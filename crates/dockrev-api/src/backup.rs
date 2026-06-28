@@ -2,7 +2,7 @@ use std::{path::PathBuf, time::Duration};
 
 use serde_json::json;
 
-use crate::api::types::{BackupSettings, BackupTarget, JobScope, StackRecord, TernaryChoice};
+use crate::api::types::{BackupSettings, BackupTarget, BackupTargetPolicy, JobScope, StackRecord};
 use crate::compose_runner::{ComposeRunnerConfig, ComposeStack};
 use crate::docker_runner;
 use crate::runner::{CommandRunner, CommandSpec};
@@ -14,6 +14,13 @@ pub struct BackupRunResult {
     pub size_bytes: Option<u64>,
     pub summary_json: serde_json::Value,
     pub log_lines: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+struct IncludedBackupTarget {
+    target: BackupTarget,
+    policy: BackupTargetPolicy,
+    related_services: Vec<String>,
 }
 
 pub fn should_run_backup(settings: &BackupSettings, backup_mode: &str) -> bool {
@@ -36,9 +43,12 @@ pub fn spawn_cleanup_task(state: std::sync::Arc<crate::state::AppState>) {
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_pre_update_backup(
     runner: &dyn CommandRunner,
     settings: &BackupSettings,
+    compose_bin: &str,
+    docker_config_path: Option<&std::path::Path>,
     stack: &StackRecord,
     scope: &JobScope,
     service_id: Option<&str>,
@@ -73,12 +83,12 @@ pub async fn run_pre_update_backup(
         .to_string_lossy()
         .to_string();
 
-    let mut included = Vec::new();
+    let mut included = Vec::<IncludedBackupTarget>::new();
     let mut decisions = Vec::new();
 
     for target in &stack.backup.targets {
-        let effective = effective_choice_for_target(target, &services);
-        if matches!(effective, TernaryChoice::Skip) {
+        let effective = effective_policy_for_target(target, &services);
+        if matches!(effective, BackupTargetPolicy::Disabled) {
             decisions
                 .push(json!({"target": target, "status":"skipped", "reason":"skipped_by_user"}));
             continue;
@@ -94,13 +104,24 @@ pub async fn run_pre_update_backup(
         };
 
         let over_threshold = size_bytes > settings.skip_targets_over_bytes;
-        if matches!(effective, TernaryChoice::Inherit) && over_threshold {
+        if matches!(effective, BackupTargetPolicy::LiveBackup) && over_threshold {
             decisions.push(json!({"target": target, "status":"skipped", "reason":"skipped_by_size", "sizeBytes": size_bytes}));
             continue;
         }
 
-        included.push((target.clone(), size_bytes));
-        decisions.push(json!({"target": target, "status":"included", "sizeBytes": size_bytes, "effective": ternary_str(&effective)}));
+        let related_services = declared_related_service_names(target, stack);
+        included.push(IncludedBackupTarget {
+            target: target.clone(),
+            policy: effective,
+            related_services: related_services.clone(),
+        });
+        decisions.push(json!({
+            "target": target,
+            "status":"included",
+            "sizeBytes": size_bytes,
+            "policy": effective.as_str(),
+            "relatedServices": related_services
+        }));
     }
 
     if included.is_empty() {
@@ -113,7 +134,23 @@ pub async fn run_pre_update_backup(
         });
     }
 
-    run_backup_container(runner, &stack_dir, &included, &ts_slug).await?;
+    let compose_cfg = compose_runner_config(docker_config_path, compose_bin)?;
+    let compose_stack = ComposeStack {
+        project_name: sanitize_project_name(&stack.name),
+        compose: stack.compose.clone(),
+    };
+    let services_to_restart =
+        stop_related_services_for_backup(runner, &compose_stack, &compose_cfg, &included).await?;
+    let backup_result = run_backup_container(runner, &stack_dir, &included, &ts_slug).await;
+    let restart_result = restart_related_services_after_backup(
+        runner,
+        &compose_stack,
+        &compose_cfg,
+        &services_to_restart,
+    )
+    .await;
+    backup_result?;
+    restart_result?;
 
     let size_bytes = tokio::fs::metadata(&artifact_path).await?.len();
 
@@ -242,6 +279,25 @@ async fn stack_is_healthy_now(
     Ok(true)
 }
 
+fn compose_runner_config(
+    docker_config_path: Option<&std::path::Path>,
+    compose_bin: &str,
+) -> anyhow::Result<ComposeRunnerConfig> {
+    let env = docker_config_path
+        .map(|path| {
+            path.parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .to_string_lossy()
+                .to_string()
+        })
+        .map(|dir| vec![("DOCKER_CONFIG".to_string(), dir)])
+        .unwrap_or_default();
+    Ok(ComposeRunnerConfig {
+        compose_bin: compose_bin.to_string(),
+        env,
+    })
+}
+
 async fn run_to_string(
     runner: &dyn CommandRunner,
     spec: CommandSpec,
@@ -289,10 +345,10 @@ fn timestamp_slug(now_rfc3339: &str) -> String {
     "backup".to_string()
 }
 
-fn effective_choice_for_target(
+fn effective_policy_for_target(
     target: &BackupTarget,
     services: &[&crate::api::types::Service],
-) -> TernaryChoice {
+) -> BackupTargetPolicy {
     let mut choices = Vec::new();
     for svc in services {
         let choice = match target {
@@ -301,38 +357,123 @@ fn effective_choice_for_target(
                 .backup_targets
                 .volume_names
                 .get(name)
-                .cloned()
-                .unwrap_or(TernaryChoice::Inherit),
+                .map(choice_to_policy)
+                .unwrap_or(BackupTargetPolicy::Disabled),
             BackupTarget::BindMount { path } => svc
                 .settings
                 .backup_targets
                 .bind_paths
                 .get(path)
-                .cloned()
-                .unwrap_or(TernaryChoice::Inherit),
+                .map(choice_to_policy)
+                .unwrap_or(BackupTargetPolicy::Disabled),
         };
         choices.push(choice);
     }
-    coalesce_choice(&choices)
+    coalesce_policy(&choices)
 }
 
-fn coalesce_choice(choices: &[TernaryChoice]) -> TernaryChoice {
-    // Force > Inherit > Skip
-    if choices.iter().any(|c| matches!(c, TernaryChoice::Force)) {
-        return TernaryChoice::Force;
-    }
-    if choices.iter().any(|c| matches!(c, TernaryChoice::Inherit)) {
-        return TernaryChoice::Inherit;
-    }
-    TernaryChoice::Skip
-}
-
-fn ternary_str(choice: &TernaryChoice) -> &'static str {
+fn choice_to_policy(choice: &crate::api::types::TernaryChoice) -> BackupTargetPolicy {
     match choice {
-        TernaryChoice::Inherit => "inherit",
-        TernaryChoice::Skip => "skip",
-        TernaryChoice::Force => "force",
+        crate::api::types::TernaryChoice::Force => BackupTargetPolicy::StopRelatedServices,
+        crate::api::types::TernaryChoice::Inherit => BackupTargetPolicy::LiveBackup,
+        crate::api::types::TernaryChoice::Skip => BackupTargetPolicy::Disabled,
     }
+}
+
+fn coalesce_policy(choices: &[BackupTargetPolicy]) -> BackupTargetPolicy {
+    if choices
+        .iter()
+        .any(|c| matches!(c, BackupTargetPolicy::StopRelatedServices))
+    {
+        return BackupTargetPolicy::StopRelatedServices;
+    }
+    if choices
+        .iter()
+        .any(|c| matches!(c, BackupTargetPolicy::LiveBackup))
+    {
+        return BackupTargetPolicy::LiveBackup;
+    }
+    BackupTargetPolicy::Disabled
+}
+
+fn declared_related_service_names(target: &BackupTarget, stack: &StackRecord) -> Vec<String> {
+    stack
+        .services
+        .iter()
+        .filter_map(|service| {
+            let matched = match target {
+                BackupTarget::DockerVolume { name } => service
+                    .settings
+                    .backup_targets
+                    .volume_names
+                    .contains_key(name),
+                BackupTarget::BindMount { path } => service
+                    .settings
+                    .backup_targets
+                    .bind_paths
+                    .contains_key(path),
+            };
+            matched.then(|| service.name.clone())
+        })
+        .collect()
+}
+
+async fn stop_related_services_for_backup(
+    runner: &dyn CommandRunner,
+    compose_stack: &ComposeStack,
+    compose_cfg: &ComposeRunnerConfig,
+    included: &[IncludedBackupTarget],
+) -> anyhow::Result<Vec<String>> {
+    let mut services_to_stop = std::collections::BTreeSet::<String>::new();
+    for item in included {
+        if !matches!(item.policy, BackupTargetPolicy::StopRelatedServices) {
+            continue;
+        }
+        services_to_stop.extend(item.related_services.iter().cloned());
+    }
+    if services_to_stop.is_empty() {
+        return Ok(Vec::new());
+    }
+    let services = services_to_stop.into_iter().collect::<Vec<_>>();
+    let out = runner
+        .run(
+            compose_stack.stop_services(compose_cfg, &services),
+            Duration::from_secs(120),
+        )
+        .await?;
+    if out.status != 0 {
+        return Err(anyhow::anyhow!(
+            "stop services failed: status={} stderr={}",
+            out.status,
+            out.stderr
+        ));
+    }
+    Ok(services)
+}
+
+async fn restart_related_services_after_backup(
+    runner: &dyn CommandRunner,
+    compose_stack: &ComposeStack,
+    compose_cfg: &ComposeRunnerConfig,
+    services: &[String],
+) -> anyhow::Result<()> {
+    if services.is_empty() {
+        return Ok(());
+    }
+    let out = runner
+        .run(
+            compose_stack.up_services(compose_cfg, services),
+            Duration::from_secs(180),
+        )
+        .await?;
+    if out.status != 0 {
+        return Err(anyhow::anyhow!(
+            "restart services failed: status={} stderr={}",
+            out.status,
+            out.stderr
+        ));
+    }
+    Ok(())
 }
 
 async fn probe_size_bytes(
@@ -380,7 +521,7 @@ async fn probe_size_bytes(
 async fn run_backup_container(
     runner: &dyn CommandRunner,
     stack_dir: &std::path::Path,
-    included: &[(BackupTarget, u64)],
+    included: &[IncludedBackupTarget],
     ts_slug: &str,
 ) -> anyhow::Result<()> {
     let mut args = Vec::new();
@@ -390,8 +531,8 @@ async fn run_backup_container(
     args.push(format!("{}:/out", stack_dir.to_string_lossy()));
 
     let mut binds = 0usize;
-    for (target, _) in included {
-        match target {
+    for item in included {
+        match &item.target {
             BackupTarget::DockerVolume { name } => {
                 args.push("-v".to_string());
                 args.push(format!("{name}:/backup/volumes/{name}:ro"));
@@ -446,6 +587,18 @@ mod tests {
             spec: CommandSpec,
             _timeout: Duration,
         ) -> anyhow::Result<crate::runner::CommandOutput> {
+            if (spec.program == "docker-compose" || spec.program == "docker")
+                && spec
+                    .args
+                    .iter()
+                    .any(|arg| arg == "stop" || arg == "up" || arg == "ps")
+            {
+                return Ok(crate::runner::CommandOutput {
+                    status: 0,
+                    stdout: "container-id\n".to_string(),
+                    stderr: String::new(),
+                });
+            }
             if spec.program == "docker" && spec.args.first().is_some_and(|a| a == "run") {
                 if spec.args.iter().any(|a| a.contains("du -sb /data")) {
                     let mount = spec
@@ -561,6 +714,8 @@ mod tests {
         let out = run_pre_update_backup(
             &runner,
             &settings,
+            "docker-compose",
+            None,
             &stack,
             &JobScope::Stack,
             None,
@@ -595,11 +750,13 @@ mod tests {
             .settings
             .backup_targets
             .volume_names
-            .insert("big".to_string(), TernaryChoice::Force);
+            .insert("big".to_string(), crate::api::types::TernaryChoice::Force);
 
         let out = run_pre_update_backup(
             &runner,
             &settings,
+            "docker-compose",
+            None,
             &stack,
             &JobScope::Stack,
             None,

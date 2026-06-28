@@ -97,6 +97,56 @@ pub struct PutServiceComposeTagResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ServiceBackupTargetItem {
+    pub key: String,
+    pub policy: BackupTargetPolicy,
+    pub related_service_count: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub related_service_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceBackupStorageInfo {
+    pub base_dir: String,
+    pub artifact_pattern: String,
+    pub compression: String,
+    pub keep_last: u32,
+    pub delete_after_stable_seconds: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceBackupTargetsResponse {
+    pub bind_paths: Vec<ServiceBackupTargetItem>,
+    pub volume_names: Vec<ServiceBackupTargetItem>,
+    pub storage: ServiceBackupStorageInfo,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PutServiceBackupTargetItem {
+    pub key: String,
+    pub policy: BackupTargetPolicy,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PutServiceBackupTargetsRequest {
+    #[serde(default)]
+    pub bind_paths: Vec<PutServiceBackupTargetItem>,
+    #[serde(default)]
+    pub volume_names: Vec<PutServiceBackupTargetItem>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PutServiceBackupTargetsResponse {
+    pub ok: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum NewVersionDiscoveryTimelineItemKind {
     CurrentCandidate,
     HistoricalCandidate,

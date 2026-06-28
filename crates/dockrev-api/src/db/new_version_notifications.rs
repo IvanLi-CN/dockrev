@@ -842,6 +842,8 @@ mod tests {
                 image_tag: "latest".to_string(),
                 homepage: None,
                 update_guard: None,
+                backup_bind_paths: Vec::new(),
+                backup_volume_names: Vec::new(),
             }],
             "2026-03-09T00:02:00Z",
         )
@@ -895,6 +897,8 @@ mod tests {
                 image_tag: "stable".to_string(),
                 homepage: None,
                 update_guard: None,
+                backup_bind_paths: Vec::new(),
+                backup_volume_names: Vec::new(),
             }],
             "2026-03-09T00:02:00Z",
         )
@@ -994,6 +998,8 @@ mod tests {
                 image_tag: "stable".to_string(),
                 homepage: None,
                 update_guard: None,
+                backup_bind_paths: Vec::new(),
+                backup_volume_names: Vec::new(),
             }],
             "2026-03-09T00:02:00Z",
         )

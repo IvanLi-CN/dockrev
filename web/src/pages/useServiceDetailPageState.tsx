@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ApiError, archiveService, createIgnore, getServiceRollbackTarget, getServiceSettings, getStack, getStackSettings, listIgnores, newJobEventsSource, restoreService, triggerRuntimeScan, triggerServiceRollback, triggerUpdate, type IgnoreRule, type Service, type ServiceRollbackTargetResponse, type ServiceSettings, type StackDetail, type StackSettings } from '../api'
+import { ApiError, archiveService, createIgnore, getServiceBackupTargets, getServiceRollbackTarget, getServiceSettings, getStack, getStackSettings, listIgnores, newJobEventsSource, restoreService, triggerRuntimeScan, triggerServiceRollback, triggerUpdate, type IgnoreRule, type Service, type ServiceBackupTargetsResponse, type ServiceRollbackTargetResponse, type ServiceSettings, type StackDetail, type StackSettings } from '../api'
 import { readUpdateGuardBlockedReason } from '../aggregateUpdateGuard'
 import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
 import { normalizeDigest } from '../components/digest'
@@ -9,7 +9,7 @@ import { useConfirm } from '../confirm'
 import { DIGEST_SNAPSHOT_UPDATED_EVENT, type DigestSnapshotUpdatedDetail } from '../digestInferenceTracker'
 import { normalizeExternalHttpUrl } from '../imageLinks'
 import { imageRepoFromImageRef } from '../imageRepo'
-import { errorMessage, formatMap, isDockrevService, normalizeMaybeDigest, rollbackTargetMatchesServiceDigest, rollbackUnavailableReasonLabel, rollbackVersionLabel, ROLLBACK_TARGET_REFRESH_HINT, scanHasFailures, scanIsComplete, shortDigest, shouldPrefetchFloatingCandidate, svcTone, useRollbackTargetInvariantWarning } from './serviceDetailUtils'
+import { errorMessage, isDockrevService, normalizeMaybeDigest, rollbackTargetMatchesServiceDigest, rollbackUnavailableReasonLabel, rollbackVersionLabel, ROLLBACK_TARGET_REFRESH_HINT, scanHasFailures, scanIsComplete, shortDigest, shouldPrefetchFloatingCandidate, svcTone, useRollbackTargetInvariantWarning } from './serviceDetailUtils'
 import { navigate } from '../routes'
 import { selfUpgradeBaseUrl } from '../runtimeConfig'
 import { Button, Mono } from '../ui'
@@ -30,6 +30,7 @@ export function useServiceDetailPageState(props: {
   const [stack, setStack] = useState<StackDetail | null>(null)
   const [service, setService] = useState<Service | null>(null)
   const [settings, setSettings] = useState<ServiceSettings | null>(null)
+  const [backupTargets, setBackupTargets] = useState<ServiceBackupTargetsResponse | null>(null)
   const [stackSettings, setStackSettings] = useState<StackSettings | null>(null)
   const [rules, setRules] = useState<IgnoreRule[]>([])
   const [busy, setBusy] = useState(false)
@@ -136,8 +137,9 @@ export function useServiceDetailPageState(props: {
         if (!svc || isDockrevService(svc)) { setRollbackTarget(null); setRollbackActiveTarget(null) }
       }
 
-      const [settingsRes, rulesRes, rollbackRes] = await Promise.allSettled([
+      const [settingsRes, backupTargetsRes, rulesRes, rollbackRes] = await Promise.allSettled([
         getServiceSettings(serviceId),
+        getServiceBackupTargets(serviceId),
         listIgnores(),
         svc && !isDockrevService(svc) ? getServiceRollbackTarget(serviceId) : Promise.resolve(null),
       ])
@@ -148,6 +150,7 @@ export function useServiceDetailPageState(props: {
       const errors: string[] = []
 
       if (settingsRes.status === 'rejected') errors.push(errorMessage(settingsRes.reason))
+      if (backupTargetsRes.status === 'rejected') errors.push(errorMessage(backupTargetsRes.reason))
       if (stackSettingsRes.status === 'rejected') errors.push(errorMessage(stackSettingsRes.reason))
       if (rulesRes.status === 'rejected') errors.push(errorMessage(rulesRes.reason))
       if (rollbackRes.status === 'rejected') errors.push(errorMessage(rollbackRes.reason))
@@ -155,6 +158,7 @@ export function useServiceDetailPageState(props: {
       if (fullRefreshRequestId < latestAppliedFullRefreshRequestIdRef.current) return
 
       if (settingsRes.status === 'fulfilled') setSettings(settingsRes.value)
+      if (backupTargetsRes.status === 'fulfilled') setBackupTargets(backupTargetsRes.value)
       if (stackSettingsRes.status === 'fulfilled') setStackSettings(stackSettingsRes.value)
       if (rulesRes.status === 'fulfilled') {
         setRules(rulesRes.value.filter((r) => r.scope.serviceId === serviceId))
@@ -875,8 +879,6 @@ export function useServiceDetailPageState(props: {
     [archiveOrRestoreService, blockServiceUpdates, busy, service],
   )
 
-  const bindTargets = useMemo(() => (settings ? formatMap(settings.backupTargets.bindPaths) : []), [settings])
-  const volTargets = useMemo(() => (settings ? formatMap(settings.backupTargets.volumeNames) : []), [settings])
   const draftRepoUrl = useMemo(() => normalizeExternalHttpUrl(settings?.repoUrl), [settings?.repoUrl])
   const settingsBusy = busy || repoInferBusy
 
@@ -1068,7 +1070,7 @@ export function useServiceDetailPageState(props: {
     bannerClass,
     bannerDetail,
     bannerTitle,
-    bindTargets,
+    backupTargets,
     busy,
     composeEnvFile,
     composeFiles,
@@ -1102,6 +1104,5 @@ export function useServiceDetailPageState(props: {
     topActions,
     tone,
     dangerousActions,
-    volTargets,
   }
 }

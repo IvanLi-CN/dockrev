@@ -54,6 +54,20 @@ pub fn inspect_image_id(cfg: &DockerRunnerConfig, container_id: &str) -> Command
     }
 }
 
+#[allow(dead_code)]
+pub fn inspect_is_running(cfg: &DockerRunnerConfig, container_id: &str) -> CommandSpec {
+    CommandSpec {
+        program: cfg.docker_bin.clone(),
+        args: vec![
+            "inspect".to_string(),
+            "--format".to_string(),
+            "{{if .State.Running}}1{{else}}0{{end}}".to_string(),
+            container_id.to_string(),
+        ],
+        env: cfg.env.clone(),
+    }
+}
+
 pub fn tag_image(cfg: &DockerRunnerConfig, image_id: &str, image_ref: &str) -> CommandSpec {
     CommandSpec {
         program: cfg.docker_bin.clone(),

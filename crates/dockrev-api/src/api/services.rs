@@ -1,8 +1,15 @@
 use super::*;
 use crate::updater::is_dockrev_image_ref;
+use std::collections::BTreeMap;
 
+mod backup_targets;
 mod github_releases;
 mod repo_links;
+
+use backup_targets::{
+    get_service_backup_targets as load_service_backup_targets_response,
+    put_service_backup_targets as save_service_backup_targets_response, read_compose_service_specs,
+};
 
 pub(super) use repo_links::get_service_new_version_discovery_timeline;
 use repo_links::normalize_repo_url_input;
@@ -42,6 +49,29 @@ pub(super) async fn get_service_settings(
         repo_url: stored.settings.repo_url,
         auto_update_policy: stored.auto_update_policy,
     }))
+}
+
+pub(super) async fn get_service_backup_targets(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(service_id): Path<String>,
+) -> Result<Json<ServiceBackupTargetsResponse>, ApiError> {
+    let _user = require_user(&state, &headers).await?;
+    Ok(Json(
+        load_service_backup_targets_response(&state, &service_id).await?,
+    ))
+}
+
+pub(super) async fn put_service_backup_targets(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(service_id): Path<String>,
+    Json(req): Json<PutServiceBackupTargetsRequest>,
+) -> Result<Json<PutServiceBackupTargetsResponse>, ApiError> {
+    let _user = require_user(&state, &headers).await?;
+    Ok(Json(
+        save_service_backup_targets_response(&state, &service_id, req).await?,
+    ))
 }
 
 pub(super) async fn infer_service_repo_link(
@@ -202,30 +232,6 @@ async fn resolve_compose_file_for_service_image(
 fn service_tag_history_repo_key(image_ref: &str) -> Option<String> {
     let image_repo = crate::compose::image_repo_from_tagged_ref(image_ref)?;
     crate::snapshot_worker::image_repo_from_image_ref(&format!("{image_repo}:latest"))
-}
-
-async fn read_compose_service_specs(
-    compose_files: &[String],
-) -> anyhow::Result<Vec<crate::db::ComposeServiceSpec>> {
-    let mut merged = std::collections::BTreeMap::new();
-    for path in compose_files {
-        let contents = tokio::fs::read_to_string(path)
-            .await
-            .with_context(|| format!("read compose file {path}"))?;
-        let parsed = crate::compose::parse_services(&contents)
-            .with_context(|| format!("parse compose file {path}"))?;
-        merged = crate::compose::merge_services(merged, parsed);
-    }
-    Ok(merged
-        .into_values()
-        .map(|svc| crate::db::ComposeServiceSpec {
-            name: svc.name,
-            image_ref: svc.image_ref,
-            image_tag: svc.image_tag,
-            homepage: svc.homepage,
-            update_guard: svc.update_guard,
-        })
-        .collect())
 }
 
 #[derive(Debug, Default, Deserialize)]

@@ -4706,6 +4706,213 @@ html[data-theme='light'] .modalOverlay {
   flex: 1 1 auto;
 }
 
+.serviceBackupPicker {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 10px;
+}
+
+.serviceBackupMetaCard,
+.serviceBackupGroup,
+.serviceBackupEmptyState {
+  border: 1px solid color-mix(in srgb, var(--borderColor) 74%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel2) 30%, transparent);
+  padding: 12px 14px;
+}
+
+.serviceBackupMetaCard,
+.serviceBackupGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.serviceBackupMetaSummary {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.serviceBackupMetaGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 10px;
+}
+
+.serviceBackupMetaGrid > div {
+  min-width: 0;
+}
+
+.serviceBackupMetaGrid .mono {
+  display: block;
+  max-width: 100%;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.serviceBackupRow {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0;
+  border-top: 1px solid color-mix(in srgb, var(--borderColor) 62%, transparent);
+}
+
+.serviceBackupRow:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.serviceBackupRowHead,
+.serviceBackupRowControls {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.serviceBackupRowHead > :first-child,
+.serviceBackupRowControls > :first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.serviceBackupRowHead .mono,
+.serviceBackupRowControls .muted {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.serviceBackupCountBadge {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--panel) 74%, var(--accent) 12%);
+  border: 1px solid color-mix(in srgb, var(--borderColor) 78%, transparent);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.serviceBackupPolicyShell {
+  position: relative;
+  width: 100%;
+  padding: 3px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 80%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--panel) 94%, transparent), color-mix(in srgb, var(--panel2) 72%, transparent));
+  overflow: hidden;
+}
+
+.serviceBackupPolicyShell.isDisabled {
+  opacity: 0.64;
+}
+
+.serviceBackupPolicyThumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: calc((100% - 6px) / 3);
+  height: calc(100% - 6px);
+  border-radius: 11px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 88%, white 12%), color-mix(in srgb, var(--accent) 52%, var(--panel) 48%));
+  box-shadow:
+    0 10px 20px color-mix(in srgb, var(--accent) 26%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 20%, transparent);
+  transform: translateX(calc(var(--backup-policy-index, 0) * 100%));
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 220ms ease;
+  pointer-events: none;
+}
+
+.serviceBackupPolicyGroup {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+}
+
+.serviceBackupPolicyBtn {
+  min-width: 0;
+  height: 38px;
+  border-radius: 11px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  transition: color 180ms ease, transform 180ms ease;
+}
+
+.serviceBackupPolicyBtn.active,
+.serviceBackupPolicyBtn[data-state='on'] {
+  color: var(--text);
+  transform: translateY(-1px);
+}
+
+.serviceBackupPolicyBtn:hover:not(:disabled) {
+  background: transparent;
+  color: color-mix(in srgb, var(--text) 88%, white 12%);
+}
+
+.serviceBackupPolicyBtn:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, white 22%, transparent);
+}
+
+@media (max-width: 760px) {
+  .serviceBackupRowHead,
+  .serviceBackupRowControls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .serviceBackupCountBadge {
+    width: 100%;
+  }
+
+  .serviceBackupMetaCard,
+  .serviceBackupGroup,
+  .serviceBackupEmptyState {
+    padding-inline: 12px;
+  }
+}
+
+@media (max-width: 520px) {
+  .serviceBackupPolicyBtn {
+    height: 42px;
+    font-size: 11px;
+    letter-spacing: 0;
+  }
+}
+
+.serviceBackupEmptyState {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .serviceBackupPolicyThumb,
+  .serviceBackupPolicyBtn {
+    transition: none;
+  }
+}
+
 .serviceTagEditor {
   display: flex;
   flex-direction: column;

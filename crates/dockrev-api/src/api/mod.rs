@@ -4,7 +4,6 @@ pub mod types;
 mod tests;
 
 use std::{
-    collections::BTreeMap,
     convert::Infallible,
     str::FromStr,
     sync::{
@@ -194,6 +193,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/api/services/{service_id}/settings",
             get(get_service_settings).put(put_service_settings),
+        )
+        .route(
+            "/api/services/{service_id}/backup-targets",
+            get(get_service_backup_targets).put(put_service_backup_targets),
         )
         .route(
             "/api/notifications",

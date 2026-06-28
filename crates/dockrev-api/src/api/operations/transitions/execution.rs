@@ -215,6 +215,8 @@ pub(crate) async fn run_update_job(
                 match backup::run_pre_update_backup(
                     &logging_runner,
                     &backup_settings,
+                    &state.config.compose_bin,
+                    state.config.docker_config_path.as_deref(),
                     &stack,
                     &req.scope,
                     req.service_id.as_deref(),

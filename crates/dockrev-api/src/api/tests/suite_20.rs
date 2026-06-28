@@ -245,6 +245,22 @@ fn auto_update_discovery_summary(
     })
 }
 
+async fn service_id_by_name(
+    state: &Arc<AppState>,
+    stack_id: &str,
+    service_name: &str,
+) -> String {
+    state
+        .db
+        .list_services_for_check(stack_id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|svc| svc.name == service_name)
+        .unwrap()
+        .id
+}
+
 #[tokio::test]
 async fn schedule_auto_policy_enqueues_explicit_target_and_dedupes() {
     let state = test_state_with(
@@ -918,4 +934,454 @@ services:
         .collect::<Vec<_>>();
     assert_eq!(auto_jobs.len(), 1, "auto policy jobs: {jobs:?}");
     assert_eq!(auto_jobs[0].service_id.as_deref(), Some(service_id.as_str()));
+}
+
+#[tokio::test]
+async fn get_service_backup_targets_resolves_compose_candidates_and_storage_info() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let base_dir = format!("/tmp/dockrev-backups-{}", ulid::Ulid::new());
+    state
+        .db
+        .put_settings(
+            &crate::api::types::BackupSettings {
+                enabled: true,
+                require_success: true,
+                base_dir: base_dir.clone(),
+                skip_targets_over_bytes: 1_000_000,
+            },
+            &crate::api::types::ResourceMonitorSettings {
+                enabled: false,
+                sample_interval_seconds: 60,
+                retention_days: 7,
+            },
+            &crate::api::types::SchedulesSettings {
+                update_check: crate::api::types::ScheduleItemSettings {
+                    enabled: false,
+                    cron: "0 * * * *".to_string(),
+                },
+                ghcr_webhook_audit: crate::api::types::ScheduleItemSettings {
+                    enabled: false,
+                    cron: "0 * * * *".to_string(),
+                },
+            },
+            None,
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+
+    let compose_dir = format!("/tmp/dockrev-backup-targets-{}", ulid::Ulid::new());
+    std::fs::create_dir_all(compose_dir.clone()).unwrap();
+    let compose_path = format!("{compose_dir}/compose.yml");
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  api:
+    image: ghcr.io/acme/api:1.0
+    volumes:
+      - api-data:/var/lib/api
+      - ./data:/srv/data
+      - /srv/shared/uploads:/srv/uploads
+  worker:
+    image: ghcr.io/acme/worker:1.0
+    volumes:
+      - ./data:/srv/data
+volumes:
+  api-data:
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = service_id_by_name(&state, &stack_id, "api").await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/backup-targets"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["storage"]["baseDir"].as_str(), Some(base_dir.as_str()));
+    assert_eq!(body["storage"]["compression"].as_str(), Some("gzip"));
+    assert_eq!(body["storage"]["keepLast"].as_u64(), Some(1));
+    assert_eq!(body["storage"]["deleteAfterStableSeconds"].as_u64(), Some(3600));
+    assert_eq!(
+        body["storage"]["artifactPattern"].as_str(),
+        Some(format!("{base_dir}/<stackId>/<timestamp>.tar.gz").as_str())
+    );
+    assert_eq!(body["volumeNames"][0]["key"].as_str(), Some("api-data"));
+    assert_eq!(
+        body["bindPaths"][0]["key"].as_str(),
+        Some(format!("{compose_dir}/./data").as_str())
+    );
+    assert_eq!(
+        body["bindPaths"][1]["key"].as_str(),
+        Some("/srv/shared/uploads")
+    );
+    assert_eq!(
+        body["bindPaths"][0]["relatedServiceCount"].as_u64(),
+        Some(2)
+    );
+    assert_eq!(
+        body["bindPaths"][0]["policy"].as_str(),
+        Some("disabled")
+    );
+}
+
+#[tokio::test]
+async fn get_service_backup_targets_reads_latest_compose_mounts_without_stack_resync() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let compose_dir = format!("/tmp/dockrev-backup-live-compose-{}", ulid::Ulid::new());
+    std::fs::create_dir_all(compose_dir.clone()).unwrap();
+    let compose_path = format!("{compose_dir}/compose.yml");
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  api:
+    image: ghcr.io/acme/api:1.0
+    volumes:
+      - api-data:/var/lib/api
+  worker:
+    image: ghcr.io/acme/worker:1.0
+volumes:
+  api-data:
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = service_id_by_name(&state, &stack_id, "api").await;
+
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  api:
+    image: ghcr.io/acme/api:1.0
+    volumes:
+      - api-data:/var/lib/api
+      - ./cache:/srv/cache
+  worker:
+    image: ghcr.io/acme/worker:1.0
+    volumes:
+      - ./cache:/srv/cache
+volumes:
+  api-data:
+"#,
+    )
+    .unwrap();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/backup-targets"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    let shared_path = format!("{compose_dir}/./cache");
+    assert_eq!(body["volumeNames"][0]["key"].as_str(), Some("api-data"));
+    assert_eq!(body["bindPaths"][0]["key"].as_str(), Some(shared_path.as_str()));
+    assert_eq!(
+        body["bindPaths"][0]["relatedServiceCount"].as_u64(),
+        Some(2)
+    );
+}
+
+#[tokio::test]
+async fn get_service_backup_targets_returns_empty_candidates_when_service_missing_from_compose() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let compose_dir = format!("/tmp/dockrev-backup-missing-compose-{}", ulid::Ulid::new());
+    std::fs::create_dir_all(compose_dir.clone()).unwrap();
+    let compose_path = format!("{compose_dir}/compose.yml");
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  api:
+    image: ghcr.io/acme/api:1.0
+    volumes:
+      - api-data:/var/lib/api
+volumes:
+  api-data:
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = service_id_by_name(&state, &stack_id, "api").await;
+
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  worker:
+    image: ghcr.io/acme/worker:1.0
+"#,
+    )
+    .unwrap();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/backup-targets"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["bindPaths"].as_array().map(|items| items.len()), Some(0));
+    assert_eq!(body["volumeNames"].as_array().map(|items| items.len()), Some(0));
+}
+
+#[tokio::test]
+async fn put_service_backup_targets_removes_unique_targets_and_skips_shared_targets() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let compose_dir = format!("/tmp/dockrev-backup-update-{}", ulid::Ulid::new());
+    std::fs::create_dir_all(compose_dir.clone()).unwrap();
+    let compose_path = format!("{compose_dir}/compose.yml");
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  api:
+    image: ghcr.io/acme/api:1.0
+    volumes:
+      - api-data:/var/lib/api
+      - ./shared:/srv/shared
+  web:
+    image: ghcr.io/acme/web:1.0
+    volumes:
+      - ./shared:/srv/shared
+volumes:
+  api-data:
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let api_id = service_id_by_name(&state, &stack_id, "api").await;
+    let web_id = service_id_by_name(&state, &stack_id, "web").await;
+    let shared_path = format!("{compose_dir}/./shared");
+
+    state
+        .db
+        .put_service_backup_targets(
+            &api_id,
+            &crate::db::ServiceBackupTargetsUpdate {
+                stack_targets: vec![
+                    crate::api::types::BackupTarget::DockerVolume {
+                        name: "api-data".to_string(),
+                    },
+                    crate::api::types::BackupTarget::BindMount {
+                        path: shared_path.clone(),
+                    },
+                ],
+                bind_paths: vec![crate::db::ServiceBackupTargetPolicyRow {
+                    key: shared_path.clone(),
+                    policy: crate::api::types::BackupTargetPolicy::LiveBackup,
+                }],
+                volume_names: vec![crate::db::ServiceBackupTargetPolicyRow {
+                    key: "api-data".to_string(),
+                    policy: crate::api::types::BackupTargetPolicy::LiveBackup,
+                }],
+            },
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .put_service_backup_targets(
+            &web_id,
+            &crate::db::ServiceBackupTargetsUpdate {
+                stack_targets: vec![crate::api::types::BackupTarget::BindMount {
+                    path: shared_path.clone(),
+                }],
+                bind_paths: vec![crate::db::ServiceBackupTargetPolicyRow {
+                    key: shared_path.clone(),
+                    policy: crate::api::types::BackupTargetPolicy::LiveBackup,
+                }],
+                volume_names: Vec::new(),
+            },
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/services/{api_id}/backup-targets"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "bindPaths": [{ "key": shared_path, "policy": "disabled" }],
+                        "volumeNames": [{ "key": "api-data", "policy": "disabled" }]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let _body = response_json(resp).await;
+
+    let stack = state.db.get_stack(&stack_id).await.unwrap().unwrap();
+    let stack_target_keys = stack
+        .backup
+        .targets
+        .iter()
+        .map(|target| target.key().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(stack_target_keys, vec![shared_path.clone()]);
+
+    let api_settings = state.db.get_service_settings(&api_id).await.unwrap().unwrap();
+    assert!(matches!(
+        api_settings.backup_targets.bind_paths.get(&shared_path),
+        Some(crate::api::types::TernaryChoice::Skip)
+    ));
+    assert!(matches!(
+        api_settings.backup_targets.volume_names.get("api-data"),
+        Some(crate::api::types::TernaryChoice::Skip)
+    ));
+}
+
+#[tokio::test]
+async fn put_service_backup_targets_removes_disabled_unique_targets_even_with_legacy_stack_entries() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let compose_dir = format!("/tmp/dockrev-backup-unrelated-{}", ulid::Ulid::new());
+    std::fs::create_dir_all(compose_dir.clone()).unwrap();
+    let compose_path = format!("{compose_dir}/compose.yml");
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  api:
+    image: ghcr.io/acme/api:1.0
+    volumes:
+      - api-data:/var/lib/api
+volumes:
+  api-data:
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let api_id = service_id_by_name(&state, &stack_id, "api").await;
+    let legacy_path = "/srv/manual/legacy".to_string();
+
+    state
+        .db
+        .put_service_backup_targets(
+            &api_id,
+            &crate::db::ServiceBackupTargetsUpdate {
+                stack_targets: vec![
+                    crate::api::types::BackupTarget::DockerVolume {
+                        name: "api-data".to_string(),
+                    },
+                    crate::api::types::BackupTarget::BindMount {
+                        path: legacy_path.clone(),
+                    },
+                ],
+                bind_paths: Vec::new(),
+                volume_names: vec![crate::db::ServiceBackupTargetPolicyRow {
+                    key: "api-data".to_string(),
+                    policy: crate::api::types::BackupTargetPolicy::LiveBackup,
+                }],
+            },
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/services/{api_id}/backup-targets"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "bindPaths": [],
+                        "volumeNames": [{ "key": "api-data", "policy": "disabled" }]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let stack = state.db.get_stack(&stack_id).await.unwrap().unwrap();
+    let stack_target_keys = stack
+        .backup
+        .targets
+        .iter()
+        .map(|target| target.key().to_string())
+        .collect::<Vec<_>>();
+    assert!(stack_target_keys.is_empty());
+}
+
+#[tokio::test]
+async fn put_service_backup_targets_adds_enabled_targets_to_stack() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let compose_dir = format!("/tmp/dockrev-backup-add-{}", ulid::Ulid::new());
+    std::fs::create_dir_all(compose_dir.clone()).unwrap();
+    let compose_path = format!("{compose_dir}/compose.yml");
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  api:
+    image: ghcr.io/acme/api:1.0
+    volumes:
+      - cache-data:/var/lib/cache
+volumes:
+  cache-data:
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let api_id = service_id_by_name(&state, &stack_id, "api").await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/services/{api_id}/backup-targets"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "bindPaths": [],
+                        "volumeNames": [{ "key": "cache-data", "policy": "stop_related_services" }]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let _body = response_json(resp).await;
+
+    let stack = state.db.get_stack(&stack_id).await.unwrap().unwrap();
+    assert_eq!(stack.backup.targets.len(), 1);
+    assert_eq!(stack.backup.targets[0].key(), "cache-data");
 }

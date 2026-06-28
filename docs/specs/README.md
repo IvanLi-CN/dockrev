@@ -127,3 +127,4 @@
 | xyy72 | Dockrev：自动部署策略配置器 | active | `xyy72-auto-deploy-policy-configurator/SPEC.md` | 2026-04-30 | fast-track（auto policy model + Service/Stack UI + Storybook visual evidence） |
 | ttfyf | Dockrev：更新确认弹窗信息收敛 | 已实现 | `ttfyf-update-confirm-information-convergence/SPEC.md` | 2026-05-05 | fast-track（单服务确认与聚合预览组件边界收敛） |
 | r4t8k | Dockrev：服务详情可编辑原始 Compose Tag | active | `r4t8k-service-compose-tag-editor/SPEC.md` | 2026-05-06 | fast-track（Service detail tag editor + compose file patch + lazy suggestions） |
+| sxcmc | Dockrev：服务保护设置补全备份目标直选与备份说明 | 已完成 | `sxcmc-service-backup-target-selector/SPEC.md` | 2026-06-28 | fast-track（service backup-target API + compose-derived candidates + Service detail drawer UI + Storybook evidence） |

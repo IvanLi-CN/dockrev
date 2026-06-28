@@ -1133,6 +1133,8 @@ services:
                 image_tag: "latest".to_string(),
                 homepage: None,
                 update_guard: None,
+                backup_bind_paths: Vec::new(),
+                backup_volume_names: Vec::new(),
             }],
             &test_now_rfc3339(),
         )
@@ -1200,6 +1202,8 @@ services:
                 image_tag: "latest".to_string(),
                 homepage: None,
                 update_guard: None,
+                backup_bind_paths: Vec::new(),
+                backup_volume_names: Vec::new(),
             }],
             &test_now_rfc3339(),
         )
@@ -1258,6 +1262,8 @@ services:
                 image_tag: "latest".to_string(),
                 homepage: Some(homepage_updated.clone()),
                 update_guard: None,
+                backup_bind_paths: Vec::new(),
+                backup_volume_names: Vec::new(),
             }],
             &test_now_rfc3339(),
         )
@@ -1283,6 +1289,8 @@ services:
                 image_tag: "latest".to_string(),
                 homepage: None,
                 update_guard: None,
+                backup_bind_paths: Vec::new(),
+                backup_volume_names: Vec::new(),
             }],
             &test_now_rfc3339(),
         )

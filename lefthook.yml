@@ -24,9 +24,9 @@ commit-msg:
     commitlint:
       run: |
         set -euo pipefail
-        if command -v bun >/dev/null 2>&1 && [ -x ./node_modules/.bin/commitlint ]; then
-          bun ./node_modules/.bin/commitlint --edit {1}
+        if [ -x ./node_modules/.bin/commitlint ]; then
+          ./node_modules/.bin/commitlint --edit {1}
           exit 0
         fi
-        echo "Bun and commitlint are required. Install Bun, then run: bun install" >&2
+        echo "commitlint is required. Install dependencies, then rerun the commit." >&2
         exit 1

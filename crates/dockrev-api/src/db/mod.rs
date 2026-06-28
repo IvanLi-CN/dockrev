@@ -20,6 +20,7 @@ mod schema;
 mod settings;
 mod snapshots;
 mod stacks;
+mod stacks_backup_targets;
 mod tag_history;
 
 pub(crate) use new_version_discoveries::{
@@ -31,13 +32,14 @@ pub(crate) use new_version_discoveries::{
 };
 
 use crate::api::types::{
-    BackupSettings, Candidate, ComposeConfig, ComposeRef, DeployWelcomeSettings,
-    GitHubPackagesRepoDb, GitHubPackagesSettingsDb, GitHubPackagesTargetDb,
-    GitHubPackagesWebhookDeliveryDb, GitHubPackagesWebhookDeliverySummary, IgnoreMatch, IgnoreRule,
-    IgnoreRuleMatch, IgnoreRuleScope, JobListItem, JobLogLine, JobScope, JobType,
-    NotificationSettings, ResourceMonitorSettings, ScheduleItemSettings, SchedulesSettings,
-    Service, ServiceHomepage, ServiceResourceSample, ServiceSettings, ServiceUpdateGuard,
-    StackListItem, StackRecord, StackStatus, VersionInferenceState,
+    BackupSettings, BackupTarget, BackupTargetOverrides, BackupTargetPolicy, Candidate,
+    ComposeConfig, ComposeRef, DeployWelcomeSettings, GitHubPackagesRepoDb,
+    GitHubPackagesSettingsDb, GitHubPackagesTargetDb, GitHubPackagesWebhookDeliveryDb,
+    GitHubPackagesWebhookDeliverySummary, IgnoreMatch, IgnoreRule, IgnoreRuleMatch,
+    IgnoreRuleScope, JobListItem, JobLogLine, JobScope, JobType, NotificationSettings,
+    ResourceMonitorSettings, ScheduleItemSettings, SchedulesSettings, Service, ServiceHomepage,
+    ServiceResourceSample, ServiceSettings, ServiceUpdateGuard, StackListItem, StackRecord,
+    StackStatus, TernaryChoice, VersionInferenceState,
 };
 
 #[derive(Clone, Debug)]
@@ -55,6 +57,55 @@ pub struct ComposeServiceSpec {
     pub image_tag: String,
     pub homepage: Option<ServiceHomepage>,
     pub update_guard: Option<ServiceUpdateGuard>,
+    pub backup_bind_paths: Vec<String>,
+    pub backup_volume_names: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ServiceBackupTargetsUpdate {
+    #[allow(dead_code)]
+    pub stack_targets: Vec<BackupTarget>,
+    pub bind_paths: Vec<ServiceBackupTargetPolicyRow>,
+    pub volume_names: Vec<ServiceBackupTargetPolicyRow>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ServiceBackupTargetPolicyRow {
+    pub key: String,
+    pub policy: BackupTargetPolicy,
+}
+
+pub(crate) fn service_policy_rows_from_overrides(
+    overrides: &BackupTargetOverrides,
+) -> Vec<(String, ServiceBackupTargetPolicyRow)> {
+    let mut rows = Vec::new();
+    for (key, choice) in &overrides.bind_paths {
+        rows.push((
+            "bind".to_string(),
+            ServiceBackupTargetPolicyRow {
+                key: key.clone(),
+                policy: choice_to_policy(choice),
+            },
+        ));
+    }
+    for (key, choice) in &overrides.volume_names {
+        rows.push((
+            "volume".to_string(),
+            ServiceBackupTargetPolicyRow {
+                key: key.clone(),
+                policy: choice_to_policy(choice),
+            },
+        ));
+    }
+    rows
+}
+
+pub(crate) fn choice_to_policy(choice: &TernaryChoice) -> BackupTargetPolicy {
+    match choice {
+        TernaryChoice::Skip => BackupTargetPolicy::Disabled,
+        TernaryChoice::Force => BackupTargetPolicy::StopRelatedServices,
+        TernaryChoice::Inherit => BackupTargetPolicy::LiveBackup,
+    }
 }
 
 #[derive(Clone, Debug)]

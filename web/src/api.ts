@@ -4,6 +4,9 @@ import type {
   StackListItem,
   StackSettings,
   ServiceSettings,
+  ServiceBackupTargetsResponse,
+  PutServiceBackupTargetsRequest,
+  PutServiceBackupTargetsResponse,
   ServiceDigestTagsSnapshotResult,
   StackDetail,
   ServiceRepoLinkInferenceResponse,
@@ -810,6 +813,22 @@ export async function putServiceSettings(serviceId: string, settings: ServiceSet
     body: JSON.stringify(settings),
   })
   return (await resp.json()) as { ok: boolean }
+}
+
+export async function getServiceBackupTargets(serviceId: string): Promise<ServiceBackupTargetsResponse> {
+  const resp = await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/backup-targets`)
+  return (await resp.json()) as ServiceBackupTargetsResponse
+}
+
+export async function putServiceBackupTargets(
+  serviceId: string,
+  input: PutServiceBackupTargetsRequest,
+): Promise<PutServiceBackupTargetsResponse> {
+  const resp = await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/backup-targets`, {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  })
+  return (await resp.json()) as PutServiceBackupTargetsResponse
 }
 
 export async function inferServiceRepoLink(serviceId: string): Promise<ServiceRepoLinkInferenceResponse> {

@@ -5,13 +5,18 @@ import {
   inferServiceRepoLink,
   listServiceTagSuggestions,
   listJobs,
+  putServiceBackupTargets,
   putServiceComposeTag,
   putServiceSettings,
+  type BackupTargetPolicy,
   type JobListItem,
   type Service,
+  type ServiceBackupTargetItem,
+  type ServiceBackupTargetsResponse,
   type ServiceSettings,
   type ServiceTagSuggestionItem,
 } from '../api'
+import { BackupPolicySegmentedControl } from '../components/BackupPolicySegmentedControl'
 import { navigate } from '../routes'
 import { Button, IconButton, Input, Mono, Pill, RefreshIcon, SelectField, Switch, Tabs, TabsList, TabsTrigger } from '../ui'
 import { isDockrevImageRef } from '../runtimeConfig'
@@ -254,6 +259,68 @@ function ServiceComposeTagField(props: {
   )
 }
 
+type BackupTargetDraftItem = {
+  key: string
+  policy: BackupTargetPolicy
+  relatedServiceCount: number
+  relatedServiceIds: string[]
+}
+
+type BackupTargetsDraft = {
+  bindPaths: BackupTargetDraftItem[]
+  volumeNames: BackupTargetDraftItem[]
+}
+
+function createBackupTargetsDraft(data: ServiceBackupTargetsResponse | null): BackupTargetsDraft {
+  const normalize = (items: ServiceBackupTargetItem[]): BackupTargetDraftItem[] =>
+    items.map((item) => ({
+      key: item.key,
+      policy: item.policy,
+      relatedServiceCount: item.relatedServiceCount,
+      relatedServiceIds: item.relatedServiceIds,
+    }))
+  return {
+    bindPaths: normalize(data?.bindPaths ?? []),
+    volumeNames: normalize(data?.volumeNames ?? []),
+  }
+}
+
+function backupTargetRequestItems(items: BackupTargetDraftItem[]) {
+  return items.map((item) => ({
+    key: item.key,
+    policy: item.policy,
+  }))
+}
+
+function backupTargetRequestFromDraft(draft: BackupTargetsDraft) {
+  return {
+    bindPaths: backupTargetRequestItems(draft.bindPaths),
+    volumeNames: backupTargetRequestItems(draft.volumeNames),
+  }
+}
+
+function formatBackupRetentionSummary(storage: ServiceBackupTargetsResponse['storage']): string {
+  const hours = Math.round(storage.deleteAfterStableSeconds / 3600)
+  return `目录 ${storage.baseDir} / 产物 .tar.gz / 最近 ${storage.keepLast} 份保留 / 其余稳定 ${hours}h 后清理`
+}
+
+function backupPolicyHint(item: BackupTargetDraftItem): string {
+  if (item.policy === 'disabled') return '当前服务不会为这个 target 触发自动备份'
+  if (item.policy === 'stop_related_services') {
+    return item.relatedServiceCount > 1
+      ? `备份前会协调停掉这 ${item.relatedServiceCount} 个关联服务，再恢复`
+      : '备份前会先停掉当前服务，再恢复'
+  }
+  return item.relatedServiceCount > 1
+    ? `保持这 ${item.relatedServiceCount} 个关联服务运行，直接备份`
+    : '保持当前服务运行，直接备份'
+}
+
+function backupRelationshipLabel(item: BackupTargetDraftItem): string {
+  if (item.relatedServiceCount <= 1) return '关联 1 个服务'
+  return `关联 ${item.relatedServiceCount} 个服务`
+}
+
 export function ServiceDetailPage(props: {
   stackId: string
   serviceId: string
@@ -280,6 +347,7 @@ export function ServiceDetailPage(props: {
     newRuleNote,
     newRuleValue,
     notice,
+    backupTargets,
     repoInferBusy,
     requestRefresh,
     rules,
@@ -308,6 +376,9 @@ export function ServiceDetailPage(props: {
   const [serviceSettingsDrawerOpen, setServiceSettingsDrawerOpen] = useState(false)
   const [autoPolicyDraft, setAutoPolicyDraft] = useState(() => createDefaultAutoUpdatePolicy('inherit'))
   const [serviceSettingsDraft, setServiceSettingsDraft] = useState<ServiceSettings | null>(null)
+  const [serviceBackupTargetsDraft, setServiceBackupTargetsDraft] = useState<BackupTargetsDraft>(() =>
+    createBackupTargetsDraft(null),
+  )
 
   const refreshRecentJobs = useCallback(async () => {
     setJobs(await listJobs())
@@ -333,12 +404,6 @@ export function ServiceDetailPage(props: {
 
   const policy = settings.autoUpdatePolicy ?? createDefaultAutoUpdatePolicy('inherit')
   const serviceProtectionDraft = serviceSettingsDraft ?? settings
-  const serviceProtectionBindTargets = Object.entries(serviceProtectionDraft.backupTargets.bindPaths).map(
-    ([key, value]) => ({ key, value }),
-  )
-  const serviceProtectionVolTargets = Object.entries(serviceProtectionDraft.backupTargets.volumeNames).map(
-    ([key, value]) => ({ key, value }),
-  )
   const visibleRepoUrl = serviceSettingsDrawerOpen ? serviceProtectionDraft.repoUrl : draftRepoUrl
   const recentUpdateJobs = selectRecentServiceUpdateJobs(jobs, service.id)
   const sectionValue = section
@@ -425,6 +490,7 @@ export function ServiceDetailPage(props: {
             disabled={settingsBusy}
             onClick={() => {
               setServiceSettingsDraft(settings)
+              setServiceBackupTargetsDraft(createBackupTargetsDraft(backupTargets))
               setServiceSettingsDrawerOpen(true)
             }}
           >
@@ -791,70 +857,109 @@ export function ServiceDetailPage(props: {
           <div className="sectionTitle" style={{ marginTop: 14 }}>
             备份项（服务级）
           </div>
-          <div className="muted">三态：inherit / skip / force</div>
+          <div className="muted">每个 target 单独选择一个策略；数字表示关联服务数，停机备份会一起协调这些服务。</div>
 
-          <div className="kv" style={{ marginTop: 10 }}>
-            <div className="label">Bind paths</div>
-            {serviceProtectionBindTargets.length === 0 ? <div className="muted">暂无</div> : null}
-            {serviceProtectionBindTargets.map((t) => (
-              <div key={t.key} className="kvRow">
-                <div className="mono">{t.key}</div>
-                <SelectField
-                  className="input"
-                  disabled={settingsBusy}
-                  onChange={(value) =>
-                    setServiceSettingsDraft({
-                      ...serviceProtectionDraft,
-                      backupTargets: {
-                        ...serviceProtectionDraft.backupTargets,
-                        bindPaths: {
-                          ...serviceProtectionDraft.backupTargets.bindPaths,
-                          [t.key]: value as 'inherit' | 'skip' | 'force',
-                        },
-                      },
-                    })
-                  }
-                  options={[
-                    { value: 'inherit', label: 'inherit' },
-                    { value: 'skip', label: 'skip' },
-                    { value: 'force', label: 'force' },
-                  ]}
-                  value={t.value}
-                />
-              </div>
-            ))}
-
-            <div className="label" style={{ marginTop: 10 }}>
-              Volume names
+          <div className="serviceBackupPicker">
+            <div className="serviceBackupMetaCard">
+              <div className="label">备份说明</div>
+              {backupTargets?.storage ? (
+                <>
+                  <div className="serviceBackupMetaSummary">{formatBackupRetentionSummary(backupTargets.storage)}</div>
+                  <div className="serviceBackupMetaGrid">
+                    <div>
+                      <div className="muted">目录</div>
+                      <div className="mono">{backupTargets.storage.baseDir}</div>
+                    </div>
+                    <div>
+                      <div className="muted">产物</div>
+                      <div className="mono">{backupTargets.storage.artifactPattern}</div>
+                    </div>
+                    <div>
+                      <div className="muted">压缩</div>
+                      <div className="mono">{backupTargets.storage.compression}</div>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="muted">加载备份说明中…</div>
+              )}
             </div>
-            {serviceProtectionVolTargets.length === 0 ? <div className="muted">暂无</div> : null}
-            {serviceProtectionVolTargets.map((t) => (
-              <div key={t.key} className="kvRow">
-                <div className="mono">{t.key}</div>
-                <SelectField
-                  className="input"
-                  disabled={settingsBusy}
-                  onChange={(value) =>
-                    setServiceSettingsDraft({
-                      ...serviceProtectionDraft,
-                      backupTargets: {
-                        ...serviceProtectionDraft.backupTargets,
-                        volumeNames: {
-                          ...serviceProtectionDraft.backupTargets.volumeNames,
-                          [t.key]: value as 'inherit' | 'skip' | 'force',
-                        },
-                      },
-                    })
-                  }
-                  options={[
-                    { value: 'inherit', label: 'inherit' },
-                    { value: 'skip', label: 'skip' },
-                    { value: 'force', label: 'force' },
-                  ]}
-                  value={t.value}
-                />
+
+            {serviceBackupTargetsDraft.volumeNames.length === 0 && serviceBackupTargetsDraft.bindPaths.length === 0 ? (
+              <div className="serviceBackupEmptyState">
+                当前服务在 Compose 中未发现可备份 volume 或 bind path。
               </div>
-            ))}
+            ) : (
+              <>
+                <div className="serviceBackupGroup">
+                  <div className="label">Volumes</div>
+                  {serviceBackupTargetsDraft.volumeNames.length === 0 ? (
+                    <div className="muted">当前服务未声明可备份 volume。</div>
+                  ) : null}
+                  {serviceBackupTargetsDraft.volumeNames.map((item) => (
+                    <div key={item.key} className="serviceBackupRow">
+                      <div className="serviceBackupRowHead">
+                        <div>
+                          <div className="mono">{item.key}</div>
+                          <div className="muted">{backupRelationshipLabel(item)}</div>
+                        </div>
+                        <div className="serviceBackupCountBadge">{item.relatedServiceCount}</div>
+                      </div>
+                      <div className="serviceBackupRowControls">
+                        <div className="muted">{backupPolicyHint(item)}</div>
+                        <BackupPolicySegmentedControl
+                          disabled={settingsBusy}
+                          itemLabel={item.key}
+                          onChange={(value) => {
+                            setServiceBackupTargetsDraft((prev) => ({
+                              ...prev,
+                              volumeNames: prev.volumeNames.map((entry) =>
+                                entry.key === item.key ? { ...entry, policy: value } : entry,
+                              ),
+                            }))
+                          }}
+                          value={item.policy}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="serviceBackupGroup">
+                  <div className="label">Bind paths</div>
+                  {serviceBackupTargetsDraft.bindPaths.length === 0 ? (
+                    <div className="muted">当前服务未声明可备份 bind path。</div>
+                  ) : null}
+                  {serviceBackupTargetsDraft.bindPaths.map((item) => (
+                    <div key={item.key} className="serviceBackupRow">
+                      <div className="serviceBackupRowHead">
+                        <div>
+                          <div className="mono">{item.key}</div>
+                          <div className="muted">{backupRelationshipLabel(item)}</div>
+                        </div>
+                        <div className="serviceBackupCountBadge">{item.relatedServiceCount}</div>
+                      </div>
+                      <div className="serviceBackupRowControls">
+                        <div className="muted">{backupPolicyHint(item)}</div>
+                        <BackupPolicySegmentedControl
+                          disabled={settingsBusy}
+                          itemLabel={item.key}
+                          onChange={(value) => {
+                            setServiceBackupTargetsDraft((prev) => ({
+                              ...prev,
+                              bindPaths: prev.bindPaths.map((entry) =>
+                                entry.key === item.key ? { ...entry, policy: value } : entry,
+                              ),
+                            }))
+                          }}
+                          value={item.policy}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
 
             <div className="formActions">
               <Button
@@ -864,16 +969,40 @@ export function ServiceDetailPage(props: {
                   void (async () => {
                     setBusy(true)
                     setError(null)
+                    const previousBackupDraft = createBackupTargetsDraft(backupTargets)
+                    let backupTargetsSaved = false
                     try {
                       const draft = serviceSettingsDraft ?? settings
+                      const backupSaved = backupTargets
+                        ? await putServiceBackupTargets(
+                            props.serviceId,
+                            backupTargetRequestFromDraft(serviceBackupTargetsDraft),
+                          )
+                        : null
+                      backupTargetsSaved = backupSaved != null
                       await putServiceSettings(props.serviceId, {
                         ...draft,
+                        backupTargets: draft.backupTargets,
                         autoUpdatePolicy: settings.autoUpdatePolicy,
                         repoUrl: (draft.repoUrl ?? '').trim() || null,
                       })
                       await requestRefresh()
                     } catch (e: unknown) {
-                      setError(errorMessage(e))
+                      if (backupTargetsSaved) {
+                        try {
+                          await putServiceBackupTargets(
+                            props.serviceId,
+                            backupTargetRequestFromDraft(previousBackupDraft),
+                          )
+                          await requestRefresh()
+                          setError(`${errorMessage(e)}；备份项改动已自动回退，请检查后重试。`)
+                        } catch {
+                          await requestRefresh().catch(() => undefined)
+                          setError(`${errorMessage(e)}；备份项可能已部分保存，请刷新后确认当前状态。`)
+                        }
+                      } else {
+                        setError(errorMessage(e))
+                      }
                     } finally {
                       setBusy(false)
                     }

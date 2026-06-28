@@ -226,6 +226,8 @@ services:
                 image_tag: "1.1".to_string(),
                 homepage: None,
                 update_guard: None,
+                backup_bind_paths: Vec::new(),
+                backup_volume_names: Vec::new(),
             }],
             &test_now_rfc3339(),
         )

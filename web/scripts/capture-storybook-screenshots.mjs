@@ -327,6 +327,18 @@ async function main() {
       },
     },
     {
+      id: 'pages-servicedetailpage--service-protection-backup-targets',
+      file: 'service-protection-backup-targets.png',
+      setup: async (page) => {
+        await page.getByText('Volumes').waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        const el = page.locator('.settingsDrawerBody').first()
+        await el.waitFor({ timeout: STORY_TIMEOUT_MS })
+        await el.screenshot({ path: filePath })
+      },
+    },
+    {
       id: 'pages-overviewpage--default',
       file: 'overview-homepage-v2-desktop.png',
       viewport: { width: 1920, height: 1000 },
