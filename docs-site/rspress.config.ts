@@ -19,7 +19,7 @@ export default defineConfig({
   title: 'Dockrev Documentation',
   description: 'Dockrev deployment, operations, and API reference documentation.',
   icon: '/favicon.svg',
-  logo: '/dockrev-logo.svg',
+  logo: withDocsBase('dockrev-logo.svg'),
   logoText: '',
   lang: 'zh',
   head: [
