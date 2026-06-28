@@ -882,13 +882,37 @@ services:
         .iter()
         .find(|row| row["serviceId"].as_str() == Some(worker_id.as_str()))
         .unwrap();
-    assert_eq!(worker["sampleCount"].as_u64(), Some(1));
+    assert_eq!(worker["sampleCount"].as_u64(), Some(0));
     assert_eq!(worker["sampledAt"].as_str(), Some(worker_sampled_at.as_str()));
     assert_eq!(worker["cpuPercent"].as_f64(), Some(3.25));
     assert_eq!(worker["memUsedBytes"].as_u64(), Some(64 * 1024 * 1024));
     assert!(worker["netRxRateBps"].is_null());
     assert!(worker["netTxRateBps"].is_null());
     assert_eq!(worker["stale"].as_bool(), Some(true));
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/services/resource-usage/overview?window=15m")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let payload = response_json(resp).await;
+    let rows = payload["services"].as_array().unwrap();
+    let web = rows
+        .iter()
+        .find(|row| row["serviceId"].as_str() == Some(web_id.as_str()))
+        .unwrap();
+    assert_eq!(web["sampleCount"].as_u64(), Some(2));
+    let worker = rows
+        .iter()
+        .find(|row| row["serviceId"].as_str() == Some(worker_id.as_str()))
+        .unwrap();
+    assert_eq!(worker["sampleCount"].as_u64(), Some(0));
 }
 
 #[tokio::test]
@@ -1084,7 +1108,7 @@ services:
     let web = &payload["services"].as_array().unwrap()[0];
     assert_eq!(web["serviceId"].as_str(), Some(web_id.as_str()));
     assert_eq!(web["cpuPercent"].as_f64(), Some(12.5));
-    assert_eq!(web["sampleCount"].as_u64(), Some(2));
+    assert_eq!(web["sampleCount"].as_u64(), Some(3));
     let net_rx = web["netRxRateBps"].as_f64().unwrap();
     assert!((net_rx - 100.0).abs() < 0.01, "unexpected net rx rate: {net_rx}");
 }

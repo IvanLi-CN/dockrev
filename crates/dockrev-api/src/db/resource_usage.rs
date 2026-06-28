@@ -313,6 +313,39 @@ ORDER BY st.name ASC, sv.name ASC
         .context("list service resource latest samples")
     }
 
+    pub async fn list_service_resource_recent_counts_since(
+        &self,
+        since: &str,
+    ) -> anyhow::Result<Vec<ServiceResourceRecentCountRow>> {
+        let since = since.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT
+  sv.id,
+  COUNT(s.id)
+FROM services sv
+JOIN stacks st ON st.id = sv.stack_id
+LEFT JOIN service_resource_samples s
+  ON s.service_id = sv.id
+  AND s.sampled_at >= ?1
+WHERE st.archived = 0 AND sv.archived = 0
+GROUP BY sv.id
+ORDER BY st.name ASC, sv.name ASC
+"#,
+            )?;
+            let rows = stmt.query_map(params![since], |row| {
+                Ok(ServiceResourceRecentCountRow {
+                    service_id: row.get(0)?,
+                    sample_count: row.get::<_, i64>(1)? as u32,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list service resource recent counts since")
+    }
+
     pub async fn delete_expired_service_resource_samples(
         &self,
         older_than: &str,

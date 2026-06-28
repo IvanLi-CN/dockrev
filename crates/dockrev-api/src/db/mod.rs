@@ -270,6 +270,12 @@ pub struct ServiceResourceLatestSampleRow {
 }
 
 #[derive(Clone, Debug)]
+pub struct ServiceResourceRecentCountRow {
+    pub service_id: String,
+    pub sample_count: u32,
+}
+
+#[derive(Clone, Debug)]
 pub struct HomepageNavServiceRow {
     pub stack_id: String,
     pub stack_name: String,

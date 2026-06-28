@@ -775,7 +775,7 @@ pub(super) async fn get_service_resource_usage_overview(
         .map_err(map_internal)?;
 
     let window = q.window.unwrap_or_else(|| "1h".to_string());
-    let Some(_window_seconds) = resource_usage::parse_window_to_seconds(&window) else {
+    let Some(window_seconds) = resource_usage::parse_window_to_seconds(&window) else {
         return Err(ApiError::invalid_argument(
             "window must be one of 15m/1h/6h",
         ));
@@ -799,14 +799,37 @@ pub(super) async fn get_service_resource_usage_overview(
         }));
     }
 
+    let since = (generated_at - time::Duration::seconds(window_seconds as i64))
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|err| map_internal(err.into()))?;
     let rows = state
         .db
         .list_service_resource_latest_samples()
         .await
         .map_err(map_internal)?;
+    let recent_counts = state
+        .db
+        .list_service_resource_recent_counts_since(&since)
+        .await
+        .map_err(map_internal)?;
+    let recent_count_by_service = recent_counts
+        .into_iter()
+        .map(|row| (row.service_id, row.sample_count))
+        .collect::<std::collections::HashMap<_, _>>();
     let services = rows
         .into_iter()
-        .map(|row| to_resource_overview_item_from_latest(row, generated_at, stale_after_seconds))
+        .map(|row| {
+            let recent_sample_count = recent_count_by_service
+                .get(&row.service_id)
+                .copied()
+                .unwrap_or(0);
+            to_resource_overview_item_from_latest(
+                row,
+                generated_at,
+                stale_after_seconds,
+                Some(recent_sample_count),
+            )
+        })
         .collect();
 
     Ok(Json(ServiceResourceOverviewResponse {
@@ -844,7 +867,9 @@ pub(super) async fn get_homepage_nav(
     let mut overview_services = latest_samples
         .iter()
         .cloned()
-        .map(|row| to_resource_overview_item_from_latest(row, generated_at, stale_after_seconds))
+        .map(|row| {
+            to_resource_overview_item_from_latest(row, generated_at, stale_after_seconds, None)
+        })
         .collect::<Vec<_>>();
     overview_services.sort_by(|left, right| left.service_id.cmp(&right.service_id));
 
@@ -954,6 +979,7 @@ fn to_resource_overview_item_from_latest(
     row: crate::db::ServiceResourceLatestSampleRow,
     generated_at: time::OffsetDateTime,
     stale_after_seconds: u64,
+    sample_count_override: Option<u32>,
 ) -> ServiceResourceOverviewItem {
     let has_sample = row.sampled_at.is_some();
     let has_prev_sample = row.prev_sampled_at.is_some();
@@ -984,7 +1010,8 @@ fn to_resource_overview_item_from_latest(
         net_rx_rate_bps,
         net_tx_rate_bps,
         stale,
-        sample_count: u32::from(has_sample) + u32::from(has_prev_sample),
+        sample_count: sample_count_override
+            .unwrap_or(u32::from(has_sample) + u32::from(has_prev_sample)),
     }
 }
 

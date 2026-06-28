@@ -121,11 +121,10 @@ Returns the latest resource summary for active services.
 
 Rules:
 
-- `window` remains accepted for compatibility, but the endpoint now serves latest-per-service read-model data instead of scanning `service_resource_samples` at request time.
-- `sampleCount` is derived from how much latest-table context exists:
-  - `0` when no latest sample exists
-  - `1` when only the latest sample exists
-  - `2` when latest and previous network counters are both present
+- Current metric values (`sampledAt`, `cpuPercent`, `memUsedBytes`, `memLimitBytes`, `netRxRateBps`, `netTxRateBps`) come from the latest-per-service read model instead of rebuilding from a historical request-time scan.
+- `window` remains semantically active for compatibility:
+  - `sampleCount` is the number of historical samples for that service inside the requested window
+  - network rates still come from the latest/latest-previous counters persisted in the read model
 - `stale` is true when the latest sample is older than `max(sample_interval_seconds * 2, 60)`.
 - When resource monitoring is disabled, the endpoint returns `200` with `enabled=false` and an empty `services` array.
 
