@@ -613,7 +613,6 @@ export function OverviewPage(props: {
         .at(-1);
       onLastScanHint(maxLastScan);
       setStacks(nextStacks);
-      setDetails({});
 
       if (metricsResult.ok) {
         setResourceOverview(metricsResult.value);
@@ -633,14 +632,15 @@ export function OverviewPage(props: {
           try {
             const detail = await getStack(stack.id);
             setDetails((prev) => ({ ...prev, [stack.id]: detail }));
-            return true;
+            return [stack.id, detail, true] as const;
           } catch {
             setDetails((prev) => ({ ...prev, [stack.id]: undefined }));
-            return false;
+            return [stack.id, undefined, false] as const;
           }
         }),
       );
-      setDetailsRefreshHadFailures(detailResults.some((ok) => !ok));
+      setDetails(Object.fromEntries(detailResults.map(([id, detail]) => [id, detail])));
+      setDetailsRefreshHadFailures(detailResults.some(([, , ok]) => !ok));
       setDetailsRefreshComplete(true);
     } finally {
       setRefreshing(false);
@@ -1002,6 +1002,7 @@ export function OverviewPage(props: {
                               type="button"
                               className={`homepageServiceStateBadge homepageServiceStateBadge-${badge.tone} homepageServiceStateButton`}
                               aria-label={`更新 ${card.title}`}
+                              disabled={refreshing || busy}
                               onClick={(event) => {
                                 event.stopPropagation();
                                 setUpdateDialogCard(card);
