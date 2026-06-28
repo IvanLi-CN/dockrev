@@ -828,6 +828,7 @@ pub(super) async fn get_service_resource_usage_overview(
                 generated_at,
                 stale_after_seconds,
                 Some(recent_sample_count),
+                Some(&since),
             )
         })
         .collect();
@@ -892,6 +893,7 @@ pub(super) async fn get_homepage_nav(
                 generated_at,
                 stale_after_seconds,
                 Some(recent_sample_count),
+                Some(&since),
             )
         })
         .collect::<Vec<_>>();
@@ -1000,11 +1002,19 @@ pub(super) async fn get_homepage_nav(
 }
 
 fn to_resource_overview_item_from_latest(
-    row: crate::db::ServiceResourceLatestSampleRow,
+    mut row: crate::db::ServiceResourceLatestSampleRow,
     generated_at: time::OffsetDateTime,
     stale_after_seconds: u64,
     sample_count_override: Option<u32>,
+    since: Option<&str>,
 ) -> ServiceResourceOverviewItem {
+    if let Some(since) = since
+        && previous_sample_outside_window(&row.prev_sampled_at, since)
+    {
+        row.prev_sampled_at = None;
+        row.prev_net_rx_bytes = None;
+        row.prev_net_tx_bytes = None;
+    }
     let has_sample = row.sampled_at.is_some();
     let has_prev_sample = row.prev_sampled_at.is_some();
     let stale = row
@@ -1037,6 +1047,25 @@ fn to_resource_overview_item_from_latest(
         sample_count: sample_count_override
             .unwrap_or(u32::from(has_sample) + u32::from(has_prev_sample)),
     }
+}
+
+fn previous_sample_outside_window(prev_sampled_at: &Option<String>, since: &str) -> bool {
+    let Some(prev_sampled_at) = prev_sampled_at.as_deref() else {
+        return false;
+    };
+    let Some(prev_ts) = time::OffsetDateTime::parse(
+        prev_sampled_at,
+        &time::format_description::well_known::Rfc3339,
+    )
+    .ok() else {
+        return false;
+    };
+    let Some(since_ts) =
+        time::OffsetDateTime::parse(since, &time::format_description::well_known::Rfc3339).ok()
+    else {
+        return false;
+    };
+    prev_ts < since_ts
 }
 
 fn compute_resource_rates_from_latest(
