@@ -8,6 +8,10 @@ function normalizeBase(base: string | undefined): string {
 }
 
 const docsBase = normalizeBase(process.env.DOCS_BASE);
+const withDocsBase = (assetPath: string): string => {
+  const normalizedAssetPath = assetPath.startsWith('/') ? assetPath.slice(1) : assetPath;
+  return `${docsBase}${normalizedAssetPath}`;
+};
 
 export default defineConfig({
   root: 'docs',
@@ -19,17 +23,17 @@ export default defineConfig({
   logoText: '',
   lang: 'zh',
   head: [
-    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],
-    ['link', { rel: 'icon', type: 'image/png', href: '/favicon.png' }],
-    ['link', { rel: 'icon', href: '/favicon.ico', sizes: 'any' }],
-    ['link', { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' }],
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: withDocsBase('favicon.svg') }],
+    ['link', { rel: 'icon', type: 'image/png', href: withDocsBase('favicon.png') }],
+    ['link', { rel: 'icon', href: withDocsBase('favicon.ico'), sizes: 'any' }],
+    ['link', { rel: 'apple-touch-icon', href: withDocsBase('apple-touch-icon.png') }],
     ['meta', { property: 'og:title', content: 'Dockrev' }],
     ['meta', { property: 'og:description', content: 'Self-hosted Docker/Compose update manager' }],
-    ['meta', { property: 'og:image', content: '/dockrev-social-preview.png' }],
+    ['meta', { property: 'og:image', content: withDocsBase('dockrev-social-preview.png') }],
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
     ['meta', { name: 'twitter:title', content: 'Dockrev' }],
     ['meta', { name: 'twitter:description', content: 'Self-hosted Docker/Compose update manager' }],
-    ['meta', { name: 'twitter:image', content: '/dockrev-social-preview.png' }]
+    ['meta', { name: 'twitter:image', content: withDocsBase('dockrev-social-preview.png') }]
   ],
   themeConfig: {
     search: true,
