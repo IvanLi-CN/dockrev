@@ -1,14 +1,141 @@
+## `GET /api/homepage/nav`
+
+Homepage single-read-model response used only by `/`.
+
+```json
+{
+  "generatedAt": "2026-06-27T12:00:00Z",
+  "lastCheckAt": "2026-06-27T11:58:10Z",
+  "resourceSummary": {
+    "enabled": true,
+    "window": "1h",
+    "generatedAt": "2026-06-27T12:00:00Z",
+    "staleAfterSeconds": 60,
+    "services": [
+      {
+        "serviceId": "svc_api",
+        "sampledAt": "2026-06-27T11:59:40Z",
+        "cpuPercent": 12.5,
+        "memUsedBytes": 268435456,
+        "memLimitBytes": 1073741824,
+        "netRxRateBps": 100.0,
+        "netTxRateBps": 50.0,
+        "stale": false,
+        "sampleCount": 2
+      }
+    ]
+  },
+  "items": [
+    {
+      "stackId": "stack_prod",
+      "stackName": "prod",
+      "serviceId": "svc_api",
+      "serviceName": "api",
+      "imageRef": "ghcr.io/acme/api:5.2.1",
+      "imageTag": "5.2.1",
+      "imageDigest": "sha256:...",
+      "imageResolvedTag": "5.2.1",
+      "imageResolvedTags": ["5.2.1"],
+      "isDockrev": false,
+      "homepage": {
+        "group": "Brain",
+        "name": "Acme API",
+        "icon": "si-github",
+        "href": "https://api.example.com",
+        "description": "API gateway"
+      },
+      "candidate": {
+        "tag": "5.2.3",
+        "resolvedTag": "5.2.3",
+        "digest": "sha256:...",
+        "archMatch": "match",
+        "arch": ["linux/amd64"]
+      },
+      "ignore": null,
+      "versionInference": {
+        "status": "ready",
+        "reason": null,
+        "checkedAt": null
+      },
+      "newVersionDiscoveryCount": 1,
+      "settings": {
+        "autoRollback": true,
+        "backupTargets": {
+          "bindPaths": {},
+          "volumeNames": {}
+        },
+        "repoUrl": null
+      },
+      "archived": false,
+      "resource": {
+        "serviceId": "svc_api",
+        "sampledAt": "2026-06-27T11:59:40Z",
+        "cpuPercent": 12.5,
+        "memUsedBytes": 268435456,
+        "memLimitBytes": 1073741824,
+        "netRxRateBps": 100.0,
+        "netTxRateBps": 50.0,
+        "stale": false,
+        "sampleCount": 2
+      }
+    }
+  ]
+}
+```
+
+Rules:
+
+- Requires the same app authorization as other private APIs.
+- `items` contains only active, non-archived services with a non-empty valid `homepage.href`.
+- Ordering is stable by `stackName`, then `serviceName`.
+- `resourceSummary` and each item `resource` are built from the latest-sample read model, while `sampleCount` remains the number of historical samples for that service inside the endpoint's `1h` summary window.
+- `resourceSummary.services` still lists active services that never exposed a homepage card; the top strip is a global summary, not card-only summary.
+- `candidate`, `ignore`, `versionInference`, `newVersionDiscoveryCount`, `settings`, and `archived` preserve the same semantics used by existing service detail and update status logic.
+- This endpoint is additive. Existing `/api/stacks*` consumers remain compatible.
+
+## `GET /api/services/resource-usage/overview?window=15m|1h|6h`
+
+Returns the latest resource summary for active services.
+
+```json
+{
+  "enabled": true,
+  "window": "1h",
+  "generatedAt": "2026-06-27T12:00:00Z",
+  "staleAfterSeconds": 60,
+  "services": [
+    {
+      "serviceId": "svc_api",
+      "sampledAt": "2026-06-27T11:59:40Z",
+      "cpuPercent": 12.5,
+      "memUsedBytes": 268435456,
+      "memLimitBytes": 1073741824,
+      "netRxRateBps": 100.0,
+      "netTxRateBps": 50.0,
+      "stale": false,
+      "sampleCount": 2
+    }
+  ]
+}
+```
+
+Rules:
+
+- Current metric values (`sampledAt`, `cpuPercent`, `memUsedBytes`, `memLimitBytes`, `netRxRateBps`, `netTxRateBps`) come from the latest-per-service read model instead of rebuilding from a historical request-time scan.
+- `window` remains semantically active for compatibility:
+  - `sampleCount` is the number of historical samples for that service inside the requested window
+  - network rates still come from the latest/latest-previous counters persisted in the read model
+- `stale` is true when the latest sample is older than `max(sample_interval_seconds * 2, 60)`.
+- When resource monitoring is disabled, the endpoint returns `200` with `enabled=false` and an empty `services` array.
+
 ## `GET /api/stacks` / `GET /api/stacks/{id}` / related `Service` payloads
 
-`Service` objects gain an optional `homepage` object:
+`Service` objects keep the optional `homepage` object introduced by the earlier homepage work:
 
 ```json
 {
   "id": "svc_123",
   "name": "gitea",
-  "image": {
-    "raw": "docker.gitea.com/gitea:1.23"
-  },
   "homepage": {
     "group": "Developer",
     "name": "Gitea",
@@ -21,66 +148,9 @@
 
 Rules:
 
-- `homepage` is nullable / omittable when the service has no Homepage metadata.
-- The object only contains the five basic Homepage fields: `group`, `name`, `icon`, `href`, `description`.
-- This round must ignore any `homepage.widget.*` compose labels; they must not appear in API payloads.
-- Existing consumers that ignore unknown fields remain compatible.
-
-## `GET /api/services/resource-usage/overview?window=15m|1h|6h`
-
-Returns the latest resource summary for active services in one aggregate response.
-
-```json
-{
-  "enabled": true,
-  "window": "1h",
-  "generatedAt": "2026-04-28T14:20:00.000Z",
-  "staleAfterSeconds": 60,
-  "services": [
-    {
-      "serviceId": "svc_123",
-      "sampledAt": "2026-04-27T14:19:30.000Z",
-      "cpuPercent": 2.4,
-      "memUsedBytes": 235929600,
-      "memLimitBytes": 1073741824,
-      "netRxRateBps": 18432.2,
-      "netTxRateBps": 9216.1,
-      "stale": false,
-      "sampleCount": 121
-    }
-  ]
-}
-```
-
-Rules:
-
-- Requires the same app authorization as other service APIs.
-- `window` accepts `15m`, `1h`, or `6h`; unsupported values return an invalid-argument response.
-- `services` contains active, non-archived services. Services that have never been sampled remain present with nullable metric fields and `sampleCount=0`; services with no samples in the requested window fall back to their latest historical sample and remain stale when it is older than the freshness threshold.
-- Network RX/TX rates are derived from the latest two monotonic byte counters in the requested window; fallback-only, missing, or reset counters return `null`.
-- `stale` is true when the latest sample is older than `max(sample_interval_seconds * 2, 60)`.
-- When resource monitoring is disabled, the endpoint returns `200` with `enabled=false` and an empty `services` array so Overview can degrade without blocking navigation.
+- Existing stack/service endpoints stay compatible.
+- Homepage cache and homepage page rendering no longer rely on these endpoints for `/`, but other consumers may still do so.
 
 ## `GET /api/homepage-icons/{provider}/{path}`
 
-Proxies the built-in Homepage icon sources through the Dockrev origin so the navigation page is not dependent on cross-origin image policy for known providers.
-
-Allowed forms:
-
-- `/api/homepage-icons/iconify/mdi/{name}.svg?color=%23dbeafe`
-- `/api/homepage-icons/iconify/simple-icons/{name}.svg?color=%23dbeafe`
-- `/api/homepage-icons/selfhst/{svg|png|webp}/{name}.{ext}`
-- `/api/homepage-icons/dashboard/{svg|png|webp}/{name}.{ext}`
-
-Rules:
-
-- Requires the same app authorization boundary as other app routes.
-- `provider` is limited to `iconify`, `selfhst`, and `dashboard`.
-- Iconify collections are limited to `mdi` and `simple-icons`.
-- Static icon extensions are limited to `svg`, `png`, and `webp`.
-- Filenames may only contain ASCII letters, digits, `.`, `_`, and `-`, and must not contain traversal segments.
-- `color` is accepted only for Iconify and must be a hex color.
-- Successful responses set an image content type and public cache headers.
-- SVG responses also set a restrictive `Content-Security-Policy` that sandboxes the document and disables script execution.
-- Upstream errors, unsupported providers, unsafe paths, oversized responses, or unknown content families must fail closed so the web client can render the default fallback icon.
-- Absolute `homepage.icon` URLs supplied by compose are not proxied by this endpoint and remain direct browser image loads.
+Homepage icon proxy contract remains unchanged.

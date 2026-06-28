@@ -6,6 +6,7 @@ import type {
   DiscoveredProject,
   GitHubPackagesSettingsResponse,
   GitHubPackagesWebhookOverviewResponse,
+  HomepageNavResponse,
   IgnoreRule,
   JobDetail,
   JobListItem,
@@ -287,6 +288,51 @@ function buildResourceOverview(windowValue: string): ServiceResourceOverviewResp
       stale: false,
       sampleCount: 120,
     })),
+  }
+}
+
+function buildHomepageNav(): HomepageNavResponse {
+  const resourceSummary = buildResourceOverview('1h')
+  const items = Object.values(stackDetails).flatMap((stack) =>
+    stack.services
+      .filter((service) => !service.archived && service.homepage?.href)
+      .map((service) => ({
+        stackId: stack.id,
+        stackName: stack.name,
+        serviceId: service.id,
+        serviceName: service.name,
+        imageRef: service.image.ref,
+        imageTag: service.image.tag,
+        imageDigest: service.image.digest ?? null,
+        imageResolvedTag: service.image.resolvedTag ?? null,
+        imageResolvedTags: service.image.resolvedTags ?? null,
+        isDockrev: service.image.ref.includes('dockrev'),
+        homepage: service.homepage!,
+        candidate: service.candidate ?? null,
+        ignore: service.ignore ?? null,
+        versionInference: service.versionInference ?? null,
+        newVersionDiscoveryCount: service.newVersionDiscoveryCount ?? null,
+        settings: service.settings,
+        archived: service.archived,
+        resource:
+          resourceSummary.services.find((item) => item.serviceId === service.id) ?? {
+            serviceId: service.id,
+            sampledAt: null,
+            cpuPercent: null,
+            memUsedBytes: null,
+            memLimitBytes: null,
+            netRxRateBps: null,
+            netTxRateBps: null,
+            stale: true,
+            sampleCount: 0,
+          },
+      })),
+  )
+  return {
+    generatedAt: resourceSummary.generatedAt,
+    lastCheckAt: stackList.map((stack) => stack.lastCheckAt).sort().at(-1) ?? null,
+    resourceSummary,
+    items,
   }
 }
 
@@ -632,6 +678,9 @@ export function installAppDemoApi(): DemoInstallResult | null {
     if (path === '/api/runtime-scans' && method === 'POST') return json(createRuntimeScanJob())
     if (path === '/api/services/resource-usage/overview' && method === 'GET') {
       return json(buildResourceOverview(url.searchParams.get('window') ?? '1h'))
+    }
+    if (path === '/api/homepage/nav' && method === 'GET') {
+      return json(buildHomepageNav())
     }
     if (path.startsWith('/api/services/') && path.endsWith('/resource-usage/history') && method === 'GET') {
       const serviceId = decodeURIComponent(path.split('/')[3] ?? '')

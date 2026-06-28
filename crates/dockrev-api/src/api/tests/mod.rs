@@ -47,3 +47,4 @@ include!("suite_17.rs");
 include!("suite_18.rs");
 include!("suite_19.rs");
 include!("suite_20.rs");
+include!("suite_21.rs");

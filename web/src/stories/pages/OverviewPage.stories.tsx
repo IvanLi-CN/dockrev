@@ -1,11 +1,13 @@
 import type { Meta, StoryObj } from "@storybook/react";
 import { OverviewPage } from "../../pages/OverviewPage";
-import type {
-  HomepageNavSnapshot,
-  HomepageResourceSummarySnapshot,
-} from "../../pages/homepageSnapshot";
 import { PageHarness } from "../mocks/PageHarness";
 import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
+import {
+  auditProofHomepageOverrides,
+  cachedHomepageSnapshot,
+  defaultHomepageOverrides,
+  denseHomepageOverrides,
+} from "./OverviewPage.storyData";
 
 const meta: Meta<typeof OverviewPage> = {
   title: "Pages/OverviewPage",
@@ -82,256 +84,10 @@ function desktopTopMetricValue(canvasElement: HTMLElement, label: string) {
   );
 }
 
-function defaultHomepageOverrides() {
-  return {
-    "svc-prod-api": {
-      homepage: {
-        group: "Brain",
-        name: "Acme API",
-        icon: "si-github",
-        href: "https://api.example.com",
-        description: "API gateway & auth",
-      },
-    },
-    "svc-prod-web": {
-      homepage: {
-        group: "Brain",
-        name: "Web Console",
-        icon: "mdi-monitor-dashboard",
-        href: "https://web.example.com",
-        description: "Primary admin console",
-      },
-    },
-    "svc-prod-worker": {
-      homepage: {
-        group: "Tools",
-        name: "Background Jobs",
-        icon: "mdi-cog-refresh-outline",
-        href: null,
-        description: "Queue workers & cron",
-      },
-    },
-    "svc-infra-loki": {
-      homepage: {
-        group: "Media",
-        name: "Loki",
-        icon: "mdi-file-document-multiple-outline",
-        href: "https://logs.example.com",
-        description: "Log aggregation",
-      },
-    },
-    "svc-infra-prom": {
-      homepage: {
-        group: "Tools",
-        name: "Prometheus",
-        icon: "prometheus.svg",
-        href: "https://metrics.example.com",
-        description: "Metrics & alerts",
-      },
-    },
-    "svc-infra-postgres": {
-      homepage: {
-        group: "Infra",
-        name: "Postgres",
-        icon:
-          "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/postgres.svg",
-        href: "https://db.example.com",
-        description: "Transactional database",
-      },
-    },
-  };
-}
-
-function denseHomepageOverrides() {
-  return {
-    "svc-prod-api": {
-      homepage: {
-        group: "Brain",
-        name: "Acme API",
-        icon: "si-github",
-        href: "https://api.example.com",
-        description: "API gateway & auth",
-      },
-    },
-    "svc-prod-web": {
-      homepage: {
-        group: "Brain",
-        name: "Web Console",
-        icon: "mdi-monitor-dashboard",
-        href: "https://web.example.com",
-        description: "Primary admin console",
-      },
-    },
-    "svc-prod-worker": {
-      homepage: {
-        group: "Ops",
-        name: "Background Jobs",
-        icon: "mdi-cog-refresh-outline",
-        href: null,
-        description: "Queue workers & cron",
-      },
-    },
-    "svc-infra-loki": {
-      homepage: {
-        group: "Media",
-        name: "Loki",
-        icon: "mdi-file-document-multiple-outline",
-        href: "https://logs.example.com",
-        description: "Log aggregation",
-      },
-    },
-    "svc-infra-prom": {
-      homepage: {
-        group: "Tools",
-        name: "Prometheus",
-        icon: "prometheus.svg",
-        href: "https://metrics.example.com",
-        description: "Metrics & alerts",
-      },
-    },
-    "svc-infra-postgres": {
-      homepage: {
-        group: "Data",
-        name: "Postgres",
-        icon: "postgres.svg",
-        href: "https://db.example.com",
-        description: "Transactional database",
-      },
-    },
-  };
-}
-
-function auditProofHomepageOverrides() {
-  return {
-    "svc-prod-api": {
-      homepage: {
-        group: "Brain",
-        name: "Acme API",
-        icon: "si-github",
-        href: "https://api.example.com",
-        description: "API gateway & auth",
-      },
-    },
-    "svc-prod-web": {
-      homepage: {
-        group: "Brain",
-        name: "Web Console",
-        icon: "mdi-monitor-dashboard",
-        href: "https://web.example.com",
-        description: "Primary admin console",
-      },
-    },
-    "svc-prod-worker": {
-      homepage: {
-        group: "Ops",
-        name: "Background Jobs",
-        icon: "sh-home-assistant.png",
-        href: null,
-        description: "Queue workers & cron",
-      },
-    },
-    "svc-infra-loki": {
-      homepage: {
-        group: "Media",
-        name: "Loki",
-        icon: "nested/unsafe.svg",
-        href: "https://logs.example.com",
-        description: "Log aggregation",
-      },
-    },
-    "svc-infra-prom": {
-      homepage: {
-        group: "Tools",
-        name: "Prometheus",
-        icon: "prometheus.svg",
-        href: "https://metrics.example.com",
-        description: "Metrics & alerts",
-      },
-    },
-    "svc-infra-postgres": {
-      homepage: {
-        group: "Data",
-        name: "Postgres",
-        icon:
-          "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/postgres.svg",
-        href: "https://db.example.com",
-        description: "Transactional database",
-      },
-    },
-  };
-}
-
 function findCardByText(canvasElement: HTMLElement, text: string) {
   return serviceCards(canvasElement).find((card) =>
     card.textContent?.includes(text),
   );
-}
-
-function cachedNavSnapshot(generatedAt = new Date().toISOString()): HomepageNavSnapshot {
-  return {
-    version: 1,
-    generatedAt,
-    cards: [
-      {
-        id: "cached-acme-api",
-        stackId: "stack-prod",
-        stackName: "prod",
-        serviceId: "svc-prod-api",
-        serviceName: "api",
-        imageRef: "ghcr.io/acme/api:5.2.1",
-        groupName: "Cached Brain",
-        title: "Cached Acme API",
-        description: "Cached API gateway",
-        href: "https://cached-api.example.com",
-        icon: "si-github",
-        status: "updatable",
-        isDockrev: false,
-      },
-      {
-        id: "cached-prom",
-        stackId: "stack-infra",
-        stackName: "infra",
-        serviceId: "svc-infra-prom",
-        serviceName: "prometheus",
-        imageRef: "quay.io/prometheus/prometheus:v2.52.0",
-        groupName: "Cached Tools",
-        title: "Cached Prometheus",
-        description: "Cached metrics",
-        href: "https://cached-metrics.example.com",
-        icon: "prometheus.svg",
-        status: "ok",
-        isDockrev: false,
-      },
-    ],
-  };
-}
-
-function cachedResourceSnapshot(
-  generatedAt = new Date(Date.now() - 10 * 60 * 1000).toISOString(),
-): HomepageResourceSummarySnapshot {
-  return {
-    version: 1,
-    generatedAt,
-    overview: {
-      enabled: true,
-      window: "1h",
-      generatedAt,
-      staleAfterSeconds: 60,
-      services: [
-        {
-          serviceId: "svc-prod-api",
-          sampledAt: generatedAt,
-          cpuPercent: 42,
-          memUsedBytes: 512 * 1024 * 1024,
-          memLimitBytes: 1024 * 1024 * 1024,
-          netRxRateBps: 2048,
-          netTxRateBps: 4096,
-          stale: false,
-          sampleCount: 12,
-        },
-      ],
-    },
-  };
 }
 
 export const Default: Story = {
@@ -484,8 +240,7 @@ export const Default: Story = {
 export const CachedInstantNavigation: Story = {
   parameters: {
     dockrevApiScenario: "overview-homepage-slow-refresh",
-    dockrevHomepageNavSnapshot: cachedNavSnapshot(),
-    dockrevHomepageResourceSummarySnapshot: cachedResourceSnapshot(),
+    dockrevHomepageSnapshot: cachedHomepageSnapshot(),
     dockrevServiceOverridesById: defaultHomepageOverrides(),
   },
   render: renderOverview(),
@@ -494,7 +249,7 @@ export const CachedInstantNavigation: Story = {
 
     expectStory(
       findCardByText(canvasElement, "Cached Acme API"),
-      "cached launcher card should be visible before slow stack details return",
+      "cached launcher card should be visible before the slow homepage payload returns",
     );
     expectStory(
       desktopTopMetricValue(canvasElement, "CPU") === "42%",
@@ -866,21 +621,30 @@ export const MetricsUnavailable: Story = {
   parameters: {
     dockrevApiScenario: "overview-resource-monitor-error",
     dockrevServiceOverridesById: defaultHomepageOverrides(),
+    dockrevHomepageSnapshot: cachedHomepageSnapshot(),
   },
   render: renderOverview(),
   play: async ({ canvasElement }) => {
-    await sleep(260);
+    await sleep(80);
 
     expectStory(
-      canvasElement.textContent?.includes("资源指标暂不可用"),
-      "expected resource overview fetch failures to be visible",
+      findCardByText(canvasElement, "Cached Acme API"),
+      "homepage should keep cached cards visible when the single nav payload fails",
+    );
+    expectStory(
+      desktopTopMetricValue(canvasElement, "CPU") === "42%",
+      "homepage should keep cached resource summary visible when the single nav payload fails",
+    );
+    expectStory(
+      canvasElement.textContent?.includes("首页导航刷新失败，保留旧快照"),
+      "expected homepage refresh failure to disclose the cached fallback path",
     );
     const badges = Array.from(
       canvasElement.querySelectorAll<HTMLElement>(".homepageServiceStateBadge"),
     );
     expectStory(
       badges.some((badge) => badge.textContent?.includes("NO DATA")),
-      "expected metric fetch failures to degrade cards to NO DATA instead of HEALTHY",
+      "expected cached metric state to remain stable instead of collapsing the card grid",
     );
   },
 };

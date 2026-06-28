@@ -534,6 +534,34 @@ export type ServiceResourceOverviewResponse = {
   services: ServiceResourceOverviewItem[]
 }
 
+export type HomepageNavItem = {
+  stackId: string
+  stackName: string
+  serviceId: string
+  serviceName: string
+  imageRef: string
+  imageTag: string
+  imageDigest?: string | null
+  imageResolvedTag?: string | null
+  imageResolvedTags?: string[] | null
+  isDockrev: boolean
+  homepage: ServiceHomepage
+  candidate?: Service['candidate']
+  ignore?: Service['ignore']
+  versionInference?: VersionInferenceState | null
+  newVersionDiscoveryCount?: number | null
+  settings: ServiceSettings
+  archived?: boolean
+  resource: ServiceResourceOverviewItem
+}
+
+export type HomepageNavResponse = {
+  generatedAt: string
+  lastCheckAt?: string | null
+  resourceSummary: ServiceResourceOverviewResponse
+  items: HomepageNavItem[]
+}
+
 export type DeployCheckStatus = 'pass' | 'fail' | 'na'
 export type DeployCheckNaReason = 'disabled_by_switch' | 'missing_prerequisite' | 'not_applicable'
 

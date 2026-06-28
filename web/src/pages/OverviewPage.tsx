@@ -20,31 +20,26 @@ import {
 } from "lucide-react";
 import {
   ApiError,
+  getHomepageNav,
   getJob,
-  getServiceResourceUsageOverview,
-  getStack,
-  listStacks,
   triggerCheck,
   triggerUpdate,
+  type HomepageNavItem,
   type Service,
   type ServiceResourceOverviewItem,
   type ServiceResourceOverviewResponse,
-  type StackDetail,
-  type StackListItem,
 } from "../api";
 import { HomepageServiceIcon } from "../components/HomepageServiceIcon";
 import { ServiceUpdateConfirmDetails } from "../components/ServiceUpdateConfirmDetails";
 import { navigate } from "../routes";
-import { isDockrevImageRef } from "../runtimeConfig";
 import { buildUpdateServiceTarget } from "../updateTargets";
 import {
-  markResourceOverviewStale,
-  readHomepageNavSnapshot,
-  readHomepageResourceSummarySnapshot,
-  resourceSummarySnapshotIsStale,
-  writeHomepageNavSnapshot,
-  writeHomepageResourceSummarySnapshot,
-  type HomepageNavCardSnapshotItem,
+  homepageSnapshotFromResponse,
+  homepageSnapshotIsResourceStale,
+  markHomepageSnapshotResourceStale,
+  readHomepageSnapshot,
+  writeHomepageSnapshot,
+  type HomepageSnapshotCard,
 } from "./homepageSnapshot";
 import {
   Button,
@@ -57,7 +52,7 @@ import {
   Input,
   Mono,
 } from "../ui";
-import { serviceRowStatus, statusLabel } from "../updateStatus";
+import { statusLabel } from "../updateStatus";
 import { usePageResumeRefresh } from "../usePageResumeRefresh";
 
 const HOMEPAGE_COLUMN_BREAKPOINTS = [
@@ -66,9 +61,8 @@ const HOMEPAGE_COLUMN_BREAKPOINTS = [
   { query: "(max-width: 1500px)", columns: 3 },
 ] as const;
 
-type HomepageNavCard = HomepageNavCardSnapshotItem & {
+type HomepageNavCard = HomepageSnapshotCard & {
   source: "live" | "snapshot";
-  service?: Service;
 };
 
 type ServiceBadge = {
@@ -126,7 +120,10 @@ function balanceHomepageGroups(
     target.weight += 1 + group.cards.length;
   }
 
-  return columns.map((column) => column.groups).filter((column) => column.length > 0);
+  const populatedColumns = columns
+    .map((column) => column.groups)
+    .filter((column) => column.length > 0);
+  return populatedColumns.length > 0 ? populatedColumns : [[]];
 }
 
 function normalizeHomepageHref(
@@ -145,69 +142,127 @@ function normalizeHomepageHref(
   return null;
 }
 
-function toNavCards(
-  stacks: StackListItem[],
-  details: Record<string, StackDetail | undefined>,
-): HomepageNavCard[] {
-  const cards: HomepageNavCard[] = [];
-  for (const stack of stacks) {
-    const detail = details[stack.id];
-    if (!detail) continue;
-    for (const service of detail.services) {
-      if (service.archived) continue;
-      const homepageHref = normalizeHomepageHref(service.homepage?.href);
-      if (!homepageHref) continue;
-      const groupName = service.homepage?.group?.trim() || detail.name;
-      const title = service.homepage?.name?.trim() || service.name;
-      const description =
-        service.homepage?.description?.trim() || service.image.ref;
-      const status = serviceRowStatus(service);
-      cards.push({
-        id: service.id,
-        stackId: stack.id,
-        stackName: detail.name,
-        serviceId: service.id,
-        serviceName: service.name,
-        imageRef: service.image.ref,
-        groupName,
-        title,
-        description,
-        href: homepageHref,
-        icon: service.homepage?.icon ?? null,
-        status,
-        isDockrev: isDockrevImageRef(service.image.ref),
-        service,
-        source: "live",
-      });
-    }
-  }
-  return cards;
-}
-
-function navCardsToSnapshot(
-  cards: HomepageNavCard[],
-): HomepageNavCardSnapshotItem[] {
-  return cards.map((card) => ({
-    id: card.id,
-    stackId: card.stackId,
-    stackName: card.stackName,
-    serviceId: card.serviceId,
-    serviceName: card.serviceName,
-    imageRef: card.imageRef,
-    groupName: card.groupName,
-    title: card.title,
-    description: card.description,
-    href: card.href,
-    icon: card.icon,
-    status: card.status,
-    isDockrev: card.isDockrev,
-  }));
-}
-
-function snapshotCardsToNavCards(
-  cards: HomepageNavCardSnapshotItem[],
-): HomepageNavCard[] {
+function snapshotCardsToNavCards(cards: HomepageSnapshotCard[]): HomepageNavCard[] {
   return cards.map((card) => ({ ...card, source: "snapshot" }));
+}
+
+function navCardsToSnapshot(cards: HomepageNavCard[]): HomepageSnapshotCard[] {
+  return cards.map((card) => {
+    const { source, ...snapshotCard } = card;
+    void source;
+    return snapshotCard;
+  });
+}
+
+function homepageItemToCard(
+  item: HomepageNavItem,
+  source: HomepageNavCard["source"],
+): HomepageNavCard | null {
+  const homepageHref = normalizeHomepageHref(item.homepage?.href);
+  if (!homepageHref) return null;
+  const service: Service = {
+    id: item.serviceId,
+    name: item.serviceName,
+    image: {
+      ref: item.imageRef,
+      tag: item.imageTag,
+      digest: item.imageDigest ?? null,
+      resolvedTag: item.imageResolvedTag ?? null,
+      resolvedTags: item.imageResolvedTags ?? null,
+    },
+    homepage: item.homepage,
+    candidate: item.candidate ?? null,
+    ignore: item.ignore ?? null,
+    versionInference: item.versionInference ?? null,
+    newVersionDiscoveryCount: item.newVersionDiscoveryCount ?? null,
+    settings: item.settings,
+    archived: item.archived,
+  };
+  return {
+    id: item.serviceId,
+    stackId: item.stackId,
+    stackName: item.stackName,
+    serviceId: item.serviceId,
+    serviceName: item.serviceName,
+    imageRef: item.imageRef,
+    groupName: item.homepage.group?.trim() || item.stackName,
+    title: item.homepage.name?.trim() || item.serviceName,
+    description: item.homepage.description?.trim() || item.imageRef,
+    href: homepageHref,
+    icon: item.homepage.icon ?? null,
+    status:
+      item.ignore?.matched
+        ? "blocked"
+        : item.candidate?.archMatch === "mismatch"
+          ? "archMismatch"
+          : item.candidate?.archMatch === "unknown"
+            ? "hint"
+            : item.candidate
+              ? "updatable"
+              : "ok",
+    isDockrev: item.isDockrev,
+    service,
+    source,
+  };
+}
+
+function homepageResponseToCards(items: HomepageNavItem[]): HomepageNavCard[] {
+  return items
+    .map((item) => homepageItemToCard(item, "live"))
+    .filter((card): card is HomepageNavCard => card !== null);
+}
+
+function servicesEqual(left: Service, right: Service): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function cardsEqual(left: HomepageNavCard, right: HomepageNavCard): boolean {
+  return (
+    left.id === right.id &&
+    left.stackId === right.stackId &&
+    left.stackName === right.stackName &&
+    left.serviceId === right.serviceId &&
+    left.serviceName === right.serviceName &&
+    left.imageRef === right.imageRef &&
+    left.groupName === right.groupName &&
+    left.title === right.title &&
+    left.description === right.description &&
+    left.href === right.href &&
+    left.icon === right.icon &&
+    left.status === right.status &&
+    left.isDockrev === right.isDockrev &&
+    servicesEqual(left.service, right.service)
+  );
+}
+
+function mergeHomepageCards(
+  previous: HomepageNavCard[],
+  incoming: HomepageNavCard[],
+): HomepageNavCard[] {
+  const previousByServiceId = new Map(
+    previous.map((card) => [card.serviceId, card] as const),
+  );
+  return incoming.map((incomingCard) => {
+    const existing = previousByServiceId.get(incomingCard.serviceId);
+    if (!existing) return incomingCard;
+    if (existing.source === "live" && cardsEqual(existing, incomingCard)) {
+      return existing;
+    }
+    return {
+      ...existing,
+      ...incomingCard,
+      source: "live",
+    };
+  });
+}
+
+function mergeHomepageCardList(
+  previous: HomepageNavCard[],
+  incoming: HomepageNavCard[],
+): HomepageNavCard[] {
+  if (incoming.length === 0) return [];
+  if (previous.length === 0) return incoming;
+  return mergeHomepageCards(previous, incoming);
 }
 
 function matchesSearch(card: HomepageNavCard, query: string): boolean {
@@ -547,33 +602,36 @@ export function OverviewPage(props: {
   const [error, setError] = useState<string | null>(null);
   const [resourceError, setResourceError] = useState<string | null>(null);
   const [noticeCheckJobId, setNoticeCheckJobId] = useState<string | null>(null);
-  const [stacks, setStacks] = useState<StackListItem[]>([]);
-  const [details, setDetails] = useState<
-    Record<string, StackDetail | undefined>
-  >({});
-  const [detailsRefreshComplete, setDetailsRefreshComplete] = useState(false);
-  const [detailsRefreshHadFailures, setDetailsRefreshHadFailures] =
-    useState(false);
   const [refreshing, setRefreshing] = useState(true);
   const [cachedCards, setCachedCards] = useState<HomepageNavCard[]>(() => {
-    const snapshot = readHomepageNavSnapshot();
-    return snapshot ? snapshotCardsToNavCards(snapshot.cards) : [];
+    const snapshot = readHomepageSnapshot();
+    if (!snapshot) return [];
+    const normalized = homepageSnapshotIsResourceStale(snapshot)
+      ? markHomepageSnapshotResourceStale(snapshot)
+      : snapshot;
+    return snapshotCardsToNavCards(normalized.cards);
   });
   const [hasCachedNavSnapshot, setHasCachedNavSnapshot] = useState(
-    () => readHomepageNavSnapshot() !== null,
+    () => readHomepageSnapshot() !== null,
   );
   const [resourceFromCache, setResourceFromCache] = useState(() => {
-    const snapshot = readHomepageResourceSummarySnapshot();
-    return snapshot ? resourceSummarySnapshotIsStale(snapshot) : false;
+    const snapshot = readHomepageSnapshot();
+    return snapshot ? homepageSnapshotIsResourceStale(snapshot) : false;
   });
   const [resourceOverview, setResourceOverview] =
     useState<ServiceResourceOverviewResponse | null>(() => {
-      const snapshot = readHomepageResourceSummarySnapshot();
+      const snapshot = readHomepageSnapshot();
       if (!snapshot) return null;
-      return resourceSummarySnapshotIsStale(snapshot)
-        ? markResourceOverviewStale(snapshot.overview)
-        : snapshot.overview;
+      return homepageSnapshotIsResourceStale(snapshot)
+        ? markHomepageSnapshotResourceStale(snapshot).resourceSummary
+        : snapshot.resourceSummary;
     });
+  const [cards, setCards] = useState<HomepageNavCard[]>(() => {
+    const snapshot = readHomepageSnapshot();
+    if (!snapshot) return [];
+    return snapshotCardsToNavCards(snapshot.cards);
+  });
+  const [liveLoaded, setLiveLoaded] = useState(false);
   const [search, setSearch] = useState("");
   const [searchDraft, setSearchDraft] = useState("");
   const [headerSearchOpen, setHeaderSearchOpen] = useState(false);
@@ -597,51 +655,30 @@ export function OverviewPage(props: {
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
-    setDetailsRefreshComplete(false);
-    setDetailsRefreshHadFailures(false);
     try {
-      const [nextStacks, metricsResult] = await Promise.all([
-        listStacks(),
-        getServiceResourceUsageOverview("1h").then(
-          (value) => ({ ok: true, value }) as const,
-          (error: unknown) => ({ ok: false, error }) as const,
-        ),
-      ]);
-      const maxLastScan = nextStacks
-        .map((item) => item.lastCheckAt)
-        .sort()
-        .at(-1);
-      onLastScanHint(maxLastScan);
-      setStacks(nextStacks);
-      setDetails({});
-
-      if (metricsResult.ok) {
-        setResourceOverview(metricsResult.value);
-        setResourceFromCache(false);
-        setResourceError(null);
-        writeHomepageResourceSummarySnapshot(metricsResult.value);
-      } else {
-        setResourceError(
-          metricsResult.error instanceof Error
-            ? metricsResult.error.message
-            : String(metricsResult.error),
-        );
-      }
-
-      const detailResults = await Promise.all(
-        nextStacks.map(async (stack) => {
-          try {
-            const detail = await getStack(stack.id);
-            setDetails((prev) => ({ ...prev, [stack.id]: detail }));
-            return true;
-          } catch {
-            setDetails((prev) => ({ ...prev, [stack.id]: undefined }));
-            return false;
-          }
-        }),
+      const payload = await getHomepageNav();
+      const liveCards = homepageResponseToCards(payload.items);
+      onLastScanHint(payload.lastCheckAt ?? undefined);
+      setResourceOverview(payload.resourceSummary);
+      setResourceFromCache(false);
+      setResourceError(null);
+      setCards((previous) => mergeHomepageCardList(previous, liveCards));
+      setLiveLoaded(true);
+      const snapshotCards = navCardsToSnapshot(liveCards);
+      const snapshot = homepageSnapshotFromResponse({
+        generatedAt: payload.generatedAt,
+        lastCheckAt: payload.lastCheckAt,
+        resourceSummary: payload.resourceSummary,
+        cards: snapshotCards,
+      });
+      writeHomepageSnapshot(snapshot);
+      setCachedCards(snapshotCardsToNavCards(snapshot.cards));
+      setHasCachedNavSnapshot(true);
+    } catch (value: unknown) {
+      setResourceError(
+        value instanceof Error ? value.message : String(value),
       );
-      setDetailsRefreshHadFailures(detailResults.some((ok) => !ok));
-      setDetailsRefreshComplete(true);
+      throw value;
     } finally {
       setRefreshing(false);
     }
@@ -767,14 +804,11 @@ export function OverviewPage(props: {
     };
   }, [noticeCheckJobId, requestRefresh]);
 
-  const liveCards = useMemo(
-    () => toNavCards(stacks, details),
-    [details, stacks],
-  );
   const allCards = useMemo(() => {
-    if (liveCards.length > 0 || detailsRefreshComplete) return liveCards;
+    if (liveLoaded) return cards;
+    if (cards.length > 0) return cards;
     return cachedCards;
-  }, [cachedCards, detailsRefreshComplete, liveCards]);
+  }, [cachedCards, cards, liveLoaded]);
   const filteredCards = useMemo(
     () => allCards.filter((card) => matchesSearch(card, search)),
     [allCards, search],
@@ -808,15 +842,6 @@ export function OverviewPage(props: {
     [resourceOverview],
   );
   const hasCachedCardsInUse = allCards.some((card) => card.source === "snapshot");
-
-  useEffect(() => {
-    if (!detailsRefreshComplete) return;
-    if (detailsRefreshHadFailures) return;
-    const snapshotCards = navCardsToSnapshot(liveCards);
-    writeHomepageNavSnapshot(snapshotCards);
-    setCachedCards(snapshotCardsToNavCards(snapshotCards));
-    setHasCachedNavSnapshot(true);
-  }, [detailsRefreshComplete, detailsRefreshHadFailures, liveCards]);
 
   const topbarContent = useMemo(
     () => (
@@ -907,8 +932,8 @@ export function OverviewPage(props: {
         {resourceError ? (
           <span>
             {resourceOverview
-              ? `资源指标刷新失败，保留旧样本：${resourceError}`
-              : `资源指标暂不可用：${resourceError}`}
+              ? `首页导航刷新失败，保留旧快照：${resourceError}`
+              : `首页导航暂不可用：${resourceError}`}
           </span>
         ) : null}
       </div>

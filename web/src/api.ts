@@ -23,6 +23,7 @@ import type {
   PutSettingsInput,
   ServiceResourceUsageWindow,
   ServiceResourceHistoryResponse,
+  HomepageNavResponse,
   ServiceResourceOverviewResponse,
   DeployCheckReportEnvelope,
   DeployWelcomeResponse,
@@ -448,6 +449,11 @@ export async function getServiceResourceUsageOverview(
   const query = new URLSearchParams({ window })
   const resp = await apiFetch(`/api/services/resource-usage/overview?${query.toString()}`)
   return (await resp.json()) as ServiceResourceOverviewResponse
+}
+
+export async function getHomepageNav(): Promise<HomepageNavResponse> {
+  const resp = await apiFetch('/api/homepage/nav')
+  return (await resp.json()) as HomepageNavResponse
 }
 
 export function serviceResourceUsageEventsUrl(serviceId: string): string {

@@ -60,6 +60,41 @@ pub struct ServiceResourceOverviewResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct HomepageNavItem {
+    pub stack_id: String,
+    pub stack_name: String,
+    pub service_id: String,
+    pub service_name: String,
+    pub image_ref: String,
+    pub image_tag: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_resolved_tag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_resolved_tags: Option<Vec<String>>,
+    pub is_dockrev: bool,
+    pub homepage: ServiceHomepage,
+    pub candidate: Option<Candidate>,
+    pub ignore: Option<IgnoreMatch>,
+    pub version_inference: Option<VersionInferenceState>,
+    pub new_version_discovery_count: Option<u32>,
+    pub settings: ServiceSettings,
+    pub archived: Option<bool>,
+    pub resource: ServiceResourceOverviewItem,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HomepageNavResponse {
+    pub generated_at: String,
+    pub last_check_at: Option<String>,
+    pub resource_summary: ServiceResourceOverviewResponse,
+    pub items: Vec<HomepageNavItem>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeployCheckReportResponse {
     pub overall: DeployCheckOverall,
     pub generated_at: String,
