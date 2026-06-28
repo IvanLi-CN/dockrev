@@ -120,7 +120,10 @@ function balanceHomepageGroups(
     target.weight += 1 + group.cards.length;
   }
 
-  return columns.map((column) => column.groups).filter((column) => column.length > 0);
+  const populatedColumns = columns
+    .map((column) => column.groups)
+    .filter((column) => column.length > 0);
+  return populatedColumns.length > 0 ? populatedColumns : [[]];
 }
 
 function normalizeHomepageHref(
@@ -145,8 +148,8 @@ function snapshotCardsToNavCards(cards: HomepageSnapshotCard[]): HomepageNavCard
 
 function navCardsToSnapshot(cards: HomepageNavCard[]): HomepageSnapshotCard[] {
   return cards.map((card) => {
-    const snapshotCard = { ...card };
-    delete snapshotCard.source;
+    const { source, ...snapshotCard } = card;
+    void source;
     return snapshotCard;
   });
 }

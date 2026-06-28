@@ -27,6 +27,21 @@ function mergeHomepageCardList<T extends { serviceId: string; source: 'live' | '
   return mergeHomepageCards(previous, incoming)
 }
 
+function balancedColumnCount(groupCount: number, requestedColumnCount: number): number {
+  const safeColumnCount = Math.max(1, Math.min(4, Math.floor(requestedColumnCount)))
+  const columns = Array.from({ length: safeColumnCount }, () => 0)
+  for (let index = 0; index < groupCount; index += 1) {
+    const targetIndex = columns.reduce(
+      (bestIndex, weight, currentIndex) =>
+        weight < columns[bestIndex] ? currentIndex : bestIndex,
+      0,
+    )
+    columns[targetIndex] += 1
+  }
+  const populatedColumns = columns.filter((weight) => weight > 0)
+  return populatedColumns.length > 0 ? populatedColumns.length : 1
+}
+
 function visibleCards<T>(
   liveLoaded: boolean,
   liveCards: T[],
@@ -66,5 +81,10 @@ describe('homepage refresh state', () => {
       { serviceId: 'svc-api', source: 'live', title: 'Live API' },
       { serviceId: 'svc-loki', source: 'live', title: 'Live Loki' },
     ])
+  })
+
+  test('keeps at least one homepage column when no groups render', () => {
+    expect(balancedColumnCount(0, 4)).toBe(1)
+    expect(balancedColumnCount(0, 1)).toBe(1)
   })
 })
