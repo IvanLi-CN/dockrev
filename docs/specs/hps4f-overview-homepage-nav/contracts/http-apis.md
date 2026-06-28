@@ -88,7 +88,7 @@ Rules:
 - Requires the same app authorization as other private APIs.
 - `items` contains only active, non-archived services with a non-empty valid `homepage.href`.
 - Ordering is stable by `stackName`, then `serviceName`.
-- `resourceSummary` and each item `resource` are built from the latest-sample table, not from a historical table scan.
+- `resourceSummary` and each item `resource` are built from the latest-sample read model, while `sampleCount` remains the number of historical samples for that service inside the endpoint's `1h` summary window.
 - `resourceSummary.services` still lists active services that never exposed a homepage card; the top strip is a global summary, not card-only summary.
 - `candidate`, `ignore`, `versionInference`, `newVersionDiscoveryCount`, `settings`, and `archived` preserve the same semantics used by existing service detail and update status logic.
 - This endpoint is additive. Existing `/api/stacks*` consumers remain compatible.

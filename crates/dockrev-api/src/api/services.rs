@@ -846,6 +846,7 @@ pub(super) async fn get_homepage_nav(
     headers: HeaderMap,
 ) -> Result<Json<HomepageNavResponse>, ApiError> {
     let _user = require_user(&state, &headers).await?;
+    const HOMEPAGE_RESOURCE_WINDOW: &str = "1h";
     let settings = state
         .db
         .get_resource_monitor_settings()
@@ -859,16 +860,39 @@ pub(super) async fn get_homepage_nav(
         resource_usage::normalize_sample_interval_seconds(settings.sample_interval_seconds)
             .saturating_mul(2)
             .max(60);
+    let homepage_window_seconds = resource_usage::parse_window_to_seconds(HOMEPAGE_RESOURCE_WINDOW)
+        .ok_or_else(|| map_internal(anyhow::anyhow!("homepage resource window is invalid")))?;
+    let since = (generated_at - time::Duration::seconds(homepage_window_seconds as i64))
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|err| map_internal(err.into()))?;
     let latest_samples = state
         .db
         .list_service_resource_latest_samples()
         .await
         .map_err(map_internal)?;
+    let recent_counts = state
+        .db
+        .list_service_resource_recent_counts_since(&since)
+        .await
+        .map_err(map_internal)?;
+    let recent_count_by_service = recent_counts
+        .into_iter()
+        .map(|row| (row.service_id, row.sample_count))
+        .collect::<std::collections::HashMap<_, _>>();
     let mut overview_services = latest_samples
         .iter()
         .cloned()
         .map(|row| {
-            to_resource_overview_item_from_latest(row, generated_at, stale_after_seconds, None)
+            let recent_sample_count = recent_count_by_service
+                .get(&row.service_id)
+                .copied()
+                .unwrap_or(0);
+            to_resource_overview_item_from_latest(
+                row,
+                generated_at,
+                stale_after_seconds,
+                Some(recent_sample_count),
+            )
         })
         .collect::<Vec<_>>();
     overview_services.sort_by(|left, right| left.service_id.cmp(&right.service_id));
@@ -960,7 +984,7 @@ pub(super) async fn get_homepage_nav(
         last_check_at,
         resource_summary: ServiceResourceOverviewResponse {
             enabled: settings.enabled,
-            window: "1h".to_string(),
+            window: HOMEPAGE_RESOURCE_WINDOW.to_string(),
             generated_at: generated_at
                 .format(&time::format_description::well_known::Rfc3339)
                 .map_err(|err| map_internal(err.into()))?,

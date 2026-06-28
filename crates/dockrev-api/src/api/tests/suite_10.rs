@@ -1266,6 +1266,10 @@ services:
     assert!(payload["generatedAt"].as_str().is_some());
     assert!(payload["lastCheckAt"].as_str().is_some());
     assert_eq!(payload["resourceSummary"]["enabled"].as_bool(), Some(true));
+    assert_eq!(
+        payload["resourceSummary"]["services"][0]["sampleCount"].as_u64(),
+        Some(2)
+    );
     assert_eq!(payload["items"].as_array().unwrap().len(), 1);
     let item = &payload["items"].as_array().unwrap()[0];
     assert_eq!(item["serviceName"].as_str(), Some("api"));

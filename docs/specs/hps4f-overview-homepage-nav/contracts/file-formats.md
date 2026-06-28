@@ -79,4 +79,5 @@ Rules:
 - Frontend must support best-effort migration from the legacy split cache:
   - `dockrev.homepage.nav.snapshot.v1`
   - `dockrev.homepage.resource.summary.v1`
+- Legacy `status="updatable"` cards must not be migrated into actionable cached update candidates; the migrated card may stay visible, but its cached status must be non-actionable until live data arrives.
 - Cache reads may mark `resourceSummary.services[*].stale=true` when the snapshot is older than `staleAfterSeconds`, but must preserve the metric values for fast first paint.

@@ -355,8 +355,10 @@ function isResourceSummaryStale(
 }
 
 function legacyCardToSnapshotCard(card: LegacyHomepageNavCardSnapshotItem): HomepageSnapshotCard {
+  const legacyCandidateStatus = card.status === "updatable" ? "hint" : card.status;
   return {
     ...card,
+    status: legacyCandidateStatus,
     service: {
       id: card.serviceId,
       name: card.serviceName,
@@ -374,15 +376,7 @@ function legacyCardToSnapshotCard(card: LegacyHomepageNavCardSnapshotItem): Home
         href: card.href,
         description: card.description,
       },
-      candidate: card.status === "updatable"
-        ? {
-            tag: "-",
-            resolvedTag: null,
-            digest: "sha256:cached",
-            archMatch: "match",
-            arch: [],
-          }
-        : null,
+      candidate: null,
       ignore: card.status === "blocked"
         ? {
             matched: true,

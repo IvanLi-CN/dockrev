@@ -186,6 +186,8 @@ describe('homepage snapshot cache', () => {
     const snapshot = readHomepageSnapshot(storage)
     expect(snapshot?.version).toBe(2)
     expect(snapshot?.cards[0]?.title).toBe('Acme API')
+    expect(snapshot?.cards[0]?.status).toBe('hint')
+    expect(snapshot?.cards[0]?.service.candidate).toBeNull()
     expect(storage.getItem(HOMEPAGE_SNAPSHOT_KEY)).not.toBeNull()
   })
 
