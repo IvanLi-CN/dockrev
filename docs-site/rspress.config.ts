@@ -18,8 +18,10 @@ export default defineConfig({
   base: docsBase,
   title: 'Dockrev Documentation',
   description: 'Dockrev deployment, operations, and API reference documentation.',
+  // Rspress resolves `icon` as a public-dir file path and emits it under `base`.
   icon: '/favicon.svg',
-  logo: '/dockrev-logo.svg',
+  // SSR does not base-prefix `logo`, while the runtime `withBase` helper is idempotent.
+  logo: withDocsBase('dockrev-logo.svg'),
   logoText: '',
   lang: 'zh',
   head: [
