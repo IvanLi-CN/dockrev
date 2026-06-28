@@ -475,14 +475,13 @@ pub(super) async fn resolve_discovery_stable_tags_by_provenance(
     Ok(combined)
 }
 
-async fn apply_candidate_notification_fallbacks(
+async fn apply_candidate_notification_fallbacks_to_services(
     state: &Arc<AppState>,
-    stack: &mut StackRecord,
+    services: &mut [Service],
 ) -> Result<(), ApiError> {
     use std::collections::HashMap;
 
-    let targets = stack
-        .services
+    let targets = services
         .iter()
         .filter_map(|service| {
             let candidate = service.candidate.as_ref()?;
@@ -518,7 +517,7 @@ async fn apply_candidate_notification_fallbacks(
         .map_err(map_internal)?;
     let notification_tags = notification_tags.into_iter().collect::<HashMap<_, _>>();
 
-    for service in &mut stack.services {
+    for service in services {
         let Some(candidate) = service.candidate.as_mut() else {
             continue;
         };
@@ -556,9 +555,9 @@ async fn apply_candidate_notification_fallbacks(
     Ok(())
 }
 
-pub(super) async fn enrich_stack_with_version_inference(
+pub(super) async fn enrich_services_with_version_inference(
     state: &Arc<AppState>,
-    stack: &mut StackRecord,
+    services: &mut [Service],
 ) -> Result<(), ApiError> {
     use std::collections::HashMap;
 
@@ -567,7 +566,7 @@ pub(super) async fn enrich_stack_with_version_inference(
     let mut snapshot_cache: HashMap<String, Option<DigestSnapshotCacheValue>> = HashMap::new();
     let mut inflight_cache: HashMap<String, Option<String>> = HashMap::new();
 
-    for svc in stack.services.iter_mut() {
+    for svc in services.iter_mut() {
         if !needs_version_inference(svc) {
             svc.version_inference = Some(VersionInferenceState {
                 status: "ready".to_string(),
@@ -752,7 +751,7 @@ pub(super) async fn enrich_stack_with_version_inference(
         });
     }
 
-    apply_candidate_notification_fallbacks(state, stack).await?;
+    apply_candidate_notification_fallbacks_to_services(state, services).await?;
 
     Ok(())
 }
@@ -765,14 +764,13 @@ struct DiscoveryCountServiceContext {
     current_tag: String,
 }
 
-async fn enrich_stack_with_new_version_discovery_counts(
+pub(super) async fn enrich_services_with_new_version_discovery_counts(
     state: &Arc<AppState>,
-    stack: &mut StackRecord,
+    services: &mut [Service],
 ) -> Result<(), ApiError> {
     use std::collections::HashMap;
 
-    let contexts = stack
-        .services
+    let contexts = services
         .iter()
         .filter(|service| service.candidate.is_some())
         .map(|service| {
@@ -800,7 +798,7 @@ async fn enrich_stack_with_new_version_discovery_counts(
         })
         .collect::<HashMap<_, _>>();
 
-    for service in stack.services.iter_mut() {
+    for service in services.iter_mut() {
         service.new_version_discovery_count = None;
     }
     if contexts.is_empty() {
@@ -822,7 +820,7 @@ async fn enrich_stack_with_new_version_discovery_counts(
         },
     );
 
-    for service in stack.services.iter_mut() {
+    for service in services.iter_mut() {
         let Some(context) = contexts.get(&service.id) else {
             continue;
         };
@@ -854,8 +852,8 @@ pub(super) async fn get_stack(
     let Some(mut stack) = stack else {
         return Err(ApiError::not_found("stack not found"));
     };
-    enrich_stack_with_version_inference(&state, &mut stack).await?;
-    enrich_stack_with_new_version_discovery_counts(&state, &mut stack).await?;
+    enrich_services_with_version_inference(&state, &mut stack.services).await?;
+    enrich_services_with_new_version_discovery_counts(&state, &mut stack.services).await?;
 
     Ok(Json(GetStackResponse {
         stack: StackResponse {

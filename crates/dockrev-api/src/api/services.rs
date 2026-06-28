@@ -1,4 +1,5 @@
 use super::*;
+use crate::updater::is_dockrev_image_ref;
 
 mod github_releases;
 mod repo_links;
@@ -774,7 +775,7 @@ pub(super) async fn get_service_resource_usage_overview(
         .map_err(map_internal)?;
 
     let window = q.window.unwrap_or_else(|| "1h".to_string());
-    let Some(window_seconds) = resource_usage::parse_window_to_seconds(&window) else {
+    let Some(_window_seconds) = resource_usage::parse_window_to_seconds(&window) else {
         return Err(ApiError::invalid_argument(
             "window must be one of 15m/1h/6h",
         ));
@@ -798,24 +799,14 @@ pub(super) async fn get_service_resource_usage_overview(
         }));
     }
 
-    let since = (generated_at - time::Duration::seconds(window_seconds as i64))
-        .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|err| map_internal(err.into()))?;
     let rows = state
         .db
-        .list_service_resource_overview_samples_since(&since)
+        .list_service_resource_latest_samples()
         .await
         .map_err(map_internal)?;
     let services = rows
         .into_iter()
-        .map(|row| {
-            to_resource_overview_item(
-                row.service_id,
-                row.samples,
-                generated_at,
-                stale_after_seconds,
-            )
-        })
+        .map(|row| to_resource_overview_item_from_latest(row, generated_at, stale_after_seconds))
         .collect();
 
     Ok(Json(ServiceResourceOverviewResponse {
@@ -827,60 +818,190 @@ pub(super) async fn get_service_resource_usage_overview(
     }))
 }
 
-fn to_resource_overview_item(
-    service_id: String,
-    samples: Vec<ServiceResourceSample>,
+pub(super) async fn get_homepage_nav(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<HomepageNavResponse>, ApiError> {
+    let _user = require_user(&state, &headers).await?;
+    let settings = state
+        .db
+        .get_resource_monitor_settings()
+        .await
+        .map_err(map_internal)?;
+    let generated_at = time::OffsetDateTime::now_utc();
+    let generated_at_label = generated_at
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|err| map_internal(err.into()))?;
+    let stale_after_seconds =
+        resource_usage::normalize_sample_interval_seconds(settings.sample_interval_seconds)
+            .saturating_mul(2)
+            .max(60);
+    let latest_samples = state
+        .db
+        .list_service_resource_latest_samples()
+        .await
+        .map_err(map_internal)?;
+    let mut overview_services = latest_samples
+        .iter()
+        .cloned()
+        .map(|row| to_resource_overview_item_from_latest(row, generated_at, stale_after_seconds))
+        .collect::<Vec<_>>();
+    overview_services.sort_by(|left, right| left.service_id.cmp(&right.service_id));
+
+    let mut rows = state
+        .db
+        .list_homepage_nav_services()
+        .await
+        .map_err(map_internal)?;
+    let last_check_at = rows
+        .iter()
+        .map(|row| row.stack_last_check_at.as_str())
+        .max()
+        .map(ToString::to_string);
+    let metrics_by_service = overview_services
+        .iter()
+        .cloned()
+        .map(|item| (item.service_id.clone(), item))
+        .collect::<std::collections::HashMap<_, _>>();
+
+    let mut services = rows
+        .iter_mut()
+        .map(|row| row.service.clone())
+        .collect::<Vec<_>>();
+    crate::api::stacks::enrich_services_with_version_inference(&state, &mut services).await?;
+    crate::api::stacks::enrich_services_with_new_version_discovery_counts(&state, &mut services)
+        .await?;
+    for (index, service) in services.into_iter().enumerate() {
+        rows[index].service = service;
+    }
+
+    let mut items = rows
+        .into_iter()
+        .filter_map(|row| {
+            let homepage = row.service.homepage.clone()?;
+            let href = homepage
+                .href
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?;
+            Some(HomepageNavItem {
+                stack_id: row.stack_id,
+                stack_name: row.stack_name,
+                service_id: row.service.id.clone(),
+                service_name: row.service.name.clone(),
+                image_ref: row.service.image.reference.clone(),
+                image_tag: row.service.image.tag.clone(),
+                image_digest: row.service.image.digest.clone(),
+                image_resolved_tag: row.service.image.resolved_tag.clone(),
+                image_resolved_tags: row.service.image.resolved_tags.clone(),
+                is_dockrev: is_dockrev_image_ref(
+                    &row.service.image.reference,
+                    Some(state.config.dockrev_image_repo.as_str()),
+                ),
+                homepage: ServiceHomepage {
+                    href: Some(href.to_string()),
+                    ..homepage
+                },
+                candidate: row.service.candidate.clone(),
+                ignore: row.service.ignore.clone(),
+                version_inference: row.service.version_inference.clone(),
+                new_version_discovery_count: row.service.new_version_discovery_count,
+                settings: row.service.settings.clone(),
+                archived: row.service.archived,
+                resource: metrics_by_service.get(&row.service.id).cloned().unwrap_or(
+                    ServiceResourceOverviewItem {
+                        service_id: row.service.id,
+                        sampled_at: None,
+                        cpu_percent: None,
+                        mem_used_bytes: None,
+                        mem_limit_bytes: None,
+                        net_rx_rate_bps: None,
+                        net_tx_rate_bps: None,
+                        stale: true,
+                        sample_count: 0,
+                    },
+                ),
+            })
+        })
+        .collect::<Vec<_>>();
+    items.sort_by(|left, right| {
+        left.stack_name
+            .cmp(&right.stack_name)
+            .then_with(|| left.service_name.cmp(&right.service_name))
+    });
+
+    Ok(Json(HomepageNavResponse {
+        generated_at: generated_at_label,
+        last_check_at,
+        resource_summary: ServiceResourceOverviewResponse {
+            enabled: settings.enabled,
+            window: "1h".to_string(),
+            generated_at: generated_at
+                .format(&time::format_description::well_known::Rfc3339)
+                .map_err(|err| map_internal(err.into()))?,
+            stale_after_seconds,
+            services: if settings.enabled {
+                overview_services
+            } else {
+                Vec::new()
+            },
+        },
+        items,
+    }))
+}
+
+fn to_resource_overview_item_from_latest(
+    row: crate::db::ServiceResourceLatestSampleRow,
     generated_at: time::OffsetDateTime,
     stale_after_seconds: u64,
 ) -> ServiceResourceOverviewItem {
-    let latest = samples.last();
-    let previous = samples
-        .len()
-        .checked_sub(2)
-        .and_then(|index| samples.get(index));
-    let (net_rx_rate_bps, net_tx_rate_bps) = match (previous, latest) {
-        (Some(prev), Some(next)) => compute_resource_rates(prev, next),
-        _ => (None, None),
-    };
-    let stale = latest
-        .and_then(|sample| {
-            time::OffsetDateTime::parse(
-                &sample.sampled_at,
-                &time::format_description::well_known::Rfc3339,
-            )
-            .ok()
+    let has_sample = row.sampled_at.is_some();
+    let has_prev_sample = row.prev_sampled_at.is_some();
+    let stale = row
+        .sampled_at
+        .as_deref()
+        .and_then(|sampled_at| {
+            time::OffsetDateTime::parse(sampled_at, &time::format_description::well_known::Rfc3339)
+                .ok()
         })
         .is_none_or(|sampled_at| {
             (generated_at - sampled_at).whole_seconds() > stale_after_seconds as i64
         });
-
+    let (net_rx_rate_bps, net_tx_rate_bps) = compute_resource_rates_from_latest(
+        &row.prev_sampled_at,
+        row.prev_net_rx_bytes,
+        row.prev_net_tx_bytes,
+        &row.sampled_at,
+        row.net_rx_bytes,
+        row.net_tx_bytes,
+    );
     ServiceResourceOverviewItem {
-        service_id,
-        sampled_at: latest.map(|sample| sample.sampled_at.clone()),
-        cpu_percent: latest.map(|sample| sample.cpu_percent),
-        mem_used_bytes: latest.and_then(|sample| sample.mem_used_bytes),
-        mem_limit_bytes: latest.and_then(|sample| sample.mem_limit_bytes),
+        service_id: row.service_id,
+        sampled_at: row.sampled_at,
+        cpu_percent: row.cpu_percent,
+        mem_used_bytes: row.mem_used_bytes,
+        mem_limit_bytes: row.mem_limit_bytes,
         net_rx_rate_bps,
         net_tx_rate_bps,
         stale,
-        sample_count: samples.len() as u32,
+        sample_count: u32::from(has_sample) + u32::from(has_prev_sample),
     }
 }
 
-fn compute_resource_rates(
-    prev: &ServiceResourceSample,
-    next: &ServiceResourceSample,
+fn compute_resource_rates_from_latest(
+    prev_sampled_at: &Option<String>,
+    prev_net_rx_bytes: Option<u64>,
+    prev_net_tx_bytes: Option<u64>,
+    next_sampled_at: &Option<String>,
+    next_net_rx_bytes: Option<u64>,
+    next_net_tx_bytes: Option<u64>,
 ) -> (Option<f64>, Option<f64>) {
-    let prev_ts = time::OffsetDateTime::parse(
-        &prev.sampled_at,
-        &time::format_description::well_known::Rfc3339,
-    )
-    .ok();
-    let next_ts = time::OffsetDateTime::parse(
-        &next.sampled_at,
-        &time::format_description::well_known::Rfc3339,
-    )
-    .ok();
+    let prev_ts = prev_sampled_at.as_deref().and_then(|value| {
+        time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).ok()
+    });
+    let next_ts = next_sampled_at.as_deref().and_then(|value| {
+        time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).ok()
+    });
     let Some((prev_ts, next_ts)) = prev_ts.zip(next_ts) else {
         return (None, None);
     };
@@ -889,8 +1010,8 @@ fn compute_resource_rates(
         return (None, None);
     }
     (
-        compute_counter_rate(prev.net_rx_bytes, next.net_rx_bytes, seconds),
-        compute_counter_rate(prev.net_tx_bytes, next.net_tx_bytes, seconds),
+        compute_counter_rate(prev_net_rx_bytes, next_net_rx_bytes, seconds),
+        compute_counter_rate(prev_net_tx_bytes, next_net_tx_bytes, seconds),
     )
 }
 

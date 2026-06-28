@@ -656,6 +656,7 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     ensure_github_packages_repos_webhook_columns(conn)?;
     ensure_github_packages_deliveries_columns(conn)?;
     ensure_github_packages_delivery_events_schema(conn)?;
+    ensure_service_resource_latest_samples_schema(conn)?;
     ensure_schema_migrations_table(conn)?;
     apply_migration_0007_remove_manual_stacks(conn)?;
     apply_migration_0008_drop_version_inference_snapshots(conn)?;
@@ -664,6 +665,34 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     apply_migration_0011_track_candidate_display_tags_in_new_version_discoveries(conn)?;
     apply_migration_0012_track_image_ref_in_new_version_discoveries(conn)?;
     auto_archive_missing_discovery_projects_on_startup(conn)?;
+    Ok(())
+}
+
+fn ensure_service_resource_latest_samples_schema(
+    conn: &rusqlite::Connection,
+) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"
+CREATE TABLE IF NOT EXISTS service_resource_latest_samples (
+  service_id TEXT PRIMARY KEY NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  sampled_at TEXT NOT NULL,
+  cpu_percent REAL NOT NULL,
+  mem_used_bytes INTEGER,
+  mem_limit_bytes INTEGER,
+  net_rx_bytes INTEGER,
+  net_tx_bytes INTEGER,
+  block_read_bytes INTEGER,
+  block_write_bytes INTEGER,
+  pids INTEGER,
+  container_count INTEGER NOT NULL DEFAULT 1,
+  prev_sampled_at TEXT,
+  prev_net_rx_bytes INTEGER,
+  prev_net_tx_bytes INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_service_resource_latest_samples_sampled_at
+  ON service_resource_latest_samples(sampled_at);
+"#,
+    )?;
     Ok(())
 }
 
@@ -1397,4 +1426,23 @@ CREATE INDEX IF NOT EXISTS idx_service_resource_samples_service_time
   ON service_resource_samples(service_id, sampled_at);
 CREATE INDEX IF NOT EXISTS idx_service_resource_samples_sampled_at
   ON service_resource_samples(sampled_at);
+
+CREATE TABLE IF NOT EXISTS service_resource_latest_samples (
+  service_id TEXT PRIMARY KEY NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  sampled_at TEXT NOT NULL,
+  cpu_percent REAL NOT NULL,
+  mem_used_bytes INTEGER,
+  mem_limit_bytes INTEGER,
+  net_rx_bytes INTEGER,
+  net_tx_bytes INTEGER,
+  block_read_bytes INTEGER,
+  block_write_bytes INTEGER,
+  pids INTEGER,
+  container_count INTEGER NOT NULL DEFAULT 1,
+  prev_sampled_at TEXT,
+  prev_net_rx_bytes INTEGER,
+  prev_net_tx_bytes INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_service_resource_latest_samples_sampled_at
+  ON service_resource_latest_samples(sampled_at);
 "#;

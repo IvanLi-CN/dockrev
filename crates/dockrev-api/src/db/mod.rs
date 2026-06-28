@@ -31,12 +31,13 @@ pub(crate) use new_version_discoveries::{
 };
 
 use crate::api::types::{
-    BackupSettings, ComposeConfig, ComposeRef, DeployWelcomeSettings, GitHubPackagesRepoDb,
-    GitHubPackagesSettingsDb, GitHubPackagesTargetDb, GitHubPackagesWebhookDeliveryDb,
-    GitHubPackagesWebhookDeliverySummary, IgnoreRule, IgnoreRuleMatch, IgnoreRuleScope,
-    JobListItem, JobLogLine, JobScope, JobType, NotificationSettings, ResourceMonitorSettings,
-    ScheduleItemSettings, SchedulesSettings, ServiceHomepage, ServiceResourceSample,
-    ServiceSettings, ServiceUpdateGuard, StackListItem, StackRecord, StackStatus,
+    BackupSettings, Candidate, ComposeConfig, ComposeRef, DeployWelcomeSettings,
+    GitHubPackagesRepoDb, GitHubPackagesSettingsDb, GitHubPackagesTargetDb,
+    GitHubPackagesWebhookDeliveryDb, GitHubPackagesWebhookDeliverySummary, IgnoreMatch, IgnoreRule,
+    IgnoreRuleMatch, IgnoreRuleScope, JobListItem, JobLogLine, JobScope, JobType,
+    NotificationSettings, ResourceMonitorSettings, ScheduleItemSettings, SchedulesSettings,
+    Service, ServiceHomepage, ServiceResourceSample, ServiceSettings, ServiceUpdateGuard,
+    StackListItem, StackRecord, StackStatus, VersionInferenceState,
 };
 
 #[derive(Clone, Debug)]
@@ -255,9 +256,25 @@ pub struct ServiceResourceTarget {
 }
 
 #[derive(Clone, Debug)]
-pub struct ServiceResourceOverviewSamples {
+pub struct ServiceResourceLatestSampleRow {
     pub service_id: String,
-    pub samples: Vec<ServiceResourceSample>,
+    pub sampled_at: Option<String>,
+    pub cpu_percent: Option<f64>,
+    pub mem_used_bytes: Option<u64>,
+    pub mem_limit_bytes: Option<u64>,
+    pub net_rx_bytes: Option<u64>,
+    pub net_tx_bytes: Option<u64>,
+    pub prev_sampled_at: Option<String>,
+    pub prev_net_rx_bytes: Option<u64>,
+    pub prev_net_tx_bytes: Option<u64>,
+}
+
+#[derive(Clone, Debug)]
+pub struct HomepageNavServiceRow {
+    pub stack_id: String,
+    pub stack_name: String,
+    pub stack_last_check_at: String,
+    pub service: Service,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -632,7 +649,13 @@ impl Db {
 
     async fn init(&self) -> anyhow::Result<()> {
         self.call(|conn| {
-            conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+            conn.execute_batch(
+                r#"
+PRAGMA foreign_keys = ON;
+PRAGMA journal_mode = WAL;
+PRAGMA busy_timeout = 5000;
+"#,
+            )?;
             conn.execute_batch(schema::SCHEMA)?;
             Ok(())
         })

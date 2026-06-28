@@ -3,15 +3,15 @@ import { describe, expect, test } from 'bun:test'
 import {
   HOMEPAGE_NAV_SNAPSHOT_KEY,
   HOMEPAGE_RESOURCE_SUMMARY_KEY,
-  markResourceOverviewStale,
-  readHomepageNavSnapshot,
-  readHomepageResourceSummarySnapshot,
-  resourceSummarySnapshotIsStale,
-  writeHomepageNavSnapshot,
-  writeHomepageResourceSummarySnapshot,
-  type HomepageNavCardSnapshotItem,
+  HOMEPAGE_SNAPSHOT_KEY,
+  homepageSnapshotFromResponse,
+  homepageSnapshotIsResourceStale,
+  markHomepageSnapshotResourceStale,
+  readHomepageSnapshot,
+  writeHomepageSnapshot,
+  type HomepageSnapshotCard,
 } from '../src/pages/homepageSnapshot'
-import type { ServiceResourceOverviewResponse } from '../src/api'
+import type { HomepageNavResponse, ServiceResourceOverviewResponse } from '../src/api'
 
 class MemoryStorage {
   private values = new Map<string, string>()
@@ -27,22 +27,6 @@ class MemoryStorage {
   removeItem(key: string) {
     this.values.delete(key)
   }
-}
-
-const card: HomepageNavCardSnapshotItem = {
-  id: 'svc-api',
-  stackId: 'stack-prod',
-  stackName: 'prod',
-  serviceId: 'svc-api',
-  serviceName: 'api',
-  imageRef: 'ghcr.io/acme/api:5.2.1',
-  groupName: 'Brain',
-  title: 'Acme API',
-  description: 'API gateway',
-  href: 'https://api.example.com',
-  icon: 'si-github',
-  status: 'updatable',
-  isDockrev: false,
 }
 
 const overview: ServiceResourceOverviewResponse = {
@@ -65,73 +49,143 @@ const overview: ServiceResourceOverviewResponse = {
   ],
 }
 
+const card: HomepageSnapshotCard = {
+  id: 'svc-api',
+  stackId: 'stack-prod',
+  stackName: 'prod',
+  serviceId: 'svc-api',
+  serviceName: 'api',
+  imageRef: 'ghcr.io/acme/api:5.2.1',
+  groupName: 'Brain',
+  title: 'Acme API',
+  description: 'API gateway',
+  href: 'https://api.example.com',
+  icon: 'si-github',
+  status: 'updatable',
+  isDockrev: false,
+  service: {
+    id: 'svc-api',
+    name: 'api',
+    image: {
+      ref: 'ghcr.io/acme/api:5.2.1',
+      tag: '5.2.1',
+      digest: 'sha256:api',
+      resolvedTag: '5.2.1',
+      resolvedTags: ['5.2.1'],
+    },
+    homepage: {
+      group: 'Brain',
+      name: 'Acme API',
+      icon: 'si-github',
+      href: 'https://api.example.com',
+      description: 'API gateway',
+    },
+    candidate: {
+      tag: '5.2.3',
+      resolvedTag: '5.2.3',
+      digest: 'sha256:candidate',
+      archMatch: 'match',
+      arch: ['linux/amd64'],
+    },
+    ignore: null,
+    versionInference: {
+      status: 'ready',
+      reason: null,
+      checkedAt: null,
+    },
+    newVersionDiscoveryCount: 1,
+    settings: {
+      autoRollback: true,
+      backupTargets: { bindPaths: {}, volumeNames: {} },
+      repoUrl: null,
+    },
+    archived: false,
+  },
+}
+
+const homepageResponse: HomepageNavResponse = {
+  generatedAt: '2026-05-07T00:00:00.000Z',
+  lastCheckAt: '2026-05-07T00:00:00.000Z',
+  resourceSummary: overview,
+  items: [],
+}
+
 describe('homepage snapshot cache', () => {
-  test('round-trips normalized navigation cards without full stack detail', () => {
+  test('round-trips homepage snapshot v2', () => {
     const storage = new MemoryStorage()
+    const snapshot = homepageSnapshotFromResponse({
+      generatedAt: homepageResponse.generatedAt,
+      lastCheckAt: homepageResponse.lastCheckAt,
+      resourceSummary: overview,
+      cards: [card],
+    })
 
-    writeHomepageNavSnapshot([card], storage, '2026-05-07T00:00:00.000Z')
+    writeHomepageSnapshot(snapshot, storage)
 
-    const raw = JSON.parse(storage.getItem(HOMEPAGE_NAV_SNAPSHOT_KEY) ?? '{}')
-    expect(raw.cards[0].service).toBeUndefined()
-    expect(raw.cards[0].compose).toBeUndefined()
+    const raw = JSON.parse(storage.getItem(HOMEPAGE_SNAPSHOT_KEY) ?? '{}')
+    expect(raw.version).toBe(2)
+    expect(raw.cards[0].service.image.ref).toBe('ghcr.io/acme/api:5.2.1')
 
-    const snapshot = readHomepageNavSnapshot(storage)
-    expect(snapshot?.cards).toEqual([card])
+    const parsed = readHomepageSnapshot(storage)
+    expect(parsed?.cards).toEqual([card])
+    expect(parsed?.resourceSummary.services[0].cpuPercent).toBe(12)
   })
 
-  test('drops invalid navigation snapshots instead of rendering corrupt entries', () => {
+  test('marks cached resource summary stale while preserving values', () => {
+    const snapshot = homepageSnapshotFromResponse({
+      generatedAt: '2026-05-07T00:00:00.000Z',
+      lastCheckAt: null,
+      resourceSummary: overview,
+      cards: [card],
+    })
+
+    expect(
+      homepageSnapshotIsResourceStale(snapshot, Date.parse('2026-05-07T00:02:01.000Z')),
+    ).toBe(true)
+
+    const stale = markHomepageSnapshotResourceStale(snapshot)
+    expect(stale.resourceSummary.services[0].stale).toBe(true)
+    expect(stale.resourceSummary.services[0].cpuPercent).toBe(12)
+  })
+
+  test('migrates legacy v1 nav/resource snapshots into v2 on read', () => {
     const storage = new MemoryStorage()
     storage.setItem(
       HOMEPAGE_NAV_SNAPSHOT_KEY,
       JSON.stringify({
         version: 1,
         generatedAt: '2026-05-07T00:00:00.000Z',
-        cards: [{ ...card, status: 'ignored' }],
+        cards: [
+          {
+            id: 'svc-api',
+            stackId: 'stack-prod',
+            stackName: 'prod',
+            serviceId: 'svc-api',
+            serviceName: 'api',
+            imageRef: 'ghcr.io/acme/api:5.2.1',
+            groupName: 'Brain',
+            title: 'Acme API',
+            description: 'API gateway',
+            href: 'https://api.example.com',
+            icon: 'si-github',
+            status: 'updatable',
+            isDockrev: false,
+          },
+        ],
       }),
     )
-
-    expect(readHomepageNavSnapshot(storage)).toBeNull()
-  })
-
-  test('round-trips resource summaries and detects stale cached samples', () => {
-    const storage = new MemoryStorage()
-
-    writeHomepageResourceSummarySnapshot(
-      overview,
-      storage,
-      '2026-05-07T00:00:00.000Z',
-    )
-
-    const snapshot = readHomepageResourceSummarySnapshot(storage)
-    expect(snapshot?.overview.services[0].cpuPercent).toBe(12)
-    expect(
-      resourceSummarySnapshotIsStale(
-        snapshot!,
-        Date.parse('2026-05-07T00:02:01.000Z'),
-      ),
-    ).toBe(true)
-  })
-
-  test('marks cached resource overview services stale while preserving values', () => {
-    const stale = markResourceOverviewStale(overview)
-
-    expect(stale.services[0].stale).toBe(true)
-    expect(stale.services[0].cpuPercent).toBe(12)
-    expect(stale.services[0].netTxRateBps).toBe(8)
-    expect(stale).not.toBe(overview)
-  })
-
-  test('drops invalid resource summary snapshots', () => {
-    const storage = new MemoryStorage()
     storage.setItem(
       HOMEPAGE_RESOURCE_SUMMARY_KEY,
       JSON.stringify({
-        version: 2,
+        version: 1,
         generatedAt: '2026-05-07T00:00:00.000Z',
         overview,
       }),
     )
 
-    expect(readHomepageResourceSummarySnapshot(storage)).toBeNull()
+    const snapshot = readHomepageSnapshot(storage)
+    expect(snapshot?.version).toBe(2)
+    expect(snapshot?.cards[0]?.title).toBe('Acme API')
+    expect(storage.getItem(HOMEPAGE_SNAPSHOT_KEY)).not.toBeNull()
   })
 })

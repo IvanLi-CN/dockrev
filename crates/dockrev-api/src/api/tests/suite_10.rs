@@ -947,6 +947,114 @@ async fn resource_usage_overview_degrades_when_monitor_disabled() {
 }
 
 #[tokio::test]
+async fn homepage_nav_returns_single_read_model_with_resources_and_status() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-homepage-nav-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  api:
+    image: ghcr.io/acme/api:5.2.1
+    labels:
+      - homepage.group=Brain
+      - homepage.name=Acme API
+      - homepage.icon=si-github
+      - homepage.href=https://api.example.com
+      - homepage.description=Primary API
+  worker:
+    image: ghcr.io/acme/worker:5.2.0
+    labels:
+      - homepage.group=Ops
+      - homepage.name=Worker
+      - homepage.description=No href should hide
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let api_service = services.iter().find(|service| service.name == "api").unwrap();
+
+    state
+        .db
+        .update_service_check_result(
+            &api_service.id,
+            Some("sha256:cur".to_string()),
+            Some("5.2.1".to_string()),
+            Some(serde_json::to_string(&vec!["5.2.1"]).unwrap()),
+            Some("5.2.3".to_string()),
+            Some("5.2.3".to_string()),
+            Some("sha256:new".to_string()),
+            Some("match".to_string()),
+            Some(serde_json::to_string(&vec!["linux/amd64"]).unwrap()),
+            None,
+            None,
+            &test_now_rfc3339(),
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .insert_service_resource_samples(&[
+            crate::db::ServiceResourceSampleInput {
+                service_id: api_service.id.clone(),
+                sampled_at: test_offset_from_now_rfc3339(time::Duration::seconds(-20)),
+                cpu_percent: 10.0,
+                mem_used_bytes: Some(100),
+                mem_limit_bytes: Some(200),
+                net_rx_bytes: Some(1_000),
+                net_tx_bytes: Some(2_000),
+                block_read_bytes: None,
+                block_write_bytes: None,
+                pids: Some(2),
+                container_count: 1,
+            },
+            crate::db::ServiceResourceSampleInput {
+                service_id: api_service.id.clone(),
+                sampled_at: test_offset_from_now_rfc3339(time::Duration::seconds(-10)),
+                cpu_percent: 12.5,
+                mem_used_bytes: Some(120),
+                mem_limit_bytes: Some(200),
+                net_rx_bytes: Some(2_000),
+                net_tx_bytes: Some(4_000),
+                block_read_bytes: None,
+                block_write_bytes: None,
+                pids: Some(3),
+                container_count: 1,
+            },
+        ])
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/homepage/nav")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let payload = response_json(resp).await;
+    assert!(payload["generatedAt"].as_str().is_some());
+    assert!(payload["lastCheckAt"].as_str().is_some());
+    assert_eq!(payload["resourceSummary"]["enabled"].as_bool(), Some(true));
+    assert_eq!(payload["items"].as_array().unwrap().len(), 1);
+    let item = &payload["items"].as_array().unwrap()[0];
+    assert_eq!(item["serviceName"].as_str(), Some("api"));
+    assert_eq!(item["homepage"]["name"].as_str(), Some("Acme API"));
+    assert_eq!(item["candidate"]["tag"].as_str(), Some("5.2.3"));
+    assert_eq!(item["resource"]["cpuPercent"].as_f64(), Some(12.5));
+    let net_rx = item["resource"]["netRxRateBps"].as_f64().unwrap();
+    assert!((net_rx - 100.0).abs() < 0.01, "unexpected net rx rate: {net_rx}");
+}
+
+#[tokio::test]
 async fn resource_usage_events_emits_error_when_runtime_stats_unavailable() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());

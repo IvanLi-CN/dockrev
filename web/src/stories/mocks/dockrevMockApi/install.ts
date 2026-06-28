@@ -1,6 +1,7 @@
 import type {
   CleanupApplyRequest,
   CleanupScanRequest,
+  HomepageNavResponse,
   JobDetail,
   JobListItem,
   ServiceGitHubRepoRef,
@@ -32,6 +33,8 @@ import type {
 } from './shared'
 import {
   MockEventSource,
+  buildResourceHistorySamples,
+  type Fixture,
   getBoolean,
   getString,
   isRecord,
@@ -286,6 +289,84 @@ export function installDockrevMockApi(
     applyRollbackTargetRaceAfterUpdate({ rollbackTargets: state!.rollbackTargetByServiceId, raceByServiceId: rollbackTargetRaceByServiceId, scenario, serviceId, nextTag, nextDigest, nextResolvedTag, previousDigest, previousDisplayTag })
   }
 
+  function buildHomepageNavResponse(f: Fixture): HomepageNavResponse {
+    const generatedAt = new Date().toISOString()
+    const staleAfterSeconds = Math.max(60, f.settings.resourceMonitor.sampleIntervalSeconds * 2)
+    const resourceSummary = {
+      enabled: f.settings.resourceMonitor.enabled,
+      window: '1h',
+      generatedAt,
+      staleAfterSeconds,
+      services: Object.values(f.stackById)
+        .filter((stack) => !stack.archived)
+        .flatMap((stack) => stack.services.filter((service) => !service.archived))
+        .map((service) => {
+          const samples = buildResourceHistorySamples(service.id, 60 * 60)
+          const latest = samples[samples.length - 1] ?? null
+          const previous = samples[samples.length - 2] ?? null
+          const prevTs = previous ? Date.parse(previous.sampledAt) : Number.NaN
+          const nextTs = latest ? Date.parse(latest.sampledAt) : Number.NaN
+          const seconds = Number.isFinite(prevTs) && Number.isFinite(nextTs) ? (nextTs - prevTs) / 1000 : 0
+          const rate = (prev: number | null | undefined, next: number | null | undefined) =>
+            seconds > 0 && prev != null && next != null && next >= prev ? (next - prev) / seconds : null
+          const sampledAtMs = latest ? Date.parse(latest.sampledAt) : Number.NaN
+          return {
+            serviceId: service.id,
+            sampledAt: latest?.sampledAt ?? null,
+            cpuPercent: latest?.cpuPercent ?? null,
+            memUsedBytes: latest?.memUsedBytes ?? null,
+            memLimitBytes: latest?.memLimitBytes ?? null,
+            netRxRateBps: rate(previous?.netRxBytes, latest?.netRxBytes),
+            netTxRateBps: rate(previous?.netTxBytes, latest?.netTxBytes),
+            stale: !Number.isFinite(sampledAtMs) || Date.now() - sampledAtMs > staleAfterSeconds * 1000,
+            sampleCount: samples.length,
+          }
+        }),
+    }
+    return {
+      generatedAt,
+      lastCheckAt: f.stacks.map((stack) => stack.lastCheckAt).sort().at(-1) ?? null,
+      resourceSummary,
+      items: Object.values(f.stackById)
+        .filter((stack) => !stack.archived)
+        .flatMap((stack) =>
+          stack.services
+            .filter((service) => !service.archived && service.homepage?.href)
+            .map((service) => ({
+              stackId: stack.id,
+              stackName: stack.name,
+              serviceId: service.id,
+              serviceName: service.name,
+              imageRef: service.image.ref,
+              imageTag: service.image.tag,
+              imageDigest: service.image.digest ?? null,
+              imageResolvedTag: service.image.resolvedTag ?? null,
+              imageResolvedTags: service.image.resolvedTags ?? null,
+              isDockrev: isDockrevImageRef(service.image.ref),
+              homepage: service.homepage!,
+              candidate: service.candidate ?? null,
+              ignore: service.ignore ?? null,
+              versionInference: service.versionInference ?? null,
+              newVersionDiscoveryCount: service.newVersionDiscoveryCount ?? null,
+              settings: service.settings,
+              archived: service.archived,
+              resource:
+                resourceSummary.services.find((item) => item.serviceId === service.id) ?? {
+                  serviceId: service.id,
+                  sampledAt: null,
+                  cpuPercent: null,
+                  memUsedBytes: null,
+                  memLimitBytes: null,
+                  netRxRateBps: null,
+                  netTxRateBps: null,
+                  stale: true,
+                  sampleCount: 0,
+                },
+            })),
+        ),
+    }
+  }
+
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase()
     const urlString = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
@@ -343,11 +424,20 @@ export function installDockrevMockApi(
     if (
       scenario === 'overview-homepage-slow-refresh' &&
       method === 'GET' &&
-      (urlPath === '/api/services/resource-usage/overview' || urlPath.startsWith('/api/stacks'))
+      urlPath === '/api/homepage/nav'
     ) {
       await new Promise<void>((resolve) => {
         globalThis.setTimeout(() => resolve(), 900)
       })
+    }
+    if (method === 'GET' && urlPath === '/api/homepage/nav') {
+      if (scenario === 'overview-resource-monitor-error') {
+        return json(
+          { error: { code: 'upstream_error', message: 'homepage nav unavailable' } },
+          { status: 503 },
+        )
+      }
+      return json(buildHomepageNavResponse(f))
     }
     const routeCtx: MockRouteContext = {
       scenario,

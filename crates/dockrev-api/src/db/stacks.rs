@@ -348,6 +348,148 @@ WHERE id = ?1
         .context("get stack")
     }
 
+    pub async fn list_homepage_nav_services(&self) -> anyhow::Result<Vec<HomepageNavServiceRow>> {
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT
+  st.id,
+  st.name,
+  st.last_check_at,
+  sv.id,
+  sv.name,
+  sv.image_ref,
+  sv.image_tag,
+  sv.current_digest,
+  sv.current_resolved_tag,
+  sv.current_resolved_tags_json,
+  sv.candidate_tag,
+  sv.candidate_resolved_tag,
+  sv.candidate_digest,
+  sv.candidate_arch_match,
+  sv.candidate_arch_json,
+  sv.ignore_rule_id,
+  sv.ignore_reason,
+  sv.auto_rollback,
+  sv.backup_targets_bind_paths_json,
+  sv.backup_targets_volume_names_json,
+  sv.repo_url,
+  sv.homepage_json,
+  sv.update_guard_json,
+  sv.archived
+FROM services sv
+JOIN stacks st ON st.id = sv.stack_id
+WHERE st.archived = 0 AND sv.archived = 0
+ORDER BY st.name ASC, sv.name ASC
+"#,
+            )?;
+            let rows = stmt.query_map([], |row| {
+                let bind_paths_json: String = row.get(18)?;
+                let volume_names_json: String = row.get(19)?;
+                let homepage = deserialize_service_homepage(row.get(21)?)?;
+                let update_guard = deserialize_service_update_guard(row.get(22)?)?;
+                let bind_paths: BTreeMap<String, crate::api::types::TernaryChoice> =
+                    serde_json::from_str(&bind_paths_json).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            0,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?;
+                let volume_names: BTreeMap<String, crate::api::types::TernaryChoice> =
+                    serde_json::from_str(&volume_names_json).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            0,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?;
+                let current_resolved_tags_json: Option<String> = row.get(9)?;
+                let current_resolved_tags: Option<Vec<String>> = current_resolved_tags_json
+                    .as_deref()
+                    .and_then(|value| serde_json::from_str::<Vec<String>>(value).ok())
+                    .and_then(|values| {
+                        if values.is_empty() {
+                            None
+                        } else {
+                            Some(values)
+                        }
+                    });
+                let candidate_arch_json: Option<String> = row.get(14)?;
+                let candidate_arch: Vec<String> = candidate_arch_json
+                    .as_deref()
+                    .and_then(|value| serde_json::from_str::<Vec<String>>(value).ok())
+                    .unwrap_or_default();
+                let candidate = match (
+                    row.get::<_, Option<String>>(10)?,
+                    row.get::<_, Option<String>>(12)?,
+                ) {
+                    (Some(tag), Some(digest)) => Some(Candidate {
+                        tag,
+                        resolved_tag: row.get(11)?,
+                        digest,
+                        arch_match: crate::api::types::ArchMatch::from_str(
+                            row.get::<_, Option<String>>(13)?
+                                .as_deref()
+                                .unwrap_or("unknown"),
+                        ),
+                        arch: candidate_arch,
+                    }),
+                    _ => None,
+                };
+                let ignore = match (
+                    row.get::<_, Option<String>>(15)?,
+                    row.get::<_, Option<String>>(16)?,
+                ) {
+                    (Some(rule_id), Some(reason)) => Some(IgnoreMatch {
+                        matched: true,
+                        rule_id,
+                        reason,
+                    }),
+                    _ => None,
+                };
+                Ok(HomepageNavServiceRow {
+                    stack_id: row.get(0)?,
+                    stack_name: row.get(1)?,
+                    stack_last_check_at: row.get(2)?,
+                    service: Service {
+                        id: row.get(3)?,
+                        name: row.get(4)?,
+                        image: ComposeRef {
+                            reference: row.get(5)?,
+                            tag: row.get(6)?,
+                            digest: row.get(7)?,
+                            resolved_tag: row.get(8)?,
+                            resolved_tags: current_resolved_tags,
+                        },
+                        homepage,
+                        update_guard,
+                        candidate,
+                        ignore,
+                        version_inference: Some(VersionInferenceState {
+                            status: "ready".to_string(),
+                            reason: None,
+                            checked_at: None,
+                        }),
+                        new_version_discovery_count: None,
+                        settings: ServiceSettings {
+                            auto_rollback: row.get::<_, i64>(17)? != 0,
+                            backup_targets: crate::api::types::BackupTargetOverrides {
+                                bind_paths,
+                                volume_names,
+                            },
+                            repo_url: row.get(20)?,
+                        },
+                        archived: Some(row.get::<_, i64>(23)? != 0),
+                    },
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list homepage nav services")
+    }
+
     pub async fn insert_stack(
         &self,
         stack: &StackRecord,

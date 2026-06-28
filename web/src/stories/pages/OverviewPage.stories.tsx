@@ -1,8 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react";
 import { OverviewPage } from "../../pages/OverviewPage";
 import type {
-  HomepageNavSnapshot,
-  HomepageResourceSummarySnapshot,
+  HomepageSnapshotV2,
 } from "../../pages/homepageSnapshot";
 import { PageHarness } from "../mocks/PageHarness";
 import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
@@ -267,52 +266,14 @@ function findCardByText(canvasElement: HTMLElement, text: string) {
   );
 }
 
-function cachedNavSnapshot(generatedAt = new Date().toISOString()): HomepageNavSnapshot {
+function cachedHomepageSnapshot(
+  generatedAt = new Date().toISOString(),
+): HomepageSnapshotV2 {
   return {
-    version: 1,
+    version: 2,
     generatedAt,
-    cards: [
-      {
-        id: "cached-acme-api",
-        stackId: "stack-prod",
-        stackName: "prod",
-        serviceId: "svc-prod-api",
-        serviceName: "api",
-        imageRef: "ghcr.io/acme/api:5.2.1",
-        groupName: "Cached Brain",
-        title: "Cached Acme API",
-        description: "Cached API gateway",
-        href: "https://cached-api.example.com",
-        icon: "si-github",
-        status: "updatable",
-        isDockrev: false,
-      },
-      {
-        id: "cached-prom",
-        stackId: "stack-infra",
-        stackName: "infra",
-        serviceId: "svc-infra-prom",
-        serviceName: "prometheus",
-        imageRef: "quay.io/prometheus/prometheus:v2.52.0",
-        groupName: "Cached Tools",
-        title: "Cached Prometheus",
-        description: "Cached metrics",
-        href: "https://cached-metrics.example.com",
-        icon: "prometheus.svg",
-        status: "ok",
-        isDockrev: false,
-      },
-    ],
-  };
-}
-
-function cachedResourceSnapshot(
-  generatedAt = new Date(Date.now() - 10 * 60 * 1000).toISOString(),
-): HomepageResourceSummarySnapshot {
-  return {
-    version: 1,
-    generatedAt,
-    overview: {
+    lastCheckAt: "2026-01-18T06:10:00.000Z",
+    resourceSummary: {
       enabled: true,
       window: "1h",
       generatedAt,
@@ -331,6 +292,100 @@ function cachedResourceSnapshot(
         },
       ],
     },
+    cards: [
+      {
+        id: "cached-acme-api",
+        stackId: "stack-prod",
+        stackName: "prod",
+        serviceId: "svc-prod-api",
+        serviceName: "api",
+        imageRef: "ghcr.io/acme/api:5.2.1",
+        groupName: "Cached Brain",
+        title: "Cached Acme API",
+        description: "Cached API gateway",
+        href: "https://cached-api.example.com",
+        icon: "si-github",
+        status: "updatable",
+        isDockrev: false,
+        service: {
+          id: "svc-prod-api",
+          name: "api",
+          image: {
+            ref: "ghcr.io/acme/api:5.2.1",
+            tag: "5.2.1",
+            digest: "sha256:cached-api",
+            resolvedTag: "5.2.1",
+            resolvedTags: ["5.2.1"],
+          },
+          homepage: {
+            group: "Cached Brain",
+            name: "Cached Acme API",
+            icon: "si-github",
+            href: "https://cached-api.example.com",
+            description: "Cached API gateway",
+          },
+          candidate: {
+            tag: "5.2.3",
+            resolvedTag: "5.2.3",
+            digest: "sha256:cached-candidate",
+            archMatch: "match",
+            arch: ["linux/amd64"],
+          },
+          ignore: null,
+          versionInference: { status: "ready", reason: null, checkedAt: null },
+          newVersionDiscoveryCount: 1,
+          settings: {
+            autoRollback: true,
+            backupTargets: { bindPaths: {}, volumeNames: {} },
+            repoUrl: null,
+          },
+          archived: false,
+        },
+      },
+      {
+        id: "cached-prom",
+        stackId: "stack-infra",
+        stackName: "infra",
+        serviceId: "svc-infra-prom",
+        serviceName: "prometheus",
+        imageRef: "quay.io/prometheus/prometheus:v2.52.0",
+        groupName: "Cached Tools",
+        title: "Cached Prometheus",
+        description: "Cached metrics",
+        href: "https://cached-metrics.example.com",
+        icon: "prometheus.svg",
+        status: "ok",
+        isDockrev: false,
+        service: {
+          id: "svc-infra-prom",
+          name: "prometheus",
+          image: {
+            ref: "quay.io/prometheus/prometheus:v2.52.0",
+            tag: "v2.52.0",
+            digest: "sha256:cached-prom",
+            resolvedTag: "v2.52.0",
+            resolvedTags: ["v2.52.0"],
+          },
+          homepage: {
+            group: "Cached Tools",
+            name: "Cached Prometheus",
+            icon: "prometheus.svg",
+            href: "https://cached-metrics.example.com",
+            description: "Cached metrics",
+          },
+          candidate: null,
+          ignore: null,
+          versionInference: { status: "ready", reason: null, checkedAt: null },
+          newVersionDiscoveryCount: null,
+          settings: {
+            autoRollback: true,
+            backupTargets: { bindPaths: {}, volumeNames: {} },
+            repoUrl: null,
+          },
+          archived: false,
+        },
+      },
+    ],
   };
 }
 
@@ -484,8 +539,7 @@ export const Default: Story = {
 export const CachedInstantNavigation: Story = {
   parameters: {
     dockrevApiScenario: "overview-homepage-slow-refresh",
-    dockrevHomepageNavSnapshot: cachedNavSnapshot(),
-    dockrevHomepageResourceSummarySnapshot: cachedResourceSnapshot(),
+    dockrevHomepageSnapshot: cachedHomepageSnapshot(),
     dockrevServiceOverridesById: defaultHomepageOverrides(),
   },
   render: renderOverview(),
@@ -494,7 +548,7 @@ export const CachedInstantNavigation: Story = {
 
     expectStory(
       findCardByText(canvasElement, "Cached Acme API"),
-      "cached launcher card should be visible before slow stack details return",
+      "cached launcher card should be visible before the slow homepage payload returns",
     );
     expectStory(
       desktopTopMetricValue(canvasElement, "CPU") === "42%",
@@ -866,21 +920,30 @@ export const MetricsUnavailable: Story = {
   parameters: {
     dockrevApiScenario: "overview-resource-monitor-error",
     dockrevServiceOverridesById: defaultHomepageOverrides(),
+    dockrevHomepageSnapshot: cachedHomepageSnapshot(),
   },
   render: renderOverview(),
   play: async ({ canvasElement }) => {
-    await sleep(260);
+    await sleep(80);
 
     expectStory(
-      canvasElement.textContent?.includes("资源指标暂不可用"),
-      "expected resource overview fetch failures to be visible",
+      findCardByText(canvasElement, "Cached Acme API"),
+      "homepage should keep cached cards visible when the single nav payload fails",
+    );
+    expectStory(
+      desktopTopMetricValue(canvasElement, "CPU") === "42%",
+      "homepage should keep cached resource summary visible when the single nav payload fails",
+    );
+    expectStory(
+      canvasElement.textContent?.includes("首页导航刷新失败，保留旧快照"),
+      "expected homepage refresh failure to disclose the cached fallback path",
     );
     const badges = Array.from(
       canvasElement.querySelectorAll<HTMLElement>(".homepageServiceStateBadge"),
     );
     expectStory(
       badges.some((badge) => badge.textContent?.includes("NO DATA")),
-      "expected metric fetch failures to degrade cards to NO DATA instead of HEALTHY",
+      "expected cached metric state to remain stable instead of collapsing the card grid",
     );
   },
 };

@@ -119,6 +119,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/services/resource-usage/overview",
             get(get_service_resource_usage_overview),
         )
+        .route("/api/homepage/nav", get(get_homepage_nav))
         .route(
             "/api/services/{service_id}/resource-usage/events",
             get(service_resource_usage_events),
