@@ -287,17 +287,30 @@ function parseLegacyNavSnapshot(value: unknown): LegacyHomepageNavSnapshot | nul
     if (!isRecord(entry)) return null;
     const status = asString(entry.status);
     if (!status || !ROW_STATUSES.has(status as RowStatus)) return null;
+    const required = {
+      id: asString(entry.id),
+      stackId: asString(entry.stackId),
+      stackName: asString(entry.stackName),
+      serviceId: asString(entry.serviceId),
+      serviceName: asString(entry.serviceName),
+      imageRef: asString(entry.imageRef),
+      groupName: asString(entry.groupName),
+      title: asString(entry.title),
+      description: asString(entry.description),
+      href: asString(entry.href),
+    };
+    if (Object.values(required).some((item) => item == null)) return null;
     return {
-      id: asString(entry.id) ?? "",
-      stackId: asString(entry.stackId) ?? "",
-      stackName: asString(entry.stackName) ?? "",
-      serviceId: asString(entry.serviceId) ?? "",
-      serviceName: asString(entry.serviceName) ?? "",
-      imageRef: asString(entry.imageRef) ?? "",
-      groupName: asString(entry.groupName) ?? "",
-      title: asString(entry.title) ?? "",
-      description: asString(entry.description) ?? "",
-      href: asString(entry.href) ?? "",
+      id: required.id ?? "",
+      stackId: required.stackId ?? "",
+      stackName: required.stackName ?? "",
+      serviceId: required.serviceId ?? "",
+      serviceName: required.serviceName ?? "",
+      imageRef: required.imageRef ?? "",
+      groupName: required.groupName ?? "",
+      title: required.title ?? "",
+      description: required.description ?? "",
+      href: required.href ?? "",
       icon: asOptionalString(entry.icon),
       status: status as RowStatus,
       isDockrev: Boolean(entry.isDockrev),

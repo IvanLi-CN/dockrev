@@ -194,6 +194,7 @@ ON CONFLICT(service_id) DO UPDATE SET
   prev_sampled_at = excluded.prev_sampled_at,
   prev_net_rx_bytes = excluded.prev_net_rx_bytes,
   prev_net_tx_bytes = excluded.prev_net_tx_bytes
+WHERE excluded.sampled_at >= service_resource_latest_samples.sampled_at
 "#,
                     params![
                         row.service_id,

@@ -188,4 +188,33 @@ describe('homepage snapshot cache', () => {
     expect(snapshot?.cards[0]?.title).toBe('Acme API')
     expect(storage.getItem(HOMEPAGE_SNAPSHOT_KEY)).not.toBeNull()
   })
+
+  test('drops corrupt legacy nav snapshots instead of migrating blank cards', () => {
+    const storage = new MemoryStorage()
+    storage.setItem(
+      HOMEPAGE_NAV_SNAPSHOT_KEY,
+      JSON.stringify({
+        version: 1,
+        generatedAt: '2026-05-07T00:00:00.000Z',
+        cards: [
+          {
+            id: 'svc-api',
+            stackId: 'stack-prod',
+            stackName: 'prod',
+            serviceId: 'svc-api',
+            serviceName: 'api',
+            imageRef: 'ghcr.io/acme/api:5.2.1',
+            groupName: 'Brain',
+            title: 'Acme API',
+            description: 'API gateway',
+            status: 'updatable',
+            isDockrev: false,
+          },
+        ],
+      }),
+    )
+
+    expect(readHomepageSnapshot(storage)).toBeNull()
+    expect(storage.getItem(HOMEPAGE_SNAPSHOT_KEY)).toBeNull()
+  })
 })

@@ -1005,6 +1005,91 @@ services:
 }
 
 #[tokio::test]
+async fn resource_usage_overview_ignores_out_of_order_older_latest_write() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-resource-out-of-order-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: nginx:1.27
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let web_id = services[0].id.clone();
+
+    state
+        .db
+        .insert_service_resource_samples(&[
+            crate::db::ServiceResourceSampleInput {
+                service_id: web_id.clone(),
+                sampled_at: test_offset_from_now_rfc3339(time::Duration::seconds(-20)),
+                cpu_percent: 10.0,
+                mem_used_bytes: Some(100),
+                mem_limit_bytes: Some(200),
+                net_rx_bytes: Some(1_000),
+                net_tx_bytes: Some(2_000),
+                block_read_bytes: None,
+                block_write_bytes: None,
+                pids: Some(2),
+                container_count: 1,
+            },
+            crate::db::ServiceResourceSampleInput {
+                service_id: web_id.clone(),
+                sampled_at: test_offset_from_now_rfc3339(time::Duration::seconds(-10)),
+                cpu_percent: 12.5,
+                mem_used_bytes: Some(120),
+                mem_limit_bytes: Some(200),
+                net_rx_bytes: Some(2_000),
+                net_tx_bytes: Some(4_000),
+                block_read_bytes: None,
+                block_write_bytes: None,
+                pids: Some(3),
+                container_count: 1,
+            },
+            crate::db::ServiceResourceSampleInput {
+                service_id: web_id.clone(),
+                sampled_at: test_offset_from_now_rfc3339(time::Duration::seconds(-30)),
+                cpu_percent: 6.0,
+                mem_used_bytes: Some(60),
+                mem_limit_bytes: Some(200),
+                net_rx_bytes: Some(500),
+                net_tx_bytes: Some(800),
+                block_read_bytes: None,
+                block_write_bytes: None,
+                pids: Some(1),
+                container_count: 1,
+            },
+        ])
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/services/resource-usage/overview?window=1h")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let payload = response_json(resp).await;
+    let web = &payload["services"].as_array().unwrap()[0];
+    assert_eq!(web["serviceId"].as_str(), Some(web_id.as_str()));
+    assert_eq!(web["cpuPercent"].as_f64(), Some(12.5));
+    assert_eq!(web["sampleCount"].as_u64(), Some(2));
+    let net_rx = web["netRxRateBps"].as_f64().unwrap();
+    assert!((net_rx - 100.0).abs() < 0.01, "unexpected net rx rate: {net_rx}");
+}
+
+#[tokio::test]
 async fn resource_usage_overview_degrades_when_monitor_disabled() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());
