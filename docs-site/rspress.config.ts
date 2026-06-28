@@ -14,7 +14,23 @@ export default defineConfig({
   base: docsBase,
   title: 'Dockrev Documentation',
   description: 'Dockrev deployment, operations, and API reference documentation.',
+  icon: '/favicon.svg',
+  logo: '/dockrev-logo.svg',
+  logoText: '',
   lang: 'zh',
+  head: [
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],
+    ['link', { rel: 'icon', type: 'image/png', href: '/favicon.png' }],
+    ['link', { rel: 'icon', href: '/favicon.ico', sizes: 'any' }],
+    ['link', { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' }],
+    ['meta', { property: 'og:title', content: 'Dockrev' }],
+    ['meta', { property: 'og:description', content: 'Self-hosted Docker/Compose update manager' }],
+    ['meta', { property: 'og:image', content: '/dockrev-social-preview.png' }],
+    ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
+    ['meta', { name: 'twitter:title', content: 'Dockrev' }],
+    ['meta', { name: 'twitter:description', content: 'Self-hosted Docker/Compose update manager' }],
+    ['meta', { name: 'twitter:image', content: '/dockrev-social-preview.png' }]
+  ],
   themeConfig: {
     search: true,
     nav: [
