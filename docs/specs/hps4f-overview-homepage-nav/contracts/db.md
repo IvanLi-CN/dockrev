@@ -50,6 +50,7 @@ Indexes:
 Rules:
 
 - The resource sampler must update this table in the same write transaction that appends to `service_resource_samples`.
+- Schema migration must backfill this table from each service's latest historical samples so upgraded databases keep existing homepage/overview metrics before the next live sample arrives.
 - `prev_*` columns capture the previously latest network counters so requests can compute RX/TX rates without reading the historical table.
 - Rows are one-per-service and are deleted automatically when the service row is deleted.
 - Historical retention and pruning still apply only to `service_resource_samples`; this table is the small read model optimized for homepage/opening-path queries.
