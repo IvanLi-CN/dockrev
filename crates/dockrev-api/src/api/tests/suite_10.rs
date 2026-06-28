@@ -1266,10 +1266,14 @@ services:
     assert!(payload["generatedAt"].as_str().is_some());
     assert!(payload["lastCheckAt"].as_str().is_some());
     assert_eq!(payload["resourceSummary"]["enabled"].as_bool(), Some(true));
-    assert_eq!(
-        payload["resourceSummary"]["services"][0]["sampleCount"].as_u64(),
-        Some(2)
-    );
+    let summary_services = payload["resourceSummary"]["services"]
+        .as_array()
+        .unwrap();
+    let summary_api = summary_services
+        .iter()
+        .find(|row| row["serviceId"].as_str() == Some(api_service.id.as_str()))
+        .unwrap();
+    assert_eq!(summary_api["sampleCount"].as_u64(), Some(2));
     assert_eq!(payload["items"].as_array().unwrap().len(), 1);
     let item = &payload["items"].as_array().unwrap()[0];
     assert_eq!(item["serviceName"].as_str(), Some("api"));
