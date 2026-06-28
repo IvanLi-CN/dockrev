@@ -190,10 +190,24 @@
   - before/after 请求瀑布
   - 缓存 reload 期间网格连续可见
   - 图标失败 fallback 稳定
-- 本地 Storybook 收口证据（source_type=storybook_canvas）：
-  - `pages-overviewpage--cached-instant-navigation`
-    - 证明点：慢 live payload 返回前，缓存卡片与缓存资源摘要已可见；页面不先掉成空态。
-    - 资产：![Cached-first homepage proof](./assets/overview-homepage-cached-first-proof.png)
-  - `pages-overviewpage--cold-start-skeleton`
-    - 证明点：无缓存冷启动时，首页先显示稳定 skeleton，而不是误导性空列表；live 完成后再进入真实卡片态。
-    - 资产：![Cold-start skeleton proof](./assets/overview-homepage-cold-start-skeleton-proof.png)
+- source_type: storybook_canvas
+  target_program: mock-only
+  capture_scope: element
+  story_id_or_title: Pages/OverviewPage/CachedInstantNavigation
+  state: cached-instant-navigation
+  evidence_note: 慢 live payload 返回前，缓存卡片与缓存资源摘要已可见；页面不先掉成空态。
+  PR: include
+  PR caption: 缓存首显期间首页卡片和资源摘要保持连续可见，不再先掉成空态或 partial live 子集。
+  image:
+  ![Cached-first homepage proof](./assets/overview-homepage-cached-first-proof.png)
+
+- source_type: storybook_canvas
+  target_program: mock-only
+  capture_scope: element
+  story_id_or_title: Pages/OverviewPage/ColdStartSkeleton
+  state: cold-start-skeleton
+  evidence_note: 无缓存冷启动时，首页先显示稳定 skeleton，而不是误导性空列表；live 完成后再进入真实卡片态。
+  PR: include
+  PR caption: 无缓存冷启动时首页先显示稳定 skeleton，避免误导性空列表与整页抖动。
+  image:
+  ![Cold-start skeleton proof](./assets/overview-homepage-cold-start-skeleton-proof.png)
