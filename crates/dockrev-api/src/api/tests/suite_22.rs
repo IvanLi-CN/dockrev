@@ -268,6 +268,89 @@ services:
 }
 
 #[tokio::test]
+async fn get_service_backup_records_keeps_service_scope_noop_updates() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let compose_dir = format!("/tmp/dockrev-backup-records-noop-{}", ulid::Ulid::new());
+    std::fs::create_dir_all(compose_dir.clone()).unwrap();
+    let compose_path = format!("{compose_dir}/compose.yml");
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  api:
+    image: ghcr.io/acme/api:1.0
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "noop", &compose_path).await;
+    let api_id = service_id_by_name(&state, &stack_id, "api").await;
+    let now = test_now_rfc3339();
+
+    insert_update_job_with_summary(
+        &state,
+        "job-noop",
+        crate::api::types::JobScope::Service,
+        Some(&stack_id),
+        Some(&api_id),
+        json!({
+            "stacks": [{
+                "stackId": stack_id,
+                "backup": {
+                    "status": "success",
+                    "targets": [{
+                        "target": { "kind": "bind-mount", "path": "/srv/data" },
+                        "status": "included",
+                        "policy": "live_backup",
+                        "sizeBytes": 128
+                    }]
+                },
+                "update": {
+                    "changedServices": 0,
+                    "oldDigests": {},
+                    "newDigests": {},
+                    "finalDigests": {}
+                }
+            }]
+        }),
+        &now,
+    )
+    .await;
+    insert_backup_record(
+        &state,
+        "bkp-noop",
+        &stack_id,
+        "job-noop",
+        &now,
+        "success",
+        Some("/tmp/noop.tar.gz"),
+        Some(128),
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{api_id}/backup-records"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    let records = body["records"].as_array().unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["backupId"].as_str(), Some("bkp-noop"));
+    assert_eq!(records[0]["scope"].as_str(), Some("service"));
+    assert_eq!(records[0]["assets"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn get_service_backup_records_excludes_other_stack_backups_from_shared_all_scope_jobs()
 {
     let state = test_state(":memory:").await;
