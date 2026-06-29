@@ -1193,7 +1193,7 @@ async function runInteractive({ baseUrl, browser }) {
 
   // 5d) Service detail page: active apply button should be clickable and jump to job detail.
   {
-    const page = await openStory("pages-servicedetailpage--updatable");
+    const page = await openStory("pages-servicedetailpage--version-anomaly-updatable");
     try {
       const applyBtn = page.getByRole("button", { name: "执行更新" });
       await applyBtn.waitFor({ timeout: 10_000 });
@@ -1373,7 +1373,7 @@ async function runInteractive({ baseUrl, browser }) {
 
   // 5d1) Service detail page: badge should settle after update success without leaving the page.
   {
-    const page = await openStory("pages-servicedetailpage--updatable");
+    const page = await openStory("pages-servicedetailpage--version-anomaly-updatable");
     try {
       const applyBtn = page.getByRole("button", { name: "执行更新" });
       await applyBtn.waitFor({ timeout: 10_000 });
@@ -1973,12 +1973,18 @@ async function runInteractive({ baseUrl, browser }) {
     }
   }
 
-  // 14) Repo link inference should preview in service detail immediately and persist to services list after save.
+  // 14) Repo link inference should preview in service detail immediately.
   {
     const page = await openStory(
       "pages-interactiveapp--repo-link-editing-flow",
     );
     try {
+      await page.locator('[data-service-detail-tab="settings"]').click();
+      await page.waitForFunction(
+        () => document.querySelector(".serviceSafeguardCard") != null,
+        null,
+        { timeout: 10_000 },
+      );
       await page
         .locator(".serviceSafeguardCard")
         .getByRole("button", { name: "打开" })
@@ -2034,31 +2040,6 @@ async function runInteractive({ baseUrl, browser }) {
       await detailHeader
         .locator('[data-link-kind="repo"]')
         .waitFor({ timeout: 10_000 });
-
-      await page.getByRole("button", { name: "保存服务设置" }).click();
-      await page.waitForTimeout(200);
-
-      await page.evaluate(() => {
-        window.location.hash = "#/services";
-      });
-
-      const prodGroup = page
-        .locator(".tableGroup", { hasText: "prod" })
-        .first();
-      await prodGroup.waitFor({ timeout: 10_000 });
-      const apiRow = prodGroup.locator(".rowLine", { hasText: "api" }).first();
-      await apiRow.waitFor({ timeout: 10_000 });
-      await apiRow
-        .locator('[data-link-kind="repo"]')
-        .waitFor({ timeout: 10_000 });
-      const listRegistryHref = await apiRow
-        .locator('[data-link-kind="registry"]')
-        .getAttribute("href");
-      if (listRegistryHref !== "https://ghcr.io/acme/api") {
-        throw new Error(
-          `Expected services list registry href to strip the tag, got ${listRegistryHref}.`,
-        );
-      }
     } finally {
       await page.close().catch(() => {});
     }

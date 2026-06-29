@@ -1,5 +1,14 @@
+fn digest_map(entries: &[(&str, &str)]) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    for (key, value) in entries {
+        map.insert((*key).to_string(), serde_json::Value::String((*value).to_string()));
+    }
+    serde_json::Value::Object(map)
+}
+
 #[tokio::test]
-async fn get_service_backup_records_returns_related_service_scope_stack_scope_and_all_scope_rows() {
+async fn get_service_backup_records_returns_related_service_scope_stack_scope_and_all_scope_rows()
+{
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());
     let compose_dir = format!("/tmp/dockrev-backup-records-{}", ulid::Ulid::new());
@@ -22,6 +31,7 @@ services:
 "#,
     )
     .unwrap();
+
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
     let api_id = service_id_by_name(&state, &stack_id, "api").await;
     let web_id = service_id_by_name(&state, &stack_id, "web").await;
@@ -38,21 +48,26 @@ services:
         Some(&stack_id),
         Some(&api_id),
         json!({
-            "targets": [{ "serviceId": api_id, "from": "1.0", "to": "1.1" }],
             "stacks": [{
-              "stackId": stack_id,
-              "backup": {
-                "status": "success",
-                "artifactPath": "/tmp/api.tar.gz",
-                "sizeBytes": 1500,
-                "targets": [{
-                  "target": { "kind": "bind-mount", "path": "/srv/data" },
-                  "status": "included",
-                  "sizeBytes": 1500,
-                  "policy": "live_backup",
-                  "relatedServices": ["api", "web"]
-                }]
-              }
+                "stackId": stack_id,
+                "backup": {
+                    "status": "success",
+                    "artifactPath": "/tmp/api.tar.gz",
+                    "sizeBytes": 1500,
+                    "targets": [{
+                        "target": { "kind": "bind-mount", "path": "/srv/data" },
+                        "status": "included",
+                        "sizeBytes": 1500,
+                        "policy": "live_backup",
+                        "relatedServices": ["api", "web"]
+                    }]
+                },
+                "update": {
+                    "changedServices": 1,
+                    "oldDigests": digest_map(&[(api_id.as_str(), "ghcr.io/acme/api:1.0")]),
+                    "newDigests": digest_map(&[(api_id.as_str(), "ghcr.io/acme/api:1.1")]),
+                    "finalDigests": digest_map(&[(api_id.as_str(), "ghcr.io/acme/api:1.1")])
+                }
             }]
         }),
         &now,
@@ -80,22 +95,33 @@ services:
         Some(&stack_id),
         None,
         json!({
-            "targets": [
-              { "serviceId": api_id, "from": "1.0", "to": "1.1" },
-              { "serviceId": web_id, "from": "1.0", "to": "1.1" }
-            ],
             "stacks": [{
-              "stackId": stack_id,
-              "backup": {
-                "status": "skipped",
-                "reason": "no_included_targets",
-                "targets": [{
-                  "target": { "kind": "bind-mount", "path": "/srv/data" },
-                  "status": "skipped",
-                  "reason": "skipped_by_size",
-                  "sizeBytes": 2048
-                }]
-              }
+                "stackId": stack_id,
+                "backup": {
+                    "status": "skipped",
+                    "reason": "no_included_targets",
+                    "targets": [{
+                        "target": { "kind": "bind-mount", "path": "/srv/data" },
+                        "status": "skipped",
+                        "reason": "skipped_by_size",
+                        "sizeBytes": 2048
+                    }]
+                },
+                "update": {
+                    "changedServices": 2,
+                    "oldDigests": digest_map(&[
+                        (api_id.as_str(), "ghcr.io/acme/api:1.0"),
+                        (web_id.as_str(), "ghcr.io/acme/web:1.0"),
+                    ]),
+                    "newDigests": digest_map(&[
+                        (api_id.as_str(), "ghcr.io/acme/api:1.1"),
+                        (web_id.as_str(), "ghcr.io/acme/web:1.1"),
+                    ]),
+                    "finalDigests": digest_map(&[
+                        (api_id.as_str(), "ghcr.io/acme/api:1.1"),
+                        (web_id.as_str(), "ghcr.io/acme/web:1.1"),
+                    ])
+                }
             }]
         }),
         &older,
@@ -123,21 +149,32 @@ services:
         None,
         None,
         json!({
-            "targets": [
-              { "serviceId": api_id, "from": "1.0", "to": "1.1" },
-              { "serviceId": other_id, "from": "1.0", "to": "1.1" }
-            ],
             "stacks": [{
-              "stackId": stack_id,
-              "backup": {
-                "status": "failed",
-                "error": "archive failed",
-                "targets": [{
-                  "target": { "kind": "docker-volume", "name": "api-data" },
-                  "status": "skipped",
-                  "reason": "skipped_by_probe_error"
-                }]
-              }
+                "stackId": stack_id,
+                "backup": {
+                    "status": "failed",
+                    "error": "archive failed",
+                    "targets": [{
+                        "target": { "kind": "docker-volume", "name": "api-data" },
+                        "status": "skipped",
+                        "reason": "skipped_by_probe_error"
+                    }]
+                },
+                "rollback": {
+                    "changedServices": 2,
+                    "oldDigests": digest_map(&[
+                        (api_id.as_str(), "ghcr.io/acme/api:1.1"),
+                        (other_id.as_str(), "ghcr.io/acme/other:1.0"),
+                    ]),
+                    "newDigests": digest_map(&[
+                        (api_id.as_str(), "ghcr.io/acme/api:1.0"),
+                        (other_id.as_str(), "ghcr.io/acme/other:1.1"),
+                    ]),
+                    "finalDigests": digest_map(&[
+                        (api_id.as_str(), "ghcr.io/acme/api:1.0"),
+                        (other_id.as_str(), "ghcr.io/acme/other:1.1"),
+                    ])
+                }
             }]
         }),
         &oldest,
@@ -165,10 +202,18 @@ services:
         Some(&stack_id),
         Some(&other_id),
         json!({
-            "targets": [{ "serviceId": other_id, "from": "1.0", "to": "1.1" }],
             "stacks": [{
-              "stackId": stack_id,
-              "backup": { "status": "success", "targets": [] }
+                "stackId": stack_id,
+                "backup": {
+                    "status": "success",
+                    "targets": []
+                },
+                "update": {
+                    "changedServices": 1,
+                    "oldDigests": digest_map(&[(other_id.as_str(), "ghcr.io/acme/other:1.0")]),
+                    "newDigests": digest_map(&[(other_id.as_str(), "ghcr.io/acme/other:1.1")]),
+                    "finalDigests": digest_map(&[(other_id.as_str(), "ghcr.io/acme/other:1.1")])
+                }
             }]
         }),
         &oldest,
@@ -223,7 +268,8 @@ services:
 }
 
 #[tokio::test]
-async fn get_service_backup_records_excludes_other_stack_backups_from_shared_all_scope_jobs() {
+async fn get_service_backup_records_excludes_other_stack_backups_from_shared_all_scope_jobs()
+{
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());
 
@@ -265,35 +311,43 @@ services:
         None,
         None,
         json!({
-            "targets": [
-              { "serviceId": api_id, "from": "1.0", "to": "1.1" },
-              { "serviceId": worker_id, "from": "1.0", "to": "1.1" }
-            ],
             "stacks": [
-              {
-                "stackId": stack_a_id,
-                "backup": {
-                  "status": "success",
-                  "targets": [{
-                    "target": { "kind": "bind-mount", "path": "/srv/api-data" },
-                    "status": "included",
-                    "policy": "live_backup",
-                    "sizeBytes": 512
-                  }]
+                {
+                    "stackId": stack_a_id,
+                    "backup": {
+                        "status": "success",
+                        "targets": [{
+                            "target": { "kind": "bind-mount", "path": "/srv/api-data" },
+                            "status": "included",
+                            "policy": "live_backup",
+                            "sizeBytes": 512
+                        }]
+                    },
+                    "update": {
+                        "changedServices": 1,
+                        "oldDigests": digest_map(&[(api_id.as_str(), "ghcr.io/acme/api:1.0")]),
+                        "newDigests": digest_map(&[(api_id.as_str(), "ghcr.io/acme/api:1.1")]),
+                        "finalDigests": digest_map(&[(api_id.as_str(), "ghcr.io/acme/api:1.1")])
+                    }
+                },
+                {
+                    "stackId": stack_b_id,
+                    "backup": {
+                        "status": "success",
+                        "targets": [{
+                            "target": { "kind": "bind-mount", "path": "/srv/worker-data" },
+                            "status": "included",
+                            "policy": "live_backup",
+                            "sizeBytes": 2048
+                        }]
+                    },
+                    "update": {
+                        "changedServices": 1,
+                        "oldDigests": digest_map(&[(worker_id.as_str(), "ghcr.io/acme/worker:1.0")]),
+                        "newDigests": digest_map(&[(worker_id.as_str(), "ghcr.io/acme/worker:1.1")]),
+                        "finalDigests": digest_map(&[(worker_id.as_str(), "ghcr.io/acme/worker:1.1")])
+                    }
                 }
-              },
-              {
-                "stackId": stack_b_id,
-                "backup": {
-                  "status": "success",
-                  "targets": [{
-                    "target": { "kind": "bind-mount", "path": "/srv/worker-data" },
-                    "status": "included",
-                    "policy": "live_backup",
-                    "sizeBytes": 2048
-                  }]
-                }
-              }
             ]
         }),
         &now,
