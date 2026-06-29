@@ -272,10 +272,8 @@ html[data-theme='light'] .brandLogoForLight {
 
 .jobProgress {
   margin-top: 12px;
-  padding: 12px;
-  border: 1px solid var(--borderColor);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--panel) 88%, var(--panel2) 12%);
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
 }
 
 .jobProgressHeader {
@@ -5392,7 +5390,9 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .jobResultReason {
-  margin-top: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
 }
 
 .autoPolicyEditor {
@@ -8014,7 +8014,6 @@ html[data-theme='light'] .btnPrimary {
   top: calc(var(--dockrev-table-group-head-height) + var(--dockrev-table-group-gap));
 }
 
-.jobProgress,
 .versionInferenceProgressBar,
 .queueProgressLayers {
   border-radius: 12px;

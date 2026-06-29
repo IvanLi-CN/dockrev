@@ -171,6 +171,7 @@
 - `空白裁剪=无需裁剪`
 - `聊天回图=已展示`
 - `证据落盘=已落盘`
+- `去嵌套卡片=已修正`
 
 - `source_type=storybook_canvas` · `target_program=mock-only` · `capture_scope=element` · `story_id_or_title=Pages/QueuePage / ResultReasonRollback`
   - `requested_viewport=1600x1100`
@@ -188,7 +189,7 @@
   - `submission_gate=pending-owner-approval`
   - `state`: detail two-line reason block
   - `evidence_note`: 验证任务详情页在进度区下方增加两行预算的“结果原因”区块，并保留终态进度与日志上下文。
-  ![任务详情页中的结果原因区块](./assets/job-detail-result-reason.png)
+  ![任务详情页中的结果原因区块](./assets/job-detail-result-reason-flat-v2.png)
 
 - `source_type=storybook_canvas` · `target_program=mock-only` · `capture_scope=element` · `story_id_or_title=Components/TaskResultReason / QueueSingleLine`
   - `requested_viewport=980x780`

@@ -440,7 +440,6 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
                 updated <Mono>{formatShort(progress.updatedAt)}</Mono>
               </span>
             </div>
-            <TaskResultReason reason={job?.resultReason} lines={2} className="jobResultReason" label="结果原因" />
           </div>
         ) : job?.status === 'running' ? (
           <div className="jobProgress">
@@ -466,7 +465,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
           </div>
         ) : null}
 
-        {!progress && job?.status !== 'running' ? (
+        {job?.status !== 'running' ? (
           <TaskResultReason reason={job?.resultReason} lines={2} className="jobResultReason" label="结果原因" />
         ) : null}
 

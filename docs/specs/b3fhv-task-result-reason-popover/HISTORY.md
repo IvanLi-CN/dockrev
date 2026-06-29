@@ -6,6 +6,7 @@
 
 - 2026-06-29: 新建本 spec，冻结“API 统一派生 resultReason + queue/detail/recent updates 共用摘要与气泡详情”的范围与验收口径。
 - 2026-06-29: 实现 `resultReason` API 派生器、共享前端展示组件与 Storybook 视觉证据；补上 multi-stack 终态失败时优先选择失败 stack summary 的派生规则。
+- 2026-06-29: 追加 JobDetailPage 扁平化修正，去掉进度区内层卡片壳，使结果原因与进度成为同级 section。
 
 ## Key Reasons / Replacements
 
