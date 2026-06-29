@@ -1,5 +1,6 @@
 import type { JobListItem, StackDetail } from '../api'
 import { Mono, Pill } from '../ui'
+import { TaskResultReason } from './TaskResultReason'
 
 function formatCompactDateTime(ts?: string | null): string {
   if (!ts) return '-'
@@ -96,6 +97,7 @@ export function RecentUpdateRecords(props: { jobs: JobListItem[] }) {
               <div className="muted">
                 {reasonLabel(job.reason)} · by <Mono>{job.createdBy}</Mono>
               </div>
+              <TaskResultReason reason={job.resultReason} lines={1} className="recentUpdateReason" />
             </div>
             <div className="recentUpdateTime">{formatCompactDateTime(job.finishedAt ?? job.startedAt ?? job.createdAt)}</div>
           </div>

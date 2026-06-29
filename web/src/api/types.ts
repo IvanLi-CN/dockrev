@@ -448,6 +448,13 @@ export type JobListItem = {
   backupMode: string
   summary: unknown
   progress?: JobProgress | null
+  resultReason?: JobResultReason | null
+}
+
+export type JobResultReason = {
+  summary: string
+  detail: string
+  raw?: string | null
 }
 
 export type JobLogLine = {

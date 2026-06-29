@@ -832,6 +832,15 @@ services:
         payload["job"]["progress"]["message"].as_str(),
         Some("update rolled back after healthcheck failure")
     );
+    assert_eq!(
+        payload["job"]["resultReason"]["summary"].as_str(),
+        Some("健康检查失败，已回滚")
+    );
+    assert_eq!(
+        payload["job"]["resultReason"]["detail"].as_str(),
+        Some("健康检查未通过，已停止本次变更并恢复到回滚前状态。")
+    );
+    assert!(payload["job"]["resultReason"]["raw"].is_null());
     let update = &payload["job"]["summary"]["stacks"][0]["update"];
     assert_eq!(update["failureStep"].as_str(), Some("healthcheck"));
     assert_eq!(
@@ -846,6 +855,33 @@ services:
     assert_eq!(
         update["rollback"]["toDigests"][service.id.as_str()].as_str(),
         Some("sha256:old")
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/jobs")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let jobs_payload = response_json(resp).await;
+    let queue_job = jobs_payload["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"].as_str() == Some(job_id.as_str()))
+        .expect("job missing from list");
+    assert_eq!(
+        queue_job["resultReason"]["summary"].as_str(),
+        Some("健康检查失败，已回滚")
+    );
+    assert_eq!(
+        queue_job["resultReason"]["detail"].as_str(),
+        Some("健康检查未通过，已停止本次变更并恢复到回滚前状态。")
     );
 }
 
@@ -1439,4 +1475,26 @@ async fn trigger_service_rollback_creates_rolled_back_job() {
     assert!(rollback["oldDigests"].is_object());
     assert!(rollback["newDigests"].is_object());
     assert!(rollback["finalDigests"].is_object());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/jobs/{job_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let payload = response_json(resp).await;
+    assert_eq!(
+        payload["job"]["resultReason"]["summary"].as_str(),
+        Some("回滚完成")
+    );
+    assert_eq!(
+        payload["job"]["resultReason"]["detail"].as_str(),
+        Some("rollback finished")
+    );
+    assert!(payload["job"]["resultReason"]["raw"].is_null());
 }

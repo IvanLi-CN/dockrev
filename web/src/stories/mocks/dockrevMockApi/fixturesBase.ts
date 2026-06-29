@@ -342,6 +342,10 @@ export function buildDashboardDemo(): Fixture {
     summary: {
       targets: [{ serviceId: serviceProdApi.id, from: '5.2.1', to: '5.2.3' }],
     },
+    resultReason: {
+      summary: '更新完成',
+      detail: '更新已完成，目标版本已应用。',
+    },
   } satisfies JobListItem
 
   const recentWebhookJob = {
@@ -360,6 +364,10 @@ export function buildDashboardDemo(): Fixture {
     backupMode: 'inherit',
     summary: {
       targets: [{ serviceId: serviceProdApi.id, from: '5.2.0', to: '5.2.2' }],
+    },
+    resultReason: {
+      summary: '更新完成',
+      detail: '更新已完成，目标版本已应用。',
     },
   } satisfies JobListItem
 
@@ -382,6 +390,11 @@ export function buildDashboardDemo(): Fixture {
         { serviceId: serviceProdApi.id, from: '5.1.9', to: '5.2.0' },
         { serviceId: serviceProdWeb.id, from: '5.1', to: '5.2' },
       ],
+    },
+    resultReason: {
+      summary: '任务执行失败',
+      detail: '任务执行失败，详情请参考原始输出。',
+      raw: 'task failed: exit status 1',
     },
   } satisfies JobListItem
 

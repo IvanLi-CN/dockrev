@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { getJob, newJobEventsSource, type JobDetail, type JobLogLine, type JobProgress } from '../api'
 import { formatJobMachineName, formatJobReadableDisplay } from '../jobDisplay'
+import { TaskResultReason } from '../components/TaskResultReason'
 import { navigate } from '../routes'
 import { Button, Chip, Mono, Pill } from '../ui'
 
@@ -439,6 +440,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
                 updated <Mono>{formatShort(progress.updatedAt)}</Mono>
               </span>
             </div>
+            <TaskResultReason reason={job?.resultReason} lines={2} className="jobResultReason" label="结果原因" />
           </div>
         ) : job?.status === 'running' ? (
           <div className="jobProgress">
@@ -462,6 +464,10 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
               <span>运行中，等待进度数据…</span>
             </div>
           </div>
+        ) : null}
+
+        {!progress && job?.status !== 'running' ? (
+          <TaskResultReason reason={job?.resultReason} lines={2} className="jobResultReason" label="结果原因" />
         ) : null}
 
         {error ? <div className="error">{error}</div> : null}

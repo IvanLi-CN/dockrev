@@ -97,6 +97,28 @@ export const ProgressSmoothing: Story = {
   },
 }
 
+export const ResultReasonRollback: Story = {
+  parameters: { dockrevApiScenario: 'queue-health-rollback' },
+  render: () => {
+    return (
+      <PageHarness
+        route={{ name: 'queue' }}
+        title="任务队列"
+        pageSubtitle="终态任务在元信息下方展示结果原因摘要，并支持展开完整详情"
+      >
+        {({ onTopActions }) => <QueuePage onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+  play: async ({ canvasElement }) => {
+    await sleep(120)
+    const text = canvasElement.textContent ?? ''
+    if (!text.includes('健康检查失败，已回滚')) {
+      throw new globalThis.Error('queue page should render rollback result reason summary')
+    }
+  },
+}
+
 export const Empty: Story = {
   parameters: { dockrevApiScenario: 'empty' },
   render: () => {
