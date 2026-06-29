@@ -1049,6 +1049,8 @@ async fn run_scan_inner(
                 image_tag: svc.image_tag.clone(),
                 homepage: svc.homepage.clone(),
                 update_guard: svc.update_guard.clone(),
+                backup_bind_paths: svc.backup_bind_paths.clone(),
+                backup_volume_names: svc.backup_volume_names.clone(),
             })
             .collect();
 

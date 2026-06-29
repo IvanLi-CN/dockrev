@@ -638,6 +638,8 @@ services:
                 image_tag: "5.3".to_string(),
                 homepage: None,
                 update_guard: None,
+                backup_bind_paths: Vec::new(),
+                backup_volume_names: Vec::new(),
             }],
             &synced_at,
         )
@@ -918,6 +920,8 @@ services:
                 image_tag: "latest".to_string(),
                 homepage: None,
                 update_guard: None,
+                backup_bind_paths: Vec::new(),
+                backup_volume_names: Vec::new(),
             }],
             &test_offset_rfc3339(&now, time::Duration::minutes(2)),
         )
@@ -1084,6 +1088,8 @@ services:
                 image_tag: "latest".to_string(),
                 homepage: None,
                 update_guard: None,
+                backup_bind_paths: Vec::new(),
+                backup_volume_names: Vec::new(),
             }],
             &test_offset_rfc3339(&now, time::Duration::minutes(2)),
         )

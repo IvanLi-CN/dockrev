@@ -630,6 +630,27 @@ CREATE INDEX IF NOT EXISTS idx_service_tag_history_service_last_used
     Ok(())
 }
 
+fn ensure_service_backup_target_policies_schema(conn: &rusqlite::Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"
+CREATE TABLE IF NOT EXISTS service_backup_target_policies (
+  service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  target_kind TEXT NOT NULL,
+  target_key TEXT NOT NULL,
+  policy TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (service_id, target_kind, target_key)
+);
+CREATE INDEX IF NOT EXISTS idx_service_backup_target_policies_service_id
+  ON service_backup_target_policies(service_id);
+CREATE INDEX IF NOT EXISTS idx_service_backup_target_policies_target_lookup
+  ON service_backup_target_policies(target_kind, target_key);
+"#,
+    )?;
+    Ok(())
+}
+
 fn ensure_schema_migrations_table(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         r#"
@@ -654,6 +675,7 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     ensure_discovery_schema(conn)?;
     ensure_auto_update_schema(conn)?;
     ensure_service_tag_history_schema(conn)?;
+    ensure_service_backup_target_policies_schema(conn)?;
     ensure_github_packages_repos_webhook_columns(conn)?;
     ensure_github_packages_deliveries_columns(conn)?;
     ensure_github_packages_delivery_events_schema(conn)?;
@@ -1082,6 +1104,20 @@ CREATE TABLE IF NOT EXISTS services (
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_services_stack_id ON services(stack_id);
+
+CREATE TABLE IF NOT EXISTS service_backup_target_policies (
+  service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  target_kind TEXT NOT NULL,
+  target_key TEXT NOT NULL,
+  policy TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (service_id, target_kind, target_key)
+);
+CREATE INDEX IF NOT EXISTS idx_service_backup_target_policies_service_id
+  ON service_backup_target_policies(service_id);
+CREATE INDEX IF NOT EXISTS idx_service_backup_target_policies_target_lookup
+  ON service_backup_target_policies(target_kind, target_key);
 
 CREATE TABLE IF NOT EXISTS discovered_compose_projects (
   project TEXT PRIMARY KEY NOT NULL,

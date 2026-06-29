@@ -196,6 +196,28 @@ pub enum TernaryChoice {
     Force,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BackupTargetPolicy {
+    Disabled,
+    StopRelatedServices,
+    LiveBackup,
+}
+
+impl BackupTargetPolicy {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::StopRelatedServices => "stop_related_services",
+            Self::LiveBackup => "live_backup",
+        }
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        !matches!(self, Self::Disabled)
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AutoUpdatePolicyMode {
@@ -320,4 +342,14 @@ pub enum BackupTarget {
     DockerVolume { name: String },
     #[serde(rename_all = "camelCase")]
     BindMount { path: String },
+}
+
+impl BackupTarget {
+    #[cfg(test)]
+    pub fn key(&self) -> &str {
+        match self {
+            Self::DockerVolume { name } => name,
+            Self::BindMount { path } => path,
+        }
+    }
 }

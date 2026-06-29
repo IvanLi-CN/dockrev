@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Context as _;
 
@@ -11,6 +15,8 @@ pub struct ServiceFromCompose {
     pub image_tag: String,
     pub homepage: Option<ServiceHomepage>,
     pub update_guard: Option<ServiceUpdateGuard>,
+    pub backup_bind_paths: Vec<String>,
+    pub backup_volume_names: Vec<String>,
 }
 
 pub fn parse_services(compose_yaml: &str) -> anyhow::Result<Vec<ServiceFromCompose>> {
@@ -53,6 +59,8 @@ pub fn parse_services(compose_yaml: &str) -> anyhow::Result<Vec<ServiceFromCompo
             image_tag,
             homepage,
             update_guard: None,
+            backup_bind_paths: Vec::new(),
+            backup_volume_names: Vec::new(),
         });
     }
 
@@ -86,6 +94,171 @@ fn merge_service(existing: &mut ServiceFromCompose, incoming: ServiceFromCompose
 
     existing.homepage = merge_homepage(existing.homepage.take(), incoming.homepage);
     existing.update_guard = merge_update_guard(existing.update_guard.take(), incoming.update_guard);
+    existing.backup_bind_paths = merge_backup_items(
+        std::mem::take(&mut existing.backup_bind_paths),
+        incoming.backup_bind_paths,
+    );
+    existing.backup_volume_names = merge_backup_items(
+        std::mem::take(&mut existing.backup_volume_names),
+        incoming.backup_volume_names,
+    );
+}
+
+fn merge_backup_items(base: Vec<String>, incoming: Vec<String>) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for item in base.into_iter().chain(incoming) {
+        if seen.insert(item.clone()) {
+            out.push(item);
+        }
+    }
+    out
+}
+
+pub fn parse_backup_targets(
+    compose_yaml: &str,
+    compose_file: &Path,
+) -> anyhow::Result<BTreeMap<String, ServiceBackupTargetsFromCompose>> {
+    let root: serde_yaml_ng::Value = serde_yaml_ng::from_str(compose_yaml).context("parse yaml")?;
+
+    let services = root
+        .get("services")
+        .and_then(|v| v.as_mapping())
+        .ok_or_else(|| anyhow::anyhow!("missing or invalid 'services' section"))?;
+
+    let compose_dir = compose_file
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+
+    let mut out = BTreeMap::new();
+    for (name_key, svc_val) in services {
+        let Some(name) = name_key.as_str() else {
+            continue;
+        };
+        let parsed = parse_service_backup_targets(svc_val, &compose_dir)?;
+        out.insert(name.to_string(), parsed);
+    }
+    Ok(out)
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ServiceBackupTargetsFromCompose {
+    pub bind_paths: Vec<String>,
+    pub volume_names: Vec<String>,
+}
+
+fn parse_service_backup_targets(
+    svc_val: &serde_yaml_ng::Value,
+    compose_dir: &Path,
+) -> anyhow::Result<ServiceBackupTargetsFromCompose> {
+    let mut bind_paths = Vec::new();
+    let mut volume_names = Vec::new();
+    let mut bind_seen = BTreeSet::new();
+    let mut volume_seen = BTreeSet::new();
+    let Some(volumes) = svc_val.get("volumes") else {
+        return Ok(ServiceBackupTargetsFromCompose {
+            bind_paths,
+            volume_names,
+        });
+    };
+
+    if let Some(sequence) = volumes.as_sequence() {
+        for item in sequence {
+            match parse_volume_sequence_item(item, compose_dir)? {
+                Some(ComposeMountIdentity::Bind(path)) if bind_seen.insert(path.clone()) => {
+                    bind_paths.push(path);
+                }
+                Some(ComposeMountIdentity::Volume(name)) if volume_seen.insert(name.clone()) => {
+                    volume_names.push(name);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(ServiceBackupTargetsFromCompose {
+        bind_paths,
+        volume_names,
+    })
+}
+
+enum ComposeMountIdentity {
+    Bind(String),
+    Volume(String),
+}
+
+fn parse_volume_sequence_item(
+    value: &serde_yaml_ng::Value,
+    compose_dir: &Path,
+) -> anyhow::Result<Option<ComposeMountIdentity>> {
+    if let Some(raw) = value.as_str() {
+        return Ok(parse_volume_short_syntax(raw, compose_dir));
+    }
+    let Some(mapping) = value.as_mapping() else {
+        return Ok(None);
+    };
+    let kind = mapping
+        .get(serde_yaml_ng::Value::String("type".to_string()))
+        .and_then(|v| v.as_str())
+        .unwrap_or("volume");
+    match kind {
+        "bind" => Ok(mapping
+            .get(serde_yaml_ng::Value::String("source".to_string()))
+            .and_then(|v| v.as_str())
+            .map(|source| ComposeMountIdentity::Bind(resolve_bind_path(source, compose_dir)))),
+        "volume" => Ok(mapping
+            .get(serde_yaml_ng::Value::String("source".to_string()))
+            .and_then(|v| v.as_str())
+            .and_then(normalize_named_volume)
+            .map(ComposeMountIdentity::Volume)),
+        _ => Ok(None),
+    }
+}
+
+fn parse_volume_short_syntax(raw: &str, compose_dir: &Path) -> Option<ComposeMountIdentity> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut parts = trimmed.split(':');
+    let source = parts.next()?.trim();
+    let target = parts.next()?.trim();
+    if target.is_empty() || source.is_empty() {
+        return None;
+    }
+    if source.starts_with('/') || source.starts_with("./") || source.starts_with("../") {
+        return Some(ComposeMountIdentity::Bind(resolve_bind_path(
+            source,
+            compose_dir,
+        )));
+    }
+    if source.starts_with("~/") {
+        return Some(ComposeMountIdentity::Bind(resolve_bind_path(
+            source,
+            compose_dir,
+        )));
+    }
+    normalize_named_volume(source).map(ComposeMountIdentity::Volume)
+}
+
+fn normalize_named_volume(source: &str) -> Option<String> {
+    let trimmed = source.trim();
+    if trimmed.is_empty() || trimmed.contains('/') || trimmed == "." || trimmed == ".." {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+fn resolve_bind_path(source: &str, compose_dir: &Path) -> String {
+    let source = source.trim();
+    if source.starts_with('/') {
+        return source.to_string();
+    }
+    if let Some(rest) = source.strip_prefix("~/") {
+        return PathBuf::from("~").join(rest).to_string_lossy().into_owned();
+    }
+    compose_dir.join(source).to_string_lossy().into_owned()
 }
 
 fn merge_homepage(

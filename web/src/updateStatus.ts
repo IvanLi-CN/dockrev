@@ -214,15 +214,15 @@ export function noteFor(svc: Service, st: RowStatus): string {
     return ''
   }
   if (st === 'updatable') {
-    const hasForceBackup =
+    const hasCoordinatedBackup =
       Object.values(svc.settings.backupTargets.bindPaths).some((v) => v === 'force') ||
       Object.values(svc.settings.backupTargets.volumeNames).some((v) => v === 'force')
     const semverAnomaly = isSemverDowngradeAnomaly(svc)
-    if (semverAnomaly && hasForceBackup) return '⚠ 版本异常：候选版本低于当前版本；备份通过后执行'
+    if (semverAnomaly && hasCoordinatedBackup) return '⚠ 版本异常：候选版本低于当前版本；备份通过后执行'
     if (semverAnomaly) return '⚠ 版本异常：候选版本低于当前版本'
     // The "按当前标签序列" hint became low-value after version popovers were introduced; keep notes
     // only when there's an operator-relevant extra step.
-    return hasForceBackup ? '备份通过后执行' : ''
+    return hasCoordinatedBackup ? '备份通过后执行' : ''
   }
   return ''
 }

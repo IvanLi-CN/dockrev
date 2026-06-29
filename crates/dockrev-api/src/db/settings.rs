@@ -1,15 +1,57 @@
+use std::collections::BTreeMap;
+
 use super::*;
 
 impl Db {
+    async fn list_service_backup_target_policy_rows(
+        &self,
+        service_id: &str,
+    ) -> anyhow::Result<Vec<(String, crate::db::ServiceBackupTargetPolicyRow)>> {
+        let service_id = service_id.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT target_kind, target_key, policy
+FROM service_backup_target_policies
+WHERE service_id = ?1
+ORDER BY target_kind ASC, target_key ASC
+"#,
+            )?;
+            let rows = stmt.query_map(params![service_id], |row| {
+                let policy = match row.get::<_, String>(2)?.as_str() {
+                    "stop_related_services" => {
+                        crate::api::types::BackupTargetPolicy::StopRelatedServices
+                    }
+                    "live_backup" => crate::api::types::BackupTargetPolicy::LiveBackup,
+                    _ => crate::api::types::BackupTargetPolicy::Disabled,
+                };
+                Ok((
+                    row.get::<_, String>(0)?,
+                    crate::db::ServiceBackupTargetPolicyRow {
+                        key: row.get(1)?,
+                        policy,
+                    },
+                ))
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list service backup target policy rows")
+    }
+
     pub async fn get_stored_service_settings(
         &self,
         service_id: &str,
     ) -> anyhow::Result<Option<StoredServiceSettings>> {
+        let rows = self
+            .list_service_backup_target_policy_rows(service_id)
+            .await?;
         let service_id = service_id.to_string();
-        self.call(move |conn| {
-            Ok(conn
-                .query_row(
-                    r#"
+        let stored = self
+            .call(move |conn| {
+                Ok(conn
+                    .query_row(
+                        r#"
 SELECT
   auto_rollback,
   backup_targets_bind_paths_json,
@@ -25,49 +67,63 @@ LEFT JOIN auto_update_policies auto_policy
   ON auto_policy.scope_type = 'service' AND auto_policy.scope_id = services.id
 WHERE id = ?1
 "#,
-                    params![service_id],
-                    |row| {
-                        let bind_paths_json: String = row.get(1)?;
-                        let volume_names_json: String = row.get(2)?;
-                        let bind_paths = serde_json::from_str(&bind_paths_json).map_err(|e| {
-                            rusqlite::Error::FromSqlConversionFailure(
-                                0,
-                                rusqlite::types::Type::Text,
-                                Box::new(e),
-                            )
-                        })?;
-                        let volume_names =
-                            serde_json::from_str(&volume_names_json).map_err(|e| {
-                                rusqlite::Error::FromSqlConversionFailure(
-                                    0,
-                                    rusqlite::types::Type::Text,
-                                    Box::new(e),
-                                )
-                            })?;
-                        Ok(StoredServiceSettings {
-                            auto_update_policy: super::auto_update::auto_update_policy_from_row(
-                                row.get(5)?,
-                                row.get(6)?,
-                                row.get(7)?,
-                                row.get(8)?,
-                                crate::api::types::AutoUpdatePolicyMode::Inherit,
-                            )?,
-                            settings: ServiceSettings {
-                                auto_rollback: row.get::<_, i64>(0)? != 0,
-                                backup_targets: crate::api::types::BackupTargetOverrides {
-                                    bind_paths,
-                                    volume_names,
+                        params![service_id],
+                        |row| {
+                            Ok(StoredServiceSettings {
+                                auto_update_policy:
+                                    super::auto_update::auto_update_policy_from_row(
+                                        row.get(5)?,
+                                        row.get(6)?,
+                                        row.get(7)?,
+                                        row.get(8)?,
+                                        crate::api::types::AutoUpdatePolicyMode::Inherit,
+                                    )?,
+                                settings: ServiceSettings {
+                                    auto_rollback: row.get::<_, i64>(0)? != 0,
+                                    backup_targets: crate::api::types::BackupTargetOverrides {
+                                        bind_paths: BTreeMap::new(),
+                                        volume_names: BTreeMap::new(),
+                                    },
+                                    repo_url: row.get(3)?,
                                 },
-                                repo_url: row.get(3)?,
-                            },
-                            repo_url_auto_disabled: row.get::<_, i64>(4)? != 0,
-                        })
-                    },
-                )
-                .optional()?)
-        })
-        .await
-        .context("get stored service settings")
+                                repo_url_auto_disabled: row.get::<_, i64>(4)? != 0,
+                            })
+                        },
+                    )
+                    .optional()?)
+            })
+            .await
+            .context("get stored service settings")?;
+        let Some(mut stored) = stored else {
+            return Ok(None);
+        };
+        for (target_kind, row) in rows {
+            let choice = match row.policy {
+                crate::api::types::BackupTargetPolicy::Disabled => {
+                    crate::api::types::TernaryChoice::Skip
+                }
+                crate::api::types::BackupTargetPolicy::StopRelatedServices => {
+                    crate::api::types::TernaryChoice::Force
+                }
+                crate::api::types::BackupTargetPolicy::LiveBackup => {
+                    crate::api::types::TernaryChoice::Inherit
+                }
+            };
+            if target_kind == "volume" {
+                stored
+                    .settings
+                    .backup_targets
+                    .volume_names
+                    .insert(row.key, choice);
+            } else {
+                stored
+                    .settings
+                    .backup_targets
+                    .bind_paths
+                    .insert(row.key, choice);
+            }
+        }
+        Ok(Some(stored))
     }
 
     pub async fn get_service_settings(
@@ -103,7 +159,8 @@ WHERE id = ?1
         let repo_url_auto_disabled = repo_url_auto_disabled as i64;
         let now = now.to_string();
         self.call(move |conn| {
-            let changed = conn.execute(
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let changed = tx.execute(
                 r#"
 UPDATE services
 SET
@@ -125,6 +182,36 @@ WHERE id = ?1
                     now
                 ],
             )?;
+            if changed > 0 {
+                tx.execute(
+                    "DELETE FROM service_backup_target_policies WHERE service_id = ?1",
+                    params![service_id.clone()],
+                )?;
+                for (target_kind, row) in
+                    super::service_policy_rows_from_overrides(&settings.backup_targets)
+                {
+                    tx.execute(
+                        r#"
+INSERT INTO service_backup_target_policies (
+  service_id,
+  target_kind,
+  target_key,
+  policy,
+  created_at,
+  updated_at
+) VALUES (?1, ?2, ?3, ?4, ?5, ?5)
+"#,
+                        params![
+                            service_id.clone(),
+                            target_kind,
+                            row.key,
+                            row.policy.as_str(),
+                            now.clone(),
+                        ],
+                    )?;
+                }
+            }
+            tx.commit()?;
             Ok(changed > 0)
         })
         .await

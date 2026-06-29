@@ -20,10 +20,46 @@ export type ComposeConfig = {
 export type ArchMatch = 'match' | 'mismatch' | 'unknown'
 
 export type TernaryChoice = 'inherit' | 'skip' | 'force'
+export type BackupTargetPolicy = 'disabled' | 'stop_related_services' | 'live_backup'
 
 export type BackupTargetOverrides = {
   bindPaths: Record<string, TernaryChoice>
   volumeNames: Record<string, TernaryChoice>
+}
+
+export type ServiceBackupTargetItem = {
+  key: string
+  policy: BackupTargetPolicy
+  relatedServiceCount: number
+  relatedServiceIds: string[]
+}
+
+export type ServiceBackupStorageInfo = {
+  baseDir: string
+  artifactPattern: string
+  compression: string
+  keepLast: number
+  deleteAfterStableSeconds: number
+}
+
+export type ServiceBackupTargetsResponse = {
+  bindPaths: ServiceBackupTargetItem[]
+  volumeNames: ServiceBackupTargetItem[]
+  storage: ServiceBackupStorageInfo
+}
+
+export type PutServiceBackupTargetItem = {
+  key: string
+  policy: BackupTargetPolicy
+}
+
+export type PutServiceBackupTargetsRequest = {
+  bindPaths: PutServiceBackupTargetItem[]
+  volumeNames: PutServiceBackupTargetItem[]
+}
+
+export type PutServiceBackupTargetsResponse = {
+  ok: boolean
 }
 
 export type AutoUpdatePolicyMode = 'inherit' | 'override' | 'disabled'

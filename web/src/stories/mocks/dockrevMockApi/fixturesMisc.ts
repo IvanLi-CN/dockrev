@@ -131,6 +131,22 @@ export function buildAggregateDockrevGuard(): Fixture {
     [appService.id]: appService.settings,
     [dockrevService.id]: dockrevService.settings,
   }
+  f.serviceBackupTargetsById = Object.fromEntries(
+    Object.keys(f.serviceSettingsById).map((serviceId) => [
+      serviceId,
+      {
+        bindPaths: [],
+        volumeNames: [],
+        storage: {
+          baseDir: '/srv/dockrev/backups',
+          artifactPattern: '/srv/dockrev/backups/<stackId>/<timestamp>.tar.gz',
+          compression: 'gzip',
+          keepLast: 1,
+          deleteAfterStableSeconds: 3600,
+        },
+      },
+    ]),
+  )
 
   return f
 }

@@ -15,6 +15,7 @@ import type {
   ServiceGitHubReleaseLocateResponse,
   ServiceGitHubReleasesStatus,
   ServiceGitHubRepoRef,
+  ServiceBackupTargetsResponse,
   ServiceRepoLinkInferenceResponse,
   ServiceResourceSample,
   ServiceRollbackTargetResponse,
@@ -350,6 +351,7 @@ export type Fixture = {
   githubPackagesSettings: GitHubPackagesSettingsResponse
   githubPackagesRepos: GitHubPackagesRepo[]
   serviceSettingsById: Record<string, ServiceSettings>
+  serviceBackupTargetsById: Record<string, ServiceBackupTargetsResponse>
   stackSettingsById: Record<string, StackSettings>
   rollbackTargetByServiceId: Record<string, ServiceRollbackTargetResponse>
   repoLinkInferenceByServiceId: Record<string, ServiceRepoLinkInferenceResponse>

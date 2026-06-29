@@ -1,3 +1,7 @@
+use super::stacks_backup_targets::{
+    project_backup_target_overrides, prune_service_backup_target_policies_tx,
+    put_service_backup_targets_tx,
+};
 use super::*;
 
 fn serialize_service_homepage(
@@ -190,8 +194,6 @@ WHERE id = ?1
 	  ignore_rule_id,
 	  ignore_reason,
 	  auto_rollback,
-	  backup_targets_bind_paths_json,
-	  backup_targets_volume_names_json,
 	  repo_url,
 	  homepage_json,
 	  update_guard_json,
@@ -209,6 +211,7 @@ WHERE id = ?1
                 Option<String>,
                 bool,
             )>::new();
+            let mut service_ids = Vec::<String>::new();
 
             while let Some(row) = rows.next()? {
                 let service_id: String = row.get(0)?;
@@ -216,26 +219,8 @@ WHERE id = ?1
                 let image_reference: String = row.get(2)?;
                 let image_tag: String = row.get(3)?;
                 let image_digest: Option<String> = row.get(4)?;
-                let bind_paths_json: String = row.get(15)?;
-                let volume_names_json: String = row.get(16)?;
-                let homepage = deserialize_service_homepage(row.get(18)?)?;
-                let update_guard = deserialize_service_update_guard(row.get(19)?)?;
-                let bind_paths: BTreeMap<String, crate::api::types::TernaryChoice> =
-                    serde_json::from_str(&bind_paths_json).map_err(|e| {
-                        rusqlite::Error::FromSqlConversionFailure(
-                            0,
-                            rusqlite::types::Type::Text,
-                            Box::new(e),
-                        )
-                    })?;
-                let volume_names: BTreeMap<String, crate::api::types::TernaryChoice> =
-                    serde_json::from_str(&volume_names_json).map_err(|e| {
-                        rusqlite::Error::FromSqlConversionFailure(
-                            0,
-                            rusqlite::types::Type::Text,
-                            Box::new(e),
-                        )
-                    })?;
+                let homepage = deserialize_service_homepage(row.get(16)?)?;
+                let update_guard = deserialize_service_update_guard(row.get(17)?)?;
 
                 let current_resolved_tag: Option<String> = row.get(5)?;
                 let current_resolved_tags_json: Option<String> = row.get(6)?;
@@ -283,7 +268,7 @@ WHERE id = ?1
 
                 services.push((
                     crate::api::types::Service {
-                        id: service_id,
+                        id: service_id.clone(),
                         name: service_name,
                         image: ComposeRef {
                             reference: image_reference,
@@ -301,21 +286,70 @@ WHERE id = ?1
                         settings: ServiceSettings {
                             auto_rollback: row.get::<_, i64>(14)? != 0,
                             backup_targets: crate::api::types::BackupTargetOverrides {
-                                bind_paths,
-                                volume_names,
+                                bind_paths: BTreeMap::new(),
+                                volume_names: BTreeMap::new(),
                             },
-                            repo_url: row.get(17)?,
+                            repo_url: row.get(15)?,
                         },
-                        archived: Some(row.get::<_, i64>(20)? != 0),
+                        archived: Some(row.get::<_, i64>(18)? != 0),
                     },
                     image_digest,
                     current_resolved_tag.clone(),
                     has_candidate,
                 ));
+                service_ids.push(service_id);
             }
 
             drop(rows);
             drop(stmt);
+
+            let mut policies_by_service =
+                BTreeMap::<String, Vec<crate::db::ServiceBackupTargetPolicyRow>>::new();
+            if !service_ids.is_empty() {
+                let placeholders = service_ids
+                    .iter()
+                    .map(|_| "?")
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let sql = format!(
+                    r#"
+SELECT service_id, target_kind, target_key, policy
+FROM service_backup_target_policies
+WHERE service_id IN ({placeholders})
+ORDER BY service_id ASC, target_kind ASC, target_key ASC
+"#
+                );
+                let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(service_ids.len());
+                for service_id in &service_ids {
+                    params.push(service_id);
+                }
+                let mut stmt = conn.prepare(&sql)?;
+                let rows = stmt.query_map(params.as_slice(), |row| {
+                    let policy = match row.get::<_, String>(3)?.as_str() {
+                        "stop_related_services" => {
+                            crate::api::types::BackupTargetPolicy::StopRelatedServices
+                        }
+                        "live_backup" => crate::api::types::BackupTargetPolicy::LiveBackup,
+                        _ => crate::api::types::BackupTargetPolicy::Disabled,
+                    };
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        crate::db::ServiceBackupTargetPolicyRow {
+                            key: row.get(2)?,
+                            policy,
+                        },
+                    ))
+                })?;
+                for row in rows {
+                    let (service_id, target_kind, policy_row) = row?;
+                    let entry = policies_by_service.entry(service_id).or_default();
+                    let wants_volume = target_kind == "volume";
+                    if wants_volume != policy_row.key.starts_with('/') {
+                        entry.push(policy_row);
+                    }
+                }
+            }
 
             let discovery_counts =
                 super::new_version_discoveries::count_new_version_discoveries_for_services_conn(
@@ -338,6 +372,11 @@ WHERE id = ?1
                 )?;
 
             for (mut service, _, _, _) in services {
+                let policies = policies_by_service.remove(&service.id).unwrap_or_default();
+                service.settings.backup_targets = crate::api::types::BackupTargetOverrides {
+                    bind_paths: project_backup_target_overrides(&policies, false),
+                    volume_names: project_backup_target_overrides(&policies, true),
+                };
                 service.new_version_discovery_count = discovery_counts.get(&service.id).copied();
                 stack.services.push(service);
             }
@@ -568,6 +607,26 @@ INSERT INTO services (
                         now
                     ],
                 )?;
+                for (target_kind, row) in super::service_policy_rows_from_overrides(
+                    &crate::api::types::BackupTargetOverrides {
+                        bind_paths: svc.backup_bind_paths.clone(),
+                        volume_names: svc.backup_volume_names.clone(),
+                    },
+                ) {
+                    tx.execute(
+                        r#"
+INSERT INTO service_backup_target_policies (
+  service_id,
+  target_kind,
+  target_key,
+  policy,
+  created_at,
+  updated_at
+) VALUES (?1, ?2, ?3, ?4, ?5, ?5)
+"#,
+                        params![svc.id, target_kind, row.key, row.policy.as_str(), now],
+                    )?;
+                }
             }
 
             tx.commit()?;
@@ -724,6 +783,16 @@ WHERE id = ?1
             let mut keep_ids = Vec::<String>::new();
 
             for svc in services {
+                let declared_bind_paths = svc
+                    .backup_bind_paths
+                    .iter()
+                    .cloned()
+                    .collect::<BTreeSet<_>>();
+                let declared_volume_names = svc
+                    .backup_volume_names
+                    .iter()
+                    .cloned()
+                    .collect::<BTreeSet<_>>();
                 if let Some((
                     id,
                     existing_image_ref,
@@ -757,6 +826,12 @@ WHERE id = ?1
                                 params![id, homepage_json, update_guard_json, now],
                             )?;
                         }
+                        prune_service_backup_target_policies_tx(
+                            &tx,
+                            id,
+                            &declared_bind_paths,
+                            &declared_volume_names,
+                        )?;
                         keep_ids.push(id.clone());
                         continue;
                     }
@@ -812,6 +887,12 @@ WHERE id = ?1
                         None,
                         &now,
                     )?;
+                    prune_service_backup_target_policies_tx(
+                        &tx,
+                        id,
+                        &declared_bind_paths,
+                        &declared_volume_names,
+                    )?;
                     keep_ids.push(id.clone());
                 } else {
                     let id = crate::ids::new_service_id();
@@ -849,6 +930,12 @@ INSERT INTO services (
                             now
                         ],
                     )?;
+                    prune_service_backup_target_policies_tx(
+                        &tx,
+                        &id,
+                        &declared_bind_paths,
+                        &declared_volume_names,
+                    )?;
                     keep_ids.push(id);
                 }
             }
@@ -876,6 +963,20 @@ INSERT INTO services (
         })
         .await
         .context("sync stack from compose")
+    }
+
+    pub async fn put_service_backup_targets(
+        &self,
+        service_id: &str,
+        update: &crate::db::ServiceBackupTargetsUpdate,
+        now: &str,
+    ) -> anyhow::Result<bool> {
+        let service_id = service_id.to_string();
+        let update = update.clone();
+        let now = now.to_string();
+        self.call(move |conn| put_service_backup_targets_tx(conn, &service_id, &update, &now))
+            .await
+            .context("put service backup targets")
     }
 
     pub async fn list_services_for_check(

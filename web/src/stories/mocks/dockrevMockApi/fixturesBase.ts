@@ -23,6 +23,7 @@ export function baseEmpty(): Fixture {
     githubPackagesSettings: makeDefaultGitHubPackagesSettings(),
     githubPackagesRepos: [],
     serviceSettingsById: {},
+    serviceBackupTargetsById: {},
     stackSettingsById: {},
     rollbackTargetByServiceId: {},
     repoLinkInferenceByServiceId: {},
@@ -72,7 +73,7 @@ export function buildDashboardDemo(): Fixture {
       href: 'https://web.example.com',
       description: 'User-facing dashboard',
     },
-    settings: { autoRollback: true, backupTargets: { bindPaths: { '/var/lib/web/uploads': 'force' }, volumeNames: { 'vol:web-data': 'inherit' } }, repoUrl: null },
+    settings: { autoRollback: true, backupTargets: { bindPaths: { '/var/lib/web/uploads': 'force' }, volumeNames: { 'web-data': 'inherit' } }, repoUrl: null },
   } satisfies StackDetail['services'][number]
 
   const serviceProdWorker = {
@@ -207,6 +208,81 @@ export function buildDashboardDemo(): Fixture {
     [infraSvcA.id]: infraSvcA.settings,
     [infraSvcB.id]: infraSvcB.settings,
     [infraSvcC.id]: infraSvcC.settings,
+  }
+  f.serviceBackupTargetsById = {
+    [serviceProdApi.id]: {
+      bindPaths: [
+        {
+          key: '/var/lib/api/data',
+          policy: 'live_backup',
+          relatedServiceCount: 1,
+          relatedServiceIds: ['svc-prod-api'],
+        },
+        {
+          key: '/srv/app/../shared/assets',
+          policy: 'disabled',
+          relatedServiceCount: 2,
+          relatedServiceIds: ['svc-prod-api', 'svc-prod-web'],
+        },
+      ],
+      volumeNames: [
+        {
+          key: 'api-cache',
+          policy: 'stop_related_services',
+          relatedServiceCount: 1,
+          relatedServiceIds: ['svc-prod-api'],
+        },
+      ],
+      storage: {
+        baseDir: '/srv/dockrev/backups',
+        artifactPattern: '/srv/dockrev/backups/<stackId>/<timestamp>.tar.gz',
+        compression: 'gzip',
+        keepLast: 1,
+        deleteAfterStableSeconds: 3600,
+      },
+    },
+    [serviceProdWeb.id]: {
+      bindPaths: [
+        {
+          key: '/var/lib/web/uploads',
+          policy: 'stop_related_services',
+          relatedServiceCount: 1,
+          relatedServiceIds: ['svc-prod-web'],
+        },
+        {
+          key: '/srv/app/../shared/assets',
+          policy: 'live_backup',
+          relatedServiceCount: 2,
+          relatedServiceIds: ['svc-prod-api', 'svc-prod-web'],
+        },
+      ],
+      volumeNames: [
+        {
+          key: 'web-data',
+          policy: 'live_backup',
+          relatedServiceCount: 1,
+          relatedServiceIds: ['svc-prod-web'],
+        },
+      ],
+      storage: {
+        baseDir: '/srv/dockrev/backups',
+        artifactPattern: '/srv/dockrev/backups/<stackId>/<timestamp>.tar.gz',
+        compression: 'gzip',
+        keepLast: 1,
+        deleteAfterStableSeconds: 3600,
+      },
+    },
+    [serviceProdWorker.id]: {
+      bindPaths: [],
+      volumeNames: [],
+      storage: {
+        baseDir: '/srv/dockrev/backups',
+        artifactPattern: '/srv/dockrev/backups/<stackId>/<timestamp>.tar.gz',
+        compression: 'gzip',
+        keepLast: 1,
+        deleteAfterStableSeconds: 3600,
+      },
+    },
   }
 
   f.discoveredProjects = [

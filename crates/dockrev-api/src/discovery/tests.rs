@@ -83,6 +83,8 @@ fn stack_services_match_specs_detects_changes() {
             description: Some("Docs".to_string()),
         }),
         update_guard: None,
+        backup_bind_paths: Vec::new(),
+        backup_volume_names: Vec::new(),
     }];
     assert!(stack_services_match_specs(&stack, &specs_ok));
 
@@ -98,6 +100,8 @@ fn stack_services_match_specs_detects_changes() {
             description: Some("Docs".to_string()),
         }),
         update_guard: None,
+        backup_bind_paths: Vec::new(),
+        backup_volume_names: Vec::new(),
     }];
     assert!(!stack_services_match_specs(&stack, &specs_changed));
 
@@ -113,6 +117,8 @@ fn stack_services_match_specs_detects_changes() {
             description: Some("Docs".to_string()),
         }),
         update_guard: None,
+        backup_bind_paths: Vec::new(),
+        backup_volume_names: Vec::new(),
     }];
     assert!(!stack_services_match_specs(&stack, &specs_homepage_changed));
 }

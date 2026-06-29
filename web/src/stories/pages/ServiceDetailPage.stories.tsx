@@ -393,6 +393,60 @@ export const ComposeTagEditorMobileDrawer: Story = {
   },
 }
 
+export const ServiceProtectionBackupTargets: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  render: render('stack-prod', 'svc-prod-api', 'settings'),
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => findButton(doc, '打开') != null)
+    findButton(doc, '打开')?.click()
+    await waitForCondition(() => drawerText(doc).includes('备份项（服务级）'))
+    expectStory(drawerText(doc).includes('Volumes'), 'volume section missing')
+    expectStory(drawerText(doc).includes('Bind paths'), 'bind path section missing')
+    expectStory(drawerText(doc).includes('/srv/dockrev/backups'), 'backup storage summary missing')
+    expectStory(drawerText(doc).includes('gzip'), 'backup compression copy missing')
+    expectStory(drawerText(doc).includes('停机备份'), 'stop-related policy missing')
+    expectStory(drawerText(doc).includes('在线备份'), 'live-backup policy missing')
+  },
+}
+
+export const ServiceProtectionSharedTargetOff: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  render: render('stack-prod', 'svc-prod-api', 'settings'),
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => findButton(doc, '打开') != null)
+    findButton(doc, '打开')?.click()
+    await waitForCondition(() => drawerText(doc).includes('/srv/app/../shared/assets'))
+    expectStory(drawerText(doc).includes('关联 2 个服务'), 'related service count missing')
+    expectStory(drawerText(doc).includes('当前服务不会为这个 target 触发自动备份'), 'disabled policy copy missing')
+  },
+}
+
+export const ServiceProtectionEmptyBackupTargets: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  render: render('stack-prod', 'svc-prod-worker', 'settings'),
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => findButton(doc, '打开') != null)
+    findButton(doc, '打开')?.click()
+    await waitForCondition(() => drawerText(doc).includes('当前服务在 Compose 中未发现可备份 volume 或 bind path'))
+  },
+}
+
+export const ServiceProtectionStorageSummaryOnly: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  render: render('stack-prod', 'svc-prod-api', 'settings'),
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => findButton(doc, '打开') != null)
+    findButton(doc, '打开')?.click()
+    await waitForCondition(() => drawerText(doc).includes('最近 1 份保留'))
+    expectStory(drawerText(doc).includes('.tar.gz'), 'artifact extension summary missing')
+    expectStory(drawerText(doc).includes('稳定 1h 后清理'), 'retention summary missing')
+  },
+}
+
 export const AutoPolicyDisabled: Story = {
   parameters: {
     dockrevApiScenario: 'dashboard-demo',

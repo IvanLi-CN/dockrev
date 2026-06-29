@@ -67,6 +67,8 @@ services:
                 image_tag: "latest".to_string(),
                 homepage: None,
                 update_guard: None,
+                backup_bind_paths: Vec::new(),
+                backup_volume_names: Vec::new(),
             }],
             &test_offset_rfc3339(&now, time::Duration::minutes(1)),
         )

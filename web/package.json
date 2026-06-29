@@ -15,7 +15,7 @@
     "storybook:status": "bun ./scripts/storybook-daemon.mjs status",
     "storybook:logs": "bun ./scripts/storybook-daemon.mjs logs",
     "storybook:screenshots": "bun ./scripts/capture-storybook-screenshots.mjs",
-    "build-storybook": "bun --bun ./node_modules/.bin/storybook build",
+    "build-storybook": "node ./scripts/storybook-build.mjs",
     "test-storybook": "bun ./scripts/test-storybook.mjs",
     "preview": "bun --bun ./node_modules/.bin/vite preview"
   },

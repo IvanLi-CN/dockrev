@@ -1,4 +1,10 @@
-import type { IgnoreRule, NotificationTestChannel, ServiceRepoLinkInferenceResponse, ServiceSettings } from '../../../../api'
+import type {
+  BackupTargetPolicy,
+  IgnoreRule,
+  NotificationTestChannel,
+  ServiceRepoLinkInferenceResponse,
+  ServiceSettings,
+} from '../../../../api'
 import { imageRepoFromImageRef } from '../../../../imageRepo'
 import type { MockRouteContext } from '../context'
 import {
@@ -646,6 +652,14 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     return json(settings)
   }
 
+  if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/backup-targets')) {
+    const parts = urlPath.split('/').filter(Boolean)
+    const serviceId = decodeURIComponent(parts[2])
+    const backupTargets = f.serviceBackupTargetsById[serviceId]
+    if (!backupTargets) return json({ error: 'not found' }, { status: 404 })
+    return json(backupTargets)
+  }
+
   if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/tag-suggestions')) {
     const parts = urlPath.split('/').filter(Boolean)
     const serviceId = decodeURIComponent(parts[2])
@@ -698,6 +712,68 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
       const found = findService(serviceId)
       if (found) found.svc.settings = parsed
     }
+    return json({ ok: true })
+  }
+
+  if (method === 'PUT' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/backup-targets')) {
+    const parts = urlPath.split('/').filter(Boolean)
+    const serviceId = decodeURIComponent(parts[2])
+    const parsed = parseJsonBody(init?.body)
+    if (!isRecord(parsed)) return json({ error: 'invalid json' }, { status: 400 })
+    const current = f.serviceBackupTargetsById[serviceId]
+    if (!current) return json({ error: 'not found' }, { status: 404 })
+    const normalizeCategory = (
+      currentItems: typeof current.bindPaths,
+      input: unknown,
+    ): typeof current.bindPaths =>
+      currentItems.map((item) => {
+        const requested = Array.isArray(input)
+          ? input.find((value) => isRecord(value) && getString(value.key) === item.key)
+          : null
+        const requestedPolicy = requested ? getString(requested.policy) : null
+        return {
+          ...item,
+          policy: (
+            requestedPolicy === 'stop_related_services' || requestedPolicy === 'live_backup' || requestedPolicy === 'disabled'
+              ? requestedPolicy
+              : item.policy
+          ) as BackupTargetPolicy,
+        }
+      })
+
+    const next = {
+      ...current,
+      bindPaths: normalizeCategory(current.bindPaths, parsed.bindPaths),
+      volumeNames: normalizeCategory(current.volumeNames, parsed.volumeNames),
+    }
+    f.serviceBackupTargetsById[serviceId] = next
+    const settings = f.serviceSettingsById[serviceId]
+    if (settings) {
+      settings.backupTargets = {
+        bindPaths: Object.fromEntries(
+          next.bindPaths.map((item) => [
+            item.key,
+            item.policy === 'stop_related_services'
+              ? 'force'
+              : item.policy === 'live_backup'
+                ? 'inherit'
+                : 'skip',
+          ]),
+        ),
+        volumeNames: Object.fromEntries(
+          next.volumeNames.map((item) => [
+            item.key,
+            item.policy === 'stop_related_services'
+              ? 'force'
+              : item.policy === 'live_backup'
+                ? 'inherit'
+                : 'skip',
+          ]),
+        ),
+      }
+    }
+    const found = findService(serviceId)
+    if (found && settings) found.svc.settings = settings
     return json({ ok: true })
   }
 

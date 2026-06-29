@@ -68,6 +68,13 @@ impl ComposeStack {
         cmd
     }
 
+    pub fn stop_services(&self, cfg: &ComposeRunnerConfig, services: &[String]) -> CommandSpec {
+        let mut cmd = self.base_command(cfg);
+        cmd.args.push("stop".to_string());
+        cmd.args.extend(services.iter().cloned());
+        cmd
+    }
+
     pub fn up_service_no_pull(&self, cfg: &ComposeRunnerConfig, service: &str) -> CommandSpec {
         let mut cmd = self.base_command(cfg);
         cmd.args.extend([
