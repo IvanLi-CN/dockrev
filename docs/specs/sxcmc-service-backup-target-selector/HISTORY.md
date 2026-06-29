@@ -4,12 +4,13 @@
 
 ## Decision Trace
 
-- 2026-06-28: 创建 topic-level spec，锁定服务保护抽屉内直接选择 `Volumes` / `Bind paths` 与只读备份说明的范围。
+- 2026-06-28: 创建 topic-level spec，锁定备份设置抽屉内直接选择 `Volumes` / `Bind paths` 与只读备份说明的范围。
 - 2026-06-28: 新增专用 `GET/PUT /api/services/{service_id}/backup-targets`，把 compose 候选发现与服务级选择语义从通用 settings API 中拆开。
 - 2026-06-28: 服务端收敛为“共享 target 取消只记当前服务 `skip`，独占 target 取消才真正移除 stack target”的保守引用语义。
-- 2026-06-28: 服务保护抽屉完成 volumes/bind paths 直选、共享提示、空态文案、只读备份说明和 Storybook mock 覆盖。
+- 2026-06-28: 备份设置抽屉完成 volumes/bind paths 直选、共享提示、空态文案、只读备份说明和 Storybook mock 覆盖。
 - 2026-06-28: 服务级备份选择从 `selected + inherit|force|skip` 三态收敛为面向操作者的三策略：`不备份`、`停机备份`、`在线备份`。
-- 2026-06-28: 服务保护抽屉的策略控件收敛为单轨 segmented button group，用水平滑块表达当前策略，解决长文案与独立按钮高亮的歧义。
+- 2026-06-28: 备份设置抽屉的策略控件收敛为单轨 segmented button group，用水平滑块表达当前策略，解决长文案与独立按钮高亮的歧义。
+- 2026-06-29: 新增 `GET /api/services/{service_id}/backup-records`，并把服务级备份摘要/记录从 `设置` 页迁到独立 `备份` 子页。
 
 ## Key Reasons / Replacements
 

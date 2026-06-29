@@ -1,0 +1,97 @@
+use super::*;
+
+pub(super) async fn get_service_backup_records(
+    state: &Arc<AppState>,
+    service_id: &str,
+) -> Result<ServiceBackupRecordsResponse, ApiError> {
+    let stack_id = state
+        .db
+        .get_service_stack_id(service_id)
+        .await
+        .map_err(map_internal)?
+        .ok_or_else(|| ApiError::not_found("service not found"))?;
+    let stack = state
+        .db
+        .get_stack(&stack_id)
+        .await
+        .map_err(map_internal)?
+        .ok_or_else(|| ApiError::not_found("service not found"))?;
+    if !stack.services.iter().any(|svc| svc.id == service_id) {
+        return Err(ApiError::not_found("service not found"));
+    }
+
+    let rows = state
+        .db
+        .list_service_backup_records(service_id)
+        .await
+        .map_err(map_internal)?;
+    Ok(ServiceBackupRecordsResponse {
+        records: rows.into_iter().map(map_backup_record_row).collect(),
+    })
+}
+
+fn map_backup_record_row(row: crate::db::ServiceBackupRecordRow) -> ServiceBackupRecordItem {
+    ServiceBackupRecordItem {
+        backup_id: row.backup_id,
+        job_id: row.job_id,
+        scope: JobScope::from_str(&row.scope),
+        status: row.status,
+        created_at: row.created_at,
+        finished_at: row.finished_at,
+        artifact_path: row.artifact_path,
+        size_bytes: row.size_bytes,
+        cleanup_after: row.cleanup_after,
+        deleted_at: row.deleted_at,
+        error: row.error,
+        assets: extract_backup_assets(&row.job_summary_json),
+    }
+}
+
+fn extract_backup_assets(summary: &serde_json::Value) -> Vec<ServiceBackupRecordAsset> {
+    summary
+        .get("stacks")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .find_map(|stack| {
+            stack.get("backup").and_then(|backup| {
+                backup
+                    .get("targets")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|targets| {
+                        targets
+                            .iter()
+                            .filter_map(map_backup_asset_value)
+                            .collect::<Vec<_>>()
+                    })
+            })
+        })
+        .unwrap_or_default()
+}
+
+fn map_backup_asset_value(value: &serde_json::Value) -> Option<ServiceBackupRecordAsset> {
+    let object = value.as_object()?;
+    let target_value = object.get("target")?.clone();
+    let target = serde_json::from_value::<BackupTarget>(target_value).ok()?;
+    let status = match object.get("status").and_then(serde_json::Value::as_str) {
+        Some("included") => ServiceBackupRecordAssetStatus::Included,
+        Some("skipped") => ServiceBackupRecordAssetStatus::Skipped,
+        _ => return None,
+    };
+    let policy = object
+        .get("policy")
+        .and_then(serde_json::Value::as_str)
+        .map(BackupTargetPolicy::from_str);
+    let size_bytes = object.get("sizeBytes").and_then(serde_json::Value::as_u64);
+    let reason = object
+        .get("reason")
+        .and_then(serde_json::Value::as_str)
+        .map(ToString::to_string);
+    Some(ServiceBackupRecordAsset {
+        target,
+        status,
+        policy,
+        size_bytes,
+        reason,
+    })
+}

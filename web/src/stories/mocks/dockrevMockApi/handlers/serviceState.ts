@@ -660,6 +660,14 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     return json(backupTargets)
   }
 
+  if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/backup-records')) {
+    const parts = urlPath.split('/').filter(Boolean)
+    const serviceId = decodeURIComponent(parts[2])
+    const backupRecords = f.serviceBackupRecordsById[serviceId]
+    if (!backupRecords) return json({ error: 'not found' }, { status: 404 })
+    return json(backupRecords)
+  }
+
   if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/tag-suggestions')) {
     const parts = urlPath.split('/').filter(Boolean)
     const serviceId = decodeURIComponent(parts[2])

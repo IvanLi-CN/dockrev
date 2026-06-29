@@ -146,6 +146,56 @@ pub struct PutServiceBackupTargetsResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceBackupRecordAssetStatus {
+    Included,
+    Skipped,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceBackupRecordAsset {
+    pub target: BackupTarget,
+    pub status: ServiceBackupRecordAssetStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy: Option<BackupTargetPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceBackupRecordItem {
+    pub backup_id: String,
+    pub job_id: String,
+    pub scope: JobScope,
+    pub status: String,
+    pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cleanup_after: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deleted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assets: Vec<ServiceBackupRecordAsset>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceBackupRecordsResponse {
+    pub records: Vec<ServiceBackupRecordItem>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum NewVersionDiscoveryTimelineItemKind {
     CurrentCandidate,

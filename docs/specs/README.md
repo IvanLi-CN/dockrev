@@ -118,7 +118,7 @@
 | 4fhgd | Dockrev：版本发现时间线联动 GitHub Releases 抽屉 | 已完成 | `4fhgd-github-release-drawer/SPEC.md` | 2026-04-10 | fast-track（service-scoped GitHub releases API + URL-driven drawer + locate window=50 + shadcn drawer/scroll-area + review-loop fixes；2026-04-10 收窄前端入口：badge 保持时间线入口，Releases 抽屉仅由时间线版本项打开） |
 | 57jzh | Dockrev：全仓大文件治理与预算守门 | 已完成 | `57jzh-large-file-governance/SPEC.md` | 2026-04-10 | fast-track（implementation + budget gate + full validation + storybook visual evidence + review proof；PR #208） |
 | dh3i9 | Dockrev：EdgeOne Origin Timeout Hardening | 待实现 | `dh3i9-edgeone-origin-timeout-hardening/SPEC.md` | 2026-06-26 | fast-track（cleanup/deploy snapshot reads + digest/release timeout hardening + SSE heartbeat） |
-| ey4ar | Dockrev：服务详情页三子页信息架构升级 | active | `ey4ar-service-detail-subpages/SPEC.md` | 2026-06-27 | fast-track（service detail route-backed overview/monitoring/settings subpages + storybook evidence） |
+| ey4ar | Dockrev：服务详情页四子页信息架构升级 | active | `ey4ar-service-detail-subpages/SPEC.md` | 2026-06-29 | fast-track（service detail route-backed overview/monitoring/backup/settings subpages + storybook evidence） |
 | b3fhv | Dockrev：任务结果原因摘要与气泡详情 | 已实现 | `b3fhv-task-result-reason-popover/SPEC.md` | 2026-06-29 | fast-track（resultReason API contract + queue/detail/recent updates reason preview + popover detail + storybook visual evidence + review clean） |
 | hw3pb | Dockrev：Cleanup apply 指纹稳定化与 stale 诊断补强 | 已完成 | `hw3pb-cleanup-apply-fingerprint-stability/SPEC.md` | 2026-04-11 | fast-track（implementation + cleanup tests + local browser proof + stale diagnostics） |
 | d2u78 | Dockrev：Cleanup 顶部按钮 loading 态去重与语义收口 | 已完成 | `d2u78-cleanup-top-action-loading-clarity/SPEC.md` | 2026-04-11 | fast-track（PR #206 follow-up；cleanup top actions loading affordance + storybook evidence + web validation） |
@@ -128,4 +128,4 @@
 | xyy72 | Dockrev：自动部署策略配置器 | active | `xyy72-auto-deploy-policy-configurator/SPEC.md` | 2026-04-30 | fast-track（auto policy model + Service/Stack UI + Storybook visual evidence） |
 | ttfyf | Dockrev：更新确认弹窗信息收敛 | 已实现 | `ttfyf-update-confirm-information-convergence/SPEC.md` | 2026-05-05 | fast-track（单服务确认与聚合预览组件边界收敛） |
 | r4t8k | Dockrev：服务详情可编辑原始 Compose Tag | active | `r4t8k-service-compose-tag-editor/SPEC.md` | 2026-05-06 | fast-track（Service detail tag editor + compose file patch + lazy suggestions） |
-| sxcmc | Dockrev：服务保护设置补全备份目标直选与备份说明 | 已完成 | `sxcmc-service-backup-target-selector/SPEC.md` | 2026-06-28 | fast-track（service backup-target API + compose-derived candidates + Service detail drawer UI + Storybook evidence） |
+| sxcmc | Dockrev：服务保护设置补全备份目标直选与备份说明 | 已完成 | `sxcmc-service-backup-target-selector/SPEC.md` | 2026-06-29 | fast-track（service backup-target API + service backup records API + Service detail backup tab + Storybook evidence） |

@@ -51,6 +51,22 @@ pub struct BackupCleanupItem {
 }
 
 #[derive(Clone, Debug)]
+pub struct ServiceBackupRecordRow {
+    pub backup_id: String,
+    pub job_id: String,
+    pub scope: String,
+    pub status: String,
+    pub created_at: String,
+    pub finished_at: Option<String>,
+    pub artifact_path: Option<String>,
+    pub size_bytes: Option<u64>,
+    pub cleanup_after: Option<String>,
+    pub deleted_at: Option<String>,
+    pub error: Option<String>,
+    pub job_summary_json: serde_json::Value,
+}
+
+#[derive(Clone, Debug)]
 pub struct ComposeServiceSpec {
     pub name: String,
     pub image_ref: String,
