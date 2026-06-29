@@ -40,7 +40,7 @@ fn map_backup_record_row(
     ServiceBackupRecordItem {
         backup_id: row.backup_id,
         job_id: row.job_id,
-        scope: JobScope::from_str(&row.scope),
+        scope: row.scope,
         status: row.status,
         created_at: row.created_at,
         finished_at: row.finished_at,

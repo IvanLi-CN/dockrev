@@ -170,7 +170,7 @@ pub struct ServiceBackupRecordAsset {
 pub struct ServiceBackupRecordItem {
     pub backup_id: String,
     pub job_id: String,
-    pub scope: JobScope,
+    pub scope: String,
     pub status: String,
     pub created_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
