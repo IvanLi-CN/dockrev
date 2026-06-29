@@ -292,6 +292,7 @@ async fn insert_update_job_with_summary(
         .unwrap();
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn insert_backup_record(
     state: &Arc<AppState>,
     backup_id: &str,
