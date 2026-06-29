@@ -17,6 +17,7 @@ import {
   type ServiceTagSuggestionItem,
 } from '../api'
 import { BackupPolicySegmentedControl } from '../components/BackupPolicySegmentedControl'
+import { BackupRecordList } from '../components/ServiceBackupRecords'
 import { navigate } from '../routes'
 import { Button, IconButton, Input, Mono, Pill, RefreshIcon, SelectField, Switch, Tabs, TabsList, TabsTrigger } from '../ui'
 import { isDockrevImageRef } from '../runtimeConfig'
@@ -324,7 +325,7 @@ function backupRelationshipLabel(item: BackupTargetDraftItem): string {
 export function ServiceDetailPage(props: {
   stackId: string
   serviceId: string
-  section?: 'overview' | 'monitoring' | 'settings'
+  section?: 'overview' | 'monitoring' | 'backup' | 'settings'
   onLastScanHint: (lastScan?: string) => void
   onTopActions: (node: ReactNode) => void
 }) {
@@ -336,6 +337,7 @@ export function ServiceDetailPage(props: {
     bannerClass,
     bannerDetail,
     bannerTitle,
+    backupRecords,
     busy,
     composeEnvFile,
     composeFiles,
@@ -374,6 +376,7 @@ export function ServiceDetailPage(props: {
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false)
   const [tagDrawerOpen, setTagDrawerOpen] = useState(false)
   const [serviceSettingsDrawerOpen, setServiceSettingsDrawerOpen] = useState(false)
+  const [backupSettingsDrawerOpen, setBackupSettingsDrawerOpen] = useState(false)
   const [autoPolicyDraft, setAutoPolicyDraft] = useState(() => createDefaultAutoUpdatePolicy('inherit'))
   const [serviceSettingsDraft, setServiceSettingsDraft] = useState<ServiceSettings | null>(null)
   const [serviceBackupTargetsDraft, setServiceBackupTargetsDraft] = useState<BackupTargetsDraft>(() =>
@@ -417,6 +420,63 @@ export function ServiceDetailPage(props: {
   const renderMonitoringSection = () => (
     <div className="svcDetailSectionStack">
       <ServiceResourcePanel serviceId={service.id} />
+    </div>
+  )
+
+  const renderBackupSection = () => (
+    <div className="svcDetailSectionStack">
+      <div className="card serviceBackupSummaryCard" data-service-detail-section-card="backup-summary">
+        <div className="serviceBackupSummaryHead">
+          <div>
+            <div className="title">备份设置</div>
+            <div className="muted">当前服务的备份策略、存储位置与默认保留摘要。</div>
+          </div>
+          <div data-service-detail-action="open-backup-settings">
+            <Button
+              disabled={settingsBusy}
+              onClick={() => {
+                setServiceBackupTargetsDraft(createBackupTargetsDraft(backupTargets))
+                setBackupSettingsDrawerOpen(true)
+              }}
+            >
+              编辑备份设置
+            </Button>
+          </div>
+        </div>
+        <div className="serviceBackupMetaCard">
+          {backupTargets?.storage ? (
+            <>
+              <div className="serviceBackupMetaSummary">{formatBackupRetentionSummary(backupTargets.storage)}</div>
+              <div className="serviceBackupMetaGrid">
+                <div>
+                  <div className="muted">目录</div>
+                  <div className="mono">{backupTargets.storage.baseDir}</div>
+                </div>
+                <div>
+                  <div className="muted">产物</div>
+                  <div className="mono">{backupTargets.storage.artifactPattern}</div>
+                </div>
+                <div>
+                  <div className="muted">压缩</div>
+                  <div className="mono">{backupTargets.storage.compression}</div>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="muted">加载备份说明中…</div>
+          )}
+        </div>
+      </div>
+
+      <div className="card" data-service-detail-section-card="backup-records">
+        <div className="serviceBackupSummaryHead">
+          <div>
+            <div className="title">当前服务相关的备份记录</div>
+            <div className="muted">凡该次 update / rollback 实际影响当前服务，都会出现在这里。</div>
+          </div>
+        </div>
+        <BackupRecordList records={backupRecords} />
+      </div>
     </div>
   )
 
@@ -483,14 +543,13 @@ export function ServiceDetailPage(props: {
       <div className="card serviceSafeguardCard">
         <div>
           <div className="title">服务保护设置</div>
-          <div className="muted">失败回滚、代码仓库和备份目标单独配置，不与自动更新策略混排。</div>
+          <div className="muted">失败回滚与代码仓库单独配置；备份目标已经迁到独立的备份分区。</div>
         </div>
         <div data-service-detail-action="open-service-settings">
           <Button
             disabled={settingsBusy}
             onClick={() => {
               setServiceSettingsDraft(settings)
-              setServiceBackupTargetsDraft(createBackupTargetsDraft(backupTargets))
               setServiceSettingsDrawerOpen(true)
             }}
           >
@@ -633,6 +692,7 @@ export function ServiceDetailPage(props: {
 
   const renderSection = () => {
     if (sectionValue === 'monitoring') return renderMonitoringSection()
+    if (sectionValue === 'backup') return renderBackupSection()
     if (sectionValue === 'settings') return renderSettingsSection()
     return renderOverviewSection()
   }
@@ -672,7 +732,7 @@ export function ServiceDetailPage(props: {
       <div className="svcDetailTabsShell">
         <Tabs
           onValueChange={(value) => {
-            const nextSection = value as 'overview' | 'monitoring' | 'settings'
+            const nextSection = value as 'overview' | 'monitoring' | 'backup' | 'settings'
             navigate({
               name: 'service',
               stackId: props.stackId,
@@ -696,6 +756,13 @@ export function ServiceDetailPage(props: {
               value="monitoring"
             >
               监控
+            </TabsTrigger>
+            <TabsTrigger
+              className={sectionValue === 'backup' ? 'svcDetailTab active' : 'svcDetailTab'}
+              data-service-detail-tab="backup"
+              value="backup"
+            >
+              备份
             </TabsTrigger>
             <TabsTrigger
               className={sectionValue === 'settings' ? 'svcDetailTab active' : 'svcDetailTab'}
@@ -788,8 +855,13 @@ export function ServiceDetailPage(props: {
       </ResponsiveSettingsDrawer>
 
       <ResponsiveSettingsDrawer
-        description="配置失败回滚、代码仓库和服务级备份目标。"
-        onOpenChange={setServiceSettingsDrawerOpen}
+        description="配置失败回滚与代码仓库。"
+        onOpenChange={(open) => {
+          setServiceSettingsDrawerOpen(open)
+          if (!open) {
+            setServiceSettingsDraft(null)
+          }
+        }}
         open={serviceSettingsDrawerOpen}
         title="服务保护设置"
       >
@@ -854,9 +926,45 @@ export function ServiceDetailPage(props: {
             </div>
           </div>
 
-          <div className="sectionTitle" style={{ marginTop: 14 }}>
-            备份项（服务级）
+          <div className="formActions">
+            <Button
+              variant="primary"
+              disabled={settingsBusy}
+              onClick={() => {
+                void (async () => {
+                  setBusy(true)
+                  setError(null)
+                  try {
+                    await putServiceSettings(props.serviceId, {
+                      ...serviceProtectionDraft,
+                      autoUpdatePolicy: settings.autoUpdatePolicy,
+                      repoUrl: (serviceProtectionDraft.repoUrl ?? '').trim() || null,
+                    })
+                    await requestRefresh()
+                    setServiceSettingsDrawerOpen(false)
+                    setServiceSettingsDraft(null)
+                  } catch (e: unknown) {
+                    setError(errorMessage(e))
+                  } finally {
+                    setBusy(false)
+                  }
+                })()
+              }}
+            >
+              保存服务保护设置
+            </Button>
           </div>
+        </div>
+      </ResponsiveSettingsDrawer>
+
+      <ResponsiveSettingsDrawer
+        description="配置当前服务升级前的备份 targets 与默认存储说明。"
+        onOpenChange={setBackupSettingsDrawerOpen}
+        open={backupSettingsDrawerOpen}
+        title="备份设置"
+      >
+        <div className="settingsDrawerSection">
+          <div className="sectionTitle">备份项（服务级）</div>
           <div className="muted">每个 target 单独选择一个策略；数字表示关联服务数，停机备份会一起协调这些服务。</div>
 
           <div className="serviceBackupPicker">
@@ -969,47 +1077,21 @@ export function ServiceDetailPage(props: {
                   void (async () => {
                     setBusy(true)
                     setError(null)
-                    const previousBackupDraft = createBackupTargetsDraft(backupTargets)
-                    let backupTargetsSaved = false
                     try {
-                      const draft = serviceSettingsDraft ?? settings
-                      const backupSaved = backupTargets
-                        ? await putServiceBackupTargets(
-                            props.serviceId,
-                            backupTargetRequestFromDraft(serviceBackupTargetsDraft),
-                          )
-                        : null
-                      backupTargetsSaved = backupSaved != null
-                      await putServiceSettings(props.serviceId, {
-                        ...draft,
-                        backupTargets: draft.backupTargets,
-                        autoUpdatePolicy: settings.autoUpdatePolicy,
-                        repoUrl: (draft.repoUrl ?? '').trim() || null,
-                      })
+                      await putServiceBackupTargets(
+                        props.serviceId,
+                        backupTargetRequestFromDraft(serviceBackupTargetsDraft),
+                      )
                       await requestRefresh()
                     } catch (e: unknown) {
-                      if (backupTargetsSaved) {
-                        try {
-                          await putServiceBackupTargets(
-                            props.serviceId,
-                            backupTargetRequestFromDraft(previousBackupDraft),
-                          )
-                          await requestRefresh()
-                          setError(`${errorMessage(e)}；备份项改动已自动回退，请检查后重试。`)
-                        } catch {
-                          await requestRefresh().catch(() => undefined)
-                          setError(`${errorMessage(e)}；备份项可能已部分保存，请刷新后确认当前状态。`)
-                        }
-                      } else {
-                        setError(errorMessage(e))
-                      }
+                      setError(errorMessage(e))
                     } finally {
                       setBusy(false)
                     }
                   })()
                 }}
               >
-                保存服务设置
+                保存备份设置
               </Button>
             </div>
           </div>

@@ -24,6 +24,7 @@ export function baseEmpty(): Fixture {
     githubPackagesRepos: [],
     serviceSettingsById: {},
     serviceBackupTargetsById: {},
+    serviceBackupRecordsById: {},
     stackSettingsById: {},
     rollbackTargetByServiceId: {},
     repoLinkInferenceByServiceId: {},
@@ -282,6 +283,114 @@ export function buildDashboardDemo(): Fixture {
         keepLast: 1,
         deleteAfterStableSeconds: 3600,
       },
+    },
+  }
+  f.serviceBackupRecordsById = {
+    [serviceProdApi.id]: {
+      records: [
+        {
+          backupId: 'bkp-prod-api-latest',
+          jobId: 'job-auto-policy-api-5-2-3',
+          scope: 'service',
+          status: 'success',
+          createdAt: nowIso(-3_580_000),
+          finishedAt: nowIso(-3_570_000),
+          artifactPath: '/srv/dockrev/backups/stack-prod/20260628-120000.tar.gz',
+          sizeBytes: 18_432_000,
+          cleanupAfter: nowIso(1_200_000),
+          deletedAt: null,
+          error: null,
+          assets: [
+            {
+              target: { kind: 'bind-mount', path: '/var/lib/api/data' },
+              status: 'included',
+              policy: 'live_backup',
+              sizeBytes: 12_288_000,
+              reason: null,
+            },
+            {
+              target: { kind: 'docker-volume', name: 'api-cache' },
+              status: 'included',
+              policy: 'stop_related_services',
+              sizeBytes: 6_144_000,
+              reason: null,
+            },
+          ],
+        },
+        {
+          backupId: 'bkp-prod-api-stack',
+          jobId: 'job-stack-prod-batch',
+          scope: 'stack',
+          status: 'skipped',
+          createdAt: nowIso(-17_995_000),
+          finishedAt: nowIso(-17_994_000),
+          artifactPath: null,
+          sizeBytes: null,
+          cleanupAfter: null,
+          deletedAt: null,
+          error: null,
+          assets: [
+            {
+              target: { kind: 'bind-mount', path: '/srv/app/../shared/assets' },
+              status: 'skipped',
+              policy: null,
+              sizeBytes: 9_437_184,
+              reason: 'skipped_by_size',
+            },
+          ],
+        },
+        {
+          backupId: 'bkp-prod-api-all',
+          jobId: 'job-prod-all-failed',
+          scope: 'all',
+          status: 'failed',
+          createdAt: nowIso(-31_000_000),
+          finishedAt: nowIso(-30_999_000),
+          artifactPath: null,
+          sizeBytes: null,
+          cleanupAfter: null,
+          deletedAt: nowIso(-29_000_000),
+          error: 'archive failed',
+          assets: [
+            {
+              target: { kind: 'docker-volume', name: 'api-cache' },
+              status: 'skipped',
+              policy: null,
+              sizeBytes: null,
+              reason: 'skipped_by_probe_error',
+            },
+          ],
+        },
+      ],
+    },
+    [serviceProdWeb.id]: {
+      records: [
+        {
+          backupId: 'bkp-prod-web-stack',
+          jobId: 'job-stack-prod-batch',
+          scope: 'stack',
+          status: 'success',
+          createdAt: nowIso(-18_100_000),
+          finishedAt: nowIso(-18_090_000),
+          artifactPath: '/srv/dockrev/backups/stack-prod/20260627-000000.tar.gz',
+          sizeBytes: 8_388_608,
+          cleanupAfter: nowIso(-6_000_000),
+          deletedAt: null,
+          error: null,
+          assets: [
+            {
+              target: { kind: 'bind-mount', path: '/srv/app/../shared/assets' },
+              status: 'included',
+              policy: 'live_backup',
+              sizeBytes: 8_388_608,
+              reason: null,
+            },
+          ],
+        },
+      ],
+    },
+    [serviceProdWorker.id]: {
+      records: [],
     },
   }
 

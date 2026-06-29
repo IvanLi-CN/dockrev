@@ -261,6 +261,84 @@ async fn service_id_by_name(
         .id
 }
 
+async fn insert_update_job_with_summary(
+    state: &Arc<AppState>,
+    job_id: &str,
+    scope: crate::api::types::JobScope,
+    stack_id: Option<&str>,
+    service_id: Option<&str>,
+    summary: serde_json::Value,
+    created_at: &str,
+) {
+    state
+        .db
+        .insert_job(crate::api::types::JobListItem {
+            id: job_id.to_string(),
+            r#type: crate::api::types::JobType::Update,
+            scope,
+            stack_id: stack_id.map(ToString::to_string),
+            service_id: service_id.map(ToString::to_string),
+            status: "success".to_string(),
+            created_by: "test".to_string(),
+            reason: "ui".to_string(),
+            created_at: created_at.to_string(),
+            started_at: Some(created_at.to_string()),
+            finished_at: Some(created_at.to_string()),
+            allow_arch_mismatch: false,
+            backup_mode: "inherit".to_string(),
+            summary_json: summary,
+        })
+        .await
+        .unwrap();
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn insert_backup_record(
+    state: &Arc<AppState>,
+    backup_id: &str,
+    stack_id: &str,
+    job_id: &str,
+    created_at: &str,
+    status: &str,
+    artifact_path: Option<&str>,
+    size_bytes: Option<u64>,
+    error: Option<&str>,
+    cleanup_after: Option<&str>,
+    deleted_at: Option<&str>,
+) {
+    state
+        .db
+        .insert_backup(backup_id, stack_id, job_id, created_at)
+        .await
+        .unwrap();
+    state
+        .db
+        .finish_backup(
+            backup_id,
+            status,
+            created_at,
+            artifact_path,
+            size_bytes,
+            error,
+        )
+        .await
+        .unwrap();
+    if let Some(cleanup_after) = cleanup_after {
+        state
+            .db
+            .schedule_backup_cleanup(backup_id, cleanup_after)
+            .await
+            .unwrap();
+    }
+    if let Some(deleted_at) = deleted_at {
+        state
+            .db
+            .mark_backup_deleted(backup_id, deleted_at)
+            .await
+            .unwrap();
+    }
+}
+
 #[tokio::test]
 async fn schedule_auto_policy_enqueues_explicit_target_and_dedupes() {
     let state = test_state_with(

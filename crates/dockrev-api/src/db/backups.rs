@@ -158,4 +158,88 @@ ORDER BY created_at DESC
         .await
         .context("list success backups for stack")
     }
+
+    pub async fn list_service_backup_records(
+        &self,
+        stack_id: &str,
+        service_id: &str,
+    ) -> anyhow::Result<Vec<ServiceBackupRecordRow>> {
+        let stack_id = stack_id.to_string();
+        let service_id = service_id.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT
+  b.id,
+  b.job_id,
+  j.scope,
+  b.status,
+  b.created_at,
+  b.finished_at,
+  b.artifact_path,
+  b.size_bytes,
+  b.cleanup_after,
+  b.deleted_at,
+  b.error,
+  j.summary_json
+FROM backups b
+JOIN jobs j ON j.id = b.job_id
+WHERE b.stack_id = ?1
+  AND (
+    (j.scope = 'service' AND j.service_id = ?2)
+    OR (
+      EXISTS (
+        SELECT 1
+        FROM json_each(COALESCE(json_extract(j.summary_json, '$.stacks'), '[]')) AS s
+        WHERE json_extract(s.value, '$.stackId') = ?1
+          AND EXISTS (
+            SELECT 1
+            FROM json_each(
+              COALESCE(
+                json_extract(s.value, '$.update.newDigests'),
+                json_extract(s.value, '$.update.oldDigests'),
+                json_extract(s.value, '$.rollback.newDigests'),
+                json_extract(s.value, '$.rollback.oldDigests'),
+                '{}'
+              )
+            ) AS d
+            WHERE d.key = ?2
+          )
+      )
+    )
+  )
+ORDER BY b.created_at DESC, b.id DESC
+"#,
+            )?;
+            let rows = stmt.query_map(params![stack_id, service_id], |row| {
+                let summary_json: String = row.get(11)?;
+                let job_summary_json = serde_json::from_str(&summary_json).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        11,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?;
+                Ok(ServiceBackupRecordRow {
+                    backup_id: row.get(0)?,
+                    job_id: row.get(1)?,
+                    scope: row.get(2)?,
+                    status: row.get(3)?,
+                    created_at: row.get(4)?,
+                    finished_at: row.get(5)?,
+                    artifact_path: row.get(6)?,
+                    size_bytes: row
+                        .get::<_, Option<i64>>(7)?
+                        .map(|value| value.max(0) as u64),
+                    cleanup_after: row.get(8)?,
+                    deleted_at: row.get(9)?,
+                    error: row.get(10)?,
+                    job_summary_json,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list service backup records")
+    }
 }

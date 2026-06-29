@@ -13,7 +13,7 @@ const meta: Meta<typeof ServiceDetailPage> = {
 
 export default meta
 type Story = StoryObj<typeof ServiceDetailPage>
-type ServiceSection = 'overview' | 'monitoring' | 'settings'
+type ServiceSection = 'overview' | 'monitoring' | 'backup' | 'settings'
 
 function expectStory(condition: unknown, message: string): asserts condition {
   if (!condition) throw new globalThis.Error(message)
@@ -139,6 +139,19 @@ export const SettingsSection: Story = {
   },
 }
 
+export const BackupSection: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  render: render('stack-prod', 'svc-prod-api', 'backup', '备份子页集中备份摘要、记录列表与设置入口'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(findSectionCard(canvasElement, 'backup-summary')))
+    expectStory(currentRoutePathname() === '/services/stack-prod/svc-prod-api/backup', 'backup deep link missing')
+    expectStory(findTab(canvasElement, 'backup')?.getAttribute('data-state') === 'active', 'backup tab should be active')
+    expectStory(Boolean(findSectionCard(canvasElement, 'backup-records')), 'backup should render backup records card')
+    expectStory(normalizeText(canvasElement.textContent).includes('当前服务相关的备份记录'), 'backup records heading missing')
+    expectStory(normalizeText(canvasElement.textContent).includes('备份时间'), 'backup record card content missing')
+  },
+}
+
 export const TabNavigation: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo' },
   render: render('stack-prod', 'svc-prod-api', 'overview', '页头 Tabs 直接驱动 service section 路由'),
@@ -149,6 +162,11 @@ export const TabNavigation: Story = {
     await waitForCondition(() => currentRoutePathname() === '/services/stack-prod/svc-prod-api/monitoring')
     await waitForCondition(() => normalizeText(canvasElement.textContent).includes('资源监控'))
     expectStory(findTab(canvasElement, 'monitoring')?.getAttribute('data-state') === 'active', 'monitoring tab active state missing after switch')
+
+    findTab(canvasElement, 'backup')?.click()
+    await waitForCondition(() => currentRoutePathname() === '/services/stack-prod/svc-prod-api/backup')
+    await waitForCondition(() => Boolean(findSectionCard(canvasElement, 'backup-summary')))
+    expectStory(findTab(canvasElement, 'backup')?.getAttribute('data-state') === 'active', 'backup tab active state missing after switch')
 
     findTab(canvasElement, 'settings')?.click()
     await waitForCondition(() => currentRoutePathname() === '/services/stack-prod/svc-prod-api/settings')
@@ -395,11 +413,11 @@ export const ComposeTagEditorMobileDrawer: Story = {
 
 export const ServiceProtectionBackupTargets: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo' },
-  render: render('stack-prod', 'svc-prod-api', 'settings'),
+  render: render('stack-prod', 'svc-prod-api', 'backup'),
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument
-    await waitForCondition(() => findButton(doc, '打开') != null)
-    findButton(doc, '打开')?.click()
+    await waitForCondition(() => findButton(doc, '编辑备份设置') != null)
+    findButton(doc, '编辑备份设置')?.click()
     await waitForCondition(() => drawerText(doc).includes('备份项（服务级）'))
     expectStory(drawerText(doc).includes('Volumes'), 'volume section missing')
     expectStory(drawerText(doc).includes('Bind paths'), 'bind path section missing')
@@ -412,11 +430,11 @@ export const ServiceProtectionBackupTargets: Story = {
 
 export const ServiceProtectionSharedTargetOff: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo' },
-  render: render('stack-prod', 'svc-prod-api', 'settings'),
+  render: render('stack-prod', 'svc-prod-api', 'backup'),
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument
-    await waitForCondition(() => findButton(doc, '打开') != null)
-    findButton(doc, '打开')?.click()
+    await waitForCondition(() => findButton(doc, '编辑备份设置') != null)
+    findButton(doc, '编辑备份设置')?.click()
     await waitForCondition(() => drawerText(doc).includes('/srv/app/../shared/assets'))
     expectStory(drawerText(doc).includes('关联 2 个服务'), 'related service count missing')
     expectStory(drawerText(doc).includes('当前服务不会为这个 target 触发自动备份'), 'disabled policy copy missing')
@@ -425,25 +443,34 @@ export const ServiceProtectionSharedTargetOff: Story = {
 
 export const ServiceProtectionEmptyBackupTargets: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo' },
-  render: render('stack-prod', 'svc-prod-worker', 'settings'),
+  render: render('stack-prod', 'svc-prod-worker', 'backup'),
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument
-    await waitForCondition(() => findButton(doc, '打开') != null)
-    findButton(doc, '打开')?.click()
+    await waitForCondition(() => findButton(doc, '编辑备份设置') != null)
+    findButton(doc, '编辑备份设置')?.click()
     await waitForCondition(() => drawerText(doc).includes('当前服务在 Compose 中未发现可备份 volume 或 bind path'))
   },
 }
 
 export const ServiceProtectionStorageSummaryOnly: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo' },
-  render: render('stack-prod', 'svc-prod-api', 'settings'),
+  render: render('stack-prod', 'svc-prod-api', 'backup'),
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument
-    await waitForCondition(() => findButton(doc, '打开') != null)
-    findButton(doc, '打开')?.click()
+    await waitForCondition(() => findButton(doc, '编辑备份设置') != null)
+    findButton(doc, '编辑备份设置')?.click()
     await waitForCondition(() => drawerText(doc).includes('最近 1 份保留'))
     expectStory(drawerText(doc).includes('.tar.gz'), 'artifact extension summary missing')
     expectStory(drawerText(doc).includes('稳定 1h 后清理'), 'retention summary missing')
+  },
+}
+
+export const BackupRecordsEmpty: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  render: render('stack-prod', 'svc-prod-worker', 'backup'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(findSectionCard(canvasElement, 'backup-records')))
+    expectStory(normalizeText(canvasElement.textContent).includes('当前服务暂无相关备份记录'), 'backup empty state missing')
   },
 }
 

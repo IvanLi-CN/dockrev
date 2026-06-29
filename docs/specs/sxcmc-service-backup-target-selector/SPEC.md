@@ -12,17 +12,19 @@
 
 ### Goals
 
-- 在现有“服务保护设置”抽屉内补齐 `Volumes` 与 `Bind paths` 的直接选择能力，不新增新的 stack 级备份编辑页。
+- 在现有服务详情页内补齐独立 `备份` 子页，并通过专用“备份设置”抽屉承载 `Volumes` 与 `Bind paths` 的直接选择能力，不新增新的 stack 级备份编辑页。
 - 为服务详情页新增专用 `GET/PUT /api/services/{service_id}/backup-targets`，返回 compose 派生候选、关联服务信息与只读存储说明。
+- 为服务详情页新增专用 `GET /api/services/{service_id}/backup-records`，返回“当前服务相关”的备份记录卡片所需只读数据。
 - 后端基于 compose 声明解析当前服务可备份 mounts，并在保存时原子更新 `stack.backup.targets` 与当前服务级 backup-target policy 关系。
 - 服务页内每个 target 使用三选一策略：`不备份`、`停机备份`、`在线备份`。
-- 在抽屉内清楚展示备份目录、产物模式、压缩格式与默认保留摘要，但不扩展 retention 编辑能力。
+- 在摘要卡/抽屉内清楚展示备份目录、产物模式、压缩格式与默认保留摘要，但不扩展 retention 编辑能力。
 
 ### Non-goals
 
 - 不把 `PUT /api/services/{id}/settings` 改造成隐式跨层级写 `stack.backup.targets` 或服务级 backup-target policy 的副作用接口。
 - 不新增 stack 级或全局级的完整备份目标管理器。
 - 不修改备份执行格式、压缩方式、cleanup 调度逻辑或默认保留策略。
+- 不新增备份记录删除、下载、重试等 mutation 能力。
 - 不从 Docker 运行时挂载扫描候选，本次只以 compose 声明为准。
 
 ## 范围（Scope）
@@ -52,14 +54,18 @@
 
 ### MUST
 
-- 服务保护抽屉必须能直接选择 compose 中声明的 Docker named volumes 与 host bind mounts。
+- 备份设置抽屉必须能直接选择 compose 中声明的 Docker named volumes 与 host bind mounts。
 - `GET /api/services/{service_id}/backup-targets` 必须返回 `bindPaths[]`、`volumeNames[]` 与 `storage { baseDir, artifactPattern, compression, keepLast, deleteAfterStableSeconds }`。
+- `GET /api/services/{service_id}/backup-records` 必须返回按备份创建时间倒序排列的记录列表。
 - 每个候选项必须统一为 `{ key, policy, relatedServiceCount, relatedServiceIds }`，其中 `policy` 只允许 `disabled | stop_related_services | live_backup`。
 - `PUT /api/services/{service_id}/backup-targets` 的输入必须表达“当前服务对候选项的策略选择结果”，而不是要求前端自行拼接 stack 级 diff。
 - 共享 target 的信息必须以关联服务计数和 service id 列表形式可见，供更新前停机协调使用。
 - compose 相对 bind path 必须按 compose 文件目录解析为绝对路径，即使路径当前不存在。
 - 匿名 volume、`tmpfs`、`image` mounts 等非可恢复目标必须忽略，不得出现在候选列表里。
 - 抽屉内必须展示只读备份说明，明确 `<baseDir>/<stackId>/<timestamp>.tar.gz`、`gzip`、`keepLast=1` 与 `deleteAfterStableSeconds=3600`。
+- 备份记录每项至少必须返回：`backupId`、`jobId`、`scope`、`status`、`createdAt`、`sizeBytes?`、`cleanupAfter?`、`deletedAt?`、`artifactPath?`、`error?`、`assets[]`。
+- 备份记录的 `assets[]` 至少必须返回：`target`、`status`、`policy?`、`sizeBytes?`、`reason?`。
+- “当前服务相关”必须按该次 job 的实际 `summary.targets[].serviceId` 是否包含当前服务来判定，不得仅依赖 `jobs.service_id`。
 
 ### SHOULD
 
@@ -91,6 +97,17 @@
   - `policy=live_backup` 表示保持相关服务运行，直接备份。
   - 响应仅返回 `ok`；普通服务设置保存链路不再依赖该接口回传旧 `backupTargets`。
 
+### Service backup-records API
+
+- `GET /api/services/{service_id}/backup-records`
+  - 仅返回已经落在 `backups` 表中的备份记录。
+  - 通过关联 `jobs.summary_json.targets[*].serviceId` 过滤出“当前服务相关”的记录，因此可以命中 `service / stack / all` 三种触发 scope。
+  - 返回列表按 `backups.created_at DESC, backups.id DESC` 排序。
+  - `cleanupAfter` 直接投影自 `backups.cleanup_after`；若为空，前端显示“未计划删除”。
+  - `deletedAt` 非空表示该备份包已被 cleanup worker 删除；前端以“已删除”状态文案呈现。
+  - `assets[]` 优先投影自该次任务的 `summary.backup.targets[]`，不再额外引入独立资产表。
+  - 若任务级 `summary.backup.targets[]` 缺失，则返回空数组，不伪造资产项。
+
 ### Save semantics
 
 - 保存服务保护设置时，前端先提交专用 backup-targets API，再沿用现有 settings API 保存 `repoUrl`、`autoRollback` 与 `autoUpdatePolicy` 草稿。
@@ -99,7 +116,12 @@
 
 ### UI behavior
 
-- 服务保护抽屉中的“备份项”区域改为发现结果驱动：
+- 服务详情 `备份` 子页顶部先展示备份摘要卡：
+  - 当前存储目录
+  - 产物模式与压缩格式
+  - 默认保留摘要
+  - “编辑备份设置”按钮，打开专用抽屉
+- 备份设置抽屉中的“备份项”区域改为发现结果驱动：
   - 先显示 `Volumes`
   - 再显示 `Bind paths`
 - 每行展示 technical key、关联服务计数、策略说明与三选一 button group。
@@ -111,6 +133,10 @@
 - 即使当前策略为 `不备份`，候选行也必须保留可见。
 - 无候选时显示“当前服务在 Compose 中未发现可备份 volume 或 bind path”。
 - 只读说明区块展示目录、产物格式、压缩与保留摘要，不提供编辑控件。
+- 备份记录列表使用列表卡片而不是表格。
+- 每张记录卡优先展示备份时间、总大小、计划删除时间与状态，再展示资产小列表。
+- 资产小列表中必须让操作者看见 target 标识、单项状态和体积；缺失体积时明确显示“体积未知”。
+- 空记录时展示明确空态，而不是留白。
 
 ## 接口契约（Interfaces & Contracts）
 
@@ -120,10 +146,11 @@
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `GET /api/services/{service_id}/backup-targets` | HTTP | external | New | 本文 | dockrev-api | Web | 返回 compose 派生候选与存储说明 |
 | `PUT /api/services/{service_id}/backup-targets` | HTTP | external | New | 本文 | dockrev-api | Web | 保存当前服务 backup target 选择结果 |
+| `GET /api/services/{service_id}/backup-records` | HTTP | external | New | 本文 | dockrev-api | Web | 返回当前服务相关的备份记录卡片数据 |
 | `ComposeServiceSpec.backup_*` | backend type | internal | New | 本文 | dockrev-api | discovery / services API | compose 解析产物 |
-| `ServiceDetailPage` 服务保护抽屉 | frontend UI | internal | Modify | 本文 | web | operators | volumes/bind paths 直选与只读说明 |
+| `ServiceDetailPage backup section` | frontend UI | internal | Modify | 本文 | web | operators | backup 子页摘要卡、记录卡、备份设置抽屉 |
 
-### JSON shape
+### `GET /api/services/{service_id}/backup-targets`
 
 ```json
 {
@@ -153,6 +180,36 @@
 }
 ```
 
+### `GET /api/services/{service_id}/backup-records`
+
+```json
+{
+  "records": [
+    {
+      "backupId": "bkp_01",
+      "jobId": "job_01",
+      "scope": "stack",
+      "status": "success",
+      "createdAt": "2026-06-29T01:02:03Z",
+      "artifactPath": "/srv/dockrev/backups/stack-prod/20260629-010203.tar.gz",
+      "sizeBytes": 1048576,
+      "cleanupAfter": "2026-06-29T02:02:03Z",
+      "deletedAt": null,
+      "error": null,
+      "assets": [
+        {
+          "target": { "kind": "bind-mount", "path": "/srv/app/data" },
+          "status": "included",
+          "policy": "live_backup",
+          "sizeBytes": 524288,
+          "reason": null
+        }
+      ]
+    }
+  ]
+}
+```
+
 ## 验收标准（Acceptance Criteria）
 
 - Given 服务 compose 中同时存在 named volume、绝对 bind path 与相对 bind path
@@ -171,7 +228,7 @@
   When 调用 `PUT /api/services/{id}/backup-targets`
   Then stack 级 target 继续保留，当前服务 policy 记录为 `disabled`。
 
-- Given 服务保护抽屉存在候选项
+- Given 备份设置抽屉存在候选项
   When 用户打开抽屉
   Then 可直接选择 `Volumes` 与 `Bind paths`，并能为每个 target 切换 `不备份 | 停机备份 | 在线备份`。
 
@@ -182,6 +239,18 @@
 - Given 用户查看备份说明
   When 抽屉渲染只读说明区块
   Then 能直接看到备份目录、`.tar.gz` 产物模式、`gzip` 压缩与默认保留摘要，无需跳转系统设置页。
+
+- Given 某次 stack/all update 实际 targets 包含当前服务
+  When 调用 `GET /api/services/{service_id}/backup-records`
+  Then 该记录仍会出现在结果中，即使 `jobs.service_id` 为空。
+
+- Given 某条备份记录的 `cleanup_after` 为空
+  When 前端渲染记录卡
+  Then 计划删除时间显示为“未计划删除”，而不是空白。
+
+- Given 某条备份已被 cleanup worker 删除
+  When 前端渲染记录卡
+  Then 状态区显示“已删除”，并保留原备份时间与计划删除时间信息。
 
 ## 验收清单（Acceptance checklist）
 
@@ -194,6 +263,7 @@
 
 ### Testing
 
+- `cargo test -p dockrev-api get_service_backup_records -- --nocapture`
 - `cargo test -p dockrev-api put_service_backup_targets -- --nocapture`
 - `bun run --cwd web lint`
 - `bun run --cwd web build`
@@ -204,8 +274,8 @@
 
 - Stories to add/update: `web/src/stories/pages/ServiceDetailPage.stories.tsx`
 - Docs pages / state galleries to add/update: `none (reason: repo currently uses page-story canvas coverage for this surface)`
-- `play` / interaction coverage to add/update: 有 volume + bind path、共享 target 关闭、无候选空态、只读备份说明
-- Visual regression baseline changes (if any): 服务保护抽屉 backup targets 直选与说明区块 mock-only 视觉证据
+- `play` / interaction coverage to add/update: backup tab 导航、有记录态、空记录态、备份设置入口、以及有 volume + bind path、共享 target 关闭、无候选空态、只读备份说明
+- Visual regression baseline changes (if any): 服务详情 backup 子页列表卡与备份设置抽屉 mock-only 视觉证据
 
 ## Visual Evidence
 
@@ -218,10 +288,10 @@
   submission_gate: `approved`
   PR: include
   story_id_or_title: `Pages/ServiceDetailPage/Service Protection Backup Targets`
-  state: `volume + bind path candidates`
-  evidence_note: 验证服务保护抽屉直接展示 `Volumes` / `Bind paths` 两组候选、技术 key、关联服务计数、带水平滑块的三选一策略按钮组，以及只读备份说明卡片。
+  state: `backup settings drawer with volume + bind path candidates`
+  evidence_note: 验证备份子页里的“备份设置”抽屉直接展示 `Volumes` / `Bind paths` 两组候选、技术 key、关联服务计数、带水平滑块的三选一策略按钮组，以及只读备份说明卡片。
 
-![服务保护抽屉：Volumes + Bind paths 直选](./assets/service-protection-backup-targets.png)
+![备份设置抽屉：Volumes + Bind paths 直选](./assets/service-protection-backup-targets.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`
@@ -234,7 +304,7 @@
   state: `shared target deselected`
   evidence_note: 验证共享 bind path 设为“不备份”后仍保留可见行，并明确提示“关联 2 个服务”与禁用态说明。
 
-![服务保护抽屉：共享 target 关闭态](./assets/service-protection-shared-target-off.png)
+![备份设置抽屉：共享 target 关闭态](./assets/service-protection-shared-target-off.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`
@@ -245,9 +315,9 @@
   submission_gate: `approved`
   story_id_or_title: `Pages/ServiceDetailPage/Service Protection Empty Backup Targets`
   state: `no compose backup candidates`
-  evidence_note: 验证当前服务未声明任何可备份 volume 或 bind path 时，抽屉给出明确空态文案而不是“暂无”。
+  evidence_note: 验证当前服务未声明任何可备份 volume 或 bind path 时，备份设置抽屉给出明确空态文案而不是“暂无”。
 
-![服务保护抽屉：无可备份候选空态](./assets/service-protection-empty-backup-targets.png)
+![备份设置抽屉：无可备份候选空态](./assets/service-protection-empty-backup-targets.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`
@@ -258,9 +328,9 @@
   submission_gate: `approved`
   story_id_or_title: `Pages/ServiceDetailPage/Service Protection Storage Summary Only`
   state: `read-only backup storage summary`
-  evidence_note: 验证抽屉内的只读备份说明明确展示目录、`.tar.gz` 产物模式、`gzip` 压缩与“最近 1 份保留 / 稳定 1h 后清理”摘要。
+  evidence_note: 验证备份设置抽屉内的只读备份说明明确展示目录、`.tar.gz` 产物模式、`gzip` 压缩与“最近 1 份保留 / 稳定 1h 后清理”摘要。
 
-![服务保护抽屉：只读备份说明](./assets/service-protection-storage-summary-only.png)
+![备份设置抽屉：只读备份说明](./assets/service-protection-storage-summary-only.png)
 
 ## Related PRs
 

@@ -213,6 +213,14 @@ impl BackupTargetPolicy {
         }
     }
 
+    pub fn from_str(input: &str) -> Self {
+        match input {
+            "stop_related_services" => Self::StopRelatedServices,
+            "live_backup" => Self::LiveBackup,
+            _ => Self::Disabled,
+        }
+    }
+
     pub fn is_enabled(&self) -> bool {
         !matches!(self, Self::Disabled)
     }

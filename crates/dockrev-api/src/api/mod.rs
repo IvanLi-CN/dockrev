@@ -199,6 +199,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(get_service_backup_targets).put(put_service_backup_targets),
         )
         .route(
+            "/api/services/{service_id}/backup-records",
+            get(get_service_backup_records),
+        )
+        .route(
             "/api/notifications",
             get(get_notifications).put(put_notifications),
         )

@@ -62,6 +62,39 @@ export type PutServiceBackupTargetsResponse = {
   ok: boolean
 }
 
+export type ServiceBackupRecordAssetStatus = 'included' | 'skipped'
+
+export type ServiceBackupRecordAssetTarget =
+  | { kind: 'docker-volume'; name: string }
+  | { kind: 'bind-mount'; path: string }
+
+export type ServiceBackupRecordAsset = {
+  target: ServiceBackupRecordAssetTarget
+  status: ServiceBackupRecordAssetStatus
+  policy?: BackupTargetPolicy | null
+  sizeBytes?: number | null
+  reason?: string | null
+}
+
+export type ServiceBackupRecordItem = {
+  backupId: string
+  jobId: string
+  scope: 'service' | 'stack' | 'all'
+  status: string
+  createdAt: string
+  finishedAt?: string | null
+  artifactPath?: string | null
+  sizeBytes?: number | null
+  cleanupAfter?: string | null
+  deletedAt?: string | null
+  error?: string | null
+  assets: ServiceBackupRecordAsset[]
+}
+
+export type ServiceBackupRecordsResponse = {
+  records: ServiceBackupRecordItem[]
+}
+
 export type AutoUpdatePolicyMode = 'inherit' | 'override' | 'disabled'
 export type AutoUpdateMatcherType = 'semver' | 'regex' | 'glob'
 export type AutoUpdateRuleAction = 'immediate' | 'delayed'

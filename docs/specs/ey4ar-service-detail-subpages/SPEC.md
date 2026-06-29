@@ -1,4 +1,4 @@
-# Dockrev：服务详情页三子页信息架构升级（#ey4ar）
+# Dockrev：服务详情页四子页信息架构升级（#ey4ar）
 
 > 当前有效规范以本文为准；实现覆盖与当前状态见 `./IMPLEMENTATION.md`，关键演进原因见 `./HISTORY.md`。
 
@@ -12,10 +12,10 @@
 
 ### Goals
 
-- 将服务详情页拆成 route-backed 的 `概览 / 监控 / 设置` 三个子页，并保留旧 `/services/:stackId/:serviceId` 入口稳定落到默认 `概览`。
+- 将服务详情页拆成 route-backed 的 `概览 / 监控 / 备份 / 设置` 四个子页，并保留旧 `/services/:stackId/:serviceId` 入口稳定落到默认 `概览`。
 - 保留共享的服务上下文：标题、镜像/仓库信息、状态 banner、版本异常提示、全局 success/error 反馈，以及高频顶部动作。
-- 将 `ServiceResourcePanel` 独占到 `监控` 子页，将自动更新 / Compose / 服务保护 / 忽略规则 / Webhook / 低频危险动作集中到 `设置` 子页。
-- 在已有 Storybook 与 spec 流程下补齐三子页的稳定 stories、交互断言与 owner-facing 视觉证据。
+- 将 `ServiceResourcePanel` 独占到 `监控` 子页，将服务级备份摘要、备份设置入口与当前服务相关备份记录集中到 `备份` 子页，将自动更新 / Compose / 回滚 / repoUrl / 忽略规则 / Webhook / 低频危险动作集中到 `设置` 子页。
+- 在已有 Storybook 与 spec 流程下补齐四子页的稳定 stories、交互断言与 owner-facing 视觉证据。
 
 ### Non-goals
 
@@ -36,6 +36,7 @@
 - `web/src/stories/mocks/PageHarness.tsx`
 - `web/src/App.css`
 - 本 spec 目录与其视觉证据资产
+- 相关服务级备份记录 API 的前端消费契约
 
 ### Out of scope
 
@@ -47,20 +48,23 @@
 
 ### MUST
 
-- `Route.name === 'service'` 必须支持 `section?: 'overview' | 'monitoring' | 'settings'`。
+- `Route.name === 'service'` 必须支持 `section?: 'overview' | 'monitoring' | 'backup' | 'settings'`。
 - `href()` 对 `section=undefined | overview` 必须输出旧 canonical URL `/services/:stackId/:serviceId`，不得生成新的 `/overview` canonical path。
 - `parseRoute()` 必须接受旧路径，并把它解析为服务详情 `overview` 语义；对于 `/monitoring` 与 `/settings` 需返回对应 section。
-- 服务详情页顶部必须提供 route-backed tabs，标签固定为 `概览 / 监控 / 设置`。
-- `预览更新 / 执行更新 / 回滚 / Stack 详情` 必须在三页保持一致可达；`归档/恢复` 与 `阻止此服务更新` 必须从全局顶部动作下沉到 `设置` 页。
+- `parseRoute()` 对 `/backup` 必须返回对应 section。
+- 服务详情页顶部必须提供 route-backed tabs，标签固定为 `概览 / 监控 / 备份 / 设置`。
+- `预览更新 / 执行更新 / 回滚 / Stack 详情` 必须在各子页保持一致可达；`归档/恢复` 与 `阻止此服务更新` 必须从全局顶部动作下沉到 `设置` 页。
 - `概览` 不得再出现资源监控卡、自动更新结果卡、Compose 信息卡或服务保护卡。
 - `监控` 只承载资源监控面板及其原有空态/错态/SSE 状态，不得混入配置内容。
+- `备份` 必须集中承载服务级备份摘要卡、备份设置抽屉入口，以及“当前服务相关”的备份记录卡片列表。
+- `设置` 不得再承载备份目标编辑入口；设置页中的“服务保护设置”只保留失败回滚与代码仓库配置。
 - `设置` 必须集中承载自动更新摘要与抽屉、Compose 信息、部署 tag 编辑、服务保护、忽略规则、Webhook，以及下沉后的低频危险动作。
-- Storybook 必须提供三子页稳定入口，并至少覆盖：旧链接默认概览、tabs active state、设置抽屉入口或监控页稳定渲染。
+- Storybook 必须提供四子页稳定入口，并至少覆盖：旧链接默认概览、tabs active state、备份页记录列表/空态、设置抽屉入口或监控页稳定渲染。
 
 ### SHOULD
 
 - 共享数据继续由单一 `useServiceDetailPageState` 驱动，避免按子页重复请求 stack/service/settings 数据。
-- 服务详情页的三子页应在移动端保持单列、无横向滚动，并确保 tabs 可稳定切换。
+- 服务详情页的四子页应在移动端保持单列、无横向滚动，并确保 tabs 可稳定切换。
 - 设置页中的动作分区应把低频危险动作与普通配置分开呈现。
 
 ### COULD
@@ -78,9 +82,12 @@
 - 用户访问 `.../monitoring`：
   - 共享 hero/banner/top actions 与普通服务详情一致。
   - 内容区只展示资源监控面板。
+- 用户访问 `.../backup`：
+  - 共享 hero/banner/top actions 与普通服务详情一致。
+  - 内容区展示备份说明摘要、进入备份设置抽屉的入口，以及当前服务相关的备份记录卡片。
 - 用户访问 `.../settings`：
   - 共享 hero/banner/top actions 与普通服务详情一致。
-  - 内容区展示自动更新摘要、Compose 信息、tag 编辑入口、服务保护、忽略规则、Webhook 与危险动作。
+  - 内容区展示自动更新摘要、Compose 信息、tag 编辑入口、服务保护（仅回滚 + repoUrl）、忽略规则、Webhook 与危险动作。
 - 用户点击页头 tabs：
   - 更新路由 section。
   - 不切换服务实体，不清空已有服务上下文。
@@ -91,7 +98,7 @@
 - 旧 bookmark、从服务列表/Stack 详情/概览跳来的 `navigate({ name: 'service', stackId, serviceId })` 调用必须继续可用，不要求调用点立即补 section。
 - 若当前服务是 Dockrev 自身：
   - 继续保留既有 supervisor 自升级动作逻辑。
-  - 三子页结构仍然生效。
+  - 四子页结构仍然生效。
 - 全局 success/error notice 仍由服务详情页底部统一承载，不因 section 切换丢失。
 
 ## 接口契约（Interfaces & Contracts）
@@ -102,6 +109,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `Route.name='service'` | frontend route union | internal | Modify | 本文 | web | App / pages / stories | 新增 `section` 路由语义 |
 | `/services/:stackId/:serviceId[/<section>]` | frontend URL contract | external | Modify | 本文 | web | operators / bookmarks / internal links | `overview` canonical 仍为无 section 旧路径 |
+| `ServiceDetailPage backup section` | frontend UI | internal | New | 本文 + `#sxcmc` | web | operators | 新增独立备份子页，承载摘要、入口与记录列表 |
 
 ### 契约文档（按 Kind 拆分）
 
@@ -117,9 +125,13 @@
   When 用户切到 `监控`
   Then 保留相同服务上下文与顶部动作，内容区只显示资源监控面板。
 
+- Given 服务详情页处于 `备份`
+  When 用户查看页面主体
+  Then 可看到备份说明摘要、编辑备份设置入口与备份记录卡片列表，且不再需要回到 `设置` 页寻找备份入口。
+
 - Given 服务详情页处于 `设置`
   When 用户查看页面主体
-  Then 可看到自动更新摘要、Compose 信息、部署 tag、服务保护、忽略规则、Webhook 与危险动作，且不再看到最近更新记录卡。
+  Then 可看到自动更新摘要、Compose 信息、部署 tag、服务保护、忽略规则、Webhook 与危险动作，且不再看到最近更新记录卡，也不再看到备份目标编辑入口。
 
 - Given 任一服务详情子页
   When 用户需要执行 `预览更新 / 执行更新 / 回滚 / Stack 详情`
@@ -127,7 +139,7 @@
 
 - Given 服务详情 stories 已更新
   When 运行 Storybook interaction 回归
-  Then 至少能验证旧链接默认概览、tabs active/切换行为，以及设置页或监控页的核心入口稳定可用。
+  Then 至少能验证旧链接默认概览、tabs active/切换行为，以及备份页或设置页/监控页的核心入口稳定可用。
 
 ## 验收清单（Acceptance checklist）
 
@@ -149,8 +161,8 @@
 
 - Stories to add/update: `web/src/stories/pages/ServiceDetailPage.stories.tsx`
 - Docs pages / state galleries to add/update: `none (reason: repo currently uses page stories/canvas coverage for this surface)`
-- `play` / interaction coverage to add/update: tabs route switching、旧链接默认概览、设置抽屉入口、监控页稳定渲染
-- Visual regression baseline changes (if any): 服务详情三子页 mock-only 视觉证据
+- `play` / interaction coverage to add/update: tabs route switching、旧链接默认概览、备份页记录卡渲染/空态、设置抽屉入口、监控页稳定渲染
+- Visual regression baseline changes (if any): 服务详情四子页 mock-only 视觉证据
 
 ### Quality checks
 
@@ -187,6 +199,21 @@
   PR caption: 监控子页独占资源监控面板，复用同一服务上下文与顶部动作。
 
 ![服务详情监控子页（桌面）](./assets/service-detail-monitoring-desktop.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `element`
+  requested_viewport: `1440x1500`
+  viewport_strategy: `devtools-emulate`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/BackupSection`
+  state: `backup deep link`
+  evidence_note: 验证 `备份` 子页集中备份摘要、编辑入口与当前服务相关备份记录卡片，并从 `设置` 页移除了重复备份入口。
+  PR: include
+  PR caption: 备份子页集中服务级备份摘要、编辑入口与记录卡片，形成独立深链分区。
+
+![服务详情备份子页（桌面）](./assets/service-detail-backup-desktop.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`

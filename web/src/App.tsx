@@ -100,6 +100,8 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string } {
         pageSubtitle:
           route.section === 'monitoring'
             ? '资源趋势、实时状态与容器压力观测'
+            : route.section === 'backup'
+              ? '服务级备份摘要、备份记录与保留状态'
             : route.section === 'settings'
               ? '自动更新、Compose、保护项与服务级集成设置'
               : '运行态摘要、更新决策与服务上下文',

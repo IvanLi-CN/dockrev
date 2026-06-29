@@ -2,10 +2,12 @@ use super::*;
 use crate::updater::is_dockrev_image_ref;
 use std::collections::BTreeMap;
 
+mod backup_records;
 mod backup_targets;
 mod github_releases;
 mod repo_links;
 
+use backup_records::get_service_backup_records as load_service_backup_records_response;
 use backup_targets::{
     get_service_backup_targets as load_service_backup_targets_response,
     put_service_backup_targets as save_service_backup_targets_response, read_compose_service_specs,
@@ -71,6 +73,17 @@ pub(super) async fn put_service_backup_targets(
     let _user = require_user(&state, &headers).await?;
     Ok(Json(
         save_service_backup_targets_response(&state, &service_id, req).await?,
+    ))
+}
+
+pub(super) async fn get_service_backup_records(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(service_id): Path<String>,
+) -> Result<Json<ServiceBackupRecordsResponse>, ApiError> {
+    let _user = require_user(&state, &headers).await?;
+    Ok(Json(
+        load_service_backup_records_response(&state, &service_id).await?,
     ))
 }
 

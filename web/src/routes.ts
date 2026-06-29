@@ -13,15 +13,15 @@ export type Route =
   | { name: 'deploy-check' }
   | { name: 'settings' }
   | { name: 'stack'; stackId: string }
-  | { name: 'service'; stackId: string; serviceId: string; section?: 'overview' | 'monitoring' | 'settings' }
+  | { name: 'service'; stackId: string; serviceId: string; section?: 'overview' | 'monitoring' | 'backup' | 'settings' }
   | { name: 'supervisor-misroute'; basePath: string; pathname: string }
 
 function normalizeServiceSection(
   value: string | null | undefined,
-): 'overview' | 'monitoring' | 'settings' | null {
+): 'overview' | 'monitoring' | 'backup' | 'settings' | null {
   const section = (value ?? '').trim()
   if (section === '' || section === 'overview') return 'overview'
-  if (section === 'monitoring' || section === 'settings') return section
+  if (section === 'monitoring' || section === 'backup' || section === 'settings') return section
   return null
 }
 
