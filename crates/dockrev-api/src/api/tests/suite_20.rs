@@ -1336,6 +1336,134 @@ services:
 }
 
 #[tokio::test]
+async fn get_service_backup_records_excludes_other_stack_backups_from_shared_all_scope_jobs() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_dir_a = format!("/tmp/dockrev-backup-records-a-{}", ulid::Ulid::new());
+    std::fs::create_dir_all(compose_dir_a.clone()).unwrap();
+    let compose_path_a = format!("{compose_dir_a}/compose.yml");
+    std::fs::write(
+        &compose_path_a,
+        r#"
+services:
+  api:
+    image: ghcr.io/acme/api:1.0
+"#,
+    )
+    .unwrap();
+    let stack_a_id = seed_stack_from_compose(&state, "alpha", &compose_path_a).await;
+    let api_id = service_id_by_name(&state, &stack_a_id, "api").await;
+
+    let compose_dir_b = format!("/tmp/dockrev-backup-records-b-{}", ulid::Ulid::new());
+    std::fs::create_dir_all(compose_dir_b.clone()).unwrap();
+    let compose_path_b = format!("{compose_dir_b}/compose.yml");
+    std::fs::write(
+        &compose_path_b,
+        r#"
+services:
+  worker:
+    image: ghcr.io/acme/worker:1.0
+"#,
+    )
+    .unwrap();
+    let stack_b_id = seed_stack_from_compose(&state, "beta", &compose_path_b).await;
+    let worker_id = service_id_by_name(&state, &stack_b_id, "worker").await;
+
+    let now = test_now_rfc3339();
+    insert_update_job_with_summary(
+        &state,
+        "job-all-cross-stack",
+        crate::api::types::JobScope::All,
+        None,
+        None,
+        json!({
+            "targets": [
+              { "serviceId": api_id, "from": "1.0", "to": "1.1" },
+              { "serviceId": worker_id, "from": "1.0", "to": "1.1" }
+            ],
+            "stacks": [
+              {
+                "stackId": stack_a_id,
+                "backup": {
+                  "status": "success",
+                  "targets": [{
+                    "target": { "kind": "bind-mount", "path": "/srv/api-data" },
+                    "status": "included",
+                    "policy": "live_backup",
+                    "sizeBytes": 512
+                  }]
+                }
+              },
+              {
+                "stackId": stack_b_id,
+                "backup": {
+                  "status": "success",
+                  "targets": [{
+                    "target": { "kind": "bind-mount", "path": "/srv/worker-data" },
+                    "status": "included",
+                    "policy": "live_backup",
+                    "sizeBytes": 2048
+                  }]
+                }
+              }
+            ]
+        }),
+        &now,
+    )
+    .await;
+
+    insert_backup_record(
+        &state,
+        "bkp-alpha",
+        &stack_a_id,
+        "job-all-cross-stack",
+        &now,
+        "success",
+        Some("/tmp/alpha.tar.gz"),
+        Some(512),
+        None,
+        None,
+        None,
+    )
+    .await;
+    insert_backup_record(
+        &state,
+        "bkp-beta",
+        &stack_b_id,
+        "job-all-cross-stack",
+        &now,
+        "success",
+        Some("/tmp/beta.tar.gz"),
+        Some(2048),
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{api_id}/backup-records"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    let records = body["records"].as_array().unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["backupId"].as_str(), Some("bkp-alpha"));
+    assert_eq!(records[0]["assets"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        records[0]["assets"][0]["target"]["path"].as_str(),
+        Some("/srv/api-data")
+    );
+}
+
+#[tokio::test]
 async fn get_service_backup_targets_reads_latest_compose_mounts_without_stack_resync() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());

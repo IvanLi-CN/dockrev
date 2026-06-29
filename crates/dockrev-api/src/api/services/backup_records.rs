@@ -22,15 +22,21 @@ pub(super) async fn get_service_backup_records(
 
     let rows = state
         .db
-        .list_service_backup_records(service_id)
+        .list_service_backup_records(&stack_id, service_id)
         .await
         .map_err(map_internal)?;
     Ok(ServiceBackupRecordsResponse {
-        records: rows.into_iter().map(map_backup_record_row).collect(),
+        records: rows
+            .into_iter()
+            .map(|row| map_backup_record_row(row, &stack_id))
+            .collect(),
     })
 }
 
-fn map_backup_record_row(row: crate::db::ServiceBackupRecordRow) -> ServiceBackupRecordItem {
+fn map_backup_record_row(
+    row: crate::db::ServiceBackupRecordRow,
+    stack_id: &str,
+) -> ServiceBackupRecordItem {
     ServiceBackupRecordItem {
         backup_id: row.backup_id,
         job_id: row.job_id,
@@ -43,17 +49,28 @@ fn map_backup_record_row(row: crate::db::ServiceBackupRecordRow) -> ServiceBacku
         cleanup_after: row.cleanup_after,
         deleted_at: row.deleted_at,
         error: row.error,
-        assets: extract_backup_assets(&row.job_summary_json),
+        assets: extract_backup_assets(&row.job_summary_json, stack_id),
     }
 }
 
-fn extract_backup_assets(summary: &serde_json::Value) -> Vec<ServiceBackupRecordAsset> {
+fn extract_backup_assets(
+    summary: &serde_json::Value,
+    stack_id: &str,
+) -> Vec<ServiceBackupRecordAsset> {
     summary
         .get("stacks")
         .and_then(serde_json::Value::as_array)
         .into_iter()
         .flatten()
         .find_map(|stack| {
+            let stack_matches = stack
+                .get("stackId")
+                .and_then(serde_json::Value::as_str)
+                .map(|value| value == stack_id)
+                .unwrap_or(false);
+            if !stack_matches {
+                return None;
+            }
             stack.get("backup").and_then(|backup| {
                 backup
                     .get("targets")

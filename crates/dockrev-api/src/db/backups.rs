@@ -161,8 +161,10 @@ ORDER BY created_at DESC
 
     pub async fn list_service_backup_records(
         &self,
+        stack_id: &str,
         service_id: &str,
     ) -> anyhow::Result<Vec<ServiceBackupRecordRow>> {
+        let stack_id = stack_id.to_string();
         let service_id = service_id.to_string();
         self.call(move |conn| {
             let mut stmt = conn.prepare(
@@ -182,15 +184,16 @@ SELECT
   j.summary_json
 FROM backups b
 JOIN jobs j ON j.id = b.job_id
-WHERE EXISTS (
+WHERE b.stack_id = ?1
+  AND EXISTS (
   SELECT 1
   FROM json_each(COALESCE(json_extract(j.summary_json, '$.targets'), '[]')) AS t
-  WHERE json_extract(t.value, '$.serviceId') = ?1
+  WHERE json_extract(t.value, '$.serviceId') = ?2
 )
 ORDER BY b.created_at DESC, b.id DESC
 "#,
             )?;
-            let rows = stmt.query_map(params![service_id], |row| {
+            let rows = stmt.query_map(params![stack_id, service_id], |row| {
                 let summary_json: String = row.get(11)?;
                 let job_summary_json = serde_json::from_str(&summary_json).map_err(|e| {
                     rusqlite::Error::FromSqlConversionFailure(
