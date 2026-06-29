@@ -7,6 +7,7 @@ import {
   type JobListItem,
 } from '../api'
 import { formatJobMachineName, formatJobReadableDisplay } from '../jobDisplay'
+import { TaskResultReason } from '../components/TaskResultReason'
 import { navigate } from '../routes'
 import { Button, Mono, Pill } from '../ui'
 
@@ -568,10 +569,20 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
             const completedAria = completedPercent !== null ? `${completedPercent}%` : 'running'
             const isDualIndeterminate = plannedPercent === null || completedPercent === null
             return (
-              <button
+              <div
                 key={j.id}
                 className="queueItem"
+                role="button"
+                tabIndex={0}
                 onClick={() => navigate({ name: 'job', jobId: j.id })}
+                onKeyDown={(event) => {
+                  const target = event.target as HTMLElement | null
+                  if (target && target !== event.currentTarget) return
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    navigate({ name: 'job', jobId: j.id })
+                  }
+                }}
               >
                 <div className="queueMain">
                   <div className="queueTitle">
@@ -604,6 +615,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
                       </span>
                     ) : null}
                   </div>
+                  <TaskResultReason reason={j.resultReason} lines={1} className="queueResultReason" />
                   {j.status === 'running' ? (
                     <div className="queueProgressLayers">
                       <div
@@ -639,7 +651,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
                     {j.status}
                   </Pill>
                 </div>
-              </button>
+              </div>
             )
           })}
           {filtered.length === 0 ? <div className="muted">暂无任务</div> : null}

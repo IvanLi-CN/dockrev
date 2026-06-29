@@ -116,6 +116,12 @@ export const HealthRollback: Story = {
     if (!pageText.includes('healthcheck failed for api; rolling back')) {
       throw new globalThis.Error('healthcheck failure log missing')
     }
+    if (!pageText.includes('结果原因')) {
+      throw new globalThis.Error('result reason section missing')
+    }
+    if (!pageText.includes('健康检查失败，已回滚')) {
+      throw new globalThis.Error('friendly rollback reason missing')
+    }
     if (pageText.includes('healthcheck passed for api')) {
       throw new globalThis.Error('healthcheck passed log should not appear after rollback')
     }

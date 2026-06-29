@@ -80,6 +80,11 @@ export function buildQueueMixed(): Fixture {
       createdAt: nowIso(-82_000),
       startedAt: nowIso(-80_000),
       finishedAt: nowIso(-70_000),
+      resultReason: {
+        summary: '任务执行失败',
+        detail: 'scheduled checks 执行失败，请查看详细日志定位原因。',
+        raw: 'scheduled checks (53/74) aborted with exit code 1',
+      },
     }),
     makeJob({
       id: 'job-ghcr-success',
@@ -102,6 +107,10 @@ export function buildQueueMixed(): Fixture {
       createdAt: nowIso(-62_000),
       startedAt: nowIso(-60_000),
       finishedAt: nowIso(-55_000),
+      resultReason: {
+        summary: '回滚完成',
+        detail: '回滚已完成，目标服务已恢复到指定版本。',
+      },
     }),
   ]
 
@@ -1063,6 +1072,10 @@ export function buildQueueHealthRollback(): Fixture {
       plannedPercent: 100,
       currentTarget: 'api',
       updatedAt: nowIso(-62_000),
+    },
+    resultReason: {
+      summary: '健康检查失败，已回滚',
+      detail: '健康检查未通过，已停止本次变更并恢复到回滚前状态。',
     },
   }
 

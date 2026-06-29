@@ -40,11 +40,18 @@ pub(super) async fn get_job(
         .and_then(|o| o.get("progress"))
         .cloned()
         .and_then(|v| serde_json::from_value::<JobProgress>(v).ok());
+    let job_type = job.r#type.as_str().to_string();
+    let result_reason = crate::api::types::result_reason_from_summary(
+        &job_type,
+        &job.status,
+        &job.summary_json,
+        progress.as_ref(),
+    );
 
     Ok(Json(GetJobResponse {
         job: JobDetail {
             id: job.id,
-            r#type: job.r#type.as_str().to_string(),
+            r#type: job_type,
             scope: job.scope.as_str().to_string(),
             stack_id: job.stack_id,
             service_id: job.service_id,
@@ -58,6 +65,7 @@ pub(super) async fn get_job(
             backup_mode: job.backup_mode,
             summary: job.summary_json,
             progress,
+            result_reason,
             logs,
             logs_last_id,
         },

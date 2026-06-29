@@ -119,6 +119,7 @@
 | 57jzh | Dockrev：全仓大文件治理与预算守门 | 已完成 | `57jzh-large-file-governance/SPEC.md` | 2026-04-10 | fast-track（implementation + budget gate + full validation + storybook visual evidence + review proof；PR #208） |
 | dh3i9 | Dockrev：EdgeOne Origin Timeout Hardening | 待实现 | `dh3i9-edgeone-origin-timeout-hardening/SPEC.md` | 2026-06-26 | fast-track（cleanup/deploy snapshot reads + digest/release timeout hardening + SSE heartbeat） |
 | ey4ar | Dockrev：服务详情页三子页信息架构升级 | active | `ey4ar-service-detail-subpages/SPEC.md` | 2026-06-27 | fast-track（service detail route-backed overview/monitoring/settings subpages + storybook evidence） |
+| b3fhv | Dockrev：任务结果原因摘要与气泡详情 | 已实现 | `b3fhv-task-result-reason-popover/SPEC.md` | 2026-06-29 | fast-track（resultReason API contract + queue/detail/recent updates reason preview + popover detail + storybook visual evidence + review clean） |
 | hw3pb | Dockrev：Cleanup apply 指纹稳定化与 stale 诊断补强 | 已完成 | `hw3pb-cleanup-apply-fingerprint-stability/SPEC.md` | 2026-04-11 | fast-track（implementation + cleanup tests + local browser proof + stale diagnostics） |
 | d2u78 | Dockrev：Cleanup 顶部按钮 loading 态去重与语义收口 | 已完成 | `d2u78-cleanup-top-action-loading-clarity/SPEC.md` | 2026-04-11 | fast-track（PR #206 follow-up；cleanup top actions loading affordance + storybook evidence + web validation） |
 | hw3pb | Dockrev：Cleanup apply 指纹稳定化与 stale 诊断补强 | 已完成 | `hw3pb-cleanup-apply-fingerprint-stability/SPEC.md` | 2026-04-11 | fast-track（implementation + cleanup tests + local browser proof + stale diagnostics + shared-testbox cleanup proof script） |

@@ -272,10 +272,8 @@ html[data-theme='light'] .brandLogoForLight {
 
 .jobProgress {
   margin-top: 12px;
-  padding: 12px;
-  border: 1px solid var(--borderColor);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--panel) 88%, var(--panel2) 12%);
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
 }
 
 .jobProgressHeader {
@@ -400,6 +398,99 @@ html[data-theme='light'] .brandLogoForLight {
   gap: 8px 14px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.taskResultReason {
+  margin-top: 8px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.taskResultReasonLabel {
+  flex: 0 0 auto;
+  color: var(--muted2);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.taskResultReasonTrigger {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.taskResultReasonTrigger:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+.taskResultReasonSummary {
+  display: -webkit-box;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--text) 82%, var(--muted2) 18%);
+  font-size: 12px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+}
+
+.taskResultReasonSummary-1 {
+  -webkit-line-clamp: 1;
+}
+
+.taskResultReasonSummary-2 {
+  -webkit-line-clamp: 2;
+}
+
+.taskResultReasonPopover {
+  width: min(480px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.taskResultReasonPopoverSection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.taskResultReasonPopoverTitle,
+.taskResultReasonPopoverSubtitle {
+  color: var(--muted2);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.taskResultReasonPopoverBody {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.taskResultReasonPopoverSection-raw {
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
+}
+
+.taskResultReasonPopoverRaw {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
 }
 
 .jobProgressCounters {
@@ -3898,6 +3989,10 @@ html[data-theme='light'] .modalOverlay {
   color: var(--muted2);
 }
 
+.queueResultReason {
+  margin-top: 7px;
+}
+
 .ghcrInboxPage {
   gap: 12px;
 }
@@ -5284,10 +5379,20 @@ html[data-theme='light'] .modalOverlay {
   padding-top: 8px;
 }
 
+.recentUpdateReason {
+  margin-top: 4px;
+}
+
 .recentUpdateTime {
   flex: 0 0 auto;
   color: var(--muted);
   font-size: 12px;
+}
+
+.jobResultReason {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
 }
 
 .autoPolicyEditor {
@@ -7909,7 +8014,6 @@ html[data-theme='light'] .btnPrimary {
   top: calc(var(--dockrev-table-group-head-height) + var(--dockrev-table-group-gap));
 }
 
-.jobProgress,
 .versionInferenceProgressBar,
 .queueProgressLayers {
   border-radius: 12px;
