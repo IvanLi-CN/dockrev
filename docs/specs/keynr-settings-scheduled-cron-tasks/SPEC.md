@@ -25,7 +25,7 @@
 - 任务到点执行时：
   - “定期检查更新”创建 `check` job（`createdBy=schedule`、`reason=schedule`、`scope=all`），并在任务队列中可见
   - “webhook 巡查”入队 `github_packages_webhook` 的 `audit_all` job（同样 `createdBy/reason=schedule`），在 `/queue` 与 GHCR 队列页可见
-- `/queue` 模块名统一为“任务队列”（侧栏导航 + 顶栏 hint）。
+- `/queue` 模块名统一为“任务队列”（侧栏导航 + 页面标题）。
 
 ### Non-goals
 
@@ -70,7 +70,7 @@
   - webhook 巡查：到点入队 `github_packages_webhook` 的 `audit_all`，并避免重复入队（若已有 schedule 来源的 pending job，跳过本次）。
   - `/queue` 可见 `by schedule · reason schedule`。
 - UI 文案：
-  - 导航与顶栏不再出现“更新队列”，统一为“任务队列”。
+  - 导航与页面标题不再出现“更新队列”，统一为“任务队列”。
 
 ### SHOULD
 
@@ -125,3 +125,7 @@
 - Settings 页「定时任务」卡片截图（Storybook）：
 
 ![Settings 定时任务卡片](./assets/schedules-card.png)
+
+- Queue 页面与全局壳层截图：侧栏导航与页面标题保留“任务队列”，品牌区下方不再重复显示全局 topbar hint。
+
+![任务队列页面壳层去重](./assets/queue-layout-without-topbar-hint.png)

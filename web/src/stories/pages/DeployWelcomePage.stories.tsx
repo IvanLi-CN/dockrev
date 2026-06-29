@@ -32,7 +32,7 @@ function expectStory(condition: unknown, message: string): asserts condition {
 
 function renderPage(pageSubtitle = '部署功能完整性检查') {
   return (
-    <PageHarness route={{ name: 'deploy-check' }} title="部署检查" pageSubtitle={pageSubtitle} topbarHint="Deployment Checklist">
+    <PageHarness route={{ name: 'deploy-check' }} title="部署检查" pageSubtitle={pageSubtitle}>
       {() => <DeployWelcomePage />}
     </PageHarness>
   )

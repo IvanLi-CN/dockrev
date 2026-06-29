@@ -33,7 +33,7 @@
 
 - `/web/src/index.css`：重建 design tokens 与主题层变量。
 - `/web/src/App.css`：重构全局组件与页面样式（含 modal/popover/deploy 页面）。
-- `/web/src/Shell.tsx`：壳层结构微调（topbar hint、移动导航与摘要信息）。
+- `/web/src/Shell.tsx`：壳层结构微调（移动导航、品牌区与摘要信息）。
 - `/web/src/ui.tsx` 及 `/web/src/pages/*.tsx`：仅在必要处做非行为变更的结构配合。
 
 ### Out of scope

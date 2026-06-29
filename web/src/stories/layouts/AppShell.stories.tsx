@@ -38,7 +38,6 @@ function render(route: Route): Story['render'] {
         route={route}
         title="示例页面"
         pageSubtitle="在 Storybook 中预览 AppShell"
-        topbarHint="Compose 镜像更新 / 版本提示"
         topActions={<Button variant="primary">Action</Button>}
         authIdentity={demoAuthIdentity}
         lastScanHint={new Date().toISOString()}

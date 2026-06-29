@@ -48,7 +48,6 @@ export function AppShell(props: {
   route: Route
   title?: string
   pageSubtitle?: string
-  topbarHint?: string
   topActions?: ReactNode
   topbarContent?: ReactNode
   sidebarNavContent?: ReactNode
@@ -164,7 +163,6 @@ export function AppShell(props: {
                   <div className="brand">
                     <BrandLogo />
                   </div>
-                  {props.topbarHint ? <div className="topbarHint">{props.topbarHint}</div> : null}
                 </div>
               </div>
               {props.topbarContent ? <div className="topbarGlobalContent">{props.topbarContent}</div> : null}

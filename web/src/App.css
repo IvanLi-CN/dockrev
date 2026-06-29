@@ -123,11 +123,6 @@ html[data-theme='light'] .brandLogoForLight {
   opacity: 1;
 }
 
-.topbarHint {
-  font-size: 12px;
-  color: var(--muted2);
-}
-
 .sidebar {
   grid-area: side;
   background: var(--panel2);
@@ -7104,16 +7099,6 @@ html[data-theme='light'] .brandLogoThemeSwitch {
   filter: none;
 }
 
-.topbarHint {
-  font-size: 12px;
-  color: var(--muted2);
-  letter-spacing: 0.02em;
-  max-width: min(46vw, 620px);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .sidebar {
   padding: 20px 16px 16px;
   background:
@@ -7866,10 +7851,6 @@ html[data-theme='light'] .btnPrimary {
     display: flex;
     justify-content: flex-end;
     min-width: 0;
-  }
-
-  .topbarHint {
-    display: none;
   }
 
   .topbarRight {
