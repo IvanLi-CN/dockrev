@@ -497,8 +497,8 @@ fn friendly_result_reason_from_transition_summary(
         "rollback" => "rollback",
         _ => return None,
     };
-    let update_summary = stack_transition_summary_for_status(summary, transition_key, status)
-        .or_else(|| Some(summary))?;
+    let update_summary =
+        stack_transition_summary_for_status(summary, transition_key, status).or(Some(summary))?;
 
     let failure_step = object_field_as_non_empty_str(Some(update_summary), "failureStep");
     let raw_last_error = object_field_as_non_empty_str(Some(update_summary), "lastError");
