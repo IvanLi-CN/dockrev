@@ -20,7 +20,6 @@ export const Default: Story = {
         route={{ name: 'ghcr-webhook-registry' }}
         title="GHCR Webhook 维护"
         pageSubtitle="集中维护仓库 webhook 注册状态、重试注册与删除反注册任务"
-        topbarHint="系统设置"
       >
         {({ onTopActions }) => <GhcrWebhookRegistryPage onTopActions={onTopActions} />}
       </PageHarness>
@@ -32,7 +31,7 @@ export const Empty: Story = {
   parameters: { dockrevApiScenario: 'empty' },
   render: () => {
     return (
-      <PageHarness route={{ name: 'ghcr-webhook-registry' }} title="GHCR Webhook 维护" topbarHint="系统设置">
+      <PageHarness route={{ name: 'ghcr-webhook-registry' }} title="GHCR Webhook 维护">
         {({ onTopActions }) => <GhcrWebhookRegistryPage onTopActions={onTopActions} />}
       </PageHarness>
     )
@@ -47,7 +46,6 @@ export const RegistryLinks: Story = {
         route={{ name: 'ghcr-webhook-registry' }}
         title="GHCR Webhook 维护"
         pageSubtitle="验证仓库标题链接与 webhook 页面跳转规则"
-        topbarHint="系统设置"
       >
         {({ onTopActions }) => <GhcrWebhookRegistryPage onTopActions={onTopActions} />}
       </PageHarness>

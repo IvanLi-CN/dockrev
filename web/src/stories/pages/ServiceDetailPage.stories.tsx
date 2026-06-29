@@ -83,7 +83,6 @@ function render(
     <PageHarness
       route={routeFor(stackId, serviceId, section)}
       title="服务详情"
-      topbarHint="服务详情"
       pageSubtitle={pageSubtitle}
     >
       {({ route, onTopActions, onLastScanHint }) =>

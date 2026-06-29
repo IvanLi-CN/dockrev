@@ -44,63 +44,55 @@ import {
   type TopbarAuthIdentity,
 } from './topbarAuthIdentity'
 
-function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbarHint?: string } {
+function pageTitle(route: Route): { title: string; pageSubtitle?: string } {
   switch (route.name) {
     case 'overview':
       return {
         title: '',
       }
     case 'queue':
-      return { title: '任务队列', topbarHint: '任务队列' }
+      return { title: '任务队列' }
     case 'job':
-      return { title: '任务详情', topbarHint: '任务队列' }
+      return { title: '任务详情' }
     case 'services':
       return {
         title: '服务',
         pageSubtitle: '运行态与结果、发现异常、更新候选与归档恢复',
-        topbarHint: '运维大盘',
       }
     case 'cleanup':
       return {
         title: '清理',
         pageSubtitle: '按规则预览 docker prune 候选，支持全局 / Stack / 服务三级清理',
-        topbarHint: 'Docker 清理控制台',
       }
     case 'version-inference':
       return {
         title: '版本推测',
         pageSubtitle: '镜像版本推测任务与缓存状态总览',
-        topbarHint: '版本推测可观测性',
       }
     case 'ghcr-webhooks':
       return {
         title: 'GHCR Webhook',
         pageSubtitle: 'Webhook 注册/反注册任务与巡检状态',
-        topbarHint: 'GHCR Webhook 队列',
       }
     case 'ghcr-webhook-inbox':
       return {
         title: 'Webhook 收件箱',
         pageSubtitle: '按 delivery 展示事件、处理结果与响应状态',
-        topbarHint: '任务队列',
       }
     case 'ghcr-webhook-registry':
       return {
         title: 'GHCR Webhook 维护',
         pageSubtitle: '集中维护仓库 webhook 注册状态、重试注册与删除反注册任务',
-        topbarHint: '系统设置',
       }
     case 'deploy-check':
       return {
         title: '部署检查',
         pageSubtitle: '面向运维：按功能能力判定配置完整性（PASS/FAIL）',
-        topbarHint: '部署检查',
       }
     case 'settings':
       return {
         title: '系统设置',
         pageSubtitle: 'Forward Auth · 用户/组鉴权 · 通知配置 · 备份默认策略',
-        topbarHint: '系统设置',
       }
     case 'service':
       return {
@@ -111,12 +103,11 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbar
             : route.section === 'settings'
               ? '自动更新、Compose、保护项与服务级集成设置'
               : '运行态摘要、更新决策与服务上下文',
-        topbarHint: '服务详情',
       }
     case 'stack':
-      return { title: 'Stack 详情', topbarHint: 'Stack 详情' }
+      return { title: 'Stack 详情' }
     case 'supervisor-misroute':
-      return { title: '部署问题', topbarHint: '自我升级（Supervisor）' }
+      return { title: '部署问题' }
   }
 }
 
@@ -316,7 +307,6 @@ export default function App() {
         route={route}
         title={head.title}
         pageSubtitle={head.pageSubtitle}
-        topbarHint={head.topbarHint}
         topActions={null}
         authIdentity={authIdentity}
         lastScanHint={lastScanHint}
@@ -336,7 +326,6 @@ export default function App() {
         route={route}
         title={head.title}
         pageSubtitle={head.pageSubtitle}
-        topbarHint={head.topbarHint}
         topActions={topActions}
         topbarContent={topbarContent}
         sidebarNavContent={sidebarNavContent}

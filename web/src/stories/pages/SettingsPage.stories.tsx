@@ -32,7 +32,7 @@ function renderSettingsPage(
 ) {
   preparePublicBaseUrlSuggestionStorage(options?.publicBaseUrlSuggestion ?? 'clear')
   return (
-    <PageHarness route={{ name: 'settings' }} title="系统设置" pageSubtitle={pageSubtitle} topbarHint="系统设置">
+    <PageHarness route={{ name: 'settings' }} title="系统设置" pageSubtitle={pageSubtitle}>
       {({ onTopActions }) => <SettingsPage onTopActions={onTopActions} />}
     </PageHarness>
   )
@@ -195,7 +195,7 @@ export const Error: Story = {
   parameters: { dockrevApiScenario: 'error' },
   render: () => {
     return (
-      <PageHarness route={{ name: 'settings' }} title="系统设置" topbarHint="系统设置">
+      <PageHarness route={{ name: 'settings' }} title="系统设置">
         {({ onTopActions }) => <SettingsPage onTopActions={onTopActions} />}
       </PageHarness>
     )
@@ -206,7 +206,7 @@ export const Empty: Story = {
   parameters: { dockrevApiScenario: 'empty' },
   render: () => {
     return (
-      <PageHarness route={{ name: 'settings' }} title="系统设置" topbarHint="系统设置">
+      <PageHarness route={{ name: 'settings' }} title="系统设置">
         {({ onTopActions }) => <SettingsPage onTopActions={onTopActions} />}
       </PageHarness>
     )

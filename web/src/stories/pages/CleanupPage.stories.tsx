@@ -61,7 +61,6 @@ function renderPage() {
     <PageHarness
       route={{ name: 'cleanup' }}
       title="清理"
-      topbarHint="Docker 清理控制台"
       pageSubtitle="按规则预览 docker prune 候选，支持全局 / Stack / 服务三级清理"
     >
       {({ onLastScanHint, onTopActions }) => (

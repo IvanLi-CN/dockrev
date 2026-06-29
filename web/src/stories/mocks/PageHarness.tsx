@@ -15,7 +15,6 @@ export function PageHarness(props: {
   route: Route
   title: string
   pageSubtitle?: string
-  topbarHint?: string
   authIdentity?: TopbarAuthIdentity | null
   children: (ctx: {
     route: Route
@@ -33,7 +32,6 @@ function PageHarnessInner(props: {
   route: Route
   title: string
   pageSubtitle?: string
-  topbarHint?: string
   authIdentity?: TopbarAuthIdentity | null
   children: (ctx: {
     route: Route
@@ -111,7 +109,6 @@ function PageHarnessInner(props: {
         route={route}
         title={props.title}
         pageSubtitle={props.pageSubtitle}
-        topbarHint={props.topbarHint}
         topActions={topActions}
         topbarContent={topbarContent}
         sidebarNavContent={sidebarNavContent}

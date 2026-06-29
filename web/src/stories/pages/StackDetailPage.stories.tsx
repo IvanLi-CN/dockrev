@@ -42,7 +42,7 @@ function drawerText(doc: Document): string {
 
 function render(stackId: string): Story['render'] {
   return () => (
-    <PageHarness route={{ name: 'stack', stackId }} title="Stack 详情" topbarHint="Stack 详情">
+    <PageHarness route={{ name: 'stack', stackId }} title="Stack 详情">
       {({ onTopActions, onLastScanHint }) => (
         <StackDetailPage stackId={stackId} onLastScanHint={onLastScanHint} onTopActions={onTopActions} />
       )}
