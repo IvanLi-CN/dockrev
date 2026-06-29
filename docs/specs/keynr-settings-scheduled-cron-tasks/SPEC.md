@@ -125,3 +125,7 @@
 - Settings 页「定时任务」卡片截图（Storybook）：
 
 ![Settings 定时任务卡片](./assets/schedules-card.png)
+
+- Queue 页面与全局壳层截图：侧栏导航与页面标题保留“任务队列”，品牌区下方不再重复显示全局 topbar hint。
+
+![任务队列页面壳层去重](./assets/queue-layout-without-topbar-hint.png)
