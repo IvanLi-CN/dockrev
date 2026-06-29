@@ -957,7 +957,12 @@ export function ServiceDetailPage(props: {
 
       <ResponsiveSettingsDrawer
         description="配置失败回滚与代码仓库。"
-        onOpenChange={setServiceSettingsDrawerOpen}
+        onOpenChange={(open) => {
+          setServiceSettingsDrawerOpen(open)
+          if (!open) {
+            setServiceSettingsDraft(null)
+          }
+        }}
         open={serviceSettingsDrawerOpen}
         title="服务保护设置"
       >
@@ -1020,6 +1025,35 @@ export function ServiceDetailPage(props: {
                 <div className="muted">清空并保存会禁用后续自动补齐；再次手动推断并保存可恢复。</div>
               </div>
             </div>
+          </div>
+
+          <div className="formActions">
+            <Button
+              variant="primary"
+              disabled={settingsBusy}
+              onClick={() => {
+                void (async () => {
+                  setBusy(true)
+                  setError(null)
+                  try {
+                    await putServiceSettings(props.serviceId, {
+                      ...serviceProtectionDraft,
+                      autoUpdatePolicy: settings.autoUpdatePolicy,
+                      repoUrl: (serviceProtectionDraft.repoUrl ?? '').trim() || null,
+                    })
+                    await requestRefresh()
+                    setServiceSettingsDrawerOpen(false)
+                    setServiceSettingsDraft(null)
+                  } catch (e: unknown) {
+                    setError(errorMessage(e))
+                  } finally {
+                    setBusy(false)
+                  }
+                })()
+              }}
+            >
+              保存服务保护设置
+            </Button>
           </div>
         </div>
       </ResponsiveSettingsDrawer>
