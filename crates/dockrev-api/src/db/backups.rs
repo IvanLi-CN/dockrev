@@ -186,25 +186,26 @@ FROM backups b
 JOIN jobs j ON j.id = b.job_id
 WHERE b.stack_id = ?1
   AND (
-    j.scope = 'service'
-    AND j.service_id = ?2
-    OR EXISTS (
-      SELECT 1
-      FROM json_each(COALESCE(json_extract(j.summary_json, '$.stacks'), '[]')) AS s
-      WHERE json_extract(s.value, '$.stackId') = ?1
-        AND EXISTS (
-          SELECT 1
-          FROM json_each(
-            COALESCE(
-              json_extract(s.value, '$.update.newDigests'),
-              json_extract(s.value, '$.update.oldDigests'),
-              json_extract(s.value, '$.rollback.newDigests'),
-              json_extract(s.value, '$.rollback.oldDigests'),
-              '{}'
-            )
-          ) AS d
-          WHERE d.key = ?2
-        )
+    (j.scope = 'service' AND j.service_id = ?2)
+    OR (
+      EXISTS (
+        SELECT 1
+        FROM json_each(COALESCE(json_extract(j.summary_json, '$.stacks'), '[]')) AS s
+        WHERE json_extract(s.value, '$.stackId') = ?1
+          AND EXISTS (
+            SELECT 1
+            FROM json_each(
+              COALESCE(
+                json_extract(s.value, '$.update.newDigests'),
+                json_extract(s.value, '$.update.oldDigests'),
+                json_extract(s.value, '$.rollback.newDigests'),
+                json_extract(s.value, '$.rollback.oldDigests'),
+                '{}'
+              )
+            ) AS d
+            WHERE d.key = ?2
+          )
+      )
     )
   )
 ORDER BY b.created_at DESC, b.id DESC
