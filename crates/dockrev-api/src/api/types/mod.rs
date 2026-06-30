@@ -11,6 +11,7 @@ mod github_packages;
 mod ignores;
 mod jobs;
 mod notifications;
+mod service_logs;
 mod services;
 mod settings;
 
@@ -22,6 +23,7 @@ pub use github_packages::*;
 pub use ignores::*;
 pub use jobs::*;
 pub use notifications::*;
+pub use service_logs::*;
 pub use services::*;
 pub use settings::*;
 

@@ -486,3 +486,131 @@ services:
         Some("/srv/api-data")
     );
 }
+
+use crate::api::{ServiceLogEventEnvelope, ServiceLogLine};
+
+#[tokio::test]
+async fn service_logs_snapshot_returns_single_service_stream() {
+    let db_path = format!("/tmp/dockrev-service-logs-snapshot-{}.db", ulid::Ulid::new());
+    let compose_path = format!("/tmp/dockrev-service-logs-snapshot-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: nginx:1.27
+"#,
+    )
+    .unwrap();
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), Arc::new(ServiceLogsRunner)).await;
+    let app = api::router(state.clone());
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    seed_discovered_project(&state, &stack_id, "demo-logs").await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let service_id = services[0].id.clone();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/logs?tail=3"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body = response_json(resp).await;
+    assert_eq!(body["serviceId"].as_str(), Some(service_id.as_str()));
+    assert_eq!(body["lines"].as_array().map(Vec::len), Some(3));
+    assert!(body["lines"][0].get("container").is_none());
+    assert_eq!(body["lines"][0]["raw"].as_str(), Some("\u{1b}[32mapi boot ok\u{1b}[0m"));
+    assert_eq!(
+        body["lines"][2]["plain"].as_str(),
+        Some("\u{1b}[31merror burst\u{1b}[0m")
+    );
+}
+
+#[tokio::test]
+async fn service_logs_events_replay_and_reset_gap() {
+    let db_path = format!("/tmp/dockrev-service-logs-events-{}.db", ulid::Ulid::new());
+    let compose_path = format!("/tmp/dockrev-service-logs-events-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: nginx:1.27
+"#,
+    )
+    .unwrap();
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    seed_discovered_project(&state, &stack_id, "demo-logs").await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let service_id = services[0].id.clone();
+
+    state
+        .service_log_hub
+        .seed_test_buffer(
+            &service_id,
+            vec![
+                ServiceLogEventEnvelope::Line {
+                    id: 10,
+                    service_id: service_id.clone(),
+                    line: ServiceLogLine {
+                        ts: "2026-06-29T08:00:00.000000000Z".to_string(),
+                        raw: "raw 10".to_string(),
+                        plain: "raw 10".to_string(),
+                    },
+                },
+                ServiceLogEventEnvelope::Line {
+                    id: 11,
+                    service_id: service_id.clone(),
+                    line: ServiceLogLine {
+                        ts: "2026-06-29T08:00:01.000000000Z".to_string(),
+                        raw: "raw 11".to_string(),
+                        plain: "raw 11".to_string(),
+                    },
+                },
+            ],
+        )
+        .await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/logs/events?afterId=10"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let mut body = resp.into_body();
+    let replay = wait_for_sse_event(&mut body, "service_log_line", Duration::from_secs(2)).await;
+    let replay_data: serde_json::Value = serde_json::from_str(&replay.data).unwrap();
+    assert_eq!(replay.id.as_deref(), Some("11"));
+    assert_eq!(replay_data["line"]["raw"].as_str(), Some("raw 11"));
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/logs/events?afterId=5"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let mut body = resp.into_body();
+    let reset = wait_for_sse_event(&mut body, "service_log_reset", Duration::from_secs(2)).await;
+    let reset_data: serde_json::Value = serde_json::from_str(&reset.data).unwrap();
+    assert_eq!(reset_data["reason"].as_str(), Some("buffer_gap_reset"));
+}

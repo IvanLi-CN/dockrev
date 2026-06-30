@@ -29,6 +29,7 @@ mod runner;
 mod runtime_scan;
 mod schedules;
 mod service_check;
+mod service_logs;
 mod snapshot_worker;
 mod state;
 mod ui;
@@ -104,6 +105,8 @@ async fn main() -> anyhow::Result<()> {
         db.clone(),
         runner.clone(),
     ));
+    let service_log_hub =
+        std::sync::Arc::new(service_logs::ServiceLogHub::new(db.clone(), runner.clone()));
     let snapshot_worker = std::sync::Arc::new(snapshot_worker::SnapshotWorker::new(
         db.clone(),
         registry.clone(),
@@ -126,6 +129,7 @@ async fn main() -> anyhow::Result<()> {
         cleanup_snapshot_worker,
         deploy_check_refresh_worker,
         resource_hub,
+        service_log_hub,
     );
 
     // Recover orphaned/incomplete jobs created by a previous process instance.

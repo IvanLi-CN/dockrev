@@ -524,6 +524,87 @@ NAME                LINKS               SIZE
     }
 }
 
+#[derive(Clone, Default)]
+struct ServiceLogsRunner;
+
+#[async_trait::async_trait]
+impl CommandRunner for ServiceLogsRunner {
+    async fn run(&self, spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+        let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
+
+        if spec.program == "docker"
+            && args
+                == vec![
+                    "ps",
+                    "-q",
+                    "--filter",
+                    "label=com.docker.compose.project=demo-logs",
+                    "--filter",
+                    "label=com.docker.compose.service=web",
+                ]
+        {
+            return Ok(CommandOutput {
+                status: 0,
+                stdout: "cid-web-1\ncid-web-2\n".to_string(),
+                stderr: String::new(),
+            });
+        }
+
+        if spec.program == "docker"
+            && args.first() == Some(&"inspect")
+            && args.get(1) == Some(&"--format")
+            && args.len() == 5
+            && args[3] == "cid-web-1"
+            && args[4] == "cid-web-2"
+        {
+            let stdout = [
+                "cid-web-1\t/demo-logs-web-1\tweb".to_string(),
+                "cid-web-2\t/demo-logs-web-2\tweb".to_string(),
+            ]
+            .join("\n");
+            return Ok(CommandOutput {
+                status: 0,
+                stdout: format!("{stdout}\n"),
+                stderr: String::new(),
+            });
+        }
+
+        if spec.program == "docker"
+            && args.first() == Some(&"logs")
+            && args.get(1) == Some(&"--timestamps")
+            && args.get(2) == Some(&"--tail")
+        {
+            let container_id = args.last().copied().unwrap_or_default();
+            let stdout = match container_id {
+                "cid-web-1" => concat!(
+                    "2026-06-29T08:00:00.000000000Z \u{1b}[32mapi boot ok\u{1b}[0m\n",
+                    "2026-06-29T08:00:02.000000000Z worker ready\n",
+                    "2026-06-29T08:00:03.000000000Z \u{1b}[31merror burst\u{1b}[0m\n"
+                ),
+                "cid-web-2" => "2026-06-29T08:00:01.000000000Z sidecar init\n",
+                other => {
+                    return Ok(CommandOutput {
+                        status: 1,
+                        stdout: String::new(),
+                        stderr: format!("unexpected logs container {other}"),
+                    });
+                }
+            };
+            return Ok(CommandOutput {
+                status: 0,
+                stdout: stdout.to_string(),
+                stderr: String::new(),
+            });
+        }
+
+        Ok(CommandOutput {
+            status: 1,
+            stdout: String::new(),
+            stderr: format!("unexpected service logs args: {:?}", args),
+        })
+    }
+}
+
 async fn seed_cleanup_stack(
     state: &Arc<AppState>,
     project: &str,
