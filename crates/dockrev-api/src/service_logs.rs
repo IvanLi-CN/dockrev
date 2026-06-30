@@ -225,6 +225,7 @@ impl ServiceLogHub {
         }))
     }
 
+    #[cfg(test)]
     pub async fn seed_test_buffer(&self, service_id: &str, events: Vec<ServiceLogEventEnvelope>) {
         let entry = {
             let mut map = self.entries.lock().await;
@@ -344,14 +345,12 @@ impl ServiceLogHub {
                             "log_source_changed",
                         ).await;
 
-                        if follower_handle.is_none() {
-                            if let Some(source) = active_source.clone() {
-                                follower_handle = Some(spawn_source_follower(
-                                    runner.clone(),
-                                    collector_tx.clone(),
-                                    source,
-                                ));
-                            }
+                        if follower_handle.is_none() && let Some(source) = active_source.clone() {
+                            follower_handle = Some(spawn_source_follower(
+                                runner.clone(),
+                                collector_tx.clone(),
+                                source,
+                            ));
                         }
                     }
                     maybe_message = collector_rx.recv() => {
