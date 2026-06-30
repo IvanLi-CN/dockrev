@@ -115,6 +115,14 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(get_service_resource_usage_history),
         )
         .route(
+            "/api/services/{service_id}/logs",
+            get(get_service_logs_snapshot),
+        )
+        .route(
+            "/api/services/{service_id}/logs/events",
+            get(service_logs_events),
+        )
+        .route(
             "/api/services/resource-usage/overview",
             get(get_service_resource_usage_overview),
         )

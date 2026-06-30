@@ -12,6 +12,7 @@ import type {
   StackDetail,
   ServiceRepoLinkInferenceResponse,
   ServiceTagSuggestionsResponse,
+  ServiceLogSnapshotResponse,
   PutServiceComposeTagResponse,
   DiscoveredProject,
   TriggerDiscoveryScanJobResponse,
@@ -434,6 +435,25 @@ export function versionInferenceEventsUrl(opts?: { afterId?: number }): string {
 
 export function newVersionInferenceEventsSource(opts?: { afterId?: number }): EventSource {
   return new EventSource(versionInferenceEventsUrl(opts), { withCredentials: true })
+}
+
+export async function getServiceLogs(serviceId: string, tail = 500): Promise<ServiceLogSnapshotResponse> {
+  const query = new URLSearchParams({ tail: String(tail) })
+  const resp = await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/logs?${query.toString()}`)
+  return (await resp.json()) as ServiceLogSnapshotResponse
+}
+
+export function serviceLogsEventsUrl(serviceId: string, opts?: { afterId?: number }): string {
+  const base = apiBaseUrl().replace(/\/$/, '')
+  let url = `${base}/api/services/${encodeURIComponent(serviceId)}/logs/events`
+  if (opts && typeof opts.afterId === 'number' && Number.isFinite(opts.afterId)) {
+    url += `?afterId=${encodeURIComponent(String(opts.afterId))}`
+  }
+  return url
+}
+
+export function newServiceLogsEventsSource(serviceId: string, opts?: { afterId?: number }): EventSource {
+  return new EventSource(serviceLogsEventsUrl(serviceId, opts), { withCredentials: true })
 }
 
 export async function getServiceResourceUsageHistory(

@@ -19,6 +19,8 @@ import type {
   ServiceBackupRecordsResponse,
   ServiceRepoLinkInferenceResponse,
   ServiceResourceSample,
+  ServiceLogEventEnvelope,
+  ServiceLogSnapshotResponse,
   ServiceRollbackTargetResponse,
   ServiceSettings,
   ServiceTagSuggestionItem,
@@ -56,6 +58,7 @@ export type DockrevApiScenario =
   | 'service-detail-resource-monitor-disabled'
   | 'service-detail-resource-monitor-empty'
   | 'service-detail-resource-monitor-stream-error'
+  | 'service-detail-logs'
   | 'repo-link-editing'
   | 'guide-line-long-names'
   | 'resolved-tag-demo'
@@ -100,9 +103,15 @@ export type DockrevMockApiOptions = {
   discoveryTimelineErrorServiceIds?: string[]
   githubReleasesByServiceId?: Record<string, DockrevMockGitHubReleasesDataset>
   serviceOverridesById?: Record<string, Partial<StackDetail['services'][number]>>
+  serviceLogsByServiceId?: Record<string, ServiceLogsMockDataset>
   serviceTagSuggestionsById?: Record<string, ServiceTagSuggestionItem[]>
   deployCheckReportOverride?: Partial<DeployCheckReportEnvelope>
   deployWelcomeOverride?: Partial<DeployWelcomeResponse>
+}
+
+export type ServiceLogsMockDataset = {
+  snapshot: ServiceLogSnapshotResponse
+  eventsPayload?: string
 }
 
 export type DockrevMockGitHubReleasesDataset = {
@@ -358,10 +367,21 @@ export type Fixture = {
   rollbackTargetByServiceId: Record<string, ServiceRollbackTargetResponse>
   repoLinkInferenceByServiceId: Record<string, ServiceRepoLinkInferenceResponse>
   serviceTagSuggestionsById: Record<string, ServiceTagSuggestionItem[]>
+  serviceLogsByServiceId: Record<string, ServiceLogsMockDataset>
   deployCheckReport: DeployCheckReportEnvelope
   deployWelcome: DeployWelcomeResponse
   versionInferenceOverview: VersionInferenceOverviewMock
   versionInferenceEvents: VersionInferenceEventMock[]
+}
+
+export function buildServiceLogsSsePayload(events: ServiceLogEventEnvelope[]): string {
+  if (events.length === 0) return ': keep-alive\n\n'
+  return events
+    .map((event) => {
+      const eventName = event.type === 'reset' ? 'service_log_reset' : 'service_log_line'
+      return `id: ${event.id}\nevent: ${eventName}\ndata: ${JSON.stringify(event)}\n\n`
+    })
+    .join('')
 }
 
 export function json(data: unknown, init?: ResponseInit) {

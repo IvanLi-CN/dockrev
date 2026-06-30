@@ -1,0 +1,220 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  getServiceLogs,
+  newServiceLogsEventsSource,
+  type ServiceLogEventEnvelope,
+  type ServiceLogLine,
+} from '../api'
+
+export const SERVICE_LOG_INITIAL_TAIL = 500
+export const SERVICE_LOG_BUFFER_LIMIT = 2_000
+const ESC = String.fromCharCode(27)
+const ANSI_SGR_PATTERN = new RegExp(`${ESC}\\[[0-9;]*m`, 'g')
+const ANSI_ERROR_PATTERN = new RegExp(`${ESC}\\[(?:[0-9;]*;)?31m`)
+const ANSI_WARN_PATTERN = new RegExp(`${ESC}\\[(?:[0-9;]*;)?33m`)
+const ANSI_INFO_PATTERN = new RegExp(`${ESC}\\[(?:[0-9;]*;)?(?:32|36)m`)
+const ANSI_DEBUG_PATTERN = new RegExp(`${ESC}\\[(?:[0-9;]*;)?90m`)
+
+export type ServiceLogLevel = 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'unknown'
+
+export type ServiceLogRenderSegment = {
+  text: string
+  style?: React.CSSProperties
+}
+
+export type ServiceLogRecord = {
+  id: number
+  ts: string
+  raw: string
+  plain: string
+  level: ServiceLogLevel
+  segments: ServiceLogRenderSegment[]
+}
+
+function stripAnsi(input: string): string {
+  return input.replace(ANSI_SGR_PATTERN, '')
+}
+
+function ansiSegments(input: string): ServiceLogRenderSegment[] {
+  const segments: ServiceLogRenderSegment[] = []
+  const ansiPattern = new RegExp(`${ESC}\\[([0-9;]*)m`, 'g')
+  let foreground: string | undefined
+  let bold = false
+  let lastIndex = 0
+
+  const pushText = (text: string) => {
+    if (!text) return
+    segments.push({
+      text,
+      style:
+        foreground || bold
+          ? {
+              ...(foreground ? { color: foreground } : null),
+              ...(bold ? { fontWeight: 700 } : null),
+            }
+          : undefined,
+    })
+  }
+
+  for (const match of input.matchAll(ansiPattern)) {
+    const index = match.index ?? 0
+    pushText(input.slice(lastIndex, index))
+    const codes = (match[1] ?? '')
+      .split(';')
+      .map((value) => Number.parseInt(value, 10))
+      .filter(Number.isFinite)
+    if (codes.length === 0 || codes.includes(0)) {
+      foreground = undefined
+      bold = false
+    }
+    for (const code of codes) {
+      if (code === 1) bold = true
+      if (code === 31) foreground = '#f87171'
+      if (code === 32) foreground = '#4ade80'
+      if (code === 33) foreground = '#fbbf24'
+      if (code === 34) foreground = '#60a5fa'
+      if (code === 35) foreground = '#f472b6'
+      if (code === 36) foreground = '#22d3ee'
+      if (code === 37) foreground = '#e5e7eb'
+      if (code === 90) foreground = '#94a3b8'
+    }
+    lastIndex = index + match[0].length
+  }
+  pushText(input.slice(lastIndex))
+  return segments.length > 0 ? segments : [{ text: input }]
+}
+
+function inferLogLevel(raw: string, plain: string): ServiceLogLevel {
+  if (ANSI_ERROR_PATTERN.test(raw)) return 'error'
+  if (ANSI_WARN_PATTERN.test(raw)) return 'warn'
+  if (ANSI_DEBUG_PATTERN.test(raw)) return 'debug'
+  if (ANSI_INFO_PATTERN.test(raw)) return 'info'
+
+  const lower = plain.trim().toLowerCase()
+  if (!lower) return 'unknown'
+  if (/\btrace\b/.test(lower)) return 'trace'
+  if (/\bdebug\b|\bverbose\b|cache warmup/.test(lower)) return 'debug'
+  if (/\bfatal\b|\bpanic\b|\bexception\b|\berr(or)?\b|\bfailed\b|\btimeout\b|\bdenied\b|\bunavailable\b/.test(lower)) {
+    return 'error'
+  }
+  if (/\bwarn(ing)?\b|slow query|\bretry\b|\bdegraded\b|\bstale\b/.test(lower)) return 'warn'
+  if (/\binfo\b|\bboot\b|\bcomplete\b|\bconnected\b|\bserving\b|\breload\b|\bready\b|\bhealthz\b|\breadiness\b/.test(lower)) {
+    return 'info'
+  }
+  return 'unknown'
+}
+
+function toRecord(line: ServiceLogLine, id: number): ServiceLogRecord {
+  const plain = stripAnsi(line.plain || line.raw)
+  return {
+    id,
+    ts: line.ts,
+    raw: line.raw,
+    plain,
+    level: inferLogLevel(line.raw, plain),
+    segments: ansiSegments(line.raw),
+  }
+}
+
+export function useServiceLogsState(serviceId: string) {
+  const [records, setRecords] = useState<ServiceLogRecord[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [resetNonce, setResetNonce] = useState(0)
+  const lastEventIdRef = useRef(0)
+
+  const refreshSnapshot = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const snapshot = await getServiceLogs(serviceId, SERVICE_LOG_INITIAL_TAIL)
+      lastEventIdRef.current = snapshot.lastEventId
+      setRecords(
+        snapshot.lines.map((line, index) =>
+          toRecord(line, Math.max(1, snapshot.lastEventId - snapshot.lines.length + index + 1)),
+        ),
+      )
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [serviceId])
+
+  useEffect(() => {
+    void refreshSnapshot()
+  }, [refreshSnapshot])
+
+  useEffect(() => {
+    let closed = false
+    let eventSource: EventSource | null = null
+
+    const start = () => {
+      eventSource = newServiceLogsEventsSource(
+        serviceId,
+        lastEventIdRef.current > 0 ? { afterId: lastEventIdRef.current } : undefined,
+      )
+
+      eventSource.addEventListener('service_log_line', (event: Event) => {
+        const payload = (event as MessageEvent).data
+        if (typeof payload !== 'string' || !payload) return
+        try {
+          const parsed = JSON.parse(payload) as ServiceLogEventEnvelope
+          if (parsed.type !== 'line') return
+          setRecords((prev) => {
+            const next = [...prev, toRecord(parsed.line, parsed.id)]
+            return next.length > SERVICE_LOG_BUFFER_LIMIT ? next.slice(-SERVICE_LOG_BUFFER_LIMIT) : next
+          })
+          lastEventIdRef.current = parsed.id
+        } catch {
+          // ignore malformed events
+        }
+      })
+
+      eventSource.addEventListener('service_log_reset', (event: Event) => {
+        const payload = (event as MessageEvent).data
+        if (typeof payload !== 'string' || !payload) return
+        try {
+          const parsed = JSON.parse(payload) as ServiceLogEventEnvelope
+          if (parsed.type !== 'reset') return
+          if (parsed.id > 0) {
+            lastEventIdRef.current = Math.max(lastEventIdRef.current, parsed.id)
+          }
+          if (parsed.reason === 'buffer_gap_reset' || parsed.reason === 'subscriber_lagged') {
+            setResetNonce((value) => value + 1)
+            void refreshSnapshot()
+          }
+        } catch {
+          void refreshSnapshot()
+        }
+      })
+
+      eventSource.onerror = () => {
+        if (closed) return
+      }
+    }
+
+    if (!loading) start()
+    return () => {
+      closed = true
+      eventSource?.close()
+    }
+  }, [loading, refreshSnapshot, serviceId])
+
+  const normalizedQuery = query.trim().toLowerCase()
+  const filteredRecords = useMemo(() => {
+    if (!normalizedQuery) return records
+    return records.filter((record) => record.plain.toLowerCase().includes(normalizedQuery))
+  }, [normalizedQuery, records])
+
+  return {
+    error,
+    filteredRecords,
+    loading,
+    query,
+    records,
+    resetNonce,
+    setQuery,
+  }
+}

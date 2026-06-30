@@ -128,6 +128,10 @@ async fn test_state_with(
         db.clone(),
         runner.clone(),
     ));
+    let service_log_hub = Arc::new(crate::service_logs::ServiceLogHub::new(
+        db.clone(),
+        runner.clone(),
+    ));
     AppState::new(
         config,
         db,
@@ -137,6 +141,7 @@ async fn test_state_with(
         cleanup_snapshot_worker,
         deploy_check_refresh_worker,
         resource_hub,
+        service_log_hub,
     )
 }
 
@@ -193,6 +198,10 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
         db.clone(),
         runner.clone(),
     ));
+    let service_log_hub = Arc::new(crate::service_logs::ServiceLogHub::new(
+        db.clone(),
+        runner.clone(),
+    ));
     AppState::new(
         config,
         db,
@@ -202,6 +211,7 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
         cleanup_snapshot_worker,
         deploy_check_refresh_worker,
         resource_hub,
+        service_log_hub,
     )
 }
 
@@ -257,6 +267,10 @@ async fn test_state_auth_required(db_path: &str) -> Arc<AppState> {
         db.clone(),
         runner.clone(),
     ));
+    let service_log_hub = Arc::new(crate::service_logs::ServiceLogHub::new(
+        db.clone(),
+        runner.clone(),
+    ));
     AppState::new(
         config,
         db,
@@ -266,6 +280,7 @@ async fn test_state_auth_required(db_path: &str) -> Arc<AppState> {
         cleanup_snapshot_worker,
         deploy_check_refresh_worker,
         resource_hub,
+        service_log_hub,
     )
 }
 
@@ -326,6 +341,10 @@ async fn test_state_with_authz(
         db.clone(),
         runner.clone(),
     ));
+    let service_log_hub = Arc::new(crate::service_logs::ServiceLogHub::new(
+        db.clone(),
+        runner.clone(),
+    ));
     AppState::new(
         config,
         db,
@@ -335,6 +354,7 @@ async fn test_state_with_authz(
         cleanup_snapshot_worker,
         deploy_check_refresh_worker,
         resource_hub,
+        service_log_hub,
     )
 }
 

@@ -82,6 +82,7 @@ impl CommandRunner for TokioCommandRunner {
         }
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
+        cmd.kill_on_drop(true);
 
         let fut = async {
             let mut child = cmd.spawn()?;

@@ -1,10 +1,12 @@
 use super::*;
 use crate::updater::is_dockrev_image_ref;
 use std::collections::BTreeMap;
+use std::convert::Infallible;
 
 mod backup_records;
 mod backup_targets;
 mod github_releases;
+mod logs;
 mod repo_links;
 
 use backup_records::get_service_backup_records as load_service_backup_records_response;
@@ -13,6 +15,7 @@ use backup_targets::{
     put_service_backup_targets as save_service_backup_targets_response, read_compose_service_specs,
 };
 
+pub(super) use logs::{get_service_logs_snapshot, service_logs_events};
 pub(super) use repo_links::get_service_new_version_discovery_timeline;
 use repo_links::normalize_repo_url_input;
 #[allow(unused_imports)]

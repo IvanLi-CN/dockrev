@@ -244,6 +244,33 @@ export type ServiceTagSuggestionsResponse = {
   items: ServiceTagSuggestionItem[]
 }
 
+export type ServiceLogLine = {
+  ts: string
+  raw: string
+  plain: string
+}
+
+export type ServiceLogSnapshotResponse = {
+  serviceId: string
+  lines: ServiceLogLine[]
+  lastEventId: number
+  bufferLimit: number
+}
+
+export type ServiceLogEventEnvelope =
+  | {
+      type: 'line'
+      id: number
+      serviceId: string
+      line: ServiceLogLine
+    }
+  | {
+      type: 'reset'
+      id: number
+      serviceId: string
+      reason: string
+    }
+
 export type PutServiceComposeTagResponse = {
   ok: boolean
   tag: string

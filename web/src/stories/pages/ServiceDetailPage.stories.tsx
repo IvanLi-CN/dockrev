@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react'
+import type { ServiceLogSnapshotResponse } from '../../api'
 import { ServiceDetailPage } from '../../pages/ServiceDetailPage'
 import { currentRoutePathname, type Route } from '../../routes'
 import { PageHarness } from '../mocks/PageHarness'
@@ -13,7 +14,7 @@ const meta: Meta<typeof ServiceDetailPage> = {
 
 export default meta
 type Story = StoryObj<typeof ServiceDetailPage>
-type ServiceSection = 'overview' | 'monitoring' | 'backup' | 'settings'
+type ServiceSection = 'overview' | 'monitoring' | 'backup' | 'logs' | 'settings'
 
 function expectStory(condition: unknown, message: string): asserts condition {
   if (!condition) throw new globalThis.Error(message)
@@ -33,6 +34,12 @@ async function waitForCondition(check: () => boolean, timeoutMs = 3000): Promise
 
 function normalizeText(value: string | null | undefined): string {
   return value?.replace(/\s+/g, ' ').trim() ?? ''
+}
+
+function expectNearlyEqual(actual: number, expected: number, tolerance: number, message: string): void {
+  if (Math.abs(actual - expected) > tolerance) {
+    throw new globalThis.Error(`${message}: expected ${expected}, got ${actual}`)
+  }
 }
 
 function findButton(root: ParentNode, text: string): HTMLButtonElement | null {
@@ -71,6 +78,29 @@ function routeFor(stackId: string, serviceId: string, section: ServiceSection = 
   return section === 'overview'
     ? { name: 'service', stackId, serviceId }
     : { name: 'service', stackId, serviceId, section }
+}
+
+function buildLongLogsSnapshot(serviceId: string, count = 1600): ServiceLogSnapshotResponse {
+  const startedAt = Date.parse('2026-06-29T08:00:00.000Z')
+  return {
+    serviceId,
+    lines: Array.from({ length: count }, (_, index) => {
+      const ts = new Date(startedAt + index * 1_000).toISOString()
+      const base =
+        index % 7 === 0
+          ? `GET /internal/metrics 200 trace=req-${String(index).padStart(4, '0')} cache=warm upstream=payments-v2 latency=${40 + (index % 11)}ms region=ap-southeast-1 release=2026.06.29-${(index % 5) + 1}`
+          : `worker cycle=${index} queue=critical state=idle lease=svc-prod-api lock=refresh-${String(index).padStart(4, '0')}`
+      const raw =
+        index % 11 === 0
+          ? `\u001b[33m${base}\u001b[0m`
+          : index % 13 === 0
+            ? `\u001b[31m${base}\u001b[0m`
+            : base
+      return { ts, raw, plain: raw }
+    }),
+    lastEventId: count,
+    bufferLimit: 2000,
+  }
 }
 
 function render(
@@ -152,6 +182,113 @@ export const BackupSection: Story = {
   },
 }
 
+export const LogsSection: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  render: render('stack-prod', 'svc-prod-api', 'logs', '日志子页提供单服务实时日志、搜索与吸底'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => normalizeText(canvasElement.textContent).includes('实时日志'))
+    expectStory(currentRoutePathname() === '/services/stack-prod/svc-prod-api/logs', 'logs deep link missing')
+    expectStory(findTab(canvasElement, 'logs')?.getAttribute('data-state') === 'active', 'logs tab should be active')
+    expectStory(normalizeText(canvasElement.textContent).includes('boot complete'), 'logs should render stream lines')
+    expectStory(normalizeText(canvasElement.textContent).includes('2026-06-29'), 'logs should render the log date')
+    expectStory(normalizeText(canvasElement.textContent).includes('ERR'), 'logs should render inferred log levels')
+    const input = canvasElement.querySelector<HTMLInputElement>('input[aria-label="搜索日志"]')
+    expectStory(input, 'logs search input missing')
+    expectStory(Boolean(findButton(canvasElement, '自动换行 关')), 'logs wrap toggle missing')
+    expectStory(Boolean(findButton(canvasElement, 'UTC')), 'logs timezone toggle missing')
+    expectStory(
+      canvasElement.querySelector('[data-service-logs-virtualized="true"]')?.getAttribute('data-service-logs-wrap') === 'off',
+      'logs should default to nowrap mode',
+    )
+    input.value = 'slow query'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    input.dispatchEvent(new Event('change', { bubbles: true }))
+    await waitForCondition(() => normalizeText(canvasElement.textContent).includes('1 /'))
+  },
+}
+
+export const LogsSectionVirtualized: Story = {
+  parameters: {
+    dockrevApiScenario: 'dashboard-demo',
+    dockrevServiceLogsByServiceId: {
+      'svc-prod-api': {
+        snapshot: buildLongLogsSnapshot('svc-prod-api'),
+        eventsPayload: ': keep-alive\n\n',
+      },
+    },
+  },
+  render: render('stack-prod', 'svc-prod-api', 'logs', '日志子页在大缓冲下继续使用虚拟列表，并提供自动换行切换'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => normalizeText(canvasElement.textContent).includes('实时日志'))
+    const terminal = canvasElement.querySelector<HTMLElement>('[data-service-logs-virtualized="true"]')
+    expectStory(terminal, 'virtualized logs terminal missing')
+    const totalCount = Number(terminal?.getAttribute('data-service-logs-total-count') ?? '0')
+    const visibleCount = Number(terminal?.getAttribute('data-service-logs-visible-count') ?? '0')
+    expectStory(totalCount >= 1600, 'virtualized story should expose a large in-memory buffer')
+    expectStory(visibleCount > 0 && visibleCount < totalCount, 'virtualized story should only render the visible window')
+    expectStory(
+      canvasElement.querySelectorAll('.serviceLogRow').length === visibleCount,
+      'rendered row count should match the virtualized visible window',
+    )
+
+    const wrapButton = findButton(canvasElement, '自动换行 关')
+    expectStory(wrapButton, 'wrap toggle missing in virtualized story')
+    wrapButton.click()
+    await waitForCondition(() => Boolean(findButton(canvasElement, '自动换行 开')))
+    expectStory(
+      terminal?.getAttribute('data-service-logs-wrap') === 'on',
+      'wrap toggle should update terminal wrap state',
+    )
+
+    const utcButton = findButton(canvasElement, 'UTC')
+    expectStory(utcButton, 'timezone toggle missing in virtualized story')
+  },
+}
+
+export const LogsSectionEvidence: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  render: render('stack-prod', 'svc-prod-api', 'logs', '日志子页提供单服务实时日志、搜索与吸底'),
+  play: async ({ canvasElement, step }) => {
+    await waitForCondition(() => normalizeText(canvasElement.textContent).includes('实时日志'))
+    expectStory(currentRoutePathname() === '/services/stack-prod/svc-prod-api/logs', 'logs deep link missing')
+    expectStory(findTab(canvasElement, 'logs')?.getAttribute('data-state') === 'active', 'logs tab should be active')
+    expectStory(normalizeText(canvasElement.textContent).includes('worker sync complete jobs=18 queue=critical'), 'logs evidence story should render denser stream lines')
+    expectStory(normalizeText(canvasElement.textContent).includes('WARN'), 'logs evidence story should expose inferred warning level')
+    const input = canvasElement.querySelector<HTMLInputElement>('input[aria-label="搜索日志"]')
+    expectStory(input, 'logs search input missing')
+    expectStory(input?.value === '', 'logs evidence story should stay in default non-filtered state')
+    expectStory(Boolean(findButton(canvasElement, '自动换行 关')), 'logs evidence story should expose wrap toggle')
+
+    const assertAligned = () => {
+      const headerCells = canvasElement.querySelectorAll<HTMLElement>('.serviceLogsTerminalHead > span')
+      const firstRowCells = canvasElement.querySelectorAll<HTMLElement>('.serviceLogRow:first-of-type > span')
+      expectStory(headerCells.length === 3, 'logs header should render three columns')
+      expectStory(firstRowCells.length === 3, 'logs first row should render three columns')
+      for (let index = 0; index < 3; index += 1) {
+        const headerLeft = Math.round(headerCells[index]!.getBoundingClientRect().left)
+        const rowLeft = Math.round(firstRowCells[index]!.getBoundingClientRect().left)
+        expectNearlyEqual(rowLeft, headerLeft, 1, `logs column ${index + 1} should align between header and body`)
+      }
+    }
+
+    await step('desktop columns stay aligned', async () => {
+      globalThis.innerWidth = 1280
+      globalThis.dispatchEvent(new Event('resize'))
+      await waitForCondition(() => canvasElement.querySelectorAll('.serviceLogRow:first-of-type > span').length === 3)
+      assertAligned()
+    })
+
+    await step('mobile columns stay aligned', async () => {
+      globalThis.innerWidth = 390
+      globalThis.dispatchEvent(new Event('resize'))
+      await waitForCondition(() => canvasElement.querySelectorAll('.serviceLogRow:first-of-type > span').length === 3)
+      assertAligned()
+      globalThis.innerWidth = 1280
+      globalThis.dispatchEvent(new Event('resize'))
+    })
+  },
+}
+
 export const TabNavigation: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo' },
   render: render('stack-prod', 'svc-prod-api', 'overview', '页头 Tabs 直接驱动 service section 路由'),
@@ -167,6 +304,11 @@ export const TabNavigation: Story = {
     await waitForCondition(() => currentRoutePathname() === '/services/stack-prod/svc-prod-api/backup')
     await waitForCondition(() => Boolean(findSectionCard(canvasElement, 'backup-summary')))
     expectStory(findTab(canvasElement, 'backup')?.getAttribute('data-state') === 'active', 'backup tab active state missing after switch')
+
+    findTab(canvasElement, 'logs')?.click()
+    await waitForCondition(() => currentRoutePathname() === '/services/stack-prod/svc-prod-api/logs')
+    await waitForCondition(() => normalizeText(canvasElement.textContent).includes('实时日志'))
+    expectStory(findTab(canvasElement, 'logs')?.getAttribute('data-state') === 'active', 'logs tab active state missing after switch')
 
     findTab(canvasElement, 'settings')?.click()
     await waitForCondition(() => currentRoutePathname() === '/services/stack-prod/svc-prod-api/settings')

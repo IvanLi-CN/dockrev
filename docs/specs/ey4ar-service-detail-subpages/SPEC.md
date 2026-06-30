@@ -1,4 +1,4 @@
-# Dockrev：服务详情页四子页信息架构升级（#ey4ar）
+# Dockrev：服务详情页五子页信息架构升级（#ey4ar）
 
 > 当前有效规范以本文为准；实现覆盖与当前状态见 `./IMPLEMENTATION.md`，关键演进原因见 `./HISTORY.md`。
 
@@ -6,16 +6,18 @@
 
 - 现有 `ServiceDetailPage` 把运行态摘要、资源监控、自动更新策略、Compose 信息、服务保护、忽略规则与 Webhook 说明堆叠在单一页面里，导致服务详情首屏信息密度过高。
 - 该页面已经承载多个逐步独立演进的主题能力，但当前仍缺少稳定的二级信息架构与可直达的子页 URL，导致页面越来越“多、杂”。
+- 服务级实时日志目前没有独立的“专注查看”空间，后续若继续塞回 `monitoring` 或聚合页，会再次引入首屏拥挤与高频滚动干扰。
 - 如果不冻结这次拆分规范，后续继续往服务详情页新增功能时，会不断重复“首屏堆卡片”和“全量页面滚动”的旧模式。
 
 ## 目标 / 非目标
 
 ### Goals
 
-- 将服务详情页拆成 route-backed 的 `概览 / 监控 / 备份 / 设置` 四个子页，并保留旧 `/services/:stackId/:serviceId` 入口稳定落到默认 `概览`。
+- 将服务详情页拆成 route-backed 的 `概览 / 监控 / 备份 / 日志 / 设置` 五个子页，并保留旧 `/services/:stackId/:serviceId` 入口稳定落到默认 `概览`。
 - 保留共享的服务上下文：标题、镜像/仓库信息、状态 banner、版本异常提示、全局 success/error 反馈，以及高频顶部动作。
-- 将 `ServiceResourcePanel` 独占到 `监控` 子页，将服务级备份摘要、备份设置入口与当前服务相关备份记录集中到 `备份` 子页，将自动更新 / Compose / 回滚 / repoUrl / 忽略规则 / Webhook / 低频危险动作集中到 `设置` 子页。
-- 在已有 Storybook 与 spec 流程下补齐四子页的稳定 stories、交互断言与 owner-facing 视觉证据。
+- 将 `ServiceResourcePanel` 独占到 `监控` 子页，将服务级备份摘要、备份设置入口与当前服务相关备份记录集中到 `备份` 子页，将自动更新 / Compose / 服务保护 / 忽略规则 / Webhook / 低频危险动作集中到 `设置` 子页。
+- 为服务详情新增 Dozzle 风格的 `日志` 子页，提供单服务 live tail、当前缓冲搜索、默认吸底、自动换行开关与跳到最新交互。
+- 在已有 Storybook 与 spec 流程下补齐五子页的稳定 stories、交互断言与 owner-facing 视觉证据。
 
 ### Non-goals
 
@@ -23,6 +25,7 @@
 - 不把 `设置` 子页改造成纯页内编辑器；自动更新、Compose tag、服务保护继续沿用摘要卡片 + 抽屉编辑模式。
 - 不增加侧栏级第二套服务详情子导航，也不为本次改造保留长期并行的旧聚合页。
 - 不改写现有 feature specs（如自动更新、回滚、Compose tag、资源监控）的主题 owner；这些 spec 继续拥有各自功能契约。
+- 不引入持久化日志索引、跨会话全文搜索、单容器 picker、日志下载或 `WebSocket/xterm.js` 终端模拟器。
 
 ## 范围（Scope）
 
@@ -35,6 +38,16 @@
 - `web/src/stories/pages/ServiceDetailPage.stories.tsx`
 - `web/src/stories/mocks/PageHarness.tsx`
 - `web/src/App.css`
+- `web/src/components/ServiceLogsPanel.tsx`
+- `web/src/pages/useServiceLogsState.ts`
+- `web/src/api.ts`
+- `web/src/api/types.ts`
+- `web/src/stories/mocks/dockrevMockApi/**`
+- `crates/dockrev-api/src/api/services.rs`
+- `crates/dockrev-api/src/api/types/service_logs.rs`
+- `crates/dockrev-api/src/service_logs.rs`
+- `crates/dockrev-api/src/state.rs`
+- `crates/dockrev-api/src/main.rs`
 - 本 spec 目录与其视觉证据资产
 - 相关服务级备份记录 API 的前端消费契约
 
@@ -48,23 +61,30 @@
 
 ### MUST
 
-- `Route.name === 'service'` 必须支持 `section?: 'overview' | 'monitoring' | 'backup' | 'settings'`。
+- `Route.name === 'service'` 必须支持 `section?: 'overview' | 'monitoring' | 'backup' | 'logs' | 'settings'`。
 - `href()` 对 `section=undefined | overview` 必须输出旧 canonical URL `/services/:stackId/:serviceId`，不得生成新的 `/overview` canonical path。
-- `parseRoute()` 必须接受旧路径，并把它解析为服务详情 `overview` 语义；对于 `/monitoring` 与 `/settings` 需返回对应 section。
-- `parseRoute()` 对 `/backup` 必须返回对应 section。
-- 服务详情页顶部必须提供 route-backed tabs，标签固定为 `概览 / 监控 / 备份 / 设置`。
+- `parseRoute()` 必须接受旧路径，并把它解析为服务详情 `overview` 语义；对于 `/monitoring`、`/backup`、`/logs` 与 `/settings` 需返回对应 section。
+- 服务详情页顶部必须提供 route-backed tabs，标签固定为 `概览 / 监控 / 备份 / 日志 / 设置`。
 - `预览更新 / 执行更新 / 回滚 / Stack 详情` 必须在各子页保持一致可达；`归档/恢复` 与 `阻止此服务更新` 必须从全局顶部动作下沉到 `设置` 页。
 - `概览` 不得再出现资源监控卡、自动更新结果卡、Compose 信息卡或服务保护卡。
 - `监控` 只承载资源监控面板及其原有空态/错态/SSE 状态，不得混入配置内容。
 - `备份` 必须集中承载服务级备份摘要卡、备份设置抽屉入口，以及“当前服务相关”的备份记录卡片列表。
+- `日志` 必须独占服务级实时日志面板，不得混入监控卡或配置卡。
+- `日志` 必须通过 `GET /api/services/{service_id}/logs?tail=500` 提供最近缓冲 snapshot，并通过 `GET /api/services/{service_id}/logs/events?afterId=` 建立 SSE 增量续流；SSE 继续支持 `Last-Event-ID`、`Cache-Control: no-cache` 与 `X-Accel-Buffering: no`。
+- `日志` 必须保留 ANSI 颜色渲染，同时维护 strip-ANSI 文本用于大小写不敏感的当前缓冲过滤搜索。
+- `日志` 首屏默认展示最近 `500` 行，会话缓冲上限为 `2000` 行；超出 ring buffer 的断线补偿必须通过 `service_log_reset` 触发前端重抓 snapshot。
+- `日志` 必须支持默认吸底、用户上滚后暂停跟随、`跳到最新` 恢复吸底，以及查询非空时继续接收流但不自动跳底。
+- `日志` 必须提供显式的自动换行开关；关闭时保留原始单行滚动查看，开启时在当前视口内折行，但两种模式都不得放弃虚拟列表渲染。
 - `设置` 不得再承载备份目标编辑入口；设置页中的“服务保护设置”只保留失败回滚与代码仓库配置。
 - `设置` 必须集中承载自动更新摘要与抽屉、Compose 信息、部署 tag 编辑、服务保护、忽略规则、Webhook，以及下沉后的低频危险动作。
-- Storybook 必须提供四子页稳定入口，并至少覆盖：旧链接默认概览、tabs active state、备份页记录列表/空态、设置抽屉入口或监控页稳定渲染。
+- Storybook 必须提供五子页稳定入口，并至少覆盖：旧链接默认概览、tabs active state、备份页记录列表/空态、日志深链、设置抽屉入口或监控页稳定渲染。
 
 ### SHOULD
 
 - 共享数据继续由单一 `useServiceDetailPageState` 驱动，避免按子页重复请求 stack/service/settings 数据。
-- 服务详情页的四子页应在移动端保持单列、无横向滚动，并确保 tabs 可稳定切换。
+- 日志流状态应由独立 hook 管理，并通过有界缓冲避免无限堆积 DOM 与内存。
+- 服务详情页的五子页应在移动端保持单列、无横向滚动，并确保 tabs 可稳定切换。
+- 日志页应在桌面与移动端保持时间戳 / 正文两列的可读性，必要时在窄屏下收紧间距而不是回退到终端模拟器。
 - 设置页中的动作分区应把低频危险动作与普通配置分开呈现。
 
 ### COULD
@@ -85,6 +105,11 @@
 - 用户访问 `.../backup`：
   - 共享 hero/banner/top actions 与普通服务详情一致。
   - 内容区展示备份说明摘要、进入备份设置抽屉的入口，以及当前服务相关的备份记录卡片。
+- 用户访问 `.../logs`：
+  - 共享 hero/banner/top actions 与普通服务详情一致。
+  - 内容区展示服务级日志 snapshot + SSE live tail、搜索框与吸底控制。
+  - 状态条同时提供当前缓冲状态、虚拟渲染状态与自动换行开关。
+  - 若用户未主动离开底部且查询为空，则新日志到达后自动保持在最新位置。
 - 用户访问 `.../settings`：
   - 共享 hero/banner/top actions 与普通服务详情一致。
   - 内容区展示自动更新摘要、Compose 信息、tag 编辑入口、服务保护（仅回滚 + repoUrl）、忽略规则、Webhook 与危险动作。
@@ -98,7 +123,10 @@
 - 旧 bookmark、从服务列表/Stack 详情/概览跳来的 `navigate({ name: 'service', stackId, serviceId })` 调用必须继续可用，不要求调用点立即补 section。
 - 若当前服务是 Dockrev 自身：
   - 继续保留既有 supervisor 自升级动作逻辑。
-  - 四子页结构仍然生效。
+- 五子页结构仍然生效。
+- 若服务当前没有日志输出：
+  - `日志` 子页显示稳定空态而不是失败页。
+  - 后续服务恢复输出时，日志流无需手动刷新即可恢复。
 - 全局 success/error notice 仍由服务详情页底部统一承载，不因 section 切换丢失。
 
 ## 接口契约（Interfaces & Contracts）
@@ -110,10 +138,14 @@
 | `Route.name='service'` | frontend route union | internal | Modify | 本文 | web | App / pages / stories | 新增 `section` 路由语义 |
 | `/services/:stackId/:serviceId[/<section>]` | frontend URL contract | external | Modify | 本文 | web | operators / bookmarks / internal links | `overview` canonical 仍为无 section 旧路径 |
 | `ServiceDetailPage backup section` | frontend UI | internal | New | 本文 + `#sxcmc` | web | operators | 新增独立备份子页，承载摘要、入口与记录列表 |
+| `GET /api/services/{service_id}/logs` | HTTP JSON API | internal | Add | 本文 | api | web logs page | 返回最近缓冲与 `lastEventId` |
+| `GET /api/services/{service_id}/logs/events` | SSE API | internal | Add | 本文 | api | web logs page | 支持 `afterId` / `Last-Event-ID` / `service_log_reset` |
 
 ### 契约文档（按 Kind 拆分）
 
-- `None`
+- `ServiceLogEventEnvelope`
+  - `service_log_line`: 单条日志行，包含事件 ID、时间戳、原始文本与 strip-ANSI 文本。
+  - `service_log_reset`: 表示前端应丢弃增量流状态并重新抓取 snapshot。
 
 ## 验收标准（Acceptance Criteria）
 
@@ -128,6 +160,17 @@
 - Given 服务详情页处于 `备份`
   When 用户查看页面主体
   Then 可看到备份说明摘要、编辑备份设置入口与备份记录卡片列表，且不再需要回到 `设置` 页寻找备份入口。
+- Given 服务详情页处于 `日志`
+  When 用户保持在列表底部且查询为空
+  Then 新日志到达后页面持续吸底；若用户上滚，则停止吸底并显示 `跳到最新` 控件。
+
+- Given 服务详情页处于 `日志`
+  When 查询非空
+  Then 只显示当前缓冲内匹配 strip-ANSI 文本的结果，日志流仍继续进入缓冲；清空查询后恢复完整时间流。
+
+- Given 服务详情页处于 `日志`
+  When 用户切换自动换行
+  Then 页面在“原始单行横向滚动查看”和“当前视口内折行查看”之间切换，且两种模式都继续使用虚拟列表渲染。
 
 - Given 服务详情页处于 `设置`
   When 用户查看页面主体
@@ -137,9 +180,13 @@
   When 用户需要执行 `预览更新 / 执行更新 / 回滚 / Stack 详情`
   Then 无需先切回 `概览`，这些高频动作在当前子页即可直接触发。
 
+- Given `GET /api/services/{service_id}/logs/events`
+  When 断线后请求的 `afterId` 已超出 ring buffer
+  Then 服务端发送 `service_log_reset`，前端随后重抓 snapshot 而不是静默丢日志。
+
 - Given 服务详情 stories 已更新
   When 运行 Storybook interaction 回归
-  Then 至少能验证旧链接默认概览、tabs active/切换行为，以及备份页或设置页/监控页的核心入口稳定可用。
+  Then 至少能验证旧链接默认概览、tabs active/切换行为、备份页与日志页的核心入口稳定可用，以及设置页或监控页稳定渲染。
 
 ## 验收清单（Acceptance checklist）
 
@@ -152,6 +199,7 @@
 
 ### Testing
 
+- `cargo test -p dockrev-api`
 - `bun run --cwd web lint`
 - `bun run --cwd web build`
 - `bun run --cwd web build-storybook`
@@ -161,12 +209,12 @@
 
 - Stories to add/update: `web/src/stories/pages/ServiceDetailPage.stories.tsx`
 - Docs pages / state galleries to add/update: `none (reason: repo currently uses page stories/canvas coverage for this surface)`
-- `play` / interaction coverage to add/update: tabs route switching、旧链接默认概览、备份页记录卡渲染/空态、设置抽屉入口、监控页稳定渲染
-- Visual regression baseline changes (if any): 服务详情四子页 mock-only 视觉证据
+- `play` / interaction coverage to add/update: tabs route switching、旧链接默认概览、备份页记录卡渲染/空态、日志深链与搜索交互、日志自动换行/虚拟列表断言、设置抽屉入口、监控页稳定渲染
+- Visual regression baseline changes (if any): 服务详情五子页 mock-only 视觉证据
 
 ### Quality checks
 
-- Lint / typecheck / formatting: 前端 lint/build 与 Storybook 构建/交互检查必须通过
+- Lint / typecheck / formatting: API 测试、前端 lint/build 与 Storybook 构建/交互检查必须通过
 
 ## Visual Evidence
 
@@ -199,6 +247,21 @@
   PR caption: 监控子页独占资源监控面板，复用同一服务上下文与顶部动作。
 
 ![服务详情监控子页（桌面）](./assets/service-detail-monitoring-desktop.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `1440x1200`
+  viewport_strategy: `devtools-emulate`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/LogsSection`
+  state: `logs deep link`
+  evidence_note: 验证 `日志` 子页通过独立 section 深链承载单服务 live tail、当前缓冲搜索、ANSI 颜色渲染、虚拟列表状态与自动换行开关，且不再把实时日志塞回 `monitoring` 卡片区。
+  PR: include
+  PR caption: 日志子页新增服务级实时日志视图，支持缓冲搜索与跳到最新。
+
+![服务详情日志子页（桌面）](./assets/service-detail-logs-desktop.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`
@@ -251,7 +314,9 @@
 
 - 风险：服务详情现有 stories 数量较多，若不显式切换到对应 section，容易因内容搬迁导致 Storybook 回归集中失败。
 - 风险：顶部 `设置` tab 与现有自动更新卡片 `设置` 按钮同名，stories 需避免依赖“第一个同名按钮”这类脆弱选择器。
+- 风险：高频日志若不做有界缓冲与虚拟滚动，会迅速放大前端内存、重排与渲染成本。
 - 假设：`useServiceDetailPageState` 继续作为服务详情共享数据与顶部动作逻辑的单一真相源，无需拆成多 hook。
+- 假设：v1 只搜索当前会话内的 live buffer，不提供跨刷新或跨会话全文检索。
 
 ## 参考（References）
 

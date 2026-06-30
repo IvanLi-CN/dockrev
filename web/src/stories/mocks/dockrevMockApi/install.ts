@@ -68,6 +68,12 @@ export function installDockrevMockApi(
         ...options.serviceTagSuggestionsById,
       }
     }
+    if (options.serviceLogsByServiceId) {
+      state.serviceLogsByServiceId = {
+        ...state.serviceLogsByServiceId,
+        ...options.serviceLogsByServiceId,
+      }
+    }
     if (options.deployCheckReportOverride) {
       state.deployCheckReport = {
         ...state.deployCheckReport,

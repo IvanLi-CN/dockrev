@@ -644,6 +644,29 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     })
   }
 
+  if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/logs')) {
+    const parts = urlPath.split('/').filter(Boolean)
+    const serviceId = decodeURIComponent(parts[2] ?? '')
+    const snapshot = f.serviceLogsByServiceId[serviceId]?.snapshot ?? null
+    if (!snapshot) return json({ error: 'not found' }, { status: 404 })
+    return json(snapshot)
+  }
+
+  if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/logs/events')) {
+    const parts = urlPath.split('/').filter(Boolean)
+    const serviceId = decodeURIComponent(parts[2] ?? '')
+    const dataset = f.serviceLogsByServiceId[serviceId] ?? null
+    if (!dataset) return json({ error: 'not found' }, { status: 404 })
+    return new Response(dataset.eventsPayload || ': keep-alive\n\n', {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'x-accel-buffering': 'no',
+      },
+    })
+  }
+
   if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/settings')) {
     const parts = urlPath.split('/').filter(Boolean)
     const serviceId = decodeURIComponent(parts[2])

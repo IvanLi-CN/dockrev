@@ -1,5 +1,6 @@
 import type { IgnoreRule, JobDetail, JobListItem, StackDetail, StackListItem } from '../../../api'
 import {
+  buildServiceLogsSsePayload,
   makeDefaultDeployCheckEnvelope,
   makeDefaultDeployWelcome,
   makeDefaultGitHubPackagesSettings,
@@ -29,6 +30,7 @@ export function baseEmpty(): Fixture {
     rollbackTargetByServiceId: {},
     repoLinkInferenceByServiceId: {},
     serviceTagSuggestionsById: {},
+    serviceLogsByServiceId: {},
     deployCheckReport: makeDefaultDeployCheckEnvelope(),
     deployWelcome: makeDefaultDeployWelcome(),
     versionInferenceOverview: makeVersionInferenceOverview(),
@@ -617,6 +619,103 @@ export function buildDashboardDemo(): Fixture {
       },
     },
   ]
+
+  f.serviceLogsByServiceId[serviceProdApi.id] = {
+    snapshot: {
+      serviceId: serviceProdApi.id,
+      lines: [
+        {
+          ts: '2026-06-29T08:00:00.000Z',
+          raw: '\u001b[32mboot complete\u001b[0m',
+          plain: '\u001b[32mboot complete\u001b[0m',
+        },
+        {
+          ts: '2026-06-29T08:00:01.000Z',
+          raw: 'migrator connected',
+          plain: 'migrator connected',
+        },
+        {
+          ts: '2026-06-29T08:00:02.000Z',
+          raw: 'serving on :8080',
+          plain: 'serving on :8080',
+        },
+        {
+          ts: '2026-06-29T08:00:03.000Z',
+          raw: '\u001b[31mretry upstream timeout\u001b[0m',
+          plain: '\u001b[31mretry upstream timeout\u001b[0m',
+        },
+        {
+          ts: '2026-06-29T08:00:03.120Z',
+          raw: 'resolved upstream=payments-v2 attempt=2 trace=8af1f0ce',
+          plain: 'resolved upstream=payments-v2 attempt=2 trace=8af1f0ce',
+        },
+        {
+          ts: '2026-06-29T08:00:03.480Z',
+          raw: '\u001b[90mcache warmup hit ratio=0.92 region=ap-southeast-1\u001b[0m',
+          plain: '\u001b[90mcache warmup hit ratio=0.92 region=ap-southeast-1\u001b[0m',
+        },
+        {
+          ts: '2026-06-29T08:00:03.900Z',
+          raw: 'POST /v1/sessions 201 user=ops-bot latency=38ms',
+          plain: 'POST /v1/sessions 201 user=ops-bot latency=38ms',
+        },
+        {
+          ts: '2026-06-29T08:00:04.040Z',
+          raw: '\u001b[36mdb schema=v18 migration status=idle\u001b[0m',
+          plain: '\u001b[36mdb schema=v18 migration status=idle\u001b[0m',
+        },
+        {
+          ts: '2026-06-29T08:00:04.300Z',
+          raw: 'worker sync complete jobs=18 queue=critical',
+          plain: 'worker sync complete jobs=18 queue=critical',
+        },
+      ],
+      lastEventId: 9,
+      bufferLimit: 2000,
+    },
+    eventsPayload: buildServiceLogsSsePayload([
+      {
+        type: 'line',
+        id: 10,
+        serviceId: serviceProdApi.id,
+        line: {
+          ts: '2026-06-29T08:00:04.000Z',
+          raw: 'GET /healthz 200',
+          plain: 'GET /healthz 200',
+        },
+      },
+      {
+        type: 'line',
+        id: 11,
+        serviceId: serviceProdApi.id,
+        line: {
+          ts: '2026-06-29T08:00:05.000Z',
+          raw: '\u001b[33mslow query 412ms\u001b[0m',
+          plain: '\u001b[33mslow query 412ms\u001b[0m',
+        },
+      },
+      {
+        type: 'line',
+        id: 12,
+        serviceId: serviceProdApi.id,
+        line: {
+          ts: '2026-06-29T08:00:05.180Z',
+          raw: '\u001b[32mreload config source=/etc/dockrev/api.yaml\u001b[0m',
+          plain: '\u001b[32mreload config source=/etc/dockrev/api.yaml\u001b[0m',
+        },
+      },
+      {
+        type: 'line',
+        id: 13,
+        serviceId: serviceProdApi.id,
+        line: {
+          ts: '2026-06-29T08:00:05.520Z',
+          raw: 'GET /internal/readiness 200 revision=2026.06.29-1',
+          plain: 'GET /internal/readiness 200 revision=2026.06.29-1',
+        },
+      },
+    ]),
+  }
 
   return f
 }

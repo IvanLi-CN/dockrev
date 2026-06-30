@@ -23,6 +23,7 @@ import { Button, IconButton, Input, Mono, Pill, RefreshIcon, SelectField, Switch
 import { isDockrevImageRef } from '../runtimeConfig'
 import { serviceRowStatus } from '../updateStatus'
 import { ServiceResourcePanel } from '../components/ServiceResourcePanel'
+import { ServiceLogsPanel } from '../components/ServiceLogsPanel'
 import { createDefaultAutoUpdatePolicy } from '../components/AutoUpdatePolicyEditor'
 import { AutoUpdatePolicyDrawer } from '../components/AutoUpdatePolicyDrawer'
 import { AutoUpdatePolicyResultCard } from '../components/AutoUpdatePolicyResultCard'
@@ -325,7 +326,7 @@ function backupRelationshipLabel(item: BackupTargetDraftItem): string {
 export function ServiceDetailPage(props: {
   stackId: string
   serviceId: string
-  section?: 'overview' | 'monitoring' | 'backup' | 'settings'
+  section?: 'overview' | 'monitoring' | 'backup' | 'logs' | 'settings'
   onLastScanHint: (lastScan?: string) => void
   onTopActions: (node: ReactNode) => void
 }) {
@@ -477,6 +478,12 @@ export function ServiceDetailPage(props: {
         </div>
         <BackupRecordList records={backupRecords} />
       </div>
+    </div>
+  )
+
+  const renderLogsSection = () => (
+    <div className="svcDetailSectionStack">
+      <ServiceLogsPanel serviceId={service.id} />
     </div>
   )
 
@@ -693,6 +700,7 @@ export function ServiceDetailPage(props: {
   const renderSection = () => {
     if (sectionValue === 'monitoring') return renderMonitoringSection()
     if (sectionValue === 'backup') return renderBackupSection()
+    if (sectionValue === 'logs') return renderLogsSection()
     if (sectionValue === 'settings') return renderSettingsSection()
     return renderOverviewSection()
   }
@@ -732,7 +740,7 @@ export function ServiceDetailPage(props: {
       <div className="svcDetailTabsShell">
         <Tabs
           onValueChange={(value) => {
-            const nextSection = value as 'overview' | 'monitoring' | 'backup' | 'settings'
+            const nextSection = value as 'overview' | 'monitoring' | 'backup' | 'logs' | 'settings'
             navigate({
               name: 'service',
               stackId: props.stackId,
@@ -763,6 +771,13 @@ export function ServiceDetailPage(props: {
               value="backup"
             >
               备份
+            </TabsTrigger>
+            <TabsTrigger
+              className={sectionValue === 'logs' ? 'svcDetailTab active' : 'svcDetailTab'}
+              data-service-detail-tab="logs"
+              value="logs"
+            >
+              日志
             </TabsTrigger>
             <TabsTrigger
               className={sectionValue === 'settings' ? 'svcDetailTab active' : 'svcDetailTab'}
