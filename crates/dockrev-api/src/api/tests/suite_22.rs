@@ -534,6 +534,59 @@ services:
 }
 
 #[tokio::test]
+async fn service_logs_snapshot_falls_back_to_project_scan_when_service_filter_is_empty() {
+    let db_path = format!(
+        "/tmp/dockrev-service-logs-project-fallback-{}.db",
+        ulid::Ulid::new()
+    );
+    let compose_path = format!(
+        "/tmp/dockrev-service-logs-project-fallback-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: nginx:1.27
+"#,
+    )
+    .unwrap();
+    let state = test_state_with(
+        &db_path,
+        Arc::new(FakeRegistry),
+        Arc::new(ServiceLogsProjectWideRunner),
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    seed_discovered_project(&state, &stack_id, "demo-logs").await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let service_id = services[0].id.clone();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/logs?tail=3"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body = response_json(resp).await;
+    assert_eq!(body["serviceId"].as_str(), Some(service_id.as_str()));
+    assert_eq!(body["lines"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        body["lines"][0]["plain"].as_str(),
+        Some("resolved from project scan")
+    );
+}
+
+#[tokio::test]
 async fn service_logs_events_replay_and_reset_gap() {
     let db_path = format!("/tmp/dockrev-service-logs-events-{}.db", ulid::Ulid::new());
     let compose_path = format!("/tmp/dockrev-service-logs-events-{}.yml", ulid::Ulid::new());
