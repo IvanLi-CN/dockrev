@@ -770,7 +770,7 @@ async fn select_service_log_source(
 struct PendingServiceLogLine {
     ts: String,
     raw: String,
-    has_continuation: bool,
+    allows_indented_continuation: bool,
 }
 
 impl PendingServiceLogLine {
@@ -800,19 +800,21 @@ impl ServiceLogFrameParser {
         let next = PendingServiceLogLine {
             ts: ts.to_string(),
             raw: raw.to_string(),
-            has_continuation: false,
+            allows_indented_continuation: false,
         };
 
         if let Some(current) = self.current.as_mut()
-            && is_service_log_continuation(&next.raw, current.has_continuation)
+            && is_service_log_continuation(&next.raw, current.allows_indented_continuation)
         {
+            let allows_indented = current.allows_indented_continuation
+                || is_service_log_continuation_marker(&next.raw);
             current.raw.push('\n');
             current.raw.push_str(&next.raw);
-            current.has_continuation = true;
+            current.allows_indented_continuation = allows_indented;
             return None;
         }
 
-        if self.current.is_none() && is_service_log_leading_continuation_marker(&next.raw) {
+        if self.current.is_none() && is_service_log_continuation_marker(&next.raw) {
             self.dropping_leading_continuation = true;
             return None;
         }
@@ -852,10 +854,12 @@ fn parse_service_log_lines(output: &str) -> Vec<ServiceLogLine> {
 }
 
 fn split_docker_log_line(line: &str) -> (&str, &str) {
-    if let Some((ts, rest)) = line.split_once(' ')
-        && is_docker_log_timestamp(ts)
-    {
-        return (ts.trim(), rest);
+    if let Some(separator_index) = line.find(' ') {
+        let ts = &line[..separator_index];
+        let rest = &line[separator_index + 1..];
+        if is_docker_log_timestamp(ts) {
+            return (ts.trim(), rest);
+        }
     }
     ("", line)
 }
@@ -867,22 +871,18 @@ fn is_docker_log_timestamp(value: &str) -> bool {
             .is_ok()
 }
 
-fn is_service_log_continuation(raw: &str, current_has_continuation: bool) -> bool {
+fn is_service_log_continuation(raw: &str, allows_indented_continuation: bool) -> bool {
     if raw.is_empty() {
         return true;
     }
-    if current_has_continuation && raw.starts_with(char::is_whitespace) {
+    if allows_indented_continuation && raw.starts_with(char::is_whitespace) {
         return true;
     }
 
-    let plain = strip_ansi_sgr(raw);
-    let trimmed = plain.trim_start();
-    trimmed == "Caused by:"
-        || trimmed.starts_with("Caused by:")
-        || trimmed.starts_with("Stack backtrace:")
+    is_service_log_continuation_marker(raw)
 }
 
-fn is_service_log_leading_continuation_marker(raw: &str) -> bool {
+fn is_service_log_continuation_marker(raw: &str) -> bool {
     let plain = strip_ansi_sgr(raw);
     let trimmed = plain.trim_start();
     trimmed == "Caused by:"
@@ -935,5 +935,18 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].raw, "    standalone indented output");
         assert_eq!(lines[1].raw, "worker ready");
+    }
+
+    #[test]
+    fn parse_service_log_lines_removes_only_docker_separator_space() {
+        let lines = parse_service_log_lines(
+            "2026-07-01T08:12:51.833063000Z worker ready\n\
+             2026-07-01T08:12:51.833070000Z \n\
+             2026-07-01T08:12:51.833081000Z     standalone indented output\n",
+        );
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].raw, "worker ready\n");
+        assert_eq!(lines[1].raw, "    standalone indented output");
     }
 }
