@@ -636,18 +636,46 @@ async fn discover_active_source(
     compose_project: &str,
     service_name: &str,
 ) -> anyhow::Result<Option<ServiceLogSource>> {
+    let strict_ids = docker_ps_ids(
+        runner,
+        vec![
+            format!("label=com.docker.compose.project={compose_project}"),
+            format!("label=com.docker.compose.service={service_name}"),
+        ],
+    )
+    .await?;
+    if !strict_ids.is_empty() {
+        return select_service_log_source(runner, strict_ids, service_name).await;
+    }
+
+    let project_ids = docker_ps_ids(
+        runner,
+        vec![format!(
+            "label=com.docker.compose.project={compose_project}"
+        )],
+    )
+    .await?;
+    if project_ids.is_empty() {
+        return Ok(None);
+    }
+
+    select_service_log_source(runner, project_ids, service_name).await
+}
+
+async fn docker_ps_ids(
+    runner: &dyn CommandRunner,
+    filters: Vec<String>,
+) -> anyhow::Result<Vec<String>> {
+    let mut args = vec!["ps".to_string(), "-q".to_string()];
+    for filter in filters {
+        args.push("--filter".to_string());
+        args.push(filter);
+    }
     let ps = runner
         .run(
             CommandSpec {
                 program: "docker".to_string(),
-                args: vec![
-                    "ps".to_string(),
-                    "-q".to_string(),
-                    "--filter".to_string(),
-                    format!("label=com.docker.compose.project={compose_project}"),
-                    "--filter".to_string(),
-                    format!("label=com.docker.compose.service={service_name}"),
-                ],
+                args,
                 env: Vec::new(),
             },
             Duration::from_secs(8),
@@ -662,13 +690,20 @@ async fn discover_active_source(
         ));
     }
 
-    let container_ids = ps
+    Ok(ps
         .stdout
         .lines()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-        .collect::<Vec<_>>();
+        .collect::<Vec<_>>())
+}
+
+async fn select_service_log_source(
+    runner: &dyn CommandRunner,
+    container_ids: Vec<String>,
+    service_name: &str,
+) -> anyhow::Result<Option<ServiceLogSource>> {
     if container_ids.is_empty() {
         return Ok(None);
     }
