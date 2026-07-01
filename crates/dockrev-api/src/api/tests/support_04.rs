@@ -574,6 +574,10 @@ impl CommandRunner for ServiceLogsRunner {
             && args.get(1) == Some(&"--timestamps")
             && args.get(2) == Some(&"--tail")
         {
+            let tail = args
+                .get(3)
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(usize::MAX);
             let container_id = args.last().copied().unwrap_or_default();
             let stdout = match container_id {
                 "cid-web-1" => concat!(
@@ -595,9 +599,17 @@ impl CommandRunner for ServiceLogsRunner {
                     });
                 }
             };
+            let physical_lines = stdout.lines().collect::<Vec<_>>();
+            let start = physical_lines.len().saturating_sub(tail);
+            let stdout = physical_lines[start..].join("\n");
+            let stdout = if stdout.is_empty() {
+                stdout
+            } else {
+                format!("{stdout}\n")
+            };
             return Ok(CommandOutput {
                 status: 0,
-                stdout: stdout.to_string(),
+                stdout,
                 stderr: String::new(),
             });
         }

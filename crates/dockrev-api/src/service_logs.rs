@@ -24,6 +24,8 @@ pub const DEFAULT_SERVICE_LOG_TAIL: usize = 500;
 pub const MAX_SERVICE_LOG_TAIL: usize = 2_000;
 pub const SERVICE_LOG_RING_BUFFER_LIMIT: usize = 2_000;
 const SERVICE_LOG_BROADCAST_CAPACITY: usize = 512;
+const SERVICE_LOG_SNAPSHOT_PHYSICAL_TAIL_MULTIPLIER: usize = 8;
+const SERVICE_LOG_SNAPSHOT_PHYSICAL_TAIL_MIN_EXTRA: usize = 32;
 const SERVICE_LOG_IDLE_GRACE_SECONDS: u64 = 10;
 const SERVICE_LOG_SCAN_INTERVAL_MS: u64 = 1_000;
 const SERVICE_LOG_CMD_TIMEOUT_SECONDS: u64 = 20;
@@ -585,6 +587,12 @@ fn normalize_tail(value: usize) -> usize {
     value.clamp(1, MAX_SERVICE_LOG_TAIL)
 }
 
+fn physical_tail_for_grouped_snapshot(logical_tail: usize) -> usize {
+    logical_tail
+        .saturating_mul(SERVICE_LOG_SNAPSHOT_PHYSICAL_TAIL_MULTIPLIER)
+        .max(logical_tail.saturating_add(SERVICE_LOG_SNAPSHOT_PHYSICAL_TAIL_MIN_EXTRA))
+}
+
 async fn collect_service_logs(
     runner: &dyn CommandRunner,
     target: &ServiceResourceTarget,
@@ -605,7 +613,7 @@ async fn collect_service_logs(
                     "logs".to_string(),
                     "--timestamps".to_string(),
                     "--tail".to_string(),
-                    tail.to_string(),
+                    physical_tail_for_grouped_snapshot(tail).to_string(),
                     source.id,
                 ],
                 env: Vec::new(),
