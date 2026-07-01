@@ -577,6 +577,10 @@ impl CommandRunner for ServiceLogsRunner {
             let container_id = args.last().copied().unwrap_or_default();
             let stdout = match container_id {
                 "cid-web-1" => concat!(
+                    "2026-07-01T08:12:51.833063000Z \u{1b}[2m2026-07-01T08:12:51.833063Z\u{1b}[0m \u{1b}[33m WARN\u{1b}[0m failed to broadcast pool attempt start runtime snapshot err=error returned from database: (code: 5) database is locked\n",
+                    "2026-07-01T08:12:51.833070000Z \n",
+                    "2026-07-01T08:12:51.833074000Z Caused by:\n",
+                    "2026-07-01T08:12:51.833081000Z     (code: 5) database is locked invoke_id=proxy-1281-1782893570550\n",
                     "2026-06-29T08:00:00.000000000Z \u{1b}[32mapi boot ok\u{1b}[0m\n",
                     "2026-06-29T08:00:02.000000000Z worker ready\n",
                     "2026-06-29T08:00:03.000000000Z \u{1b}[31merror burst\u{1b}[0m\n"

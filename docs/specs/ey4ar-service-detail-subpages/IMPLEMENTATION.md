@@ -16,6 +16,7 @@
 - 已将服务级备份摘要、备份设置入口与当前服务相关备份记录迁移到 `备份` 子页，并从 `设置` 子页移除重复备份入口。
 - 已新增服务级日志 snapshot + SSE 合同、`ServiceLogHub` 共享缓冲、`service_log_reset` 断线补偿语义，以及前端 `ServiceLogsPanel` 的虚拟滚动、搜索、自动换行开关与吸底交互。
 - 日志实现语义已收敛为“单服务日志流”，不再在产品接口或界面上暴露容器聚合模型。
+- 日志解析已按 Dozzle-like grouped log 语义保留 Docker timestamp 元信息，并将应用输出中的空行、缩进行、`Caused by:` 等 continuation 合并进同一逻辑日志记录；正文自带 tracing 时间与等级时，前端等级列不再重复显示等价级别文本。
 - 已更新 `PageHarness` 与服务详情 Storybook stories，补齐旧链接默认概览、tabs route 切换、备份页状态、日志深链与搜索交互、设置抽屉入口与监控页稳定渲染。
 - 已产出 owner-facing mock-only 视觉证据并写回 `SPEC.md`。
 

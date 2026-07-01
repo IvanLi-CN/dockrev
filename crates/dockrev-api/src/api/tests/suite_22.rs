@@ -534,6 +534,74 @@ services:
 }
 
 #[tokio::test]
+async fn service_logs_snapshot_groups_multiline_application_error() {
+    let db_path = format!(
+        "/tmp/dockrev-service-logs-multiline-{}.db",
+        ulid::Ulid::new()
+    );
+    let compose_path = format!(
+        "/tmp/dockrev-service-logs-multiline-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: nginx:1.27
+"#,
+    )
+    .unwrap();
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), Arc::new(ServiceLogsRunner)).await;
+    let app = api::router(state.clone());
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    seed_discovered_project(&state, &stack_id, "demo-logs").await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let service_id = services[0].id.clone();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/logs?tail=5"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body = response_json(resp).await;
+    let lines = body["lines"].as_array().unwrap();
+    assert_eq!(lines.len(), 4);
+
+    let multiline = lines
+        .iter()
+        .find(|line| {
+            line["raw"]
+                .as_str()
+                .is_some_and(|raw| raw.contains("failed to broadcast pool attempt"))
+        })
+        .expect("multiline log should be present");
+    let raw = multiline["raw"].as_str().unwrap();
+    assert_eq!(
+        multiline["ts"].as_str(),
+        Some("2026-07-01T08:12:51.833063000Z")
+    );
+    assert!(raw.contains("\n\nCaused by:\n    (code: 5) database is locked"));
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| line["raw"]
+                .as_str()
+                .is_some_and(|raw| raw.contains("database is locked")))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn service_logs_events_replay_and_reset_gap() {
     let db_path = format!("/tmp/dockrev-service-logs-events-{}.db", ulid::Ulid::new());
     let compose_path = format!("/tmp/dockrev-service-logs-events-{}.yml", ulid::Ulid::new());
