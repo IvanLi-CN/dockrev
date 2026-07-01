@@ -811,6 +811,10 @@ impl ServiceLogFrameParser {
             return None;
         }
 
+        if self.current.is_none() && is_service_log_leading_continuation(&next.raw) {
+            return None;
+        }
+
         self.current
             .replace(next)
             .map(PendingServiceLogLine::into_line)
@@ -868,6 +872,18 @@ fn is_service_log_continuation(raw: &str, current_has_continuation: bool) -> boo
         || trimmed.starts_with("Stack backtrace:")
 }
 
+fn is_service_log_leading_continuation(raw: &str) -> bool {
+    if raw.is_empty() || raw.starts_with(char::is_whitespace) {
+        return true;
+    }
+
+    let plain = strip_ansi_sgr(raw);
+    let trimmed = plain.trim_start();
+    trimmed == "Caused by:"
+        || trimmed.starts_with("Caused by:")
+        || trimmed.starts_with("Stack backtrace:")
+}
+
 fn strip_ansi_sgr(input: &str) -> String {
     let mut output = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
@@ -884,4 +900,23 @@ fn strip_ansi_sgr(input: &str) -> String {
         output.push(ch);
     }
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_service_log_lines;
+
+    #[test]
+    fn parse_service_log_lines_drops_truncated_leading_continuation() {
+        let lines = parse_service_log_lines(
+            "2026-07-01T08:12:51.833070000Z \n\
+             2026-07-01T08:12:51.833074000Z Caused by:\n\
+             2026-07-01T08:12:51.833081000Z     (code: 5) database is locked\n\
+             2026-07-01T08:12:53.763043000Z worker ready\n",
+        );
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].raw, "worker ready");
+        assert_eq!(lines[0].ts, "2026-07-01T08:12:53.763043000Z");
+    }
 }
