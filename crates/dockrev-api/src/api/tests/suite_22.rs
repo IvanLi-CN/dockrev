@@ -514,7 +514,7 @@ services:
         .clone()
         .oneshot(
             Request::builder()
-                .uri(format!("/api/services/{service_id}/logs?tail=3"))
+                .uri(format!("/api/services/{service_id}/logs?tail=4"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -524,12 +524,64 @@ services:
 
     let body = response_json(resp).await;
     assert_eq!(body["serviceId"].as_str(), Some(service_id.as_str()));
-    assert_eq!(body["lines"].as_array().map(Vec::len), Some(3));
+    assert_eq!(body["lines"].as_array().map(Vec::len), Some(4));
     assert!(body["lines"][0].get("container").is_none());
     assert_eq!(body["lines"][0]["raw"].as_str(), Some("\u{1b}[32mapi boot ok\u{1b}[0m"));
     assert_eq!(
         body["lines"][2]["plain"].as_str(),
         Some("\u{1b}[31merror burst\u{1b}[0m")
+    );
+}
+
+#[tokio::test]
+async fn service_logs_snapshot_keeps_standalone_indented_line_separate() {
+    let db_path = format!(
+        "/tmp/dockrev-service-logs-indented-{}.db",
+        ulid::Ulid::new()
+    );
+    let compose_path = format!(
+        "/tmp/dockrev-service-logs-indented-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: nginx:1.27
+"#,
+    )
+    .unwrap();
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), Arc::new(ServiceLogsRunner)).await;
+    let app = api::router(state.clone());
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    seed_discovered_project(&state, &stack_id, "demo-logs").await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let service_id = services[0].id.clone();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/logs?tail=2"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body = response_json(resp).await;
+    let lines = body["lines"].as_array().unwrap();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(
+        lines[0]["raw"].as_str(),
+        Some("\u{1b}[31merror burst\u{1b}[0m")
+    );
+    assert_eq!(
+        lines[1]["raw"].as_str(),
+        Some("    standalone indented output")
     );
 }
 
@@ -574,7 +626,7 @@ services:
 
     let body = response_json(resp).await;
     let lines = body["lines"].as_array().unwrap();
-    assert_eq!(lines.len(), 4);
+    assert_eq!(lines.len(), 5);
 
     let multiline = lines
         .iter()

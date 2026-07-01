@@ -762,6 +762,7 @@ async fn select_service_log_source(
 struct PendingServiceLogLine {
     ts: String,
     raw: String,
+    has_continuation: bool,
 }
 
 impl PendingServiceLogLine {
@@ -790,13 +791,15 @@ impl ServiceLogFrameParser {
         let next = PendingServiceLogLine {
             ts: ts.to_string(),
             raw: raw.to_string(),
+            has_continuation: false,
         };
 
         if let Some(current) = self.current.as_mut()
-            && is_service_log_continuation(&next.raw)
+            && is_service_log_continuation(&next.raw, current.has_continuation)
         {
             current.raw.push('\n');
             current.raw.push_str(&next.raw);
+            current.has_continuation = true;
             return None;
         }
 
@@ -842,11 +845,11 @@ fn is_docker_log_timestamp(value: &str) -> bool {
             .is_ok()
 }
 
-fn is_service_log_continuation(raw: &str) -> bool {
+fn is_service_log_continuation(raw: &str, current_has_continuation: bool) -> bool {
     if raw.is_empty() {
         return true;
     }
-    if raw.starts_with(char::is_whitespace) {
+    if current_has_continuation && raw.starts_with(char::is_whitespace) {
         return true;
     }
 
