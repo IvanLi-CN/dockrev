@@ -574,12 +574,21 @@ impl CommandRunner for ServiceLogsRunner {
             && args.get(1) == Some(&"--timestamps")
             && args.get(2) == Some(&"--tail")
         {
+            let tail = args
+                .get(3)
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(usize::MAX);
             let container_id = args.last().copied().unwrap_or_default();
             let stdout = match container_id {
                 "cid-web-1" => concat!(
+                    "2026-07-01T08:12:51.833063000Z \u{1b}[2m2026-07-01T08:12:51.833063Z\u{1b}[0m \u{1b}[33m WARN\u{1b}[0m failed to broadcast pool attempt start runtime snapshot err=error returned from database: (code: 5) database is locked\n",
+                    "2026-07-01T08:12:51.833070000Z \n",
+                    "2026-07-01T08:12:51.833074000Z Caused by:\n",
+                    "2026-07-01T08:12:51.833081000Z     (code: 5) database is locked invoke_id=proxy-1281-1782893570550\n",
                     "2026-06-29T08:00:00.000000000Z \u{1b}[32mapi boot ok\u{1b}[0m\n",
                     "2026-06-29T08:00:02.000000000Z worker ready\n",
-                    "2026-06-29T08:00:03.000000000Z \u{1b}[31merror burst\u{1b}[0m\n"
+                    "2026-06-29T08:00:03.000000000Z \u{1b}[31merror burst\u{1b}[0m\n",
+                    "2026-06-29T08:00:04.000000000Z     standalone indented output\n"
                 ),
                 "cid-web-2" => "2026-06-29T08:00:01.000000000Z sidecar init\n",
                 other => {
@@ -590,9 +599,17 @@ impl CommandRunner for ServiceLogsRunner {
                     });
                 }
             };
+            let physical_lines = stdout.lines().collect::<Vec<_>>();
+            let start = physical_lines.len().saturating_sub(tail);
+            let stdout = physical_lines[start..].join("\n");
+            let stdout = if stdout.is_empty() {
+                stdout
+            } else {
+                format!("{stdout}\n")
+            };
             return Ok(CommandOutput {
                 status: 0,
-                stdout: stdout.to_string(),
+                stdout,
                 stderr: String::new(),
             });
         }

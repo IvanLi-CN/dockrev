@@ -259,7 +259,9 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
                       <div
                         className="serviceLogRow"
                         data-following={follow ? 'true' : 'false'}
+                        data-inline-level={record.inlineLevel ? 'true' : 'false'}
                         data-level={record.level}
+                        data-multiline={record.multiline ? 'true' : 'false'}
                         data-wrap={wrapLines ? 'true' : 'false'}
                         key={record.id}
                         ref={virtualizer.measureElement}
@@ -269,11 +271,15 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
                           <span className="serviceLogTsTime">{stamp.time}</span>
                         </span>
                         <span
-                          className={`mono logLvl serviceLogLevel logLvl-${record.level}`}
+                          className={`mono logLvl serviceLogLevel logLvl-${record.level}${record.inlineLevel ? ' serviceLogLevelInline' : ''}`}
                           data-level={record.level}
-                          title={`等级：${formatLogLevel(record.level)}（基于 ANSI 颜色与关键词推断）`}
+                          title={
+                            record.inlineLevel
+                              ? `等级已包含在输出中：${formatLogLevel(record.level)}`
+                              : `等级：${formatLogLevel(record.level)}（基于 ANSI 颜色与关键词推断）`
+                          }
                         >
-                          {formatLogLevel(record.level)}
+                          {record.inlineLevel ? '' : formatLogLevel(record.level)}
                         </span>
                         <span className="serviceLogMsg">
                           {record.segments.map((segment, index) => (

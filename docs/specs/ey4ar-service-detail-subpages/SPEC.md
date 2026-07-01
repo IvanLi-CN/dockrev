@@ -266,6 +266,21 @@
 - source_type: `storybook_canvas`
   target_program: `mock-only`
   capture_scope: `element`
+  requested_viewport: `1440x900`
+  viewport_strategy: `storybook-canvas`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/LogsSectionMultilineGrouping`
+  state: `multiline log grouping`
+  evidence_note: 验证 `WARN ... database is locked` 多行应用错误按一条日志组展示，`Caused by:` continuation 保留在同一输出单元内，且正文自带 tracing 级别时等级列不再重复显示 `WARN` 文本。
+  PR: include
+  PR caption: 日志页按一条日志组展示多行应用错误，并避免重复渲染正文已包含的 tracing 级别。
+
+![服务详情日志多行分组](./assets/service-detail-logs-multiline-grouping.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `element`
   requested_viewport: `1440x1500`
   viewport_strategy: `devtools-emulate`
   sensitive_exclusion: `N/A`

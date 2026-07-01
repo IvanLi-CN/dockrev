@@ -14,6 +14,8 @@ const ANSI_ERROR_PATTERN = new RegExp(`${ESC}\\[(?:[0-9;]*;)?31m`)
 const ANSI_WARN_PATTERN = new RegExp(`${ESC}\\[(?:[0-9;]*;)?33m`)
 const ANSI_INFO_PATTERN = new RegExp(`${ESC}\\[(?:[0-9;]*;)?(?:32|36)m`)
 const ANSI_DEBUG_PATTERN = new RegExp(`${ESC}\\[(?:[0-9;]*;)?90m`)
+const INLINE_TRACING_LEVEL_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\S+\s+(TRACE|DEBUG|INFO|WARN|WARNING|ERROR|ERR|FATAL|CRITICAL)\b/i
 
 export type ServiceLogLevel = 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'unknown'
 
@@ -28,6 +30,8 @@ export type ServiceLogRecord = {
   raw: string
   plain: string
   level: ServiceLogLevel
+  inlineLevel: boolean
+  multiline: boolean
   segments: ServiceLogRenderSegment[]
 }
 
@@ -104,6 +108,10 @@ function inferLogLevel(raw: string, plain: string): ServiceLogLevel {
   return 'unknown'
 }
 
+function hasInlineTracingLevel(plain: string): boolean {
+  return INLINE_TRACING_LEVEL_PATTERN.test(plain.trimStart())
+}
+
 function toRecord(line: ServiceLogLine, id: number): ServiceLogRecord {
   const plain = stripAnsi(line.plain || line.raw)
   return {
@@ -112,6 +120,8 @@ function toRecord(line: ServiceLogLine, id: number): ServiceLogRecord {
     raw: line.raw,
     plain,
     level: inferLogLevel(line.raw, plain),
+    inlineLevel: hasInlineTracingLevel(plain),
+    multiline: line.raw.includes('\n'),
     segments: ansiSegments(line.raw),
   }
 }
