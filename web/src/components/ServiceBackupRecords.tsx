@@ -53,6 +53,7 @@ export function BackupRecordList(props: { records: ServiceBackupRecordItem[] }) 
     <div className="serviceBackupRecordsList" data-service-backup-records-state="ready">
       {props.records.map((record) => {
         const status = backupRecordStatusMeta(record)
+        const assets = Array.isArray(record.assets) ? record.assets : []
         return (
           <div key={record.backupId} className="serviceBackupRecordCard">
             <div className="serviceBackupRecordHead">
@@ -78,10 +79,10 @@ export function BackupRecordList(props: { records: ServiceBackupRecordItem[] }) 
             </div>
             {record.error ? <div className="serviceBackupRecordError">{record.error}</div> : null}
             <div className="serviceBackupAssetList">
-              {record.assets.length === 0 ? (
+              {assets.length === 0 ? (
                 <div className="muted">未记录资产明细。</div>
               ) : (
-                record.assets.map((asset, index) => (
+                assets.map((asset, index) => (
                   <div key={`${record.backupId}-${index}-${backupAssetTargetLabel(asset)}`} className="serviceBackupAssetRow">
                     <div>
                       <div className="mono">{backupAssetTargetLabel(asset)}</div>

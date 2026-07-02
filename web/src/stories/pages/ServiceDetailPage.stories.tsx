@@ -616,6 +616,33 @@ export const BackupRecordsEmpty: Story = {
   },
 }
 
+export const BackupRecordsLegacyMissingAssets: Story = {
+  parameters: {
+    dockrevApiScenario: 'dashboard-demo',
+    dockrevServiceBackupRecordsById: {
+      'svc-prod-api': {
+        records: [
+          {
+            backupId: 'bkp_legacy',
+            jobId: 'job_legacy',
+            scope: 'service',
+            status: 'skipped',
+            createdAt: '2026-06-28T18:15:24.960797189Z',
+            finishedAt: '2026-06-28T18:15:24.960797189Z',
+          },
+        ],
+      },
+    },
+  },
+  render: render('stack-prod', 'svc-prod-api', 'backup', '旧版备份记录缺少 assets 字段时仍稳定渲染'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(findSectionCard(canvasElement, 'backup-records')))
+    await waitForCondition(() => normalizeText(canvasElement.textContent).includes('未记录资产明细'))
+    expectStory(findTab(canvasElement, 'backup')?.getAttribute('data-state') === 'active', 'backup tab should stay active')
+    expectStory(normalizeText(canvasElement.textContent).includes('已跳过'), 'legacy skipped backup status missing')
+  },
+}
+
 export const AutoPolicyDisabled: Story = {
   parameters: {
     dockrevApiScenario: 'dashboard-demo',
