@@ -854,7 +854,16 @@ export async function putServiceBackupTargets(
 
 export async function getServiceBackupRecords(serviceId: string): Promise<ServiceBackupRecordsResponse> {
   const resp = await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/backup-records`)
-  return (await resp.json()) as ServiceBackupRecordsResponse
+  const data = (await resp.json()) as ServiceBackupRecordsResponse
+  return {
+    ...data,
+    records: Array.isArray(data.records)
+      ? data.records.map((record) => ({
+          ...record,
+          assets: Array.isArray(record.assets) ? record.assets : [],
+        }))
+      : [],
+  }
 }
 
 export async function inferServiceRepoLink(serviceId: string): Promise<ServiceRepoLinkInferenceResponse> {
