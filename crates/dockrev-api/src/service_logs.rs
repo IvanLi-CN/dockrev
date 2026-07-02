@@ -24,10 +24,13 @@ pub const DEFAULT_SERVICE_LOG_TAIL: usize = 500;
 pub const MAX_SERVICE_LOG_TAIL: usize = 2_000;
 pub const SERVICE_LOG_RING_BUFFER_LIMIT: usize = 2_000;
 const SERVICE_LOG_BROADCAST_CAPACITY: usize = 512;
+const SERVICE_LOG_SNAPSHOT_PHYSICAL_TAIL_MULTIPLIER: usize = 8;
+const SERVICE_LOG_SNAPSHOT_PHYSICAL_TAIL_MIN_EXTRA: usize = 32;
 const SERVICE_LOG_IDLE_GRACE_SECONDS: u64 = 10;
 const SERVICE_LOG_SCAN_INTERVAL_MS: u64 = 1_000;
 const SERVICE_LOG_CMD_TIMEOUT_SECONDS: u64 = 20;
 const SERVICE_LOG_FOLLOW_TIMEOUT_SECONDS: u64 = 60 * 60 * 24;
+const SERVICE_LOG_FOLLOW_GROUP_DEBOUNCE_MS: u64 = 75;
 
 #[derive(Clone, Debug)]
 pub enum ServiceLogRealtimeMessage {
@@ -511,40 +514,83 @@ fn spawn_source_follower(
     source: ServiceLogSource,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let tx_for_stdout = tx.clone();
-        let mut on_stdout = move |chunk: String| {
-            for raw_line in chunk.lines() {
-                if let Some(line) = parse_service_log_line(raw_line) {
-                    let _ = tx_for_stdout.send(CollectorMessage::Line(line));
+        let (raw_tx, mut raw_rx) = mpsc::unbounded_channel::<String>();
+        let processor_tx = tx.clone();
+        let processor_handle = tokio::spawn(async move {
+            let mut parser = ServiceLogFrameParser::default();
+            loop {
+                let next_line = if parser.has_current() {
+                    match tokio::time::timeout(
+                        Duration::from_millis(SERVICE_LOG_FOLLOW_GROUP_DEBOUNCE_MS),
+                        raw_rx.recv(),
+                    )
+                    .await
+                    {
+                        Ok(value) => value,
+                        Err(_) => {
+                            if let Some(line) = parser.finish() {
+                                let _ = processor_tx.send(CollectorMessage::Line(line));
+                            }
+                            continue;
+                        }
+                    }
+                } else {
+                    raw_rx.recv().await
+                };
+
+                let Some(raw_line) = next_line else {
+                    break;
+                };
+                if let Some(line) = parser.push_physical_line(&raw_line) {
+                    let _ = processor_tx.send(CollectorMessage::Line(line));
                 }
             }
-        };
-        let mut on_stderr = |_chunk: String| {};
+            if let Some(line) = parser.finish() {
+                let _ = processor_tx.send(CollectorMessage::Line(line));
+            }
+        });
 
-        let _ = runner
-            .run_stream(
-                CommandSpec {
-                    program: "docker".to_string(),
-                    args: vec![
-                        "logs".to_string(),
-                        "--timestamps".to_string(),
-                        "--follow".to_string(),
-                        "--tail".to_string(),
-                        "0".to_string(),
-                        source.id,
-                    ],
-                    env: Vec::new(),
-                },
-                Duration::from_secs(SERVICE_LOG_FOLLOW_TIMEOUT_SECONDS),
-                &mut on_stdout,
-                &mut on_stderr,
-            )
-            .await;
+        {
+            let mut on_stdout = |chunk: String| {
+                for raw_line in chunk.lines() {
+                    let _ = raw_tx.send(raw_line.to_string());
+                }
+            };
+            let mut on_stderr = |_chunk: String| {};
+
+            let _ = runner
+                .run_stream(
+                    CommandSpec {
+                        program: "docker".to_string(),
+                        args: vec![
+                            "logs".to_string(),
+                            "--timestamps".to_string(),
+                            "--follow".to_string(),
+                            "--tail".to_string(),
+                            "0".to_string(),
+                            source.id,
+                        ],
+                        env: Vec::new(),
+                    },
+                    Duration::from_secs(SERVICE_LOG_FOLLOW_TIMEOUT_SECONDS),
+                    &mut on_stdout,
+                    &mut on_stderr,
+                )
+                .await;
+        }
+        drop(raw_tx);
+        let _ = processor_handle.await;
     })
 }
 
 fn normalize_tail(value: usize) -> usize {
     value.clamp(1, MAX_SERVICE_LOG_TAIL)
+}
+
+fn physical_tail_for_grouped_snapshot(logical_tail: usize) -> usize {
+    logical_tail
+        .saturating_mul(SERVICE_LOG_SNAPSHOT_PHYSICAL_TAIL_MULTIPLIER)
+        .max(logical_tail.saturating_add(SERVICE_LOG_SNAPSHOT_PHYSICAL_TAIL_MIN_EXTRA))
 }
 
 async fn collect_service_logs(
@@ -567,7 +613,7 @@ async fn collect_service_logs(
                     "logs".to_string(),
                     "--timestamps".to_string(),
                     "--tail".to_string(),
-                    tail.to_string(),
+                    physical_tail_for_grouped_snapshot(tail).to_string(),
                     source.id,
                 ],
                 env: Vec::new(),
@@ -585,11 +631,7 @@ async fn collect_service_logs(
         ));
     }
 
-    let mut lines = output
-        .stdout
-        .lines()
-        .filter_map(parse_service_log_line)
-        .collect::<Vec<_>>();
+    let mut lines = parse_service_log_lines(&output.stdout);
     if lines.len() > tail {
         lines = lines.split_off(lines.len() - tail);
     }
@@ -724,23 +766,187 @@ async fn select_service_log_source(
     Ok(sources.into_iter().next())
 }
 
-fn parse_service_log_line(raw_line: &str) -> Option<ServiceLogLine> {
-    let trimmed = raw_line.trim_end_matches('\r').trim_end_matches('\n');
-    if trimmed.is_empty() {
-        return None;
+#[derive(Clone, Debug)]
+struct PendingServiceLogLine {
+    ts: String,
+    raw: String,
+    allows_indented_continuation: bool,
+}
+
+impl PendingServiceLogLine {
+    fn into_line(self) -> ServiceLogLine {
+        ServiceLogLine {
+            ts: self.ts,
+            plain: self.raw.clone(),
+            raw: self.raw,
+        }
     }
-    let (ts, message) = split_docker_log_line(trimmed);
-    let message = message.to_string();
-    Some(ServiceLogLine {
-        ts: ts.to_string(),
-        raw: message.clone(),
-        plain: message,
-    })
+}
+
+#[derive(Debug, Default)]
+struct ServiceLogFrameParser {
+    current: Option<PendingServiceLogLine>,
+    dropping_leading_continuation: bool,
+}
+
+impl ServiceLogFrameParser {
+    fn push_physical_line(&mut self, raw_line: &str) -> Option<ServiceLogLine> {
+        let trimmed = raw_line.trim_end_matches('\r').trim_end_matches('\n');
+        if trimmed.trim().is_empty() && self.current.is_none() {
+            return None;
+        }
+
+        let (ts, raw) = split_docker_log_line(trimmed);
+        let next = PendingServiceLogLine {
+            ts: ts.to_string(),
+            raw: raw.to_string(),
+            allows_indented_continuation: false,
+        };
+
+        if let Some(current) = self.current.as_mut()
+            && is_service_log_continuation(&next.raw, current.allows_indented_continuation)
+        {
+            let allows_indented = current.allows_indented_continuation
+                || is_service_log_continuation_marker(&next.raw);
+            current.raw.push('\n');
+            current.raw.push_str(&next.raw);
+            current.allows_indented_continuation = allows_indented;
+            return None;
+        }
+
+        if self.current.is_none() && is_service_log_continuation_marker(&next.raw) {
+            self.dropping_leading_continuation = true;
+            return None;
+        }
+
+        if self.current.is_none()
+            && self.dropping_leading_continuation
+            && next.raw.starts_with(char::is_whitespace)
+        {
+            return None;
+        }
+
+        self.dropping_leading_continuation = false;
+        self.current
+            .replace(next)
+            .map(PendingServiceLogLine::into_line)
+    }
+
+    fn finish(&mut self) -> Option<ServiceLogLine> {
+        self.current.take().map(PendingServiceLogLine::into_line)
+    }
+
+    fn has_current(&self) -> bool {
+        self.current.is_some()
+    }
+}
+
+fn parse_service_log_lines(output: &str) -> Vec<ServiceLogLine> {
+    let mut parser = ServiceLogFrameParser::default();
+    let mut lines = output
+        .lines()
+        .filter_map(|raw_line| parser.push_physical_line(raw_line))
+        .collect::<Vec<_>>();
+    if let Some(line) = parser.finish() {
+        lines.push(line);
+    }
+    lines
 }
 
 fn split_docker_log_line(line: &str) -> (&str, &str) {
-    if let Some((ts, rest)) = line.split_once(' ') {
-        return (ts.trim(), rest.trim_start());
+    if let Some(separator_index) = line.find(' ') {
+        let ts = &line[..separator_index];
+        let rest = &line[separator_index + 1..];
+        if is_docker_log_timestamp(ts) {
+            return (ts.trim(), rest);
+        }
     }
     ("", line)
+}
+
+fn is_docker_log_timestamp(value: &str) -> bool {
+    value.ends_with('Z')
+        && value.contains('T')
+        && time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339)
+            .is_ok()
+}
+
+fn is_service_log_continuation(raw: &str, allows_indented_continuation: bool) -> bool {
+    if raw.is_empty() {
+        return true;
+    }
+    if allows_indented_continuation && raw.starts_with(char::is_whitespace) {
+        return true;
+    }
+
+    is_service_log_continuation_marker(raw)
+}
+
+fn is_service_log_continuation_marker(raw: &str) -> bool {
+    let plain = strip_ansi_sgr(raw);
+    let trimmed = plain.trim_start();
+    trimmed == "Caused by:"
+        || trimmed.starts_with("Caused by:")
+        || trimmed.starts_with("Stack backtrace:")
+}
+
+fn strip_ansi_sgr(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            let _ = chars.next();
+            for code_ch in chars.by_ref() {
+                if code_ch == 'm' {
+                    break;
+                }
+            }
+            continue;
+        }
+        output.push(ch);
+    }
+    output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_service_log_lines;
+
+    #[test]
+    fn parse_service_log_lines_drops_truncated_leading_continuation() {
+        let lines = parse_service_log_lines(
+            "2026-07-01T08:12:51.833074000Z Caused by:\n\
+             2026-07-01T08:12:51.833081000Z     (code: 5) database is locked\n\
+             2026-07-01T08:12:53.763043000Z worker ready\n",
+        );
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].raw, "worker ready");
+        assert_eq!(lines[0].ts, "2026-07-01T08:12:53.763043000Z");
+    }
+
+    #[test]
+    fn parse_service_log_lines_preserves_leading_indented_entry() {
+        let lines = parse_service_log_lines(
+            "2026-07-01T08:12:51.833081000Z     standalone indented output\n\
+             2026-07-01T08:12:53.763043000Z worker ready\n",
+        );
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].raw, "    standalone indented output");
+        assert_eq!(lines[1].raw, "worker ready");
+    }
+
+    #[test]
+    fn parse_service_log_lines_removes_only_docker_separator_space() {
+        let lines = parse_service_log_lines(
+            "2026-07-01T08:12:51.833063000Z worker ready\n\
+             2026-07-01T08:12:51.833070000Z \n\
+             2026-07-01T08:12:51.833081000Z     standalone indented output\n",
+        );
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].raw, "worker ready\n");
+        assert_eq!(lines[1].raw, "    standalone indented output");
+    }
 }

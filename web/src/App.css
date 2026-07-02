@@ -4860,6 +4860,11 @@ html[data-theme='light'] .modalOverlay {
   background: rgba(255, 255, 255, 0.04);
 }
 
+.serviceLogRow[data-multiline='true'] {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
 .serviceLogTs {
   display: inline-flex;
   min-width: 0;
@@ -4910,8 +4915,24 @@ html[data-theme='light'] .modalOverlay {
   background: color-mix(in srgb, var(--muted2) 14%, transparent);
 }
 
+.serviceLogLevelInline {
+  border-style: dashed;
+  color: color-mix(in srgb, var(--muted2) 76%, white 24%);
+  background: color-mix(in srgb, var(--muted2) 8%, transparent);
+}
+
+.serviceLogLevelInline::before {
+  content: '•';
+}
+
 .serviceLogMsg {
+  min-width: 0;
   color: var(--text);
+}
+
+.serviceLogRow[data-multiline='true'] .serviceLogMsg {
+  padding-left: 10px;
+  border-left: 2px solid color-mix(in srgb, var(--color-info) 42%, transparent);
 }
 
 .serviceLogsTerminal[data-wrap='on'] .serviceLogMsg {

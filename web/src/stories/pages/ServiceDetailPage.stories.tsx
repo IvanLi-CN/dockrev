@@ -103,6 +103,33 @@ function buildLongLogsSnapshot(serviceId: string, count = 1600): ServiceLogSnaps
   }
 }
 
+function buildMultilineLogsSnapshot(serviceId: string): ServiceLogSnapshotResponse {
+  const multilineRaw = [
+    '\u001b[2m2026-07-01T08:12:51.833063Z\u001b[0m \u001b[33m WARN\u001b[0m failed to broadcast pool attempt start runtime snapshot err=error returned from database: (code: 5) database is locked',
+    '',
+    'Caused by:',
+    '    (code: 5) database is locked invoke_id=proxy-1281-1782893570550',
+  ].join('\n')
+  return {
+    serviceId,
+    lines: [
+      {
+        ts: '2026-07-01T08:12:51.833063000Z',
+        raw: multilineRaw,
+        plain: multilineRaw,
+      },
+      {
+        ts: '2026-07-01T08:12:53.763043000Z',
+        raw: '\u001b[2m2026-07-01T08:12:53.763043Z\u001b[0m \u001b[32m INFO\u001b[0m openai proxy response headers ready proxy_request_id=1279 method=POST uri=/v1/responses status=200 OK elapsed_ms=10542',
+        plain:
+          '\u001b[2m2026-07-01T08:12:53.763043Z\u001b[0m \u001b[32m INFO\u001b[0m openai proxy response headers ready proxy_request_id=1279 method=POST uri=/v1/responses status=200 OK elapsed_ms=10542',
+      },
+    ],
+    lastEventId: 2,
+    bufferLimit: 2000,
+  }
+}
+
 function render(
   stackId: string,
   serviceId: string,
@@ -242,6 +269,39 @@ export const LogsSectionVirtualized: Story = {
 
     const utcButton = findButton(canvasElement, 'UTC')
     expectStory(utcButton, 'timezone toggle missing in virtualized story')
+  },
+}
+
+export const LogsSectionMultilineGrouping: Story = {
+  parameters: {
+    dockrevApiScenario: 'dashboard-demo',
+    dockrevServiceLogsByServiceId: {
+      'svc-prod-api': {
+        snapshot: buildMultilineLogsSnapshot('svc-prod-api'),
+        eventsPayload: ': keep-alive\n\n',
+      },
+    },
+  },
+  render: render('stack-prod', 'svc-prod-api', 'logs', '多行应用错误保持为一条日志组'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => normalizeText(canvasElement.textContent).includes('database is locked'))
+    const rows = canvasElement.querySelectorAll<HTMLElement>('.serviceLogRow')
+    expectStory(rows.length === 2, 'multiline snapshot should render two logical log rows')
+    const firstRow = rows[0]
+    expectStory(firstRow?.getAttribute('data-multiline') === 'true', 'error row should be marked multiline')
+    expectStory(firstRow?.getAttribute('data-inline-level') === 'true', 'inline tracing level should suppress duplicate badge text')
+    expectStory(
+      normalizeText(firstRow?.querySelector('.serviceLogMsg')?.textContent).includes('Caused by:'),
+      'multiline row should keep continuation text in the message column',
+    )
+    expectStory(
+      firstRow?.querySelector('.serviceLogLevel')?.classList.contains('serviceLogLevelInline'),
+      'inline tracing level should render with the compact marker style in the level column',
+    )
+    expectStory(
+      normalizeText(firstRow?.querySelector('.serviceLogLevel')?.textContent) === '',
+      'inline tracing level should not repeat the textual level badge',
+    )
   },
 }
 
