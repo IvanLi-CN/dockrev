@@ -1,5 +1,16 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { History, X } from 'lucide-react'
+import {
+  ChevronLeft,
+  ChevronRight,
+  Gauge,
+  History,
+  LayoutDashboard,
+  ListChecks,
+  Settings,
+  Trash2,
+  X,
+  type LucideIcon,
+} from 'lucide-react'
 import { getDockrevVersion } from './api'
 import { GitHubIcon, Mono, ToggleGroup, ToggleGroupItem } from './ui'
 import { ConfirmProvider } from './ConfirmProvider'
@@ -11,9 +22,26 @@ import { TopbarUserIdentity } from './components/TopbarUserIdentity'
 import type { TopbarAuthIdentity } from './topbarAuthIdentity'
 
 const MOBILE_MENU_MEDIA_QUERY = '(max-width: 960px)'
+export const APP_SHELL_SIDEBAR_COLLAPSED_STORAGE_KEY = 'dockrev:shell:sidebarCollapsed:v1'
+
+type PrimaryNavItem = {
+  key: 'overview' | 'queue' | 'services' | 'cleanup' | 'settings'
+  label: string
+  icon: LucideIcon
+  to: Route
+}
 
 function readMobileMenuMediaMatches(): boolean {
   return typeof window !== 'undefined' && window.matchMedia(MOBILE_MENU_MEDIA_QUERY).matches
+}
+
+function readSidebarCollapsed(): boolean {
+  if (typeof window === 'undefined') return false
+  try {
+    return window.localStorage.getItem(APP_SHELL_SIDEBAR_COLLAPSED_STORAGE_KEY) === '1'
+  } catch {
+    return false
+  }
 }
 
 function formatShort(ts: string) {
@@ -68,21 +96,31 @@ export function AppShell(props: {
           ? 'settings'
         : props.route.name
   const [appVersion, setAppVersion] = useState<string | null>(null)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed)
   const [mobileMenuOpenFor, setMobileMenuOpenFor] = useState<string | null>(null)
   const [mobileMenuMediaMatches, setMobileMenuMediaMatches] = useState(readMobileMenuMediaMatches)
 
   const lastScan = props.lastScanHint
 
   const nav = useMemo(
-    () => [
-      { key: 'overview', label: '导航概览', to: { name: 'overview' } as const },
-      { key: 'queue', label: '任务队列', to: { name: 'queue' } as const },
-      { key: 'services', label: '运维大盘', to: { name: 'services' } as const },
-      { key: 'cleanup', label: '清理', to: { name: 'cleanup' } as const },
-      { key: 'settings', label: '系统设置', to: { name: 'settings' } as const },
+    (): PrimaryNavItem[] => [
+      { key: 'overview', label: '导航概览', icon: LayoutDashboard, to: { name: 'overview' } },
+      { key: 'queue', label: '任务队列', icon: ListChecks, to: { name: 'queue' } },
+      { key: 'services', label: '运维大盘', icon: Gauge, to: { name: 'services' } },
+      { key: 'cleanup', label: '清理', icon: Trash2, to: { name: 'cleanup' } },
+      { key: 'settings', label: '系统设置', icon: Settings, to: { name: 'settings' } },
     ],
     [],
   )
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      window.localStorage.setItem(APP_SHELL_SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsed ? '1' : '0')
+    } catch {
+      // Sidebar width is a local preference; failure to persist should not block navigation.
+    }
+  }, [sidebarCollapsed])
 
   useEffect(() => {
     let cancelled = false
@@ -105,6 +143,13 @@ export function AppShell(props: {
   const versionDisplay = formatVersionDisplay(appVersion)
   const mobileMenuOpen = mobileMenuOpenFor === active
   const mobileMenuVisible = mobileMenuOpen && mobileMenuMediaMatches
+  const shellClassName = [
+    'appShell',
+    props.topbarContent ? 'appShellWithTopbarContent' : null,
+    sidebarCollapsed ? 'appShellSidebarCollapsed' : null,
+  ]
+    .filter(Boolean)
+    .join(' ')
   const versionHref =
     versionLabel !== '-' && versionRef
       ? `https://github.com/IvanLi-CN/dockrev/releases/tag/${encodeGitRefForPath(versionRef)}`
@@ -139,7 +184,7 @@ export function AppShell(props: {
   return (
     <UpdateActionTrackerProvider>
       <ConfirmProvider>
-        <div className={props.topbarContent ? 'appShell appShellWithTopbarContent' : 'appShell'}>
+        <div className={shellClassName}>
           <header className="topbar">
             <div className="topbarMain">
               <div className="topbarLeft">
@@ -208,20 +253,24 @@ export function AppShell(props: {
               <div className="mobileMenuEmbeddedContent">{props.mobileNavContent}</div>
             ) : null}
             <nav className="mobileNav" aria-label="主导航">
-              {nav.map((item) => (
-                <a
-                  key={`mobile-${item.key}`}
-                  href={currentHref(item.to)}
-                  className={active === item.key ? 'mobileNavItem mobileNavItemActive' : 'mobileNavItem'}
-                  onClick={(e) => {
-                    e.preventDefault()
-                    setMobileMenuOpenFor(null)
-                    navigate(item.to)
-                  }}
-                >
-                  {item.label}
-                </a>
-              ))}
+              {nav.map((item) => {
+                const NavIcon = item.icon
+                return (
+                  <a
+                    key={`mobile-${item.key}`}
+                    href={currentHref(item.to)}
+                    className={active === item.key ? 'mobileNavItem mobileNavItemActive' : 'mobileNavItem'}
+                    onClick={(e) => {
+                      e.preventDefault()
+                      setMobileMenuOpenFor(null)
+                      navigate(item.to)
+                    }}
+                  >
+                    <NavIcon className="mobileNavIcon" aria-hidden="true" strokeWidth={2.1} />
+                    <span className="mobileNavLabel">{item.label}</span>
+                  </a>
+                )
+              })}
             </nav>
             <div className="mobileMeta">
               <div className="mobileMetaRow">
@@ -231,59 +280,107 @@ export function AppShell(props: {
             </div>
           </div>
 
-        <aside className="sidebar">
-          <div className="sidebarSectionLabel">导航</div>
-          <nav className="nav">
-            {nav.map((item) => (
-              <a
-                key={item.key}
-                href={currentHref(item.to)}
-                className={active === item.key ? 'navItem navItemActive' : 'navItem'}
-                onClick={(e) => {
-                  e.preventDefault()
-                  navigate(item.to)
-                }}
-              >
-                {item.label}
-              </a>
-            ))}
+        <aside className="sidebar" aria-label="主导航侧栏">
+          <div className="sidebarNavHeader">
+            <span className="sidebarSectionLabel sidebarNavLabel">导航</span>
+            <button
+              type="button"
+              className="sidebarCollapseButton"
+              aria-label={sidebarCollapsed ? '展开左侧导航' : '折叠左侧导航'}
+              aria-controls="appShellPrimaryNav"
+              aria-expanded={!sidebarCollapsed}
+              title={sidebarCollapsed ? '展开左侧导航' : '折叠左侧导航'}
+              onClick={() => setSidebarCollapsed((value) => !value)}
+            >
+              {sidebarCollapsed ? (
+                <ChevronRight size={17} strokeWidth={2.2} aria-hidden="true" />
+              ) : (
+                <ChevronLeft size={17} strokeWidth={2.2} aria-hidden="true" />
+              )}
+            </button>
+          </div>
+          <nav id="appShellPrimaryNav" className="nav" aria-label="主导航">
+            {nav.map((item) => {
+              const NavIcon = item.icon
+              return (
+                <a
+                  key={item.key}
+                  href={currentHref(item.to)}
+                  className={active === item.key ? 'navItem navItemActive' : 'navItem'}
+                  aria-label={sidebarCollapsed ? item.label : undefined}
+                  title={sidebarCollapsed ? item.label : undefined}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    navigate(item.to)
+                  }}
+                >
+                  <NavIcon className="navItemIcon" aria-hidden="true" strokeWidth={2.1} />
+                  <span className="navItemLabel">{item.label}</span>
+                </a>
+              )
+            })}
           </nav>
-          {props.sidebarNavContent ? (
+          {!sidebarCollapsed && props.sidebarNavContent ? (
             <div className="sidebarEmbeddedContent">{props.sidebarNavContent}</div>
           ) : null}
 
-          <div className="sidebarSectionLabel" style={{ marginTop: 24 }}>
-            最近一次扫描
-          </div>
-          {lastScan ? (
-            <div className="sidebarMono sidebarInfoLine">
-              <History className="sidebarInfoIcon" aria-hidden="true" />
-              <Mono>{formatShort(lastScan)}</Mono>
+          {!sidebarCollapsed ? (
+            <div className="sidebarScanBlock">
+              <div className="sidebarSectionLabel" style={{ marginTop: 24 }}>
+                最近一次扫描
+              </div>
+              {lastScan ? (
+                <div className="sidebarMono sidebarInfoLine">
+                  <History className="sidebarInfoIcon" aria-hidden="true" />
+                  <Mono>{formatShort(lastScan)}</Mono>
+                </div>
+              ) : (
+                <div className="sidebarMuted sidebarInfoLine">
+                  <History className="sidebarInfoIcon" aria-hidden="true" />
+                  <span>-</span>
+                </div>
+              )}
             </div>
-          ) : (
-            <div className="sidebarMuted sidebarInfoLine">
-              <History className="sidebarInfoIcon" aria-hidden="true" />
-              <span>-</span>
-            </div>
-          )}
+          ) : null}
 
           <div className="sidebarMeta">
             <div className="sidebarMetaDivider" aria-hidden="true" />
             <div className="sidebarMetaTop">
-              {versionHref ? (
+              {!sidebarCollapsed ? (
+                versionHref ? (
+                  <a
+                    className="sidebarMetaVersion"
+                    href={versionHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`Release on GitHub: ${versionDisplay}`}
+                    title={`Release: ${versionDisplay}`}
+                  >
+                    <Mono>{versionDisplay}</Mono>
+                  </a>
+                ) : (
+                  <Mono>{versionDisplay}</Mono>
+                )
+              ) : null}
+              {sidebarCollapsed && versionHref ? (
                 <a
-                  className="sidebarMetaVersion"
+                  className="sidebarMetaIcon"
                   href={versionHref}
                   target="_blank"
                   rel="noopener noreferrer"
                   aria-label={`Release on GitHub: ${versionDisplay}`}
                   title={`Release: ${versionDisplay}`}
                 >
-                  <Mono>{versionDisplay}</Mono>
+                  <span className="mono" aria-hidden="true">
+                    v
+                  </span>
                 </a>
-              ) : (
-                <Mono>{versionDisplay}</Mono>
-              )}
+              ) : null}
+              {sidebarCollapsed && !versionHref ? (
+                <span className="sidebarMetaIcon sidebarMetaIconDisabled" aria-hidden="true">
+                  <Mono>v</Mono>
+                </span>
+              ) : null}
               <a
                 className="sidebarMetaIcon"
                 href="https://github.com/IvanLi-CN/dockrev"
@@ -295,14 +392,16 @@ export function AppShell(props: {
                 <GitHubIcon className="sidebarMetaGitHub" />
               </a>
             </div>
-            <a
-              className="sidebarMetaPowered"
-              href="https://github.com/IvanLi-CN"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Powered by <span className="mono">Ivan Li</span>
-            </a>
+            {!sidebarCollapsed ? (
+              <a
+                className="sidebarMetaPowered"
+                href="https://github.com/IvanLi-CN"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Powered by <span className="mono">Ivan Li</span>
+              </a>
+            ) : null}
           </div>
         </aside>
 
