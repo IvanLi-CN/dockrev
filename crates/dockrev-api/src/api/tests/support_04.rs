@@ -764,7 +764,7 @@ impl CommandRunner for ServiceLogsStderrRunner {
             return Ok(CommandOutput {
                 status: 0,
                 stdout: String::new(),
-                stderr: "2026-07-04T12:01:43.750608627Z stderr-follow line\n".to_string(),
+                stderr: "Error response from daemon: stream interrupted\n2026-07-04T12:01:43.750608627Z stderr-follow line\n".to_string(),
             });
         }
 
@@ -777,7 +777,7 @@ impl CommandRunner for ServiceLogsStderrRunner {
             return Ok(CommandOutput {
                 status: 0,
                 stdout: String::new(),
-                stderr: "2026-07-04T12:01:42.750608627Z stderr-only line\n".to_string(),
+                stderr: "Error response from daemon: historical warning\n2026-07-04T12:01:42.750608627Z stderr-only line\n".to_string(),
             });
         }
 

@@ -805,6 +805,9 @@ impl ServiceLogFrameParser {
         }
 
         let (ts, raw) = split_docker_log_line(trimmed);
+        if ts.is_empty() {
+            return None;
+        }
         let next = PendingServiceLogLine {
             ts: ts.to_string(),
             raw: raw.to_string(),
