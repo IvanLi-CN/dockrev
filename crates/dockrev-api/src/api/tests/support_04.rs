@@ -714,6 +714,81 @@ impl CommandRunner for ServiceLogsProjectWideRunner {
     }
 }
 
+#[derive(Clone, Default)]
+struct ServiceLogsStderrRunner;
+
+#[async_trait::async_trait]
+impl CommandRunner for ServiceLogsStderrRunner {
+    async fn run(&self, spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+        let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
+
+        if spec.program == "docker"
+            && args
+                == vec![
+                    "ps",
+                    "-q",
+                    "--filter",
+                    "label=com.docker.compose.project=demo-logs",
+                    "--filter",
+                    "label=com.docker.compose.service=web",
+                ]
+        {
+            return Ok(CommandOutput {
+                status: 0,
+                stdout: "cid-web-stderr\n".to_string(),
+                stderr: String::new(),
+            });
+        }
+
+        if spec.program == "docker"
+            && args.first() == Some(&"inspect")
+            && args.get(1) == Some(&"--format")
+            && args.len() == 4
+            && args[3] == "cid-web-stderr"
+        {
+            return Ok(CommandOutput {
+                status: 0,
+                stdout: "cid-web-stderr\t/demo-logs-web-1\tweb\n".to_string(),
+                stderr: String::new(),
+            });
+        }
+
+        if spec.program == "docker"
+            && args.first() == Some(&"logs")
+            && args.get(1) == Some(&"--timestamps")
+            && args.get(2) == Some(&"--follow")
+            && args.get(3) == Some(&"--tail")
+            && args.get(4) == Some(&"0")
+            && args.last() == Some(&"cid-web-stderr")
+        {
+            return Ok(CommandOutput {
+                status: 0,
+                stdout: String::new(),
+                stderr: "2026-07-04T12:01:43.750608627Z stderr-follow line\n".to_string(),
+            });
+        }
+
+        if spec.program == "docker"
+            && args.first() == Some(&"logs")
+            && args.get(1) == Some(&"--timestamps")
+            && args.get(2) == Some(&"--tail")
+            && args.last() == Some(&"cid-web-stderr")
+        {
+            return Ok(CommandOutput {
+                status: 0,
+                stdout: String::new(),
+                stderr: "2026-07-04T12:01:42.750608627Z stderr-only line\n".to_string(),
+            });
+        }
+
+        Ok(CommandOutput {
+            status: 1,
+            stdout: String::new(),
+            stderr: format!("unexpected stderr service logs args: {:?}", args),
+        })
+    }
+}
+
 async fn seed_cleanup_stack(
     state: &Arc<AppState>,
     project: &str,
