@@ -551,12 +551,14 @@ fn spawn_source_follower(
         });
 
         {
-            let mut on_stdout = |chunk: String| {
-                for raw_line in chunk.lines() {
-                    let _ = raw_tx.send(raw_line.to_string());
-                }
+            let stdout_tx = raw_tx.clone();
+            let mut on_stdout = move |chunk: String| {
+                send_log_chunk_lines(&stdout_tx, &chunk);
             };
-            let mut on_stderr = |_chunk: String| {};
+            let stderr_tx = raw_tx.clone();
+            let mut on_stderr = move |chunk: String| {
+                send_log_chunk_lines(&stderr_tx, &chunk);
+            };
 
             let _ = runner
                 .run_stream(
@@ -631,12 +633,18 @@ async fn collect_service_logs(
         ));
     }
 
-    let mut lines = parse_service_log_lines(&output.stdout);
+    let mut lines = parse_command_log_lines(&output.stdout, &output.stderr);
     if lines.len() > tail {
         lines = lines.split_off(lines.len() - tail);
     }
 
     Ok(ServiceLogCollectorState { lines })
+}
+
+fn send_log_chunk_lines(tx: &mpsc::UnboundedSender<String>, chunk: &str) {
+    for raw_line in chunk.lines() {
+        let _ = tx.send(raw_line.to_string());
+    }
 }
 
 async fn discover_active_source(
@@ -797,6 +805,9 @@ impl ServiceLogFrameParser {
         }
 
         let (ts, raw) = split_docker_log_line(trimmed);
+        if ts.is_empty() {
+            return None;
+        }
         let next = PendingServiceLogLine {
             ts: ts.to_string(),
             raw: raw.to_string(),
@@ -850,6 +861,20 @@ fn parse_service_log_lines(output: &str) -> Vec<ServiceLogLine> {
     if let Some(line) = parser.finish() {
         lines.push(line);
     }
+    lines
+}
+
+fn parse_command_log_lines(stdout: &str, stderr: &str) -> Vec<ServiceLogLine> {
+    if stdout.is_empty() {
+        return parse_service_log_lines(stderr);
+    }
+    if stderr.is_empty() {
+        return parse_service_log_lines(stdout);
+    }
+
+    let mut lines = parse_service_log_lines(stdout);
+    lines.extend(parse_service_log_lines(stderr));
+    lines.sort_by(|left, right| left.ts.cmp(&right.ts));
     lines
 }
 

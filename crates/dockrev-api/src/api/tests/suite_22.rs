@@ -487,7 +487,10 @@ services:
     );
 }
 
-use crate::api::{ServiceLogEventEnvelope, ServiceLogLine};
+use crate::{
+    api::{ServiceLogEventEnvelope, ServiceLogLine},
+    service_logs::ServiceLogRealtimeMessage,
+};
 
 #[tokio::test]
 async fn service_logs_snapshot_returns_single_service_stream() {
@@ -704,6 +707,98 @@ services:
         body["lines"][0]["plain"].as_str(),
         Some("resolved from project scan")
     );
+}
+
+#[tokio::test]
+async fn service_logs_snapshot_includes_stderr_stream() {
+    let db_path = format!(
+        "/tmp/dockrev-service-logs-stderr-{}.db",
+        ulid::Ulid::new()
+    );
+    let compose_path = format!(
+        "/tmp/dockrev-service-logs-stderr-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: nginx:1.27
+"#,
+    )
+    .unwrap();
+    let state = test_state_with(
+        &db_path,
+        Arc::new(FakeRegistry),
+        Arc::new(ServiceLogsStderrRunner),
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    seed_discovered_project(&state, &stack_id, "demo-logs").await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let service_id = services[0].id.clone();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/logs?tail=3"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body = response_json(resp).await;
+    assert_eq!(body["lines"].as_array().map(Vec::len), Some(1));
+    assert_eq!(body["lines"][0]["plain"].as_str(), Some("stderr-only line"));
+}
+
+#[tokio::test]
+async fn service_logs_events_include_stderr_follow_stream() {
+    let db_path = format!(
+        "/tmp/dockrev-service-logs-stderr-events-{}.db",
+        ulid::Ulid::new()
+    );
+    let compose_path = format!(
+        "/tmp/dockrev-service-logs-stderr-events-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: nginx:1.27
+"#,
+    )
+    .unwrap();
+    let state = test_state_with(
+        &db_path,
+        Arc::new(FakeRegistry),
+        Arc::new(ServiceLogsStderrRunner),
+    )
+    .await;
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    seed_discovered_project(&state, &stack_id, "demo-logs").await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let service_id = services[0].id.clone();
+
+    let mut subscription = state.service_log_hub.subscribe(&service_id).await;
+    let message = tokio::time::timeout(Duration::from_secs(2), subscription.recv())
+        .await
+        .expect("stderr follow event should arrive")
+        .expect("stderr follow event should be readable");
+
+    let ServiceLogRealtimeMessage::Event(ServiceLogEventEnvelope::Line { line, .. }) = message else {
+        panic!("expected service log line event");
+    };
+    assert_eq!(line.plain, "stderr-follow line");
 }
 
 #[tokio::test]
