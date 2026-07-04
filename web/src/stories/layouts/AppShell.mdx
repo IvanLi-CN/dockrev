@@ -1,0 +1,14 @@
+import { Canvas, Meta } from '@storybook/addon-docs/blocks'
+import * as AppShellStories from './AppShell.stories'
+
+<Meta of={AppShellStories} />
+
+# AppShell Navigation
+
+Desktop navigation supports the normal expanded shell and a compact icon-only shell. The mobile drawer uses the same primary navigation icon map, so labels and icons do not drift between responsive states.
+
+<Canvas of={AppShellStories.Overview} />
+
+<Canvas of={AppShellStories.CollapsedSidebar} />
+
+<Canvas of={AppShellStories.MobileDrawerWithIcons} />
