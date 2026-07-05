@@ -61,8 +61,8 @@ pub(crate) async fn send_new_versions(
             .await
         }
         .await;
-        log_result(state, Some(check_job_id), now_rfc3339, "telegram", &r).await;
-        results.insert("telegram".to_string(), result_value(r));
+        log_telegram_result(state, Some(check_job_id), now_rfc3339, &r).await;
+        results.insert("telegram".to_string(), telegram_result_value(r));
     }
 
     if settings.email_enabled {
@@ -168,8 +168,8 @@ pub(crate) async fn send_ghcr_webhook_anomaly(
             .await
         }
         .await;
-        log_result(state, Some(event.job_id), now_rfc3339, "telegram", &r).await;
-        results.insert("telegram".to_string(), result_value(r));
+        log_telegram_result(state, Some(event.job_id), now_rfc3339, &r).await;
+        results.insert("telegram".to_string(), telegram_result_value(r));
     }
 
     if settings.email_enabled {
@@ -338,8 +338,8 @@ pub(crate) async fn send_all(
                 .await
             }
         };
-        log_result(state, job_id, now_rfc3339, "telegram", &r).await;
-        results.insert("telegram".to_string(), result_value(r));
+        log_telegram_result(state, job_id, now_rfc3339, &r).await;
+        results.insert("telegram".to_string(), telegram_result_value(r));
     }
 
     if should_send_channel(
@@ -480,9 +480,69 @@ async fn log_result(
         .await;
 }
 
+async fn log_telegram_result(
+    state: &AppState,
+    job_id: Option<&str>,
+    now_rfc3339: &str,
+    result: &anyhow::Result<TelegramDeliveryReport>,
+) {
+    let Some(job_id) = job_id else { return };
+    match result {
+        Ok(report) => {
+            let mut msg = "notify: telegram=ok".to_string();
+            if report.supplemental_sent {
+                msg.push_str(" supplemental=sent");
+            }
+            if let Some(err) = report.photo_fallback_error.as_deref() {
+                msg.push_str(" photo=fallback error=");
+                msg.push_str(&truncate_chars(err, 300));
+            }
+            let _ = state
+                .db
+                .insert_job_log(
+                    job_id,
+                    &JobLogLine {
+                        ts: now_rfc3339.to_string(),
+                        level: if report.photo_fallback_error.is_some() {
+                            "warn".to_string()
+                        } else {
+                            "info".to_string()
+                        },
+                        msg,
+                    },
+                )
+                .await;
+        }
+        Err(e) => {
+            let _ = state
+                .db
+                .insert_job_log(
+                    job_id,
+                    &JobLogLine {
+                        ts: now_rfc3339.to_string(),
+                        level: "warn".to_string(),
+                        msg: format!("notify: telegram=failed error={e}"),
+                    },
+                )
+                .await;
+        }
+    }
+}
+
 fn result_value(result: anyhow::Result<()>) -> Value {
     match result {
         Ok(()) => json!({"ok": true}),
+        Err(e) => json!({"ok": false, "error": e.to_string()}),
+    }
+}
+
+fn telegram_result_value(result: anyhow::Result<TelegramDeliveryReport>) -> Value {
+    match result {
+        Ok(report) => json!({
+            "ok": true,
+            "photoFallback": report.photo_fallback_error.is_some(),
+            "supplementalSent": report.supplemental_sent,
+        }),
         Err(e) => json!({"ok": false, "error": e.to_string()}),
     }
 }
@@ -507,63 +567,21 @@ async fn send_telegram_test(
     bot_token: Option<&str>,
     chat_id: Option<&str>,
     payload: &TestNotificationPayloadV2,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<TelegramDeliveryReport> {
     let token = bot_token.context("telegram.botToken missing")?;
     let chat_id = chat_id.context("telegram.chatId missing")?;
-    let url = format!("https://api.telegram.org/bot{token}/sendMessage");
     let html_text = render_telegram_test_html(payload)?;
-    if html_text.chars().count() > TELEGRAM_MAX_MESSAGE_CHARS {
-        let plain_text = render_telegram_plain_for_send(payload)?;
-        let retry = client
-            .post(&url)
-            .json(&json!({ "chat_id": chat_id, "text": plain_text }))
-            .send()
-            .await?;
-        if retry.status().is_success() {
-            return Ok(());
-        }
-        let retry_status = retry.status();
-        let retry_body = retry.text().await.unwrap_or_default();
-        return Err(anyhow::anyhow!(
-            "telegram http {}: {}",
-            retry_status,
-            retry_body
-        ));
-    }
-
-    let resp = client
-        .post(&url)
-        .json(&json!({ "chat_id": chat_id, "text": html_text, "parse_mode": "HTML" }))
-        .send()
-        .await?;
-    if resp.status().is_success() {
-        return Ok(());
-    }
-
-    let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
-    if should_retry_telegram_plain_text(status, &body) {
-        let plain_text = render_telegram_plain_for_send(payload)?;
-        let retry = client
-            .post(&url)
-            .json(&json!({ "chat_id": chat_id, "text": plain_text }))
-            .send()
-            .await?;
-        if retry.status().is_success() {
-            return Ok(());
-        }
-        let retry_status = retry.status();
-        let retry_body = retry.text().await.unwrap_or_default();
-        return Err(anyhow::anyhow!(
-            "telegram http {}: {} (fallback http {}: {})",
-            status,
-            body,
-            retry_status,
-            retry_body
-        ));
-    }
-
-    Err(anyhow::anyhow!("telegram http {}: {}", status, body))
+    let plain_text = render_telegram_plain_for_send(payload)?;
+    let caption = render_telegram_photo_caption_html(
+        &payload.human.title,
+        &payload.human.summary,
+        Some(render_open_link_html(&payload.url, "设置")),
+    );
+    let card_png = render_test_telegram_card_png(payload)?;
+    send_telegram_card_or_text(
+        client, token, chat_id, card_png, caption, html_text, plain_text,
+    )
+    .await
 }
 
 async fn send_email_test(
