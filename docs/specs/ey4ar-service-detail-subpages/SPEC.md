@@ -72,9 +72,13 @@
 - `日志` 必须独占服务级实时日志面板，不得混入监控卡或配置卡。
 - `日志` 必须通过 `GET /api/services/{service_id}/logs?tail=500` 提供最近缓冲 snapshot，并通过 `GET /api/services/{service_id}/logs/events?afterId=` 建立 SSE 增量续流；SSE 继续支持 `Last-Event-ID`、`Cache-Control: no-cache` 与 `X-Accel-Buffering: no`。
 - `日志` 必须保留 ANSI 颜色渲染，同时维护 strip-ANSI 文本用于大小写不敏感的当前缓冲过滤搜索。
+- `日志` 必须在 `ServiceLogLine` 中保留 `ts/raw/plain`，并允许后端返回可选 `meta`：`format=json|logfmt|text`、应用级 `level`、应用时间戳、主消息、结构化 attributes 与重点字段列表。
+- `日志` 默认展示 Human 视图：优先使用 `meta.message` 与应用级 `meta.level`，将 `component/event/route/phase/elapsed_ms` 等重点 attributes 渲染为紧凑元数据；缺少 `meta` 时回退到原有 ANSI/关键词推断。
+- `日志` 必须提供 Human / Raw 显式切换；Raw 视图必须保留原始输出与 ANSI 分段渲染，Human 视图不得把长 metadata 截断到视口外。
 - `日志` 首屏默认展示最近 `500` 行，会话缓冲上限为 `2000` 行；超出 ring buffer 的断线补偿必须通过 `service_log_reset` 触发前端重抓 snapshot。
 - `日志` 必须支持默认吸底、用户上滚后暂停跟随、`跳到最新` 恢复吸底，以及查询非空时继续接收流但不自动跳底。
 - `日志` 必须提供显式的自动换行开关；关闭时保留原始单行滚动查看，开启时在当前视口内折行，但两种模式都不得放弃虚拟列表渲染。
+- `日志` 搜索必须覆盖 `plain/raw`、`meta.message` 与 `meta.attributes`，使操作者可按 `route`、`phase`、`event` 等结构化字段过滤当前缓冲。
 - `设置` 不得再承载备份目标编辑入口；设置页中的“服务保护设置”只保留失败回滚与代码仓库配置。
 - `设置` 必须集中承载自动更新摘要与抽屉、Compose 信息、部署 tag 编辑、服务保护、忽略规则、Webhook，以及下沉后的低频危险动作。
 - Storybook 必须提供五子页稳定入口，并至少覆盖：旧链接默认概览、tabs active state、备份页记录列表/空态、日志深链、设置抽屉入口或监控页稳定渲染。
@@ -146,6 +150,13 @@
 - `ServiceLogEventEnvelope`
   - `service_log_line`: 单条日志行，包含事件 ID、时间戳、原始文本与 strip-ANSI 文本。
   - `service_log_reset`: 表示前端应丢弃增量流状态并重新抓取 snapshot。
+- `ServiceLogLine.meta`
+  - `format`: `json | logfmt | text`
+  - `level`: 应用日志级别，优先于 Docker stdout/stderr 外壳推断。
+  - `timestamp`: 应用日志自身时间戳；列表时间列仍使用 Docker log timestamp。
+  - `message`: Human 视图主文案。
+  - `attributes`: 除 level/timestamp/message 外的结构化字段。
+  - `highlights`: 前端优先展示的 attributes key 列表。
 
 ## 验收标准（Acceptance Criteria）
 
@@ -262,6 +273,36 @@
   PR caption: 日志子页新增服务级实时日志视图，支持缓冲搜索与跳到最新。
 
 ![服务详情日志子页（桌面）](./assets/service-detail-logs-desktop.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `element`
+  requested_viewport: `1440x1000`
+  viewport_strategy: `storybook-canvas`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/LogsSectionEvidence`
+  state: `human structured metadata`
+  evidence_note: 验证日志页默认 Human 视图优先使用应用级 JSON metadata 渲染主消息、`INFO` 等级与 `component/event/route/phase/elapsed_ms` chips，metadata 在默认 nowrap 下仍保持视口内可读。
+  PR: include
+  PR caption: 日志页默认 Human 视图展示结构化消息与元数据，避免把 JSON 原文直接铺满界面。
+
+![服务详情日志 Human 元数据视图](./assets/service-detail-logs-human-metadata.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `element`
+  requested_viewport: `1440x1000`
+  viewport_strategy: `storybook-canvas`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/LogsSectionEvidence`
+  state: `raw log toggle`
+  evidence_note: 验证 Raw 视图可显式切回容器原始输出，JSON 行按原文显示并继续保留 ANSI 颜色与横向查看语义。
+  PR: include
+  PR caption: 日志页 Raw 视图保留原始日志文本，便于排障时对照结构化摘要。
+
+![服务详情日志 Raw 原文视图](./assets/service-detail-logs-raw-toggle.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`

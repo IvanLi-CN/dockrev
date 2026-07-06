@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { Input, Button, Pill, SearchIcon } from '../ui'
-import { SERVICE_LOG_BUFFER_LIMIT, useServiceLogsState } from '../pages/useServiceLogsState'
+import {
+  SERVICE_LOG_BUFFER_LIMIT,
+  useServiceLogsState,
+  type ServiceLogRecord,
+} from '../pages/useServiceLogsState'
 
 const LOCAL_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local'
 type LogTimeZone = 'local' | 'utc'
+type LogViewMode = 'human' | 'raw'
 
 function pad2(n: number): string {
   return String(n).padStart(2, '0')
@@ -59,6 +64,27 @@ function formatLogLevel(level: string): string {
   return value.slice(0, 4).toUpperCase()
 }
 
+function formatMetaValue(value: unknown): string {
+  if (value == null) return ''
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+function metadataEntries(record: ServiceLogRecord): Array<{ key: string; value: string }> {
+  const attributes = record.meta?.attributes ?? {}
+  const preferredKeys = (record.meta?.highlights ?? []).filter((key) => key in attributes)
+  const keys = preferredKeys.length > 0 ? preferredKeys : Object.keys(attributes).slice(0, 5)
+  return keys
+    .map((key) => ({ key, value: formatMetaValue(attributes[key]) }))
+    .filter((entry) => entry.value.length > 0)
+    .slice(0, 6)
+}
+
 export function ServiceLogsPanel(props: { serviceId: string }) {
   const { error, filteredRecords, loading, query, records, resetNonce, setQuery } = useServiceLogsState(
     props.serviceId,
@@ -67,6 +93,7 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
   const [follow, setFollow] = useState(true)
   const [isAtBottom, setIsAtBottom] = useState(true)
   const [logTz, setLogTz] = useState<LogTimeZone>('local')
+  const [logView, setLogView] = useState<LogViewMode>('human')
   const [wrapLines, setWrapLines] = useState(false)
 
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -106,7 +133,7 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
 
   useEffect(() => {
     virtualizer.measure()
-  }, [filteredRecords, resetNonce, virtualizer, wrapLines])
+  }, [filteredRecords, logView, resetNonce, virtualizer, wrapLines])
 
   const items = virtualizer.getVirtualItems()
   const offsetTop = items[0]?.start ?? 0
@@ -178,6 +205,26 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
         </div>
         <div className="serviceLogsStatusSide">
           <div className="serviceLogsControls">
+            <div className="serviceLogsToggleGroup" role="group" aria-label="日志显示模式">
+              <Button
+                ariaPressed={logView === 'human'}
+                className="serviceLogsMiniToggle"
+                onClick={() => setLogView('human')}
+                title="显示解析后的消息与元数据。"
+                variant={logView === 'human' ? 'primary' : 'ghost'}
+              >
+                Human
+              </Button>
+              <Button
+                ariaPressed={logView === 'raw'}
+                className="serviceLogsMiniToggle"
+                onClick={() => setLogView('raw')}
+                title="显示容器原始输出。"
+                variant={logView === 'raw' ? 'primary' : 'ghost'}
+              >
+                Raw
+              </Button>
+            </div>
             <div className="serviceLogsToggleGroup" role="group" aria-label="日志时间时区">
               <Button
                 ariaPressed={logTz === 'local'}
@@ -218,6 +265,7 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
         data-service-logs-total-count={filteredRecords.length}
         data-service-logs-visible-count={renderedCount}
         data-service-logs-virtualized="true"
+        data-service-logs-view={logView}
         data-service-logs-wrap={wrapLines ? 'on' : 'off'}
         data-wrap={wrapLines ? 'on' : 'off'}
       >
@@ -255,13 +303,16 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
                     const record = filteredRecords[item.index]
                     if (!record) return null
                     const stamp = formatLogStamp(record.ts, logTz)
+                    const metaEntries = logView === 'human' ? metadataEntries(record) : []
                     return (
                       <div
                         className="serviceLogRow"
                         data-following={follow ? 'true' : 'false'}
+                        data-format={record.meta?.format ?? 'unknown'}
                         data-inline-level={record.inlineLevel ? 'true' : 'false'}
                         data-level={record.level}
                         data-multiline={record.multiline ? 'true' : 'false'}
+                        data-view={logView}
                         data-wrap={wrapLines ? 'true' : 'false'}
                         key={record.id}
                         ref={virtualizer.measureElement}
@@ -276,17 +327,38 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
                           title={
                             record.inlineLevel
                               ? `等级已包含在输出中：${formatLogLevel(record.level)}`
-                              : `等级：${formatLogLevel(record.level)}（基于 ANSI 颜色与关键词推断）`
+                              : record.meta?.level
+                                ? `应用日志等级：${formatLogLevel(record.level)}`
+                                : `等级：${formatLogLevel(record.level)}（基于 ANSI 颜色与关键词推断）`
                           }
                         >
                           {record.inlineLevel ? '' : formatLogLevel(record.level)}
                         </span>
                         <span className="serviceLogMsg">
-                          {record.segments.map((segment, index) => (
-                            <span key={`${record.id}-${index}`} style={segment.style}>
-                              {segment.text}
-                            </span>
-                          ))}
+                          {logView === 'human' ? (
+                            <>
+                              <span className="serviceLogHumanMsg">{record.message}</span>
+                              {record.meta?.format && record.meta.format !== 'text' ? (
+                                <span className="serviceLogMetaFormat">{record.meta.format.toUpperCase()}</span>
+                              ) : null}
+                              {metaEntries.length > 0 ? (
+                                <span className="serviceLogMetaChips" aria-label="日志元数据">
+                                  {metaEntries.map((entry) => (
+                                    <span className="serviceLogMetaChip" key={`${record.id}-${entry.key}`}>
+                                      <span className="serviceLogMetaKey">{entry.key}</span>
+                                      <span className="serviceLogMetaValue">{entry.value}</span>
+                                    </span>
+                                  ))}
+                                </span>
+                              ) : null}
+                            </>
+                          ) : (
+                            record.segments.map((segment, index) => (
+                              <span key={`${record.id}-${index}`} style={segment.style}>
+                                {segment.text}
+                              </span>
+                            ))
+                          )}
                         </span>
                       </div>
                     )
