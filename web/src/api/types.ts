@@ -248,6 +248,16 @@ export type ServiceLogLine = {
   ts: string
   raw: string
   plain: string
+  meta?: ServiceLogMeta | null
+}
+
+export type ServiceLogMeta = {
+  format: 'json' | 'logfmt' | 'text'
+  level?: string | null
+  timestamp?: string | null
+  message?: string | null
+  attributes?: Record<string, unknown>
+  highlights?: string[]
 }
 
 export type ServiceLogSnapshotResponse = {

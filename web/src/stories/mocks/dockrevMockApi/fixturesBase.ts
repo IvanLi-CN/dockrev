@@ -631,8 +631,23 @@ export function buildDashboardDemo(): Fixture {
         },
         {
           ts: '2026-06-29T08:00:01.000Z',
-          raw: 'migrator connected',
-          plain: 'migrator connected',
+          raw: '{"timestamp":"2026-06-29T08:00:01.000Z","level":"INFO","message":"runtime perf","component":"admin_read","event":"dashboard_overview_phase","elapsed_ms":24,"route":"/api/dashboard/overview","phase":"freshness_probe"}',
+          plain:
+            '{"timestamp":"2026-06-29T08:00:01.000Z","level":"INFO","message":"runtime perf","component":"admin_read","event":"dashboard_overview_phase","elapsed_ms":24,"route":"/api/dashboard/overview","phase":"freshness_probe"}',
+          meta: {
+            format: 'json',
+            level: 'info',
+            timestamp: '2026-06-29T08:00:01.000Z',
+            message: 'runtime perf',
+            attributes: {
+              component: 'admin_read',
+              event: 'dashboard_overview_phase',
+              elapsed_ms: 24,
+              route: '/api/dashboard/overview',
+              phase: 'freshness_probe',
+            },
+            highlights: ['component', 'event', 'route', 'phase', 'elapsed_ms'],
+          },
         },
         {
           ts: '2026-06-29T08:00:02.000Z',

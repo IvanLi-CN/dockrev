@@ -534,6 +534,20 @@ services:
         body["lines"][2]["plain"].as_str(),
         Some("\u{1b}[31merror burst\u{1b}[0m")
     );
+    assert_eq!(body["lines"][1]["meta"]["format"].as_str(), Some("json"));
+    assert_eq!(body["lines"][1]["meta"]["level"].as_str(), Some("info"));
+    assert_eq!(
+        body["lines"][1]["meta"]["message"].as_str(),
+        Some("runtime perf")
+    );
+    assert_eq!(
+        body["lines"][1]["meta"]["attributes"]["component"].as_str(),
+        Some("admin_read")
+    );
+    assert_eq!(
+        body["lines"][1]["meta"]["attributes"]["elapsed_ms"].as_i64(),
+        Some(24)
+    );
 }
 
 #[tokio::test]
@@ -834,6 +848,7 @@ services:
                         ts: "2026-06-29T08:00:00.000000000Z".to_string(),
                         raw: "raw 10".to_string(),
                         plain: "raw 10".to_string(),
+                        meta: None,
                     },
                 },
                 ServiceLogEventEnvelope::Line {
@@ -843,6 +858,7 @@ services:
                         ts: "2026-06-29T08:00:01.000000000Z".to_string(),
                         raw: "raw 11".to_string(),
                         plain: "raw 11".to_string(),
+                        meta: None,
                     },
                 },
             ],

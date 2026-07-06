@@ -8,6 +8,7 @@ use std::{
 };
 
 use anyhow::Context as _;
+use serde_json::{Number, Value};
 use tokio::{
     sync::{Mutex, broadcast, mpsc},
     task::JoinHandle,
@@ -15,7 +16,10 @@ use tokio::{
 };
 
 use crate::{
-    api::types::{ServiceLogEventEnvelope, ServiceLogLine, ServiceLogSnapshotResponse},
+    api::types::{
+        ServiceLogEventEnvelope, ServiceLogLine, ServiceLogMeta, ServiceLogMetaFormat,
+        ServiceLogSnapshotResponse,
+    },
     db::{Db, ServiceResourceTarget},
     runner::{CommandRunner, CommandSpec},
 };
@@ -783,10 +787,12 @@ struct PendingServiceLogLine {
 
 impl PendingServiceLogLine {
     fn into_line(self) -> ServiceLogLine {
+        let meta = parse_service_log_meta(&self.raw);
         ServiceLogLine {
             ts: self.ts,
             plain: self.raw.clone(),
             raw: self.raw,
+            meta: Some(meta),
         }
     }
 }
@@ -933,9 +939,204 @@ fn strip_ansi_sgr(input: &str) -> String {
     output
 }
 
+fn parse_service_log_meta(raw: &str) -> ServiceLogMeta {
+    let plain = strip_ansi_sgr(raw);
+    let trimmed = plain.trim();
+    if let Some(meta) = parse_json_log_meta(trimmed) {
+        return meta;
+    }
+    if let Some(meta) = parse_logfmt_meta(trimmed) {
+        return meta;
+    }
+
+    ServiceLogMeta {
+        format: ServiceLogMetaFormat::Text,
+        level: None,
+        timestamp: None,
+        message: (!trimmed.is_empty()).then(|| trimmed.to_string()),
+        attributes: BTreeMap::new(),
+        highlights: Vec::new(),
+    }
+}
+
+fn parse_json_log_meta(input: &str) -> Option<ServiceLogMeta> {
+    let Value::Object(mut object) = serde_json::from_str::<Value>(input).ok()? else {
+        return None;
+    };
+
+    let level = take_stringish(&mut object, &["level", "severity"]);
+    let timestamp = take_stringish(&mut object, &["timestamp", "time", "ts"]);
+    let message = take_stringish(&mut object, &["message", "msg"]);
+    let attributes = object.into_iter().collect::<BTreeMap<_, _>>();
+    let highlights = highlight_keys(&attributes);
+
+    Some(ServiceLogMeta {
+        format: ServiceLogMetaFormat::Json,
+        level: level.map(normalize_meta_level),
+        timestamp,
+        message,
+        attributes,
+        highlights,
+    })
+}
+
+fn take_stringish(object: &mut serde_json::Map<String, Value>, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(value) = object.remove(*key) {
+            return value_to_display_string(&value);
+        }
+    }
+    None
+}
+
+fn value_to_display_string(value: &Value) -> Option<String> {
+    match value {
+        Value::Null => None,
+        Value::String(value) => Some(value.clone()),
+        Value::Bool(value) => Some(value.to_string()),
+        Value::Number(value) => Some(value.to_string()),
+        other => Some(other.to_string()),
+    }
+}
+
+fn normalize_meta_level(value: String) -> String {
+    match value.trim().to_lowercase().as_str() {
+        "warning" => "warn".to_string(),
+        "err" | "fatal" | "critical" => "error".to_string(),
+        "verbose" => "debug".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn parse_logfmt_meta(input: &str) -> Option<ServiceLogMeta> {
+    let attributes = parse_logfmt_attributes(input)?;
+    if attributes.len() < 2 {
+        return None;
+    }
+    let mut attributes = attributes;
+    let level = take_btree_stringish(&mut attributes, &["level", "severity"]);
+    let timestamp = take_btree_stringish(&mut attributes, &["timestamp", "time", "ts"]);
+    let message = take_btree_stringish(&mut attributes, &["message", "msg"]);
+    let highlights = highlight_keys(&attributes);
+
+    Some(ServiceLogMeta {
+        format: ServiceLogMetaFormat::Logfmt,
+        level: level.map(normalize_meta_level),
+        timestamp,
+        message,
+        attributes,
+        highlights,
+    })
+}
+
+fn take_btree_stringish(attributes: &mut BTreeMap<String, Value>, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(value) = attributes.remove(*key) {
+            return value_to_display_string(&value);
+        }
+    }
+    None
+}
+
+fn parse_logfmt_attributes(input: &str) -> Option<BTreeMap<String, Value>> {
+    let mut attributes = BTreeMap::new();
+    let chars = input.chars().collect::<Vec<_>>();
+    let mut index = 0;
+
+    while index < chars.len() {
+        while index < chars.len() && chars[index].is_whitespace() {
+            index += 1;
+        }
+        if index >= chars.len() {
+            break;
+        }
+
+        let key_start = index;
+        while index < chars.len() && chars[index] != '=' && !chars[index].is_whitespace() {
+            index += 1;
+        }
+        if index >= chars.len() || chars[index] != '=' || index == key_start {
+            return None;
+        }
+        let key = chars[key_start..index].iter().collect::<String>();
+        index += 1;
+
+        let value = if index < chars.len() && chars[index] == '"' {
+            index += 1;
+            let mut value = String::new();
+            while index < chars.len() {
+                let ch = chars[index];
+                index += 1;
+                if ch == '"' {
+                    break;
+                }
+                if ch == '\\' && index < chars.len() {
+                    value.push(chars[index]);
+                    index += 1;
+                } else {
+                    value.push(ch);
+                }
+            }
+            value
+        } else {
+            let value_start = index;
+            while index < chars.len() && !chars[index].is_whitespace() {
+                index += 1;
+            }
+            chars[value_start..index].iter().collect::<String>()
+        };
+        attributes.insert(key, logfmt_value(value));
+    }
+
+    (!attributes.is_empty()).then_some(attributes)
+}
+
+fn logfmt_value(value: String) -> Value {
+    if value == "true" {
+        return Value::Bool(true);
+    }
+    if value == "false" {
+        return Value::Bool(false);
+    }
+    if let Ok(int_value) = value.parse::<i64>() {
+        return Value::Number(Number::from(int_value));
+    }
+    if let Ok(float_value) = value.parse::<f64>()
+        && let Some(number) = Number::from_f64(float_value)
+    {
+        return Value::Number(number);
+    }
+    Value::String(value)
+}
+
+fn highlight_keys(attributes: &BTreeMap<String, Value>) -> Vec<String> {
+    const PREFERRED: &[&str] = &[
+        "component",
+        "event",
+        "route",
+        "scope",
+        "phase",
+        "elapsed_ms",
+        "status",
+        "method",
+        "uri",
+        "latency",
+        "proxy_request_id",
+        "trace",
+        "degraded",
+    ];
+    PREFERRED
+        .iter()
+        .filter(|key| attributes.contains_key(**key))
+        .take(8)
+        .map(|key| (*key).to_string())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::parse_service_log_lines;
+    use crate::api::types::ServiceLogMetaFormat;
 
     #[test]
     fn parse_service_log_lines_drops_truncated_leading_continuation() {
@@ -973,5 +1174,55 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].raw, "worker ready\n");
         assert_eq!(lines[1].raw, "    standalone indented output");
+    }
+
+    #[test]
+    fn parse_service_log_lines_adds_json_metadata() {
+        let lines = parse_service_log_lines(
+            "2026-07-06T16:15:16.433978000Z {\"timestamp\":\"2026-07-06T16:15:16.433978Z\",\"level\":\"INFO\",\"message\":\"runtime perf\",\"component\":\"admin_read\",\"event\":\"dashboard_overview_phase\",\"elapsed_ms\":24,\"route\":\"/api/dashboard/overview\"}\n",
+        );
+
+        assert_eq!(lines.len(), 1);
+        let meta = lines[0].meta.as_ref().expect("json metadata");
+        assert_eq!(meta.format, ServiceLogMetaFormat::Json);
+        assert_eq!(meta.level.as_deref(), Some("info"));
+        assert_eq!(
+            meta.timestamp.as_deref(),
+            Some("2026-07-06T16:15:16.433978Z")
+        );
+        assert_eq!(meta.message.as_deref(), Some("runtime perf"));
+        assert_eq!(meta.attributes["component"].as_str(), Some("admin_read"));
+        assert_eq!(
+            meta.attributes["event"].as_str(),
+            Some("dashboard_overview_phase")
+        );
+        assert_eq!(meta.attributes["elapsed_ms"].as_i64(), Some(24));
+        assert!(meta.highlights.contains(&"component".to_string()));
+        assert!(meta.highlights.contains(&"event".to_string()));
+    }
+
+    #[test]
+    fn parse_service_log_lines_adds_logfmt_metadata() {
+        let lines = parse_service_log_lines(
+            "2026-07-06T16:15:16.433978000Z level=warn msg=\"slow query\" route=/api/services elapsed_ms=242 degraded=true\n",
+        );
+
+        let meta = lines[0].meta.as_ref().expect("logfmt metadata");
+        assert_eq!(meta.format, ServiceLogMetaFormat::Logfmt);
+        assert_eq!(meta.level.as_deref(), Some("warn"));
+        assert_eq!(meta.message.as_deref(), Some("slow query"));
+        assert_eq!(meta.attributes["route"].as_str(), Some("/api/services"));
+        assert_eq!(meta.attributes["elapsed_ms"].as_i64(), Some(242));
+        assert_eq!(meta.attributes["degraded"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn parse_service_log_lines_falls_back_to_text_metadata() {
+        let lines = parse_service_log_lines("2026-07-06T16:15:16.433978000Z worker ready\n");
+
+        let meta = lines[0].meta.as_ref().expect("text metadata");
+        assert_eq!(meta.format, ServiceLogMetaFormat::Text);
+        assert_eq!(meta.message.as_deref(), Some("worker ready"));
+        assert!(meta.attributes.is_empty());
     }
 }

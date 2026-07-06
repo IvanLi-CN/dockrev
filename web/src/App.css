@@ -4934,6 +4934,69 @@ html[data-theme='light'] .modalOverlay {
   color: var(--text);
 }
 
+.serviceLogRow[data-view='human'] .serviceLogMsg {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.serviceLogHumanMsg {
+  color: color-mix(in srgb, var(--text) 92%, white 8%);
+  font-weight: 580;
+}
+
+.serviceLogMetaFormat {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--color-info) 36%, transparent);
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--color-info) 78%, white 22%);
+  background: color-mix(in srgb, var(--color-info) 10%, transparent);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.serviceLogMetaChips {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.serviceLogMetaChip {
+  display: inline-flex;
+  max-width: 320px;
+  min-width: 0;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 60%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, white 5%, transparent);
+  line-height: 1.15;
+}
+
+.serviceLogMetaKey {
+  flex: 0 0 auto;
+  padding: 3px 5px 3px 7px;
+  color: color-mix(in srgb, var(--muted2) 76%, white 24%);
+  font-size: 10px;
+}
+
+.serviceLogMetaValue {
+  min-width: 0;
+  overflow: hidden;
+  padding: 3px 7px 3px 0;
+  color: color-mix(in srgb, var(--text) 80%, white 20%);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .serviceLogRow[data-multiline='true'] .serviceLogMsg {
   padding-left: 10px;
   border-left: 2px solid color-mix(in srgb, var(--color-info) 42%, transparent);
@@ -4950,11 +5013,23 @@ html[data-theme='light'] .modalOverlay {
   min-width: 100%;
 }
 
+.serviceLogsTerminal[data-wrap='off'] .serviceLogRow[data-view='human'] {
+  width: 100%;
+  min-width: 100%;
+}
+
 .serviceLogsTerminal[data-wrap='off'] .serviceLogMsg {
   display: inline-block;
   white-space: pre;
   overflow-wrap: normal;
   word-break: normal;
+}
+
+.serviceLogsTerminal[data-wrap='off'] .serviceLogRow[data-view='human'] .serviceLogMsg {
+  display: flex;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .serviceLogsWrapToggle {
