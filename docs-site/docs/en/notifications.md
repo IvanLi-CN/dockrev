@@ -23,6 +23,7 @@ Purpose: turn internal paths (e.g. `queue/{jobId}`) into absolute URLs (e.g. `ht
   - `links.*Url` will fall back to internal paths (starting with `/`)
   - Telegram / Email will show paths as code (not clickable) and include a hint to configure the base URL
   - Web Push will still open the path under the current origin
+- Telegram dynamic cards do not depend on the Public Base URL; it only controls whether caption/detail links are clickable.
 
 ## Notification Types
 
@@ -187,9 +188,22 @@ Truncation:
 
 ## Channel rendering
 
-### Telegram (HTML)
+### Telegram (dynamic card + HTML details)
 
-Chinese title with an inline clickable `详情` link + summary + per-service list + optional error excerpt (`<pre>...`).
+Telegram notifications first send a content-related PNG card instead of relying on Telegram-generated link previews. The card uses a theme-neutral light information layout and does not assume the Telegram client or Dockrev Web UI is in dark mode. The card only includes summary-level information:
+
+- notification type, status, and key object
+- task id, scope/reason, check count, anomaly count, version transition, or up to 5 summary rows
+- omitted count when the underlying list is longer
+
+The photo caption stays short and includes the primary action link. Full service lists, full URLs, digests, error excerpts, and debug JSON remain in follow-up text details when needed.
+
+Every Telegram `sendMessage` text path disables link previews so task, service, and settings links do not auto-expand. If card rendering or `sendPhoto` upload fails, Dockrev falls back to the existing text details; if that fallback succeeds, the channel is still treated as delivered and the job log records a photo fallback diagnostic.
+
+Privacy boundary:
+
+- The image does not render full URLs, digests, long error stacks, or debug JSON.
+- Public Base URL only affects clickable links in the caption/details, not card generation.
 
 ### Email (multipart)
 
