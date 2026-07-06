@@ -11,14 +11,12 @@ pub(super) const CHECK_PARALLELISM: usize = crate::config::FIXED_CHECK_PARALLELI
 pub(super) const CHECK_SPAWN_STAGGER: Duration = Duration::from_secs(1);
 pub(super) const UPDATE_STACK_BASE_PROGRESS: f64 = 0.15;
 pub(super) const UPDATE_STACK_APPLY_SPAN: f64 = 0.80;
-
 pub(super) fn progress_percent(current: u32, total: u32) -> u32 {
     if total == 0 {
         return 0;
     }
     ((current.saturating_mul(100)) / total).min(100)
 }
-
 pub(super) fn make_job_progress(
     phase: &str,
     message: String,
@@ -37,7 +35,6 @@ pub(super) fn make_job_progress(
         progress_percent(current, total),
     )
 }
-
 pub(super) fn make_job_progress_with_percent(
     phase: &str,
     message: String,
@@ -60,7 +57,6 @@ pub(super) fn make_job_progress_with_percent(
         Some(Some(percent)),
     )
 }
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn make_job_progress_with_percent_and_plan(
     phase: &str,
@@ -87,7 +83,6 @@ pub(super) fn make_job_progress_with_percent_and_plan(
         Some(Some(planned_percent)),
     )
 }
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn make_job_progress_with_optional_plan(
     phase: &str,
@@ -115,7 +110,6 @@ pub(super) fn make_job_progress_with_optional_plan(
         updated_at,
     }
 }
-
 pub(super) fn make_check_job_progress(
     message: String,
     completed: u32,
@@ -137,7 +131,6 @@ pub(super) fn make_check_job_progress(
         progress_percent(planned, total),
     )
 }
-
 pub(super) fn update_progress_percent(
     processed_stacks: u32,
     total_stacks: u32,
