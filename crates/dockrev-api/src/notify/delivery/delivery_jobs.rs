@@ -157,11 +157,36 @@ pub(crate) async fn send_telegram_card_or_text(
     client: &reqwest::Client,
     token: &str,
     chat_id: &str,
-    card_png: Vec<u8>,
+    card_png: anyhow::Result<Vec<u8>>,
     caption_html: String,
     detail_html: String,
     detail_plain: String,
 ) -> anyhow::Result<TelegramDeliveryReport> {
+    let card_png = match telegram_card_png_or_render_fallback(card_png) {
+        Ok(card_png) => card_png,
+        Err(fallback_error) => {
+            send_telegram_html_or_plain_message(
+                client,
+                token,
+                chat_id,
+                &detail_html,
+                &detail_plain,
+            )
+            .await
+            .map_err(|text_err| {
+                anyhow::anyhow!(
+                    "telegram card render failed: {}; text fallback failed: {}",
+                    fallback_error,
+                    text_err
+                )
+            })?;
+            return Ok(TelegramDeliveryReport {
+                photo_fallback_error: Some(format!("card render failed: {fallback_error}")),
+                supplemental_sent: false,
+            });
+        }
+    };
+
     let photo_result = send_telegram_photo(client, token, chat_id, card_png, &caption_html).await;
     match photo_result {
         Ok(()) => {
@@ -202,6 +227,12 @@ pub(crate) async fn send_telegram_card_or_text(
             })
         }
     }
+}
+
+pub(crate) fn telegram_card_png_or_render_fallback(
+    card_png: anyhow::Result<Vec<u8>>,
+) -> Result<Vec<u8>, String> {
+    card_png.map_err(|err| err.to_string())
 }
 
 async fn send_telegram_photo(
@@ -253,7 +284,7 @@ pub(crate) async fn send_telegram_job(
         &payload.human.summary,
         Some(render_open_link_html(&payload.links.primary_url, "详情")),
     );
-    let card_png = render_job_telegram_card_png(payload, error_excerpt)?;
+    let card_png = render_job_telegram_card_png(payload, error_excerpt);
     send_telegram_card_or_text(
         client, token, chat_id, card_png, caption, html_text, plain_text,
     )
@@ -320,7 +351,7 @@ pub(crate) async fn send_telegram_new_version(
     };
     let caption =
         render_telegram_photo_caption_html(&payload.human.title, &payload.human.summary, action);
-    let card_png = render_new_version_telegram_card_png(payload)?;
+    let card_png = render_new_version_telegram_card_png(payload);
     send_telegram_card_or_text(
         client, token, chat_id, card_png, caption, html_text, plain_text,
     )
@@ -378,7 +409,7 @@ pub(crate) async fn send_telegram_ghcr_webhook_anomaly(
         &payload.human.summary,
         Some(render_open_link_html(&payload.links.job_url, "任务")),
     );
-    let card_png = render_ghcr_webhook_anomaly_telegram_card_png(payload)?;
+    let card_png = render_ghcr_webhook_anomaly_telegram_card_png(payload);
     send_telegram_card_or_text(
         client, token, chat_id, card_png, caption, html_text, plain_text,
     )

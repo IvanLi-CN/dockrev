@@ -135,6 +135,15 @@ fn telegram_text_payload_disables_link_preview() {
 }
 
 #[test]
+fn telegram_card_render_error_is_classified_as_photo_fallback() {
+    let err = telegram_card_png_or_render_fallback(Err(anyhow::anyhow!(
+        "decode telegram card reference png"
+    )))
+    .unwrap_err();
+    assert_eq!(err, "decode telegram card reference png");
+}
+
+#[test]
 fn telegram_photo_caption_is_capped() {
     let caption = render_telegram_photo_caption_html(
         "Dockrev：更新完成（成功）",

@@ -577,7 +577,7 @@ async fn send_telegram_test(
         &payload.human.summary,
         Some(render_open_link_html(&payload.url, "设置")),
     );
-    let card_png = render_test_telegram_card_png(payload)?;
+    let card_png = render_test_telegram_card_png(payload);
     send_telegram_card_or_text(
         client, token, chat_id, card_png, caption, html_text, plain_text,
     )
