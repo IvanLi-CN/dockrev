@@ -343,14 +343,11 @@ pub(crate) async fn run_update_job(
             let progress_stack_id = stack_id.clone();
             let processed_stacks_for_progress = processed_stacks;
             let total_stacks_for_progress = total_stacks;
-            let progress_semantics =
-                if job_kind == TransitionJobKind::Update
-                    && matches!(req.scope.clone(), JobScope::Stack | JobScope::All)
-                {
-                    UpdateProgressSemantics::VerifiedOnlyBatch
-                } else {
-                    UpdateProgressSemantics::Legacy
-                };
+            let progress_semantics = if job_kind == TransitionJobKind::Update {
+                UpdateProgressSemantics::VerifiedOnlyBatch
+            } else {
+                UpdateProgressSemantics::Legacy
+            };
             let progress_task = tokio::spawn(async move {
                 let mut last_percent = update_progress_percent(
                     processed_stacks_for_progress,
@@ -384,7 +381,8 @@ pub(crate) async fn run_update_job(
                             | updater::UpdateProgressStep::PullTagsDone
                             | updater::UpdateProgressStep::ServiceDone
                     ) || (progress_semantics == UpdateProgressSemantics::VerifiedOnlyBatch
-                        && matches!(evt.step, updater::UpdateProgressStep::PullStart));
+                        && matches!(evt.step, updater::UpdateProgressStep::PullStart))
+                        || evt.download.is_some();
                     let planned_changed = next_planned_percent != last_planned_percent;
                     let should_emit = force_emit
                         || planned_changed
@@ -404,7 +402,7 @@ pub(crate) async fn run_update_job(
                     } else {
                         format!("{} · {}", evt.service_name, evt.message)
                     };
-                    let progress = make_job_progress_with_optional_plan(
+                    let mut progress = make_job_progress_with_optional_plan(
                         "apply",
                         progress_message,
                         processed_stacks_for_progress,
@@ -416,6 +414,7 @@ pub(crate) async fn run_update_job(
                         Some(total_stacks_for_progress),
                         next_planned_percent,
                     );
+                    progress.download = evt.download;
                     if let Err(e) =
                         persist_job_progress(&progress_state, &progress_job_id, &progress).await
                     {

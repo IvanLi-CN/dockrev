@@ -11,6 +11,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use ulid::Ulid;
 
 use crate::{
+    api::types::JobProgressDownload,
     api::types::{JobScope, StackRecord, UpdateServiceTarget},
     compose_runner::{ComposeRunnerConfig, ComposeStack},
     docker_runner,
@@ -230,6 +231,7 @@ pub struct UpdateProgressEvent {
     pub service_index: u32,
     pub service_total: u32,
     pub pull_fraction: Option<f64>,
+    pub download: Option<JobProgressDownload>,
     pub message: String,
 }
 
@@ -370,6 +372,7 @@ pub async fn run_update_job(
                 service_index,
                 service_total,
                 pull_fraction: None,
+                download: None,
                 message: format!("starting service {}", svc.name),
             },
         );
@@ -390,6 +393,7 @@ pub async fn run_update_job(
                     service_index,
                     service_total,
                     pull_fraction: None,
+                    download: None,
                     message: format!("skipped service {} (container not running)", svc.name),
                 },
             );
@@ -446,6 +450,7 @@ pub async fn run_update_job(
                 service_index: *service_index,
                 service_total,
                 pull_fraction: None,
+                download: None,
                 message: format!("pulling image for {}", svc.name),
             },
         );
@@ -458,7 +463,7 @@ pub async fn run_update_job(
             Duration::from_secs(300),
             "pull_services",
             idempotent_retry_policy,
-            |fraction| {
+            |snapshot| {
                 for (svc, service_index, _, _) in &prepared_services {
                     emit_update_progress(
                         Some(progress_events),
@@ -467,12 +472,9 @@ pub async fn run_update_job(
                             service_name: svc.name.clone(),
                             service_index: *service_index,
                             service_total,
-                            pull_fraction: Some(fraction),
-                            message: format!(
-                                "pulling image for {} ({:.0}%)",
-                                svc.name,
-                                fraction * 100.0
-                            ),
+                            pull_fraction: snapshot.fraction,
+                            download: snapshot.download.clone(),
+                            message: pull_progress_message(&svc.name, &snapshot),
                         },
                     );
                 }
@@ -499,6 +501,7 @@ pub async fn run_update_job(
                 service_index: *service_index,
                 service_total,
                 pull_fraction: Some(1.0),
+                download: None,
                 message: format!("pull completed for {}", svc.name),
             },
         );
@@ -513,6 +516,7 @@ pub async fn run_update_job(
                 service_index: *service_index,
                 service_total,
                 pull_fraction: None,
+                download: None,
                 message: format!("recreating service {}", svc.name),
             },
         );
@@ -534,6 +538,7 @@ pub async fn run_update_job(
                 service_index: *service_index,
                 service_total,
                 pull_fraction: None,
+                download: None,
                 message: format!("service {} updated", svc.name),
             },
         );
@@ -586,6 +591,7 @@ pub async fn run_update_job(
                     service_index,
                     service_total,
                     pull_fraction: None,
+                    download: None,
                     message: format!("waiting for healthcheck on {}", svc.name),
                 },
             );
@@ -607,6 +613,7 @@ pub async fn run_update_job(
                         service_index,
                         service_total,
                         pull_fraction: None,
+                        download: None,
                         message: format!("healthcheck failed for {}; rolling back", svc.name),
                     },
                 );
@@ -658,6 +665,7 @@ pub async fn run_update_job(
                         service_index,
                         service_total,
                         pull_fraction: None,
+                        download: None,
                         message: format!("healthcheck passed for {}", svc.name),
                     },
                 );
@@ -679,6 +687,7 @@ pub async fn run_update_job(
                     service_index,
                     service_total,
                     pull_fraction: None,
+                    download: None,
                     message: format!("pulling target tag for {}", svc.name),
                 },
             );
@@ -745,6 +754,7 @@ pub async fn run_update_job(
                         service_index,
                         service_total,
                         pull_fraction: None,
+                        download: None,
                         message: format!("target tag pulled for {}", svc.name),
                     },
                 );
@@ -761,6 +771,7 @@ pub async fn run_update_job(
                     service_index,
                     service_total,
                     pull_fraction: None,
+                    download: None,
                     message: format!("syncing compose tag for {}", svc.name),
                 },
             );
@@ -821,6 +832,7 @@ pub async fn run_update_job(
                         service_index,
                         service_total,
                         pull_fraction: None,
+                        download: None,
                         message: format!("compose tag synced for {}", svc.name),
                     },
                 );
@@ -849,6 +861,7 @@ pub async fn run_update_job(
                         service_index,
                         service_total,
                         pull_fraction: None,
+                        download: None,
                         message: format!("pulling compatibility tags for {}", svc.name),
                     },
                 );
@@ -887,6 +900,7 @@ pub async fn run_update_job(
                         service_index,
                         service_total,
                         pull_fraction: None,
+                        download: None,
                         message: format!("compatibility tags settled for {}", svc.name),
                     },
                 );
@@ -910,6 +924,7 @@ pub async fn run_update_job(
                     service_index,
                     service_total,
                     pull_fraction: None,
+                    download: None,
                     message: match rollback_failure_step {
                         Some("healthcheck") => {
                             format!("service {} rolled back after healthcheck failure", svc.name)
@@ -941,6 +956,7 @@ pub async fn run_update_job(
                 service_index,
                 service_total,
                 pull_fraction: None,
+                download: None,
                 message: format!("service {} done", svc.name),
             },
         );
@@ -1067,6 +1083,10 @@ fn parse_size_to_bytes(input: &str) -> Option<f64> {
     Some(num * factor)
 }
 
+fn parse_size_to_u64(input: &str) -> Option<u64> {
+    parse_size_to_bytes(input).map(|value| value.max(0.0).round() as u64)
+}
+
 fn parse_pull_fraction_from_line(line: &str) -> Option<f64> {
     let mut best: Option<f64> = None;
     for token in line.split_whitespace() {
@@ -1093,6 +1113,262 @@ fn parse_pull_fraction_from_line(line: &str) -> Option<f64> {
     best
 }
 
+#[derive(Clone, Debug)]
+struct PullProgressSnapshot {
+    fraction: Option<f64>,
+    download: Option<JobProgressDownload>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct PullLayerState {
+    status: String,
+    current_bytes: Option<u64>,
+    total_bytes: Option<u64>,
+    complete: bool,
+}
+
+#[derive(Clone, Debug)]
+struct PullLineObservation {
+    layer_id: String,
+    status: String,
+    current_bytes: Option<u64>,
+    total_bytes: Option<u64>,
+    complete: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+struct PullProgressTracker {
+    layers: HashMap<String, PullLayerState>,
+}
+
+impl PullProgressTracker {
+    fn observe_line(&mut self, line: &str) -> Option<PullProgressSnapshot> {
+        let observation = parse_pull_line_observation(line)?;
+        let layer = self
+            .layers
+            .entry(observation.layer_id)
+            .or_insert_with(PullLayerState::default);
+        layer.status = observation.status;
+        layer.complete = layer.complete || observation.complete;
+        if let Some(current) = observation.current_bytes {
+            layer.current_bytes = Some(layer.current_bytes.unwrap_or(0).max(current));
+        }
+        if let Some(total) = observation.total_bytes {
+            layer.total_bytes = Some(layer.total_bytes.unwrap_or(0).max(total));
+        }
+        if layer.complete
+            && let Some(total) = layer.total_bytes
+        {
+            layer.current_bytes = Some(total);
+        }
+        Some(self.snapshot())
+    }
+
+    fn snapshot(&self) -> PullProgressSnapshot {
+        let total_layers = self.layers.len() as u32;
+        let completed_layers = self.layers.values().filter(|layer| layer.complete).count() as u32;
+        let current_bytes = self
+            .layers
+            .values()
+            .filter_map(|layer| layer.current_bytes)
+            .sum::<u64>();
+        let total_bytes = self
+            .layers
+            .values()
+            .filter_map(|layer| layer.total_bytes)
+            .sum::<u64>();
+        let current_bytes_with_known_total = self
+            .layers
+            .values()
+            .filter_map(|layer| {
+                layer
+                    .total_bytes
+                    .map(|total| layer.current_bytes.unwrap_or(0).min(total))
+            })
+            .sum::<u64>();
+        let active_layers = self
+            .layers
+            .iter()
+            .filter(|(_, layer)| !layer.complete)
+            .take(4)
+            .map(|(id, layer)| format!("{} {}", short_layer_id(id), layer.status))
+            .collect::<Vec<_>>();
+        let status = if total_layers > 0 {
+            Some(format!("layers {completed_layers}/{total_layers}"))
+        } else {
+            None
+        };
+        let download = JobProgressDownload {
+            current_bytes: (current_bytes > 0).then_some(current_bytes),
+            total_bytes: (total_bytes > 0).then_some(total_bytes),
+            completed_layers: (total_layers > 0).then_some(completed_layers),
+            total_layers: (total_layers > 0).then_some(total_layers),
+            active_layers,
+            status,
+        };
+        let fraction = if total_bytes > 0 {
+            Some((current_bytes_with_known_total as f64 / total_bytes as f64).clamp(0.0, 1.0))
+        } else {
+            None
+        };
+        PullProgressSnapshot {
+            fraction,
+            download: Some(download),
+        }
+    }
+}
+
+fn short_layer_id(layer_id: &str) -> String {
+    layer_id.chars().take(12).collect()
+}
+
+fn parse_pull_line_observation(line: &str) -> Option<PullLineObservation> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let tokens = trimmed.split_whitespace().collect::<Vec<_>>();
+    let layer_id = tokens.first()?.trim_matches(|c| matches!(c, ':' | ','));
+    if layer_id.is_empty()
+        || matches!(
+            layer_id,
+            "Image" | "Digest:" | "Status:" | "time=" | "level=warning"
+        )
+    {
+        return None;
+    }
+
+    let (status, complete) = if trimmed.contains("Download complete") {
+        ("Download complete".to_string(), true)
+    } else if trimmed.contains("Pull complete") {
+        ("Pull complete".to_string(), true)
+    } else if trimmed.contains("Already exists") {
+        ("Already exists".to_string(), true)
+    } else if trimmed.contains("Downloading") {
+        ("Downloading".to_string(), false)
+    } else if trimmed.contains("Extracting") {
+        ("Extracting".to_string(), false)
+    } else if trimmed.contains("Verifying Checksum") {
+        ("Verifying Checksum".to_string(), false)
+    } else if trimmed.contains("Pulling fs layer") {
+        ("Pulling fs layer".to_string(), false)
+    } else if trimmed.contains("Waiting") {
+        ("Waiting".to_string(), false)
+    } else {
+        return None;
+    };
+
+    let mut current_bytes = None;
+    let mut total_bytes = None;
+    for token in &tokens {
+        let clean = token
+            .trim()
+            .trim_matches(|c| matches!(c, '[' | ']' | '(' | ')' | ','));
+        if let Some((current, total)) = clean.split_once('/') {
+            if let (Some(current), Some(total)) =
+                (parse_size_to_u64(current), parse_size_to_u64(total))
+            {
+                current_bytes = Some(current);
+                total_bytes = Some(total);
+            }
+            continue;
+        }
+        if current_bytes.is_none()
+            && let Some(value) = parse_size_to_u64(clean)
+        {
+            current_bytes = Some(value);
+        }
+    }
+
+    Some(PullLineObservation {
+        layer_id: layer_id.to_string(),
+        status,
+        current_bytes,
+        total_bytes,
+        complete,
+    })
+}
+
+fn format_download_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = 1024.0 * 1024.0;
+    const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+    let bytes = bytes as f64;
+    if bytes >= GIB {
+        format!("{:.1}GB", bytes / GIB)
+    } else if bytes >= MIB {
+        format!("{:.1}MB", bytes / MIB)
+    } else if bytes >= KIB {
+        format!("{:.1}KB", bytes / KIB)
+    } else {
+        format!("{}B", bytes as u64)
+    }
+}
+
+fn pull_download_summary(download: &JobProgressDownload) -> String {
+    let mut parts = Vec::new();
+    if let Some(current) = download.current_bytes {
+        let bytes = match download.total_bytes {
+            Some(total) if total > 0 => {
+                format!(
+                    "{} / {}",
+                    format_download_bytes(current),
+                    format_download_bytes(total)
+                )
+            }
+            _ => format!("downloaded {}", format_download_bytes(current)),
+        };
+        parts.push(bytes);
+    }
+    if let (Some(done), Some(total)) = (download.completed_layers, download.total_layers) {
+        parts.push(format!("layers {done}/{total}"));
+    }
+    if let Some(active) = download.active_layers.first() {
+        parts.push(active.clone());
+    }
+    if parts.is_empty() {
+        download
+            .status
+            .clone()
+            .unwrap_or_else(|| "downloading".to_string())
+    } else {
+        parts.join(" · ")
+    }
+}
+
+fn pull_progress_message(service_name: &str, snapshot: &PullProgressSnapshot) -> String {
+    if let Some(fraction) = snapshot.fraction {
+        return format!(
+            "pulling image for {} ({:.0}%)",
+            service_name,
+            fraction * 100.0
+        );
+    }
+    if let Some(download) = snapshot.download.as_ref() {
+        return format!(
+            "pulling image for {} · {}",
+            service_name,
+            pull_download_summary(download)
+        );
+    }
+    format!("pulling image for {service_name}")
+}
+
+fn pull_progress_signature(snapshot: &PullProgressSnapshot) -> String {
+    let Some(download) = snapshot.download.as_ref() else {
+        return format!("fraction={:?}", snapshot.fraction);
+    };
+    format!(
+        "fraction={:?};current={:?};total={:?};layers={:?}/{:?};active={}",
+        snapshot.fraction,
+        download.current_bytes,
+        download.total_bytes,
+        download.completed_layers,
+        download.total_layers,
+        download.active_layers.join("|")
+    )
+}
+
 async fn run_checked_with_pull_progress<F>(
     runner: &dyn CommandRunner,
     spec: CommandSpec,
@@ -1102,17 +1378,43 @@ async fn run_checked_with_pull_progress<F>(
     mut on_progress: F,
 ) -> anyhow::Result<()>
 where
-    F: FnMut(f64) + Send,
+    F: FnMut(PullProgressSnapshot) + Send,
 {
     let mut last_fraction = 0.0f64;
+    let mut last_signature = String::new();
     for attempt in 1..=retry_policy.max_attempts {
+        let mut tracker = PullProgressTracker::default();
+        let mut last_status_emit = std::time::Instant::now()
+            .checked_sub(Duration::from_secs(5))
+            .unwrap_or_else(std::time::Instant::now);
         let mut on_stdout = |_chunk: String| {};
         let mut on_stderr = |chunk: String| {
-            if let Some(frac) = parse_pull_fraction_from_line(&chunk) {
-                let capped = frac.clamp(0.0, 0.99);
-                if capped > last_fraction + 0.01 {
-                    last_fraction = capped;
-                    on_progress(capped);
+            for line in chunk.lines() {
+                let snapshot = tracker.observe_line(line).or_else(|| {
+                    parse_pull_fraction_from_line(line).map(|fraction| PullProgressSnapshot {
+                        fraction: Some(fraction.clamp(0.0, 1.0)),
+                        download: None,
+                    })
+                });
+                let Some(mut snapshot) = snapshot else {
+                    continue;
+                };
+                if let Some(fraction) = snapshot.fraction {
+                    snapshot.fraction = Some(fraction.clamp(0.0, 0.99));
+                }
+                let fraction_changed = snapshot
+                    .fraction
+                    .is_some_and(|fraction| fraction > last_fraction + 0.01);
+                let signature = pull_progress_signature(&snapshot);
+                let status_changed = signature != last_signature
+                    && last_status_emit.elapsed() >= Duration::from_millis(600);
+                if fraction_changed || status_changed {
+                    if let Some(fraction) = snapshot.fraction {
+                        last_fraction = fraction;
+                    }
+                    last_signature = signature;
+                    last_status_emit = std::time::Instant::now();
+                    on_progress(snapshot);
                 }
             }
         };

@@ -19,6 +19,7 @@ fn evt_with_index(
         service_index,
         service_total,
         pull_fraction,
+        download: None,
         message: "mock".to_string(),
     }
 }

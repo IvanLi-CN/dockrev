@@ -12,6 +12,84 @@ fn parse_pull_fraction_supports_size_ratio_tokens() {
     assert!((full_frac - 1.0).abs() < f64::EPSILON);
 }
 
+#[test]
+fn pull_progress_tracker_reports_unknown_total_download_bytes() {
+    let mut tracker = PullProgressTracker::default();
+    let snapshot = tracker
+        .observe_line("ad6b1fa7e521 Downloading 4.194MB")
+        .expect("compose download status should be parsed");
+    let download = snapshot.download.expect("download state");
+
+    assert_eq!(snapshot.fraction, None);
+    assert_eq!(download.current_bytes, Some(4_397_728));
+    assert_eq!(download.total_bytes, None);
+    assert_eq!(download.completed_layers, Some(0));
+    assert_eq!(download.total_layers, Some(1));
+    assert!(
+        download
+            .active_layers
+            .iter()
+            .any(|line| line.contains("Downloading"))
+    );
+}
+
+#[test]
+fn pull_progress_tracker_reports_determinate_ratio_when_total_is_known() {
+    let mut tracker = PullProgressTracker::default();
+    let snapshot = tracker
+        .observe_line("d2cad1f9f7c9 Downloading [==================> ] 3.146MB/5.89MB")
+        .expect("docker ratio status should be parsed");
+    let download = snapshot.download.expect("download state");
+    let fraction = snapshot.fraction.expect("known total fraction");
+
+    assert!(fraction > 0.50 && fraction < 0.60);
+    assert!(
+        download
+            .current_bytes
+            .is_some_and(|value| value > 3_000_000)
+    );
+    assert!(download.total_bytes.is_some_and(|value| value > 5_000_000));
+}
+
+#[test]
+fn pull_progress_tracker_counts_completed_layers() {
+    let mut tracker = PullProgressTracker::default();
+    tracker
+        .observe_line("4f4fb700ef54 Pulling fs layer 0B")
+        .expect("layer start");
+    tracker
+        .observe_line("4f4fb700ef54 Download complete 0B")
+        .expect("download complete");
+    tracker
+        .observe_line("b47651011c80 Already exists 0B")
+        .expect("already exists");
+    let snapshot = tracker
+        .observe_line("a6f09e5c55f7 Downloading 1.049MB")
+        .expect("active download");
+    let download = snapshot.download.expect("download state");
+
+    assert_eq!(snapshot.fraction, None);
+    assert_eq!(download.completed_layers, Some(2));
+    assert_eq!(download.total_layers, Some(3));
+    assert!(
+        download
+            .active_layers
+            .iter()
+            .any(|line| line.contains("a6f09e5c55f7"))
+    );
+}
+
+#[test]
+fn pull_progress_tracker_ignores_lines_without_pull_progress() {
+    let mut tracker = PullProgressTracker::default();
+    assert!(tracker.observe_line("Digest: sha256:abc").is_none());
+    assert!(
+        tracker
+            .observe_line("Status: Downloaded newer image")
+            .is_none()
+    );
+}
+
 #[derive(Default)]
 struct FlakyInspectRunner {
     calls: Mutex<usize>,

@@ -119,6 +119,14 @@
 
 ![Job detail update indeterminate](./assets/update-indeterminate-job-detail.png)
 
+![Queue update determinate download progress](./assets/update-download-determinate-queue.png)
+
+![Job detail determinate download progress](./assets/update-download-determinate-job-detail.png)
+
+![Queue update unknown-total download progress](./assets/update-download-unknown-queue.png)
+
+![Job detail unknown-total download progress](./assets/update-download-unknown-job-detail.png)
+
 ## 实现里程碑（Milestones / Delivery checklist）
 
 - [x] M1: 新增 spec 并冻结验收口径。
@@ -139,3 +147,4 @@
 - 2026-02-24: 完成实现与本地验证（cargo test + web lint/build）。
 - 2026-02-24: 快车道交付完成（PR #90，CI 全绿，review-loop 无 P0/P1 阻塞）。
 - 2026-06-22: 修正 `stack/all update` batch pull 的进度语义；无可解析 pull 证据时使用显式 `plannedPercent: null` 驱动 UI 进入 indeterminate，避免 synthetic service 预推进造成的虚高百分比。
+- 2026-07-06: 增加真实 Docker/Compose pull 下载明细；共享测试机验证 service 与 stack 更新均能产生 `download.currentBytes`，缺少可证明总量时保持 indeterminate。
