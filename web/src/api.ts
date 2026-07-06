@@ -19,6 +19,7 @@ import type {
   TriggerVersionInferenceRefreshResponse,
   NewVersionDiscoveryTimelineResponse,
   ServiceGitHubReleasesResponse,
+  ServiceReleaseNotesResponse,
   VersionInferenceOverviewResponse,
   GetVersionInferenceOverviewInput,
   JobListItem,
@@ -333,6 +334,23 @@ export async function getServiceGitHubReleases(
   return (await resp.json()) as ServiceGitHubReleasesResponse
 }
 
+export async function getServiceReleaseNotes(
+  serviceId: string,
+  input: { cursor?: string | null; limit?: number } = {},
+): Promise<ServiceReleaseNotesResponse> {
+  const sp = new URLSearchParams()
+  const cursor = input.cursor?.trim()
+  if (cursor) sp.set('cursor', cursor)
+  if (typeof input.limit === 'number' && Number.isFinite(input.limit)) {
+    sp.set('limit', String(Math.max(1, Math.round(input.limit))))
+  }
+  const query = sp.toString()
+  const resp = await apiFetch(
+    `/api/services/${encodeURIComponent(serviceId)}/release-notes${query ? `?${query}` : ''}`,
+  )
+  return (await resp.json()) as ServiceReleaseNotesResponse
+}
+
 export async function getVersionInferenceOverview(
   input: GetVersionInferenceOverviewInput = {},
 ): Promise<VersionInferenceOverviewResponse> {
@@ -631,6 +649,14 @@ export async function getSettings(): Promise<SettingsResponse> {
   const data = (await resp.json()) as SettingsResponse
   return {
     ...data,
+    releaseNotes: data.releaseNotes ?? {
+      octoRill: {
+        enabled: false,
+        apiBaseUrl: null,
+        apiKeyMasked: null,
+        defaultView: 'smart',
+      },
+    },
     auth: {
       ...data.auth,
       currentGroups: Array.isArray(data.auth?.currentGroups)

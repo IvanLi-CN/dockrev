@@ -35,6 +35,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     autoSaveToastClassName,
     busy,
     canWebPush,
+    clearOctoRillApiKeyMaskForEdit,
     clearTelegramBotTokenMaskForEdit,
     confirm,
     dismissInstancePublicBaseUrlSuggestBubble,
@@ -56,8 +57,12 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     notificationTestStates,
     notifications,
     openGhcrRegistry,
+    octoRillApiBaseUrlInputClassName,
+    octoRillApiKeyFocused,
+    octoRillApiKeyTouched,
     refresh,
     refreshTrackedRepos,
+    restoreOctoRillApiKeyMaskIfNeeded,
     restoreTelegramBotTokenMaskIfNeeded,
     runNotificationChannelTest,
     selfUpgradeUrl,
@@ -69,6 +74,8 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     setGitHubPackagesNewRepo,
     setInstancePublicBaseUrlSuggestFloating,
     setInstancePublicBaseUrlSuggestReference,
+    setOctoRillApiKeyFocused,
+    setOctoRillApiKeyTouched,
     setTelegramBotTokenFocused,
     setTelegramBotTokenTouched,
     setTelegramBotTokenVisible,
@@ -84,6 +91,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     updateCheckCronInputClassName,
     updateGhcr,
     updateInstance,
+    updateReleaseNotes,
     updateNotifications,
     updateResourceMonitor,
     updateSchedules,
@@ -424,6 +432,114 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                     只巡检与标记 drift，不自动修复。
                   </div>
                 </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="title">OctoRill 更新日志</div>
+            <div className="muted">发布抽屉优先读取 OctoRill 仓库 feed；失败时显示原因并回退 GitHub Releases。</div>
+
+            <div className="kv">
+              <div className="kvRow">
+                <div className="label">启用 OctoRill</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Switch
+                    checked={settings.releaseNotes.octoRill.enabled}
+                    disabled={busy}
+                    onChange={(value) =>
+                      updateReleaseNotes(
+                        'releaseNotes.octoRill.enabled',
+                        (current) => ({
+                          ...current,
+                          octoRill: { ...current.octoRill, enabled: value },
+                        }),
+                        true,
+                      )
+                    }
+                  />
+                  <div className="muted">{settings.releaseNotes.octoRill.enabled ? 'on' : 'off'}</div>
+                </div>
+              </div>
+
+              <div className="kvRow">
+                <div className="label">API Base URL</div>
+                <div>
+                  <Input
+                    className={octoRillApiBaseUrlInputClassName}
+                    disabled={busy}
+                    value={settings.releaseNotes.octoRill.apiBaseUrl ?? ''}
+                    onChange={(e) =>
+                      updateReleaseNotes('releaseNotes.octoRill.apiBaseUrl', (current) => ({
+                        ...current,
+                        octoRill: { ...current.octoRill, apiBaseUrl: e.target.value },
+                      }))
+                    }
+                    placeholder="https://octo.example.com"
+                  />
+                  <div className="muted" style={{ marginTop: 6 }}>
+                    保存时会去掉尾部 <Mono>/</Mono>；不要填写带账号密码的 URL。
+                  </div>
+                </div>
+              </div>
+
+              <div className="kvRow">
+                <div className="label">API Key</div>
+                <div>
+                  <Input
+                    className="input"
+                    disabled={busy}
+                    type="password"
+                    autoComplete="new-password"
+                    value={
+                      octoRillApiKeyFocused &&
+                      !octoRillApiKeyTouched &&
+                      settings.releaseNotes.octoRill.apiKey === '******'
+                        ? ''
+                        : settings.releaseNotes.octoRill.apiKey ?? ''
+                    }
+                    onFocus={() => {
+                      setOctoRillApiKeyFocused(true)
+                      setOctoRillApiKeyTouched(false)
+                      clearOctoRillApiKeyMaskForEdit()
+                    }}
+                    onBlur={() => {
+                      setOctoRillApiKeyFocused(false)
+                      restoreOctoRillApiKeyMaskIfNeeded()
+                    }}
+                    onChange={(e) => {
+                      setOctoRillApiKeyTouched(true)
+                      updateReleaseNotes('releaseNotes.octoRill.apiKey', (current) => ({
+                        ...current,
+                        octoRill: { ...current.octoRill, apiKey: e.target.value },
+                      }))
+                    }}
+                    placeholder="orill_ak_..."
+                  />
+                  <div className="muted" style={{ marginTop: 6 }}>
+                    已保存时显示为 <Mono>******</Mono>；清空后自动保存会删除当前 key。
+                  </div>
+                </div>
+              </div>
+
+              <div className="kvRow">
+                <div className="label">默认视图</div>
+                <SelectField
+                  className="input"
+                  disabled={busy}
+                  value={settings.releaseNotes.octoRill.defaultView}
+                  onChange={(value) =>
+                    updateReleaseNotes('releaseNotes.octoRill.defaultView', (current) => ({
+                      ...current,
+                      octoRill: { ...current.octoRill, defaultView: value },
+                    }))
+                  }
+                  options={[
+                    { value: 'smart', label: '润色' },
+                    { value: 'translated', label: '翻译' },
+                    { value: 'original', label: '原文' },
+                  ]}
+                />
               </div>
             </div>
           </div>

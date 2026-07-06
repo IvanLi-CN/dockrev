@@ -7,6 +7,7 @@ mod backup_records;
 mod backup_targets;
 mod github_releases;
 mod logs;
+mod release_notes;
 mod repo_links;
 
 use backup_records::get_service_backup_records as load_service_backup_records_response;
@@ -32,6 +33,7 @@ use github_releases::{
     list_service_github_releases_with_client, locate_service_github_release_with_client,
 };
 pub(super) use github_releases::{list_service_github_releases, locate_service_github_release};
+pub(super) use release_notes::list_service_release_notes;
 
 pub(super) async fn get_service_settings(
     State(state): State<Arc<AppState>>,

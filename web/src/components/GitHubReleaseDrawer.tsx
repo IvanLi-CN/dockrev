@@ -3,23 +3,14 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 
 import {
   ApiError,
-  getServiceGitHubReleases,
-  type GitHubReleaseAuthMode,
-  type ServiceGitHubReleaseItem,
-  type ServiceGitHubReleaseLocateResponse,
-  type ServiceGitHubReleaseLocateStatus,
-  type ServiceGitHubReleasesResponse,
-  type ServiceGitHubReleasesStatus,
+  getServiceReleaseNotes,
+  type ReleaseNotesView,
+  type ServiceReleaseNoteItem,
+  type ServiceReleaseNotesResponse,
+  type ServiceReleaseNotesStatus,
 } from '../api'
-import {
-  buildReleaseLocateFailureFromListResponse,
-  buildReleaseLocateNotFoundResponse,
-  RELEASE_DRAWER_LOCATE_LIMIT,
-  shouldContinueReleaseLocateSearch,
-} from '../githubReleaseDrawerState'
 import { navigate } from '../routes'
 import { closeGitHubReleaseDrawer } from '../releaseDrawer'
-import { requestSettingsFocus } from '../settingsFocus'
 import {
   Button,
   Drawer,
@@ -35,8 +26,22 @@ import {
 import { cn } from '../lib/utils'
 
 const RELEASES_PER_PAGE = 20
+const RELEASE_DRAWER_LOCATE_LIMIT = 50
 const TARGET_HIGHLIGHT_MS = 2200
 const RELEASE_ROW_GAP = 12
+
+type ReleaseLocateStatus = 'found' | 'notFound' | 'outsideWindow' | 'unsupportedRepo' | 'upstreamError'
+
+type ReleaseLocateResponse = {
+  status: ReleaseLocateStatus
+  version: string
+  searchedCount: number
+  matchedTag?: string | null
+  page?: number | null
+  indexWithinPage?: number | null
+  absoluteIndex?: number | null
+  message?: string | null
+}
 
 function InfoIcon(props: { className?: string }) {
   return (
@@ -68,8 +73,19 @@ function formatReleaseDate(value: string | null | undefined): string {
   }).format(parsed)
 }
 
-function preferredReleaseTimestamp(item: ServiceGitHubReleaseItem): string | null {
+function preferredReleaseTimestamp(item: ServiceReleaseNoteItem): string | null {
   return item.publishedAt?.trim() || item.createdAt?.trim() || null
+}
+
+function safeHttpUrl(value: string | null | undefined): string {
+  const trimmed = (value ?? '').trim()
+  if (!trimmed) return ''
+  try {
+    const url = new URL(trimmed)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : ''
+  } catch {
+    return ''
+  }
 }
 
 function hasLongBody(body: string | null | undefined): boolean {
@@ -83,29 +99,30 @@ function normalizeVersion(value: string | null | undefined): string {
 }
 
 function statusTone(
-  status: ServiceGitHubReleasesStatus | ServiceGitHubReleaseLocateStatus | 'info',
+  status: ServiceReleaseNotesStatus | ReleaseLocateStatus | 'info',
 ): 'info' | 'warning' | 'danger' | 'success' {
   if (status === 'found') return 'success'
-  if (status === 'outsideWindow' || status === 'notFound' || status === 'info') return 'warning'
-  if (status === 'permissionDenied' || status === 'rateLimited' || status === 'upstreamError') return 'danger'
+  if (status === 'notFound' || status === 'outsideWindow' || status === 'info') return 'warning'
+  if (status === 'upstreamError') return 'danger'
   return 'info'
 }
 
-function authModeLabel(authMode: GitHubReleaseAuthMode | null | undefined): string {
-  return authMode === 'pat' ? 'PAT' : authMode === 'anonymous' ? '匿名' : '未知'
+function sourceLabel(response: ServiceReleaseNotesResponse | null | undefined): string {
+  if (!response) return '未知'
+  return response.source === 'octoRill' ? 'OctoRill' : 'GitHub Releases'
 }
 
-function shouldOfferSettingsAction(
-  status: ServiceGitHubReleasesStatus | ServiceGitHubReleaseLocateStatus | null | undefined,
-  authMode: GitHubReleaseAuthMode | null | undefined,
-  message: string | null | undefined,
-): boolean {
-  if (status === 'permissionDenied' || status === 'rateLimited') return true
-  if (status !== 'upstreamError') return false
-  if (!message?.trim()) return false
-  return authMode === 'anonymous'
-    ? message.includes('配置 GitHub PAT')
-    : message.includes('GitHub PAT') || message.includes('token 权限')
+function viewLabel(view: ReleaseNotesView): string {
+  if (view === 'original') return '原文'
+  if (view === 'translated') return '翻译'
+  return '润色'
+}
+
+function shouldOfferSettingsAction(response: ServiceReleaseNotesResponse | null | undefined): boolean {
+  const fallbackReason = response?.fallback?.reason
+  if (fallbackReason === 'notConfigured' || fallbackReason === 'unauthorized') return true
+  const message = response?.message ?? response?.fallback?.message ?? ''
+  return message.includes('GitHub PAT') || message.includes('token 权限') || message.includes('OctoRill')
 }
 
 function fallbackReleaseErrorMessage(error: unknown): string {
@@ -116,27 +133,29 @@ function fallbackReleaseErrorMessage(error: unknown): string {
     const message = error.message.trim()
     if (message) return message
   }
-  return 'GitHub Releases 拉取失败，请稍后重试。'
+  return '发布记录拉取失败，请稍后重试。'
 }
 
 function buildListFailureResponse(
   error: unknown,
-  page: number,
-  perPage: number,
-): ServiceGitHubReleasesResponse {
+  cursor: string | null,
+  limit: number,
+): ServiceReleaseNotesResponse {
   return {
     status: 'upstreamError',
-    authMode: 'anonymous',
+    source: 'gitHub',
     repo: null,
-    page,
-    perPage,
+    cursor,
+    limit,
+    nextCursor: null,
     hasMore: false,
+    defaultView: 'smart',
     items: [],
     message: fallbackReleaseErrorMessage(error),
   }
 }
 
-function releaseMatchesVersion(item: ServiceGitHubReleaseItem, version: string | null | undefined): boolean {
+function releaseMatchesVersion(item: ServiceReleaseNoteItem, version: string | null | undefined): boolean {
   const normalizedVersion = normalizeVersion(version)
   if (!normalizedVersion) return false
   const normalizedTag = normalizeVersion(item.tagName)
@@ -144,6 +163,19 @@ function releaseMatchesVersion(item: ServiceGitHubReleaseItem, version: string |
   if (normalizedTag === `v${normalizedVersion}`) return true
   if (normalizedVersion.startsWith('v') && normalizedTag === normalizedVersion.slice(1)) return true
   return false
+}
+
+function releaseBodyForView(item: ServiceReleaseNoteItem, view: ReleaseNotesView): { body: string; missing: boolean } {
+  const original = (item.originalBody ?? '').trim()
+  if (view === 'translated') {
+    const translated = (item.translatedBody ?? '').trim()
+    return translated ? { body: translated, missing: false } : { body: original, missing: true }
+  }
+  if (view === 'smart') {
+    const smart = (item.smartBody ?? '').trim()
+    return smart ? { body: smart, missing: false } : { body: original, missing: true }
+  }
+  return { body: original, missing: false }
 }
 
 type GitHubReleaseDrawerProps = {
@@ -161,7 +193,8 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const activeSessionRef = useRef<string | null>(sessionKey)
   const loadedPagesRef = useRef(0)
-  const inFlightPagesRef = useRef<Map<string, Promise<ServiceGitHubReleasesResponse | null>>>(new Map())
+  const nextCursorRef = useRef<string | null>(null)
+  const inFlightPagesRef = useRef<Map<string, Promise<ServiceReleaseNotesResponse | null>>>(new Map())
   const hasMoreRef = useRef(false)
   const loadingMoreRef = useRef(false)
   const targetScrollKeyRef = useRef<string | null>(null)
@@ -169,15 +202,16 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
   const infoCloseTimerRef = useRef<number | null>(null)
 
   const [initialLoadState, setInitialLoadState] = useState<'idle' | 'loading' | 'ready'>('idle')
-  const [listResponse, setListResponse] = useState<ServiceGitHubReleasesResponse | null>(null)
+  const [listResponse, setListResponse] = useState<ServiceReleaseNotesResponse | null>(null)
   const [locateState, setLocateState] = useState<'idle' | 'loading' | 'ready'>('idle')
-  const [locateResponse, setLocateResponse] = useState<ServiceGitHubReleaseLocateResponse | null>(null)
-  const [items, setItems] = useState<ServiceGitHubReleaseItem[]>([])
-  const [expandedIds, setExpandedIds] = useState<Set<number>>(() => new Set())
+  const [locateResponse, setLocateResponse] = useState<ReleaseLocateResponse | null>(null)
+  const [items, setItems] = useState<ServiceReleaseNoteItem[]>([])
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set())
   const [loadingMore, setLoadingMore] = useState(false)
-  const [loadMoreFailure, setLoadMoreFailure] = useState<ServiceGitHubReleasesResponse | null>(null)
-  const [highlightedId, setHighlightedId] = useState<number | null>(null)
+  const [loadMoreFailure, setLoadMoreFailure] = useState<ServiceReleaseNotesResponse | null>(null)
+  const [highlightedId, setHighlightedId] = useState<string | null>(null)
   const [infoPanelOpen, setInfoPanelOpen] = useState(false)
+  const [viewMode, setViewMode] = useState<ReleaseNotesView>('smart')
 
   useEffect(() => {
     activeSessionRef.current = sessionKey
@@ -196,6 +230,7 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
 
   const resetState = useCallback(() => {
     loadedPagesRef.current = 0
+    nextCursorRef.current = null
     inFlightPagesRef.current.clear()
     hasMoreRef.current = false
     loadingMoreRef.current = false
@@ -218,37 +253,41 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
     setLoadMoreFailure(null)
     setHighlightedId(null)
     setInfoPanelOpen(false)
+    setViewMode('smart')
   }, [])
 
   const fetchPage = useCallback(
-    async (expectedSession: string, targetServiceId: string, page: number) => {
-      const requestKey = `${expectedSession}:${page}`
+    async (expectedSession: string, targetServiceId: string, cursor: string | null) => {
+      const isFirstPage = cursor == null
+      const requestKey = `${expectedSession}:${cursor ?? 'first'}`
       const existing = inFlightPagesRef.current.get(requestKey)
       if (existing) {
         return await existing
       }
 
       const request = (async () => {
-        let response: ServiceGitHubReleasesResponse
+        let response: ServiceReleaseNotesResponse
         try {
-          response = await getServiceGitHubReleases(targetServiceId, {
-            page,
-            perPage: RELEASES_PER_PAGE,
+          response = await getServiceReleaseNotes(targetServiceId, {
+            cursor,
+            limit: RELEASES_PER_PAGE,
           })
         } catch (error) {
-          response = buildListFailureResponse(error, page, RELEASES_PER_PAGE)
+          response = buildListFailureResponse(error, cursor, RELEASES_PER_PAGE)
         }
         if (activeSessionRef.current !== expectedSession) return null
 
-        if (page === 1) {
+        if (isFirstPage) {
           setListResponse(response)
           setInitialLoadState('ready')
+          setViewMode(response.source === 'gitHub' ? 'original' : response.defaultView)
         }
 
         if (response.status !== 'ready') {
-          if (page === 1) {
+          if (isFirstPage) {
             setItems([])
             loadedPagesRef.current = 0
+            nextCursorRef.current = null
             hasMoreRef.current = false
           } else {
             setLoadMoreFailure(response)
@@ -256,11 +295,12 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
           return response
         }
 
-        loadedPagesRef.current = Math.max(loadedPagesRef.current, page)
-        hasMoreRef.current = response.hasMore
+        loadedPagesRef.current = isFirstPage ? 1 : loadedPagesRef.current + 1
+        nextCursorRef.current = response.nextCursor ?? null
+        hasMoreRef.current = response.hasMore && nextCursorRef.current != null
         setLoadMoreFailure(null)
         setItems((prev) => {
-          if (page === 1) return response.items
+          if (isFirstPage) return response.items
           return [...prev, ...response.items]
         })
         return response
@@ -283,17 +323,29 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
       expectedSession: string,
       targetServiceId: string,
       version: string,
-      initialResponse: ServiceGitHubReleasesResponse | null,
-    ): Promise<ServiceGitHubReleaseLocateResponse | null> => {
+      initialResponse: ServiceReleaseNotesResponse | null,
+    ): Promise<ReleaseLocateResponse | null> => {
       let response = initialResponse
       let searchedCount = 0
       if (response && response.status !== 'ready') {
-        return buildReleaseLocateFailureFromListResponse(response, version, searchedCount)
+        return {
+          status: response.status === 'unsupportedRepo' ? 'unsupportedRepo' : 'upstreamError',
+          version,
+          searchedCount,
+          message: response.message ?? response.fallback?.message ?? '无法定位发布记录。',
+        }
       }
       while (response && response.status === 'ready') {
         const remainingBudget = RELEASE_DRAWER_LOCATE_LIMIT - searchedCount
         if (remainingBudget <= 0) {
-          return buildReleaseLocateNotFoundResponse(response, version, searchedCount)
+          return {
+            status: response.hasMore ? 'outsideWindow' : 'notFound',
+            version,
+            searchedCount,
+            message: response.hasMore
+              ? `已扫描前 ${searchedCount} 条发布记录，${version} 不在当前定位窗口内。`
+              : `在前 ${searchedCount} 条发布记录中未找到 ${version}。`,
+          }
         }
         const scanCount = Math.min(response.items.length, remainingBudget)
         const scanItems = response.items.slice(0, scanCount)
@@ -301,30 +353,53 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
         if (matchedIndex >= 0) {
           return {
             status: 'found',
-            authMode: response.authMode,
-            repo: response.repo ?? null,
             version,
             searchedCount: searchedCount + scanCount,
             matchedTag: scanItems[matchedIndex]?.tagName ?? version,
-            page: response.page,
+            page: Math.max(1, loadedPagesRef.current),
             indexWithinPage: matchedIndex,
             absoluteIndex: searchedCount + matchedIndex,
             message: null,
           }
         }
         searchedCount += scanCount
-        if (!shouldContinueReleaseLocateSearch(response, searchedCount)) {
-          return buildReleaseLocateNotFoundResponse(response, version, searchedCount)
+        if (!response.hasMore || searchedCount >= RELEASE_DRAWER_LOCATE_LIMIT) {
+          return {
+            status: response.hasMore ? 'outsideWindow' : 'notFound',
+            version,
+            searchedCount,
+            message: response.hasMore
+              ? `已扫描前 ${searchedCount} 条发布记录，${version} 不在当前定位窗口内。`
+              : `在前 ${searchedCount} 条发布记录中未找到 ${version}。`,
+          }
         }
-        const nextPage = response.page + 1
-        const nextResponse = await fetchPage(expectedSession, targetServiceId, nextPage)
+        const nextCursor = response.nextCursor ?? nextCursorRef.current
+        if (!nextCursor) {
+          return {
+            status: 'notFound',
+            version,
+            searchedCount,
+            message: `在前 ${searchedCount} 条发布记录中未找到 ${version}。`,
+          }
+        }
+        const nextResponse = await fetchPage(expectedSession, targetServiceId, nextCursor)
         if (!nextResponse) return null
         if (nextResponse.status !== 'ready') {
-          return buildReleaseLocateFailureFromListResponse(nextResponse, version, searchedCount)
+          return {
+            status: nextResponse.status === 'unsupportedRepo' ? 'unsupportedRepo' : 'upstreamError',
+            version,
+            searchedCount,
+            message: nextResponse.message ?? nextResponse.fallback?.message ?? '无法继续定位发布记录。',
+          }
         }
         response = nextResponse
       }
-      return buildReleaseLocateNotFoundResponse(initialResponse, version, searchedCount)
+      return {
+        status: 'notFound',
+        version,
+        searchedCount,
+        message: `在前 ${searchedCount} 条发布记录中未找到 ${version}。`,
+      }
     },
     [fetchPage],
   )
@@ -332,12 +407,12 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
   const loadNextPage = useCallback(async () => {
     if (!sessionKey || !serviceId) return
     if (loadingMoreRef.current || loadingMore || !hasMoreRef.current) return
-    const nextPage = loadedPagesRef.current + 1
-    if (nextPage <= 1) return
+    const nextCursor = nextCursorRef.current
+    if (!nextCursor) return
     loadingMoreRef.current = true
     setLoadingMore(true)
     try {
-      await fetchPage(sessionKey, serviceId, nextPage)
+      await fetchPage(sessionKey, serviceId, nextCursor)
     } finally {
       if (activeSessionRef.current === sessionKey) {
         loadingMoreRef.current = false
@@ -360,7 +435,7 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
     let cancelled = false
 
     void (async () => {
-      const pageResponse = await fetchPage(sessionKey, serviceId, 1)
+      const pageResponse = await fetchPage(sessionKey, serviceId, null)
       if (cancelled || activeSessionRef.current !== sessionKey) return
 
       const resolvedLocateResponse = targetVersion
@@ -395,7 +470,7 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
 
   useEffect(() => {
     virtualizer.measure()
-  }, [expandedIds, items.length, locateResponse?.status, virtualizer])
+  }, [expandedIds, items.length, locateResponse?.status, viewMode, virtualizer])
 
   const virtualItems = virtualizer.getVirtualItems()
   const listOffset = virtualItems[0]?.start ?? 0
@@ -434,8 +509,7 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
     return () => window.cancelAnimationFrame(frame)
   }, [items, locateResponse, props.open, sessionKey, virtualizer])
 
-  const authMode = listResponse?.authMode ?? locateResponse?.authMode ?? null
-  const repo = listResponse?.repo ?? locateResponse?.repo ?? null
+  const repo = listResponse?.repo ?? null
   const repoUrl = repo?.htmlUrl ?? null
   const locateBanner = useMemo(() => {
     if (!targetVersion || locateState !== 'ready' || !locateResponse) return null
@@ -461,16 +535,16 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
   }, [listResponse])
 
   const surfaceBanner = isReady ? locateBanner : listBanner ?? locateBanner
+  const fallbackBanner = listResponse?.fallback
+    ? { tone: 'warning' as const, message: listResponse.fallback.message }
+    : null
   const loaderVisible = initialLoadState === 'loading' && items.length === 0
   const unsupportedOrErrored = initialLoadState === 'ready' && listResponse && listResponse.status !== 'ready'
   const emptyReady = isReady && items.length === 0
-  const showSettingsAction =
-    shouldOfferSettingsAction(listResponse?.status, listResponse?.authMode, listResponse?.message) ||
-    shouldOfferSettingsAction(locateResponse?.status, locateResponse?.authMode, locateResponse?.message)
+  const showSettingsAction = shouldOfferSettingsAction(listResponse)
 
   const openSettings = () => {
     closeGitHubReleaseDrawer('replace')
-    requestSettingsFocus('ghcr-webhook')
     navigate({ name: 'settings' })
   }
 
@@ -500,7 +574,7 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
     scheduleInfoPanelClose()
   }
 
-  const toggleExpanded = (id: number) => {
+  const toggleExpanded = (id: string) => {
     setExpandedIds((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
@@ -522,9 +596,9 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
             <div className="releaseDrawerHeaderText">
               <div className="releaseDrawerTitleRow">
                 <DrawerTitle asChild>
-                  <div className="modalTitle">GitHub Releases</div>
+                  <div className="modalTitle">发布记录</div>
                 </DrawerTitle>
-                {authMode || targetVersion ? (
+                {listResponse || targetVersion ? (
                   <div
                     className="releaseDrawerInfoInline"
                     onBlurCapture={handleInfoPanelBlur}
@@ -550,10 +624,16 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
                         role="tooltip"
                       >
                         <div className="releaseDrawerInfoTooltipTitle">扩展信息</div>
-                        {authMode ? (
+                        {listResponse ? (
                           <div className="releaseDrawerInfoTooltipRow">
-                            <span className="releaseDrawerInfoTooltipLabel">访问身份</span>
-                            <span className="releaseDrawerInfoTooltipValue">{authModeLabel(authMode)}</span>
+                            <span className="releaseDrawerInfoTooltipLabel">数据来源</span>
+                            <span className="releaseDrawerInfoTooltipValue">{sourceLabel(listResponse)}</span>
+                          </div>
+                        ) : null}
+                        {listResponse ? (
+                          <div className="releaseDrawerInfoTooltipRow">
+                            <span className="releaseDrawerInfoTooltipLabel">默认视图</span>
+                            <span className="releaseDrawerInfoTooltipValue">{viewLabel(listResponse.defaultView)}</span>
                           </div>
                         ) : null}
                         {targetVersion ? (
@@ -569,7 +649,7 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
               </div>
               <DrawerDescription asChild>
                 <div className="releaseDrawerDescription" id="github-release-drawer-description">
-                  查看该服务对应 GitHub 仓库的发布记录，并可按版本号快速定位。
+                  查看该服务对应仓库的发布记录，并可按版本号快速定位。
                 </div>
               </DrawerDescription>
             </div>
@@ -601,6 +681,32 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
           {repo ? (
             <div className="releaseDrawerHeaderMeta">
               <span className="releaseDrawerChip"><Mono>{repo.fullName}</Mono></span>
+              {listResponse?.source ? (
+                <span className="releaseDrawerChip">{sourceLabel(listResponse)}</span>
+              ) : null}
+            </div>
+          ) : null}
+          {isReady ? (
+            <div className="releaseDrawerViewTabs" aria-label="发布说明视图">
+              {(['smart', 'translated', 'original'] as const).map((view) => (
+                <button
+                  key={view}
+                  type="button"
+                  className={cn('releaseDrawerViewTab', viewMode === view && 'releaseDrawerViewTabActive')}
+                  aria-pressed={viewMode === view}
+                  onClick={() => setViewMode(view)}
+                >
+                  {viewLabel(view)}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {fallbackBanner ? (
+            <div className="releaseDrawerBanner releaseDrawerBanner-warning" data-release-drawer-banner="fallback">
+              <span>{fallbackBanner.message}</span>
+              {showSettingsAction ? (
+                <Button variant="ghost" onClick={openSettings}>打开设置</Button>
+              ) : null}
             </div>
           ) : null}
           {surfaceBanner ? (
@@ -690,9 +796,11 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
                       }
 
                       const expanded = expandedIds.has(item.id)
-                      const body = (item.body ?? '').trim()
+                      const selectedBody = releaseBodyForView(item, viewMode)
+                      const body = selectedBody.body
                       const showExpand = hasLongBody(body)
                       const publishedAt = preferredReleaseTimestamp(item)
+                      const htmlUrl = safeHttpUrl(item.htmlUrl)
                       const matched = locateResponse?.status === 'found'
                         ? item.id === highlightedId || releaseMatchesVersion(item, targetVersion)
                         : item.id === highlightedId
@@ -724,19 +832,26 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
                                   ) : null}
                                 </div>
                               </div>
-                              <a
-                                className="releaseDrawerItemLink"
-                                href={item.htmlUrl}
-                                rel="noreferrer"
-                                target="_blank"
-                                title={`打开 ${item.tagName} 的 GitHub Release`}
-                              >
-                                <ExternalLinkIcon className="iconSm" />
-                              </a>
+                              {htmlUrl ? (
+                                <a
+                                  className="releaseDrawerItemLink"
+                                  href={htmlUrl}
+                                  rel="noreferrer"
+                                  target="_blank"
+                                  title={`打开 ${item.tagName} 的发布记录`}
+                                >
+                                  <ExternalLinkIcon className="iconSm" />
+                                </a>
+                              ) : null}
                             </div>
 
                             {body ? (
                               <div className="releaseDrawerItemBodyWrap">
+                                {selectedBody.missing ? (
+                                  <div className="releaseDrawerItemViewFallback">
+                                    {viewLabel(viewMode)}不可用，已显示原文。
+                                  </div>
+                                ) : null}
                                 <pre className={cn('releaseDrawerItemBody', !expanded && 'releaseDrawerItemBodyCollapsed')}>
                                   {body}
                                 </pre>

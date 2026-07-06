@@ -37,9 +37,10 @@ use crate::api::types::{
     GitHubPackagesSettingsDb, GitHubPackagesTargetDb, GitHubPackagesWebhookDeliveryDb,
     GitHubPackagesWebhookDeliverySummary, IgnoreMatch, IgnoreRule, IgnoreRuleMatch,
     IgnoreRuleScope, JobListItem, JobLogLine, JobScope, JobType, NotificationSettings,
-    ResourceMonitorSettings, ScheduleItemSettings, SchedulesSettings, Service, ServiceHomepage,
-    ServiceResourceSample, ServiceSettings, ServiceUpdateGuard, StackListItem, StackRecord,
-    StackStatus, TernaryChoice, VersionInferenceState,
+    OctoRillReleaseNotesSettings, ReleaseNotesSettings, ReleaseNotesView, ResourceMonitorSettings,
+    ScheduleItemSettings, SchedulesSettings, Service, ServiceHomepage, ServiceResourceSample,
+    ServiceSettings, ServiceUpdateGuard, StackListItem, StackRecord, StackStatus, TernaryChoice,
+    VersionInferenceState,
 };
 
 #[derive(Clone, Debug)]

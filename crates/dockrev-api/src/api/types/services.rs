@@ -308,6 +308,81 @@ pub struct ServiceGitHubReleaseLocateResponse {
     pub message: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ServiceReleaseNotesSource {
+    OctoRill,
+    GitHub,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ServiceReleaseNotesStatus {
+    Ready,
+    UnsupportedRepo,
+    UpstreamError,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ServiceReleaseNotesFallbackReason {
+    Disabled,
+    NotConfigured,
+    UnsupportedRepo,
+    Unauthorized,
+    EmptyFeed,
+    UpstreamError,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceReleaseNotesFallback {
+    pub from: ServiceReleaseNotesSource,
+    pub reason: ServiceReleaseNotesFallbackReason,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceReleaseNoteItem {
+    pub id: String,
+    pub tag_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub translated_body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub smart_body: Option<String>,
+    pub html_url: String,
+    pub draft: bool,
+    pub prerelease: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub published_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceReleaseNotesResponse {
+    pub status: ServiceReleaseNotesStatus,
+    pub source: ServiceReleaseNotesSource,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo: Option<ServiceGitHubRepoRef>,
+    pub cursor: Option<String>,
+    pub limit: u32,
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
+    pub default_view: ReleaseNotesView,
+    pub items: Vec<ServiceReleaseNoteItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<ServiceReleaseNotesFallback>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionInferenceOverviewResponse {

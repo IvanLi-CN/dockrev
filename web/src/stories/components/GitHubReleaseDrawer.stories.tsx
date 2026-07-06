@@ -66,16 +66,15 @@ const shellStyle: CSSProperties = {
   minHeight: '100vh',
   padding: '24px',
   boxSizing: 'border-box',
-  background:
-    'radial-gradient(circle at top left, rgba(62,123,255,0.24), transparent 34%), linear-gradient(180deg, #071120 0%, #08182d 55%, #0b1730 100%)',
+  background: 'var(--bg-layered)',
 }
 
 const shellFrameStyle: CSSProperties = {
   minHeight: 'calc(100vh - 48px)',
-  borderRadius: '28px',
-  border: '1px solid rgba(142, 174, 255, 0.18)',
-  background: 'linear-gradient(180deg, rgba(11, 22, 44, 0.92) 0%, rgba(8, 18, 34, 0.86) 100%)',
-  boxShadow: '0 24px 72px rgba(0, 0, 0, 0.34)',
+  borderRadius: '6px',
+  border: '1px solid var(--borderColor)',
+  background: 'var(--panel)',
+  boxShadow: 'var(--shadow-card)',
   overflow: 'hidden',
 }
 
@@ -85,7 +84,7 @@ const shellHeaderStyle: CSSProperties = {
   justifyContent: 'space-between',
   gap: '16px',
   padding: '18px 24px',
-  borderBottom: '1px solid rgba(155, 178, 255, 0.12)',
+  borderBottom: '1px solid var(--borderColor)',
 }
 
 const shellPillStyle: CSSProperties = {
@@ -93,10 +92,10 @@ const shellPillStyle: CSSProperties = {
   alignItems: 'center',
   gap: '8px',
   padding: '8px 12px',
-  borderRadius: '999px',
-  border: '1px solid rgba(141, 170, 255, 0.18)',
-  background: 'rgba(11, 23, 46, 0.7)',
-  color: 'rgba(221, 229, 255, 0.88)',
+  borderRadius: '6px',
+  border: '1px solid var(--borderColor)',
+  background: 'var(--dockrev-chip)',
+  color: 'var(--text)',
   fontSize: '12px',
   fontWeight: 650,
 }
@@ -109,11 +108,10 @@ const shellBodyStyle: CSSProperties = {
 }
 
 const shellPanelStyle: CSSProperties = {
-  borderRadius: '22px',
-  border: '1px solid rgba(141, 170, 255, 0.12)',
-  background: 'rgba(10, 20, 40, 0.78)',
+  borderRadius: '6px',
+  border: '1px solid var(--borderColor)',
+  background: 'var(--panel2)',
   padding: '18px',
-  boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.03)',
 }
 
 const shellReleaseBadgeStyle: CSSProperties = {
@@ -122,9 +120,9 @@ const shellReleaseBadgeStyle: CSSProperties = {
   justifyContent: 'center',
   alignItems: 'center',
   padding: '4px 10px',
-  borderRadius: '999px',
-  background: 'rgba(60, 174, 255, 0.16)',
-  color: '#d5f0ff',
+  borderRadius: '6px',
+  background: 'var(--dockrev-chip)',
+  color: 'var(--text)',
   fontSize: '12px',
   fontWeight: 700,
 }
@@ -135,14 +133,14 @@ function DrawerStoryShell(props: { children: ReactNode }) {
       <div style={shellFrameStyle}>
         <header style={shellHeaderStyle}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <strong style={{ color: '#f4f7ff', fontSize: '20px', letterSpacing: '0.01em' }}>服务更新概览</strong>
-            <span style={{ color: 'rgba(191, 203, 238, 0.76)', fontSize: '13px' }}>
+            <strong style={{ color: 'var(--text)', fontSize: '20px', letterSpacing: 0 }}>服务更新概览</strong>
+            <span style={{ color: 'var(--muted)', fontSize: '13px' }}>
               用稳定的 mock 页面承载右侧 GitHub Releases 抽屉，方便检查间距、滚动和定位反馈。
             </span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
             <span style={shellPillStyle}>全部 62</span>
-            <span style={{ ...shellPillStyle, borderColor: 'rgba(63, 199, 255, 0.32)', color: '#e4f7ff' }}>可更新 13</span>
+            <span style={{ ...shellPillStyle, borderColor: 'var(--color-primary)', color: 'var(--text)' }}>可更新 13</span>
             <span style={shellPillStyle}>需确认 0</span>
           </div>
         </header>
@@ -162,18 +160,18 @@ function DrawerStoryShell(props: { children: ReactNode }) {
                   gap: '14px',
                   alignItems: 'center',
                   padding: '14px 16px',
-                  borderRadius: '18px',
-                  border: '1px solid rgba(143, 171, 255, 0.1)',
-                  background: 'rgba(9, 18, 37, 0.72)',
+                  borderRadius: '6px',
+                  border: '1px solid var(--borderColor)',
+                  background: 'var(--dockrev-surface)',
                 }}
               >
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <strong style={{ color: '#edf3ff', fontSize: '15px' }}>{serviceName}</strong>
-                  <span style={{ color: 'rgba(186, 198, 228, 0.72)', fontSize: '13px' }}>{repoName}</span>
+                  <strong style={{ color: 'var(--text)', fontSize: '15px' }}>{serviceName}</strong>
+                  <span style={{ color: 'var(--muted)', fontSize: '13px' }}>{repoName}</span>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <span style={{ color: '#edf3ff', fontSize: '14px' }}>{versionText}</span>
-                  <span style={{ color: 'rgba(186, 198, 228, 0.72)', fontSize: '12px' }}>{note}</span>
+                  <span style={{ color: 'var(--text)', fontSize: '14px' }}>{versionText}</span>
+                  <span style={{ color: 'var(--muted)', fontSize: '12px' }}>{note}</span>
                 </div>
                 <span style={shellReleaseBadgeStyle}>Releases</span>
               </div>
@@ -181,7 +179,7 @@ function DrawerStoryShell(props: { children: ReactNode }) {
           </section>
 
           <aside style={{ ...shellPanelStyle, display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <strong style={{ color: '#edf3ff', fontSize: '15px' }}>这次截图要证明的点</strong>
+            <strong style={{ color: 'var(--text)', fontSize: '15px' }}>这次截图要证明的点</strong>
             {[
               '右侧面板要保留真正的 Drawer 语义：贴边、全高、强层级、明确可关闭。',
               'mock 的 release 数量和内容要像真实发布序列，不是两三条占位数据。',
@@ -191,10 +189,10 @@ function DrawerStoryShell(props: { children: ReactNode }) {
                 key={line}
                 style={{
                   padding: '12px 14px',
-                  borderRadius: '16px',
-                  background: 'rgba(8, 17, 34, 0.72)',
-                  border: '1px solid rgba(143, 171, 255, 0.08)',
-                  color: 'rgba(223, 231, 255, 0.88)',
+                  borderRadius: '6px',
+                  background: 'var(--dockrev-surface)',
+                  border: '1px solid var(--borderColor)',
+                  color: 'var(--text)',
                   fontSize: '13px',
                   lineHeight: 1.55,
                 }}
@@ -332,6 +330,22 @@ export default meta
 
 type Story = StoryObj<typeof GitHubReleaseDrawer>
 
+const releaseDrawerLocatedDataset = {
+  'svc-release-drawer': {
+    ...baseDataset,
+    locateByVersion: {
+      '1.39.5': {
+        status: 'found',
+        searchedCount: 20,
+        matchedTag: '1.39.5',
+        page: 1,
+        indexWithinPage: 12,
+        absoluteIndex: 12,
+      },
+    },
+  },
+}
+
 async function openInfoTooltip(): Promise<HTMLElement> {
   const trigger = document.querySelector('[data-release-drawer-info-trigger="true"]')
   if (!(trigger instanceof HTMLElement)) throw new Error('expected release drawer info trigger')
@@ -404,6 +418,32 @@ function assertTooltipDoesNotChangeDocumentFlow(before: ReturnType<typeof readRe
   }
 }
 
+export const OctoRillSmartDefault: Story = {
+  args: {
+    open: true,
+    serviceId: 'svc-release-drawer',
+    onOpenChange: () => {},
+  },
+  parameters: {
+    dockrevApiScenario: 'default',
+    dockrevGitHubReleasesByServiceId: {
+      'svc-release-drawer': baseDataset,
+    },
+  },
+  play: async () => {
+    await new Promise((resolve) => setTimeout(resolve, 360))
+    const drawer = document.querySelector('[data-release-drawer="true"]')
+    if (!(drawer instanceof HTMLElement)) throw new Error('expected release drawer content to render')
+    if (!drawer.textContent?.includes('润色摘要')) {
+      throw new Error('expected smart release notes to be visible by default')
+    }
+    const activeView = document.querySelector('.releaseDrawerViewTabActive')
+    if (!activeView?.textContent?.includes('润色')) {
+      throw new Error('expected smart view tab to be active by default')
+    }
+  },
+}
+
 export const AnonymousLocated: Story = {
   args: {
     open: true,
@@ -413,21 +453,7 @@ export const AnonymousLocated: Story = {
   },
   parameters: {
     dockrevApiScenario: 'default',
-    dockrevGitHubReleasesByServiceId: {
-      'svc-release-drawer': {
-        ...baseDataset,
-        locateByVersion: {
-          '1.39.5': {
-            status: 'found',
-            searchedCount: 20,
-            matchedTag: '1.39.5',
-            page: 1,
-            indexWithinPage: 12,
-            absoluteIndex: 12,
-          },
-        },
-      },
-    },
+    dockrevGitHubReleasesByServiceId: releaseDrawerLocatedDataset,
   },
   play: async () => {
     await new Promise((resolve) => setTimeout(resolve, 360))
@@ -443,18 +469,33 @@ export const AnonymousLocated: Story = {
     if (!target) throw new Error('expected targeted release row to exist')
     const banner = document.querySelector('[data-release-drawer-banner="success"]')
     if (!banner) throw new Error('expected locate success banner')
+    if (!drawer.textContent?.includes('润色摘要')) {
+      throw new Error('expected smart release notes to be visible by default')
+    }
+    const translatedTab = Array.from(document.querySelectorAll<HTMLButtonElement>('.releaseDrawerViewTab')).find(
+      (button) => button.textContent?.trim() === '翻译',
+    )
+    if (!translatedTab) throw new Error('expected translated view tab')
+    translatedTab.click()
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    if (!drawer.textContent?.includes('翻译：')) {
+      throw new Error('expected translated release notes after switching view')
+    }
 
     const chips = Array.from(document.querySelectorAll('.releaseDrawerChip')).map((node) => node.textContent?.trim() ?? '')
-    if (chips.includes('匿名') || chips.includes('定位 1.39.5')) {
-      throw new Error('expected auth mode and target version to move out of always-visible header chips')
+    if (chips.includes('定位 1.39.5')) {
+      throw new Error('expected target version to move out of always-visible header chips')
     }
 
     const layoutBeforeTooltip = readReleaseDrawerLayoutSnapshot()
     await new Promise((resolve) => setTimeout(resolve, 160))
     const tooltip = await openInfoTooltip()
     await new Promise((resolve) => setTimeout(resolve, 160))
-    if (!tooltip.textContent?.includes('访问身份') || !tooltip.textContent?.includes('匿名')) {
-      throw new Error('expected tooltip to expose anonymous auth mode')
+    if (!tooltip.textContent?.includes('数据来源') || !tooltip.textContent?.includes('OctoRill')) {
+      throw new Error('expected tooltip to expose release notes source')
+    }
+    if (!tooltip.textContent?.includes('默认视图') || !tooltip.textContent?.includes('润色')) {
+      throw new Error('expected tooltip to expose default release notes view')
     }
     if (!tooltip.textContent?.includes('定位版本') || !tooltip.textContent?.includes('1.39.5')) {
       throw new Error('expected tooltip to expose target version')
@@ -498,14 +539,14 @@ export const PatAuthenticatedShortList: Story = {
     if (!(closeButton instanceof HTMLButtonElement)) throw new Error('expected drawer to expose an explicit close button')
 
     const chips = Array.from(document.querySelectorAll('.releaseDrawerChip')).map((node) => node.textContent?.trim() ?? '')
-    if (chips.includes('PAT')) throw new Error('expected PAT auth mode to stay inside the info tooltip')
+    if (!chips.includes('OctoRill')) throw new Error('expected OctoRill source chip')
 
     const layoutBeforeTooltip = readReleaseDrawerLayoutSnapshot()
     await new Promise((resolve) => setTimeout(resolve, 160))
     const tooltip = await openInfoTooltip()
     await new Promise((resolve) => setTimeout(resolve, 160))
-    if (!tooltip.textContent?.includes('访问身份') || !tooltip.textContent?.includes('PAT')) {
-      throw new Error('expected info tooltip to expose PAT auth mode')
+    if (!tooltip.textContent?.includes('数据来源') || !tooltip.textContent?.includes('OctoRill')) {
+      throw new Error('expected info tooltip to expose release notes source')
     }
 
     const scrollRegion = document.querySelector('.releaseDrawerScrollViewport')
@@ -543,8 +584,8 @@ export const PermissionDenied: Story = {
   },
   play: async () => {
     await new Promise((resolve) => setTimeout(resolve, 180))
-    const state = document.querySelector('[data-release-drawer-state="permissionDenied"]')
-    if (!state) throw new Error('expected permission denied state to render')
+    const state = document.querySelector('[data-release-drawer-state="upstreamError"]')
+    if (!state) throw new Error('expected upstream error state to render')
   },
 }
 

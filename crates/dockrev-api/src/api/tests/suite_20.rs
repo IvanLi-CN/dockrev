@@ -1043,6 +1043,14 @@ async fn get_service_backup_targets_resolves_compose_candidates_and_storage_info
                     cron: "0 * * * *".to_string(),
                 },
             },
+            &crate::api::types::ReleaseNotesSettings {
+                octo_rill: crate::api::types::OctoRillReleaseNotesSettings {
+                    enabled: false,
+                    api_base_url: None,
+                    api_key: None,
+                    default_view: crate::api::types::ReleaseNotesView::Smart,
+                },
+            },
             None,
             &test_now_rfc3339(),
         )
