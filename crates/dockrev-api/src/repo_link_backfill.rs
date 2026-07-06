@@ -352,6 +352,7 @@ fn make_job_progress(
         planned_total: Some(total),
         planned_percent: Some(Some(percent)),
         current_target,
+        download: None,
         updated_at,
     }
 }

@@ -11,14 +11,12 @@ pub(super) const CHECK_PARALLELISM: usize = crate::config::FIXED_CHECK_PARALLELI
 pub(super) const CHECK_SPAWN_STAGGER: Duration = Duration::from_secs(1);
 pub(super) const UPDATE_STACK_BASE_PROGRESS: f64 = 0.15;
 pub(super) const UPDATE_STACK_APPLY_SPAN: f64 = 0.80;
-
 pub(super) fn progress_percent(current: u32, total: u32) -> u32 {
     if total == 0 {
         return 0;
     }
     ((current.saturating_mul(100)) / total).min(100)
 }
-
 pub(super) fn make_job_progress(
     phase: &str,
     message: String,
@@ -37,7 +35,6 @@ pub(super) fn make_job_progress(
         progress_percent(current, total),
     )
 }
-
 pub(super) fn make_job_progress_with_percent(
     phase: &str,
     message: String,
@@ -60,7 +57,6 @@ pub(super) fn make_job_progress_with_percent(
         Some(Some(percent)),
     )
 }
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn make_job_progress_with_percent_and_plan(
     phase: &str,
@@ -87,7 +83,6 @@ pub(super) fn make_job_progress_with_percent_and_plan(
         Some(Some(planned_percent)),
     )
 }
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn make_job_progress_with_optional_plan(
     phase: &str,
@@ -111,10 +106,10 @@ pub(super) fn make_job_progress_with_optional_plan(
         planned_total,
         planned_percent: planned_percent.map(|value| value.map(|value| value.min(100))),
         current_target,
+        download: None,
         updated_at,
     }
 }
-
 pub(super) fn make_check_job_progress(
     message: String,
     completed: u32,
@@ -136,7 +131,6 @@ pub(super) fn make_check_job_progress(
         progress_percent(planned, total),
     )
 }
-
 pub(super) fn update_progress_percent(
     processed_stacks: u32,
     total_stacks: u32,
@@ -220,7 +214,12 @@ pub(super) fn update_progress_snapshot(
     let next_percent = match evt.step {
         S::ServiceStart | S::PullStart => last_percent,
         S::PullProgress => {
-            let pull_fraction = evt.pull_fraction.unwrap_or(0.0).clamp(0.0, 1.0);
+            let Some(pull_fraction) = evt.pull_fraction.map(|value| value.clamp(0.0, 1.0)) else {
+                return UpdateProgressSnapshot {
+                    percent: last_percent,
+                    planned_percent: Some(None),
+                };
+            };
             update_progress_percent(
                 processed_stacks,
                 total_stacks,
@@ -239,6 +238,7 @@ pub(super) fn update_progress_snapshot(
 
     let planned_percent = match evt.step {
         S::ServiceStart | S::PullStart => Some(None),
+        S::PullProgress if evt.pull_fraction.is_none() => Some(None),
         _ => Some(Some(next_percent)),
     };
 
@@ -256,7 +256,7 @@ pub(super) async fn persist_job_progress(
     let progress_json = serde_json::to_value(progress)?;
     state.db.set_job_progress(job_id, &progress_json).await?;
 
-    let evt = json!({
+    let mut evt = json!({
         "type": "job_progress",
         "jobId": job_id,
         "ts": progress.updated_at,
@@ -271,6 +271,11 @@ pub(super) async fn persist_job_progress(
         "currentTarget": progress.current_target,
         "updatedAt": progress.updated_at,
     });
+    if let Some(download) = progress.download.as_ref()
+        && let Some(obj) = evt.as_object_mut()
+    {
+        obj.insert("download".to_string(), serde_json::to_value(download)?);
+    }
 
     state
         .db

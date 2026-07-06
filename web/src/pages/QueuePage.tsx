@@ -7,6 +7,7 @@ import {
   type JobListItem,
 } from '../api'
 import { formatJobMachineName, formatJobReadableDisplay } from '../jobDisplay'
+import { formatJobProgressDownload } from '../jobProgressDownload'
 import { TaskResultReason } from '../components/TaskResultReason'
 import { navigate } from '../routes'
 import { Button, Mono, Pill } from '../ui'
@@ -90,12 +91,14 @@ function formatProgressLabel(job: JobListItem): string | null {
   const phase = (job.progress?.phase ?? '').trim()
   const message = (job.progress?.message ?? '').trim()
   const target = (job.progress?.currentTarget ?? '').trim()
+  const download = formatJobProgressDownload(job.progress?.download)
   const parts: string[] = []
   if (m.plannedTotal > 0 || m.completedTotal > 0) {
     parts.push(`安排 ${m.plannedCurrent}/${m.plannedTotal || '-'} · 完成 ${m.completedCurrent}/${m.completedTotal || '-'}`)
   }
   if (phase) parts.push(phase)
   if (message) parts.push(message)
+  if (download) parts.push(`下载 ${download}`)
   if (target) parts.push(target)
   return parts.length > 0 ? parts.join(' · ') : null
 }

@@ -72,6 +72,46 @@ export const UpdateIndeterminate: Story = {
     if (progressbar.getAttribute('aria-valuetext') !== '安排 running · 完成 40%') {
       throw new globalThis.Error('progress aria text should stay indeterminate on planned side')
     }
+    const pageText = canvasElement.textContent ?? ''
+    if (!pageText.includes('下载')) {
+      throw new globalThis.Error('download label missing')
+    }
+    if (!pageText.includes('已下载 4.2MB · layers 2/6')) {
+      throw new globalThis.Error('job detail should render unknown-total download status')
+    }
+  },
+}
+
+export const UpdateDownloadDeterminate: Story = {
+  parameters: { dockrevApiScenario: 'queue-update-download-determinate' },
+  render: () => {
+    return (
+      <PageHarness
+        route={{ name: 'job', jobId: 'job-running' }}
+        title="任务详情"
+        pageSubtitle="运行中 stack update 在 pull 提供 current/total 时应显示真实下载百分比"
+      >
+        {({ onTopActions }) => <JobDetailPage jobId="job-running" onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+  play: async ({ canvasElement }) => {
+    await sleep(120)
+
+    const progressbar = canvasElement.querySelector('[role="progressbar"]') as HTMLElement | null
+    if (!progressbar) {
+      throw new globalThis.Error('progress bar missing')
+    }
+    if (progressbar.className.includes('jobProgressBarIndeterminate')) {
+      throw new globalThis.Error('progress bar should be determinate when pull total is known')
+    }
+    if (progressbar.getAttribute('aria-valuetext') !== '安排 40% · 完成 40%') {
+      throw new globalThis.Error('progress aria text should expose determinate planned state')
+    }
+    const pageText = canvasElement.textContent ?? ''
+    if (!pageText.includes('3.1MB / 5.9MB · layers 1/3')) {
+      throw new globalThis.Error('job detail should render determinate download status')
+    }
   },
 }
 

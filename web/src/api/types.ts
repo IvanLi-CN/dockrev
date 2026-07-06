@@ -543,7 +543,17 @@ export type JobProgress = {
   plannedTotal?: number | null
   plannedPercent?: number | null
   currentTarget?: string | null
+  download?: JobProgressDownload | null
   updatedAt: string
+}
+
+export type JobProgressDownload = {
+  currentBytes?: number | null
+  totalBytes?: number | null
+  completedLayers?: number | null
+  totalLayers?: number | null
+  activeLayers?: string[]
+  status?: string | null
 }
 
 export type JobDetail = JobListItem & { logs: JobLogLine[]; logsLastId: number; progress?: JobProgress | null }

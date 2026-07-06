@@ -557,6 +557,57 @@ export function buildQueueUpdateIndeterminate(): Fixture {
     plannedTotal: 5,
     plannedPercent: null,
     currentTarget: 'worker',
+    download: {
+      currentBytes: 4_397_728,
+      totalBytes: null,
+      completedLayers: 2,
+      totalLayers: 6,
+      activeLayers: ['ad6b1fa7e521 Downloading'],
+      status: 'layers 2/6',
+    },
+    updatedAt: nowIso(-600),
+  }
+
+  runningJob.type = 'update'
+  runningJob.scope = 'stack'
+  runningJob.progress = nextProgress
+
+  const runningDetail = f.jobById['job-running']
+  if (runningDetail) {
+    f.jobById['job-running'] = {
+      ...runningDetail,
+      type: 'update',
+      scope: 'stack',
+      progress: { ...nextProgress },
+    }
+  }
+
+  return f
+}
+
+export function buildQueueUpdateDownloadDeterminate(): Fixture {
+  const f = buildQueueMixed()
+  const runningJob = f.jobs.find((job) => job.id === 'job-running')
+  if (!runningJob) return f
+
+  const nextProgress = {
+    phase: 'apply',
+    message: 'pulling image for api (53%)',
+    current: 2,
+    total: 5,
+    percent: 40,
+    plannedCurrent: 2,
+    plannedTotal: 5,
+    plannedPercent: 40,
+    currentTarget: 'api',
+    download: {
+      currentBytes: 3_298_919,
+      totalBytes: 6_175_785,
+      completedLayers: 1,
+      totalLayers: 3,
+      activeLayers: ['d2cad1f9f7c9 Downloading'],
+      status: 'layers 1/3',
+    },
     updatedAt: nowIso(-600),
   }
 

@@ -51,6 +51,7 @@ fn make_job_progress(
         planned_total: Some(total),
         planned_percent: Some(Some(progress_percent(current, total))),
         current_target,
+        download: None,
         updated_at,
     }
 }

@@ -323,6 +323,23 @@ pub struct JobListItem {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct JobProgressDownload {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_layers: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_layers: Option<u32>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub active_layers: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JobProgress {
     /// Progress phase label (e.g. prepare/scan/apply/done).
     pub phase: String,
@@ -349,6 +366,8 @@ pub struct JobProgress {
     pub planned_percent: Option<Option<u32>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_target: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub download: Option<JobProgressDownload>,
     pub updated_at: String,
 }
 
