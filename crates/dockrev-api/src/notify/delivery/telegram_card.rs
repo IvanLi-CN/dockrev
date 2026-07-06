@@ -144,18 +144,28 @@ pub(crate) fn render_new_version_telegram_card_png(
         pair("发现", &format!("{} 个新版本", payload.check.new_versions)),
         pair("", &payload.check.job_id),
     ];
-    let service_label = payload
+    let service_labels = payload
         .links
         .service_urls
-        .first()
+        .iter()
         .map(|svc| format!("{} / {}", svc.stack_name, svc.service_name))
-        .unwrap_or_else(|| format!("{} 个服务", payload.check.new_versions));
-    let version_change = payload
+        .collect::<Vec<_>>();
+    let service_label = summarize_card_items(
+        &service_labels,
+        payload.links.truncated.service_urls_omitted,
+        format!("{} 个服务", payload.check.new_versions),
+    );
+    let version_changes = payload
         .links
         .service_urls
-        .first()
-        .and_then(new_version_transition)
-        .unwrap_or_else(|| format!("{} 个新版本", payload.check.new_versions));
+        .iter()
+        .filter_map(new_version_transition)
+        .collect::<Vec<_>>();
+    let version_change = summarize_card_items(
+        &version_changes,
+        payload.links.truncated.service_urls_omitted,
+        format!("{} 个新版本", payload.check.new_versions),
+    );
     let rows = vec![
         pair("通知类型", "发现新版本"),
         pair("服务", &service_label),
@@ -193,12 +203,17 @@ pub(crate) fn render_ghcr_webhook_anomaly_telegram_card_png(
         pair("通知类型", "Webhook 巡检"),
         pair("异常摘要", &anomaly_summary),
     ];
-    let repo_summary = payload
+    let repo_summaries = payload
         .links
         .repos
-        .first()
+        .iter()
         .map(|repo| format!("{} [{}]", repo.full_name, repo.state))
-        .unwrap_or_else(|| "无仓库详情".to_string());
+        .collect::<Vec<_>>();
+    let repo_summary = summarize_card_items(
+        &repo_summaries,
+        payload.links.truncated.repos_omitted,
+        "无仓库详情".to_string(),
+    );
     rows.push(pair("仓库", &repo_summary));
     rows.push(pair("巡检时间", &format_card_time(&payload.sent_at)));
 
@@ -1183,6 +1198,26 @@ fn new_version_transition(svc: &NewVersionNotificationServiceUrlV2) -> Option<St
             Some(format!("{current} -> {candidate}"))
         }
         _ => None,
+    }
+}
+
+pub(crate) fn summarize_card_items(items: &[String], omitted: u32, fallback: String) -> String {
+    if items.is_empty() {
+        return fallback;
+    }
+
+    const MAX_CARD_ITEMS: usize = 3;
+    let visible = items
+        .iter()
+        .take(MAX_CARD_ITEMS)
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join("、");
+    let hidden = items.len().saturating_sub(MAX_CARD_ITEMS) as u32 + omitted;
+    if hidden > 0 {
+        format!("{visible}，另 {hidden} 项")
+    } else {
+        visible
     }
 }
 

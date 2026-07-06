@@ -144,6 +144,28 @@ fn telegram_card_render_error_is_classified_as_photo_fallback() {
 }
 
 #[test]
+fn telegram_card_item_summary_includes_multiple_items_and_omitted_count() {
+    let items = vec![
+        "blog / api".to_string(),
+        "blog / worker".to_string(),
+        "shop / gateway".to_string(),
+        "shop / sync".to_string(),
+    ];
+    assert_eq!(
+        summarize_card_items(&items, 2, "4 个服务".to_string()),
+        "blog / api、blog / worker、shop / gateway，另 3 项"
+    );
+    assert_eq!(
+        summarize_card_items(&items[..2], 0, "2 个服务".to_string()),
+        "blog / api、blog / worker"
+    );
+    assert_eq!(
+        summarize_card_items(&[], 0, "无仓库详情".to_string()),
+        "无仓库详情"
+    );
+}
+
+#[test]
 fn telegram_photo_caption_is_capped() {
     let caption = render_telegram_photo_caption_html(
         "Dockrev：更新完成（成功）",
