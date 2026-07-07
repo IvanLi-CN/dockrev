@@ -4,6 +4,7 @@ import {
   newServiceLogsEventsSource,
   type ServiceLogEventEnvelope,
   type ServiceLogLine,
+  type ServiceLogMeta,
 } from '../api'
 
 export const SERVICE_LOG_INITIAL_TAIL = 500
@@ -29,6 +30,9 @@ export type ServiceLogRecord = {
   ts: string
   raw: string
   plain: string
+  message: string
+  meta?: ServiceLogMeta | null
+  searchText: string
   level: ServiceLogLevel
   inlineLevel: boolean
   multiline: boolean
@@ -108,19 +112,59 @@ function inferLogLevel(raw: string, plain: string): ServiceLogLevel {
   return 'unknown'
 }
 
+function normalizeLogLevel(level: string | null | undefined): ServiceLogLevel | null {
+  const value = (level ?? '').trim().toLowerCase()
+  if (!value) return null
+  if (value === 'trace') return 'trace'
+  if (value === 'debug' || value === 'verbose') return 'debug'
+  if (value === 'info') return 'info'
+  if (value === 'warn' || value === 'warning') return 'warn'
+  if (value === 'error' || value === 'err' || value === 'fatal' || value === 'critical') return 'error'
+  return null
+}
+
 function hasInlineTracingLevel(plain: string): boolean {
   return INLINE_TRACING_LEVEL_PATTERN.test(plain.trimStart())
 }
 
+function metadataSearchText(meta: ServiceLogMeta | null | undefined): string {
+  if (!meta) return ''
+  const attributes = meta.attributes ?? {}
+  const attributeText = Object.entries(attributes)
+    .map(([key, value]) => `${key}=${formatSearchValue(value)}`)
+    .join(' ')
+  return [meta.format, meta.level, meta.timestamp, meta.message, attributeText, ...(meta.highlights ?? [])]
+    .filter(Boolean)
+    .join(' ')
+}
+
+function formatSearchValue(value: unknown): string {
+  if (value == null) return ''
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
 function toRecord(line: ServiceLogLine, id: number): ServiceLogRecord {
   const plain = stripAnsi(line.plain || line.raw)
+  const metaLevel = normalizeLogLevel(line.meta?.level)
+  const level = metaLevel ?? inferLogLevel(line.raw, plain)
+  const message = (line.meta?.message ?? '').trim() || plain
+  const searchText = [plain, line.raw, metadataSearchText(line.meta)].join(' ').toLowerCase()
   return {
     id,
     ts: line.ts,
     raw: line.raw,
     plain,
-    level: inferLogLevel(line.raw, plain),
-    inlineLevel: hasInlineTracingLevel(plain),
+    message,
+    meta: line.meta,
+    searchText,
+    level,
+    inlineLevel: !metaLevel && hasInlineTracingLevel(plain),
     multiline: line.raw.includes('\n'),
     segments: ansiSegments(line.raw),
   }
@@ -215,7 +259,7 @@ export function useServiceLogsState(serviceId: string) {
   const normalizedQuery = query.trim().toLowerCase()
   const filteredRecords = useMemo(() => {
     if (!normalizedQuery) return records
-    return records.filter((record) => record.plain.toLowerCase().includes(normalizedQuery))
+    return records.filter((record) => record.searchText.includes(normalizedQuery))
   }, [normalizedQuery, records])
 
   return {

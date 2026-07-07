@@ -23,6 +23,7 @@ description: Dockrev 通知类型、字段格式、以及可点击 URL/跳转规
   - `links.*Url` 仍会给出**站内路径**（以 `/` 开头）
   - Telegram / Email：站内路径会以代码样式显示（不可点击），并提示去配置 Public Base URL
   - Web Push：`url` 仍会是站内路径（浏览器可在当前 origin 下打开）
+- Telegram 动态卡片不依赖 Public Base URL；该配置只影响 caption / 文本详情里的链接是否可点击。
 
 ## 通知类型一览
 
@@ -226,20 +227,22 @@ Service Worker（`web/public/sw.js`）会优先读取 `data.url` 并打开。
 
 ## 渠道渲染示例
 
-### Telegram（HTML）
+### Telegram（动态卡片 + HTML 详情）
 
-- 标题：加粗中文标题
-- 内容：标题后直接附“详情”超链接 + 摘要 + 服务清单（每条可点击）+ 错误节选（`<pre>`，可能截断）
+Telegram 通知优先发送一张内容相关 PNG 卡片，而不是依赖 Telegram 自动生成链接预览。卡片采用主题中立的浅色信息卡，不假定 Telegram 客户端或 Dockrev Web UI 使用暗色主题。卡片只展示摘要级信息：
 
-示例（单服务变更）：
+- 通知类型、状态、关键对象
+- 任务 ID、scope/reason、检查数量、异常统计、版本变化等最多 5 条摘要
+- 超出时只显示 omitted 计数
 
-```
-Dockrev：更新完成（成功） 详情（可点击）
-变更 1 个服务（blog / api）。
+caption 保持短摘要和一个主动作链接。完整服务清单、完整 URL、digest、错误节选、debug JSON 等长详情仍通过后续文本消息展示。
 
-服务清单
-- blog / api：服务详情（可点击）
-```
+所有 Telegram `sendMessage` 文本路径都会禁用链接预览，避免任务详情、服务详情或设置页链接被 Telegram 自动展开。若图片生成或 `sendPhoto` 上传失败，Dockrev 会回退到原有文本详情；文本发送成功时该渠道仍视为发送成功，并在任务日志里记录 photo fallback 诊断。
+
+隐私边界：
+
+- 图片不会绘制完整 URL、digest、长错误栈或 debug JSON。
+- Public Base URL 只影响 caption / 文本详情里的链接是否可点击，不影响图片生成。
 
 ### Email（multipart）
 

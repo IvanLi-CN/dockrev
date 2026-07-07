@@ -586,7 +586,7 @@ impl CommandRunner for ServiceLogsRunner {
                     "2026-07-01T08:12:51.833074000Z Caused by:\n",
                     "2026-07-01T08:12:51.833081000Z     (code: 5) database is locked invoke_id=proxy-1281-1782893570550\n",
                     "2026-06-29T08:00:00.000000000Z \u{1b}[32mapi boot ok\u{1b}[0m\n",
-                    "2026-06-29T08:00:02.000000000Z worker ready\n",
+                    "2026-06-29T08:00:02.000000000Z {\"timestamp\":\"2026-06-29T08:00:02Z\",\"level\":\"INFO\",\"message\":\"runtime perf\",\"component\":\"admin_read\",\"event\":\"dashboard_overview_phase\",\"elapsed_ms\":24,\"route\":\"/api/dashboard/overview\"}\n",
                     "2026-06-29T08:00:03.000000000Z \u{1b}[31merror burst\u{1b}[0m\n",
                     "2026-06-29T08:00:04.000000000Z     standalone indented output\n"
                 ),

@@ -11,13 +11,14 @@ use tokio::sync::mpsc::UnboundedSender;
 use ulid::Ulid;
 
 use crate::{
-    api::types::{JobScope, StackRecord, UpdateServiceTarget},
+    api::types::{JobProgressDownload, JobScope, StackRecord, UpdateServiceTarget},
     compose_runner::{ComposeRunnerConfig, ComposeStack},
     docker_runner,
     runner::{CommandRunner, CommandSpec},
 };
 
 mod planning;
+mod pull_progress;
 
 #[allow(unused_imports)]
 pub use planning::UpdateServiceSelection;
@@ -29,6 +30,10 @@ use planning::{
     retry_backoff_delay, should_sync_local_tag, tag_pull_warning_value,
 };
 pub use planning::{is_dockrev_image_ref, select_update_services};
+use pull_progress::{
+    PullProgressSnapshot, PullProgressTracker, parse_pull_fraction_from_line,
+    pull_progress_message, pull_progress_signature,
+};
 
 #[derive(Clone, Debug)]
 struct TempFileCleanup(std::path::PathBuf);
@@ -230,6 +235,7 @@ pub struct UpdateProgressEvent {
     pub service_index: u32,
     pub service_total: u32,
     pub pull_fraction: Option<f64>,
+    pub download: Option<JobProgressDownload>,
     pub message: String,
 }
 
@@ -370,6 +376,7 @@ pub async fn run_update_job(
                 service_index,
                 service_total,
                 pull_fraction: None,
+                download: None,
                 message: format!("starting service {}", svc.name),
             },
         );
@@ -390,6 +397,7 @@ pub async fn run_update_job(
                     service_index,
                     service_total,
                     pull_fraction: None,
+                    download: None,
                     message: format!("skipped service {} (container not running)", svc.name),
                 },
             );
@@ -446,6 +454,7 @@ pub async fn run_update_job(
                 service_index: *service_index,
                 service_total,
                 pull_fraction: None,
+                download: None,
                 message: format!("pulling image for {}", svc.name),
             },
         );
@@ -458,7 +467,7 @@ pub async fn run_update_job(
             Duration::from_secs(300),
             "pull_services",
             idempotent_retry_policy,
-            |fraction| {
+            |snapshot| {
                 for (svc, service_index, _, _) in &prepared_services {
                     emit_update_progress(
                         Some(progress_events),
@@ -467,12 +476,9 @@ pub async fn run_update_job(
                             service_name: svc.name.clone(),
                             service_index: *service_index,
                             service_total,
-                            pull_fraction: Some(fraction),
-                            message: format!(
-                                "pulling image for {} ({:.0}%)",
-                                svc.name,
-                                fraction * 100.0
-                            ),
+                            pull_fraction: snapshot.fraction,
+                            download: snapshot.download.clone(),
+                            message: pull_progress_message(&svc.name, &snapshot),
                         },
                     );
                 }
@@ -499,6 +505,7 @@ pub async fn run_update_job(
                 service_index: *service_index,
                 service_total,
                 pull_fraction: Some(1.0),
+                download: None,
                 message: format!("pull completed for {}", svc.name),
             },
         );
@@ -513,6 +520,7 @@ pub async fn run_update_job(
                 service_index: *service_index,
                 service_total,
                 pull_fraction: None,
+                download: None,
                 message: format!("recreating service {}", svc.name),
             },
         );
@@ -534,6 +542,7 @@ pub async fn run_update_job(
                 service_index: *service_index,
                 service_total,
                 pull_fraction: None,
+                download: None,
                 message: format!("service {} updated", svc.name),
             },
         );
@@ -586,6 +595,7 @@ pub async fn run_update_job(
                     service_index,
                     service_total,
                     pull_fraction: None,
+                    download: None,
                     message: format!("waiting for healthcheck on {}", svc.name),
                 },
             );
@@ -607,6 +617,7 @@ pub async fn run_update_job(
                         service_index,
                         service_total,
                         pull_fraction: None,
+                        download: None,
                         message: format!("healthcheck failed for {}; rolling back", svc.name),
                     },
                 );
@@ -658,6 +669,7 @@ pub async fn run_update_job(
                         service_index,
                         service_total,
                         pull_fraction: None,
+                        download: None,
                         message: format!("healthcheck passed for {}", svc.name),
                     },
                 );
@@ -679,6 +691,7 @@ pub async fn run_update_job(
                     service_index,
                     service_total,
                     pull_fraction: None,
+                    download: None,
                     message: format!("pulling target tag for {}", svc.name),
                 },
             );
@@ -745,6 +758,7 @@ pub async fn run_update_job(
                         service_index,
                         service_total,
                         pull_fraction: None,
+                        download: None,
                         message: format!("target tag pulled for {}", svc.name),
                     },
                 );
@@ -761,6 +775,7 @@ pub async fn run_update_job(
                     service_index,
                     service_total,
                     pull_fraction: None,
+                    download: None,
                     message: format!("syncing compose tag for {}", svc.name),
                 },
             );
@@ -821,6 +836,7 @@ pub async fn run_update_job(
                         service_index,
                         service_total,
                         pull_fraction: None,
+                        download: None,
                         message: format!("compose tag synced for {}", svc.name),
                     },
                 );
@@ -849,6 +865,7 @@ pub async fn run_update_job(
                         service_index,
                         service_total,
                         pull_fraction: None,
+                        download: None,
                         message: format!("pulling compatibility tags for {}", svc.name),
                     },
                 );
@@ -887,6 +904,7 @@ pub async fn run_update_job(
                         service_index,
                         service_total,
                         pull_fraction: None,
+                        download: None,
                         message: format!("compatibility tags settled for {}", svc.name),
                     },
                 );
@@ -910,6 +928,7 @@ pub async fn run_update_job(
                     service_index,
                     service_total,
                     pull_fraction: None,
+                    download: None,
                     message: match rollback_failure_step {
                         Some("healthcheck") => {
                             format!("service {} rolled back after healthcheck failure", svc.name)
@@ -941,6 +960,7 @@ pub async fn run_update_job(
                 service_index,
                 service_total,
                 pull_fraction: None,
+                download: None,
                 message: format!("service {} done", svc.name),
             },
         );
@@ -1035,64 +1055,6 @@ fn strip_tag_and_digest(image_ref: &str) -> Option<String> {
     Some(left.to_string())
 }
 
-fn parse_size_to_bytes(input: &str) -> Option<f64> {
-    let trimmed = input
-        .trim()
-        .trim_matches(|c| matches!(c, '[' | ']' | '(' | ')' | ','));
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    let mut split_idx = None;
-    for (idx, ch) in trimmed.char_indices() {
-        if !(ch.is_ascii_digit() || ch == '.') {
-            split_idx = Some(idx);
-            break;
-        }
-    }
-    let idx = split_idx.unwrap_or(trimmed.len());
-    if idx == 0 {
-        return None;
-    }
-    let num = trimmed[..idx].parse::<f64>().ok()?;
-    let unit = trimmed[idx..].trim().to_ascii_uppercase();
-    let factor = match unit.as_str() {
-        "" | "B" => 1.0,
-        "K" | "KB" | "KIB" => 1024.0,
-        "M" | "MB" | "MIB" => 1024.0 * 1024.0,
-        "G" | "GB" | "GIB" => 1024.0 * 1024.0 * 1024.0,
-        "T" | "TB" | "TIB" => 1024.0 * 1024.0 * 1024.0 * 1024.0,
-        _ => return None,
-    };
-    Some(num * factor)
-}
-
-fn parse_pull_fraction_from_line(line: &str) -> Option<f64> {
-    let mut best: Option<f64> = None;
-    for token in line.split_whitespace() {
-        let clean = token
-            .trim()
-            .trim_matches(|c| matches!(c, '[' | ']' | '(' | ')' | ','));
-        let Some((current, total)) = clean.split_once('/') else {
-            continue;
-        };
-        let Some(current_bytes) = parse_size_to_bytes(current) else {
-            continue;
-        };
-        let Some(total_bytes) = parse_size_to_bytes(total) else {
-            continue;
-        };
-        if total_bytes <= 0.0 {
-            continue;
-        }
-        let ratio = (current_bytes / total_bytes).clamp(0.0, 1.0);
-        if best.is_none_or(|v| ratio > v) {
-            best = Some(ratio);
-        }
-    }
-    best
-}
-
 async fn run_checked_with_pull_progress<F>(
     runner: &dyn CommandRunner,
     spec: CommandSpec,
@@ -1102,17 +1064,43 @@ async fn run_checked_with_pull_progress<F>(
     mut on_progress: F,
 ) -> anyhow::Result<()>
 where
-    F: FnMut(f64) + Send,
+    F: FnMut(PullProgressSnapshot) + Send,
 {
     let mut last_fraction = 0.0f64;
+    let mut last_signature = String::new();
     for attempt in 1..=retry_policy.max_attempts {
+        let mut tracker = PullProgressTracker::default();
+        let mut last_status_emit = std::time::Instant::now()
+            .checked_sub(Duration::from_secs(5))
+            .unwrap_or_else(std::time::Instant::now);
         let mut on_stdout = |_chunk: String| {};
         let mut on_stderr = |chunk: String| {
-            if let Some(frac) = parse_pull_fraction_from_line(&chunk) {
-                let capped = frac.clamp(0.0, 0.99);
-                if capped > last_fraction + 0.01 {
-                    last_fraction = capped;
-                    on_progress(capped);
+            for line in chunk.lines() {
+                let snapshot = tracker.observe_line(line).or_else(|| {
+                    parse_pull_fraction_from_line(line).map(|fraction| PullProgressSnapshot {
+                        fraction: Some(fraction.clamp(0.0, 1.0)),
+                        download: None,
+                    })
+                });
+                let Some(mut snapshot) = snapshot else {
+                    continue;
+                };
+                if let Some(fraction) = snapshot.fraction {
+                    snapshot.fraction = Some(fraction.clamp(0.0, 0.99));
+                }
+                let fraction_changed = snapshot
+                    .fraction
+                    .is_some_and(|fraction| fraction > last_fraction + 0.01);
+                let signature = pull_progress_signature(&snapshot);
+                let status_changed = signature != last_signature
+                    && last_status_emit.elapsed() >= Duration::from_millis(600);
+                if fraction_changed || status_changed {
+                    if let Some(fraction) = snapshot.fraction {
+                        last_fraction = fraction;
+                    }
+                    last_signature = signature;
+                    last_status_emit = std::time::Instant::now();
+                    on_progress(snapshot);
                 }
             }
         };

@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+ab_glyph = "0.2.32"
 async-trait = { workspace = true }
 async-stream = "0.3"
 axum = { workspace = true }
@@ -17,6 +18,8 @@ chrono = { workspace = true }
 cron = { workspace = true }
 dockrev-common = { path = "../dockrev-common" }
 include_dir = "0.7"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+imageproc = { version = "0.27.0", default-features = false, features = ["text"] }
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls", "ring", "rustls-native-certs"] }
 mime_guess = "2"
 regex = { workspace = true }

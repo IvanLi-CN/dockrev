@@ -1,5 +1,7 @@
 use super::*;
 
+mod telegram_card;
+
 #[test]
 fn smtp_dsn_parsing_requires_to() {
     let err = parse_smtp_dsn("smtp://user:pass@smtp.example.com:587").unwrap_err();
@@ -148,6 +150,665 @@ fn sample_job_payload(links: JobNotificationLinksV2) -> JobNotificationPayloadV2
             app_version: "0.1.0".to_string(),
             source: "dockrev-api",
         },
+    }
+}
+
+fn assert_png(bytes: &[u8]) {
+    assert!(bytes.len() > 4096, "png should not be tiny/empty");
+    assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
+}
+
+#[derive(Clone, Debug)]
+struct PixelParityRow {
+    name: &'static str,
+    width: u32,
+    height: u32,
+    byte_equal: bool,
+    diff_pixels: u64,
+    max_channel_delta: u8,
+}
+
+#[derive(Clone, Debug)]
+struct DynamicParityRow {
+    name: &'static str,
+    output_file: &'static str,
+    diff_file: &'static str,
+    width: u32,
+    height: u32,
+    diff_pixels: u64,
+    max_channel_delta: u8,
+}
+
+fn assert_png_pixel_equal(name: &'static str, actual: &[u8], expected: &[u8]) -> PixelParityRow {
+    let actual_img = image::load_from_memory(actual)
+        .unwrap_or_else(|err| panic!("{name} actual png decodes: {err}"))
+        .to_rgba8();
+    let expected_img = image::load_from_memory(expected)
+        .unwrap_or_else(|err| panic!("{name} expected png decodes: {err}"))
+        .to_rgba8();
+
+    assert_eq!(
+        actual_img.dimensions(),
+        expected_img.dimensions(),
+        "{name} dimensions must match"
+    );
+
+    let mut diff_pixels = 0u64;
+    let mut max_channel_delta = 0u8;
+    for (actual_pixel, expected_pixel) in actual_img.pixels().zip(expected_img.pixels()) {
+        if actual_pixel.0 != expected_pixel.0 {
+            diff_pixels += 1;
+        }
+        for channel in 0..4 {
+            max_channel_delta =
+                max_channel_delta.max(actual_pixel.0[channel].abs_diff(expected_pixel.0[channel]));
+        }
+    }
+
+    assert_eq!(diff_pixels, 0, "{name} pixel diff count must be 0");
+    assert_eq!(max_channel_delta, 0, "{name} max channel delta must be 0");
+
+    let (width, height) = actual_img.dimensions();
+    PixelParityRow {
+        name,
+        width,
+        height,
+        byte_equal: actual == expected,
+        diff_pixels,
+        max_channel_delta,
+    }
+}
+
+fn dynamic_parity_row(
+    name: &'static str,
+    output_file: &'static str,
+    diff_file: &'static str,
+    actual: &[u8],
+    expected: &[u8],
+) -> (DynamicParityRow, image::RgbaImage) {
+    let actual_img = image::load_from_memory(actual)
+        .unwrap_or_else(|err| panic!("{name} actual png decodes: {err}"))
+        .to_rgba8();
+    let expected_img = image::load_from_memory(expected)
+        .unwrap_or_else(|err| panic!("{name} expected png decodes: {err}"))
+        .to_rgba8();
+    assert_eq!(
+        actual_img.dimensions(),
+        expected_img.dimensions(),
+        "{name} dimensions must match"
+    );
+
+    let (width, height) = actual_img.dimensions();
+    let mut heatmap =
+        image::RgbaImage::from_pixel(width, height, image::Rgba([255, 255, 255, 255]));
+    let mut diff_pixels = 0u64;
+    let mut max_channel_delta = 0u8;
+
+    for y in 0..height {
+        for x in 0..width {
+            let actual_pixel = actual_img.get_pixel(x, y);
+            let expected_pixel = expected_img.get_pixel(x, y);
+            let mut pixel_delta = 0u8;
+            for channel in 0..4 {
+                let delta = actual_pixel.0[channel].abs_diff(expected_pixel.0[channel]);
+                pixel_delta = pixel_delta.max(delta);
+                max_channel_delta = max_channel_delta.max(delta);
+            }
+            if pixel_delta > 0 {
+                diff_pixels += 1;
+                heatmap.put_pixel(x, y, image::Rgba([255, 0, 64, 255]));
+            }
+        }
+    }
+
+    assert_eq!(diff_pixels, 0, "{name} dynamic parity diff count must be 0");
+    assert_eq!(
+        max_channel_delta, 0,
+        "{name} dynamic parity max channel delta must be 0"
+    );
+
+    (
+        DynamicParityRow {
+            name,
+            output_file,
+            diff_file,
+            width,
+            height,
+            diff_pixels,
+            max_channel_delta,
+        },
+        heatmap,
+    )
+}
+
+fn diff_pixels(actual: &image::RgbaImage, expected: &image::RgbaImage) -> u64 {
+    assert_eq!(actual.dimensions(), expected.dimensions());
+    actual
+        .pixels()
+        .zip(expected.pixels())
+        .filter(|(lhs, rhs)| lhs.0 != rhs.0)
+        .count() as u64
+}
+
+fn assert_dynamic_card_changes_are_slot_bounded(name: &'static str, card: &TelegramCard) {
+    let slots = telegram_card_debug_dynamic_text_slots(card).unwrap();
+    assert!(!slots.is_empty(), "{name} should have dynamic text slots");
+
+    for slot in &slots {
+        assert!(
+            slot.rendered_width <= slot.draw.2,
+            "{name} {} rendered width {} must fit draw width {}",
+            slot.name,
+            slot.rendered_width,
+            slot.draw.2
+        );
+    }
+    assert!(
+        slots.iter().any(|slot| slot.rendered_text.ends_with("...")),
+        "{name} should truncate at least one long dynamic slot"
+    );
+
+    let actual = image::load_from_memory(&render_telegram_card_png(card).unwrap())
+        .unwrap()
+        .to_rgba8();
+    let reference =
+        image::load_from_memory(&render_telegram_card_static_template_png(card.template).unwrap())
+            .unwrap()
+            .to_rgba8();
+    assert_eq!(actual.dimensions(), reference.dimensions());
+
+    let mut outside_slot_diffs = Vec::new();
+    for y in 0..actual.height() {
+        for x in 0..actual.width() {
+            if actual.get_pixel(x, y).0 == reference.get_pixel(x, y).0 {
+                continue;
+            }
+            if !slots
+                .iter()
+                .any(|slot| rect_contains(slot.draw, x, y) || rect_contains(slot.erase, x, y))
+            {
+                outside_slot_diffs.push((x, y));
+                if outside_slot_diffs.len() >= 8 {
+                    break;
+                }
+            }
+        }
+        if outside_slot_diffs.len() >= 8 {
+            break;
+        }
+    }
+
+    assert!(
+        outside_slot_diffs.is_empty(),
+        "{name} changed pixels outside declared slots: {outside_slot_diffs:?}"
+    );
+}
+
+fn rect_contains(rect: (i32, i32, u32, u32), x: u32, y: u32) -> bool {
+    let (rx, ry, rw, rh) = rect;
+    let x = x as i32;
+    let y = y as i32;
+    x >= rx && y >= ry && x < rx + rw as i32 && y < ry + rh as i32
+}
+
+fn write_pixel_parity_report(rows: &[PixelParityRow]) {
+    let Ok(dir) = std::env::var("DOCKREV_WRITE_TELEGRAM_CARD_EVIDENCE_DIR") else {
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    let dir = if dir.is_absolute() {
+        dir
+    } else {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(dir)
+    };
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let mut report = String::from(
+        "# Telegram Card Pixel Parity Report\n\n\
+         Template assets are compared against the accepted imagegen design reference PNGs after PNG decoding.\n\n\
+         | Card | Size | Byte Equal | Diff Pixels | Max Channel Delta |\n\
+         | --- | ---: | ---: | ---: | ---: |\n",
+    );
+    for row in rows {
+        report.push_str(&format!(
+            "| {} | {}x{} | {} | {} | {} |\n",
+            row.name, row.width, row.height, row.byte_equal, row.diff_pixels, row.max_channel_delta
+        ));
+    }
+    std::fs::write(dir.join("pixel-parity-report.md"), report).unwrap();
+}
+
+fn write_dynamic_parity_report(rows: &[DynamicParityRow]) {
+    let Ok(dir) = std::env::var("DOCKREV_WRITE_TELEGRAM_CARD_EVIDENCE_DIR") else {
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    let dir = if dir.is_absolute() {
+        dir
+    } else {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(dir)
+    };
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let mut report = String::from(
+        "# Telegram Dynamic Parity Report\n\n\
+         Accepted fixture cards are rendered through the dynamic slot renderer, then compared against the original design references after PNG decoding.\n\n\
+         | Card | Size | Dynamic Output | Diff Heatmap | Diff Pixels | Max Channel Delta |\n\
+         | --- | ---: | --- | --- | ---: | ---: |\n",
+    );
+    for row in rows {
+        report.push_str(&format!(
+            "| {} | {}x{} | [{}]({}) | [{}]({}) | {} | {} |\n",
+            row.name,
+            row.width,
+            row.height,
+            row.output_file,
+            row.output_file,
+            row.diff_file,
+            row.diff_file,
+            row.diff_pixels,
+            row.max_channel_delta
+        ));
+    }
+    std::fs::write(dir.join("dynamic-parity-report.md"), report).unwrap();
+}
+
+#[test]
+fn telegram_card_renderer_generates_all_notification_cards() {
+    let links = finalize_job_links(
+        "https://dockrev.example.com/queue/job_123".to_string(),
+        vec![make_service_url(1)],
+        false,
+        None,
+    );
+    let job = sample_job_payload(links);
+    assert_png(&render_job_telegram_card_png(&job, None).unwrap());
+
+    let new_version = sample_new_version_payload();
+    assert_png(&render_new_version_telegram_card_png(&new_version).unwrap());
+
+    let ghcr = sample_ghcr_anomaly_payload();
+    assert_png(&render_ghcr_webhook_anomaly_telegram_card_png(&ghcr).unwrap());
+
+    let test = build_test_payload_v2(
+        "2026-03-05T04:44:59.673686721Z",
+        "dockrev: test notification",
+        Some(NotificationTestChannel::Telegram),
+        NotificationTestChannel::Telegram,
+        "0.1.0",
+        "https://dockrev.example.com/settings",
+    );
+    let test_png = render_test_telegram_card_png(&test).unwrap();
+    assert_png(&test_png);
+
+    if let Ok(dir) = std::env::var("DOCKREV_WRITE_TELEGRAM_CARD_EVIDENCE_DIR") {
+        let dir = std::path::PathBuf::from(dir);
+        let dir = if dir.is_absolute() {
+            dir
+        } else {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join(dir)
+        };
+        std::fs::create_dir_all(&dir).unwrap();
+        let fixture_job = accepted_design_fixture_card(CardTemplate::JobFinished);
+        let fixture_new_version = accepted_design_fixture_card(CardTemplate::NewVersion);
+        let fixture_ghcr = accepted_design_fixture_card(CardTemplate::GhcrAnomaly);
+        let fixture_test = accepted_design_fixture_card(CardTemplate::TestNotification);
+        std::fs::write(
+            dir.join("job-finished-card.png"),
+            render_telegram_card_png(&fixture_job).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("new-version-card.png"),
+            render_telegram_card_png(&fixture_new_version).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("ghcr-anomaly-card.png"),
+            render_telegram_card_png(&fixture_ghcr).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("test-notification-card.png"),
+            render_telegram_card_png(&fixture_test).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("job-finished-dynamic-card.png"),
+            render_job_telegram_card_png(&job, None).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("new-version-dynamic-card.png"),
+            render_new_version_telegram_card_png(&new_version).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("ghcr-anomaly-dynamic-card.png"),
+            render_ghcr_webhook_anomaly_telegram_card_png(&ghcr).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("test-notification-dynamic-card.png"),
+            render_test_telegram_card_png(&test).unwrap(),
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn telegram_card_template_assets_match_accepted_design_templates() {
+    assert_eq!(
+        include_bytes!("../../../../docs/specs/tgc9m-telegram-dynamic-notification-cards/assets/job-finished-design-reference.png")
+            .as_slice(),
+        include_bytes!("../../assets/telegram-card-template-job-finished.png").as_slice()
+    );
+
+    assert_eq!(
+        include_bytes!("../../../../docs/specs/tgc9m-telegram-dynamic-notification-cards/assets/imagegen-design-reference.png")
+            .as_slice(),
+        include_bytes!("../../assets/telegram-card-template-new-version.png").as_slice()
+    );
+
+    assert_eq!(
+        include_bytes!("../../../../docs/specs/tgc9m-telegram-dynamic-notification-cards/assets/ghcr-anomaly-design-reference.png")
+            .as_slice(),
+        include_bytes!("../../assets/telegram-card-template-ghcr-anomaly.png").as_slice()
+    );
+
+    assert_eq!(
+        include_bytes!("../../../../docs/specs/tgc9m-telegram-dynamic-notification-cards/assets/test-notification-design-reference.png")
+            .as_slice(),
+        include_bytes!("../../assets/telegram-card-template-test.png").as_slice()
+    );
+}
+
+#[test]
+fn telegram_card_template_assets_pixel_match_accepted_design_templates() {
+    let rows = vec![
+        assert_png_pixel_equal(
+            "job_finished",
+            include_bytes!("../../assets/telegram-card-template-job-finished.png").as_slice(),
+            include_bytes!("../../../../docs/specs/tgc9m-telegram-dynamic-notification-cards/assets/job-finished-design-reference.png")
+                .as_slice(),
+        ),
+        assert_png_pixel_equal(
+            "new_version",
+            include_bytes!("../../assets/telegram-card-template-new-version.png").as_slice(),
+            include_bytes!("../../../../docs/specs/tgc9m-telegram-dynamic-notification-cards/assets/imagegen-design-reference.png")
+                .as_slice(),
+        ),
+        assert_png_pixel_equal(
+            "ghcr_anomaly",
+            include_bytes!("../../assets/telegram-card-template-ghcr-anomaly.png").as_slice(),
+            include_bytes!("../../../../docs/specs/tgc9m-telegram-dynamic-notification-cards/assets/ghcr-anomaly-design-reference.png")
+                .as_slice(),
+        ),
+        assert_png_pixel_equal(
+            "notification_test",
+            include_bytes!("../../assets/telegram-card-template-test.png").as_slice(),
+            include_bytes!("../../../../docs/specs/tgc9m-telegram-dynamic-notification-cards/assets/test-notification-design-reference.png")
+                .as_slice(),
+        ),
+    ];
+
+    for row in &rows {
+        println!(
+            "{}: size={}x{}, byte_equal={}, diff_pixels={}, max_channel_delta={}",
+            row.name, row.width, row.height, row.byte_equal, row.diff_pixels, row.max_channel_delta
+        );
+    }
+    write_pixel_parity_report(&rows);
+}
+
+#[test]
+fn telegram_card_renderer_replaces_dynamic_metadata_slots() {
+    let links = finalize_job_links(
+        "https://dockrev.example.com/queue/job_123".to_string(),
+        vec![make_service_url(1)],
+        false,
+        None,
+    );
+    let job = sample_job_payload(links);
+    let new_version = sample_new_version_payload();
+    let ghcr = sample_ghcr_anomaly_payload();
+    let test = build_test_payload_v2(
+        "2026-03-05T04:44:59.673686721Z",
+        "dockrev: test notification",
+        Some(NotificationTestChannel::Telegram),
+        NotificationTestChannel::Telegram,
+        "0.1.0",
+        "https://dockrev.example.com/settings",
+    );
+
+    let cases = [
+        (
+            "job_finished",
+            render_job_telegram_card_png(&job, None).unwrap(),
+            CardTemplate::JobFinished,
+        ),
+        (
+            "new_version",
+            render_new_version_telegram_card_png(&new_version).unwrap(),
+            CardTemplate::NewVersion,
+        ),
+        (
+            "ghcr_anomaly",
+            render_ghcr_webhook_anomaly_telegram_card_png(&ghcr).unwrap(),
+            CardTemplate::GhcrAnomaly,
+        ),
+        (
+            "notification_test",
+            render_test_telegram_card_png(&test).unwrap(),
+            CardTemplate::TestNotification,
+        ),
+    ];
+
+    for (name, actual, template) in cases {
+        assert_png(&actual);
+        assert_ne!(
+            actual,
+            render_telegram_card_static_template_png(template).unwrap(),
+            "{name} should replace at least one text slot for non-fixture metadata"
+        );
+    }
+}
+
+#[test]
+fn telegram_card_design_fixture_cards_render_accepted_designs() {
+    let cases = [
+        (
+            "job_finished",
+            CardTemplate::JobFinished,
+            "job-finished-dynamic-parity-card.png",
+            "job-finished-dynamic-parity-diff.png",
+            include_bytes!("../../../../docs/specs/tgc9m-telegram-dynamic-notification-cards/assets/job-finished-design-reference.png")
+                .as_slice(),
+        ),
+        (
+            "new_version",
+            CardTemplate::NewVersion,
+            "new-version-dynamic-parity-card.png",
+            "new-version-dynamic-parity-diff.png",
+            include_bytes!("../../../../docs/specs/tgc9m-telegram-dynamic-notification-cards/assets/imagegen-design-reference.png")
+                .as_slice(),
+        ),
+        (
+            "ghcr_anomaly",
+            CardTemplate::GhcrAnomaly,
+            "ghcr-anomaly-dynamic-parity-card.png",
+            "ghcr-anomaly-dynamic-parity-diff.png",
+            include_bytes!("../../../../docs/specs/tgc9m-telegram-dynamic-notification-cards/assets/ghcr-anomaly-design-reference.png")
+                .as_slice(),
+        ),
+        (
+            "notification_test",
+            CardTemplate::TestNotification,
+            "test-notification-dynamic-parity-card.png",
+            "test-notification-dynamic-parity-diff.png",
+            include_bytes!("../../../../docs/specs/tgc9m-telegram-dynamic-notification-cards/assets/test-notification-design-reference.png")
+                .as_slice(),
+        ),
+    ];
+    let mut rows = Vec::new();
+
+    let evidence_dir = std::env::var("DOCKREV_WRITE_TELEGRAM_CARD_EVIDENCE_DIR")
+        .ok()
+        .map(|dir| {
+            let dir = std::path::PathBuf::from(dir);
+            if dir.is_absolute() {
+                dir
+            } else {
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../..")
+                    .join(dir)
+            }
+        });
+    if let Some(dir) = &evidence_dir {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+
+    for (name, template, output_file, diff_file, expected) in cases {
+        let card = accepted_design_fixture_card(template);
+        let actual = render_telegram_card_png(&card).unwrap();
+        assert_png_pixel_equal(name, &actual, expected);
+        let debug_slots = telegram_card_debug_dynamic_text_slots(&card).unwrap();
+        assert!(
+            !debug_slots.is_empty(),
+            "{name} parity fixture must still traverse text slots"
+        );
+        let (row, heatmap) = dynamic_parity_row(name, output_file, diff_file, &actual, expected);
+        if let Some(dir) = &evidence_dir {
+            std::fs::write(dir.join(output_file), &actual).unwrap();
+            heatmap.save(dir.join(diff_file)).unwrap();
+        }
+        rows.push(row);
+    }
+
+    write_dynamic_parity_report(&rows);
+}
+
+#[test]
+fn telegram_card_static_fixture_requires_exact_design_metadata() {
+    let mut card = accepted_design_fixture_card(CardTemplate::NewVersion);
+    card.subject = "1.0.0 -> latest".to_string();
+    let err = render_static_design_fixture_card_png(&card).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("does not match the accepted static design fixture")
+    );
+}
+
+#[test]
+fn telegram_card_dynamic_renderer_handles_long_text_without_overflowing_slots() {
+    let mut job = accepted_design_fixture_card(CardTemplate::JobFinished);
+    job.title =
+        "enterprise-platform-with-long-stack-name / api-gateway-worker-with-long-service-name 更新完成"
+            .to_string();
+    job.subject =
+        "enterprise-platform-with-long-stack-name / api-gateway-worker-with-long-service-name"
+            .to_string();
+    job.metrics[0] = pair(
+        "变更",
+        "enterprise-platform-with-long-stack-name / api-gateway-worker-with-long-service-name",
+    );
+    job.metrics[2] = pair("", "job_update_with_a_very_long_identifier_1234567890");
+    job.rows[1] = pair(
+        "服务",
+        "enterprise-platform-with-long-stack-name / api-gateway-worker-with-long-service-name",
+    );
+
+    let mut new_version = accepted_design_fixture_card(CardTemplate::NewVersion);
+    new_version.title =
+        "blog / api-with-a-very-long-service-name-that-should-not-overflow 服务有新版本"
+            .to_string();
+    new_version.subject =
+        "v2026.07.06-super-long-current-build-tag -> v2026.07.06-even-longer-candidate-build-tag"
+            .to_string();
+    new_version.metrics[0] = pair("检查", "123456789 个服务");
+    new_version.metrics[2] = pair("", "job_check_with_a_very_long_identifier_1234567890");
+    new_version.rows[1] = pair(
+        "服务",
+        "enterprise-platform-with-long-stack-name / api-gateway-worker-with-long-service-name",
+    );
+    new_version.rows[2] = pair(
+        "版本变更",
+        "v2026.07.06-super-long-current-build-tag -> v2026.07.06-even-longer-candidate-build-tag",
+    );
+
+    let mut ghcr = accepted_design_fixture_card(CardTemplate::GhcrAnomaly);
+    ghcr.subject = "123 missing / 456 conflict / 789 error".to_string();
+    ghcr.metrics[0] = pair("缺失", "123456789 个");
+    ghcr.metrics[1] = pair("冲突", "456789123 个");
+    ghcr.metrics[2] = pair("", "job_ghcr_with_a_very_long_identifier_1234567890");
+    ghcr.rows[1] = pair("异常摘要", "123 missing / 456 conflict / 789 error");
+    ghcr.rows[2] = pair(
+        "仓库",
+        "organization-with-long-name/service-with-long-name [missing]",
+    );
+
+    let mut test = accepted_design_fixture_card(CardTemplate::TestNotification);
+    test.metrics[0] = pair("请求", "telegram-with-a-very-long-request-channel");
+    test.metrics[2] = pair("", "2026.07.06-super-long-version-tag");
+    test.rows[2] = pair("应用版本", "2026.07.06-super-long-version-tag");
+    test.rows[3] = pair("发送时间", "2026-03-05 04:44:59");
+
+    for (name, card) in [
+        ("job_finished", job),
+        ("new_version", new_version),
+        ("ghcr_anomaly", ghcr),
+        ("notification_test", test),
+    ] {
+        let png = render_telegram_card_png(&card).unwrap();
+        assert_png(&png);
+        assert_ne!(
+            png,
+            render_telegram_card_static_template_png(card.template).unwrap()
+        );
+        assert_dynamic_card_changes_are_slot_bounded(name, &card);
+    }
+}
+
+#[test]
+fn telegram_card_static_template_rebuilds_accepted_design_from_base_and_layers() {
+    let cases = [
+        ("job_finished", CardTemplate::JobFinished),
+        ("new_version", CardTemplate::NewVersion),
+        ("ghcr_anomaly", CardTemplate::GhcrAnomaly),
+        ("notification_test", CardTemplate::TestNotification),
+    ];
+    for (name, template) in cases {
+        let static_template = build_static_telegram_card_template(template).unwrap();
+        let restored = compose_static_template(&static_template).unwrap();
+        let base_diff_pixels = diff_pixels(&static_template.base, &static_template.reference);
+        let restored_diff_pixels = diff_pixels(&restored, &static_template.reference);
+
+        assert_eq!(static_template.template, template);
+        assert!(
+            static_template.layers.len() >= 8,
+            "{name} should expose multiple template layers"
+        );
+        assert!(
+            static_template
+                .layers
+                .iter()
+                .all(|layer| !layer.name.trim().is_empty()),
+            "{name} template layers should carry stable names"
+        );
+        assert!(
+            base_diff_pixels > 0,
+            "{name} base must differ from the reference after blanking content layers"
+        );
+        assert_eq!(
+            restored_diff_pixels, 0,
+            "{name} recomposed output must restore the accepted reference exactly"
+        );
     }
 }
 

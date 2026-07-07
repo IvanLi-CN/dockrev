@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { getJob, newJobEventsSource, type JobDetail, type JobLogLine, type JobProgress } from '../api'
 import { formatJobMachineName, formatJobReadableDisplay } from '../jobDisplay'
+import { formatJobProgressDownload, parseJobProgressDownload } from '../jobProgressDownload'
 import { TaskResultReason } from '../components/TaskResultReason'
 import { navigate } from '../routes'
 import { Button, Chip, Mono, Pill } from '../ui'
@@ -238,6 +239,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
               plannedTotal: typeof p.plannedTotal === 'number' ? p.plannedTotal : null,
               ...(plannedPercent === undefined ? {} : { plannedPercent }),
               currentTarget: typeof p.currentTarget === 'string' ? p.currentTarget : null,
+              download: parseJobProgressDownload(p.download),
               updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : new Date().toISOString(),
             })
             if (next) setProgress(next)
@@ -334,6 +336,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
     displayedCompletedPercent !== null ? `${displayedCompletedPercent}%` : isRunning ? 'running' : job?.status ?? 'finished'
   const dualProgressAriaText = `安排 ${plannedProgressAriaText} · 完成 ${completedProgressAriaText}`
   const isDualIndeterminate = isPlannedIndeterminateRunning || isCompletedIndeterminateRunning
+  const downloadLabel = formatJobProgressDownload(progress?.download)
 
   return (
     <div className="page jobDetailPage">
@@ -431,6 +434,11 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
                 <Mono>{progress.phase || '-'}</Mono>
                 {progress.message ? ` · ${progress.message}` : ''}
               </span>
+              {downloadLabel ? (
+                <span>
+                  下载 <Mono>{downloadLabel}</Mono>
+                </span>
+              ) : null}
               <span>
                 安排 <Mono>{plannedTotal > 0 ? `${plannedCurrent}/${plannedTotal}` : '-'}</Mono> · 完成{' '}
                 <Mono>{progress.total > 0 ? `${progress.current}/${progress.total}` : '-'}</Mono>

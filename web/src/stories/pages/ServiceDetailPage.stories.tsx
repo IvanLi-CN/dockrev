@@ -217,20 +217,45 @@ export const LogsSection: Story = {
     expectStory(currentRoutePathname() === '/services/stack-prod/svc-prod-api/logs', 'logs deep link missing')
     expectStory(findTab(canvasElement, 'logs')?.getAttribute('data-state') === 'active', 'logs tab should be active')
     expectStory(normalizeText(canvasElement.textContent).includes('boot complete'), 'logs should render stream lines')
+    expectStory(normalizeText(canvasElement.textContent).includes('runtime perf'), 'logs should render structured message text')
+    expectStory(normalizeText(canvasElement.textContent).includes('admin_read'), 'logs should render structured metadata chips')
     expectStory(normalizeText(canvasElement.textContent).includes('2026-06-29'), 'logs should render the log date')
     expectStory(normalizeText(canvasElement.textContent).includes('ERR'), 'logs should render inferred log levels')
     const input = canvasElement.querySelector<HTMLInputElement>('input[aria-label="搜索日志"]')
     expectStory(input, 'logs search input missing')
+    expectStory(Boolean(findButton(canvasElement, 'Human')), 'logs human toggle missing')
+    expectStory(Boolean(findButton(canvasElement, 'Raw')), 'logs raw toggle missing')
+    expectStory(
+      canvasElement.querySelector('[data-service-logs-virtualized="true"]')?.getAttribute('data-service-logs-view') === 'human',
+      'logs should default to human mode',
+    )
     expectStory(Boolean(findButton(canvasElement, '自动换行 关')), 'logs wrap toggle missing')
     expectStory(Boolean(findButton(canvasElement, 'UTC')), 'logs timezone toggle missing')
     expectStory(
       canvasElement.querySelector('[data-service-logs-virtualized="true"]')?.getAttribute('data-service-logs-wrap') === 'off',
       'logs should default to nowrap mode',
     )
+    findButton(canvasElement, 'Raw')?.click()
+    await waitForCondition(
+      () =>
+        canvasElement.querySelector('[data-service-logs-virtualized="true"]')?.getAttribute('data-service-logs-view') ===
+        'raw',
+    )
+    expectStory(normalizeText(canvasElement.textContent).includes('"timestamp"'), 'raw mode should expose original JSON text')
+    findButton(canvasElement, 'Human')?.click()
+    await waitForCondition(
+      () =>
+        canvasElement.querySelector('[data-service-logs-virtualized="true"]')?.getAttribute('data-service-logs-view') ===
+        'human',
+    )
     input.value = 'slow query'
     input.dispatchEvent(new Event('input', { bubbles: true }))
     input.dispatchEvent(new Event('change', { bubbles: true }))
     await waitForCondition(() => normalizeText(canvasElement.textContent).includes('1 /'))
+    input.value = 'freshness_probe'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    input.dispatchEvent(new Event('change', { bubbles: true }))
+    await waitForCondition(() => normalizeText(canvasElement.textContent).includes('runtime perf'))
   },
 }
 
@@ -312,11 +337,15 @@ export const LogsSectionEvidence: Story = {
     await waitForCondition(() => normalizeText(canvasElement.textContent).includes('实时日志'))
     expectStory(currentRoutePathname() === '/services/stack-prod/svc-prod-api/logs', 'logs deep link missing')
     expectStory(findTab(canvasElement, 'logs')?.getAttribute('data-state') === 'active', 'logs tab should be active')
+    expectStory(normalizeText(canvasElement.textContent).includes('runtime perf'), 'logs evidence story should render structured summary')
+    expectStory(normalizeText(canvasElement.textContent).includes('dashboard_overview_phase'), 'logs evidence story should render structured metadata')
     expectStory(normalizeText(canvasElement.textContent).includes('worker sync complete jobs=18 queue=critical'), 'logs evidence story should render denser stream lines')
     expectStory(normalizeText(canvasElement.textContent).includes('WARN'), 'logs evidence story should expose inferred warning level')
     const input = canvasElement.querySelector<HTMLInputElement>('input[aria-label="搜索日志"]')
     expectStory(input, 'logs search input missing')
     expectStory(input?.value === '', 'logs evidence story should stay in default non-filtered state')
+    expectStory(Boolean(findButton(canvasElement, 'Human')), 'logs evidence story should expose human toggle')
+    expectStory(Boolean(findButton(canvasElement, 'Raw')), 'logs evidence story should expose raw toggle')
     expectStory(Boolean(findButton(canvasElement, '自动换行 关')), 'logs evidence story should expose wrap toggle')
 
     const assertAligned = () => {
