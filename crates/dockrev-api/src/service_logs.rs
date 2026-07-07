@@ -1042,7 +1042,9 @@ fn parse_tracing_text_meta(input: &str) -> Option<ServiceLogMeta> {
         return None;
     }
 
-    let (message, mut attributes) = split_tracing_message_and_attributes(rest);
+    let (rest, mut attributes) = strip_tracing_context_prefixes(rest);
+    let (message, event_attributes) = split_tracing_message_and_attributes(rest);
+    attributes.extend(event_attributes);
     let message = message.trim().trim_end_matches(':').trim();
     if message.is_empty() && attributes.is_empty() {
         return None;
@@ -1096,6 +1098,62 @@ fn take_leading_level_token(input: &str) -> Option<(&str, &str)> {
         return Some((level, parts.next().unwrap_or_default()));
     }
     None
+}
+
+fn strip_tracing_context_prefixes(input: &str) -> (&str, BTreeMap<String, Value>) {
+    let mut rest = input.trim_start();
+    let mut attributes = BTreeMap::new();
+
+    if let Some((target, after)) = rest.split_once(": ")
+        && !target.contains('=')
+        && !target.contains('{')
+        && is_tracing_target(target)
+    {
+        attributes.insert("target".to_string(), Value::String(target.to_string()));
+        rest = after.trim_start();
+    }
+
+    while let Some((span, span_fields, after)) = take_leading_tracing_span(rest) {
+        attributes
+            .entry("span".to_string())
+            .or_insert_with(|| Value::String(span.to_string()));
+        if let Some(span_attributes) = parse_logfmt_attributes(span_fields) {
+            for (key, value) in span_attributes {
+                attributes.entry(key).or_insert(value);
+            }
+        }
+        rest = after.trim_start();
+    }
+
+    (rest, attributes)
+}
+
+fn take_leading_tracing_span(input: &str) -> Option<(&str, &str, &str)> {
+    let open_index = input.find('{')?;
+    let span = input[..open_index].trim();
+    if !is_tracing_span_name(span) {
+        return None;
+    }
+
+    let mut depth = 0usize;
+    let mut close_index = None;
+    for (offset, ch) in input[open_index..].char_indices() {
+        if ch == '{' {
+            depth += 1;
+            continue;
+        }
+        if ch == '}' {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                close_index = Some(open_index + offset);
+                break;
+            }
+        }
+    }
+    let close_index = close_index?;
+    let after = input[close_index + 1..].trim_start();
+    let after = after.strip_prefix(':')?;
+    Some((span, &input[open_index + 1..close_index], after))
 }
 
 fn split_tracing_message_and_attributes(input: &str) -> (String, BTreeMap<String, Value>) {
@@ -1189,6 +1247,14 @@ fn is_tracing_target(value: &str) -> bool {
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | ':' | '-'))
         && (value.contains("::") || value.contains('_') || value.contains('-'))
+}
+
+fn is_tracing_span_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 80
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | ':' | '-'))
 }
 
 fn take_btree_stringish(attributes: &mut BTreeMap<String, Value>, keys: &[&str]) -> Option<String> {
@@ -1432,6 +1498,25 @@ mod tests {
         );
         assert_eq!(meta.attributes["status"].as_str(), Some("200 OK"));
         assert_eq!(meta.attributes["elapsed_ms"].as_i64(), Some(4548));
+    }
+
+    #[test]
+    fn parse_service_log_lines_handles_tracing_span_fields() {
+        let lines = parse_service_log_lines(
+            "2026-07-07T05:54:01.126784508Z 2026-07-07T05:54:01.126674Z INFO openai_proxy: request{method=POST uri=/v1/responses}: openai proxy request started proxy_request_id=2722 has_body=true\n",
+        );
+
+        let meta = lines[0].meta.as_ref().expect("tracing text metadata");
+        assert_eq!(
+            meta.message.as_deref(),
+            Some("openai proxy request started")
+        );
+        assert_eq!(meta.attributes["target"].as_str(), Some("openai_proxy"));
+        assert_eq!(meta.attributes["span"].as_str(), Some("request"));
+        assert_eq!(meta.attributes["method"].as_str(), Some("POST"));
+        assert_eq!(meta.attributes["uri"].as_str(), Some("/v1/responses"));
+        assert_eq!(meta.attributes["proxy_request_id"].as_i64(), Some(2722));
+        assert_eq!(meta.attributes["has_body"].as_bool(), Some(true));
     }
 
     #[test]
