@@ -134,6 +134,13 @@ export const RescanningState: Story = {
     await waitForCondition(() => findButton(doc, '重扫中…')?.getAttribute('aria-busy') === 'true')
     assertStory(findButton(doc, '等待扫描')?.disabled === true, 'cleanup action should switch to waiting copy while rescanning')
     assertStory(findButton(doc, '重扫中…')?.disabled === true, 'rescan action should be disabled while rescanning')
+    assertStory(!(canvasElement.textContent?.includes('旧数据正在更新') ?? false), 'rescan should not render the old stale-data prompt copy')
+    assertStory(!canvasElement.querySelector('.cleanupAlert.cleanupAlertInfo'), 'rescan should not render a full-width info alert')
+    assertStory(
+      canvasElement.textContent?.includes('37.8 GB / 80.0 GB'),
+      'partial rescan should preserve cached server disk usage until ready',
+    )
+    assertStory(canvasElement.querySelector('.cleanupStaleLoading'), 'stale cached cleanup cards or rows should show weak loading motion')
     assertButtonHasNoIcon(doc, '等待扫描')
     assertButtonHasNoIcon(doc, '重扫中…')
   },

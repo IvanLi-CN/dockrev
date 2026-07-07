@@ -812,6 +812,21 @@ export type CleanupScanResponse = {
   confirmationFingerprint?: string | null
 }
 
+export type CleanupScanRunStartResponse = {
+  scanId: string
+  previousSnapshot?: CleanupScanResponse | null
+  retryAfterMs: number
+}
+
+export type CleanupScanRunPhase = 'scan_started' | 'scan_partial' | 'scan_ready' | 'scan_failed'
+
+export type CleanupScanRunEvent = {
+  scanId: string
+  phase: CleanupScanRunPhase
+  response?: CleanupScanResponse | null
+  message?: string | null
+}
+
 export type CleanupFingerprintMismatchError = {
   latest: CleanupScanResponse
 }

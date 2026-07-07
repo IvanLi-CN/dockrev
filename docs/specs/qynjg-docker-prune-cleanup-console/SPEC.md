@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-03-29
-- Last: 2026-04-28
+- Last: 2026-07-07
 
 ## 背景 / 问题陈述
 
@@ -190,6 +190,19 @@
 
 ![Cleanup confirm dialog](./assets/cleanup-confirm-dialog.png)
 
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `element`
+  requested_viewport: `1920x1000`
+  viewport_strategy: `devtools-emulate`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/CleanupPage/RescanningState`
+  state: `stale snapshot with streaming partial refresh`
+  evidence_note: 验证 cleanup 重扫期间保留旧 snapshot 可读，已到达的 streaming partial 会逐步替换页面投影，旧缓存卡片、统计块、分组与行使用低干扰 loading 动效标记。
+
+![Cleanup streaming rescan stale state](./assets/cleanup-streaming-rescan-stale.png)
+
 ## 资产晋升（Asset promotion）
 
 None
@@ -220,6 +233,7 @@ None
 - 2026-03-29：完成 cleanup console 实装、Storybook 场景、视觉证据与 contract 同步。
 - 2026-04-04：将清理页“服务器状态”摘要区压缩为更紧凑的信息密度，并把 preset tabs 内联进清理规则标题区，减少首屏纵向空白。
 - 2026-04-28：补充服务器磁盘已使用/总容量展示，明确候选百分比语义，并修正未知大小资源的空轨道展示。
+- 2026-07-07：新增 cleanup scan-runs SSE 流式重扫契约，页面重扫期间使用旧 snapshot 弱加载态并按 partial 事件渐进替换。
 
 ## 参考（References）
 

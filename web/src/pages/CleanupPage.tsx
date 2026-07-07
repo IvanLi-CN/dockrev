@@ -1,25 +1,48 @@
-import { startTransition, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { startTransition, useCallback, useEffect, useRef, useMemo, useState, type ReactNode } from 'react'
 import { Box, HardDrive, Layers3, Package } from 'lucide-react'
 import {
   ApiError,
   applyCleanups,
+  cleanupScanRunEventsUrl,
   scanCleanups,
+  startCleanupScanRun,
   type CleanupApplyRequest,
   type CleanupFingerprintMismatchError,
   type CleanupPreset,
   type CleanupResourceItem,
   type CleanupResourceKind,
+  type CleanupScanRunEvent,
   type CleanupScanRequest,
   type CleanupScanResponse,
   type CleanupScope,
-  type CleanupServerDiskUsage,
   type CleanupStackGroup,
 } from '../api'
 import { useConfirm } from '../confirm'
 import { navigate } from '../routes'
 import { Button, Mono, Pill, RefreshIcon, SectionTitle, Tabs, TabsList, TabsTrigger, TrashIcon } from '../ui'
-
-const PRESET_ORDER: CleanupPreset[] = ['conservative', 'balanced', 'project_deep_clean', 'aggressive']
+import {
+  KIND_LABEL,
+  aggregateStackResources,
+  buildUsageCards,
+  cleanupResourceKey,
+  cleanupResourceKeys,
+  countUnknownResources,
+  countVisibleResources,
+  flattenAllResources,
+  formatBytes,
+  formatDiskUsage,
+  formatEstimate,
+  formatPercent,
+  formatUnknownCount,
+  itemHasUnknownSize,
+  kindSummary,
+  mergeCleanupResponses,
+  projectResponseForPreset,
+  staleBucketsForResponse,
+  toErrorMessage,
+  type CleanupUsageBucket,
+  type CleanupUsageCard,
+} from './cleanupPageModel'
 
 const PRESET_META: Array<{
   key: CleanupPreset
@@ -48,58 +71,28 @@ const PRESET_META: Array<{
   },
 ]
 
-const KIND_LABEL: Record<CleanupResourceKind, string> = {
-  image: '镜像',
-  container: '容器',
-  network: '网络',
-  volume: '卷',
-  builder_cache: 'Builder Cache',
-}
-
-type CleanupUsageBucket = 'container' | 'image' | 'volume' | 'other'
-
-type CleanupUsageCard = {
-  key: CleanupUsageBucket
-  label: string
-  description: string
-  bytes: number
-  count: number
-  unknownCount: number
-  share: number
-}
-
 const CLEANUP_USAGE_CARD_META: Array<{
   key: CleanupUsageBucket
-  label: string
-  description: string
   icon: typeof Box
   toneClassName: string
 }> = [
   {
     key: 'container',
-    label: '容器',
-    description: '可回收容器层与残留运行时空间',
     icon: Box,
     toneClassName: 'cleanupUsageCardContainer',
   },
   {
     key: 'image',
-    label: '镜像',
-    description: '可回收旧 tag 与未被引用的镜像层',
     icon: Package,
     toneClassName: 'cleanupUsageCardImage',
   },
   {
     key: 'volume',
-    label: '卷',
-    description: '可回收缓存、数据卷与未挂载持久化内容',
     icon: HardDrive,
     toneClassName: 'cleanupUsageCardVolume',
   },
   {
     key: 'other',
-    label: '其他',
-    description: '可回收网络与 builder cache 等辅助资源',
     icon: Layers3,
     toneClassName: 'cleanupUsageCardOther',
   },
@@ -126,219 +119,6 @@ function formatShort(ts?: string | null): string {
   const date = new Date(ts)
   if (Number.isNaN(date.valueOf())) return ts
   return date.toLocaleString('zh-CN', { hour12: false })
-}
-
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let value = bytes
-  let index = 0
-  while (value >= 1024 && index < units.length - 1) {
-    value /= 1024
-    index += 1
-  }
-  const digits = value >= 100 || index === 0 ? 0 : value >= 10 ? 1 : 2
-  return `${value.toFixed(digits)} ${units[index]}`
-}
-
-function formatEstimate(bytes?: number | null, hasUnknown?: boolean): string {
-  const normalizedBytes = Number.isFinite(bytes ?? null) ? Math.max(0, bytes ?? 0) : 0
-  if (hasUnknown) {
-    if (normalizedBytes > 0) return `${formatBytes(normalizedBytes)}+`
-    return '未知大小'
-  }
-  return formatBytes(normalizedBytes)
-}
-
-function formatUnknownCount(count: number): string {
-  return `${count} 项大小未知`
-}
-
-function formatDiskUsage(usage?: CleanupServerDiskUsage | null): { value: string; hint: string; percent: number } {
-  if (!usage || usage.totalBytes <= 0) {
-    return {
-      value: '未获取',
-      hint: '运行环境未返回 df 数据',
-      percent: 0,
-    }
-  }
-  const percent = Math.min(1, Math.max(0, usage.usedBytes / usage.totalBytes))
-  return {
-    value: `${formatBytes(usage.usedBytes)} / ${formatBytes(usage.totalBytes)}`,
-    hint: `服务器磁盘已使用 ${formatPercent(percent)}`,
-    percent,
-  }
-}
-
-function formatPercent(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return '0%'
-  if (value >= 0.995) return '100%'
-  return `${Math.max(1, Math.round(value * 100))}%`
-}
-
-function countVisibleResources(response: CleanupScanResponse): number {
-  if (response.status !== 'ready') return 0
-  let total = 0
-  for (const stack of response.stackGroups) {
-    total += stack.stackOrphans.length
-    for (const service of stack.services) total += service.resources.length
-  }
-  total += response.unownedGroup?.resources.length ?? 0
-  return total
-}
-
-function flattenAllResources(response: CleanupScanResponse): CleanupResourceItem[] {
-  if (response.status !== 'ready') return []
-  return [
-    ...response.stackGroups.flatMap((stack) => [
-      ...stack.stackOrphans,
-      ...stack.services.flatMap((service) => service.resources),
-    ]),
-    ...(response.unownedGroup?.resources ?? []),
-  ]
-}
-
-function countUnknownResources(resources: CleanupResourceItem[]): number {
-  return resources.filter(itemHasUnknownSize).length
-}
-
-function usageBucketForKind(kind: CleanupResourceKind): CleanupUsageBucket {
-  if (kind === 'container') return 'container'
-  if (kind === 'image') return 'image'
-  if (kind === 'volume') return 'volume'
-  return 'other'
-}
-
-function buildUsageCards(response: CleanupScanResponse): CleanupUsageCard[] {
-  if (response.status !== 'ready') return []
-  const resources = flattenAllResources(response)
-  const totals = new Map<CleanupUsageBucket, { bytes: number; count: number; unknownCount: number }>()
-  for (const meta of CLEANUP_USAGE_CARD_META) {
-    totals.set(meta.key, { bytes: 0, count: 0, unknownCount: 0 })
-  }
-
-  for (const resource of resources) {
-    const bucket = usageBucketForKind(resource.kind)
-    const entry = totals.get(bucket)
-    if (!entry) continue
-    entry.count += 1
-    entry.bytes += resource.estimatedReclaimableBytes ?? 0
-    if (itemHasUnknownSize(resource)) entry.unknownCount += 1
-  }
-
-  const totalKnownBytes = resources.reduce((sum, resource) => sum + (resource.estimatedReclaimableBytes ?? 0), 0)
-  return CLEANUP_USAGE_CARD_META.map((meta) => {
-    const entry = totals.get(meta.key) ?? { bytes: 0, count: 0, unknownCount: 0 }
-    return {
-      key: meta.key,
-      label: meta.label,
-      description: meta.description,
-      bytes: entry.bytes,
-      count: entry.count,
-      unknownCount: entry.unknownCount,
-      share: totalKnownBytes > 0 ? entry.bytes / totalKnownBytes : 0,
-    }
-  })
-}
-
-function kindSummary(resources: CleanupResourceItem[]): string {
-  const counts = new Map<CleanupResourceKind, number>()
-  for (const resource of resources) {
-    counts.set(resource.kind, (counts.get(resource.kind) ?? 0) + 1)
-  }
-  return [...counts.entries()]
-    .map(([kind, count]) => `${KIND_LABEL[kind]} ${count}`)
-    .join(' · ')
-}
-
-function toErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) return error.message
-  if (error instanceof Error && error.message.trim()) return error.message
-  return '请求失败，请稍后重试。'
-}
-
-function includesPreset(active: CleanupPreset, candidate: CleanupPreset): boolean {
-  return PRESET_ORDER.indexOf(active) >= PRESET_ORDER.indexOf(candidate)
-}
-
-function itemHasUnknownSize(item: CleanupResourceItem): boolean {
-  return item.estimateUnknown === true || item.estimatedReclaimableBytes == null
-}
-
-function projectResponseForPreset(pageScan: CleanupScanResponse, preset: CleanupPreset): CleanupScanResponse {
-  if (pageScan.status !== 'ready') return { ...pageScan, preset }
-  const stackGroups: CleanupStackGroup[] = []
-  let totalBytes = 0
-  let totalUnknown = false
-
-  for (const stack of pageScan.stackGroups) {
-    const projectedOrphans = stack.stackOrphans.filter((item) => includesPreset(preset, item.minPreset))
-    const projectedServices = stack.services
-      .map((service) => {
-        const resources = service.resources.filter((item) => includesPreset(preset, item.minPreset))
-        const estimatedReclaimableBytes = resources.reduce(
-          (sum, item) => sum + (item.estimatedReclaimableBytes ?? 0),
-          0,
-        )
-        const hasUnknownSize = resources.some(itemHasUnknownSize)
-        return {
-          ...service,
-          resources,
-          estimatedReclaimableBytes,
-          hasUnknownSize,
-        }
-      })
-      .filter((service) => service.resources.length > 0)
-
-    if (projectedOrphans.length === 0 && projectedServices.length === 0) continue
-
-    const orphanBytes = projectedOrphans.reduce((sum, item) => sum + (item.estimatedReclaimableBytes ?? 0), 0)
-    const orphanUnknown = projectedOrphans.some(itemHasUnknownSize)
-    const serviceBytes = projectedServices.reduce((sum, service) => sum + service.estimatedReclaimableBytes, 0)
-    const serviceUnknown = projectedServices.some((service) => service.hasUnknownSize === true)
-    const estimatedReclaimableBytes = orphanBytes + serviceBytes
-    const hasUnknownSize = orphanUnknown || serviceUnknown
-
-    totalBytes += estimatedReclaimableBytes
-    totalUnknown ||= hasUnknownSize
-    stackGroups.push({
-      ...stack,
-      stackOrphans: projectedOrphans,
-      services: projectedServices,
-      estimatedReclaimableBytes,
-      hasUnknownSize,
-    })
-  }
-
-  const projectedUnowned =
-    pageScan.unownedGroup?.resources.filter((item) => includesPreset(preset, item.minPreset)) ?? []
-
-  const unownedGroup =
-    projectedUnowned.length > 0
-      ? {
-          title: pageScan.unownedGroup?.title ?? '未归属资源',
-          resources: projectedUnowned,
-          estimatedReclaimableBytes: projectedUnowned.reduce(
-            (sum, item) => sum + (item.estimatedReclaimableBytes ?? 0),
-            0,
-          ),
-          hasUnknownSize: projectedUnowned.some(itemHasUnknownSize),
-        }
-      : null
-
-  if (unownedGroup) {
-    totalBytes += unownedGroup.estimatedReclaimableBytes
-    totalUnknown ||= unownedGroup.hasUnknownSize === true
-  }
-
-  return {
-    ...pageScan,
-    preset,
-    estimatedReclaimableBytes: totalBytes,
-    hasUnknownSize: totalUnknown,
-    stackGroups,
-    unownedGroup,
-  }
 }
 
 function parseFingerprintMismatch(details: unknown): CleanupFingerprintMismatchError | null {
@@ -403,10 +183,6 @@ function resourceKindClassName(kind: CleanupResourceKind): string {
   }
 }
 
-function aggregateStackResources(stack: CleanupStackGroup): CleanupResourceItem[] {
-  return [...stack.stackOrphans, ...stack.services.flatMap((service) => service.resources)]
-}
-
 function CleanupSummaryCell(props: { resources: CleanupResourceItem[]; hint?: string }) {
   return (
     <div className="cleanupCellSummary">
@@ -425,7 +201,7 @@ function CleanupEstimateCell(props: { bytes: number; hasUnknown?: boolean; count
   )
 }
 
-function CleanupUsageCardView(props: { card: CleanupUsageCard }) {
+function CleanupUsageCardView(props: { card: CleanupUsageCard; refreshing?: boolean }) {
   const meta = CLEANUP_USAGE_CARD_META.find((item) => item.key === props.card.key) ?? CLEANUP_USAGE_CARD_META[3]
   const Icon = meta.icon
   const knownOnly = props.card.bytes > 0 ? formatBytes(props.card.bytes) : '0 B'
@@ -433,7 +209,10 @@ function CleanupUsageCardView(props: { card: CleanupUsageCard }) {
   const barWidth = props.card.bytes > 0 && props.card.share > 0 ? Math.max(2, Math.round(props.card.share * 100)) : 0
 
   return (
-    <article className={`cleanupUsageCard ${meta.toneClassName}${props.card.unknownCount > 0 ? ' cleanupUsageCardUnknown' : ''}`}>
+    <article
+      className={`cleanupUsageCard ${meta.toneClassName}${props.card.unknownCount > 0 ? ' cleanupUsageCardUnknown' : ''}${props.refreshing ? ' cleanupStaleLoading' : ''}`}
+      data-refreshing={props.refreshing ? 'true' : undefined}
+    >
       <div className="cleanupUsageCardHead">
         <div className="cleanupUsageCardIconWrap">
           <Icon aria-hidden="true" className="cleanupUsageCardIcon" size={18} strokeWidth={2} />
@@ -513,6 +292,7 @@ function CleanupResponseView(props: {
   response: CleanupScanResponse
   compact?: boolean
   busyActionKey?: string | null
+  staleResourceKeys?: Set<string>
   onStackAction?: (stack: CleanupStackGroup) => void
   onServiceAction?: (stack: CleanupStackGroup, serviceId: string, serviceName: string) => void
 }) {
@@ -534,7 +314,13 @@ function CleanupResponseView(props: {
 
       {props.response.stackGroups.map((stack) => (
         <section key={stack.stackId} className="tableGroup cleanupTableGroup">
-          <div className="groupHead cleanupGroupHead">
+          <div
+            className={`groupHead cleanupGroupHead${
+              aggregateStackResources(stack).some((resource) => props.staleResourceKeys?.has(cleanupResourceKey(resource)))
+                ? ' cleanupStaleLoading'
+                : ''
+            }`}
+          >
             <div className="cellService cellServiceGroup">
               <StackIcon variant="expanded" />
               <div className="groupTitle">{stack.stackName}</div>
@@ -571,7 +357,9 @@ function CleanupResponseView(props: {
           {flattenStackRows(stack).map((row) => (
             <div
               key={row.key}
-              className={row.ownerTone === 'warn' ? 'rowLine cleanupRowLine cleanupRowLineMuted' : 'rowLine cleanupRowLine'}
+              className={`${row.ownerTone === 'warn' ? 'rowLine cleanupRowLine cleanupRowLineMuted' : 'rowLine cleanupRowLine'}${
+                props.staleResourceKeys?.has(cleanupResourceKey(row.resource)) ? ' cleanupStaleLoading' : ''
+              }`}
             >
               <div className="cellService">
                 <span className={row.ownerTone === 'warn' ? 'svcBullet cleanupSvcBulletWarn' : 'svcBullet'} aria-hidden="true" />
@@ -626,7 +414,15 @@ function CleanupResponseView(props: {
 
       {props.response.unownedGroup?.resources.length ? (
         <section className="tableGroup cleanupTableGroup cleanupTableGroupUnowned">
-          <div className="groupHead cleanupGroupHead cleanupGroupHeadWarn">
+          <div
+            className={`groupHead cleanupGroupHead cleanupGroupHeadWarn${
+              props.response.unownedGroup.resources.some((resource) =>
+                props.staleResourceKeys?.has(cleanupResourceKey(resource)),
+              )
+                ? ' cleanupStaleLoading'
+                : ''
+            }`}
+          >
             <div className="cellService cellServiceGroup">
               <StackIcon variant="expanded" />
               <div className="groupTitle">{props.response.unownedGroup.title}</div>
@@ -643,7 +439,12 @@ function CleanupResponseView(props: {
           </div>
 
           {flattenUnownedRows(props.response).map((row) => (
-            <div key={row.key} className="rowLine cleanupRowLine cleanupRowLineMuted">
+            <div
+              key={row.key}
+              className={`rowLine cleanupRowLine cleanupRowLineMuted${
+                props.staleResourceKeys?.has(cleanupResourceKey(row.resource)) ? ' cleanupStaleLoading' : ''
+              }`}
+            >
               <div className="cellService">
                 <span className="svcBullet cleanupSvcBulletWarn" aria-hidden="true" />
                 <span className="svcName">{row.resource.label}</span>
@@ -710,13 +511,21 @@ export function CleanupPage(props: {
 }) {
   const { onLastScanHint, onTopActions } = props
   const confirm = useConfirm()
+  const activeScanIdRef = useRef<string | null>(null)
+  const pageScanRef = useRef<CleanupScanResponse | null>(null)
+  const scanEventSourceRef = useRef<EventSource | null>(null)
   const [activePreset, setActivePreset] = useState<CleanupPreset>('balanced')
   const [pageScan, setPageScan] = useState<CleanupScanResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [staleResourceKeys, setStaleResourceKeys] = useState<Set<string>>(() => new Set())
   const [pageError, setPageError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [busyActionKey, setBusyActionKey] = useState<string | null>(null)
+
+  useEffect(() => {
+    pageScanRef.current = pageScan
+  }, [pageScan])
 
   const projected = useMemo(
     () => (pageScan ? projectResponseForPreset(pageScan, activePreset) : null),
@@ -734,6 +543,8 @@ export function CleanupPage(props: {
     [activePreset],
   )
   const initialScanPending = loading && !pageScan
+  const staleUsageBuckets = useMemo(() => staleBucketsForResponse(pageScan, staleResourceKeys), [pageScan, staleResourceKeys])
+  const hasStaleResources = staleResourceKeys.size > 0 && refreshing
 
   const fetchCleanupScan = useCallback(
     async (input: CleanupScanRequest, options?: { pollUntilReady?: boolean }) => {
@@ -752,44 +563,108 @@ export function CleanupPage(props: {
   const refreshPageScan = useCallback(async () => {
     setRefreshing(true)
     setPageError(null)
+    scanEventSourceRef.current?.close()
+    scanEventSourceRef.current = null
     try {
-      const response = await fetchCleanupScan({
+      const request: CleanupScanRequest = {
         reason: 'page',
         refresh: true,
         preset: 'aggressive',
         scope: 'all',
-      })
-      if (response.status === 'ready') {
-        setPageScan(response)
-        onLastScanHint?.(response.scannedAt ?? undefined)
       }
-      if (response.status !== 'ready' || response.refreshing) {
-        const settled = await fetchCleanupScan(
-          {
-            reason: 'page',
-            refresh: true,
-            preset: 'aggressive',
-            scope: 'all',
-          },
-          { pollUntilReady: true },
-        )
-        setPageScan(settled)
-        onLastScanHint?.(settled.scannedAt ?? undefined)
+      const started = await startCleanupScanRun(request)
+      activeScanIdRef.current = started.scanId
+      const baseline = started.previousSnapshot ?? pageScanRef.current
+      if (started.previousSnapshot) {
+        setPageScan(started.previousSnapshot)
+        setStaleResourceKeys(cleanupResourceKeys(started.previousSnapshot))
+        onLastScanHint?.(started.previousSnapshot.scannedAt ?? undefined)
+      } else {
+        setStaleResourceKeys(new Set())
+      }
+
+      const eventSource = new EventSource(cleanupScanRunEventsUrl(started.scanId), { withCredentials: true })
+      scanEventSourceRef.current = eventSource
+      const finishStream = () => {
+        eventSource.close()
+        if (scanEventSourceRef.current === eventSource) scanEventSourceRef.current = null
+      }
+      const parseEvent = (event: Event): CleanupScanRunEvent | null => {
+        if (!(event instanceof MessageEvent)) return null
+        try {
+          return JSON.parse(event.data) as CleanupScanRunEvent
+        } catch {
+          return null
+        }
+      }
+      eventSource.addEventListener('scan_partial', (event) => {
+        const payload = parseEvent(event)
+        if (!payload?.response || payload.scanId !== activeScanIdRef.current) return
+        const response =
+          baseline && baseline.status === 'ready'
+            ? mergeCleanupResponses(baseline, payload.response)
+            : {
+                response: {
+                  ...payload.response,
+                  status: 'ready' as const,
+                  refreshing: true,
+                  confirmationFingerprint: null,
+                },
+                staleKeys: new Set<string>(),
+              }
+        setPageScan(response.response)
+        setStaleResourceKeys(response.staleKeys)
+        setLoading(false)
+        onLastScanHint?.(response.response.scannedAt ?? undefined)
+      })
+      eventSource.addEventListener('scan_ready', (event) => {
+        const payload = parseEvent(event)
+        if (!payload?.response || payload.scanId !== activeScanIdRef.current) return
+        setPageScan(payload.response)
+        setStaleResourceKeys(new Set())
+        setLoading(false)
+        setRefreshing(false)
+        onLastScanHint?.(payload.response.scannedAt ?? undefined)
+        finishStream()
+      })
+      eventSource.addEventListener('scan_failed', (event) => {
+        const payload = parseEvent(event)
+        if (payload?.scanId !== activeScanIdRef.current) return
+        setPageError(payload?.message || 'cleanup streaming scan failed')
+        setStaleResourceKeys(new Set())
+        setLoading(false)
+        setRefreshing(false)
+        if (!baseline) onLastScanHint?.(undefined)
+        finishStream()
+      })
+      eventSource.onerror = () => {
+        if (eventSource.readyState === EventSource.CLOSED) return
+        setPageError('cleanup streaming connection failed')
+        setRefreshing(false)
+        setLoading(false)
+        setStaleResourceKeys(new Set())
+        finishStream()
       }
     } catch (error) {
       const message = toErrorMessage(error)
       setPageError(message)
+      setStaleResourceKeys(new Set())
       onLastScanHint?.(undefined)
-    } finally {
       setLoading(false)
       setRefreshing(false)
     }
-  }, [fetchCleanupScan, onLastScanHint])
+  }, [onLastScanHint])
 
   useEffect(() => {
     onLastScanHint?.(undefined)
     void refreshPageScan()
   }, [onLastScanHint, refreshPageScan])
+
+  useEffect(() => {
+    return () => {
+      scanEventSourceRef.current?.close()
+    }
+  }, [])
 
   const runCleanupFlow = useCallback(
     async (target: CleanupActionTarget) => {
@@ -1017,7 +892,7 @@ export function CleanupPage(props: {
             <div className="cleanupUsageSectionHint">这是最近一次全量扫描识别到的可回收候选分布，用来看清回收空间主要集中在哪类资源。</div>
           </div>
           <div className="cleanupOverviewStats cleanupStatusStats">
-            <div className="cleanupOverviewStat cleanupDiskStat">
+            <div className={`cleanupOverviewStat cleanupDiskStat${hasStaleResources ? ' cleanupStaleLoading' : ''}`}>
               <div className="sectionTitle">服务器磁盘</div>
               <div className="cleanupOverviewStatValue">{serverDiskUsage.value}</div>
               <div className="cleanupOverviewStatHint">{serverDiskUsage.hint}</div>
@@ -1025,16 +900,20 @@ export function CleanupPage(props: {
                 <span style={{ width: `${Math.round(serverDiskUsage.percent * 100)}%` }} />
               </div>
             </div>
-            <div className="cleanupOverviewStat">
+            <div className={`cleanupOverviewStat${hasStaleResources ? ' cleanupStaleLoading' : ''}`}>
               <div className="sectionTitle">当前可回收候选</div>
               <div className="cleanupOverviewStatValue">
                 {pageScan ? formatEstimate(pageScan.estimatedReclaimableBytes, pageScan.hasUnknownSize) : '-'}
               </div>
               <div className="cleanupOverviewStatHint">
-                {pageUnknownCount > 0 ? `${formatUnknownCount(pageUnknownCount)}，已知部分按下限展示` : '基于最近一次全量扫描候选'}
+                {hasStaleResources
+                  ? '扫描进行中，局部结果会逐步覆盖'
+                  : pageUnknownCount > 0
+                    ? `${formatUnknownCount(pageUnknownCount)}，已知部分按下限展示`
+                    : '基于最近一次全量扫描候选'}
               </div>
             </div>
-            <div className="cleanupOverviewStat cleanupLatestScanStat">
+            <div className={`cleanupOverviewStat cleanupLatestScanStat${hasStaleResources ? ' cleanupStaleLoading' : ''}`}>
               <div className="sectionTitle">最新扫描</div>
               <div className="cleanupOverviewStatMeta">
                 <Mono>{pageScan ? formatShort(pageScan.scannedAt) : '-'}</Mono>
@@ -1046,7 +925,7 @@ export function CleanupPage(props: {
         <div className="cleanupUsageSection">
           <div className="cleanupUsageGrid">
             {usageCards.map((card) => (
-              <CleanupUsageCardView key={card.key} card={card} />
+              <CleanupUsageCardView key={card.key} card={card} refreshing={staleUsageBuckets.has(card.key)} />
             ))}
           </div>
         </div>
@@ -1078,16 +957,20 @@ export function CleanupPage(props: {
             </Tabs>
           </div>
           <div className="cleanupOverviewStats cleanupRuleStats">
-            <div className="cleanupOverviewStat">
+            <div className={`cleanupOverviewStat${hasStaleResources ? ' cleanupStaleLoading' : ''}`}>
               <div className="sectionTitle">当前规则预计释放</div>
               <div className="cleanupOverviewStatValue">
                 {response ? formatEstimate(response.estimatedReclaimableBytes, response.hasUnknownSize) : '-'}
               </div>
               <div className="cleanupOverviewStatHint">
-                {projectedUnknownCount > 0 ? `${formatUnknownCount(projectedUnknownCount)}，释放量按下限展示` : '会随规则切换重新投影'}
+                {hasStaleResources
+                  ? '缓存项保持可读，等待扫描覆盖'
+                  : projectedUnknownCount > 0
+                    ? `${formatUnknownCount(projectedUnknownCount)}，释放量按下限展示`
+                    : '会随规则切换重新投影'}
               </div>
             </div>
-            <div className="cleanupOverviewStat">
+            <div className={`cleanupOverviewStat${hasStaleResources ? ' cleanupStaleLoading' : ''}`}>
               <div className="sectionTitle">最新扫描</div>
               <div className="cleanupOverviewStatMeta">
                 <Mono>{response ? formatShort(response.scannedAt) : '-'}</Mono>
@@ -1123,6 +1006,7 @@ export function CleanupPage(props: {
             })
           }
           response={response}
+          staleResourceKeys={staleResourceKeys}
         />
       ) : null}
     </div>

@@ -6,6 +6,9 @@
 - `CleanupScope = "all" | "stack" | "service"`
 - `CleanupResourceKind = "image" | "container" | "network" | "volume" | "builder_cache"`
 - `CleanupScanResponse`
+- `CleanupScanRunStartResponse`
+- `CleanupScanRunEvent`
+- `CleanupScanRunPhase = "scan_started" | "scan_partial" | "scan_ready" | "scan_failed"`
 - `CleanupServerDiskUsage`
 - `CleanupStackGroup`
 - `CleanupServiceGroup`
@@ -175,6 +178,83 @@ pending 示例：
   "scope": "all"
 }
 ```
+
+## `POST /api/cleanups/scan-runs`
+
+作用：启动一次 owner-facing cleanup page 重扫会话。该接口用于页面重扫的流式刷新，不替代 confirm-scan / apply 的安全路径。
+
+Request body:
+
+```json
+{
+  "reason": "page",
+  "refresh": true,
+  "preset": "aggressive",
+  "scope": "all"
+}
+```
+
+约束：
+
+- 仅接受 `reason=page + preset=aggressive + scope=all`；`stackId` / `serviceId` 不允许出现。
+- 返回值可以带上一份可显示 snapshot，前端必须把它视为 stale baseline，仅用于重扫期间保持页面可读。
+- 会话最终 `scan_ready.response` 必须是完整 `CleanupScanResponse`，并写回现有 cleanup snapshot cache。
+
+Response: `202 Accepted`
+
+```json
+{
+  "scanId": "clnscan_01J...",
+  "previousSnapshot": {
+    "status": "ready",
+    "reason": "page",
+    "preset": "aggressive",
+    "scope": "all",
+    "refreshing": true,
+    "scannedAt": "2026-07-07T00:15:24Z",
+    "estimatedReclaimableBytes": 5089538048,
+    "stackGroups": []
+  },
+  "retryAfterMs": 800
+}
+```
+
+## `GET /api/cleanups/scan-runs/{scanId}/events`
+
+作用：以 SSE 推送 cleanup 重扫会话进度。事件名固定为：
+
+- `scan_started`
+- `scan_partial`
+- `scan_ready`
+- `scan_failed`
+
+客户端可通过 `Last-Event-ID` 或 query `afterId=<event-id>` 续接事件流。服务端会对同一 `scanId` replay 已记录事件，再等待新事件。
+
+SSE data payload:
+
+```json
+{
+  "scanId": "clnscan_01J...",
+  "phase": "scan_partial",
+  "response": {
+    "status": "pending",
+    "reason": "page",
+    "preset": "aggressive",
+    "scope": "all",
+    "refreshing": true,
+    "confirmationFingerprint": null,
+    "stackGroups": []
+  },
+  "message": null
+}
+```
+
+语义约束：
+
+- `scan_partial.response` 只能用于页面投影的渐进替换，不得用于 confirm dialog 或 apply fingerprint。
+- `scan_ready.response` 是唯一可视为本轮重扫完整结果的 payload。
+- `scan_failed` 不清空页面，前端保留上一份 snapshot 并展示非阻断错误。
+- cleanup apply 仍只接受完整 confirm-scan fingerprint；partial 数据不得进入 apply。
 
 ## `POST /api/cleanups/apply`
 

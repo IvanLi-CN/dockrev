@@ -5,6 +5,7 @@ mod authz;
 mod auto_update;
 mod backup;
 mod cleanup;
+mod cleanup_scan_runs;
 mod cleanup_snapshot_worker;
 mod compose;
 mod compose_runner;
@@ -114,6 +115,7 @@ async fn main() -> anyhow::Result<()> {
     let cleanup_snapshot_worker = std::sync::Arc::new(
         cleanup_snapshot_worker::CleanupSnapshotWorker::new(db.clone(), runner.clone()),
     );
+    let cleanup_scan_runs = std::sync::Arc::new(cleanup_scan_runs::CleanupScanRunHub::new());
     let deploy_check_refresh_worker =
         std::sync::Arc::new(deploy_check_refresh_worker::DeployCheckRefreshWorker::new(
             db.clone(),
@@ -127,6 +129,7 @@ async fn main() -> anyhow::Result<()> {
         runner,
         snapshot_worker,
         cleanup_snapshot_worker,
+        cleanup_scan_runs,
         deploy_check_refresh_worker,
         resource_hub,
         service_log_hub,

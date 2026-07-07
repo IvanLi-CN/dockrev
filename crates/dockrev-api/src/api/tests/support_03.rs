@@ -117,6 +117,7 @@ async fn test_state_with(
         db.clone(),
         runner.clone(),
     ));
+    let cleanup_scan_runs = Arc::new(crate::cleanup_scan_runs::CleanupScanRunHub::new());
     let deploy_check_refresh_worker = Arc::new(
         crate::deploy_check_refresh_worker::DeployCheckRefreshWorker::new(
             db.clone(),
@@ -139,6 +140,7 @@ async fn test_state_with(
         runner,
         snapshot_worker,
         cleanup_snapshot_worker,
+        cleanup_scan_runs,
         deploy_check_refresh_worker,
         resource_hub,
         service_log_hub,
@@ -187,6 +189,7 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
         db.clone(),
         runner.clone(),
     ));
+    let cleanup_scan_runs = Arc::new(crate::cleanup_scan_runs::CleanupScanRunHub::new());
     let deploy_check_refresh_worker = Arc::new(
         crate::deploy_check_refresh_worker::DeployCheckRefreshWorker::new(
             db.clone(),
@@ -209,6 +212,7 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
         runner,
         snapshot_worker,
         cleanup_snapshot_worker,
+        cleanup_scan_runs,
         deploy_check_refresh_worker,
         resource_hub,
         service_log_hub,
@@ -256,6 +260,7 @@ async fn test_state_auth_required(db_path: &str) -> Arc<AppState> {
         db.clone(),
         runner.clone(),
     ));
+    let cleanup_scan_runs = Arc::new(crate::cleanup_scan_runs::CleanupScanRunHub::new());
     let deploy_check_refresh_worker = Arc::new(
         crate::deploy_check_refresh_worker::DeployCheckRefreshWorker::new(
             db.clone(),
@@ -278,6 +283,7 @@ async fn test_state_auth_required(db_path: &str) -> Arc<AppState> {
         runner,
         snapshot_worker,
         cleanup_snapshot_worker,
+        cleanup_scan_runs,
         deploy_check_refresh_worker,
         resource_hub,
         service_log_hub,
@@ -330,6 +336,7 @@ async fn test_state_with_authz(
         db.clone(),
         runner.clone(),
     ));
+    let cleanup_scan_runs = Arc::new(crate::cleanup_scan_runs::CleanupScanRunHub::new());
     let deploy_check_refresh_worker = Arc::new(
         crate::deploy_check_refresh_worker::DeployCheckRefreshWorker::new(
             db.clone(),
@@ -352,6 +359,7 @@ async fn test_state_with_authz(
         runner,
         snapshot_worker,
         cleanup_snapshot_worker,
+        cleanup_scan_runs,
         deploy_check_refresh_worker,
         resource_hub,
         service_log_hub,

@@ -177,6 +177,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/api/discovery/scan", post(trigger_discovery_scan))
         .route("/api/cleanups/scan", post(scan_cleanups))
+        .route("/api/cleanups/scan-runs", post(start_cleanup_scan_run))
+        .route(
+            "/api/cleanups/scan-runs/{scan_id}/events",
+            get(cleanup_scan_run_events),
+        )
         .route("/api/cleanups/apply", post(apply_cleanups))
         .route("/api/discovery/projects", get(list_discovery_projects))
         .route(

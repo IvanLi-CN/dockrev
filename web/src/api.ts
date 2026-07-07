@@ -36,6 +36,7 @@ import type {
   CleanupApplyRequest,
   CleanupApplyResponse,
   CleanupScanResponse,
+  CleanupScanRunStartResponse,
   NotificationConfig,
   NotificationTestChannel,
   TestNotificationsResponse,
@@ -375,6 +376,22 @@ export async function scanCleanups(input: CleanupScanRequest): Promise<CleanupSc
     body: JSON.stringify(input),
   })
   return (await resp.json()) as CleanupScanResponse
+}
+
+export async function startCleanupScanRun(input: CleanupScanRequest): Promise<CleanupScanRunStartResponse> {
+  const resp = await apiFetch('/api/cleanups/scan-runs', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+  return (await resp.json()) as CleanupScanRunStartResponse
+}
+
+export function cleanupScanRunEventsUrl(scanId: string, opts?: { afterId?: number }): string {
+  const base = apiBaseUrl().replace(/\/$/, '')
+  const params = new URLSearchParams()
+  if (opts?.afterId != null && opts.afterId > 0) params.set('afterId', String(opts.afterId))
+  const suffix = params.toString()
+  return `${base}/api/cleanups/scan-runs/${encodeURIComponent(scanId)}/events${suffix ? `?${suffix}` : ''}`
 }
 
 export async function applyCleanups(input: CleanupApplyRequest): Promise<CleanupApplyResponse> {

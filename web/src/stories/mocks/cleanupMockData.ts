@@ -23,6 +23,8 @@ export type CleanupMockScenario =
 export type CleanupMockRuntimeState = {
   nextJobSeq: number
   staleApplyConsumed: boolean
+  nextScanRunSeq: number
+  scanRuns: Map<string, Array<{ id: number; event: string; data: unknown }>>
 }
 
 type CleanupOwner =
