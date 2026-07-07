@@ -655,6 +655,27 @@ export function buildDashboardDemo(): Fixture {
           plain: 'serving on :8080',
         },
         {
+          ts: '2026-07-07T05:54:01.126784508Z',
+          raw: '\u001b[2m2026-07-07T05:54:01.126674Z\u001b[0m \u001b[32m INFO\u001b[0m openai proxy request started \u001b[3mproxy_request_id\u001b[0m\u001b[2m=\u001b[0m2722 \u001b[3mmethod\u001b[0m\u001b[2m=\u001b[0mPOST \u001b[3muri\u001b[0m\u001b[2m=\u001b[0m/v1/responses \u001b[3mproxy_request_started\u001b[0m\u001b[2m=\u001b[0mtrue \u001b[3mhas_body\u001b[0m\u001b[2m=\u001b[0mtrue \u001b[3mcontent_length\u001b[0m\u001b[2m=\u001b[0mSome(569164)',
+          plain:
+            '\u001b[2m2026-07-07T05:54:01.126674Z\u001b[0m \u001b[32m INFO\u001b[0m openai proxy request started \u001b[3mproxy_request_id\u001b[0m\u001b[2m=\u001b[0m2722 \u001b[3mmethod\u001b[0m\u001b[2m=\u001b[0mPOST \u001b[3muri\u001b[0m\u001b[2m=\u001b[0m/v1/responses \u001b[3mproxy_request_started\u001b[0m\u001b[2m=\u001b[0mtrue \u001b[3mhas_body\u001b[0m\u001b[2m=\u001b[0mtrue \u001b[3mcontent_length\u001b[0m\u001b[2m=\u001b[0mSome(569164)',
+          meta: {
+            format: 'text',
+            level: 'info',
+            timestamp: '2026-07-07T05:54:01.126674Z',
+            message: 'openai proxy request started',
+            attributes: {
+              proxy_request_id: 2722,
+              method: 'POST',
+              uri: '/v1/responses',
+              proxy_request_started: true,
+              has_body: true,
+              content_length: 'Some(569164)',
+            },
+            highlights: ['method', 'uri', 'proxy_request_id'],
+          },
+        },
+        {
           ts: '2026-06-29T08:00:03.000Z',
           raw: '\u001b[31mretry upstream timeout\u001b[0m',
           plain: '\u001b[31mretry upstream timeout\u001b[0m',
@@ -685,13 +706,13 @@ export function buildDashboardDemo(): Fixture {
           plain: 'worker sync complete jobs=18 queue=critical',
         },
       ],
-      lastEventId: 9,
+      lastEventId: 10,
       bufferLimit: 2000,
     },
     eventsPayload: buildServiceLogsSsePayload([
       {
         type: 'line',
-        id: 10,
+        id: 11,
         serviceId: serviceProdApi.id,
         line: {
           ts: '2026-06-29T08:00:04.000Z',
@@ -701,7 +722,7 @@ export function buildDashboardDemo(): Fixture {
       },
       {
         type: 'line',
-        id: 11,
+        id: 12,
         serviceId: serviceProdApi.id,
         line: {
           ts: '2026-06-29T08:00:05.000Z',
@@ -711,7 +732,7 @@ export function buildDashboardDemo(): Fixture {
       },
       {
         type: 'line',
-        id: 12,
+        id: 13,
         serviceId: serviceProdApi.id,
         line: {
           ts: '2026-06-29T08:00:05.180Z',
@@ -721,7 +742,7 @@ export function buildDashboardDemo(): Fixture {
       },
       {
         type: 'line',
-        id: 13,
+        id: 14,
         serviceId: serviceProdApi.id,
         line: {
           ts: '2026-06-29T08:00:05.520Z',

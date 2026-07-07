@@ -587,6 +587,7 @@ impl CommandRunner for ServiceLogsRunner {
                     "2026-07-01T08:12:51.833081000Z     (code: 5) database is locked invoke_id=proxy-1281-1782893570550\n",
                     "2026-06-29T08:00:00.000000000Z \u{1b}[32mapi boot ok\u{1b}[0m\n",
                     "2026-06-29T08:00:02.000000000Z {\"timestamp\":\"2026-06-29T08:00:02Z\",\"level\":\"INFO\",\"message\":\"runtime perf\",\"component\":\"admin_read\",\"event\":\"dashboard_overview_phase\",\"elapsed_ms\":24,\"route\":\"/api/dashboard/overview\"}\n",
+                    "2026-07-07T05:54:01.126784508Z \u{1b}[2m2026-07-07T05:54:01.126674Z\u{1b}[0m \u{1b}[32m INFO\u{1b}[0m openai proxy request started proxy_request_id=2722 method=POST uri=/v1/responses proxy_request_started=true has_body=true content_length=Some(569164)\n",
                     "2026-06-29T08:00:03.000000000Z \u{1b}[31merror burst\u{1b}[0m\n",
                     "2026-06-29T08:00:04.000000000Z     standalone indented output\n"
                 ),

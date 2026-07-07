@@ -948,6 +948,9 @@ fn parse_service_log_meta(raw: &str) -> ServiceLogMeta {
     if let Some(meta) = parse_logfmt_meta(trimmed) {
         return meta;
     }
+    if let Some(meta) = parse_tracing_text_meta(trimmed) {
+        return meta;
+    }
 
     ServiceLogMeta {
         format: ServiceLogMetaFormat::Text,
@@ -1027,6 +1030,165 @@ fn parse_logfmt_meta(input: &str) -> Option<ServiceLogMeta> {
         attributes,
         highlights,
     })
+}
+
+fn parse_tracing_text_meta(input: &str) -> Option<ServiceLogMeta> {
+    let first_line = input.lines().next()?.trim();
+    let (timestamp, rest) = take_leading_rfc3339_token(first_line)?;
+    let rest = rest.trim_start();
+    let (level, rest) = take_leading_level_token(rest)?;
+    let rest = rest.trim_start();
+    if rest.is_empty() {
+        return None;
+    }
+
+    let (message, mut attributes) = split_tracing_message_and_attributes(rest);
+    let message = message.trim().trim_end_matches(':').trim();
+    if message.is_empty() && attributes.is_empty() {
+        return None;
+    }
+
+    if message
+        .split_once(": ")
+        .is_some_and(|(target, _)| is_tracing_target(target))
+    {
+        let (target, rest) = message.split_once(": ")?;
+        attributes.insert("target".to_string(), Value::String(target.to_string()));
+        let highlights = highlight_keys(&attributes);
+        return Some(ServiceLogMeta {
+            format: ServiceLogMetaFormat::Text,
+            level: Some(normalize_meta_level(level.to_string())),
+            timestamp: Some(timestamp.to_string()),
+            message: Some(rest.trim().to_string()),
+            attributes,
+            highlights,
+        });
+    }
+
+    let highlights = highlight_keys(&attributes);
+    Some(ServiceLogMeta {
+        format: ServiceLogMetaFormat::Text,
+        level: Some(normalize_meta_level(level.to_string())),
+        timestamp: Some(timestamp.to_string()),
+        message: Some(message.to_string()),
+        attributes,
+        highlights,
+    })
+}
+
+fn take_leading_rfc3339_token(input: &str) -> Option<(&str, &str)> {
+    let mut parts = input.splitn(2, char::is_whitespace);
+    let timestamp = parts.next()?.trim();
+    if !is_docker_log_timestamp(timestamp) {
+        return None;
+    }
+    Some((timestamp, parts.next().unwrap_or_default()))
+}
+
+fn take_leading_level_token(input: &str) -> Option<(&str, &str)> {
+    let trimmed = input.trim_start();
+    let mut parts = trimmed.splitn(2, char::is_whitespace);
+    let level = parts.next()?.trim();
+    if matches!(
+        normalize_meta_level(level.to_string()).as_str(),
+        "trace" | "debug" | "info" | "warn" | "error"
+    ) {
+        return Some((level, parts.next().unwrap_or_default()));
+    }
+    None
+}
+
+fn split_tracing_message_and_attributes(input: &str) -> (String, BTreeMap<String, Value>) {
+    let tokens = shellish_split(input);
+    let attr_start = tokens
+        .iter()
+        .position(|token| token.find('=').is_some_and(|index| index > 0));
+    let Some(attr_start) = attr_start else {
+        return (input.to_string(), BTreeMap::new());
+    };
+
+    let mut attributes = BTreeMap::new();
+    let mut current_key: Option<String> = None;
+    let mut current_value = String::new();
+
+    let flush_current = |attributes: &mut BTreeMap<String, Value>,
+                         current_key: &mut Option<String>,
+                         current_value: &mut String| {
+        if let Some(key) = current_key.take() {
+            attributes.insert(key, logfmt_value(std::mem::take(current_value)));
+        }
+    };
+
+    for token in tokens.iter().skip(attr_start) {
+        if let Some(index) = token.find('=')
+            && index > 0
+        {
+            flush_current(&mut attributes, &mut current_key, &mut current_value);
+            current_key = Some(token[..index].trim_matches(':').to_string());
+            current_value = token[index + 1..].to_string();
+            continue;
+        }
+        if current_key.is_some() {
+            if !current_value.is_empty() {
+                current_value.push(' ');
+            }
+            current_value.push_str(token);
+        }
+    }
+    flush_current(&mut attributes, &mut current_key, &mut current_value);
+
+    (tokens[..attr_start].join(" "), attributes)
+}
+
+fn shellish_split(input: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+
+    for ch in input.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if let Some(quote_ch) = quote {
+            if ch == quote_ch {
+                quote = None;
+            } else {
+                current.push(ch);
+            }
+            continue;
+        }
+        if ch == '"' || ch == '\'' {
+            quote = Some(ch);
+            continue;
+        }
+        if ch.is_whitespace() {
+            if !current.is_empty() {
+                tokens.push(std::mem::take(&mut current));
+            }
+            continue;
+        }
+        current.push(ch);
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
+fn is_tracing_target(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 80
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | ':' | '-'))
+        && (value.contains("::") || value.contains('_') || value.contains('-'))
 }
 
 fn take_btree_stringish(attributes: &mut BTreeMap<String, Value>, keys: &[&str]) -> Option<String> {
@@ -1214,6 +1376,62 @@ mod tests {
         assert_eq!(meta.attributes["route"].as_str(), Some("/api/services"));
         assert_eq!(meta.attributes["elapsed_ms"].as_i64(), Some(242));
         assert_eq!(meta.attributes["degraded"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn parse_service_log_lines_adds_tracing_text_metadata() {
+        let lines = parse_service_log_lines(
+            "2026-07-07T05:54:01.126784508Z \u{1b}[2m2026-07-07T05:54:01.126674Z\u{1b}[0m \u{1b}[32m INFO\u{1b}[0m openai proxy request started \u{1b}[3mproxy_request_id\u{1b}[0m\u{1b}[2m=\u{1b}[0m2722 \u{1b}[3mmethod\u{1b}[0m\u{1b}[2m=\u{1b}[0mPOST \u{1b}[3muri\u{1b}[0m\u{1b}[2m=\u{1b}[0m/v1/responses \u{1b}[3mproxy_request_started\u{1b}[0m\u{1b}[2m=\u{1b}[0mtrue \u{1b}[3mhas_body\u{1b}[0m\u{1b}[2m=\u{1b}[0mtrue \u{1b}[3mcontent_length\u{1b}[0m\u{1b}[2m=\u{1b}[0mSome(569164) \u{1b}[3mpeer_ip\u{1b}[0m\u{1b}[2m=\u{1b}[0mSome(172.24.0.176)\n",
+        );
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].ts, "2026-07-07T05:54:01.126784508Z");
+        let meta = lines[0].meta.as_ref().expect("tracing text metadata");
+        assert_eq!(meta.format, ServiceLogMetaFormat::Text);
+        assert_eq!(meta.level.as_deref(), Some("info"));
+        assert_eq!(
+            meta.timestamp.as_deref(),
+            Some("2026-07-07T05:54:01.126674Z")
+        );
+        assert_eq!(
+            meta.message.as_deref(),
+            Some("openai proxy request started")
+        );
+        assert_eq!(meta.attributes["proxy_request_id"].as_i64(), Some(2722));
+        assert_eq!(meta.attributes["method"].as_str(), Some("POST"));
+        assert_eq!(meta.attributes["uri"].as_str(), Some("/v1/responses"));
+        assert_eq!(
+            meta.attributes["proxy_request_started"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(meta.attributes["has_body"].as_bool(), Some(true));
+        assert_eq!(
+            meta.attributes["content_length"].as_str(),
+            Some("Some(569164)")
+        );
+        assert_eq!(
+            meta.attributes["peer_ip"].as_str(),
+            Some("Some(172.24.0.176)")
+        );
+        assert!(meta.highlights.contains(&"method".to_string()));
+        assert!(meta.highlights.contains(&"uri".to_string()));
+        assert!(meta.highlights.contains(&"proxy_request_id".to_string()));
+    }
+
+    #[test]
+    fn parse_service_log_lines_keeps_tracing_status_phrase() {
+        let lines = parse_service_log_lines(
+            "2026-07-07T05:54:00.521644238Z 2026-07-07T05:54:00.521559Z  INFO openai proxy response headers ready proxy_request_id=2719 method=POST uri=/v1/responses status=200 OK elapsed_ms=4548\n",
+        );
+
+        let meta = lines[0].meta.as_ref().expect("tracing text metadata");
+        assert_eq!(meta.level.as_deref(), Some("info"));
+        assert_eq!(
+            meta.message.as_deref(),
+            Some("openai proxy response headers ready")
+        );
+        assert_eq!(meta.attributes["status"].as_str(), Some("200 OK"));
+        assert_eq!(meta.attributes["elapsed_ms"].as_i64(), Some(4548));
     }
 
     #[test]
