@@ -13,7 +13,7 @@
 ### Goals
 
 - Settings 新增 OctoRill 更新日志配置：启用开关、API Base URL、API Key、默认视图 `original | translated | smart`，默认 `smart`。
-- API Key 只在 Dockrev 后端保存；设置读取只返回脱敏状态，不把明文 key 暴露给浏览器。
+- API Key 只在 Dockrev 后端保存；设置读取只返回等长圆点脱敏状态，不把明文 key 暴露给浏览器。
 - 新增服务级统一 release notes API，开启 OctoRill 后优先从 OctoRill repo feed 读取发布记录，并规范化成发布抽屉可消费的数据。
 - OctoRill 失败、未配置或无可用 feed 时，发布抽屉显示失败原因并自动回退现有 GitHub Releases 数据。
 - 发布抽屉支持原文、翻译、润色切换；缺少翻译/润色时可见降级到原文。
@@ -49,7 +49,8 @@
 - `GET /api/settings` 必须返回 `releaseNotes.octoRill.enabled`、`apiBaseUrl`、`apiKeyMasked`、`defaultView`。
 - `PUT /api/settings` 必须支持局部更新 `releaseNotes.octoRill`；`apiKey` 字段省略时保留旧 key，`null` 或空字符串清除旧 key，非空明文覆盖旧 key。
 - API Base URL 必须是无 username/password 的 `http(s)` 绝对 URL，并规范化为无尾部 `/` 的 origin/base path。
-- API Key 明文必须只在后端持久化；GET 响应只返回脱敏 `apiKeyMasked`。
+- API Key 明文必须只在后端持久化；GET 响应只返回脱敏 `apiKeyMasked`，其长度必须与已保存 key 的字符长度一致，并统一使用圆点掩码。
+- `PUT /api/settings` 的 `apiKey` 若是非空全星号或全圆点掩码，应视为保留旧 key，避免浏览器把脱敏回显误写回明文字段。
 - 统一 release notes API 必须在 OctoRill 开启且配置完整时优先请求 `GET {apiBaseUrl}/api/feed?scope=repo&items=<owner/repo>&types=releases&limit=<limit>[&cursor=<cursor>]`，请求头带 `Authorization: Bearer <apiKey>`。
 - OctoRill feed 映射必须宽容解析：优先使用显式 tag 字段，其次从 `html_url` / `htmlUrl` 的 `/releases/tag/<tag>` 解析，最后用 title/id 兜底。
 - OctoRill 失败必须返回可展示 fallback 原因，并自动回退现有 GitHub Releases 数据。
@@ -99,12 +100,13 @@
 - Given 当前抽屉有 OctoRill items，When 切换为原文或翻译，Then 内容切换且滚动/定位状态保持可用。
 - Given OctoRill 请求返回 401，When 打开发布抽屉，Then 顶部显示 OctoRill 鉴权失败，同时列表回退为 GitHub Releases。
 - Given `translated` 或 `smart` 缺失，When 用户选择对应视图，Then UI 明确显示该视图不可用并展示原文。
-- Given `GET /api/settings`，Then 响应不包含 OctoRill API Key 明文，只包含脱敏状态。
+- Given `GET /api/settings`，Then 响应不包含 OctoRill API Key 明文，只包含与真实 key 等长的圆点脱敏状态。
 - Given `PUT /api/settings` 省略 `apiKey`，Then 已保存 key 保持不变；传 `null` 或空字符串时清除。
+- Given `PUT /api/settings` 提交等长全圆点 `apiKey`，Then 已保存 key 保持不变。
 
 ## 验收清单（Acceptance checklist）
 
-- [x] 后端 settings roundtrip、key masking、Base URL validation 与 key preserve/clear 行为被测试覆盖。
+- [x] 后端 settings roundtrip、等长 key masking、Base URL validation 与 key preserve/clear 行为被测试覆盖。
 - [x] OctoRill feed mapping、tag 解析与 fallback 被测试覆盖。
 - [x] Settings 与发布抽屉 Storybook 状态覆盖核心 UI 分支。
 - [x] 视觉证据写入本 spec 的 `## Visual Evidence`。
@@ -140,7 +142,7 @@
   submission_gate: `approved`
   story_id_or_title: `Pages/SettingsPage / Octo Rill Release Notes Card`
   state: `configured OctoRill settings`
-  evidence_note: `验证 Settings 中新增 OctoRill 更新日志卡片，包含启用开关、API Base URL、API Key 脱敏与默认视图=润色。`
+  evidence_note: `验证 Settings 中新增 OctoRill 更新日志卡片，包含启用开关、API Base URL、等长 API Key 脱敏与默认视图=润色。`
 
 PR: include
 ![OctoRill 更新日志设置卡](./assets/octorill-settings-card.png)

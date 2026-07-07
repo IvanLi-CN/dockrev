@@ -434,6 +434,11 @@ export function isMaskLiteral(value: string): boolean {
   return value === '******' || value === '••••••••••••••••'
 }
 
+export function isVariableMaskLiteral(value: string): boolean {
+  const trimmed = value.trim()
+  return trimmed.length > 0 && /^[*•]+$/.test(trimmed)
+}
+
 export const TELEGRAM_BOT_TOKEN_PATTERN = /^\d{5,}:[A-Za-z0-9_-]{8,}$/
 
 export function isValidTelegramBotToken(value: string): boolean {
@@ -620,8 +625,8 @@ export function makeDefaultSettings(): SettingsResponse {
       octoRill: {
         enabled: true,
         apiBaseUrl: 'https://octo.example.com',
-        apiKeyMasked: '******',
-        apiKey: '******',
+        apiKeyMasked: '••••••••••••••••••••',
+        apiKey: '••••••••••••••••••••',
         defaultView: 'smart',
       },
     },

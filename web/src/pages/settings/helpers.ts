@@ -30,7 +30,7 @@ export function formatBytes(n: number) {
 export function buildSettingsSavePayload(settings: SettingsResponse): PutSettingsInput {
   const octoRillApiKey = (settings.releaseNotes.octoRill.apiKey ?? '').trim()
   const releaseNotesApiKey =
-    isMaskedPat(octoRillApiKey) ? undefined : octoRillApiKey.length > 0 ? octoRillApiKey : null
+    isMaskedSecretLiteral(octoRillApiKey) ? undefined : octoRillApiKey.length > 0 ? octoRillApiKey : null
   return {
     backup: settings.backup,
     resourceMonitor: {
@@ -96,6 +96,11 @@ export type GhcrDraft = {
 
 export function isMaskedPat(value: string): boolean {
   return value.trim() === PAT_MASK
+}
+
+export function isMaskedSecretLiteral(value: string): boolean {
+  const trimmed = value.trim()
+  return trimmed.length > 0 && /^[*•]+$/.test(trimmed)
 }
 
 export function hasExplicitPat(value: string): boolean {

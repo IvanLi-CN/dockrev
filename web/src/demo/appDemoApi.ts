@@ -230,8 +230,8 @@ const demoSettings = {
     octoRill: {
       enabled: true,
       apiBaseUrl: 'https://octo.example.com',
-      apiKeyMasked: '******',
-      apiKey: '******',
+      apiKeyMasked: '••••••••••••••••••••',
+      apiKey: '••••••••••••••••••••',
       defaultView: 'smart',
     },
   },

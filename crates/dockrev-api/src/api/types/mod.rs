@@ -31,6 +31,10 @@ fn mask_if_some(input: Option<String>) -> Option<String> {
     input.map(|_| "******".to_string())
 }
 
+fn mask_to_bullets(input: Option<&str>) -> Option<String> {
+    input.map(|value| "•".repeat(value.chars().count()))
+}
+
 fn is_non_empty(input: Option<&str>) -> bool {
     input.map(|value| !value.trim().is_empty()).unwrap_or(false)
 }

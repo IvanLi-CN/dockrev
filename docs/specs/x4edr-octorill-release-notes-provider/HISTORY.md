@@ -5,11 +5,13 @@
 ## Decision Trace
 
 - 2026-07-07: 创建 spec，冻结 v1 只读接入 OctoRill feed、失败自动回退 GitHub Releases、默认 `smart` 视图与 API Key 后端代理边界。
+- 2026-07-07: OctoRill API Key 脱敏回显改为等长圆点串，保留明文不回传的安全边界，同时避免用户误判已保存 key 被截短。
 
 ## Key Reasons / Replacements
 
 - 复用既有 GitHub Releases 抽屉作为承载面，避免新增并行 release viewer。
 - API Key 仅由 Dockrev 后端保存与转发，避免浏览器直连第三方时泄漏敏感凭据。
+- 脱敏回显允许暴露 key 字符长度，但不暴露明文内容；Settings 保存路径必须把全星号或全圆点掩码视为保留旧 key。
 - OctoRill 文档仅声明 `translated` / `smart` 存在，未稳定展开内部字段，因此实现必须宽容解析并允许缺失降级。
 
 ## References

@@ -15,7 +15,7 @@ No. GHCR webhook is optional; Dockrev can still work with regular registry check
 
 ## Why is PAT never returned in plain text?
 
-By design. Sensitive values are masked as `******` on reads.
+By design. Sensitive values are masked on reads, such as `******` for PATs or dot masks for some keys.
 
 ## When should I set `DOCKREV_IMAGE_REPO`?
 

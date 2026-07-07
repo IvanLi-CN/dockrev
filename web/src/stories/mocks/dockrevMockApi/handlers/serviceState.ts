@@ -12,6 +12,7 @@ import {
   buildResourceSsePayload,
   isMaskLiteral,
   isNotificationTestChannel,
+  isVariableMaskLiteral,
   isValidTelegramBotToken,
   mockNotificationChannelResult,
   parseResourceWindow,
@@ -245,16 +246,16 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
           apiKeyMasked:
             apiKey === undefined
               ? f.settings.releaseNotes.octoRill.apiKeyMasked
-              : apiKey && apiKey !== '******'
-                ? '******'
+              : apiKey && !isVariableMaskLiteral(apiKey)
+                ? '•'.repeat(Array.from(apiKey).length)
                 : apiKey === '' || apiKey === null
                   ? null
                   : f.settings.releaseNotes.octoRill.apiKeyMasked,
           apiKey:
             apiKey === undefined
               ? f.settings.releaseNotes.octoRill.apiKey
-              : apiKey && apiKey !== '******'
-                ? '******'
+              : apiKey && !isVariableMaskLiteral(apiKey)
+                ? '•'.repeat(Array.from(apiKey).length)
                 : apiKey,
           defaultView:
             defaultView === 'original' || defaultView === 'translated' || defaultView === 'smart'
