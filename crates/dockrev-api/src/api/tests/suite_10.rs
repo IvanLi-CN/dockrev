@@ -236,8 +236,13 @@ async fn settings_and_notifications_roundtrip() {
     );
     assert_eq!(
         settings["releaseNotes"]["octoRill"]["apiKeyMasked"].as_str(),
-        Some("******")
+        Some("••••••••••••••••••••")
     );
+    let octo_rill_mask = settings["releaseNotes"]["octoRill"]["apiKeyMasked"]
+        .as_str()
+        .unwrap();
+    assert_eq!(octo_rill_mask.chars().count(), "orill_ak_test_secret".len());
+    assert!(!octo_rill_mask.contains("orill_ak_test_secret"));
     assert_eq!(
         settings["releaseNotes"]["octoRill"]["defaultView"].as_str(),
         Some("translated")
@@ -280,7 +285,7 @@ async fn settings_and_notifications_roundtrip() {
     let settings = response_json(resp).await;
     assert_eq!(
         settings["releaseNotes"]["octoRill"]["apiKeyMasked"].as_str(),
-        Some("******")
+        Some("••••••••••••••••••••")
     );
     assert_eq!(
         settings["releaseNotes"]["octoRill"]["defaultView"].as_str(),
@@ -291,7 +296,7 @@ async fn settings_and_notifications_roundtrip() {
         "backup": settings["backup"],
         "releaseNotes": {
             "octoRill": {
-                "apiKey": "******"
+                "apiKey": "••••••••••••••••••••"
             }
         }
     });
@@ -323,7 +328,7 @@ async fn settings_and_notifications_roundtrip() {
     let settings = response_json(resp).await;
     assert_eq!(
         settings["releaseNotes"]["octoRill"]["apiKeyMasked"].as_str(),
-        Some("******")
+        Some("••••••••••••••••••••")
     );
 
     let clear_octo_rill_key = serde_json::json!({

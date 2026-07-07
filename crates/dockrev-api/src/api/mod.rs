@@ -594,7 +594,7 @@ async fn put_settings(
         }
         if let Some(api_key) = octo_rill.api_key {
             match api_key {
-                Some(value) if is_mask_literal(value.trim()) => {}
+                Some(value) if is_octo_rill_api_key_mask_literal(value.trim()) => {}
                 other => merged_release_notes.octo_rill.api_key = other,
             }
         }
@@ -1115,4 +1115,9 @@ fn merge_telegram_chat_id(target: &mut Option<String>, existing: Option<String>)
 
 fn is_mask_literal(value: &str) -> bool {
     value == "******" || value == "••••••••••••••••"
+}
+
+fn is_octo_rill_api_key_mask_literal(value: &str) -> bool {
+    let trimmed = value.trim();
+    !trimmed.is_empty() && trimmed.chars().all(|c| c == '*' || c == '•')
 }

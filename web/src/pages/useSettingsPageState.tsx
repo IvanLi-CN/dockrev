@@ -51,6 +51,7 @@ errorMessage,
 errorTestState,
 isGhcrLiveJob,
 isMaskedPat,
+isMaskedSecretLiteral,
 isMaskedTelegramBotToken,
 mapScopeLabel,
 NOTIFICATION_CHANNEL_LABEL,
@@ -346,7 +347,8 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
             const settingsPayload = payload as PutSettingsInput
             const rawApiKey = settingsPayload.releaseNotes?.octoRill?.apiKey
             const apiKey = typeof rawApiKey === 'string' ? rawApiKey.trim() : rawApiKey
-            if (typeof apiKey === 'string' && apiKey && !isMaskedPat(apiKey)) {
+            if (typeof apiKey === 'string' && apiKey && !isMaskedSecretLiteral(apiKey)) {
+              const apiKeyMask = '•'.repeat(Array.from(apiKey).length)
               setSettings((prev) =>
                 prev
                   ? {
@@ -355,8 +357,8 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
                         ...prev.releaseNotes,
                         octoRill: {
                           ...prev.releaseNotes.octoRill,
-                          apiKey: PAT_MASK,
-                          apiKeyMasked: PAT_MASK,
+                          apiKey: apiKeyMask,
+                          apiKeyMasked: apiKeyMask,
                         },
                       },
                     }

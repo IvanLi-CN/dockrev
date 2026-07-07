@@ -160,7 +160,7 @@ impl From<ReleaseNotesSettings> for ReleaseNotesSettingsResponse {
             octo_rill: OctoRillReleaseNotesSettingsResponse {
                 enabled: value.octo_rill.enabled,
                 api_base_url: value.octo_rill.api_base_url,
-                api_key_masked: mask_if_some(value.octo_rill.api_key),
+                api_key_masked: mask_to_bullets(value.octo_rill.api_key.as_deref()),
                 default_view: value.octo_rill.default_view,
             },
         }

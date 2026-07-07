@@ -154,6 +154,17 @@ export const OctoRillReleaseNotesCard: Story = {
     if (!card.textContent?.includes('默认视图')) throw new globalThis.Error('expected default view control')
     const apiKeyInput = card.querySelector<HTMLInputElement>('input[type="password"]')
     if (!apiKeyInput) throw new globalThis.Error('expected OctoRill API key password input')
+    if (!/^•{20}$/.test(apiKeyInput.value)) {
+      throw new globalThis.Error(`expected equal-length OctoRill API key mask, got ${apiKeyInput.value.length}`)
+    }
+    apiKeyInput.focus()
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    if (apiKeyInput.value !== '') throw new globalThis.Error('expected OctoRill API key mask to clear on focus')
+    apiKeyInput.blur()
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    if (!/^•{20}$/.test(apiKeyInput.value)) {
+      throw new globalThis.Error('expected OctoRill API key mask to restore on blur')
+    }
   },
 }
 

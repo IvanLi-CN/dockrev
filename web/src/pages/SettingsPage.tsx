@@ -20,6 +20,7 @@ import {
 GHCR_PREVIEW_LIMIT,
 errorMessage,
 formatBytes,
+isMaskedSecretLiteral,
 mapResolveFailure,
 normalizeNotificationEvents,
 normalizeWebhookState,
@@ -494,7 +495,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                     value={
                       octoRillApiKeyFocused &&
                       !octoRillApiKeyTouched &&
-                      settings.releaseNotes.octoRill.apiKey === '******'
+                      isMaskedSecretLiteral(settings.releaseNotes.octoRill.apiKey ?? '')
                         ? ''
                         : settings.releaseNotes.octoRill.apiKey ?? ''
                     }
@@ -517,7 +518,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                     placeholder="orill_ak_..."
                   />
                   <div className="muted" style={{ marginTop: 6 }}>
-                    已保存时显示为 <Mono>******</Mono>；清空后自动保存会删除当前 key。
+                    已保存时显示等长圆点掩码；清空后自动保存会删除当前 key。
                   </div>
                 </div>
               </div>
