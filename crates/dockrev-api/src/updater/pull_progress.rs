@@ -5,7 +5,14 @@ use crate::api::types::JobProgressDownload;
 #[derive(Clone, Debug)]
 pub(super) struct PullProgressSnapshot {
     pub(super) fraction: Option<f64>,
+    pub(super) fraction_source: Option<PullProgressFractionSource>,
     pub(super) download: Option<JobProgressDownload>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PullProgressFractionSource {
+    Bytes,
+    Layers,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -28,6 +35,9 @@ struct PullLineObservation {
 #[derive(Clone, Debug, Default)]
 pub(super) struct PullProgressTracker {
     layers: HashMap<String, PullLayerState>,
+    last_byte_fraction: Option<f64>,
+    last_layer_fraction: Option<f64>,
+    last_fraction: Option<(PullProgressFractionSource, f64)>,
 }
 
 impl PullProgressTracker {
@@ -47,7 +57,27 @@ impl PullProgressTracker {
         {
             layer.current_bytes = Some(total);
         }
-        Some(self.snapshot())
+        let mut snapshot = self.snapshot();
+        if let (Some(source), Some(fraction)) = (snapshot.fraction_source, snapshot.fraction) {
+            let last_fraction = match source {
+                PullProgressFractionSource::Bytes => &mut self.last_byte_fraction,
+                PullProgressFractionSource::Layers => &mut self.last_layer_fraction,
+            };
+            let monotonic_fraction = last_fraction
+                .map(|last| last.max(fraction))
+                .unwrap_or(fraction);
+            *last_fraction = Some(monotonic_fraction);
+            snapshot.fraction = Some(monotonic_fraction);
+            if let Some((last_source, last)) = self.last_fraction
+                && last > monotonic_fraction
+            {
+                snapshot.fraction = Some(last);
+                snapshot.fraction_source = Some(last_source);
+                return Some(snapshot);
+            }
+            self.last_fraction = Some((source, monotonic_fraction));
+        }
+        Some(snapshot)
     }
 
     fn snapshot(&self) -> PullProgressSnapshot {
@@ -92,13 +122,22 @@ impl PullProgressTracker {
             active_layers,
             status,
         };
-        let fraction = if total_bytes > 0 {
-            Some((current_bytes_with_known_total as f64 / total_bytes as f64).clamp(0.0, 1.0))
+        let (fraction, fraction_source) = if total_bytes > 0 {
+            (
+                Some((current_bytes_with_known_total as f64 / total_bytes as f64).clamp(0.0, 1.0)),
+                Some(PullProgressFractionSource::Bytes),
+            )
+        } else if total_layers > 0 && completed_layers > 0 {
+            (
+                Some((completed_layers as f64 / total_layers as f64).clamp(0.0, 0.99)),
+                Some(PullProgressFractionSource::Layers),
+            )
         } else {
-            None
+            (None, None)
         };
         PullProgressSnapshot {
             fraction,
+            fraction_source,
             download: Some(download),
         }
     }
@@ -283,7 +322,9 @@ fn pull_download_summary(download: &JobProgressDownload) -> String {
 }
 
 pub(super) fn pull_progress_message(service_name: &str, snapshot: &PullProgressSnapshot) -> String {
-    if let Some(fraction) = snapshot.fraction {
+    if snapshot.fraction_source == Some(PullProgressFractionSource::Bytes)
+        && let Some(fraction) = snapshot.fraction
+    {
         return format!(
             "pulling image for {} ({:.0}%)",
             service_name,
