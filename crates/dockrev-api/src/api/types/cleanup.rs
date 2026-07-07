@@ -222,6 +222,49 @@ pub struct CleanupScanResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CleanupScanRunStartResponse {
+    pub scan_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_snapshot: Option<CleanupScanResponse>,
+    pub retry_after_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum CleanupScanRunPhase {
+    #[serde(rename = "scan_started")]
+    Started,
+    #[serde(rename = "scan_partial")]
+    Partial,
+    #[serde(rename = "scan_ready")]
+    Ready,
+    #[serde(rename = "scan_failed")]
+    Failed,
+}
+
+impl CleanupScanRunPhase {
+    pub fn event_name(&self) -> &'static str {
+        match self {
+            Self::Started => "scan_started",
+            Self::Partial => "scan_partial",
+            Self::Ready => "scan_ready",
+            Self::Failed => "scan_failed",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CleanupScanRunEvent {
+    pub scan_id: String,
+    pub phase: CleanupScanRunPhase,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response: Option<CleanupScanResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CleanupInventorySnapshot {
     pub scanned_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]

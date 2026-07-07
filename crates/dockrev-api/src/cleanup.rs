@@ -260,10 +260,32 @@ pub async fn build_inventory_snapshot(
     db: Db,
     runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
 ) -> anyhow::Result<CleanupInventorySnapshot> {
+    build_inventory_snapshot_with_progress(db, runner, |_| {}).await
+}
+
+pub async fn build_inventory_snapshot_with_progress(
+    db: Db,
+    runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
+    mut on_partial: impl FnMut(CleanupInventorySnapshot) + Send,
+) -> anyhow::Result<CleanupInventorySnapshot> {
     let managed = load_managed_context_from_db(&db).await?;
-    let mut candidates = scan_candidates(&runner, &db, &managed).await?;
+    let mut candidates = scan_candidates_with_progress(&runner, &db, &managed, |candidates| {
+        on_partial(CleanupInventorySnapshot {
+            scanned_at: now_rfc3339()
+                .unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string()),
+            server_disk_usage: None,
+            candidates,
+        });
+    })
+    .await?;
     if let Some(builder_cache) = scan_builder_cache_candidate(runner.clone()).await {
         candidates.push(builder_cache);
+        on_partial(CleanupInventorySnapshot {
+            scanned_at: now_rfc3339()
+                .unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string()),
+            server_disk_usage: None,
+            candidates: candidates.clone(),
+        });
     }
     let scanned_at = now_rfc3339()?;
     let server_disk_usage = scan_server_disk_usage_with_runner(runner.clone())
@@ -540,10 +562,11 @@ async fn load_managed_context_from_db(db: &Db) -> anyhow::Result<ManagedContext>
     Ok(context)
 }
 
-async fn scan_candidates(
+async fn scan_candidates_with_progress(
     runner: &std::sync::Arc<dyn crate::runner::CommandRunner>,
     db: &Db,
     managed: &ManagedContext,
+    mut on_partial: impl FnMut(Vec<CleanupInventoryCandidate>) + Send,
 ) -> anyhow::Result<Vec<CleanupInventoryCandidate>> {
     let container_ids = docker_list_ids(runner, vec!["container", "ls", "-aq"]).await?;
     let mut containers = Vec::<DockerContainerInspect>::new();
@@ -606,6 +629,7 @@ async fn scan_candidates(
             category: CleanupInventoryCategory::StoppedContainer,
         });
     }
+    on_partial(candidates.clone());
 
     let image_ids = docker_list_ids(runner, vec!["image", "ls", "-aq", "--no-trunc"]).await?;
     let mut dedup_image_ids = BTreeSet::new();
@@ -647,6 +671,7 @@ async fn scan_candidates(
             category,
         });
     }
+    on_partial(candidates.clone());
 
     let volume_names = docker_list_ids(runner, vec!["volume", "ls", "-q"]).await?;
     let mut system_df_volume_sizes: Option<BTreeMap<String, u64>> = None;
@@ -707,6 +732,7 @@ async fn scan_candidates(
             category,
         });
     }
+    on_partial(candidates.clone());
 
     let network_ids = docker_list_ids(runner, vec!["network", "ls", "-q"]).await?;
     let mut dedup_network_ids = BTreeSet::new();
@@ -740,6 +766,7 @@ async fn scan_candidates(
             category: CleanupInventoryCategory::UnusedNetwork,
         });
     }
+    on_partial(candidates.clone());
 
     let _ = db;
     Ok(candidates)

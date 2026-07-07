@@ -1,6 +1,7 @@
 import type {
   CleanupApplyRequest,
   CleanupScanRequest,
+  CleanupScanResponse,
   HomepageNavResponse,
   JobDetail,
   JobListItem,
@@ -104,6 +105,49 @@ export function installDockrevMockApi(
   const cleanupRuntime: CleanupMockRuntimeState = {
     nextJobSeq: 0,
     staleApplyConsumed: false,
+    nextScanRunSeq: 0,
+    scanRuns: new Map(),
+  }
+
+  const parseCleanupScanRequest = (body: unknown): CleanupScanRequest => {
+    const parsed = parseJsonBody(body) as CleanupScanRequest | null
+    return {
+      reason: parsed?.reason === 'confirm' ? 'confirm' : 'page',
+      refresh: parsed?.refresh !== false,
+      preset:
+        parsed?.preset === 'conservative' ||
+        parsed?.preset === 'balanced' ||
+        parsed?.preset === 'project_deep_clean' ||
+        parsed?.preset === 'aggressive'
+          ? parsed.preset
+          : 'balanced',
+      scope: parsed?.scope === 'stack' || parsed?.scope === 'service' ? parsed.scope : 'all',
+      stackId: typeof parsed?.stackId === 'string' ? parsed.stackId : undefined,
+      serviceId: typeof parsed?.serviceId === 'string' ? parsed.serviceId : undefined,
+    }
+  }
+
+  const partialCleanupResponse = (response: CleanupScanResponse): CleanupScanResponse => {
+    const firstStack = response.stackGroups[0]
+    const partialStacks = firstStack
+      ? [
+          {
+            ...firstStack,
+            services: firstStack.services.slice(0, 1),
+            stackOrphans: firstStack.stackOrphans.slice(0, 1),
+          },
+        ]
+      : []
+    return {
+      ...response,
+      status: 'pending',
+      refreshing: true,
+      retryAfterMs: 450,
+      serverDiskUsage: null,
+      stackGroups: partialStacks,
+      unownedGroup: null,
+      confirmationFingerprint: null,
+    }
   }
   const rollbackTargetRaceByServiceId = new Map<string, RollbackTargetRaceState>()
 
@@ -590,23 +634,59 @@ export function installDockrevMockApi(
       })
     }
 
+    if (isCleanupMockScenario(scenario) && method === 'POST' && urlPath === '/api/cleanups/scan-runs') {
+      const request = parseCleanupScanRequest(init?.body)
+      cleanupRuntime.nextScanRunSeq += 1
+      const scanId = `mock-cleanup-scan-${cleanupRuntime.nextScanRunSeq}`
+      const previousSnapshot =
+        scenario === 'cleanup-console-scan-pending' ? null : buildCleanupMockScanResponse(scenario, request, 1)
+      const ready = buildCleanupMockScanResponse(scenario, request, scenario === 'cleanup-console-stale' ? 2 : 1)
+      const holdPartial = scenario === 'cleanup-console-scan-slow' && cleanupRuntime.nextScanRunSeq > 1
+      const events: Array<{ id: number; event: string; data: unknown }> = [
+        {
+          id: 1,
+          event: 'scan_started',
+          data: { scanId, phase: 'scan_started', response: previousSnapshot },
+        },
+      ]
+      if (scenario !== 'cleanup-console-scan-pending') {
+        events.push({
+          id: 2,
+          event: 'scan_partial',
+          data: { scanId, phase: 'scan_partial', response: partialCleanupResponse(ready) },
+        })
+        if (!holdPartial) {
+          events.push({
+            id: 3,
+            event: 'scan_ready',
+            data: { scanId, phase: 'scan_ready', response: ready },
+          })
+        }
+      }
+      cleanupRuntime.scanRuns.set(scanId, events)
+      return json({ scanId, previousSnapshot, retryAfterMs: 450 })
+    }
+
+    if (isCleanupMockScenario(scenario) && method === 'GET' && urlPath.match(/^\/api\/cleanups\/scan-runs\/[^/]+\/events$/)) {
+      const scanId = decodeURIComponent(urlPath.split('/')[4] ?? '')
+      const afterId = Number.parseInt(url?.searchParams.get('afterId') ?? '0', 10)
+      const events = (cleanupRuntime.scanRuns.get(scanId) ?? []).filter((event) => event.id > (Number.isFinite(afterId) ? afterId : 0))
+      const body = events
+        .map((event) => `id: ${event.id}\nevent: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`)
+        .join('')
+      return new Response(body || ': keep-alive\n\n', {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'x-accel-buffering': 'no',
+        },
+      })
+    }
+
     if (isCleanupMockScenario(scenario) && method === 'POST' && urlPath === '/api/cleanups/scan') {
       if (scenario === 'cleanup-console-scan-pending') {
-        const parsed = parseJsonBody(init?.body) as CleanupScanRequest | null
-        const request: CleanupScanRequest = {
-          reason: parsed?.reason === 'confirm' ? 'confirm' : 'page',
-          refresh: parsed?.refresh !== false,
-          preset:
-            parsed?.preset === 'conservative' ||
-            parsed?.preset === 'balanced' ||
-            parsed?.preset === 'project_deep_clean' ||
-            parsed?.preset === 'aggressive'
-              ? parsed.preset
-              : 'balanced',
-          scope: parsed?.scope === 'stack' || parsed?.scope === 'service' ? parsed.scope : 'all',
-          stackId: typeof parsed?.stackId === 'string' ? parsed.stackId : undefined,
-          serviceId: typeof parsed?.serviceId === 'string' ? parsed.serviceId : undefined,
-        }
+        const request = parseCleanupScanRequest(init?.body)
         const ready = buildCleanupMockScanResponse('cleanup-console', request)
         if (request.reason === 'page') {
           return json(
@@ -640,21 +720,7 @@ export function installDockrevMockApi(
           globalThis.setTimeout(() => resolve(), 1600)
         })
       }
-      const parsed = parseJsonBody(init?.body) as CleanupScanRequest | null
-      const request: CleanupScanRequest = {
-        reason: parsed?.reason === 'confirm' ? 'confirm' : 'page',
-        refresh: parsed?.refresh !== false,
-        preset:
-          parsed?.preset === 'conservative' ||
-          parsed?.preset === 'balanced' ||
-          parsed?.preset === 'project_deep_clean' ||
-          parsed?.preset === 'aggressive'
-            ? parsed.preset
-            : 'balanced',
-        scope: parsed?.scope === 'stack' || parsed?.scope === 'service' ? parsed.scope : 'all',
-        stackId: typeof parsed?.stackId === 'string' ? parsed.stackId : undefined,
-        serviceId: typeof parsed?.serviceId === 'string' ? parsed.serviceId : undefined,
-      }
+      const request = parseCleanupScanRequest(init?.body)
       return json(buildCleanupMockScanResponse(scenario, request))
     }
 

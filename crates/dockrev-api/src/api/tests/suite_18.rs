@@ -227,6 +227,80 @@ async fn cleanup_page_refresh_forces_background_refresh_even_with_fresh_cache() 
 }
 
 #[tokio::test]
+async fn cleanup_scan_run_streams_partial_and_ready_events() {
+    let db_path = format!("/tmp/dockrev-cleanup-scan-run-{}.sqlite3", ulid::Ulid::new());
+    let runner = Arc::new(CleanupRunner::stale_on_second_scan());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner.clone()).await;
+    let app = api::router(state.clone());
+
+    let initial = wait_for_cleanup_scan_ready(
+        &app,
+        serde_json::json!({
+            "reason": "page",
+            "preset": "balanced",
+            "scope": "all",
+        }),
+    )
+    .await;
+    assert_eq!(initial["status"].as_str(), Some("ready"));
+
+    let start_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan-runs")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "page",
+                        "refresh": true,
+                        "preset": "aggressive",
+                        "scope": "all",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(start_resp.status(), 202);
+    let start_body = response_json(start_resp).await;
+    let scan_id = start_body["scanId"].as_str().unwrap().to_string();
+    assert_eq!(
+        start_body["previousSnapshot"]["status"].as_str(),
+        Some("ready")
+    );
+
+    let events_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/api/cleanups/scan-runs/{scan_id}/events"))
+                .header("X-Forwarded-User", "ops")
+                .header("accept", "text/event-stream")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(events_resp.status(), 200);
+    let mut body = events_resp.into_body();
+    let partial = wait_for_sse_event(&mut body, "scan_partial", Duration::from_secs(3)).await;
+    let partial_data: serde_json::Value = serde_json::from_str(&partial.data).unwrap();
+    assert_eq!(partial_data["phase"].as_str(), Some("scan_partial"));
+    assert_eq!(partial_data["response"]["refreshing"].as_bool(), Some(true));
+
+    let ready = wait_for_sse_event(&mut body, "scan_ready", Duration::from_secs(3)).await;
+    let ready_data: serde_json::Value = serde_json::from_str(&ready.data).unwrap();
+    assert_eq!(ready_data["phase"].as_str(), Some("scan_ready"));
+    assert_eq!(ready_data["response"]["status"].as_str(), Some("ready"));
+    assert_eq!(runner.stale_generation(), 2);
+}
+
+#[tokio::test]
 async fn cleanup_page_stale_poll_reenqueues_refresh_when_worker_is_idle() {
     let db_path = format!("/tmp/dockrev-cleanup-page-stale-poll-{}.sqlite3", ulid::Ulid::new());
     let runner = Arc::new(CleanupRunner::stale_on_second_scan());

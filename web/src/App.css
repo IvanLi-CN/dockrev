@@ -9705,6 +9705,64 @@ html[data-theme='light'] .btnPrimary {
   outline-offset: -1px;
 }
 
+.cleanupStaleLoading {
+  position: relative;
+  isolation: isolate;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 18%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--color-primary) 8%, transparent);
+  animation: cleanupStaleBreathe 2200ms ease-in-out infinite;
+}
+
+.cleanupStaleLoading::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    115deg,
+    transparent 0%,
+    transparent 34%,
+    color-mix(in srgb, var(--color-primary) 9%, transparent) 48%,
+    transparent 62%,
+    transparent 100%
+  );
+  opacity: 0.45;
+  transform: translateX(-38%);
+  animation: cleanupStaleSheen 2600ms ease-out infinite;
+}
+
+.cleanupStaleLoading > * {
+  position: relative;
+  z-index: 1;
+}
+
+@keyframes cleanupStaleBreathe {
+  0%,
+  100% {
+    border-color: color-mix(in srgb, var(--borderColor) 84%, transparent);
+  }
+  50% {
+    border-color: color-mix(in srgb, var(--color-primary) 28%, var(--borderColor) 72%);
+  }
+}
+
+@keyframes cleanupStaleSheen {
+  0% {
+    transform: translateX(-42%);
+    opacity: 0;
+  }
+  18% {
+    opacity: 0.45;
+  }
+  70%,
+  100% {
+    transform: translateX(42%);
+    opacity: 0;
+  }
+}
+
 .cleanupUsageCardContainer {
   color: color-mix(in srgb, #7dd3fc 78%, #cbd5e1 22%);
 }
@@ -10039,6 +10097,15 @@ html[data-theme='light'] .btnPrimary {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .cleanupStaleLoading,
+  .cleanupStaleLoading::before {
+    animation: none;
+  }
+
+  .cleanupStaleLoading::before {
+    opacity: 0;
+  }
+
   .overviewJobProgressBgShimmer {
     animation: none;
     transform: none;
