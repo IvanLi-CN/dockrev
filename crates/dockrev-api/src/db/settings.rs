@@ -597,6 +597,41 @@ WHERE id = 'default'
         .context("get deploy welcome settings")
     }
 
+    pub async fn get_release_notes_settings(&self) -> anyhow::Result<ReleaseNotesSettings> {
+        self.call(|conn| {
+            Ok(conn.query_row(
+                r#"
+SELECT
+  release_notes_octo_rill_enabled,
+  release_notes_octo_rill_api_base_url,
+  release_notes_octo_rill_api_key,
+  release_notes_octo_rill_default_view
+FROM settings
+WHERE id = 'default'
+"#,
+                [],
+                |row| {
+                    let raw_view: String = row.get(3)?;
+                    let default_view = match raw_view.as_str() {
+                        "original" => ReleaseNotesView::Original,
+                        "translated" => ReleaseNotesView::Translated,
+                        _ => ReleaseNotesView::Smart,
+                    };
+                    Ok(ReleaseNotesSettings {
+                        octo_rill: OctoRillReleaseNotesSettings {
+                            enabled: row.get::<_, i64>(0)? != 0,
+                            api_base_url: row.get(1)?,
+                            api_key: row.get(2)?,
+                            default_view,
+                        },
+                    })
+                },
+            )?)
+        })
+        .await
+        .context("get release notes settings")
+    }
+
     pub async fn put_deploy_welcome_settings(
         &self,
         never_auto_open: bool,
@@ -626,12 +661,14 @@ WHERE id = 'default'
         backup: &BackupSettings,
         resource_monitor: &ResourceMonitorSettings,
         schedules: &SchedulesSettings,
+        release_notes: &ReleaseNotesSettings,
         public_base_url: Option<String>,
         now: &str,
     ) -> anyhow::Result<()> {
         let backup = backup.clone();
         let resource_monitor = resource_monitor.clone();
         let schedules = schedules.clone();
+        let release_notes = release_notes.clone();
         let public_base_url = public_base_url.map(|v| v.trim().to_string());
         let public_base_url =
             public_base_url.and_then(|v| if v.is_empty() { None } else { Some(v) });
@@ -652,7 +689,11 @@ SET
   schedule_ghcr_webhook_audit_enabled = ?9,
   schedule_ghcr_webhook_audit_cron = ?10,
   public_base_url = ?11,
-  updated_at = ?12
+  release_notes_octo_rill_enabled = ?12,
+  release_notes_octo_rill_api_base_url = ?13,
+  release_notes_octo_rill_api_key = ?14,
+  release_notes_octo_rill_default_view = ?15,
+  updated_at = ?16
 WHERE id = 'default'
 "#,
                 params![
@@ -667,6 +708,14 @@ WHERE id = 'default'
                     schedules.ghcr_webhook_audit.enabled as i64,
                     schedules.ghcr_webhook_audit.cron,
                     public_base_url,
+                    release_notes.octo_rill.enabled as i64,
+                    release_notes.octo_rill.api_base_url,
+                    release_notes.octo_rill.api_key,
+                    match release_notes.octo_rill.default_view {
+                        ReleaseNotesView::Original => "original",
+                        ReleaseNotesView::Translated => "translated",
+                        ReleaseNotesView::Smart => "smart",
+                    },
                     now,
                 ],
             )?;

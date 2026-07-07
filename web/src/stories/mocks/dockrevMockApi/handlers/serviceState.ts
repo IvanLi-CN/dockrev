@@ -174,6 +174,7 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     const backup = record && isRecord(record.backup) ? record.backup : null
     const resourceMonitor = record && isRecord(record.resourceMonitor) ? record.resourceMonitor : null
     const schedules = record && isRecord(record.schedules) ? record.schedules : null
+    const releaseNotes = record && isRecord(record.releaseNotes) ? record.releaseNotes : null
 
     if (backup) {
       const enabled = getBoolean(backup.enabled)
@@ -222,6 +223,43 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
         f.settings.schedules.ghcrWebhookAudit = {
           enabled: enabled ?? f.settings.schedules.ghcrWebhookAudit.enabled,
           cron: cron ?? f.settings.schedules.ghcrWebhookAudit.cron,
+        }
+      }
+    }
+
+    if (releaseNotes) {
+      const octoRill = isRecord(releaseNotes.octoRill) ? releaseNotes.octoRill : null
+      if (octoRill) {
+        const enabled = getBoolean(octoRill.enabled)
+        const apiBaseUrl = getString(octoRill.apiBaseUrl)
+        const apiKey = Object.prototype.hasOwnProperty.call(octoRill, 'apiKey')
+          ? octoRill.apiKey === null
+            ? null
+            : getString(octoRill.apiKey)
+          : undefined
+        const defaultView = getString(octoRill.defaultView)
+        f.settings.releaseNotes.octoRill = {
+          ...f.settings.releaseNotes.octoRill,
+          enabled: enabled ?? f.settings.releaseNotes.octoRill.enabled,
+          apiBaseUrl: apiBaseUrl ?? f.settings.releaseNotes.octoRill.apiBaseUrl,
+          apiKeyMasked:
+            apiKey === undefined
+              ? f.settings.releaseNotes.octoRill.apiKeyMasked
+              : apiKey && apiKey !== '******'
+                ? '******'
+                : apiKey === '' || apiKey === null
+                  ? null
+                  : f.settings.releaseNotes.octoRill.apiKeyMasked,
+          apiKey:
+            apiKey === undefined
+              ? f.settings.releaseNotes.octoRill.apiKey
+              : apiKey && apiKey !== '******'
+                ? '******'
+                : apiKey,
+          defaultView:
+            defaultView === 'original' || defaultView === 'translated' || defaultView === 'smart'
+              ? defaultView
+              : f.settings.releaseNotes.octoRill.defaultView,
         }
       }
     }
@@ -368,6 +406,67 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
 
   if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/candidates')) {
     return json({ error: 'not found' }, { status: 404 })
+  }
+
+  if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/release-notes')) {
+    const parts = urlPath.split('/').filter(Boolean)
+    const serviceId = decodeURIComponent(parts[2])
+    const page = Math.max(1, Number(url?.searchParams.get('cursor') ?? '1') || 1)
+    const limit = Math.max(1, Number(url?.searchParams.get('limit') ?? '20') || 20)
+    const github = buildMockGitHubReleasesResponse(serviceId, page, limit)
+    const octoRill = f.settings.releaseNotes.octoRill
+    const configured = Boolean(octoRill.apiBaseUrl?.trim() && octoRill.apiKeyMasked)
+    const shouldUseOctoRill = octoRill.enabled && configured && github.status === 'ready'
+    const smartSummaryFor = (item: (typeof github.items)[number]) => {
+      const title = item.name && item.name !== item.tagName ? item.name : item.tagName
+      const subject = /^release\s+\d/i.test(title) || /^\d+(?:\.\d+)+(?:[-+].*)?$/.test(title) ? '本次更新' : title
+      return [
+        `润色摘要：${subject}主要优化发布说明阅读体验与维护决策效率。`,
+        '',
+        '- 将关键变更压缩成可快速扫读的摘要，减少从原文里反复定位重点。',
+        '- 适合在维护窗口中判断升级收益、影响范围和是否需要继续查看原文。',
+      ].join('\n')
+    }
+
+    return json({
+      status: github.status === 'ready' ? 'ready' : github.status === 'unsupportedRepo' ? 'unsupportedRepo' : 'upstreamError',
+      source: shouldUseOctoRill ? 'octoRill' : 'gitHub',
+      repo: github.repo,
+      cursor: page > 1 ? String(page) : null,
+      limit,
+      nextCursor: github.hasMore ? String(page + 1) : null,
+      hasMore: github.hasMore,
+      defaultView: octoRill.defaultView,
+      items: github.items.map((item, index) => ({
+        id: shouldUseOctoRill ? `octorill:${item.id}` : `github:${item.id}`,
+        tagName: item.tagName,
+        name: item.name,
+        originalBody: item.body,
+        translatedBody:
+          shouldUseOctoRill && index % 4 !== 2
+            ? `翻译：${item.name ?? item.tagName}\n\n${item.body ?? '暂无原始说明'}`
+            : null,
+        smartBody:
+          shouldUseOctoRill && index % 4 !== 3
+            ? smartSummaryFor(item)
+            : null,
+        htmlUrl: item.htmlUrl,
+        draft: item.draft,
+        prerelease: item.prerelease,
+        publishedAt: item.publishedAt,
+        createdAt: item.createdAt,
+      })),
+      message: github.message,
+      fallback: shouldUseOctoRill
+        ? null
+        : {
+            from: 'octoRill',
+            reason: octoRill.enabled ? 'notConfigured' : 'disabled',
+            message: octoRill.enabled
+              ? 'OctoRill API Base URL 或 API Key 未配置完整，已使用 GitHub Releases。'
+              : 'OctoRill 更新日志未启用，已使用 GitHub Releases。',
+          },
+    })
   }
 
   if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/github-releases')) {

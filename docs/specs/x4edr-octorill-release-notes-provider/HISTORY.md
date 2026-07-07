@@ -1,0 +1,18 @@
+# Dockrev：OctoRill 更新日志来源与发布抽屉视图切换 演进历史（#x4edr）
+
+> 这里记录会影响 Agent 理解“为什么一步步变成现在这样”的关键演进；单次任务流水账不放这里，规范正文仍以 `./SPEC.md` 为准。
+
+## Decision Trace
+
+- 2026-07-07: 创建 spec，冻结 v1 只读接入 OctoRill feed、失败自动回退 GitHub Releases、默认 `smart` 视图与 API Key 后端代理边界。
+
+## Key Reasons / Replacements
+
+- 复用既有 GitHub Releases 抽屉作为承载面，避免新增并行 release viewer。
+- API Key 仅由 Dockrev 后端保存与转发，避免浏览器直连第三方时泄漏敏感凭据。
+- OctoRill 文档仅声明 `translated` / `smart` 存在，未稳定展开内部字段，因此实现必须宽容解析并允许缺失降级。
+
+## References
+
+- `./SPEC.md`
+- `./IMPLEMENTATION.md`

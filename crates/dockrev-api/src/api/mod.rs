@@ -160,6 +160,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(locate_service_github_release),
         )
         .route(
+            "/api/services/{service_id}/release-notes",
+            get(list_service_release_notes),
+        )
+        .route(
             "/api/services/{service_id}/rollback-target",
             get(get_service_rollback_target),
         )
@@ -372,6 +376,44 @@ fn normalize_public_base_url(input: &str) -> anyhow::Result<String> {
     Ok(url.to_string())
 }
 
+fn normalize_octo_rill_api_base_url(input: &str) -> anyhow::Result<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow::anyhow!(
+            "releaseNotes.octoRill.apiBaseUrl must not be empty"
+        ));
+    }
+
+    let mut url =
+        Url::parse(trimmed).context("releaseNotes.octoRill.apiBaseUrl is not a valid URL")?;
+    match url.scheme() {
+        "http" | "https" => {}
+        _ => {
+            return Err(anyhow::anyhow!(
+                "releaseNotes.octoRill.apiBaseUrl must start with http:// or https://"
+            ));
+        }
+    }
+    if url.host_str().is_none() {
+        return Err(anyhow::anyhow!(
+            "releaseNotes.octoRill.apiBaseUrl must be absolute"
+        ));
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(anyhow::anyhow!(
+            "releaseNotes.octoRill.apiBaseUrl must not include credentials"
+        ));
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err(anyhow::anyhow!(
+            "releaseNotes.octoRill.apiBaseUrl must not include query or fragment"
+        ));
+    }
+    let normalized_path = url.path().trim_end_matches('/').to_string();
+    url.set_path(&normalized_path);
+    Ok(url.to_string())
+}
+
 fn gen_webhook_secret() -> anyhow::Result<String> {
     let rng = ring::rand::SystemRandom::new();
     let mut buf = [0u8; 32];
@@ -424,6 +466,11 @@ async fn get_settings(
         .get_schedule_settings()
         .await
         .map_err(map_internal)?;
+    let release_notes = state
+        .db
+        .get_release_notes_settings()
+        .await
+        .map_err(map_internal)?;
     let public_base_url = state
         .db
         .get_instance_public_base_url()
@@ -434,6 +481,7 @@ async fn get_settings(
         backup,
         resource_monitor,
         schedules,
+        release_notes: release_notes.into(),
         auth: AuthSettings {
             forward_header_name: auth_view.forward_header_name,
             group_header_name: auth_view.group_header_name,
@@ -529,6 +577,51 @@ async fn put_settings(
         )?;
     }
 
+    let existing_release_notes = state
+        .db
+        .get_release_notes_settings()
+        .await
+        .map_err(map_internal)?;
+    let mut merged_release_notes = existing_release_notes;
+    if let Some(put) = req.release_notes
+        && let Some(octo_rill) = put.octo_rill
+    {
+        if let Some(enabled) = octo_rill.enabled {
+            merged_release_notes.octo_rill.enabled = enabled;
+        }
+        if let Some(api_base_url) = octo_rill.api_base_url {
+            merged_release_notes.octo_rill.api_base_url = api_base_url;
+        }
+        if let Some(api_key) = octo_rill.api_key {
+            match api_key {
+                Some(value) if is_mask_literal(value.trim()) => {}
+                other => merged_release_notes.octo_rill.api_key = other,
+            }
+        }
+        if let Some(default_view) = octo_rill.default_view {
+            merged_release_notes.octo_rill.default_view = default_view;
+        }
+    }
+    merged_release_notes.octo_rill.api_base_url = merged_release_notes
+        .octo_rill
+        .api_base_url
+        .map(|v| v.trim().to_string())
+        .and_then(|v| if v.is_empty() { None } else { Some(v) });
+    if let Some(raw) = merged_release_notes.octo_rill.api_base_url.clone() {
+        let normalized = normalize_octo_rill_api_base_url(&raw).map_err(|e| {
+            ApiError::invalid_argument(e.to_string()).with_details(serde_json::json!({
+                "reason": "octo_rill_api_base_url_invalid",
+                "field": "releaseNotes.octoRill.apiBaseUrl",
+            }))
+        })?;
+        merged_release_notes.octo_rill.api_base_url = Some(normalized);
+    }
+    merged_release_notes.octo_rill.api_key = merged_release_notes
+        .octo_rill
+        .api_key
+        .map(|v| v.trim().to_string())
+        .and_then(|v| if v.is_empty() { None } else { Some(v) });
+
     let existing_public_base_url = state
         .db
         .get_instance_public_base_url()
@@ -559,6 +652,7 @@ async fn put_settings(
             &req.backup,
             &merged_resource_monitor,
             &merged_schedules,
+            &merged_release_notes,
             merged_public_base_url,
             &now,
         )

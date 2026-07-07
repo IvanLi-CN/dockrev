@@ -44,6 +44,12 @@ function scrollToNotificationCard(root: HTMLElement): void {
   notificationCard?.scrollIntoView({ block: 'start', behavior: 'auto' })
 }
 
+function scrollToOctoRillCard(root: HTMLElement): void {
+  const cards = Array.from(root.querySelectorAll<HTMLElement>('.card'))
+  const octoRillCard = cards.find((card) => card.querySelector('.title')?.textContent?.trim() === 'OctoRill 更新日志')
+  octoRillCard?.scrollIntoView({ block: 'center', behavior: 'auto' })
+}
+
 function setInputValue(input: HTMLInputElement, value: string): void {
   const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
   descriptor?.set?.call(input, value)
@@ -131,6 +137,24 @@ export const RepoPickerUx: Story = {
 export const GhcrPreview: Story = {
   parameters: { dockrevApiScenario: 'settings-configured' },
   render: () => renderSettingsPage('验证 GHCR Repos 区域仅预览前 6 条并通过“查看更多”进入维护页'),
+}
+
+export const OctoRillReleaseNotesCard: Story = {
+  parameters: { dockrevApiScenario: 'settings-configured' },
+  render: () => renderSettingsPage('聚焦 OctoRill 更新日志配置（Base URL / API Key / 默认视图）'),
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    scrollToOctoRillCard(canvasElement)
+    await new Promise((resolve) => setTimeout(resolve, 80))
+
+    const card = Array.from(canvasElement.querySelectorAll<HTMLElement>('.card')).find(
+      (node) => node.querySelector('.title')?.textContent?.trim() === 'OctoRill 更新日志',
+    )
+    if (!card) throw new globalThis.Error('expected OctoRill release notes card')
+    if (!card.textContent?.includes('默认视图')) throw new globalThis.Error('expected default view control')
+    const apiKeyInput = card.querySelector<HTMLInputElement>('input[type="password"]')
+    if (!apiKeyInput) throw new globalThis.Error('expected OctoRill API key password input')
+  },
 }
 
 export const NotificationCard: Story = {

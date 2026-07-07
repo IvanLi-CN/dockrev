@@ -9,7 +9,7 @@ const DEFAULT_OUTDIR = path.resolve(process.cwd(), 'storybook-static')
 const STORY_TIMEOUT_MS = 20_000
 
 function parseArgs(argv) {
-  const out = { url: null, outdir: null }
+  const out = { url: null, outdir: null, only: [] }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--url') {
@@ -19,6 +19,14 @@ function parseArgs(argv) {
     }
     if (a === '--outdir') {
       out.outdir = argv[i + 1] ?? null
+      i++
+      continue
+    }
+    if (a === '--only') {
+      out.only = (argv[i + 1] ?? '')
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean)
       i++
       continue
     }
@@ -425,10 +433,44 @@ async function main() {
       file: 'services-dashboard.png',
       setup: async () => {},
     },
+    {
+      id: 'pages-settingspage--octo-rill-release-notes-card',
+      file: 'octorill-settings-card.png',
+      setup: async (page) => {
+        const card = page.locator('.card').filter({ hasText: 'OctoRill 更新日志' }).first()
+        await card.waitFor({ timeout: STORY_TIMEOUT_MS })
+        await card.evaluate((el) => el.scrollIntoView({ block: 'center', behavior: 'auto' }))
+        await page.waitForTimeout(160)
+      },
+      screenshot: async (page, filePath) => {
+        const card = page.locator('.card').filter({ hasText: 'OctoRill 更新日志' }).first()
+        await card.screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'components-githubreleasedrawer--octo-rill-smart-default',
+      file: 'octorill-release-drawer-smart-default.png',
+      setup: async (page) => {
+        await page.locator('.releaseDrawerContent').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.locator('.releaseDrawerViewTabActive', { hasText: '润色' }).waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.getByText('润色摘要').first().waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        const drawer = page.locator('.releaseDrawerContent').first()
+        await drawer.screenshot({ path: filePath })
+      },
+    },
   ]
 
   try {
-    for (const s of shots) {
+    const selectedShots =
+      args.only.length > 0
+        ? shots.filter((s) => args.only.includes(s.id) || args.only.includes(s.file))
+        : shots
+    if (selectedShots.length === 0) {
+      throw new Error(`No screenshots matched --only=${args.only.join(',')}`)
+    }
+    for (const s of selectedShots) {
       const page = await openStory(s.id, s.viewport)
       try {
         await s.setup(page)

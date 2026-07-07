@@ -15,6 +15,7 @@ import type {
   Service,
   ServiceDigestTagsSnapshotResult,
   ServiceGitHubReleasesResponse,
+  ServiceReleaseNotesResponse,
   ServiceResourceHistoryResponse,
   ServiceResourceOverviewResponse,
   SettingsResponse,
@@ -224,6 +225,15 @@ const demoSettings = {
   schedules: {
     updateCheck: { enabled: true, cron: '17 */6 * * *' },
     ghcrWebhookAudit: { enabled: true, cron: '42 */12 * * *' },
+  },
+  releaseNotes: {
+    octoRill: {
+      enabled: true,
+      apiBaseUrl: 'https://octo.example.com',
+      apiKeyMasked: '******',
+      apiKey: '******',
+      defaultView: 'smart',
+    },
   },
   auth: {
     forwardHeaderName: 'X-Forwarded-User',
@@ -586,6 +596,42 @@ function githubReleases(): ServiceGitHubReleasesResponse {
   }
 }
 
+function releaseNotes(): ServiceReleaseNotesResponse {
+  const github = githubReleases()
+  return {
+    status: 'ready',
+    source: 'octoRill',
+    repo: github.repo,
+    cursor: null,
+    limit: 20,
+    nextCursor: null,
+    hasMore: false,
+    defaultView: 'smart',
+    items: github.items.map((item) => {
+      const title = item.name && item.name !== item.tagName ? item.name : item.tagName
+      const subject = /^release\s+\d/i.test(title) || /^\d+(?:\.\d+)+(?:[-+].*)?$/.test(title) ? '本次更新' : title
+      return {
+        id: `octorill:${item.id}`,
+        tagName: item.tagName,
+        name: item.name,
+        originalBody: item.body,
+        translatedBody: `翻译：${item.body ?? 'Demo release notes.'}`,
+        smartBody: [
+          `润色摘要：${subject}主要优化发布说明阅读体验与维护决策效率。`,
+          '',
+          '- 将关键变更压缩成可快速扫读的摘要，帮助判断升级收益与影响范围。',
+          '- 如需核对细节，可继续切换到翻译或原文视图。',
+        ].join('\n'),
+        htmlUrl: item.htmlUrl,
+        draft: item.draft,
+        prerelease: item.prerelease,
+        publishedAt: item.publishedAt,
+        createdAt: item.createdAt,
+      }
+    }),
+  }
+}
+
 function isDemoRequested(): boolean {
   const flag = import.meta.env.VITE_DOCKREV_DEMO
   const normalizedFlag = (flag ?? '').trim().toLowerCase()
@@ -709,6 +755,7 @@ export function installAppDemoApi(): DemoInstallResult | null {
     if (path.startsWith('/api/services/') && path.endsWith('/new-version-discovery-timeline') && method === 'GET') {
       return json({ items: [{ kind: 'currentCandidate', version: '5.2.3', occurredAt: nowIso(-86_400_000) }] } satisfies NewVersionDiscoveryTimelineResponse)
     }
+    if (path.startsWith('/api/services/') && path.endsWith('/release-notes') && method === 'GET') return json(releaseNotes())
     if (path.startsWith('/api/services/') && path.endsWith('/github-releases') && method === 'GET') return json(githubReleases())
     if (path.startsWith('/api/services/') && path.endsWith('/repo-link/infer') && method === 'POST') {
       return json({ repoUrl: 'https://github.com/acme/demo', strategy: 'oci_source', reason: null })

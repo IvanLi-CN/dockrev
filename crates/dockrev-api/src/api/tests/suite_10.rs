@@ -18,9 +18,20 @@ async fn settings_and_notifications_roundtrip() {
     assert!(settings["backup"].is_object());
     assert!(settings["resourceMonitor"].is_object());
     assert!(settings["schedules"].is_object());
+    assert!(settings["releaseNotes"].is_object());
     assert!(settings["auth"].is_object());
     assert!(settings["instance"].is_object());
     assert!(settings["instance"]["publicBaseUrl"].is_null());
+    assert_eq!(
+        settings["releaseNotes"]["octoRill"]["enabled"].as_bool(),
+        Some(false)
+    );
+    assert!(settings["releaseNotes"]["octoRill"]["apiBaseUrl"].is_null());
+    assert!(settings["releaseNotes"]["octoRill"]["apiKeyMasked"].is_null());
+    assert_eq!(
+        settings["releaseNotes"]["octoRill"]["defaultView"].as_str(),
+        Some("smart")
+    );
     assert_eq!(settings["resourceMonitor"]["enabled"].as_bool(), Some(true));
     assert_eq!(
         settings["resourceMonitor"]["sampleIntervalSeconds"].as_u64(),
@@ -178,6 +189,179 @@ async fn settings_and_notifications_roundtrip() {
         Some("https://dockrev.example.com/")
     );
 
+    let set_octo_rill = serde_json::json!({
+        "backup": settings["backup"],
+        "releaseNotes": {
+            "octoRill": {
+                "enabled": true,
+                "apiBaseUrl": "https://octo.example.com/octo-rill/",
+                "apiKey": " orill_ak_test_secret ",
+                "defaultView": "translated"
+            }
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(set_octo_rill.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/settings")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let settings = response_json(resp).await;
+    assert_eq!(
+        settings["releaseNotes"]["octoRill"]["enabled"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        settings["releaseNotes"]["octoRill"]["apiBaseUrl"].as_str(),
+        Some("https://octo.example.com/octo-rill")
+    );
+    assert_eq!(
+        settings["releaseNotes"]["octoRill"]["apiKeyMasked"].as_str(),
+        Some("******")
+    );
+    assert_eq!(
+        settings["releaseNotes"]["octoRill"]["defaultView"].as_str(),
+        Some("translated")
+    );
+
+    let preserve_octo_rill_key = serde_json::json!({
+        "backup": settings["backup"],
+        "releaseNotes": {
+            "octoRill": {
+                "enabled": true,
+                "defaultView": "original"
+            }
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(preserve_octo_rill_key.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/settings")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let settings = response_json(resp).await;
+    assert_eq!(
+        settings["releaseNotes"]["octoRill"]["apiKeyMasked"].as_str(),
+        Some("******")
+    );
+    assert_eq!(
+        settings["releaseNotes"]["octoRill"]["defaultView"].as_str(),
+        Some("original")
+    );
+
+    let preserve_octo_rill_mask = serde_json::json!({
+        "backup": settings["backup"],
+        "releaseNotes": {
+            "octoRill": {
+                "apiKey": "******"
+            }
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(preserve_octo_rill_mask.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/settings")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let settings = response_json(resp).await;
+    assert_eq!(
+        settings["releaseNotes"]["octoRill"]["apiKeyMasked"].as_str(),
+        Some("******")
+    );
+
+    let clear_octo_rill_key = serde_json::json!({
+        "backup": settings["backup"],
+        "releaseNotes": {
+            "octoRill": {
+                "apiKey": null
+            }
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(clear_octo_rill_key.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/settings")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let settings = response_json(resp).await;
+    assert!(settings["releaseNotes"]["octoRill"]["apiKeyMasked"].is_null());
+
     let invalid_base_url = serde_json::json!({
         "backup": settings["backup"],
         "instance": {
@@ -201,6 +385,33 @@ async fn settings_and_notifications_roundtrip() {
     assert_eq!(
         payload["error"]["details"]["reason"].as_str(),
         Some("instance_public_base_url_invalid")
+    );
+
+    let invalid_octo_rill_base_url = serde_json::json!({
+        "backup": settings["backup"],
+        "releaseNotes": {
+            "octoRill": {
+                "apiBaseUrl": "https://user:pass@octo.example.com/"
+            }
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(invalid_octo_rill_base_url.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let payload = response_json(resp).await;
+    assert_eq!(
+        payload["error"]["details"]["reason"].as_str(),
+        Some("octo_rill_api_base_url_invalid")
     );
 
     let resp = app

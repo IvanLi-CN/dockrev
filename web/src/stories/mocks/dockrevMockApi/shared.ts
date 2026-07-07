@@ -616,6 +616,15 @@ export function makeDefaultSettings(): SettingsResponse {
       updateCheck: { enabled: false, cron: '*/30 * * * *' },
       ghcrWebhookAudit: { enabled: true, cron: '0 3 * * *' },
     },
+    releaseNotes: {
+      octoRill: {
+        enabled: true,
+        apiBaseUrl: 'https://octo.example.com',
+        apiKeyMasked: '******',
+        apiKey: '******',
+        defaultView: 'smart',
+      },
+    },
     auth: {
       forwardHeaderName: 'X-Forwarded-User',
       groupHeaderName: 'Remote-Groups',

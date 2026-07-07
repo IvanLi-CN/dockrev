@@ -24,7 +24,7 @@ pub(crate) struct ServiceGitHubReleaseLocateQuery {
     limit: Option<u32>,
 }
 
-fn github_release_auth_mode(mode: github::GitHubAuthMode) -> GitHubReleaseAuthMode {
+pub(super) fn github_release_auth_mode(mode: github::GitHubAuthMode) -> GitHubReleaseAuthMode {
     match mode {
         github::GitHubAuthMode::Pat => GitHubReleaseAuthMode::Pat,
         github::GitHubAuthMode::Anonymous => GitHubReleaseAuthMode::Anonymous,
@@ -76,11 +76,11 @@ fn split_github_repo_full_name(full_name: &str) -> Option<(String, String)> {
     Some((owner.to_string(), repo.to_string()))
 }
 
-fn normalize_github_releases_page(value: Option<u32>) -> u32 {
+pub(super) fn normalize_github_releases_page(value: Option<u32>) -> u32 {
     value.unwrap_or(DEFAULT_GITHUB_RELEASES_PAGE).max(1)
 }
 
-fn normalize_github_releases_per_page(value: Option<u32>) -> u32 {
+pub(super) fn normalize_github_releases_per_page(value: Option<u32>) -> u32 {
     value
         .unwrap_or(DEFAULT_GITHUB_RELEASES_PER_PAGE)
         .clamp(1, MAX_GITHUB_RELEASES_PER_PAGE)
@@ -92,7 +92,9 @@ fn normalize_github_release_locate_limit(value: Option<u32>) -> u32 {
         .clamp(1, MAX_GITHUB_RELEASE_LOCATE_LIMIT)
 }
 
-fn github_release_item_from_api(release: github::GitHubRelease) -> ServiceGitHubReleaseItem {
+pub(super) fn github_release_item_from_api(
+    release: github::GitHubRelease,
+) -> ServiceGitHubReleaseItem {
     ServiceGitHubReleaseItem {
         id: release.id,
         tag_name: release.tag_name,
@@ -292,7 +294,7 @@ fn classify_github_release_locate_failure(
     }
 }
 
-fn build_service_github_releases_client(
+pub(super) fn build_service_github_releases_client(
     settings: &crate::models::GitHubPackagesSettingsDb,
 ) -> Result<github::GitHubClient, ApiError> {
     let pat = settings

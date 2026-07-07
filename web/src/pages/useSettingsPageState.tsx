@@ -71,7 +71,6 @@ type SaveScope
 } from './settings/helpers'
 
 export function useSettingsPageState(props: { onTopActions: (node: React.ReactNode) => void }) {
-
   const { onTopActions } = props
   const confirm = useConfirm()
   const [settings, setSettings] = useState<SettingsResponse | null>(null)
@@ -79,6 +78,8 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
   const [telegramBotTokenVisible, setTelegramBotTokenVisible] = useState(false)
   const [telegramBotTokenTouched, setTelegramBotTokenTouched] = useState(false)
   const [telegramBotTokenFocused, setTelegramBotTokenFocused] = useState(false)
+  const [octoRillApiKeyTouched, setOctoRillApiKeyTouched] = useState(false)
+  const [octoRillApiKeyFocused, setOctoRillApiKeyFocused] = useState(false)
   const [githubPackages, setGitHubPackages] = useState<GitHubPackagesSettingsResponse | null>(null)
   const [githubPackagesPat, setGitHubPackagesPat] = useState('')
   const [githubPackagesNewRepo, setGitHubPackagesNewRepo] = useState('')
@@ -238,6 +239,8 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     else if (reason === 'telegram_bot_token_invalid') message = 'Bot token 格式不合法，请填写形如 123456:AA... 的 Telegram Bot token'
     else if (reason === 'instance_public_base_url_invalid')
       message = '实例 Public Base URL 格式不合法，请填写 http(s) 的绝对 URL，例如 https://dockrev.example.com/'
+    else if (reason === 'octo_rill_api_base_url_invalid')
+      message = 'OctoRill API Base URL 格式不合法，请填写不含账号密码的 http(s) 绝对 URL'
     else if (reason === 'github_upstream_timeout') message = 'GitHub 响应超时，请稍后重试'
     else if (reason === 'github_upstream_unavailable') message = 'GitHub 请求失败，请稍后重试'
 
@@ -337,6 +340,44 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
             const ghcrPayload = payload as { enabled: boolean; callbackUrl: string; pat: string | null }
             if (ghcrPayload.pat && !isMaskedPat(ghcrPayload.pat)) {
               setGitHubPackages((prev) => (prev ? { ...prev, patMasked: PAT_MASK } : prev))
+            }
+          }
+          if (scope === 'backup') {
+            const settingsPayload = payload as PutSettingsInput
+            const rawApiKey = settingsPayload.releaseNotes?.octoRill?.apiKey
+            const apiKey = typeof rawApiKey === 'string' ? rawApiKey.trim() : rawApiKey
+            if (typeof apiKey === 'string' && apiKey && !isMaskedPat(apiKey)) {
+              setSettings((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      releaseNotes: {
+                        ...prev.releaseNotes,
+                        octoRill: {
+                          ...prev.releaseNotes.octoRill,
+                          apiKey: PAT_MASK,
+                          apiKeyMasked: PAT_MASK,
+                        },
+                      },
+                    }
+                  : prev,
+              )
+            } else if (apiKey === null || apiKey === '') {
+              setSettings((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      releaseNotes: {
+                        ...prev.releaseNotes,
+                        octoRill: {
+                          ...prev.releaseNotes.octoRill,
+                          apiKey: '',
+                          apiKeyMasked: null,
+                        },
+                      },
+                    }
+                  : prev,
+              )
             }
           }
           setAutoSaveUpdatedAt(new Date().toISOString())
@@ -497,6 +538,15 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     const nextSettings: SettingsResponse = {
       ...rawSettings,
       instance: rawSettings.instance ?? { publicBaseUrl: null },
+      releaseNotes: {
+        octoRill: {
+          enabled: rawSettings.releaseNotes?.octoRill.enabled ?? false,
+          apiBaseUrl: rawSettings.releaseNotes?.octoRill.apiBaseUrl ?? '',
+          apiKeyMasked: rawSettings.releaseNotes?.octoRill.apiKeyMasked ?? null,
+          apiKey: rawSettings.releaseNotes?.octoRill.apiKeyMasked ?? '',
+          defaultView: rawSettings.releaseNotes?.octoRill.defaultView ?? 'smart',
+        },
+      },
     }
     const nextNotifications = normalizeNotificationsForUi(await getNotifications())
     const gh = await getGitHubPackagesSettings()
@@ -515,6 +565,8 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     setTelegramBotTokenVisible(false)
     setTelegramBotTokenTouched(false)
     setTelegramBotTokenFocused(false)
+    setOctoRillApiKeyTouched(false)
+    setOctoRillApiKeyFocused(false)
     setGitHubPackages(nextGhcr)
     setGitHubPackagesPat(nextPat)
     setNotificationTestStates({})
@@ -714,6 +766,45 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     },
     [markFieldDirty],
   )
+
+  const updateReleaseNotes = useCallback(
+    (
+      fieldPath: string,
+      updater: (current: SettingsResponse['releaseNotes']) => SettingsResponse['releaseNotes'],
+      isToggle = false,
+    ) => {
+      setSettings((prev) => {
+        if (!prev) return prev
+        return { ...prev, releaseNotes: updater(prev.releaseNotes) }
+      })
+      markFieldDirty('backup', fieldPath, isToggle ? TOGGLE_DEBOUNCE_MS : TEXT_DEBOUNCE_MS)
+    },
+    [markFieldDirty],
+  )
+
+  const clearOctoRillApiKeyMaskForEdit = useCallback(() => {
+    setOctoRillApiKeyTouched(false)
+  }, [])
+
+  const restoreOctoRillApiKeyMaskIfNeeded = useCallback(() => {
+    if (octoRillApiKeyTouched) return
+    setSettings((prev) => {
+      if (!prev) return prev
+      if ((prev.releaseNotes.octoRill.apiKey ?? '').trim()) return prev
+      const mask = prev.releaseNotes.octoRill.apiKeyMasked
+      if (!mask) return prev
+      return {
+        ...prev,
+        releaseNotes: {
+          ...prev.releaseNotes,
+          octoRill: {
+            ...prev.releaseNotes.octoRill,
+            apiKey: mask,
+          },
+        },
+      }
+    })
+  }, [octoRillApiKeyTouched])
 
   const updateNotifications = useCallback(
     (fieldPath: string, updater: (current: NotificationConfig) => NotificationConfig, isToggle = false) => {
@@ -991,11 +1082,16 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     autoSaveIssue?.scope === 'backup' && autoSaveIssue.fieldPath === 'schedules.ghcrWebhookAudit.cron'
       ? autoSaveIssue
       : null
+  const octoRillApiBaseUrlIssue =
+    autoSaveIssue?.scope === 'backup' && autoSaveIssue.fieldPath === 'releaseNotes.octoRill.apiBaseUrl'
+      ? autoSaveIssue
+      : null
   const showTelegramBotTokenEye =
     telegramBotTokenFocused && telegramBotTokenTouched && (notifications?.telegram.botToken ?? '').trim().length > 0
   const telegramBotTokenInputClassName = telegramBotTokenIssue ? 'input inputError' : 'input'
   const updateCheckCronInputClassName = updateCheckCronIssue ? 'input inputError' : 'input'
   const ghcrWebhookAuditCronInputClassName = ghcrWebhookAuditCronIssue ? 'input inputError' : 'input'
+  const octoRillApiBaseUrlInputClassName = octoRillApiBaseUrlIssue ? 'input inputError' : 'input'
   const ghcrLiveProgressText = (() => {
     if (!ghcrLiveJob) return null
     const p = ghcrLiveJob.progress
@@ -1027,6 +1123,7 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     autoSaveToastClassName,
     busy,
     canWebPush,
+    clearOctoRillApiKeyMaskForEdit,
     clearTelegramBotTokenMaskForEdit,
     confirm,
     dismissInstancePublicBaseUrlSuggestBubble,
@@ -1047,9 +1144,13 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     notificationTestRunning,
     notificationTestStates,
     notifications,
+    octoRillApiKeyFocused,
+    octoRillApiKeyTouched,
     openGhcrRegistry,
+    octoRillApiBaseUrlInputClassName,
     refresh,
     refreshTrackedRepos,
+    restoreOctoRillApiKeyMaskIfNeeded,
     restoreTelegramBotTokenMaskIfNeeded,
     runNotificationChannelTest,
     selfUpgradeUrl,
@@ -1061,6 +1162,8 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     setGitHubPackagesNewRepo,
     setInstancePublicBaseUrlSuggestFloating,
     setInstancePublicBaseUrlSuggestReference,
+    setOctoRillApiKeyFocused,
+    setOctoRillApiKeyTouched,
     setTelegramBotTokenFocused,
     setTelegramBotTokenTouched,
     setTelegramBotTokenVisible,
@@ -1076,6 +1179,7 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     updateCheckCronInputClassName,
     updateGhcr,
     updateInstance,
+    updateReleaseNotes,
     updateNotifications,
     updateResourceMonitor,
     updateSchedules,

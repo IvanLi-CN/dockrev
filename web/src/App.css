@@ -1252,6 +1252,47 @@ html[data-theme='light'] .versionTagsPopover {
   color: color-mix(in srgb, var(--text) 78%, var(--color-info) 22%);
 }
 
+.releaseDrawerViewTabs {
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
+  background: color-mix(in srgb, var(--dockrev-surface) 88%, var(--panel2) 12%);
+}
+
+.releaseDrawerViewTab {
+  min-width: 48px;
+  height: 26px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  transition:
+    color 140ms ease,
+    background-color 140ms ease;
+}
+
+.releaseDrawerViewTab:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-wash) 80%, transparent);
+}
+
+.releaseDrawerViewTab:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-primary) 46%, transparent);
+  outline-offset: 2px;
+}
+
+.releaseDrawerViewTabActive {
+  color: var(--text);
+  background: color-mix(in srgb, var(--color-primary) 18%, var(--dockrev-surface) 82%);
+}
+
 .releaseDrawerInfoTrigger,
 .releaseDrawerCloseButton {
   display: inline-flex;
@@ -1560,6 +1601,13 @@ html[data-theme='light'] .versionTagsPopover {
 
 .releaseDrawerItemBodyWrap {
   margin-top: 12px;
+}
+
+.releaseDrawerItemViewFallback {
+  margin-bottom: 8px;
+  color: color-mix(in srgb, var(--color-warning) 72%, var(--text) 28%);
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .releaseDrawerItemBody {

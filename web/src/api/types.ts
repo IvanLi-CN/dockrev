@@ -408,6 +408,52 @@ export type ServiceGitHubReleaseLocateResponse = {
   message?: string | null
 }
 
+export type ServiceReleaseNotesSource = 'octoRill' | 'gitHub'
+
+export type ServiceReleaseNotesStatus = 'ready' | 'unsupportedRepo' | 'upstreamError'
+
+export type ServiceReleaseNotesFallbackReason =
+  | 'disabled'
+  | 'notConfigured'
+  | 'unsupportedRepo'
+  | 'unauthorized'
+  | 'emptyFeed'
+  | 'upstreamError'
+
+export type ServiceReleaseNotesFallback = {
+  from: ServiceReleaseNotesSource
+  reason: ServiceReleaseNotesFallbackReason
+  message: string
+}
+
+export type ServiceReleaseNoteItem = {
+  id: string
+  tagName: string
+  name?: string | null
+  originalBody?: string | null
+  translatedBody?: string | null
+  smartBody?: string | null
+  htmlUrl: string
+  draft: boolean
+  prerelease: boolean
+  publishedAt?: string | null
+  createdAt?: string | null
+}
+
+export type ServiceReleaseNotesResponse = {
+  status: ServiceReleaseNotesStatus
+  source: ServiceReleaseNotesSource
+  repo?: ServiceGitHubRepoRef | null
+  cursor?: string | null
+  limit: number
+  nextCursor?: string | null
+  hasMore: boolean
+  defaultView: ReleaseNotesView
+  items: ServiceReleaseNoteItem[]
+  message?: string | null
+  fallback?: ServiceReleaseNotesFallback | null
+}
+
 export type VersionInferenceOverviewStatus =
   | 'queued'
   | 'running'
@@ -582,6 +628,16 @@ export type SettingsResponse = {
     updateCheck: { enabled: boolean; cron: string }
     ghcrWebhookAudit: { enabled: boolean; cron: string }
   }
+  releaseNotes: {
+    octoRill: {
+      enabled: boolean
+      apiBaseUrl?: string | null
+      apiKeyMasked?: string | null
+      // UI draft only: populated from apiKeyMasked on load and never returned by the API.
+      apiKey?: string | null
+      defaultView: ReleaseNotesView
+    }
+  }
   auth: {
     forwardHeaderName: string
     groupHeaderName: string
@@ -610,11 +666,21 @@ export type PutSettingsInput = {
     updateCheck?: { enabled: boolean; cron: string }
     ghcrWebhookAudit?: { enabled: boolean; cron: string }
   }
+  releaseNotes?: {
+    octoRill?: {
+      enabled?: boolean
+      apiBaseUrl?: string | null
+      apiKey?: string | null
+      defaultView?: ReleaseNotesView
+    }
+  }
   instance?: {
     // When present, updates the stored public base URL. `null` (or empty string) clears it.
     publicBaseUrl?: string | null
   }
 }
+
+export type ReleaseNotesView = 'original' | 'translated' | 'smart'
 
 export type ServiceResourceUsageWindow = '15m' | '1h' | '6h'
 

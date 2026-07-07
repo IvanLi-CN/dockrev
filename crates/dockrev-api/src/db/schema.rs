@@ -8,6 +8,7 @@ use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 
 use super::*;
 mod schema_resource_latest;
+mod schema_settings_release_notes;
 
 pub(super) fn ensure_parent_dir(path: &Path) -> anyhow::Result<PathBuf> {
     let path = path.to_path_buf();
@@ -670,6 +671,7 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     ensure_settings_resource_monitor_columns(conn)?;
     ensure_settings_schedule_columns(conn)?;
     ensure_settings_public_base_url_columns(conn)?;
+    schema_settings_release_notes::ensure_columns(conn)?;
     ensure_stack_archive_columns(conn)?;
     ensure_service_archive_columns(conn)?;
     ensure_discovery_schema(conn)?;
@@ -1163,6 +1165,10 @@ CREATE TABLE IF NOT EXISTS settings (
   schedule_ghcr_webhook_audit_enabled INTEGER NOT NULL DEFAULT 1,
   schedule_ghcr_webhook_audit_cron TEXT NOT NULL DEFAULT '0 3 * * *',
   public_base_url TEXT,
+  release_notes_octo_rill_enabled INTEGER NOT NULL DEFAULT 0,
+  release_notes_octo_rill_api_base_url TEXT,
+  release_notes_octo_rill_api_key TEXT,
+  release_notes_octo_rill_default_view TEXT NOT NULL DEFAULT 'smart',
   deploy_welcome_never_auto_open INTEGER NOT NULL DEFAULT 0,
   deploy_welcome_updated_at TEXT,
   updated_at TEXT

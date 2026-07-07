@@ -28,6 +28,9 @@ export function formatBytes(n: number) {
 }
 
 export function buildSettingsSavePayload(settings: SettingsResponse): PutSettingsInput {
+  const octoRillApiKey = (settings.releaseNotes.octoRill.apiKey ?? '').trim()
+  const releaseNotesApiKey =
+    isMaskedPat(octoRillApiKey) ? undefined : octoRillApiKey.length > 0 ? octoRillApiKey : null
   return {
     backup: settings.backup,
     resourceMonitor: {
@@ -35,6 +38,14 @@ export function buildSettingsSavePayload(settings: SettingsResponse): PutSetting
       sampleIntervalSeconds: settings.resourceMonitor.sampleIntervalSeconds,
     },
     schedules: settings.schedules,
+    releaseNotes: {
+      octoRill: {
+        enabled: settings.releaseNotes.octoRill.enabled,
+        apiBaseUrl: settings.releaseNotes.octoRill.apiBaseUrl ?? '',
+        ...(releaseNotesApiKey !== undefined ? { apiKey: releaseNotesApiKey } : {}),
+        defaultView: settings.releaseNotes.octoRill.defaultView,
+      },
+    },
     instance: {
       publicBaseUrl: settings.instance.publicBaseUrl ?? '',
     },
