@@ -396,6 +396,13 @@ fn render_dynamic_template_card_png(card: &TelegramCard) -> anyhow::Result<Vec<u
             }
             None => {}
         }
+
+        if matches!(
+            (card.template, slot.kind),
+            (CardTemplate::NewVersion, TextSlotKind::MetricValue(0))
+        ) {
+            restore_reference_patch(&mut img, &reference, rect(276, 408, 74, 44));
+        }
     }
 
     encode_card_png(img)
@@ -888,8 +895,23 @@ fn scaled_text_slots(template: CardTemplate, profile: CardProfile) -> Vec<TextSl
 
 fn template_text_slot(template: CardTemplate, mut slot: TextSlotSpec) -> TextSlotSpec {
     match (template, slot.kind) {
+        (CardTemplate::NewVersion, TextSlotKind::MetricValue(0)) => {
+            slot.draw = rect(356, 424, 210, 36);
+            slot.erase = rect(326, 408, 250, 66);
+            slot.fill_x = 525;
+        }
+        (CardTemplate::NewVersion, TextSlotKind::MetricValue(1)) => {
+            slot.draw = rect(846, 424, 210, 36);
+            slot.erase = rect(820, 408, 250, 66);
+            slot.fill_x = 1015;
+        }
+        (CardTemplate::NewVersion, TextSlotKind::MetricValue(2)) => {
+            slot.draw = rect(1240, 424, 320, 38);
+            slot.erase = rect(1200, 406, 380, 72);
+            slot.fill_x = 1212;
+        }
         (
-            CardTemplate::NewVersion | CardTemplate::GhcrAnomaly | CardTemplate::TestNotification,
+            CardTemplate::GhcrAnomaly | CardTemplate::TestNotification,
             TextSlotKind::MetricValue(0),
         ) => {
             slot.draw = rect(356, 424, 210, 36);
@@ -897,7 +919,7 @@ fn template_text_slot(template: CardTemplate, mut slot: TextSlotSpec) -> TextSlo
             slot.fill_x = 525;
         }
         (
-            CardTemplate::NewVersion | CardTemplate::GhcrAnomaly | CardTemplate::TestNotification,
+            CardTemplate::GhcrAnomaly | CardTemplate::TestNotification,
             TextSlotKind::MetricValue(1),
         ) => {
             slot.draw = rect(846, 424, 210, 36);
@@ -905,7 +927,7 @@ fn template_text_slot(template: CardTemplate, mut slot: TextSlotSpec) -> TextSlo
             slot.fill_x = 1015;
         }
         (
-            CardTemplate::NewVersion | CardTemplate::GhcrAnomaly | CardTemplate::TestNotification,
+            CardTemplate::GhcrAnomaly | CardTemplate::TestNotification,
             TextSlotKind::MetricValue(2),
         ) => {
             slot.draw = rect(1240, 424, 320, 38);
@@ -914,12 +936,12 @@ fn template_text_slot(template: CardTemplate, mut slot: TextSlotSpec) -> TextSlo
         }
         (CardTemplate::NewVersion, TextSlotKind::Title) => {
             slot.draw = rect(288, 226, 980, 56);
-            slot.erase = rect(286, 220, 900, 76);
+            slot.erase = rect(260, 210, 940, 92);
             slot.fill_x = 1280;
         }
         (CardTemplate::NewVersion, TextSlotKind::Subject) => {
             slot.draw = rect(288, 306, 820, 38);
-            slot.erase = rect(286, 302, 760, 52);
+            slot.erase = rect(260, 290, 800, 70);
             slot.fill_x = 1120;
         }
         (CardTemplate::GhcrAnomaly, TextSlotKind::Title) => {
@@ -1005,17 +1027,15 @@ fn erase_text_slot(img: &mut RgbaImage, slot: &TextSlotSpec) {
 }
 
 fn restore_reference_text_slot(img: &mut RgbaImage, reference: &RgbaImage, slot: &TextSlotSpec) {
+    restore_reference_patch(img, reference, slot.erase);
+}
+
+fn restore_reference_patch(img: &mut RgbaImage, reference: &RgbaImage, rect: TextRect) {
     paste_rect(
         img,
-        slot.erase.x,
-        slot.erase.y,
-        &crop_rect(
-            reference,
-            slot.erase.x,
-            slot.erase.y,
-            slot.erase.w,
-            slot.erase.h,
-        ),
+        rect.x,
+        rect.y,
+        &crop_rect(reference, rect.x, rect.y, rect.w, rect.h),
     );
 }
 

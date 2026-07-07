@@ -74,3 +74,126 @@ fn telegram_photo_caption_truncates_before_html_escape() {
     assert!(!caption.contains("&lt..."));
     assert!(!caption.contains("&quot..."));
 }
+
+#[test]
+fn telegram_new_version_card_erases_reference_text_before_drawing_live_values() {
+    let mut payload = sample_new_version_payload();
+    payload.sent_at = "2026-07-07T04:01:13Z".to_string();
+    payload.check.job_id = "chk_01KWXBQ5GXXR2QPHEWT3GATNPB".to_string();
+    payload.check.services_checked = 74;
+    payload.links.job_url =
+        "https://dockrev.example.com/queue/chk_01KWXBQ5GXXR2QPHEWT3GATNPB".to_string();
+    payload.links.primary_url =
+        "https://dockrev.example.com/services/docker-mod/dockrev-supervisor".to_string();
+    let service = payload.links.service_urls.first_mut().unwrap();
+    service.stack_id = "docker-mod".to_string();
+    service.stack_name = "docker-mod".to_string();
+    service.service_id = "dockrev-supervisor".to_string();
+    service.service_name = "dockrev-supervisor".to_string();
+    service.current_display_tag = Some("0.48.0".to_string());
+    service.candidate_display_tag = Some("0.55.0".to_string());
+    service.url = payload.links.primary_url.clone();
+    payload.human.title = "docker-mod / dockrev-supervisor 服务有新版本".to_string();
+    payload.human.summary =
+        "docker-mod / dockrev-supervisor 服务有新版本（0.48.0 -> 0.55.0）。".to_string();
+
+    let png = render_new_version_telegram_card_png(&payload).unwrap();
+    assert_png(&png);
+    write_debug_card("new-version-live-regression-card.png", &png);
+    let image = image::load_from_memory(&png).unwrap().to_rgba8();
+
+    assert_no_text_ink(&image, (292, 208, 12, 70), "title-left-reference-remnant");
+    assert_no_text_ink(&image, (292, 292, 12, 42), "subject-left-reference-remnant");
+    assert_no_blue_ink(
+        &image,
+        (342, 398, 30, 50),
+        "metric-1-left-reference-remnant",
+    );
+}
+
+#[test]
+fn telegram_metric_value_erasure_does_not_wipe_metric_labels() {
+    let mut ghcr = accepted_design_fixture_card(CardTemplate::GhcrAnomaly);
+    ghcr.metrics[0].value = "17 个".to_string();
+    ghcr.metrics[1].value = "3 个".to_string();
+    let ghcr_png = render_telegram_card_png(&ghcr).unwrap();
+    write_debug_card("ghcr-metric-label-regression-card.png", &ghcr_png);
+    let ghcr = image::load_from_memory(&ghcr_png).unwrap().to_rgba8();
+    assert_text_ink_at_least(&ghcr, (326, 433, 24, 24), 20, "ghcr-metric-label");
+
+    let mut test = accepted_design_fixture_card(CardTemplate::TestNotification);
+    test.metrics[0].value = "telegram".to_string();
+    test.metrics[1].value = "Telegram".to_string();
+    let test_png = render_telegram_card_png(&test).unwrap();
+    write_debug_card("test-metric-label-regression-card.png", &test_png);
+    let test = image::load_from_memory(&test_png).unwrap().to_rgba8();
+    assert_text_ink_at_least(&test, (326, 423, 24, 26), 20, "test-metric-label");
+}
+
+fn assert_no_text_ink(image: &image::RgbaImage, rect: (u32, u32, u32, u32), label: &'static str) {
+    let (x, y, w, h) = rect;
+    let ink_pixels = (y..y + h)
+        .flat_map(|yy| (x..x + w).map(move |xx| image.get_pixel(xx, yy)))
+        .filter(|pixel| is_text_ink(pixel.0))
+        .count();
+    assert_eq!(
+        ink_pixels, 0,
+        "{label} should not contain old template text ink"
+    );
+}
+
+fn assert_text_ink_at_least(
+    image: &image::RgbaImage,
+    rect: (u32, u32, u32, u32),
+    minimum: usize,
+    label: &'static str,
+) {
+    let (x, y, w, h) = rect;
+    let ink_pixels = (y..y + h)
+        .flat_map(|yy| (x..x + w).map(move |xx| image.get_pixel(xx, yy)))
+        .filter(|pixel| is_text_ink(pixel.0))
+        .count();
+    assert!(
+        ink_pixels >= minimum,
+        "{label} should keep metric label text ink; found {ink_pixels}, expected at least {minimum}"
+    );
+}
+
+fn assert_no_blue_ink(image: &image::RgbaImage, rect: (u32, u32, u32, u32), label: &'static str) {
+    let (x, y, w, h) = rect;
+    let ink_pixels = (y..y + h)
+        .flat_map(|yy| (x..x + w).map(move |xx| image.get_pixel(xx, yy)))
+        .filter(|pixel| is_blue_ink(pixel.0))
+        .count();
+    assert_eq!(
+        ink_pixels, 0,
+        "{label} should not contain old template blue text ink"
+    );
+}
+
+fn is_text_ink([r, g, b, a]: [u8; 4]) -> bool {
+    if a == 0 {
+        return false;
+    }
+    (r < 80 && g < 110 && b < 140) || (r < 80 && g < 150 && b > 150)
+}
+
+fn is_blue_ink([r, g, b, a]: [u8; 4]) -> bool {
+    a != 0 && r < 80 && g < 150 && b > 150
+}
+
+fn write_debug_card(file_name: &str, bytes: &[u8]) {
+    let Ok(dir) = std::env::var("DOCKREV_WRITE_TELEGRAM_CARD_EVIDENCE_DIR") else {
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    let dir = if dir.is_absolute() {
+        dir
+    } else {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(dir)
+    };
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(file_name), bytes).unwrap();
+}
