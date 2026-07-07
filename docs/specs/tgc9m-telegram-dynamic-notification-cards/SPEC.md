@@ -156,6 +156,10 @@ Dynamic:
 
 ![New version Telegram dynamic card](assets/new-version-dynamic-card.png)
 
+Production-shaped erase regression:
+
+![New version Telegram live erase regression card](assets/new-version-live-regression-card.png)
+
 ### GHCR Webhook Anomaly
 
 Original design:

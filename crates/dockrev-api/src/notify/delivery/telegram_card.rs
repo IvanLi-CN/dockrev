@@ -893,7 +893,7 @@ fn template_text_slot(template: CardTemplate, mut slot: TextSlotSpec) -> TextSlo
             TextSlotKind::MetricValue(0),
         ) => {
             slot.draw = rect(356, 424, 210, 36);
-            slot.erase = rect(350, 414, 210, 52);
+            slot.erase = rect(326, 408, 250, 66);
             slot.fill_x = 525;
         }
         (
@@ -901,7 +901,7 @@ fn template_text_slot(template: CardTemplate, mut slot: TextSlotSpec) -> TextSlo
             TextSlotKind::MetricValue(1),
         ) => {
             slot.draw = rect(846, 424, 210, 36);
-            slot.erase = rect(840, 414, 210, 52);
+            slot.erase = rect(820, 408, 250, 66);
             slot.fill_x = 1015;
         }
         (
@@ -909,17 +909,17 @@ fn template_text_slot(template: CardTemplate, mut slot: TextSlotSpec) -> TextSlo
             TextSlotKind::MetricValue(2),
         ) => {
             slot.draw = rect(1240, 424, 320, 38);
-            slot.erase = rect(1230, 412, 330, 58);
+            slot.erase = rect(1200, 406, 380, 72);
             slot.fill_x = 1212;
         }
         (CardTemplate::NewVersion, TextSlotKind::Title) => {
             slot.draw = rect(288, 226, 980, 56);
-            slot.erase = rect(286, 220, 900, 76);
+            slot.erase = rect(260, 210, 940, 92);
             slot.fill_x = 1280;
         }
         (CardTemplate::NewVersion, TextSlotKind::Subject) => {
             slot.draw = rect(288, 306, 820, 38);
-            slot.erase = rect(286, 302, 760, 52);
+            slot.erase = rect(260, 290, 800, 70);
             slot.fill_x = 1120;
         }
         (CardTemplate::GhcrAnomaly, TextSlotKind::Title) => {
