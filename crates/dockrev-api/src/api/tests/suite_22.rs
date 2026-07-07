@@ -663,7 +663,7 @@ services:
         .clone()
         .oneshot(
             Request::builder()
-                .uri(format!("/api/services/{service_id}/logs?tail=5"))
+                .uri(format!("/api/services/{service_id}/logs?tail=9"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -673,7 +673,7 @@ services:
 
     let body = response_json(resp).await;
     let lines = body["lines"].as_array().unwrap();
-    assert_eq!(lines.len(), 5);
+    assert_eq!(lines.len(), 6);
 
     let multiline = lines
         .iter()
