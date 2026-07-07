@@ -297,12 +297,42 @@
   sensitive_exclusion: `N/A`
   submission_gate: `approved`
   story_id_or_title: `Pages/ServiceDetailPage/LogsSectionEvidence`
+  state: `human tracing text metadata`
+  evidence_note: 验证 ANSI tracing 文本日志在 Human 视图中提取应用级 `INFO`、应用时间戳与 `method/uri/proxy_request_id` metadata chips，消息列不再重复显示行首应用时间与等级。
+  PR: include
+  PR caption: 日志页 Human 视图可解析真实 tracing 文本日志，等级与元数据不再退回到整行文本展示。
+
+![服务详情日志 Human tracing 文本元数据视图](./assets/service-detail-logs-tracing-human.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `element`
+  requested_viewport: `1440x1000`
+  viewport_strategy: `storybook-canvas`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/LogsSectionEvidence`
   state: `raw log toggle`
   evidence_note: 验证 Raw 视图可显式切回容器原始输出，JSON 行按原文显示并继续保留 ANSI 颜色与横向查看语义。
   PR: include
   PR caption: 日志页 Raw 视图保留原始日志文本，便于排障时对照结构化摘要。
 
 ![服务详情日志 Raw 原文视图](./assets/service-detail-logs-raw-toggle.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `element`
+  requested_viewport: `1440x1000`
+  viewport_strategy: `storybook-canvas`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/LogsSectionEvidence`
+  state: `raw tracing text metadata`
+  evidence_note: 验证 Raw 视图仍保留真实 tracing 原文，包括应用级时间戳、等级与 ANSI 颜色，同时等级列继续使用解析后的结构化等级。
+  PR: include
+  PR caption: 日志页 Raw 视图继续保留 tracing 原文，便于和结构化 Human 摘要互相对照。
+
+![服务详情日志 Raw tracing 原文视图](./assets/service-detail-logs-tracing-raw.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`

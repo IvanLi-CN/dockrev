@@ -517,7 +517,7 @@ services:
         .clone()
         .oneshot(
             Request::builder()
-                .uri(format!("/api/services/{service_id}/logs?tail=4"))
+                .uri(format!("/api/services/{service_id}/logs?tail=5"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -527,11 +527,11 @@ services:
 
     let body = response_json(resp).await;
     assert_eq!(body["serviceId"].as_str(), Some(service_id.as_str()));
-    assert_eq!(body["lines"].as_array().map(Vec::len), Some(4));
+    assert_eq!(body["lines"].as_array().map(Vec::len), Some(5));
     assert!(body["lines"][0].get("container").is_none());
     assert_eq!(body["lines"][0]["raw"].as_str(), Some("\u{1b}[32mapi boot ok\u{1b}[0m"));
     assert_eq!(
-        body["lines"][2]["plain"].as_str(),
+        body["lines"][3]["plain"].as_str(),
         Some("\u{1b}[31merror burst\u{1b}[0m")
     );
     assert_eq!(body["lines"][1]["meta"]["format"].as_str(), Some("json"));
@@ -547,6 +547,36 @@ services:
     assert_eq!(
         body["lines"][1]["meta"]["attributes"]["elapsed_ms"].as_i64(),
         Some(24)
+    );
+    assert_eq!(body["lines"][2]["meta"]["format"].as_str(), Some("text"));
+    assert_eq!(body["lines"][2]["meta"]["level"].as_str(), Some("info"));
+    assert_eq!(
+        body["lines"][2]["meta"]["timestamp"].as_str(),
+        Some("2026-07-07T05:54:01.126674Z")
+    );
+    assert_eq!(
+        body["lines"][2]["meta"]["message"].as_str(),
+        Some("openai proxy request started")
+    );
+    assert_eq!(
+        body["lines"][2]["meta"]["attributes"]["proxy_request_id"].as_u64(),
+        Some(2722)
+    );
+    assert_eq!(
+        body["lines"][2]["meta"]["attributes"]["method"].as_str(),
+        Some("POST")
+    );
+    assert_eq!(
+        body["lines"][2]["meta"]["attributes"]["uri"].as_str(),
+        Some("/v1/responses")
+    );
+    assert_eq!(
+        body["lines"][2]["meta"]["attributes"]["proxy_request_started"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        body["lines"][2]["meta"]["attributes"]["content_length"].as_str(),
+        Some("Some(569164)")
     );
 }
 
@@ -633,7 +663,7 @@ services:
         .clone()
         .oneshot(
             Request::builder()
-                .uri(format!("/api/services/{service_id}/logs?tail=5"))
+                .uri(format!("/api/services/{service_id}/logs?tail=9"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -643,7 +673,7 @@ services:
 
     let body = response_json(resp).await;
     let lines = body["lines"].as_array().unwrap();
-    assert_eq!(lines.len(), 5);
+    assert_eq!(lines.len(), 6);
 
     let multiline = lines
         .iter()

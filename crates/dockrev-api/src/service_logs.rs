@@ -948,6 +948,9 @@ fn parse_service_log_meta(raw: &str) -> ServiceLogMeta {
     if let Some(meta) = parse_logfmt_meta(trimmed) {
         return meta;
     }
+    if let Some(meta) = parse_tracing_text_meta(trimmed) {
+        return meta;
+    }
 
     ServiceLogMeta {
         format: ServiceLogMetaFormat::Text,
@@ -1027,6 +1030,231 @@ fn parse_logfmt_meta(input: &str) -> Option<ServiceLogMeta> {
         attributes,
         highlights,
     })
+}
+
+fn parse_tracing_text_meta(input: &str) -> Option<ServiceLogMeta> {
+    let first_line = input.lines().next()?.trim();
+    let (timestamp, rest) = take_leading_rfc3339_token(first_line)?;
+    let rest = rest.trim_start();
+    let (level, rest) = take_leading_level_token(rest)?;
+    let rest = rest.trim_start();
+    if rest.is_empty() {
+        return None;
+    }
+
+    let (rest, mut attributes) = strip_tracing_context_prefixes(rest);
+    let (message, event_attributes) = split_tracing_message_and_attributes(rest);
+    attributes.extend(event_attributes);
+    let message = message.trim().trim_end_matches(':').trim();
+    if message.is_empty() && attributes.is_empty() {
+        return None;
+    }
+
+    if message
+        .split_once(": ")
+        .is_some_and(|(target, _)| is_tracing_target(target))
+    {
+        let (target, rest) = message.split_once(": ")?;
+        attributes.insert("target".to_string(), Value::String(target.to_string()));
+        let highlights = highlight_keys(&attributes);
+        return Some(ServiceLogMeta {
+            format: ServiceLogMetaFormat::Text,
+            level: Some(normalize_meta_level(level.to_string())),
+            timestamp: Some(timestamp.to_string()),
+            message: Some(rest.trim().to_string()),
+            attributes,
+            highlights,
+        });
+    }
+
+    let highlights = highlight_keys(&attributes);
+    Some(ServiceLogMeta {
+        format: ServiceLogMetaFormat::Text,
+        level: Some(normalize_meta_level(level.to_string())),
+        timestamp: Some(timestamp.to_string()),
+        message: Some(message.to_string()),
+        attributes,
+        highlights,
+    })
+}
+
+fn take_leading_rfc3339_token(input: &str) -> Option<(&str, &str)> {
+    let mut parts = input.splitn(2, char::is_whitespace);
+    let timestamp = parts.next()?.trim();
+    if !is_docker_log_timestamp(timestamp) {
+        return None;
+    }
+    Some((timestamp, parts.next().unwrap_or_default()))
+}
+
+fn take_leading_level_token(input: &str) -> Option<(&str, &str)> {
+    let trimmed = input.trim_start();
+    let mut parts = trimmed.splitn(2, char::is_whitespace);
+    let level = parts.next()?.trim();
+    if matches!(
+        normalize_meta_level(level.to_string()).as_str(),
+        "trace" | "debug" | "info" | "warn" | "error"
+    ) {
+        return Some((level, parts.next().unwrap_or_default()));
+    }
+    None
+}
+
+fn strip_tracing_context_prefixes(input: &str) -> (&str, BTreeMap<String, Value>) {
+    let mut rest = input.trim_start();
+    let mut attributes = BTreeMap::new();
+
+    if let Some((target, after)) = rest.split_once(": ")
+        && !target.contains('=')
+        && !target.contains('{')
+        && is_tracing_target(target)
+    {
+        attributes.insert("target".to_string(), Value::String(target.to_string()));
+        rest = after.trim_start();
+    }
+
+    while let Some((span, span_fields, after)) = take_leading_tracing_span(rest) {
+        attributes
+            .entry("span".to_string())
+            .or_insert_with(|| Value::String(span.to_string()));
+        if let Some(span_attributes) = parse_logfmt_attributes(span_fields) {
+            for (key, value) in span_attributes {
+                attributes.entry(key).or_insert(value);
+            }
+        }
+        rest = after.trim_start();
+    }
+
+    (rest, attributes)
+}
+
+fn take_leading_tracing_span(input: &str) -> Option<(&str, &str, &str)> {
+    let open_index = input.find('{')?;
+    let span = input[..open_index].trim();
+    if !is_tracing_span_name(span) {
+        return None;
+    }
+
+    let mut depth = 0usize;
+    let mut close_index = None;
+    for (offset, ch) in input[open_index..].char_indices() {
+        if ch == '{' {
+            depth += 1;
+            continue;
+        }
+        if ch == '}' {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                close_index = Some(open_index + offset);
+                break;
+            }
+        }
+    }
+    let close_index = close_index?;
+    let after = input[close_index + 1..].trim_start();
+    let after = after.strip_prefix(':')?;
+    Some((span, &input[open_index + 1..close_index], after))
+}
+
+fn split_tracing_message_and_attributes(input: &str) -> (String, BTreeMap<String, Value>) {
+    let tokens = shellish_split(input);
+    let attr_start = tokens
+        .iter()
+        .position(|token| token.find('=').is_some_and(|index| index > 0));
+    let Some(attr_start) = attr_start else {
+        return (input.to_string(), BTreeMap::new());
+    };
+
+    let mut attributes = BTreeMap::new();
+    let mut current_key: Option<String> = None;
+    let mut current_value = String::new();
+
+    let flush_current = |attributes: &mut BTreeMap<String, Value>,
+                         current_key: &mut Option<String>,
+                         current_value: &mut String| {
+        if let Some(key) = current_key.take() {
+            attributes.insert(key, logfmt_value(std::mem::take(current_value)));
+        }
+    };
+
+    for token in tokens.iter().skip(attr_start) {
+        if let Some(index) = token.find('=')
+            && index > 0
+        {
+            flush_current(&mut attributes, &mut current_key, &mut current_value);
+            current_key = Some(token[..index].trim_matches(':').to_string());
+            current_value = token[index + 1..].to_string();
+            continue;
+        }
+        if current_key.is_some() {
+            if !current_value.is_empty() {
+                current_value.push(' ');
+            }
+            current_value.push_str(token);
+        }
+    }
+    flush_current(&mut attributes, &mut current_key, &mut current_value);
+
+    (tokens[..attr_start].join(" "), attributes)
+}
+
+fn shellish_split(input: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+
+    for ch in input.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if let Some(quote_ch) = quote {
+            if ch == quote_ch {
+                quote = None;
+            } else {
+                current.push(ch);
+            }
+            continue;
+        }
+        if ch == '"' || ch == '\'' {
+            quote = Some(ch);
+            continue;
+        }
+        if ch.is_whitespace() {
+            if !current.is_empty() {
+                tokens.push(std::mem::take(&mut current));
+            }
+            continue;
+        }
+        current.push(ch);
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
+fn is_tracing_target(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 80
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | ':' | '-'))
+        && (value.contains("::") || value.contains('_') || value.contains('-'))
+}
+
+fn is_tracing_span_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 80
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | ':' | '-'))
 }
 
 fn take_btree_stringish(attributes: &mut BTreeMap<String, Value>, keys: &[&str]) -> Option<String> {
@@ -1132,6 +1360,10 @@ fn highlight_keys(attributes: &BTreeMap<String, Value>) -> Vec<String> {
         .map(|key| (*key).to_string())
         .collect()
 }
+
+#[cfg(test)]
+#[path = "service_logs_tracing_tests.rs"]
+mod tracing_tests;
 
 #[cfg(test)]
 mod tests {

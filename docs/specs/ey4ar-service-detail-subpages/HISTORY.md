@@ -11,6 +11,7 @@
 - 2026-06-30: 主干新增 `备份` 子页与本分支新增 `日志` 子页完成合流，服务详情最终收敛为 `概览 / 监控 / 备份 / 日志 / 设置` 五子页 IA。
 - 2026-07-01: 按 Dozzle grouped log 参考修正服务日志多行语义，将应用多行错误 continuation 保留在同一逻辑日志组内，并避免在等级列重复渲染正文 tracing 级别。
 - 2026-07-04: 修正服务日志采集只读取 stdout 的缺口；Docker 容器常把应用日志写入 stderr，snapshot 与 SSE live tail 均需消费 stdout/stderr 双流。
+- 2026-07-07: 修正服务日志结构化解析边界；Rust `tracing` 默认文本输出并非 JSON/logfmt，但仍包含应用级时间、等级与 `key=value` 字段，后端需在 text meta 中提取这些字段，而不能只靠前端启发式推断。
 
 ## Key Reasons / Replacements
 

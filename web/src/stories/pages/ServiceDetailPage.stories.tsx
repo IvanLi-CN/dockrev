@@ -70,6 +70,14 @@ function findTab(root: ParentNode, section: ServiceSection): HTMLButtonElement |
   return root.querySelector<HTMLButtonElement>(`[data-service-detail-tab="${section}"]`)
 }
 
+function findLogRowContaining(root: ParentNode, text: string): HTMLElement | null {
+  return (
+    Array.from(root.querySelectorAll<HTMLElement>('.serviceLogRow')).find((row) =>
+      normalizeText(row.textContent).includes(text),
+    ) ?? null
+  )
+}
+
 function drawerText(doc: Document): string {
   return normalizeText(doc.querySelector('.settingsDrawerContent')?.textContent)
 }
@@ -219,6 +227,22 @@ export const LogsSection: Story = {
     expectStory(normalizeText(canvasElement.textContent).includes('boot complete'), 'logs should render stream lines')
     expectStory(normalizeText(canvasElement.textContent).includes('runtime perf'), 'logs should render structured message text')
     expectStory(normalizeText(canvasElement.textContent).includes('admin_read'), 'logs should render structured metadata chips')
+    const tracingRow = findLogRowContaining(canvasElement, 'openai proxy request started')
+    expectStory(tracingRow, 'logs should render parsed tracing text message')
+    expectStory(tracingRow?.getAttribute('data-format') === 'text', 'tracing text row should stay text-formatted')
+    expectStory(tracingRow?.getAttribute('data-level') === 'info', 'tracing text row should expose parsed info level')
+    expectStory(
+      normalizeText(tracingRow?.querySelector('.serviceLogLevel')?.textContent) === 'INFO',
+      'tracing text row should show parsed level badge',
+    )
+    expectStory(
+      !normalizeText(tracingRow?.querySelector('.serviceLogHumanMsg')?.textContent).includes('2026-07-07T05:54:01'),
+      'human tracing message should omit the application timestamp prefix',
+    )
+    expectStory(
+      normalizeText(tracingRow?.textContent).includes('proxy_request_id2722'),
+      'tracing text row should render parsed metadata chips',
+    )
     expectStory(normalizeText(canvasElement.textContent).includes('2026-06-29'), 'logs should render the log date')
     expectStory(normalizeText(canvasElement.textContent).includes('ERR'), 'logs should render inferred log levels')
     const input = canvasElement.querySelector<HTMLInputElement>('input[aria-label="搜索日志"]')
@@ -242,6 +266,10 @@ export const LogsSection: Story = {
         'raw',
     )
     expectStory(normalizeText(canvasElement.textContent).includes('"timestamp"'), 'raw mode should expose original JSON text')
+    expectStory(
+      normalizeText(canvasElement.textContent).includes('2026-07-07T05:54:01.126674Z INFO openai proxy request started'),
+      'raw mode should expose original tracing text with application timestamp and level',
+    )
     findButton(canvasElement, 'Human')?.click()
     await waitForCondition(
       () =>
@@ -339,6 +367,11 @@ export const LogsSectionEvidence: Story = {
     expectStory(findTab(canvasElement, 'logs')?.getAttribute('data-state') === 'active', 'logs tab should be active')
     expectStory(normalizeText(canvasElement.textContent).includes('runtime perf'), 'logs evidence story should render structured summary')
     expectStory(normalizeText(canvasElement.textContent).includes('dashboard_overview_phase'), 'logs evidence story should render structured metadata')
+    expectStory(normalizeText(canvasElement.textContent).includes('openai proxy request started'), 'logs evidence story should render tracing text summary')
+    expectStory(
+      !normalizeText(findLogRowContaining(canvasElement, 'openai proxy request started')?.querySelector('.serviceLogHumanMsg')?.textContent).includes('2026-07-07T05:54:01'),
+      'logs evidence story should omit tracing timestamp from the human message',
+    )
     expectStory(normalizeText(canvasElement.textContent).includes('worker sync complete jobs=18 queue=critical'), 'logs evidence story should render denser stream lines')
     expectStory(normalizeText(canvasElement.textContent).includes('WARN'), 'logs evidence story should expose inferred warning level')
     const input = canvasElement.querySelector<HTMLInputElement>('input[aria-label="搜索日志"]')
