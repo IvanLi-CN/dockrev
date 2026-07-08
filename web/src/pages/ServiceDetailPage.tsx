@@ -528,7 +528,6 @@ export function ServiceDetailPage(props: {
               />
             </div>
           </div>
-
       <div className="card svcComposeCard">
         <div className="title">Compose 信息</div>
         <div className="kv">
@@ -634,7 +633,6 @@ export function ServiceDetailPage(props: {
           ))}
           {rules.length === 0 ? <div className="muted">暂无规则</div> : null}
         </div>
-
         <div className="sectionTitle" style={{ marginTop: 14 }}>
           添加规则
         </div>
@@ -695,7 +693,6 @@ export function ServiceDetailPage(props: {
       <div className="card" data-service-detail-section-card="webhook">
         <div className="title">Webhook 触发（服务级）</div>
         <div className="muted">用于外部系统触发：更新此服务 / 更新 compose / 更新全部</div>
-
         <div className="webhookRow">
           <div className="label">POST</div>
           <div className="mono">/api/v1/update/service/{effectiveService.name}</div>
@@ -719,8 +716,8 @@ export function ServiceDetailPage(props: {
         </div>
         <div className="svcDangerZoneActions">{dangerousActions}</div>
       </div>
-        </>
-      ) : null}
+      </>
+    ) : null}
     </div>
   )
 
