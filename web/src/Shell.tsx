@@ -394,7 +394,7 @@ export function AppShell(props: {
                 <X size={18} strokeWidth={2.2} />
               </button>
             </div>
-            {props.mobileNavContent ? (
+            {mobileMenuVisible && props.mobileNavContent ? (
               <div className="mobileMenuEmbeddedContent">
                 {props.mobileNavContent}
               </div>

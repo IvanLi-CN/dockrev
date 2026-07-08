@@ -11,6 +11,7 @@
 - 已补齐 `961px - 1160px` 窄桌面断点下的详情页 grid override，避免三列详情壳层误回退到 overview 使用的两列媒体规则。
 - 已把归档 Stack 也纳入详情页服务树数据源，并补上归档服务详情的 Storybook 回归 story，保证 archived detail route 仍能显示当前 Stack / Service 高亮。
 - 已把服务树详情读取改为“先加载 Stack 列表，再按当前/展开的 Stack 懒加载 detail”，避免每次进入详情页都并发请求全部 `getStack()`，并修正懒加载 effect 的自取消问题，确保展开 Stack 后能稳定落盘服务列表结果。
+- 已让移动端抽屉内的服务树按打开状态再挂载，避免桌面详情页同时挂出桌面树与隐藏的移动树，从而重复触发导航请求。
 
 ## Outstanding
 
