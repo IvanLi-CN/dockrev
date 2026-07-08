@@ -57,7 +57,7 @@
 - 备份设置抽屉必须能直接选择 compose 中声明的 Docker named volumes 与 host bind mounts。
 - `GET /api/services/{service_id}/backup-targets` 必须返回 `bindPaths[]`、`volumeNames[]` 与 `storage { baseDir, artifactPattern, compression, keepLast, deleteAfterStableSeconds }`。
 - `GET /api/services/{service_id}/backup-records` 必须返回按备份创建时间倒序排列的记录列表。
-- `GET /api/services/{service_id}/backup-records` 不得返回 `status=skipped` 且 `summary.backup.reason=no_included_targets` 的纯噪音记录。
+- `GET /api/services/{service_id}/backup-records` 只得返回真正产出过备份产物的记录；凡是没有 `artifactPath` 的 `skipped` / `failed` / 其他尝试记录都不得返回。
 - 每个候选项必须统一为 `{ key, policy, relatedServiceCount, relatedServiceIds }`，其中 `policy` 只允许 `disabled | stop_related_services | live_backup`。
 - `PUT /api/services/{service_id}/backup-targets` 的输入必须表达“当前服务对候选项的策略选择结果”，而不是要求前端自行拼接 stack 级 diff。
 - 共享 target 的信息必须以关联服务计数和 service id 列表形式可见，供更新前停机协调使用。
@@ -101,13 +101,13 @@
 ### Service backup-records API
 
 - `GET /api/services/{service_id}/backup-records`
-  - 仅返回已经落在 `backups` 表中的、对操作者有意义的备份记录。
+  - 仅返回已经落在 `backups` 表中的、真正产生过备份产物的记录。
   - 通过关联 `jobs.summary_json.targets[*].serviceId` 过滤出“当前服务相关”的记录，因此可以命中 `service / stack / all` 三种触发 scope。
   - 返回列表按 `backups.created_at DESC, backups.id DESC` 排序。
-  - 若某条记录满足 `status=skipped` 且当前 stack 对应的 `summary.backup.reason=no_included_targets`，则视为“没有任何实际纳入目标的纯噪音尝试”，不得进入结果。
+  - 若某条记录在 `backups.artifact_path` 与当前 stack 对应的 `summary.backup.artifactPath` 上都没有实际产物路径，则视为“没有形成实际备份产物”，不得进入结果；这同样覆盖 `skipped`、无产物 `failed` 与其他尝试态记录。
   - `cleanupAfter` 直接投影自 `backups.cleanup_after`；若为空，前端显示“未计划删除”。
   - `deletedAt` 非空表示该备份包已被 cleanup worker 删除；前端以“已删除”状态文案呈现。
-  - `assets[]` 优先投影自该次任务的 `summary.backup.targets[]`，不再额外引入独立资产表。
+  - `assets[]` 优先投影自该次任务的 `summary.backup.targets[]` 中实际 `included` 的 target，不再把 skipped target 混入“实际备份记录”页面，也不额外引入独立资产表。
   - 若任务级 `summary.backup.targets[]` 缺失，则返回空数组，不伪造资产项。
 
 ### Save semantics
@@ -244,11 +244,15 @@
 
 - Given 某次 stack/all update 实际 targets 包含当前服务
   When 调用 `GET /api/services/{service_id}/backup-records`
-  Then 该记录仍会出现在结果中，即使 `jobs.service_id` 为空。
+  Then 只要该次记录确实产出了备份产物，它仍会出现在结果中，即使 `jobs.service_id` 为空。
 
-- Given 某条记录的 `status=skipped` 且当前 stack 对应的 `summary.backup.reason=no_included_targets`
+- Given 某条记录没有任何 `artifactPath`
   When 调用 `GET /api/services/{service_id}/backup-records`
-  Then 该记录不会返回，因为它没有任何实际纳入备份目标。
+  Then 该记录不会返回，因为它没有形成任何实际备份产物。
+
+- Given 某条成功备份的 `summary.backup.targets[]` 同时包含 `included` 与 `skipped` target
+  When 调用 `GET /api/services/{service_id}/backup-records`
+  Then 返回的 `assets[]` 只保留实际 `included` 的 target，不展示 skipped target。
 
 - Given 某条备份记录的 `cleanup_after` 为空
   When 前端渲染记录卡
@@ -337,6 +341,32 @@
   evidence_note: 验证备份设置抽屉内的只读备份说明明确展示目录、`.tar.gz` 产物模式、`gzip` 压缩与“最近 1 份保留 / 稳定 1h 后清理”摘要。
 
 ![备份设置抽屉：只读备份说明](./assets/service-protection-storage-summary-only.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `1500x1250`
+  viewport_strategy: `devtools-emulate`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/Backup Records Actual Only`
+  state: `only actual backup artifacts remain visible`
+  evidence_note: 验证服务备份页只展示真正产生过备份产物的记录；没有产物的 `skipped` / `failed` 尝试不会再出现在“实际备份记录”列表里。
+
+![实际备份记录：只显示真实产物记录](./assets/backup-records-actual-only.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `1500x1250`
+  viewport_strategy: `devtools-emulate`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/Backup Records Noise Filtered`
+  state: `no actual backup artifacts means empty state`
+  evidence_note: 验证当相关历史里没有任何实际备份产物时，后端过滤掉未产生产物的尝试记录后，服务备份页落成“当前服务暂无实际备份记录。”空态。
+
+![实际备份记录：无真实产物时为空](./assets/backup-records-noise-filtered.png)
 
 ## Related PRs
 

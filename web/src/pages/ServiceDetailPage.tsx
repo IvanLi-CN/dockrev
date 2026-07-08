@@ -472,7 +472,7 @@ export function ServiceDetailPage(props: {
         <div className="serviceBackupSummaryHead">
           <div>
             <div className="title">实际备份记录</div>
-            <div className="muted">这里只显示当前服务产生了实际备份结果或失败信息的记录。</div>
+            <div className="muted">这里只显示当前服务实际产生过备份产物的记录。</div>
           </div>
         </div>
         <BackupRecordList records={effectiveBackupRecords} />
@@ -770,7 +770,34 @@ export function ServiceDetailPage(props: {
         </div>
       </div>
 
-      <div className="svcDetailTabsShell">
+      <div className="svcDetailContextSummary" data-service-detail-context="status-summary">
+        <div className={effectiveBannerClass}>
+          <div className="svcBannerTitleRow">
+            <span className={effectiveDotClass} />
+            <div className="svcBannerTitle">{effectiveBannerTitle}</div>
+            <div style={{ marginLeft: 'auto' }}>
+              <Pill tone={tone}>{svcBadge(effectiveService)}</Pill>
+            </div>
+          </div>
+          <div className="svcBannerDetail">{effectiveBannerDetail}</div>
+        </div>
+
+        {semverDowngradeAnomaly ? (
+          <div className="svcAnomalyAlert" role="alert">
+            <div className="svcAnomalyAlertTitle">
+              <span className="svcAnomalyAlertIcon" aria-hidden="true">
+                ⚠
+              </span>
+              <span>版本异常：候选版本低于当前版本</span>
+            </div>
+            <div className="svcAnomalyAlertText">
+              当前 <Mono>{anomalyCurrentTag}</Mono> → 候选 <Mono>{anomalyCandidateTag}</Mono>。手动更新仍可继续，请确认这是预期降级。
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="svcDetailTabsShell" data-service-detail-tabs-shell="true">
         <Tabs
           onValueChange={(value) => {
             const nextSection = value as 'overview' | 'monitoring' | 'backup' | 'logs' | 'settings'
@@ -822,31 +849,6 @@ export function ServiceDetailPage(props: {
           </TabsList>
         </Tabs>
       </div>
-
-      <div className={effectiveBannerClass}>
-        <div className="svcBannerTitleRow">
-          <span className={effectiveDotClass} />
-          <div className="svcBannerTitle">{effectiveBannerTitle}</div>
-          <div style={{ marginLeft: 'auto' }}>
-            <Pill tone={tone}>{svcBadge(effectiveService)}</Pill>
-          </div>
-        </div>
-        <div className="svcBannerDetail">{effectiveBannerDetail}</div>
-      </div>
-
-      {semverDowngradeAnomaly ? (
-        <div className="svcAnomalyAlert" role="alert">
-          <div className="svcAnomalyAlertTitle">
-            <span className="svcAnomalyAlertIcon" aria-hidden="true">
-              ⚠
-            </span>
-            <span>版本异常：候选版本低于当前版本</span>
-          </div>
-          <div className="svcAnomalyAlertText">
-            当前 <Mono>{anomalyCurrentTag}</Mono> → 候选 <Mono>{anomalyCandidateTag}</Mono>。手动更新仍可继续，请确认这是预期降级。
-          </div>
-        </div>
-      ) : null}
 
       {isDockrevService(effectiveService) && supervisorState.status === 'offline' ? (
         <div className="muted" style={{ marginTop: 10 }}>

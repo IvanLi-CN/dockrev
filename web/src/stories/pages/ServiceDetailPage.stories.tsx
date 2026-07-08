@@ -209,11 +209,44 @@ export const BackupSection: Story = {
   render: render('stack-prod', 'svc-prod-api', 'backup', '备份子页集中备份摘要、记录列表与设置入口'),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => Boolean(findSectionCard(canvasElement, 'backup-summary')))
+    const banner = canvasElement.querySelector<HTMLElement>('[data-service-detail-context="status-summary"]')
+    const tabsShell = canvasElement.querySelector<HTMLElement>('[data-service-detail-tabs-shell="true"]')
     expectStory(currentRoutePathname() === '/services/stack-prod/svc-prod-api/backup', 'backup deep link missing')
     expectStory(findTab(canvasElement, 'backup')?.getAttribute('data-state') === 'active', 'backup tab should be active')
+    expectStory(Boolean(banner), 'service-level status summary missing')
+    expectStory(Boolean(tabsShell), 'tab shell missing')
+    expectStory(
+      Boolean(
+        banner &&
+          tabsShell &&
+          (banner.compareDocumentPosition(tabsShell) & Node.DOCUMENT_POSITION_FOLLOWING) === Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+      'service-level status summary should render before the tab shell',
+    )
     expectStory(Boolean(findSectionCard(canvasElement, 'backup-records')), 'backup should render backup records card')
     expectStory(normalizeText(canvasElement.textContent).includes('实际备份记录'), 'backup records heading missing')
     expectStory(normalizeText(canvasElement.textContent).includes('备份时间'), 'backup record card content missing')
+  },
+}
+
+export const BackupRecordsActualOnly: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  render: render(
+    'stack-prod',
+    'svc-prod-api',
+    'backup',
+    '这里只展示实际产生过备份产物的记录；没有备份产物的尝试不会出现在这里。',
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(findSectionCard(canvasElement, 'backup-records')))
+    expectStory(
+      normalizeText(canvasElement.textContent).includes('这里只展示实际产生过备份产物的记录'),
+      'actual-records subtitle missing',
+    )
+    expectStory(normalizeText(canvasElement.textContent).includes('实际备份记录'), 'actual-records heading missing')
+    expectStory(normalizeText(canvasElement.textContent).includes('备份时间'), 'actual-records content missing')
+    expectStory(!normalizeText(canvasElement.textContent).includes('已跳过'), 'skipped records should not be visible')
+    expectStory(!normalizeText(canvasElement.textContent).includes('archive failed'), 'failed attempt details should not be visible')
   },
 }
 
@@ -759,6 +792,31 @@ export const BackupRecordsEmpty: Story = {
   },
 }
 
+export const BackupRecordsNoiseFiltered: Story = {
+  parameters: {
+    dockrevApiScenario: 'dashboard-demo',
+    dockrevServiceBackupRecordsById: {
+      'svc-prod-api': {
+        records: [],
+      },
+    },
+  },
+  render: render(
+    'stack-prod',
+    'svc-prod-api',
+    'backup',
+    '相关历史里没有任何实际备份产物；后端过滤掉未产生产物的尝试后，这里应为空。',
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(findSectionCard(canvasElement, 'backup-records')))
+    expectStory(
+      normalizeText(canvasElement.textContent).includes('相关历史里没有任何实际备份产物'),
+      'noise-filter subtitle missing',
+    )
+    expectStory(normalizeText(canvasElement.textContent).includes('当前服务暂无实际备份记录'), 'noise-filter empty state missing')
+  },
+}
+
 export const BackupRecordsLegacyMissingAssets: Story = {
   parameters: {
     dockrevApiScenario: 'dashboard-demo',
@@ -769,20 +827,21 @@ export const BackupRecordsLegacyMissingAssets: Story = {
             backupId: 'bkp_legacy',
             jobId: 'job_legacy',
             scope: 'service',
-            status: 'skipped',
+            status: 'success',
             createdAt: '2026-06-28T18:15:24.960797189Z',
             finishedAt: '2026-06-28T18:15:24.960797189Z',
+            artifactPath: '/srv/dockrev/backups/stack-prod/20260628-181524.tar.gz',
           },
         ],
       },
     },
   },
-  render: render('stack-prod', 'svc-prod-api', 'backup', '旧版备份记录缺少 assets 字段时仍稳定渲染'),
+  render: render('stack-prod', 'svc-prod-api', 'backup', '旧版实际备份记录缺少 assets 字段时仍稳定渲染'),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => Boolean(findSectionCard(canvasElement, 'backup-records')))
     await waitForCondition(() => normalizeText(canvasElement.textContent).includes('未记录资产明细'))
     expectStory(findTab(canvasElement, 'backup')?.getAttribute('data-state') === 'active', 'backup tab should stay active')
-    expectStory(normalizeText(canvasElement.textContent).includes('已跳过'), 'legacy skipped backup status missing')
+    expectStory(normalizeText(canvasElement.textContent).includes('成功'), 'legacy success backup status missing')
   },
 }
 

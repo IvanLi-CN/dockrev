@@ -7,7 +7,7 @@ fn digest_map(entries: &[(&str, &str)]) -> serde_json::Value {
 }
 
 #[tokio::test]
-async fn get_service_backup_records_returns_related_service_scope_stack_scope_and_all_scope_rows()
+async fn get_service_backup_records_returns_only_related_actual_backup_rows()
 {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());
@@ -54,13 +54,21 @@ services:
                     "status": "success",
                     "artifactPath": "/tmp/api.tar.gz",
                     "sizeBytes": 1500,
-                    "targets": [{
-                        "target": { "kind": "bind-mount", "path": "/srv/data" },
-                        "status": "included",
-                        "sizeBytes": 1500,
-                        "policy": "live_backup",
-                        "relatedServices": ["api", "web"]
-                    }]
+                    "targets": [
+                        {
+                            "target": { "kind": "bind-mount", "path": "/srv/data" },
+                            "status": "included",
+                            "sizeBytes": 1500,
+                            "policy": "live_backup",
+                            "relatedServices": ["api", "web"]
+                        },
+                        {
+                            "target": { "kind": "docker-volume", "name": "api-cache" },
+                            "status": "skipped",
+                            "reason": "skipped_by_size",
+                            "sizeBytes": 2048
+                        }
+                    ]
                 },
                 "update": {
                     "changedServices": 1,
@@ -246,20 +254,16 @@ services:
     assert_eq!(resp.status(), 200);
     let body = response_json(resp).await;
     let records = body["records"].as_array().unwrap();
-    assert_eq!(records.len(), 2);
+    assert_eq!(records.len(), 1);
     assert_eq!(records[0]["backupId"].as_str(), Some("bkp-api"));
     assert_eq!(records[0]["scope"].as_str(), Some("service"));
     assert_eq!(records[0]["sizeBytes"].as_u64(), Some(1500));
     assert_eq!(records[0]["cleanupAfter"].as_str(), Some(cleanup_after.as_str()));
+    assert_eq!(records[0]["status"].as_str(), Some("success"));
+    assert_eq!(records[0]["assets"].as_array().unwrap().len(), 1);
     assert_eq!(records[0]["assets"][0]["policy"].as_str(), Some("live_backup"));
     assert_eq!(records[0]["assets"][0]["status"].as_str(), Some("included"));
     assert_eq!(records[0]["assets"][0]["sizeBytes"].as_u64(), Some(1500));
-    assert_eq!(records[1]["backupId"].as_str(), Some("bkp-all"));
-    assert_eq!(records[1]["scope"].as_str(), Some("all"));
-    assert_eq!(records[1]["status"].as_str(), Some("failed"));
-    assert_eq!(records[1]["deletedAt"].as_str(), Some(now.as_str()));
-    assert_eq!(records[1]["error"].as_str(), Some("archive failed"));
-    assert_eq!(records[1]["assets"][0]["reason"].as_str(), Some("skipped_by_probe_error"));
 }
 
 #[tokio::test]
@@ -407,6 +411,89 @@ services:
         None,
         None,
         None,
+        None,
+        None,
+    )
+    .await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{api_id}/backup-records"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    let records = body["records"].as_array().unwrap();
+    assert!(records.is_empty());
+}
+
+#[tokio::test]
+async fn get_service_backup_records_hides_failed_rows_without_actual_backup_artifacts() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let compose_dir = format!("/tmp/dockrev-backup-records-hidden-failed-{}", ulid::Ulid::new());
+    std::fs::create_dir_all(compose_dir.clone()).unwrap();
+    let compose_path = format!("{compose_dir}/compose.yml");
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  api:
+    image: ghcr.io/acme/api:1.0
+    volumes:
+      - ./data:/srv/data
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "failed", &compose_path).await;
+    let api_id = service_id_by_name(&state, &stack_id, "api").await;
+    let now = test_now_rfc3339();
+
+    insert_update_job_with_summary(
+        &state,
+        "job-hidden-failed",
+        crate::api::types::JobScope::Stack,
+        Some(&stack_id),
+        None,
+        json!({
+            "stacks": [{
+                "stackId": stack_id,
+                "backup": {
+                    "status": "failed",
+                    "error": "archive failed",
+                    "targets": [{
+                        "target": { "kind": "bind-mount", "path": "/srv/data" },
+                        "status": "included",
+                        "policy": "live_backup",
+                        "sizeBytes": 256
+                    }]
+                },
+                "update": {
+                    "changedServices": 1,
+                    "oldDigests": digest_map(&[(api_id.as_str(), "ghcr.io/acme/api:1.0")]),
+                    "newDigests": digest_map(&[(api_id.as_str(), "ghcr.io/acme/api:1.1")]),
+                    "finalDigests": digest_map(&[(api_id.as_str(), "ghcr.io/acme/api:1.1")])
+                }
+            }]
+        }),
+        &now,
+    )
+    .await;
+    insert_backup_record(
+        &state,
+        "bkp-hidden-failed",
+        &stack_id,
+        "job-hidden-failed",
+        &now,
+        "failed",
+        None,
+        None,
+        Some("archive failed"),
         None,
         None,
     )

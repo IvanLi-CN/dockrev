@@ -5267,6 +5267,13 @@ html[data-theme='light'] .modalOverlay {
   padding-bottom: 4px;
 }
 
+.svcDetailContextSummary {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 18px;
+}
+
 .svcDetailTabsList {
   width: max-content;
   min-width: 100%;
