@@ -296,7 +296,6 @@
   viewport_strategy: `devtools-emulate`
   sensitive_exclusion: `N/A`
   submission_gate: `approved`
-  PR: include
   story_id_or_title: `Pages/ServiceDetailPage/Service Protection Backup Targets`
   state: `backup settings drawer with volume + bind path candidates`
   evidence_note: 验证备份子页里的“备份设置”抽屉直接展示 `Volumes` / `Bind paths` 两组候选、技术 key、关联服务计数、带水平滑块的三选一策略按钮组，以及只读备份说明卡片。
@@ -349,6 +348,7 @@
   viewport_strategy: `devtools-emulate`
   sensitive_exclusion: `N/A`
   submission_gate: `approved`
+  PR: include
   story_id_or_title: `Pages/ServiceDetailPage/Backup Records Actual Only`
   state: `only actual backup artifacts remain visible`
   evidence_note: 验证服务备份页只展示真正产生过备份产物的记录；没有产物的 `skipped` / `failed` 尝试不会再出现在“实际备份记录”列表里。
@@ -362,6 +362,7 @@
   viewport_strategy: `devtools-emulate`
   sensitive_exclusion: `N/A`
   submission_gate: `approved`
+  PR: include
   story_id_or_title: `Pages/ServiceDetailPage/Backup Records Noise Filtered`
   state: `no actual backup artifacts means empty state`
   evidence_note: 验证当相关历史里没有任何实际备份产物时，后端过滤掉未产生产物的尝试记录后，服务备份页落成“当前服务暂无实际备份记录。”空态。
