@@ -19,7 +19,7 @@ registerRoute(
       /^\/overview$/,
       /^\/services$/,
       /^\/services\/[^/]+$/,
-      /^\/services\/[^/]+\/[^/]+(?:\/(?:overview|monitoring|backup))?$/,
+      /^\/services\/[^/]+\/[^/]+(?:\/(?:overview|monitoring|backup|logs|settings))?$/,
       /^\/queue$/,
       /^\/queue\/version-inference$/,
     ],

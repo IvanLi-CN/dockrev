@@ -11,9 +11,9 @@ import { usePwaStatus } from '../pwaStatus'
 import { buildReadonlySnapshotKey, readReadonlySnapshot, writeReadonlySnapshot } from '../readonlySnapshotCache'
 import { Button, Input, Mono, Pill, SelectField, ToggleGroup, ToggleGroupItem } from '../ui'
 
-type StatusFilter = 'all' | 'queued' | 'running' | 'ready' | 'all_failed'
+type StatusFilter = 'all' | 'queued' | 'running' | 'ready' | 'stale' | 'all_failed'
 
-const STATUS_FILTERS: readonly StatusFilter[] = ['all', 'queued', 'running', 'ready', 'all_failed']
+const STATUS_FILTERS: readonly StatusFilter[] = ['all', 'queued', 'running', 'ready', 'stale', 'all_failed']
 const PER_PAGE_OPTIONS = [20, 50, 100, 200] as const
 const QUERY_DEBOUNCE_MS = 250
 const SSE_RECONNECT_MS = 3_000
@@ -38,6 +38,7 @@ function statusLabel(status: string): string {
   if (status === 'queued') return '排队中'
   if (status === 'running') return '执行中'
   if (status === 'ready') return '已就绪'
+  if (status === 'stale') return '需处理'
   if (status === 'all_failed') return '全部失败'
   return status || '-'
 }
@@ -46,6 +47,7 @@ function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' | 'info' {
   if (status === 'ready') return 'ok'
   if (status === 'running') return 'info'
   if (status === 'queued') return 'warn'
+  if (status === 'stale') return 'warn'
   if (status === 'all_failed') return 'bad'
   return 'muted'
 }
@@ -117,15 +119,17 @@ function statusCount(summary: VersionInferenceOverviewResponse['summary'] | null
   if (key === 'queued') return summary.queued
   if (key === 'running') return summary.running
   if (key === 'ready') return summary.ready
+  if (key === 'stale') return summary.stale
   if (key === 'all_failed') return summary.allFailed
-  return summary.queued + summary.running + summary.ready + summary.allFailed
+  return summary.queued + summary.running + summary.ready + summary.stale + summary.allFailed
 }
 
 function rowSortValue(status: string): number {
   if (status === 'running') return 0
   if (status === 'queued') return 1
-  if (status === 'all_failed') return 2
-  if (status === 'ready') return 3
+  if (status === 'stale') return 2
+  if (status === 'all_failed') return 3
+  if (status === 'ready') return 4
   return 9
 }
 
@@ -363,10 +367,7 @@ export function VersionInferencePage(props: {
 
   const currentPage = overview?.page ?? page
   const summary = overview?.summary ?? null
-  const rows = useMemo(
-    () => sortRows((overview?.rows ?? []).filter((row) => row.status !== 'stale')),
-    [overview?.rows],
-  )
+  const rows = useMemo(() => sortRows(overview?.rows ?? []), [overview?.rows])
   const gcTip = useMemo(() => {
     const gc = overview?.gc
     if (!gc) return 'GC 状态加载中'
