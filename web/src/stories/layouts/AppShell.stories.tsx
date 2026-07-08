@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from 'react'
 import type { Meta, StoryObj } from '@storybook/react'
 import { APP_SHELL_SIDEBAR_COLLAPSED_STORAGE_KEY, AppShell } from '../../Shell'
+import { DetailRouteServiceTree } from '../../components/DetailRouteServiceTree'
 import type { Route } from '../../routes'
 import { Button } from '../../ui'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
@@ -44,6 +45,9 @@ function ShellStory(props: {
   route: Route
   sidebarCollapsed?: boolean
   autoOpenMobileDrawer?: boolean
+  detailSidebarContent?: ReactNode
+  mobileNavContent?: ReactNode
+  mobileDrawerTitle?: string
   children?: ReactNode
 }) {
   setSidebarCollapsedPreference(props.sidebarCollapsed ?? false)
@@ -62,6 +66,10 @@ function ShellStory(props: {
       title="示例页面"
       pageSubtitle="在 Storybook 中预览 AppShell"
       topActions={<Button variant="primary">Action</Button>}
+      detailSidebarContent={props.detailSidebarContent}
+      detailSidebarTitle={props.detailSidebarContent ? '服务列表' : undefined}
+      mobileNavContent={props.mobileNavContent}
+      mobileDrawerTitle={props.mobileDrawerTitle}
       authIdentity={demoAuthIdentity}
       lastScanHint={new Date().toISOString()}
     >
@@ -85,6 +93,21 @@ function render(route: Route, options?: { sidebarCollapsed?: boolean; autoOpenMo
       />
     )
   }
+}
+
+function renderDetailShell(
+  route: Extract<Route, { name: 'stack' | 'service' }>,
+  options?: { autoOpenMobileDrawer?: boolean },
+): Story['render'] {
+  return () => (
+    <ShellStory
+      route={route}
+      autoOpenMobileDrawer={options?.autoOpenMobileDrawer}
+      detailSidebarContent={<DetailRouteServiceTree route={route} variant="desktop" />}
+      mobileNavContent={<DetailRouteServiceTree route={route} variant="mobile" />}
+      mobileDrawerTitle="服务列表"
+    />
+  )
 }
 
 export const Overview: Story = { render: render({ name: 'overview' }) }
@@ -123,23 +146,31 @@ export const SidebarToggleInteraction: Story = {
     )
   },
 }
-export const MobileDrawerWithIcons: Story = {
-  render: render({ name: 'overview' }, { sidebarCollapsed: true, autoOpenMobileDrawer: true }),
+export const DetailSidebarDesktop: Story = {
+  render: renderDetailShell({ name: 'service', stackId: 'stack-prod', serviceId: 'svc-prod-api', section: 'logs' }),
+  play: async ({ canvasElement }) => {
+    const detailSidebar = canvasElement.querySelector<HTMLElement>('.detailSidebar')
+    expectStory(detailSidebar?.textContent?.includes('prod'), 'Detail sidebar should render stack names')
+    expectStory(detailSidebar?.textContent?.includes('api'), 'Detail sidebar should render service names')
+    expectStory(detailSidebar?.textContent?.includes('web'), 'Detail sidebar should render sibling services')
+  },
+}
+export const MobileBottomNavAndDrawer: Story = {
+  render: renderDetailShell(
+    { name: 'service', stackId: 'stack-prod', serviceId: 'svc-prod-api', section: 'logs' },
+    { autoOpenMobileDrawer: true },
+  ),
   parameters: {
     viewport: { defaultViewport: 'mobile1' },
   },
   play: async ({ canvasElement }) => {
-    const shell = canvasElement.querySelector<HTMLElement>('.appShell')
-    expectStory(shell?.classList.contains('appShellSidebarCollapsed'), 'Mobile story should preserve collapsed preference')
-
-    const content = canvasElement.querySelector<HTMLElement>('.content')
-    expectStory(
-      content ? content.getBoundingClientRect().width > 300 : false,
-      'Collapsed preference should not constrain mobile content to the desktop icon column',
-    )
+    const bottomNavItems = canvasElement.ownerDocument.querySelectorAll('.mobileBottomNavItem')
+    expectStory(bottomNavItems.length === 5, 'Mobile shell should move primary navigation into bottom nav')
 
     const drawer = canvasElement.querySelector<HTMLElement>('#mobileDockrevMenu')
-    expectStory(drawer?.querySelectorAll('.mobileNavIcon').length === 5, 'Mobile drawer should render one icon per nav item')
+    expectStory(drawer?.textContent?.includes('服务列表'), 'Mobile drawer should be dedicated to the service tree')
+    expectStory(drawer?.textContent?.includes('prod'), 'Mobile drawer should render stack names')
+    expectStory(drawer?.textContent?.includes('api'), 'Mobile drawer should render service names')
   },
 }
 export const OverviewWithIdentityPopover: Story = {

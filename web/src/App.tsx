@@ -1,6 +1,7 @@
 import './App.css'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { AppShell } from './Shell'
+import { DetailRouteServiceTree } from './components/DetailRouteServiceTree'
 import type { Route } from './routes'
 import { currentRoutePathname, navigate } from './routes'
 import { OverviewPage } from './pages/OverviewPage'
@@ -136,6 +137,16 @@ export default function App() {
   const previousRoutePathRef = useRef<string | null>(null)
 
   const head = useMemo(() => pageTitle(route), [route])
+  const detailSidebarContent = useMemo(() => {
+    if (route.name !== 'stack' && route.name !== 'service') return null
+    return <DetailRouteServiceTree route={route} variant="desktop" />
+  }, [route])
+  const mobileDrawerContent = useMemo(() => {
+    if (route.name === 'stack' || route.name === 'service') {
+      return <DetailRouteServiceTree route={route} variant="mobile" />
+    }
+    return mobileNavContent
+  }, [mobileNavContent, route])
   const topActions = useMemo(() => {
     return <>{pageActions}</>
   }, [pageActions])
@@ -333,7 +344,10 @@ export default function App() {
         topActions={topActions}
         topbarContent={topbarContent}
         sidebarNavContent={sidebarNavContent}
-        mobileNavContent={mobileNavContent}
+        detailSidebarContent={detailSidebarContent}
+        detailSidebarTitle={detailSidebarContent ? '服务列表' : undefined}
+        mobileNavContent={mobileDrawerContent}
+        mobileDrawerTitle={detailSidebarContent ? '服务列表' : mobileDrawerContent ? '页面工具' : undefined}
         authIdentity={authIdentity}
         lastScanHint={lastScanHint}
       >

@@ -56,6 +56,14 @@ function findButtons(root: ParentNode, text: string): HTMLButtonElement[] {
   )
 }
 
+function findLink(root: ParentNode, text: string): HTMLAnchorElement | null {
+  return (
+    Array.from(root.querySelectorAll<HTMLAnchorElement>('a')).find((link) =>
+      normalizeText(link.textContent).includes(text),
+    ) ?? null
+  )
+}
+
 function findActionButton(root: ParentNode, action: string, text: string): HTMLButtonElement | null {
   const scope = root.querySelector(`[data-service-detail-action="${action}"]`)
   if (!scope) return null
@@ -170,11 +178,16 @@ export const OverviewDefault: Story = {
   render: render('stack-prod', 'svc-prod-api', 'overview', '旧链接默认落到概览；保留共享顶部动作与最近更新记录'),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => normalizeText(canvasElement.textContent).includes('最近更新记录'))
+    await waitForCondition(() => normalizeText(canvasElement.ownerDocument.body.textContent).includes('服务列表'))
     expectStory(currentRoutePathname() === '/services/stack-prod/svc-prod-api', 'legacy overview route should stay canonical')
     expectStory(findTab(canvasElement, 'overview')?.getAttribute('data-state') === 'active', 'overview tab should be active')
     expectStory(!normalizeText(canvasElement.textContent).includes('资源监控'), 'overview should not render monitoring panel')
     expectStory(!findSectionCard(canvasElement, 'auto-policy'), 'overview should not render settings cards')
     expectStory(findButton(canvasElement, 'Stack 详情'), 'stack detail top action missing')
+    expectStory(
+      Boolean(canvasElement.ownerDocument.querySelector('.detailRouteServiceLinkActive')),
+      'detail service tree should highlight the current service',
+    )
   },
 }
 
@@ -338,6 +351,30 @@ export const SettingsOfflineReadonly: Story = {
       'settings offline gate detail missing',
     )
     expectStory(!findSectionCard(canvasElement, 'auto-policy'), 'offline settings should not render editable cards')
+  },
+}
+
+export const MobileLogsSection: Story = {
+  parameters: {
+    dockrevApiScenario: 'dashboard-demo',
+    viewport: { defaultViewport: 'mobile1' },
+  },
+  render: render('stack-prod', 'svc-prod-api', 'logs', '移动端使用底部主导航，抽屉承载服务树'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => normalizeText(canvasElement.textContent).includes('实时日志'))
+    const doc = canvasElement.ownerDocument
+    const bottomNav = doc.querySelectorAll('.mobileBottomNavItem')
+    expectStory(bottomNav.length === 5, 'mobile detail page should render bottom primary navigation')
+
+    const menuButton = doc.querySelector<HTMLButtonElement>('.mobileMenuButton')
+    expectStory(menuButton, 'mobile detail page should expose the service tree drawer trigger')
+    menuButton.click()
+    await waitForCondition(() => normalizeText(doc.querySelector('#mobileDockrevMenu')?.textContent).includes('服务列表'))
+
+    const siblingLink = findLink(doc, 'web')
+    expectStory(siblingLink, 'mobile service drawer should include sibling services')
+    siblingLink.click()
+    await waitForCondition(() => currentRoutePathname() === '/services/stack-prod/svc-prod-web/logs')
   },
 }
 

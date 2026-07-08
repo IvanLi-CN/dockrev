@@ -572,7 +572,8 @@ async function runInteractive({ baseUrl, browser }) {
         timeout: 10_000,
       });
 
-      await page.getByRole("button", { name: "打开主导航" }).click();
+      await page.locator(".mobileBottomNav").waitFor({ timeout: 10_000 });
+      await page.locator(".mobileMenuButton").click();
       const drawerSearch = page.locator(
         "#mobileDockrevMenu .mobileMenuEmbeddedContent .homepageDrawerSearchSlot",
       );

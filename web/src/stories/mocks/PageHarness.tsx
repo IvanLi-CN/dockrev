@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { AppShell } from '../../Shell'
+import { DetailRouteServiceTree } from '../../components/DetailRouteServiceTree'
 import { GitHubReleaseDrawer } from '../../components/GitHubReleaseDrawer'
 import {
   CLOSED_GITHUB_RELEASE_DRAWER_STATE,
@@ -49,6 +50,12 @@ function PageHarnessInner(props: {
   const [lastScanHint, setLastScanHint] = useState<string | undefined>(undefined)
   const [releaseDrawerState, setReleaseDrawerState] = useState(CLOSED_GITHUB_RELEASE_DRAWER_STATE)
   const [route, setRoute] = useState<Route>(props.route)
+  const detailSidebarContent =
+    route.name === 'stack' || route.name === 'service' ? <DetailRouteServiceTree route={route} variant="desktop" /> : null
+  const mobileDrawerContent =
+    route.name === 'stack' || route.name === 'service'
+      ? <DetailRouteServiceTree route={route} variant="mobile" />
+      : mobileNavContent
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -112,7 +119,10 @@ function PageHarnessInner(props: {
         topActions={topActions}
         topbarContent={topbarContent}
         sidebarNavContent={sidebarNavContent}
-        mobileNavContent={mobileNavContent}
+        detailSidebarContent={detailSidebarContent}
+        detailSidebarTitle={detailSidebarContent ? '服务列表' : undefined}
+        mobileNavContent={mobileDrawerContent}
+        mobileDrawerTitle={detailSidebarContent ? '服务列表' : mobileDrawerContent ? '页面工具' : undefined}
         authIdentity={props.authIdentity}
         lastScanHint={lastScanHint}
       >
