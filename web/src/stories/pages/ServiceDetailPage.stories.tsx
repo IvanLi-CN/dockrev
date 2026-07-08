@@ -287,6 +287,27 @@ export const LogsSection: Story = {
   },
 }
 
+export const SettingsOfflineReadonly: Story = {
+  parameters: {
+    dockrevApiScenario: 'dashboard-demo',
+    pwaStatus: { isOnline: false },
+  },
+  render: render('stack-prod', 'svc-prod-api', 'settings', '离线时设置页应明确阻断，不伪装成本地可编辑'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => normalizeText(canvasElement.textContent).includes('设置页需要联网'))
+    expectStory(currentRoutePathname() === '/services/stack-prod/svc-prod-api/settings', 'offline settings deep link missing')
+    expectStory(
+      normalizeText(canvasElement.textContent).includes('当前离线'),
+      'offline readonly banner missing',
+    )
+    expectStory(
+      normalizeText(canvasElement.textContent).includes('设置页包含敏感配置与写操作'),
+      'settings offline gate detail missing',
+    )
+    expectStory(!findSectionCard(canvasElement, 'auto-policy'), 'offline settings should not render editable cards')
+  },
+}
+
 export const LogsSectionVirtualized: Story = {
   parameters: {
     dockrevApiScenario: 'dashboard-demo',

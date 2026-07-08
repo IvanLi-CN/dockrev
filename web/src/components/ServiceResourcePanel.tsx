@@ -83,6 +83,13 @@ const METRIC_PANEL_COPY: Record<
 
 const SSE_BACKOFF_MS = [1000, 2000, 5000]
 
+export type ServiceResourceSnapshot = {
+  fetchedAt?: string | null
+  windowKey: ServiceResourceUsageWindow
+  samples: ServiceResourceSample[]
+  monitorDisabled?: boolean
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error)
@@ -466,15 +473,23 @@ function ResourceLineChart(props: {
   )
 }
 
-export function ServiceResourcePanel(props: { serviceId: string }) {
-  const { serviceId } = props
+export function ServiceResourcePanel(props: {
+  serviceId: string
+  readonly?: boolean
+  initialSnapshot?: ServiceResourceSnapshot | null
+}) {
+  const { serviceId, readonly = false, initialSnapshot = null } = props
 
-  const [windowKey, setWindowKey] = useState<ServiceResourceUsageWindow>('1h')
+  const [windowKey, setWindowKey] = useState<ServiceResourceUsageWindow>(
+    initialSnapshot?.windowKey ?? '1h',
+  )
   const [metricTab, setMetricTab] = useState<MetricTabKey>('cpu')
-  const [samples, setSamples] = useState<ServiceResourceSample[]>([])
+  const [samples, setSamples] = useState<ServiceResourceSample[]>(initialSnapshot?.samples ?? [])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyError, setHistoryError] = useState<string | null>(null)
-  const [monitorDisabled, setMonitorDisabled] = useState(false)
+  const [monitorDisabled, setMonitorDisabled] = useState(
+    initialSnapshot?.monitorDisabled === true,
+  )
   const [streamState, setStreamState] = useState<StreamState>('idle')
   const [streamError, setStreamError] = useState<string | null>(null)
   const [isPageVisible, setIsPageVisible] = useState(() =>
@@ -488,6 +503,17 @@ export function ServiceResourcePanel(props: { serviceId: string }) {
   }, [windowKey])
 
   useEffect(() => {
+    if (!readonly || !initialSnapshot) return
+    setWindowKey(initialSnapshot.windowKey)
+    setSamples(initialSnapshot.samples)
+    setMonitorDisabled(initialSnapshot.monitorDisabled === true)
+    setHistoryError(null)
+    setHistoryLoading(false)
+    setStreamError(null)
+    setStreamState('idle')
+  }, [initialSnapshot, readonly])
+
+  useEffect(() => {
     if (typeof document === 'undefined') return undefined
     const onVisibilityChange = () => {
       setIsPageVisible(document.visibilityState === 'visible')
@@ -497,6 +523,10 @@ export function ServiceResourcePanel(props: { serviceId: string }) {
   }, [])
 
   useEffect(() => {
+    if (readonly) {
+      setHistoryLoading(false)
+      return undefined
+    }
     let cancelled = false
 
     const load = async () => {
@@ -528,10 +558,10 @@ export function ServiceResourcePanel(props: { serviceId: string }) {
     return () => {
       cancelled = true
     }
-  }, [serviceId, windowKey])
+  }, [readonly, serviceId, windowKey])
 
   useEffect(() => {
-    if (!isPageVisible || monitorDisabled) {
+    if (readonly || !isPageVisible || monitorDisabled) {
       setStreamState('idle')
       return undefined
     }
@@ -639,7 +669,7 @@ export function ServiceResourcePanel(props: { serviceId: string }) {
       closeSource()
       setStreamState('idle')
     }
-  }, [isPageVisible, monitorDisabled, serviceId])
+  }, [isPageVisible, monitorDisabled, readonly, serviceId])
 
   const networkRates = useMemo(
     () => computeRatePairs(samples, (sample) => sample.netRxBytes, (sample) => sample.netTxBytes),
@@ -733,8 +763,9 @@ export function ServiceResourcePanel(props: { serviceId: string }) {
     return (value: number) => `${Math.round(value)}`
   }, [metricTab])
 
-  const streamStatusLabel =
-    streamState === 'live'
+  const streamStatusLabel = readonly
+    ? '离线缓存（只读）'
+    : streamState === 'live'
       ? '实时连接中（1s）'
       : streamState === 'connecting'
         ? '正在建立实时连接…'
@@ -745,6 +776,7 @@ export function ServiceResourcePanel(props: { serviceId: string }) {
             : '页面不可见，实时连接已暂停'
 
   const streamBadge = useMemo(() => {
+    if (readonly) return { label: '本地缓存', className: 'svcResourceStatusIdle' }
     if (monitorDisabled) return { label: '监控关闭', className: 'svcResourceStatusWarn' }
     if (streamError) return { label: '实时异常', className: 'svcResourceStatusBad' }
     if (streamState === 'live') return { label: '实时在线', className: 'svcResourceStatusLive' }
@@ -753,7 +785,7 @@ export function ServiceResourcePanel(props: { serviceId: string }) {
     }
     if (!isPageVisible) return { label: '已暂停', className: 'svcResourceStatusIdle' }
     return { label: '未连接', className: 'svcResourceStatusIdle' }
-  }, [isPageVisible, monitorDisabled, streamError, streamState])
+  }, [isPageVisible, monitorDisabled, readonly, streamError, streamState])
 
   const activeMetric = TAB_OPTIONS.find((item) => item.key === metricTab) ?? TAB_OPTIONS[0]
   const activeMetricCopy = METRIC_PANEL_COPY[metricTab]
@@ -771,8 +803,8 @@ export function ServiceResourcePanel(props: { serviceId: string }) {
   const chartContext = historyLoading
     ? `${WINDOW_META_LABELS[windowKey]} · 正在加载历史样本`
     : samples.length > 0
-      ? `${WINDOW_META_LABELS[windowKey]} · ${samples.length} 个样本`
-      : `${WINDOW_META_LABELS[windowKey]} · 暂无历史样本`
+      ? `${WINDOW_META_LABELS[windowKey]} · ${samples.length} 个${readonly ? '已缓存' : ''}样本`
+      : `${WINDOW_META_LABELS[windowKey]} · 暂无${readonly ? '缓存' : '历史'}样本`
 
   const statCards = [
     {
@@ -819,7 +851,11 @@ export function ServiceResourcePanel(props: { serviceId: string }) {
         <div className="svcResourceHeroTop">
           <div className="svcResourceTitleBlock">
             <div className="title svcResourceTitle">资源监控</div>
-            <div className="muted svcResourceSubtitle">历史趋势 + SSE 实时推送（1 秒），优先帮助你抓住尖峰、漂移和容器压力。</div>
+            <div className="muted svcResourceSubtitle">
+              {readonly
+                ? '当前展示最近一次缓存到本地的监控样本；恢复联网后才会继续拉取历史并恢复实时推送。'
+                : '历史趋势 + SSE 实时推送（1 秒），优先帮助你抓住尖峰、漂移和容器压力。'}
+            </div>
           </div>
 
           <div className={`svcResourceStatusBadge ${streamBadge.className}`} role="status" aria-live="polite">
@@ -830,11 +866,13 @@ export function ServiceResourcePanel(props: { serviceId: string }) {
 
         <div className="svcResourceFacts" aria-label="监控面板概览">
           <div className="svcResourceFact">{WINDOW_META_LABELS[windowKey]}</div>
-          <div className="svcResourceFact">{historyLoading ? '加载样本中' : `${samples.length} 个样本`}</div>
+          <div className="svcResourceFact">
+            {historyLoading ? '加载样本中' : `${samples.length} 个${readonly ? '已缓存' : ''}样本`}
+          </div>
           <div className="svcResourceFact">最近更新 {formatSampleTime(latestSample)}</div>
         </div>
 
-        {streamError && !monitorDisabled ? <div className="svcResourceSubtleAlert">实时状态：{streamError}</div> : null}
+        {streamError && !monitorDisabled && !readonly ? <div className="svcResourceSubtleAlert">实时状态：{streamError}</div> : null}
       </div>
 
       {monitorDisabled ? (
@@ -873,26 +911,34 @@ export function ServiceResourcePanel(props: { serviceId: string }) {
 
               <div className="svcResourceToolbarGroup svcResourceToolbarGroupWindow">
                 <div className="svcResourceToolbarLabel">时间范围</div>
-                <ToggleGroup
-                  className="svcResourceWindowSwitch"
-                  type="single"
-                  value={windowKey}
-                  onValueChange={(value) => {
-                    if (!value) return
-                    setWindowKey(value as ServiceResourceUsageWindow)
-                  }}
-                  aria-label="时间窗口切换"
-                >
-                  {WINDOW_OPTIONS.map((option) => (
-                    <ToggleGroupItem
-                      key={option.key}
-                      className={option.key === windowKey ? 'svcResourceWindowBtn active' : 'svcResourceWindowBtn'}
-                      value={option.key}
-                    >
-                      {option.label}
-                    </ToggleGroupItem>
-                  ))}
-                </ToggleGroup>
+                {readonly ? (
+                  <div className="svcResourceWindowSwitch" aria-label="时间窗口切换">
+                    <div className="svcResourceWindowBtn active" aria-disabled="true">
+                      {WINDOW_META_LABELS[windowKey]}
+                    </div>
+                  </div>
+                ) : (
+                  <ToggleGroup
+                    className="svcResourceWindowSwitch"
+                    type="single"
+                    value={windowKey}
+                    onValueChange={(value) => {
+                      if (!value) return
+                      setWindowKey(value as ServiceResourceUsageWindow)
+                    }}
+                    aria-label="时间窗口切换"
+                  >
+                    {WINDOW_OPTIONS.map((option) => (
+                      <ToggleGroupItem
+                        key={option.key}
+                        className={option.key === windowKey ? 'svcResourceWindowBtn active' : 'svcResourceWindowBtn'}
+                        value={option.key}
+                      >
+                        {option.label}
+                      </ToggleGroupItem>
+                    ))}
+                  </ToggleGroup>
+                )}
               </div>
             </div>
 

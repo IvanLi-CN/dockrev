@@ -5297,6 +5297,14 @@ html[data-theme='light'] .modalOverlay {
   margin-top: 16px;
 }
 
+.serviceDetailReadonlyBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 34%, var(--surface-border-strong) 66%);
+  background: color-mix(in srgb, var(--color-warning) 8%, var(--panel2) 92%);
+}
+
 .serviceRepoField {
   display: flex;
   align-items: center;
@@ -11163,5 +11171,134 @@ html[data-theme='light'] .homepageHeaderSearchPopover {
 
   .homepageDashboardGroupHeader h2 {
     font-size: 20px;
+  }
+}
+.shellStatusBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  border: 1px solid var(--surface-border-strong);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 84%, var(--panel2) 16%);
+  box-shadow: var(--shadow-soft);
+}
+
+.shellStatusBannerText {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.shellStatusBannerText strong {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.shellStatusBannerText span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.shellStatusBannerActions {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.shellStatusBanner-update {
+  border-color: color-mix(in srgb, var(--color-primary) 42%, var(--surface-border-strong) 58%);
+  background: color-mix(in srgb, var(--dockrev-nav-active-bg) 44%, var(--panel) 56%);
+}
+
+.shellStatusBanner-offline {
+  border-color: color-mix(in srgb, var(--color-warning) 38%, var(--surface-border-strong) 62%);
+  background: color-mix(in srgb, var(--color-warning) 10%, var(--panel2) 90%);
+}
+
+.shellStatusBanner-ready {
+  border-color: color-mix(in srgb, var(--color-info) 38%, var(--surface-border-strong) 62%);
+  background: color-mix(in srgb, var(--color-info) 10%, var(--panel2) 90%);
+}
+
+.readonlySnapshotNotice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  border: 1px solid var(--surface-border-strong);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 88%, var(--panel2) 12%);
+}
+
+.readonlySnapshotNoticeIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: var(--color-info);
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.readonlySnapshotNoticeBody {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.readonlySnapshotNoticeTitle {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.readonlySnapshotNoticeDetail,
+.readonlySnapshotNoticeMeta {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.readonlySnapshotNoticeAction {
+  flex: 0 0 auto;
+}
+
+.readonlySnapshotNotice-warn {
+  border-color: color-mix(in srgb, var(--color-warning) 38%, var(--surface-border-strong) 62%);
+  background: color-mix(in srgb, var(--color-warning) 10%, var(--panel2) 90%);
+}
+
+.readonlySnapshotNotice-warn .readonlySnapshotNoticeIcon {
+  color: var(--color-warning);
+}
+
+.readonlySnapshotNotice-bad {
+  border-color: color-mix(in srgb, var(--color-error) 44%, var(--surface-border-strong) 56%);
+  background: color-mix(in srgb, var(--color-error) 10%, var(--panel2) 90%);
+}
+
+.readonlySnapshotNotice-bad .readonlySnapshotNoticeIcon {
+  color: var(--color-error);
+}
+
+@media (max-width: 820px) {
+  .shellStatusBanner,
+  .readonlySnapshotNotice {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .shellStatusBannerActions {
+    justify-content: flex-start;
   }
 }

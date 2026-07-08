@@ -1,6 +1,7 @@
 import type { Preview } from '@storybook/react'
 import { themes } from 'storybook/theming'
 
+import { PwaStatusMockProvider } from '../src/pwaStatus'
 import { TooltipProvider } from '../src/components/ui/tooltip'
 import '../src/index.css'
 import '../src/App.css'
@@ -37,13 +38,16 @@ const preview: Preview = {
   decorators: [
     (Story, context) => {
       const theme = context.globals.theme === 'light' ? 'light' : 'dark'
+      const pwaStatus = context.parameters?.pwaStatus
       document.documentElement.dataset.theme = theme
       document.documentElement.style.colorScheme = theme
       document.documentElement.classList.toggle('dark', theme === 'dark')
       return (
-        <TooltipProvider>
-          <Story />
-        </TooltipProvider>
+        <PwaStatusMockProvider value={pwaStatus}>
+          <TooltipProvider>
+            <Story />
+          </TooltipProvider>
+        </PwaStatusMockProvider>
       )
     },
   ],

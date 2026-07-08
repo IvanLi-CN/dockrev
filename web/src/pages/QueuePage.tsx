@@ -9,6 +9,13 @@ import {
 import { formatJobMachineName, formatJobReadableDisplay } from '../jobDisplay'
 import { formatJobProgressDownload } from '../jobProgressDownload'
 import { TaskResultReason } from '../components/TaskResultReason'
+import { ReadonlySnapshotNotice } from '../components/ReadonlySnapshotNotice'
+import { usePwaStatus } from '../pwaStatus'
+import {
+  buildReadonlySnapshotKey,
+  readReadonlySnapshot,
+  writeReadonlySnapshot,
+} from '../readonlySnapshotCache'
 import { navigate } from '../routes'
 import { Button, Mono, Pill } from '../ui'
 
@@ -160,6 +167,16 @@ const QUEUE_SSE_REFRESH_DEBOUNCE_MS = 250
 const QUEUE_SSE_FALLBACK_POLL_MS = 10_000
 const VERSION_INFERENCE_SUMMARY_POLL_MS = 15_000
 const GHCR_SUMMARY_POLL_MS = 15_000
+const QUEUE_SNAPSHOT_KEY = buildReadonlySnapshotKey('queue', 'jobs-overview')
+const QUEUE_SNAPSHOT_STALE_MS = 60_000
+
+type QueueSnapshotPayload = {
+  jobs: JobListItem[]
+  versionInferenceSummary: VersionInferenceSummary
+  versionInferenceLoaded: boolean
+  ghcrSummary: GhcrWebhookSummary
+  ghcrLoaded: boolean
+}
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null
@@ -207,7 +224,7 @@ function versionInferenceTone(summary: VersionInferenceSummary): 'ok' | 'warn' |
 function versionInferenceLabel(summary: VersionInferenceSummary): string {
   if (summary.running > 0) return 'running'
   if (summary.queued > 0) return 'queued'
-  if (summary.stale > 0) return 'stale'
+  if (summary.stale > 0) return '需处理'
   if (summary.allFailed > 0) return 'all_failed'
   return 'ready'
 }
@@ -229,7 +246,9 @@ function ghcrLabel(summary: GhcrWebhookSummary): string {
 
 export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void }) {
   const { onTopActions } = props
+  const { isOnline } = usePwaStatus()
   const [jobs, setJobs] = useState<JobListItem[]>([])
+  const [jobsLoaded, setJobsLoaded] = useState(false)
   const [filter, setFilter] = useState<Filter>('all')
   const [error, setError] = useState<string | null>(null)
   const [versionInferenceSummary, setVersionInferenceSummary] = useState<VersionInferenceSummary>(
@@ -241,9 +260,35 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
   const [ghcrLoaded, setGhcrLoaded] = useState(false)
   const [ghcrError, setGhcrError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [, setSnapshotStatus] = useState<'missing' | 'fresh' | 'stale' | 'expired' | 'unsupported'>(
+    'missing',
+  )
+  const [snapshotFetchedAt, setSnapshotFetchedAt] = useState<string | null>(null)
+  const [snapshotActive, setSnapshotActive] = useState(false)
   const refreshRequestIdRef = useRef(0)
   const inferenceRequestIdRef = useRef(0)
   const ghcrRequestIdRef = useRef(0)
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const snapshot = await readReadonlySnapshot<QueueSnapshotPayload>(QUEUE_SNAPSHOT_KEY)
+      if (cancelled) return
+      setSnapshotStatus(snapshot.status)
+      setSnapshotFetchedAt(snapshot.record?.fetchedAt ?? null)
+      if (snapshot.status !== 'fresh') return
+      setJobs(snapshot.record.payload.jobs)
+      setJobsLoaded(true)
+      setVersionInferenceSummary(snapshot.record.payload.versionInferenceSummary)
+      setVersionInferenceLoaded(snapshot.record.payload.versionInferenceLoaded)
+      setGhcrSummary(snapshot.record.payload.ghcrSummary)
+      setGhcrLoaded(snapshot.record.payload.ghcrLoaded)
+      setSnapshotActive(true)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const refresh = useCallback(async () => {
     const requestId = ++refreshRequestIdRef.current
@@ -252,6 +297,8 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
       const nextJobs = await listJobs()
       if (requestId !== refreshRequestIdRef.current) return
       setJobs(nextJobs)
+      setJobsLoaded(true)
+      setSnapshotActive(false)
     } catch (e: unknown) {
       if (requestId !== refreshRequestIdRef.current) return
       throw e
@@ -273,6 +320,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
       setVersionInferenceSummary(parseVersionInferenceSummary(payload))
       setVersionInferenceError(null)
       setVersionInferenceLoaded(true)
+      setSnapshotActive(false)
     } catch (e: unknown) {
       if (requestId !== inferenceRequestIdRef.current) return
       setVersionInferenceError(e instanceof Error ? e.message : String(e))
@@ -288,6 +336,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
       setGhcrSummary(parseGhcrWebhookSummary(payload))
       setGhcrError(null)
       setGhcrLoaded(true)
+      setSnapshotActive(false)
     } catch (e: unknown) {
       if (requestId !== ghcrRequestIdRef.current) return
       setGhcrError(e instanceof Error ? e.message : String(e))
@@ -422,7 +471,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
     onTopActions(
       <Button
         variant="ghost"
-        disabled={busy}
+        disabled={busy || !isOnline}
         onClick={() => {
           void (async () => {
             setBusy(true)
@@ -439,7 +488,21 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
         刷新
       </Button>,
     )
-  }, [busy, onTopActions, refresh, refreshGhcrSummary, refreshVersionInferenceSummary])
+  }, [busy, isOnline, onTopActions, refresh, refreshGhcrSummary, refreshVersionInferenceSummary])
+
+  useEffect(() => {
+    if (!jobsLoaded && !versionInferenceLoaded && !ghcrLoaded) return
+    const payload: QueueSnapshotPayload = {
+      jobs,
+      versionInferenceSummary,
+      versionInferenceLoaded,
+      ghcrSummary,
+      ghcrLoaded,
+    }
+    void writeReadonlySnapshot(QUEUE_SNAPSHOT_KEY, payload, {
+      staleAfterMs: QUEUE_SNAPSHOT_STALE_MS,
+    })
+  }, [ghcrLoaded, ghcrSummary, jobs, jobsLoaded, versionInferenceLoaded, versionInferenceSummary])
 
   const filtered = useMemo(() => {
     if (filter === 'all') return jobs
@@ -448,6 +511,34 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
 
   return (
     <div className="page">
+      {snapshotActive ? (
+        <ReadonlySnapshotNotice
+          tone={!isOnline ? 'warn' : 'info'}
+          title={!isOnline ? '当前离线，显示已缓存的任务队列数据。' : '任务队列先显示已缓存数据，后台会继续刷新。'}
+          detail="任务详情页、GHCR 管理写操作和其他高时效内容仍以联网结果为准。"
+          fetchedAt={snapshotFetchedAt}
+          actionLabel="重试刷新"
+          actionDisabled={!isOnline || busy}
+          onAction={() => {
+            void (async () => {
+              setBusy(true)
+              try {
+                await Promise.all([refresh(), refreshVersionInferenceSummary(), refreshGhcrSummary()])
+              } catch (e: unknown) {
+                setError(e instanceof Error ? e.message : String(e))
+              } finally {
+                setBusy(false)
+              }
+            })()
+          }}
+        />
+      ) : !isOnline && !jobsLoaded && !versionInferenceLoaded && !ghcrLoaded ? (
+        <ReadonlySnapshotNotice
+          tone="bad"
+          title="当前没有可用的离线任务队列数据。"
+          detail="请恢复联网后重新加载该页面。"
+        />
+      ) : null}
       <div className="card">
         <div className="sectionRow">
           <div className="title">任务队列</div>
@@ -487,9 +578,6 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
               </span>
               <span>
                 running <Mono>{versionInferenceSummary.running}</Mono>
-              </span>
-              <span>
-                stale <Mono>{versionInferenceSummary.stale}</Mono>
               </span>
               <span>
                 all_failed <Mono>{versionInferenceSummary.allFailed}</Mono>

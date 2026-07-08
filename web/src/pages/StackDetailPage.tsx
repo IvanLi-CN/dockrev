@@ -12,6 +12,9 @@ import { createDefaultAutoUpdatePolicy } from '../components/AutoUpdatePolicyEdi
 import { AutoUpdatePolicyDrawer } from '../components/AutoUpdatePolicyDrawer'
 import { AutoUpdatePolicyResultCard } from '../components/AutoUpdatePolicyResultCard'
 import { RecentUpdateRecords, selectRecentStackUpdateJobs } from '../components/RecentUpdateRecords'
+import { ReadonlySnapshotNotice } from '../components/ReadonlySnapshotNotice'
+import { usePwaStatus } from '../pwaStatus'
+import { buildReadonlySnapshotKey, readReadonlySnapshot, writeReadonlySnapshot } from '../readonlySnapshotCache'
 import { navigate } from '../routes'
 import { Button, Mono, Pill } from '../ui'
 import { serviceRowStatus } from '../updateStatus'
@@ -36,19 +39,35 @@ function statusTone(status: ReturnType<typeof serviceRowStatus>): 'ok' | 'warn' 
   return 'muted'
 }
 
+const STACK_DETAIL_SNAPSHOT_STALE_MS = 60_000
+
+type StackDetailSnapshotPayload = {
+  stack: StackDetail
+  jobs: JobListItem[]
+  policy: StackSettings['autoUpdatePolicy'] | null
+}
+
 export function StackDetailPage(props: {
   stackId: string
   onLastScanHint: (lastScan?: string) => void
   onTopActions: (node: ReactNode) => void
 }) {
   const { stackId, onLastScanHint, onTopActions } = props
+  const { isOnline } = usePwaStatus()
+  const snapshotKey = buildReadonlySnapshotKey('stack-detail', stackId)
   const [stack, setStack] = useState<StackDetail | null>(null)
   const [settings, setSettings] = useState<StackSettings | null>(null)
+  const [cachedPolicy, setCachedPolicy] = useState<StackSettings['autoUpdatePolicy'] | null>(null)
   const [jobs, setJobs] = useState<JobListItem[]>([])
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false)
   const [autoPolicyDraft, setAutoPolicyDraft] = useState(() => createDefaultAutoUpdatePolicy('override'))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [, setSnapshotStatus] = useState<'missing' | 'fresh' | 'stale' | 'expired' | 'unsupported'>(
+    'missing',
+  )
+  const [snapshotFetchedAt, setSnapshotFetchedAt] = useState<string | null>(null)
+  const [snapshotActive, setSnapshotActive] = useState(false)
 
   const refresh = useCallback(async () => {
     setError(null)
@@ -60,12 +79,45 @@ export function StackDetailPage(props: {
     ])
     setStack(stackRes)
     setSettings(settingsRes)
+    setCachedPolicy(settingsRes.autoUpdatePolicy ?? null)
     setJobs(jobsRes)
+    setSnapshotActive(false)
   }, [onLastScanHint, stackId])
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const snapshot = await readReadonlySnapshot<StackDetailSnapshotPayload>(snapshotKey)
+      if (cancelled) return
+      setSnapshotStatus(snapshot.status)
+      setSnapshotFetchedAt(snapshot.record?.fetchedAt ?? null)
+      if (snapshot.status !== 'fresh') return
+      setStack(snapshot.record.payload.stack)
+      setJobs(snapshot.record.payload.jobs)
+      setCachedPolicy(snapshot.record.payload.policy ?? null)
+      setSnapshotActive(true)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [snapshotKey])
 
   useEffect(() => {
     void refresh().catch((e: unknown) => setError(errorMessage(e)))
   }, [refresh])
+
+  useEffect(() => {
+    if (!stack) return
+    void writeReadonlySnapshot(
+      snapshotKey,
+      {
+        stack,
+        jobs,
+        policy: settings?.autoUpdatePolicy ?? cachedPolicy ?? null,
+      },
+      { staleAfterMs: STACK_DETAIL_SNAPSHOT_STALE_MS },
+    )
+  }, [cachedPolicy, jobs, settings?.autoUpdatePolicy, snapshotKey, stack])
 
   useEffect(() => {
     onTopActions(
@@ -73,22 +125,46 @@ export function StackDetailPage(props: {
         <Button disabled={busy} onClick={() => navigate({ name: 'services' })}>
           返回服务
         </Button>
-        <Button disabled={busy} onClick={() => void refresh()}>
+        <Button disabled={busy || !isOnline} onClick={() => void refresh()}>
           刷新
         </Button>
       </>,
     )
     return () => onTopActions(null)
-  }, [busy, onTopActions, refresh])
+  }, [busy, isOnline, onTopActions, refresh])
 
-  if (!stack || !settings) return <div className="muted">加载中…</div>
+  if (!stack) {
+    if (!isOnline) {
+      return (
+        <div className="page">
+          <ReadonlySnapshotNotice
+            tone="bad"
+            title="当前没有可用的离线 Stack 数据。"
+            detail="请恢复联网后重新加载该页面。"
+          />
+        </div>
+      )
+    }
+    return <div className="muted">加载中…</div>
+  }
 
-  const policy = settings.autoUpdatePolicy ?? createDefaultAutoUpdatePolicy('override')
+  const policy = settings?.autoUpdatePolicy ?? cachedPolicy ?? createDefaultAutoUpdatePolicy('override')
   const updatable = stack.services.filter((service) => serviceRowStatus(service) !== 'ok').length
   const recentUpdateJobs = selectRecentStackUpdateJobs(jobs, stack)
 
   return (
     <div className="page">
+      {snapshotActive ? (
+        <ReadonlySnapshotNotice
+          tone={!isOnline ? 'warn' : 'info'}
+          title={!isOnline ? '当前离线，显示已缓存的 Stack 数据。' : '先显示已缓存的 Stack 数据，后台会继续刷新。'}
+          detail="自动更新策略只展示只读摘要；恢复联网后才能编辑并保存。"
+          fetchedAt={snapshotFetchedAt}
+          actionLabel="重试刷新"
+          actionDisabled={!isOnline || busy}
+          onAction={() => void refresh()}
+        />
+      ) : null}
       <div className="stackDetailHero">
         <div>
           <div className="svcTitleName">Stack: <Mono>{stack.name}</Mono></div>
@@ -101,6 +177,7 @@ export function StackDetailPage(props: {
       <AutoUpdatePolicyResultCard
         busy={busy}
         onOpenSettings={() => {
+          if (!settings || !isOnline) return
           setAutoPolicyDraft(policy)
           setSettingsDrawerOpen(true)
         }}

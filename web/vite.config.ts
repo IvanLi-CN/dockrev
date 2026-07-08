@@ -2,6 +2,7 @@ import { fileURLToPath, URL } from 'node:url'
 import { defineConfig, loadEnv, type Connect, type Plugin } from 'vite'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
+import { VitePWA } from 'vite-plugin-pwa'
 
 function appDemoSinglePathPlugin(enabled: boolean): Plugin | null {
   if (!enabled) return null
@@ -48,7 +49,38 @@ export default defineConfig(({ mode }) => {
   const appDemoEnabled = demoMode === 'app' || demoMode === 'true' || demoMode === '1'
 
   return {
-    plugins: [appDemoSinglePathPlugin(appDemoEnabled), react(), tailwindcss()],
+    plugins: [
+      appDemoSinglePathPlugin(appDemoEnabled),
+      react(),
+      tailwindcss(),
+      VitePWA({
+        strategies: 'injectManifest',
+        srcDir: 'src',
+        filename: 'sw.ts',
+        injectRegister: false,
+        registerType: 'prompt',
+        injectManifest: {
+          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+        },
+        includeAssets: ['favicon.ico', 'favicon.png', 'apple-touch-icon.png', 'pwa-192.png', 'pwa-512.png'],
+        manifest: {
+          id: '/',
+          name: 'Dockrev',
+          short_name: 'Dockrev',
+          description: 'A calm, exact Docker Compose operations console with offline-first readonly snapshots.',
+          theme_color: '#061227',
+          background_color: '#061227',
+          display: 'standalone',
+          start_url: '/',
+          scope: '/',
+          icons: [
+            { src: '/pwa-192.png', sizes: '192x192', type: 'image/png' },
+            { src: '/pwa-512.png', sizes: '512x512', type: 'image/png' },
+            { src: '/pwa-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+          ],
+        },
+      }),
+    ],
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url)),

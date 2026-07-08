@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
+  ApiError,
   createIgnore,
   deleteIgnore,
+  getServiceResourceUsageHistory,
   inferServiceRepoLink,
   listServiceTagSuggestions,
   listJobs,
@@ -11,18 +13,24 @@ import {
   type BackupTargetPolicy,
   type JobListItem,
   type Service,
+  type ServiceBackupRecordItem,
   type ServiceBackupTargetItem,
   type ServiceBackupTargetsResponse,
+  type ServiceResourceUsageWindow,
   type ServiceSettings,
   type ServiceTagSuggestionItem,
+  type StackDetail,
 } from '../api'
 import { BackupPolicySegmentedControl } from '../components/BackupPolicySegmentedControl'
 import { BackupRecordList } from '../components/ServiceBackupRecords'
+import { ReadonlySnapshotNotice } from '../components/ReadonlySnapshotNotice'
 import { navigate } from '../routes'
 import { Button, IconButton, Input, Mono, Pill, RefreshIcon, SelectField, Switch, Tabs, TabsList, TabsTrigger } from '../ui'
+import { usePwaStatus } from '../pwaStatus'
+import { buildReadonlySnapshotKey, readReadonlySnapshot, writeReadonlySnapshot } from '../readonlySnapshotCache'
 import { isDockrevImageRef } from '../runtimeConfig'
 import { serviceRowStatus } from '../updateStatus'
-import { ServiceResourcePanel } from '../components/ServiceResourcePanel'
+import { ServiceResourcePanel, type ServiceResourceSnapshot } from '../components/ServiceResourcePanel'
 import { ServiceLogsPanel } from '../components/ServiceLogsPanel'
 import { createDefaultAutoUpdatePolicy } from '../components/AutoUpdatePolicyEditor'
 import { AutoUpdatePolicyDrawer } from '../components/AutoUpdatePolicyDrawer'
@@ -323,6 +331,55 @@ function backupRelationshipLabel(item: BackupTargetDraftItem): string {
   return `关联 ${item.relatedServiceCount} 个服务`
 }
 
+const SERVICE_DETAIL_SNAPSHOT_STALE_MS = 60_000
+const SERVICE_DETAIL_MONITORING_WINDOW: ServiceResourceUsageWindow = '1h'
+
+type ServiceDetailSnapshotPayload = {
+  stack: StackDetail
+  jobs: JobListItem[]
+  backupTargets: ServiceBackupTargetsResponse | null
+  backupRecords: ServiceBackupRecordItem[]
+  monitoring: ServiceResourceSnapshot | null
+}
+
+function readReason(details: unknown): string | null {
+  if (!details || typeof details !== 'object') return null
+  const reason = (details as Record<string, unknown>).reason
+  return typeof reason === 'string' ? reason : null
+}
+
+function isMonitorDisabledError(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 409 && readReason(error.details) === 'resource_monitor_disabled'
+}
+
+function ServiceDetailReadonlyBlocked(props: {
+  title: string
+  detail: string
+}) {
+  return (
+    <div className="card serviceDetailReadonlyBlock">
+      <div className="title">{props.title}</div>
+      <div className="muted">{props.detail}</div>
+    </div>
+  )
+}
+
+function sanitizeReadonlyStackSnapshot(stack: StackDetail): StackDetail {
+  return {
+    ...stack,
+    services: stack.services.map((service) => ({
+      ...service,
+      settings: {
+        autoRollback: false,
+        backupTargets: {
+          bindPaths: {},
+          volumeNames: {},
+        },
+      },
+    })),
+  }
+}
+
 export function ServiceDetailPage(props: {
   stackId: string
   serviceId: string
@@ -332,6 +389,8 @@ export function ServiceDetailPage(props: {
 }) {
   const { onTopActions } = props
   const section = props.section ?? 'overview'
+  const { isOnline } = usePwaStatus()
+  const snapshotKey = buildReadonlySnapshotKey('service-detail', `${props.stackId}:${props.serviceId}`)
   const {
     anomalyCandidateTag,
     anomalyCurrentTag,
@@ -374,6 +433,13 @@ export function ServiceDetailPage(props: {
     dangerousActions,
   } = useServiceDetailPageState(props)
   const [jobs, setJobs] = useState<JobListItem[]>([])
+  const [monitoringSnapshot, setMonitoringSnapshot] = useState<ServiceResourceSnapshot | null>(null)
+  const [snapshotPayload, setSnapshotPayload] = useState<ServiceDetailSnapshotPayload | null>(null)
+  const [, setSnapshotStatus] = useState<'missing' | 'fresh' | 'stale' | 'expired' | 'unsupported'>(
+    'missing',
+  )
+  const [snapshotFetchedAt, setSnapshotFetchedAt] = useState<string | null>(null)
+  const [snapshotActive, setSnapshotActive] = useState(false)
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false)
   const [tagDrawerOpen, setTagDrawerOpen] = useState(false)
   const [serviceSettingsDrawerOpen, setServiceSettingsDrawerOpen] = useState(false)
@@ -389,6 +455,23 @@ export function ServiceDetailPage(props: {
   }, [])
 
   useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const snapshot = await readReadonlySnapshot<ServiceDetailSnapshotPayload>(snapshotKey)
+      if (cancelled) return
+      setSnapshotStatus(snapshot.status)
+      setSnapshotFetchedAt(snapshot.record?.fetchedAt ?? null)
+      if (snapshot.status !== 'fresh') return
+      setSnapshotPayload(snapshot.record.payload)
+      setMonitoringSnapshot(snapshot.record.payload.monitoring ?? null)
+      setSnapshotActive(true)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [snapshotKey])
+
+  useEffect(() => {
     void refreshRecentJobs().catch(() => undefined)
   }, [props.serviceId, refreshRecentJobs])
 
@@ -398,19 +481,119 @@ export function ServiceDetailPage(props: {
   }, [notice?.jobId, refreshRecentJobs])
 
   useEffect(() => {
+    let cancelled = false
+    if (!isOnline) return undefined
+    void (async () => {
+      try {
+        const response = await getServiceResourceUsageHistory(props.serviceId, SERVICE_DETAIL_MONITORING_WINDOW)
+        if (cancelled) return
+        setMonitoringSnapshot({
+          fetchedAt:
+            response.samples.length > 0
+              ? response.samples[response.samples.length - 1]?.sampledAt ?? new Date().toISOString()
+              : new Date().toISOString(),
+          windowKey: SERVICE_DETAIL_MONITORING_WINDOW,
+          samples: response.samples,
+          monitorDisabled: false,
+        })
+      } catch (error: unknown) {
+        if (cancelled) return
+        if (isMonitorDisabledError(error)) {
+          setMonitoringSnapshot({
+            fetchedAt: new Date().toISOString(),
+            windowKey: SERVICE_DETAIL_MONITORING_WINDOW,
+            samples: [],
+            monitorDisabled: true,
+          })
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [isOnline, props.serviceId])
+
+  useEffect(() => {
+    if (!stack || !service) return
+    setSnapshotActive(false)
+    void writeReadonlySnapshot(
+      snapshotKey,
+      {
+        stack: sanitizeReadonlyStackSnapshot(stack),
+        jobs,
+        backupTargets,
+        backupRecords,
+        monitoring: monitoringSnapshot,
+      },
+      { staleAfterMs: SERVICE_DETAIL_SNAPSHOT_STALE_MS },
+    )
+  }, [backupRecords, backupTargets, jobs, monitoringSnapshot, service, snapshotKey, stack])
+
+  const snapshotService = useMemo(
+    () => snapshotPayload?.stack.services.find((item) => item.id === props.serviceId) ?? null,
+    [props.serviceId, snapshotPayload],
+  )
+  const effectiveStack = stack ?? snapshotPayload?.stack ?? null
+  const effectiveService = service ?? snapshotService
+  const effectiveJobs = snapshotActive ? snapshotPayload?.jobs ?? jobs : jobs
+  const effectiveBackupTargets = snapshotActive ? snapshotPayload?.backupTargets ?? backupTargets : backupTargets
+  const effectiveBackupRecords = snapshotActive ? snapshotPayload?.backupRecords ?? backupRecords : backupRecords
+  const readonlyUi = !isOnline || snapshotActive
+
+  useEffect(() => {
+    if (readonlyUi) {
+      onTopActions(
+        <>
+          <Button disabled={busy} onClick={() => navigate({ name: 'stack', stackId: props.stackId })}>
+            Stack 详情
+          </Button>
+          <Button disabled={busy || !isOnline} onClick={() => void requestRefresh()}>
+            刷新
+          </Button>
+        </>,
+      )
+      return () => onTopActions(null)
+    }
     onTopActions(topActions)
     return () => onTopActions(null)
-  }, [onTopActions, topActions])
+  }, [busy, isOnline, onTopActions, props.stackId, readonlyUi, requestRefresh, topActions])
 
-  if (!stack || !service || !settings) {
+  if (!effectiveStack || !effectiveService) {
+    if (!isOnline) {
+      return (
+        <div className="page">
+          <ReadonlySnapshotNotice
+            tone="bad"
+            title="当前没有可用的离线服务详情数据。"
+            detail="请恢复联网后重新加载该页面。"
+          />
+        </div>
+      )
+    }
     return <div className="muted">加载中…</div>
   }
 
-  const policy = settings.autoUpdatePolicy ?? createDefaultAutoUpdatePolicy('inherit')
-  const serviceProtectionDraft = serviceSettingsDraft ?? settings
+  const policy = settings?.autoUpdatePolicy ?? stackSettings?.autoUpdatePolicy ?? createDefaultAutoUpdatePolicy('inherit')
+  const serviceProtectionDraft = serviceSettingsDraft ?? settings ?? effectiveService.settings
   const visibleRepoUrl = serviceSettingsDrawerOpen ? serviceProtectionDraft.repoUrl : draftRepoUrl
-  const recentUpdateJobs = selectRecentServiceUpdateJobs(jobs, service.id)
+  const recentUpdateJobs = selectRecentServiceUpdateJobs(effectiveJobs, effectiveService.id)
   const sectionValue = section
+  const effectiveBannerTitle =
+    service != null
+      ? bannerTitle
+      : serviceRowStatus(effectiveService) === 'blocked'
+        ? '已阻止（忽略规则命中）'
+        : serviceRowStatus(effectiveService) === 'archMismatch'
+          ? '架构不匹配（仅提示，不允许更新）'
+          : serviceRowStatus(effectiveService) === 'hint'
+            ? '需确认（arch 未知）'
+            : serviceRowStatus(effectiveService) === 'updatable'
+              ? '可更新'
+              : '暂无候选版本'
+  const effectiveBannerClass = service != null ? bannerClass : 'svcBanner svcBannerMuted'
+  const effectiveDotClass = service != null ? dotClass : 'svcBannerDot'
+  const effectiveBannerDetail =
+    service != null ? bannerDetail : '当前展示本地快照；恢复联网后刷新可获取最新候选与实时状态。'
 
   const renderOverviewSection = () => (
     <div className="svcDetailSectionStack">
@@ -420,7 +603,11 @@ export function ServiceDetailPage(props: {
 
   const renderMonitoringSection = () => (
     <div className="svcDetailSectionStack">
-      <ServiceResourcePanel serviceId={service.id} />
+      <ServiceResourcePanel
+        initialSnapshot={readonlyUi ? monitoringSnapshot ?? snapshotPayload?.monitoring ?? null : undefined}
+        readonly={readonlyUi}
+        serviceId={effectiveService.id}
+      />
     </div>
   )
 
@@ -434,9 +621,9 @@ export function ServiceDetailPage(props: {
           </div>
           <div data-service-detail-action="open-backup-settings">
             <Button
-              disabled={settingsBusy}
+              disabled={settingsBusy || readonlyUi}
               onClick={() => {
-                setServiceBackupTargetsDraft(createBackupTargetsDraft(backupTargets))
+                setServiceBackupTargetsDraft(createBackupTargetsDraft(effectiveBackupTargets))
                 setBackupSettingsDrawerOpen(true)
               }}
             >
@@ -445,21 +632,21 @@ export function ServiceDetailPage(props: {
           </div>
         </div>
         <div className="serviceBackupMetaCard">
-          {backupTargets?.storage ? (
+          {effectiveBackupTargets?.storage ? (
             <>
-              <div className="serviceBackupMetaSummary">{formatBackupRetentionSummary(backupTargets.storage)}</div>
+              <div className="serviceBackupMetaSummary">{formatBackupRetentionSummary(effectiveBackupTargets.storage)}</div>
               <div className="serviceBackupMetaGrid">
                 <div>
                   <div className="muted">目录</div>
-                  <div className="mono">{backupTargets.storage.baseDir}</div>
+                  <div className="mono">{effectiveBackupTargets.storage.baseDir}</div>
                 </div>
                 <div>
                   <div className="muted">产物</div>
-                  <div className="mono">{backupTargets.storage.artifactPattern}</div>
+                  <div className="mono">{effectiveBackupTargets.storage.artifactPattern}</div>
                 </div>
                 <div>
                   <div className="muted">压缩</div>
-                  <div className="mono">{backupTargets.storage.compression}</div>
+                  <div className="mono">{effectiveBackupTargets.storage.compression}</div>
                 </div>
               </div>
             </>
@@ -476,33 +663,48 @@ export function ServiceDetailPage(props: {
             <div className="muted">凡该次 update / rollback 实际影响当前服务，都会出现在这里。</div>
           </div>
         </div>
-        <BackupRecordList records={backupRecords} />
+        <BackupRecordList records={effectiveBackupRecords} />
       </div>
     </div>
   )
 
   const renderLogsSection = () => (
     <div className="svcDetailSectionStack">
-      <ServiceLogsPanel serviceId={service.id} />
+      {readonlyUi ? (
+        <ServiceDetailReadonlyBlocked
+          detail="日志流不做持久化。恢复联网后才能重新建立实时日志连接。"
+          title="当前离线，日志页需要联网。"
+        />
+      ) : (
+        <ServiceLogsPanel serviceId={effectiveService.id} />
+      )}
     </div>
   )
 
   const renderSettingsSection = () => (
     <div className="svcDetailSectionStack">
-      <div data-service-detail-section-card="auto-policy">
-        <div data-service-detail-action="open-auto-policy">
-          <AutoUpdatePolicyResultCard
-            busy={settingsBusy}
-            onOpenSettings={() => {
-              setAutoPolicyDraft(policy)
-              setSettingsDrawerOpen(true)
-            }}
-            policy={policy}
-            scope="service"
-            stackPolicy={stackSettings?.autoUpdatePolicy ?? null}
-          />
-        </div>
-      </div>
+      {readonlyUi || !settings ? (
+        <ServiceDetailReadonlyBlocked
+          detail="设置页包含敏感配置与写操作，不会持久化到本地；恢复联网后才可编辑。"
+          title="当前离线，设置页需要联网。"
+        />
+      ) : null}
+      {!readonlyUi && settings ? (
+        <>
+          <div data-service-detail-section-card="auto-policy">
+            <div data-service-detail-action="open-auto-policy">
+              <AutoUpdatePolicyResultCard
+                busy={settingsBusy}
+                onOpenSettings={() => {
+                  setAutoPolicyDraft(policy)
+                  setSettingsDrawerOpen(true)
+                }}
+                policy={policy}
+                scope="service"
+                stackPolicy={stackSettings?.autoUpdatePolicy ?? null}
+              />
+            </div>
+          </div>
 
       <div className="card svcComposeCard">
         <div className="title">Compose 信息</div>
@@ -537,12 +739,12 @@ export function ServiceDetailPage(props: {
           <div className="title">部署 tag</div>
           <div className="muted">直接写回原始 Compose 文件里的镜像 tag，不自动执行 compose up。</div>
         </div>
-        <div className="serviceTagCardActions">
-          <div className="chipStatic">
-            当前 <Mono>{service.image.tag || '-'}</Mono>
-          </div>
-          <Button disabled={settingsBusy} onClick={() => setTagDrawerOpen(true)}>
-            编辑 tag
+          <div className="serviceTagCardActions">
+            <div className="chipStatic">
+              当前 <Mono>{effectiveService.image.tag || '-'}</Mono>
+            </div>
+            <Button disabled={settingsBusy} onClick={() => setTagDrawerOpen(true)}>
+              编辑 tag
           </Button>
         </div>
       </div>
@@ -673,7 +875,7 @@ export function ServiceDetailPage(props: {
 
         <div className="webhookRow">
           <div className="label">POST</div>
-          <div className="mono">/api/v1/update/service/{service.name}</div>
+          <div className="mono">/api/v1/update/service/{effectiveService.name}</div>
           <div style={{ marginLeft: 'auto' }} className="chipStatic">
             需要鉴权
           </div>
@@ -694,6 +896,8 @@ export function ServiceDetailPage(props: {
         </div>
         <div className="svcDangerZoneActions">{dangerousActions}</div>
       </div>
+        </>
+      ) : null}
     </div>
   )
 
@@ -707,17 +911,34 @@ export function ServiceDetailPage(props: {
 
   return (
     <div className="page">
+      {snapshotActive ? (
+        <ReadonlySnapshotNotice
+          tone={!isOnline ? 'warn' : 'info'}
+          title={!isOnline ? '当前离线，显示已缓存的服务详情数据。' : '先显示已缓存的服务详情数据，后台会继续刷新。'}
+          detail="仅保留概览、监控摘要与备份摘要；日志和设置会继续要求联网。"
+          fetchedAt={snapshotFetchedAt}
+          actionLabel="重试刷新"
+          actionDisabled={!isOnline || busy}
+          onAction={() => void requestRefresh()}
+        />
+      ) : !isOnline ? (
+        <ReadonlySnapshotNotice
+          tone="warn"
+          title="当前离线。"
+          detail="仅在存在可用缓存时显示只读内容；日志与设置需要联网。"
+        />
+      ) : null}
       <div className="svcTitleRow">
         <div className="svcTitleMain">
           <div className="svcTitleNameRow">
             <div className="svcTitleName">
-              服务: <Mono>{service.name}</Mono>
+              服务: <Mono>{effectiveService.name}</Mono>
             </div>
-            <Pill tone="muted">{stack.name}</Pill>
+            <Pill tone="muted">{effectiveStack.name}</Pill>
           </div>
           {(() => {
-            const img = splitImageRef(service.image.ref)
-            const dn = splitImageNameForDisplay(img.name, service.image.tag)
+            const img = splitImageRef(effectiveService.image.ref)
+            const dn = splitImageNameForDisplay(img.name, effectiveService.image.tag)
             return (
               <div className="cellTwoLine">
                 <div
@@ -725,14 +946,14 @@ export function ServiceDetailPage(props: {
                   title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}
                 >
                   <span className="monoSplitBase">{dn.base}</span>
-                  <ImageLinkIcons imageRef={service.image.ref} repoUrl={visibleRepoUrl} />
+                  <ImageLinkIcons imageRef={effectiveService.image.ref} repoUrl={visibleRepoUrl} />
                 </div>
                 <div className="mono monoSecondary">{img.registry}</div>
               </div>
             )
           })()}
           <div className="muted">
-            id <Mono>{service.id}</Mono> · stack <Mono>{stack.id}</Mono>
+            id <Mono>{effectiveService.id}</Mono> · stack <Mono>{effectiveStack.id}</Mono>
           </div>
         </div>
       </div>
@@ -790,15 +1011,15 @@ export function ServiceDetailPage(props: {
         </Tabs>
       </div>
 
-      <div className={bannerClass}>
+      <div className={effectiveBannerClass}>
         <div className="svcBannerTitleRow">
-          <span className={dotClass} />
-          <div className="svcBannerTitle">{bannerTitle}</div>
+          <span className={effectiveDotClass} />
+          <div className="svcBannerTitle">{effectiveBannerTitle}</div>
           <div style={{ marginLeft: 'auto' }}>
-            <Pill tone={tone}>{svcBadge(service)}</Pill>
+            <Pill tone={tone}>{svcBadge(effectiveService)}</Pill>
           </div>
         </div>
-        <div className="svcBannerDetail">{bannerDetail}</div>
+        <div className="svcBannerDetail">{effectiveBannerDetail}</div>
       </div>
 
       {semverDowngradeAnomaly ? (
@@ -815,7 +1036,7 @@ export function ServiceDetailPage(props: {
         </div>
       ) : null}
 
-      {isDockrevService(service) && supervisorState.status === 'offline' ? (
+      {isDockrevService(effectiveService) && supervisorState.status === 'offline' ? (
         <div className="muted" style={{ marginTop: 10 }}>
           supervisor offline · {supervisorErrorAt ?? '-'}
         </div>
@@ -823,34 +1044,36 @@ export function ServiceDetailPage(props: {
 
       {renderSection()}
 
-      <AutoUpdatePolicyDrawer
-        busy={settingsBusy}
-        onChange={setAutoPolicyDraft}
-        onOpenChange={setSettingsDrawerOpen}
-        onSave={() => {
-          void (async () => {
-            setBusy(true)
-            setError(null)
-            try {
-              await putServiceSettings(props.serviceId, {
-                ...settings,
-                autoUpdatePolicy: autoPolicyDraft,
-                repoUrl: undefined,
-              })
-              await requestRefresh()
-            } catch (e: unknown) {
-              setError(errorMessage(e))
-            } finally {
-              setBusy(false)
-            }
-          })()
-        }}
-        open={settingsDrawerOpen}
-        policy={autoPolicyDraft}
-        previewServiceId={service.id}
-        scope="service"
-        stackPolicy={stackSettings?.autoUpdatePolicy ?? null}
-      />
+      {settings ? (
+        <AutoUpdatePolicyDrawer
+          busy={settingsBusy}
+          onChange={setAutoPolicyDraft}
+          onOpenChange={setSettingsDrawerOpen}
+          onSave={() => {
+            void (async () => {
+              setBusy(true)
+              setError(null)
+              try {
+                await putServiceSettings(props.serviceId, {
+                  ...settings,
+                  autoUpdatePolicy: autoPolicyDraft,
+                  repoUrl: undefined,
+                })
+                await requestRefresh()
+              } catch (e: unknown) {
+                setError(errorMessage(e))
+              } finally {
+                setBusy(false)
+              }
+            })()
+          }}
+          open={settingsDrawerOpen}
+          policy={autoPolicyDraft}
+          previewServiceId={effectiveService.id}
+          scope="service"
+          stackPolicy={stackSettings?.autoUpdatePolicy ?? null}
+        />
+      ) : null}
 
       <ResponsiveSettingsDrawer
         description="写回原始 Compose 文件里的镜像 tag；保存后不会自动执行 compose up。"
@@ -861,7 +1084,7 @@ export function ServiceDetailPage(props: {
         <div className="settingsDrawerSection">
           <ServiceComposeTagField
             busy={settingsBusy}
-            currentTag={service.image.tag}
+            currentTag={effectiveService.image.tag}
             onError={setError}
             onSaved={requestRefresh}
             serviceId={props.serviceId}
@@ -952,7 +1175,7 @@ export function ServiceDetailPage(props: {
                   try {
                     await putServiceSettings(props.serviceId, {
                       ...serviceProtectionDraft,
-                      autoUpdatePolicy: settings.autoUpdatePolicy,
+                      autoUpdatePolicy: settings?.autoUpdatePolicy,
                       repoUrl: (serviceProtectionDraft.repoUrl ?? '').trim() || null,
                     })
                     await requestRefresh()
@@ -985,21 +1208,21 @@ export function ServiceDetailPage(props: {
           <div className="serviceBackupPicker">
             <div className="serviceBackupMetaCard">
               <div className="label">备份说明</div>
-              {backupTargets?.storage ? (
+              {effectiveBackupTargets?.storage ? (
                 <>
-                  <div className="serviceBackupMetaSummary">{formatBackupRetentionSummary(backupTargets.storage)}</div>
+                  <div className="serviceBackupMetaSummary">{formatBackupRetentionSummary(effectiveBackupTargets.storage)}</div>
                   <div className="serviceBackupMetaGrid">
                     <div>
                       <div className="muted">目录</div>
-                      <div className="mono">{backupTargets.storage.baseDir}</div>
+                      <div className="mono">{effectiveBackupTargets.storage.baseDir}</div>
                     </div>
                     <div>
                       <div className="muted">产物</div>
-                      <div className="mono">{backupTargets.storage.artifactPattern}</div>
+                      <div className="mono">{effectiveBackupTargets.storage.artifactPattern}</div>
                     </div>
                     <div>
                       <div className="muted">压缩</div>
-                      <div className="mono">{backupTargets.storage.compression}</div>
+                      <div className="mono">{effectiveBackupTargets.storage.compression}</div>
                     </div>
                   </div>
                 </>

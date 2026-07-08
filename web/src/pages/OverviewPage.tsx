@@ -30,13 +30,18 @@ import {
   type ServiceResourceOverviewResponse,
 } from "../api";
 import { HomepageServiceIcon } from "../components/HomepageServiceIcon";
+import { ReadonlySnapshotNotice } from "../components/ReadonlySnapshotNotice";
 import { ServiceUpdateConfirmDetails } from "../components/ServiceUpdateConfirmDetails";
+import { usePwaStatus } from "../pwaStatus";
+import {
+  buildReadonlySnapshotKey,
+  readReadonlySnapshot,
+  writeReadonlySnapshot,
+} from "../readonlySnapshotCache";
 import { navigate } from "../routes";
 import { buildUpdateServiceTarget } from "../updateTargets";
 import {
   homepageSnapshotFromResponse,
-  homepageSnapshotIsResourceStale,
-  markHomepageSnapshotResourceStale,
   readHomepageSnapshot,
   writeHomepageSnapshot,
   type HomepageSnapshotCard,
@@ -60,6 +65,18 @@ const HOMEPAGE_COLUMN_BREAKPOINTS = [
   { query: "(max-width: 1160px)", columns: 2 },
   { query: "(max-width: 1500px)", columns: 3 },
 ] as const;
+const HOMEPAGE_PERSISTED_SNAPSHOT_KEY = buildReadonlySnapshotKey(
+  "overview",
+  "homepage-nav",
+);
+const HOMEPAGE_PERSISTED_SNAPSHOT_STALE_MS = 60_000;
+
+type PersistedHomepageSnapshotPayload = {
+  generatedAt: string;
+  lastCheckAt: string | null;
+  resourceSummary: ServiceResourceOverviewResponse;
+  cards: HomepageSnapshotCard[];
+};
 
 type HomepageNavCard = HomepageSnapshotCard & {
   source: "live" | "snapshot";
@@ -344,14 +361,13 @@ function sumMetricValues<T>(
 }
 
 function aggregateMetrics(items: ServiceResourceOverviewItem[]) {
-  const sampled = items.filter((item) => item.sampledAt);
-  const active = sampled.filter((item) => !item.stale);
+  const active = items.filter((item) => item.sampledAt && !item.stale);
   return {
     activeCount: active.length,
-    cpu: sumMetricValues(sampled, (item) => item.cpuPercent),
-    memory: sumMetricValues(sampled, (item) => item.memUsedBytes),
-    rx: sumMetricValues(sampled, (item) => item.netRxRateBps),
-    tx: sumMetricValues(sampled, (item) => item.netTxRateBps),
+    cpu: sumMetricValues(active, (item) => item.cpuPercent),
+    memory: sumMetricValues(active, (item) => item.memUsedBytes),
+    rx: sumMetricValues(active, (item) => item.netRxRateBps),
+    tx: sumMetricValues(active, (item) => item.netTxRateBps),
   };
 }
 
@@ -371,7 +387,6 @@ function serviceBadge(
   if (overview?.enabled === false) return { label: "NO DATA", tone: "muted" };
   if (metric?.sampledAt && !metric.stale)
     return { label: "RUNNING", tone: "running" };
-  if (metric?.sampledAt && metric.stale) return { label: "STALE", tone: "stale" };
   if (metric || overview) return { label: "NO DATA", tone: "muted" };
   return { label: "NO DATA", tone: "muted" };
 }
@@ -598,6 +613,7 @@ export function OverviewPage(props: {
     onTopbarContent,
   } =
     props;
+  const { isOnline } = usePwaStatus();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resourceError, setResourceError] = useState<string | null>(null);
@@ -606,25 +622,17 @@ export function OverviewPage(props: {
   const [cachedCards, setCachedCards] = useState<HomepageNavCard[]>(() => {
     const snapshot = readHomepageSnapshot();
     if (!snapshot) return [];
-    const normalized = homepageSnapshotIsResourceStale(snapshot)
-      ? markHomepageSnapshotResourceStale(snapshot)
-      : snapshot;
-    return snapshotCardsToNavCards(normalized.cards);
+    return snapshotCardsToNavCards(snapshot.cards);
   });
   const [hasCachedNavSnapshot, setHasCachedNavSnapshot] = useState(
     () => readHomepageSnapshot() !== null,
   );
-  const [resourceFromCache, setResourceFromCache] = useState(() => {
-    const snapshot = readHomepageSnapshot();
-    return snapshot ? homepageSnapshotIsResourceStale(snapshot) : false;
-  });
+  const [resourceFromCache, setResourceFromCache] = useState(() => readHomepageSnapshot() !== null);
   const [resourceOverview, setResourceOverview] =
     useState<ServiceResourceOverviewResponse | null>(() => {
       const snapshot = readHomepageSnapshot();
       if (!snapshot) return null;
-      return homepageSnapshotIsResourceStale(snapshot)
-        ? markHomepageSnapshotResourceStale(snapshot).resourceSummary
-        : snapshot.resourceSummary;
+      return snapshot.resourceSummary;
     });
   const [cards, setCards] = useState<HomepageNavCard[]>(() => {
     const snapshot = readHomepageSnapshot();
@@ -632,6 +640,12 @@ export function OverviewPage(props: {
     return snapshotCardsToNavCards(snapshot.cards);
   });
   const [liveLoaded, setLiveLoaded] = useState(false);
+  const [, setPersistedSnapshotStatus] = useState<
+    "missing" | "fresh" | "stale" | "expired" | "unsupported"
+  >("missing");
+  const [persistedSnapshotFetchedAt, setPersistedSnapshotFetchedAt] = useState<
+    string | null
+  >(null);
   const [search, setSearch] = useState("");
   const [searchDraft, setSearchDraft] = useState("");
   const [headerSearchOpen, setHeaderSearchOpen] = useState(false);
@@ -653,6 +667,49 @@ export function OverviewPage(props: {
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const persisted = await readReadonlySnapshot<PersistedHomepageSnapshotPayload>(
+        HOMEPAGE_PERSISTED_SNAPSHOT_KEY,
+      );
+      if (cancelled) return;
+      setPersistedSnapshotStatus(persisted.status);
+      setPersistedSnapshotFetchedAt(persisted.record?.fetchedAt ?? null);
+
+      const legacy = readHomepageSnapshot();
+      if (legacy) {
+        void writeReadonlySnapshot(
+          HOMEPAGE_PERSISTED_SNAPSHOT_KEY,
+          {
+            generatedAt: legacy.generatedAt,
+            lastCheckAt: legacy.lastCheckAt,
+            resourceSummary: legacy.resourceSummary,
+            cards: legacy.cards,
+          },
+          {
+            staleAfterMs: HOMEPAGE_PERSISTED_SNAPSHOT_STALE_MS,
+            fetchedAt: Date.parse(legacy.generatedAt) || Date.now(),
+          },
+        );
+        return;
+      }
+
+      if (persisted.status !== "fresh") return;
+      const payload = persisted.record.payload;
+      setHasCachedNavSnapshot(true);
+      setCachedCards(snapshotCardsToNavCards(payload.cards));
+      setCards((current) =>
+        current.length > 0 ? current : snapshotCardsToNavCards(payload.cards),
+      );
+      setResourceOverview(payload.resourceSummary);
+      setResourceFromCache(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const refresh = useCallback(async () => {
     setRefreshing(true);
     try {
@@ -672,6 +729,19 @@ export function OverviewPage(props: {
         cards: snapshotCards,
       });
       writeHomepageSnapshot(snapshot);
+      void writeReadonlySnapshot(
+        HOMEPAGE_PERSISTED_SNAPSHOT_KEY,
+        {
+          generatedAt: snapshot.generatedAt,
+          lastCheckAt: snapshot.lastCheckAt,
+          resourceSummary: snapshot.resourceSummary,
+          cards: snapshot.cards,
+        },
+        {
+          staleAfterMs: HOMEPAGE_PERSISTED_SNAPSHOT_STALE_MS,
+          fetchedAt: Date.parse(snapshot.generatedAt) || Date.now(),
+        },
+      );
       setCachedCards(snapshotCardsToNavCards(snapshot.cards));
       setHasCachedNavSnapshot(true);
     } catch (value: unknown) {
@@ -904,6 +974,41 @@ export function OverviewPage(props: {
   return (
     <div className="page homepageDashboardPage">
       <h1 className="srOnly">服务导航</h1>
+      {hasCachedCardsInUse || resourceFromCache ? (
+        <ReadonlySnapshotNotice
+          tone={!isOnline ? "warn" : "info"}
+          title={
+            !isOnline
+              ? "当前离线，显示已缓存的首页数据。"
+              : "首页先显示已缓存数据，后台会继续刷新。"
+          }
+          detail="应用壳和首页只读导航已缓存；写操作与高时效数据仍以联网结果为准。"
+          fetchedAt={persistedSnapshotFetchedAt}
+          actionLabel="重试刷新"
+          actionDisabled={!isOnline || busy}
+          onAction={() => {
+            void (async () => {
+              setBusy(true);
+              setError(null);
+              try {
+                await requestRefresh();
+              } catch (value: unknown) {
+                setError(
+                  value instanceof Error ? value.message : String(value),
+                );
+              } finally {
+                setBusy(false);
+              }
+            })();
+          }}
+        />
+      ) : !hasCachedNavSnapshot && !liveLoaded && !isOnline ? (
+        <ReadonlySnapshotNotice
+          tone="bad"
+          title="当前没有可用的离线首页数据。"
+          detail="请恢复联网后重新加载应用。"
+        />
+      ) : null}
       <div className="homepageMobileNavModule" aria-label="导航页快捷栏">
         <HomepageTopStrip
           className="homepageTopStripMobile"
@@ -918,13 +1023,13 @@ export function OverviewPage(props: {
       <div className="homepageStatusLine">
         <span>
           {hasCachedCardsInUse
-            ? "正在刷新服务入口，先显示上次导航"
+            ? "正在同步服务入口"
             : summary.activeCount > 0
             ? `${summary.activeCount} 个服务提供实时摘要`
             : resourceOverview?.enabled === false
               ? "资源监控已关闭"
               : resourceOverview && resourceFromCache
-                ? "显示上次资源样本，正在刷新"
+                ? "显示已缓存的资源样本"
                 : refreshing
                   ? "正在加载资源样本"
                   : "等待资源样本"}
@@ -932,7 +1037,7 @@ export function OverviewPage(props: {
         {resourceError ? (
           <span>
             {resourceOverview
-              ? `首页导航刷新失败，保留旧快照：${resourceError}`
+              ? `首页导航刷新失败：${resourceError}`
               : `首页导航暂不可用：${resourceError}`}
           </span>
         ) : null}

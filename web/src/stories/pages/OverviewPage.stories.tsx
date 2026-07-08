@@ -636,8 +636,8 @@ export const MetricsUnavailable: Story = {
       "homepage should keep cached resource summary visible when the single nav payload fails",
     );
     expectStory(
-      canvasElement.textContent?.includes("首页导航刷新失败，保留旧快照"),
-      "expected homepage refresh failure to disclose the cached fallback path",
+      canvasElement.textContent?.includes("首页导航刷新失败："),
+      "expected homepage refresh failure to stay visible while cached data remains available",
     );
     const badges = Array.from(
       canvasElement.querySelectorAll<HTMLElement>(".homepageServiceStateBadge"),
@@ -696,12 +696,12 @@ export const MetricsStale: Story = {
     const staleCard = serviceCards(canvasElement).find((card) =>
       card
         .querySelector(".homepageServiceStateBadge")
-        ?.textContent?.includes("STALE"),
+        ?.textContent?.includes("NO DATA"),
     );
-    expectStory(staleCard, "expected stale resource samples to be surfaced");
+    expectStory(staleCard, "expected stale resource samples to be suppressed from the card");
     expectStory(
       staleCard.querySelectorAll(".homepageServiceMetricValue").length === 4,
-      "expected stale cards to keep metric cells stable",
+      "expected cards with unavailable samples to keep metric cells stable",
     );
   },
 };

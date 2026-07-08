@@ -6,15 +6,20 @@ import {
   type VersionInferenceOverviewResponse,
   type VersionInferenceTaskProgress,
 } from '../api'
+import { ReadonlySnapshotNotice } from '../components/ReadonlySnapshotNotice'
+import { usePwaStatus } from '../pwaStatus'
+import { buildReadonlySnapshotKey, readReadonlySnapshot, writeReadonlySnapshot } from '../readonlySnapshotCache'
 import { Button, Input, Mono, Pill, SelectField, ToggleGroup, ToggleGroupItem } from '../ui'
 
-type StatusFilter = 'all' | 'queued' | 'running' | 'ready' | 'stale' | 'all_failed'
+type StatusFilter = 'all' | 'queued' | 'running' | 'ready' | 'all_failed'
 
-const STATUS_FILTERS: readonly StatusFilter[] = ['all', 'queued', 'running', 'ready', 'stale', 'all_failed']
+const STATUS_FILTERS: readonly StatusFilter[] = ['all', 'queued', 'running', 'ready', 'all_failed']
 const PER_PAGE_OPTIONS = [20, 50, 100, 200] as const
 const QUERY_DEBOUNCE_MS = 250
 const SSE_RECONNECT_MS = 3_000
 const SSE_REFRESH_DEBOUNCE_MS = 250
+const VERSION_INFERENCE_SNAPSHOT_KEY = buildReadonlySnapshotKey('queue', 'version-inference-overview')
+const VERSION_INFERENCE_SNAPSHOT_STALE_MS = 60_000
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
@@ -33,7 +38,6 @@ function statusLabel(status: string): string {
   if (status === 'queued') return '排队中'
   if (status === 'running') return '执行中'
   if (status === 'ready') return '已就绪'
-  if (status === 'stale') return '已过期'
   if (status === 'all_failed') return '全部失败'
   return status || '-'
 }
@@ -41,7 +45,7 @@ function statusLabel(status: string): string {
 function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' | 'info' {
   if (status === 'ready') return 'ok'
   if (status === 'running') return 'info'
-  if (status === 'queued' || status === 'stale') return 'warn'
+  if (status === 'queued') return 'warn'
   if (status === 'all_failed') return 'bad'
   return 'muted'
 }
@@ -113,17 +117,15 @@ function statusCount(summary: VersionInferenceOverviewResponse['summary'] | null
   if (key === 'queued') return summary.queued
   if (key === 'running') return summary.running
   if (key === 'ready') return summary.ready
-  if (key === 'stale') return summary.stale
   if (key === 'all_failed') return summary.allFailed
-  return summary.queued + summary.running + summary.ready + summary.stale + summary.allFailed
+  return summary.queued + summary.running + summary.ready + summary.allFailed
 }
 
 function rowSortValue(status: string): number {
   if (status === 'running') return 0
   if (status === 'queued') return 1
-  if (status === 'stale') return 2
-  if (status === 'all_failed') return 3
-  if (status === 'ready') return 4
+  if (status === 'all_failed') return 2
+  if (status === 'ready') return 3
   return 9
 }
 
@@ -144,6 +146,7 @@ export function VersionInferencePage(props: {
   onTopActions: (node: ReactNode) => void
 }) {
   const { onLastScanHint, onTopActions } = props
+  const { isOnline } = usePwaStatus()
   const [overview, setOverview] = useState<VersionInferenceOverviewResponse | null>(null)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [queryInput, setQueryInput] = useState('')
@@ -155,11 +158,34 @@ export function VersionInferencePage(props: {
   const [error, setError] = useState<string | null>(null)
   const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null)
   const [sseStatus, setSseStatus] = useState<'connecting' | 'open' | 'reconnecting'>('connecting')
+  const [, setSnapshotStatus] = useState<'missing' | 'fresh' | 'stale' | 'expired' | 'unsupported'>(
+    'missing',
+  )
+  const [snapshotFetchedAt, setSnapshotFetchedAt] = useState<string | null>(null)
+  const [snapshotActive, setSnapshotActive] = useState(false)
   const refreshRequestIdRef = useRef(0)
 
   useEffect(() => {
     onLastScanHint?.(undefined)
   }, [onLastScanHint])
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const snapshot = await readReadonlySnapshot<VersionInferenceOverviewResponse>(VERSION_INFERENCE_SNAPSHOT_KEY)
+      if (cancelled) return
+      setSnapshotStatus(snapshot.status)
+      setSnapshotFetchedAt(snapshot.record?.fetchedAt ?? null)
+      if (snapshot.status !== 'fresh') return
+      setOverview(snapshot.record.payload)
+      setLoading(false)
+      setSnapshotActive(true)
+      setLastRefreshAt(snapshot.record.fetchedAt)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -188,6 +214,7 @@ export function VersionInferencePage(props: {
 
         setOverview(next)
         setLastRefreshAt(new Date().toISOString())
+        setSnapshotActive(false)
         setPage((prev) => {
           const normalized = Number.isFinite(next.page) ? Math.max(1, Math.round(next.page)) : prev
           return prev === normalized ? prev : normalized
@@ -307,7 +334,7 @@ export function VersionInferencePage(props: {
     onTopActions(
       <Button
         variant="ghost"
-        disabled={manualBusy}
+        disabled={manualBusy || !isOnline}
         onClick={() => {
           void refresh({ silent: false })
         }}
@@ -315,7 +342,14 @@ export function VersionInferencePage(props: {
         刷新
       </Button>,
     )
-  }, [manualBusy, onTopActions, refresh])
+  }, [isOnline, manualBusy, onTopActions, refresh])
+
+  useEffect(() => {
+    if (!overview) return
+    void writeReadonlySnapshot(VERSION_INFERENCE_SNAPSHOT_KEY, overview, {
+      staleAfterMs: VERSION_INFERENCE_SNAPSHOT_STALE_MS,
+    })
+  }, [overview])
 
   const totalPages = useMemo(() => {
     const total = overview?.total ?? 0
@@ -325,7 +359,10 @@ export function VersionInferencePage(props: {
 
   const currentPage = overview?.page ?? page
   const summary = overview?.summary ?? null
-  const rows = useMemo(() => sortRows(overview?.rows ?? []), [overview?.rows])
+  const rows = useMemo(
+    () => sortRows((overview?.rows ?? []).filter((row) => row.status !== 'stale')),
+    [overview?.rows],
+  )
   const gcTip = useMemo(() => {
     const gc = overview?.gc
     if (!gc) return 'GC 状态加载中'
@@ -341,6 +378,25 @@ export function VersionInferencePage(props: {
 
   return (
     <div className="page versionInferencePage">
+      {snapshotActive ? (
+        <ReadonlySnapshotNotice
+          tone={!isOnline ? 'warn' : 'info'}
+          title={!isOnline ? '当前离线，显示已缓存的版本推测数据。' : '先显示已缓存的版本推测数据，后台会继续刷新。'}
+          detail="SSE 连接、实时推测进度和 GC 最新结果仍以联网后的服务端状态为准。"
+          fetchedAt={snapshotFetchedAt}
+          actionLabel="重试刷新"
+          actionDisabled={!isOnline || manualBusy}
+          onAction={() => {
+            void refresh({ silent: false })
+          }}
+        />
+      ) : !overview && !loading && !isOnline ? (
+        <ReadonlySnapshotNotice
+          tone="bad"
+          title="当前没有可用的离线版本推测数据。"
+          detail="请恢复联网后重新加载该页面。"
+        />
+      ) : null}
       <div className="card">
         <div className="sectionRow versionInferenceSummaryHead">
           <div className="title versionInferenceSummaryTitle">任务与缓存总览</div>
@@ -380,8 +436,8 @@ export function VersionInferencePage(props: {
             <strong>{summary?.ready ?? 0}</strong>
           </div>
           <div className="versionInferenceMetric">
-            <span>stale + all_failed</span>
-            <strong>{(summary?.stale ?? 0) + (summary?.allFailed ?? 0)}</strong>
+            <span>失败</span>
+            <strong>{summary?.allFailed ?? 0}</strong>
           </div>
         </div>
       </div>
@@ -462,7 +518,7 @@ export function VersionInferencePage(props: {
             type="button"
             className="versionInferenceSortHint"
             aria-label="排序说明"
-            data-tip="执行中 > 排队中 > 已过期 > 全部失败 > 已就绪（同状态按更新时间倒序）"
+            data-tip="执行中 > 排队中 > 全部失败 > 已就绪（同状态按更新时间倒序）"
           >
             ?
           </button>

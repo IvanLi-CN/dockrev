@@ -27,7 +27,6 @@ import {
 type NotificationChannelTestState
 } from '../components/NotificationChannelCard'
 import { useConfirm } from '../confirm'
-import { serviceWorkerUrl } from '../publicAssetUrls'
 import { derivePublicBaseUrlSuggestion } from '../publicBaseUrlSuggestion'
 import { currentRoutePathname,navigate } from '../routes'
 import { selfUpgradeBaseUrl } from '../runtimeConfig'
@@ -965,7 +964,7 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     if (!notifications?.webPush.vapidPublicKey) throw new Error('请先在右侧配置 VAPID Public Key')
     if (!canWebPush) throw new Error('当前环境不支持 Web Push / Service Worker')
 
-    const reg = await navigator.serviceWorker.register(serviceWorkerUrl)
+    const reg = await navigator.serviceWorker.ready
     const keyBytes = base64UrlToUint8Array(notifications.webPush.vapidPublicKey)
     const appServerKey = keyBytes.buffer.slice(
       keyBytes.byteOffset,

@@ -278,6 +278,18 @@ async function main() {
       },
     },
     {
+      id: 'components-serviceresourcepanel--offline-snapshot',
+      file: 'service-resource-offline-snapshot.png',
+      setup: async (page) => {
+        await page.locator('.svcResourceCard').waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        const el = page.locator('.svcResourceCard')
+        await el.waitFor({ timeout: STORY_TIMEOUT_MS })
+        await el.screenshot({ path: filePath })
+      },
+    },
+    {
       id: 'components-statusremark--all-statuses',
       file: 'status-remark-discovery-timeline-open.png',
       setup: async (page) => {
@@ -342,6 +354,19 @@ async function main() {
       },
       screenshot: async (page, filePath) => {
         const el = page.locator('.settingsDrawerBody').first()
+        await el.waitFor({ timeout: STORY_TIMEOUT_MS })
+        await el.screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'pages-servicedetailpage--settings-offline-readonly',
+      file: 'service-detail-settings-offline-readonly.png',
+      viewport: { width: 1440, height: 1080 },
+      setup: async (page) => {
+        await page.getByText('当前离线，设置页需要联网。').waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        const el = page.locator('.page').first()
         await el.waitFor({ timeout: STORY_TIMEOUT_MS })
         await el.screenshot({ path: filePath })
       },
@@ -458,6 +483,26 @@ async function main() {
       screenshot: async (page, filePath) => {
         const drawer = page.locator('.releaseDrawerContent').first()
         await drawer.screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'components-appshellstatusbanner--update-ready',
+      file: 'pwa-update-banner.png',
+      setup: async (page) => {
+        await page.locator('.shellStatusBanner-update').waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        await page.locator('.shellStatusBanner-update').screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'components-readonlysnapshotnotice--offline-snapshot',
+      file: 'offline-snapshot-notice.png',
+      setup: async (page) => {
+        await page.locator('.readonlySnapshotNotice-warn').waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        await page.locator('.readonlySnapshotNotice-warn').screenshot({ path: filePath })
       },
     },
   ]

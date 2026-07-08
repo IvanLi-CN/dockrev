@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { PwaStatusProvider } from './pwaStatus'
 import { initTheme } from './theme'
 
 function shouldInstallAppDemoApi(): boolean {
@@ -20,9 +21,11 @@ async function bootstrap() {
 
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      <TooltipProvider>
-        <App />
-      </TooltipProvider>
+      <PwaStatusProvider>
+        <TooltipProvider>
+          <App />
+        </TooltipProvider>
+      </PwaStatusProvider>
     </StrictMode>,
   )
 }
