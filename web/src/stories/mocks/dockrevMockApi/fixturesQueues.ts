@@ -542,6 +542,49 @@ export function buildQueueProgressSmoothing(): Fixture {
   return f
 }
 
+export function buildQueueUpdateLayerProgress(): Fixture {
+  const f = buildQueueMixed()
+  const runningJob = f.jobs.find((job) => job.id === 'job-running')
+  if (!runningJob) return f
+
+  const nextProgress = {
+    phase: 'apply',
+    message: 'pulling image for worker · downloaded 4.2MB · layers 2/6 · ad6b1fa7e521 Downloading',
+    current: 2,
+    total: 5,
+    percent: 40,
+    plannedCurrent: 2,
+    plannedTotal: 5,
+    plannedPercent: 40,
+    currentTarget: 'worker',
+    download: {
+      currentBytes: 4_397_728,
+      totalBytes: null,
+      completedLayers: 2,
+      totalLayers: 6,
+      activeLayers: ['ad6b1fa7e521 Downloading'],
+      status: 'layers 2/6',
+    },
+    updatedAt: nowIso(-600),
+  }
+
+  runningJob.type = 'update'
+  runningJob.scope = 'stack'
+  runningJob.progress = nextProgress
+
+  const runningDetail = f.jobById['job-running']
+  if (runningDetail) {
+    f.jobById['job-running'] = {
+      ...runningDetail,
+      type: 'update',
+      scope: 'stack',
+      progress: { ...nextProgress },
+    }
+  }
+
+  return f
+}
+
 export function buildQueueUpdateIndeterminate(): Fixture {
   const f = buildQueueMixed()
   const runningJob = f.jobs.find((job) => job.id === 'job-running')
@@ -560,10 +603,10 @@ export function buildQueueUpdateIndeterminate(): Fixture {
     download: {
       currentBytes: 4_397_728,
       totalBytes: null,
-      completedLayers: 2,
+      completedLayers: 0,
       totalLayers: 6,
       activeLayers: ['ad6b1fa7e521 Downloading'],
-      status: 'layers 2/6',
+      status: 'layers 0/6',
     },
     updatedAt: nowIso(-600),
   }

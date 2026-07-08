@@ -434,6 +434,30 @@ async function main() {
       setup: async () => {},
     },
     {
+      id: 'pages-queuepage--update-layer-progress',
+      file: 'update-layer-progress-queue.png',
+      setup: async (page) => {
+        await page.locator('.page').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.getByText('已下载 4.2MB · layers 2/6').waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        const pageSurface = page.locator('.page').first()
+        await pageSurface.screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'pages-jobdetailpage--update-layer-progress',
+      file: 'update-layer-progress-job-detail.png',
+      setup: async (page) => {
+        await page.locator('.jobDetailPage').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.getByText('已下载 4.2MB · layers 2/6').waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        const pageSurface = page.locator('.jobDetailPage').first()
+        await pageSurface.screenshot({ path: filePath })
+      },
+    },
+    {
       id: 'pages-settingspage--octo-rill-release-notes-card',
       file: 'octorill-settings-card.png',
       setup: async (page) => {

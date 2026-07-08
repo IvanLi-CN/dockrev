@@ -46,14 +46,14 @@ export const RunningDualProgress: Story = {
   },
 }
 
-export const UpdateIndeterminate: Story = {
-  parameters: { dockrevApiScenario: 'queue-update-indeterminate' },
+export const UpdateLayerProgress: Story = {
+  parameters: { dockrevApiScenario: 'queue-update-layer-progress' },
   render: () => {
     return (
       <PageHarness
         route={{ name: 'job', jobId: 'job-running' }}
         title="任务详情"
-        pageSubtitle="运行中 update 在缺少可解析 pull 证据时应进入 indeterminate"
+        pageSubtitle="运行中 update 缺少总字节但有 layers 证据时应显示保守进度"
       >
         {({ onTopActions }) => <JobDetailPage jobId="job-running" onTopActions={onTopActions} />}
       </PageHarness>
@@ -66,11 +66,11 @@ export const UpdateIndeterminate: Story = {
     if (!progressbar) {
       throw new globalThis.Error('progress bar missing')
     }
-    if (!progressbar.className.includes('jobProgressBarIndeterminate')) {
-      throw new globalThis.Error('progress bar should be indeterminate')
+    if (progressbar.className.includes('jobProgressBarIndeterminate')) {
+      throw new globalThis.Error('progress bar should be determinate when layer progress is available')
     }
-    if (progressbar.getAttribute('aria-valuetext') !== '安排 running · 完成 40%') {
-      throw new globalThis.Error('progress aria text should stay indeterminate on planned side')
+    if (progressbar.getAttribute('aria-valuetext') !== '安排 40% · 完成 40%') {
+      throw new globalThis.Error('progress aria text should expose layer-derived determinate state')
     }
     const pageText = canvasElement.textContent ?? ''
     if (!pageText.includes('下载')) {

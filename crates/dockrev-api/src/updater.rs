@@ -31,8 +31,8 @@ use planning::{
 };
 pub use planning::{is_dockrev_image_ref, select_update_services};
 use pull_progress::{
-    PullProgressSnapshot, PullProgressTracker, parse_pull_fraction_from_line,
-    pull_progress_message, pull_progress_signature,
+    PullProgressFractionSource, PullProgressSnapshot, PullProgressTracker,
+    parse_pull_fraction_from_line, pull_progress_message, pull_progress_signature,
 };
 
 #[derive(Clone, Debug)]
@@ -1079,6 +1079,7 @@ where
                 let snapshot = tracker.observe_line(line).or_else(|| {
                     parse_pull_fraction_from_line(line).map(|fraction| PullProgressSnapshot {
                         fraction: Some(fraction.clamp(0.0, 1.0)),
+                        fraction_source: Some(PullProgressFractionSource::Bytes),
                         download: None,
                     })
                 });

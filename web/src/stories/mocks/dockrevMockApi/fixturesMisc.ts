@@ -1,7 +1,7 @@
 import type { GitHubPackagesRepo, StackDetail, StackListItem } from '../../../api'
 import { nowIso, type Fixture, type DockrevApiScenario } from './shared'
 import { buildDashboardDemo, baseEmpty, buildDigestPinnedImageDisplay, buildGuideLineLongNames, buildLinkIconCatalog, buildNoCandidates, buildResolvedTagDemo, buildServiceDetailComposeFallbacks, buildServiceDetailVersionAnomaly, buildServicesInferencePendingCandidateLoading, buildVersionTagsPopoverDemo } from './fixturesBase'
-import { buildOverviewJobsCardExactFiveNonTerminal, buildOverviewJobsCardHeavyInFlight, buildOverviewJobsCardRunningProgressModes, buildOverviewJobsCardTerminalOnly, buildQueueHealthRollback, buildQueueLegacyProgress, buildQueueLongLogs, buildQueueMixed, buildQueueProgressSmoothing, buildQueueUpdateDownloadDeterminate, buildQueueUpdateIndeterminate, buildVersionInferenceIdleFixture, buildVersionInferenceOverviewFixture, buildVersionInferenceQueueBacklogFixture, buildVersionInferenceResyncRequiredFixture, buildVersionInferenceRunningFixture, buildVersionInferenceStaleAllFailedFixture } from './fixturesQueues'
+import { buildOverviewJobsCardExactFiveNonTerminal, buildOverviewJobsCardHeavyInFlight, buildOverviewJobsCardRunningProgressModes, buildOverviewJobsCardTerminalOnly, buildQueueHealthRollback, buildQueueLegacyProgress, buildQueueLongLogs, buildQueueMixed, buildQueueProgressSmoothing, buildQueueUpdateDownloadDeterminate, buildQueueUpdateIndeterminate, buildQueueUpdateLayerProgress, buildVersionInferenceIdleFixture, buildVersionInferenceOverviewFixture, buildVersionInferenceQueueBacklogFixture, buildVersionInferenceResyncRequiredFixture, buildVersionInferenceRunningFixture, buildVersionInferenceStaleAllFailedFixture } from './fixturesQueues'
 import { isCleanupMockScenario } from '../cleanupMockData'
 
 export function buildSettingsConfigured(): Fixture {
@@ -488,6 +488,7 @@ export function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fi
   if (scenario === 'queue-progress-smoothing') return buildQueueProgressSmoothing()
   if (scenario === 'queue-health-rollback') return buildQueueHealthRollback()
   if (scenario === 'queue-legacy-progress') return buildQueueLegacyProgress()
+  if (scenario === 'queue-update-layer-progress') return buildQueueUpdateLayerProgress()
   if (scenario === 'queue-update-indeterminate') return buildQueueUpdateIndeterminate()
   if (scenario === 'queue-update-download-determinate') return buildQueueUpdateDownloadDeterminate()
   if (scenario === 'queue-long-logs') return buildQueueLongLogs()
