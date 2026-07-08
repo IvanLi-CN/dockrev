@@ -214,6 +214,10 @@ export const ArchivedServiceNavigation: Story = {
       doc.querySelector('.detailRouteServiceLinkActive')?.textContent?.includes('vaultwarden'),
       'archived service should stay highlighted in the detail tree',
     )
+    expectStory(
+      Object.keys(globalThis.__DOCKREV_MOCK_DEBUG__?.stackDetailCallsById ?? {}).every((id) => id === 'stack-lab'),
+      'detail tree should not prefetch unrelated stack details',
+    )
   },
 }
 

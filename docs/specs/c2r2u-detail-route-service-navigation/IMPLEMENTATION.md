@@ -10,6 +10,7 @@
 - 已修正 `StackDetailPage` 路由下主导航 / 移动端底部导航的 active 映射，让 `stack` 详情与 `service` 详情统一归到 “服务” 主模块，并由 `StackDetailPage` stories 回归断言覆盖。
 - 已补齐 `961px - 1160px` 窄桌面断点下的详情页 grid override，避免三列详情壳层误回退到 overview 使用的两列媒体规则。
 - 已把归档 Stack 也纳入详情页服务树数据源，并补上归档服务详情的 Storybook 回归 story，保证 archived detail route 仍能显示当前 Stack / Service 高亮。
+- 已把服务树详情读取改为“先加载 Stack 列表，再按当前/展开的 Stack 懒加载 detail”，避免每次进入详情页都并发请求全部 `getStack()`。
 
 ## Outstanding
 

@@ -263,6 +263,8 @@ export type MockDebug = {
   lastUpdateRequest: unknown | null
   lastUpdateUrl: string | null
   lastUpdateMethod: string | null
+  stackDetailCalls: number
+  stackDetailCallsById: Record<string, number>
   digestTagsSnapshotCalls: number
   digestTagsCalls: number
   lastDigestTagsSnapshotUrl: string | null
@@ -602,6 +604,8 @@ export function makeMockDebug(): MockDebug {
     lastUpdateRequest: null,
     lastUpdateUrl: null,
     lastUpdateMethod: null,
+    stackDetailCalls: 0,
+    stackDetailCallsById: {},
     digestTagsSnapshotCalls: 0,
     digestTagsCalls: 0,
     lastDigestTagsSnapshotUrl: null,

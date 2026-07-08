@@ -9,6 +9,7 @@ type DetailRoute = Extract<Route, { name: 'stack' | 'service' }>
 
 type TreeStack = StackListItem & {
   detail: StackDetail | null
+  detailStatus: 'idle' | 'loading' | 'loaded' | 'error'
 }
 
 function isDetailRoute(route: Route): route is DetailRoute {
@@ -74,6 +75,44 @@ export function DetailRouteServiceTree(props: {
   }, [activeStackId])
 
   useEffect(() => {
+    const pendingStackIds = expandedStackIds.filter((stackId) =>
+      stacks.some((stack) => stack.id === stackId && stack.detailStatus === 'idle'),
+    )
+    if (pendingStackIds.length === 0) return
+
+    let cancelled = false
+    setStacks((current) =>
+      current.map((stack) =>
+        pendingStackIds.includes(stack.id) ? { ...stack, detailStatus: 'loading' } : stack,
+      ),
+    )
+
+    void Promise.all(
+      pendingStackIds.map(async (stackId) => {
+        try {
+          return { stackId, detail: await getStack(stackId), detailStatus: 'loaded' as const }
+        } catch {
+          return { stackId, detail: null, detailStatus: 'error' as const }
+        }
+      }),
+    ).then((results) => {
+      if (cancelled) return
+      const byId = new Map(results.map((result) => [result.stackId, result]))
+      setStacks((current) =>
+        current.map((stack) => {
+          const next = byId.get(stack.id)
+          if (!next) return stack
+          return { ...stack, detail: next.detail, detailStatus: next.detailStatus }
+        }),
+      )
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [expandedStackIds, stacks])
+
+  useEffect(() => {
     let cancelled = false
 
     const load = async () => {
@@ -91,17 +130,14 @@ export function DetailRouteServiceTree(props: {
           seenStackIds.add(stack.id)
           stackList.push(stack)
         }
-        const details = await Promise.all(
-          stackList.map(async (stack) => {
-            try {
-              return await getStack(stack.id)
-            } catch {
-              return null
-            }
-          }),
-        )
         if (cancelled) return
-        setStacks(stackList.map((stack, index) => ({ ...stack, detail: details[index] })))
+        setStacks(
+          stackList.map((stack) => ({
+            ...stack,
+            detail: null,
+            detailStatus: 'idle',
+          })),
+        )
       } catch (value: unknown) {
         if (cancelled) return
         setError(value instanceof Error ? value.message : String(value))
@@ -254,7 +290,12 @@ export function DetailRouteServiceTree(props: {
                 </div>
                 {expanded ? (
                   <div className="detailRouteServiceList" role="list" aria-label={`${stack.name} 服务`}>
-                    {services.map((service) => renderServiceLink(stack, service))}
+                    {stack.detailStatus === 'loading' ? <div className="muted">加载服务列表…</div> : null}
+                    {stack.detailStatus === 'error' ? <div className="muted">服务列表暂不可用</div> : null}
+                    {stack.detailStatus === 'loaded' && services.length === 0 ? <div className="muted">暂无服务</div> : null}
+                    {stack.detailStatus === 'loaded'
+                      ? services.map((service) => renderServiceLink(stack, service))
+                      : null}
                   </div>
                 ) : null}
               </section>
