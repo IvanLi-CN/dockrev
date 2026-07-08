@@ -27,6 +27,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
+| r8kpa | Dockrev：Web PWA 离线壳、更新提示与分级缓存 | 部分完成（5/6） | `r8kpa-web-pwa-offline-shell/SPEC.md` | 2026-07-08 | fast-track（PWA shell + update prompt + readonly snapshot cache 已收口；当前剩余 PR merge-ready 收尾） |
 | 8hewd | Dockrev：概览发现异常详情改为点击弹窗并消除双 tooltip | 已完成 | `8hewd-overview-discovery-error-detail-dialog/SPEC.md` | 2026-04-05 | fast-track（shared dialog primitive + overview discovery dialog + storybook evidence） |
 | hb4cp | Dockrev：服务详情页手动回滚到升级前版本 | 已完成 | `hb4cp-service-manual-rollback/SPEC.md` | 2026-04-12 | fast-track（PR #201 merge-ready；2026-04-12 follow-up fixes rollback target stale disable race, adds diagnostics logs, and refresh-race Storybook evidence） |
 | qynjg | Dockrev：Docker Prune 清理控制台 | 已完成 | `qynjg-docker-prune-cleanup-console/SPEC.md` | 2026-07-07 | fast-track（cleanup scan/apply + cleanup console + storybook + visual evidence + review-loop；2026-07-07 新增 scan-runs SSE 流式重扫与旧缓存弱加载态） |

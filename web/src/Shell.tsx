@@ -12,7 +12,9 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { getDockrevVersion } from './api'
-import { GitHubIcon, Mono, ToggleGroup, ToggleGroupItem } from './ui'
+import { AppShellStatusBanner } from './components/AppShellStatusBanner'
+import { usePwaStatus } from './pwaStatus'
+import { Button, GitHubIcon, Mono, ToggleGroup, ToggleGroupItem } from './ui'
 import { ConfirmProvider } from './ConfirmProvider'
 import { BrandLogo } from './BrandLogo'
 import { UpdateActionTrackerProvider } from './updateActionTracking'
@@ -70,6 +72,66 @@ function formatVersionDisplay(version: string | null): string {
 function encodeGitRefForPath(ref: string): string {
   // Keep slashes so branch names like "feat/x" can still be used as a ref segment.
   return encodeURIComponent(ref).replaceAll('%2F', '/')
+}
+
+function ShellStatusStrip() {
+  const {
+    isOnline,
+    offlineReady,
+    updateAvailable,
+    dismissOfflineReady,
+    dismissUpdate,
+    applyUpdate,
+  } = usePwaStatus()
+
+  if (updateAvailable) {
+    return (
+      <AppShellStatusBanner
+        tone="update"
+        title="发现新版本，可刷新更新。"
+        detail="当前页面不会自动切换；确认后才载入新的前端资源。"
+        actions={
+          <>
+          <Button onClick={() => void applyUpdate()} variant="primary">
+            刷新更新
+          </Button>
+          <Button onClick={dismissUpdate} variant="ghost">
+            稍后
+          </Button>
+          </>
+        }
+      />
+    )
+  }
+
+  if (!isOnline) {
+    return (
+      <AppShellStatusBanner
+        tone="offline"
+        title="当前离线，优先使用本地只读快照。"
+        detail="写操作、日志流和部分高时效页面需要恢复联网后才能继续。"
+      />
+    )
+  }
+
+  if (offlineReady) {
+    return (
+      <AppShellStatusBanner
+        tone="ready"
+        title="离线壳已就绪。"
+        detail="之后断网刷新仍可先启动应用与已缓存的主要只读页。"
+        actions={
+          <>
+          <Button onClick={dismissOfflineReady} variant="ghost">
+            知道了
+          </Button>
+          </>
+        }
+      />
+    )
+  }
+
+  return null
 }
 
 export function AppShell(props: {
@@ -406,6 +468,7 @@ export function AppShell(props: {
         </aside>
 
         <main className="content">
+          <ShellStatusStrip />
           {props.title || props.pageSubtitle ? (
             <div className="pageHead">
               {props.title ? <div className="h1">{props.title}</div> : null}

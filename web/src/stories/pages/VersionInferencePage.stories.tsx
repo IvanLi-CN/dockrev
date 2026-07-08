@@ -49,7 +49,7 @@ export const StaleAndAllFailed: Story = {
   parameters: { dockrevApiScenario: 'version-inference-stale-all-failed' },
   render: () => {
     return (
-      <PageHarness route={{ name: 'version-inference' }} title="版本推测" pageSubtitle="异常态：stale + all_failed 混合展示">
+      <PageHarness route={{ name: 'version-inference' }} title="版本推测" pageSubtitle="异常态：需处理缓存与失败任务混合展示">
         {({ onTopActions }) => <VersionInferencePage onTopActions={onTopActions} />}
       </PageHarness>
     )

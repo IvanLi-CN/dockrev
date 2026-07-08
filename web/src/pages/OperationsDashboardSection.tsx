@@ -77,6 +77,7 @@ export function OperationsDashboardSectionView(props: {
     onChangeFilter,
     overviewCardJobs,
     patchServiceInStackDetails,
+    readonlyOffline,
     runDiscoveryScan,
     selfUpgradeUrl,
     setCandidateSearch,
@@ -212,7 +213,7 @@ export function OperationsDashboardSectionView(props: {
             <div className="discoveryCardActions">
               <Button
                 variant="ghost"
-                disabled={busy}
+                disabled={busy || readonlyOffline}
                 onClick={runDiscoveryScan}
               >
                 执行发现扫描
@@ -461,7 +462,7 @@ export function OperationsDashboardSectionView(props: {
                         disabled={
                           stackApplyActiveJob
                             ? false
-                            : !stackApply.enabled || busy || stackApplySubmitting
+                            : !stackApply.enabled || busy || stackApplySubmitting || readonlyOffline
                         }
                         loading={
                           stackApplyActionKey
@@ -862,7 +863,7 @@ export function OperationsDashboardSectionView(props: {
                                 <Button
                                   variant="ghost"
                                   disabled={
-                                    busy || supervisor.state.status !== "ok"
+                                    busy || readonlyOffline || supervisor.state.status !== "ok"
                                   }
                                   title={
                                     supervisor.state.status === "offline"
@@ -882,6 +883,7 @@ export function OperationsDashboardSectionView(props: {
                                     variant="ghost"
                                     disabled={
                                       busy ||
+                                      readonlyOffline ||
                                       supervisor.state.status === "checking"
                                     }
                                     onClick={() => {
@@ -907,7 +909,8 @@ export function OperationsDashboardSectionView(props: {
                                     ? false
                                     : !svcApply.enabled ||
                                       busy ||
-                                      svcApplySubmitting
+                                      svcApplySubmitting ||
+                                      readonlyOffline
                                 }
                                 loading={
                                   svcApplyActionKey

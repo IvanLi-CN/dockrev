@@ -1,5 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { restoreService, restoreStack, type Service } from "../api";
+import { ReadonlySnapshotNotice } from "../components/ReadonlySnapshotNotice";
 import { navigate } from "../routes";
 import { Button, Mono, Pill } from "../ui";
 import { splitImageNameForDisplay, splitImageRef } from "../imageLinks";
@@ -23,7 +24,10 @@ export function ServicesPage(props: {
   const state = useOverviewPageState(props);
   const {
     details,
+    readonlyOffline,
     requestRefresh,
+    snapshotActive,
+    snapshotFetchedAt,
     stacks,
   } = state;
   const {
@@ -50,6 +54,43 @@ export function ServicesPage(props: {
 
   return (
     <div className="page">
+      {snapshotActive ? (
+        <ReadonlySnapshotNotice
+          tone={readonlyOffline ? "warn" : "info"}
+          title={
+            readonlyOffline
+              ? "当前离线，显示已缓存的运维大盘数据。"
+              : "运维大盘先显示已缓存数据，后台会继续刷新。"
+          }
+          detail="扫描、批量更新、自升级和归档恢复都需要恢复联网后再继续。"
+          fetchedAt={snapshotFetchedAt}
+          actionLabel="重试刷新"
+          actionDisabled={readonlyOffline || busy}
+          onAction={() => {
+            void (async () => {
+              setBusy(true);
+              setError(null);
+              try {
+                await Promise.all([requestRefresh(), requestArchivedRefresh()]);
+              } catch (value: unknown) {
+                setError(
+                  value instanceof Error
+                    ? value.message
+                    : String(value),
+                );
+              } finally {
+                setBusy(false);
+              }
+            })();
+          }}
+        />
+      ) : readonlyOffline ? (
+        <ReadonlySnapshotNotice
+          tone="bad"
+          title="当前没有可用的离线运维数据。"
+          detail="请恢复联网后重新加载该页面。"
+        />
+      ) : null}
       <OperationsDashboardSectionView state={state} />
 
       <div className="card">
@@ -99,7 +140,7 @@ export function ServicesPage(props: {
                       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                         <Button
                           variant="primary"
-                          disabled={busy}
+                          disabled={busy || readonlyOffline}
                           onClick={() => {
                             void (async () => {
                               setBusy(true);
@@ -186,7 +227,7 @@ export function ServicesPage(props: {
                     <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                       <Button
                         variant="primary"
-                        disabled={busy}
+                        disabled={busy || readonlyOffline}
                         onClick={() => {
                           void (async () => {
                             setBusy(true);

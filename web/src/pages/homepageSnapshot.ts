@@ -354,6 +354,13 @@ function isResourceSummaryStale(
   return nowMs - generatedAtMs > staleAfterMs;
 }
 
+export function homepageSnapshotIsFresh(
+  snapshot: HomepageSnapshotV2,
+  nowMs = Date.now(),
+): boolean {
+  return !isResourceSummaryStale(snapshot.generatedAt, snapshot.resourceSummary, nowMs);
+}
+
 function legacyCardToSnapshotCard(card: LegacyHomepageNavCardSnapshotItem): HomepageSnapshotCard {
   const legacyCandidateStatus = card.status === "updatable" ? "hint" : card.status;
   return {
@@ -426,6 +433,7 @@ function tryMigrateLegacySnapshot(
     resourceSummary,
     cards: nav.cards.map(legacyCardToSnapshotCard),
   };
+  if (!homepageSnapshotIsFresh(snapshot)) return null;
   writeJson(storage, HOMEPAGE_SNAPSHOT_KEY, snapshot);
   try {
     storage?.removeItem(HOMEPAGE_NAV_SNAPSHOT_KEY);
@@ -439,10 +447,9 @@ function tryMigrateLegacySnapshot(
 export function readHomepageSnapshot(
   storage: SnapshotStorage | null = browserStorage(),
 ): HomepageSnapshotV2 | null {
-  return (
-    parseSnapshotV2(readJson(storage, HOMEPAGE_SNAPSHOT_KEY)) ??
-    tryMigrateLegacySnapshot(storage)
-  );
+  const current = parseSnapshotV2(readJson(storage, HOMEPAGE_SNAPSHOT_KEY));
+  if (current && homepageSnapshotIsFresh(current)) return current;
+  return tryMigrateLegacySnapshot(storage);
 }
 
 export function writeHomepageSnapshot(

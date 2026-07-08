@@ -49,6 +49,8 @@ type UpdateJobSettledDetail,
 import { isSemverDowngradeAnomaly,serviceRowStatus,type RowStatus } from '../updateStatus'
 import { buildUpdateServiceTargets } from '../updateTargets'
 import { usePageResumeRefresh } from '../usePageResumeRefresh'
+import { usePwaStatus } from '../pwaStatus'
+import { buildReadonlySnapshotKey, readReadonlySnapshot, writeReadonlySnapshot } from '../readonlySnapshotCache'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import {
 inferResolvedTagsFromSnapshot,
@@ -76,6 +78,15 @@ const OVERVIEW_JOBS_SSE_REFRESH_DEBOUNCE_MS = 180
 const OVERVIEW_JOBS_SSE_FALLBACK_POLL_MS = 5000
 const OVERVIEW_JOBS_SSE_ERROR_THRESHOLD = 3
 const OVERVIEW_JOBS_SSE_RECONNECT_MS = 1500
+const SERVICES_OVERVIEW_SNAPSHOT_KEY = buildReadonlySnapshotKey('services', 'operations-dashboard')
+const SERVICES_OVERVIEW_SNAPSHOT_STALE_MS = 60_000
+
+type ServicesOverviewSnapshotPayload = {
+  stacks: StackListItem[]
+  details: Record<string, StackDetail | undefined>
+  jobs: JobListItem[]
+  discoveredProjects: DiscoveredProject[]
+}
 
 export function useOverviewPageState(props: {
   onLastScanHint: (lastScan?: string) => void
@@ -83,6 +94,7 @@ export function useOverviewPageState(props: {
 }) {
 
   const { onLastScanHint, onTopActions } = props
+  const { isOnline } = usePwaStatus()
   const confirm = useConfirm()
   const [filter, setFilter] = useState<UpdateCandidateFilter>(() => readUpdateCandidateFilterFromUrl() ?? 'all')
   const [candidateSearch, setCandidateSearch] = useState('')
@@ -100,6 +112,10 @@ export function useOverviewPageState(props: {
   const [noticeDiscoveryJobId, setNoticeDiscoveryJobId] = useState<string | null>(null)
   const [noticeCheckJobId, setNoticeCheckJobId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [snapshotStatus, setSnapshotStatus] = useState<'missing' | 'fresh' | 'stale' | 'expired' | 'unsupported'>('missing')
+  const [snapshotFetchedAt, setSnapshotFetchedAt] = useState<string | null>(null)
+  const [snapshotAnchorFetchedAt, setSnapshotAnchorFetchedAt] = useState<string | null>(null)
+  const [snapshotActive, setSnapshotActive] = useState(false)
   const jobsRefreshErrorRef = useRef<string | null>(null)
   const refreshRequestIdRef = useRef(0)
   const latestAppliedStacksRequestIdRef = useRef(0)
@@ -112,6 +128,29 @@ export function useOverviewPageState(props: {
   const allApplyActionBusy = isTargetBusy('all')
   const allApplyActiveJob = getActiveJobByTarget('all')
   const allApplySubmitting = isTargetSubmitting('all')
+  const readonlyOffline = !isOnline
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const snapshot = await readReadonlySnapshot<ServicesOverviewSnapshotPayload>(SERVICES_OVERVIEW_SNAPSHOT_KEY)
+      if (cancelled) return
+      setSnapshotStatus(snapshot.status)
+      setSnapshotFetchedAt(snapshot.record?.fetchedAt ?? null)
+      setSnapshotAnchorFetchedAt(snapshot.record?.fetchedAt ?? null)
+      if (snapshot.status !== 'fresh') return
+      setStacks(snapshot.record.payload.stacks)
+      setDetails(snapshot.record.payload.details)
+      setJobs(snapshot.record.payload.jobs)
+      setDiscoveredProjects(snapshot.record.payload.discoveredProjects)
+      const maxLastScan = snapshot.record.payload.stacks.map((item) => item.lastCheckAt).sort().at(-1)
+      onLastScanHint(maxLastScan)
+      setSnapshotActive(true)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [onLastScanHint])
 
   const lastDiscoveryScanAt = useMemo(() => {
     const candidates = jobs
@@ -175,6 +214,10 @@ export function useOverviewPageState(props: {
       )
       if (requestId < latestAppliedStacksRequestIdRef.current) return
       setDetails(Object.fromEntries(results))
+      if (errors.length === 0 && results.every(([, detail]) => detail !== undefined)) {
+        setSnapshotActive(false)
+        setSnapshotAnchorFetchedAt(null)
+      }
     } catch (error: unknown) {
       if (requestId < latestAppliedStacksRequestIdRef.current) return
       throw error
@@ -271,6 +314,23 @@ export function useOverviewPageState(props: {
   useEffect(() => {
     void requestRefresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
   }, [requestRefresh])
+
+  useEffect(() => {
+    if (stacks.length === 0 && jobs.length === 0 && discoveredProjects.length === 0) return
+    void writeReadonlySnapshot(
+      SERVICES_OVERVIEW_SNAPSHOT_KEY,
+      {
+        stacks,
+        details,
+        jobs,
+        discoveredProjects,
+      },
+      {
+        staleAfterMs: SERVICES_OVERVIEW_SNAPSHOT_STALE_MS,
+        fetchedAt: snapshotAnchorFetchedAt ? Date.parse(snapshotAnchorFetchedAt) || undefined : undefined,
+      },
+    )
+  }, [details, discoveredProjects, jobs, snapshotAnchorFetchedAt, stacks])
 
   useEffect(() => {
     let closed = false
@@ -946,7 +1006,7 @@ export function useOverviewPageState(props: {
       <>
         <Button
           variant="primary"
-          disabled={busy}
+          disabled={busy || readonlyOffline}
           onClick={() => {
             void (async () => {
               setBusy(true)
@@ -989,7 +1049,7 @@ export function useOverviewPageState(props: {
             disabled={
               allApplyActiveJob
                 ? false
-                : !allApply.enabled || busy || allApplySubmitting
+                : !allApply.enabled || busy || allApplySubmitting || readonlyOffline
             }
             loading={allApplyActionBusy}
             loadingClickable={Boolean(allApplyActiveJob)}
@@ -1097,6 +1157,7 @@ export function useOverviewPageState(props: {
 	    busy,
 	    onTopActions,
 	    patchServiceInStackDetails,
+      readonlyOffline,
 	    requestRefresh,
 	    triggerApply,
 	  ])
@@ -1118,6 +1179,7 @@ export function useOverviewPageState(props: {
     noticeCheckJobId,
     noticeDiscoveryJobId,
     noticeJobId,
+    readonlyOffline,
     onChangeFilter,
     overviewCardJobs,
     patchServiceInStackDetails,
@@ -1126,6 +1188,9 @@ export function useOverviewPageState(props: {
     selfUpgradeUrl,
     setCandidateSearch,
     setActiveDiscoveryIssue,
+    snapshotActive,
+    snapshotFetchedAt,
+    snapshotStatus,
     stacks,
     supervisor,
     toggleStackCollapsed,
