@@ -368,8 +368,8 @@ export const MobileLogsSection: Story = {
 
     const menuButton = doc.querySelector<HTMLButtonElement>('.mobileMenuButton')
     expectStory(menuButton, 'mobile detail page should expose the service tree drawer trigger')
-    menuButton.click()
-    await waitForCondition(() => normalizeText(doc.querySelector('#mobileDockrevMenu')?.textContent).includes('服务列表'))
+    menuButton?.click()
+    await waitForCondition(() => normalizeText(doc.querySelector('#mobileDockrevMenu')?.textContent).includes('服务导航'))
 
     const siblingLink = findLink(doc, 'web')
     expectStory(siblingLink, 'mobile service drawer should include sibling services')

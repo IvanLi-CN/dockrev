@@ -1,114 +1,139 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { AppShell } from '../../Shell'
-import { DetailRouteServiceTree } from '../../components/DetailRouteServiceTree'
-import { GitHubReleaseDrawer } from '../../components/GitHubReleaseDrawer'
+import { useEffect, useState, type ReactNode } from "react";
+import { AppShell } from "../../Shell";
+import { DetailRouteServiceTree } from "../../components/DetailRouteServiceTree";
+import { GitHubReleaseDrawer } from "../../components/GitHubReleaseDrawer";
 import {
   CLOSED_GITHUB_RELEASE_DRAWER_STATE,
   RELEASE_DRAWER_LOCATION_EVENT,
   RELEASE_DRAWER_QUERY_KEYS,
   closeGitHubReleaseDrawer,
   readGitHubReleaseDrawerState,
-} from '../../releaseDrawer'
-import { currentHref, currentRoutePathname, parseRoute, subscribeNavigation, type Route } from '../../routes'
-import type { TopbarAuthIdentity } from '../../topbarAuthIdentity'
+} from "../../releaseDrawer";
+import {
+  currentHref,
+  currentRoutePathname,
+  parseRoute,
+  subscribeNavigation,
+  type Route,
+} from "../../routes";
+import type { TopbarAuthIdentity } from "../../topbarAuthIdentity";
 
 export function PageHarness(props: {
-  route: Route
-  title: string
-  pageSubtitle?: string
-  authIdentity?: TopbarAuthIdentity | null
+  route: Route;
+  title?: string;
+  pageSubtitle?: string;
+  authIdentity?: TopbarAuthIdentity | null;
   children: (ctx: {
-    route: Route
-    onTopActions: (node: ReactNode) => void
-    onTopbarContent: (node: ReactNode) => void
-    onSidebarNavContent: (node: ReactNode) => void
-    onMobileNavContent: (node: ReactNode) => void
-    onLastScanHint: (lastScan?: string) => void
-  }) => ReactNode
+    route: Route;
+    onTopActions: (node: ReactNode) => void;
+    onTopbarContent: (node: ReactNode) => void;
+    onSidebarNavContent: (node: ReactNode) => void;
+    onMobileNavContent: (node: ReactNode) => void;
+    onLastScanHint: (lastScan?: string) => void;
+  }) => ReactNode;
 }) {
-  return <PageHarnessInner key={currentHref(props.route)} {...props} />
+  return <PageHarnessInner key={currentHref(props.route)} {...props} />;
 }
 
 function PageHarnessInner(props: {
-  route: Route
-  title: string
-  pageSubtitle?: string
-  authIdentity?: TopbarAuthIdentity | null
+  route: Route;
+  title?: string;
+  pageSubtitle?: string;
+  authIdentity?: TopbarAuthIdentity | null;
   children: (ctx: {
-    route: Route
-    onTopActions: (node: ReactNode) => void
-    onTopbarContent: (node: ReactNode) => void
-    onSidebarNavContent: (node: ReactNode) => void
-    onMobileNavContent: (node: ReactNode) => void
-    onLastScanHint: (lastScan?: string) => void
-  }) => ReactNode
+    route: Route;
+    onTopActions: (node: ReactNode) => void;
+    onTopbarContent: (node: ReactNode) => void;
+    onSidebarNavContent: (node: ReactNode) => void;
+    onMobileNavContent: (node: ReactNode) => void;
+    onLastScanHint: (lastScan?: string) => void;
+  }) => ReactNode;
 }) {
-  const [topActions, setTopActions] = useState<ReactNode>(null)
-  const [topbarContent, setTopbarContent] = useState<ReactNode>(null)
-  const [sidebarNavContent, setSidebarNavContent] = useState<ReactNode>(null)
-  const [mobileNavContent, setMobileNavContent] = useState<ReactNode>(null)
-  const [lastScanHint, setLastScanHint] = useState<string | undefined>(undefined)
-  const [releaseDrawerState, setReleaseDrawerState] = useState(CLOSED_GITHUB_RELEASE_DRAWER_STATE)
-  const [route, setRoute] = useState<Route>(props.route)
+  const [topActions, setTopActions] = useState<ReactNode>(null);
+  const [topbarContent, setTopbarContent] = useState<ReactNode>(null);
+  const [sidebarNavContent, setSidebarNavContent] = useState<ReactNode>(null);
+  const [mobileNavContent, setMobileNavContent] = useState<ReactNode>(null);
+  const [lastScanHint, setLastScanHint] = useState<string | undefined>(
+    undefined,
+  );
+  const [releaseDrawerState, setReleaseDrawerState] = useState(
+    CLOSED_GITHUB_RELEASE_DRAWER_STATE,
+  );
+  const [route, setRoute] = useState<Route>(props.route);
   const detailSidebarContent =
-    route.name === 'stack' || route.name === 'service' ? <DetailRouteServiceTree route={route} variant="desktop" /> : null
+    route.name === "stack" || route.name === "service" ? (
+      <DetailRouteServiceTree route={route} variant="desktop" />
+    ) : null;
   const mobileDrawerContent =
-    route.name === 'stack' || route.name === 'service'
-      ? <DetailRouteServiceTree route={route} variant="mobile" />
-      : mobileNavContent
+    route.name === "stack" || route.name === "service" ? (
+      <DetailRouteServiceTree route={route} variant="mobile" />
+    ) : (
+      mobileNavContent
+    );
 
   useEffect(() => {
-    if (typeof window === 'undefined') return
-    const url = new URL(window.location.href)
-    let changed = false
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    let changed = false;
     for (const key of RELEASE_DRAWER_QUERY_KEYS) {
-      if (!url.searchParams.has(key)) continue
-      url.searchParams.delete(key)
-      changed = true
+      if (!url.searchParams.has(key)) continue;
+      url.searchParams.delete(key);
+      changed = true;
     }
-    if (!changed) return
-    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
-  }, [])
+    if (!changed) return;
+    window.history.replaceState(
+      {},
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  }, []);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return
-    const targetHref = currentHref(props.route)
-    if (targetHref.startsWith('#')) {
-      if (window.location.hash !== targetHref) window.location.hash = targetHref
-      return
+    if (typeof window === "undefined") return;
+    const targetHref = currentHref(props.route);
+    if (targetHref.startsWith("#")) {
+      if (window.location.hash !== targetHref)
+        window.location.hash = targetHref;
+      return;
     }
     if (window.location.pathname !== targetHref) {
-      window.history.replaceState({}, '', targetHref)
+      window.history.replaceState({}, "", targetHref);
     }
-  }, [props.route])
+  }, [props.route]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return
-    const sync = () => setRoute(parseRoute(currentRoutePathname()))
-    window.addEventListener('popstate', sync)
-    window.addEventListener('hashchange', sync)
-    const unsubscribe = subscribeNavigation(sync)
+    if (typeof window === "undefined") return;
+    const sync = () => setRoute(parseRoute(currentRoutePathname()));
+    window.addEventListener("popstate", sync);
+    window.addEventListener("hashchange", sync);
+    const unsubscribe = subscribeNavigation(sync);
     return () => {
-      window.removeEventListener('popstate', sync)
-      window.removeEventListener('hashchange', sync)
-      unsubscribe()
-    }
-  }, [])
+      window.removeEventListener("popstate", sync);
+      window.removeEventListener("hashchange", sync);
+      unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return
-    const sync = () => setReleaseDrawerState(readGitHubReleaseDrawerState())
-    const handleLocation = () => sync()
-    sync()
-    window.addEventListener('popstate', handleLocation)
-    window.addEventListener('hashchange', handleLocation)
-    window.addEventListener(RELEASE_DRAWER_LOCATION_EVENT, handleLocation as EventListener)
+    if (typeof window === "undefined") return;
+    const sync = () => setReleaseDrawerState(readGitHubReleaseDrawerState());
+    const handleLocation = () => sync();
+    sync();
+    window.addEventListener("popstate", handleLocation);
+    window.addEventListener("hashchange", handleLocation);
+    window.addEventListener(
+      RELEASE_DRAWER_LOCATION_EVENT,
+      handleLocation as EventListener,
+    );
     return () => {
-      window.removeEventListener('popstate', handleLocation)
-      window.removeEventListener('hashchange', handleLocation)
-      window.removeEventListener(RELEASE_DRAWER_LOCATION_EVENT, handleLocation as EventListener)
-    }
-  }, [])
+      window.removeEventListener("popstate", handleLocation);
+      window.removeEventListener("hashchange", handleLocation);
+      window.removeEventListener(
+        RELEASE_DRAWER_LOCATION_EVENT,
+        handleLocation as EventListener,
+      );
+    };
+  }, []);
 
   return (
     <>
@@ -122,7 +147,13 @@ function PageHarnessInner(props: {
         detailSidebarContent={detailSidebarContent}
         detailSidebarTitle={undefined}
         mobileNavContent={mobileDrawerContent}
-        mobileDrawerTitle={detailSidebarContent ? '服务导航' : mobileDrawerContent ? '页面工具' : undefined}
+        mobileDrawerTitle={
+          detailSidebarContent
+            ? "服务导航"
+            : mobileDrawerContent
+              ? "页面工具"
+              : undefined
+        }
         authIdentity={props.authIdentity}
         lastScanHint={lastScanHint}
       >
@@ -140,10 +171,10 @@ function PageHarnessInner(props: {
         serviceId={releaseDrawerState.serviceId}
         version={releaseDrawerState.version}
         onOpenChange={(open) => {
-          if (open) return
-          closeGitHubReleaseDrawer('replace')
+          if (open) return;
+          closeGitHubReleaseDrawer("replace");
         }}
       />
     </>
-  )
+  );
 }

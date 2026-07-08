@@ -6,8 +6,8 @@
   grid-template-rows: auto 1fr;
   grid-template-columns: 256px 1fr;
   grid-template-areas:
-    'top top'
-    'side main';
+    "top top"
+    "side main";
 }
 
 .appShellSidebarCollapsed {
@@ -17,8 +17,8 @@
 .appShellWithDetailSidebar {
   grid-template-columns: 248px 320px minmax(0, 1fr);
   grid-template-areas:
-    'top top top'
-    'side detail main';
+    "top top top"
+    "side detail main";
 }
 
 .appShellWithDetailSidebar.appShellSidebarCollapsed {
@@ -130,11 +130,11 @@
   opacity: 0;
 }
 
-html[data-theme='light'] .brandLogoForDark {
+html[data-theme="light"] .brandLogoForDark {
   opacity: 0;
 }
 
-html[data-theme='light'] .brandLogoForLight {
+html[data-theme="light"] .brandLogoForLight {
   opacity: 1;
 }
 
@@ -153,8 +153,11 @@ html[data-theme='light'] .brandLogoForLight {
   overflow: auto;
   display: flex;
   flex-direction: column;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--panel2) 95%, transparent) 0%, var(--panel2) 100%);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--panel2) 95%, transparent) 0%,
+    var(--panel2) 100%
+  );
   border-right: 1px solid var(--borderColor);
 }
 
@@ -377,7 +380,8 @@ html[data-theme='light'] .brandLogoForLight {
 .detailRouteStackGroup {
   border-radius: 14px;
   background: color-mix(in srgb, var(--dockrev-surface) 78%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--borderColor) 84%, transparent);
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--borderColor) 84%, transparent);
 }
 
 .detailRouteStackRow {
@@ -406,7 +410,11 @@ html[data-theme='light'] .brandLogoForLight {
 }
 
 .detailRouteStackToggle:hover {
-  background: color-mix(in srgb, var(--dockrev-surface-strong) 88%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--dockrev-surface-strong) 88%,
+    transparent
+  );
   border-color: color-mix(in srgb, var(--borderColor) 74%, transparent);
   color: var(--text);
 }
@@ -430,16 +438,29 @@ html[data-theme='light'] .brandLogoForLight {
 
 .detailRouteStackLink:hover {
   text-decoration: none;
-  background: color-mix(in srgb, var(--dockrev-surface-strong) 86%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--dockrev-surface-strong) 86%,
+    transparent
+  );
 }
 
 .detailRouteStackLinkCurrent {
-  background: color-mix(in srgb, var(--dockrev-surface-strong) 86%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--dockrev-surface-strong) 86%,
+    transparent
+  );
 }
 
 .detailRouteStackLinkActive {
-  background: color-mix(in srgb, var(--color-primary) 16%, var(--dockrev-surface) 84%);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 30%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--color-primary) 16%,
+    var(--dockrev-surface) 84%
+  );
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--color-primary) 30%, transparent);
 }
 
 .detailRouteStackTitle {
@@ -500,7 +521,7 @@ html[data-theme='light'] .brandLogoForLight {
 }
 
 .detailRouteServiceList::before {
-  content: '';
+  content: "";
   position: absolute;
   top: 2px;
   bottom: 12px;
@@ -528,13 +549,22 @@ html[data-theme='light'] .brandLogoForLight {
 .detailRouteServiceLink:hover {
   text-decoration: none;
   color: var(--text);
-  background: color-mix(in srgb, var(--dockrev-surface-strong) 84%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--dockrev-surface-strong) 84%,
+    transparent
+  );
 }
 
 .detailRouteServiceLinkActive {
   color: var(--text);
-  background: color-mix(in srgb, var(--color-primary) 14%, var(--dockrev-surface) 86%);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 28%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--color-primary) 14%,
+    var(--dockrev-surface) 86%
+  );
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--color-primary) 28%, transparent);
 }
 
 .detailRouteStatusDot {
@@ -884,8 +914,8 @@ html[data-theme='light'] .brandLogoForLight {
   .appShell {
     grid-template-columns: 1fr;
     grid-template-areas:
-      'top'
-      'main';
+      "top"
+      "main";
   }
   .sidebar {
     display: none;
@@ -921,7 +951,9 @@ html[data-theme='light'] .brandLogoForLight {
 }
 
 .mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: 12px;
   color: var(--muted);
 }
@@ -1142,7 +1174,7 @@ html[data-theme='light'] .brandLogoForLight {
   will-change: opacity, transform;
 }
 
-.versionTagsPopover[data-state='closed'] {
+.versionTagsPopover[data-state="closed"] {
   opacity: 0;
   transform: translateY(-4px) scale(0.98);
   pointer-events: none;
@@ -1154,7 +1186,7 @@ html[data-theme='light'] .brandLogoForLight {
   }
 }
 
-html[data-theme='light'] .versionTagsPopover {
+html[data-theme="light"] .versionTagsPopover {
   box-shadow: 0 18px 64px rgba(2, 6, 23, 0.18);
 }
 
@@ -1259,10 +1291,18 @@ html[data-theme='light'] .versionTagsPopover {
 }
 
 .discoveryHistoryTrigger:hover,
-.discoveryHistoryTrigger[data-state='open'] {
-  border-color: color-mix(in srgb, var(--color-info) 34%, var(--borderColor) 66%);
+.discoveryHistoryTrigger[data-state="open"] {
+  border-color: color-mix(
+    in srgb,
+    var(--color-info) 34%,
+    var(--borderColor) 66%
+  );
   color: var(--text);
-  background: color-mix(in srgb, var(--dockrev-surface) 82%, var(--color-info) 18%);
+  background: color-mix(
+    in srgb,
+    var(--dockrev-surface) 82%,
+    var(--color-info) 18%
+  );
 }
 
 .discoveryHistoryTriggerCompact {
@@ -1273,8 +1313,13 @@ html[data-theme='light'] .versionTagsPopover {
   height: 22px;
   padding: 0 6px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--color-info) 36%, var(--borderColor) 64%);
-  background: color-mix(in srgb, var(--dockrev-surface) 74%, var(--color-info) 26%);
+  border: 1px solid
+    color-mix(in srgb, var(--color-info) 36%, var(--borderColor) 64%);
+  background: color-mix(
+    in srgb,
+    var(--dockrev-surface) 74%,
+    var(--color-info) 26%
+  );
   color: color-mix(in srgb, var(--text) 76%, var(--color-info) 24%);
   font-size: 11px;
   font-weight: 700;
@@ -1301,7 +1346,7 @@ html[data-theme='light'] .versionTagsPopover {
     transform 160ms ease;
 }
 
-.discoveryHistoryPopover[data-state='closed'] {
+.discoveryHistoryPopover[data-state="closed"] {
   opacity: 0;
   transform: translateY(-4px) scale(0.98);
   pointer-events: none;
@@ -1365,7 +1410,7 @@ html[data-theme='light'] .versionTagsPopover {
 }
 
 .discoveryTimeline::before {
-  content: '';
+  content: "";
   position: absolute;
   left: 6px;
   top: 6px;
@@ -1386,7 +1431,8 @@ html[data-theme='light'] .versionTagsPopover {
   height: 12px;
   margin-top: 3px;
   border-radius: 999px;
-  border: 2px solid color-mix(in srgb, var(--color-info) 38%, var(--borderColor) 62%);
+  border: 2px solid
+    color-mix(in srgb, var(--color-info) 38%, var(--borderColor) 62%);
   background: var(--panel);
   z-index: 1;
 }
@@ -1398,7 +1444,11 @@ html[data-theme='light'] .versionTagsPopover {
 }
 
 .discoveryTimelineItem-currentRunning .discoveryTimelineDot {
-  border-color: color-mix(in srgb, var(--color-success) 55%, var(--borderColor) 45%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-success) 55%,
+    var(--borderColor) 45%
+  );
   background: color-mix(in srgb, var(--color-success) 18%, var(--panel) 82%);
 }
 
@@ -1489,8 +1539,13 @@ html[data-theme='light'] .versionTagsPopover {
 .releaseDrawerHeader {
   gap: 0;
   padding: 18px 20px 16px;
-  border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--panel2) 74%, transparent) 0%, transparent 100%);
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--borderColor) 82%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--panel2) 74%, transparent) 0%,
+    transparent 100%
+  );
 }
 
 .releaseDrawerHeaderTop {
@@ -1565,7 +1620,11 @@ html[data-theme='light'] .versionTagsPopover {
 }
 
 .releaseDrawerChipTarget {
-  border-color: color-mix(in srgb, var(--color-info) 34%, var(--borderColor) 66%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-info) 34%,
+    var(--borderColor) 66%
+  );
   color: color-mix(in srgb, var(--text) 78%, var(--color-info) 22%);
 }
 
@@ -1607,7 +1666,11 @@ html[data-theme='light'] .versionTagsPopover {
 
 .releaseDrawerViewTabActive {
   color: var(--text);
-  background: color-mix(in srgb, var(--color-primary) 18%, var(--dockrev-surface) 82%);
+  background: color-mix(
+    in srgb,
+    var(--color-primary) 18%,
+    var(--dockrev-surface) 82%
+  );
 }
 
 .releaseDrawerInfoTrigger,
@@ -1632,8 +1695,16 @@ html[data-theme='light'] .versionTagsPopover {
 .releaseDrawerInfoTrigger:hover,
 .releaseDrawerCloseButton:hover {
   color: var(--text);
-  border-color: color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
-  background: color-mix(in srgb, var(--dockrev-surface) 76%, var(--color-primary) 24%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 34%,
+    var(--borderColor) 66%
+  );
+  background: color-mix(
+    in srgb,
+    var(--dockrev-surface) 76%,
+    var(--color-primary) 24%
+  );
   transform: translateY(-1px);
 }
 
@@ -1728,8 +1799,16 @@ html[data-theme='light'] .versionTagsPopover {
 .releaseDrawerIconLink:hover,
 .releaseDrawerItemLink:hover {
   color: var(--text);
-  border-color: color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
-  background: color-mix(in srgb, var(--dockrev-surface) 76%, var(--color-primary) 24%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 34%,
+    var(--borderColor) 66%
+  );
+  background: color-mix(
+    in srgb,
+    var(--dockrev-surface) 76%,
+    var(--color-primary) 24%
+  );
   transform: translateY(-1px);
 }
 
@@ -1749,18 +1828,42 @@ html[data-theme='light'] .versionTagsPopover {
 }
 
 .releaseDrawerBanner-success {
-  border-color: color-mix(in srgb, var(--color-success) 32%, var(--borderColor) 68%);
-  background: color-mix(in srgb, var(--color-success) 12%, var(--dockrev-surface) 88%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-success) 32%,
+    var(--borderColor) 68%
+  );
+  background: color-mix(
+    in srgb,
+    var(--color-success) 12%,
+    var(--dockrev-surface) 88%
+  );
 }
 
 .releaseDrawerBanner-warning {
-  border-color: color-mix(in srgb, var(--color-warning) 38%, var(--borderColor) 62%);
-  background: color-mix(in srgb, var(--color-warning) 12%, var(--dockrev-surface) 88%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-warning) 38%,
+    var(--borderColor) 62%
+  );
+  background: color-mix(
+    in srgb,
+    var(--color-warning) 12%,
+    var(--dockrev-surface) 88%
+  );
 }
 
 .releaseDrawerBanner-danger {
-  border-color: color-mix(in srgb, var(--color-error) 34%, var(--borderColor) 66%);
-  background: color-mix(in srgb, var(--color-error) 11%, var(--dockrev-surface) 89%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-error) 34%,
+    var(--borderColor) 66%
+  );
+  background: color-mix(
+    in srgb,
+    var(--color-error) 11%,
+    var(--dockrev-surface) 89%
+  );
 }
 
 .releaseDrawerBody {
@@ -1790,7 +1893,7 @@ html[data-theme='light'] .versionTagsPopover {
   overflow: hidden;
 }
 
-.releaseDrawerScrollArea [data-slot='scroll-area-scrollbar'],
+.releaseDrawerScrollArea [data-slot="scroll-area-scrollbar"],
 .releaseDrawerScrollArea [data-radix-scroll-area-scrollbar] {
   padding-top: 16px;
   padding-bottom: 20px;
@@ -1798,7 +1901,7 @@ html[data-theme='light'] .versionTagsPopover {
   padding-left: 3px;
 }
 
-.releaseDrawerScrollArea [data-slot='scroll-area-thumb'],
+.releaseDrawerScrollArea [data-slot="scroll-area-thumb"],
 .releaseDrawerScrollArea [data-radix-scroll-area-thumb] {
   background: linear-gradient(
     180deg,
@@ -1810,8 +1913,10 @@ html[data-theme='light'] .versionTagsPopover {
     0 8px 20px color-mix(in srgb, var(--color-primary) 32%, transparent);
 }
 
-.releaseDrawerScrollArea [data-slot='scroll-area-scrollbar'][data-orientation='vertical'],
-.releaseDrawerScrollArea [data-radix-scroll-area-scrollbar][data-orientation='vertical'] {
+.releaseDrawerScrollArea
+  [data-slot="scroll-area-scrollbar"][data-orientation="vertical"],
+.releaseDrawerScrollArea
+  [data-radix-scroll-area-scrollbar][data-orientation="vertical"] {
   width: 16px;
   background: linear-gradient(
     180deg,
@@ -1844,17 +1949,20 @@ html[data-theme='light'] .versionTagsPopover {
   padding: 14px 15px;
   border-radius: 16px;
   border: 1px solid color-mix(in srgb, var(--borderColor) 86%, transparent);
-  background:
-    linear-gradient(
-      160deg,
-      color-mix(in srgb, var(--dockrev-surface) 92%, var(--panel2) 8%) 0%,
-      color-mix(in srgb, var(--panel) 96%, var(--panel2) 4%) 100%
-    );
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--dockrev-surface) 92%, var(--panel2) 8%) 0%,
+    color-mix(in srgb, var(--panel) 96%, var(--panel2) 4%) 100%
+  );
   box-shadow: inset 0 0 0 1px color-mix(in srgb, white 2%, transparent);
 }
 
 .releaseDrawerItemHighlighted {
-  border-color: color-mix(in srgb, var(--color-info) 48%, var(--borderColor) 52%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-info) 48%,
+    var(--borderColor) 52%
+  );
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, var(--color-info) 24%, transparent),
     0 0 0 1px color-mix(in srgb, var(--color-info) 16%, transparent),
@@ -1912,7 +2020,11 @@ html[data-theme='light'] .versionTagsPopover {
 }
 
 .releaseDrawerBadgeTarget {
-  border-color: color-mix(in srgb, var(--color-info) 34%, var(--borderColor) 66%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-info) 34%,
+    var(--borderColor) 66%
+  );
   color: color-mix(in srgb, var(--text) 76%, var(--color-info) 24%);
 }
 
@@ -2023,11 +2135,11 @@ html[data-theme='light'] .versionTagsPopover {
   }
 }
 
-html[data-theme='light'] .discoveryHistoryPopover {
+html[data-theme="light"] .discoveryHistoryPopover {
   box-shadow: 0 18px 64px rgba(2, 6, 23, 0.18);
 }
 
-html[data-theme='light'] .releaseDrawerContent {
+html[data-theme="light"] .releaseDrawerContent {
   box-shadow: -18px 0 56px rgba(15, 23, 42, 0.18);
 }
 
@@ -2178,10 +2290,18 @@ html[data-theme='light'] .releaseDrawerContent {
 }
 
 .topbarUserTrigger:hover,
-.topbarUserTrigger[data-state='open'] {
+.topbarUserTrigger[data-state="open"] {
   color: var(--text);
-  border-color: color-mix(in srgb, var(--color-info) 34%, var(--borderColor) 66%);
-  background: color-mix(in srgb, var(--dockrev-surface) 80%, var(--color-info) 20%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-info) 34%,
+    var(--borderColor) 66%
+  );
+  background: color-mix(
+    in srgb,
+    var(--dockrev-surface) 80%,
+    var(--color-info) 20%
+  );
   box-shadow: 0 10px 24px color-mix(in srgb, var(--color-info) 10%, transparent);
 }
 
@@ -2424,14 +2544,23 @@ html[data-theme='light'] .releaseDrawerContent {
   /* Table layout tokens (keep guide + row heights in sync without JS measuring). */
   --dockrev-table-font-size: 12px;
   --dockrev-table-line-height: 1.5;
-  --dockrev-table-line-height-px: calc(var(--dockrev-table-font-size) * var(--dockrev-table-line-height));
+  --dockrev-table-line-height-px: calc(
+    var(--dockrev-table-font-size) * var(--dockrev-table-line-height)
+  );
   --dockrev-table-row-lines: 2;
   --dockrev-table-group-gap: 4px;
-  --dockrev-table-group-head-height: calc(var(--dockrev-table-row-lines) * var(--dockrev-table-line-height-px));
-  --dockrev-table-row-pad-y: calc(var(--dockrev-table-font-size) * 0.6667); /* 8px @ 12px */
-  --dockrev-table-row-line-gap: calc(var(--dockrev-table-font-size) * 0.1667); /* 2px @ 12px */
+  --dockrev-table-group-head-height: calc(
+    var(--dockrev-table-row-lines) * var(--dockrev-table-line-height-px)
+  );
+  --dockrev-table-row-pad-y: calc(
+    var(--dockrev-table-font-size) * 0.6667
+  ); /* 8px @ 12px */
+  --dockrev-table-row-line-gap: calc(
+    var(--dockrev-table-font-size) * 0.1667
+  ); /* 2px @ 12px */
   --dockrev-table-row-height: calc(
-    var(--dockrev-table-group-head-height) + var(--dockrev-table-row-line-gap) + (2 * var(--dockrev-table-row-pad-y))
+    var(--dockrev-table-group-head-height) + var(--dockrev-table-row-line-gap) +
+      (2 * var(--dockrev-table-row-pad-y))
   );
   --dockrev-table-guide-bullet-gap: 10px;
   --dockrev-table-guide-center-x: 28px;
@@ -2565,7 +2694,8 @@ html[data-theme='light'] .releaseDrawerContent {
   flex: 0 0 auto;
   position: absolute;
   left: calc(
-    var(--dockrev-table-guide-center-x, 28px) - (var(--dockrev-table-guide-dot-size, 6px) / 2)
+    var(--dockrev-table-guide-center-x, 28px) -
+      (var(--dockrev-table-guide-dot-size, 6px) / 2)
   );
   top: 50%;
   transform: translateY(-50%);
@@ -2707,9 +2837,12 @@ html[data-theme='light'] .releaseDrawerContent {
 .groupGuide {
   position: absolute;
   left: calc(
-    var(--dockrev-table-guide-center-x, 28px) - (var(--dockrev-table-guide-line-width, 2px) / 2)
+    var(--dockrev-table-guide-center-x, 28px) -
+      (var(--dockrev-table-guide-line-width, 2px) / 2)
   );
-  top: calc(var(--dockrev-table-group-head-height) + var(--dockrev-table-group-gap));
+  top: calc(
+    var(--dockrev-table-group-head-height) + var(--dockrev-table-group-gap)
+  );
   bottom: 0;
   width: var(--dockrev-table-guide-line-width, 2px);
   pointer-events: none;
@@ -2718,12 +2851,36 @@ html[data-theme='light'] .releaseDrawerContent {
   background: repeating-linear-gradient(
     to bottom,
     var(--dockrev-guide) 0
-      calc((var(--dockrev-table-row-height) - var(--dockrev-table-guide-bullet-gap)) / 2),
+      calc(
+        (
+            var(--dockrev-table-row-height) -
+              var(--dockrev-table-guide-bullet-gap)
+          ) /
+          2
+      ),
     transparent
-      calc((var(--dockrev-table-row-height) - var(--dockrev-table-guide-bullet-gap)) / 2)
-      calc((var(--dockrev-table-row-height) + var(--dockrev-table-guide-bullet-gap)) / 2),
+      calc(
+        (
+            var(--dockrev-table-row-height) -
+              var(--dockrev-table-guide-bullet-gap)
+          ) /
+          2
+      )
+      calc(
+        (
+            var(--dockrev-table-row-height) +
+              var(--dockrev-table-guide-bullet-gap)
+          ) /
+          2
+      ),
     var(--dockrev-guide)
-      calc((var(--dockrev-table-row-height) + var(--dockrev-table-guide-bullet-gap)) / 2)
+      calc(
+        (
+            var(--dockrev-table-row-height) +
+              var(--dockrev-table-guide-bullet-gap)
+          ) /
+          2
+      )
       calc(var(--dockrev-table-row-height) + var(--dockrev-table-group-gap))
   );
 }
@@ -2817,12 +2974,12 @@ html[data-theme='light'] .releaseDrawerContent {
     border-color 160ms ease;
 }
 
-html[data-theme='light'] .switchSlider {
+html[data-theme="light"] .switchSlider {
   background: rgba(15, 23, 42, 0.03);
 }
 
 .switchSlider::before {
-  content: '';
+  content: "";
   position: absolute;
   top: 2px;
   left: 3px;
@@ -2858,7 +3015,7 @@ html[data-theme='light'] .switchSlider {
   color: var(--text);
 }
 
-html[data-theme='light'] .input {
+html[data-theme="light"] .input {
   background: rgba(15, 23, 42, 0.03);
 }
 
@@ -2970,7 +3127,7 @@ html[data-theme='light'] .input {
   padding: 24px;
 }
 
-html[data-theme='light'] .modalOverlay {
+html[data-theme="light"] .modalOverlay {
   background: rgba(15, 23, 42, 0.42);
 }
 
@@ -3124,8 +3281,16 @@ html[data-theme='light'] .modalOverlay {
   border: 1px solid var(--confirm-signal-border);
   border-radius: 999px;
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--confirm-signal-color) 16%, transparent), transparent),
-    color-mix(in srgb, var(--confirm-signal-color) 10%, var(--dockrev-surface) 90%);
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--confirm-signal-color) 16%, transparent),
+      transparent
+    ),
+    color-mix(
+      in srgb,
+      var(--confirm-signal-color) 10%,
+      var(--dockrev-surface) 90%
+    );
   color: color-mix(in srgb, var(--confirm-signal-color) 82%, var(--text) 18%);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--text) 10%, transparent),
@@ -3145,33 +3310,55 @@ html[data-theme='light'] .modalOverlay {
   height: 7px;
   border-radius: 999px;
   background: var(--confirm-signal-color);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--confirm-signal-color) 16%, transparent);
+  box-shadow: 0 0 0 3px
+    color-mix(in srgb, var(--confirm-signal-color) 16%, transparent);
   flex: 0 0 auto;
 }
 
 .confirmSignalBadge-action {
   --confirm-signal-color: var(--color-primary);
-  --confirm-signal-border: color-mix(in srgb, var(--color-primary) 48%, var(--borderColor) 52%);
+  --confirm-signal-border: color-mix(
+    in srgb,
+    var(--color-primary) 48%,
+    var(--borderColor) 52%
+  );
 }
 
 .confirmSignalBadge-warn {
   --confirm-signal-color: var(--color-warning);
-  --confirm-signal-border: color-mix(in srgb, var(--color-warning) 48%, var(--borderColor) 52%);
+  --confirm-signal-border: color-mix(
+    in srgb,
+    var(--color-warning) 48%,
+    var(--borderColor) 52%
+  );
 }
 
 .confirmSignalBadge-guard {
   --confirm-signal-color: var(--color-warning);
-  --confirm-signal-border: color-mix(in srgb, var(--color-warning) 46%, var(--color-error) 14%, var(--borderColor) 40%);
+  --confirm-signal-border: color-mix(
+    in srgb,
+    var(--color-warning) 46%,
+    var(--color-error) 14%,
+    var(--borderColor) 40%
+  );
 }
 
 .confirmSignalBadge-bad {
   --confirm-signal-color: var(--color-error);
-  --confirm-signal-border: color-mix(in srgb, var(--color-error) 46%, var(--borderColor) 54%);
+  --confirm-signal-border: color-mix(
+    in srgb,
+    var(--color-error) 46%,
+    var(--borderColor) 54%
+  );
 }
 
 .confirmSignalBadge-neutral {
   --confirm-signal-color: var(--muted2);
-  --confirm-signal-border: color-mix(in srgb, var(--muted2) 34%, var(--borderColor) 66%);
+  --confirm-signal-border: color-mix(
+    in srgb,
+    var(--muted2) 34%,
+    var(--borderColor) 66%
+  );
 }
 
 .modalKvValue .mono {
@@ -3209,8 +3396,13 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .modalListItemAnomaly {
-  border-color: color-mix(in srgb, var(--color-warning) 52%, rgba(229, 231, 235, 0.08));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-warning) 18%, transparent);
+  border-color: color-mix(
+    in srgb,
+    var(--color-warning) 52%,
+    rgba(229, 231, 235, 0.08)
+  );
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--color-warning) 18%, transparent);
 }
 
 .modalListItemGuarded {
@@ -3545,12 +3737,13 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .versionInferenceSortHint::before {
-  content: '';
+  content: "";
   right: 2px;
   top: calc(100% + 2px);
   border-width: 6px;
   border-style: solid;
-  border-color: transparent transparent color-mix(in srgb, var(--panel) 94%, #050b1a 6%) transparent;
+  border-color: transparent transparent
+    color-mix(in srgb, var(--panel) 94%, #050b1a 6%) transparent;
   transform: translateY(-3px);
 }
 
@@ -3635,7 +3828,11 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .versionInferenceProgressFillAssigned {
-  background: linear-gradient(90deg, color-mix(in srgb, var(--color-info) 56%, transparent), color-mix(in srgb, var(--color-info) 78%, var(--color-primary) 22%));
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-info) 56%, transparent),
+    color-mix(in srgb, var(--color-info) 78%, var(--color-primary) 22%)
+  );
   box-shadow: 0 0 6px color-mix(in srgb, var(--color-info) 30%, transparent);
   opacity: 0.72;
 }
@@ -3711,7 +3908,8 @@ html[data-theme='light'] .modalOverlay {
   isolation: isolate;
   width: 100%;
   border: 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--borderColor) 72%, transparent);
   background: transparent;
   padding: 9px 0;
   overflow: hidden;
@@ -3756,18 +3954,21 @@ html[data-theme='light'] .modalOverlay {
   transform: translateX(-118%);
 }
 
-.overviewJobListRow[data-progress-mode='determinate'] .overviewJobProgressBg {
+.overviewJobListRow[data-progress-mode="determinate"] .overviewJobProgressBg {
   opacity: 1;
   clip-path: inset(0 calc(100% - var(--overview-row-progress, 0%)) 0 0);
 }
 
-.overviewJobListRow[data-progress-mode='determinate'] .overviewJobProgressBgShimmer,
-.overviewJobListRow[data-progress-mode='indeterminate'] .overviewJobProgressBgShimmer {
+.overviewJobListRow[data-progress-mode="determinate"]
+  .overviewJobProgressBgShimmer,
+.overviewJobListRow[data-progress-mode="indeterminate"]
+  .overviewJobProgressBgShimmer {
   animation: overviewRowProgressShimmer 3.9s ease-in-out infinite;
   will-change: transform;
 }
 
-.overviewJobListRow[data-progress-mode='determinate'] .overviewJobProgressBgFill {
+.overviewJobListRow[data-progress-mode="determinate"]
+  .overviewJobProgressBgFill {
   width: var(--overview-row-progress, 0%);
   background: linear-gradient(
     90deg,
@@ -3776,7 +3977,8 @@ html[data-theme='light'] .modalOverlay {
   );
 }
 
-.overviewJobListRow[data-progress-mode='determinate'] .overviewJobProgressBgShimmer {
+.overviewJobListRow[data-progress-mode="determinate"]
+  .overviewJobProgressBgShimmer {
   opacity: 0.42;
   background: linear-gradient(
     90deg,
@@ -3786,15 +3988,20 @@ html[data-theme='light'] .modalOverlay {
   );
 }
 
-.overviewJobListRow[data-progress-mode='indeterminate'] .overviewJobProgressBg {
+.overviewJobListRow[data-progress-mode="indeterminate"] .overviewJobProgressBg {
   opacity: 1;
 }
 
-.overviewJobListRow[data-progress-mode='indeterminate'] .overviewJobProgressBgFill {
+.overviewJobListRow[data-progress-mode="indeterminate"]
+  .overviewJobProgressBgFill {
   width: 100%;
   opacity: 0.2;
   background:
-    linear-gradient(90deg, color-mix(in srgb, var(--color-info) 9%, transparent), transparent),
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--color-info) 9%, transparent),
+      transparent
+    ),
     repeating-linear-gradient(
       110deg,
       color-mix(in srgb, var(--color-info) 9%, transparent) 0 12px,
@@ -3802,7 +4009,8 @@ html[data-theme='light'] .modalOverlay {
     );
 }
 
-.overviewJobListRow[data-progress-mode='indeterminate'] .overviewJobProgressBgShimmer {
+.overviewJobListRow[data-progress-mode="indeterminate"]
+  .overviewJobProgressBgShimmer {
   opacity: 0.34;
   background: linear-gradient(
     90deg,
@@ -3861,7 +4069,11 @@ html[data-theme='light'] .modalOverlay {
 
 .discoveryStatChipScan {
   border-color: color-mix(in srgb, var(--borderColor) 86%, transparent);
-  background: color-mix(in srgb, var(--dockrev-surface-strong) 88%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--dockrev-surface-strong) 88%,
+    transparent
+  );
 }
 
 .discoveryStatLabel {
@@ -3889,7 +4101,8 @@ html[data-theme='light'] .modalOverlay {
 
 .discoveryIssueRow {
   padding: 14px 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--borderColor) 72%, transparent);
 }
 
 .discoveryIssueRow:last-child {
@@ -4154,31 +4367,48 @@ html[data-theme='light'] .modalOverlay {
   font-weight: 640;
   line-height: 1.2;
   color: var(--muted);
-  border: 1px solid color-mix(in srgb, var(--muted2) 30%, var(--borderColor) 70%);
+  border: 1px solid
+    color-mix(in srgb, var(--muted2) 30%, var(--borderColor) 70%);
   background: color-mix(in srgb, var(--muted2) 10%, transparent);
 }
 
-.overviewJobStatusTag[data-status='running'] {
+.overviewJobStatusTag[data-status="running"] {
   color: color-mix(in srgb, var(--color-info) 84%, var(--text) 16%);
-  border-color: color-mix(in srgb, var(--color-info) 34%, var(--borderColor) 66%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-info) 34%,
+    var(--borderColor) 66%
+  );
   background: color-mix(in srgb, var(--color-info) 12%, transparent);
 }
 
-.overviewJobStatusTag[data-status='queued'] {
+.overviewJobStatusTag[data-status="queued"] {
   color: color-mix(in srgb, var(--color-warning) 84%, var(--text) 16%);
-  border-color: color-mix(in srgb, var(--color-warning) 34%, var(--borderColor) 66%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-warning) 34%,
+    var(--borderColor) 66%
+  );
   background: color-mix(in srgb, var(--color-warning) 12%, transparent);
 }
 
-.overviewJobStatusTag[data-status='success'] {
+.overviewJobStatusTag[data-status="success"] {
   color: color-mix(in srgb, var(--color-success) 84%, var(--text) 16%);
-  border-color: color-mix(in srgb, var(--color-success) 34%, var(--borderColor) 66%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-success) 34%,
+    var(--borderColor) 66%
+  );
   background: color-mix(in srgb, var(--color-success) 12%, transparent);
 }
 
-.overviewJobStatusTag[data-status='failed'] {
+.overviewJobStatusTag[data-status="failed"] {
   color: color-mix(in srgb, var(--color-error) 84%, var(--text) 16%);
-  border-color: color-mix(in srgb, var(--color-error) 34%, var(--borderColor) 66%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-error) 34%,
+    var(--borderColor) 66%
+  );
   background: color-mix(in srgb, var(--color-error) 12%, transparent);
 }
 
@@ -4292,37 +4522,61 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .jobTypeTag-check {
-  border-color: color-mix(in srgb, var(--color-warning) 34%, var(--borderColor) 66%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-warning) 34%,
+    var(--borderColor) 66%
+  );
   background: color-mix(in srgb, var(--color-warning) 14%, transparent);
   color: color-mix(in srgb, var(--color-warning) 84%, var(--text) 16%);
 }
 
 .jobTypeTag-discovery {
-  border-color: color-mix(in srgb, var(--color-success) 34%, var(--borderColor) 66%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-success) 34%,
+    var(--borderColor) 66%
+  );
   background: color-mix(in srgb, var(--color-success) 14%, transparent);
   color: color-mix(in srgb, var(--color-success) 84%, var(--text) 16%);
 }
 
 .jobTypeTag-runtimeScan {
-  border-color: color-mix(in srgb, var(--color-info) 34%, var(--borderColor) 66%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-info) 34%,
+    var(--borderColor) 66%
+  );
   background: color-mix(in srgb, var(--color-info) 14%, transparent);
   color: color-mix(in srgb, var(--color-info) 84%, var(--text) 16%);
 }
 
 .jobTypeTag-ghcrWebhook {
-  border-color: color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 34%,
+    var(--borderColor) 66%
+  );
   background: color-mix(in srgb, var(--color-primary) 16%, transparent);
   color: color-mix(in srgb, var(--color-primary) 84%, var(--text) 16%);
 }
 
 .jobTypeTag-update {
-  border-color: color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 34%,
+    var(--borderColor) 66%
+  );
   background: color-mix(in srgb, var(--color-primary) 12%, transparent);
   color: color-mix(in srgb, var(--color-primary) 80%, var(--text) 20%);
 }
 
 .jobTypeTag-rollback {
-  border-color: color-mix(in srgb, var(--color-error) 34%, var(--borderColor) 66%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-error) 34%,
+    var(--borderColor) 66%
+  );
   background: color-mix(in srgb, var(--color-error) 14%, transparent);
   color: color-mix(in srgb, var(--color-error) 84%, var(--text) 16%);
 }
@@ -4340,7 +4594,8 @@ html[data-theme='light'] .modalOverlay {
   min-height: 20px;
   padding: 1px 9px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--color-primary) 24%, var(--borderColor) 76%);
+  border: 1px solid
+    color-mix(in srgb, var(--color-primary) 24%, var(--borderColor) 76%);
   background: color-mix(in srgb, var(--color-primary) 10%, transparent);
   color: color-mix(in srgb, var(--text) 70%, var(--color-primary) 30%);
   font-size: 11px;
@@ -4588,8 +4843,13 @@ html[data-theme='light'] .modalOverlay {
   max-width: 240px;
   padding: 4px 8px;
   border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--color-warning) 44%, var(--borderColor) 56%);
-  background: color-mix(in srgb, var(--panel) 90%, var(--dockrev-surface-strong) 10%);
+  border: 1px solid
+    color-mix(in srgb, var(--color-warning) 44%, var(--borderColor) 56%);
+  background: color-mix(
+    in srgb,
+    var(--panel) 90%,
+    var(--dockrev-surface-strong) 10%
+  );
   color: var(--text);
   font-size: 11px;
   font-weight: 500;
@@ -4681,7 +4941,7 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .ghcrRegistryFilterSelectWrap::after {
-  content: '';
+  content: "";
   position: absolute;
   right: 14px;
   bottom: 13px;
@@ -4953,7 +5213,9 @@ html[data-theme='light'] .modalOverlay {
   overflow: auto;
   /* Avoid layout "jiggle" when a scrollbar appears/disappears. */
   scrollbar-gutter: stable both-edges;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: 12px;
   line-height: 1.45;
 }
@@ -5071,7 +5333,8 @@ html[data-theme='light'] .modalOverlay {
 
 .serviceLogsLiveDot.active {
   background: color-mix(in srgb, var(--color-success) 88%, white 12%);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-success) 14%, transparent);
+  box-shadow: 0 0 0 4px
+    color-mix(in srgb, var(--color-success) 14%, transparent);
 }
 
 .serviceLogsSearch {
@@ -5157,8 +5420,16 @@ html[data-theme='light'] .modalOverlay {
   border: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
   border-radius: 16px;
   background:
-    linear-gradient(180deg, color-mix(in srgb, #081321 92%, var(--color-primary) 8%) 0%, #091323 100%),
-    radial-gradient(circle at top left, color-mix(in srgb, var(--color-primary) 14%, transparent) 0%, transparent 34%);
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, #081321 92%, var(--color-primary) 8%) 0%,
+      #091323 100%
+    ),
+    radial-gradient(
+      circle at top left,
+      color-mix(in srgb, var(--color-primary) 14%, transparent) 0%,
+      transparent 34%
+    );
   overflow: hidden;
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, white 4%, transparent),
@@ -5167,12 +5438,19 @@ html[data-theme='light'] .modalOverlay {
 
 .serviceLogsTerminalHead {
   display: grid;
-  grid-template-columns: var(--service-log-col-time) var(--service-log-col-level) minmax(0, 1fr);
+  grid-template-columns:
+    var(--service-log-col-time) var(--service-log-col-level)
+    minmax(0, 1fr);
   gap: 12px;
   align-items: center;
   padding: 10px 18px;
-  border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 60%, transparent);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01));
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--borderColor) 60%, transparent);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.04),
+    rgba(255, 255, 255, 0.01)
+  );
   color: color-mix(in srgb, var(--muted2) 86%, white 14%);
   font-size: 10px;
   font-weight: 700;
@@ -5214,12 +5492,16 @@ html[data-theme='light'] .modalOverlay {
 
 .serviceLogRow {
   display: grid;
-  grid-template-columns: var(--service-log-col-time) var(--service-log-col-level) minmax(0, 1fr);
+  grid-template-columns:
+    var(--service-log-col-time) var(--service-log-col-level)
+    minmax(0, 1fr);
   gap: 12px;
   align-items: start;
   padding: 5px 0;
   border-radius: 8px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: 12px;
   line-height: 1.55;
   transition: background-color 140ms ease;
@@ -5229,7 +5511,7 @@ html[data-theme='light'] .modalOverlay {
   background: rgba(255, 255, 255, 0.04);
 }
 
-.serviceLogRow[data-multiline='true'] {
+.serviceLogRow[data-multiline="true"] {
   padding-top: 8px;
   padding-bottom: 8px;
 }
@@ -5266,21 +5548,21 @@ html[data-theme='light'] .modalOverlay {
   line-height: 1.2;
 }
 
-.serviceLogLevel[data-level='error'] {
+.serviceLogLevel[data-level="error"] {
   background: color-mix(in srgb, var(--color-error) 16%, transparent);
 }
 
-.serviceLogLevel[data-level='warn'] {
+.serviceLogLevel[data-level="warn"] {
   background: color-mix(in srgb, var(--color-warning) 16%, transparent);
 }
 
-.serviceLogLevel[data-level='info'] {
+.serviceLogLevel[data-level="info"] {
   background: color-mix(in srgb, var(--color-info) 16%, transparent);
 }
 
-.serviceLogLevel[data-level='debug'],
-.serviceLogLevel[data-level='trace'],
-.serviceLogLevel[data-level='unknown'] {
+.serviceLogLevel[data-level="debug"],
+.serviceLogLevel[data-level="trace"],
+.serviceLogLevel[data-level="unknown"] {
   background: color-mix(in srgb, var(--muted2) 14%, transparent);
 }
 
@@ -5291,7 +5573,7 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .serviceLogLevelInline::before {
-  content: '•';
+  content: "•";
 }
 
 .serviceLogMsg {
@@ -5299,7 +5581,7 @@ html[data-theme='light'] .modalOverlay {
   color: var(--text);
 }
 
-.serviceLogRow[data-view='human'] .serviceLogMsg {
+.serviceLogRow[data-view="human"] .serviceLogMsg {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -5362,35 +5644,37 @@ html[data-theme='light'] .modalOverlay {
   white-space: nowrap;
 }
 
-.serviceLogRow[data-multiline='true'] .serviceLogMsg {
+.serviceLogRow[data-multiline="true"] .serviceLogMsg {
   padding-left: 10px;
   border-left: 2px solid color-mix(in srgb, var(--color-info) 42%, transparent);
 }
 
-.serviceLogsTerminal[data-wrap='on'] .serviceLogMsg {
+.serviceLogsTerminal[data-wrap="on"] .serviceLogMsg {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
 
-.serviceLogsTerminal[data-wrap='off'] .serviceLogRow {
+.serviceLogsTerminal[data-wrap="off"] .serviceLogRow {
   width: max-content;
   min-width: 100%;
 }
 
-.serviceLogsTerminal[data-wrap='off'] .serviceLogRow[data-view='human'] {
+.serviceLogsTerminal[data-wrap="off"] .serviceLogRow[data-view="human"] {
   width: 100%;
   min-width: 100%;
 }
 
-.serviceLogsTerminal[data-wrap='off'] .serviceLogMsg {
+.serviceLogsTerminal[data-wrap="off"] .serviceLogMsg {
   display: inline-block;
   white-space: pre;
   overflow-wrap: normal;
   word-break: normal;
 }
 
-.serviceLogsTerminal[data-wrap='off'] .serviceLogRow[data-view='human'] .serviceLogMsg {
+.serviceLogsTerminal[data-wrap="off"]
+  .serviceLogRow[data-view="human"]
+  .serviceLogMsg {
   display: flex;
   white-space: normal;
   overflow-wrap: anywhere;
@@ -5475,12 +5759,16 @@ html[data-theme='light'] .modalOverlay {
   }
 
   .serviceLogRow {
-    grid-template-columns: var(--service-log-col-time) var(--service-log-col-level) minmax(0, 1fr);
+    grid-template-columns:
+      var(--service-log-col-time) var(--service-log-col-level)
+      minmax(0, 1fr);
     gap: 4px;
   }
 
   .serviceLogsTerminalHead {
-    grid-template-columns: var(--service-log-col-time) var(--service-log-col-level) minmax(0, 1fr);
+    grid-template-columns:
+      var(--service-log-col-time) var(--service-log-col-level)
+      minmax(0, 1fr);
     gap: 4px;
     padding: 10px 14px;
   }
@@ -5549,29 +5837,169 @@ html[data-theme='light'] .modalOverlay {
 }
 
 /* Service detail */
-.svcTitleRow {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.svcTitleMain {
+.detailHeroShell {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 14px;
 }
 
-.svcTitleNameRow {
+.svcTitleRow,
+.stackDetailHero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(236px, 288px);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.detailHeroCard {
+  border: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
+  border-radius: 14px;
+  padding: 18px 20px;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--panel2) 38%, transparent) 0%,
+      transparent 100%
+    ),
+    color-mix(in srgb, var(--panel) 94%, var(--bg) 6%);
+  box-shadow: 0 14px 38px rgba(1, 8, 20, 0.32);
+}
+
+.svcTitleMain,
+.detailHeroPrimary {
+  min-width: 0;
   display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.detailHeroContext {
+  display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--muted2);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.detailHeroContextDivider {
+  opacity: 0.56;
+}
+
+.svcTitleNameRow,
+.detailHeroNameRow {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
 .svcTitleName {
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 750;
+  line-height: 1.08;
+  letter-spacing: -0.03em;
   color: var(--text);
+}
+
+.detailHeroName {
+  font-size: 28px;
+}
+
+.detailHeroDescription {
+  max-width: 72ch;
+  min-width: 0;
+}
+
+.detailHeroAside {
+  min-width: 0;
+  display: flex;
+}
+
+.detailHeroStatusCard {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.detailHeroStatusPanel {
+  width: 100%;
+  min-height: 100%;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 76%, transparent);
+  border-radius: 14px;
+  padding: 14px;
+  background: color-mix(in srgb, var(--panel2) 28%, transparent);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.detailHeroStatusHeadline {
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 680;
+  line-height: 1.35;
+}
+
+.detailHeroStatusCopy {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.detailHeroStatusFoot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.detailHeroMetaGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: 12px;
+}
+
+.detailHeroMetaGridStack {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+}
+
+.detailHeroMetaCard {
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 74%, transparent);
+  border-radius: 14px;
+  padding: 12px 13px;
+  background: color-mix(in srgb, var(--panel2) 22%, transparent);
+}
+
+.detailHeroMetaLabel {
+  color: var(--muted2);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.detailHeroMetaValue {
+  margin-top: 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 620;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.detailHeroMetaValue .mono {
+  display: block;
+  max-width: 100%;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .svcComposeCard {
@@ -5579,9 +6007,12 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .svcDetailTabsShell {
-  margin-top: 18px;
   overflow-x: auto;
-  padding-bottom: 4px;
+  padding-bottom: 2px;
+}
+
+.detailHeroShell .svcDetailTabsShell {
+  margin-top: 0;
 }
 
 .svcDetailContextSummary {
@@ -5595,23 +6026,62 @@ html[data-theme='light'] .modalOverlay {
   width: max-content;
   min-width: 100%;
   justify-content: flex-start;
-  gap: 6px;
+  gap: 4px;
   padding: 4px;
   border: 1px solid color-mix(in srgb, var(--borderColor) 84%, transparent);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--panel2) 72%, transparent) 0%, transparent 100%),
-    color-mix(in srgb, var(--panel) 92%, var(--bg) 8%);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, white 8%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel2) 30%, transparent);
+  box-shadow: none;
 }
 
 .svcDetailTab {
-  min-width: 104px;
+  min-width: 96px;
+  border-radius: 10px;
   color: var(--muted);
+  font-weight: 620;
+}
+
+.svcDetailTab:hover:not(:disabled) {
+  background: color-mix(
+    in srgb,
+    var(--dockrev-surface-strong) 84%,
+    transparent
+  );
+  color: var(--text);
 }
 
 .svcDetailTab.active,
-.svcDetailTab[data-state='active'] {
+.svcDetailTab[data-state="active"] {
+  background: color-mix(
+    in srgb,
+    var(--dockrev-surface-strong) 90%,
+    transparent
+  );
   color: var(--text);
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--color-primary) 22%, var(--borderColor) 78%);
+}
+
+@media (max-width: 1280px) {
+  .svcTitleRow,
+  .stackDetailHero {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .detailHeroCard {
+    padding: 16px;
+  }
+
+  .detailHeroName {
+    font-size: 24px;
+  }
+
+  .detailHeroMetaGrid,
+  .detailHeroMetaGridStack {
+    grid-template-columns: 1fr;
+  }
 }
 
 .svcDetailSectionStack {
@@ -5758,8 +6228,11 @@ html[data-theme='light'] .modalOverlay {
   padding: 3px;
   border-radius: 14px;
   border: 1px solid color-mix(in srgb, var(--borderColor) 80%, transparent);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--panel) 94%, transparent), color-mix(in srgb, var(--panel2) 72%, transparent));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--panel) 94%, transparent),
+    color-mix(in srgb, var(--panel2) 72%, transparent)
+  );
   overflow: hidden;
 }
 
@@ -5774,13 +6247,18 @@ html[data-theme='light'] .modalOverlay {
   width: calc((100% - 6px) / 3);
   height: calc(100% - 6px);
   border-radius: 11px;
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--accent) 88%, white 12%), color-mix(in srgb, var(--accent) 52%, var(--panel) 48%));
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent) 88%, white 12%),
+    color-mix(in srgb, var(--accent) 52%, var(--panel) 48%)
+  );
   box-shadow:
     0 10px 20px color-mix(in srgb, var(--accent) 26%, transparent),
     inset 0 1px 0 color-mix(in srgb, white 20%, transparent);
   transform: translateX(calc(var(--backup-policy-index, 0) * 100%));
-  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 220ms ease;
+  transition:
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 220ms ease;
   pointer-events: none;
 }
 
@@ -5804,11 +6282,13 @@ html[data-theme='light'] .modalOverlay {
   font-weight: 600;
   letter-spacing: 0.01em;
   white-space: nowrap;
-  transition: color 180ms ease, transform 180ms ease;
+  transition:
+    color 180ms ease,
+    transform 180ms ease;
 }
 
 .serviceBackupPolicyBtn.active,
-.serviceBackupPolicyBtn[data-state='on'] {
+.serviceBackupPolicyBtn[data-state="on"] {
   color: var(--text);
   transform: translateY(-1px);
 }
@@ -5977,7 +6457,8 @@ html[data-theme='light'] .modalOverlay {
   left: 0;
   right: 0;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--color-primary) 24%, var(--borderColor) 76%);
+  border: 1px solid
+    color-mix(in srgb, var(--color-primary) 24%, var(--borderColor) 76%);
   border-radius: 10px;
   background: color-mix(in srgb, var(--panel2) 94%, var(--bg) 6%);
   box-shadow: var(--shadow-soft);
@@ -5992,7 +6473,8 @@ html[data-theme='light'] .modalOverlay {
   min-height: 38px;
   padding: 8px 10px;
   border: 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--borderColor) 72%, transparent);
   background: transparent;
   color: var(--text);
   cursor: pointer;
@@ -6006,7 +6488,7 @@ html[data-theme='light'] .modalOverlay {
 .serviceTagSuggestionItem:hover,
 .serviceTagSuggestionItem:focus-visible,
 .serviceTagSuggestionItem.active,
-.serviceTagSuggestionItem[aria-selected='true'] {
+.serviceTagSuggestionItem[aria-selected="true"] {
   background: color-mix(in srgb, var(--color-primary) 12%, transparent);
   outline: none;
 }
@@ -6052,14 +6534,14 @@ html[data-theme='light'] .modalOverlay {
   box-shadow: -24px 0 56px rgba(0, 0, 0, 0.42);
 }
 
-.settingsDrawerContent[data-settings-drawer-direction='right'] {
+.settingsDrawerContent[data-settings-drawer-direction="right"] {
   border-radius: 0;
   box-shadow:
     inset 1px 0 0 var(--surface-border-strong),
     -24px 0 56px rgba(0, 0, 0, 0.42);
 }
 
-.settingsDrawerContent[data-settings-drawer-direction='bottom'] {
+.settingsDrawerContent[data-settings-drawer-direction="bottom"] {
   width: 100vw;
   max-width: 100vw;
   height: min(86dvh, 760px);
@@ -6085,24 +6567,28 @@ html[data-theme='light'] .modalOverlay {
   background: color-mix(in srgb, var(--muted) 62%, transparent);
 }
 
-.settingsDrawerContent[data-settings-drawer-direction='bottom'] .settingsDrawerDragZone {
+.settingsDrawerContent[data-settings-drawer-direction="bottom"]
+  .settingsDrawerDragZone {
   top: 8px;
   left: 50%;
   transform: translateX(-50%);
 }
 
-.settingsDrawerContent[data-settings-drawer-direction='bottom'] .settingsDrawerHandle {
+.settingsDrawerContent[data-settings-drawer-direction="bottom"]
+  .settingsDrawerHandle {
   width: 38px;
   height: 5px;
 }
 
-.settingsDrawerContent[data-settings-drawer-direction='right'] .settingsDrawerDragZone {
+.settingsDrawerContent[data-settings-drawer-direction="right"]
+  .settingsDrawerDragZone {
   top: 50%;
   left: 8px;
   transform: translateY(-50%);
 }
 
-.settingsDrawerContent[data-settings-drawer-direction='right'] .settingsDrawerHandle {
+.settingsDrawerContent[data-settings-drawer-direction="right"]
+  .settingsDrawerHandle {
   width: 5px;
   height: 38px;
   margin: 0;
@@ -6110,8 +6596,13 @@ html[data-theme='light'] .modalOverlay {
 
 .settingsDrawerHeader {
   padding: 18px 20px 16px;
-  border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--panel2) 74%, transparent) 0%, transparent 100%);
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--borderColor) 82%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--panel2) 74%, transparent) 0%,
+    transparent 100%
+  );
 }
 
 .settingsDrawerTitleRow,
@@ -6201,9 +6692,17 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .svcDangerZoneCard {
-  border-color: color-mix(in srgb, var(--color-danger) 28%, var(--borderColor) 72%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-danger) 28%,
+    var(--borderColor) 72%
+  );
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-danger) 8%, transparent) 0%, transparent 100%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-danger) 8%, transparent) 0%,
+      transparent 100%
+    ),
     color-mix(in srgb, var(--panel) 96%, var(--bg) 4%);
 }
 
@@ -6341,17 +6840,13 @@ html[data-theme='light'] .modalOverlay {
 .autoPolicyActions,
 .autoPolicyPreview,
 .autoPolicyInherited,
-.autoPolicySliderHead,
-.stackDetailHero,
-.stackServiceRow {
+.autoPolicySliderHead {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-.autoPolicyTop,
-.stackDetailHero,
-.stackServiceRow {
+.autoPolicyTop {
   justify-content: space-between;
 }
 
@@ -6440,12 +6935,12 @@ html[data-theme='light'] .modalOverlay {
   user-select: none;
 }
 
-.autoPolicySlider input[type='range'] {
+.autoPolicySlider input[type="range"] {
   width: 100%;
   accent-color: var(--color-primary);
 }
 
-.autoPolicySlider input[type='range']:focus-visible {
+.autoPolicySlider input[type="range"]:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 4px;
   border-radius: 999px;
@@ -6547,20 +7042,51 @@ html[data-theme='light'] .modalOverlay {
   font-size: 11px;
 }
 
-.stackDetailHero {
-  margin-bottom: 16px;
-}
-
 .stackServiceList {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   margin-top: 12px;
 }
 
 .stackServiceRow {
-  border-top: 1px solid rgba(148, 163, 184, 0.14);
-  padding-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 74%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel2) 24%, transparent);
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease;
+}
+
+.stackServiceRow:hover {
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 24%,
+    var(--borderColor) 76%
+  );
+  background: color-mix(in srgb, var(--panel2) 34%, transparent);
+}
+
+.stackServiceCopy {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stackServiceName {
+  line-height: 1.3;
+}
+
+.stackServiceRef {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 @media (max-width: 760px) {
@@ -6581,7 +7107,6 @@ html[data-theme='light'] .modalOverlay {
   .autoPolicyTop,
   .svcDangerZoneActions,
   .serviceSafeguardCard,
-  .stackDetailHero,
   .stackServiceRow {
     align-items: flex-start;
     flex-direction: column;
@@ -6624,22 +7149,38 @@ html[data-theme='light'] .modalOverlay {
 
 .svcBannerOk {
   border-color: rgba(34, 197, 94, 0.18);
-  background: linear-gradient(90deg, rgba(34, 197, 94, 0.14), rgba(34, 197, 94, 0.04));
+  background: linear-gradient(
+    90deg,
+    rgba(34, 197, 94, 0.14),
+    rgba(34, 197, 94, 0.04)
+  );
 }
 
 .svcBannerWarn {
   border-color: rgba(245, 158, 11, 0.18);
-  background: linear-gradient(90deg, rgba(245, 158, 11, 0.14), rgba(245, 158, 11, 0.04));
+  background: linear-gradient(
+    90deg,
+    rgba(245, 158, 11, 0.14),
+    rgba(245, 158, 11, 0.04)
+  );
 }
 
 .svcBannerBad {
   border-color: rgba(251, 113, 133, 0.2);
-  background: linear-gradient(90deg, rgba(251, 113, 133, 0.16), rgba(251, 113, 133, 0.05));
+  background: linear-gradient(
+    90deg,
+    rgba(251, 113, 133, 0.16),
+    rgba(251, 113, 133, 0.05)
+  );
 }
 
 .svcBannerMuted {
   border-color: rgba(229, 231, 235, 0.14);
-  background: linear-gradient(90deg, rgba(148, 163, 184, 0.12), rgba(148, 163, 184, 0.03));
+  background: linear-gradient(
+    90deg,
+    rgba(148, 163, 184, 0.12),
+    rgba(148, 163, 184, 0.03)
+  );
 }
 
 .svcBannerTitleRow {
@@ -6682,7 +7223,8 @@ html[data-theme='light'] .modalOverlay {
 .svcAnomalyAlert {
   margin-top: 10px;
   border-radius: 14px;
-  border: 1px solid color-mix(in srgb, var(--color-warning) 52%, rgba(229, 231, 235, 0.1));
+  border: 1px solid
+    color-mix(in srgb, var(--color-warning) 52%, rgba(229, 231, 235, 0.1));
   background: linear-gradient(
     90deg,
     color-mix(in srgb, var(--color-warning) 18%, transparent),
@@ -6719,35 +7261,50 @@ html[data-theme='light'] .modalOverlay {
   position: relative;
   overflow: hidden;
   isolation: isolate;
-  border-color: color-mix(in srgb, var(--color-primary) 24%, var(--borderColor) 76%);
-  background:
-    linear-gradient(
-      162deg,
-      color-mix(in srgb, var(--panel) 82%, rgba(9, 36, 73, 0.52)) 0%,
-      color-mix(in srgb, var(--panel2) 92%, rgba(2, 10, 23, 0.96)) 100%
-    );
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 24%,
+    var(--borderColor) 76%
+  );
+  background: linear-gradient(
+    162deg,
+    color-mix(in srgb, var(--panel) 82%, rgba(9, 36, 73, 0.52)) 0%,
+    color-mix(in srgb, var(--panel2) 92%, rgba(2, 10, 23, 0.96)) 100%
+  );
   box-shadow:
     0 26px 72px rgba(1, 10, 24, 0.38),
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .svcResourceCard::before {
-  content: '';
+  content: "";
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(520px 220px at 14% 0%, rgba(56, 189, 248, 0.12), transparent 70%),
-    radial-gradient(640px 260px at 100% 6%, rgba(14, 165, 233, 0.12), transparent 74%);
+    radial-gradient(
+      520px 220px at 14% 0%,
+      rgba(56, 189, 248, 0.12),
+      transparent 70%
+    ),
+    radial-gradient(
+      640px 260px at 100% 6%,
+      rgba(14, 165, 233, 0.12),
+      transparent 74%
+    );
   opacity: 0.95;
   pointer-events: none;
 }
 
 .svcResourceCard::after {
-  content: '';
+  content: "";
   position: absolute;
   inset: auto 0 0;
   height: 140px;
-  background: linear-gradient(180deg, rgba(2, 10, 22, 0), rgba(2, 10, 22, 0.22));
+  background: linear-gradient(
+    180deg,
+    rgba(2, 10, 22, 0),
+    rgba(2, 10, 22, 0.22)
+  );
   pointer-events: none;
 }
 
@@ -6888,8 +7445,13 @@ html[data-theme='light'] .modalOverlay {
   min-height: 30px;
   padding: 6px 12px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--color-info) 16%, var(--borderColor) 84%);
-  background: color-mix(in srgb, var(--dockrev-surface) 72%, rgba(255, 255, 255, 0.02));
+  border: 1px solid
+    color-mix(in srgb, var(--color-info) 16%, var(--borderColor) 84%);
+  background: color-mix(
+    in srgb,
+    var(--dockrev-surface) 72%,
+    rgba(255, 255, 255, 0.02)
+  );
   color: var(--muted);
   font-size: 12px;
   line-height: 1.2;
@@ -6912,7 +7474,8 @@ html[data-theme='light'] .modalOverlay {
 
 .svcResourceNotice {
   margin-top: 18px;
-  border: 1px dashed color-mix(in srgb, var(--color-warning) 54%, rgba(148, 163, 184, 0.18));
+  border: 1px dashed
+    color-mix(in srgb, var(--color-warning) 54%, rgba(148, 163, 184, 0.18));
   color: color-mix(in srgb, var(--color-warning) 88%, var(--text) 12%);
   background: color-mix(in srgb, var(--color-warning) 10%, transparent);
 }
@@ -6929,12 +7492,11 @@ html[data-theme='light'] .modalOverlay {
   min-height: 110px;
   border-radius: 18px;
   border: 1px solid rgba(148, 163, 184, 0.16);
-  background:
-    linear-gradient(
-      160deg,
-      color-mix(in srgb, var(--panel) 90%, rgba(15, 23, 42, 0.24)) 0%,
-      color-mix(in srgb, var(--panel2) 88%, rgba(4, 12, 24, 0.42)) 100%
-    );
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--panel) 90%, rgba(15, 23, 42, 0.24)) 0%,
+    color-mix(in srgb, var(--panel2) 88%, rgba(4, 12, 24, 0.42)) 100%
+  );
   padding: 14px 15px;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.03),
@@ -6942,13 +7504,16 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .svcResourceStatCardPrimary {
-  border-color: color-mix(in srgb, var(--color-primary) 28%, var(--borderColor) 72%);
-  background:
-    linear-gradient(
-      165deg,
-      color-mix(in srgb, var(--color-primary) 15%, var(--panel) 85%) 0%,
-      color-mix(in srgb, var(--panel2) 86%, rgba(2, 10, 24, 0.52)) 100%
-    );
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 28%,
+    var(--borderColor) 72%
+  );
+  background: linear-gradient(
+    165deg,
+    color-mix(in srgb, var(--color-primary) 15%, var(--panel) 85%) 0%,
+    color-mix(in srgb, var(--panel2) 86%, rgba(2, 10, 24, 0.52)) 100%
+  );
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.05),
     0 16px 36px color-mix(in srgb, var(--color-primary) 12%, transparent);
@@ -6979,14 +7544,14 @@ html[data-theme='light'] .modalOverlay {
 .svcResourceChartWrap {
   margin-top: 18px;
   border-radius: 22px;
-  border: 1px solid color-mix(in srgb, var(--color-primary) 16%, var(--borderColor) 84%);
+  border: 1px solid
+    color-mix(in srgb, var(--color-primary) 16%, var(--borderColor) 84%);
   padding: 14px;
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--dockrev-surface) 82%, rgba(2, 10, 22, 0.34)) 0%,
-      color-mix(in srgb, var(--panel2) 86%, rgba(2, 10, 22, 0.16)) 100%
-    );
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--dockrev-surface) 82%, rgba(2, 10, 22, 0.34)) 0%,
+    color-mix(in srgb, var(--panel2) 86%, rgba(2, 10, 22, 0.16)) 100%
+  );
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
@@ -7046,12 +7611,16 @@ html[data-theme='light'] .modalOverlay {
 .svcResourceTab:hover,
 .svcResourceWindowBtn:hover {
   transform: translateY(-1px);
-  border-color: color-mix(in srgb, var(--color-info) 32%, var(--borderColor) 68%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-info) 32%,
+    var(--borderColor) 68%
+  );
   color: var(--text);
 }
 
 .svcResourceTab.active,
-.svcResourceTab[data-state='active'] {
+.svcResourceTab[data-state="active"] {
   border-color: color-mix(in srgb, var(--color-info) 60%, transparent);
   background: color-mix(in srgb, var(--color-info) 16%, transparent);
   color: color-mix(in srgb, var(--color-info) 84%, var(--text) 16%);
@@ -7065,22 +7634,22 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .svcResourceWindowBtn.active,
-.svcResourceWindowBtn[data-state='on'] {
+.svcResourceWindowBtn[data-state="on"] {
   border-color: color-mix(in srgb, var(--color-success) 60%, transparent);
   background: color-mix(in srgb, var(--color-success) 14%, transparent);
   color: color-mix(in srgb, var(--color-success) 82%, var(--text) 18%);
-  box-shadow: 0 10px 18px color-mix(in srgb, var(--color-success) 12%, transparent);
+  box-shadow: 0 10px 18px
+    color-mix(in srgb, var(--color-success) 12%, transparent);
 }
 
 .svcResourceChartStage {
   border-radius: 18px;
   border: 1px solid rgba(148, 163, 184, 0.14);
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--panel) 82%, rgba(3, 10, 20, 0.4)) 0%,
-      color-mix(in srgb, var(--panel2) 88%, rgba(3, 10, 20, 0.7)) 100%
-    );
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--panel) 82%, rgba(3, 10, 20, 0.4)) 0%,
+    color-mix(in srgb, var(--panel2) 88%, rgba(3, 10, 20, 0.7)) 100%
+  );
   padding: 16px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
@@ -7117,8 +7686,13 @@ html[data-theme='light'] .modalOverlay {
   gap: 8px;
   padding: 12px 14px;
   border-radius: 16px;
-  border: 1px solid color-mix(in srgb, var(--color-primary) 20%, var(--borderColor) 80%);
-  background: color-mix(in srgb, var(--dockrev-surface-strong) 92%, transparent);
+  border: 1px solid
+    color-mix(in srgb, var(--color-primary) 20%, var(--borderColor) 80%);
+  background: color-mix(
+    in srgb,
+    var(--dockrev-surface-strong) 92%,
+    transparent
+  );
 }
 
 .svcResourceChartCurrentLabel,
@@ -7194,7 +7768,9 @@ html[data-theme='light'] .modalOverlay {
   stroke-width: 2.2;
   stroke-linejoin: round;
   stroke-linecap: round;
-  filter: drop-shadow(0 0 8px color-mix(in srgb, currentColor 18%, transparent));
+  filter: drop-shadow(
+    0 0 8px color-mix(in srgb, currentColor 18%, transparent)
+  );
 }
 
 .svcResourcePoint {
@@ -7341,8 +7917,16 @@ html[data-theme='light'] .modalOverlay {
 .settingsInlineSuggestionBubble {
   position: fixed;
   z-index: 1100;
-  --settings-inline-suggestion-bg: color-mix(in srgb, var(--panel2) 92%, #020814 8%);
-  --settings-inline-suggestion-border: color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  --settings-inline-suggestion-bg: color-mix(
+    in srgb,
+    var(--panel2) 92%,
+    #020814 8%
+  );
+  --settings-inline-suggestion-border: color-mix(
+    in srgb,
+    var(--color-primary) 34%,
+    var(--borderColor) 66%
+  );
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
@@ -7360,7 +7944,7 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .settingsInlineSuggestionBubble::before {
-  content: '';
+  content: "";
   position: absolute;
   right: 22px;
   width: 10px;
@@ -7370,13 +7954,13 @@ html[data-theme='light'] .modalOverlay {
   pointer-events: none;
 }
 
-.settingsInlineSuggestionBubble[data-placement^='bottom']::before {
+.settingsInlineSuggestionBubble[data-placement^="bottom"]::before {
   top: -6px;
   border-left: 1px solid var(--settings-inline-suggestion-border);
   border-top: 1px solid var(--settings-inline-suggestion-border);
 }
 
-.settingsInlineSuggestionBubble[data-placement^='top']::before {
+.settingsInlineSuggestionBubble[data-placement^="top"]::before {
   bottom: -6px;
   border-right: 1px solid var(--settings-inline-suggestion-border);
   border-bottom: 1px solid var(--settings-inline-suggestion-border);
@@ -7508,41 +8092,68 @@ html[data-theme='light'] .modalOverlay {
   width: min(320px, calc(100vw - 28px));
   border-radius: 14px;
   padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  border: 1px solid
+    color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
   background: color-mix(in srgb, var(--panel2) 92%, #020814 8%);
   box-shadow: var(--shadow-soft);
   color: var(--text);
 }
 
 .notificationTestBubble::before {
-  content: '';
+  content: "";
   position: absolute;
   right: 18px;
   top: -6px;
   width: 10px;
   height: 10px;
-  border-left: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
-  border-top: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  border-left: 1px solid
+    color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  border-top: 1px solid
+    color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
   background: color-mix(in srgb, var(--panel2) 92%, #020814 8%);
   transform: rotate(45deg);
 }
 
 .notificationTestBubbleOk {
-  border-color: color-mix(in srgb, var(--color-success) 44%, var(--borderColor) 56%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-success) 44%,
+    var(--borderColor) 56%
+  );
 }
 
 .notificationTestBubbleOk::before {
-  border-left-color: color-mix(in srgb, var(--color-success) 44%, var(--borderColor) 56%);
-  border-top-color: color-mix(in srgb, var(--color-success) 44%, var(--borderColor) 56%);
+  border-left-color: color-mix(
+    in srgb,
+    var(--color-success) 44%,
+    var(--borderColor) 56%
+  );
+  border-top-color: color-mix(
+    in srgb,
+    var(--color-success) 44%,
+    var(--borderColor) 56%
+  );
 }
 
 .notificationTestBubbleBad {
-  border-color: color-mix(in srgb, var(--color-error) 46%, var(--borderColor) 54%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-error) 46%,
+    var(--borderColor) 54%
+  );
 }
 
 .notificationTestBubbleBad::before {
-  border-left-color: color-mix(in srgb, var(--color-error) 46%, var(--borderColor) 54%);
-  border-top-color: color-mix(in srgb, var(--color-error) 46%, var(--borderColor) 54%);
+  border-left-color: color-mix(
+    in srgb,
+    var(--color-error) 46%,
+    var(--borderColor) 54%
+  );
+  border-top-color: color-mix(
+    in srgb,
+    var(--color-error) 46%,
+    var(--borderColor) 54%
+  );
 }
 
 .notificationTestBubbleTitle {
@@ -7607,7 +8218,8 @@ html[data-theme='light'] .modalOverlay {
   margin-top: 9px;
   padding: 7px 9px;
   border-radius: 10px;
-  border: 1px solid color-mix(in srgb, var(--color-error) 28%, var(--borderColor) 72%);
+  border: 1px solid
+    color-mix(in srgb, var(--color-error) 28%, var(--borderColor) 72%);
   background: color-mix(in srgb, var(--color-error) 10%, transparent);
   color: color-mix(in srgb, var(--color-error) 86%, var(--text) 14%);
   font-size: 12px;
@@ -7693,7 +8305,11 @@ html[data-theme='light'] .modalOverlay {
 
 .deployWelcomeSummaryPanel {
   background:
-    radial-gradient(120% 130% at 0% 0%, rgba(38, 103, 120, 0.32), transparent 46%),
+    radial-gradient(
+      120% 130% at 0% 0%,
+      rgba(38, 103, 120, 0.32),
+      transparent 46%
+    ),
     linear-gradient(165deg, rgba(18, 28, 41, 0.96), rgba(12, 20, 33, 0.94));
 }
 
@@ -8116,7 +8732,11 @@ html[data-theme='light'] .modalOverlay {
   border-color: rgba(84, 124, 164, 0.38);
   background:
     linear-gradient(160deg, rgba(14, 24, 38, 0.96), rgba(10, 20, 34, 0.9)),
-    radial-gradient(80% 120% at 0% 100%, rgba(34, 95, 146, 0.14), transparent 60%);
+    radial-gradient(
+      80% 120% at 0% 100%,
+      rgba(34, 95, 146, 0.14),
+      transparent 60%
+    );
 }
 
 .deployWelcomeActionLayout {
@@ -8263,8 +8883,16 @@ html[data-theme='light'] .modalOverlay {
   grid-template-rows: auto 1fr;
   grid-template-columns: 292px 1fr;
   background:
-    radial-gradient(900px 340px at -18% -6%, rgba(56, 142, 255, 0.07), transparent 62%),
-    radial-gradient(800px 320px at 112% -8%, rgba(56, 189, 248, 0.06), transparent 62%);
+    radial-gradient(
+      900px 340px at -18% -6%,
+      rgba(56, 142, 255, 0.07),
+      transparent 62%
+    ),
+    radial-gradient(
+      800px 320px at 112% -8%,
+      rgba(56, 189, 248, 0.06),
+      transparent 62%
+    );
 }
 
 .appShell.appShellSidebarCollapsed {
@@ -8297,7 +8925,9 @@ html[data-theme='light'] .modalOverlay {
 
 .appShellWithTopbarContent .topbarMain {
   display: grid;
-  grid-template-columns: minmax(150px, max-content) minmax(320px, 1fr) max-content;
+  grid-template-columns:
+    minmax(150px, max-content) minmax(320px, 1fr)
+    max-content;
   column-gap: 18px;
 }
 
@@ -8330,6 +8960,68 @@ html[data-theme='light'] .modalOverlay {
   box-shadow: none;
 }
 
+.appShellWithDetailSidebar .topActions {
+  padding: 4px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 76%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel2) 54%, transparent);
+}
+
+.appShellWithDetailSidebar .topActions .btn {
+  height: 36px;
+  min-height: 36px;
+  padding: 0 13px;
+  border-radius: 10px;
+  font-weight: 650;
+  box-shadow: none !important;
+}
+
+.appShellWithDetailSidebar .topActions .btn:hover:not(:disabled) {
+  transform: none;
+}
+
+.appShellWithDetailSidebar .topActions .btnGhost,
+.appShellWithDetailSidebar .topActions .btnDanger {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+
+.appShellWithDetailSidebar .topActions .btnGhost:hover:not(:disabled),
+.appShellWithDetailSidebar .topActions .btnDanger:hover:not(:disabled) {
+  background: color-mix(
+    in srgb,
+    var(--dockrev-surface-strong) 84%,
+    transparent
+  );
+  border-color: color-mix(in srgb, var(--borderColor) 78%, transparent);
+  color: var(--text);
+}
+
+.appShellWithDetailSidebar .topbarRight .btn.btnPrimary {
+  background: color-mix(
+    in srgb,
+    var(--panel) 78%,
+    var(--color-primary) 22%
+  ) !important;
+  color: var(--text) !important;
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 28%,
+    var(--borderColor) 72%
+  );
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, white 8%, transparent) !important;
+}
+
+.appShellWithDetailSidebar .topbarRight .btn.btnPrimary:hover:not(:disabled) {
+  background: color-mix(
+    in srgb,
+    var(--panel) 72%,
+    var(--color-primary) 28%
+  ) !important;
+  filter: none;
+}
+
 .brand {
   gap: 6px;
   font-size: 19px;
@@ -8359,7 +9051,7 @@ html[data-theme='light'] .modalOverlay {
   filter: none;
 }
 
-html[data-theme='light'] .brandLogoThemeSwitch {
+html[data-theme="light"] .brandLogoThemeSwitch {
   filter: none;
 }
 
@@ -8415,8 +9107,16 @@ html[data-theme='light'] .brandLogoThemeSwitch {
 }
 
 .sidebarCollapseButton:hover {
-  border-color: color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
-  background: color-mix(in srgb, var(--dockrev-surface-strong) 88%, transparent);
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 34%,
+    var(--borderColor) 66%
+  );
+  background: color-mix(
+    in srgb,
+    var(--dockrev-surface-strong) 88%,
+    transparent
+  );
   color: var(--text);
 }
 
@@ -8466,11 +9166,19 @@ html[data-theme='light'] .brandLogoThemeSwitch {
 }
 
 .navItem:hover {
-  background: color-mix(in srgb, var(--dockrev-surface-strong) 82%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--dockrev-surface-strong) 82%,
+    transparent
+  );
 }
 
 .navItemActive {
-  background: color-mix(in srgb, var(--dockrev-surface-strong) 88%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--dockrev-surface-strong) 88%,
+    transparent
+  );
   color: color-mix(in srgb, var(--text) 88%, var(--color-primary) 12%);
   font-size: 13px;
   font-weight: 670;
@@ -8600,43 +9308,53 @@ html[data-theme='light'] .brandLogoThemeSwitch {
   padding: 32px 30px 40px;
 }
 
-html[data-theme='light'] .appShell {
+html[data-theme="light"] .appShell {
   background:
-    radial-gradient(980px 360px at -20% -8%, rgba(70, 149, 229, 0.03), transparent 62%),
-    radial-gradient(820px 300px at 112% -12%, rgba(26, 144, 219, 0.02), transparent 60%),
+    radial-gradient(
+      980px 360px at -20% -8%,
+      rgba(70, 149, 229, 0.03),
+      transparent 62%
+    ),
+    radial-gradient(
+      820px 300px at 112% -12%,
+      rgba(26, 144, 219, 0.02),
+      transparent 60%
+    ),
     linear-gradient(180deg, #fafcff 0%, #f7fbff 100%);
 }
 
-html[data-theme='light'] .topbar {
+html[data-theme="light"] .topbar {
   background: color-mix(in srgb, #ffffff 88%, var(--color-base-200) 12%);
   border-bottom-color: color-mix(in srgb, var(--borderColor) 78%, transparent);
 }
 
-html[data-theme='light'] .sidebar {
+html[data-theme="light"] .sidebar {
   background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
   box-shadow: inset -1px 0 0 rgba(12, 121, 207, 0.12);
 }
 
-html[data-theme='light'] .chipStatic,
-html[data-theme='light'] .chip {
+html[data-theme="light"] .chipStatic,
+html[data-theme="light"] .chip {
   background: color-mix(in srgb, #ffffff 93%, var(--color-primary) 7%);
 }
 
-html[data-theme='light'] .topbarUserPopover {
+html[data-theme="light"] .topbarUserPopover {
   box-shadow: 0 18px 64px rgba(2, 6, 23, 0.18);
 }
 
-html[data-theme='light'] .tableHeader,
-html[data-theme='light'] .groupHead,
-html[data-theme='light'] .rowLine {
+html[data-theme="light"] .tableHeader,
+html[data-theme="light"] .groupHead,
+html[data-theme="light"] .rowLine {
   background: #ffffff;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--borderColor) 74%, transparent);
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--borderColor) 74%, transparent);
 }
 
-html[data-theme='light'] .groupHead:hover,
-html[data-theme='light'] .rowLine:hover {
+html[data-theme="light"] .groupHead:hover,
+html[data-theme="light"] .rowLine:hover {
   background: color-mix(in srgb, #ffffff 92%, var(--color-primary) 8%);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 28%, var(--borderColor) 72%);
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--color-primary) 28%, var(--borderColor) 72%);
 }
 
 .mobileDockrevPanel {
@@ -8708,31 +9426,28 @@ html[data-theme='light'] .rowLine:hover {
 .card {
   border-radius: 16px;
   border: 1px solid var(--borderColor);
-  background:
-    linear-gradient(
-      160deg,
-      color-mix(in srgb, var(--panel) 92%, var(--color-primary) 8%) 0%,
-      color-mix(in srgb, var(--panel) 96%, var(--panel2) 4%) 100%
-    );
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--panel) 92%, var(--color-primary) 8%) 0%,
+    color-mix(in srgb, var(--panel) 96%, var(--panel2) 4%) 100%
+  );
   box-shadow: var(--shadow-soft);
 }
 
-html[data-theme='dark'] .card {
-  background:
-    linear-gradient(
-      165deg,
-      color-mix(in srgb, var(--panel) 78%, var(--panel2) 22%) 0%,
-      color-mix(in srgb, var(--panel2) 92%, #020916 8%) 100%
-    );
+html[data-theme="dark"] .card {
+  background: linear-gradient(
+    165deg,
+    color-mix(in srgb, var(--panel) 78%, var(--panel2) 22%) 0%,
+    color-mix(in srgb, var(--panel2) 92%, #020916 8%) 100%
+  );
 }
 
-html[data-theme='light'] .card {
-  background:
-    linear-gradient(
-      170deg,
-      color-mix(in srgb, #ffffff 98%, var(--color-primary) 2%) 0%,
-      color-mix(in srgb, #ffffff 99%, var(--color-base-200) 1%) 100%
-    );
+html[data-theme="light"] .card {
+  background: linear-gradient(
+    170deg,
+    color-mix(in srgb, #ffffff 98%, var(--color-primary) 2%) 0%,
+    color-mix(in srgb, #ffffff 99%, var(--color-base-200) 1%) 100%
+  );
 }
 
 .btn {
@@ -8768,7 +9483,7 @@ html[data-theme='light'] .card {
     inset 0 0 0 1px color-mix(in srgb, #ffffff 34%, transparent);
 }
 
-html[data-theme='light'] .btnPrimary {
+html[data-theme="light"] .btnPrimary {
   background: linear-gradient(
     150deg,
     oklch(0.48 0.14 250) 0%,
@@ -8803,8 +9518,16 @@ html[data-theme='light'] .btnPrimary {
 }
 
 .btnGhost:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--color-primary) 42%, var(--borderColor) 58%);
-  background: color-mix(in srgb, var(--dockrev-surface-strong) 88%, transparent);
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 42%,
+    var(--borderColor) 58%
+  );
+  background: color-mix(
+    in srgb,
+    var(--dockrev-surface-strong) 88%,
+    transparent
+  );
 }
 
 .btnPrimary:hover:not(:disabled),
@@ -8828,7 +9551,11 @@ html[data-theme='light'] .btnPrimary {
 .buttonHintFloating {
   position: fixed;
   --button-hint-bg: color-mix(in srgb, var(--panel2) 94%, #020814 6%);
-  --button-hint-border: color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  --button-hint-border: color-mix(
+    in srgb,
+    var(--color-primary) 34%,
+    var(--borderColor) 66%
+  );
   width: max-content;
   min-width: 140px;
   max-width: min(320px, calc(100vw - 28px));
@@ -8903,13 +9630,20 @@ html[data-theme='light'] .btnPrimary {
   left: var(--responsive-action-bubble-anchor-left);
   right: var(--responsive-action-bubble-anchor-right);
   bottom: calc(100% + 10px);
-  transform: translate(calc(var(--responsive-action-bubble-shift-x) + var(--responsive-action-bubble-offset-x)), 4px);
+  transform: translate(
+    calc(
+      var(--responsive-action-bubble-shift-x) +
+        var(--responsive-action-bubble-offset-x)
+    ),
+    4px
+  );
   width: max-content;
   min-width: 120px;
   max-width: min(300px, calc(100vw - 28px));
   padding: 8px 11px;
   border-radius: 12px;
-  border: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  border: 1px solid
+    color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
   background: color-mix(in srgb, var(--panel2) 94%, #020814 6%);
   color: var(--text);
   font-size: 11px;
@@ -8930,14 +9664,16 @@ html[data-theme='light'] .btnPrimary {
 }
 
 .responsiveActionBtnBubble::after {
-  content: '';
+  content: "";
   position: absolute;
   left: var(--responsive-action-bubble-arrow-left);
   top: 100%;
   width: 9px;
   height: 9px;
-  border-right: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
-  border-bottom: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  border-right: 1px solid
+    color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
   background: color-mix(in srgb, var(--panel2) 94%, #020814 6%);
   transform: translate(-50%, -50%) rotate(45deg);
 }
@@ -8946,15 +9682,23 @@ html[data-theme='light'] .btnPrimary {
   top: 0;
   border-right: 0;
   border-bottom: 0;
-  border-left: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
-  border-top: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  border-left: 1px solid
+    color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  border-top: 1px solid
+    color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
 }
 
 .responsiveActionBtnHasHint:hover .responsiveActionBtnBubble,
 .responsiveActionBtnHasHint:focus-visible .responsiveActionBtnBubble,
 .responsiveActionBtnShowBubble .responsiveActionBtnBubble {
   opacity: 1;
-  transform: translate(calc(var(--responsive-action-bubble-shift-x) + var(--responsive-action-bubble-offset-x)), 0);
+  transform: translate(
+    calc(
+      var(--responsive-action-bubble-shift-x) +
+        var(--responsive-action-bubble-offset-x)
+    ),
+    0
+  );
 }
 
 .chipStatic,
@@ -8981,13 +9725,25 @@ html[data-theme='light'] .btnPrimary {
 }
 
 .chip:hover {
-  background: color-mix(in srgb, var(--dockrev-surface-strong) 90%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--dockrev-surface-strong) 90%,
+    transparent
+  );
 }
 
 .chipActive {
   color: var(--text);
-  border-color: color-mix(in srgb, var(--color-primary) 38%, var(--borderColor) 62%);
-  background: color-mix(in srgb, var(--color-primary) 20%, var(--dockrev-surface) 80%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 38%,
+    var(--borderColor) 62%
+  );
+  background: color-mix(
+    in srgb,
+    var(--color-primary) 20%,
+    var(--dockrev-surface) 80%
+  );
 }
 
 .chipCount {
@@ -9016,13 +9772,22 @@ html[data-theme='light'] .btnPrimary {
 
 .input:hover,
 .select:hover {
-  border-color: color-mix(in srgb, var(--color-primary) 30%, var(--borderColor) 70%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 30%,
+    var(--borderColor) 70%
+  );
 }
 
 .input:focus,
 .select:focus {
-  border-color: color-mix(in srgb, var(--color-primary) 44%, var(--borderColor) 56%);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 18%, transparent);
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 44%,
+    var(--borderColor) 56%
+  );
+  box-shadow: 0 0 0 3px
+    color-mix(in srgb, var(--color-primary) 18%, transparent);
 }
 
 .table {
@@ -9039,13 +9804,19 @@ html[data-theme='light'] .btnPrimary {
   border: 0;
   background: color-mix(in srgb, var(--dockrev-surface) 82%, transparent);
   border-radius: 12px;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--borderColor) 84%, transparent);
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--borderColor) 84%, transparent);
 }
 
 .groupHead:hover,
 .rowLine:hover {
-  background: color-mix(in srgb, var(--dockrev-surface-strong) 86%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 26%, var(--borderColor) 74%);
+  background: color-mix(
+    in srgb,
+    var(--dockrev-surface-strong) 86%,
+    transparent
+  );
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--color-primary) 26%, var(--borderColor) 74%);
 }
 
 .groupTitle {
@@ -9063,7 +9834,9 @@ html[data-theme='light'] .btnPrimary {
 
 .groupGuide {
   opacity: 0.72;
-  top: calc(var(--dockrev-table-group-head-height) + var(--dockrev-table-group-gap));
+  top: calc(
+    var(--dockrev-table-group-head-height) + var(--dockrev-table-group-gap)
+  );
 }
 
 .versionInferenceProgressBar,
@@ -9082,14 +9855,21 @@ html[data-theme='light'] .btnPrimary {
 
 .queueItem:hover,
 .versionInferenceItem:hover {
-  border-color: color-mix(in srgb, var(--color-primary) 26%, var(--borderColor) 74%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 26%,
+    var(--borderColor) 74%
+  );
 }
 
 .logs {
   border-radius: 12px;
   border: 1px solid var(--borderColor);
-  background:
-    linear-gradient(170deg, color-mix(in srgb, var(--panel2) 82%, transparent) 0%, var(--panel) 100%);
+  background: linear-gradient(
+    170deg,
+    color-mix(in srgb, var(--panel2) 82%, transparent) 0%,
+    var(--panel) 100%
+  );
 }
 
 .logTs {
@@ -9103,12 +9883,11 @@ html[data-theme='light'] .btnPrimary {
 .modalCard {
   border: 1px solid var(--surface-border-strong);
   border-radius: 16px;
-  background:
-    linear-gradient(
-      160deg,
-      color-mix(in srgb, var(--panel) 94%, var(--color-primary) 6%) 0%,
-      color-mix(in srgb, var(--panel) 97%, var(--panel2) 3%) 100%
-    );
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--panel) 94%, var(--color-primary) 6%) 0%,
+    color-mix(in srgb, var(--panel) 97%, var(--panel2) 3%) 100%
+  );
   box-shadow: var(--shadow-card);
 }
 
@@ -9116,12 +9895,11 @@ html[data-theme='light'] .btnPrimary {
   border-radius: 14px;
   border-color: var(--surface-border-strong);
   box-shadow: var(--shadow-card);
-  background:
-    linear-gradient(
-      160deg,
-      color-mix(in srgb, var(--panel) 94%, var(--color-primary) 6%) 0%,
-      color-mix(in srgb, var(--panel) 98%, var(--panel2) 2%) 100%
-    );
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--panel) 94%, var(--color-primary) 6%) 0%,
+    color-mix(in srgb, var(--panel) 98%, var(--panel2) 2%) 100%
+  );
 }
 
 .versionTagsChip {
@@ -9139,8 +9917,16 @@ html[data-theme='light'] .btnPrimary {
 .deployWelcomeRoot {
   padding: 26px 16px 42px;
   background:
-    radial-gradient(760px 320px at -10% -12%, color-mix(in srgb, var(--color-primary) 20%, transparent), transparent 62%),
-    radial-gradient(700px 280px at 110% -15%, color-mix(in srgb, var(--color-info) 18%, transparent), transparent 60%);
+    radial-gradient(
+      760px 320px at -10% -12%,
+      color-mix(in srgb, var(--color-primary) 20%, transparent),
+      transparent 62%
+    ),
+    radial-gradient(
+      700px 280px at 110% -15%,
+      color-mix(in srgb, var(--color-info) 18%, transparent),
+      transparent 60%
+    );
 }
 
 .deployWelcomeMain {
@@ -9174,8 +9960,16 @@ html[data-theme='light'] .btnPrimary {
 
 .deployChecklistList > li:hover,
 .deployChecklistItem:hover {
-  border-color: color-mix(in srgb, var(--color-primary) 26%, var(--borderColor) 74%);
-  background: color-mix(in srgb, var(--dockrev-surface-strong) 82%, transparent);
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 26%,
+    var(--borderColor) 74%
+  );
+  background: color-mix(
+    in srgb,
+    var(--dockrev-surface-strong) 82%,
+    transparent
+  );
 }
 
 @media (max-width: 1160px) {
@@ -9196,8 +9990,8 @@ html[data-theme='light'] .btnPrimary {
   .appShell {
     grid-template-columns: 1fr;
     grid-template-areas:
-      'top'
-      'main';
+      "top"
+      "main";
   }
 
   .appShell.appShellSidebarCollapsed {
@@ -9231,6 +10025,54 @@ html[data-theme='light'] .btnPrimary {
 
   .topbarRight {
     gap: 10px;
+  }
+
+  .appShellWithDetailSidebar .topbar {
+    padding-bottom: 10px;
+  }
+
+  .appShellWithDetailSidebar .topbarMain {
+    min-height: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    row-gap: 10px;
+    padding-top: 12px;
+  }
+
+  .appShellWithDetailSidebar .topbarRight {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 10px;
+  }
+
+  .appShellWithDetailSidebar .topActions {
+    order: 2;
+    flex: 0 0 100%;
+    min-width: 100%;
+    gap: 6px;
+    justify-content: flex-start;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .appShellWithDetailSidebar .topActions::-webkit-scrollbar {
+    display: none;
+  }
+
+  .appShellWithDetailSidebar .topActions .btn {
+    flex: 0 0 auto;
+    height: 34px;
+    min-height: 34px;
+    padding: 0 10px;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .appShellWithDetailSidebar .topbarUserSlot {
+    order: 1;
+    margin-left: auto;
+    flex: 0 0 auto;
   }
 
   .brandLogo,
@@ -9293,7 +10135,11 @@ html[data-theme='light'] .btnPrimary {
     padding: 0;
     border: 1px solid var(--borderColor);
     border-radius: 14px;
-    background: color-mix(in srgb, var(--dockrev-surface) 84%, var(--panel2) 16%);
+    background: color-mix(
+      in srgb,
+      var(--dockrev-surface) 84%,
+      var(--panel2) 16%
+    );
     color: var(--text);
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.04),
@@ -9354,14 +10200,14 @@ html[data-theme='light'] .btnPrimary {
     width: min(344px, 86vw);
     flex-direction: column;
     border-right: 1px solid var(--borderColor);
-    background:
-      linear-gradient(
-        180deg,
-        color-mix(in srgb, var(--panel) 94%, var(--color-primary) 6%) 0%,
-        color-mix(in srgb, var(--panel2) 92%, #020916 8%) 100%
-      );
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--panel) 94%, var(--color-primary) 6%) 0%,
+      color-mix(in srgb, var(--panel2) 92%, #020916 8%) 100%
+    );
     box-shadow: 24px 0 64px rgba(1, 8, 20, 0.46);
-    padding: max(18px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+    padding: max(18px, env(safe-area-inset-top)) 16px
+      max(16px, env(safe-area-inset-bottom));
     overflow-y: auto;
     animation: mobileDrawerIn 190ms cubic-bezier(0.22, 1, 0.36, 1);
   }
@@ -9461,12 +10307,11 @@ html[data-theme='light'] .btnPrimary {
     gap: 9px;
     border: 1px solid color-mix(in srgb, var(--borderColor) 64%, transparent);
     border-radius: 14px;
-    background:
-      linear-gradient(
-        180deg,
-        color-mix(in srgb, var(--panel2) 88%, var(--color-primary) 4%),
-        color-mix(in srgb, var(--panel2) 82%, #020916 18%)
-      );
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--panel2) 88%, var(--color-primary) 4%),
+      color-mix(in srgb, var(--panel2) 82%, #020916 18%)
+    );
     box-shadow: 0 14px 36px rgba(1, 8, 20, 0.34);
     color: var(--text);
     padding: 10px;
@@ -9568,7 +10413,7 @@ html[data-theme='light'] .btnPrimary {
     width: 3px;
     border-radius: 999px;
     background: transparent;
-    content: '';
+    content: "";
   }
 
   .mobileNavItem:hover {
@@ -9578,7 +10423,11 @@ html[data-theme='light'] .btnPrimary {
 
   .mobileNavItemActive {
     color: var(--text);
-    background: linear-gradient(90deg, color-mix(in srgb, var(--color-primary) 10%, transparent), transparent 72%);
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--color-primary) 10%, transparent),
+      transparent 72%
+    );
     font-weight: 720;
   }
 
@@ -9884,7 +10733,8 @@ html[data-theme='light'] .btnPrimary {
   }
 
   .ghcrInboxCell + .ghcrInboxCell {
-    border-top: 1px dashed color-mix(in srgb, var(--borderColor) 72%, transparent);
+    border-top: 1px dashed
+      color-mix(in srgb, var(--borderColor) 72%, transparent);
   }
 }
 
@@ -9985,8 +10835,18 @@ html[data-theme='light'] .btnPrimary {
 }
 
 .jobTypeTag-cleanup {
-  border-color: color-mix(in srgb, var(--color-error) 28%, var(--color-warning) 30%, var(--borderColor) 42%);
-  background: color-mix(in srgb, var(--color-error) 10%, var(--color-warning) 8%, transparent);
+  border-color: color-mix(
+    in srgb,
+    var(--color-error) 28%,
+    var(--color-warning) 30%,
+    var(--borderColor) 42%
+  );
+  background: color-mix(
+    in srgb,
+    var(--color-error) 10%,
+    var(--color-warning) 8%,
+    transparent
+  );
   color: color-mix(in srgb, var(--color-error) 62%, var(--color-warning) 38%);
 }
 
@@ -10002,14 +10862,19 @@ html[data-theme='light'] .btnPrimary {
     color-mix(in srgb, var(--panel) 97%, transparent) 0%,
     color-mix(in srgb, var(--dockrev-surface) 88%, transparent) 100%
   );
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-primary) 10%, transparent);
+  box-shadow: inset 0 1px 0
+    color-mix(in srgb, var(--color-primary) 10%, transparent);
 }
 
 .cleanupStatusCard {
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--borderColor) 84%, transparent);
   background:
-    radial-gradient(circle at top right, color-mix(in srgb, var(--color-primary) 8%, transparent) 0%, transparent 32%),
+    radial-gradient(
+      circle at top right,
+      color-mix(in srgb, var(--color-primary) 8%, transparent) 0%,
+      transparent 32%
+    ),
     linear-gradient(
       180deg,
       color-mix(in srgb, var(--panel) 98%, transparent) 0%,
@@ -10058,7 +10923,10 @@ html[data-theme='light'] .btnPrimary {
 }
 
 .cleanupStatusStats {
-  grid-template-columns: minmax(190px, 1.2fr) minmax(170px, 1fr) minmax(150px, 0.9fr);
+  grid-template-columns: minmax(190px, 1.2fr) minmax(170px, 1fr) minmax(
+      150px,
+      0.9fr
+    );
   min-width: min(620px, 100%);
 }
 
@@ -10153,18 +11021,30 @@ html[data-theme='light'] .btnPrimary {
   border-radius: 16px;
   border: 1px solid color-mix(in srgb, var(--borderColor) 84%, transparent);
   background:
-    radial-gradient(circle at top right, color-mix(in srgb, currentColor 9%, transparent) 0%, transparent 38%),
-    linear-gradient(180deg, color-mix(in srgb, var(--dockrev-surface) 92%, transparent) 0%, color-mix(in srgb, var(--panel) 86%, transparent) 100%);
+    radial-gradient(
+      circle at top right,
+      color-mix(in srgb, currentColor 9%, transparent) 0%,
+      transparent 38%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--dockrev-surface) 92%, transparent) 0%,
+      color-mix(in srgb, var(--panel) 86%, transparent) 100%
+    );
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, currentColor 10%, transparent),
     0 14px 32px rgba(2, 6, 23, 0.16);
 }
 
 .cleanupUsageCard::after {
-  content: '';
+  content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(135deg, color-mix(in srgb, currentColor 8%, transparent) 0%, transparent 56%);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, currentColor 8%, transparent) 0%,
+    transparent 56%
+  );
   opacity: 0.9;
   pointer-events: none;
 }
@@ -10252,7 +11132,11 @@ html[data-theme='light'] .btnPrimary {
   height: 100%;
   min-width: 0;
   border-radius: inherit;
-  background: linear-gradient(90deg, color-mix(in srgb, currentColor 68%, transparent) 0%, color-mix(in srgb, var(--text) 18%, currentColor 82%) 100%);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, currentColor 68%, transparent) 0%,
+    color-mix(in srgb, var(--text) 18%, currentColor 82%) 100%
+  );
   box-shadow: 0 0 16px color-mix(in srgb, currentColor 24%, transparent);
 }
 
@@ -10272,7 +11156,7 @@ html[data-theme='light'] .btnPrimary {
 }
 
 .cleanupStaleLoading::before {
-  content: '';
+  content: "";
   position: absolute;
   inset: 0;
   z-index: 0;
@@ -10301,7 +11185,11 @@ html[data-theme='light'] .btnPrimary {
     border-color: color-mix(in srgb, var(--borderColor) 84%, transparent);
   }
   50% {
-    border-color: color-mix(in srgb, var(--color-primary) 28%, var(--borderColor) 72%);
+    border-color: color-mix(
+      in srgb,
+      var(--color-primary) 28%,
+      var(--borderColor) 72%
+    );
   }
 }
 
@@ -10397,19 +11285,28 @@ html[data-theme='light'] .btnPrimary {
 }
 
 .cleanupPresetTab:hover {
-  background: color-mix(in srgb, var(--dockrev-surface-strong) 76%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--dockrev-surface-strong) 76%,
+    transparent
+  );
   color: var(--text);
 }
 
 .cleanupPresetTabActive {
-  border-color: color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 34%,
+    var(--borderColor) 66%
+  );
   background: linear-gradient(
     135deg,
     color-mix(in srgb, var(--color-primary) 18%, var(--dockrev-surface) 82%) 0%,
     color-mix(in srgb, var(--dockrev-surface-strong) 88%, transparent) 100%
   );
   color: var(--text);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 18%, transparent);
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--color-primary) 18%, transparent);
 }
 
 .cleanupAlert {
@@ -10422,19 +11319,31 @@ html[data-theme='light'] .btnPrimary {
 }
 
 .cleanupAlertWarn {
-  border-color: color-mix(in srgb, var(--color-warning) 26%, var(--borderColor) 74%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-warning) 26%,
+    var(--borderColor) 74%
+  );
   background: color-mix(in srgb, var(--color-warning) 10%, transparent);
   color: color-mix(in srgb, var(--color-warning) 72%, var(--text) 28%);
 }
 
 .cleanupAlertInfo {
-  border-color: color-mix(in srgb, var(--color-primary) 24%, var(--borderColor) 76%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 24%,
+    var(--borderColor) 76%
+  );
   background: color-mix(in srgb, var(--color-primary) 10%, transparent);
   color: color-mix(in srgb, var(--color-primary) 72%, var(--text) 28%);
 }
 
 .cleanupAlertError {
-  border-color: color-mix(in srgb, var(--color-error) 28%, var(--borderColor) 72%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-error) 28%,
+    var(--borderColor) 72%
+  );
   background: color-mix(in srgb, var(--color-error) 10%, transparent);
   color: color-mix(in srgb, var(--color-error) 76%, var(--text) 24%);
 }
@@ -10479,7 +11388,8 @@ html[data-theme='light'] .btnPrimary {
 }
 
 .cleanupGroupHeadWarn {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-warning) 22%, var(--borderColor) 78%);
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--color-warning) 22%, var(--borderColor) 78%);
 }
 
 .cleanupRowLine {
@@ -10499,7 +11409,11 @@ html[data-theme='light'] .btnPrimary {
 }
 
 .cleanupSvcBulletWarn {
-  background: color-mix(in srgb, var(--color-warning) 82%, var(--dockrev-accent-dot) 18%);
+  background: color-mix(
+    in srgb,
+    var(--color-warning) 82%,
+    var(--dockrev-accent-dot) 18%
+  );
 }
 
 .cleanupCellSummary,
@@ -10554,7 +11468,11 @@ html[data-theme='light'] .btnPrimary {
 }
 
 .cleanupResourceKindImage {
-  border-color: color-mix(in srgb, var(--color-primary) 28%, var(--borderColor) 72%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 28%,
+    var(--borderColor) 72%
+  );
   background: color-mix(in srgb, var(--color-primary) 10%, transparent);
   color: color-mix(in srgb, var(--color-primary) 72%, var(--text) 28%);
 }
@@ -10567,7 +11485,11 @@ html[data-theme='light'] .btnPrimary {
 
 .cleanupResourceKindVolume,
 .cleanupResourceKindBuilderCache {
-  border-color: color-mix(in srgb, var(--color-warning) 28%, var(--borderColor) 72%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-warning) 28%,
+    var(--borderColor) 72%
+  );
   background: color-mix(in srgb, var(--color-warning) 10%, transparent);
   color: color-mix(in srgb, var(--color-warning) 74%, var(--text) 26%);
 }
@@ -10868,12 +11790,11 @@ html[data-theme='light'] .btnPrimary {
   width: min(360px, calc(100vw - 28px));
   border: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
   border-radius: 12px;
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--panel2) 92%, var(--color-primary) 5%),
-      color-mix(in srgb, var(--panel2) 86%, #020916 14%)
-    );
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--panel2) 92%, var(--color-primary) 5%),
+    color-mix(in srgb, var(--panel2) 86%, #020916 14%)
+  );
   box-shadow: 0 18px 48px rgba(1, 8, 20, 0.42);
   padding: 8px;
 }
@@ -11302,7 +12223,8 @@ html[data-theme='light'] .btnPrimary {
     oklch(0.34 0.032 252 / 0.42)
   );
   background-size: 220% 100%;
-  animation: homepageSkeletonSweep 1400ms cubic-bezier(0.22, 1, 0.36, 1) infinite;
+  animation: homepageSkeletonSweep 1400ms cubic-bezier(0.22, 1, 0.36, 1)
+    infinite;
 }
 
 .homepageSkeletonLine {
@@ -11348,8 +12270,8 @@ html[data-theme='light'] .btnPrimary {
   }
 }
 
-html[data-theme='light'] .homepageDashboardPage,
-html[data-theme='light'] .homepageHeaderContent {
+html[data-theme="light"] .homepageDashboardPage,
+html[data-theme="light"] .homepageHeaderContent {
   --homepage-line: oklch(0.54 0.036 252 / 0.26);
   --homepage-panel: oklch(0.97 0.012 252 / 0.96);
   --homepage-panel-strong: oklch(0.95 0.018 252 / 0.98);
@@ -11359,24 +12281,23 @@ html[data-theme='light'] .homepageHeaderContent {
   --homepage-text-dim: oklch(0.36 0.032 252 / 0.96);
 }
 
-html[data-theme='light'] .homepageOverviewSearchShell {
+html[data-theme="light"] .homepageOverviewSearchShell {
   background: oklch(0.98 0.01 252 / 0.98);
 }
 
-html[data-theme='light'] .homepageDashboardGroupHeader span {
+html[data-theme="light"] .homepageDashboardGroupHeader span {
   border-color: oklch(0.52 0.052 248 / 0.28);
   background: oklch(0.88 0.026 252 / 0.94);
   color: oklch(0.3 0.056 248);
   box-shadow: inset 0 1px 0 oklch(0.98 0.006 252 / 0.72);
 }
 
-html[data-theme='light'] .homepageHeaderSearchPopover {
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--panel2) 94%, var(--color-primary) 3%),
-      color-mix(in srgb, var(--panel2) 90%, #e9f3ff 10%)
-    );
+html[data-theme="light"] .homepageHeaderSearchPopover {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--panel2) 94%, var(--color-primary) 3%),
+    color-mix(in srgb, var(--panel2) 90%, #e9f3ff 10%)
+  );
   box-shadow: 0 18px 42px oklch(0.42 0.05 252 / 0.18);
 }
 
@@ -11517,14 +12438,22 @@ html[data-theme='light'] .homepageHeaderSearchPopover {
     height: 44px;
     border: 1px solid var(--borderColor);
     border-radius: 11px;
-    background: color-mix(in srgb, var(--dockrev-surface) 88%, var(--panel2) 12%);
+    background: color-mix(
+      in srgb,
+      var(--dockrev-surface) 88%,
+      var(--panel2) 12%
+    );
     color: var(--text);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
   }
 
   .homepageHeaderSearchToggle:hover,
   .homepageHeaderSearchToggle:focus-visible {
-    border-color: color-mix(in srgb, var(--color-primary) 60%, var(--borderColor));
+    border-color: color-mix(
+      in srgb,
+      var(--color-primary) 60%,
+      var(--borderColor)
+    );
     outline: none;
   }
 
