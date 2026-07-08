@@ -67,6 +67,7 @@ export function StackDetailPage(props: {
     'missing',
   )
   const [snapshotFetchedAt, setSnapshotFetchedAt] = useState<string | null>(null)
+  const [snapshotAnchorFetchedAt, setSnapshotAnchorFetchedAt] = useState<string | null>(null)
   const [snapshotActive, setSnapshotActive] = useState(false)
 
   const refresh = useCallback(async () => {
@@ -82,6 +83,7 @@ export function StackDetailPage(props: {
     setCachedPolicy(settingsRes.autoUpdatePolicy ?? null)
     setJobs(jobsRes)
     setSnapshotActive(false)
+    setSnapshotAnchorFetchedAt(null)
   }, [onLastScanHint, stackId])
 
   useEffect(() => {
@@ -91,6 +93,7 @@ export function StackDetailPage(props: {
       if (cancelled) return
       setSnapshotStatus(snapshot.status)
       setSnapshotFetchedAt(snapshot.record?.fetchedAt ?? null)
+      setSnapshotAnchorFetchedAt(snapshot.record?.fetchedAt ?? null)
       if (snapshot.status !== 'fresh') return
       setStack(snapshot.record.payload.stack)
       setJobs(snapshot.record.payload.jobs)
@@ -115,9 +118,12 @@ export function StackDetailPage(props: {
         jobs,
         policy: settings?.autoUpdatePolicy ?? cachedPolicy ?? null,
       },
-      { staleAfterMs: STACK_DETAIL_SNAPSHOT_STALE_MS },
+      {
+        staleAfterMs: STACK_DETAIL_SNAPSHOT_STALE_MS,
+        fetchedAt: snapshotAnchorFetchedAt ? Date.parse(snapshotAnchorFetchedAt) || undefined : undefined,
+      },
     )
-  }, [cachedPolicy, jobs, settings?.autoUpdatePolicy, snapshotKey, stack])
+  }, [cachedPolicy, jobs, settings?.autoUpdatePolicy, snapshotAnchorFetchedAt, snapshotKey, stack])
 
   useEffect(() => {
     onTopActions(

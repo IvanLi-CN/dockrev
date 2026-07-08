@@ -54,6 +54,7 @@ export function useServiceDetailPageState(props: {
   const applyActiveJob = applyActionKey ? getActiveJobByTarget(applyActionKey) : null
   const applySubmitting = applyActionKey ? isTargetSubmitting(applyActionKey) : false
   const [rollbackTargetRefreshing, setRollbackTargetRefreshing] = useState(false)
+  const [lastSuccessfulRefreshAt, setLastSuccessfulRefreshAt] = useState<string | null>(null)
   const rollbackStatusSource = rollbackTarget ?? rollbackActiveTarget
   const rollbackActiveJobId = (rollbackStatusSource?.activeJobId ?? '').trim() || null
   const rollbackActiveJobStatus = (rollbackStatusSource?.activeJobStatus ?? '').trim() || null
@@ -176,6 +177,7 @@ export function useServiceDetailPageState(props: {
         setRollbackTarget(null); setRollbackActiveTarget(null); setRollbackTargetRefreshing(false)
       }
       if (errors.length > 0) throw new Error(errors.join(' · '))
+      setLastSuccessfulRefreshAt(new Date().toISOString())
     } catch (error: unknown) {
       if (!appliedFullRefreshRoot && stackRequestId < latestAppliedStackRefreshRequestIdRef.current) return
       if (appliedFullRefreshRoot && fullRefreshRequestId < latestAppliedFullRefreshRequestIdRef.current) return
@@ -1083,6 +1085,7 @@ export function useServiceDetailPageState(props: {
     dotClass,
     draftRepoUrl,
     error,
+    lastSuccessfulRefreshAt,
     newRuleKind,
     newRuleNote,
     newRuleValue,

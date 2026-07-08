@@ -197,6 +197,7 @@ export function ServiceDetailPage(props: {
     dotClass,
     draftRepoUrl,
     error,
+    lastSuccessfulRefreshAt,
     newRuleKind,
     newRuleNote,
     newRuleValue,
@@ -231,6 +232,7 @@ export function ServiceDetailPage(props: {
     'missing',
   )
   const [snapshotFetchedAt, setSnapshotFetchedAt] = useState<string | null>(null)
+  const [snapshotAnchorFetchedAt, setSnapshotAnchorFetchedAt] = useState<string | null>(null)
   const [snapshotActive, setSnapshotActive] = useState(false)
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false)
   const [tagDrawerOpen, setTagDrawerOpen] = useState(false)
@@ -253,6 +255,7 @@ export function ServiceDetailPage(props: {
       if (cancelled) return
       setSnapshotStatus(snapshot.status)
       setSnapshotFetchedAt(snapshot.record?.fetchedAt ?? null)
+      setSnapshotAnchorFetchedAt(snapshot.record?.fetchedAt ?? null)
       if (snapshot.status !== 'fresh') return
       setSnapshotPayload(snapshot.record.payload)
       setMonitoringSnapshot(snapshot.record.payload.monitoring ?? null)
@@ -306,8 +309,13 @@ export function ServiceDetailPage(props: {
   }, [isOnline, props.serviceId])
 
   useEffect(() => {
-    if (!stack || !service) return
+    if (!lastSuccessfulRefreshAt) return
     setSnapshotActive(false)
+    setSnapshotAnchorFetchedAt(null)
+  }, [lastSuccessfulRefreshAt])
+
+  useEffect(() => {
+    if (!stack || !service) return
     void writeReadonlySnapshot(
       snapshotKey,
       {
@@ -317,9 +325,21 @@ export function ServiceDetailPage(props: {
         backupRecords,
         monitoring: monitoringSnapshot,
       },
-      { staleAfterMs: SERVICE_DETAIL_SNAPSHOT_STALE_MS },
+      {
+        staleAfterMs: SERVICE_DETAIL_SNAPSHOT_STALE_MS,
+        fetchedAt: snapshotAnchorFetchedAt ? Date.parse(snapshotAnchorFetchedAt) || undefined : undefined,
+      },
     )
-  }, [backupRecords, backupTargets, jobs, monitoringSnapshot, service, snapshotKey, stack])
+  }, [
+    backupRecords,
+    backupTargets,
+    jobs,
+    monitoringSnapshot,
+    service,
+    snapshotAnchorFetchedAt,
+    snapshotKey,
+    stack,
+  ])
 
   const snapshotService = useMemo(
     () => snapshotPayload?.stack.services.find((item) => item.id === props.serviceId) ?? null,

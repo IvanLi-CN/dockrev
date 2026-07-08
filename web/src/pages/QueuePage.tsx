@@ -249,21 +249,25 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
   const { isOnline } = usePwaStatus()
   const [jobs, setJobs] = useState<JobListItem[]>([])
   const [jobsLoaded, setJobsLoaded] = useState(false)
+  const [jobsLiveLoaded, setJobsLiveLoaded] = useState(false)
   const [filter, setFilter] = useState<Filter>('all')
   const [error, setError] = useState<string | null>(null)
   const [versionInferenceSummary, setVersionInferenceSummary] = useState<VersionInferenceSummary>(
     DEFAULT_VERSION_INFERENCE_SUMMARY,
   )
   const [versionInferenceLoaded, setVersionInferenceLoaded] = useState(false)
+  const [versionInferenceLiveLoaded, setVersionInferenceLiveLoaded] = useState(false)
   const [versionInferenceError, setVersionInferenceError] = useState<string | null>(null)
   const [ghcrSummary, setGhcrSummary] = useState<GhcrWebhookSummary>(DEFAULT_GHCR_SUMMARY)
   const [ghcrLoaded, setGhcrLoaded] = useState(false)
+  const [ghcrLiveLoaded, setGhcrLiveLoaded] = useState(false)
   const [ghcrError, setGhcrError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [, setSnapshotStatus] = useState<'missing' | 'fresh' | 'stale' | 'expired' | 'unsupported'>(
     'missing',
   )
   const [snapshotFetchedAt, setSnapshotFetchedAt] = useState<string | null>(null)
+  const [snapshotAnchorFetchedAt, setSnapshotAnchorFetchedAt] = useState<string | null>(null)
   const [snapshotActive, setSnapshotActive] = useState(false)
   const refreshRequestIdRef = useRef(0)
   const inferenceRequestIdRef = useRef(0)
@@ -276,6 +280,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
       if (cancelled) return
       setSnapshotStatus(snapshot.status)
       setSnapshotFetchedAt(snapshot.record?.fetchedAt ?? null)
+      setSnapshotAnchorFetchedAt(snapshot.record?.fetchedAt ?? null)
       if (snapshot.status !== 'fresh') return
       setJobs(snapshot.record.payload.jobs)
       setJobsLoaded(true)
@@ -298,7 +303,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
       if (requestId !== refreshRequestIdRef.current) return
       setJobs(nextJobs)
       setJobsLoaded(true)
-      setSnapshotActive(false)
+      setJobsLiveLoaded(true)
     } catch (e: unknown) {
       if (requestId !== refreshRequestIdRef.current) return
       throw e
@@ -320,7 +325,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
       setVersionInferenceSummary(parseVersionInferenceSummary(payload))
       setVersionInferenceError(null)
       setVersionInferenceLoaded(true)
-      setSnapshotActive(false)
+      setVersionInferenceLiveLoaded(true)
     } catch (e: unknown) {
       if (requestId !== inferenceRequestIdRef.current) return
       setVersionInferenceError(e instanceof Error ? e.message : String(e))
@@ -336,7 +341,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
       setGhcrSummary(parseGhcrWebhookSummary(payload))
       setGhcrError(null)
       setGhcrLoaded(true)
-      setSnapshotActive(false)
+      setGhcrLiveLoaded(true)
     } catch (e: unknown) {
       if (requestId !== ghcrRequestIdRef.current) return
       setGhcrError(e instanceof Error ? e.message : String(e))
@@ -491,6 +496,12 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
   }, [busy, isOnline, onTopActions, refresh, refreshGhcrSummary, refreshVersionInferenceSummary])
 
   useEffect(() => {
+    if (!jobsLiveLoaded || !versionInferenceLiveLoaded || !ghcrLiveLoaded) return
+    setSnapshotActive(false)
+    setSnapshotAnchorFetchedAt(null)
+  }, [ghcrLiveLoaded, jobsLiveLoaded, versionInferenceLiveLoaded])
+
+  useEffect(() => {
     if (!jobsLoaded && !versionInferenceLoaded && !ghcrLoaded) return
     const payload: QueueSnapshotPayload = {
       jobs,
@@ -501,8 +512,17 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
     }
     void writeReadonlySnapshot(QUEUE_SNAPSHOT_KEY, payload, {
       staleAfterMs: QUEUE_SNAPSHOT_STALE_MS,
+      fetchedAt: snapshotAnchorFetchedAt ? Date.parse(snapshotAnchorFetchedAt) || undefined : undefined,
     })
-  }, [ghcrLoaded, ghcrSummary, jobs, jobsLoaded, versionInferenceLoaded, versionInferenceSummary])
+  }, [
+    ghcrLoaded,
+    ghcrSummary,
+    jobs,
+    jobsLoaded,
+    snapshotAnchorFetchedAt,
+    versionInferenceLoaded,
+    versionInferenceSummary,
+  ])
 
   const filtered = useMemo(() => {
     if (filter === 'all') return jobs

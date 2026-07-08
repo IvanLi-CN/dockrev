@@ -114,6 +114,7 @@ export function useOverviewPageState(props: {
   const [busy, setBusy] = useState(false)
   const [snapshotStatus, setSnapshotStatus] = useState<'missing' | 'fresh' | 'stale' | 'expired' | 'unsupported'>('missing')
   const [snapshotFetchedAt, setSnapshotFetchedAt] = useState<string | null>(null)
+  const [snapshotAnchorFetchedAt, setSnapshotAnchorFetchedAt] = useState<string | null>(null)
   const [snapshotActive, setSnapshotActive] = useState(false)
   const jobsRefreshErrorRef = useRef<string | null>(null)
   const refreshRequestIdRef = useRef(0)
@@ -136,6 +137,7 @@ export function useOverviewPageState(props: {
       if (cancelled) return
       setSnapshotStatus(snapshot.status)
       setSnapshotFetchedAt(snapshot.record?.fetchedAt ?? null)
+      setSnapshotAnchorFetchedAt(snapshot.record?.fetchedAt ?? null)
       if (snapshot.status !== 'fresh') return
       setStacks(snapshot.record.payload.stacks)
       setDetails(snapshot.record.payload.details)
@@ -198,7 +200,6 @@ export function useOverviewPageState(props: {
       latestAppliedStacksRequestIdRef.current = requestId
       setStacks(s)
       onLastScanHint(maxLastScan)
-      setSnapshotActive(false)
       setError(errors.length > 0 ? errors.join(' · ') : null)
 
       const ids = s.map((x) => x.id)
@@ -213,6 +214,10 @@ export function useOverviewPageState(props: {
       )
       if (requestId < latestAppliedStacksRequestIdRef.current) return
       setDetails(Object.fromEntries(results))
+      if (errors.length === 0 && results.every(([, detail]) => detail !== undefined)) {
+        setSnapshotActive(false)
+        setSnapshotAnchorFetchedAt(null)
+      }
     } catch (error: unknown) {
       if (requestId < latestAppliedStacksRequestIdRef.current) return
       throw error
@@ -322,9 +327,10 @@ export function useOverviewPageState(props: {
       },
       {
         staleAfterMs: SERVICES_OVERVIEW_SNAPSHOT_STALE_MS,
+        fetchedAt: snapshotAnchorFetchedAt ? Date.parse(snapshotAnchorFetchedAt) || undefined : undefined,
       },
     )
-  }, [details, discoveredProjects, jobs, stacks])
+  }, [details, discoveredProjects, jobs, snapshotAnchorFetchedAt, stacks])
 
   useEffect(() => {
     let closed = false

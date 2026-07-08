@@ -162,6 +162,7 @@ export function VersionInferencePage(props: {
     'missing',
   )
   const [snapshotFetchedAt, setSnapshotFetchedAt] = useState<string | null>(null)
+  const [snapshotAnchorFetchedAt, setSnapshotAnchorFetchedAt] = useState<string | null>(null)
   const [snapshotActive, setSnapshotActive] = useState(false)
   const refreshRequestIdRef = useRef(0)
 
@@ -176,6 +177,7 @@ export function VersionInferencePage(props: {
       if (cancelled) return
       setSnapshotStatus(snapshot.status)
       setSnapshotFetchedAt(snapshot.record?.fetchedAt ?? null)
+      setSnapshotAnchorFetchedAt(snapshot.record?.fetchedAt ?? null)
       if (snapshot.status !== 'fresh') return
       setOverview(snapshot.record.payload)
       setLoading(false)
@@ -215,6 +217,7 @@ export function VersionInferencePage(props: {
         setOverview(next)
         setLastRefreshAt(new Date().toISOString())
         setSnapshotActive(false)
+        setSnapshotAnchorFetchedAt(null)
         setPage((prev) => {
           const normalized = Number.isFinite(next.page) ? Math.max(1, Math.round(next.page)) : prev
           return prev === normalized ? prev : normalized
@@ -348,8 +351,9 @@ export function VersionInferencePage(props: {
     if (!overview) return
     void writeReadonlySnapshot(VERSION_INFERENCE_SNAPSHOT_KEY, overview, {
       staleAfterMs: VERSION_INFERENCE_SNAPSHOT_STALE_MS,
+      fetchedAt: snapshotAnchorFetchedAt ? Date.parse(snapshotAnchorFetchedAt) || undefined : undefined,
     })
-  }, [overview])
+  }, [overview, snapshotAnchorFetchedAt])
 
   const totalPages = useMemo(() => {
     const total = overview?.total ?? 0
