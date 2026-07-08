@@ -158,7 +158,7 @@ export function AppShell(props: {
   children: ReactNode;
 }) {
   const active =
-    props.route.name === "service"
+    props.route.name === "service" || props.route.name === "stack"
       ? "services"
       : props.route.name === "job" ||
           props.route.name === "version-inference" ||

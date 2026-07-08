@@ -50,6 +50,21 @@ function findLink(root: ParentNode, text: string): HTMLAnchorElement | null {
   );
 }
 
+function findActiveNavLink(
+  root: ParentNode,
+  text: string,
+): HTMLAnchorElement | null {
+  return (
+    Array.from(
+      root.querySelectorAll<HTMLAnchorElement>(
+        ".navItemActive, .mobileBottomNavItemActive",
+      ),
+    ).find((link) =>
+      (link.textContent?.replace(/\s+/g, " ").trim() ?? "").includes(text),
+    ) ?? null
+  );
+}
+
 function drawerText(doc: Document): string {
   return (
     doc
@@ -112,6 +127,10 @@ export const PolicyEnabled: Story = {
       "stack auto policy drawer must stay independent",
     );
     expectStory(
+      findActiveNavLink(doc, "服务"),
+      "stack detail route should keep the Services navigation item active",
+    );
+    expectStory(
       doc
         .querySelector(".detailRouteStackLinkActive")
         ?.textContent?.includes("prod"),
@@ -144,6 +163,10 @@ export const MobileNavigation: Story = {
     const doc = canvasElement.ownerDocument;
     await waitForCondition(
       () => canvasElement.textContent?.includes("自动更新结果") ?? false,
+    );
+    expectStory(
+      findActiveNavLink(doc, "服务"),
+      "mobile stack route should keep the Services navigation item active",
     );
     const menuButton =
       doc.querySelector<HTMLButtonElement>(".mobileMenuButton");
