@@ -166,6 +166,20 @@
 - source_type: `storybook_canvas`
   target_program: `mock-only`
   capture_scope: `browser-viewport`
+  requested_viewport: `1680x640`
+  viewport_strategy: `clipped-from-1680x900`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/Archived Service Navigation`
+  state: `archived detail route desktop`
+  evidence_note: 验证归档服务详情仍复用同一份 `Stack -> Service` 树，当前 archived Stack / Service 节点保持可见与高亮。
+  PR: omit
+
+![归档服务详情桌面导航高亮](./assets/service-detail-archived-desktop.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
   requested_viewport: `390x900`
   viewport_strategy: `browser-resize-fallback`
   sensitive_exclusion: `N/A`

@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { getStack, listStacks, type Service, type StackDetail, type StackListItem, type StackStatus } from '../api'
+import { getStack, listStacks, listStacksArchived, type Service, type StackDetail, type StackListItem, type StackStatus } from '../api'
 import { currentHref, navigate, type Route } from '../routes'
 import { Mono } from '../ui'
 import { serviceRowStatus, statusLabel } from '../updateStatus'
@@ -80,7 +80,17 @@ export function DetailRouteServiceTree(props: {
       setLoading(true)
       setError(null)
       try {
-        const stackList = await listStacks()
+        const [activeStacks, archivedStacks] = await Promise.all([
+          listStacks(),
+          listStacksArchived('only').catch(() => []),
+        ])
+        const stackList = [...activeStacks]
+        const seenStackIds = new Set(activeStacks.map((stack) => stack.id))
+        for (const stack of archivedStacks) {
+          if (seenStackIds.has(stack.id)) continue
+          seenStackIds.add(stack.id)
+          stackList.push(stack)
+        }
         const details = await Promise.all(
           stackList.map(async (stack) => {
             try {
@@ -109,7 +119,10 @@ export function DetailRouteServiceTree(props: {
 
   const treeClassName = props.variant === 'mobile' ? 'detailRouteTree detailRouteTreeMobile' : 'detailRouteTree'
   const showState = useMemo(() => loading || Boolean(error) || stacks.length === 0, [error, loading, stacks.length])
-  const totalServices = useMemo(() => stacks.reduce((sum, stack) => sum + stack.services, 0), [stacks])
+  const totalServices = useMemo(
+    () => stacks.reduce((sum, stack) => sum + (stack.detail?.services.length ?? stack.services), 0),
+    [stacks],
+  )
   const activeStack = useMemo(
     () => (activeStackId ? stacks.find((stack) => stack.id === activeStackId) ?? null : null),
     [activeStackId, stacks],

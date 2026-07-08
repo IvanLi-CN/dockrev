@@ -72,6 +72,7 @@ export type DockrevApiScenario =
   | 'version-tags-popover-same-digest'
   | 'version-tags-popover-snapshot-pending'
   | 'version-tags-popover-snapshot-missing'
+  | 'archived-stack-detail-navigation'
   | 'multi-stack-mixed'
   | 'overview-discovery-readable'
   | 'overview-resource-monitor-error'

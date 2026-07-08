@@ -191,6 +191,32 @@ export const OverviewDefault: Story = {
   },
 }
 
+export const ArchivedServiceNavigation: Story = {
+  parameters: { dockrevApiScenario: 'archived-stack-detail-navigation' },
+  render: render(
+    'stack-lab',
+    'svc-lab-arch',
+    'overview',
+    '归档服务详情也必须保留同一份 Stack → Service 树与当前节点高亮。',
+  ),
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => normalizeText(doc.body.textContent).includes('vaultwarden'))
+    expectStory(
+      currentRoutePathname() === '/services/stack-lab/svc-lab-arch',
+      'archived service detail route should stay canonical',
+    )
+    expectStory(
+      doc.querySelector('.detailRouteStackLinkCurrent')?.textContent?.includes('home-lab'),
+      'archived stack should stay visible in the detail tree',
+    )
+    expectStory(
+      doc.querySelector('.detailRouteServiceLinkActive')?.textContent?.includes('vaultwarden'),
+      'archived service should stay highlighted in the detail tree',
+    )
+  },
+}
+
 export const MonitoringSection: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo' },
   render: render('stack-prod', 'svc-prod-api', 'monitoring', '监控子页只承载资源监控面板'),
