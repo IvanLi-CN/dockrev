@@ -461,9 +461,11 @@ export function AppShell(props: {
 
           {props.detailSidebarContent ? (
             <aside className="detailSidebar" aria-label={props.detailSidebarTitle ?? '服务列表'}>
-              <div className="detailSidebarHeader">
-                <span className="sidebarSectionLabel detailSidebarLabel">{props.detailSidebarTitle ?? '服务列表'}</span>
-              </div>
+              {props.detailSidebarTitle ? (
+                <div className="detailSidebarHeader">
+                  <span className="sidebarSectionLabel detailSidebarLabel">{props.detailSidebarTitle}</span>
+                </div>
+              ) : null}
               <div className="detailSidebarBody">{props.detailSidebarContent}</div>
             </aside>
           ) : null}

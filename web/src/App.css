@@ -15,14 +15,14 @@
 }
 
 .appShellWithDetailSidebar {
-  grid-template-columns: 256px 288px minmax(0, 1fr);
+  grid-template-columns: 248px 320px minmax(0, 1fr);
   grid-template-areas:
     'top top top'
     'side detail main';
 }
 
 .appShellWithDetailSidebar.appShellSidebarCollapsed {
-  grid-template-columns: 72px 288px minmax(0, 1fr);
+  grid-template-columns: 72px 320px minmax(0, 1fr);
 }
 
 .topbar {
@@ -31,7 +31,7 @@
   grid-template-columns: minmax(0, 1fr);
   align-items: stretch;
   gap: 0;
-  padding: 0 28px;
+  padding: 0 24px;
   background: var(--panel2);
   position: sticky;
   top: 0;
@@ -41,7 +41,7 @@
 .topbarMain {
   display: flex;
   min-width: 0;
-  min-height: 64px;
+  min-height: 68px;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
@@ -141,7 +141,7 @@ html[data-theme='light'] .brandLogoForLight {
 .sidebar {
   grid-area: side;
   background: var(--panel2);
-  padding: 18px 16px;
+  padding: 20px 14px 16px;
   overflow: auto;
   display: flex;
   flex-direction: column;
@@ -149,12 +149,12 @@ html[data-theme='light'] .brandLogoForLight {
 
 .detailSidebar {
   grid-area: detail;
-  padding: 18px 14px 16px;
+  padding: 22px 18px 18px;
   overflow: auto;
   display: flex;
   flex-direction: column;
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--panel2) 94%, transparent) 0%, var(--panel2) 100%);
+    linear-gradient(180deg, color-mix(in srgb, var(--panel2) 95%, transparent) 0%, var(--panel2) 100%);
   border-right: 1px solid var(--borderColor);
 }
 
@@ -171,6 +171,8 @@ html[data-theme='light'] .brandLogoForLight {
 
 .detailSidebarBody {
   min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .sidebarSectionLabel {
@@ -288,17 +290,17 @@ html[data-theme='light'] .brandLogoForLight {
 
 .content {
   grid-area: main;
-  padding: 48px 28px 48px 40px;
+  padding: 40px 32px 42px 38px;
   overflow-x: hidden;
   overflow-y: auto;
 }
 
 .contentWithDetailSidebar {
-  padding-left: 30px;
+  padding-left: 34px;
 }
 
 .pageHead {
-  margin-bottom: 26px;
+  margin-bottom: 24px;
 }
 
 .page {
@@ -310,40 +312,121 @@ html[data-theme='light'] .brandLogoForLight {
 .detailRouteTree {
   display: flex;
   flex-direction: column;
+  gap: 14px;
+}
+
+.detailRouteTreeIntro {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 2px 0;
+}
+
+.detailRouteTreeIntroText {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.detailRouteTreeTitle {
+  font-size: 18px;
+  font-weight: 720;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.detailRouteTreeHint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.detailRouteTreeSummary {
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
+.detailRouteTreeSummaryItem,
+.detailRouteTreeContextValue {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dockrev-surface) 84%, var(--color-primary) 16%);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.detailRouteTreeContext {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
+  border-radius: 16px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--dockrev-surface) 88%, transparent) 0%,
+    color-mix(in srgb, var(--panel2) 82%, transparent) 100%
+  );
+}
+
+.detailRouteTreeContextLabel {
+  color: var(--muted2);
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.detailRouteTreeContextValueMuted {
+  background: color-mix(in srgb, var(--panel2) 92%, var(--color-primary) 8%);
+  color: var(--muted);
+}
+
+.detailRouteTreeList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .detailRouteTreeState {
-  padding: 8px 10px;
+  padding: 8px 12px;
+  border: 1px dashed color-mix(in srgb, var(--borderColor) 62%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--dockrev-surface) 72%, transparent);
 }
 
 .detailRouteStackGroup {
-  border: 1px solid color-mix(in srgb, var(--borderColor) 76%, transparent);
-  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 74%, transparent);
+  border-radius: 18px;
   background:
     linear-gradient(
       180deg,
-      color-mix(in srgb, var(--dockrev-surface) 94%, transparent) 0%,
-      color-mix(in srgb, var(--panel2) 82%, transparent) 100%
+      color-mix(in srgb, var(--dockrev-surface) 92%, transparent) 0%,
+      color-mix(in srgb, var(--panel2) 84%, transparent) 100%
     );
 }
 
 .detailRouteStackRow {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-columns: 32px minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
-  padding: 8px 8px 6px;
+  gap: 10px;
+  padding: 10px 10px 8px;
 }
 
 .detailRouteStackToggle {
   display: inline-flex;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   align-items: center;
   justify-content: center;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: 12px;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -364,10 +447,11 @@ html[data-theme='light'] .brandLogoForLight {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 12px;
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: 14px;
   color: var(--text);
   transition:
     border-color 160ms ease,
@@ -382,7 +466,7 @@ html[data-theme='light'] .brandLogoForLight {
 }
 
 .detailRouteStackLinkCurrent {
-  background: color-mix(in srgb, var(--dockrev-surface) 92%, var(--color-primary) 8%);
+  background: color-mix(in srgb, var(--dockrev-surface) 90%, var(--color-primary) 10%);
 }
 
 .detailRouteStackLinkActive {
@@ -392,6 +476,34 @@ html[data-theme='light'] .brandLogoForLight {
     color-mix(in srgb, var(--color-primary) 10%, var(--panel2) 90%) 100%
   );
   border-color: color-mix(in srgb, var(--color-primary) 38%, var(--borderColor) 62%);
+}
+
+.detailRouteStackTitle {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.detailRouteStackDot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--muted2);
+  box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.detailRouteStackDotHealthy {
+  background: color-mix(in srgb, var(--color-success) 92%, white 8%);
+}
+
+.detailRouteStackDotDegraded {
+  background: color-mix(in srgb, var(--color-warning) 92%, white 8%);
+}
+
+.detailRouteStackDotUnknown {
+  background: var(--muted2);
 }
 
 .detailRouteStackLabel {
@@ -405,8 +517,8 @@ html[data-theme='light'] .brandLogoForLight {
 
 .detailRouteStackMeta {
   display: inline-flex;
-  min-width: 24px;
-  height: 22px;
+  min-width: 28px;
+  height: 24px;
   align-items: center;
   justify-content: center;
   padding: 0 8px;
@@ -417,10 +529,25 @@ html[data-theme='light'] .brandLogoForLight {
 }
 
 .detailRouteServiceList {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 0 8px 8px 42px;
+  gap: 6px;
+  padding: 2px 10px 12px 44px;
+}
+
+.detailRouteServiceList::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 14px;
+  left: 14px;
+  width: 1px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-primary) 30%, transparent),
+    color-mix(in srgb, var(--borderColor) 72%, transparent)
+  );
 }
 
 .detailRouteServiceLink {
@@ -429,9 +556,9 @@ html[data-theme='light'] .brandLogoForLight {
   grid-template-columns: 8px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
-  padding: 7px 10px;
+  padding: 9px 12px;
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: 14px;
   color: var(--muted);
   transition:
     border-color 160ms ease,
@@ -442,7 +569,7 @@ html[data-theme='light'] .brandLogoForLight {
 .detailRouteServiceLink:hover {
   text-decoration: none;
   color: var(--text);
-  background: color-mix(in srgb, var(--dockrev-surface) 82%, transparent);
+  background: color-mix(in srgb, var(--dockrev-surface) 86%, transparent);
   border-color: color-mix(in srgb, var(--borderColor) 68%, transparent);
 }
 
@@ -481,7 +608,7 @@ html[data-theme='light'] .brandLogoForLight {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
 
 .detailRouteServiceName {
@@ -490,7 +617,7 @@ html[data-theme='light'] .brandLogoForLight {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
-  font-weight: 620;
+  font-weight: 640;
 }
 
 .detailRouteServiceMeta {
@@ -8191,23 +8318,23 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .appShell.appShellWithDetailSidebar {
-  grid-template-columns: 292px 280px minmax(0, 1fr);
+  grid-template-columns: 264px 332px minmax(0, 1fr);
 }
 
 .appShell.appShellWithDetailSidebar.appShellSidebarCollapsed {
-  grid-template-columns: 72px 280px minmax(0, 1fr);
+  grid-template-columns: 72px 332px minmax(0, 1fr);
 }
 
 .topbar {
-  min-height: 72px;
-  padding: 0 24px;
-  background: color-mix(in srgb, var(--panel2) 74%, transparent);
+  min-height: 68px;
+  padding: 0 22px;
+  background: color-mix(in srgb, var(--panel2) 78%, transparent);
   border-bottom: 1px solid var(--borderColor);
   backdrop-filter: blur(12px) saturate(130%);
 }
 
 .topbarMain {
-  min-height: 72px;
+  min-height: 68px;
 }
 
 .topbarGlobalContent {
@@ -8277,16 +8404,21 @@ html[data-theme='light'] .brandLogoThemeSwitch {
 }
 
 .sidebar {
-  padding: 20px 16px 16px;
+  padding: 18px 14px 16px;
   background:
-    linear-gradient(170deg, color-mix(in srgb, var(--panel2) 94%, transparent) 0%, var(--panel2) 100%);
+    linear-gradient(180deg, color-mix(in srgb, var(--panel2) 96%, transparent) 0%, var(--panel2) 100%);
   border-right: 1px solid var(--borderColor);
   box-shadow: inset -1px 0 0 color-mix(in srgb, var(--color-primary) 15%, transparent);
 }
 
 .detailSidebar {
+  padding: 20px 18px 18px;
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--panel2) 92%, transparent) 0%, var(--panel2) 100%);
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--panel2) 94%, transparent) 0%,
+      color-mix(in srgb, var(--panel2) 88%, #050d1b 12%) 100%
+    );
   box-shadow: inset -1px 0 0 color-mix(in srgb, var(--color-primary) 14%, transparent);
 }
 
@@ -8344,22 +8476,22 @@ html[data-theme='light'] .brandLogoThemeSwitch {
 }
 
 .sidebarEmbeddedContent {
-  margin: 20px 12px 0;
+  margin: 18px 10px 0;
 }
 
 .nav {
-  gap: 7px;
+  gap: 6px;
 }
 
 .navItem {
   position: relative;
-  height: 42px;
+  height: 44px;
   border: 1px solid transparent;
-  border-radius: 12px;
-  padding: 0 12px;
-  gap: 10px;
+  border-radius: 14px;
+  padding: 0 13px;
+  gap: 11px;
   font-size: 13px;
-  font-weight: 560;
+  font-weight: 590;
   transition:
     border-color 160ms ease,
     background-color 160ms ease,
@@ -8388,14 +8520,14 @@ html[data-theme='light'] .brandLogoThemeSwitch {
 .navItemActive {
   background: linear-gradient(
     128deg,
-    color-mix(in srgb, var(--color-primary) 22%, var(--panel2) 78%) 0%,
+    color-mix(in srgb, var(--color-primary) 24%, var(--panel2) 76%) 0%,
     color-mix(in srgb, var(--color-primary) 12%, var(--panel2) 88%) 100%
   );
   border-color: color-mix(in srgb, var(--color-primary) 42%, var(--borderColor) 58%);
   color: var(--text);
   font-size: 13px;
-  font-weight: 640;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 28%, transparent);
+  font-weight: 670;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 20%, transparent);
 }
 
 .navItemActive .navItemIcon {
@@ -8518,7 +8650,7 @@ html[data-theme='light'] .brandLogoThemeSwitch {
 }
 
 .content {
-  padding: 36px 26px 34px;
+  padding: 32px 30px 40px;
 }
 
 html[data-theme='light'] .appShell {
@@ -8590,13 +8722,13 @@ html[data-theme='light'] .rowLine:hover {
 }
 
 .pageHead {
-  margin-bottom: 20px;
+  margin-bottom: 24px;
 }
 
 .h1 {
-  font-size: clamp(22px, 2.4vw, 28px);
-  font-weight: 700;
-  letter-spacing: 0.01em;
+  font-size: 30px;
+  font-weight: 740;
+  letter-spacing: -0.02em;
 }
 
 .title {
@@ -9198,7 +9330,7 @@ html[data-theme='light'] .btnPrimary {
   }
 
   .content {
-    padding: 16px 12px 92px;
+    padding: 18px 14px 96px;
   }
 
   .mobileDockrevPanel {
@@ -9213,10 +9345,12 @@ html[data-theme='light'] .btnPrimary {
     height: 44px;
     padding: 0;
     border: 1px solid var(--borderColor);
-    border-radius: 11px;
-    background: color-mix(in srgb, var(--dockrev-surface) 88%, var(--panel2) 12%);
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--dockrev-surface) 84%, var(--panel2) 16%);
     color: var(--text);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.04),
+      0 10px 24px rgba(1, 8, 20, 0.16);
   }
 
   .mobileMenuIcon {
@@ -9270,7 +9404,7 @@ html[data-theme='light'] .btnPrimary {
     left: 0;
     z-index: 1040;
     display: flex;
-    width: min(328px, 84vw);
+    width: min(344px, 86vw);
     flex-direction: column;
     border-right: 1px solid var(--borderColor);
     background:
@@ -9279,8 +9413,8 @@ html[data-theme='light'] .btnPrimary {
         color-mix(in srgb, var(--panel) 94%, var(--color-primary) 6%) 0%,
         color-mix(in srgb, var(--panel2) 92%, #020916 8%) 100%
       );
-    box-shadow: 28px 0 70px rgba(1, 8, 20, 0.5);
-    padding: max(18px, env(safe-area-inset-top)) 14px max(16px, env(safe-area-inset-bottom));
+    box-shadow: 24px 0 64px rgba(1, 8, 20, 0.46);
+    padding: max(18px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
     overflow-y: auto;
     animation: mobileDrawerIn 190ms cubic-bezier(0.22, 1, 0.36, 1);
   }
@@ -9299,10 +9433,10 @@ html[data-theme='light'] .btnPrimary {
 
   .mobileMenuEmbeddedContent {
     display: block;
-    margin: 0 0 8px;
+    margin: 0 0 10px;
     border-top: 1px solid var(--borderColor);
     border-bottom: 1px solid var(--borderColor);
-    padding: 12px 0;
+    padding: 14px 0 12px;
   }
 
   .mobileMenuEmbeddedContent .homepageTopStrip {
@@ -9422,9 +9556,10 @@ html[data-theme='light'] .btnPrimary {
 
   .mobileMenuDrawerTitle {
     color: var(--text);
-    font-size: 15px;
-    font-weight: 700;
+    font-size: 16px;
+    font-weight: 720;
     line-height: 1.1;
+    letter-spacing: -0.02em;
   }
 
   .mobileMenuDrawerClose {
@@ -9542,7 +9677,7 @@ html[data-theme='light'] .btnPrimary {
     background: color-mix(in srgb, var(--panel2) 92%, transparent);
     backdrop-filter: blur(14px) saturate(140%);
     box-shadow: 0 -10px 30px rgba(1, 8, 20, 0.28);
-    padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
+    padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
   }
 
   .mobileBottomNavItem {
@@ -9552,8 +9687,8 @@ html[data-theme='light'] .btnPrimary {
     align-items: center;
     justify-content: center;
     gap: 4px;
-    border-radius: 12px;
-    padding: 6px 4px;
+    border-radius: 14px;
+    padding: 7px 4px;
     color: var(--muted);
   }
 
@@ -9591,15 +9726,15 @@ html[data-theme='light'] .btnPrimary {
   }
 
   .detailRouteTreeMobile .detailRouteStackGroup {
-    border-radius: 12px;
+    border-radius: 16px;
   }
 
   .detailRouteTreeMobile .detailRouteStackRow {
-    padding-top: 10px;
+    padding-top: 11px;
   }
 
   .detailRouteTreeMobile .detailRouteServiceList {
-    padding-left: 38px;
+    padding-left: 42px;
   }
 
   .detailRouteTreeMobile .detailRouteServiceLink,
@@ -9608,7 +9743,7 @@ html[data-theme='light'] .btnPrimary {
   }
 
   .pageHead {
-    margin-bottom: 16px;
+    margin-bottom: 18px;
   }
 
   .h1 {

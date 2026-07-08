@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { getStack, listStacks, type Service, type StackDetail, type StackListItem } from '../api'
+import { getStack, listStacks, type Service, type StackDetail, type StackListItem, type StackStatus } from '../api'
 import { currentHref, navigate, type Route } from '../routes'
 import { Mono } from '../ui'
 import { serviceRowStatus, statusLabel } from '../updateStatus'
@@ -27,6 +27,32 @@ function serviceVersionLabel(service: Service): string {
   const resolved = (service.image.resolvedTag ?? '').trim()
   const raw = (service.image.tag ?? '').trim()
   return resolved || raw || '-'
+}
+
+function serviceSectionLabel(section: Extract<Route, { name: 'service' }>['section'] | undefined): string {
+  switch (section) {
+    case 'monitoring':
+      return '监控'
+    case 'backup':
+      return '备份'
+    case 'logs':
+      return '日志'
+    case 'settings':
+      return '设置'
+    default:
+      return '概览'
+  }
+}
+
+function stackStatusClassName(status: StackStatus): string {
+  switch (status) {
+    case 'healthy':
+      return 'detailRouteStackDot detailRouteStackDotHealthy'
+    case 'degraded':
+      return 'detailRouteStackDot detailRouteStackDotDegraded'
+    default:
+      return 'detailRouteStackDot detailRouteStackDotUnknown'
+  }
 }
 
 export function DetailRouteServiceTree(props: {
@@ -83,6 +109,15 @@ export function DetailRouteServiceTree(props: {
 
   const treeClassName = props.variant === 'mobile' ? 'detailRouteTree detailRouteTreeMobile' : 'detailRouteTree'
   const showState = useMemo(() => loading || Boolean(error) || stacks.length === 0, [error, loading, stacks.length])
+  const totalServices = useMemo(() => stacks.reduce((sum, stack) => sum + stack.services, 0), [stacks])
+  const activeStack = useMemo(
+    () => (activeStackId ? stacks.find((stack) => stack.id === activeStackId) ?? null : null),
+    [activeStackId, stacks],
+  )
+  const activeService = useMemo(() => {
+    if (!detailRoute || detailRoute.name !== 'service' || !activeStack?.detail) return null
+    return activeStack.detail.services.find((service) => service.id === detailRoute.serviceId) ?? null
+  }, [activeStack, detailRoute])
 
   const renderServiceLink = (stack: TreeStack, service: Service) => {
     const active = props.route.name === 'service' && props.route.stackId === stack.id && props.route.serviceId === service.id
@@ -120,6 +155,38 @@ export function DetailRouteServiceTree(props: {
 
   return (
     <div className={treeClassName}>
+      <div className="detailRouteTreeIntro">
+        <div className="detailRouteTreeIntroText">
+          <div className="detailRouteTreeTitle">跨服务导航</div>
+          <div className="detailRouteTreeHint">
+            当前 Stack 默认展开，切换服务时保留当前详情分区。
+          </div>
+        </div>
+        {!showState ? (
+          <div className="detailRouteTreeSummary" aria-label="导航统计">
+            <span className="detailRouteTreeSummaryItem">
+              <Mono>{stacks.length}</Mono> 个 Stack
+            </span>
+            <span className="detailRouteTreeSummaryItem">
+              <Mono>{totalServices}</Mono> 个服务
+            </span>
+          </div>
+        ) : null}
+      </div>
+
+      {detailRoute ? (
+        <div className="detailRouteTreeContext" aria-label="当前上下文">
+          <span className="detailRouteTreeContextLabel">当前</span>
+          <span className="detailRouteTreeContextValue">{activeStack?.name ?? detailRoute.stackId}</span>
+          {activeService ? <span className="detailRouteTreeContextValue">{activeService.name}</span> : null}
+          {props.route.name === 'service' ? (
+            <span className="detailRouteTreeContextValue detailRouteTreeContextValueMuted">
+              {serviceSectionLabel(activeServiceSection)}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
       {showState ? (
         <div className="detailRouteTreeState">
           {loading ? <div className="muted">加载服务列表…</div> : null}
@@ -128,12 +195,12 @@ export function DetailRouteServiceTree(props: {
         </div>
       ) : null}
 
-      {!showState
-        ? stacks.map((stack) => {
+      {!showState ? <div className="detailRouteTreeList">{stacks.map((stack) => {
             const expanded = expandedStackIds.includes(stack.id)
             const stackActive = props.route.name === 'stack' && props.route.stackId === stack.id
             const stackCurrent = activeStackId === stack.id
             const services = stack.detail?.services ?? []
+            const serviceCount = stack.detail?.services.length ?? stack.services
 
             return (
               <section className="detailRouteStackGroup" key={stack.id}>
@@ -166,9 +233,12 @@ export function DetailRouteServiceTree(props: {
                       navigate({ name: 'stack', stackId: stack.id })
                     }}
                   >
-                    <span className="detailRouteStackLabel">{stack.name}</span>
+                    <span className="detailRouteStackTitle">
+                      <span className={stackStatusClassName(stack.status)} aria-hidden="true" />
+                      <span className="detailRouteStackLabel">{stack.name}</span>
+                    </span>
                     <span className="detailRouteStackMeta">
-                      <Mono>{services.length}</Mono>
+                      <Mono>{serviceCount}</Mono>
                     </span>
                   </a>
                 </div>
@@ -179,8 +249,7 @@ export function DetailRouteServiceTree(props: {
                 ) : null}
               </section>
             )
-          })
-        : null}
+          })}</div> : null}
     </div>
   )
 }

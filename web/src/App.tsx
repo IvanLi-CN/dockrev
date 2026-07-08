@@ -345,9 +345,9 @@ export default function App() {
         topbarContent={topbarContent}
         sidebarNavContent={sidebarNavContent}
         detailSidebarContent={detailSidebarContent}
-        detailSidebarTitle={detailSidebarContent ? '服务列表' : undefined}
+        detailSidebarTitle={undefined}
         mobileNavContent={mobileDrawerContent}
-        mobileDrawerTitle={detailSidebarContent ? '服务列表' : mobileDrawerContent ? '页面工具' : undefined}
+        mobileDrawerTitle={detailSidebarContent ? '服务导航' : mobileDrawerContent ? '页面工具' : undefined}
         authIdentity={authIdentity}
         lastScanHint={lastScanHint}
       >
