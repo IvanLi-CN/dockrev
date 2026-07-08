@@ -28,20 +28,25 @@ pub(super) async fn get_service_backup_records(
     Ok(ServiceBackupRecordsResponse {
         records: rows
             .into_iter()
-            .filter(|row| !is_pure_noise_backup_record(row, &stack_id))
+            .filter(|row| is_actual_backup_record(row, &stack_id))
             .map(|row| map_backup_record_row(row, &stack_id))
             .collect(),
     })
 }
 
-fn is_pure_noise_backup_record(row: &crate::db::ServiceBackupRecordRow, stack_id: &str) -> bool {
-    if row.status != "skipped" {
-        return false;
+fn is_actual_backup_record(row: &crate::db::ServiceBackupRecordRow, stack_id: &str) -> bool {
+    if row
+        .artifact_path
+        .as_deref()
+        .is_some_and(|path| !path.trim().is_empty())
+    {
+        return true;
     }
+
     current_stack_backup_summary(&row.job_summary_json, stack_id)
-        .and_then(|backup| backup.get("reason"))
+        .and_then(|backup| backup.get("artifactPath"))
         .and_then(serde_json::Value::as_str)
-        == Some("no_included_targets")
+        .is_some_and(|path| !path.trim().is_empty())
 }
 
 fn map_backup_record_row(
@@ -108,7 +113,6 @@ fn map_backup_asset_value(value: &serde_json::Value) -> Option<ServiceBackupReco
     let target = serde_json::from_value::<BackupTarget>(target_value).ok()?;
     let status = match object.get("status").and_then(serde_json::Value::as_str) {
         Some("included") => ServiceBackupRecordAssetStatus::Included,
-        Some("skipped") => ServiceBackupRecordAssetStatus::Skipped,
         _ => return None,
     };
     let policy = object
