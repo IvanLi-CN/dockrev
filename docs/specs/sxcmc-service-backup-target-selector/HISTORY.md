@@ -11,6 +11,7 @@
 - 2026-06-28: 服务级备份选择从 `selected + inherit|force|skip` 三态收敛为面向操作者的三策略：`不备份`、`停机备份`、`在线备份`。
 - 2026-06-28: 备份设置抽屉的策略控件收敛为单轨 segmented button group，用水平滑块表达当前策略，解决长文案与独立按钮高亮的歧义。
 - 2026-06-29: 新增 `GET /api/services/{service_id}/backup-records`，并把服务级备份摘要/记录从 `设置` 页迁到独立 `备份` 子页。
+- 2026-07-08: 收紧 `GET /api/services/{service_id}/backup-records` 契约，隐藏 `status=skipped && reason=no_included_targets` 的纯噪音记录，并把备份页文案改为“实际备份记录”语义。
 
 ## Key Reasons / Replacements
 

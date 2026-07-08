@@ -53,14 +53,14 @@ export const LegacyProgressFallback: Story = {
   },
 }
 
-export const UpdateIndeterminate: Story = {
-  parameters: { dockrevApiScenario: 'queue-update-indeterminate' },
+export const UpdateLayerProgress: Story = {
+  parameters: { dockrevApiScenario: 'queue-update-layer-progress' },
   render: () => {
     return (
       <PageHarness
         route={{ name: 'queue' }}
         title="任务队列"
-        pageSubtitle="运行中 update 在缺少可解析 pull 证据时应保持 indeterminate"
+        pageSubtitle="运行中 update 缺少总字节但有 layers 证据时应显示保守进度"
       >
         {({ onTopActions }) => <QueuePage onTopActions={onTopActions} />}
       </PageHarness>
@@ -73,11 +73,11 @@ export const UpdateIndeterminate: Story = {
     if (!progressbar) {
       throw new globalThis.Error('queue progress bar missing')
     }
-    if (!progressbar.className.includes('queueProgressBarIndeterminate')) {
-      throw new globalThis.Error('queue progress bar should be indeterminate')
+    if (progressbar.className.includes('queueProgressBarIndeterminate')) {
+      throw new globalThis.Error('queue progress bar should be determinate when layer progress is available')
     }
-    if (progressbar.getAttribute('aria-valuetext') !== '安排 running · 完成 40%') {
-      throw new globalThis.Error('queue progress aria text should preserve indeterminate planned state')
+    if (progressbar.getAttribute('aria-valuetext') !== '安排 40% · 完成 40%') {
+      throw new globalThis.Error('queue progress aria text should expose layer-derived determinate state')
     }
     const text = canvasElement.textContent ?? ''
     if (!text.includes('下载 已下载 4.2MB · layers 2/6')) {

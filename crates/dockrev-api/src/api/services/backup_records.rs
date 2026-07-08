@@ -28,9 +28,20 @@ pub(super) async fn get_service_backup_records(
     Ok(ServiceBackupRecordsResponse {
         records: rows
             .into_iter()
+            .filter(|row| !is_pure_noise_backup_record(row, &stack_id))
             .map(|row| map_backup_record_row(row, &stack_id))
             .collect(),
     })
+}
+
+fn is_pure_noise_backup_record(row: &crate::db::ServiceBackupRecordRow, stack_id: &str) -> bool {
+    if row.status != "skipped" {
+        return false;
+    }
+    current_stack_backup_summary(&row.job_summary_json, stack_id)
+        .and_then(|backup| backup.get("reason"))
+        .and_then(serde_json::Value::as_str)
+        == Some("no_included_targets")
 }
 
 fn map_backup_record_row(
@@ -57,33 +68,38 @@ fn extract_backup_assets(
     summary: &serde_json::Value,
     stack_id: &str,
 ) -> Vec<ServiceBackupRecordAsset> {
+    current_stack_backup_summary(summary, stack_id)
+        .and_then(|backup| {
+            backup
+                .get("targets")
+                .and_then(serde_json::Value::as_array)
+                .map(|targets| {
+                    targets
+                        .iter()
+                        .filter_map(map_backup_asset_value)
+                        .collect::<Vec<_>>()
+                })
+        })
+        .unwrap_or_default()
+}
+
+fn current_stack_backup_summary<'a>(
+    summary: &'a serde_json::Value,
+    stack_id: &str,
+) -> Option<&'a serde_json::Value> {
     summary
         .get("stacks")
         .and_then(serde_json::Value::as_array)
         .into_iter()
         .flatten()
-        .find_map(|stack| {
-            let stack_matches = stack
+        .find(|stack| {
+            stack
                 .get("stackId")
                 .and_then(serde_json::Value::as_str)
                 .map(|value| value == stack_id)
-                .unwrap_or(false);
-            if !stack_matches {
-                return None;
-            }
-            stack.get("backup").and_then(|backup| {
-                backup
-                    .get("targets")
-                    .and_then(serde_json::Value::as_array)
-                    .map(|targets| {
-                        targets
-                            .iter()
-                            .filter_map(map_backup_asset_value)
-                            .collect::<Vec<_>>()
-                    })
-            })
+                .unwrap_or(false)
         })
-        .unwrap_or_default()
+        .and_then(|stack| stack.get("backup"))
 }
 
 fn map_backup_asset_value(value: &serde_json::Value) -> Option<ServiceBackupRecordAsset> {
