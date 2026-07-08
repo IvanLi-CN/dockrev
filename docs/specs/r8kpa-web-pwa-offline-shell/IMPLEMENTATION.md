@@ -16,7 +16,6 @@
 
 - `/services` 虽已进入只读快照模式并禁用关键扫描/批量更新入口，但尚未做到页内所有写动作都逐一细化门控。
 - `service detail` 当前仍只持久化监控样本与只读摘要，未对更多高时效子模块做更细颗粒的只读/在线分层。
-- `test-storybook` 在本次运行中出现长时间无输出卡住，未形成可用通过证明。
 
 ## Validation
 
@@ -25,7 +24,7 @@
 - `bun run build-storybook`
 - `bun run storybook:screenshots -- --only components-appshellstatusbanner--update-ready,components-readonlysnapshotnotice--offline-snapshot`
 - `bun run storybook:screenshots -- --only components-serviceresourcepanel--offline-snapshot,pages-servicedetailpage--settings-offline-readonly`
-- `bun run test-storybook`：本次运行在启动后进入静默长等待，约 15 分钟无新输出，按 stalled 处理，未记为通过。
+- `bun run test-storybook`
 
 ## Current Coverage
 
