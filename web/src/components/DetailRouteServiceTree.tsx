@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { getStack, listStacks, listStacksArchived, type Service, type StackDetail, type StackListItem, type StackStatus } from '../api'
 import { currentHref, navigate, type Route } from '../routes'
 import { Mono } from '../ui'
@@ -64,6 +64,8 @@ export function DetailRouteServiceTree(props: {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expandedStackIds, setExpandedStackIds] = useState<string[]>([])
+  const inFlightStackIdsRef = useRef<Set<string>>(new Set())
+  const mountedRef = useRef(true)
 
   const detailRoute = isDetailRoute(props.route) ? props.route : null
   const activeStackId = detailRoute ? currentStackId(detailRoute) : null
@@ -75,15 +77,24 @@ export function DetailRouteServiceTree(props: {
   }, [activeStackId])
 
   useEffect(() => {
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+
+  useEffect(() => {
     const pendingStackIds = expandedStackIds.filter((stackId) =>
-      stacks.some((stack) => stack.id === stackId && stack.detailStatus === 'idle'),
+      stacks.some((stack) => stack.id === stackId && stack.detailStatus === 'idle') &&
+      !inFlightStackIdsRef.current.has(stackId),
     )
     if (pendingStackIds.length === 0) return
 
-    let cancelled = false
+    const pendingStackIdSet = new Set(pendingStackIds)
+    for (const stackId of pendingStackIds) inFlightStackIdsRef.current.add(stackId)
+
     setStacks((current) =>
       current.map((stack) =>
-        pendingStackIds.includes(stack.id) ? { ...stack, detailStatus: 'loading' } : stack,
+        pendingStackIdSet.has(stack.id) ? { ...stack, detailStatus: 'loading' } : stack,
       ),
     )
 
@@ -96,7 +107,8 @@ export function DetailRouteServiceTree(props: {
         }
       }),
     ).then((results) => {
-      if (cancelled) return
+      for (const result of results) inFlightStackIdsRef.current.delete(result.stackId)
+      if (!mountedRef.current) return
       const byId = new Map(results.map((result) => [result.stackId, result]))
       setStacks((current) =>
         current.map((stack) => {
@@ -106,10 +118,6 @@ export function DetailRouteServiceTree(props: {
         }),
       )
     })
-
-    return () => {
-      cancelled = true
-    }
   }, [expandedStackIds, stacks])
 
   useEffect(() => {
@@ -119,6 +127,7 @@ export function DetailRouteServiceTree(props: {
       setLoading(true)
       setError(null)
       try {
+        inFlightStackIdsRef.current.clear()
         const [activeStacks, archivedStacks] = await Promise.all([
           listStacks(),
           listStacksArchived('only').catch(() => []),

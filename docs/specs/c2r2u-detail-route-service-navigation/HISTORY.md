@@ -9,3 +9,4 @@
 - 2026-07-09：fresh merge-proof 继续指出 `961px - 1160px` 断点会让详情页三列壳层错误回退为两列；已为 `.appShellWithDetailSidebar` 补齐窄桌面媒体规则，并刷新最终桌面 / 移动端视觉证据。
 - 2026-07-09：fresh merge-proof 继续指出归档 Stack / Service 详情路由不会出现在详情树里；已将 `listStacksArchived("only")` 并入服务树读模型，并补上归档详情 story 回归覆盖。
 - 2026-07-09：fresh merge-proof 继续指出详情树会为全部 Stack 并发请求 `getStack()`；已改为按当前/展开 Stack 懒加载详情，并用 Storybook mock debug 断言不预取无关 Stack detail。
+- 2026-07-09：fresh merge-proof 继续指出懒加载 effect 会因自身 `loading` 状态写回而自取消；已改为用 in-flight 集合与仅卸载失效的守卫收口请求，避免展开后长期停在“加载服务列表…”。
