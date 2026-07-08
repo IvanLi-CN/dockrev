@@ -67,7 +67,7 @@ function ShellStory(props: {
       pageSubtitle="在 Storybook 中预览 AppShell"
       topActions={<Button variant="primary">Action</Button>}
       detailSidebarContent={props.detailSidebarContent}
-      detailSidebarTitle={props.detailSidebarContent ? '服务列表' : undefined}
+      detailSidebarTitle={undefined}
       mobileNavContent={props.mobileNavContent}
       mobileDrawerTitle={props.mobileDrawerTitle}
       authIdentity={demoAuthIdentity}
@@ -105,7 +105,7 @@ function renderDetailShell(
       autoOpenMobileDrawer={options?.autoOpenMobileDrawer}
       detailSidebarContent={<DetailRouteServiceTree route={route} variant="desktop" />}
       mobileNavContent={<DetailRouteServiceTree route={route} variant="mobile" />}
-      mobileDrawerTitle="服务列表"
+      mobileDrawerTitle="服务导航"
     />
   )
 }
@@ -168,7 +168,7 @@ export const MobileBottomNavAndDrawer: Story = {
     expectStory(bottomNavItems.length === 5, 'Mobile shell should move primary navigation into bottom nav')
 
     const drawer = canvasElement.querySelector<HTMLElement>('#mobileDockrevMenu')
-    expectStory(drawer?.textContent?.includes('服务列表'), 'Mobile drawer should be dedicated to the service tree')
+    expectStory(drawer?.textContent?.includes('服务导航'), 'Mobile drawer should be dedicated to the service tree')
     expectStory(drawer?.textContent?.includes('prod'), 'Mobile drawer should render stack names')
     expectStory(drawer?.textContent?.includes('api'), 'Mobile drawer should render service names')
   },

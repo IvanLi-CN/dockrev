@@ -156,36 +156,34 @@ export function DetailRouteServiceTree(props: {
   return (
     <div className={treeClassName}>
       <div className="detailRouteTreeIntro">
-        <div className="detailRouteTreeIntroText">
-          <div className="detailRouteTreeTitle">跨服务导航</div>
-          <div className="detailRouteTreeHint">
-            当前 Stack 默认展开，切换服务时保留当前详情分区。
-          </div>
-        </div>
-        {!showState ? (
-          <div className="detailRouteTreeSummary" aria-label="导航统计">
-            <span className="detailRouteTreeSummaryItem">
-              <Mono>{stacks.length}</Mono> 个 Stack
-            </span>
-            <span className="detailRouteTreeSummaryItem">
-              <Mono>{totalServices}</Mono> 个服务
-            </span>
-          </div>
-        ) : null}
-      </div>
-
-      {detailRoute ? (
-        <div className="detailRouteTreeContext" aria-label="当前上下文">
-          <span className="detailRouteTreeContextLabel">当前</span>
-          <span className="detailRouteTreeContextValue">{activeStack?.name ?? detailRoute.stackId}</span>
-          {activeService ? <span className="detailRouteTreeContextValue">{activeService.name}</span> : null}
-          {props.route.name === 'service' ? (
-            <span className="detailRouteTreeContextValue detailRouteTreeContextValueMuted">
-              {serviceSectionLabel(activeServiceSection)}
-            </span>
+        <div className="detailRouteTreeTitleRow">
+          <div className="detailRouteTreeTitle">服务导航</div>
+          {!showState ? (
+            <div className="detailRouteTreeMeta" aria-label="导航统计">
+              <Mono>{stacks.length}</Mono>
+              <span>Stacks</span>
+              <span className="detailRouteTreeMetaDivider" aria-hidden="true">
+                ·
+              </span>
+              <Mono>{totalServices}</Mono>
+              <span>Services</span>
+            </div>
           ) : null}
         </div>
-      ) : null}
+        <div className="detailRouteTreePath" aria-label="当前导航路径">
+          {detailRoute ? (
+            <>
+              <span>{activeStack?.name ?? detailRoute.stackId}</span>
+              {activeService ? <span className="detailRouteTreePathDivider">/</span> : null}
+              {activeService ? <span>{activeService.name}</span> : null}
+              {props.route.name === 'service' ? <span className="detailRouteTreePathDivider">/</span> : null}
+              {props.route.name === 'service' ? <span>{serviceSectionLabel(activeServiceSection)}</span> : null}
+            </>
+          ) : (
+            <span>按 Stack 浏览，并直接切换到目标服务。</span>
+          )}
+        </div>
+      </div>
 
       {showState ? (
         <div className="detailRouteTreeState">
@@ -193,9 +191,9 @@ export function DetailRouteServiceTree(props: {
           {!loading && error ? <div className="muted">服务树暂不可用：{error}</div> : null}
           {!loading && !error && stacks.length === 0 ? <div className="muted">暂无可导航的 Stack</div> : null}
         </div>
-      ) : null}
-
-      {!showState ? <div className="detailRouteTreeList">{stacks.map((stack) => {
+      ) : (
+        <div className="detailRouteTreeList">
+          {stacks.map((stack) => {
             const expanded = expandedStackIds.includes(stack.id)
             const stackActive = props.route.name === 'stack' && props.route.stackId === stack.id
             const stackCurrent = activeStackId === stack.id
@@ -249,7 +247,9 @@ export function DetailRouteServiceTree(props: {
                 ) : null}
               </section>
             )
-          })}</div> : null}
+          })}
+        </div>
+      )}
     </div>
   )
 }
