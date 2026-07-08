@@ -151,15 +151,15 @@
 - source_type: `storybook_canvas`
   target_program: `mock-only`
   capture_scope: `browser-viewport`
-  requested_viewport: `1680x1180`
+  requested_viewport: `1100x980`
   viewport_strategy: `browser-resize-fallback`
   sensitive_exclusion: `N/A`
   submission_gate: `approved`
   story_id_or_title: `Pages/StackDetailPage/Policy Disabled`
-  state: `desktop stack workspace`
-  evidence_note: 验证 Stack 详情页复用相同三列壳层，当前 Stack 默认展开，服务树可直接跨服务跳转。
+  state: `narrow desktop stack workspace`
+  evidence_note: 验证 Stack 详情页在 `961px - 1160px` 窄桌面断点仍保持 `主导航 / 服务树 / 主内容` 三列壳层，当前 Stack 默认展开，服务树可直接跨服务跳转。
   PR: include
-  PR caption: Stack 详情页与服务详情页共享三列壳层，并默认展开当前 Stack。
+  PR caption: Stack 详情页在窄桌面断点仍保持三列壳层，并默认展开当前 Stack。
 
 ![Stack 详情页桌面三列壳层](./assets/stack-detail-desktop.png)
 

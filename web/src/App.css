@@ -10058,6 +10058,14 @@ html[data-theme="light"] .btnPrimary {
     grid-template-columns: 72px 1fr;
   }
 
+  .appShell.appShellWithDetailSidebar {
+    grid-template-columns: 248px 288px minmax(0, 1fr);
+  }
+
+  .appShell.appShellWithDetailSidebar.appShellSidebarCollapsed {
+    grid-template-columns: 72px 288px minmax(0, 1fr);
+  }
+
   .content {
     padding: 26px 20px 30px;
   }

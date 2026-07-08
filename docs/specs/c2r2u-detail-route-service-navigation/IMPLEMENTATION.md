@@ -8,6 +8,7 @@
 - 已为移动端详情页接入底部主导航与“服务导航”抽屉入口。
 - 已补齐 `ServiceDetailPage` 与 `StackDetailPage` 的 Storybook stories / interaction coverage，覆盖桌面与移动端导航行为。
 - 已修正 `StackDetailPage` 路由下主导航 / 移动端底部导航的 active 映射，让 `stack` 详情与 `service` 详情统一归到 “服务” 主模块，并由 `StackDetailPage` stories 回归断言覆盖。
+- 已补齐 `961px - 1160px` 窄桌面断点下的详情页 grid override，避免三列详情壳层误回退到 overview 使用的两列媒体规则。
 
 ## Outstanding
 
