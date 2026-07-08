@@ -57,6 +57,7 @@
 - 备份设置抽屉必须能直接选择 compose 中声明的 Docker named volumes 与 host bind mounts。
 - `GET /api/services/{service_id}/backup-targets` 必须返回 `bindPaths[]`、`volumeNames[]` 与 `storage { baseDir, artifactPattern, compression, keepLast, deleteAfterStableSeconds }`。
 - `GET /api/services/{service_id}/backup-records` 必须返回按备份创建时间倒序排列的记录列表。
+- `GET /api/services/{service_id}/backup-records` 不得返回 `status=skipped` 且 `summary.backup.reason=no_included_targets` 的纯噪音记录。
 - 每个候选项必须统一为 `{ key, policy, relatedServiceCount, relatedServiceIds }`，其中 `policy` 只允许 `disabled | stop_related_services | live_backup`。
 - `PUT /api/services/{service_id}/backup-targets` 的输入必须表达“当前服务对候选项的策略选择结果”，而不是要求前端自行拼接 stack 级 diff。
 - 共享 target 的信息必须以关联服务计数和 service id 列表形式可见，供更新前停机协调使用。
@@ -100,9 +101,10 @@
 ### Service backup-records API
 
 - `GET /api/services/{service_id}/backup-records`
-  - 仅返回已经落在 `backups` 表中的备份记录。
+  - 仅返回已经落在 `backups` 表中的、对操作者有意义的备份记录。
   - 通过关联 `jobs.summary_json.targets[*].serviceId` 过滤出“当前服务相关”的记录，因此可以命中 `service / stack / all` 三种触发 scope。
   - 返回列表按 `backups.created_at DESC, backups.id DESC` 排序。
+  - 若某条记录满足 `status=skipped` 且当前 stack 对应的 `summary.backup.reason=no_included_targets`，则视为“没有任何实际纳入目标的纯噪音尝试”，不得进入结果。
   - `cleanupAfter` 直接投影自 `backups.cleanup_after`；若为空，前端显示“未计划删除”。
   - `deletedAt` 非空表示该备份包已被 cleanup worker 删除；前端以“已删除”状态文案呈现。
   - `assets[]` 优先投影自该次任务的 `summary.backup.targets[]`，不再额外引入独立资产表。
@@ -243,6 +245,10 @@
 - Given 某次 stack/all update 实际 targets 包含当前服务
   When 调用 `GET /api/services/{service_id}/backup-records`
   Then 该记录仍会出现在结果中，即使 `jobs.service_id` 为空。
+
+- Given 某条记录的 `status=skipped` 且当前 stack 对应的 `summary.backup.reason=no_included_targets`
+  When 调用 `GET /api/services/{service_id}/backup-records`
+  Then 该记录不会返回，因为它没有任何实际纳入备份目标。
 
 - Given 某条备份记录的 `cleanup_after` 为空
   When 前端渲染记录卡

@@ -44,7 +44,7 @@ export function BackupRecordList(props: { records: ServiceBackupRecordItem[] }) 
   if (props.records.length === 0) {
     return (
       <div className="serviceBackupRecordsEmpty" data-service-backup-records-state="empty">
-        当前服务暂无相关备份记录。
+        当前服务暂无实际备份记录。
       </div>
     )
   }

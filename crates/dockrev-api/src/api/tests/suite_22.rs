@@ -246,7 +246,7 @@ services:
     assert_eq!(resp.status(), 200);
     let body = response_json(resp).await;
     let records = body["records"].as_array().unwrap();
-    assert_eq!(records.len(), 3);
+    assert_eq!(records.len(), 2);
     assert_eq!(records[0]["backupId"].as_str(), Some("bkp-api"));
     assert_eq!(records[0]["scope"].as_str(), Some("service"));
     assert_eq!(records[0]["sizeBytes"].as_u64(), Some(1500));
@@ -254,17 +254,12 @@ services:
     assert_eq!(records[0]["assets"][0]["policy"].as_str(), Some("live_backup"));
     assert_eq!(records[0]["assets"][0]["status"].as_str(), Some("included"));
     assert_eq!(records[0]["assets"][0]["sizeBytes"].as_u64(), Some(1500));
-    assert_eq!(records[1]["backupId"].as_str(), Some("bkp-stack"));
-    assert_eq!(records[1]["scope"].as_str(), Some("stack"));
-    assert_eq!(records[1]["status"].as_str(), Some("skipped"));
-    assert_eq!(records[1]["cleanupAfter"], serde_json::Value::Null);
-    assert_eq!(records[1]["assets"][0]["reason"].as_str(), Some("skipped_by_size"));
-    assert_eq!(records[2]["backupId"].as_str(), Some("bkp-all"));
-    assert_eq!(records[2]["scope"].as_str(), Some("all"));
-    assert_eq!(records[2]["status"].as_str(), Some("failed"));
-    assert_eq!(records[2]["deletedAt"].as_str(), Some(now.as_str()));
-    assert_eq!(records[2]["error"].as_str(), Some("archive failed"));
-    assert_eq!(records[2]["assets"][0]["reason"].as_str(), Some("skipped_by_probe_error"));
+    assert_eq!(records[1]["backupId"].as_str(), Some("bkp-all"));
+    assert_eq!(records[1]["scope"].as_str(), Some("all"));
+    assert_eq!(records[1]["status"].as_str(), Some("failed"));
+    assert_eq!(records[1]["deletedAt"].as_str(), Some(now.as_str()));
+    assert_eq!(records[1]["error"].as_str(), Some("archive failed"));
+    assert_eq!(records[1]["assets"][0]["reason"].as_str(), Some("skipped_by_probe_error"));
 }
 
 #[tokio::test]
@@ -348,6 +343,88 @@ services:
     assert_eq!(records[0]["backupId"].as_str(), Some("bkp-noop"));
     assert_eq!(records[0]["scope"].as_str(), Some("service"));
     assert_eq!(records[0]["assets"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn get_service_backup_records_hides_skipped_no_included_targets_rows() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let compose_dir = format!("/tmp/dockrev-backup-records-hidden-noise-{}", ulid::Ulid::new());
+    std::fs::create_dir_all(compose_dir.clone()).unwrap();
+    let compose_path = format!("{compose_dir}/compose.yml");
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  api:
+    image: ghcr.io/acme/api:1.0
+    volumes:
+      - ./data:/srv/data
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "noise", &compose_path).await;
+    let api_id = service_id_by_name(&state, &stack_id, "api").await;
+    let now = test_now_rfc3339();
+
+    insert_update_job_with_summary(
+        &state,
+        "job-hidden-noise",
+        crate::api::types::JobScope::Service,
+        Some(&stack_id),
+        Some(&api_id),
+        json!({
+            "stacks": [{
+                "stackId": stack_id,
+                "backup": {
+                    "status": "skipped",
+                    "reason": "no_included_targets",
+                    "targets": [{
+                        "target": { "kind": "bind-mount", "path": "/srv/data" },
+                        "status": "skipped",
+                        "reason": "skipped_by_user"
+                    }]
+                },
+                "update": {
+                    "changedServices": 1,
+                    "oldDigests": digest_map(&[(api_id.as_str(), "ghcr.io/acme/api:1.0")]),
+                    "newDigests": digest_map(&[(api_id.as_str(), "ghcr.io/acme/api:1.1")]),
+                    "finalDigests": digest_map(&[(api_id.as_str(), "ghcr.io/acme/api:1.1")])
+                }
+            }]
+        }),
+        &now,
+    )
+    .await;
+    insert_backup_record(
+        &state,
+        "bkp-hidden-noise",
+        &stack_id,
+        "job-hidden-noise",
+        &now,
+        "skipped",
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{api_id}/backup-records"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    let records = body["records"].as_array().unwrap();
+    assert!(records.is_empty());
 }
 
 #[tokio::test]

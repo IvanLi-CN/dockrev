@@ -212,7 +212,7 @@ export const BackupSection: Story = {
     expectStory(currentRoutePathname() === '/services/stack-prod/svc-prod-api/backup', 'backup deep link missing')
     expectStory(findTab(canvasElement, 'backup')?.getAttribute('data-state') === 'active', 'backup tab should be active')
     expectStory(Boolean(findSectionCard(canvasElement, 'backup-records')), 'backup should render backup records card')
-    expectStory(normalizeText(canvasElement.textContent).includes('当前服务相关的备份记录'), 'backup records heading missing')
+    expectStory(normalizeText(canvasElement.textContent).includes('实际备份记录'), 'backup records heading missing')
     expectStory(normalizeText(canvasElement.textContent).includes('备份时间'), 'backup record card content missing')
   },
 }
@@ -734,7 +734,7 @@ export const BackupRecordsEmpty: Story = {
   render: render('stack-prod', 'svc-prod-worker', 'backup'),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => Boolean(findSectionCard(canvasElement, 'backup-records')))
-    expectStory(normalizeText(canvasElement.textContent).includes('当前服务暂无相关备份记录'), 'backup empty state missing')
+    expectStory(normalizeText(canvasElement.textContent).includes('当前服务暂无实际备份记录'), 'backup empty state missing')
   },
 }
 

@@ -11,7 +11,7 @@
 ## Coverage / rollout summary
 
 - 已新增 `GET/PUT /api/services/{service_id}/backup-targets`，返回服务级 bind path / volume 候选、共享信息与只读备份存储说明。
-- 已新增 `GET /api/services/{service_id}/backup-records`，返回“当前服务相关”的备份记录、计划删除时间与资产明细。
+- 已新增 `GET /api/services/{service_id}/backup-records`，返回“当前服务相关”的实际备份记录、计划删除时间与资产明细，并过滤 `status=skipped && reason=no_included_targets` 的纯噪音尝试。
 - 已扩展 compose 解析链路，按 compose 声明提取 named volumes 与 bind mounts，并把相对 bind path 解析为基于 compose 文件目录的绝对路径。
 - 已将服务级备份策略落到独立关系表，并在服务端把它投影回现有 settings 视图，兼容当前其余读取路径。
 - 已实现共享 target 的保守取消语义：独占 target 取消时从 `stack.backup.targets` 移除；共享 target 取消时仅把当前服务 policy 记为 `disabled`。

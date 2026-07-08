@@ -472,8 +472,8 @@ export function ServiceDetailPage(props: {
       <div className="card" data-service-detail-section-card="backup-records">
         <div className="serviceBackupSummaryHead">
           <div>
-            <div className="title">当前服务相关的备份记录</div>
-            <div className="muted">凡该次 update / rollback 实际影响当前服务，都会出现在这里。</div>
+            <div className="title">实际备份记录</div>
+            <div className="muted">这里只显示当前服务产生了实际备份结果或失败信息的记录。</div>
           </div>
         </div>
         <BackupRecordList records={backupRecords} />
