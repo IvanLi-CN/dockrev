@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-02-24
-- Last: 2026-06-22
+- Last: 2026-07-08
 
 ## 背景 / 问题陈述
 
@@ -84,13 +84,14 @@
 - `update/runtime_scan/discovery`：
   - 默认 `planned* = completed*`，保证前端双层展示一致。
   - 例外：`stack/all update` 的 batch pull 阶段若缺少可解析中间证据，不得用 synthetic service 预推进伪造高百分比；此时允许显式发送 `plannedPercent: null`，completed `percent` 只在已验证阶段推进。
+  - Docker/Compose pull 输出中，`current/total` 字节比例是最强证据；缺少总字节但存在 `completedLayers/totalLayers` 时，layers 比例可作为保守中间证据推进 pull 子阶段，且必须保持单调不减、不得伪造下载总量。
 
 ### 前端展示
 
 - Queue 行内展示两层条：安排（上）+ 完成（下）。
 - Job 详情页进度卡展示两层条与对应计数/百分比。
 - 历史任务若缺失 `planned*`，前端回退为 `planned=completed`。
-- 若任务显式发送 `plannedPercent: null`，UI 必须显示 running/indeterminate，而不是回退成具体数字。
+- 若任务显式发送 `plannedPercent: null`，UI 必须显示 running/indeterminate，而不是回退成具体数字；若后端已用真实字节或 layers 证据给出 `plannedPercent`，UI 显示确定进度，同时下载明细仍表达为 `已下载 X · layers n/m` 或 `X / Y · layers n/m`。
 
 ## 验收标准（Acceptance Criteria）
 
@@ -99,6 +100,7 @@
 - Given 任务处于 running，When 查看 `/queue` 与 `/queue/:jobId`，Then 均可见双层进度条。
 - Given 历史任务无 `planned*`，When 前端渲染，Then 不报错且双层展示正常回退。
 - Given `stack/all update` 的 batch pull 无可解析进展，When 读取 jobs API/SSE 或查看 `/queue` 与 `/queue/:jobId`，Then `plannedPercent` 保持 `null`，UI 进入 indeterminate，且不会在 pull 完成前虚高到 `82%` 一类已验证阶段之外的数值。
+- Given `stack/all update` 的 batch pull 缺少下载总字节但持续输出 layers 完成数，When 读取 jobs API/SSE 或查看 `/queue` 与 `/queue/:jobId`，Then 主进度条随 layers 证据保守推进，下载明细不把 layers 伪装成字节百分比。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
 
@@ -127,6 +129,10 @@
 
 ![Job detail unknown-total download progress](./assets/update-download-unknown-job-detail.png)
 
+![Queue update layer-derived download progress](./assets/update-layer-progress-queue.png)
+
+![Job detail layer-derived download progress](./assets/update-layer-progress-job-detail.png)
+
 ## 实现里程碑（Milestones / Delivery checklist）
 
 - [x] M1: 新增 spec 并冻结验收口径。
@@ -148,3 +154,4 @@
 - 2026-02-24: 快车道交付完成（PR #90，CI 全绿，review-loop 无 P0/P1 阻塞）。
 - 2026-06-22: 修正 `stack/all update` batch pull 的进度语义；无可解析 pull 证据时使用显式 `plannedPercent: null` 驱动 UI 进入 indeterminate，避免 synthetic service 预推进造成的虚高百分比。
 - 2026-07-06: 增加真实 Docker/Compose pull 下载明细；共享测试机验证 service 与 stack 更新均能产生 `download.currentBytes`，缺少可证明总量时保持 indeterminate。
+- 2026-07-08: 将 Docker/Compose layers 完成数纳入保守 pull 进度证据；仍优先真实字节比例，缺少任何可解析证据时继续保持 indeterminate。

@@ -52,6 +52,121 @@ fn pull_progress_tracker_reports_determinate_ratio_when_total_is_known() {
 }
 
 #[test]
+fn pull_progress_tracker_uses_layers_when_total_bytes_are_unknown() {
+    let mut tracker = PullProgressTracker::default();
+    tracker
+        .observe_line("4f4fb700ef54 Pulling fs layer 0B")
+        .expect("layer start");
+    tracker
+        .observe_line("b47651011c80 Pulling fs layer 0B")
+        .expect("layer start");
+    tracker
+        .observe_line("a6f09e5c55f7 Pulling fs layer 0B")
+        .expect("layer start");
+    let snapshot = tracker
+        .observe_line("4f4fb700ef54 Download complete 0B")
+        .expect("download complete");
+
+    assert_eq!(snapshot.fraction, Some(1.0 / 3.0));
+    assert!(snapshot.download.is_some_and(|download| {
+        download.total_bytes.is_none()
+            && download.completed_layers == Some(1)
+            && download.total_layers == Some(3)
+    }));
+}
+
+#[test]
+fn pull_progress_tracker_keeps_unknown_total_indeterminate_until_a_layer_completes() {
+    let mut tracker = PullProgressTracker::default();
+    tracker
+        .observe_line("4f4fb700ef54 Pulling fs layer 0B")
+        .expect("layer start");
+    let snapshot = tracker
+        .observe_line("b47651011c80 Downloading 4.2MB")
+        .expect("unknown total current bytes");
+
+    assert_eq!(snapshot.fraction, None);
+    assert!(snapshot.download.is_some_and(|download| {
+        download.total_bytes.is_none()
+            && download.completed_layers == Some(0)
+            && download.total_layers == Some(2)
+    }));
+}
+
+#[test]
+fn pull_progress_tracker_prefers_byte_fraction_over_layer_fraction() {
+    let mut tracker = PullProgressTracker::default();
+    tracker
+        .observe_line("4f4fb700ef54 Pulling fs layer 0B")
+        .expect("layer start");
+    tracker
+        .observe_line("b47651011c80 Pulling fs layer 0B")
+        .expect("layer start");
+    tracker
+        .observe_line("4f4fb700ef54 Download complete 0B")
+        .expect("download complete");
+    let snapshot = tracker
+        .observe_line("b47651011c80 Downloading 8MB/10MB")
+        .expect("known total bytes");
+
+    assert_eq!(snapshot.fraction, Some(0.8));
+}
+
+#[test]
+fn pull_progress_tracker_keeps_effective_fraction_monotonic_across_sources() {
+    let mut tracker = PullProgressTracker::default();
+    tracker
+        .observe_line("4f4fb700ef54 Pulling fs layer 0B")
+        .expect("layer start");
+    let layer_snapshot = tracker
+        .observe_line("4f4fb700ef54 Download complete 0B")
+        .expect("layer complete");
+    assert_eq!(layer_snapshot.fraction, Some(0.99));
+
+    let byte_snapshot = tracker
+        .observe_line("b47651011c80 Downloading 2MB/10MB")
+        .expect("known byte progress");
+
+    assert_eq!(byte_snapshot.fraction, Some(0.99));
+}
+
+#[test]
+fn pull_progress_tracker_switches_to_byte_fraction_after_bytes_catch_up() {
+    let mut tracker = PullProgressTracker::default();
+    tracker
+        .observe_line("4f4fb700ef54 Pulling fs layer 0B")
+        .expect("layer start");
+    tracker
+        .observe_line("4f4fb700ef54 Download complete 0B")
+        .expect("layer complete");
+    let snapshot = tracker
+        .observe_line("b47651011c80 Downloading 10MB/10MB")
+        .expect("known byte progress");
+
+    assert_eq!(snapshot.fraction, Some(1.0));
+}
+
+#[test]
+fn pull_progress_tracker_keeps_fraction_monotonic_when_layer_total_grows() {
+    let mut tracker = PullProgressTracker::default();
+    tracker
+        .observe_line("4f4fb700ef54 Pulling fs layer 0B")
+        .expect("layer start");
+    let first = tracker
+        .observe_line("4f4fb700ef54 Download complete 0B")
+        .expect("one of one complete");
+    assert_eq!(first.fraction, Some(0.99));
+
+    let later = tracker
+        .observe_line("b47651011c80 Pulling fs layer 0B")
+        .expect("new layer appears later");
+    assert_eq!(later.fraction, Some(0.99));
+    assert!(later.download.is_some_and(|download| {
+        download.completed_layers == Some(1) && download.total_layers == Some(2)
+    }));
+}
+
+#[test]
 fn pull_progress_tracker_counts_completed_layers() {
     let mut tracker = PullProgressTracker::default();
     tracker
@@ -68,7 +183,7 @@ fn pull_progress_tracker_counts_completed_layers() {
         .expect("active download");
     let download = snapshot.download.expect("download state");
 
-    assert_eq!(snapshot.fraction, None);
+    assert_eq!(snapshot.fraction, Some(0.99));
     assert_eq!(download.completed_layers, Some(2));
     assert_eq!(download.total_layers, Some(3));
     assert!(
