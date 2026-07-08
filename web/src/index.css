@@ -203,8 +203,16 @@ html[data-theme='dark'] {
   --chart-5: var(--color-error);
   --overlay-scrim: oklch(0.08 0.02 256 / 0.58);
   --bg-layered:
-    radial-gradient(960px 520px at -12% -20%, rgba(55, 133, 226, 0.18) 0%, rgba(55, 133, 226, 0) 55%),
-    radial-gradient(880px 460px at 115% -12%, rgba(48, 161, 211, 0.14) 0%, rgba(48, 161, 211, 0) 56%),
+    radial-gradient(
+      960px 520px at -12% -20%,
+      color-mix(in srgb, var(--color-primary) 18%, transparent) 0%,
+      color-mix(in srgb, var(--color-primary) 0%, transparent) 55%
+    ),
+    radial-gradient(
+      880px 460px at 115% -12%,
+      color-mix(in srgb, var(--color-secondary) 14%, transparent) 0%,
+      color-mix(in srgb, var(--color-secondary) 0%, transparent) 56%
+    ),
     linear-gradient(160deg, #040b1a 0%, #061227 48%, #040f21 100%);
 }
 
@@ -283,7 +291,7 @@ html[data-theme='light'] {
   --bg-layered:
     radial-gradient(980px 500px at -14% -24%, rgba(76, 162, 238, 0.03) 0%, rgba(76, 162, 238, 0) 58%),
     radial-gradient(900px 460px at 112% -14%, rgba(57, 156, 228, 0.025) 0%, rgba(57, 156, 228, 0) 56%),
-    linear-gradient(160deg, #ffffff 0%, #f8fcff 46%, #f3f9ff 100%);
+    linear-gradient(160deg, var(--color-base-100) 0%, var(--color-base-200) 46%, var(--color-base-300) 100%);
 }
 
 :root:not([data-theme]) {

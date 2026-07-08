@@ -61,6 +61,16 @@ function isDockrevService(svc: Service): boolean {
   return isDockrevImageRef(svc.image.ref)
 }
 
+type ServiceDetailSection = 'overview' | 'monitoring' | 'backup' | 'logs' | 'settings'
+
+function serviceDetailSectionLabel(section: ServiceDetailSection): string {
+  if (section === 'monitoring') return '监控'
+  if (section === 'backup') return '备份'
+  if (section === 'logs') return '日志'
+  if (section === 'settings') return '设置'
+  return '概览'
+}
+
 type BackupTargetDraftItem = {
   key: string
   policy: BackupTargetPolicy
@@ -406,6 +416,7 @@ export function ServiceDetailPage(props: {
   const effectiveDotClass = service != null ? dotClass : 'svcBannerDot'
   const effectiveBannerDetail =
     service != null ? bannerDetail : '当前展示本地快照；恢复联网后刷新可获取最新候选与实时状态。'
+  const currentSectionLabel = serviceDetailSectionLabel(sectionValue)
 
   const renderOverviewSection = () => (
     <div className="svcDetailSectionStack">
@@ -517,7 +528,6 @@ export function ServiceDetailPage(props: {
               />
             </div>
           </div>
-
       <div className="card svcComposeCard">
         <div className="title">Compose 信息</div>
         <div className="kv">
@@ -623,7 +633,6 @@ export function ServiceDetailPage(props: {
           ))}
           {rules.length === 0 ? <div className="muted">暂无规则</div> : null}
         </div>
-
         <div className="sectionTitle" style={{ marginTop: 14 }}>
           添加规则
         </div>
@@ -684,7 +693,6 @@ export function ServiceDetailPage(props: {
       <div className="card" data-service-detail-section-card="webhook">
         <div className="title">Webhook 触发（服务级）</div>
         <div className="muted">用于外部系统触发：更新此服务 / 更新 compose / 更新全部</div>
-
         <div className="webhookRow">
           <div className="label">POST</div>
           <div className="mono">/api/v1/update/service/{effectiveService.name}</div>
@@ -708,8 +716,8 @@ export function ServiceDetailPage(props: {
         </div>
         <div className="svcDangerZoneActions">{dangerousActions}</div>
       </div>
-        </>
-      ) : null}
+      </>
+    ) : null}
     </div>
   )
 
@@ -740,115 +748,142 @@ export function ServiceDetailPage(props: {
           detail="仅在存在可用缓存时显示只读内容；日志与设置需要联网。"
         />
       ) : null}
-      <div className="svcTitleRow">
-        <div className="svcTitleMain">
-          <div className="svcTitleNameRow">
-            <div className="svcTitleName">
-              服务: <Mono>{effectiveService.name}</Mono>
-            </div>
-            <Pill tone="muted">{effectiveStack.name}</Pill>
-          </div>
-          {(() => {
-            const img = splitImageRef(effectiveService.image.ref)
-            const dn = splitImageNameForDisplay(img.name, effectiveService.image.tag)
-            return (
-              <div className="cellTwoLine">
-                <div
-                  className="mono monoPrimary monoSplit imageLinkRow"
-                  title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}
-                >
-                  <span className="monoSplitBase">{dn.base}</span>
-                  <ImageLinkIcons imageRef={effectiveService.image.ref} repoUrl={visibleRepoUrl} />
-                </div>
-                <div className="mono monoSecondary">{img.registry}</div>
-              </div>
-            )
-          })()}
-          <div className="muted">
-            id <Mono>{effectiveService.id}</Mono> · stack <Mono>{effectiveStack.id}</Mono>
-          </div>
-        </div>
-      </div>
-
-      <div className="svcDetailContextSummary" data-service-detail-context="status-summary">
-        <div className={effectiveBannerClass}>
-          <div className="svcBannerTitleRow">
-            <span className={effectiveDotClass} />
-            <div className="svcBannerTitle">{effectiveBannerTitle}</div>
-            <div style={{ marginLeft: 'auto' }}>
-              <Pill tone={tone}>{svcBadge(effectiveService)}</Pill>
-            </div>
-          </div>
-          <div className="svcBannerDetail">{effectiveBannerDetail}</div>
-        </div>
-
-        {semverDowngradeAnomaly ? (
-          <div className="svcAnomalyAlert" role="alert">
-            <div className="svcAnomalyAlertTitle">
-              <span className="svcAnomalyAlertIcon" aria-hidden="true">
-                ⚠
+      <section className="detailHeroShell">
+        <div className="svcTitleRow detailHeroCard detailHeroCardService">
+          <div className="svcTitleMain detailHeroPrimary">
+            <div className="detailHeroContext" aria-label="当前详情层级">
+              <span>服务工作区</span>
+              <span className="detailHeroContextDivider" aria-hidden="true">
+                /
               </span>
-              <span>版本异常：候选版本低于当前版本</span>
+              <span>{currentSectionLabel}</span>
             </div>
-            <div className="svcAnomalyAlertText">
-              当前 <Mono>{anomalyCurrentTag}</Mono> → 候选 <Mono>{anomalyCandidateTag}</Mono>。手动更新仍可继续，请确认这是预期降级。
+            <div className="svcTitleNameRow detailHeroNameRow">
+              <div className="svcTitleName detailHeroName">
+                <Mono>{effectiveService.name}</Mono>
+              </div>
+              <Pill tone="muted">{effectiveStack.name}</Pill>
+            </div>
+            {(() => {
+              const img = splitImageRef(effectiveService.image.ref)
+              const dn = splitImageNameForDisplay(img.name, effectiveService.image.tag)
+              return (
+                <div className="cellTwoLine detailHeroDescription">
+                  <div
+                    className="mono monoPrimary monoSplit imageLinkRow"
+                    title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}
+                  >
+                    <span className="monoSplitBase">{dn.base}</span>
+                    <ImageLinkIcons imageRef={effectiveService.image.ref} repoUrl={visibleRepoUrl} />
+                  </div>
+                  <div className="mono monoSecondary">{img.registry}</div>
+                </div>
+              )
+            })()}
+          </div>
+
+          <div className="detailHeroAside" data-service-detail-context="status-summary">
+            <div className={`${effectiveBannerClass} detailHeroStatusCard`}>
+              <div className="svcBannerTitleRow">
+                <span className={effectiveDotClass} />
+                <div className="svcBannerTitle">{effectiveBannerTitle}</div>
+                <div style={{ marginLeft: 'auto' }}>
+                  <Pill tone={tone}>{svcBadge(effectiveService)}</Pill>
+                </div>
+              </div>
+              <div className="svcBannerDetail">{effectiveBannerDetail}</div>
             </div>
           </div>
-        ) : null}
-      </div>
+        </div>
 
-      <div className="svcDetailTabsShell" data-service-detail-tabs-shell="true">
-        <Tabs
-          onValueChange={(value) => {
-            const nextSection = value as 'overview' | 'monitoring' | 'backup' | 'logs' | 'settings'
-            navigate({
-              name: 'service',
-              stackId: props.stackId,
-              serviceId: props.serviceId,
-              section: nextSection,
-            })
-          }}
-          value={sectionValue}
-        >
-          <TabsList className="svcDetailTabsList" aria-label="服务详情分区">
-            <TabsTrigger
-              className={sectionValue === 'overview' ? 'svcDetailTab active' : 'svcDetailTab'}
-              data-service-detail-tab="overview"
-              value="overview"
-            >
-              概览
-            </TabsTrigger>
-            <TabsTrigger
-              className={sectionValue === 'monitoring' ? 'svcDetailTab active' : 'svcDetailTab'}
-              data-service-detail-tab="monitoring"
-              value="monitoring"
-            >
-              监控
-            </TabsTrigger>
-            <TabsTrigger
-              className={sectionValue === 'backup' ? 'svcDetailTab active' : 'svcDetailTab'}
-              data-service-detail-tab="backup"
-              value="backup"
-            >
-              备份
-            </TabsTrigger>
-            <TabsTrigger
-              className={sectionValue === 'logs' ? 'svcDetailTab active' : 'svcDetailTab'}
-              data-service-detail-tab="logs"
-              value="logs"
-            >
-              日志
-            </TabsTrigger>
-            <TabsTrigger
-              className={sectionValue === 'settings' ? 'svcDetailTab active' : 'svcDetailTab'}
-              data-service-detail-tab="settings"
-              value="settings"
-            >
-              设置
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-      </div>
+        <div className="detailHeroMetaGrid">
+          <div className="detailHeroMetaCard">
+            <div className="detailHeroMetaLabel">Image Ref</div>
+            <div className="detailHeroMetaValue">
+              <Mono>{effectiveService.image.ref}</Mono>
+            </div>
+          </div>
+          <div className="detailHeroMetaCard">
+            <div className="detailHeroMetaLabel">Service ID</div>
+            <div className="detailHeroMetaValue">
+              <Mono>{effectiveService.id}</Mono>
+            </div>
+          </div>
+          <div className="detailHeroMetaCard">
+            <div className="detailHeroMetaLabel">Stack ID</div>
+            <div className="detailHeroMetaValue">
+              <Mono>{effectiveStack.id}</Mono>
+            </div>
+          </div>
+        </div>
+
+        <div className="svcDetailTabsShell" data-service-detail-tabs-shell="true">
+          <Tabs
+            onValueChange={(value) => {
+              const nextSection = value as ServiceDetailSection
+              navigate({
+                name: 'service',
+                stackId: props.stackId,
+                serviceId: props.serviceId,
+                section: nextSection,
+              })
+            }}
+            value={sectionValue}
+          >
+            <TabsList className="svcDetailTabsList" aria-label="服务详情分区">
+              <TabsTrigger
+                className={sectionValue === 'overview' ? 'svcDetailTab active' : 'svcDetailTab'}
+                data-service-detail-tab="overview"
+                value="overview"
+              >
+                概览
+              </TabsTrigger>
+              <TabsTrigger
+                className={sectionValue === 'monitoring' ? 'svcDetailTab active' : 'svcDetailTab'}
+                data-service-detail-tab="monitoring"
+                value="monitoring"
+              >
+                监控
+              </TabsTrigger>
+              <TabsTrigger
+                className={sectionValue === 'backup' ? 'svcDetailTab active' : 'svcDetailTab'}
+                data-service-detail-tab="backup"
+                value="backup"
+              >
+                备份
+              </TabsTrigger>
+              <TabsTrigger
+                className={sectionValue === 'logs' ? 'svcDetailTab active' : 'svcDetailTab'}
+                data-service-detail-tab="logs"
+                value="logs"
+              >
+                日志
+              </TabsTrigger>
+              <TabsTrigger
+                className={sectionValue === 'settings' ? 'svcDetailTab active' : 'svcDetailTab'}
+                data-service-detail-tab="settings"
+                value="settings"
+              >
+                设置
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+      </section>
+
+      {semverDowngradeAnomaly ? (
+        <div className="svcAnomalyAlert" role="alert">
+          <div className="svcAnomalyAlertTitle">
+            <span className="svcAnomalyAlertIcon" aria-hidden="true">
+              ⚠
+            </span>
+            <span>版本异常：候选版本低于当前版本</span>
+          </div>
+          <div className="svcAnomalyAlertText">
+            当前 <Mono>{anomalyCurrentTag}</Mono> → 候选 <Mono>{anomalyCandidateTag}</Mono>。手动更新仍可继续，请确认这是预期降级。
+          </div>
+        </div>
+      ) : null}
 
       {isDockrevService(effectiveService) && supervisorState.status === 'offline' ? (
         <div className="muted" style={{ marginTop: 10 }}>

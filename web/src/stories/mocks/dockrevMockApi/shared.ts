@@ -72,6 +72,7 @@ export type DockrevApiScenario =
   | 'version-tags-popover-same-digest'
   | 'version-tags-popover-snapshot-pending'
   | 'version-tags-popover-snapshot-missing'
+  | 'archived-stack-detail-navigation'
   | 'multi-stack-mixed'
   | 'overview-discovery-readable'
   | 'overview-resource-monitor-error'
@@ -262,6 +263,8 @@ export type MockDebug = {
   lastUpdateRequest: unknown | null
   lastUpdateUrl: string | null
   lastUpdateMethod: string | null
+  stackDetailCalls: number
+  stackDetailCallsById: Record<string, number>
   digestTagsSnapshotCalls: number
   digestTagsCalls: number
   lastDigestTagsSnapshotUrl: string | null
@@ -601,6 +604,8 @@ export function makeMockDebug(): MockDebug {
     lastUpdateRequest: null,
     lastUpdateUrl: null,
     lastUpdateMethod: null,
+    stackDetailCalls: 0,
+    stackDetailCallsById: {},
     digestTagsSnapshotCalls: 0,
     digestTagsCalls: 0,
     lastDigestTagsSnapshotUrl: null,

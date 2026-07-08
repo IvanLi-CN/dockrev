@@ -798,6 +798,9 @@ export function installDockrevMockApi(
     }
     if (method === 'GET' && urlPath.startsWith('/api/stacks/')) {
       const id = decodeURIComponent(urlPath.split('/').slice(3).join('/'))
+      const dbg = globalThis.__DOCKREV_MOCK_DEBUG__ ?? (globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug())
+      dbg.stackDetailCalls += 1
+      dbg.stackDetailCallsById[id] = (dbg.stackDetailCallsById[id] ?? 0) + 1
       const st = f.stackById[id]
       if (!st) return json({ error: 'not found' }, { status: 404 })
       return json({ stack: st })

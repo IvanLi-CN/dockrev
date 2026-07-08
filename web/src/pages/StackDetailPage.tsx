@@ -157,6 +157,7 @@ export function StackDetailPage(props: {
   const policy = settings?.autoUpdatePolicy ?? cachedPolicy ?? createDefaultAutoUpdatePolicy('override')
   const updatable = stack.services.filter((service) => serviceRowStatus(service) !== 'ok').length
   const recentUpdateJobs = selectRecentStackUpdateJobs(jobs, stack)
+  const stableServices = Math.max(stack.services.length - updatable, 0)
 
   return (
     <div className="page">
@@ -171,25 +172,78 @@ export function StackDetailPage(props: {
           onAction={() => void refresh()}
         />
       ) : null}
-      <div className="stackDetailHero">
-        <div>
-          <div className="svcTitleName">Stack: <Mono>{stack.name}</Mono></div>
-          <div className="muted">id <Mono>{stack.id}</Mono> · 服务 {stack.services.length} · 候选 {updatable}</div>
+      <section className="detailHeroShell">
+        <div className="stackDetailHero detailHeroCard detailHeroCardStack">
+          <div className="detailHeroPrimary">
+            <div className="detailHeroContext" aria-label="当前 Stack 状态">
+              <span>Stack 工作区</span>
+              <span className="detailHeroContextDivider" aria-hidden="true">
+                /
+              </span>
+              <span>{stack.archived ? '已归档' : '运行中'}</span>
+            </div>
+            <div className="svcTitleName detailHeroName">
+              <Mono>{stack.name}</Mono>
+            </div>
+            <div className="muted detailHeroDescription">
+              共 <Mono>{stack.services.length}</Mono> 个服务，其中 <Mono>{updatable}</Mono> 项需要关注。
+            </div>
+          </div>
+          <div className="detailHeroAside">
+            <div className="detailHeroStatusPanel">
+              <div className="detailHeroMetaLabel">运行概况</div>
+              <div className="detailHeroStatusHeadline">
+                {updatable === 0 ? '当前没有待处理项' : `${updatable} 个服务需要关注`}
+              </div>
+              <div className="detailHeroStatusCopy">
+                稳定 <Mono>{stableServices}</Mono> · 总计 <Mono>{stack.services.length}</Mono>
+              </div>
+              <div className="detailHeroStatusFoot">
+                <Pill tone={stack.archived ? 'warn' : 'info'}>
+                  {stack.archived ? 'archived' : stack.compose.type}
+                </Pill>
+              </div>
+            </div>
+          </div>
         </div>
-        <Pill tone={stack.archived ? 'warn' : 'info'}>{stack.archived ? 'archived' : stack.compose.type}</Pill>
-      </div>
+
+        <div className="detailHeroMetaGrid detailHeroMetaGridStack">
+          <div className="detailHeroMetaCard">
+            <div className="detailHeroMetaLabel">Stack ID</div>
+            <div className="detailHeroMetaValue">
+              <Mono>{stack.id}</Mono>
+            </div>
+          </div>
+          <div className="detailHeroMetaCard">
+            <div className="detailHeroMetaLabel">Compose</div>
+            <div className="detailHeroMetaValue">{stack.compose.type}</div>
+          </div>
+          <div className="detailHeroMetaCard">
+            <div className="detailHeroMetaLabel">服务数</div>
+            <div className="detailHeroMetaValue">
+              <Mono>{stack.services.length}</Mono>
+            </div>
+          </div>
+          <div className="detailHeroMetaCard">
+            <div className="detailHeroMetaLabel">需关注</div>
+            <div className="detailHeroMetaValue">
+              <Mono>{updatable}</Mono>
+            </div>
+          </div>
+        </div>
+      </section>
 
       <div className="settingsSummaryGrid">
-      <AutoUpdatePolicyResultCard
-        busy={busy}
-        onOpenSettings={() => {
-          if (!settings || !isOnline) return
-          setAutoPolicyDraft(policy)
-          setSettingsDrawerOpen(true)
-        }}
-        policy={policy}
-        scope="stack"
-      />
+        <AutoUpdatePolicyResultCard
+          busy={busy}
+          onOpenSettings={() => {
+            if (!settings || !isOnline) return
+            setAutoPolicyDraft(policy)
+            setSettingsDrawerOpen(true)
+          }}
+          policy={policy}
+          scope="stack"
+        />
         <RecentUpdateRecords jobs={recentUpdateJobs} />
       </div>
 
@@ -200,9 +254,9 @@ export function StackDetailPage(props: {
             const status = serviceRowStatus(service)
             return (
               <div className="stackServiceRow" key={service.id}>
-                <div>
-                  <div className="mono">{service.name}</div>
-                  <div className="muted">{service.image.ref}</div>
+                <div className="stackServiceCopy">
+                  <div className="stackServiceName mono">{service.name}</div>
+                  <div className="stackServiceRef muted">{service.image.ref}</div>
                 </div>
                 <Pill tone={statusTone(status)}>{statusLabel(status)}</Pill>
                 <Button onClick={() => navigate({ name: 'service', stackId: stack.id, serviceId: service.id })}>

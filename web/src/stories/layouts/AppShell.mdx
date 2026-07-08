@@ -5,10 +5,12 @@ import * as AppShellStories from './AppShell.stories'
 
 # AppShell Navigation
 
-Desktop navigation supports the normal expanded shell and a compact icon-only shell. The mobile drawer uses the same primary navigation icon map, so labels and icons do not drift between responsive states.
+Desktop navigation supports the normal expanded shell, the compact icon-only shell, and a detail layout with a dedicated service tree rail. On mobile, primary navigation moves to the bottom bar while the drawer is reserved for page-level secondary content such as the service tree.
 
 <Canvas of={AppShellStories.Overview} />
 
 <Canvas of={AppShellStories.CollapsedSidebar} />
 
-<Canvas of={AppShellStories.MobileDrawerWithIcons} />
+<Canvas of={AppShellStories.DetailSidebarDesktop} />
+
+<Canvas of={AppShellStories.MobileBottomNavAndDrawer} />

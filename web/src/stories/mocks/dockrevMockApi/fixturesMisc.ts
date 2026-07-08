@@ -272,6 +272,22 @@ export function buildMultiStackMixed(): Fixture {
   return f
 }
 
+export function buildArchivedStackDetailNavigation(): Fixture {
+  const f = buildMultiStackMixed()
+  const stackId = 'stack-lab'
+  const stack = f.stacks.find((item) => item.id === stackId)
+  if (stack) {
+    stack.archived = true
+    stack.archivedServices =
+      f.stackById[stackId]?.services.filter((service) => Boolean(service.archived))
+        .length ?? 0
+  }
+  if (f.stackById[stackId]) {
+    f.stackById[stackId].archived = true
+  }
+  return f
+}
+
 export function buildOverviewDiscoveryReadable(): Fixture {
   const f = buildDashboardDemo()
 
@@ -480,6 +496,7 @@ export function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fi
   if (scenario === 'version-tags-popover-same-digest') {
     return buildVersionTagsPopoverDemo({ sameDigest: true, candidateTag: 'stable' })
   }
+  if (scenario === 'archived-stack-detail-navigation') return buildArchivedStackDetailNavigation()
   if (scenario === 'queue-mixed') return buildQueueMixed()
   if (scenario === 'overview-jobs-card-heavy-inflight') return buildOverviewJobsCardHeavyInFlight()
   if (scenario === 'overview-jobs-card-running-progress-modes') return buildOverviewJobsCardRunningProgressModes()
