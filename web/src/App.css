@@ -315,36 +315,43 @@ html[data-theme="light"] .brandLogoForLight {
 .detailRouteTree {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 
 .detailRouteTreeIntro {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 0 2px 4px;
+  gap: 10px;
+  padding: 0 2px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
 }
 
 .detailRouteTreeTitleRow {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 
 .detailRouteTreeTitle {
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0;
+  font-size: 15px;
+  font-weight: 720;
+  letter-spacing: -0.01em;
   color: var(--text);
 }
 
 .detailRouteTreeMeta {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
+  min-height: 24px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 76%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dockrev-surface) 78%, transparent);
   font-size: 11px;
   color: var(--muted2);
+  white-space: nowrap;
 }
 
 .detailRouteTreeMetaDivider {
@@ -355,10 +362,24 @@ html[data-theme="light"] .brandLogoForLight {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.detailRouteTreePathLabel {
+  display: inline-flex;
+  min-height: 20px;
+  align-items: center;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dockrev-surface) 52%, transparent);
+  color: var(--muted2);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
 }
 
 .detailRouteTreePathDivider {
@@ -366,67 +387,68 @@ html[data-theme="light"] .brandLogoForLight {
 }
 
 .detailRouteTreeState {
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-radius: 12px;
-  background: color-mix(in srgb, var(--dockrev-surface) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
+  background: color-mix(in srgb, var(--dockrev-surface) 72%, transparent);
 }
 
 .detailRouteTreeList {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
 }
 
 .detailRouteStackGroup {
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--dockrev-surface) 78%, transparent);
-  box-shadow: inset 0 0 0 1px
-    color-mix(in srgb, var(--borderColor) 84%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 0;
+  border-top: 1px solid color-mix(in srgb, var(--borderColor) 68%, transparent);
+}
+
+.detailRouteStackGroup:first-child {
+  padding-top: 0;
+  border-top: 0;
 }
 
 .detailRouteStackRow {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-columns: 24px minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
-  padding: 8px 8px 6px;
+  gap: 10px;
 }
 
 .detailRouteStackToggle {
   display: inline-flex;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   align-items: center;
   justify-content: center;
-  border: 1px solid transparent;
-  border-radius: 8px;
+  border: 0;
+  border-radius: 7px;
   background: transparent;
-  color: var(--muted);
+  color: var(--muted2);
   cursor: pointer;
   transition:
     background-color 160ms ease,
-    border-color 160ms ease,
     color 160ms ease;
 }
 
 .detailRouteStackToggle:hover {
-  background: color-mix(
-    in srgb,
-    var(--dockrev-surface-strong) 88%,
-    transparent
-  );
-  border-color: color-mix(in srgb, var(--borderColor) 74%, transparent);
+  background: color-mix(in srgb, var(--dockrev-surface-strong) 80%, transparent);
   color: var(--text);
 }
 
 .detailRouteStackLink {
+  position: relative;
   min-width: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  min-height: 38px;
-  padding: 9px 10px;
+  min-height: 40px;
+  padding: 9px 10px 9px 12px;
   border: 1px solid transparent;
   border-radius: 10px;
   color: var(--text);
@@ -436,38 +458,53 @@ html[data-theme="light"] .brandLogoForLight {
     color 160ms ease;
 }
 
+.detailRouteStackLink::before {
+  content: "";
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  left: 0;
+  width: 2px;
+  border-radius: 999px;
+  background: transparent;
+  transition: background-color 160ms ease;
+}
+
 .detailRouteStackLink:hover {
   text-decoration: none;
-  background: color-mix(
-    in srgb,
-    var(--dockrev-surface-strong) 86%,
-    transparent
-  );
+  background: color-mix(in srgb, var(--dockrev-surface-strong) 76%, transparent);
 }
 
 .detailRouteStackLinkCurrent {
-  background: color-mix(
-    in srgb,
-    var(--dockrev-surface-strong) 86%,
-    transparent
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-primary) 5%, transparent),
+    transparent 78%
   );
 }
 
+.detailRouteStackLinkCurrent::before {
+  background: color-mix(in srgb, var(--color-primary) 28%, transparent);
+}
+
 .detailRouteStackLinkActive {
-  background: color-mix(
-    in srgb,
-    var(--color-primary) 16%,
-    var(--dockrev-surface) 84%
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-primary) 10%, transparent),
+    color-mix(in srgb, var(--dockrev-surface) 72%, transparent) 88%
   );
-  box-shadow: inset 0 0 0 1px
-    color-mix(in srgb, var(--color-primary) 30%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 18%, transparent);
+}
+
+.detailRouteStackLinkActive::before {
+  background: var(--color-primary);
 }
 
 .detailRouteStackTitle {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .detailRouteStackDot {
@@ -501,13 +538,14 @@ html[data-theme="light"] .brandLogoForLight {
 
 .detailRouteStackMeta {
   display: inline-flex;
-  min-width: 24px;
-  height: 20px;
+  min-width: 28px;
+  height: 22px;
   align-items: center;
   justify-content: center;
-  padding: 0 7px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 74%, transparent);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--panel2) 96%, transparent);
+  background: color-mix(in srgb, var(--panel2) 82%, transparent);
   color: var(--muted2);
   font-size: 11px;
 }
@@ -516,27 +554,30 @@ html[data-theme="light"] .brandLogoForLight {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 2px 8px 10px 34px;
+  gap: 4px;
+  margin-left: 10px;
+  padding: 0 0 0 18px;
 }
 
 .detailRouteServiceList::before {
   content: "";
   position: absolute;
-  top: 2px;
-  bottom: 12px;
-  left: 13px;
+  top: 4px;
+  bottom: 4px;
+  left: 0;
   width: 1px;
-  background: color-mix(in srgb, var(--borderColor) 88%, transparent);
+  background: color-mix(in srgb, var(--borderColor) 76%, transparent);
 }
 
 .detailRouteServiceLink {
+  position: relative;
   min-width: 0;
   display: grid;
-  grid-template-columns: 8px minmax(0, 1fr);
+  grid-template-columns: 8px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px;
+  min-height: 34px;
+  padding: 6px 10px 6px 12px;
   border: 1px solid transparent;
   border-radius: 10px;
   color: var(--muted);
@@ -546,30 +587,52 @@ html[data-theme="light"] .brandLogoForLight {
     color 160ms ease;
 }
 
+.detailRouteServiceLink::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: -18px;
+  width: 10px;
+  height: 1px;
+  background: color-mix(in srgb, var(--borderColor) 76%, transparent);
+  transform: translateY(-50%);
+}
+
+.detailRouteServiceLink::after {
+  content: "";
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 0;
+  width: 2px;
+  border-radius: 999px;
+  background: transparent;
+  transition: background-color 160ms ease;
+}
+
 .detailRouteServiceLink:hover {
   text-decoration: none;
   color: var(--text);
-  background: color-mix(
-    in srgb,
-    var(--dockrev-surface-strong) 84%,
-    transparent
-  );
+  background: color-mix(in srgb, var(--dockrev-surface-strong) 72%, transparent);
 }
 
 .detailRouteServiceLinkActive {
   color: var(--text);
-  background: color-mix(
-    in srgb,
-    var(--color-primary) 14%,
-    var(--dockrev-surface) 86%
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-primary) 10%, transparent),
+    color-mix(in srgb, var(--dockrev-surface) 70%, transparent) 88%
   );
-  box-shadow: inset 0 0 0 1px
-    color-mix(in srgb, var(--color-primary) 28%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 18%, transparent);
+}
+
+.detailRouteServiceLinkActive::after {
+  background: var(--color-primary);
 }
 
 .detailRouteStatusDot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 999px;
   background: var(--muted2);
   box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 32%, transparent);
@@ -588,25 +651,39 @@ html[data-theme="light"] .brandLogoForLight {
   background: var(--color-error);
 }
 
-.detailRouteServiceText {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
 .detailRouteServiceName {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
-  font-weight: 640;
+  font-weight: 620;
+}
+
+.detailRouteServiceLinkActive .detailRouteServiceName {
+  font-weight: 680;
 }
 
 .detailRouteServiceMeta {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 104px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 70%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel2) 76%, transparent);
   color: var(--muted2);
-  font-size: 11px;
+  font-size: 9px;
+  line-height: 1;
+}
+
+.detailRouteServiceMeta .mono {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .jobDetailPage {
@@ -8900,11 +8977,11 @@ html[data-theme="light"] .modalOverlay {
 }
 
 .appShell.appShellWithDetailSidebar {
-  grid-template-columns: 264px 332px minmax(0, 1fr);
+  grid-template-columns: 264px 304px minmax(0, 1fr);
 }
 
 .appShell.appShellWithDetailSidebar.appShellSidebarCollapsed {
-  grid-template-columns: 72px 332px minmax(0, 1fr);
+  grid-template-columns: 72px 304px minmax(0, 1fr);
 }
 
 .topbar {
@@ -9063,7 +9140,7 @@ html[data-theme="light"] .brandLogoThemeSwitch {
 }
 
 .detailSidebar {
-  padding: 20px 18px 18px;
+  padding: 18px 16px 18px;
   background: color-mix(in srgb, var(--panel2) 96%, transparent);
   box-shadow: none;
 }
@@ -10521,21 +10598,31 @@ html[data-theme="light"] .btnPrimary {
     font-weight: 650;
   }
 
-  .detailRouteTreeMobile .detailRouteStackGroup {
-    border-radius: 16px;
+  .detailRouteTreeMobile {
+    gap: 14px;
   }
 
-  .detailRouteTreeMobile .detailRouteStackRow {
-    padding-top: 11px;
+  .detailRouteTreeMobile .detailRouteStackGroup {
+    padding: 14px 0;
+  }
+
+  .detailRouteTreeMobile .detailRouteTreeIntro {
+    padding-bottom: 12px;
   }
 
   .detailRouteTreeMobile .detailRouteServiceList {
-    padding-left: 42px;
+    margin-left: 14px;
+    padding-left: 18px;
   }
 
-  .detailRouteTreeMobile .detailRouteServiceLink,
-  .detailRouteTreeMobile .detailRouteStackLink {
+  .detailRouteTreeMobile .detailRouteStackLink,
+  .detailRouteTreeMobile .detailRouteServiceLink {
     min-height: 40px;
+    border-radius: 10px;
+  }
+
+  .detailRouteTreeMobile .detailRouteServiceMeta {
+    max-width: 96px;
   }
 
   .pageHead {

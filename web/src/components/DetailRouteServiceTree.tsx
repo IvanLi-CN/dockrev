@@ -143,11 +143,9 @@ export function DetailRouteServiceTree(props: {
         }}
       >
         <span className={`detailRouteStatusDot detailRouteStatusDot-${rowStatus}`} aria-hidden="true" />
-        <span className="detailRouteServiceText">
-          <span className="detailRouteServiceName">{service.name}</span>
-          <span className="detailRouteServiceMeta">
-            <Mono>{serviceVersionLabel(service)}</Mono>
-          </span>
+        <span className="detailRouteServiceName">{service.name}</span>
+        <span className="detailRouteServiceMeta">
+          <Mono>{serviceVersionLabel(service)}</Mono>
         </span>
       </a>
     )
@@ -161,18 +159,19 @@ export function DetailRouteServiceTree(props: {
           {!showState ? (
             <div className="detailRouteTreeMeta" aria-label="导航统计">
               <Mono>{stacks.length}</Mono>
-              <span>Stacks</span>
+              <span>个 Stack</span>
               <span className="detailRouteTreeMetaDivider" aria-hidden="true">
                 ·
               </span>
               <Mono>{totalServices}</Mono>
-              <span>Services</span>
+              <span>个服务</span>
             </div>
           ) : null}
         </div>
         <div className="detailRouteTreePath" aria-label="当前导航路径">
           {detailRoute ? (
             <>
+              <span className="detailRouteTreePathLabel">当前</span>
               <span>{activeStack?.name ?? detailRoute.stackId}</span>
               {activeService ? <span className="detailRouteTreePathDivider">/</span> : null}
               {activeService ? <span>{activeService.name}</span> : null}
