@@ -11,6 +11,30 @@ function expectStory(condition: unknown, message: string): asserts condition {
   if (!condition) throw new globalThis.Error(message)
 }
 
+function expectDesktopActiveNavBaseline(root: ParentNode) {
+  const activeLink = root.querySelector<HTMLAnchorElement>('.navItemActive')
+  expectStory(activeLink, 'Desktop sidebar should expose one active nav item')
+
+  const view = activeLink.ownerDocument.defaultView
+  const activeStyle = view?.getComputedStyle(activeLink)
+  expectStory(activeStyle?.backgroundImage !== 'none', 'Active desktop nav item should keep the collapsible-sidebar gradient fill')
+  expectStory(
+    activeStyle?.boxShadow?.includes('inset 0px 0px 0px 1px'),
+    'Active desktop nav item should keep the full inset outline instead of a left accent bar',
+  )
+  expectStory(
+    activeStyle?.borderTopColor !== 'rgba(0, 0, 0, 0)',
+    'Active desktop nav item should keep the highlighted border color',
+  )
+
+  const activeIcon = activeLink.querySelector<HTMLElement>('.navItemIcon')
+  const activeIconStyle = activeIcon ? view?.getComputedStyle(activeIcon) : undefined
+  expectStory(
+    !!activeIconStyle && activeIconStyle.color !== activeStyle?.color,
+    'Active desktop nav icon should keep its dedicated primary accent color',
+  )
+}
+
 function setSidebarCollapsedPreference(collapsed: boolean) {
   if (typeof window === 'undefined') return
   window.localStorage.setItem(APP_SHELL_SIDEBAR_COLLAPSED_STORAGE_KEY, collapsed ? '1' : '0')
@@ -110,7 +134,12 @@ function renderDetailShell(
   )
 }
 
-export const Overview: Story = { render: render({ name: 'overview' }) }
+export const Overview: Story = {
+  render: render({ name: 'overview' }),
+  play: async ({ canvasElement }) => {
+    expectDesktopActiveNavBaseline(canvasElement)
+  },
+}
 export const CollapsedSidebar: Story = {
   render: render({ name: 'services' }, { sidebarCollapsed: true }),
   play: async ({ canvasElement }) => {
@@ -127,6 +156,7 @@ export const CollapsedSidebar: Story = {
 
     const activeLink = canvasElement.querySelector<HTMLAnchorElement>('.navItemActive')
     expectStory(activeLink?.getAttribute('aria-label') === '运维大盘', 'Collapsed active nav item should keep an aria-label')
+    expectDesktopActiveNavBaseline(canvasElement)
   },
 }
 export const SidebarToggleInteraction: Story = {

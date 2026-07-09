@@ -9245,25 +9245,35 @@ html[data-theme="light"] .brandLogoThemeSwitch {
 .navItem:hover {
   background: color-mix(
     in srgb,
-    var(--dockrev-surface-strong) 82%,
-    transparent
+    var(--dockrev-surface-strong) 88%,
+    var(--panel2) 12%
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--borderColor) 75%,
+    var(--color-primary) 25%
   );
 }
 
 .navItemActive {
-  background: color-mix(
-    in srgb,
-    var(--dockrev-surface-strong) 88%,
-    transparent
+  background: linear-gradient(
+    128deg,
+    color-mix(in srgb, var(--color-primary) 22%, var(--panel2) 78%) 0%,
+    color-mix(in srgb, var(--color-primary) 12%, var(--panel2) 88%) 100%
   );
-  color: color-mix(in srgb, var(--text) 88%, var(--color-primary) 12%);
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 42%,
+    var(--borderColor) 58%
+  );
+  color: var(--text);
   font-size: 13px;
-  font-weight: 670;
-  box-shadow: inset 2px 0 0 var(--color-primary);
+  font-weight: 640;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 28%, transparent);
 }
 
 .navItemActive .navItemIcon {
-  color: color-mix(in srgb, var(--text) 72%, var(--color-primary) 28%);
+  color: var(--color-primary);
 }
 
 .sidebarMuted,
