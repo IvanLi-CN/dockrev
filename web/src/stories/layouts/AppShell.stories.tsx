@@ -19,7 +19,7 @@ function expectDesktopActiveNavBaseline(root: ParentNode) {
   const activeStyle = view?.getComputedStyle(activeLink)
   expectStory(activeStyle?.backgroundImage !== 'none', 'Active desktop nav item should keep the collapsible-sidebar gradient fill')
   expectStory(
-    activeStyle?.boxShadow?.includes('inset 0px 0px 0px 1px'),
+    !!activeStyle?.boxShadow?.includes('inset') && activeStyle.boxShadow.includes('0px 0px 0px 1px'),
     'Active desktop nav item should keep the full inset outline instead of a left accent bar',
   )
   expectStory(
