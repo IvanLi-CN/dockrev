@@ -513,6 +513,93 @@ export function useServiceDetailPageState(props: {
     }
   }, [requestRefresh, serviceId])
 
+  const requestRollback = useCallback(() => {
+    void (async () => {
+      if (rollbackActiveJobId) {
+        navigate({ name: 'job', jobId: rollbackActiveJobId })
+        return
+      }
+      if (!service || !rollbackTarget?.available || !rollbackTarget.targetDigest) return
+      const ok = await confirm({
+        title: `确认回滚服务 ${service.name}？`,
+        body: (
+          <>
+            <div className="modalLead">将把该服务回滚到上次升级前的版本。</div>
+            <div className="modalKvGrid">
+              <div className="modalKvLabel">范围</div>
+              <div className="modalKvValue">
+                <Mono>service</Mono>
+              </div>
+              <div className="modalKvLabel">目标</div>
+              <div className="modalKvValue">
+                <Mono>{`${stack?.name ?? stackId}/${service.name}`}</Mono>
+              </div>
+              <div className="modalKvLabel">当前版本</div>
+              <div className="modalKvValue">
+                <span>{rollbackVersionLabel(rollbackTarget.currentDisplayTag, rollbackTarget.currentDigest)}</span>
+                <span className="muted">{` · ${shortDigest(rollbackTarget.currentDigest)}`}</span>
+              </div>
+              <div className="modalKvLabel">回滚目标</div>
+              <div className="modalKvValue">
+                <span>{rollbackVersionLabel(rollbackTarget.targetDisplayTag, rollbackTarget.targetDigest)}</span>
+                <span className="muted">{` · ${shortDigest(rollbackTarget.targetDigest)}`}</span>
+              </div>
+              <div className="modalKvLabel">来源任务</div>
+              <div className="modalKvValue">
+                <Mono>{rollbackTarget.sourceUpdateJobId ?? '-'}</Mono>
+              </div>
+              <div className="modalKvLabel">完成时间</div>
+              <div className="modalKvValue">
+                <Mono>{rollbackTarget.sourceFinishedAt ?? '-'}</Mono>
+              </div>
+            </div>
+            <div className="modalDivider" />
+          </>
+        ),
+        confirmText: '执行回滚',
+        cancelText: '取消',
+        confirmVariant: 'danger',
+        badgeText: null,
+      })
+      if (!ok) return
+      setBusy(true)
+      setError(null)
+      setNotice(null)
+      try {
+        const resp = await triggerServiceRollback(service.id)
+        setNotice({ jobId: resp.jobId, kind: 'rollback' })
+        await refreshStackOnly()
+      } catch (e: unknown) {
+        if (e instanceof ApiError) {
+          if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
+          else if (e.status === 409) {
+            const details = e.details
+            const existingJobId =
+              details && typeof details === 'object' && details !== null && 'existingJobId' in details
+                ? (details as Record<string, unknown>).existingJobId
+                : null
+            const reason =
+              details && typeof details === 'object' && details !== null && 'reason' in details
+                ? (details as Record<string, unknown>).reason
+                : null
+            if (typeof existingJobId === 'string' && existingJobId.trim()) {
+              navigate({ name: 'job', jobId: existingJobId })
+            } else if (typeof reason === 'string' && reason.trim()) {
+              setError(rollbackUnavailableReasonLabel(reason) ?? e.message)
+            } else {
+              setError(e.message)
+            }
+            await refreshStackOnly()
+          } else setError(e.message)
+        } else {
+          setError(errorMessage(e))
+        }
+      } finally {
+        setBusy(false)
+      }
+    })()
+  }, [confirm, refreshStackOnly, rollbackActiveJobId, rollbackTarget, service, stack?.name, stackId])
+
   const topActions = useMemo(
     () => (
       <>
@@ -722,92 +809,7 @@ export function useServiceDetailPageState(props: {
               loadingClickable={Boolean(rollbackActiveJobId)}
               hint={rollbackHint}
               title={rollbackActiveJobId ? '任务进行中，点击查看任务详情' : undefined}
-              onClick={() => {
-                void (async () => {
-                  if (rollbackActiveJobId) {
-                    navigate({ name: 'job', jobId: rollbackActiveJobId })
-                    return
-                  }
-                  if (!service || !rollbackTarget?.available || !rollbackTarget.targetDigest) return
-                  const ok = await confirm({
-                    title: `确认回滚服务 ${service.name}？`,
-                    body: (
-                      <>
-                        <div className="modalLead">将把该服务回滚到上次升级前的版本。</div>
-                        <div className="modalKvGrid">
-                          <div className="modalKvLabel">范围</div>
-                          <div className="modalKvValue">
-                            <Mono>service</Mono>
-                          </div>
-                          <div className="modalKvLabel">目标</div>
-                          <div className="modalKvValue">
-                            <Mono>{`${stack?.name ?? stackId}/${service.name}`}</Mono>
-                          </div>
-                          <div className="modalKvLabel">当前版本</div>
-                          <div className="modalKvValue">
-                            <span>{rollbackVersionLabel(rollbackTarget.currentDisplayTag, rollbackTarget.currentDigest)}</span>
-                            <span className="muted">{` · ${shortDigest(rollbackTarget.currentDigest)}`}</span>
-                          </div>
-                          <div className="modalKvLabel">回滚目标</div>
-                          <div className="modalKvValue">
-                            <span>{rollbackVersionLabel(rollbackTarget.targetDisplayTag, rollbackTarget.targetDigest)}</span>
-                            <span className="muted">{` · ${shortDigest(rollbackTarget.targetDigest)}`}</span>
-                          </div>
-                          <div className="modalKvLabel">来源任务</div>
-                          <div className="modalKvValue">
-                            <Mono>{rollbackTarget.sourceUpdateJobId ?? '-'}</Mono>
-                          </div>
-                          <div className="modalKvLabel">完成时间</div>
-                          <div className="modalKvValue">
-                            <Mono>{rollbackTarget.sourceFinishedAt ?? '-'}</Mono>
-                          </div>
-                        </div>
-                        <div className="modalDivider" />
-                      </>
-                    ),
-                    confirmText: '执行回滚',
-                    cancelText: '取消',
-                    confirmVariant: 'danger',
-                    badgeText: null,
-                  })
-                  if (!ok) return
-                  setBusy(true)
-                  setError(null)
-                  setNotice(null)
-                  try {
-                    const resp = await triggerServiceRollback(service.id)
-                    setNotice({ jobId: resp.jobId, kind: 'rollback' })
-                    await refreshStackOnly()
-                  } catch (e: unknown) {
-                    if (e instanceof ApiError) {
-                      if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
-                      else if (e.status === 409) {
-                        const details = e.details
-                        const existingJobId =
-                          details && typeof details === 'object' && details !== null && 'existingJobId' in details
-                            ? (details as Record<string, unknown>).existingJobId
-                            : null
-                        const reason =
-                          details && typeof details === 'object' && details !== null && 'reason' in details
-                            ? (details as Record<string, unknown>).reason
-                            : null
-                        if (typeof existingJobId === 'string' && existingJobId.trim()) {
-                          navigate({ name: 'job', jobId: existingJobId })
-                        } else if (typeof reason === 'string' && reason.trim()) {
-                          setError(rollbackUnavailableReasonLabel(reason) ?? e.message)
-                        } else {
-                          setError(e.message)
-                        }
-                        await refreshStackOnly()
-                      } else setError(e.message)
-                    } else {
-                      setError(errorMessage(e))
-                    }
-                  } finally {
-                    setBusy(false)
-                  }
-                })()
-              }}
+              onClick={requestRollback}
             >
               {rollbackActiveJobId
                 ? rollbackReason === 'rollback_in_progress'
@@ -840,7 +842,7 @@ export function useServiceDetailPageState(props: {
       endSubmitting,
       patchServiceInStack,
       requestRefresh,
-      refreshStackOnly,
+      requestRollback,
       rollbackActionBusy,
       rollbackActiveJobId,
       rollbackActiveJobStatus,
@@ -850,7 +852,6 @@ export function useServiceDetailPageState(props: {
       rollbackTargetRefreshing,
       selfUpgradeUrl,
       service,
-      stack?.name,
       stackId,
       supervisorError,
       supervisorErrorAt,
@@ -1092,6 +1093,9 @@ export function useServiceDetailPageState(props: {
     notice,
     repoInferBusy,
     requestRefresh,
+    requestRollback,
+    rollbackTarget,
+    rollbackTargetRefreshing,
     rules,
     semverDowngradeAnomaly,
     service,

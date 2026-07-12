@@ -6941,6 +6941,209 @@ html[data-theme="light"] .modalOverlay {
   font-size: 12px;
 }
 
+.serviceOperationHistory {
+  display: flex;
+  flex-direction: column;
+}
+
+.serviceOperationHistoryTable {
+  display: flex;
+  flex-direction: column;
+}
+
+.serviceOperationHistoryHeader,
+.serviceOperationHistoryRow {
+  display: grid;
+  grid-template-columns: minmax(220px, 2fr) minmax(100px, 0.8fr) minmax(120px, 1fr) minmax(110px, 0.8fr) minmax(70px, auto);
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
+}
+
+.serviceOperationHistoryHeader {
+  border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 64%, transparent);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.serviceOperationHistoryRow {
+  min-height: 66px;
+  border-top: 1px solid color-mix(in srgb, var(--borderColor) 64%, transparent);
+  cursor: pointer;
+  outline: none;
+}
+
+.serviceOperationHistoryRowFailed > :not(.serviceOperationHistoryStatus) {
+  opacity: 0.52;
+}
+
+.serviceOperationHistoryRowFailed:hover > :not(.serviceOperationHistoryStatus),
+.serviceOperationHistoryRowFailed:focus-visible > :not(.serviceOperationHistoryStatus) {
+  opacity: 0.72;
+}
+
+.serviceOperationHistoryRow:hover,
+.serviceOperationHistoryRow:focus-visible {
+  background: color-mix(in srgb, var(--dockrev-surface-strong) 82%, transparent);
+}
+
+.serviceOperationHistoryRow:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--color-primary);
+}
+
+.serviceOperationHistoryOperation,
+.serviceOperationHistorySource {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.serviceOperationHistoryOperationTitle {
+  color: var(--text);
+  font-weight: 650;
+  flex: 0 0 auto;
+}
+
+.serviceOperationHistoryOperationSummary {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.serviceOperationHistoryOperation .mono,
+.serviceOperationHistorySource span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.serviceOperationHistoryReason {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.serviceOperationHistoryTime {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.serviceOperationHistoryAction {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.serviceOperationHistoryRollbackButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 56px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 48%, var(--borderColor) 52%);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  color: var(--color-warning);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.serviceOperationHistoryRollbackButton:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  border-color: color-mix(in srgb, var(--color-warning) 70%, var(--borderColor) 30%);
+}
+
+.serviceOperationHistoryRollbackButton:focus-visible {
+  outline: 2px solid var(--color-warning);
+  outline-offset: 2px;
+}
+
+.serviceOperationHistoryRollbackButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.serviceOperationHistoryEmpty {
+  padding: 20px 14px;
+  color: var(--muted);
+}
+
+.serviceOperationHistoryPager,
+.serviceOperationHistoryPagerActions {
+  display: flex;
+  align-items: center;
+}
+
+.serviceOperationHistoryPager {
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 14px 0;
+}
+
+.serviceOperationHistoryPagerStatus {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.serviceOperationHistoryPagerActions {
+  gap: 4px;
+}
+
+@media (max-width: 760px) {
+  .serviceOperationHistoryHeader {
+    display: none;
+  }
+
+  .serviceOperationHistoryRow {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      'operation status action'
+      'source time action';
+    gap: 10px 12px;
+    padding: 12px;
+  }
+
+  .serviceOperationHistoryOperation {
+    grid-area: operation;
+  }
+
+  .serviceOperationHistoryStatus {
+    grid-area: status;
+    justify-self: end;
+  }
+
+  .serviceOperationHistorySource {
+    grid-area: source;
+  }
+
+  .serviceOperationHistoryTime {
+    grid-area: time;
+    align-self: end;
+  }
+
+  .serviceOperationHistoryAction {
+    align-self: center;
+    grid-area: action;
+    justify-self: end;
+  }
+
+  .serviceOperationHistoryPager {
+    justify-content: space-between;
+  }
+}
+
 .jobResultReason {
   margin-top: 12px;
   padding-top: 12px;

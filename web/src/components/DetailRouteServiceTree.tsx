@@ -30,8 +30,10 @@ function serviceVersionLabel(service: Service): string {
   return resolved || raw || '-'
 }
 
-function serviceSectionLabel(section: Extract<Route, { name: 'service' }>['section'] | undefined): string {
+export function serviceSectionLabel(section: Extract<Route, { name: 'service' }>['section'] | undefined): string {
   switch (section) {
+    case 'history':
+      return '更新记录'
     case 'monitoring':
       return '监控'
     case 'backup':

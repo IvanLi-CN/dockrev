@@ -57,7 +57,8 @@
 - service worker 使用 `vite-plugin-pwa` `injectManifest` 路线统一生成，并在同一个 worker 中同时承载 precache、SPA navigation fallback、Push、通知点击跳转与手动 `skipWaiting`。
 - 应用启动即注册 service worker；通知设置页改为复用全局注册结果，不再自行注册单独 worker。
 - 持久快照统一记录 `fetchedAt`、`staleAt`、`expireAt`、`schemaVersion`、`sourceVersion`；只有仍处于 `fresh` 窗口内的快照允许展示，超过新鲜窗口或超过 7 天都必须回退为需联网态。
-- 纳入持久缓存的 read model 固定为：首页 launcher、概览/服务列表、stack detail、service detail 的 overview/monitoring/backup 只读摘要、队列列表、版本推测总览。
+- 纳入持久缓存的 read model 固定为：首页 launcher、概览/服务列表、stack detail、service detail 的 overview/history/monitoring/backup 只读摘要、队列列表、版本推测总览。
+- service detail 的 history 仅回放现有 60 秒 fresh snapshot 中的 jobs；离线时不得建立 jobs SSE，联网且 history 激活时才允许实时刷新。
 - 日志内容、认证态、通知敏感字段、设置表单值、写操作上下文与高时效流式数据不得落持久缓存。
 - 离线时页面只允许展示仍处于 `fresh` 窗口内的本地只读数据，并把所有需要联网的写操作显式禁用或隐藏；不可继续展示非新鲜快照，也不得向用户暴露“数据过时”类提示。
 - 更新检测触发器固定为：`focus`、`visibilitychange -> visible`、`pageshow(persisted)` 与页面可见期间每 1 小时轮询；同一版本 ready 期间全局提示去重。
@@ -74,7 +75,7 @@
 
 ## Visual Evidence
 
-视觉证据在实现完成后补充到本 spec 的 `assets/` 目录，并绑定到 Storybook mock-only 场景。
+视觉证据在实现完成后补充到本 spec 的 `assets/` 目录，并绑定到 Storybook mock-only 场景；离线新鲜快照回放更新记录时，记录列仍严格保持操作与补充结果摘要、Job ID 两行，结果摘要单行截断，并省略已由操作类型或状态表达的泛化内容。匹配记录超过 20 条时，fresh snapshot 在本地按页浏览，且仅渲染当前页。失败记录可以弱化非状态信息，但状态 Badge 必须保持完整颜色与对比度。
 
 ### Update Prompt Banner
 
@@ -107,6 +108,18 @@
 - capture_scope: `.svcResourceCard`
 - requested_viewport: 1440x900
 - viewport_strategy: storybook-static
+- PR: include
+
+### Service Update History Fresh Snapshot
+
+![Service update history fresh snapshot (page-level)](assets/service-detail-update-history-snapshot.png)
+
+- source_type: storybook_canvas
+- target_program: mock-only
+- capture_scope: `browser-viewport`
+- requested_viewport: 1600x1200
+- viewport_strategy: controlled-viewport
+- state: page-level history deep link with collapsed primary navigation, persisted fresh jobs read model, client pagination, and strictly two-line record summaries
 - PR: include
 
 ### Service Settings Offline Gate

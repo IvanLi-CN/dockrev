@@ -113,7 +113,11 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     return json({}, { status: 204 })
   }
 
-  if (method === 'GET' && urlPath === '/api/jobs') return json({ jobs: f.jobs })
+  if (method === 'GET' && urlPath === '/api/jobs') {
+    const debug = globalThis.__DOCKREV_MOCK_DEBUG__ ?? (globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug())
+    debug.jobsListCalls += 1
+    return json({ jobs: f.jobs })
+  }
 
   if (method === 'GET' && urlPath.startsWith('/api/jobs/')) {
     const id = decodeURIComponent(urlPath.split('/').slice(3).join('/'))

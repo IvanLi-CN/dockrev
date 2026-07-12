@@ -17,16 +17,16 @@ export type Route =
       name: 'service'
       stackId: string
       serviceId: string
-      section?: 'overview' | 'monitoring' | 'backup' | 'logs' | 'settings'
+      section?: 'overview' | 'history' | 'monitoring' | 'backup' | 'logs' | 'settings'
     }
   | { name: 'supervisor-misroute'; basePath: string; pathname: string }
 
 function normalizeServiceSection(
   value: string | null | undefined,
-): 'overview' | 'monitoring' | 'backup' | 'logs' | 'settings' | null {
+): 'overview' | 'history' | 'monitoring' | 'backup' | 'logs' | 'settings' | null {
   const section = (value ?? '').trim()
   if (section === '' || section === 'overview') return 'overview'
-  if (section === 'monitoring' || section === 'backup' || section === 'logs' || section === 'settings') return section
+  if (section === 'history' || section === 'monitoring' || section === 'backup' || section === 'logs' || section === 'settings') return section
   return null
 }
 

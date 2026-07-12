@@ -28,7 +28,7 @@
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
 | c2r2u | Dockrev：详情页双侧栏与 Stack→Service 树导航 | active | `c2r2u-detail-route-service-navigation/SPEC.md` | 2026-07-09 | fast-track（detail AppShell + Stack→Service tree + mobile drawer/bottom nav + Storybook evidence） |
-| r8kpa | Dockrev：Web PWA 离线壳、更新提示与分级缓存 | 部分完成（5/6） | `r8kpa-web-pwa-offline-shell/SPEC.md` | 2026-07-08 | fast-track（PWA shell + update prompt + readonly snapshot cache 已收口；当前剩余 PR merge-ready 收尾） |
+| r8kpa | Dockrev：Web PWA 离线壳、更新提示与分级缓存 | 部分完成（5/6） | `r8kpa-web-pwa-offline-shell/SPEC.md` | 2026-07-12 | fast-track（PWA shell + update prompt + readonly snapshot cache 已收口；service history 纳入 fresh snapshot read model） |
 | 8hewd | Dockrev：概览发现异常详情改为点击弹窗并消除双 tooltip | 已完成 | `8hewd-overview-discovery-error-detail-dialog/SPEC.md` | 2026-04-05 | fast-track（shared dialog primitive + overview discovery dialog + storybook evidence） |
 | hb4cp | Dockrev：服务详情页手动回滚到升级前版本 | 已完成 | `hb4cp-service-manual-rollback/SPEC.md` | 2026-04-12 | fast-track（PR #201 merge-ready；2026-04-12 follow-up fixes rollback target stale disable race, adds diagnostics logs, and refresh-race Storybook evidence） |
 | qynjg | Dockrev：Docker Prune 清理控制台 | 已完成 | `qynjg-docker-prune-cleanup-console/SPEC.md` | 2026-07-07 | fast-track（cleanup scan/apply + cleanup console + storybook + visual evidence + review-loop；2026-07-07 新增 scan-runs SSE 流式重扫与旧缓存弱加载态） |
@@ -121,7 +121,7 @@
 | 57jzh | Dockrev：全仓大文件治理与预算守门 | 已完成 | `57jzh-large-file-governance/SPEC.md` | 2026-04-10 | fast-track（implementation + budget gate + full validation + storybook visual evidence + review proof；PR #208） |
 | dh3i9 | Dockrev：EdgeOne Origin Timeout Hardening | 待实现 | `dh3i9-edgeone-origin-timeout-hardening/SPEC.md` | 2026-06-26 | fast-track（cleanup/deploy snapshot reads + digest/release timeout hardening + SSE heartbeat） |
 | x4edr | Dockrev：OctoRill 更新日志来源与发布抽屉视图切换 | active | `x4edr-octorill-release-notes-provider/SPEC.md` | 2026-07-07 | fast-track（OctoRill release notes provider + Settings 配置 + release drawer 视图切换 + Storybook 视觉证据） |
-| ey4ar | Dockrev：服务详情页四子页信息架构升级 | active | `ey4ar-service-detail-subpages/SPEC.md` | 2026-06-29 | fast-track（service detail route-backed overview/monitoring/backup/settings subpages + storybook evidence） |
+| ey4ar | Dockrev：服务详情页六子页信息架构升级 | active | `ey4ar-service-detail-subpages/SPEC.md` | 2026-07-12 | fast-track（service detail route-backed overview/history/monitoring/backup/logs/settings subpages + Storybook evidence） |
 | b3fhv | Dockrev：任务结果原因摘要与气泡详情 | 已实现 | `b3fhv-task-result-reason-popover/SPEC.md` | 2026-06-29 | fast-track（resultReason API contract + queue/detail/recent updates reason preview + popover detail + storybook visual evidence + review clean） |
 | hw3pb | Dockrev：Cleanup apply 指纹稳定化与 stale 诊断补强 | 已完成 | `hw3pb-cleanup-apply-fingerprint-stability/SPEC.md` | 2026-04-11 | fast-track（implementation + cleanup tests + local browser proof + stale diagnostics） |
 | d2u78 | Dockrev：Cleanup 顶部按钮 loading 态去重与语义收口 | 已完成 | `d2u78-cleanup-top-action-loading-clarity/SPEC.md` | 2026-04-11 | fast-track（PR #206 follow-up；cleanup top actions loading affordance + storybook evidence + web validation） |

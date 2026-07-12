@@ -392,6 +392,23 @@ export function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fi
     }
     return fixture
   }
+  if (scenario === 'service-detail-history-rollback-action') {
+    const fixture = buildDashboardDemo()
+    const currentDigest = fixture.stackById['stack-prod']?.services.find((service) => service.id === 'svc-prod-api')?.image.digest ?? ''
+    fixture.rollbackTargetByServiceId['svc-prod-api'] = {
+      available: true,
+      currentDigest,
+      currentDisplayTag: '5.2.1',
+      targetDigest: 'sha256:0000000000000000000000000000000000000000000000000000000000000010',
+      targetDisplayTag: '5.2.0',
+      sourceUpdateJobId: 'job-auto-policy-api-5-2-3',
+      sourceFinishedAt: '2026-07-12T13:45:00.000Z',
+      unavailableReason: null,
+      activeJobId: null,
+      activeJobStatus: null,
+    }
+    return fixture
+  }
   if (scenario === 'service-detail-rollback-unavailable') {
     const fixture = buildDashboardDemo()
     const currentDigest = fixture.stackById['stack-prod']?.services.find((service) => service.id === 'svc-prod-api')?.image.digest ?? ''

@@ -21,7 +21,7 @@
 ### Non-goals
 
 - 不调用 OctoRill 翻译接口生成缺失的 `translated` 或 `smart` 内容。
-- 不扩展通知、日报、版本发现时间线之外的其它 release notes 展示面。
+- 不扩展通知、日报或新增并行 release notes viewer；服务更新记录可复用既有抽屉定位其可靠目标版本。
 - 不移除或重命名现有 `/api/services/{service_id}/github-releases`。
 - 不引入 Markdown 富文本渲染；发布说明仍按安全纯文本保留换行展示。
 - 不在浏览器保存或直连发送 OctoRill API Key。
@@ -67,7 +67,7 @@
 ### Core flows
 
 - 用户在 Settings 开启 OctoRill、填入 Base URL 与 API Key、选择默认视图后，设置自动保存。
-- 用户从版本时间线打开发布抽屉时，前端调用服务级 release notes API。
+- 用户从版本时间线或服务更新记录打开发布抽屉时，前端调用服务级 release notes API。
 - API 返回 OctoRill 数据时，抽屉使用 OctoRill items 展示，并默认选中 `smart`。
 - 用户切换 `original | translated | smart` 时，列表内容即时切换，不改变 URL 和全局设置。
 - API 返回 fallback 时，抽屉展示警告 banner，并继续展示 GitHub Releases 数据。
