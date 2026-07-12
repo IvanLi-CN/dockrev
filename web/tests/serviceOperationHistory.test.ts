@@ -33,7 +33,24 @@ describe('service operation history', () => {
   test('includes matching updates and rollbacks across service, stack, and all scopes in time order', () => {
     const jobs = [
       makeJob({ id: 'service-update', type: 'update', status: 'success', serviceId: 'svc-api', finishedAt: '2026-07-12T09:01:00.000Z' }),
-      makeJob({ id: 'stack-update', type: 'update', status: 'failed', serviceId: null, scope: 'stack', finishedAt: '2026-07-12T09:03:00.000Z', summary: {} }),
+      makeJob({
+        id: 'stack-update',
+        type: 'update',
+        status: 'failed',
+        serviceId: null,
+        scope: 'stack',
+        finishedAt: '2026-07-12T09:03:00.000Z',
+        summary: { targets: [{ serviceId: 'svc-api' }] },
+      }),
+      makeJob({
+        id: 'stack-other',
+        type: 'update',
+        status: 'success',
+        serviceId: null,
+        scope: 'stack',
+        finishedAt: '2026-07-12T09:05:15.000Z',
+        summary: { targets: [{ serviceId: 'svc-web' }] },
+      }),
       makeJob({ id: 'all-update', type: 'update', status: 'running', serviceId: null, scope: 'all', startedAt: '2026-07-12T09:04:00.000Z', summary: { targets: [{ serviceId: 'svc-api' }] } }),
       makeJob({ id: 'all-other', type: 'update', status: 'success', serviceId: null, scope: 'all', finishedAt: '2026-07-12T09:05:30.000Z', summary: {} }),
       makeJob({ id: 'rollback', type: 'rollback', status: 'rolled_back', serviceId: 'svc-api', finishedAt: '2026-07-12T09:02:00.000Z' }),

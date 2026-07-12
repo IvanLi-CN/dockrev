@@ -77,7 +77,9 @@ export function selectServiceOperationJobs(jobs: JobListItem[], serviceId: strin
     .filter((job) => {
       if (job.type !== 'update' && job.type !== 'rollback') return false
       if (job.serviceId === serviceId) return true
-      if (stackId && job.scope === 'stack' && job.stackId === stackId) return true
+      if (stackId && job.scope === 'stack' && job.stackId === stackId) {
+        return serviceIdsFromSummary(job.summary).has(serviceId)
+      }
       return serviceIdsFromSummary(job.summary).has(serviceId)
     })
     .sort((a, b) => jobSortTime(b) - jobSortTime(a))

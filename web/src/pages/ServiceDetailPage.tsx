@@ -506,6 +506,7 @@ export function ServiceDetailPage(props: {
   const renderHistorySection = () => (
     <div className="svcDetailSectionStack">
       <ServiceOperationHistory
+        key={serviceId}
         jobs={serviceOperationJobs}
         serviceId={serviceId}
         onRollback={readonlyUi ? undefined : requestRollback}
