@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { Input, Button, Pill, SearchIcon } from '../ui'
+import { Input, Button, OverlayScrollArea, Pill, SearchIcon } from '../ui'
 import {
   SERVICE_LOG_BUFFER_LIMIT,
   useServiceLogsState,
@@ -89,7 +89,7 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
   const { error, filteredRecords, loading, query, records, resetNonce, setQuery } = useServiceLogsState(
     props.serviceId,
   )
-  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const [scrollViewport, setScrollViewport] = useState<HTMLElement | null>(null)
   const [follow, setFollow] = useState(true)
   const [isAtBottom, setIsAtBottom] = useState(true)
   const [logTz, setLogTz] = useState<LogTimeZone>('local')
@@ -99,7 +99,7 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: filteredRecords.length,
-    getScrollElement: () => scrollRef.current,
+    getScrollElement: () => scrollViewport,
     estimateSize: () => 42,
     overscan: 12,
     getItemKey: (index) => filteredRecords[index]?.id ?? index,
@@ -107,8 +107,8 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
   })
 
   useEffect(() => {
-    if (!scrollRef.current) return
-    const element = scrollRef.current
+    if (!scrollViewport) return
+    const element = scrollViewport
     const onScroll = () => {
       const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 48
       setIsAtBottom(nearBottom)
@@ -118,7 +118,7 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
     onScroll()
     element.addEventListener('scroll', onScroll)
     return () => element.removeEventListener('scroll', onScroll)
-  }, [query])
+  }, [query, scrollViewport])
 
   useEffect(() => {
     if (!follow) return
@@ -275,7 +275,12 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
           <span>输出</span>
         </div>
         <div className="serviceLogsTerminalBody">
-          <div className="serviceLogsViewport" ref={scrollRef}>
+          <OverlayScrollArea
+            className="serviceLogsViewport"
+            defer={false}
+            onViewportReady={setScrollViewport}
+            viewportLabel="服务实时日志"
+          >
             {emptyState ? (
               <div className="serviceLogsEmptyState">
                 <div className="serviceLogsEmptyTitle">{emptyState.title}</div>
@@ -366,7 +371,7 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
                 </div>
               </div>
             ) : null}
-          </div>
+          </OverlayScrollArea>
 
           {showJump ? (
             <div className="serviceLogsJumpWrap">

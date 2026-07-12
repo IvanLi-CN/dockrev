@@ -4,7 +4,7 @@ import { formatJobMachineName, formatJobReadableDisplay } from '../jobDisplay'
 import { formatJobProgressDownload, parseJobProgressDownload } from '../jobProgressDownload'
 import { TaskResultReason } from '../components/TaskResultReason'
 import { navigate } from '../routes'
-import { Button, Chip, Mono, Pill } from '../ui'
+import { Button, Chip, Mono, OverlayScrollArea, Pill } from '../ui'
 
 function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' | 'info' {
   if (status === 'success') return 'ok'
@@ -494,7 +494,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
           </div>
         </div>
 
-        <div className="logs">
+        <OverlayScrollArea className="logs" viewportLabel="任务日志">
           {logs.map((l, idx) => (
             <div
               key={`${l.ts}-${idx}`}
@@ -508,7 +508,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
             </div>
           ))}
           {logs.length === 0 ? <div className="muted">无日志</div> : null}
-        </div>
+        </OverlayScrollArea>
       </div>
     </div>
   )

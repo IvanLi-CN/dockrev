@@ -71,6 +71,14 @@
 - Given 用户访问 Overview/Services/Queue/Settings/DeployWelcome，When 查看卡片与表格，Then 视觉层级一致且无功能回归。
 - Given 执行 `bun run lint`、`bun run build`、`bun run test-storybook`，Then 全部通过。
 
+## Visual Evidence
+
+滚动条使用 OverlayScrollbars 统一主要长内容区，并为原生遗留滚动区提供相同的主题 fallback；深浅主题均保持紧凑、可见且可拖拽的操作型轨道。
+
+![深色主题滚动条](./assets/overlay-scrollbar-dark.png)
+
+![浅色主题滚动条](./assets/overlay-scrollbar-light.png)
+
 ## 实现里程碑（Milestones / Delivery checklist）
 
 - [x] M1：创建并落地主题 token（dark/light）与全局字体体系。

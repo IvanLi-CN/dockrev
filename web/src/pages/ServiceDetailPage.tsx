@@ -22,7 +22,7 @@ import { BackupPolicySegmentedControl } from '../components/BackupPolicySegmente
 import { BackupRecordList } from '../components/ServiceBackupRecords'
 import { ReadonlySnapshotNotice } from '../components/ReadonlySnapshotNotice'
 import { navigate } from '../routes'
-import { Button, IconButton, Input, Mono, Pill, RefreshIcon, SelectField, Switch, Tabs, TabsList, TabsTrigger } from '../ui'
+import { Button, IconButton, Input, Mono, OverlayScrollArea, Pill, RefreshIcon, SelectField, Switch, Tabs, TabsList, TabsTrigger } from '../ui'
 import { usePwaStatus } from '../pwaStatus'
 import { buildReadonlySnapshotKey, readReadonlySnapshot, writeReadonlySnapshot } from '../readonlySnapshotCache'
 import { isDockrevImageRef } from '../runtimeConfig'
@@ -817,7 +817,7 @@ export function ServiceDetailPage(props: {
           </div>
         </div>
 
-        <div className="svcDetailTabsShell" data-service-detail-tabs-shell="true">
+        <OverlayScrollArea className="svcDetailTabsShell" data-service-detail-tabs-shell="true" options={{ overflow: { x: 'scroll', y: 'hidden' } }}>
           <Tabs
             onValueChange={(value) => {
               const nextSection = value as ServiceDetailSection
@@ -868,7 +868,7 @@ export function ServiceDetailPage(props: {
               </TabsTrigger>
             </TabsList>
           </Tabs>
-        </div>
+        </OverlayScrollArea>
       </section>
 
       {semverDowngradeAnomaly ? (

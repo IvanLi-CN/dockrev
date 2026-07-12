@@ -140,17 +140,17 @@ html[data-theme="light"] .brandLogoForLight {
 
 .sidebar {
   grid-area: side;
+  min-height: 0;
   background: var(--panel2);
   padding: 20px 14px 16px;
-  overflow: auto;
   display: flex;
   flex-direction: column;
 }
 
 .detailSidebar {
   grid-area: detail;
+  min-height: 0;
   padding: 22px 18px 18px;
-  overflow: auto;
   display: flex;
   flex-direction: column;
   background: linear-gradient(
@@ -293,9 +293,14 @@ html[data-theme="light"] .brandLogoForLight {
 
 .content {
   grid-area: main;
+  min-height: 0;
   padding: 40px 32px 42px 38px;
-  overflow-x: hidden;
-  overflow-y: auto;
+}
+
+.sidebar.overlayScrollArea,
+.detailSidebar.overlayScrollArea,
+.content.overlayScrollArea {
+  height: 100%;
 }
 
 .contentWithDetailSidebar {
@@ -5287,7 +5292,6 @@ html[data-theme="light"] .modalOverlay {
   /* Fill available space on the Job detail page; keep its own scroll. */
   flex: 1;
   min-height: 0;
-  overflow: auto;
   /* Avoid layout "jiggle" when a scrollbar appears/disappears. */
   scrollbar-gutter: stable both-edges;
   font-family:
@@ -5540,11 +5544,51 @@ html[data-theme="light"] .modalOverlay {
 }
 
 .serviceLogsViewport {
+  --service-logs-viewport-padding: 8px 18px 10px;
   min-height: 420px;
   height: min(72vh, 760px);
-  overflow: auto;
-  padding: 8px 18px 10px;
   scrollbar-gutter: stable;
+}
+
+.serviceLogsViewport [data-overlayscrollbars-viewport] {
+  padding: var(--service-logs-viewport-padding);
+}
+
+.overlayScrollAreaStory {
+  height: 240px;
+  width: min(420px, 100%);
+  border: 1px solid var(--borderColor);
+  border-radius: 10px;
+  background: var(--panel2);
+}
+
+.overlayScrollAreaStoryHorizontal {
+  height: 120px;
+}
+
+.overlayScrollAreaStoryList,
+.overlayScrollAreaStoryRow {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+}
+
+.overlayScrollAreaStoryList {
+  flex-direction: column;
+}
+
+.overlayScrollAreaStoryRow {
+  width: max-content;
+}
+
+.overlayScrollAreaStoryItem {
+  min-width: 150px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 80%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--dockrev-surface) 88%, transparent);
+  color: var(--text);
+  font-size: 12px;
 }
 
 .serviceLogsEmptyState {
@@ -5803,7 +5847,6 @@ html[data-theme="light"] .modalOverlay {
 
   .serviceLogsViewport {
     height: min(68vh, 640px);
-    padding: 8px;
   }
 
   .serviceLogsPanel {
@@ -5851,7 +5894,7 @@ html[data-theme="light"] .modalOverlay {
   }
 
   .serviceLogsViewport {
-    padding: 8px 14px 10px;
+    --service-logs-viewport-padding: 8px 14px 10px;
   }
 
   .serviceLogsJumpWrap {
@@ -6084,7 +6127,6 @@ html[data-theme="light"] .modalOverlay {
 }
 
 .svcDetailTabsShell {
-  overflow-x: auto;
   padding-bottom: 2px;
 }
 
