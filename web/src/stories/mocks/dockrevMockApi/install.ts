@@ -54,6 +54,15 @@ export function installDockrevMockApi(
 ) {
   const state = scenario === 'error' ? null : buildFixture(scenario)
   if (state) {
+    if (options.jobsOverride) {
+      state.jobs = options.jobsOverride
+      state.jobById = Object.fromEntries(
+        options.jobsOverride.map((job) => [
+          job.id,
+          { ...job, logs: [], logsLastId: 0 } satisfies JobDetail,
+        ]),
+      )
+    }
     for (const stack of Object.values(state.stackById)) {
       stack.services = stack.services.map((service) => {
         const override = options.serviceOverridesById?.[service.id]
@@ -594,6 +603,19 @@ export function installDockrevMockApi(
         .map((evt) => `id: ${evt.id}\nevent: version_inference_event\ndata: ${JSON.stringify(evt.data)}\n\n`)
         .join('')
       return new Response(body || ': keep-alive\n\n', {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'x-accel-buffering': 'no',
+        },
+      })
+    }
+
+    if (urlPath === '/api/jobs/events' && method === 'GET' && options.jobsEventsPayload != null) {
+      const debug = globalThis.__DOCKREV_MOCK_DEBUG__ ?? (globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug())
+      debug.jobsEventsCalls += 1
+      return new Response(options.jobsEventsPayload ?? ': keep-alive\n\n', {
         status: 200,
         headers: {
           'Content-Type': 'text/event-stream',

@@ -465,7 +465,64 @@ export function buildDashboardDemo(): Fixture {
     },
   } satisfies JobListItem
 
-  f.jobs = [job1, recentAutoPolicyJob, recentWebhookJob, recentStackJob]
+  const recentAllJob = {
+    id: 'job-all-api-5-2-4',
+    type: 'update',
+    scope: 'all',
+    stackId: null,
+    serviceId: null,
+    status: 'running',
+    createdBy: 'ivan',
+    reason: 'ui',
+    createdAt: nowIso(-600_000),
+    startedAt: nowIso(-590_000),
+    finishedAt: null,
+    allowArchMismatch: false,
+    backupMode: 'inherit',
+    summary: {
+      targets: [{ serviceId: serviceProdApi.id, from: '5.2.3', to: '5.2.4' }],
+    },
+  } satisfies JobListItem
+
+  const rollbackJob = {
+    id: 'job-rollback-api-5-2-2',
+    type: 'rollback',
+    scope: 'service',
+    stackId: prodStackId,
+    serviceId: serviceProdApi.id,
+    status: 'rolled_back',
+    createdBy: 'ivan',
+    reason: 'ui',
+    createdAt: nowIso(-1_800_000),
+    startedAt: nowIso(-1_790_000),
+    finishedAt: nowIso(-1_780_000),
+    allowArchMismatch: false,
+    backupMode: 'inherit',
+    summary: {},
+    resultReason: {
+      summary: '回滚完成',
+      detail: '服务已恢复到更新前的镜像版本。',
+    },
+  } satisfies JobListItem
+
+  const unrelatedJob = {
+    id: 'job-unrelated-web',
+    type: 'update',
+    scope: 'service',
+    stackId: prodStackId,
+    serviceId: serviceProdWeb.id,
+    status: 'success',
+    createdBy: 'ivan',
+    reason: 'ui',
+    createdAt: nowIso(-300_000),
+    startedAt: nowIso(-290_000),
+    finishedAt: nowIso(-280_000),
+    allowArchMismatch: false,
+    backupMode: 'inherit',
+    summary: { targets: [{ serviceId: serviceProdWeb.id, from: '5.1', to: '5.2' }] },
+  } satisfies JobListItem
+
+  f.jobs = [job1, recentAutoPolicyJob, recentWebhookJob, recentStackJob, recentAllJob, rollbackJob, unrelatedJob]
   f.jobById = {
     [job1.id]: {
       ...job1,
@@ -475,6 +532,12 @@ export function buildDashboardDemo(): Fixture {
       ],
       logsLastId: 2,
     } satisfies JobDetail,
+    [recentAutoPolicyJob.id]: { ...recentAutoPolicyJob, logs: [], logsLastId: 0 } satisfies JobDetail,
+    [recentWebhookJob.id]: { ...recentWebhookJob, logs: [], logsLastId: 0 } satisfies JobDetail,
+    [recentStackJob.id]: { ...recentStackJob, logs: [], logsLastId: 0 } satisfies JobDetail,
+    [recentAllJob.id]: { ...recentAllJob, logs: [], logsLastId: 0 } satisfies JobDetail,
+    [rollbackJob.id]: { ...rollbackJob, logs: [], logsLastId: 0 } satisfies JobDetail,
+    [unrelatedJob.id]: { ...unrelatedJob, logs: [], logsLastId: 0 } satisfies JobDetail,
   }
 
   const now = nowIso()

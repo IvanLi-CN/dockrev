@@ -14,7 +14,7 @@ const meta: Meta<typeof ServiceDetailPage> = {
 
 export default meta
 type Story = StoryObj<typeof ServiceDetailPage>
-type ServiceSection = 'overview' | 'monitoring' | 'backup' | 'logs' | 'settings'
+type ServiceSection = 'overview' | 'history' | 'monitoring' | 'backup' | 'logs' | 'settings'
 
 function expectStory(condition: unknown, message: string): asserts condition {
   if (!condition) throw new globalThis.Error(message)
@@ -230,6 +230,62 @@ export const MonitoringSection: Story = {
     expectStory(findTab(canvasElement, 'monitoring')?.getAttribute('data-state') === 'active', 'monitoring tab should be active')
     expectStory(!normalizeText(canvasElement.textContent).includes('最近更新记录'), 'monitoring should not render recent updates')
     expectStory(!findSectionCard(canvasElement, 'auto-policy'), 'monitoring should not render settings cards')
+  },
+}
+
+export const UpdateHistorySection: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  render: render('stack-prod', 'svc-prod-api', 'history', '更新与回滚历史统一按时间排序并可直达任务详情'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(findSectionCard(canvasElement, 'update-history')))
+    expectStory(currentRoutePathname() === '/services/stack-prod/svc-prod-api/history', 'history deep link missing')
+    expectStory(findTab(canvasElement, 'history')?.getAttribute('data-state') === 'active', 'history tab should be active')
+    await waitForCondition(() => canvasElement.querySelectorAll('.serviceOperationHistoryRow').length === 5)
+    const rows = Array.from(canvasElement.querySelectorAll<HTMLElement>('.serviceOperationHistoryRow'))
+    expectStory(rows.length === 5, 'history should include all matching update and rollback jobs only')
+    expectStory(normalizeText(rows[0]?.textContent).includes('job-all-api-5-2-4'), 'history should sort newest jobs first')
+    expectStory(
+      rows.some((row) => normalizeText(row.textContent).includes('回滚') && normalizeText(row.textContent).includes('已回滚')),
+      'rollback record should be rendered in the shared table',
+    )
+    expectStory(!normalizeText(canvasElement.textContent).includes('job-unrelated-web'), 'unrelated service job must stay filtered')
+
+    rows[4]?.click()
+    await waitForCondition(() => currentRoutePathname() === '/queue/job-stack-prod-batch')
+
+    window.location.hash = '#/services/stack-prod/svc-prod-api/history'
+    await waitForCondition(() => Boolean(findSectionCard(canvasElement, 'update-history')))
+    const rowsAfterClick = Array.from(canvasElement.querySelectorAll<HTMLElement>('.serviceOperationHistoryRow'))
+    rowsAfterClick[0]?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await waitForCondition(() => currentRoutePathname() === '/queue/job-all-api-5-2-4')
+
+    window.location.hash = '#/services/stack-prod/svc-prod-api/history'
+    await waitForCondition(() => Boolean(findSectionCard(canvasElement, 'update-history')))
+    const rowsAfterEnter = Array.from(canvasElement.querySelectorAll<HTMLElement>('.serviceOperationHistoryRow'))
+    rowsAfterEnter[1]?.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+    await waitForCondition(() => currentRoutePathname() === '/queue/job-rollback-api-5-2-2')
+  },
+}
+
+export const UpdateHistoryEmpty: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo', dockrevJobsOverride: [] },
+  render: render('stack-prod', 'svc-prod-api', 'history', '更新记录空态保持稳定可读'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(findSectionCard(canvasElement, 'update-history')))
+    expectStory(normalizeText(canvasElement.textContent).includes('当前服务暂无更新或回滚记录'), 'history empty state missing')
+  },
+}
+
+export const UpdateHistoryRealtimeRefresh: Story = {
+  parameters: {
+    dockrevApiScenario: 'dashboard-demo',
+    dockrevJobsEventsPayload: 'id: 701\nevent: job_event\ndata: {"jobId":"job-all-api-5-2-4"}\n\n',
+  },
+  render: render('stack-prod', 'svc-prod-api', 'history', '更新记录激活时复用全局 jobs SSE 刷新列表'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(findSectionCard(canvasElement, 'update-history')))
+    await waitForCondition(() => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.jobsEventsCalls ?? 0) >= 1)
+    await waitForCondition(() => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.jobsListCalls ?? 0) >= 2)
   },
 }
 
@@ -537,6 +593,11 @@ export const TabNavigation: Story = {
   render: render('stack-prod', 'svc-prod-api', 'overview', '页头 Tabs 直接驱动 service section 路由'),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => findTab(canvasElement, 'overview') != null)
+
+    findTab(canvasElement, 'history')?.click()
+    await waitForCondition(() => currentRoutePathname() === '/services/stack-prod/svc-prod-api/history')
+    await waitForCondition(() => Boolean(findSectionCard(canvasElement, 'update-history')))
+    expectStory(findTab(canvasElement, 'history')?.getAttribute('data-state') === 'active', 'history tab active state missing after switch')
 
     findTab(canvasElement, 'monitoring')?.click()
     await waitForCondition(() => currentRoutePathname() === '/services/stack-prod/svc-prod-api/monitoring')

@@ -1,4 +1,4 @@
-# Dockrev：服务详情页五子页信息架构升级 演进历史（#ey4ar）
+# Dockrev：服务详情页六子页信息架构升级 演进历史（#ey4ar）
 
 > 这里记录会影响 Agent 理解“为什么一步步变成现在这样”的关键演进；单次任务流水账不放这里，规范正文仍以 `./SPEC.md` 为准。
 
@@ -12,6 +12,7 @@
 - 2026-07-01: 按 Dozzle grouped log 参考修正服务日志多行语义，将应用多行错误 continuation 保留在同一逻辑日志组内，并避免在等级列重复渲染正文 tracing 级别。
 - 2026-07-04: 修正服务日志采集只读取 stdout 的缺口；Docker 容器常把应用日志写入 stderr，snapshot 与 SSE live tail 均需消费 stdout/stderr 双流。
 - 2026-07-07: 修正服务日志结构化解析边界；Rust `tracing` 默认文本输出并非 JSON/logfmt，但仍包含应用级时间、等级与 `key=value` 字段，后端需在 text meta 中提取这些字段，而不能只靠前端启发式推断。
+- 2026-07-12: 新增 route-backed `更新记录` 子页，完整历史从概览最近三条摘要中分离；基于既有 jobs 读模型统一展示当前服务关联的 update/rollback 任务，并只在该 section 在线时订阅全局 jobs SSE。
 
 ## Key Reasons / Replacements
 

@@ -6941,6 +6941,126 @@ html[data-theme="light"] .modalOverlay {
   font-size: 12px;
 }
 
+.serviceOperationHistory {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.serviceOperationHistoryHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.serviceOperationHistoryTable {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 74%, transparent);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.serviceOperationHistoryHeader,
+.serviceOperationHistoryRow {
+  display: grid;
+  grid-template-columns: minmax(220px, 2fr) minmax(100px, 0.8fr) minmax(120px, 1fr) minmax(110px, 0.8fr);
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
+}
+
+.serviceOperationHistoryHeader {
+  background: color-mix(in srgb, var(--panel2) 54%, transparent);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.serviceOperationHistoryRow {
+  min-height: 66px;
+  border-top: 1px solid color-mix(in srgb, var(--borderColor) 64%, transparent);
+  cursor: pointer;
+  outline: none;
+}
+
+.serviceOperationHistoryRow:hover,
+.serviceOperationHistoryRow:focus-visible {
+  background: color-mix(in srgb, var(--dockrev-surface-strong) 82%, transparent);
+}
+
+.serviceOperationHistoryRow:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--color-primary);
+}
+
+.serviceOperationHistoryOperation,
+.serviceOperationHistorySource {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.serviceOperationHistoryOperationTitle {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.serviceOperationHistoryOperation .mono,
+.serviceOperationHistorySource span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.serviceOperationHistoryReason {
+  margin-top: 2px;
+}
+
+.serviceOperationHistoryTime {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.serviceOperationHistoryEmpty {
+  padding: 20px 14px;
+  color: var(--muted);
+}
+
+@media (max-width: 760px) {
+  .serviceOperationHistoryHeader {
+    display: none;
+  }
+
+  .serviceOperationHistoryRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'operation status'
+      'source time';
+    gap: 10px 12px;
+    padding: 12px;
+  }
+
+  .serviceOperationHistoryOperation {
+    grid-area: operation;
+  }
+
+  .serviceOperationHistoryStatus {
+    grid-area: status;
+    justify-self: end;
+  }
+
+  .serviceOperationHistorySource {
+    grid-area: source;
+  }
+
+  .serviceOperationHistoryTime {
+    grid-area: time;
+    align-self: end;
+  }
+}
+
 .jobResultReason {
   margin-top: 12px;
   padding-top: 12px;

@@ -6,6 +6,7 @@ import {
   getServiceResourceUsageHistory,
   inferServiceRepoLink,
   listJobs,
+  newJobsEventsSource,
   putServiceBackupTargets,
   putServiceSettings,
   type BackupTargetPolicy,
@@ -32,7 +33,7 @@ import { ServiceLogsPanel } from '../components/ServiceLogsPanel'
 import { createDefaultAutoUpdatePolicy } from '../components/AutoUpdatePolicyEditor'
 import { AutoUpdatePolicyDrawer } from '../components/AutoUpdatePolicyDrawer'
 import { AutoUpdatePolicyResultCard } from '../components/AutoUpdatePolicyResultCard'
-import { RecentUpdateRecords, selectRecentServiceUpdateJobs } from '../components/RecentUpdateRecords'
+import { RecentUpdateRecords, ServiceOperationHistory, selectRecentServiceUpdateJobs, selectServiceOperationJobs } from '../components/RecentUpdateRecords'
 import { ResponsiveSettingsDrawer } from '../components/ResponsiveSettingsDrawer'
 import {
   ImageLinkIcons,
@@ -61,9 +62,10 @@ function isDockrevService(svc: Service): boolean {
   return isDockrevImageRef(svc.image.ref)
 }
 
-type ServiceDetailSection = 'overview' | 'monitoring' | 'backup' | 'logs' | 'settings'
+type ServiceDetailSection = 'overview' | 'history' | 'monitoring' | 'backup' | 'logs' | 'settings'
 
 function serviceDetailSectionLabel(section: ServiceDetailSection): string {
+  if (section === 'history') return '更新记录'
   if (section === 'monitoring') return '监控'
   if (section === 'backup') return '备份'
   if (section === 'logs') return '日志'
@@ -185,7 +187,7 @@ function sanitizeReadonlyStackSnapshot(stack: StackDetail): StackDetail {
 export function ServiceDetailPage(props: {
   stackId: string
   serviceId: string
-  section?: 'overview' | 'monitoring' | 'backup' | 'logs' | 'settings'
+  section?: 'overview' | 'history' | 'monitoring' | 'backup' | 'logs' | 'settings'
   onLastScanHint: (lastScan?: string) => void
   onTopActions: (node: ReactNode) => void
 }) {
@@ -254,8 +256,12 @@ export function ServiceDetailPage(props: {
     createBackupTargetsDraft(null),
   )
 
-  const refreshRecentJobs = useCallback(async () => {
-    setJobs(await listJobs())
+  const refreshRecentJobs = useCallback(async (activateLive = false) => {
+    const nextJobs = await listJobs()
+    setJobs(nextJobs)
+    if (!activateLive) return
+    setSnapshotActive(false)
+    setSnapshotAnchorFetchedAt(null)
   }, [])
 
   useEffect(() => {
@@ -284,6 +290,75 @@ export function ServiceDetailPage(props: {
     if (!notice?.jobId) return
     void refreshRecentJobs().catch(() => undefined)
   }, [notice?.jobId, refreshRecentJobs])
+
+  useEffect(() => {
+    if (section !== 'history' || !isOnline) return undefined
+    let closed = false
+    let source: EventSource | null = null
+    let errorStreak = 0
+    let lastEventId = 0
+    let refreshTimer: number | null = null
+    let pollTimer: number | null = null
+    let reconnectTimer: number | null = null
+
+    const clearRefreshTimer = () => {
+      if (refreshTimer != null) window.clearTimeout(refreshTimer)
+      refreshTimer = null
+    }
+    const stopPolling = () => {
+      if (pollTimer != null) window.clearInterval(pollTimer)
+      pollTimer = null
+    }
+    const scheduleRefresh = (delayMs: number) => {
+      if (refreshTimer != null) return
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = null
+        void refreshRecentJobs(true).catch(() => undefined)
+      }, delayMs)
+    }
+    const startPolling = () => {
+      if (pollTimer != null) return
+      pollTimer = window.setInterval(() => void refreshRecentJobs(true).catch(() => undefined), 10_000)
+    }
+    const connect = () => {
+      if (closed) return
+      source = newJobsEventsSource(lastEventId > 0 ? { afterId: lastEventId } : undefined)
+      source.addEventListener('open', () => {
+        errorStreak = 0
+        stopPolling()
+        scheduleRefresh(0)
+      })
+      source.addEventListener('job_event', (event: Event) => {
+        const rawId = (event as MessageEvent).lastEventId
+        const parsedId = typeof rawId === 'string' ? Number.parseInt(rawId, 10) : 0
+        if (Number.isFinite(parsedId) && parsedId > 0) lastEventId = parsedId
+        scheduleRefresh(250)
+      })
+      source.addEventListener('job_events_error', () => scheduleRefresh(0))
+      source.onerror = () => {
+        errorStreak += 1
+        scheduleRefresh(0)
+        if (errorStreak < 3) return
+        source?.close()
+        source = null
+        startPolling()
+        if (reconnectTimer != null) return
+        reconnectTimer = window.setTimeout(() => {
+          reconnectTimer = null
+          connect()
+        }, 3_000)
+      }
+    }
+
+    connect()
+    return () => {
+      closed = true
+      clearRefreshTimer()
+      stopPolling()
+      if (reconnectTimer != null) window.clearTimeout(reconnectTimer)
+      source?.close()
+    }
+  }, [isOnline, refreshRecentJobs, section])
 
   useEffect(() => {
     let cancelled = false
@@ -399,6 +474,7 @@ export function ServiceDetailPage(props: {
   const serviceProtectionDraft = serviceSettingsDraft ?? settings ?? effectiveService.settings
   const visibleRepoUrl = serviceSettingsDrawerOpen ? serviceProtectionDraft.repoUrl : draftRepoUrl
   const recentUpdateJobs = selectRecentServiceUpdateJobs(effectiveJobs, effectiveService.id)
+  const serviceOperationJobs = selectServiceOperationJobs(effectiveJobs, effectiveService.id, effectiveStack.id)
   const sectionValue = section
   const effectiveBannerTitle =
     service != null
@@ -421,6 +497,12 @@ export function ServiceDetailPage(props: {
   const renderOverviewSection = () => (
     <div className="svcDetailSectionStack">
       <RecentUpdateRecords jobs={recentUpdateJobs} />
+    </div>
+  )
+
+  const renderHistorySection = () => (
+    <div className="svcDetailSectionStack">
+      <ServiceOperationHistory jobs={serviceOperationJobs} />
     </div>
   )
 
@@ -722,6 +804,7 @@ export function ServiceDetailPage(props: {
   )
 
   const renderSection = () => {
+    if (sectionValue === 'history') return renderHistorySection()
     if (sectionValue === 'monitoring') return renderMonitoringSection()
     if (sectionValue === 'backup') return renderBackupSection()
     if (sectionValue === 'logs') return renderLogsSection()
@@ -735,7 +818,7 @@ export function ServiceDetailPage(props: {
         <ReadonlySnapshotNotice
           tone={!isOnline ? 'warn' : 'info'}
           title={!isOnline ? '当前离线，显示已缓存的服务详情数据。' : '先显示已缓存的服务详情数据，后台会继续刷新。'}
-          detail="仅保留概览、监控摘要与备份摘要；日志和设置会继续要求联网。"
+          detail="仅保留概览、更新记录、监控摘要与备份摘要；日志和设置会继续要求联网。"
           fetchedAt={snapshotFetchedAt}
           actionLabel="重试刷新"
           actionDisabled={!isOnline || busy}
@@ -837,6 +920,13 @@ export function ServiceDetailPage(props: {
                 value="overview"
               >
                 概览
+              </TabsTrigger>
+              <TabsTrigger
+                className={sectionValue === 'history' ? 'svcDetailTab active' : 'svcDetailTab'}
+                data-service-detail-tab="history"
+                value="history"
+              >
+                更新记录
               </TabsTrigger>
               <TabsTrigger
                 className={sectionValue === 'monitoring' ? 'svcDetailTab active' : 'svcDetailTab'}

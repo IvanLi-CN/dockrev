@@ -7,8 +7,8 @@
 - 已新增 installability 所需的 `manifest.webmanifest`、`theme-color`、`apple-touch-icon`、`pwa-192.png` 与 `pwa-512.png`。
 - 已实现全局 PWA 状态管理：页面激活/focus/visible 时更新检查、可见态每小时轮询、ready prompt 手动刷新、不静默热切换。
 - 已落统一只读快照层 `readonlySnapshotCache.ts`，并把首页旧 `localStorage` 快照迁移桥接到 IndexedDB。
-- 已接入持久快照与离线提示的页面：`/`、`/services`、`/queue`、`/queue/version-inference`、stack detail、service detail 的 `overview / monitoring / backup` 只读子页。
-- service detail 已改为：离线时只回放本地摘要与监控样本，`logs / settings` 明确回退到联网门控，不再伪装成可离线使用。
+- 已接入持久快照与离线提示的页面：`/`、`/services`、`/queue`、`/queue/version-inference`、stack detail、service detail 的 `overview / history / monitoring / backup` 只读子页。
+- service detail 已改为：离线时只回放本地摘要、更新记录、监控样本与备份摘要；history 只使用现有 60 秒 fresh jobs snapshot，不建立 SSE，`logs / settings` 明确回退到联网门控，不再伪装成可离线使用。
 - 只读缓存消费已进一步收紧：各页面现在只接受 `fresh` 快照，离开新鲜窗口的本地数据一律不再展示，也不再向用户暴露“数据过时”类文案。
 - 已补壳层状态条、只读快照提示组件、service detail 离线门控与监控快照 Storybook 场景，以及对应截图脚本入口。
 

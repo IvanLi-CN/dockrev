@@ -13,6 +13,8 @@ import {
 export const withDockrevMockApi: Decorator = (Story, context) => {
   const scenario = (context.parameters?.dockrevApiScenario ?? 'default') as DockrevApiScenario
   const options = {
+    jobsOverride: context.parameters?.dockrevJobsOverride,
+    jobsEventsPayload: context.parameters?.dockrevJobsEventsPayload,
     discoveryTimelineByServiceId: context.parameters?.dockrevDiscoveryTimelineByServiceId,
     discoveryTimelineErrorServiceIds: context.parameters?.dockrevDiscoveryTimelineErrorServiceIds,
     githubReleasesByServiceId: context.parameters?.dockrevGitHubReleasesByServiceId,

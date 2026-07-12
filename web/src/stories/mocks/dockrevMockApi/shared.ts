@@ -102,6 +102,8 @@ export type DockrevApiScenario =
   | 'error'
 
 export type DockrevMockApiOptions = {
+  jobsOverride?: JobListItem[]
+  jobsEventsPayload?: string
   discoveryTimelineByServiceId?: Record<string, NewVersionDiscoveryTimelineResponse>
   discoveryTimelineErrorServiceIds?: string[]
   githubReleasesByServiceId?: Record<string, DockrevMockGitHubReleasesDataset>
@@ -260,6 +262,8 @@ export class MockEventSource extends EventTarget {
 }
 
 export type MockDebug = {
+  jobsEventsCalls: number
+  jobsListCalls: number
   lastUpdateRequest: unknown | null
   lastUpdateUrl: string | null
   lastUpdateMethod: string | null
@@ -601,6 +605,8 @@ export function nowIso(offsetMs = 0) {
 
 export function makeMockDebug(): MockDebug {
   return {
+    jobsEventsCalls: 0,
+    jobsListCalls: 0,
     lastUpdateRequest: null,
     lastUpdateUrl: null,
     lastUpdateMethod: null,
