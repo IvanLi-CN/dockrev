@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import type { JobListItem } from '../src/api'
+import { serviceSectionLabel } from '../src/components/DetailRouteServiceTree'
 import {
   paginateServiceOperationJobs,
   releaseVersionForServiceOperation,
@@ -30,6 +31,10 @@ function makeJob(input: Partial<JobListItem> & Pick<JobListItem, 'id' | 'type' |
 }
 
 describe('service operation history', () => {
+  test('labels the history section in the detail service tree', () => {
+    expect(serviceSectionLabel('history')).toBe('更新记录')
+  })
+
   test('includes matching updates and rollbacks across service, stack, and all scopes in time order', () => {
     const jobs = [
       makeJob({ id: 'service-update', type: 'update', status: 'success', serviceId: 'svc-api', finishedAt: '2026-07-12T09:01:00.000Z' }),
