@@ -140,6 +140,7 @@ html[data-theme="light"] .brandLogoForLight {
 
 .sidebar {
   grid-area: side;
+  min-height: 0;
   background: var(--panel2);
   padding: 20px 14px 16px;
   display: flex;
@@ -148,6 +149,7 @@ html[data-theme="light"] .brandLogoForLight {
 
 .detailSidebar {
   grid-area: detail;
+  min-height: 0;
   padding: 22px 18px 18px;
   display: flex;
   flex-direction: column;
@@ -291,7 +293,14 @@ html[data-theme="light"] .brandLogoForLight {
 
 .content {
   grid-area: main;
+  min-height: 0;
   padding: 40px 32px 42px 38px;
+}
+
+.sidebar.overlayScrollArea,
+.detailSidebar.overlayScrollArea,
+.content.overlayScrollArea {
+  height: 100%;
 }
 
 .contentWithDetailSidebar {
