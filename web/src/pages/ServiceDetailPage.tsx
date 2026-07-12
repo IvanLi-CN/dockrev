@@ -817,11 +817,7 @@ export function ServiceDetailPage(props: {
           </div>
         </div>
 
-        <OverlayScrollArea
-          className="svcDetailTabsShell"
-          data-service-detail-tabs-shell="true"
-          options={{ overflow: { x: 'scroll', y: 'hidden' } }}
-        >
+        <OverlayScrollArea className="svcDetailTabsShell" data-service-detail-tabs-shell="true" options={{ overflow: { x: 'scroll', y: 'hidden' } }}>
           <Tabs
             onValueChange={(value) => {
               const nextSection = value as ServiceDetailSection
