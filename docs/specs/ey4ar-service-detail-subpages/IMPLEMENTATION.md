@@ -24,6 +24,7 @@
 - 服务日志采集同时消费 `docker logs` 的 stdout 与 stderr stream；snapshot 与 SSE live tail 均覆盖仅向 stderr 写日志的容器。
 - 已更新 `PageHarness`、服务树 section 标签与服务详情 Storybook stories，补齐旧链接默认概览、tabs route 切换、更新记录深链/混合列表/空态/click-Enter-Space 跳转/受控回滚入口、备份页状态、日志深链与搜索交互、Human/Raw 日志切换、设置抽屉入口与监控页稳定渲染。
 - 已产出 owner-facing mock-only 视觉证据并写回 `SPEC.md`。
+- 服务详情页面与 stories 已收敛到仓库 1200 行文件预算以内，并通过 CI 同款预算检查。
 
 ## Remaining Gaps
 
