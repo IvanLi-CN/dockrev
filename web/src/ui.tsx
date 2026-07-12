@@ -47,6 +47,7 @@ export {
   DrawerTrigger,
 } from '@/components/ui/drawer'
 export { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
+export { OverlayScrollArea } from '@/components/ui/overlay-scroll-area'
 export {
   Select,
   SelectContent,

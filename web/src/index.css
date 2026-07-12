@@ -1,3 +1,4 @@
+@import 'overlayscrollbars/overlayscrollbars.css';
 @import "tailwindcss";
 @import "tw-animate-css";
 
@@ -128,6 +129,84 @@ button,
 textarea,
 select {
   font: inherit;
+}
+
+.os-theme-dockrev {
+  --os-size: 12px;
+  --os-padding-axis: 4px;
+  --os-padding-perpendicular: 2px;
+  --os-track-bg: color-mix(in srgb, var(--panel2) 76%, transparent);
+  --os-track-bg-hover: color-mix(in srgb, var(--panel2) 88%, transparent);
+  --os-track-border: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
+  --os-track-border-radius: 999px;
+  --os-handle-bg: color-mix(in srgb, var(--muted2) 54%, var(--color-primary) 46%);
+  --os-handle-bg-hover: color-mix(in srgb, var(--color-primary) 78%, white 22%);
+  --os-handle-bg-active: var(--color-primary);
+  --os-handle-border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+  --os-handle-border-radius: 999px;
+  --os-handle-interactive-area-offset: 3px;
+  --os-handle-min-size: 36px;
+}
+
+.overlayScrollArea [data-overlayscrollbars-viewport] {
+  overscroll-behavior: contain;
+}
+
+.sidebar [data-overlayscrollbars-viewport],
+.detailSidebar [data-overlayscrollbars-viewport] {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.serviceLogsViewport [data-overlayscrollbars-viewport] {
+  padding: 8px 18px 10px;
+}
+
+.svcDetailTabsShell [data-overlayscrollbars-viewport] {
+  padding-bottom: 2px;
+}
+
+* {
+  scrollbar-color: color-mix(in srgb, var(--muted2) 54%, var(--color-primary) 46%) color-mix(in srgb, var(--panel2) 76%, transparent);
+  scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+*::-webkit-scrollbar-track {
+  background: color-mix(in srgb, var(--panel2) 76%, transparent);
+  border: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted2) 54%, var(--color-primary) 46%);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-primary) 78%, white 22%);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+@media (pointer: coarse) {
+  .os-theme-dockrev {
+    --os-size: 16px;
+    --os-padding-perpendicular: 3px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .os-scrollbar {
+    transition: none !important;
+  }
 }
 
 html[data-theme='dark'] {

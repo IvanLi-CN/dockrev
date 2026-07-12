@@ -14,7 +14,7 @@ import {
 import { getDockrevVersion } from './api'
 import { AppShellStatusBanner } from './components/AppShellStatusBanner'
 import { usePwaStatus } from './pwaStatus'
-import { Button, GitHubIcon, Mono, ToggleGroup, ToggleGroupItem } from './ui'
+import { Button, GitHubIcon, Mono, OverlayScrollArea, ToggleGroup, ToggleGroupItem } from './ui'
 import { ConfirmProvider } from './ConfirmProvider'
 import { BrandLogo } from './BrandLogo'
 import { UpdateActionTrackerProvider } from './updateActionTracking'
@@ -409,7 +409,7 @@ export function AppShell(props: {
             </div>
           </div>
 
-          <aside className="sidebar" aria-label="主导航侧栏">
+          <OverlayScrollArea className="sidebar" role="complementary" aria-label="主导航侧栏">
             <div className="sidebarNavHeader">
               <span className="sidebarSectionLabel sidebarNavLabel">导航</span>
               <button
@@ -547,11 +547,12 @@ export function AppShell(props: {
                 </a>
               ) : null}
             </div>
-          </aside>
+          </OverlayScrollArea>
 
           {props.detailSidebarContent ? (
-            <aside
+            <OverlayScrollArea
               className="detailSidebar"
+              role="complementary"
               aria-label={props.detailSidebarTitle ?? "服务导航"}
             >
               {props.detailSidebarTitle ? (
@@ -564,10 +565,13 @@ export function AppShell(props: {
               <div className="detailSidebarBody">
                 {props.detailSidebarContent}
               </div>
-            </aside>
+            </OverlayScrollArea>
           ) : null}
 
-          <main className={props.detailSidebarContent ? 'content contentWithDetailSidebar' : 'content'}>
+          <OverlayScrollArea
+            className={props.detailSidebarContent ? 'content contentWithDetailSidebar' : 'content'}
+            role="main"
+          >
             <ShellStatusStrip />
             {props.title || props.pageSubtitle ? (
               <div className="pageHead">
@@ -578,7 +582,7 @@ export function AppShell(props: {
               </div>
             ) : null}
             {props.children}
-          </main>
+          </OverlayScrollArea>
 
           <nav className="mobileBottomNav" aria-label="底部主导航">
             {nav.map((item) => {
