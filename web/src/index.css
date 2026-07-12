@@ -159,10 +159,6 @@ select {
   min-height: 0;
 }
 
-.serviceLogsViewport [data-overlayscrollbars-viewport] {
-  padding: 8px 18px 10px;
-}
-
 .svcDetailTabsShell [data-overlayscrollbars-viewport] {
   padding-bottom: 2px;
 }
@@ -199,6 +195,7 @@ select {
 @media (pointer: coarse) {
   .os-theme-dockrev {
     --os-size: 16px;
+    --os-handle-interactive-area-offset: 8px;
     --os-padding-perpendicular: 3px;
   }
 }

@@ -277,7 +277,9 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
         <div className="serviceLogsTerminalBody">
           <OverlayScrollArea
             className="serviceLogsViewport"
+            defer={false}
             onViewportReady={setScrollViewport}
+            viewportLabel="服务实时日志"
           >
             {emptyState ? (
               <div className="serviceLogsEmptyState">

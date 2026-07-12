@@ -5535,10 +5535,14 @@ html[data-theme="light"] .modalOverlay {
 }
 
 .serviceLogsViewport {
+  --service-logs-viewport-padding: 8px 18px 10px;
   min-height: 420px;
   height: min(72vh, 760px);
-  padding: 8px 18px 10px;
   scrollbar-gutter: stable;
+}
+
+.serviceLogsViewport [data-overlayscrollbars-viewport] {
+  padding: var(--service-logs-viewport-padding);
 }
 
 .overlayScrollAreaStory {
@@ -5834,7 +5838,6 @@ html[data-theme="light"] .modalOverlay {
 
   .serviceLogsViewport {
     height: min(68vh, 640px);
-    padding: 8px;
   }
 
   .serviceLogsPanel {
@@ -5882,7 +5885,7 @@ html[data-theme="light"] .modalOverlay {
   }
 
   .serviceLogsViewport {
-    padding: 8px 14px 10px;
+    --service-logs-viewport-padding: 8px 14px 10px;
   }
 
   .serviceLogsJumpWrap {

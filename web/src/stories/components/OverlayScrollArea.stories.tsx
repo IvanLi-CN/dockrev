@@ -7,6 +7,7 @@ function ScrollAreaPreview(props: { horizontal?: boolean }) {
     <OverlayScrollArea
       className={props.horizontal ? 'overlayScrollAreaStory overlayScrollAreaStoryHorizontal' : 'overlayScrollAreaStory'}
       options={{ overflow: props.horizontal ? { x: 'scroll', y: 'hidden' } : { x: 'hidden', y: 'scroll' } }}
+      viewportLabel={props.horizontal ? '横向操作记录' : '纵向操作记录'}
     >
       <div className={props.horizontal ? 'overlayScrollAreaStoryRow' : 'overlayScrollAreaStoryList'}>
         {entries.map((entry) => (
@@ -38,6 +39,10 @@ export const Vertical: Story = {
     expectStory(viewport, 'OverlayScrollArea should create a scrollable viewport')
     expectStory(viewport.scrollHeight > viewport.clientHeight, 'Vertical story should overflow')
     expectStory(canvasElement.querySelector('.os-theme-dockrev'), 'Scrollbar should receive the Dockrev theme')
+    expectStory(viewport.getAttribute('role') === 'region', 'Viewport should expose a named region')
+    expectStory(viewport.tabIndex === 0, 'Viewport should be keyboard focusable')
+    viewport.focus()
+    expectStory(viewport.ownerDocument.activeElement === viewport, 'Viewport should accept keyboard focus')
   },
 }
 

@@ -409,7 +409,12 @@ export function AppShell(props: {
             </div>
           </div>
 
-          <OverlayScrollArea className="sidebar" role="complementary" aria-label="主导航侧栏">
+          <OverlayScrollArea
+            className="sidebar"
+            role="complementary"
+            aria-label="主导航侧栏"
+            viewportLabel="主导航侧栏"
+          >
             <div className="sidebarNavHeader">
               <span className="sidebarSectionLabel sidebarNavLabel">导航</span>
               <button
@@ -554,6 +559,7 @@ export function AppShell(props: {
               className="detailSidebar"
               role="complementary"
               aria-label={props.detailSidebarTitle ?? "服务导航"}
+              viewportLabel={props.detailSidebarTitle ?? "服务导航"}
             >
               {props.detailSidebarTitle ? (
                 <div className="detailSidebarHeader">
@@ -571,6 +577,7 @@ export function AppShell(props: {
           <OverlayScrollArea
             className={props.detailSidebarContent ? 'content contentWithDetailSidebar' : 'content'}
             role="main"
+            viewportLabel="主内容"
           >
             <ShellStatusStrip />
             {props.title || props.pageSubtitle ? (

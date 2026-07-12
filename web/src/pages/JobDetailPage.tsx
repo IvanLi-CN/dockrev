@@ -494,7 +494,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
           </div>
         </div>
 
-        <OverlayScrollArea className="logs">
+        <OverlayScrollArea className="logs" viewportLabel="任务日志">
           {logs.map((l, idx) => (
             <div
               key={`${l.ts}-${idx}`}
