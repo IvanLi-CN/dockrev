@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 
 import type { JobListItem } from '../src/api'
-import { selectRecentServiceUpdateJobs, selectServiceOperationJobs } from '../src/components/RecentUpdateRecords'
+import {
+  paginateServiceOperationJobs,
+  releaseVersionForServiceOperation,
+  selectRecentServiceUpdateJobs,
+  selectServiceOperationJobs,
+  SERVICE_OPERATION_HISTORY_PAGE_SIZE,
+} from '../src/components/RecentUpdateRecords'
 
 function makeJob(input: Partial<JobListItem> & Pick<JobListItem, 'id' | 'type' | 'status'>): JobListItem {
   return {
@@ -53,5 +59,49 @@ describe('service operation history', () => {
     ]
 
     expect(selectRecentServiceUpdateJobs(jobs, 'svc-api').map((job) => job.id)).toEqual(['update-4', 'update-3', 'update-2'])
+  })
+
+  test('limits the rendered history rows to the requested client page', () => {
+    const jobs = Array.from({ length: SERVICE_OPERATION_HISTORY_PAGE_SIZE + 3 }, (_, index) =>
+      makeJob({ id: `history-${index + 1}`, type: 'update', status: 'success', serviceId: 'svc-api' }),
+    )
+
+    const first = paginateServiceOperationJobs(jobs, 1)
+    const second = paginateServiceOperationJobs(jobs, 2)
+
+    expect(first).toMatchObject({ page: 1, totalPages: 2 })
+    expect(first.jobs).toHaveLength(SERVICE_OPERATION_HISTORY_PAGE_SIZE)
+    expect(second).toMatchObject({ page: 2, totalPages: 2 })
+    expect(second.jobs.map((job) => job.id)).toEqual(['history-21', 'history-22', 'history-23'])
+  })
+
+  test('uses the current service target version when opening release notes', () => {
+    expect(
+      releaseVersionForServiceOperation(
+        makeJob({
+          id: 'stack-update',
+          type: 'update',
+          status: 'success',
+          summary: {
+            targets: [
+              { serviceId: 'svc-web', targetTag: '5.2.4' },
+              { serviceId: 'svc-api', to: '5.2.3' },
+            ],
+          },
+        }),
+        'svc-api',
+      ),
+    ).toBe('5.2.3')
+    expect(
+      releaseVersionForServiceOperation(
+        makeJob({
+          id: 'rollback',
+          type: 'rollback',
+          status: 'rolled_back',
+          summary: { targetDisplayTag: '5.2.0' },
+        }),
+        'svc-api',
+      ),
+    ).toBe('5.2.0')
   })
 })

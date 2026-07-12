@@ -17,7 +17,7 @@
 - 保留共享的服务上下文：标题、镜像/仓库信息、状态 banner、版本异常提示、全局 success/error 反馈，以及高频顶部动作。
 - 将 `ServiceResourcePanel` 独占到 `监控` 子页，将服务级备份摘要、备份设置入口与当前服务相关备份记录集中到 `备份` 子页，将自动更新 / Compose / 服务保护 / 忽略规则 / Webhook / 低频危险动作集中到 `设置` 子页。
 - 为服务详情新增 Dozzle 风格的 `日志` 子页，提供单服务 live tail、当前缓冲搜索、默认吸底、自动换行开关与跳到最新交互。
-- 新增 `更新记录` 子页，统一展示当前服务关联的 update/rollback 任务，并在联网时实时同步状态。
+- 新增 `更新记录` 子页，统一展示当前服务关联的 update/rollback 任务，提供客户端分页浏览，并在联网时实时同步状态。
 - 在已有 Storybook 与 spec 流程下补齐六子页的稳定 stories、交互断言与 owner-facing 视觉证据。
 
 ### Non-goals
@@ -69,7 +69,7 @@
 - `预览更新 / 执行更新 / 回滚 / Stack 详情` 必须在各子页保持一致可达；`归档/恢复` 与 `阻止此服务更新` 必须从全局顶部动作下沉到 `设置` 页。
 - `概览` 不得再出现资源监控卡、自动更新结果卡、Compose 信息卡或服务保护卡。
 - `更新记录` 必须复用 `GET /api/jobs` 全量数据，只展示当前服务关联的 `update` 与 `rollback` 任务；服务、Stack 和 all scope 任务均以 `serviceId` 或 summary targets 关联判断，按 `finishedAt ?? startedAt ?? createdAt` 倒序排列。
-- `更新记录` 必须使用操作、状态、来源、时间四列；操作列包含 Job ID 与异常或回滚结果摘要，整行支持 click、Enter、Space 进入 `/queue/:jobId`。
+- `更新记录` 必须使用记录、状态、来源、时间、操作五列；记录列严格限制为两行：首行操作名与异常或回滚结果摘要，次行 Job ID，摘要必须单行截断，不得出现第三行。与操作类型或状态重复的泛化摘要（如“更新完成”“回滚完成”“任务执行失败”）不得显示；仅保留额外诊断结果。整行支持 click、Enter、Space 进入 `/queue/:jobId`。失败任务的非状态列必须弱化显示，但状态列必须保持完整失败 Badge 的颜色和对比度，且仍保留 hover/focus 定位与行级跳转。记录能可靠解析当前服务的目标 tag（`targetDisplayTag`、`targetTag` 或服务 target 的 `to`）时，操作列必须提供更新日志图标入口，打开既有右侧 release drawer 并定位、高亮对应版本；无可靠 tag 时不得显示误导入口。仅当成功更新任务是当前服务可回滚目标的来源任务时，操作列显示回滚入口；该入口复用服务级回滚确认、鉴权与并发保护，不得声称可回滚到任意历史版本。匹配记录超过 20 条时，前端必须只渲染当前页，并提供带页码状态的上一页/下一页箭头；页码越界时回退到有效页。分页不改变既有全量 jobs 请求或 SSE 合同。
 - `更新记录` 激活且在线时必须复用全局 jobs SSE；事件 250ms 去抖刷新，连续三次错误后每 10 秒轮询、3 秒后重连，连接恢复立即停止轮询；切离 section 或卸载时清理订阅和计时器。
 - `监控` 只承载资源监控面板及其原有空态/错态/SSE 状态，不得混入配置内容。
 - `备份` 必须集中承载服务级备份摘要卡、备份设置抽屉入口，以及“当前服务相关”的备份记录卡片列表。
@@ -85,7 +85,7 @@
 - `日志` 搜索必须覆盖 `plain/raw`、`meta.message` 与 `meta.attributes`，使操作者可按 `route`、`phase`、`event` 等结构化字段过滤当前缓冲。
 - `设置` 不得再承载备份目标编辑入口；设置页中的“服务保护设置”只保留失败回滚与代码仓库配置。
 - `设置` 必须集中承载自动更新摘要与抽屉、Compose 信息、部署 tag 编辑、服务保护、忽略规则、Webhook，以及下沉后的低频危险动作。
-- Storybook 必须提供六子页稳定入口，并至少覆盖：旧链接默认概览、tabs active state、更新记录深链/混合排序/空态/行级跳转、备份页记录列表/空态、日志深链、设置抽屉入口或监控页稳定渲染。
+- Storybook 必须提供六子页稳定入口，并至少覆盖：旧链接默认概览、tabs active state、更新记录深链/混合排序/分页边界/更新日志定位/空态/行级跳转、备份页记录列表/空态、日志深链、设置抽屉入口或监控页稳定渲染。
 
 ### SHOULD
 
@@ -112,7 +112,7 @@
   - 内容区只展示资源监控面板。
 - 用户访问 `.../history`：
   - 共享 hero/banner/top actions 与普通服务详情一致。
-  - 内容区展示当前服务的完整更新与回滚记录表；所有状态按最新时间排序，任务行可直接跳转任务详情。
+  - 内容区展示当前服务的完整更新与回滚记录表；所有状态按最新时间排序，任务行可直接跳转任务详情。已回滚状态使用独立回滚视觉语义，当前可回滚目标的来源更新行显示受控回滚入口。
   - 在线时只在本 section 建立 jobs SSE；离线时只回放既有 60 秒 fresh snapshot 中的 jobs，不建立 SSE。
 - 用户访问 `.../backup`：
   - 共享 hero/banner/top actions 与普通服务详情一致。
@@ -178,7 +178,7 @@
 
 - Given 服务详情页处于 `更新记录`
   When 当前服务关联 update、rollback、Stack scope 与 all scope 任务
-  Then 统一表格只显示这些任务，按 `finishedAt ?? startedAt ?? createdAt` 倒序排列，不混入其他服务任务；行 click、Enter、Space 都进入对应 `/queue/:jobId`。
+  Then 统一表格只显示这些任务，按 `finishedAt ?? startedAt ?? createdAt` 倒序排列，不混入其他服务任务；行 click、Enter、Space 都进入对应 `/queue/:jobId`。若当前回滚目标的来源任务在表中且为成功更新，则仅该行显示回滚按钮，点击不会先触发行级跳转，并进入既有回滚确认。
 
 - Given 服务详情页处于 `更新记录` 且在线
   When jobs SSE 发出事件或连续三次连接错误
@@ -236,7 +236,7 @@
 
 - Stories to add/update: `web/src/stories/pages/ServiceDetailPage.stories.tsx`
 - Docs pages / state galleries to add/update: `none (reason: repo currently uses page stories/canvas coverage for this surface)`
-- `play` / interaction coverage to add/update: tabs route switching、旧链接默认概览、更新记录深链/混合列表/空态/click-Enter-Space 跳转、备份页记录卡渲染/空态、日志深链与搜索交互、日志自动换行/虚拟列表断言、设置抽屉入口、监控页稳定渲染
+- `play` / interaction coverage to add/update: tabs route switching、旧链接默认概览、更新记录深链/混合列表/分页边界/更新日志定位/空态/click-Enter-Space 跳转/受控回滚入口、备份页记录卡渲染/空态、日志深链与搜索交互、日志自动换行/虚拟列表断言、设置抽屉入口、监控页稳定渲染
 - Visual regression baseline changes (if any): 服务详情六子页 mock-only 视觉证据
 
 ### Quality checks
@@ -248,13 +248,13 @@
 - source_type: `storybook_canvas`
   target_program: `mock-only`
   capture_scope: `browser-viewport`
-  requested_viewport: `1440x1200`
-  viewport_strategy: `storybook-viewport`
+  requested_viewport: `1600x1200`
+  viewport_strategy: `controlled-viewport`
   sensitive_exclusion: `N/A`
   submission_gate: `approved`
-  story_id_or_title: `Pages/ServiceDetailPage/UpdateHistorySection`
-  state: `history deep link with mixed update and rollback records`
-  evidence_note: 页面级视图验证 `/history` 深链、服务上下文、双侧导航、六个 Tabs 与更新时间倒序的统一四列表格；表格包含运行中/成功/失败/已回滚状态与结果摘要，390px 窄屏下表格和行均无横向滚动。
+  story_id_or_title: `Pages/ServiceDetailPage/UpdateHistoryReleaseNotes`
+  state: `history deep link with target release drawer open`
+  evidence_note: 标准桌面 `1600x1200` 页面级视图验证 `/history` 深链、折叠的主导航，以及记录的更新日志图标复用右侧 release drawer；目标 `5.2.4` 被定位并高亮。抽屉在 28 条 mock 发布记录中仅挂载虚拟窗口，活动 Tab 已表达当前 section，内容区不重复标题、说明或记录数量。更新记录仅保留外层 section card，表格不再使用嵌套圆角容器。当前 Storybook 未配置桌面 viewport preset，故以受控视口模拟采集。
   PR: include
   PR caption: 服务详情新增更新记录子页，统一展示当前服务的更新与回滚任务。
 

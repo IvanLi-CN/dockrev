@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react'
-import type { ServiceLogSnapshotResponse } from '../../api'
+import type { JobListItem, ServiceLogSnapshotResponse } from '../../api'
 import { ServiceDetailPage } from '../../pages/ServiceDetailPage'
 import { currentRoutePathname, type Route } from '../../routes'
 import { PageHarness } from '../mocks/PageHarness'
@@ -151,12 +151,14 @@ function render(
   serviceId: string,
   section: ServiceSection = 'overview',
   pageSubtitle?: string,
+  options?: { sidebarCollapsed?: boolean },
 ): Story['render'] {
   return () => (
     <PageHarness
       route={routeFor(stackId, serviceId, section)}
       title="服务详情"
       pageSubtitle={pageSubtitle}
+      sidebarCollapsed={options?.sidebarCollapsed ?? false}
     >
       {({ route, onTopActions, onLastScanHint }) =>
         route.name === 'service' ? (
@@ -172,6 +174,42 @@ function render(
     </PageHarness>
   )
 }
+
+const paginatedHistoryJobs: JobListItem[] = Array.from({ length: 23 }, (_, index) => {
+  const sequence = 23 - index
+  const timestamp = new Date(Date.parse('2026-07-12T16:30:00.000Z') - index * 60_000).toISOString()
+  return {
+    id: `job-history-page-${sequence}`,
+    type: index % 5 === 0 ? 'rollback' : 'update',
+    scope: 'service',
+    stackId: 'stack-prod',
+    serviceId: 'svc-prod-api',
+    status: index % 7 === 0 ? 'rolled_back' : 'success',
+    createdBy: index % 2 === 0 ? 'ivan' : 'auto-policy',
+    reason: index % 2 === 0 ? 'ui' : 'auto_policy',
+    createdAt: timestamp,
+    startedAt: timestamp,
+    finishedAt: timestamp,
+    allowArchMismatch: false,
+    backupMode: 'inherit',
+    summary: { serviceId: 'svc-prod-api' },
+  }
+})
+
+const historyReleaseNotes = Array.from({ length: 28 }, (_, index) => {
+  const tagName = index === 22 ? '5.2.4' : `5.1.${28 - index}`
+  return {
+    id: 70_000 + index,
+    tagName,
+    name: tagName,
+    body: `Release ${tagName}\n\n- 修复部署流程中的边界问题。\n- 改进任务状态的可读性。`,
+    htmlUrl: `https://github.com/acme/api/releases/tag/${tagName}`,
+    draft: false,
+    prerelease: false,
+    publishedAt: new Date(Date.UTC(2026, 6, 12, 16, 30) - index * 3_600_000).toISOString(),
+    createdAt: new Date(Date.UTC(2026, 6, 12, 16, 15) - index * 3_600_000).toISOString(),
+  }
+})
 
 export const OverviewDefault: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo' },
@@ -235,9 +273,19 @@ export const MonitoringSection: Story = {
 
 export const UpdateHistorySection: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo' },
-  render: render('stack-prod', 'svc-prod-api', 'history', '更新与回滚历史统一按时间排序并可直达任务详情'),
+  render: render(
+    'stack-prod',
+    'svc-prod-api',
+    'history',
+    '更新与回滚历史统一按时间排序并可直达任务详情',
+    { sidebarCollapsed: true },
+  ),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => Boolean(findSectionCard(canvasElement, 'update-history')))
+    expectStory(
+      canvasElement.querySelector('.appShell')?.classList.contains('appShellSidebarCollapsed'),
+      'history evidence should render with the primary sidebar collapsed',
+    )
     expectStory(currentRoutePathname() === '/services/stack-prod/svc-prod-api/history', 'history deep link missing')
     expectStory(findTab(canvasElement, 'history')?.getAttribute('data-state') === 'active', 'history tab should be active')
     await waitForCondition(() => canvasElement.querySelectorAll('.serviceOperationHistoryRow').length === 5)
@@ -247,6 +295,20 @@ export const UpdateHistorySection: Story = {
     expectStory(
       rows.some((row) => normalizeText(row.textContent).includes('回滚') && normalizeText(row.textContent).includes('已回滚')),
       'rollback record should be rendered in the shared table',
+    )
+    const failedRow = rows.find((row) => normalizeText(row.textContent).includes('job-stack-prod-batch'))
+    expectStory(failedRow?.classList.contains('serviceOperationHistoryRowFailed'), 'failed history row should be visually de-emphasized')
+    expectStory(
+      getComputedStyle(failedRow?.querySelector('.serviceOperationHistoryStatus') ?? canvasElement).opacity === '1',
+      'failed history status must retain full visual prominence',
+    )
+    expectStory(
+      Array.from(rows).every((row) => row.querySelectorAll('.serviceOperationHistoryOperation > *').length === 2),
+      'history operation content must stay within two visible text rows',
+    )
+    expectStory(
+      !['更新完成', '回滚完成', '任务执行失败'].some((summary) => normalizeText(canvasElement.textContent).includes(summary)),
+      'history must omit summaries already expressed by operation type or status',
     )
     expectStory(!normalizeText(canvasElement.textContent).includes('job-unrelated-web'), 'unrelated service job must stay filtered')
 
@@ -264,6 +326,144 @@ export const UpdateHistorySection: Story = {
     const rowsAfterEnter = Array.from(canvasElement.querySelectorAll<HTMLElement>('.serviceOperationHistoryRow'))
     rowsAfterEnter[1]?.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
     await waitForCondition(() => currentRoutePathname() === '/queue/job-rollback-api-5-2-2')
+  },
+}
+
+export const UpdateHistorySectionEvidence: Story = {
+  parameters: { dockrevApiScenario: 'service-detail-history-rollback-action' },
+  render: render(
+    'stack-prod',
+    'svc-prod-api',
+    'history',
+    '更新与回滚历史统一按时间排序并可直达任务详情',
+    { sidebarCollapsed: true },
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(findSectionCard(canvasElement, 'update-history')))
+    await waitForCondition(() => canvasElement.querySelectorAll('.serviceOperationHistoryRow').length === 5)
+    expectStory(
+      canvasElement.querySelector('.appShell')?.classList.contains('appShellSidebarCollapsed'),
+      'history evidence should render with the primary sidebar collapsed',
+    )
+    expectStory(findTab(canvasElement, 'history')?.getAttribute('data-state') === 'active', 'history tab should be active')
+    expectStory(
+      Boolean(canvasElement.querySelector('[data-service-operation-action="rollback"]')),
+      'history evidence should expose the current rollback action',
+    )
+    expectStory(
+      canvasElement.querySelector('.serviceOperationHistoryRowFailed')?.textContent?.includes('job-stack-prod-batch'),
+      'history evidence should retain the de-emphasized failed row',
+    )
+    expectStory(
+      getComputedStyle(canvasElement.querySelector('.serviceOperationHistoryRowFailed .serviceOperationHistoryStatus') ?? canvasElement)
+        .opacity === '1',
+      'history evidence must retain failed status prominence',
+    )
+    expectStory(
+      Array.from(canvasElement.querySelectorAll('.serviceOperationHistoryRow')).every(
+        (row) => row.querySelectorAll('.serviceOperationHistoryOperation > *').length === 2,
+      ),
+      'history evidence must keep operation content to two visible text rows',
+    )
+    expectStory(
+      !['更新完成', '回滚完成', '任务执行失败'].some((summary) => normalizeText(canvasElement.textContent).includes(summary)),
+      'history evidence must omit summaries already expressed by operation type or status',
+    )
+  },
+}
+
+export const UpdateHistoryPagination: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo', dockrevJobsOverride: paginatedHistoryJobs },
+  render: render('stack-prod', 'svc-prod-api', 'history', '完整更新历史以页面形式稳定浏览。', { sidebarCollapsed: true }),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => canvasElement.querySelectorAll('.serviceOperationHistoryRow').length === 20)
+    const pageStatus = canvasElement.querySelector('.serviceOperationHistoryPagerStatus')
+    const previous = canvasElement.querySelector<HTMLButtonElement>('button[aria-label="上一页"]')
+    const next = canvasElement.querySelector<HTMLButtonElement>('button[aria-label="下一页"]')
+
+    expectStory(normalizeText(pageStatus?.textContent) === '第 1 / 2 页，共 23 条', 'history pager should describe the first page')
+    expectStory(previous?.disabled, 'previous page should be disabled on the first page')
+    expectStory(!next?.disabled, 'next page should be enabled on the first page')
+
+    next?.click()
+    await waitForCondition(() => canvasElement.querySelectorAll('.serviceOperationHistoryRow').length === 3)
+    expectStory(normalizeText(pageStatus?.textContent) === '第 2 / 2 页，共 23 条', 'history pager should advance to the final page')
+    expectStory(!previous?.disabled, 'previous page should be enabled on the final page')
+    expectStory(next?.disabled, 'next page should be disabled on the final page')
+    expectStory(
+      normalizeText(canvasElement.querySelector('.serviceOperationHistoryRow')?.textContent).includes('job-history-page-3'),
+      'final page should render only the remaining records',
+    )
+  },
+}
+
+export const UpdateHistoryReleaseNotes: Story = {
+  parameters: {
+    dockrevApiScenario: 'dashboard-demo',
+    dockrevGitHubReleasesByServiceId: {
+      'svc-prod-api': {
+        authMode: 'anonymous',
+        repo: { fullName: 'acme/api', htmlUrl: 'https://github.com/acme/api' },
+        items: historyReleaseNotes,
+        locateByVersion: {
+          '5.2.4': {
+            status: 'found',
+            searchedCount: 28,
+            matchedTag: '5.2.4',
+            page: 2,
+            indexWithinPage: 2,
+            absoluteIndex: 22,
+          },
+        },
+      },
+    },
+  },
+  render: render('stack-prod', 'svc-prod-api', 'history', '从更新记录定位到对应版本的发布日志。', { sidebarCollapsed: true }),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(canvasElement.querySelector('[data-service-operation-action="release-notes"][data-release-version="5.2.4"]')))
+    const action = canvasElement.querySelector<HTMLButtonElement>(
+      '[data-service-operation-action="release-notes"][data-release-version="5.2.4"] button',
+    )
+    expectStory(action, 'history release notes action missing')
+    action.click()
+
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => doc.querySelector('[data-release-drawer="true"]')?.getAttribute('data-release-drawer') === 'true')
+    await waitForCondition(
+      () => doc.querySelector('[data-release-tag="5.2.4"]')?.getAttribute('data-release-highlighted') === 'true',
+    )
+    const renderedReleaseRows = doc.querySelectorAll('.releaseDrawerVirtualRow').length
+    expectStory(renderedReleaseRows > 0 && renderedReleaseRows < historyReleaseNotes.length, 'release drawer must stay virtualized')
+    expectStory(window.location.search.includes('releaseVersion=5.2.4'), 'drawer URL should retain the target version')
+  },
+}
+
+export const UpdateHistoryRollbackAction: Story = {
+  parameters: { dockrevApiScenario: 'service-detail-history-rollback-action' },
+  render: render(
+    'stack-prod',
+    'svc-prod-api',
+    'history',
+    '当前可回滚目标只在来源更新记录行提供回滚操作。',
+    { sidebarCollapsed: true },
+  ),
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => canvasElement.querySelectorAll('.serviceOperationHistoryRow').length === 5)
+    const action = canvasElement.querySelector<HTMLButtonElement>(
+      '[data-service-operation-action="rollback"]',
+    )
+    expectStory(action, 'history rollback action missing')
+    expectStory(!action.disabled, 'history rollback action should be enabled for the current target source')
+    expectStory(
+      normalizeText(action.closest('.serviceOperationHistoryRow')?.textContent).includes('job-auto-policy-api-5-2-3'),
+      'history rollback action must stay on the current rollback target source job',
+    )
+
+    action.click()
+    await waitForCondition(() => doc.body.textContent?.includes('确认回滚服务 api？') ?? false)
+    expectStory(currentRoutePathname() === '/services/stack-prod/svc-prod-api/history', 'history action must not navigate to job detail')
+    expectStory(doc.body.textContent?.includes('来源任务'), 'rollback confirmation should retain source job details')
   },
 }
 

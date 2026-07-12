@@ -1,5 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { AppShell } from "../../Shell";
+import {
+  APP_SHELL_SIDEBAR_COLLAPSED_STORAGE_KEY,
+  AppShell,
+} from "../../Shell";
 import { DetailRouteServiceTree } from "../../components/DetailRouteServiceTree";
 import { GitHubReleaseDrawer } from "../../components/GitHubReleaseDrawer";
 import {
@@ -22,6 +25,7 @@ export function PageHarness(props: {
   route: Route;
   title?: string;
   pageSubtitle?: string;
+  sidebarCollapsed?: boolean;
   authIdentity?: TopbarAuthIdentity | null;
   children: (ctx: {
     route: Route;
@@ -32,6 +36,12 @@ export function PageHarness(props: {
     onLastScanHint: (lastScan?: string) => void;
   }) => ReactNode;
 }) {
+  if (typeof window !== "undefined" && props.sidebarCollapsed !== undefined) {
+    window.localStorage.setItem(
+      APP_SHELL_SIDEBAR_COLLAPSED_STORAGE_KEY,
+      props.sidebarCollapsed ? "1" : "0",
+    );
+  }
   return <PageHarnessInner key={currentHref(props.route)} {...props} />;
 }
 
@@ -39,6 +49,7 @@ function PageHarnessInner(props: {
   route: Route;
   title?: string;
   pageSubtitle?: string;
+  sidebarCollapsed?: boolean;
   authIdentity?: TopbarAuthIdentity | null;
   children: (ctx: {
     route: Route;

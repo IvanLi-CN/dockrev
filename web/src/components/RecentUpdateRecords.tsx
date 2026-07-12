@@ -1,7 +1,12 @@
 import type { JobListItem, StackDetail } from '../api'
+import { ChevronLeft, ChevronRight, RotateCcw, ScrollText } from 'lucide-react'
+import { useState } from 'react'
+import { openGitHubReleaseDrawer } from '../releaseDrawer'
 import { navigate } from '../routes'
-import { Mono, Pill } from '../ui'
+import { IconButton, Mono, Pill } from '../ui'
 import { TaskResultReason } from './TaskResultReason'
+
+export const SERVICE_OPERATION_HISTORY_PAGE_SIZE = 20
 
 export function formatCompactDateTime(ts?: string | null): string {
   if (!ts) return '-'
@@ -37,6 +42,29 @@ export function serviceIdsFromSummary(summary: unknown): Set<string> {
   return serviceIds
 }
 
+function summaryVersion(value: Record<string, unknown>): string | null {
+  for (const key of ['targetDisplayTag', 'targetTag', 'to']) {
+    const version = value[key]
+    if (typeof version === 'string' && version.trim()) return version.trim()
+  }
+  return null
+}
+
+export function releaseVersionForServiceOperation(job: JobListItem, serviceId: string): string | null {
+  if (!isRecord(job.summary)) return null
+
+  const directVersion = summaryVersion(job.summary)
+  if (directVersion) return directVersion
+
+  const targets = Array.isArray(job.summary.targets) ? job.summary.targets : []
+  for (const target of targets) {
+    if (!isRecord(target) || target.serviceId !== serviceId) continue
+    const targetVersion = summaryVersion(target)
+    if (targetVersion) return targetVersion
+  }
+  return null
+}
+
 export function selectRecentServiceUpdateJobs(jobs: JobListItem[], serviceId: string): JobListItem[] {
   return selectServiceOperationJobs(jobs, serviceId)
     .filter((job) => job.type === 'update')
@@ -55,6 +83,14 @@ export function selectServiceOperationJobs(jobs: JobListItem[], serviceId: strin
     .sort((a, b) => jobSortTime(b) - jobSortTime(a))
 }
 
+export function paginateServiceOperationJobs(jobs: JobListItem[], requestedPage: number, pageSize = SERVICE_OPERATION_HISTORY_PAGE_SIZE) {
+  const normalizedPageSize = Math.max(1, pageSize)
+  const totalPages = Math.max(1, Math.ceil(jobs.length / normalizedPageSize))
+  const page = Math.min(Math.max(1, requestedPage), totalPages)
+  const start = (page - 1) * normalizedPageSize
+  return { page, totalPages, jobs: jobs.slice(start, start + normalizedPageSize) }
+}
+
 export function selectRecentStackUpdateJobs(jobs: JobListItem[], stack: StackDetail): JobListItem[] {
   const stackServiceIds = new Set(stack.services.map((service) => service.id))
   return jobs
@@ -71,7 +107,8 @@ export function selectRecentStackUpdateJobs(jobs: JobListItem[], stack: StackDet
 }
 
 function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' | 'info' {
-  if (status === 'success' || status === 'rolled_back') return 'ok'
+  if (status === 'success') return 'ok'
+  if (status === 'rolled_back') return 'warn'
   if (status === 'running' || status === 'queued' || status === 'pending') return 'info'
   if (status === 'failed') return 'bad'
   return 'muted'
@@ -100,31 +137,44 @@ function statusLabel(status: string): string {
 
 function resultReasonSummary(job: JobListItem): string | null {
   const summary = job.resultReason?.summary?.trim()
-  return summary || null
+  if (!summary) return null
+
+  const redundantSummaries = new Set([
+    statusLabel(job.status),
+    job.type === 'update' ? '更新完成' : '回滚完成',
+    job.status === 'failed' ? '任务执行失败' : '',
+  ])
+  return redundantSummaries.has(summary) ? null : summary
 }
 
-export function ServiceOperationHistory(props: { jobs: JobListItem[] }) {
+export function ServiceOperationHistory(props: {
+  jobs: JobListItem[]
+  serviceId: string
+  rollbackSourceJobId?: string | null
+  rollbackBusy?: boolean
+  onRollback?: () => void
+}) {
+  const [requestedPage, setRequestedPage] = useState(1)
+  const page = paginateServiceOperationJobs(props.jobs, requestedPage)
+
   return (
     <section className="card serviceOperationHistory" data-service-detail-section-card="update-history">
-      <div className="serviceOperationHistoryHead">
-        <div>
-          <div className="title">更新记录</div>
-          <div className="muted">显示当前服务的更新与回滚任务，按最新时间排序。</div>
-        </div>
-        <Pill tone={props.jobs.length > 0 ? 'info' : 'muted'}>{props.jobs.length}</Pill>
-      </div>
       <div className="serviceOperationHistoryTable" role="table" aria-label="更新和回滚记录">
         <div className="serviceOperationHistoryHeader" role="row">
-          <span role="columnheader">操作</span>
+          <span role="columnheader">记录</span>
           <span role="columnheader">状态</span>
           <span role="columnheader">来源</span>
           <span role="columnheader">时间</span>
+          <span role="columnheader">操作</span>
         </div>
-        {props.jobs.map((job) => {
+        {page.jobs.map((job) => {
           const reason = resultReasonSummary(job)
+          const releaseVersion = releaseVersionForServiceOperation(job, props.serviceId)
+          const canRollback =
+            job.id === props.rollbackSourceJobId && job.type === 'update' && job.status === 'success' && Boolean(props.onRollback)
           return (
             <div
-              className="serviceOperationHistoryRow"
+              className={job.status === 'failed' ? 'serviceOperationHistoryRow serviceOperationHistoryRowFailed' : 'serviceOperationHistoryRow'}
               key={job.id}
               role="button"
               tabIndex={0}
@@ -139,13 +189,15 @@ export function ServiceOperationHistory(props: { jobs: JobListItem[] }) {
               }}
             >
               <div className="serviceOperationHistoryOperation" data-label="操作">
-                <div className="serviceOperationHistoryOperationTitle">{operationLabel(job.type)}</div>
+                <div className="serviceOperationHistoryOperationSummary">
+                  <div className="serviceOperationHistoryOperationTitle">{operationLabel(job.type)}</div>
+                  {reason ? (
+                    <span className="serviceOperationHistoryReason" title={job.resultReason?.detail ?? reason}>
+                      {reason}
+                    </span>
+                  ) : null}
+                </div>
                 <Mono>{job.id}</Mono>
-                {reason ? (
-                  <span className="serviceOperationHistoryReason" title={job.resultReason?.detail ?? reason}>
-                    {reason}
-                  </span>
-                ) : null}
               </div>
               <div className="serviceOperationHistoryStatus" data-label="状态">
                 <Pill tone={statusTone(job.status)}>{statusLabel(job.status)}</Pill>
@@ -157,11 +209,65 @@ export function ServiceOperationHistory(props: { jobs: JobListItem[] }) {
               <div className="serviceOperationHistoryTime" data-label="时间">
                 {formatCompactDateTime(job.finishedAt ?? job.startedAt ?? job.createdAt)}
               </div>
+              <div
+                className="serviceOperationHistoryAction"
+                data-label="操作"
+                onClick={(event) => event.stopPropagation()}
+              >
+                {releaseVersion ? (
+                  <span data-release-version={releaseVersion} data-service-operation-action="release-notes">
+                    <IconButton
+                      hint={`查看 ${releaseVersion} 的更新日志`}
+                      onClick={() => openGitHubReleaseDrawer({ serviceId: props.serviceId, version: releaseVersion })}
+                      title={`查看 ${releaseVersion} 的更新日志`}
+                    >
+                      <ScrollText aria-hidden="true" size={15} strokeWidth={2} />
+                    </IconButton>
+                  </span>
+                ) : null}
+                {canRollback ? (
+                  <button
+                    className="serviceOperationHistoryRollbackButton"
+                    data-service-operation-action="rollback"
+                    disabled={props.rollbackBusy}
+                    onClick={() => props.onRollback?.()}
+                    type="button"
+                  >
+                    <RotateCcw aria-hidden="true" size={14} strokeWidth={2} />
+                    回滚
+                  </button>
+                ) : null}
+              </div>
             </div>
           )
         })}
         {props.jobs.length === 0 ? <div className="serviceOperationHistoryEmpty">当前服务暂无更新或回滚记录。</div> : null}
       </div>
+      {props.jobs.length > SERVICE_OPERATION_HISTORY_PAGE_SIZE ? (
+        <nav className="serviceOperationHistoryPager" aria-label="更新记录分页">
+          <span className="serviceOperationHistoryPagerStatus" aria-live="polite">
+            第 {page.page} / {page.totalPages} 页，共 {props.jobs.length} 条
+          </span>
+          <div className="serviceOperationHistoryPagerActions">
+            <IconButton
+              disabled={page.page <= 1}
+              hint="上一页"
+              onClick={() => setRequestedPage((value) => Math.max(1, value - 1))}
+              title="上一页"
+            >
+              <ChevronLeft aria-hidden="true" size={16} strokeWidth={2} />
+            </IconButton>
+            <IconButton
+              disabled={page.page >= page.totalPages}
+              hint="下一页"
+              onClick={() => setRequestedPage((value) => Math.min(page.totalPages, value + 1))}
+              title="下一页"
+            >
+              <ChevronRight aria-hidden="true" size={16} strokeWidth={2} />
+            </IconButton>
+          </div>
+        </nav>
+      ) : null}
     </section>
   )
 }

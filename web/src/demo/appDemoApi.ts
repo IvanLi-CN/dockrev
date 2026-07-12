@@ -426,6 +426,111 @@ function createDiscoveryJob(): { jobId: string } {
   return { jobId: createJob('discovery_scan', { projectsSeen: stackList.length }).id }
 }
 
+function seedServiceHistoryDemoJobs() {
+  const jobs: JobDetail[] = [
+    {
+      id: 'demo-update-api-5-2-3-running',
+      type: 'update',
+      scope: 'all',
+      stackId: null,
+      serviceId: null,
+      status: 'running',
+      createdBy: 'ivan',
+      reason: 'ui',
+      createdAt: nowIso(-90_000),
+      startedAt: nowIso(-60_000),
+      finishedAt: null,
+      allowArchMismatch: false,
+      backupMode: 'inherit',
+      summary: { targets: [{ serviceId: services.api.id, from: '5.2.1', to: '5.2.3' }] },
+      logs: [{ ts: nowIso(-10_000), level: 'info', msg: 'Pulling ghcr.io/acme/api:5.2.3' }],
+      logsLastId: 1,
+      progress: { phase: 'pulling', message: '正在拉取镜像', current: 1, total: 2, percent: 50, updatedAt: nowIso(-10_000) },
+    },
+    {
+      id: 'demo-rollback-api-5-2-2',
+      type: 'rollback',
+      scope: 'service',
+      stackId: 'stack-prod',
+      serviceId: services.api.id,
+      status: 'rolled_back',
+      createdBy: 'ivan',
+      reason: 'ui',
+      createdAt: nowIso(-1_260_000),
+      startedAt: nowIso(-1_230_000),
+      finishedAt: nowIso(-1_170_000),
+      allowArchMismatch: false,
+      backupMode: 'inherit',
+      summary: { targets: [{ serviceId: services.api.id, from: '5.2.3', to: '5.2.2' }] },
+      logs: [{ ts: nowIso(-1_170_000), level: 'info', msg: 'Rollback completed.' }],
+      logsLastId: 1,
+      progress: null,
+    },
+    {
+      id: 'demo-auto-update-api-5-2-3',
+      type: 'update',
+      scope: 'service',
+      stackId: 'stack-prod',
+      serviceId: services.api.id,
+      status: 'success',
+      createdBy: 'auto-policy',
+      reason: 'auto_policy',
+      createdAt: nowIso(-2_520_000),
+      startedAt: nowIso(-2_490_000),
+      finishedAt: nowIso(-2_400_000),
+      allowArchMismatch: false,
+      backupMode: 'inherit',
+      summary: { targets: [{ serviceId: services.api.id, from: '5.2.2', to: '5.2.3' }] },
+      logs: [{ ts: nowIso(-2_400_000), level: 'info', msg: 'Update completed.' }],
+      logsLastId: 1,
+      progress: null,
+    },
+    {
+      id: 'demo-webhook-update-api-5-2-2',
+      type: 'update',
+      scope: 'service',
+      stackId: 'stack-prod',
+      serviceId: services.api.id,
+      status: 'success',
+      createdBy: 'ghcr-webhook',
+      reason: 'webhook',
+      createdAt: nowIso(-5_100_000),
+      startedAt: nowIso(-5_070_000),
+      finishedAt: nowIso(-5_010_000),
+      allowArchMismatch: false,
+      backupMode: 'inherit',
+      summary: { targets: [{ serviceId: services.api.id, from: '5.2.1', to: '5.2.2' }] },
+      logs: [{ ts: nowIso(-5_010_000), level: 'info', msg: 'Webhook update completed.' }],
+      logsLastId: 1,
+      progress: null,
+    },
+    {
+      id: 'demo-stack-update-failed',
+      type: 'update',
+      scope: 'stack',
+      stackId: 'stack-prod',
+      serviceId: null,
+      status: 'failed',
+      createdBy: 'ivan',
+      reason: 'ui',
+      createdAt: nowIso(-8_700_000),
+      startedAt: nowIso(-8_670_000),
+      finishedAt: nowIso(-8_610_000),
+      allowArchMismatch: false,
+      backupMode: 'inherit',
+      summary: { targets: [{ serviceId: services.api.id, from: '5.2.0', to: '5.2.1' }] },
+      resultReason: { summary: '任务执行失败', detail: '镜像拉取失败，未变更当前运行版本。' },
+      logs: [{ ts: nowIso(-8_610_000), level: 'error', msg: 'Image pull failed.' }],
+      logsLastId: 1,
+      progress: null,
+    },
+  ]
+
+  for (const job of jobs) jobsById[job.id] = job
+}
+
+seedServiceHistoryDemoJobs()
+
 const discoveredProjects = [
   {
     project: 'prod',
@@ -580,19 +685,21 @@ function githubReleases(): ServiceGitHubReleasesResponse {
     page: 1,
     perPage: 20,
     hasMore: false,
-    items: [
-      {
-        id: 1001,
-        tagName: 'v5.2.3',
-        name: 'v5.2.3',
-        body: 'Demo release notes.',
-        htmlUrl: 'https://github.com/acme/api/releases/tag/v5.2.3',
+    items: Array.from({ length: 28 }, (_, index) => {
+      const patch = 28 - index
+      const tagName = `v5.2.${patch}`
+      return {
+        id: 1000 + patch,
+        tagName,
+        name: tagName,
+        body: `Demo release notes for ${tagName}.`,
+        htmlUrl: `https://github.com/acme/api/releases/tag/${tagName}`,
         draft: false,
         prerelease: false,
-        publishedAt: nowIso(-86_400_000),
-        createdAt: nowIso(-86_400_000),
-      },
-    ],
+        publishedAt: nowIso(-(index + 1) * 86_400_000),
+        createdAt: nowIso(-(index + 1) * 86_400_000),
+      }
+    }),
   }
 }
 

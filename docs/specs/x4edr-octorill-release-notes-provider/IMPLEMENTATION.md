@@ -13,6 +13,7 @@
 - 后端 settings schema/API 已支持 `releaseNotes.octoRill`，包含 Base URL 规范化、API Key 等长脱敏、保留/覆盖/清除语义与默认视图。
 - 新增服务级 `GET /api/services/{service_id}/release-notes`，开启且配置完整时优先请求 OctoRill repo feed，失败时返回 fallback 并回退 GitHub Releases。
 - 发布抽屉改用统一 release notes API，显示来源、fallback banner，并支持 `润色 / 翻译 / 原文` 会话内切换。
+- 服务更新记录中的目标版本入口复用同一发布抽屉与统一 release notes API；定位、高亮与虚拟滚动行为不因入口不同而分叉。
 - Settings 新增 OctoRill 更新日志配置卡片，复用现有自动保存状态与错误提示。
 - Storybook mock API、Settings story 与 Release Drawer story 已覆盖配置卡、等长 API Key 脱敏、默认润色、视图切换与 fallback 分支。
 

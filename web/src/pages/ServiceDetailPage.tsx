@@ -217,6 +217,9 @@ export function ServiceDetailPage(props: {
     backupTargets,
     repoInferBusy,
     requestRefresh,
+    requestRollback,
+    rollbackTarget,
+    rollbackTargetRefreshing,
     rules,
     semverDowngradeAnomaly,
     service,
@@ -502,7 +505,13 @@ export function ServiceDetailPage(props: {
 
   const renderHistorySection = () => (
     <div className="svcDetailSectionStack">
-      <ServiceOperationHistory jobs={serviceOperationJobs} />
+      <ServiceOperationHistory
+        jobs={serviceOperationJobs}
+        serviceId={serviceId}
+        onRollback={readonlyUi ? undefined : requestRollback}
+        rollbackBusy={busy || rollbackTargetRefreshing}
+        rollbackSourceJobId={readonlyUi || !rollbackTarget?.available ? null : rollbackTarget.sourceUpdateJobId}
+      />
     </div>
   )
 

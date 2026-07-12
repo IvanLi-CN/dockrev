@@ -75,7 +75,7 @@
 
 ## Visual Evidence
 
-视觉证据在实现完成后补充到本 spec 的 `assets/` 目录，并绑定到 Storybook mock-only 场景。
+视觉证据在实现完成后补充到本 spec 的 `assets/` 目录，并绑定到 Storybook mock-only 场景；离线新鲜快照回放更新记录时，记录列仍严格保持操作与补充结果摘要、Job ID 两行，结果摘要单行截断，并省略已由操作类型或状态表达的泛化内容。匹配记录超过 20 条时，fresh snapshot 在本地按页浏览，且仅渲染当前页。失败记录可以弱化非状态信息，但状态 Badge 必须保持完整颜色与对比度。
 
 ### Update Prompt Banner
 
@@ -117,9 +117,9 @@
 - source_type: storybook_canvas
 - target_program: mock-only
 - capture_scope: `browser-viewport`
-- requested_viewport: 1440x1200
-- viewport_strategy: storybook-viewport
-- state: page-level history deep link with persisted fresh jobs read model
+- requested_viewport: 1600x1200
+- viewport_strategy: controlled-viewport
+- state: page-level history deep link with collapsed primary navigation, persisted fresh jobs read model, client pagination, and strictly two-line record summaries
 - PR: include
 
 ### Service Settings Offline Gate

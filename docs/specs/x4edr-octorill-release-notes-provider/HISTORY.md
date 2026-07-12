@@ -6,6 +6,7 @@
 
 - 2026-07-07: 创建 spec，冻结 v1 只读接入 OctoRill feed、失败自动回退 GitHub Releases、默认 `smart` 视图与 API Key 后端代理边界。
 - 2026-07-07: OctoRill API Key 脱敏回显改为等长圆点串，保留明文不回传的安全边界，同时避免用户误判已保存 key 被截短。
+- 2026-07-12: 服务更新记录扩展为既有发布抽屉的第二入口；继续复用统一 release notes API、来源切换、定位与虚拟滚动，不新增并行 viewer。
 
 ## Key Reasons / Replacements
 

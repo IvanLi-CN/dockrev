@@ -6944,35 +6944,24 @@ html[data-theme="light"] .modalOverlay {
 .serviceOperationHistory {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-}
-
-.serviceOperationHistoryHead {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
 }
 
 .serviceOperationHistoryTable {
   display: flex;
   flex-direction: column;
-  border: 1px solid color-mix(in srgb, var(--borderColor) 74%, transparent);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
 }
 
 .serviceOperationHistoryHeader,
 .serviceOperationHistoryRow {
   display: grid;
-  grid-template-columns: minmax(220px, 2fr) minmax(100px, 0.8fr) minmax(120px, 1fr) minmax(110px, 0.8fr);
+  grid-template-columns: minmax(220px, 2fr) minmax(100px, 0.8fr) minmax(120px, 1fr) minmax(110px, 0.8fr) minmax(70px, auto);
   gap: 12px;
   align-items: center;
   padding: 10px 14px;
 }
 
 .serviceOperationHistoryHeader {
-  background: color-mix(in srgb, var(--panel2) 54%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 64%, transparent);
   color: var(--muted);
   font-size: 12px;
 }
@@ -6982,6 +6971,15 @@ html[data-theme="light"] .modalOverlay {
   border-top: 1px solid color-mix(in srgb, var(--borderColor) 64%, transparent);
   cursor: pointer;
   outline: none;
+}
+
+.serviceOperationHistoryRowFailed > :not(.serviceOperationHistoryStatus) {
+  opacity: 0.52;
+}
+
+.serviceOperationHistoryRowFailed:hover > :not(.serviceOperationHistoryStatus),
+.serviceOperationHistoryRowFailed:focus-visible > :not(.serviceOperationHistoryStatus) {
+  opacity: 0.72;
 }
 
 .serviceOperationHistoryRow:hover,
@@ -7004,6 +7002,15 @@ html[data-theme="light"] .modalOverlay {
 .serviceOperationHistoryOperationTitle {
   color: var(--text);
   font-weight: 650;
+  flex: 0 0 auto;
+}
+
+.serviceOperationHistoryOperationSummary {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .serviceOperationHistoryOperation .mono,
@@ -7014,7 +7021,11 @@ html[data-theme="light"] .modalOverlay {
 }
 
 .serviceOperationHistoryReason {
-  margin-top: 2px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .serviceOperationHistoryTime {
@@ -7023,9 +7034,71 @@ html[data-theme="light"] .modalOverlay {
   white-space: nowrap;
 }
 
+.serviceOperationHistoryAction {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.serviceOperationHistoryRollbackButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 56px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 48%, var(--borderColor) 52%);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  color: var(--color-warning);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.serviceOperationHistoryRollbackButton:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  border-color: color-mix(in srgb, var(--color-warning) 70%, var(--borderColor) 30%);
+}
+
+.serviceOperationHistoryRollbackButton:focus-visible {
+  outline: 2px solid var(--color-warning);
+  outline-offset: 2px;
+}
+
+.serviceOperationHistoryRollbackButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .serviceOperationHistoryEmpty {
   padding: 20px 14px;
   color: var(--muted);
+}
+
+.serviceOperationHistoryPager,
+.serviceOperationHistoryPagerActions {
+  display: flex;
+  align-items: center;
+}
+
+.serviceOperationHistoryPager {
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 14px 0;
+}
+
+.serviceOperationHistoryPagerStatus {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.serviceOperationHistoryPagerActions {
+  gap: 4px;
 }
 
 @media (max-width: 760px) {
@@ -7034,10 +7107,10 @@ html[data-theme="light"] .modalOverlay {
   }
 
   .serviceOperationHistoryRow {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     grid-template-areas:
-      'operation status'
-      'source time';
+      'operation status action'
+      'source time action';
     gap: 10px 12px;
     padding: 12px;
   }
@@ -7058,6 +7131,16 @@ html[data-theme="light"] .modalOverlay {
   .serviceOperationHistoryTime {
     grid-area: time;
     align-self: end;
+  }
+
+  .serviceOperationHistoryAction {
+    align-self: center;
+    grid-area: action;
+    justify-self: end;
+  }
+
+  .serviceOperationHistoryPager {
+    justify-content: space-between;
   }
 }
 

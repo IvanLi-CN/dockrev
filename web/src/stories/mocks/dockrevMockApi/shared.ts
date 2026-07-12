@@ -49,6 +49,7 @@ export type DockrevApiScenario =
   | 'service-detail-rollback-unavailable'
   | 'service-detail-rollback-active'
   | 'service-detail-rollback-confirm-open'
+  | 'service-detail-history-rollback-action'
   | 'service-detail-rollback-stale-after-update'
   | 'link-icon-catalog'
   | 'digest-pinned-image-display'
