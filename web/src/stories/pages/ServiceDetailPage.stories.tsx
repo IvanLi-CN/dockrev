@@ -1,15 +1,22 @@
 import type { Meta, StoryObj } from "@storybook/react";
-import type { JobListItem, ServiceLogSnapshotResponse } from "../../api";
 import { ServiceDetailPage } from "../../pages/ServiceDetailPage";
 import { currentRoutePathname, type Route } from "../../routes";
 import { PageHarness } from "../mocks/PageHarness";
 import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
+import {
+  buildLongLogsSnapshot,
+  buildMultilineLogsSnapshot,
+  historyReleaseNotes,
+  paginatedHistoryJobs,
+  partialHistoryBackupRecords,
+} from "./serviceDetailPageStoryFixtures";
 
 const meta: Meta<typeof ServiceDetailPage> = {
   title: "Pages/ServiceDetailPage",
   component: ServiceDetailPage,
   decorators: [withDockrevMockApi],
   tags: ["autodocs"],
+  parameters: { layout: "fullscreen" },
 };
 
 export default meta;
@@ -68,6 +75,14 @@ function findTab(root: ParentNode, section: ServiceSection): HTMLButtonElement |
   return root.querySelector<HTMLButtonElement>(`[data-service-detail-tab="${section}"]`);
 }
 
+function tabLabels(root: ParentNode): string[] {
+  return Array.from(root.querySelectorAll<HTMLElement>("[data-service-detail-tab]")).map((tab) => normalizeText(tab.textContent));
+}
+
+function findHistoryRowByJobId(root: ParentNode, jobId: string): HTMLElement | null {
+  return Array.from(root.querySelectorAll<HTMLElement>(".serviceOperationHistoryRow")).find((row) => normalizeText(row.textContent).includes(jobId)) ?? null;
+}
+
 function findLogRowContaining(root: ParentNode, text: string): HTMLElement | null {
   return Array.from(root.querySelectorAll<HTMLElement>(".serviceLogRow")).find((row) => normalizeText(row.textContent).includes(text)) ?? null;
 }
@@ -80,95 +95,13 @@ function routeFor(stackId: string, serviceId: string, section: ServiceSection = 
   return section === "overview" ? { name: "service", stackId, serviceId } : { name: "service", stackId, serviceId, section };
 }
 
-function buildLongLogsSnapshot(serviceId: string, count = 1600): ServiceLogSnapshotResponse {
-  const startedAt = Date.parse("2026-06-29T08:00:00.000Z");
-  return {
-    serviceId,
-    lines: Array.from({ length: count }, (_, index) => {
-      const ts = new Date(startedAt + index * 1_000).toISOString();
-      const base =
-        index % 7 === 0
-          ? `GET /internal/metrics 200 trace=req-${String(index).padStart(4, "0")} cache=warm upstream=payments-v2 latency=${40 + (index % 11)}ms region=ap-southeast-1 release=2026.06.29-${(index % 5) + 1}`
-          : `worker cycle=${index} queue=critical state=idle lease=svc-prod-api lock=refresh-${String(index).padStart(4, "0")}`;
-      const raw = index % 11 === 0 ? `\u001b[33m${base}\u001b[0m` : index % 13 === 0 ? `\u001b[31m${base}\u001b[0m` : base;
-      return { ts, raw, plain: raw };
-    }),
-    lastEventId: count,
-    bufferLimit: 2000,
-  };
-}
-
-function buildMultilineLogsSnapshot(serviceId: string): ServiceLogSnapshotResponse {
-  const multilineRaw = [
-    "\u001b[2m2026-07-01T08:12:51.833063Z\u001b[0m \u001b[33m WARN\u001b[0m failed to broadcast pool attempt start runtime snapshot err=error returned from database: (code: 5) database is locked",
-    "",
-    "Caused by:",
-    "    (code: 5) database is locked invoke_id=proxy-1281-1782893570550",
-  ].join("\n");
-  return {
-    serviceId,
-    lines: [
-      {
-        ts: "2026-07-01T08:12:51.833063000Z",
-        raw: multilineRaw,
-        plain: multilineRaw,
-      },
-      {
-        ts: "2026-07-01T08:12:53.763043000Z",
-        raw: "\u001b[2m2026-07-01T08:12:53.763043Z\u001b[0m \u001b[32m INFO\u001b[0m openai proxy response headers ready proxy_request_id=1279 method=POST uri=/v1/responses status=200 OK elapsed_ms=10542",
-        plain: "\u001b[2m2026-07-01T08:12:53.763043Z\u001b[0m \u001b[32m INFO\u001b[0m openai proxy response headers ready proxy_request_id=1279 method=POST uri=/v1/responses status=200 OK elapsed_ms=10542",
-      },
-    ],
-    lastEventId: 2,
-    bufferLimit: 2000,
-  };
-}
-
 function render(stackId: string, serviceId: string, section: ServiceSection = "overview", pageSubtitle?: string, options?: { sidebarCollapsed?: boolean }): Story["render"] {
   return () => (
     <PageHarness route={routeFor(stackId, serviceId, section)} title="服务详情" pageSubtitle={pageSubtitle} sidebarCollapsed={options?.sidebarCollapsed ?? false}>
-      {({ route, onTopActions, onLastScanHint }) =>
-        route.name === "service" ? <ServiceDetailPage stackId={route.stackId} serviceId={route.serviceId} section={route.section} onLastScanHint={onLastScanHint} onTopActions={onTopActions} /> : null
-      }
+      {({ route, onTopActions, onLastScanHint }) => route.name === "service" ? <ServiceDetailPage stackId={route.stackId} serviceId={route.serviceId} section={route.section} onLastScanHint={onLastScanHint} onTopActions={onTopActions} /> : null}
     </PageHarness>
   );
 }
-
-const paginatedHistoryJobs: JobListItem[] = Array.from({ length: 23 }, (_, index) => {
-  const sequence = 23 - index;
-  const timestamp = new Date(Date.parse("2026-07-12T16:30:00.000Z") - index * 60_000).toISOString();
-  return {
-    id: `job-history-page-${sequence}`,
-    type: index % 5 === 0 ? "rollback" : "update",
-    scope: "service",
-    stackId: "stack-prod",
-    serviceId: "svc-prod-api",
-    status: index % 7 === 0 ? "rolled_back" : "success",
-    createdBy: index % 2 === 0 ? "ivan" : "auto-policy",
-    reason: index % 2 === 0 ? "ui" : "auto_policy",
-    createdAt: timestamp,
-    startedAt: timestamp,
-    finishedAt: timestamp,
-    allowArchMismatch: false,
-    backupMode: "inherit",
-    summary: { serviceId: "svc-prod-api" },
-  };
-});
-
-const historyReleaseNotes = Array.from({ length: 28 }, (_, index) => {
-  const tagName = index === 22 ? "5.2.4" : `5.1.${28 - index}`;
-  return {
-    id: 70_000 + index,
-    tagName,
-    name: tagName,
-    body: `Release ${tagName}\n\n- 修复部署流程中的边界问题。\n- 改进任务状态的可读性。`,
-    htmlUrl: `https://github.com/acme/api/releases/tag/${tagName}`,
-    draft: false,
-    prerelease: false,
-    publishedAt: new Date(Date.UTC(2026, 6, 12, 16, 30) - index * 3_600_000).toISOString(),
-    createdAt: new Date(Date.UTC(2026, 6, 12, 16, 15) - index * 3_600_000).toISOString(),
-  };
-});
 
 export const OverviewDefault: Story = {
   parameters: { dockrevApiScenario: "dashboard-demo" },
@@ -178,6 +111,7 @@ export const OverviewDefault: Story = {
     await waitForCondition(() => normalizeText(canvasElement.ownerDocument.body.textContent).includes("服务列表"));
     expectStory(currentRoutePathname() === "/services/stack-prod/svc-prod-api", "legacy overview route should stay canonical");
     expectStory(findTab(canvasElement, "overview")?.getAttribute("data-state") === "active", "overview tab should be active");
+    expectStory(JSON.stringify(tabLabels(canvasElement)) === JSON.stringify(["概览", "更新记录", "监控", "日志", "备份", "设置"]), "service detail tabs should follow the reordered sequence");
     expectStory(!normalizeText(canvasElement.textContent).includes("资源监控"), "overview should not render monitoring panel");
     expectStory(!findSectionCard(canvasElement, "auto-policy"), "overview should not render settings cards");
     expectStory(findButton(canvasElement, "Stack 详情"), "stack detail top action missing");
@@ -221,23 +155,25 @@ export const UpdateHistorySection: Story = {
     expectStory(canvasElement.querySelector(".appShell")?.classList.contains("appShellSidebarCollapsed"), "history evidence should render with the primary sidebar collapsed");
     expectStory(currentRoutePathname() === "/services/stack-prod/svc-prod-api/history", "history deep link missing");
     expectStory(findTab(canvasElement, "history")?.getAttribute("data-state") === "active", "history tab should be active");
+    const headerLabels = Array.from(canvasElement.querySelectorAll<HTMLElement>('.serviceOperationHistoryHeader [role="columnheader"]')).map((cell) => normalizeText(cell.textContent));
+    expectStory(JSON.stringify(headerLabels) === JSON.stringify(["记录", "状态", "备份", "来源", "时间", "操作"]), "history table should expose the backup column after status");
     await waitForCondition(() => canvasElement.querySelectorAll(".serviceOperationHistoryRow").length === 5);
     const rows = Array.from(canvasElement.querySelectorAll<HTMLElement>(".serviceOperationHistoryRow"));
     expectStory(rows.length === 5, "history should include all matching update and rollback jobs only");
     expectStory(normalizeText(rows[0]?.textContent).includes("job-all-api-5-2-4"), "history should sort newest jobs first");
-    expectStory(
-      rows.some((row) => normalizeText(row.textContent).includes("回滚") && normalizeText(row.textContent).includes("已回滚")),
-      "rollback record should be rendered in the shared table",
-    );
+    expectStory(rows.some((row) => normalizeText(row.textContent).includes("回滚") && normalizeText(row.textContent).includes("已回滚")), "rollback record should be rendered in the shared table");
     const failedRow = rows.find((row) => normalizeText(row.textContent).includes("job-stack-prod-batch"));
     expectStory(failedRow?.classList.contains("serviceOperationHistoryRowFailed"), "failed history row should be visually de-emphasized");
     expectStory(getComputedStyle(failedRow?.querySelector(".serviceOperationHistoryStatus") ?? canvasElement).opacity === "1", "failed history status must retain full visual prominence");
-    expectStory(
-      Array.from(rows).every((row) => row.querySelectorAll(".serviceOperationHistoryOperation > *").length === 2),
-      "history operation content must stay within two visible text rows",
-    );
+    expectStory(Array.from(rows).every((row) => row.querySelectorAll(".serviceOperationHistoryOperation > *").length === 2), "history operation content must stay within two visible text rows");
     expectStory(!["更新完成", "回滚完成", "任务执行失败"].some((summary) => normalizeText(canvasElement.textContent).includes(summary)), "history must omit summaries already expressed by operation type or status");
     expectStory(!normalizeText(canvasElement.textContent).includes("job-unrelated-web"), "unrelated service job must stay filtered");
+    const backupSummaryRow = findHistoryRowByJobId(canvasElement, "job-auto-policy-api-5-2-3");
+    expectStory(backupSummaryRow?.querySelector('.serviceOperationHistoryBackup')?.getAttribute("data-backup-state") === "ready", "matched backup row should render a ready backup summary");
+    expectStory(normalizeText(backupSummaryRow?.querySelector(".serviceOperationHistoryBackup")?.textContent) === "2 个目标17.6 MiB", "matched backup row should show target count and aggregated source size");
+    const emptyBackupRow = findHistoryRowByJobId(canvasElement, "job-all-api-5-2-4");
+    expectStory(emptyBackupRow?.querySelector('.serviceOperationHistoryBackup')?.getAttribute("data-backup-state") === "empty", "rows without backup records should render the empty placeholder state");
+    expectStory(normalizeText(emptyBackupRow?.querySelector(".serviceOperationHistoryBackup")?.textContent) === "-- --", "rows without backup records should stay neutral");
 
     rows[4]?.click();
     await waitForCondition(() => currentRoutePathname() === "/queue/job-stack-prod-batch");
@@ -374,6 +310,23 @@ export const UpdateHistoryRealtimeRefresh: Story = {
   },
 };
 
+export const UpdateHistoryBackupSizeFallback: Story = {
+  parameters: {
+    dockrevApiScenario: "dashboard-demo",
+    dockrevServiceBackupRecordsById: {
+      "svc-prod-api": partialHistoryBackupRecords,
+    },
+  },
+  render: render("stack-prod", "svc-prod-api", "history", "备份摘要在缺少源目标体积时保留数量并回退到中性占位。", { sidebarCollapsed: true }),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(findSectionCard(canvasElement, "update-history")));
+    const backupSummaryRow = findHistoryRowByJobId(canvasElement, "job-auto-policy-api-5-2-3");
+    const backupCell = backupSummaryRow?.querySelector<HTMLElement>(".serviceOperationHistoryBackup");
+    expectStory(backupCell?.getAttribute("data-backup-state") === "partial", "missing source sizes should switch the backup summary into partial mode");
+    expectStory(normalizeText(backupCell?.textContent) === "2 个目标--", "partial backup summary should keep the target count and neutralize the total size");
+  },
+};
+
 export const SettingsSection: Story = {
   parameters: { dockrevApiScenario: "dashboard-demo" },
   render: render("stack-prod", "svc-prod-api", "settings", "设置子页集中自动更新、Compose、保护项与维护动作"),
@@ -499,6 +452,57 @@ export const MobileLogsSection: Story = {
     expectStory(siblingLink, "mobile service drawer should include sibling services");
     siblingLink.click();
     await waitForCondition(() => currentRoutePathname() === "/services/stack-prod/svc-prod-web/logs");
+  },
+};
+
+export const MobileHistorySection: Story = {
+  parameters: {
+    dockrevApiScenario: "dashboard-demo",
+    viewport: { defaultViewport: "mobile1" },
+  },
+  render: render("stack-prod", "svc-prod-api", "history", "移动端更新记录保留两行栅格且不产生横向滚动。"),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => canvasElement.querySelectorAll(".serviceOperationHistoryRow").length === 5);
+    const table = canvasElement.querySelector<HTMLElement>(".serviceOperationHistoryTable");
+    const row = canvasElement.querySelector<HTMLElement>(".serviceOperationHistoryRow");
+    const heroStatusCard = canvasElement.querySelector<HTMLElement>(".detailHeroCardService .detailHeroStatusCard");
+    const historyShell = canvasElement.querySelector<HTMLElement>(".serviceOperationHistory");
+    const mobileStatus = row?.querySelector<HTMLElement>(".serviceOperationHistoryMobileStatus");
+    const desktopStatus = row?.querySelector<HTMLElement>(".serviceOperationHistoryStatus");
+    const title = row?.querySelector<HTMLElement>(".serviceOperationHistoryOperationTitle");
+    const topbar = canvasElement.ownerDocument.querySelector<HTMLElement>(".topbar");
+    const menuButton = canvasElement.ownerDocument.querySelector<HTMLElement>(".mobileMenuButton");
+    const userTrigger = canvasElement.ownerDocument.querySelector<HTMLElement>(".topbarUserSlot .topbarUserTrigger");
+    const appShell = canvasElement.ownerDocument.querySelector<HTMLElement>(".appShell");
+    expectStory(findTab(canvasElement, "history")?.getAttribute("data-state") === "active", "mobile history tab should stay active");
+    expectStory(Boolean(table), "mobile history table missing");
+    expectStory(Boolean(row), "mobile history row missing");
+    expectStory(Math.abs((appShell ?? canvasElement).getBoundingClientRect().left) <= 1, "mobile detail shell should render edge-to-edge without Storybook canvas gutters");
+    expectStory(getComputedStyle(topbar ?? canvasElement).borderBottomWidth === "0px", "mobile detail topbar should not draw an extra divider above the history tabs");
+    expectStory(
+      getComputedStyle(heroStatusCard ?? canvasElement).borderTopWidth === "0px" &&
+        getComputedStyle(heroStatusCard ?? canvasElement).backgroundImage === "none" &&
+        getComputedStyle(heroStatusCard ?? canvasElement).boxShadow === "none",
+      "mobile service summary should flatten the update status block instead of nesting a second card",
+    );
+    expectStory(
+      getComputedStyle(historyShell ?? canvasElement).borderTopWidth === "0px" &&
+        getComputedStyle(historyShell ?? canvasElement).backgroundImage === "none" &&
+        getComputedStyle(historyShell ?? canvasElement).boxShadow === "none",
+      "mobile history section should not wrap record rows in an extra outer card shell",
+    );
+    expectStory(getComputedStyle(desktopStatus ?? canvasElement).display === "none", "mobile history should hide the dedicated status column cell");
+    expectStory(Boolean(mobileStatus?.textContent?.trim()), "mobile history should render a status pill beside the card title");
+    expectStory(
+      (mobileStatus?.getBoundingClientRect().left ?? 0) > (title?.getBoundingClientRect().right ?? Number.MAX_SAFE_INTEGER) - 1,
+      "mobile history status pill should sit to the right of the card title",
+    );
+    expectStory(
+      Math.abs((menuButton?.getBoundingClientRect().top ?? 0) - (userTrigger?.getBoundingClientRect().top ?? 0)) <= 2,
+      "mobile detail topbar should keep menu, brand row, and user trigger on the same first-row baseline",
+    );
+    expectStory(row?.scrollWidth != null && row.clientWidth > 0 && row.scrollWidth <= row.clientWidth + 1, "mobile history rows should not overflow horizontally");
+    expectStory(getComputedStyle(row ?? canvasElement).gridTemplateAreas.includes("backup source time"), "mobile history should use the compact two-row grid with the backup column");
   },
 };
 

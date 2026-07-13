@@ -65,11 +65,11 @@
 - `Route.name === 'service'` 必须支持 `section?: 'overview' | 'history' | 'monitoring' | 'backup' | 'logs' | 'settings'`。
 - `href()` 对 `section=undefined | overview` 必须输出旧 canonical URL `/services/:stackId/:serviceId`，不得生成新的 `/overview` canonical path。
 - `parseRoute()` 必须接受旧路径，并把它解析为服务详情 `overview` 语义；对于 `/history`、`/monitoring`、`/backup`、`/logs` 与 `/settings` 需返回对应 section。
-- 服务详情页顶部必须提供 route-backed tabs，标签固定为 `概览 / 更新记录 / 监控 / 备份 / 日志 / 设置`。
+- 服务详情页顶部必须提供 route-backed tabs，标签固定为 `概览 / 更新记录 / 监控 / 日志 / 备份 / 设置`。
 - `预览更新 / 执行更新 / 回滚 / Stack 详情` 必须在各子页保持一致可达；`归档/恢复` 与 `阻止此服务更新` 必须从全局顶部动作下沉到 `设置` 页。
 - `概览` 不得再出现资源监控卡、自动更新结果卡、Compose 信息卡或服务保护卡。
 - `更新记录` 必须复用 `GET /api/jobs` 全量数据，只展示当前服务关联的 `update` 与 `rollback` 任务；服务、Stack 和 all scope 任务均以 `serviceId` 或 summary targets 关联判断，按 `finishedAt ?? startedAt ?? createdAt` 倒序排列。
-- `更新记录` 必须使用记录、状态、来源、时间、操作五列；记录列严格限制为两行：首行操作名与异常或回滚结果摘要，次行 Job ID，摘要必须单行截断，不得出现第三行。与操作类型或状态重复的泛化摘要（如“更新完成”“回滚完成”“任务执行失败”）不得显示；仅保留额外诊断结果。整行支持 click、Enter、Space 进入 `/queue/:jobId`。失败任务的非状态列必须弱化显示，但状态列必须保持完整失败 Badge 的颜色和对比度，且仍保留 hover/focus 定位与行级跳转。记录能可靠解析当前服务的目标 tag（`targetDisplayTag`、`targetTag` 或服务 target 的 `to`）时，操作列必须提供更新日志图标入口，打开既有右侧 release drawer 并定位、高亮对应版本；无可靠 tag 时不得显示误导入口。仅当成功更新任务是当前服务可回滚目标的来源任务时，操作列显示回滚入口；该入口复用服务级回滚确认、鉴权与并发保护，不得声称可回滚到任意历史版本。匹配记录超过 20 条时，前端必须只渲染当前页，并提供带页码状态的上一页/下一页箭头；页码越界时回退到有效页。分页不改变既有全量 jobs 请求或 SSE 合同。
+- `更新记录` 必须使用记录、状态、备份、来源、时间、操作六列；记录列严格限制为两行：首行操作名与异常或回滚结果摘要，次行 Job ID，摘要必须单行截断，不得出现第三行。`备份` 列也必须固定为两行：首行显示本次实际纳入备份的目标数量，次行显示这些 included targets 的源目标总体积；当任务没有匹配的实际备份记录、匹配记录没有 included targets，或 included targets 存在缺失体积时，必须回退到中性空占位，不得误报“未备份”“失败”或“已跳过”。与操作类型或状态重复的泛化摘要（如“更新完成”“回滚完成”“任务执行失败”）不得显示；仅保留额外诊断结果。整行支持 click、Enter、Space 进入 `/queue/:jobId`。失败任务的非状态列必须弱化显示，但状态列必须保持完整失败 Badge 的颜色和对比度，且仍保留 hover/focus 定位与行级跳转。记录能可靠解析当前服务的目标 tag（`targetDisplayTag`、`targetTag` 或服务 target 的 `to`）时，操作列必须提供更新日志图标入口，打开既有右侧 release drawer 并定位、高亮对应版本；无可靠 tag 时不得显示误导入口。仅当成功更新任务是当前服务可回滚目标的来源任务时，操作列显示回滚入口；该入口复用服务级回滚确认、鉴权与并发保护，不得声称可回滚到任意历史版本。匹配记录超过 20 条时，前端必须只渲染当前页，并提供带页码状态的上一页/下一页箭头；页码越界时回退到有效页。分页不改变既有全量 jobs 请求或 SSE 合同。
 - `更新记录` 激活且在线时必须复用全局 jobs SSE；事件 250ms 去抖刷新，连续三次错误后每 10 秒轮询、3 秒后重连，连接恢复立即停止轮询；切离 section 或卸载时清理订阅和计时器。
 - `监控` 只承载资源监控面板及其原有空态/错态/SSE 状态，不得混入配置内容。
 - `备份` 必须集中承载服务级备份摘要卡、备份设置抽屉入口，以及“当前服务相关”的备份记录卡片列表。
@@ -85,7 +85,7 @@
 - `日志` 搜索必须覆盖 `plain/raw`、`meta.message` 与 `meta.attributes`，使操作者可按 `route`、`phase`、`event` 等结构化字段过滤当前缓冲。
 - `设置` 不得再承载备份目标编辑入口；设置页中的“服务保护设置”只保留失败回滚与代码仓库配置。
 - `设置` 必须集中承载自动更新摘要与抽屉、Compose 信息、部署 tag 编辑、服务保护、忽略规则、Webhook，以及下沉后的低频危险动作。
-- Storybook 必须提供六子页稳定入口，并至少覆盖：旧链接默认概览、tabs active state、更新记录深链/混合排序/分页边界/更新日志定位/空态/行级跳转、备份页记录列表/空态、日志深链、设置抽屉入口或监控页稳定渲染。
+- Storybook 必须提供六子页稳定入口，并至少覆盖：旧链接默认概览、tabs active/order state、更新记录深链/混合排序/备份列命中与空占位/分页边界/更新日志定位/空态/行级跳转、备份页记录列表/空态、日志深链、设置抽屉入口或监控页稳定渲染，以及移动端更新记录无横向滚动。
 
 ### SHOULD
 
@@ -178,7 +178,7 @@
 
 - Given 服务详情页处于 `更新记录`
   When 当前服务关联 update、rollback、Stack scope 与 all scope 任务
-  Then 统一表格只显示这些任务，按 `finishedAt ?? startedAt ?? createdAt` 倒序排列，不混入其他服务任务；行 click、Enter、Space 都进入对应 `/queue/:jobId`。若当前回滚目标的来源任务在表中且为成功更新，则仅该行显示回滚按钮，点击不会先触发行级跳转，并进入既有回滚确认。
+  Then 统一表格只显示这些任务，按 `finishedAt ?? startedAt ?? createdAt` 倒序排列，不混入其他服务任务；行 click、Enter、Space 都进入对应 `/queue/:jobId`。若当前回滚目标的来源任务在表中且为成功更新，则仅该行显示回滚按钮，点击不会先触发行级跳转，并进入既有回滚确认。对存在实际备份记录的任务，`备份` 列显示 included targets 数量与源目标总体积；没有匹配记录时显示中性空占位。
 
 - Given 服务详情页处于 `更新记录` 且在线
   When jobs SSE 发出事件或连续三次连接错误
@@ -213,7 +213,7 @@
 
 - Given 服务详情 stories 已更新
   When 运行 Storybook interaction 回归
-  Then 至少能验证旧链接默认概览、tabs active/切换行为、更新记录深链/混合列表/空态/行级跳转、备份页与日志页的核心入口稳定可用，以及设置页或监控页稳定渲染。
+  Then 至少能验证旧链接默认概览、tabs active/顺序切换行为、更新记录深链/混合列表/备份摘要命中与空占位/空态/行级跳转、备份页与日志页的核心入口稳定可用、移动端更新记录无横向滚动，以及设置页或监控页稳定渲染。
 
 ## 验收清单（Acceptance checklist）
 
@@ -236,7 +236,7 @@
 
 - Stories to add/update: `web/src/stories/pages/ServiceDetailPage.stories.tsx`
 - Docs pages / state galleries to add/update: `none (reason: repo currently uses page stories/canvas coverage for this surface)`
-- `play` / interaction coverage to add/update: tabs route switching、旧链接默认概览、更新记录深链/混合列表/分页边界/更新日志定位/空态/click-Enter-Space 跳转/受控回滚入口、备份页记录卡渲染/空态、日志深链与搜索交互、日志自动换行/虚拟列表断言、设置抽屉入口、监控页稳定渲染
+- `play` / interaction coverage to add/update: tabs route switching 与顺序断言、旧链接默认概览、更新记录深链/混合列表/备份列命中与空占位/缺失体积回退/分页边界/更新日志定位/空态/click-Enter-Space 跳转/受控回滚入口、备份页记录卡渲染/空态、日志深链与搜索交互、日志自动换行/虚拟列表断言、移动端更新记录无横向滚动、设置抽屉入口、监控页稳定渲染
 - Visual regression baseline changes (if any): 服务详情六子页 mock-only 视觉证据
 
 ### Quality checks
@@ -252,13 +252,43 @@
   viewport_strategy: `controlled-viewport`
   sensitive_exclusion: `N/A`
   submission_gate: `approved`
-  story_id_or_title: `Pages/ServiceDetailPage/UpdateHistoryReleaseNotes`
-  state: `history deep link with target release drawer open`
-  evidence_note: 标准桌面 `1600x1200` 页面级视图验证 `/history` 深链、折叠的主导航，以及记录的更新日志图标复用右侧 release drawer；目标 `5.2.4` 被定位并高亮。抽屉在 28 条 mock 发布记录中仅挂载虚拟窗口，活动 Tab 已表达当前 section，内容区不重复标题、说明或记录数量。更新记录仅保留外层 section card，表格不再使用嵌套圆角容器。当前 Storybook 未配置桌面 viewport preset，故以受控视口模拟采集。
+  story_id_or_title: `Pages/ServiceDetailPage/UpdateHistorySection`
+  state: `history deep link with backup summary column`
+  evidence_note: 标准桌面 `1600x1200` 页面级视图验证 `/history` 深链、重排后的 tabs 顺序，以及新增 `备份` 列在桌面六列表格中的落位。带实际备份记录的行显示 `2 个目标 / 17.6 MiB`，无匹配记录的行保持中性空占位；活动 Tab 已表达当前 section，内容区不重复标题、说明或记录数量。更新记录仅保留外层 section card，表格不再使用嵌套圆角容器。当前 Storybook 未配置桌面 viewport preset，故以受控视口模拟采集。
   PR: include
-  PR caption: 服务详情新增更新记录子页，统一展示当前服务的更新与回滚任务。
+  PR caption: 服务详情更新记录子页新增备份摘要列，并按 `概览 / 更新记录 / 监控 / 日志 / 备份 / 设置` 重排顶部 tabs。
 
 ![服务详情更新记录子页（桌面页面级）](./assets/service-detail-update-history-desktop.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `element`
+  requested_viewport: `1440x1400`
+  viewport_strategy: `controlled-viewport`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/UpdateHistorySection`
+  state: `desktop tabs reordered for service detail`
+  evidence_note: 聚焦顶部 route-backed tabs，只证明本次要求的顺序已经固定为 `概览 / 更新记录 / 监控 / 日志 / 备份 / 设置`，且 `更新记录` 保持激活态。
+  PR: include
+  PR caption: 服务详情顶部 tabs 已按 `概览 / 更新记录 / 监控 / 日志 / 备份 / 设置` 重排。
+
+![服务详情更新记录子页桌面 tabs 顺序](./assets/service-detail-update-history-desktop-tabs.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `element`
+  requested_viewport: `1440x1400`
+  viewport_strategy: `controlled-viewport`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/UpdateHistorySection`
+  state: `desktop backup summary column with ready and empty rows`
+  evidence_note: 聚焦更新记录表本体，直接证明表头为 `记录 / 状态 / 备份 / 来源 / 时间 / 操作`，并同时包含一条实际备份摘要行 `2 个目标 / 17.6 MiB` 与多条空占位行 `-- / --`。
+  PR: include
+  PR caption: 更新记录表新增备份列，并同时覆盖有值摘要与空占位。
+
+![服务详情更新记录子页桌面备份列摘要](./assets/service-detail-update-history-desktop-backup-column.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`
@@ -422,6 +452,126 @@
   evidence_note: 验证窄屏下服务详情页仍保留共享顶部动作与 route-backed tabs，概览子页在移动端保持单列阅读顺序。
 
 ![服务详情概览子页（移动端）](./assets/service-detail-overview-mobile.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `390x844`
+  viewport_strategy: `storybook-viewport-mobile1`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/MobileHistorySection`
+  state: `mobile history with backup summary column`
+  evidence_note: 使用真实 `390x844` 移动端 viewport，并以 Storybook fullscreen canvas 消除外层展示 gutter；截图保持顶部命令条、压缩后的服务摘要、扁平 tabs 轨道与首条 `更新记录` 面板同时可见。服务摘要中的状态信息已并入同一张摘要面板，不再额外嵌套状态卡；history 区也取消外层卡壳，仅保留记录面板本身。验证新增 `备份` 列后仍不产生横向滚动。
+  PR: include
+  PR caption: 移动端更新记录在加入备份列后仍保持两行栅格，无横向滚动。
+
+![服务详情更新记录子页（移动端）](./assets/service-detail-update-history-mobile.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `390x844`
+  viewport_strategy: `storybook-viewport-mobile1`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/MobileHistorySection`
+  state: `mobile webpage viewport with tabs left segment`
+  evidence_note: 同一移动端网页视口截图，垂直位置固定在 `更新记录` 子页顶部。此状态下 tabs 横向停留在左段，清晰显示 `概览 / 更新记录 / 监控 / 日志`，并保留页面上下文与记录列表开头。
+  PR: include
+  PR caption: 移动端网页视口左段证明 tabs 顺序前半为 `概览 / 更新记录 / 监控 / 日志`。
+
+![服务详情更新记录子页移动端网页左段](./assets/service-detail-update-history-mobile-webpage-tabs-left.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `390x844`
+  viewport_strategy: `storybook-viewport-mobile1`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/MobileHistorySection`
+  state: `mobile webpage viewport with tabs right segment`
+  evidence_note: 与上一张相同的移动端网页视口、相同的垂直位置，仅将 tabs 横向滚到右段。截图显示 `监控 / 日志 / 备份 / 设置`，与左段通过重叠的 `监控 / 日志` 共同证明完整顺序为 `概览 / 更新记录 / 监控 / 日志 / 备份 / 设置`。
+  PR: include
+  PR caption: 移动端网页视口右段证明 `日志` 后紧接 `备份 / 设置`。
+
+![服务详情更新记录子页移动端网页右段](./assets/service-detail-update-history-mobile-webpage-tabs-right.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `390x844`
+  viewport_strategy: `storybook-viewport-mobile1`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/MobileHistorySection`
+  state: `mobile webpage viewport with backup summary states`
+  evidence_note: 同一移动端网页向下滚动后的完整视口截图。页面中同时出现一条命中备份记录的行，`备份` 字段显示 `2 个目标 / 17.6 MiB`，以及至少一条未命中备份记录的行，`备份` 字段保持 `-- / --` 中性空占位。
+  PR: include
+  PR caption: 移动端网页视口同时覆盖备份命中摘要与空占位。
+
+![服务详情更新记录子页移动端网页备份摘要](./assets/service-detail-update-history-mobile-webpage-backup-summary.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `390x844`
+  viewport_strategy: `storybook-viewport-mobile1`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/MobileHistorySection`
+  state: `mobile summary status flattened into the hero card`
+  evidence_note: 聚焦服务摘要下半区，单独证明移动端状态摘要已经并入同一张服务摘要卡。图中只有服务摘要外层卡和内部内容分隔线，不再存在第二层绿色状态卡。
+  PR: include
+  PR caption: 移动端服务摘要已去除内嵌状态卡。
+
+![服务详情更新记录子页移动端摘要区（无内嵌状态卡）](./assets/service-detail-update-history-mobile-summary-flat.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `390x844`
+  viewport_strategy: `storybook-viewport-mobile1`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/MobileHistorySection`
+  state: `mobile history status badge beside card title`
+  evidence_note: 同一移动端网页视口直接证明更新记录卡片的状态 pill 已从独立列并入标题行，紧贴 `更新 / 回滚` 标题右侧；右上角只保留 release notes 操作按钮。
+  PR: include
+  PR caption: 移动端更新记录状态标记已放到卡片标题右边。
+
+![服务详情更新记录子页移动端状态标记贴标题](./assets/service-detail-update-history-mobile-status-next-to-title.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `390x844`
+  viewport_strategy: `storybook-viewport-mobile1`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/MobileHistorySection`
+  state: `mobile history rows rendered without an outer shell`
+  evidence_note: 聚焦更新记录中段，单独证明 history 区只保留每条记录自己的行面板。多条记录之间直接落在页面背景上，不再额外包一层父级卡壳。
+  PR: include
+  PR caption: 移动端更新记录区已取消外层包卡，仅保留记录行面板。
+
+![服务详情更新记录子页移动端记录区（无外层包卡）](./assets/service-detail-update-history-mobile-history-flat.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `390x844`
+  viewport_strategy: `storybook-viewport-mobile1`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/MobileHistorySection`
+  state: `mobile topbar first row stays single-line`
+  evidence_note: 同一移动端网页视口证明详情页 topbar 首行保持单行：菜单按钮、Dockrev 品牌和右侧用户触发器处于同一横向行，顶部动作条单独下沉到第二行，不再把头像挤到下一行。
+  PR: include
+  PR caption: 移动端详情页 topbar 首行固定为菜单、品牌、头像同一行。
+
+![服务详情更新记录子页移动端首行单行页头](./assets/service-detail-update-history-mobile-header-single-row.png)
 
 ## Related PRs
 
