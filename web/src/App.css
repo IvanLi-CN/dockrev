@@ -7806,39 +7806,20 @@ html[data-theme="light"] .modalOverlay {
   margin-top: 18px;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr));
-  gap: 12px;
+  gap: 20px 24px;
 }
 
 .svcResourceStatCard {
   min-width: 0;
-  min-height: 110px;
-  border-radius: 18px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  background: linear-gradient(
-    160deg,
-    color-mix(in srgb, var(--panel) 90%, rgba(15, 23, 42, 0.24)) 0%,
-    color-mix(in srgb, var(--panel2) 88%, rgba(4, 12, 24, 0.42)) 100%
-  );
-  padding: 14px 15px;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.03),
-    0 14px 28px rgba(1, 8, 20, 0.12);
+  min-height: 82px;
+  padding: 2px 0;
 }
 
 .svcResourceStatCardPrimary {
-  border-color: color-mix(
-    in srgb,
-    var(--color-primary) 28%,
-    var(--borderColor) 72%
-  );
-  background: linear-gradient(
-    165deg,
-    color-mix(in srgb, var(--color-primary) 15%, var(--panel) 85%) 0%,
-    color-mix(in srgb, var(--panel2) 86%, rgba(2, 10, 24, 0.52)) 100%
-  );
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    0 16px 36px color-mix(in srgb, var(--color-primary) 12%, transparent);
+}
+
+.svcResourceStatCardPrimary .svcResourceStatValue {
+  color: color-mix(in srgb, var(--color-primary) 82%, var(--text) 18%);
 }
 
 .svcResourceStatLabel {
@@ -7864,17 +7845,10 @@ html[data-theme="light"] .modalOverlay {
 }
 
 .svcResourceChartWrap {
-  margin-top: 18px;
-  border-radius: 22px;
-  border: 1px solid
-    color-mix(in srgb, var(--color-primary) 16%, var(--borderColor) 84%);
-  padding: 14px;
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--dockrev-surface) 82%, rgba(2, 10, 22, 0.34)) 0%,
-    color-mix(in srgb, var(--panel2) 86%, rgba(2, 10, 22, 0.16)) 100%
-  );
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  margin-top: 22px;
+  border-top: 1px solid
+    color-mix(in srgb, var(--color-primary) 14%, var(--borderColor) 86%);
+  padding-top: 18px;
 }
 
 .svcResourceToolbar {
@@ -7965,15 +7939,7 @@ html[data-theme="light"] .modalOverlay {
 }
 
 .svcResourceChartStage {
-  border-radius: 18px;
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--panel) 82%, rgba(3, 10, 20, 0.4)) 0%,
-    color-mix(in srgb, var(--panel2) 88%, rgba(3, 10, 20, 0.7)) 100%
-  );
-  padding: 16px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  padding-top: 4px;
 }
 
 .svcResourceChartStageHead {
@@ -8001,20 +7967,14 @@ html[data-theme="light"] .modalOverlay {
 }
 
 .svcResourceChartCurrentCard {
-  min-width: min(100%, 250px);
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 8px;
-  padding: 12px 14px;
-  border-radius: 16px;
-  border: 1px solid
-    color-mix(in srgb, var(--color-primary) 20%, var(--borderColor) 80%);
-  background: color-mix(
-    in srgb,
-    var(--dockrev-surface-strong) 92%,
-    transparent
-  );
+  align-items: flex-end;
+  gap: 4px;
+  min-width: min(100%, 250px);
+  padding: 2px 0;
+  text-align: right;
 }
 
 .svcResourceChartCurrentLabel,
@@ -8064,9 +8024,8 @@ html[data-theme="light"] .modalOverlay {
 }
 
 .svcResourcePlotBackdrop {
-  fill: color-mix(in srgb, var(--panel2) 72%, rgba(6, 18, 39, 0.46));
-  stroke: rgba(148, 163, 184, 0.12);
-  stroke-width: 1;
+  fill: transparent;
+  stroke: transparent;
 }
 
 .svcResourceGridLine {
@@ -8082,17 +8041,14 @@ html[data-theme="light"] .modalOverlay {
 .svcResourceArea {
   fill: currentColor;
   stroke: none;
-  opacity: 0.16;
+  opacity: 0.08;
 }
 
 .svcResourceLine {
   fill: none;
   stroke-width: 2.2;
   stroke-linejoin: round;
-  stroke-linecap: round;
-  filter: drop-shadow(
-    0 0 8px color-mix(in srgb, currentColor 18%, transparent)
-  );
+  stroke-linecap: butt;
 }
 
 .svcResourcePoint {
@@ -8179,6 +8135,11 @@ html[data-theme="light"] .modalOverlay {
   .svcResourceStatusBadge {
     align-self: flex-start;
   }
+
+  .svcResourceChartCurrentCard {
+    align-items: flex-start;
+    text-align: left;
+  }
 }
 
 @media (max-width: 560px) {
@@ -8201,9 +8162,8 @@ html[data-theme="light"] .modalOverlay {
     height: 240px;
   }
 
-  .svcResourceChartStage,
   .svcResourceChartWrap {
-    padding: 12px;
+    padding-top: 16px;
   }
 
   .svcResourceChartEmpty {

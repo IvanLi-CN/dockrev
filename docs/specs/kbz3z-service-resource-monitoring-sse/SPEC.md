@@ -75,7 +75,7 @@
 - 顶部 Hero：标题、副说明、实时状态 badge 与窗口/样本/最近更新时间 facts 同屏可见。
 - 实时指标卡：CPU、内存作为主指标卡，网络速率、磁盘 I/O、PIDs 作为次级摘要卡。
 - 图表工具栏：同一区域内提供指标 tabs（CPU/内存/网络/磁盘 I/O/PIDs）与时间窗口切换（15m/1h/6h，默认 1h）。
-- 图表舞台：自研 SVG 趋势图保留单线/双线逻辑，并增强 plot 背景、末端锚点、图例当前值与空/错态容器。
+- 图表舞台：自研 SVG 趋势图保留单线/双线逻辑，并增强末端锚点、图例当前值与空/错态。所有指标将每个原始样本保持到下一次采样，以 right-continuous 阶梯表达变化，不平均数值、不生成斜线；CPU、内存、网络与磁盘 I/O 仅在阶梯拐角加极小圆角，PIDs 保持严格直角。单线面积填充必须复用对应阶梯路径且保持低视觉权重，双线图不绘制面积。
 - SSE：页面可见时订阅，断线退避重连（1s→2s→5s）。
 
 ## 验收标准（Acceptance Criteria）
@@ -84,6 +84,7 @@
 - 监控关闭后，history/events 返回 `409 resource_monitor_disabled`，前端展示禁用态。
 - 服务详情页在开启状态可看到历史曲线与实时滚动，且实时状态无需查看 footer 即可感知。
 - 图表支持指标切换与窗口切换，空数据/错误态有明确提示。
+- 所有指标以水平保持和垂直跳变经过每个有效采样点、缺口处断线，不生成连续中间值；折线端点平切并保留最新样本锚点。
 - 磁盘 I/O、网络 I/O 均以速率形式展示。
 - 深色/浅色主题与 375px 宽度下版式稳定，无横向滚动，长数值不炸版。
 
@@ -92,6 +93,34 @@
 - `cargo test -p dockrev-api`
 - `bun run --cwd web build`
 - `bun run --cwd web build-storybook`
+
+## Visual Evidence
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `1280x720`
+  viewport_strategy: `storybook-viewport`
+  sensitive_exclusion: `N/A`
+  submission_gate: `owner-approved`
+  story_id_or_title: `Components/ServiceResourcePanel/HighVariationCurves`
+  state: `high variation with a missing memory sample`
+  evidence_note: 固定 1280x720 浏览器视口。资源面板是唯一容器；指标摘要、工具栏、当前值与图表以无框分区呈现。25 个样本等间隔覆盖一小时，连续指标以双侧微圆角的水平保持和垂直跳变呈现稳定基线与少量可解释波动，PIDs 保持直角阶梯。
+
+![服务资源监控单调曲线](./assets/service-resource-monotone-curves.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `375x900`
+  viewport_strategy: `storybook-viewport`
+  sensitive_exclusion: `N/A`
+  submission_gate: `owner-approved`
+  story_id_or_title: `Components/ServiceResourcePanel/HighVariationCurves`
+  state: `high variation mobile CPU view`
+  evidence_note: 固定 375x900 浏览器视口。CPU、网络与 PIDs 切换均无横向溢出；摘要、指标切换、当前值与趋势图在唯一面板内按单列稳定排列，未形成嵌套卡片。
+
+![服务资源监控单调曲线移动端](./assets/service-resource-monotone-curves-mobile.png)
 
 ## 变更记录（Change log）
 

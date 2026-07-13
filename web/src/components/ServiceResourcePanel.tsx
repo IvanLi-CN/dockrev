@@ -8,6 +8,11 @@ import {
   type ServiceResourceSample,
   type ServiceResourceUsageWindow,
 } from '../api'
+import {
+  buildResourceChartPaths,
+  scaleResourceChartPoint,
+  type ResourceChartInterpolation,
+} from './resourceChartPaths'
 
 type MetricTabKey = 'cpu' | 'memory' | 'network' | 'disk' | 'pids'
 
@@ -17,6 +22,7 @@ type ChartSeries = {
   id: string
   label: string
   colorClass: string
+  interpolation: ResourceChartInterpolation
   points: Array<{ x: number; y: number | null }>
 }
 
@@ -252,89 +258,6 @@ function formatTime(ts: number): string {
   })
 }
 
-function buildPath(
-  points: Array<{ x: number; y: number | null }>,
-  domain: { xMin: number; xMax: number; yMin: number; yMax: number },
-  box: { left: number; top: number; width: number; height: number },
-): string {
-  if (!points.length) return ''
-
-  const xSpan = Math.max(1, domain.xMax - domain.xMin)
-  const ySpan = Math.max(1e-6, domain.yMax - domain.yMin)
-
-  const toX = (x: number) => box.left + ((x - domain.xMin) / xSpan) * box.width
-  const toY = (y: number) => box.top + box.height - ((y - domain.yMin) / ySpan) * box.height
-
-  let path = ''
-  let drawing = false
-
-  for (const point of points) {
-    if (point.y == null || !Number.isFinite(point.y)) {
-      drawing = false
-      continue
-    }
-
-    const x = toX(point.x)
-    const y = toY(point.y)
-    if (!drawing) {
-      path += `M ${x.toFixed(2)} ${y.toFixed(2)}`
-      drawing = true
-      continue
-    }
-    path += ` L ${x.toFixed(2)} ${y.toFixed(2)}`
-  }
-
-  return path
-}
-
-function scalePoint(
-  point: { x: number; y: number },
-  domain: { xMin: number; xMax: number; yMin: number; yMax: number },
-  box: { left: number; top: number; width: number; height: number },
-): { x: number; y: number } {
-  const xSpan = Math.max(1, domain.xMax - domain.xMin)
-  const ySpan = Math.max(1e-6, domain.yMax - domain.yMin)
-  return {
-    x: box.left + ((point.x - domain.xMin) / xSpan) * box.width,
-    y: box.top + box.height - ((point.y - domain.yMin) / ySpan) * box.height,
-  }
-}
-
-function buildAreaPaths(
-  points: Array<{ x: number; y: number | null }>,
-  domain: { xMin: number; xMax: number; yMin: number; yMax: number },
-  box: { left: number; top: number; width: number; height: number },
-): string[] {
-  const segments: Array<Array<{ x: number; y: number }>> = []
-  let currentSegment: Array<{ x: number; y: number }> = []
-
-  for (const point of points) {
-    if (point.y == null || !Number.isFinite(point.y)) {
-      if (currentSegment.length) {
-        segments.push(currentSegment)
-        currentSegment = []
-      }
-      continue
-    }
-    currentSegment.push(scalePoint({ x: point.x, y: point.y }, domain, box))
-  }
-
-  if (currentSegment.length) segments.push(currentSegment)
-
-  const baseY = box.top + box.height
-  return segments.map((segment) => {
-    const [first] = segment
-    const last = segment[segment.length - 1]
-    let path = `M ${first.x.toFixed(2)} ${baseY.toFixed(2)} L ${first.x.toFixed(2)} ${first.y.toFixed(2)}`
-    for (let index = 1; index < segment.length; index += 1) {
-      const point = segment[index]
-      path += ` L ${point.x.toFixed(2)} ${point.y.toFixed(2)}`
-    }
-    path += ` L ${last.x.toFixed(2)} ${baseY.toFixed(2)} Z`
-    return path
-  })
-}
-
 function currentPointValue(points: Array<{ x: number; y: number | null }>): number | null {
   const value = points[points.length - 1]?.y
   return value != null && Number.isFinite(value) ? value : null
@@ -347,7 +270,7 @@ function currentPointMarker(
 ): { x: number; y: number } | null {
   const point = points[points.length - 1]
   if (!point || point.y == null || !Number.isFinite(point.y)) return null
-  return scalePoint({ x: point.x, y: point.y }, domain, box)
+  return scaleResourceChartPoint({ x: point.x, y: point.y }, domain, box)
 }
 
 function ResourceLineChart(props: {
@@ -417,33 +340,31 @@ function ResourceLineChart(props: {
         })}
 
         {series.map((item) => {
-          const path = buildPath(item.points, domain, {
-            left: box.left,
-            top: box.top,
-            width: box.width,
-            height: box.height,
+          const { linePath, areaPaths } = buildResourceChartPaths({
+            points: item.points,
+            domain,
+            box: {
+              left: box.left,
+              top: box.top,
+              width: box.width,
+              height: box.height,
+            },
+            interpolation: item.interpolation,
+            includeArea: singleSeries,
           })
-          const areaPaths = singleSeries
-            ? buildAreaPaths(item.points, domain, {
-                left: box.left,
-                top: box.top,
-                width: box.width,
-                height: box.height,
-              })
-            : []
           const point = currentPointMarker(item.points, domain, {
             left: box.left,
             top: box.top,
             width: box.width,
             height: box.height,
           })
-          if (!path) return null
+          if (!linePath) return null
           return (
             <g key={item.id} className={item.colorClass}>
               {areaPaths.map((areaPath, index) => (
                 <path key={`${item.id}-area-${index}`} d={areaPath} className={`svcResourceArea ${item.colorClass}`} />
               ))}
-              <path d={path} className={`svcResourceLine ${item.colorClass}`} />
+              <path d={linePath} className={`svcResourceLine ${item.colorClass}`} />
               {point ? <circle className={`svcResourcePoint ${item.colorClass}`} cx={point.x} cy={point.y} r={4} /> : null}
             </g>
           )
@@ -696,6 +617,7 @@ export function ServiceResourcePanel(props: {
           id: 'cpu',
           label: 'CPU %',
           colorClass: 'svcResourceLineBlue',
+          interpolation: 'step-after-rounded',
           points: basePoints.map((point) => ({ x: point.x, y: point.sample.cpuPercent })),
         },
       ]
@@ -707,6 +629,7 @@ export function ServiceResourcePanel(props: {
           id: 'mem',
           label: '内存',
           colorClass: 'svcResourceLineBlue',
+          interpolation: 'step-after-rounded',
           points: basePoints.map((point) => ({ x: point.x, y: point.sample.memUsedBytes ?? null })),
         },
       ]
@@ -718,12 +641,14 @@ export function ServiceResourcePanel(props: {
           id: 'net-rx',
           label: 'RX',
           colorClass: 'svcResourceLineBlue',
+          interpolation: 'step-after-rounded',
           points: basePoints.map((point, index) => ({ x: point.x, y: networkRates[index]?.rx ?? null })),
         },
         {
           id: 'net-tx',
           label: 'TX',
           colorClass: 'svcResourceLineOrange',
+          interpolation: 'step-after-rounded',
           points: basePoints.map((point, index) => ({ x: point.x, y: networkRates[index]?.tx ?? null })),
         },
       ]
@@ -735,12 +660,14 @@ export function ServiceResourcePanel(props: {
           id: 'disk-read',
           label: 'Read',
           colorClass: 'svcResourceLineBlue',
+          interpolation: 'step-after-rounded',
           points: basePoints.map((point, index) => ({ x: point.x, y: diskRates[index]?.rx ?? null })),
         },
         {
           id: 'disk-write',
           label: 'Write',
           colorClass: 'svcResourceLineOrange',
+          interpolation: 'step-after-rounded',
           points: basePoints.map((point, index) => ({ x: point.x, y: diskRates[index]?.tx ?? null })),
         },
       ]
@@ -751,6 +678,7 @@ export function ServiceResourcePanel(props: {
         id: 'pids',
         label: 'PIDs',
         colorClass: 'svcResourceLineBlue',
+        interpolation: 'step-after',
         points: basePoints.map((point) => ({ x: point.x, y: point.sample.pids ?? null })),
       },
     ]
