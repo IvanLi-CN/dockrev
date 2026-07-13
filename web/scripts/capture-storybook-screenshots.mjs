@@ -290,6 +290,32 @@ async function main() {
       },
     },
     {
+      id: 'components-serviceresourcepanel--high-variation-curves',
+      file: 'service-resource-monotone-curves.png',
+      viewport: { width: 1280, height: 720 },
+      setup: async (page) => {
+        const chartSurface = page.locator('.svcResourceChartWrap')
+        await chartSurface.waitFor({ timeout: STORY_TIMEOUT_MS })
+        await chartSurface.evaluate((el) => el.scrollIntoView({ block: 'start', behavior: 'auto' }))
+      },
+      screenshot: async (page, filePath) => {
+        await page.screenshot({ path: filePath, fullPage: false })
+      },
+    },
+    {
+      id: 'components-serviceresourcepanel--high-variation-curves',
+      file: 'service-resource-monotone-curves-mobile.png',
+      viewport: { width: 375, height: 900 },
+      setup: async (page) => {
+        const chartSurface = page.locator('.svcResourceChartWrap')
+        await chartSurface.waitFor({ timeout: STORY_TIMEOUT_MS })
+        await chartSurface.evaluate((el) => el.scrollIntoView({ block: 'start', behavior: 'auto' }))
+      },
+      screenshot: async (page, filePath) => {
+        await page.screenshot({ path: filePath, fullPage: false })
+      },
+    },
+    {
       id: 'components-statusremark--all-statuses',
       file: 'status-remark-discovery-timeline-open.png',
       setup: async (page) => {

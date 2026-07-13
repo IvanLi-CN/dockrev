@@ -13,6 +13,8 @@ import type {
   NewVersionDiscoveryTimelineResponse,
   NotificationConfig,
   Service,
+  ServiceBackupRecordsResponse,
+  ServiceBackupTargetsResponse,
   ServiceDigestTagsSnapshotResult,
   ServiceGitHubReleasesResponse,
   ServiceReleaseNotesResponse,
@@ -261,6 +263,22 @@ const metrics = {
   'svc-infra-postgres': { cpuPercent: 19, memUsedBytes: 310 * 1024 * 1024, netRxRateBps: 0, netTxRateBps: 7.55 * 1024 },
 }
 
+const backupTargets = {
+  bindPaths: [],
+  volumeNames: [],
+  storage: {
+    baseDir: '/srv/dockrev/backups',
+    artifactPattern: '{service}-{timestamp}.tar.zst',
+    compression: 'zstd',
+    keepLast: 7,
+    deleteAfterStableSeconds: 86_400,
+  },
+} satisfies ServiceBackupTargetsResponse
+
+const backupRecords = {
+  records: [],
+} satisfies ServiceBackupRecordsResponse
+
 function json(data: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(data), {
     status: init?.status ?? 200,
@@ -346,21 +364,61 @@ function buildHomepageNav(): HomepageNavResponse {
   }
 }
 
+function interpolateTrend(anchors: number[], progress: number): number {
+  const clamped = Math.max(0, Math.min(1, progress))
+  const position = clamped * (anchors.length - 1)
+  const startIndex = Math.floor(position)
+  const endIndex = Math.min(anchors.length - 1, Math.ceil(position))
+  const remainder = position - startIndex
+  return anchors[startIndex] + (anchors[endIndex] - anchors[startIndex]) * remainder
+}
+
 function buildResourceHistory(serviceId: string, windowValue: string): ServiceResourceHistoryResponse {
   const metric = metrics[serviceId as keyof typeof metrics]
-  return {
-    serviceId,
-    window: windowValue,
-    samples: Array.from({ length: 18 }, (_, idx) => ({
-      sampledAt: nowIso(-((17 - idx) * 30_000)),
-      cpuPercent: metric ? Math.max(0, metric.cpuPercent + Math.sin(idx / 2) * 3) : 0,
-      memUsedBytes: metric?.memUsedBytes ?? 0,
+  const historyWindow =
+    windowValue === '15m'
+      ? { sampleCount: 31, intervalSeconds: 30 }
+      : windowValue === '6h'
+        ? { sampleCount: 73, intervalSeconds: 300 }
+        : { sampleCount: 61, intervalSeconds: 60 }
+  const interval = historyWindow.intervalSeconds
+  const cpuOffsets = [0, -0.025, 0.03, 0.075, 0.04, -0.055, -0.08, -0.025, 0.06, 0.1, 0.055, 0.015, -0.015]
+  const memoryOffsets = [0, 0.003, 0.007, 0.011, 0.015, 0.018, 0.019, 0.022, 0.025, 0.027, 0.03, 0.032, 0.034]
+  const pidOffsets = [0, 0, 1, 1, 2, 1, 0, 0, 1, 2, 2, 1, 1]
+  const samples: ServiceResourceHistoryResponse['samples'] = []
+  let netRxBytes = 0
+  let netTxBytes = 0
+  let blockReadBytes = 0
+  let blockWriteBytes = 0
+
+  for (let idx = 0; idx < historyWindow.sampleCount; idx += 1) {
+    const progress = idx / Math.max(1, historyWindow.sampleCount - 1)
+    const cpuOffset = interpolateTrend(cpuOffsets, progress)
+    const memoryOffset = interpolateTrend(memoryOffsets, progress)
+    const rateMultiplier = 0.84 + Math.max(cpuOffset, 0) * 1.2
+    const baseNetRx = metric?.netRxRateBps ?? 0
+    const baseNetTx = metric?.netTxRateBps ?? 0
+
+    netRxBytes += Math.round(baseNetRx * interval * rateMultiplier)
+    netTxBytes += Math.round(baseNetTx * interval * rateMultiplier)
+    blockReadBytes += Math.round(interval * (1_100 + Math.max(cpuOffset, 0) * 3_600))
+    blockWriteBytes += Math.round(interval * (560 + Math.max(cpuOffset, 0) * 1_650))
+
+    samples.push({
+      sampledAt: nowIso(-((historyWindow.sampleCount - 1 - idx) * interval * 1_000)),
+      cpuPercent: metric ? Math.max(0, metric.cpuPercent * (1 + cpuOffset)) : 0,
+      memUsedBytes: metric ? Math.round(metric.memUsedBytes * (1 + memoryOffset)) : 0,
       memLimitBytes: 2 * 1024 * 1024 * 1024,
-      netRxBytes: Math.round((metric?.netRxRateBps ?? 0) * idx * 30),
-      netTxBytes: Math.round((metric?.netTxRateBps ?? 0) * idx * 30),
+      netRxBytes,
+      netTxBytes,
+      blockReadBytes,
+      blockWriteBytes,
       containerCount: 1,
-    })),
+      pids: 18 + Math.round(interpolateTrend(pidOffsets, progress)),
+    })
   }
+
+  return { serviceId, window: windowValue, samples }
 }
 
 function listJobItems(): JobListItem[] {
@@ -839,6 +897,8 @@ export function installAppDemoApi(): DemoInstallResult | null {
       const serviceId = decodeURIComponent(path.split('/')[3] ?? '')
       return json(buildResourceHistory(serviceId, url.searchParams.get('window') ?? '1h'))
     }
+    if (path.startsWith('/api/services/') && path.endsWith('/backup-targets') && method === 'GET') return json(backupTargets)
+    if (path.startsWith('/api/services/') && path.endsWith('/backup-records') && method === 'GET') return json(backupRecords)
     if (path.startsWith('/api/services/') && path.endsWith('/settings') && method === 'GET') {
       const serviceId = decodeURIComponent(path.split('/')[3] ?? '')
       const service = Object.values(services).find((item) => item.id === serviceId)
@@ -846,7 +906,20 @@ export function installAppDemoApi(): DemoInstallResult | null {
     }
     if (path.startsWith('/api/services/') && path.endsWith('/settings') && method === 'PUT') return json({ ok: true })
     if (path.startsWith('/api/services/') && path.endsWith('/rollback-target') && method === 'GET') {
-      return json({ available: false, currentDigest: '', unavailableReason: 'no_matching_update_history' })
+      const serviceId = decodeURIComponent(path.split('/')[3] ?? '')
+      const service = Object.values(services).find((item) => item.id === serviceId)
+      return json({
+        available: false,
+        currentDigest: service?.image.digest ?? '',
+        currentDisplayTag: service?.image.tag ?? null,
+        targetDigest: null,
+        targetDisplayTag: null,
+        sourceUpdateJobId: null,
+        sourceFinishedAt: null,
+        unavailableReason: 'no_matching_update_history',
+        activeJobId: null,
+        activeJobStatus: null,
+      })
     }
     if (path.startsWith('/api/services/') && path.endsWith('/rollback') && method === 'POST') return json(createUpdateJob())
     if (path.startsWith('/api/services/') && path.endsWith('/digest-tags') && method === 'GET') {
