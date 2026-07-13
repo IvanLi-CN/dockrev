@@ -107,6 +107,8 @@
   state: `high variation with a missing memory sample`
   evidence_note: 固定 1280x720 浏览器视口。资源面板是唯一容器；指标摘要、工具栏、当前值与图表以无框分区呈现。25 个样本等间隔覆盖一小时，连续指标以双侧微圆角的水平保持和垂直跳变呈现稳定基线与少量可解释波动，PIDs 保持直角阶梯。
 
+PR: include
+
 ![服务资源监控单调曲线](./assets/service-resource-monotone-curves.png)
 
 - source_type: `storybook_canvas`
@@ -119,6 +121,8 @@
   story_id_or_title: `Components/ServiceResourcePanel/HighVariationCurves`
   state: `high variation mobile CPU view`
   evidence_note: 固定 375x900 浏览器视口。CPU、网络与 PIDs 切换均无横向溢出；摘要、指标切换、当前值与趋势图在唯一面板内按单列稳定排列，未形成嵌套卡片。
+
+PR: include
 
 ![服务资源监控单调曲线移动端](./assets/service-resource-monotone-curves-mobile.png)
 
