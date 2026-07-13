@@ -6189,17 +6189,111 @@ html[data-theme="light"] .modalOverlay {
 }
 
 @media (max-width: 760px) {
+  .detailHeroShell {
+    gap: 12px;
+  }
+
+  .svcTitleRow,
+  .stackDetailHero {
+    gap: 12px;
+  }
+
   .detailHeroCard {
-    padding: 16px;
+    padding: 14px;
+    border-radius: 14px;
+    box-shadow: 0 10px 26px rgba(1, 8, 20, 0.26);
+  }
+
+  .detailHeroPrimary {
+    gap: 8px;
+  }
+
+  .detailHeroContext {
+    gap: 6px;
+    font-size: 11px;
+  }
+
+  .detailHeroNameRow {
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
   }
 
   .detailHeroName {
-    font-size: 24px;
+    font-size: 22px;
+    line-height: 1.1;
+  }
+
+  .detailHeroAside {
+    margin-top: 2px;
+  }
+
+  .detailHeroStatusCard {
+    gap: 8px;
   }
 
   .detailHeroMetaGrid,
   .detailHeroMetaGridStack {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .detailHeroMetaCard:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .detailHeroMetaCard {
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+
+  .detailHeroMetaLabel {
+    font-size: 10px;
+  }
+
+  .detailHeroMetaValue {
+    margin-top: 4px;
+    font-size: 12px;
+  }
+
+  .svcDetailTabsShell {
+    margin: 2px -2px 0;
+    padding-bottom: 0;
+  }
+
+  .svcDetailTabsList {
+    min-width: max-content;
+    gap: 0;
+    padding: 0 2px 1px;
+    border: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .svcDetailTab {
+    min-width: 0;
+    padding: 0 14px 12px;
+    border-radius: 10px 10px 0 0;
+    color: var(--muted2);
+    font-size: 14px;
+  }
+
+  .svcDetailTab.active,
+  .svcDetailTab[data-state="active"] {
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-primary) 12%, transparent) 0%,
+      color-mix(in srgb, var(--panel2) 20%, transparent) 100%
+    );
+    box-shadow:
+      inset 0 -2px 0 var(--color-primary),
+      inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 18%, transparent);
+  }
+
+  .svcDetailSectionStack {
+    gap: 12px;
+    margin-top: 14px;
   }
 }
 
@@ -6944,6 +7038,15 @@ html[data-theme="light"] .modalOverlay {
 .serviceOperationHistory {
   display: flex;
   flex-direction: column;
+  padding: 18px 20px 20px;
+  border: 1px solid var(--borderColor);
+  border-radius: 16px;
+  background: linear-gradient(
+    165deg,
+    color-mix(in srgb, var(--panel) 78%, var(--panel2) 22%) 0%,
+    color-mix(in srgb, var(--panel2) 92%, #020916 8%) 100%
+  );
+  box-shadow: var(--shadow-soft);
 }
 
 .serviceOperationHistoryTable {
@@ -6954,7 +7057,13 @@ html[data-theme="light"] .modalOverlay {
 .serviceOperationHistoryHeader,
 .serviceOperationHistoryRow {
   display: grid;
-  grid-template-columns: minmax(220px, 2fr) minmax(100px, 0.8fr) minmax(120px, 1fr) minmax(110px, 0.8fr) minmax(70px, auto);
+  grid-template-columns:
+    minmax(220px, 2fr)
+    minmax(100px, 0.8fr)
+    minmax(110px, 0.9fr)
+    minmax(120px, 1fr)
+    minmax(110px, 0.8fr)
+    minmax(70px, auto);
   gap: 12px;
   align-items: center;
   padding: 10px 14px;
@@ -6992,6 +7101,7 @@ html[data-theme="light"] .modalOverlay {
 }
 
 .serviceOperationHistoryOperation,
+.serviceOperationHistoryBackup,
 .serviceOperationHistorySource {
   min-width: 0;
   display: flex;
@@ -6999,10 +7109,30 @@ html[data-theme="light"] .modalOverlay {
   gap: 3px;
 }
 
+.serviceOperationHistoryBackup {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.serviceOperationHistoryBackupSize {
+  color: var(--muted);
+}
+
+.serviceOperationHistoryBackupPlaceholder {
+  color: var(--muted);
+}
+
 .serviceOperationHistoryOperationTitle {
   color: var(--text);
   font-weight: 650;
   flex: 0 0 auto;
+}
+
+.serviceOperationHistoryOperationHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
 }
 
 .serviceOperationHistoryOperationSummary {
@@ -7013,7 +7143,13 @@ html[data-theme="light"] .modalOverlay {
   white-space: nowrap;
 }
 
+.serviceOperationHistoryMobileStatus {
+  display: none;
+  flex: 0 0 auto;
+}
+
 .serviceOperationHistoryOperation .mono,
+.serviceOperationHistoryBackup span,
 .serviceOperationHistorySource span {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -7102,45 +7238,148 @@ html[data-theme="light"] .modalOverlay {
 }
 
 @media (max-width: 760px) {
+  .detailHeroAside {
+    margin-top: 4px;
+    padding-top: 10px;
+    border-top: 1px solid color-mix(in srgb, var(--borderColor) 70%, transparent);
+  }
+
+  .detailHeroCardService .detailHeroStatusCard {
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .detailHeroCardService .svcBannerDetail {
+    margin-top: 4px;
+  }
+
+  .serviceOperationHistory {
+    gap: 12px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    padding: 0;
+  }
+
   .serviceOperationHistoryHeader {
     display: none;
   }
 
+  .serviceOperationHistoryTable {
+    gap: 10px;
+  }
+
   .serviceOperationHistoryRow {
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(0, 1fr) minmax(92px, 0.88fr) auto;
     grid-template-areas:
-      'operation status action'
-      'source time action';
-    gap: 10px 12px;
-    padding: 12px;
+      'operation operation action'
+      'backup source time';
+    gap: 12px 10px;
+    min-height: 0;
+    padding: 14px;
+    border: 1px solid color-mix(in srgb, var(--borderColor) 76%, transparent);
+    border-radius: 14px;
+    background:
+      linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--panel2) 26%, transparent) 0%,
+        transparent 100%
+      ),
+      color-mix(in srgb, var(--panel) 94%, var(--bg) 6%);
   }
 
   .serviceOperationHistoryOperation {
     grid-area: operation;
+    gap: 6px;
   }
 
   .serviceOperationHistoryStatus {
-    grid-area: status;
-    justify-self: end;
+    display: none;
+  }
+
+  .serviceOperationHistoryMobileStatus {
+    display: inline-flex;
+    align-items: flex-start;
+  }
+
+  .serviceOperationHistoryOperationHeader {
+    justify-content: space-between;
+  }
+
+  .serviceOperationHistoryOperationSummary {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .serviceOperationHistoryBackup {
+    grid-area: backup;
   }
 
   .serviceOperationHistorySource {
     grid-area: source;
+    align-self: end;
   }
 
   .serviceOperationHistoryTime {
     grid-area: time;
+    display: flex;
+    flex-direction: column;
     align-self: end;
+    gap: 2px;
+    justify-self: end;
+    text-align: right;
   }
 
   .serviceOperationHistoryAction {
-    align-self: center;
+    align-self: start;
     grid-area: action;
     justify-self: end;
   }
 
+  .serviceOperationHistoryBackup,
+  .serviceOperationHistorySource {
+    gap: 2px;
+  }
+
+  .serviceOperationHistoryBackup::before,
+  .serviceOperationHistorySource::before,
+  .serviceOperationHistoryTime::before {
+    content: attr(data-label);
+    color: var(--muted2);
+    font-size: 10px;
+    font-weight: 650;
+    line-height: 1.1;
+  }
+
+  .serviceOperationHistoryOperationTitle {
+    font-size: 15px;
+    line-height: 1.1;
+  }
+
+  .serviceOperationHistoryReason,
+  .serviceOperationHistorySource .muted,
+  .serviceOperationHistoryTime {
+    font-size: 11px;
+  }
+
+  .serviceOperationHistoryOperation .mono {
+    color: var(--muted2);
+  }
+
+  .serviceOperationHistoryEmpty {
+    border: 1px dashed color-mix(in srgb, var(--borderColor) 74%, transparent);
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--panel2) 20%, transparent);
+    padding: 16px 14px;
+  }
+
   .serviceOperationHistoryPager {
     justify-content: space-between;
+    padding: 2px 2px 0;
   }
 }
 
@@ -10328,32 +10567,46 @@ html[data-theme="light"] .btnPrimary {
   }
 
   .appShellWithDetailSidebar .topbar {
-    padding-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom-color: transparent;
   }
 
   .appShellWithDetailSidebar .topbarMain {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      'left global user'
+      'actions actions actions';
     min-height: 0;
-    flex-wrap: wrap;
-    align-items: center;
-    row-gap: 10px;
-    padding-top: 12px;
+    align-items: start;
+    column-gap: 10px;
+    row-gap: 8px;
+    padding-top: 10px;
+  }
+
+  .appShellWithDetailSidebar .topbarLeft {
+    grid-area: left;
+  }
+
+  .appShellWithDetailSidebar .topbarGlobalContent {
+    grid-area: global;
   }
 
   .appShellWithDetailSidebar .topbarRight {
-    flex: 1 1 auto;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: 10px;
+    display: contents;
   }
 
   .appShellWithDetailSidebar .topActions {
-    order: 2;
-    flex: 0 0 100%;
-    min-width: 100%;
-    gap: 6px;
+    grid-area: actions;
+    min-width: 0;
+    gap: 8px;
     justify-content: flex-start;
     overflow-x: auto;
     scrollbar-width: none;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    border-radius: 0;
   }
 
   .appShellWithDetailSidebar .topActions::-webkit-scrollbar {
@@ -10362,17 +10615,17 @@ html[data-theme="light"] .btnPrimary {
 
   .appShellWithDetailSidebar .topActions .btn {
     flex: 0 0 auto;
-    height: 34px;
-    min-height: 34px;
-    padding: 0 10px;
-    font-size: 11px;
+    height: 32px;
+    min-height: 32px;
+    padding: 0 12px;
+    font-size: 12px;
     white-space: nowrap;
   }
 
   .appShellWithDetailSidebar .topbarUserSlot {
-    order: 1;
-    margin-left: auto;
-    flex: 0 0 auto;
+    grid-area: user;
+    margin-left: 0;
+    justify-self: end;
   }
 
   .brandLogo,

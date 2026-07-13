@@ -1,6 +1,7 @@
-import type { JobListItem, StackDetail } from '../api'
+import type { JobListItem, ServiceBackupRecordItem, StackDetail } from '../api'
 import { ChevronLeft, ChevronRight, RotateCcw, ScrollText } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import { formatBytes } from '../pages/settings/helpers'
 import { openGitHubReleaseDrawer } from '../releaseDrawer'
 import { navigate } from '../routes'
 import { IconButton, Mono, Pill } from '../ui'
@@ -149,7 +150,66 @@ function resultReasonSummary(job: JobListItem): string | null {
   return redundantSummaries.has(summary) ? null : summary
 }
 
+type ServiceOperationBackupSummary =
+  | {
+      state: 'empty'
+    }
+  | {
+      state: 'partial'
+      targetCount: number
+    }
+  | {
+      state: 'ready'
+      targetCount: number
+      sizeLabel: string
+    }
+
+function backupTargetCountLabel(count: number): string {
+  return `${count} 个目标`
+}
+
+export function summarizeServiceOperationBackups(records: ServiceBackupRecordItem[]): Map<string, ServiceOperationBackupSummary> {
+  const summaryByJobId = new Map<string, ServiceOperationBackupSummary>()
+  const recordsByJobId = new Map<string, ServiceBackupRecordItem[]>()
+
+  for (const record of records) {
+    const jobRecords = recordsByJobId.get(record.jobId)
+    if (jobRecords) jobRecords.push(record)
+    else recordsByJobId.set(record.jobId, [record])
+  }
+
+  for (const [jobId, jobRecords] of recordsByJobId.entries()) {
+    const includedAssets = jobRecords.flatMap((record) =>
+      Array.isArray(record.assets) ? record.assets.filter((asset) => asset.status === 'included') : [],
+    )
+
+    if (includedAssets.length === 0) {
+      summaryByJobId.set(jobId, { state: 'empty' })
+      continue
+    }
+
+    const hasMissingSize = includedAssets.some((asset) => asset.sizeBytes == null)
+    if (hasMissingSize) {
+      summaryByJobId.set(jobId, {
+        state: 'partial',
+        targetCount: includedAssets.length,
+      })
+      continue
+    }
+
+    const totalSizeBytes = includedAssets.reduce((sum, asset) => sum + (asset.sizeBytes ?? 0), 0)
+    summaryByJobId.set(jobId, {
+      state: 'ready',
+      targetCount: includedAssets.length,
+      sizeLabel: formatBytes(totalSizeBytes),
+    })
+  }
+
+  return summaryByJobId
+}
+
 export function ServiceOperationHistory(props: {
+  backupRecords: ServiceBackupRecordItem[]
   jobs: JobListItem[]
   serviceId: string
   rollbackSourceJobId?: string | null
@@ -158,13 +218,15 @@ export function ServiceOperationHistory(props: {
 }) {
   const [requestedPage, setRequestedPage] = useState(1)
   const page = paginateServiceOperationJobs(props.jobs, requestedPage)
+  const backupSummaryByJobId = useMemo(() => summarizeServiceOperationBackups(props.backupRecords), [props.backupRecords])
 
   return (
-    <section className="card serviceOperationHistory" data-service-detail-section-card="update-history">
+    <section className="serviceOperationHistory" data-service-detail-section-card="update-history">
       <div className="serviceOperationHistoryTable" role="table" aria-label="更新和回滚记录">
         <div className="serviceOperationHistoryHeader" role="row">
           <span role="columnheader">记录</span>
           <span role="columnheader">状态</span>
+          <span role="columnheader">备份</span>
           <span role="columnheader">来源</span>
           <span role="columnheader">时间</span>
           <span role="columnheader">操作</span>
@@ -172,6 +234,9 @@ export function ServiceOperationHistory(props: {
         {page.jobs.map((job) => {
           const reason = resultReasonSummary(job)
           const releaseVersion = releaseVersionForServiceOperation(job, props.serviceId)
+          const backupSummary = backupSummaryByJobId.get(job.id) ?? { state: 'empty' as const }
+          const jobStatusTone = statusTone(job.status)
+          const jobStatusLabel = statusLabel(job.status)
           const canRollback =
             job.id === props.rollbackSourceJobId && job.type === 'update' && job.status === 'success' && Boolean(props.onRollback)
           return (
@@ -191,18 +256,41 @@ export function ServiceOperationHistory(props: {
               }}
             >
               <div className="serviceOperationHistoryOperation" data-label="操作">
-                <div className="serviceOperationHistoryOperationSummary">
-                  <div className="serviceOperationHistoryOperationTitle">{operationLabel(job.type)}</div>
-                  {reason ? (
-                    <span className="serviceOperationHistoryReason" title={job.resultReason?.detail ?? reason}>
-                      {reason}
-                    </span>
-                  ) : null}
+                <div className="serviceOperationHistoryOperationHeader">
+                  <div className="serviceOperationHistoryOperationSummary">
+                    <div className="serviceOperationHistoryOperationTitle">{operationLabel(job.type)}</div>
+                    {reason ? (
+                      <span className="serviceOperationHistoryReason" title={job.resultReason?.detail ?? reason}>
+                        {reason}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="serviceOperationHistoryMobileStatus" data-label="状态">
+                    <Pill tone={jobStatusTone}>{jobStatusLabel}</Pill>
+                  </div>
                 </div>
                 <Mono>{job.id}</Mono>
               </div>
               <div className="serviceOperationHistoryStatus" data-label="状态">
-                <Pill tone={statusTone(job.status)}>{statusLabel(job.status)}</Pill>
+                <Pill tone={jobStatusTone}>{jobStatusLabel}</Pill>
+              </div>
+              <div className="serviceOperationHistoryBackup" data-backup-state={backupSummary.state} data-label="备份">
+                {backupSummary.state === 'empty' ? (
+                  <>
+                    <span className="serviceOperationHistoryBackupPlaceholder">--</span>
+                    <span className="serviceOperationHistoryBackupPlaceholder">--</span>
+                  </>
+                ) : backupSummary.state === 'partial' ? (
+                  <>
+                    <span>{backupTargetCountLabel(backupSummary.targetCount)}</span>
+                    <span className="serviceOperationHistoryBackupPlaceholder">--</span>
+                  </>
+                ) : (
+                  <>
+                    <span>{backupTargetCountLabel(backupSummary.targetCount)}</span>
+                    <span className="serviceOperationHistoryBackupSize">{backupSummary.sizeLabel}</span>
+                  </>
+                )}
               </div>
               <div className="serviceOperationHistorySource" data-label="来源">
                 <span>{reasonLabel(job.reason)}</span>
