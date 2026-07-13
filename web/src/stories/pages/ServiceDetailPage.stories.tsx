@@ -1,9 +1,15 @@
 import type { Meta, StoryObj } from "@storybook/react";
-import type { JobListItem, ServiceBackupRecordsResponse, ServiceLogSnapshotResponse } from "../../api";
 import { ServiceDetailPage } from "../../pages/ServiceDetailPage";
 import { currentRoutePathname, type Route } from "../../routes";
 import { PageHarness } from "../mocks/PageHarness";
 import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
+import {
+  buildLongLogsSnapshot,
+  buildMultilineLogsSnapshot,
+  historyReleaseNotes,
+  paginatedHistoryJobs,
+  partialHistoryBackupRecords,
+} from "./serviceDetailPageStoryFixtures";
 
 const meta: Meta<typeof ServiceDetailPage> = {
   title: "Pages/ServiceDetailPage",
@@ -74,9 +80,7 @@ function tabLabels(root: ParentNode): string[] {
 }
 
 function findHistoryRowByJobId(root: ParentNode, jobId: string): HTMLElement | null {
-  return Array.from(root.querySelectorAll<HTMLElement>(".serviceOperationHistoryRow")).find((row) =>
-    normalizeText(row.textContent).includes(jobId),
-  ) ?? null;
+  return Array.from(root.querySelectorAll<HTMLElement>(".serviceOperationHistoryRow")).find((row) => normalizeText(row.textContent).includes(jobId)) ?? null;
 }
 
 function findLogRowContaining(root: ParentNode, text: string): HTMLElement | null {
@@ -91,129 +95,13 @@ function routeFor(stackId: string, serviceId: string, section: ServiceSection = 
   return section === "overview" ? { name: "service", stackId, serviceId } : { name: "service", stackId, serviceId, section };
 }
 
-function buildLongLogsSnapshot(serviceId: string, count = 1600): ServiceLogSnapshotResponse {
-  const startedAt = Date.parse("2026-06-29T08:00:00.000Z");
-  return {
-    serviceId,
-    lines: Array.from({ length: count }, (_, index) => {
-      const ts = new Date(startedAt + index * 1_000).toISOString();
-      const base =
-        index % 7 === 0
-          ? `GET /internal/metrics 200 trace=req-${String(index).padStart(4, "0")} cache=warm upstream=payments-v2 latency=${40 + (index % 11)}ms region=ap-southeast-1 release=2026.06.29-${(index % 5) + 1}`
-          : `worker cycle=${index} queue=critical state=idle lease=svc-prod-api lock=refresh-${String(index).padStart(4, "0")}`;
-      const raw = index % 11 === 0 ? `\u001b[33m${base}\u001b[0m` : index % 13 === 0 ? `\u001b[31m${base}\u001b[0m` : base;
-      return { ts, raw, plain: raw };
-    }),
-    lastEventId: count,
-    bufferLimit: 2000,
-  };
-}
-
-function buildMultilineLogsSnapshot(serviceId: string): ServiceLogSnapshotResponse {
-  const multilineRaw = [
-    "\u001b[2m2026-07-01T08:12:51.833063Z\u001b[0m \u001b[33m WARN\u001b[0m failed to broadcast pool attempt start runtime snapshot err=error returned from database: (code: 5) database is locked",
-    "",
-    "Caused by:",
-    "    (code: 5) database is locked invoke_id=proxy-1281-1782893570550",
-  ].join("\n");
-  return {
-    serviceId,
-    lines: [
-      {
-        ts: "2026-07-01T08:12:51.833063000Z",
-        raw: multilineRaw,
-        plain: multilineRaw,
-      },
-      {
-        ts: "2026-07-01T08:12:53.763043000Z",
-        raw: "\u001b[2m2026-07-01T08:12:53.763043Z\u001b[0m \u001b[32m INFO\u001b[0m openai proxy response headers ready proxy_request_id=1279 method=POST uri=/v1/responses status=200 OK elapsed_ms=10542",
-        plain: "\u001b[2m2026-07-01T08:12:53.763043Z\u001b[0m \u001b[32m INFO\u001b[0m openai proxy response headers ready proxy_request_id=1279 method=POST uri=/v1/responses status=200 OK elapsed_ms=10542",
-      },
-    ],
-    lastEventId: 2,
-    bufferLimit: 2000,
-  };
-}
-
 function render(stackId: string, serviceId: string, section: ServiceSection = "overview", pageSubtitle?: string, options?: { sidebarCollapsed?: boolean }): Story["render"] {
   return () => (
     <PageHarness route={routeFor(stackId, serviceId, section)} title="服务详情" pageSubtitle={pageSubtitle} sidebarCollapsed={options?.sidebarCollapsed ?? false}>
-      {({ route, onTopActions, onLastScanHint }) =>
-        route.name === "service" ? <ServiceDetailPage stackId={route.stackId} serviceId={route.serviceId} section={route.section} onLastScanHint={onLastScanHint} onTopActions={onTopActions} /> : null
-      }
+      {({ route, onTopActions, onLastScanHint }) => route.name === "service" ? <ServiceDetailPage stackId={route.stackId} serviceId={route.serviceId} section={route.section} onLastScanHint={onLastScanHint} onTopActions={onTopActions} /> : null}
     </PageHarness>
   );
 }
-
-const paginatedHistoryJobs: JobListItem[] = Array.from({ length: 23 }, (_, index) => {
-  const sequence = 23 - index;
-  const timestamp = new Date(Date.parse("2026-07-12T16:30:00.000Z") - index * 60_000).toISOString();
-  return {
-    id: `job-history-page-${sequence}`,
-    type: index % 5 === 0 ? "rollback" : "update",
-    scope: "service",
-    stackId: "stack-prod",
-    serviceId: "svc-prod-api",
-    status: index % 7 === 0 ? "rolled_back" : "success",
-    createdBy: index % 2 === 0 ? "ivan" : "auto-policy",
-    reason: index % 2 === 0 ? "ui" : "auto_policy",
-    createdAt: timestamp,
-    startedAt: timestamp,
-    finishedAt: timestamp,
-    allowArchMismatch: false,
-    backupMode: "inherit",
-    summary: { serviceId: "svc-prod-api" },
-  };
-});
-
-const historyReleaseNotes = Array.from({ length: 28 }, (_, index) => {
-  const tagName = index === 22 ? "5.2.4" : `5.1.${28 - index}`;
-  return {
-    id: 70_000 + index,
-    tagName,
-    name: tagName,
-    body: `Release ${tagName}\n\n- 修复部署流程中的边界问题。\n- 改进任务状态的可读性。`,
-    htmlUrl: `https://github.com/acme/api/releases/tag/${tagName}`,
-    draft: false,
-    prerelease: false,
-    publishedAt: new Date(Date.UTC(2026, 6, 12, 16, 30) - index * 3_600_000).toISOString(),
-    createdAt: new Date(Date.UTC(2026, 6, 12, 16, 15) - index * 3_600_000).toISOString(),
-  };
-});
-
-const partialHistoryBackupRecords: ServiceBackupRecordsResponse = {
-  records: [
-    {
-      backupId: "bkp-partial-size",
-      jobId: "job-auto-policy-api-5-2-3",
-      scope: "service",
-      status: "success",
-      createdAt: "2026-07-12T15:15:00.000Z",
-      finishedAt: "2026-07-12T15:16:00.000Z",
-      artifactPath: "/srv/dockrev/backups/stack-prod/20260712-151500.tar.gz",
-      sizeBytes: 18_432_000,
-      cleanupAfter: "2026-07-13T15:15:00.000Z",
-      deletedAt: null,
-      error: null,
-      assets: [
-        {
-          target: { kind: "bind-mount", path: "/var/lib/api/data" },
-          status: "included",
-          policy: "live_backup",
-          sizeBytes: 12_288_000,
-          reason: null,
-        },
-        {
-          target: { kind: "docker-volume", name: "api-cache" },
-          status: "included",
-          policy: "stop_related_services",
-          sizeBytes: null,
-          reason: null,
-        },
-      ],
-    },
-  ],
-};
 
 export const OverviewDefault: Story = {
   parameters: { dockrevApiScenario: "dashboard-demo" },
@@ -223,10 +111,7 @@ export const OverviewDefault: Story = {
     await waitForCondition(() => normalizeText(canvasElement.ownerDocument.body.textContent).includes("服务列表"));
     expectStory(currentRoutePathname() === "/services/stack-prod/svc-prod-api", "legacy overview route should stay canonical");
     expectStory(findTab(canvasElement, "overview")?.getAttribute("data-state") === "active", "overview tab should be active");
-    expectStory(
-      JSON.stringify(tabLabels(canvasElement)) === JSON.stringify(["概览", "更新记录", "监控", "日志", "备份", "设置"]),
-      "service detail tabs should follow the reordered sequence",
-    );
+    expectStory(JSON.stringify(tabLabels(canvasElement)) === JSON.stringify(["概览", "更新记录", "监控", "日志", "备份", "设置"]), "service detail tabs should follow the reordered sequence");
     expectStory(!normalizeText(canvasElement.textContent).includes("资源监控"), "overview should not render monitoring panel");
     expectStory(!findSectionCard(canvasElement, "auto-policy"), "overview should not render settings cards");
     expectStory(findButton(canvasElement, "Stack 详情"), "stack detail top action missing");
@@ -270,28 +155,17 @@ export const UpdateHistorySection: Story = {
     expectStory(canvasElement.querySelector(".appShell")?.classList.contains("appShellSidebarCollapsed"), "history evidence should render with the primary sidebar collapsed");
     expectStory(currentRoutePathname() === "/services/stack-prod/svc-prod-api/history", "history deep link missing");
     expectStory(findTab(canvasElement, "history")?.getAttribute("data-state") === "active", "history tab should be active");
-    const headerLabels = Array.from(canvasElement.querySelectorAll<HTMLElement>('.serviceOperationHistoryHeader [role="columnheader"]')).map((cell) =>
-      normalizeText(cell.textContent),
-    );
-    expectStory(
-      JSON.stringify(headerLabels) === JSON.stringify(["记录", "状态", "备份", "来源", "时间", "操作"]),
-      "history table should expose the backup column after status",
-    );
+    const headerLabels = Array.from(canvasElement.querySelectorAll<HTMLElement>('.serviceOperationHistoryHeader [role="columnheader"]')).map((cell) => normalizeText(cell.textContent));
+    expectStory(JSON.stringify(headerLabels) === JSON.stringify(["记录", "状态", "备份", "来源", "时间", "操作"]), "history table should expose the backup column after status");
     await waitForCondition(() => canvasElement.querySelectorAll(".serviceOperationHistoryRow").length === 5);
     const rows = Array.from(canvasElement.querySelectorAll<HTMLElement>(".serviceOperationHistoryRow"));
     expectStory(rows.length === 5, "history should include all matching update and rollback jobs only");
     expectStory(normalizeText(rows[0]?.textContent).includes("job-all-api-5-2-4"), "history should sort newest jobs first");
-    expectStory(
-      rows.some((row) => normalizeText(row.textContent).includes("回滚") && normalizeText(row.textContent).includes("已回滚")),
-      "rollback record should be rendered in the shared table",
-    );
+    expectStory(rows.some((row) => normalizeText(row.textContent).includes("回滚") && normalizeText(row.textContent).includes("已回滚")), "rollback record should be rendered in the shared table");
     const failedRow = rows.find((row) => normalizeText(row.textContent).includes("job-stack-prod-batch"));
     expectStory(failedRow?.classList.contains("serviceOperationHistoryRowFailed"), "failed history row should be visually de-emphasized");
     expectStory(getComputedStyle(failedRow?.querySelector(".serviceOperationHistoryStatus") ?? canvasElement).opacity === "1", "failed history status must retain full visual prominence");
-    expectStory(
-      Array.from(rows).every((row) => row.querySelectorAll(".serviceOperationHistoryOperation > *").length === 2),
-      "history operation content must stay within two visible text rows",
-    );
+    expectStory(Array.from(rows).every((row) => row.querySelectorAll(".serviceOperationHistoryOperation > *").length === 2), "history operation content must stay within two visible text rows");
     expectStory(!["更新完成", "回滚完成", "任务执行失败"].some((summary) => normalizeText(canvasElement.textContent).includes(summary)), "history must omit summaries already expressed by operation type or status");
     expectStory(!normalizeText(canvasElement.textContent).includes("job-unrelated-web"), "unrelated service job must stay filtered");
     const backupSummaryRow = findHistoryRowByJobId(canvasElement, "job-auto-policy-api-5-2-3");
