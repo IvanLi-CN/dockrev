@@ -470,6 +470,7 @@ export function ServiceDetailPage(props: {
   const renderHistorySection = () => (
     <div className="svcDetailSectionStack">
       <ServiceOperationHistory
+        backupRecords={effectiveBackupRecords}
         key={serviceId}
         jobs={serviceOperationJobs}
         serviceId={serviceId}
@@ -874,11 +875,11 @@ export function ServiceDetailPage(props: {
               <TabsTrigger className={sectionValue === "monitoring" ? "svcDetailTab active" : "svcDetailTab"} data-service-detail-tab="monitoring" value="monitoring">
                 监控
               </TabsTrigger>
-              <TabsTrigger className={sectionValue === "backup" ? "svcDetailTab active" : "svcDetailTab"} data-service-detail-tab="backup" value="backup">
-                备份
-              </TabsTrigger>
               <TabsTrigger className={sectionValue === "logs" ? "svcDetailTab active" : "svcDetailTab"} data-service-detail-tab="logs" value="logs">
                 日志
+              </TabsTrigger>
+              <TabsTrigger className={sectionValue === "backup" ? "svcDetailTab active" : "svcDetailTab"} data-service-detail-tab="backup" value="backup">
+                备份
               </TabsTrigger>
               <TabsTrigger className={sectionValue === "settings" ? "svcDetailTab active" : "svcDetailTab"} data-service-detail-tab="settings" value="settings">
                 设置
