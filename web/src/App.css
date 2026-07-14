@@ -12428,6 +12428,301 @@ html[data-theme="light"] .btnPrimary {
   font-size: 11px;
 }
 
+.homepageToolFloatWindow {
+  --homepage-tool-line: color-mix(in srgb, var(--borderColor) 82%, transparent);
+  --homepage-tool-surface: color-mix(in srgb, var(--panel) 97%, transparent);
+  --homepage-tool-surface-strong: color-mix(
+    in srgb,
+    var(--dockrev-surface) 88%,
+    transparent
+  );
+  position: fixed;
+  z-index: 36;
+  width: min(320px, calc(100vw - 36px));
+  overflow: hidden;
+  border: 1px solid var(--homepage-tool-line);
+  border-radius: 16px;
+  background:
+    radial-gradient(
+      circle at top right,
+      color-mix(in srgb, var(--color-primary) 13%, transparent) 0%,
+      transparent 42%
+    ),
+    linear-gradient(
+      180deg,
+      var(--homepage-tool-surface) 0%,
+      color-mix(in srgb, var(--panel2) 94%, transparent) 100%
+    );
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 10%, transparent),
+    0 24px 68px rgba(1, 10, 24, 0.18);
+  transition:
+    left 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    top 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 160ms ease;
+}
+
+.homepageToolFloatWindow[data-dragging="true"] {
+  transition: none;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 10%, transparent),
+    0 20px 54px rgba(1, 10, 24, 0.22);
+}
+
+.homepageToolFloatHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--homepage-tool-line) 88%, transparent);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.homepageToolFloatWindow[data-dragging="true"] .homepageToolFloatHead {
+  cursor: grabbing;
+}
+
+.homepageToolFloatGrip,
+.homepageToolBubbleIconShell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted2);
+}
+
+.homepageToolFloatGrip {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border: 1px solid color-mix(in srgb, var(--homepage-tool-line) 86%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--homepage-tool-surface-strong) 90%, transparent);
+}
+
+.homepageToolGripDots {
+  width: 12px;
+  height: 14px;
+  opacity: 0.8;
+  background:
+    radial-gradient(circle, currentColor 1.3px, transparent 1.6px) 0 0 / 6px 6px,
+    radial-gradient(circle, currentColor 1.3px, transparent 1.6px) 3px 3px / 6px 6px;
+}
+
+.homepageToolFloatMeta {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 4px;
+  min-width: 0;
+}
+
+.homepageToolFloatEyebrow,
+.homepageToolFloatLabel {
+  color: var(--muted2);
+  font-size: 10px;
+  font-weight: 720;
+  letter-spacing: 0.08em;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.homepageToolFloatTitle {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 720;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+}
+
+.homepageToolFloatActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.homepageToolFloatActions .btnIcon {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border-color: color-mix(in srgb, var(--homepage-tool-line) 88%, transparent);
+  background: color-mix(in srgb, var(--homepage-tool-surface-strong) 88%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 7%, transparent);
+  color: var(--text-soft);
+}
+
+.homepageToolFloatActions .btnIcon:hover,
+.homepageToolFloatActions .btnIcon:focus-visible {
+  border-color: color-mix(in srgb, var(--color-primary) 24%, var(--homepage-tool-line) 76%);
+  background: color-mix(in srgb, var(--homepage-tool-surface-strong) 96%, transparent);
+  color: var(--text);
+}
+
+.homepageToolFloatBody {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.homepageToolFloatSection {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.homepageToolFloatSearchSlot .homepageOverviewSearchForm {
+  min-width: 0;
+}
+
+.homepageToolFloatSearchSlot .homepageOverviewSearchShell {
+  min-height: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--homepage-tool-surface-strong) 92%, transparent);
+}
+
+.homepageToolFloatSearchSlot .homepageOverviewSearchInput {
+  height: 36px;
+  padding: 0 12px;
+}
+
+.homepageToolFloatMetrics {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.homepageToolFloatMetrics .homepageTopMetric {
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--homepage-tool-line) 88%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--homepage-tool-surface-strong) 88%, transparent);
+  padding: 8px 9px;
+}
+
+.homepageToolFloatMetrics .homepageTopMetricValue {
+  font-size: 12px;
+}
+
+.homepageToolFloatMetrics .homepageTopMetricLabel {
+  font-size: 10px;
+}
+
+.homepageToolFloatHint {
+  color: var(--muted2);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.homepageToolBubble {
+  position: fixed;
+  z-index: 36;
+  width: 60px;
+  height: 60px;
+  overflow: visible;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 84%, transparent);
+  border-radius: 999px;
+  background:
+    radial-gradient(
+      circle at 28% 24%,
+      color-mix(in srgb, var(--color-primary) 17%, transparent) 0%,
+      transparent 44%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--panel) 98%, transparent) 0%,
+      color-mix(in srgb, var(--panel2) 94%, transparent) 100%
+    );
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 10%, transparent),
+    0 18px 48px rgba(1, 10, 24, 0.16);
+  transition:
+    left 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    top 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.homepageToolBubble[data-dragging="true"] {
+  transition: none;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 10%, transparent),
+    0 16px 40px rgba(1, 10, 24, 0.22);
+}
+
+.homepageToolBubble[data-side="left"] {
+  transform-origin: left center;
+}
+
+.homepageToolBubble[data-side="right"] {
+  transform-origin: right center;
+}
+
+.homepageToolBubbleButton {
+  position: relative;
+  display: inline-flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: var(--text);
+  cursor: grab;
+  touch-action: none;
+}
+
+.homepageToolBubbleButton:hover,
+.homepageToolBubbleButton:focus-visible {
+  background: color-mix(in srgb, var(--dockrev-surface-strong) 86%, transparent);
+}
+
+.homepageToolBubble[data-dragging="true"] .homepageToolBubbleButton {
+  cursor: grabbing;
+}
+
+.homepageToolBubbleIconShell {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--homepage-tool-line) 82%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dockrev-surface) 88%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 8%, transparent);
+}
+
+.homepageToolBubbleCount {
+  position: absolute;
+  top: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 21px;
+  height: 21px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 22%, var(--borderColor) 78%);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-primary) 16%, var(--panel) 84%);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 720;
+  line-height: 1;
+}
+
+.homepageToolBubble[data-side="left"] .homepageToolBubbleCount {
+  right: 6px;
+}
+
+.homepageToolBubble[data-side="right"] .homepageToolBubbleCount {
+  left: 6px;
+}
+
 .homepageStatusLine {
   display: flex;
   flex-wrap: wrap;

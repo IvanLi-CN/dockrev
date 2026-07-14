@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type KeyboardEvent,
   type ReactNode,
@@ -58,9 +59,9 @@ import {
   HomepageHeaderContent,
   HomepageResourceMetrics,
   HomepageSearchForm,
-  HomepageSidebarClock,
   HomepageTopStrip,
 } from "./OverviewPageChrome";
+import { HomepageFloatingToolPanel } from "./OverviewFloatingToolPanel";
 
 const HOMEPAGE_COLUMN_BREAKPOINTS = [
   { query: "(max-width: 720px)", columns: 1 },
@@ -404,6 +405,7 @@ export function OverviewPage(props: {
     onTopbarContent,
   } =
     props;
+  const pageRef = useRef<HTMLDivElement | null>(null);
   const { isOnline } = usePwaStatus();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -719,10 +721,6 @@ export function OverviewPage(props: {
     ),
     [applyHeaderSearch, headerSearchOpen, searchDraft, summary],
   );
-  const sidebarNavContent = useMemo(
-    () => <HomepageSidebarClock now={now} />,
-    [now],
-  );
   const mobileNavContent = useMemo(
     () => (
       <div className="homepageDrawerNavControls">
@@ -747,8 +745,8 @@ export function OverviewPage(props: {
   }, [onTopbarContent, topbarContent]);
 
   useEffect(() => {
-    onSidebarNavContent(sidebarNavContent);
-  }, [onSidebarNavContent, sidebarNavContent]);
+    onSidebarNavContent(null);
+  }, [onSidebarNavContent]);
 
   useEffect(() => {
     onMobileNavContent(mobileNavContent);
@@ -763,8 +761,16 @@ export function OverviewPage(props: {
   }, [onMobileNavContent, onSidebarNavContent, onTopbarContent]);
 
   return (
-    <div className="page homepageDashboardPage">
+    <div ref={pageRef} className="page homepageDashboardPage">
       <h1 className="srOnly">服务导航</h1>
+      <HomepageFloatingToolPanel
+        pageRef={pageRef}
+        now={now}
+        summary={summary}
+        searchDraft={searchDraft}
+        onSearchDraftChange={setSearchDraft}
+        onApplySearch={applySearch}
+      />
       {hasCachedCardsInUse || resourceFromCache ? (
         <ReadonlySnapshotNotice
           tone={!isOnline ? "warn" : "info"}

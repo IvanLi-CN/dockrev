@@ -208,6 +208,7 @@ jobs:
           cd web
           bun run lint
           bun run build
+          DOCKREV_WEB_BASE=/demo/ bun run build:demo:pages
 
   frontend-storybook-build:
     name: Frontend Storybook build

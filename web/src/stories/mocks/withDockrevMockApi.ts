@@ -9,6 +9,7 @@ import {
   HOMEPAGE_RESOURCE_SUMMARY_KEY,
   HOMEPAGE_SNAPSHOT_KEY,
 } from '../../pages/homepageSnapshot'
+import { OVERVIEW_TOOL_PANEL_STORAGE_KEY } from '../../pages/overviewToolPanelState'
 
 export const withDockrevMockApi: Decorator = (Story, context) => {
   const scenario = (context.parameters?.dockrevApiScenario ?? 'default') as DockrevApiScenario
@@ -28,6 +29,7 @@ export const withDockrevMockApi: Decorator = (Story, context) => {
   window.localStorage.removeItem(HOMEPAGE_SNAPSHOT_KEY)
   window.localStorage.removeItem(HOMEPAGE_NAV_SNAPSHOT_KEY)
   window.localStorage.removeItem(HOMEPAGE_RESOURCE_SUMMARY_KEY)
+  window.localStorage.removeItem(OVERVIEW_TOOL_PANEL_STORAGE_KEY)
   const snapshotV2 = context.parameters?.dockrevHomepageSnapshot
   const navSnapshot = context.parameters?.dockrevHomepageNavSnapshot
   const resourceSnapshot = context.parameters?.dockrevHomepageResourceSummarySnapshot

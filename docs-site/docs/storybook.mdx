@@ -10,6 +10,10 @@ export default function StorybookRedirect() {
     typeof window === 'undefined'
       ? './storybook/'
       : new URL('./storybook/', window.location.href).toString()
+  const demoHref =
+    typeof window === 'undefined'
+      ? './demo/index.html'
+      : new URL('./demo/index.html', window.location.href).toString()
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -19,6 +23,7 @@ export default function StorybookRedirect() {
   return (
     <>
       <h1>Redirecting to Storybook...</h1>
+      <p>Storybook is the Dockrev QA/component surface. For the public product demo, open <a href={demoHref}>/demo/</a>.</p>
       <p>If the redirect does not start automatically, open <a href={storybookHref}>Dockrev Storybook</a>.</p>
     </>
   )

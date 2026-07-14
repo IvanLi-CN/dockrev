@@ -30,6 +30,7 @@ import type {
   StackListItem,
   GitHubReleaseAuthMode,
 } from '../../../api'
+import type { CleanupMockScenario } from '../cleanupMockData'
 
 export type DockrevApiScenario =
   | 'cleanup-console'
@@ -103,6 +104,9 @@ export type DockrevApiScenario =
   | 'error'
 
 export type DockrevMockApiOptions = {
+  cleanupScenario?: CleanupMockScenario
+  initialFixture?: Fixture
+  onStateChange?: (fixture: Fixture) => void
   jobsOverride?: JobListItem[]
   jobsEventsPayload?: string
   discoveryTimelineByServiceId?: Record<string, NewVersionDiscoveryTimelineResponse>
