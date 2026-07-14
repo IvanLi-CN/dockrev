@@ -12,26 +12,15 @@ import type {
 } from '../../../api'
 import { isDockrevImageRef } from '../../../runtimeConfig'
 import { serviceRowStatus } from '../../../updateStatus'
-import {
-  buildCleanupMockScanResponse,
-  isCleanupMockScenario,
-  resolveCleanupMockApply,
-  type CleanupMockRuntimeState,
-} from '../cleanupMockData'
+import { buildCleanupMockScanResponse, isCleanupMockScenario, resolveCleanupMockApply, type CleanupMockScenario, type CleanupMockRuntimeState } from '../cleanupMockData'
 import type { MockRouteContext } from './context'
 import { buildMockDiscoveryTimeline as buildMockDiscoveryTimelineResponse } from './discoveryTimeline'
 import { buildFixture } from './fixturesMisc'
-import {
-  buildMockGitHubReleaseLocateResponse,
-  buildMockGitHubReleasesResponse,
-} from './githubReleases'
+import { buildMockGitHubReleaseLocateResponse, buildMockGitHubReleasesResponse } from './githubReleases'
 import { handleGhcrRoutes } from './handlers/ghcr'
 import { handleServiceStateRoutes } from './handlers/serviceState'
 import { applyRollbackTargetRaceAfterUpdate, maybeServeRollbackTargetRaceResponse, type RollbackTargetRaceState } from './rollbackRace'
-import type {
-  DockrevApiScenario,
-  DockrevMockApiOptions,
-} from './shared'
+import type { DockrevApiScenario, DockrevMockApiOptions } from './shared'
 import {
   MockEventSource,
   buildResourceHistorySamples,
@@ -48,11 +37,37 @@ import {
   type VersionInferenceOverviewMock,
 } from './shared'
 
+function cloneFixture(fixture: Fixture): Fixture {
+  if (typeof structuredClone === 'function') {
+    return structuredClone(fixture)
+  }
+  return JSON.parse(JSON.stringify(fixture)) as Fixture
+}
+
+function nextNumericSuffix(value: string): number {
+  const match = value.match(/(\d+)(?!.*\d)/)
+  if (!match) return 0
+  const parsed = Number.parseInt(match[1] ?? '0', 10)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function seedIgnoreSequence(fixture: Fixture | null): number {
+  if (!fixture) return 0
+  return fixture.ignores.reduce((max, rule) => Math.max(max, nextNumericSuffix(rule.id)), 0)
+}
+
+function seedJobSequence(fixture: Fixture | null): number {
+  if (!fixture) return 0
+  return fixture.jobs.reduce((max, job) => Math.max(max, nextNumericSuffix(job.id)), 0)
+}
+
 export function installDockrevMockApi(
   scenario: DockrevApiScenario,
   options: DockrevMockApiOptions = {},
 ) {
-  const state = scenario === 'error' ? null : buildFixture(scenario)
+  const state = scenario === 'error' ? null : cloneFixture(options.initialFixture ?? buildFixture(scenario))
+  const cleanupScenario: CleanupMockScenario | null =
+    options.cleanupScenario ?? (isCleanupMockScenario(scenario) ? scenario : null)
   if (state) {
     if (options.jobsOverride) {
       state.jobs = options.jobsOverride
@@ -103,11 +118,23 @@ export function installDockrevMockApi(
       }
     }
   }
-  const ignoreSeqRef = { value: 0 }
-  const jobSeqRef = { value: 0 }
+  let lastSerializedState = state ? JSON.stringify(state) : null
+  const persistState = () => {
+    if (!state || !options.onStateChange) return
+    const nextSerializedState = JSON.stringify(state)
+    if (nextSerializedState === lastSerializedState) return
+    lastSerializedState = nextSerializedState
+    options.onStateChange(cloneFixture(state))
+  }
+  if (state && options.onStateChange) {
+    options.onStateChange(cloneFixture(state))
+  }
+  const initialJobSeq = seedJobSequence(state)
+  const ignoreSeqRef = { value: seedIgnoreSequence(state) }
+  const jobSeqRef = { value: initialJobSeq }
   const digestSnapshotPendingAttempts = new Map<string, number>()
   const forcedDigestSnapshotPendingAttempts = new Map<string, number>()
-  const jobsEventsSeqRef = { value: 4_000 }
+  const jobsEventsSeqRef = { value: 4_000 + initialJobSeq }
   const queueProgressDemoSteps = [40, 44, 48, 52, 56, 60, 65, 70, 75, 80, 85, 90, 94, 97]
   let queueProgressDemoStep = 0
   let queueProgressDemoDirection = 1
@@ -486,83 +513,84 @@ export function installDockrevMockApi(
 
     if (!state) return json({ error: 'mock not initialized' }, { status: 500 })
     const f = state
-    if (
-      scenario === 'overview-homepage-slow-refresh' &&
-      method === 'GET' &&
-      urlPath === '/api/homepage/nav'
-    ) {
-      await new Promise<void>((resolve) => {
-        globalThis.setTimeout(() => resolve(), 900)
-      })
-    }
-    if (method === 'GET' && urlPath === '/api/homepage/nav') {
-      if (scenario === 'overview-resource-monitor-error') {
-        return json(
-          { error: { code: 'upstream_error', message: 'homepage nav unavailable' } },
-          { status: 503 },
-        )
+    try {
+      if (
+        scenario === 'overview-homepage-slow-refresh' &&
+        method === 'GET' &&
+        urlPath === '/api/homepage/nav'
+      ) {
+        await new Promise<void>((resolve) => {
+          globalThis.setTimeout(() => resolve(), 900)
+        })
       }
-      return json(buildHomepageNavResponse(f))
-    }
-    const routeCtx: MockRouteContext = {
-      scenario,
-      state: f,
-      method,
-      init,
-      url,
-      urlPath,
-      urlPathWithQuery,
-      urlString,
-      json,
-      parseJsonBody,
-      getString,
-      getBoolean,
-      isRecord,
-      nowIso,
-      makeMockDebug,
-      findService,
-      normalizeDigestValue,
-      buildMockDigestTagData,
-      buildMockDiscoveryTimeline: (serviceId) =>
-        buildMockDiscoveryTimelineResponse(serviceId, options, findService),
-      buildMockGitHubReleasesResponse: (serviceId, page, perPage) =>
-        buildMockGitHubReleasesResponse(
-          serviceId,
-          page,
-          perPage,
-          options,
-          findService,
-          parseMockGitHubRepoRef,
-        ),
-      buildMockGitHubReleaseLocateResponse: (serviceId, version, perPage, limit) =>
-        buildMockGitHubReleaseLocateResponse(
-          serviceId,
-          version,
-          perPage,
-          limit,
-          options,
-          findService,
-          parseMockGitHubRepoRef,
-        ),
-      applyMockUpdateSettlement,
-      selectUpdateServiceIds,
-      syncStackListItem,
-      advanceQueueProgressDemo,
-      ignoreSeqRef,
-      jobSeqRef,
-      jobsEventsSeqRef,
-      digestSnapshotPendingAttempts,
-      forcedDigestSnapshotPendingAttempts,
-      cleanupRuntime,
-    }
+      if (method === 'GET' && urlPath === '/api/homepage/nav') {
+        if (scenario === 'overview-resource-monitor-error') {
+          return json(
+            { error: { code: 'upstream_error', message: 'homepage nav unavailable' } },
+            { status: 503 },
+          )
+        }
+        return json(buildHomepageNavResponse(f))
+      }
+      const routeCtx: MockRouteContext = {
+        scenario,
+        state: f,
+        method,
+        init,
+        url,
+        urlPath,
+        urlPathWithQuery,
+        urlString,
+        json,
+        parseJsonBody,
+        getString,
+        getBoolean,
+        isRecord,
+        nowIso,
+        makeMockDebug,
+        findService,
+        normalizeDigestValue,
+        buildMockDigestTagData,
+        buildMockDiscoveryTimeline: (serviceId) =>
+          buildMockDiscoveryTimelineResponse(serviceId, options, findService),
+        buildMockGitHubReleasesResponse: (serviceId, page, perPage) =>
+          buildMockGitHubReleasesResponse(
+            serviceId,
+            page,
+            perPage,
+            options,
+            findService,
+            parseMockGitHubRepoRef,
+          ),
+        buildMockGitHubReleaseLocateResponse: (serviceId, version, perPage, limit) =>
+          buildMockGitHubReleaseLocateResponse(
+            serviceId,
+            version,
+            perPage,
+            limit,
+            options,
+            findService,
+            parseMockGitHubRepoRef,
+          ),
+        applyMockUpdateSettlement,
+        selectUpdateServiceIds,
+        syncStackListItem,
+        advanceQueueProgressDemo,
+        ignoreSeqRef,
+        jobSeqRef,
+        jobsEventsSeqRef,
+        digestSnapshotPendingAttempts,
+        forcedDigestSnapshotPendingAttempts,
+        cleanupRuntime,
+      }
 
-    const ghcrResponse = await handleGhcrRoutes(routeCtx)
-    if (ghcrResponse) return ghcrResponse
+      const ghcrResponse = await handleGhcrRoutes(routeCtx)
+      if (ghcrResponse) return ghcrResponse
 
-    if (urlPath === '/api/version' && method === 'GET') {
-      // Use an existing repo tag so the version link in UI can be exercised in Storybook.
-      return json({ version: '0.5.0' })
-    }
+      if (urlPath === '/api/version' && method === 'GET') {
+        // Use an existing repo tag so the version link in UI can be exercised in Storybook.
+        return json({ version: '0.5.0' })
+      }
 
     if (urlPath === '/api/version-inference/overview' && method === 'GET') {
       const params = url?.searchParams ?? new URLSearchParams()
@@ -656,14 +684,14 @@ export function installDockrevMockApi(
       })
     }
 
-    if (isCleanupMockScenario(scenario) && method === 'POST' && urlPath === '/api/cleanups/scan-runs') {
+    if (cleanupScenario && method === 'POST' && urlPath === '/api/cleanups/scan-runs') {
       const request = parseCleanupScanRequest(init?.body)
       cleanupRuntime.nextScanRunSeq += 1
       const scanId = `mock-cleanup-scan-${cleanupRuntime.nextScanRunSeq}`
       const previousSnapshot =
-        scenario === 'cleanup-console-scan-pending' ? null : buildCleanupMockScanResponse(scenario, request, 1)
-      const ready = buildCleanupMockScanResponse(scenario, request, scenario === 'cleanup-console-stale' ? 2 : 1)
-      const holdPartial = scenario === 'cleanup-console-scan-slow' && cleanupRuntime.nextScanRunSeq > 1
+        cleanupScenario === 'cleanup-console-scan-pending' ? null : buildCleanupMockScanResponse(cleanupScenario, request, 1)
+      const ready = buildCleanupMockScanResponse(cleanupScenario, request, cleanupScenario === 'cleanup-console-stale' ? 2 : 1)
+      const holdPartial = cleanupScenario === 'cleanup-console-scan-slow' && cleanupRuntime.nextScanRunSeq > 1
       const events: Array<{ id: number; event: string; data: unknown }> = [
         {
           id: 1,
@@ -671,7 +699,7 @@ export function installDockrevMockApi(
           data: { scanId, phase: 'scan_started', response: previousSnapshot },
         },
       ]
-      if (scenario !== 'cleanup-console-scan-pending') {
+      if (cleanupScenario !== 'cleanup-console-scan-pending') {
         events.push({
           id: 2,
           event: 'scan_partial',
@@ -689,7 +717,7 @@ export function installDockrevMockApi(
       return json({ scanId, previousSnapshot, retryAfterMs: 450 })
     }
 
-    if (isCleanupMockScenario(scenario) && method === 'GET' && urlPath.match(/^\/api\/cleanups\/scan-runs\/[^/]+\/events$/)) {
+    if (cleanupScenario && method === 'GET' && urlPath.match(/^\/api\/cleanups\/scan-runs\/[^/]+\/events$/)) {
       const scanId = decodeURIComponent(urlPath.split('/')[4] ?? '')
       const afterId = Number.parseInt(url?.searchParams.get('afterId') ?? '0', 10)
       const events = (cleanupRuntime.scanRuns.get(scanId) ?? []).filter((event) => event.id > (Number.isFinite(afterId) ? afterId : 0))
@@ -706,8 +734,8 @@ export function installDockrevMockApi(
       })
     }
 
-    if (isCleanupMockScenario(scenario) && method === 'POST' && urlPath === '/api/cleanups/scan') {
-      if (scenario === 'cleanup-console-scan-pending') {
+    if (cleanupScenario && method === 'POST' && urlPath === '/api/cleanups/scan') {
+      if (cleanupScenario === 'cleanup-console-scan-pending') {
         const request = parseCleanupScanRequest(init?.body)
         const ready = buildCleanupMockScanResponse('cleanup-console', request)
         if (request.reason === 'page') {
@@ -737,24 +765,24 @@ export function installDockrevMockApi(
           { status: 200 },
         )
       }
-      if (scenario === 'cleanup-console-scan-slow') {
+      if (cleanupScenario === 'cleanup-console-scan-slow') {
         await new Promise<void>((resolve) => {
           globalThis.setTimeout(() => resolve(), 1600)
         })
       }
       const request = parseCleanupScanRequest(init?.body)
-      return json(buildCleanupMockScanResponse(scenario, request))
+      return json(buildCleanupMockScanResponse(cleanupScenario, request))
     }
 
-    if (isCleanupMockScenario(scenario) && method === 'POST' && urlPath === '/api/cleanups/apply') {
-      if (scenario === 'cleanup-console-apply-slow') {
+    if (cleanupScenario && method === 'POST' && urlPath === '/api/cleanups/apply') {
+      if (cleanupScenario === 'cleanup-console-apply-slow') {
         return new Promise<Response>(() => {})
       }
       const parsed = parseJsonBody(init?.body) as CleanupApplyRequest | null
       if (!parsed) {
         return json({ error: { code: 'invalid_argument', message: 'invalid cleanup apply payload', details: null } }, { status: 400 })
       }
-      const result = resolveCleanupMockApply(scenario, parsed, cleanupRuntime)
+      const result = resolveCleanupMockApply(cleanupScenario, parsed, cleanupRuntime)
       if (!result.ok) return json(result.body, { status: result.status })
 
       const createdAt = nowIso(-400)
@@ -986,6 +1014,7 @@ export function installDockrevMockApi(
         f.jobById[jobId] = finalJob
         f.jobs = f.jobs.map((row) => (row.id === jobId ? { ...row, status: 'success', finishedAt } : row))
 
+        persistState()
         window.setTimeout(() => {
           if (!state) return
           for (const affectedId of affectedServiceIds) {
@@ -998,6 +1027,7 @@ export function installDockrevMockApi(
               target.pullTags,
             )
           }
+          persistState()
         }, settleDelayMs)
       }, updateFinishDelayMs)
       return json({ jobId })
@@ -1150,6 +1180,7 @@ export function installDockrevMockApi(
           activeJobId: null,
           activeJobStatus: null,
         }
+        persistState()
       }, 1_200)
 
       return json({ jobId })
@@ -1159,5 +1190,8 @@ export function installDockrevMockApi(
     if (serviceStateResponse) return serviceStateResponse
 
     return json({ error: `unhandled mock route: ${method} ${urlString}` }, { status: 501 })
+    } finally {
+      persistState()
+    }
   }
 }

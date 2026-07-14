@@ -14,6 +14,9 @@ Complete deployment, usage, operations, troubleshooting, and API docs live in th
 - Local preview: `bun run docs:preview` (default `http://127.0.0.1:50885`)
 - Port override: `DOCS_PORT=<port> bun run docs:dev` / `DOCS_PORT=<port> bun run docs:preview`
 - Online (GitHub Pages): published by `.github/workflows/docs-pages.yml`
+  - Docs: site root
+  - Demo: `/demo/` public product surface
+  - Storybook: `/storybook/` QA/component surface
 
 This README intentionally stays as a quick entrypoint.
 
@@ -77,7 +80,7 @@ cd web
 bun run demo:app
 ```
 
-Open the Vite URL printed by the command at `/`. The demo uses browser-only mock data from `VITE_DOCKREV_DEMO=app`; it does not add a separate URL path.
+Open the Vite URL printed by the command at `/demo/`. The demo reuses the real React app routes/state model with browser-only mock data from `VITE_DOCKREV_DEMO=app`; it is the public product demo surface, not a Storybook replacement.
 
 Storybook:
 
@@ -95,10 +98,11 @@ python3 .codex/skills/ui-ux-pro-max/scripts/search.py "dockrev docker compose da
 
 Open:
 
-- UI (dev server): `http://127.0.0.1:50884/`
 - UI (embedded): `http://127.0.0.1:50883/`
+- Supervisor: `http://127.0.0.1:50884/`
 - API health: `http://127.0.0.1:50883/api/health`
 - API version: `http://127.0.0.1:50883/api/version`
+- Mock-only demo: run `bun run demo:app`, then open the printed Vite URL at `/demo/`
 
 ## Runtime config
 
@@ -144,6 +148,10 @@ Environment variables (Supervisor):
 - `DOCKREV_SUPERVISOR_STATE_PATH` (default `./data/supervisor/self-upgrade.json`)
 
 ## UI: navigation / scan / preview / apply
+
+- Public Demo vs Storybook:
+  - Demo (`/demo/`) is the shareable product surface with real routes and seeded mock state.
+  - Storybook (`/storybook/`) remains the QA/component/state gallery and is not the public product demo.
 
 - Navigation: Overview (`/`) is a Homepage-compatible service launcher with grouped cards, search, and live resource summaries.
 - Operations: Services (`/services`) is the update and recovery dashboard.

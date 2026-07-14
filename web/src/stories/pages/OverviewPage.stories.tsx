@@ -39,6 +39,18 @@ function setInputValue(input: HTMLInputElement, value: string) {
   input.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
+function dispatchPointer(target: EventTarget, type: string, init: PointerEventInit) {
+  target.dispatchEvent(
+    new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      pointerType: "mouse",
+      ...init,
+    }),
+  );
+}
+
 function renderOverview(): Story["render"] {
   return () => (
     <PageHarness route={{ name: "overview" }} title="">
@@ -165,8 +177,38 @@ export const Default: Story = {
       "expected current time to stay out of the global shell header",
     );
     expectStory(
-      canvasElement.querySelector(".sidebar .homepageSidebarClock"),
-      "expected overview current time to render inside the left navigation",
+      !canvasElement.querySelector(".sidebar .homepageSidebarToolPanel"),
+      "expected overview tools panel to leave the left navigation and render as a floating window",
+    );
+    expectStory(
+      canvasElement.querySelector(".homepageToolFloatWindow .homepageToolFloatTitle")
+        ?.textContent === "工具面板",
+      "expected overview floating tools panel to expose the visible title",
+    );
+    expectStory(
+      canvasElement.querySelector(".homepageToolFloatWindow .homepageToolFloatSearchSlot .homepageOverviewSearchShell"),
+      "expected overview floating tools panel to keep a desktop search entry",
+    );
+    expectStory(
+      canvasElement.querySelectorAll(".homepageToolFloatWindow .homepageToolFloatMetrics .homepageTopMetric").length ===
+        4,
+      "expected overview floating tools panel to expose four resource metrics",
+    );
+    expectStory(
+      canvasElement.querySelector(".homepageToolFloatWindow .homepageSidebarClock"),
+      "expected overview floating tools panel to render the compact current time block",
+    );
+    expectStory(
+      canvasElement.querySelector('input[type="search"][aria-label="工具面板搜索服务入口"]'),
+      "expected overview floating tools panel search to expose a dedicated accessible label",
+    );
+    expectStory(
+      !canvasElement.querySelector(".homepageToolFloatDock"),
+      "expected overview floating tools panel to drop the old dock badge and rely on the bubble state instead",
+    );
+    expectStory(
+      !canvasElement.querySelector(".homepageToolBubble"),
+      "expected overview floating tools panel to start expanded instead of hidden as a bubble",
     );
     expectStory(
       !canvasElement.querySelector(".homepageOverviewSearchButton"),
@@ -175,6 +217,124 @@ export const Default: Story = {
     expectStory(
       canvasElement.querySelector(".topActions")?.textContent?.includes("运维大盘") !== true,
       "expected overview top actions to omit the redundant operations dashboard shortcut",
+    );
+
+    const floatWindow = canvasElement.querySelector<HTMLElement>(".homepageToolFloatWindow");
+    const floatHead = canvasElement.querySelector<HTMLElement>(".homepageToolFloatHead");
+    const contentHost = canvasElement.ownerDocument.querySelector<HTMLElement>(".content.overlayScrollArea");
+    const viewportHost = canvasElement.ownerDocument.documentElement;
+    expectStory(floatWindow, "expected overview floating tools panel to render");
+    expectStory(floatHead, "expected overview floating tools panel to expose a drag handle");
+    expectStory(contentHost, "expected overview story to mount inside the shell content viewport");
+    expectStory(viewportHost, "expected overview story to expose a viewport root for edge snapping");
+    expectStory(
+      canvasElement
+        .querySelector('button[aria-label="收起"] svg')
+        ?.classList.contains("lucide-chevron-right"),
+      "expected the collapse icon to point toward the right-edge bubble while the floating window rests near the right edge",
+    );
+
+    const before = floatWindow?.getBoundingClientRect();
+    const hostRect = viewportHost?.getBoundingClientRect();
+    if (before && hostRect && floatHead) {
+      dispatchPointer(floatHead, "pointerdown", {
+        pointerId: 11,
+        button: 0,
+        buttons: 1,
+        clientX: before.left + 28,
+        clientY: before.top + 20,
+      });
+      dispatchPointer(window, "pointermove", {
+        pointerId: 11,
+        button: 0,
+        buttons: 1,
+        clientX: hostRect.left + 18,
+        clientY: before.top + 36,
+      });
+      dispatchPointer(window, "pointerup", {
+        pointerId: 11,
+        button: 0,
+        buttons: 0,
+        clientX: hostRect.left + 18,
+        clientY: before.top + 36,
+      });
+      await sleep(220);
+      expectStory(
+        canvasElement.querySelector(".homepageToolFloatWindow"),
+        "expected overview floating tools panel to stay expanded after dragging to the page edge",
+      );
+      expectStory(
+        !canvasElement.querySelector(".homepageToolBubble"),
+        "expected overview floating tools panel to avoid auto-collapsing into a bubble when dragged to the edge",
+      );
+    }
+    expectStory(
+      canvasElement
+        .querySelector('button[aria-label="收起"] svg')
+        ?.classList.contains("lucide-chevron-left"),
+      "expected the collapse icon to point toward the left-edge bubble once the floating window is dragged near the left edge",
+    );
+
+    const collapseButton = canvasElement.querySelector<HTMLButtonElement>('button[aria-label="收起"]');
+    const collapseButtonBox = collapseButton?.getBoundingClientRect() ?? null;
+    collapseButton?.click();
+    await sleep(180);
+    expectStory(
+      !canvasElement.querySelector(".homepageToolFloatWindow"),
+      "expected overview floating tools panel to collapse into a bubble",
+    );
+    const bubble = canvasElement.querySelector<HTMLElement>(".homepageToolBubble");
+    const bubbleBox = bubble?.getBoundingClientRect() ?? null;
+    if (collapseButtonBox && bubbleBox) {
+      const bubbleCenterY = bubbleBox.top + bubbleBox.height / 2;
+      const buttonCenterY = collapseButtonBox.top + collapseButtonBox.height / 2;
+      expectStory(
+        Math.abs(bubbleCenterY - buttonCenterY) <= 8,
+        "expected the collapsed bubble to align vertically to the collapse button position",
+      );
+    }
+    const draggableBubble = canvasElement.querySelector<HTMLElement>(".homepageToolBubbleButton");
+    if (bubbleBox && hostRect && draggableBubble) {
+      dispatchPointer(draggableBubble, "pointerdown", {
+        pointerId: 12,
+        button: 0,
+        buttons: 1,
+        clientX: bubbleBox.left + 14,
+        clientY: bubbleBox.top + bubbleBox.height / 2,
+      });
+      dispatchPointer(window, "pointermove", {
+        pointerId: 12,
+        button: 0,
+        buttons: 1,
+        clientX: hostRect.right - 18,
+        clientY: bubbleBox.top + bubbleBox.height / 2,
+      });
+      dispatchPointer(window, "pointerup", {
+        pointerId: 12,
+        button: 0,
+        buttons: 0,
+        clientX: hostRect.right - 18,
+        clientY: bubbleBox.top + bubbleBox.height / 2,
+      });
+      await sleep(220);
+      expectStory(
+        canvasElement.querySelector(".homepageToolBubble")?.getAttribute("data-side") === "right",
+        "expected the collapsed bubble to support dragging and auto-snap back onto the nearest right edge",
+      );
+    }
+    const bubbleButton = canvasElement.querySelector<HTMLButtonElement>(".homepageToolBubbleButton");
+    expectStory(bubbleButton, "expected overview floating tools panel to expose a collapsed bubble trigger");
+    bubbleButton?.click();
+    await sleep(180);
+    expectStory(
+      canvasElement.querySelector(".homepageToolFloatWindow") && !canvasElement.querySelector(".homepageToolBubble"),
+      "expected overview floating tools bubble to expand back into the full tool window",
+    );
+    expectStory(
+      canvasElement
+        .querySelector('button[aria-label="收起"] svg')
+        ?.classList.contains("lucide-chevron-right"),
+      "expected the collapse icon to flip back toward the right once the bubble is dragged onto the right edge and reopened",
     );
 
     const groups = Array.from(
@@ -770,6 +930,14 @@ export const MobileStacked: Story = {
     expectStory(
       !canvasElement.querySelector(".homepageMobileNavModule .homepageClock"),
       "expected mobile page navigation module to keep time out of the page header area",
+    );
+    expectStory(
+      !canvasElement.querySelector(".homepageToolFloatWindow"),
+      "expected mobile evidence story to hide the desktop floating tools panel",
+    );
+    expectStory(
+      !canvasElement.querySelector(".homepageToolBubble"),
+      "expected mobile evidence story to keep the collapsed desktop bubble out of the narrow viewport",
     );
     expectStory(
       canvasElement.querySelector(".mobileMenuEmbeddedContent .homepageDrawerSearchSlot"),

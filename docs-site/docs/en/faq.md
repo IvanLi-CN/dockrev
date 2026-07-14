@@ -27,4 +27,9 @@ No. Those directories are engineering artifacts, not end-user documentation.
 
 ## Can docs be deployed automatically?
 
-Yes. Use the `docs-pages` workflow for GitHub Pages deployment.
+Yes. The `docs-pages` workflow publishes the docs root, the [public Demo](/demo/index.html), and [Storybook](/storybook.html) together.
+
+## What is the difference between Demo and Storybook?
+
+- [Public Demo](/demo/index.html) is the `/demo/` product surface: real app routes, seeded mock state, shareable deep links, and interactive fake writes.
+- [Storybook](/storybook.html) is the QA/component/page-state gallery and is not the public product demo.

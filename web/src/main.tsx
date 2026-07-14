@@ -4,6 +4,7 @@ import './index.css'
 import App from './App.tsx'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { PwaStatusProvider } from './pwaStatus'
+import { restorePendingPagesDemoPath } from './demo/pagesDemoRestore'
 import { initTheme } from './theme'
 
 function shouldInstallAppDemoApi(): boolean {
@@ -16,6 +17,7 @@ async function bootstrap() {
   initTheme()
   if (shouldInstallAppDemoApi()) {
     const { installAppDemoApi } = await import('./demo/appDemoApi')
+    restorePendingPagesDemoPath()
     installAppDemoApi()
   }
 

@@ -36,6 +36,7 @@ clearRequestedSettingsFocus,
 peekRequestedSettingsFocus,
 } from '../settingsFocus'
 import { Button,Mono } from '../ui'
+import { isPwaRuntimeEnabled } from '../pwaStatus'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import {
 GHCR_PREVIEW_LIMIT,
@@ -922,7 +923,12 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
   }, [])
 
   const canWebPush = useMemo(() => {
-    return typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window
+    return (
+      isPwaRuntimeEnabled() &&
+      typeof window !== 'undefined' &&
+      'serviceWorker' in navigator &&
+      'PushManager' in window
+    )
   }, [])
 
   const runNotificationChannelTest = useCallback((channel: NotificationTestChannel) => {
