@@ -446,7 +446,7 @@ SELECT
   summary_json
 FROM jobs
 ORDER BY created_at DESC
-LIMIT 200
+LIMIT 2000
 "#,
             )?;
 
@@ -1290,5 +1290,45 @@ WHERE level = 'event'
         })
         .await
         .context("insert job log")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn list_jobs_returns_the_latest_two_thousand_jobs() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+
+        for index in 0..=2_000 {
+            db.insert_job(JobListItem {
+                id: format!("job-{index:04}"),
+                r#type: JobType::Update,
+                scope: JobScope::Service,
+                stack_id: Some("stack-test".to_string()),
+                service_id: Some("service-test".to_string()),
+                status: "success".to_string(),
+                created_at: format!("2026-01-01T00:{:02}:{:02}Z", index / 60, index % 60),
+                created_by: "test".to_string(),
+                reason: "ui".to_string(),
+                started_at: None,
+                finished_at: None,
+                allow_arch_mismatch: false,
+                backup_mode: "inherit".to_string(),
+                summary_json: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+        }
+
+        let jobs = db.list_jobs().await.unwrap();
+
+        assert_eq!(jobs.len(), 2_000);
+        assert_eq!(jobs.first().map(|job| job.id.as_str()), Some("job-2000"));
+        assert_eq!(jobs.last().map(|job| job.id.as_str()), Some("job-0001"));
+        assert!(!jobs.iter().any(|job| job.id == "job-0000"));
     }
 }
