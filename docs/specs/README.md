@@ -27,6 +27,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
+| 8m2dp | Dockrev：GitHub Pages 公共 Web Demo（/demo/）正式化 | 已完成 | `8m2dp-pages-public-demo/SPEC.md` | 2026-07-13 | fast-track（Pages `/demo/` public surface + BASE_URL 路由 + session mock state + docs discoverability） |
 | c2r2u | Dockrev：详情页双侧栏与 Stack→Service 树导航 | active | `c2r2u-detail-route-service-navigation/SPEC.md` | 2026-07-09 | fast-track（detail AppShell + Stack→Service tree + mobile drawer/bottom nav + Storybook evidence） |
 | r8kpa | Dockrev：Web PWA 离线壳、更新提示与分级缓存 | 部分完成（5/6） | `r8kpa-web-pwa-offline-shell/SPEC.md` | 2026-07-12 | fast-track（PWA shell + update prompt + readonly snapshot cache 已收口；service history 纳入 fresh snapshot read model） |
 | 8hewd | Dockrev：概览发现异常详情改为点击弹窗并消除双 tooltip | 已完成 | `8hewd-overview-discovery-error-detail-dialog/SPEC.md` | 2026-04-05 | fast-track（shared dialog primitive + overview discovery dialog + storybook evidence） |

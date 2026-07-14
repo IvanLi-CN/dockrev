@@ -122,6 +122,18 @@ export const ServiceDetail: Story = {
   },
 }
 
+export const ServiceHistory: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  render: () => {
+    return (
+      <>
+        <LocationReset pathname="/services/stack-prod/svc-prod-api/history" />
+        <App />
+      </>
+    )
+  },
+}
+
 export const RepoLinkEditingFlow: Story = {
   parameters: { dockrevApiScenario: 'repo-link-editing' },
   render: () => {
@@ -140,6 +152,54 @@ export const Settings: Story = {
     return (
       <>
         <LocationReset pathname="/settings" />
+        <App />
+      </>
+    )
+  },
+}
+
+export const DeployCheck: Story = {
+  parameters: { dockrevApiScenario: 'settings-configured' },
+  render: () => {
+    return (
+      <>
+        <LocationReset pathname="/deploy-check" />
+        <App />
+      </>
+    )
+  },
+}
+
+export const Cleanup: Story = {
+  parameters: { dockrevApiScenario: 'cleanup-console-storage-normal' },
+  render: () => {
+    return (
+      <>
+        <LocationReset pathname="/cleanup" />
+        <App />
+      </>
+    )
+  },
+}
+
+export const GhcrWebhookInbox: Story = {
+  parameters: { dockrevApiScenario: 'settings-configured' },
+  render: () => {
+    return (
+      <>
+        <LocationReset pathname="/queue/ghcr-webhook-inbox" />
+        <App />
+      </>
+    )
+  },
+}
+
+export const GhcrWebhookRegistry: Story = {
+  parameters: { dockrevApiScenario: 'settings-configured' },
+  render: () => {
+    return (
+      <>
+        <LocationReset pathname="/settings/ghcr-webhooks" />
         <App />
       </>
     )

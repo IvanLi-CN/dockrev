@@ -97,12 +97,60 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  assemble-pages:
+  build-demo:
     runs-on: ubuntu-latest
-    needs: [build-docs, build-storybook]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.6
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute DOCS_BASE
+        shell: bash
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY%%/*}"
+          repo="${GITHUB_REPOSITORY##*/}"
+          if [[ "${repo}" == "${owner}.github.io" ]]; then
+            echo "DOCS_BASE=/" >> "$GITHUB_ENV"
+          else
+            echo "DOCS_BASE=/${repo}/" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install demo build dependencies
+        run: bun install --cwd web --frozen-lockfile
+
+      - name: Build public demo
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd web
+          DOCKREV_WEB_BASE="${DOCS_BASE}demo/" bun run build:demo:pages
+
+      - name: Upload demo artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-demo-build
+          path: web/dist
+          retention-days: 1
+          if-no-files-found: error
+
+  assemble-pages:
+    runs-on: ubuntu-latest
+    needs: [build-docs, build-storybook, build-demo]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.6
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download docs artifact
         uses: actions/download-artifact@v4
@@ -116,11 +164,29 @@ jobs:
           name: storybook-static-build
           path: .tmp/storybook-static
 
+      - name: Download demo artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: web-demo-build
+          path: .tmp/web-demo
+
+      - name: Compute DOCS_BASE
+        shell: bash
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY%%/*}"
+          repo="${GITHUB_REPOSITORY##*/}"
+          if [[ "${repo}" == "${owner}.github.io" ]]; then
+            echo "DOCS_BASE=/" >> "$GITHUB_ENV"
+          else
+            echo "DOCS_BASE=/${repo}/" >> "$GITHUB_ENV"
+          fi
+
       - name: Assemble Pages site
         shell: bash
         run: |
           set -euo pipefail
-          bash ./.github/scripts/assemble-pages-site.sh .tmp/docs-site .tmp/storybook-static .tmp/pages-site
+          bash ./.github/scripts/assemble-pages-site.sh .tmp/docs-site .tmp/storybook-static .tmp/web-demo .tmp/pages-site
 
       - name: Smoke check assembled site
         shell: bash
@@ -128,12 +194,23 @@ jobs:
           set -euo pipefail
           test -f .tmp/pages-site/index.html
           test -f .tmp/pages-site/storybook/index.html
+          test -f .tmp/pages-site/demo/index.html
           test -f .tmp/pages-site/storybook.html
           grep -q '/storybook.html' .tmp/pages-site/index.html
           grep -q 'Redirecting to Storybook' .tmp/pages-site/storybook.html
           grep -q 'Dockrev Storybook' .tmp/pages-site/storybook.html
           grep -q './sb-manager/runtime.js' .tmp/pages-site/storybook/index.html
           grep -q './sb-common-assets/nunito-sans-regular.woff2' .tmp/pages-site/storybook/index.html
+          grep -q 'dockrev:pages-demo:restore' .tmp/pages-site/404.html
+
+      - name: Install smoke test dependencies
+        run: bun install --cwd web --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: bun ./web/node_modules/.bin/playwright install chromium
+
+      - name: Run demo Pages smoke
+        run: node ./web/scripts/demo-pages-smoke.mjs .tmp/pages-site "${DOCS_BASE}"
 
       - name: Upload assembled Pages site artifact
         uses: actions/upload-artifact@v4

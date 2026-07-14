@@ -1,0 +1,87 @@
+---
+title: Page Not Found
+description: Recover Dockrev demo deep links inside the GitHub Pages docs bundle.
+---
+
+import { useEffect } from 'react'
+
+export default function NotFoundPage() {
+  const restoreStorageKey = 'dockrev:pages-demo:restore'
+  const inferDocsBase = (href) => {
+    const url = new URL(href)
+    const demoMatch = url.pathname.match(/^(.*?\/)demo(?:\/|$)/)
+    if (demoMatch?.[1]) return demoMatch[1]
+
+    const knownRootEntries = new Set([
+      'index.html',
+      'quick-start',
+      'deploy',
+      'config',
+      'user-guide',
+      'operations',
+      'integrations',
+      'troubleshooting',
+      'faq',
+      'glossary',
+      'api-reference',
+      'notifications',
+      'en',
+      'storybook.html',
+    ])
+    const segments = url.pathname.split('/').filter(Boolean)
+    if (segments.length === 0) return '/'
+    if (knownRootEntries.has(segments[0])) return '/'
+    if (segments.length >= 2 && knownRootEntries.has(segments[1])) return `/${segments[0]}/`
+    return '/'
+  }
+  const resolveDemoRestoreTarget = (href) => {
+    const url = new URL(href)
+    const match = url.pathname.match(/^(.*?\/demo)(\/.*)?$/)
+    if (!match) return null
+
+    const demoBasePath = `${match[1]}/`
+    const pendingPath = `${url.pathname}${url.search}${url.hash}`
+    return {
+      demoHref: new URL(demoBasePath, url.origin).toString(),
+      pendingPath,
+    }
+  }
+
+  const restoreTarget = typeof window === 'undefined' ? null : resolveDemoRestoreTarget(window.location.href)
+  const docsBase = typeof window === 'undefined' ? '/' : inferDocsBase(window.location.href)
+  const homeHref = new URL('./index.html', new URL(docsBase, 'https://docs.local')).pathname
+  const englishHref = new URL('./en/index.html', new URL(docsBase, 'https://docs.local')).pathname
+  const demoHref = new URL('./demo/index.html', new URL(docsBase, 'https://docs.local')).pathname
+  const storybookHref = new URL('./storybook.html', new URL(docsBase, 'https://docs.local')).pathname
+
+  useEffect(() => {
+    if (!restoreTarget || typeof window === 'undefined') return
+    window.sessionStorage.setItem(
+      restoreStorageKey,
+      JSON.stringify({
+        path: restoreTarget.pendingPath,
+        savedAt: Date.now(),
+      }),
+    )
+    window.location.replace(restoreTarget.demoHref)
+  }, [restoreTarget])
+
+  return (
+    <>
+      <h1>Page Not Found</h1>
+      {restoreTarget ? (
+        <p>
+          Redirecting the saved Dockrev demo deep link back to <a href={restoreTarget.demoHref}>/demo/</a>...
+        </p>
+      ) : (
+        <p>The page you are looking for does not exist.</p>
+      )}
+      <ul>
+        <li>中文入口: <a href={homeHref}>简体中文</a></li>
+        <li>English entry: <a href={englishHref}>English</a></li>
+        <li>Public Demo: <a href={demoHref}>/demo/</a></li>
+        <li>Storybook: <a href={storybookHref}>/storybook/</a></li>
+      </ul>
+    </>
+  )
+}

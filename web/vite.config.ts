@@ -1,36 +1,22 @@
 import { fileURLToPath, URL } from 'node:url'
-import { defineConfig, loadEnv, type Connect, type Plugin } from 'vite'
+import { defineConfig, loadEnv, type Plugin } from 'vite'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
-function appDemoSinglePathPlugin(enabled: boolean): Plugin | null {
-  if (!enabled) return null
-  const installLegacyDemoPathReject = (middlewares: Connect.Server) => {
-    middlewares.use((req, res, next) => {
-      const url = new URL(req.url ?? '/', 'http://127.0.0.1')
-      const pathname = url.pathname
-      if (
-        pathname === '/demo' ||
-        pathname.startsWith('/demo/') ||
-        url.searchParams.has('demo') ||
-        url.searchParams.has('dockrev-demo')
-      ) {
-        res.statusCode = 404
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8')
-        res.end('Dockrev app demo is served only at / without a demo query.')
-        return
-      }
-      next()
-    })
-  }
+function normalizeBasePath(basePath: string | undefined): string {
+  const raw = (basePath ?? '/').trim()
+  if (!raw || raw === '/') return '/'
+  const withLeadingSlash = raw.startsWith('/') ? raw : `/${raw}`
+  return withLeadingSlash.endsWith('/') ? withLeadingSlash : `${withLeadingSlash}/`
+}
+
+function dockrevAppHtmlPlugin(pwaEnabled: boolean): Plugin {
   return {
-    name: 'dockrev-homepage-demo-single-path',
-    configureServer(server) {
-      installLegacyDemoPathReject(server.middlewares)
-    },
-    configurePreviewServer(server) {
-      installLegacyDemoPathReject(server.middlewares)
+    name: 'dockrev-app-html-contract',
+    transformIndexHtml(html) {
+      if (pwaEnabled) return html
+      return html.replace(/^\s*<link rel="manifest" href="[^"]+" \/>\s*$/m, '')
     },
   }
 }
@@ -45,15 +31,19 @@ export default defineConfig(({ mode }) => {
   }
   const devPort = parsePort(env.DOCKREV_WEB_DEV_PORT, 50884)
   const previewPort = parsePort(env.DOCKREV_WEB_PREVIEW_PORT, 50885)
-  const demoMode = (env.VITE_DOCKREV_DEMO ?? '').trim().toLowerCase()
-  const appDemoEnabled = demoMode === 'app' || demoMode === 'true' || demoMode === '1'
+  const base = normalizeBasePath(env.DOCKREV_WEB_BASE)
+  const pwaEnabled = !['0', 'false', 'off'].includes((env.DOCKREV_PWA ?? '').trim().toLowerCase())
+  const pwaAsset = (assetPath: string) => `${base}${assetPath}`
 
   return {
+    base,
     plugins: [
-      appDemoSinglePathPlugin(appDemoEnabled),
+      dockrevAppHtmlPlugin(pwaEnabled),
       react(),
       tailwindcss(),
       VitePWA({
+        disable: !pwaEnabled,
+        base,
         strategies: 'injectManifest',
         srcDir: 'src',
         filename: 'sw.ts',
@@ -64,19 +54,19 @@ export default defineConfig(({ mode }) => {
         },
         includeAssets: ['favicon.ico', 'favicon.png', 'apple-touch-icon.png', 'pwa-192.png', 'pwa-512.png'],
         manifest: {
-          id: '/',
+          id: base,
           name: 'Dockrev',
           short_name: 'Dockrev',
           description: 'A calm, exact Docker Compose operations console with offline-first readonly snapshots.',
           theme_color: '#061227',
           background_color: '#061227',
           display: 'standalone',
-          start_url: '/',
-          scope: '/',
+          start_url: base,
+          scope: base,
           icons: [
-            { src: '/pwa-192.png', sizes: '192x192', type: 'image/png' },
-            { src: '/pwa-512.png', sizes: '512x512', type: 'image/png' },
-            { src: '/pwa-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+            { src: pwaAsset('pwa-192.png'), sizes: '192x192', type: 'image/png' },
+            { src: pwaAsset('pwa-512.png'), sizes: '512x512', type: 'image/png' },
+            { src: pwaAsset('pwa-512.png'), sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
           ],
         },
       }),

@@ -39,9 +39,19 @@ export function derivePublicBaseUrlSuggestion(routePathname: string, origin: str
     basePath = normalizedRoutePath
   }
 
-  const pageBasePath = deriveBasePathFromPagePathname(pagePathname)
-  if (normalizedRoutePath === settingsSuffix && pageBasePath && pageBasePath.basePath !== '/' && !pageBasePath.matchesSettingsRoute) {
-    basePath = pageBasePath.basePath
+  const normalizedPagePath = normalizePathname(pagePathname)
+  if (normalizedRoutePath === settingsSuffix && normalizedPagePath.endsWith(settingsSuffix)) {
+    basePath = normalizedPagePath.slice(0, -settingsSuffix.length) || '/'
+  } else {
+    const pageBasePath = deriveBasePathFromPagePathname(pagePathname)
+    if (
+      normalizedRoutePath === settingsSuffix &&
+      pageBasePath &&
+      pageBasePath.basePath !== '/' &&
+      !pageBasePath.matchesSettingsRoute
+    ) {
+      basePath = pageBasePath.basePath
+    }
   }
 
   try {

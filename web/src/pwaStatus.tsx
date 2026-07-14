@@ -15,6 +15,15 @@ export type PwaStatusContextValue = {
 
 const PwaStatusContext = createContext<PwaStatusContextValue | null>(null)
 
+function isPwaEnvEnabled(): boolean {
+  const flag = (import.meta.env.VITE_DOCKREV_PWA ?? '').trim().toLowerCase()
+  return flag !== 'off' && flag !== 'false' && flag !== '0'
+}
+
+export function isPwaRuntimeEnabled(): boolean {
+  return isPwaEnvEnabled()
+}
+
 function buildPwaStatusValue(
   overrides?: Partial<PwaStatusContextValue>,
 ): PwaStatusContextValue {
@@ -35,7 +44,7 @@ function readOnlineStatus(): boolean {
   return navigator.onLine
 }
 
-export function PwaStatusProvider(props: PropsWithChildren) {
+function LivePwaStatusProvider(props: PropsWithChildren) {
   const registrationRef = useRef<ServiceWorkerRegistration | null>(null)
   const [isOnline, setIsOnline] = useState(readOnlineStatus)
   const {
@@ -116,6 +125,17 @@ export function PwaStatusProvider(props: PropsWithChildren) {
   )
 
   return <PwaStatusContext.Provider value={value}>{props.children}</PwaStatusContext.Provider>
+}
+
+export function PwaStatusProvider(props: PropsWithChildren) {
+  if (!isPwaEnvEnabled()) {
+    return (
+      <PwaStatusContext.Provider value={buildPwaStatusValue()}>
+        {props.children}
+      </PwaStatusContext.Provider>
+    )
+  }
+  return <LivePwaStatusProvider {...props} />
 }
 
 export function PwaStatusMockProvider(

@@ -6,6 +6,9 @@ describe('derivePublicBaseUrlSuggestion', () => {
   test('returns the site root for the default settings route', () => {
     expect(derivePublicBaseUrlSuggestion('/settings', 'https://dockrev.ivanli.cc')).toBe('https://dockrev.ivanli.cc/')
     expect(derivePublicBaseUrlSuggestion('/settings/', 'https://dockrev.ivanli.cc')).toBe('https://dockrev.ivanli.cc/')
+    expect(derivePublicBaseUrlSuggestion('/settings', 'https://dockrev.ivanli.cc', '/demo/settings')).toBe(
+      'https://dockrev.ivanli.cc/demo/',
+    )
   })
 
   test('preserves an app base path before the settings segment', () => {

@@ -1,4 +1,5 @@
 import { selfUpgradeBaseUrl } from './runtimeConfig'
+import { stripAppBase, withAppBase } from './appBase'
 
 export type Route =
   | { name: 'overview' }
@@ -34,7 +35,7 @@ export function parseRoute(pathname: string): Route {
   const sup = parseSupervisorMisroute(pathname)
   if (sup) return sup
 
-  const parts = pathname.split('/').filter(Boolean).map(decodeURIComponent)
+  const parts = stripAppBase(pathname).split('/').filter(Boolean).map(decodeURIComponent)
   if (parts.length === 0) return { name: 'overview' }
   if (parts.length === 1 && parts[0] === 'queue') return { name: 'queue' }
   if (parts.length === 2 && parts[0] === 'queue' && parts[1] === 'version-inference') {
@@ -72,41 +73,46 @@ export function parseRoute(pathname: string): Route {
 }
 
 export function href(route: Route): string {
-  switch (route.name) {
-    case 'overview':
-      return '/'
-    case 'queue':
-      return '/queue'
-    case 'job':
-      return `/queue/${encodeURIComponent(route.jobId)}`
-    case 'services':
-      return '/services'
-    case 'cleanup':
-      return '/cleanup'
-    case 'version-inference':
-      return '/queue/version-inference'
-    case 'ghcr-webhooks':
-      return '/queue/ghcr-webhooks'
-    case 'ghcr-webhook-inbox':
-      return '/queue/ghcr-webhook-inbox'
-    case 'ghcr-webhook-registry':
-      return '/settings/ghcr-webhooks'
-    case 'deploy-check':
-      return '/deploy-check'
-    case 'settings':
-      return '/settings'
-    case 'stack':
-      return `/services/${encodeURIComponent(route.stackId)}`
-    case 'service':
-      if (!route.section || route.section === 'overview') {
-        return `/services/${encodeURIComponent(route.stackId)}/${encodeURIComponent(route.serviceId)}`
+  const routePath = (() => {
+    switch (route.name) {
+      case 'overview':
+        return '/'
+      case 'queue':
+        return '/queue'
+      case 'job':
+        return `/queue/${encodeURIComponent(route.jobId)}`
+      case 'services':
+        return '/services'
+      case 'cleanup':
+        return '/cleanup'
+      case 'version-inference':
+        return '/queue/version-inference'
+      case 'ghcr-webhooks':
+        return '/queue/ghcr-webhooks'
+      case 'ghcr-webhook-inbox':
+        return '/queue/ghcr-webhook-inbox'
+      case 'ghcr-webhook-registry':
+        return '/settings/ghcr-webhooks'
+      case 'deploy-check':
+        return '/deploy-check'
+      case 'settings':
+        return '/settings'
+      case 'stack':
+        return `/services/${encodeURIComponent(route.stackId)}`
+      case 'service':
+        if (!route.section || route.section === 'overview') {
+          return `/services/${encodeURIComponent(route.stackId)}/${encodeURIComponent(route.serviceId)}`
+        }
+        return `/services/${encodeURIComponent(route.stackId)}/${encodeURIComponent(route.serviceId)}/${route.section}`
+      case 'supervisor-misroute': {
+        const p = route.basePath.endsWith('/') ? route.basePath : `${route.basePath}/`
+        return p
       }
-      return `/services/${encodeURIComponent(route.stackId)}/${encodeURIComponent(route.serviceId)}/${route.section}`
-    case 'supervisor-misroute': {
-      const p = route.basePath.endsWith('/') ? route.basePath : `${route.basePath}/`
-      return p
     }
-  }
+  })()
+
+  if (route.name === 'supervisor-misroute') return routePath
+  return withAppBase(routePath)
 }
 
 function parseSupervisorMisroute(pathname: string): Route | null {
@@ -130,7 +136,7 @@ function parseSupervisorMisroute(pathname: string): Route | null {
 function currentPathname(): string {
   const hash = window.location.hash
   if (hash.startsWith('#/')) return hash.slice(1)
-  return window.location.pathname
+  return stripAppBase(window.location.pathname)
 }
 
 function shouldUseHashRouting(): boolean {

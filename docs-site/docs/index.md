@@ -22,6 +22,7 @@ Dockrev 是一个自托管的 Docker/Compose 更新管理器，提供自动发�
 - [运维手册](/operations)
 - [集成指南](/integrations)
 - [API 参考（全量接口）](/api-reference)
+- [公开 Demo（产品模拟）](/demo/index.html)
 - [UI 预览（Storybook）](/storybook.html)
 - [故障排查](/troubleshooting)
 - [常见问题](/faq)
@@ -31,7 +32,13 @@ Dockrev 是一个自托管的 Docker/Compose 更新管理器，提供自动发�
 
 - 中文文档入口: [简体中文](/index.html)
 - English docs entry: [English](/en/index.html)
+- 公开 Demo: [Demo](/demo/index.html)
 - UI 预览入口: [Storybook](/storybook.html)
+
+## Demo / Storybook 分工
+
+- Demo：公开产品 surface，复用真实 app routes 与 mock state，可分享深链、可交互假写。
+- Storybook：组件/页面状态 QA surface，不替代产品 demo。
 
 ## 典型使用路径
 

@@ -109,6 +109,8 @@ export function HomepageResourceMetrics(props: {
 export function HomepageSearchForm(props: {
   searchDraft: string
   autoFocus?: boolean
+  ariaLabel?: string
+  placeholder?: string
   onSearchDraftChange: (value: string) => void
   onApplySearch: () => void
   onEscape?: () => void
@@ -123,7 +125,7 @@ export function HomepageSearchForm(props: {
     >
       <div className="homepageOverviewSearchShell">
         <Input
-          aria-label="搜索服务入口"
+          aria-label={props.ariaLabel ?? '搜索服务入口'}
           autoFocus={props.autoFocus}
           className="input homepageOverviewSearchInput"
           name="overview-search"
@@ -131,7 +133,7 @@ export function HomepageSearchForm(props: {
             if (event.key === 'Escape') props.onEscape?.()
           }}
           onChange={(event) => props.onSearchDraftChange(event.target.value)}
-          placeholder="搜索服务入口..."
+          placeholder={props.placeholder ?? '搜索服务入口...'}
           type="search"
           value={props.searchDraft}
         />
