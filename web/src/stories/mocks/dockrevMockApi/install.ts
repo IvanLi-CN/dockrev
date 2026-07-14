@@ -12,27 +12,15 @@ import type {
 } from '../../../api'
 import { isDockrevImageRef } from '../../../runtimeConfig'
 import { serviceRowStatus } from '../../../updateStatus'
-import {
-  buildCleanupMockScanResponse,
-  isCleanupMockScenario,
-  resolveCleanupMockApply,
-  type CleanupMockScenario,
-  type CleanupMockRuntimeState,
-} from '../cleanupMockData'
+import { buildCleanupMockScanResponse, isCleanupMockScenario, resolveCleanupMockApply, type CleanupMockScenario, type CleanupMockRuntimeState } from '../cleanupMockData'
 import type { MockRouteContext } from './context'
 import { buildMockDiscoveryTimeline as buildMockDiscoveryTimelineResponse } from './discoveryTimeline'
 import { buildFixture } from './fixturesMisc'
-import {
-  buildMockGitHubReleaseLocateResponse,
-  buildMockGitHubReleasesResponse,
-} from './githubReleases'
+import { buildMockGitHubReleaseLocateResponse, buildMockGitHubReleasesResponse } from './githubReleases'
 import { handleGhcrRoutes } from './handlers/ghcr'
 import { handleServiceStateRoutes } from './handlers/serviceState'
 import { applyRollbackTargetRaceAfterUpdate, maybeServeRollbackTargetRaceResponse, type RollbackTargetRaceState } from './rollbackRace'
-import type {
-  DockrevApiScenario,
-  DockrevMockApiOptions,
-} from './shared'
+import type { DockrevApiScenario, DockrevMockApiOptions } from './shared'
 import {
   MockEventSource,
   buildResourceHistorySamples,
