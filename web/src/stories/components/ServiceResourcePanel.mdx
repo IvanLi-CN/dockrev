@@ -9,7 +9,7 @@ import * as ServiceResourcePanelStories from './ServiceResourcePanel.stories'
 
 ## 关注点
 - 顶部 Hero 会展示实时状态 badge、窗口/样本/最近更新时间 facts。
-- `Tabs` 负责 CPU / 内存 / 网络 / 磁盘 I/O / PIDs 的指标切换，`ToggleGroup` 负责 15m / 1h / 6h 时间窗口。
+- `Tabs` 负责 CPU / 内存 / 网络 / 磁盘 I/O / PIDs 的指标切换，`ToggleGroup` 负责 3m / 1h / 24h 时间窗口。
 - CPU、内存、网络与磁盘 I/O 将每个原始样本保持到下一次采样，使用 right-continuous 阶梯表达变化；连续指标仅在阶梯拐角加极小圆角，不平均数值、不生成斜线。PIDs 保持严格直角阶梯。
 - 单序列保留弱面积辅助趋势扫读，双序列维持纯线；每条曲线保留最新样本锚点。
 - Story 使用 mock API，覆盖默认、空数据、监控关闭、流错误、离线缓存只读态，以及高波动与缺口数据。

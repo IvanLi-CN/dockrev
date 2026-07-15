@@ -24,6 +24,13 @@ function metricTab(root: ParentNode, label: string): HTMLButtonElement | null {
   return Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.trim() === label) ?? null
 }
 
+function windowButton(root: ParentNode, label: string): HTMLButtonElement | null {
+  return Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find((button) => {
+    const text = button.textContent?.replace(/\s+/g, ' ').trim() ?? ''
+    return text === label
+  }) ?? null
+}
+
 function tick(): Promise<void> {
   return new Promise((resolve) => window.requestAnimationFrame(() => resolve()))
 }
@@ -172,5 +179,28 @@ export const HighVariationCurves: Story = {
     const networkPaths = Array.from(canvasElement.querySelectorAll<SVGPathElement>('.svcResourceLine')).map((path) => path.getAttribute('d') ?? '')
     expectStory(networkPaths.length === 2 && networkPaths.every((path) => path.includes(' H ') && path.includes(' V ') && path.includes(' Q ') && !path.includes(' C ')), 'network RX and TX should retain sampled plateaus with subtly rounded transitions')
     expectStory(canvasElement.querySelectorAll('.svcResourceArea').length === 0, 'dual-series network chart should not render an area fill')
+  },
+}
+
+export const WindowSwitchContract: Story = {
+  parameters: { dockrevApiScenario: 'default' },
+  play: async ({ canvasElement }) => {
+    const labels = ['3m', '1h', '24h'] as const
+    for (const label of labels) {
+      const button = windowButton(canvasElement, label)
+      expectStory(button, `${label} window button should be visible`)
+    }
+
+    const button24h = windowButton(canvasElement, '24h')
+    expectStory(button24h, '24h window button should be available')
+    button24h.click()
+    await tick()
+    expectStory(button24h.getAttribute('data-state') === 'on', '24h window button should become active')
+
+    const button3m = windowButton(canvasElement, '3m')
+    expectStory(button3m, '3m window button should be available')
+    button3m.click()
+    await tick()
+    expectStory(button3m.getAttribute('data-state') === 'on', '3m window button should become active')
   },
 }

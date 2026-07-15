@@ -93,7 +93,7 @@ Rules:
 - `candidate`, `ignore`, `versionInference`, `newVersionDiscoveryCount`, `settings`, and `archived` preserve the same semantics used by existing service detail and update status logic.
 - This endpoint is additive. Existing `/api/stacks*` consumers remain compatible.
 
-## `GET /api/services/resource-usage/overview?window=15m|1h|6h`
+## `GET /api/services/resource-usage/overview?window=3m|1h|24h`
 
 Returns the latest resource summary for active services.
 

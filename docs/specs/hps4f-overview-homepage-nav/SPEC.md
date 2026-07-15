@@ -4,7 +4,7 @@
 
 - Status: In progress
 - Created: 2026-04-13
-- Last: 2026-06-27
+- Last: 2026-07-15
 
 ## 背景 / 问题陈述
 
@@ -79,6 +79,7 @@
 - live payload 如果最终为空，首页必须接受“当前没有可展示的服务入口”这一真实结果，不能错误回退旧缓存。
 - `service_resource_latest_samples` 必须由资源采样写入路径同步 upsert，保存最新样本和上一条网络计数与时间。
 - `/api/services/resource-usage/overview` 与 `/api/homepage/nav` 都必须从 latest 表读取，而不是在请求时扫描 `service_resource_samples` 历史大表。
+- 共享 `GET /api/services/resource-usage/overview` window contract 必须与服务详情资源监控保持一致，接受 `3m/1h/24h`；首页 `/api/homepage/nav` 自身仍固定以 `1h` 摘要语义构建 `resourceSummary`。
 - SQLite 初始化必须在应用启动时固定执行：
   - `PRAGMA foreign_keys = ON`
   - `PRAGMA journal_mode = WAL`

@@ -29,9 +29,9 @@ type ChartSeries = {
 type RatePair = { rx: number | null; tx: number | null }
 
 const WINDOW_OPTIONS: Array<{ key: ServiceResourceUsageWindow; label: string; seconds: number }> = [
-  { key: '15m', label: '15m', seconds: 15 * 60 },
+  { key: '3m', label: '3m', seconds: 3 * 60 },
   { key: '1h', label: '1h', seconds: 60 * 60 },
-  { key: '6h', label: '6h', seconds: 6 * 60 * 60 },
+  { key: '24h', label: '24h', seconds: 24 * 60 * 60 },
 ]
 
 const WINDOW_SECONDS = WINDOW_OPTIONS.reduce<Record<ServiceResourceUsageWindow, number>>(
@@ -39,7 +39,7 @@ const WINDOW_SECONDS = WINDOW_OPTIONS.reduce<Record<ServiceResourceUsageWindow, 
     acc[item.key] = item.seconds
     return acc
   },
-  { '15m': 15 * 60, '1h': 60 * 60, '6h': 6 * 60 * 60 },
+  { '3m': 3 * 60, '1h': 60 * 60, '24h': 24 * 60 * 60 },
 )
 
 const TAB_OPTIONS: Array<{ key: MetricTabKey; label: string }> = [
@@ -51,9 +51,9 @@ const TAB_OPTIONS: Array<{ key: MetricTabKey; label: string }> = [
 ]
 
 const WINDOW_META_LABELS: Record<ServiceResourceUsageWindow, string> = {
-  '15m': '最近 15 分钟',
+  '3m': '最近 3 分钟',
   '1h': '最近 1 小时',
-  '6h': '最近 6 小时',
+  '24h': '最近 24 小时',
 }
 
 const METRIC_PANEL_COPY: Record<

@@ -522,7 +522,7 @@ async fn put_settings(
         merged_resource_monitor.sample_interval_seconds,
     ) {
         return Err(ApiError::invalid_argument(
-            "resourceMonitor.sampleIntervalSeconds must be one of 10/30/60/300",
+            "resourceMonitor.sampleIntervalSeconds must be one of 5/10/30/60/300",
         ));
     }
     merged_resource_monitor.retention_days = resource_usage::RESOURCE_MONITOR_RETENTION_DAYS;

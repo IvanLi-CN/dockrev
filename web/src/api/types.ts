@@ -621,7 +621,7 @@ export type SettingsResponse = {
   }
   resourceMonitor: {
     enabled: boolean
-    sampleIntervalSeconds: 10 | 30 | 60 | 300
+    sampleIntervalSeconds: 5 | 10 | 30 | 60 | 300
     retentionDays: number
   }
   schedules: {
@@ -660,7 +660,7 @@ export type PutSettingsInput = {
   backup: SettingsResponse['backup']
   resourceMonitor?: {
     enabled: boolean
-    sampleIntervalSeconds: 10 | 30 | 60 | 300
+    sampleIntervalSeconds: 5 | 10 | 30 | 60 | 300
   }
   schedules?: {
     updateCheck?: { enabled: boolean; cron: string }
@@ -682,7 +682,7 @@ export type PutSettingsInput = {
 
 export type ReleaseNotesView = 'original' | 'translated' | 'smart'
 
-export type ServiceResourceUsageWindow = '15m' | '1h' | '6h'
+export type ServiceResourceUsageWindow = '3m' | '1h' | '24h'
 
 export type ServiceResourceSample = {
   sampledAt: string

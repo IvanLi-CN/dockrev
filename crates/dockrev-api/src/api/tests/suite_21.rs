@@ -214,7 +214,7 @@ services:
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/api/services/resource-usage/overview?window=15m")
+                .uri("/api/services/resource-usage/overview?window=3m")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -227,7 +227,7 @@ services:
         .iter()
         .find(|row| row["serviceId"].as_str() == Some(web_id.as_str()))
         .unwrap();
-    assert_eq!(web["sampleCount"].as_u64(), Some(2));
+    assert_eq!(web["sampleCount"].as_u64(), Some(0));
     let worker = rows
         .iter()
         .find(|row| row["serviceId"].as_str() == Some(worker_id.as_str()))
@@ -473,7 +473,7 @@ services:
             },
             crate::db::ServiceResourceSampleInput {
                 service_id: web_id.clone(),
-                sampled_at: test_offset_from_now_rfc3339(time::Duration::minutes(-5)),
+                sampled_at: test_offset_from_now_rfc3339(time::Duration::minutes(-2)),
                 cpu_percent: 12.0,
                 mem_used_bytes: Some(120),
                 mem_limit_bytes: Some(200),
@@ -492,7 +492,7 @@ services:
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/api/services/resource-usage/overview?window=15m")
+                .uri("/api/services/resource-usage/overview?window=3m")
                 .body(Body::empty())
                 .unwrap(),
         )

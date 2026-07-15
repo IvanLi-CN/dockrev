@@ -35,7 +35,7 @@ async fn settings_and_notifications_roundtrip() {
     assert_eq!(settings["resourceMonitor"]["enabled"].as_bool(), Some(true));
     assert_eq!(
         settings["resourceMonitor"]["sampleIntervalSeconds"].as_u64(),
-        Some(10)
+        Some(5)
     );
     assert_eq!(
         settings["resourceMonitor"]["retentionDays"].as_u64(),

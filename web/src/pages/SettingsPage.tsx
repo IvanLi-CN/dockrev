@@ -323,13 +323,14 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                   disabled={busy || !settings.resourceMonitor.enabled}
                   onChange={(value) => {
                     const next = Number(value)
-                    if (![10, 30, 60, 300].includes(next)) return
+                    if (![5, 10, 30, 60, 300].includes(next)) return
                     updateResourceMonitor('settings.resourceMonitor.sampleIntervalSeconds', (current) => ({
                       ...current,
-                      sampleIntervalSeconds: next as 10 | 30 | 60 | 300,
+                      sampleIntervalSeconds: next as 5 | 10 | 30 | 60 | 300,
                     }))
                   }}
                   options={[
+                    { value: '5', label: '5 秒' },
                     { value: '10', label: '10 秒' },
                     { value: '30', label: '30 秒' },
                     { value: '60', label: '60 秒' },
