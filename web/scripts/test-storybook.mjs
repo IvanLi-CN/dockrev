@@ -338,6 +338,65 @@ async function assertGroupGuideAligned(page, label) {
   }
 }
 
+async function assertServiceOperationHistoryColumnsAligned(page, label) {
+  await page.locator(".serviceOperationHistoryRow").first().waitFor({
+    timeout: 10_000,
+  });
+
+  const layout = await page.evaluate(() => {
+    const selectors = [
+      ".serviceOperationHistoryOperation",
+      ".serviceOperationHistoryStatus",
+      ".serviceOperationHistoryBackup",
+      ".serviceOperationHistorySource",
+      ".serviceOperationHistoryTime",
+      ".serviceOperationHistoryAction",
+    ];
+
+    const rows = Array.from(document.querySelectorAll(".serviceOperationHistoryRow")).map(
+      (row) =>
+        selectors.map((selector) => {
+          const cell = row.querySelector(selector);
+          if (!cell) return null;
+          const rect = cell.getBoundingClientRect();
+          return { left: rect.left, width: rect.width };
+        }),
+    );
+
+    return { rows };
+  });
+
+  if (layout.rows.length < 2) {
+    throw new Error(
+      `Expected at least 2 history rows${label ? ` (${label})` : ""}, got ${layout.rows.length}.`,
+    );
+  }
+
+  const baseline = layout.rows[0];
+  for (let rowIndex = 1; rowIndex < layout.rows.length; rowIndex += 1) {
+    const row = layout.rows[rowIndex];
+    if (row.some((cell) => !cell)) {
+      throw new Error(
+        `Missing history cell${label ? ` (${label})` : ""} in row ${rowIndex + 1}.`,
+      );
+    }
+    for (let columnIndex = 0; columnIndex < baseline.length; columnIndex += 1) {
+      const baselineCell = baseline[columnIndex];
+      const cell = row[columnIndex];
+      if (!approxEqual(cell.left, baselineCell.left, 1)) {
+        throw new Error(
+          `History column left drift${label ? ` (${label})` : ""}: row=${rowIndex + 1}, column=${columnIndex + 1}, actual=${cell.left}, expected=${baselineCell.left}.`,
+        );
+      }
+      if (!approxEqual(cell.width, baselineCell.width, 1)) {
+        throw new Error(
+          `History column width drift${label ? ` (${label})` : ""}: row=${rowIndex + 1}, column=${columnIndex + 1}, actual=${cell.width}, expected=${baselineCell.width}.`,
+        );
+      }
+    }
+  }
+}
+
 async function runSmoke({ baseUrl, storyIds, browser }) {
   if (storyIds.length === 0) {
     throw new Error(
@@ -1453,6 +1512,21 @@ async function runInteractive({ baseUrl, browser }) {
         },
         null,
         { timeout: 10_000 },
+      );
+    } finally {
+      await page.close().catch(() => {});
+    }
+  }
+
+  // 5g) Service detail page: update history desktop columns must stay aligned even when one row exposes the rollback action.
+  {
+    const page = await openStory(
+      "pages-servicedetailpage--update-history-section-evidence",
+    );
+    try {
+      await assertServiceOperationHistoryColumnsAligned(
+        page,
+        "pages-servicedetailpage--update-history-section-evidence",
       );
     } finally {
       await page.close().catch(() => {});

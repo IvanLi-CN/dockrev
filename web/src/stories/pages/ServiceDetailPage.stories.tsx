@@ -3,6 +3,7 @@ import { ServiceDetailPage } from "../../pages/ServiceDetailPage";
 import { currentRoutePathname, type Route } from "../../routes";
 import { PageHarness } from "../mocks/PageHarness";
 import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
+import { expectHistoryColumnsAligned } from "./serviceDetailHistoryAssertions";
 import {
   buildLongLogsSnapshot,
   buildMultilineLogsSnapshot,
@@ -162,6 +163,7 @@ export const UpdateHistorySection: Story = {
     expectStory(rows.length === 5, "history should include all matching update and rollback jobs only");
     expectStory(normalizeText(rows[0]?.textContent).includes("job-all-api-5-2-4"), "history should sort newest jobs first");
     expectStory(rows.some((row) => normalizeText(row.textContent).includes("回滚") && normalizeText(row.textContent).includes("已回滚")), "rollback record should be rendered in the shared table");
+    expectHistoryColumnsAligned(canvasElement);
     const failedRow = rows.find((row) => normalizeText(row.textContent).includes("job-stack-prod-batch"));
     expectStory(failedRow?.classList.contains("serviceOperationHistoryRowFailed"), "failed history row should be visually de-emphasized");
     expectStory(getComputedStyle(failedRow?.querySelector(".serviceOperationHistoryStatus") ?? canvasElement).opacity === "1", "failed history status must retain full visual prominence");
@@ -201,6 +203,7 @@ export const UpdateHistorySectionEvidence: Story = {
     expectStory(canvasElement.querySelector(".appShell")?.classList.contains("appShellSidebarCollapsed"), "history evidence should render with the primary sidebar collapsed");
     expectStory(findTab(canvasElement, "history")?.getAttribute("data-state") === "active", "history tab should be active");
     expectStory(Boolean(canvasElement.querySelector('[data-service-operation-action="rollback"]')), "history evidence should expose the current rollback action");
+    expectHistoryColumnsAligned(canvasElement);
     expectStory(canvasElement.querySelector(".serviceOperationHistoryRowFailed")?.textContent?.includes("job-stack-prod-batch"), "history evidence should retain the de-emphasized failed row");
     expectStory(getComputedStyle(canvasElement.querySelector(".serviceOperationHistoryRowFailed .serviceOperationHistoryStatus") ?? canvasElement).opacity === "1", "history evidence must retain failed status prominence");
     expectStory(

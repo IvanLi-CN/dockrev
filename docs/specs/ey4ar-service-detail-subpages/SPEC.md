@@ -69,7 +69,7 @@
 - `预览更新 / 执行更新 / 回滚 / Stack 详情` 必须在各子页保持一致可达；`归档/恢复` 与 `阻止此服务更新` 必须从全局顶部动作下沉到 `设置` 页。
 - `概览` 不得再出现资源监控卡、自动更新结果卡、Compose 信息卡或服务保护卡。
 - `更新记录` 必须复用 `GET /api/jobs` 全量数据，只展示当前服务关联的 `update` 与 `rollback` 任务；服务、Stack 和 all scope 任务均以 `serviceId` 或 summary targets 关联判断，按 `finishedAt ?? startedAt ?? createdAt` 倒序排列。
-- `更新记录` 必须使用记录、状态、备份、来源、时间、操作六列；记录列严格限制为两行：首行操作名与异常或回滚结果摘要，次行 Job ID，摘要必须单行截断，不得出现第三行。`备份` 列也必须固定为两行：首行显示本次实际纳入备份的目标数量，次行显示这些 included targets 的源目标总体积；当任务没有匹配的实际备份记录、匹配记录没有 included targets，或 included targets 存在缺失体积时，必须回退到中性空占位，不得误报“未备份”“失败”或“已跳过”。与操作类型或状态重复的泛化摘要（如“更新完成”“回滚完成”“任务执行失败”）不得显示；仅保留额外诊断结果。整行支持 click、Enter、Space 进入 `/queue/:jobId`。失败任务的非状态列必须弱化显示，但状态列必须保持完整失败 Badge 的颜色和对比度，且仍保留 hover/focus 定位与行级跳转。记录能可靠解析当前服务的目标 tag（`targetDisplayTag`、`targetTag` 或服务 target 的 `to`）时，操作列必须提供更新日志图标入口，打开既有右侧 release drawer 并定位、高亮对应版本；无可靠 tag 时不得显示误导入口。仅当成功更新任务是当前服务可回滚目标的来源任务时，操作列显示回滚入口；该入口复用服务级回滚确认、鉴权与并发保护，不得声称可回滚到任意历史版本。匹配记录超过 20 条时，前端必须只渲染当前页，并提供带页码状态的上一页/下一页箭头；页码越界时回退到有效页。分页不改变既有全量 jobs 请求或 SSE 合同。
+- `更新记录` 必须使用记录、状态、备份、来源、时间、操作六列；记录列严格限制为两行：首行操作名与异常或回滚结果摘要，次行 Job ID，摘要必须单行截断，不得出现第三行。`备份` 列也必须固定为两行：首行显示本次实际纳入备份的目标数量，次行显示这些 included targets 的源目标总体积；当任务没有匹配的实际备份记录、匹配记录没有 included targets，或 included targets 存在缺失体积时，必须回退到中性空占位，不得误报“未备份”“失败”或“已跳过”。与操作类型或状态重复的泛化摘要（如“更新完成”“回滚完成”“任务执行失败”）不得显示；仅保留额外诊断结果。桌面端六列表格必须共享稳定列轨道；即使只有部分行出现更新日志按钮或回滚按钮，表头与所有数据行的列边界也不得漂移、挤压或错列。整行支持 click、Enter、Space 进入 `/queue/:jobId`。失败任务的非状态列必须弱化显示，但状态列必须保持完整失败 Badge 的颜色和对比度，且仍保留 hover/focus 定位与行级跳转。记录能可靠解析当前服务的目标 tag（`targetDisplayTag`、`targetTag` 或服务 target 的 `to`）时，操作列必须提供更新日志图标入口，打开既有右侧 release drawer 并定位、高亮对应版本；无可靠 tag 时不得显示误导入口。仅当成功更新任务是当前服务可回滚目标的来源任务时，操作列显示回滚入口；该入口复用服务级回滚确认、鉴权与并发保护，不得声称可回滚到任意历史版本。匹配记录超过 20 条时，前端必须只渲染当前页，并提供带页码状态的上一页/下一页箭头；页码越界时回退到有效页。分页不改变既有全量 jobs 请求或 SSE 合同。
 - `更新记录` 激活且在线时必须复用全局 jobs SSE；事件 250ms 去抖刷新，连续三次错误后每 10 秒轮询、3 秒后重连，连接恢复立即停止轮询；切离 section 或卸载时清理订阅和计时器。
 - `监控` 只承载资源监控面板及其原有空态/错态/SSE 状态，不得混入配置内容。
 - `备份` 必须集中承载服务级备份摘要卡、备份设置抽屉入口，以及“当前服务相关”的备份记录卡片列表。
@@ -289,6 +289,21 @@
   PR caption: 更新记录表新增备份列，并同时覆盖有值摘要与空占位。
 
 ![服务详情更新记录子页桌面备份列摘要](./assets/service-detail-update-history-desktop-backup-column.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `2048x1221`
+  viewport_strategy: `controlled-viewport`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/UpdateHistorySectionEvidence`
+  state: `desktop update history columns stay aligned with rollback action`
+  evidence_note: 页面级截图直接验证桌面端 `记录 / 状态 / 备份 / 来源 / 时间 / 操作` 六列在带回滚按钮的行上仍与其它行共享同一套列轨道；`回滚` 按钮出现时不会把其它列压窄，也不会让表头和下方记录错位。
+  PR: include
+  PR caption: 更新记录桌面六列表格在出现回滚按钮时仍保持列对齐。
+
+![服务详情更新记录子页桌面列对齐](./assets/service-detail-update-history-desktop-columns-aligned.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`
