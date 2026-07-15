@@ -655,19 +655,22 @@ export const MobileVersionsSection: Story = {
       },
     },
   },
-  render: render("stack-prod", "svc-prod-api", "versions", "移动端版本卡切换为单列堆叠，不出现横向滚动。"),
+  render: render("stack-prod", "svc-prod-api", "versions", "移动端版本卡收紧元信息栅格，不把右侧空间白白空出来。"),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => Boolean(findVersionCard(canvasElement, "5.2.1")));
     const card = findVersionCard(canvasElement, "5.2.1");
+    const factsGrid = card?.querySelector<HTMLElement>(".serviceVersionFacts");
     await waitForCondition(() => visibleVersionCards(canvasElement).length >= 2);
     const [firstVisibleCard, secondVisibleCard] = visibleVersionCards(canvasElement).sort(
       (left, right) => left.getBoundingClientRect().top - right.getBoundingClientRect().top,
     );
     const gridColumns = getComputedStyle(card ?? canvasElement).gridTemplateColumns.split(" ").filter(Boolean);
+    const factsColumns = getComputedStyle(factsGrid ?? canvasElement).gridTemplateColumns.split(" ").filter(Boolean);
     const primaryButton = findVersionAction(canvasElement, "update", "5.2.3");
 
     expectStory(findTab(canvasElement, "versions")?.getAttribute("data-state") === "active", "mobile versions tab should stay active");
     expectStory(gridColumns.length === 1, "mobile versions cards should collapse into a single-column layout");
+    expectStory(factsColumns.length === 2, "mobile versions metadata should stay in a compact two-column facts grid");
     expectStory(Boolean(primaryButton), "mobile versions card should keep the action region");
     expectStory(card?.scrollWidth != null && card.clientWidth > 0 && card.scrollWidth <= card.clientWidth + 1, "mobile versions cards should not overflow horizontally");
     expectStory((primaryButton?.getBoundingClientRect().width ?? 0) > 160, "mobile versions actions should expand to a readable tap target width");
