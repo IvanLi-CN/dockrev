@@ -12568,7 +12568,7 @@ html[data-theme="light"] .btnPrimary {
 
 .homepageToolFloatBody {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   padding: 12px;
 }
 
@@ -12578,41 +12578,46 @@ html[data-theme="light"] .btnPrimary {
   min-width: 0;
 }
 
-.homepageToolFloatSearchSlot .homepageOverviewSearchForm {
-  min-width: 0;
-}
-
-.homepageToolFloatSearchSlot .homepageOverviewSearchShell {
-  min-height: 38px;
-  height: 38px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--homepage-tool-surface-strong) 92%, transparent);
-}
-
-.homepageToolFloatSearchSlot .homepageOverviewSearchInput {
-  height: 36px;
-  padding: 0 12px;
-}
-
-.homepageToolFloatMetrics {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.homepageToolActionGrid {
+  display: grid;
+  grid-template-columns: 1fr;
   gap: 8px;
 }
 
-.homepageToolFloatMetrics .homepageTopMetric {
+.homepageToolActionGridCompact {
+  grid-template-columns: 1fr;
+}
+
+.homepageToolActionButton {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 54px;
+  gap: 4px;
+  justify-content: flex-start;
+  align-items: flex-start;
+  text-align: left;
+  padding: 10px 12px;
+  white-space: normal;
+}
+
+.homepageToolActionButton .btnInlineLoading,
+.homepageToolActionButton > span:first-child {
+  font-weight: 650;
+}
+
+.homepageToolActionButton > span {
+  display: block;
+  width: 100%;
   min-width: 0;
-  border: 1px solid color-mix(in srgb, var(--homepage-tool-line) 88%, transparent);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--homepage-tool-surface-strong) 88%, transparent);
-  padding: 8px 9px;
+  overflow-wrap: anywhere;
 }
 
-.homepageToolFloatMetrics .homepageTopMetricValue {
-  font-size: 12px;
-}
-
-.homepageToolFloatMetrics .homepageTopMetricLabel {
-  font-size: 10px;
+.homepageToolActionNote {
+  color: var(--muted2);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: normal;
 }
 
 .homepageToolFloatHint {

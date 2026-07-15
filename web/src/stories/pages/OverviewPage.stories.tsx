@@ -51,9 +51,15 @@ function dispatchPointer(target: EventTarget, type: string, init: PointerEventIn
   );
 }
 
-function renderOverview(): Story["render"] {
+function renderOverview(options?: {
+  runtimeMode?: "app-demo";
+}): Story["render"] {
   return () => (
-    <PageHarness route={{ name: "overview" }} title="">
+    <PageHarness
+      route={{ name: "overview" }}
+      title=""
+      runtimeMode={options?.runtimeMode ?? null}
+    >
       {({
         onLastScanHint,
         onMobileNavContent,
@@ -177,38 +183,13 @@ export const Default: Story = {
       "expected current time to stay out of the global shell header",
     );
     expectStory(
-      !canvasElement.querySelector(".sidebar .homepageSidebarToolPanel"),
-      "expected overview tools panel to leave the left navigation and render as a floating window",
+      canvasElement.ownerDocument.querySelector(".sidebar .homepageSidebarClock"),
+      "expected the production overview shell to keep the current time in the left sidebar",
     );
     expectStory(
-      canvasElement.querySelector(".homepageToolFloatWindow .homepageToolFloatTitle")
-        ?.textContent === "工具面板",
-      "expected overview floating tools panel to expose the visible title",
-    );
-    expectStory(
-      canvasElement.querySelector(".homepageToolFloatWindow .homepageToolFloatSearchSlot .homepageOverviewSearchShell"),
-      "expected overview floating tools panel to keep a desktop search entry",
-    );
-    expectStory(
-      canvasElement.querySelectorAll(".homepageToolFloatWindow .homepageToolFloatMetrics .homepageTopMetric").length ===
-        4,
-      "expected overview floating tools panel to expose four resource metrics",
-    );
-    expectStory(
-      canvasElement.querySelector(".homepageToolFloatWindow .homepageSidebarClock"),
-      "expected overview floating tools panel to render the compact current time block",
-    );
-    expectStory(
-      canvasElement.querySelector('input[type="search"][aria-label="工具面板搜索服务入口"]'),
-      "expected overview floating tools panel search to expose a dedicated accessible label",
-    );
-    expectStory(
-      !canvasElement.querySelector(".homepageToolFloatDock"),
-      "expected overview floating tools panel to drop the old dock badge and rely on the bubble state instead",
-    );
-    expectStory(
-      !canvasElement.querySelector(".homepageToolBubble"),
-      "expected overview floating tools panel to start expanded instead of hidden as a bubble",
+      !canvasElement.querySelector(".homepageToolFloatWindow") &&
+        !canvasElement.querySelector(".homepageToolBubble"),
+      "expected the production overview shell to keep the demo-only floating tools UI out of the page",
     );
     expectStory(
       !canvasElement.querySelector(".homepageOverviewSearchButton"),
@@ -217,124 +198,6 @@ export const Default: Story = {
     expectStory(
       canvasElement.querySelector(".topActions")?.textContent?.includes("运维大盘") !== true,
       "expected overview top actions to omit the redundant operations dashboard shortcut",
-    );
-
-    const floatWindow = canvasElement.querySelector<HTMLElement>(".homepageToolFloatWindow");
-    const floatHead = canvasElement.querySelector<HTMLElement>(".homepageToolFloatHead");
-    const contentHost = canvasElement.ownerDocument.querySelector<HTMLElement>(".content.overlayScrollArea");
-    const viewportHost = canvasElement.ownerDocument.documentElement;
-    expectStory(floatWindow, "expected overview floating tools panel to render");
-    expectStory(floatHead, "expected overview floating tools panel to expose a drag handle");
-    expectStory(contentHost, "expected overview story to mount inside the shell content viewport");
-    expectStory(viewportHost, "expected overview story to expose a viewport root for edge snapping");
-    expectStory(
-      canvasElement
-        .querySelector('button[aria-label="收起"] svg')
-        ?.classList.contains("lucide-chevron-right"),
-      "expected the collapse icon to point toward the right-edge bubble while the floating window rests near the right edge",
-    );
-
-    const before = floatWindow?.getBoundingClientRect();
-    const hostRect = viewportHost?.getBoundingClientRect();
-    if (before && hostRect && floatHead) {
-      dispatchPointer(floatHead, "pointerdown", {
-        pointerId: 11,
-        button: 0,
-        buttons: 1,
-        clientX: before.left + 28,
-        clientY: before.top + 20,
-      });
-      dispatchPointer(window, "pointermove", {
-        pointerId: 11,
-        button: 0,
-        buttons: 1,
-        clientX: hostRect.left + 18,
-        clientY: before.top + 36,
-      });
-      dispatchPointer(window, "pointerup", {
-        pointerId: 11,
-        button: 0,
-        buttons: 0,
-        clientX: hostRect.left + 18,
-        clientY: before.top + 36,
-      });
-      await sleep(220);
-      expectStory(
-        canvasElement.querySelector(".homepageToolFloatWindow"),
-        "expected overview floating tools panel to stay expanded after dragging to the page edge",
-      );
-      expectStory(
-        !canvasElement.querySelector(".homepageToolBubble"),
-        "expected overview floating tools panel to avoid auto-collapsing into a bubble when dragged to the edge",
-      );
-    }
-    expectStory(
-      canvasElement
-        .querySelector('button[aria-label="收起"] svg')
-        ?.classList.contains("lucide-chevron-left"),
-      "expected the collapse icon to point toward the left-edge bubble once the floating window is dragged near the left edge",
-    );
-
-    const collapseButton = canvasElement.querySelector<HTMLButtonElement>('button[aria-label="收起"]');
-    const collapseButtonBox = collapseButton?.getBoundingClientRect() ?? null;
-    collapseButton?.click();
-    await sleep(180);
-    expectStory(
-      !canvasElement.querySelector(".homepageToolFloatWindow"),
-      "expected overview floating tools panel to collapse into a bubble",
-    );
-    const bubble = canvasElement.querySelector<HTMLElement>(".homepageToolBubble");
-    const bubbleBox = bubble?.getBoundingClientRect() ?? null;
-    if (collapseButtonBox && bubbleBox) {
-      const bubbleCenterY = bubbleBox.top + bubbleBox.height / 2;
-      const buttonCenterY = collapseButtonBox.top + collapseButtonBox.height / 2;
-      expectStory(
-        Math.abs(bubbleCenterY - buttonCenterY) <= 8,
-        "expected the collapsed bubble to align vertically to the collapse button position",
-      );
-    }
-    const draggableBubble = canvasElement.querySelector<HTMLElement>(".homepageToolBubbleButton");
-    if (bubbleBox && hostRect && draggableBubble) {
-      dispatchPointer(draggableBubble, "pointerdown", {
-        pointerId: 12,
-        button: 0,
-        buttons: 1,
-        clientX: bubbleBox.left + 14,
-        clientY: bubbleBox.top + bubbleBox.height / 2,
-      });
-      dispatchPointer(window, "pointermove", {
-        pointerId: 12,
-        button: 0,
-        buttons: 1,
-        clientX: hostRect.right - 18,
-        clientY: bubbleBox.top + bubbleBox.height / 2,
-      });
-      dispatchPointer(window, "pointerup", {
-        pointerId: 12,
-        button: 0,
-        buttons: 0,
-        clientX: hostRect.right - 18,
-        clientY: bubbleBox.top + bubbleBox.height / 2,
-      });
-      await sleep(220);
-      expectStory(
-        canvasElement.querySelector(".homepageToolBubble")?.getAttribute("data-side") === "right",
-        "expected the collapsed bubble to support dragging and auto-snap back onto the nearest right edge",
-      );
-    }
-    const bubbleButton = canvasElement.querySelector<HTMLButtonElement>(".homepageToolBubbleButton");
-    expectStory(bubbleButton, "expected overview floating tools panel to expose a collapsed bubble trigger");
-    bubbleButton?.click();
-    await sleep(180);
-    expectStory(
-      canvasElement.querySelector(".homepageToolFloatWindow") && !canvasElement.querySelector(".homepageToolBubble"),
-      "expected overview floating tools bubble to expand back into the full tool window",
-    );
-    expectStory(
-      canvasElement
-        .querySelector('button[aria-label="收起"] svg')
-        ?.classList.contains("lucide-chevron-right"),
-      "expected the collapse icon to flip back toward the right once the bubble is dragged onto the right edge and reopened",
     );
 
     const groups = Array.from(
@@ -393,6 +256,169 @@ export const Default: Story = {
     expectStory(
       document.body.textContent?.includes("目标 digest"),
       "homepage update confirmation should show the target digest",
+    );
+  },
+};
+
+export const PublicDemoControlPanel: Story = {
+  parameters: {
+    dockrevApiScenario: "dashboard-demo",
+    dockrevServiceOverridesById: defaultHomepageOverrides(),
+    docs: {
+      description: {
+        story:
+          "Use the demo runtime marker to verify the floating demo-only control panel that belongs only to the public /demo/ surface.",
+      },
+    },
+  },
+  render: renderOverview({ runtimeMode: "app-demo" }),
+  play: async ({ canvasElement }) => {
+    await sleep(260);
+
+    expectStory(
+      !canvasElement.ownerDocument.querySelector(".sidebar .homepageSidebarClock"),
+      "expected the demo overview shell to move time out of the left sidebar",
+    );
+    expectStory(
+      canvasElement.querySelector(".homepageToolFloatWindow .homepageToolFloatTitle")
+        ?.textContent === "Demo 控制面板",
+      "expected the public demo control panel to expose the visible title",
+    );
+    expectStory(
+      canvasElement.querySelector(".homepageToolFloatWindow .homepageToolFloatEyebrow")
+        ?.textContent === "Public Demo",
+      "expected the public demo control panel to advertise the demo runtime explicitly",
+    );
+    expectStory(
+      !canvasElement.querySelector(".homepageToolFloatMetrics") &&
+        !canvasElement.textContent?.includes("Demo Runtime"),
+      "expected the public demo control panel to remove the low-value runtime status block",
+    );
+    expectStory(
+      !canvasElement.querySelector(".homepageToolFloatSearchSlot") &&
+        !canvasElement.querySelector(".homepageSidebarClock"),
+      "expected the public demo control panel to remove unrelated search and clock content",
+    );
+    expectStory(
+      !canvasElement.querySelector(".homepageToolFloatDock"),
+      "expected the public demo control panel to keep the old dock badge removed",
+    );
+    expectStory(
+      !canvasElement.querySelector(".homepageToolBubble"),
+      "expected the public demo control panel to start expanded instead of hidden as a bubble",
+    );
+    expectStory(
+      canvasElement.textContent?.includes("GHCR 假写") &&
+        canvasElement.textContent?.includes("Cleanup 假写") &&
+        canvasElement.textContent?.includes("重置 Seed"),
+      "expected the public demo control panel to expose demo route and session controls",
+    );
+    expectStory(
+      canvasElement.textContent?.includes("不会影响真实环境") &&
+        !canvasElement.textContent?.includes("sessionStorage"),
+      "expected the public demo control panel to use concise descriptive copy instead of implementation-detail requirements",
+    );
+
+    const floatWindow = canvasElement.querySelector<HTMLElement>(".homepageToolFloatWindow");
+    const floatHead = canvasElement.querySelector<HTMLElement>(".homepageToolFloatHead");
+    const contentHost = canvasElement.ownerDocument.querySelector<HTMLElement>(".content.overlayScrollArea");
+    const viewportHost = canvasElement.ownerDocument.documentElement;
+    expectStory(floatWindow, "expected overview floating tools panel to render");
+    expectStory(floatHead, "expected overview floating tools panel to expose a drag handle");
+    expectStory(contentHost, "expected overview story to mount inside the shell content viewport");
+    expectStory(viewportHost, "expected overview story to expose a viewport root for edge snapping");
+    const before = floatWindow?.getBoundingClientRect();
+    const hostRect = viewportHost?.getBoundingClientRect();
+    if (before && hostRect && floatHead) {
+      dispatchPointer(floatHead, "pointerdown", {
+        pointerId: 11,
+        button: 0,
+        buttons: 1,
+        clientX: before.left + 28,
+        clientY: before.top + 20,
+      });
+      dispatchPointer(window, "pointermove", {
+        pointerId: 11,
+        button: 0,
+        buttons: 1,
+        clientX: hostRect.left + 18,
+        clientY: before.top + 36,
+      });
+      dispatchPointer(window, "pointerup", {
+        pointerId: 11,
+        button: 0,
+        buttons: 0,
+        clientX: hostRect.left + 18,
+        clientY: before.top + 36,
+      });
+      await sleep(220);
+      expectStory(
+        canvasElement.querySelector(".homepageToolFloatWindow"),
+        "expected the public demo control panel to stay expanded after dragging to the page edge",
+      );
+      expectStory(
+        !canvasElement.querySelector(".homepageToolBubble"),
+        "expected the public demo control panel to avoid auto-collapsing into a bubble when dragged to the edge",
+      );
+    }
+    const collapseButton = canvasElement.querySelector<HTMLButtonElement>('button[aria-label="收起 Demo 控制面板"]');
+    const collapseButtonBox = collapseButton?.getBoundingClientRect() ?? null;
+    collapseButton?.click();
+    await sleep(180);
+    expectStory(
+      !canvasElement.querySelector(".homepageToolFloatWindow"),
+      "expected the public demo control panel to collapse into a bubble",
+    );
+    const bubble = canvasElement.querySelector<HTMLElement>(".homepageToolBubble");
+    const bubbleBox = bubble?.getBoundingClientRect() ?? null;
+    if (collapseButtonBox && bubbleBox) {
+      const bubbleCenterY = bubbleBox.top + bubbleBox.height / 2;
+      const buttonCenterY = collapseButtonBox.top + collapseButtonBox.height / 2;
+      expectStory(
+        Math.abs(bubbleCenterY - buttonCenterY) <= 8,
+        "expected the collapsed bubble to align vertically to the collapse button position",
+      );
+    }
+    const draggableBubble = canvasElement.querySelector<HTMLElement>(".homepageToolBubbleButton");
+    if (bubbleBox && hostRect && draggableBubble) {
+      dispatchPointer(draggableBubble, "pointerdown", {
+        pointerId: 12,
+        button: 0,
+        buttons: 1,
+        clientX: bubbleBox.left + 14,
+        clientY: bubbleBox.top + bubbleBox.height / 2,
+      });
+      dispatchPointer(window, "pointermove", {
+        pointerId: 12,
+        button: 0,
+        buttons: 1,
+        clientX: hostRect.right - 18,
+        clientY: bubbleBox.top + bubbleBox.height / 2,
+      });
+      dispatchPointer(window, "pointerup", {
+        pointerId: 12,
+        button: 0,
+        buttons: 0,
+        clientX: hostRect.right - 18,
+        clientY: bubbleBox.top + bubbleBox.height / 2,
+      });
+      await sleep(220);
+      expectStory(
+        canvasElement.querySelector(".homepageToolBubble")?.getAttribute("data-side") === "right",
+        "expected the collapsed demo bubble to support dragging and auto-snap back onto the nearest right edge",
+      );
+    }
+    const bubbleButton = canvasElement.querySelector<HTMLButtonElement>(".homepageToolBubbleButton");
+    expectStory(bubbleButton, "expected the public demo control panel to expose a collapsed bubble trigger");
+    expectStory(
+      canvasElement.querySelector(".homepageToolBubbleCount")?.textContent === "DEMO",
+      "expected the collapsed bubble to keep a demo marker instead of production counts",
+    );
+    bubbleButton?.click();
+    await sleep(180);
+    expectStory(
+      canvasElement.querySelector(".homepageToolFloatWindow") && !canvasElement.querySelector(".homepageToolBubble"),
+      "expected the public demo bubble to expand back into the full control window",
     );
   },
 };

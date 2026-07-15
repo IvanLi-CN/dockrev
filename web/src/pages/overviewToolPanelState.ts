@@ -24,7 +24,7 @@ export const OVERVIEW_TOOL_PANEL_MARGIN = 18
 export const OVERVIEW_TOOL_PANEL_COLLAPSE_THRESHOLD = 96
 export const OVERVIEW_TOOL_PANEL_DEFAULT_SIZE: OverviewToolPanelSize = {
   width: 320,
-  height: 320,
+  height: 620,
 }
 export const OVERVIEW_TOOL_BUBBLE_DEFAULT_SIZE: OverviewToolPanelSize = {
   width: 60,
