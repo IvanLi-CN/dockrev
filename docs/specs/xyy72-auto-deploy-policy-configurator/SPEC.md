@@ -120,6 +120,7 @@
 
 - Service 详情页展示当前最终自动更新结果、继承/覆盖/禁用来源、主规则摘要，以及最近三次影响该服务的 update job。
 - Stack 详情页展示当前 Stack 自动更新结果、主规则摘要、最近三次影响该 Stack 服务的 update job，以及该 Stack 下服务列表。
+- Service 详情页与 Stack 详情页的最近三次更新记录摘要卡必须把每条记录渲染成可聚焦的行级入口，支持 click、`Enter`、`Space` 进入 `/queue/:jobId`；行内 `TaskResultReason` 摘要继续独立打开结果气泡，不得误触发行级跳转。
 - Service 与 Stack 的完整设置界面必须放在独立抽屉内：桌面端从右侧出现，移动端从底部出现。
 - 自动更新策略抽屉必须只承载策略编辑、规则预览与历史版本命中预览，不得与失败回滚、代码仓库、备份目标等其他服务设置混排。
 - Service 自动更新策略抽屉应展示最近 20 条内的版本发现记录，并按当前草稿规则本地预览命中、未命中或预览不确定；该预览仅辅助判断，最终执行仍以后端匹配引擎为准。
@@ -171,6 +172,7 @@
 - Given API 收到非预设档位值，When 保存策略，Then 返回校验错误。
 - Given regex/glob/semver 非法，When 保存策略，Then 返回校验错误并不覆盖旧配置。
 - Given 用户在 Service 或 Stack 详情页编辑规则，When 保存成功，Then 重新读取后配置完整 roundtrip。
+- Given Service 或 Stack 详情页展示最近三次更新记录，When 用户点击整行或在聚焦行上按 `Enter` / `Space`，Then 进入对应 `/queue/:jobId`；When 用户点击结果原因摘要，Then 只打开结果原因气泡且保持当前详情页路由不变。
 
 ## 验收清单（Acceptance checklist）
 
@@ -200,6 +202,19 @@
 - Shared testbox Docker/Compose smoke must exercise an auto-policy update job when feasible.
 
 ## Visual Evidence
+
+- source_type: storybook_canvas
+  target_program: mock-only
+  capture_scope: browser-viewport
+  requested_viewport: 1600x1200
+  viewport_strategy: browser-resize-fallback
+  sensitive_exclusion: N/A
+  submission_gate: pending-owner-approval
+  story_id_or_title: Pages/ServiceDetailPage/OverviewRecentUpdateEvidence
+  state: Service detail recent update navigation card
+  evidence_note: verifies the Service detail overview keeps the recent update summary card in place, with the shared row-level task-detail entry visible alongside the independent result-reason trigger.
+
+![Service detail recent update navigation card](./assets/service-detail-recent-update-navigation.png)
 
 - source_type: storybook_canvas
   target_program: mock-only

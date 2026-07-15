@@ -3,6 +3,8 @@ import { StackDetailPage } from "../../pages/StackDetailPage";
 import { currentRoutePathname } from "../../routes";
 import { PageHarness } from "../mocks/PageHarness";
 import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
+import { assertRecentUpdateClickNavigation } from "./recentUpdateStoryAssertions";
+import { expectStory, findButton, findLink, waitForCondition } from "./storyAssertions";
 
 const meta: Meta<typeof StackDetailPage> = {
   title: "Pages/StackDetailPage",
@@ -13,42 +15,6 @@ const meta: Meta<typeof StackDetailPage> = {
 
 export default meta;
 type Story = StoryObj<typeof StackDetailPage>;
-
-function expectStory(condition: unknown, message: string): asserts condition {
-  if (!condition) throw new globalThis.Error(message);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitForCondition(
-  check: () => boolean,
-  timeoutMs = 3000,
-): Promise<void> {
-  const started = Date.now();
-  while (!check()) {
-    if (Date.now() - started > timeoutMs)
-      throw new globalThis.Error("condition timeout");
-    await sleep(60);
-  }
-}
-
-function findButton(root: ParentNode, text: string): HTMLButtonElement | null {
-  return (
-    Array.from(root.querySelectorAll<HTMLButtonElement>("button")).find(
-      (button) => button.textContent?.replace(/\s+/g, " ").trim() === text,
-    ) ?? null
-  );
-}
-
-function findLink(root: ParentNode, text: string): HTMLAnchorElement | null {
-  return (
-    Array.from(root.querySelectorAll<HTMLAnchorElement>("a")).find((link) =>
-      (link.textContent?.replace(/\s+/g, " ").trim() ?? "").includes(text),
-    ) ?? null
-  );
-}
 
 function findActiveNavLink(
   root: ParentNode,
@@ -151,6 +117,26 @@ export const PolicyDisabled: Story = {
       "disabled stack policy state missing",
     );
   },
+};
+
+export const RecentUpdateNavigation: Story = {
+  parameters: { dockrevApiScenario: "dashboard-demo" },
+  render: render("stack-prod"),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(
+      () => canvasElement.textContent?.includes("最近更新记录") ?? false,
+    );
+    await assertRecentUpdateClickNavigation({
+      canvasElement,
+      jobIndex: 0,
+      waitForCondition,
+    });
+  },
+};
+
+export const RecentUpdateNavigationEvidence: Story = {
+  parameters: { dockrevApiScenario: "dashboard-demo" },
+  render: render("stack-prod"),
 };
 
 export const MobileNavigation: Story = {

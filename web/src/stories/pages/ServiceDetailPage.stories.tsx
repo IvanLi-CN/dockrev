@@ -4,13 +4,9 @@ import { currentRoutePathname, type Route } from "../../routes";
 import { PageHarness } from "../mocks/PageHarness";
 import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
 import { expectHistoryColumnsAligned } from "./serviceDetailHistoryAssertions";
-import {
-  buildLongLogsSnapshot,
-  buildMultilineLogsSnapshot,
-  historyReleaseNotes,
-  paginatedHistoryJobs,
-  partialHistoryBackupRecords,
-} from "./serviceDetailPageStoryFixtures";
+import { buildLongLogsSnapshot, buildMultilineLogsSnapshot, historyReleaseNotes, paginatedHistoryJobs, partialHistoryBackupRecords } from "./serviceDetailPageStoryFixtures";
+import { assertRecentUpdateKeyboardNavigation, assertRecentUpdateReasonPopoverStaysOnRoute } from "./recentUpdateStoryAssertions";
+import { expectNearlyEqual, expectStory, findButton, findButtons, findLink, normalizeText, waitForCondition } from "./storyAssertions";
 
 const meta: Meta<typeof ServiceDetailPage> = {
   title: "Pages/ServiceDetailPage",
@@ -23,44 +19,6 @@ const meta: Meta<typeof ServiceDetailPage> = {
 export default meta;
 type Story = StoryObj<typeof ServiceDetailPage>;
 type ServiceSection = "overview" | "history" | "monitoring" | "backup" | "logs" | "settings";
-
-function expectStory(condition: unknown, message: string): asserts condition {
-  if (!condition) throw new globalThis.Error(message);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitForCondition(check: () => boolean, timeoutMs = 3000): Promise<void> {
-  const started = Date.now();
-  while (!check()) {
-    if (Date.now() - started > timeoutMs) throw new globalThis.Error("condition timeout");
-    await sleep(60);
-  }
-}
-
-function normalizeText(value: string | null | undefined): string {
-  return value?.replace(/\s+/g, " ").trim() ?? "";
-}
-
-function expectNearlyEqual(actual: number, expected: number, tolerance: number, message: string): void {
-  if (Math.abs(actual - expected) > tolerance) {
-    throw new globalThis.Error(`${message}: expected ${expected}, got ${actual}`);
-  }
-}
-
-function findButton(root: ParentNode, text: string): HTMLButtonElement | null {
-  return Array.from(root.querySelectorAll<HTMLButtonElement>("button")).find((button) => normalizeText(button.textContent) === text) ?? null;
-}
-
-function findButtons(root: ParentNode, text: string): HTMLButtonElement[] {
-  return Array.from(root.querySelectorAll<HTMLButtonElement>("button")).filter((button) => normalizeText(button.textContent) === text);
-}
-
-function findLink(root: ParentNode, text: string): HTMLAnchorElement | null {
-  return Array.from(root.querySelectorAll<HTMLAnchorElement>("a")).find((link) => normalizeText(link.textContent).includes(text)) ?? null;
-}
 
 function findActionButton(root: ParentNode, action: string, text: string): HTMLButtonElement | null {
   const scope = root.querySelector(`[data-service-detail-action="${action}"]`);
@@ -111,13 +69,39 @@ export const OverviewDefault: Story = {
     await waitForCondition(() => normalizeText(canvasElement.textContent).includes("最近更新记录"));
     await waitForCondition(() => normalizeText(canvasElement.ownerDocument.body.textContent).includes("服务列表"));
     expectStory(currentRoutePathname() === "/services/stack-prod/svc-prod-api", "legacy overview route should stay canonical");
+    await waitForCondition(() => findTab(canvasElement, "overview")?.getAttribute("data-state") === "active");
     expectStory(findTab(canvasElement, "overview")?.getAttribute("data-state") === "active", "overview tab should be active");
     expectStory(JSON.stringify(tabLabels(canvasElement)) === JSON.stringify(["概览", "更新记录", "监控", "日志", "备份", "设置"]), "service detail tabs should follow the reordered sequence");
     expectStory(!normalizeText(canvasElement.textContent).includes("资源监控"), "overview should not render monitoring panel");
     expectStory(!findSectionCard(canvasElement, "auto-policy"), "overview should not render settings cards");
     expectStory(findButton(canvasElement, "Stack 详情"), "stack detail top action missing");
     expectStory(Boolean(canvasElement.ownerDocument.querySelector(".detailRouteServiceLinkActive")), "detail service tree should highlight the current service");
+    await assertRecentUpdateReasonPopoverStaysOnRoute({
+      canvasElement,
+      expectStory,
+      routePath: "/services/stack-prod/svc-prod-api",
+      waitForCondition,
+    });
+    await assertRecentUpdateKeyboardNavigation({
+      canvasElement,
+      jobIndex: 1,
+      key: "{Enter}",
+      returnRoutePath: "/services/stack-prod/svc-prod-api",
+      waitForCondition,
+    });
+    await assertRecentUpdateKeyboardNavigation({
+      canvasElement,
+      jobIndex: 2,
+      key: "[Space]",
+      returnRoutePath: "/services/stack-prod/svc-prod-api",
+      waitForCondition,
+    });
   },
+};
+
+export const OverviewRecentUpdateEvidence: Story = {
+  parameters: { dockrevApiScenario: "dashboard-demo" },
+  render: render("stack-prod", "svc-prod-api", "overview", "最近更新记录摘要卡保持概览布局，并支持任务详情直达。"),
 };
 
 export const ArchivedServiceNavigation: Story = {
@@ -826,7 +810,7 @@ export const ComposeTagEditorSuggestions: Story = {
     await waitForCondition(() => input.value === "5.2.7");
     input.blur();
     input.focus();
-    await sleep(80);
+    await new Promise((resolve) => setTimeout(resolve, 80));
     expectStory(Number(globalThis.__DOCKREV_MOCK_DEBUG__?.serviceTagSuggestionCalls ?? -1) === 1, "suggestions should not reload");
   },
 };
