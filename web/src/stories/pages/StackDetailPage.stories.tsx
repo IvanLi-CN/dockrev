@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react";
+import { userEvent } from "storybook/test";
 import { StackDetailPage } from "../../pages/StackDetailPage";
 import { currentRoutePathname } from "../../routes";
 import { PageHarness } from "../mocks/PageHarness";
@@ -72,6 +73,10 @@ function drawerText(doc: Document): string {
       ?.textContent?.replace(/\s+/g, " ")
       .trim() ?? ""
   );
+}
+
+function recentUpdateLinks(root: ParentNode): HTMLButtonElement[] {
+  return Array.from(root.querySelectorAll<HTMLButtonElement>(".recentUpdateLink"));
 }
 
 function render(stackId: string): Story["render"] {
@@ -151,6 +156,27 @@ export const PolicyDisabled: Story = {
       "disabled stack policy state missing",
     );
   },
+};
+
+export const RecentUpdateNavigation: Story = {
+  parameters: { dockrevApiScenario: "dashboard-demo" },
+  render: render("stack-prod"),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(
+      () => canvasElement.textContent?.includes("最近更新记录") ?? false,
+    );
+    await waitForCondition(() => recentUpdateLinks(canvasElement).length === 3);
+    const row = recentUpdateLinks(canvasElement)[0];
+    const jobId = row?.getAttribute("data-recent-update-job-id");
+    expectStory(jobId, "stack recent update row should expose its target job id");
+    await userEvent.click(row);
+    await waitForCondition(() => currentRoutePathname() === `/queue/${jobId}`);
+  },
+};
+
+export const RecentUpdateNavigationEvidence: Story = {
+  parameters: { dockrevApiScenario: "dashboard-demo" },
+  render: render("stack-prod"),
 };
 
 export const MobileNavigation: Story = {

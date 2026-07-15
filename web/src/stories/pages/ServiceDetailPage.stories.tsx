@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react";
+import { userEvent } from "storybook/test";
 import { ServiceDetailPage } from "../../pages/ServiceDetailPage";
 import { currentRoutePathname, type Route } from "../../routes";
 import { PageHarness } from "../mocks/PageHarness";
@@ -84,6 +85,10 @@ function findHistoryRowByJobId(root: ParentNode, jobId: string): HTMLElement | n
   return Array.from(root.querySelectorAll<HTMLElement>(".serviceOperationHistoryRow")).find((row) => normalizeText(row.textContent).includes(jobId)) ?? null;
 }
 
+function recentUpdateLinks(root: ParentNode): HTMLButtonElement[] {
+  return Array.from(root.querySelectorAll<HTMLButtonElement>(".recentUpdateLink"));
+}
+
 function findLogRowContaining(root: ParentNode, text: string): HTMLElement | null {
   return Array.from(root.querySelectorAll<HTMLElement>(".serviceLogRow")).find((row) => normalizeText(row.textContent).includes(text)) ?? null;
 }
@@ -111,13 +116,46 @@ export const OverviewDefault: Story = {
     await waitForCondition(() => normalizeText(canvasElement.textContent).includes("最近更新记录"));
     await waitForCondition(() => normalizeText(canvasElement.ownerDocument.body.textContent).includes("服务列表"));
     expectStory(currentRoutePathname() === "/services/stack-prod/svc-prod-api", "legacy overview route should stay canonical");
+    await waitForCondition(() => findTab(canvasElement, "overview")?.getAttribute("data-state") === "active");
     expectStory(findTab(canvasElement, "overview")?.getAttribute("data-state") === "active", "overview tab should be active");
     expectStory(JSON.stringify(tabLabels(canvasElement)) === JSON.stringify(["概览", "更新记录", "监控", "日志", "备份", "设置"]), "service detail tabs should follow the reordered sequence");
     expectStory(!normalizeText(canvasElement.textContent).includes("资源监控"), "overview should not render monitoring panel");
     expectStory(!findSectionCard(canvasElement, "auto-policy"), "overview should not render settings cards");
     expectStory(findButton(canvasElement, "Stack 详情"), "stack detail top action missing");
     expectStory(Boolean(canvasElement.ownerDocument.querySelector(".detailRouteServiceLinkActive")), "detail service tree should highlight the current service");
+    await waitForCondition(() => recentUpdateLinks(canvasElement).length === 3);
+
+    const reasonRow = recentUpdateLinks(canvasElement).find((row) => Boolean(row.closest(".recentUpdateRow")?.querySelector(".taskResultReasonTrigger")));
+    const reasonButton = reasonRow?.closest(".recentUpdateRow")?.querySelector<HTMLButtonElement>(".taskResultReasonTrigger");
+    expectStory(reasonButton, "overview recent update result reason trigger missing");
+    await userEvent.click(reasonButton);
+    await waitForCondition(() => Boolean(canvasElement.ownerDocument.querySelector(".taskResultReasonPopover")));
+    expectStory(currentRoutePathname() === "/services/stack-prod/svc-prod-api", "result reason trigger must not navigate away from service detail");
+
+    const rowsAfterPopover = recentUpdateLinks(canvasElement);
+    const enterRow = rowsAfterPopover[1];
+    const enterJobId = enterRow?.getAttribute("data-recent-update-job-id");
+    expectStory(enterJobId, "recent update row should expose its target job id");
+    enterRow?.focus();
+    await userEvent.keyboard("{Enter}");
+    await waitForCondition(() => currentRoutePathname() === `/queue/${enterJobId}`);
+
+    window.location.hash = "#/services/stack-prod/svc-prod-api";
+    await waitForCondition(() => currentRoutePathname() === "/services/stack-prod/svc-prod-api");
+    await waitForCondition(() => recentUpdateLinks(canvasElement).length === 3);
+    const rowsAfterEnter = recentUpdateLinks(canvasElement);
+    const spaceRow = rowsAfterEnter[2];
+    const spaceJobId = spaceRow?.getAttribute("data-recent-update-job-id");
+    expectStory(spaceJobId, "space-key navigation row should expose its target job id");
+    spaceRow?.focus();
+    await userEvent.keyboard("[Space]");
+    await waitForCondition(() => currentRoutePathname() === `/queue/${spaceJobId}`);
   },
+};
+
+export const OverviewRecentUpdateEvidence: Story = {
+  parameters: { dockrevApiScenario: "dashboard-demo" },
+  render: render("stack-prod", "svc-prod-api", "overview", "最近更新记录摘要卡保持概览布局，并支持任务详情直达。"),
 };
 
 export const ArchivedServiceNavigation: Story = {

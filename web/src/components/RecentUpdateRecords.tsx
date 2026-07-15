@@ -373,21 +373,35 @@ export function RecentUpdateRecords(props: { jobs: JobListItem[] }) {
         <Pill tone={props.jobs.length > 0 ? 'info' : 'muted'}>{props.jobs.length}/3</Pill>
       </div>
       <div className="recentUpdatesList">
-        {props.jobs.map((job) => (
-          <div className="recentUpdateRow" key={job.id}>
-            <div>
-              <div className="recentUpdateTitle">
-                <Mono>{job.id}</Mono>
-                <Pill tone={statusTone(job.status)}>{job.status}</Pill>
-              </div>
-              <div className="muted">
-                {reasonLabel(job.reason)} · by <Mono>{job.createdBy}</Mono>
-              </div>
-              <TaskResultReason reason={job.resultReason} lines={1} className="recentUpdateReason" />
+        {props.jobs.map((job) => {
+          const hasResultReason = Boolean(job.resultReason?.summary?.trim() && (job.resultReason?.detail?.trim() || job.resultReason?.summary?.trim()))
+          return (
+            <div className="recentUpdateRow" key={job.id}>
+              <button
+                className="recentUpdateLink"
+                data-recent-update-job-id={job.id}
+                onClick={() => navigate({ name: 'job', jobId: job.id })}
+                type="button"
+              >
+                <div className="recentUpdateCopy">
+                  <div className="recentUpdateTitle">
+                    <Mono>{job.id}</Mono>
+                    <Pill tone={statusTone(job.status)}>{job.status}</Pill>
+                  </div>
+                  <div className="muted recentUpdateMeta">
+                    {reasonLabel(job.reason)} · by <Mono>{job.createdBy}</Mono>
+                  </div>
+                </div>
+                <div className="recentUpdateTime">{formatCompactDateTime(job.finishedAt ?? job.startedAt ?? job.createdAt)}</div>
+              </button>
+              {hasResultReason ? (
+                <div className="recentUpdateReasonSlot">
+                  <TaskResultReason reason={job.resultReason} lines={1} className="recentUpdateReason" />
+                </div>
+              ) : null}
             </div>
-            <div className="recentUpdateTime">{formatCompactDateTime(job.finishedAt ?? job.startedAt ?? job.createdAt)}</div>
-          </div>
-        ))}
+          )
+        })}
         {props.jobs.length === 0 ? <div className="muted">暂无更新记录</div> : null}
       </div>
     </div>

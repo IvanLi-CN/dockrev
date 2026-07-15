@@ -7017,12 +7017,72 @@ html[data-theme="light"] .modalOverlay {
 }
 
 .recentUpdateRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
   border-top: 1px solid color-mix(in srgb, var(--borderColor) 70%, transparent);
-  padding-top: 8px;
+}
+
+.recentUpdateLink {
+  grid-column: 1 / 3;
+  grid-row: 1 / 3;
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.recentUpdateLink:hover {
+  background: color-mix(in srgb, var(--surface-strong) 46%, transparent);
+}
+
+.recentUpdateLink:active {
+  transform: translateY(1px);
+}
+
+.recentUpdateLink:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--surface-strong) 56%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus-ring) 68%, transparent);
+}
+
+.recentUpdateCopy {
+  min-width: 0;
+}
+
+.recentUpdateReasonSlot {
+  grid-column: 1 / 2;
+  grid-row: 2 / 3;
+  z-index: 1;
+  min-width: 0;
+  padding: 0 0 8px 10px;
+  pointer-events: none;
+}
+
+.recentUpdateReasonSlot .taskResultReason,
+.recentUpdateReasonSlot .taskResultReasonTrigger {
+  pointer-events: auto;
+}
+
+.recentUpdateMeta,
+.recentUpdateTitle {
+  min-width: 0;
+}
+
+.recentUpdateTitle > * {
+  min-width: 0;
 }
 
 .recentUpdateReason {
@@ -7030,6 +7090,7 @@ html[data-theme="light"] .modalOverlay {
 }
 
 .recentUpdateTime {
+  justify-self: end;
   flex: 0 0 auto;
   color: var(--muted);
   font-size: 12px;
@@ -7662,10 +7723,19 @@ html[data-theme="light"] .modalOverlay {
     grid-template-columns: 1fr;
   }
   .autoPolicyResultHead,
-  .recentUpdatesHead,
-  .recentUpdateRow {
+  .recentUpdatesHead {
     align-items: flex-start;
     flex-direction: column;
+  }
+  .recentUpdateRow,
+  .recentUpdateLink {
+    grid-template-columns: 1fr;
+  }
+  .recentUpdateReasonSlot {
+    padding: 0 10px 8px;
+  }
+  .recentUpdateTime {
+    justify-self: start;
   }
   .autoPolicyRuleGrid,
   .autoPolicyDelayGrid {

@@ -14,6 +14,7 @@
 - 已实现 semver、regex、glob 匹配；延迟规则按首次发现时间与版本滞后数量两个门槛叠加判断。
 - 已实现定时检查与 GHCR webhook 检查完成后的自动入队；UI 手动扫描不会触发自动部署；忽略/归档服务与 Dockrev 自身镜像不会被自动入队。
 - 已实现 Service Detail 与 Stack Detail 的最终策略结果摘要、最近三次更新记录，以及独立响应式自动更新策略抽屉；桌面从右侧出现，移动端从底部出现。Services/Operations 更新候选列表不再展示 Stack 策略快捷按钮，Service Detail 顶部保留 Stack 详情入口。
+- 已把 Service Detail / Stack Detail 共用的最近三次更新记录升级为可访问的行级导航入口；每条记录支持 click、`Enter`、`Space` 直达 `/queue/:jobId`，且行内 `TaskResultReason` 继续独立打开气泡，不会误触发行级跳转。
 - 已实现非线性滑块、规则预览、历史版本命中预览、抽屉 Storybook 覆盖与视觉证据落盘；PR 复用截图仍需主人明确提交授权。
 
 ## Remaining Gaps
