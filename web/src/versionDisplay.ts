@@ -148,6 +148,19 @@ export function isStrictSemverTag(tag: string | null | undefined): boolean {
   return t.length > 0 && parseStrictSemver(t) != null
 }
 
+export function compareStrictSemverTags(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): number | null {
+  const left = trimOrEmpty(a)
+  const right = trimOrEmpty(b)
+  if (!left || !right) return null
+  const leftParsed = parseStrictSemver(left)
+  const rightParsed = parseStrictSemver(right)
+  if (!leftParsed || !rightParsed) return null
+  return compareStrictSemver(leftParsed, rightParsed)
+}
+
 export function inferResolvedTagsFromSnapshot(
   tags: Array<string | null | undefined> | null | undefined,
   rawTag: string | null | undefined,

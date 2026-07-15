@@ -1,11 +1,28 @@
-import type { Meta, StoryObj } from "@storybook/react";
+import type { Meta } from "@storybook/react";
 import { ServiceDetailPage } from "../../pages/ServiceDetailPage";
-import { currentRoutePathname, type Route } from "../../routes";
-import { PageHarness } from "../mocks/PageHarness";
+import { currentRoutePathname } from "../../routes";
 import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
 import { expectHistoryColumnsAligned } from "./serviceDetailHistoryAssertions";
-import { buildLongLogsSnapshot, buildMultilineLogsSnapshot, historyReleaseNotes, paginatedHistoryJobs, partialHistoryBackupRecords } from "./serviceDetailPageStoryFixtures";
+import {
+  buildLongLogsSnapshot,
+  buildMultilineLogsSnapshot,
+  historyReleaseNotes,
+  paginatedHistoryJobs,
+  partialHistoryBackupRecords,
+} from "./serviceDetailPageStoryFixtures";
 import { assertRecentUpdateKeyboardNavigation, assertRecentUpdateReasonPopoverStaysOnRoute } from "./recentUpdateStoryAssertions";
+import {
+  drawerText,
+  findActionButton,
+  findHistoryRowByJobId,
+  findLogRowContaining,
+  findSectionCard,
+  findTab,
+  render,
+  tabLabels,
+  type ServiceDetailStory,
+} from "./serviceDetailStoryShared";
+export { MobileVersionsSection, VersionsSection, VersionsSectionActionGuard } from "./serviceDetailVersionsStories";
 import { expectNearlyEqual, expectStory, findButton, findButtons, findLink, normalizeText, waitForCondition } from "./storyAssertions";
 
 const meta: Meta<typeof ServiceDetailPage> = {
@@ -17,50 +34,7 @@ const meta: Meta<typeof ServiceDetailPage> = {
 };
 
 export default meta;
-type Story = StoryObj<typeof ServiceDetailPage>;
-type ServiceSection = "overview" | "history" | "monitoring" | "backup" | "logs" | "settings";
-
-function findActionButton(root: ParentNode, action: string, text: string): HTMLButtonElement | null {
-  const scope = root.querySelector(`[data-service-detail-action="${action}"]`);
-  if (!scope) return null;
-  return findButton(scope, text);
-}
-
-function findSectionCard(root: ParentNode, card: string): HTMLElement | null {
-  return root.querySelector<HTMLElement>(`[data-service-detail-section-card="${card}"]`);
-}
-
-function findTab(root: ParentNode, section: ServiceSection): HTMLButtonElement | null {
-  return root.querySelector<HTMLButtonElement>(`[data-service-detail-tab="${section}"]`);
-}
-
-function tabLabels(root: ParentNode): string[] {
-  return Array.from(root.querySelectorAll<HTMLElement>("[data-service-detail-tab]")).map((tab) => normalizeText(tab.textContent));
-}
-
-function findHistoryRowByJobId(root: ParentNode, jobId: string): HTMLElement | null {
-  return Array.from(root.querySelectorAll<HTMLElement>(".serviceOperationHistoryRow")).find((row) => normalizeText(row.textContent).includes(jobId)) ?? null;
-}
-
-function findLogRowContaining(root: ParentNode, text: string): HTMLElement | null {
-  return Array.from(root.querySelectorAll<HTMLElement>(".serviceLogRow")).find((row) => normalizeText(row.textContent).includes(text)) ?? null;
-}
-
-function drawerText(doc: Document): string {
-  return normalizeText(doc.querySelector(".settingsDrawerContent")?.textContent);
-}
-
-function routeFor(stackId: string, serviceId: string, section: ServiceSection = "overview"): Route {
-  return section === "overview" ? { name: "service", stackId, serviceId } : { name: "service", stackId, serviceId, section };
-}
-
-function render(stackId: string, serviceId: string, section: ServiceSection = "overview", pageSubtitle?: string, options?: { sidebarCollapsed?: boolean }): Story["render"] {
-  return () => (
-    <PageHarness route={routeFor(stackId, serviceId, section)} title="服务详情" pageSubtitle={pageSubtitle} sidebarCollapsed={options?.sidebarCollapsed ?? false}>
-      {({ route, onTopActions, onLastScanHint }) => route.name === "service" ? <ServiceDetailPage stackId={route.stackId} serviceId={route.serviceId} section={route.section} onLastScanHint={onLastScanHint} onTopActions={onTopActions} /> : null}
-    </PageHarness>
-  );
-}
+type Story = ServiceDetailStory;
 
 export const OverviewDefault: Story = {
   parameters: { dockrevApiScenario: "dashboard-demo" },
@@ -71,7 +45,7 @@ export const OverviewDefault: Story = {
     expectStory(currentRoutePathname() === "/services/stack-prod/svc-prod-api", "legacy overview route should stay canonical");
     await waitForCondition(() => findTab(canvasElement, "overview")?.getAttribute("data-state") === "active");
     expectStory(findTab(canvasElement, "overview")?.getAttribute("data-state") === "active", "overview tab should be active");
-    expectStory(JSON.stringify(tabLabels(canvasElement)) === JSON.stringify(["概览", "更新记录", "监控", "日志", "备份", "设置"]), "service detail tabs should follow the reordered sequence");
+    expectStory(JSON.stringify(tabLabels(canvasElement)) === JSON.stringify(["概览", "版本", "更新记录", "监控", "日志", "备份", "设置"]), "service detail tabs should follow the reordered sequence");
     expectStory(!normalizeText(canvasElement.textContent).includes("资源监控"), "overview should not render monitoring panel");
     expectStory(!findSectionCard(canvasElement, "auto-policy"), "overview should not render settings cards");
     expectStory(findButton(canvasElement, "Stack 详情"), "stack detail top action missing");
@@ -607,6 +581,11 @@ export const TabNavigation: Story = {
   render: render("stack-prod", "svc-prod-api", "overview", "页头 Tabs 直接驱动 service section 路由"),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => findTab(canvasElement, "overview") != null);
+
+    findTab(canvasElement, "versions")?.click();
+    await waitForCondition(() => currentRoutePathname() === "/services/stack-prod/svc-prod-api/versions");
+    await waitForCondition(() => Boolean(findSectionCard(canvasElement, "versions")));
+    expectStory(findTab(canvasElement, "versions")?.getAttribute("data-state") === "active", "versions tab active state missing after switch");
 
     findTab(canvasElement, "history")?.click();
     await waitForCondition(() => currentRoutePathname() === "/services/stack-prod/svc-prod-api/history");

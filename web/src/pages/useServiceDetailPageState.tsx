@@ -600,6 +600,88 @@ export function useServiceDetailPageState(props: {
     })()
   }, [confirm, refreshStackOnly, rollbackActiveJobId, rollbackTarget, service, stack?.name, stackId])
 
+  const requestApplyUpdate = useCallback(() => {
+    void (async () => {
+      if (!service || !service.candidate) return
+      const ok = await confirm({
+        title: `确认更新服务 ${service.name}？`,
+        body: (
+          <ServiceUpdateConfirmDetails
+            service={service}
+            status={serviceRowStatus(service)}
+            onHostResolvedTags={(update) => {
+              patchServiceInStack((prev) => ({
+                ...prev,
+                image: {
+                  ...prev.image,
+                  resolvedTag: update.resolvedTag,
+                  resolvedTags: update.resolvedTags,
+                },
+              }))
+            }}
+            onHostCandidateResolvedTag={(resolvedTag) => {
+              patchServiceInStack((prev) => ({
+                ...prev,
+                candidate: prev.candidate
+                  ? {
+                      ...prev.candidate,
+                      resolvedTag,
+                    }
+                  : prev.candidate,
+              }))
+            }}
+          />
+        ),
+        confirmText: '执行更新',
+        cancelText: '取消',
+        confirmVariant: 'primary',
+        badgeText: null,
+      })
+      if (!ok) return
+      setError(null)
+      setNotice(null)
+      if (applyActionKey) beginSubmitting(applyActionKey)
+      try {
+        const resp = await triggerUpdate({
+          scope: 'service',
+          stackId,
+          ...(await buildUpdateServiceTarget(service)),
+          mode: 'apply',
+          allowArchMismatch: false,
+          backupMode: 'inherit',
+        })
+        setNotice({ jobId: resp.jobId, kind: 'update' })
+        if (applyActionKey) trackJob(applyActionKey, resp.jobId, 'queued')
+      } catch (e: unknown) {
+        if (e instanceof ApiError) {
+          if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
+          else if (e.status === 409) {
+            const guardReason = readUpdateGuardBlockedReason(e)
+            if (guardReason) setError(guardReason)
+            else {
+              setError('扫描结果已变化，请刷新并重新扫描后再更新')
+              await requestRefresh()
+            }
+          } else setError(e.message)
+        } else {
+          setError(errorMessage(e))
+        }
+      } finally {
+        if (applyActionKey) endSubmitting(applyActionKey)
+      }
+    })()
+  }, [
+    applyActionKey,
+    beginSubmitting,
+    confirm,
+    endSubmitting,
+    patchServiceInStack,
+    requestRefresh,
+    service,
+    stackId,
+    trackJob,
+  ])
+
   const topActions = useMemo(
     () => (
       <>
@@ -724,73 +806,7 @@ export function useServiceDetailPageState(props: {
                     navigate({ name: 'job', jobId: applyActiveJob.jobId })
                     return
                   }
-                  if (!service || !service.candidate) return
-                  const ok = await confirm({
-                    title: `确认更新服务 ${service.name}？`,
-                    body: (
-                      <ServiceUpdateConfirmDetails
-                        service={service}
-                        status={serviceRowStatus(service)}
-                        onHostResolvedTags={(update) => {
-                          patchServiceInStack((prev) => ({
-                            ...prev,
-                            image: {
-                              ...prev.image,
-                              resolvedTag: update.resolvedTag,
-                              resolvedTags: update.resolvedTags,
-                            },
-                          }))
-                        }}
-                        onHostCandidateResolvedTag={(resolvedTag) => {
-                          patchServiceInStack((prev) => ({
-                            ...prev,
-                            candidate: prev.candidate
-                              ? {
-                                  ...prev.candidate,
-                                  resolvedTag,
-                                }
-                              : prev.candidate,
-                          }))
-                        }}
-                      />
-                    ),
-                    confirmText: '执行更新',
-                    cancelText: '取消',
-                    confirmVariant: 'primary',
-                    badgeText: null,
-                  })
-                  if (!ok) return
-                  setError(null)
-                  setNotice(null)
-                  if (applyActionKey) beginSubmitting(applyActionKey)
-                  try {
-                    const resp = await triggerUpdate({
-                      scope: 'service',
-                      stackId,
-                      ...(await buildUpdateServiceTarget(service)),
-                      mode: 'apply',
-                      allowArchMismatch: false,
-                      backupMode: 'inherit',
-                    })
-                    setNotice({ jobId: resp.jobId, kind: 'update' })
-                    if (applyActionKey) trackJob(applyActionKey, resp.jobId, 'queued')
-                  } catch (e: unknown) {
-                    if (e instanceof ApiError) {
-                      if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
-                      else if (e.status === 409) {
-                        const guardReason = readUpdateGuardBlockedReason(e)
-                        if (guardReason) setError(guardReason)
-                        else {
-                          setError('扫描结果已变化，请刷新并重新扫描后再更新')
-                          await requestRefresh()
-                        }
-                      } else setError(e.message)
-                    } else {
-                      setError(errorMessage(e))
-                    }
-                  } finally {
-                    if (applyActionKey) endSubmitting(applyActionKey)
-                  }
+                  requestApplyUpdate()
                 })()
               }}
             >
@@ -833,14 +849,10 @@ export function useServiceDetailPageState(props: {
     [
       applyActiveJob,
       applyActionBusy,
-      applyActionKey,
       applySubmitting,
-      beginSubmitting,
       busy,
       checkSupervisor,
-      confirm,
-      endSubmitting,
-      patchServiceInStack,
+      requestApplyUpdate,
       requestRefresh,
       requestRollback,
       rollbackActionBusy,
@@ -856,7 +868,6 @@ export function useServiceDetailPageState(props: {
       supervisorError,
       supervisorErrorAt,
       supervisorState.status,
-      trackJob,
     ],
   )
 
@@ -1093,13 +1104,18 @@ export function useServiceDetailPageState(props: {
     notice,
     repoInferBusy,
     requestRefresh,
+    requestApplyUpdate,
     requestRollback,
     rollbackTarget,
+    rollbackActiveJobId,
+    rollbackActiveJobStatus,
     rollbackTargetRefreshing,
     rules,
     semverDowngradeAnomaly,
     service,
     serviceId,
+    applyActiveJob,
+    applySubmitting,
     setBusy,
     setError,
     setNewRuleKind,

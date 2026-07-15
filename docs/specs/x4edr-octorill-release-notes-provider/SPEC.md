@@ -14,7 +14,7 @@
 
 - Settings 新增 OctoRill 更新日志配置：启用开关、API Base URL、API Key、默认视图 `original | translated | smart`，默认 `smart`。
 - API Key 只在 Dockrev 后端保存；设置读取只返回等长圆点脱敏状态，不把明文 key 暴露给浏览器。
-- 新增服务级统一 release notes API，开启 OctoRill 后优先从 OctoRill repo feed 读取发布记录，并规范化成发布抽屉可消费的数据。
+- 新增服务级统一 release notes API，开启 OctoRill 后优先从 OctoRill repo feed 读取发布记录，并规范化成发布抽屉与服务详情 `版本` 子页都可消费的数据。
 - OctoRill 失败、未配置或无可用 feed 时，发布抽屉显示失败原因并自动回退现有 GitHub Releases 数据。
 - 发布抽屉支持原文、翻译、润色切换；缺少翻译/润色时可见降级到原文。
 
@@ -54,7 +54,7 @@
 - 统一 release notes API 必须在 OctoRill 开启且配置完整时优先请求 `GET {apiBaseUrl}/api/feed?scope=repo&items=<owner/repo>&types=releases&limit=<limit>[&cursor=<cursor>]`，请求头带 `Authorization: Bearer <apiKey>`。
 - OctoRill feed 映射必须宽容解析：优先使用显式 tag 字段，其次从 `html_url` / `htmlUrl` 的 `/releases/tag/<tag>` 解析，最后用 title/id 兜底。
 - OctoRill 失败必须返回可展示 fallback 原因，并自动回退现有 GitHub Releases 数据。
-- 发布抽屉默认视图来自 Settings 的 `releaseNotes.octoRill.defaultView`，单次切换仅影响当前抽屉会话。
+- 发布抽屉与服务详情 `版本` 子页的默认视图都来自 Settings 的 `releaseNotes.octoRill.defaultView`，单次切换只影响当前阅读会话。
 
 ### SHOULD
 
@@ -67,8 +67,9 @@
 ### Core flows
 
 - 用户在 Settings 开启 OctoRill、填入 Base URL 与 API Key、选择默认视图后，设置自动保存。
-- 用户从版本时间线或服务更新记录打开发布抽屉时，前端调用服务级 release notes API。
+- 用户从版本时间线、服务更新记录，或服务详情 `版本` 子页进入版本阅读流时，前端调用服务级 release notes API。
 - API 返回 OctoRill 数据时，抽屉使用 OctoRill items 展示，并默认选中 `smart`。
+- API 返回 OctoRill 数据时，服务详情 `版本` 子页也必须复用同一批 items、视图切换规则与 fallback 说明，而不是另起第二套 release 数据源。
 - 用户切换 `original | translated | smart` 时，列表内容即时切换，不改变 URL 和全局设置。
 - API 返回 fallback 时，抽屉展示警告 banner，并继续展示 GitHub Releases 数据。
 

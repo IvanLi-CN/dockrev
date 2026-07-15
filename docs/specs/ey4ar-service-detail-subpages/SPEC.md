@@ -1,4 +1,4 @@
-# Dockrev：服务详情页六子页信息架构升级（#ey4ar）
+# Dockrev：服务详情页七子页信息架构升级（#ey4ar）
 
 > 当前有效规范以本文为准；实现覆盖与当前状态见 `./IMPLEMENTATION.md`，关键演进原因见 `./HISTORY.md`。
 
@@ -13,12 +13,13 @@
 
 ### Goals
 
-- 将服务详情页拆成 route-backed 的 `概览 / 更新记录 / 监控 / 备份 / 日志 / 设置` 六个子页，并保留旧 `/services/:stackId/:serviceId` 入口稳定落到默认 `概览`。
+- 将服务详情页拆成 route-backed 的 `概览 / 版本 / 更新记录 / 监控 / 备份 / 日志 / 设置` 七个子页，并保留旧 `/services/:stackId/:serviceId` 入口稳定落到默认 `概览`。
 - 保留共享的服务上下文：标题、镜像/仓库信息、状态 banner、版本异常提示、全局 success/error 反馈，以及高频顶部动作。
 - 将 `ServiceResourcePanel` 独占到 `监控` 子页，将服务级备份摘要、备份设置入口与当前服务相关备份记录集中到 `备份` 子页，将自动更新 / Compose / 服务保护 / 忽略规则 / Webhook / 低频危险动作集中到 `设置` 子页。
 - 为服务详情新增 Dozzle 风格的 `日志` 子页，提供单服务 live tail、当前缓冲搜索、默认吸底、自动换行开关与跳到最新交互。
+- 新增 `版本` 子页，直接以内联卡片展示统一 release notes 数据源，复用既有阅读视图语义、当前版本定位与版本动作安全边界。
 - 新增 `更新记录` 子页，统一展示当前服务关联的 update/rollback 任务，提供客户端分页浏览，并在联网时实时同步状态。
-- 在已有 Storybook 与 spec 流程下补齐六子页的稳定 stories、交互断言与 owner-facing 视觉证据。
+- 在已有 Storybook 与 spec 流程下补齐七子页的稳定 stories、交互断言与 owner-facing 视觉证据。
 
 ### Non-goals
 
@@ -62,12 +63,20 @@
 
 ### MUST
 
-- `Route.name === 'service'` 必须支持 `section?: 'overview' | 'history' | 'monitoring' | 'backup' | 'logs' | 'settings'`。
+- `Route.name === 'service'` 必须支持 `section?: 'overview' | 'versions' | 'history' | 'monitoring' | 'backup' | 'logs' | 'settings'`。
 - `href()` 对 `section=undefined | overview` 必须输出旧 canonical URL `/services/:stackId/:serviceId`，不得生成新的 `/overview` canonical path。
-- `parseRoute()` 必须接受旧路径，并把它解析为服务详情 `overview` 语义；对于 `/history`、`/monitoring`、`/backup`、`/logs` 与 `/settings` 需返回对应 section。
-- 服务详情页顶部必须提供 route-backed tabs，标签固定为 `概览 / 更新记录 / 监控 / 日志 / 备份 / 设置`。
+- `parseRoute()` 必须接受旧路径，并把它解析为服务详情 `overview` 语义；对于 `/versions`、`/history`、`/monitoring`、`/backup`、`/logs` 与 `/settings` 需返回对应 section。
+- 服务详情页顶部必须提供 route-backed tabs，标签固定为 `概览 / 版本 / 更新记录 / 监控 / 日志 / 备份 / 设置`。
 - `预览更新 / 执行更新 / 回滚 / Stack 详情` 必须在各子页保持一致可达；`归档/恢复` 与 `阻止此服务更新` 必须从全局顶部动作下沉到 `设置` 页。
 - `概览` 不得再出现资源监控卡、自动更新结果卡、Compose 信息卡或服务保护卡。
+- `版本` 子页必须复用 `GET /api/services/{service_id}/release-notes` 的统一数据源与 `original | translated | smart` 阅读视图语义，改为页内卡片阅读而不是强依赖右侧抽屉。
+- `版本` 子页首屏必须以当前部署版本为锚点；前端需按 release pages 顺序抓取直到命中当前版本或列表耗尽，并在命中后把该卡片滚动到视口中心。已扫描出的较新版本保留在当前版本上方，更旧版本按需继续分页加载。
+- `版本` 子页的 release card 正文超过 10 行时必须默认折叠，支持原地展开/收起，并继续保持虚拟列表稳定测量，不得因展开造成定位丢失或明显空白。
+- `版本` 子页必须对比当前部署版本、candidate 与既有 rollback target，展示状态徽标与动作区。较新版本统一渲染 `更新` 动作位，但只有与当前 service candidate 对应且不突破现有 explicit target tag 契约的版本可真正发起更新；其余版本必须给出明确禁用原因。
+- `版本` 子页对所有已部署过的历史版本统一渲染 `回滚` 动作位；只有当前 rollback target 对应版本执行真实回滚，其余版本点击后进入解释性提示，不得创建任务。
+- `版本` 子页在同一服务已有 update/rollback 任务提交中、执行中，或 rollback target 刷新中时，必须锁定全部版本动作，并提供查看当前任务状态的稳定入口。
+- `版本` 子页宽屏必须使用多栏宽卡片；窄屏必须切换为单列窄卡片，正文宽度保持正文阅读尺度且不产生横向滚动。
+- 仅当 release tag 与当前部署版本都能 strict-semver 比较且 release 更旧时，版本卡片整体才允许置灰；状态徽标与动作提示不得因置灰失去辨识度。
 - `更新记录` 必须复用 `GET /api/jobs` 全量数据，只展示当前服务关联的 `update` 与 `rollback` 任务；服务、Stack 和 all scope 任务均以 `serviceId` 或 summary targets 关联判断，按 `finishedAt ?? startedAt ?? createdAt` 倒序排列。
 - `更新记录` 必须使用记录、状态、备份、来源、时间、操作六列；记录列严格限制为两行：首行操作名与异常或回滚结果摘要，次行 Job ID，摘要必须单行截断，不得出现第三行。`备份` 列也必须固定为两行：首行显示本次实际纳入备份的目标数量，次行显示这些 included targets 的源目标总体积；当任务没有匹配的实际备份记录、匹配记录没有 included targets，或 included targets 存在缺失体积时，必须回退到中性空占位，不得误报“未备份”“失败”或“已跳过”。与操作类型或状态重复的泛化摘要（如“更新完成”“回滚完成”“任务执行失败”）不得显示；仅保留额外诊断结果。桌面端六列表格必须共享稳定列轨道；即使只有部分行出现更新日志按钮或回滚按钮，表头与所有数据行的列边界也不得漂移、挤压或错列。整行支持 click、Enter、Space 进入 `/queue/:jobId`。失败任务的非状态列必须弱化显示，但状态列必须保持完整失败 Badge 的颜色和对比度，且仍保留 hover/focus 定位与行级跳转。记录能可靠解析当前服务的目标 tag（`targetDisplayTag`、`targetTag` 或服务 target 的 `to`）时，操作列必须提供更新日志图标入口，打开既有右侧 release drawer 并定位、高亮对应版本；无可靠 tag 时不得显示误导入口。仅当成功更新任务是当前服务可回滚目标的来源任务时，操作列显示回滚入口；该入口复用服务级回滚确认、鉴权与并发保护，不得声称可回滚到任意历史版本。匹配记录超过 20 条时，前端必须只渲染当前页，并提供带页码状态的上一页/下一页箭头；页码越界时回退到有效页。分页不改变既有全量 jobs 请求或 SSE 合同。
 - `更新记录` 激活且在线时必须复用全局 jobs SSE；事件 250ms 去抖刷新，连续三次错误后每 10 秒轮询、3 秒后重连，连接恢复立即停止轮询；切离 section 或卸载时清理订阅和计时器。
@@ -85,7 +94,7 @@
 - `日志` 搜索必须覆盖 `plain/raw`、`meta.message` 与 `meta.attributes`，使操作者可按 `route`、`phase`、`event` 等结构化字段过滤当前缓冲。
 - `设置` 不得再承载备份目标编辑入口；设置页中的“服务保护设置”只保留失败回滚与代码仓库配置。
 - `设置` 必须集中承载自动更新摘要与抽屉、Compose 信息、部署 tag 编辑、服务保护、忽略规则、Webhook，以及下沉后的低频危险动作。
-- Storybook 必须提供六子页稳定入口，并至少覆盖：旧链接默认概览、tabs active/order state、更新记录深链/混合排序/备份列命中与空占位/分页边界/更新日志定位/空态/行级跳转、备份页记录列表/空态、日志深链、设置抽屉入口或监控页稳定渲染，以及移动端更新记录无横向滚动。
+- Storybook 必须提供七子页稳定入口，并至少覆盖：旧链接默认概览、tabs active/order state、版本页锚点定位/虚拟渲染/宽窄卡布局/动作守卫、更新记录深链/混合排序/备份列命中与空占位/分页边界/更新日志定位/空态/行级跳转、备份页记录列表/空态、日志深链、设置抽屉入口或监控页稳定渲染，以及移动端更新记录与版本卡无横向滚动。
 
 ### SHOULD
 
@@ -110,6 +119,10 @@
 - 用户访问 `.../monitoring`：
   - 共享 hero/banner/top actions 与普通服务详情一致。
   - 内容区只展示资源监控面板。
+- 用户访问 `.../versions`：
+  - 共享 hero/banner/top actions 与普通服务详情一致。
+  - 内容区展示统一 release notes 版本卡片流，当前版本首屏居中定位。
+  - 较新版本可见 `更新` 动作位，历史已部署版本可见 `回滚` 动作位，但真实可执行性继续服从现有 update/rollback 合同。
 - 用户访问 `.../history`：
   - 共享 hero/banner/top actions 与普通服务详情一致。
   - 内容区展示当前服务的完整更新与回滚记录表；所有状态按最新时间排序，任务行可直接跳转任务详情。已回滚状态使用独立回滚视觉语义，当前可回滚目标的来源更新行显示受控回滚入口。
@@ -175,6 +188,14 @@
 - Given 服务详情页处于 `概览`
   When 用户切到 `监控`
   Then 保留相同服务上下文与顶部动作，内容区只显示资源监控面板。
+
+- Given 服务详情页处于 `版本`
+  When 当前 release list 能命中当前部署版本
+  Then 当前版本卡片首屏滚动到视口中心，上方保留较新的已扫描版本，下方按需继续加载较旧版本，且 DOM 只渲染可视窗口附近卡片。
+
+- Given 服务详情页处于 `版本`
+  When 用户浏览较新版本或历史已部署版本
+  Then 版本卡片会显示与当前服务关系相关的状态徽标、外链与动作区；update/rollback 的真实可执行性继续遵守既有显式 target tag 与 rollback target 合同。
 
 - Given 服务详情页处于 `更新记录`
   When 当前服务关联 update、rollback、Stack scope 与 all scope 任务
@@ -587,6 +608,66 @@
   PR caption: 移动端详情页 topbar 首行固定为菜单、品牌、头像同一行。
 
 ![服务详情更新记录子页移动端首行单行页头](./assets/service-detail-update-history-mobile-header-single-row.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `1600x1200`
+  viewport_strategy: `storybook-fullscreen-desktop`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/VersionsSection`
+  state: `desktop versions subpage with current release card in view`
+  evidence_note: 桌面宽视口下，服务详情 tabs 已扩成 `概览 / 版本 / 更新记录 / 监控 / 日志 / 备份 / 设置`，且 `版本` 保持激活。版本页不再套一层大 section card 或内层 scroll shell card，而是直接进入 release cards 列表；当前版本卡与相邻历史卡同时可见，证明宽卡使用多栏布局承载版本元信息、正文、状态与动作区。
+  PR: include
+  PR caption: 服务详情新增 `版本` 子页，并在桌面宽屏下使用多栏宽卡展示 release notes。
+
+![服务详情版本子页桌面页面级视图](./assets/service-detail-versions-desktop-page.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `element`
+  requested_viewport: `1600x1200`
+  viewport_strategy: `storybook-fullscreen-desktop`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/VersionsSection`
+  state: `desktop current release wide card`
+  evidence_note: 聚焦当前部署版本卡本体，证明桌面卡片不是表格行，也不再在卡内嵌套一组小卡片；信息改为四区并置的平面分区：左侧版本与事实信息、中间正文预览、右侧状态说明和动作语义用细分隔线组织，同时保持正文阅读宽度。
+  PR: include
+  PR caption: 桌面版本卡采用多栏宽卡而不是更新记录表格复刻。
+
+![服务详情版本子页桌面宽卡](./assets/service-detail-versions-desktop-card.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `390x844`
+  viewport_strategy: `storybook-viewport-mobile1`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/MobileVersionsSection`
+  state: `mobile versions subpage anchored around current release block`
+  evidence_note: 移动端页面级截图证明 `版本` 子页在窄屏下切换为单列阅读流。顶部 chips、正文区域与下一张旧版本卡按纵向顺序堆叠，不出现横向滚动，也不再出现虚拟列表卡片互相压住的问题；页面级 section 壳已退掉，只保留版本卡本身作为主要容器。
+  PR: include
+  PR caption: 移动端 `版本` 子页切换为单列卡片流，并保持无横向滚动。
+
+![服务详情版本子页移动端页面级视图](./assets/service-detail-versions-mobile-page.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `element`
+  requested_viewport: `390x844`
+  viewport_strategy: `storybook-viewport-mobile1`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/MobileVersionsSection`
+  state: `mobile narrow card stack`
+  evidence_note: 聚焦移动端窄卡本体，证明单张 release card 内的发布时间、来源、视图、状态与正文全部按单列顺序展开，阅读宽度稳定，没有桌面多栏布局在小屏上的压缩和重叠，也没有“卡片里再套事实卡/状态卡/动作卡”的结构噪音。
+  PR: include
+  PR caption: 移动端版本卡改为单列窄卡，信息按阅读顺序自然下沉。
+
+![服务详情版本子页移动端窄卡](./assets/service-detail-versions-mobile-card.png)
 
 ## Related PRs
 
