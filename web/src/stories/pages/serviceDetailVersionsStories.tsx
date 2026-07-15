@@ -163,6 +163,10 @@ export const VersionsSection: ServiceDetailStory = {
     expectStory(Boolean(rollbackTarget && !rollbackTarget.disabled), "rollback target version should expose an enabled rollback action");
     expectStory(Boolean(rollbackHint && !rollbackHint.disabled), "historically deployed old versions should keep an explanatory rollback entry");
     expectStory(
+      !normalizeText(findVersionCard(canvasElement, "5.2.2")?.textContent).includes("不一定是当前可执行 rollback target"),
+      "historical releases should not render the noisy rollback-target disclaimer in the card aside",
+    );
+    expectStory(
       findVersionCard(canvasElement, "5.2.0")?.getAttribute("data-version-card-older") === "true",
       "older comparable releases should render the de-emphasized state",
     );

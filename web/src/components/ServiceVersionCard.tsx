@@ -70,13 +70,11 @@ export function ServiceVersionCard(props: {
     card.rollbackTargetMatch && props.rollbackTarget?.targetDigest,
   );
   const rollbackTargetDigest = props.rollbackTarget?.targetDigest ?? null;
-  const showHistoricalStatus = Boolean(card.deployedHistorical && !card.rollbackTargetMatch);
   const showCardAside =
     card.showUpdate ||
     card.showRollback ||
     showCandidateStatus ||
-    showRollbackDigestStatus ||
-    showHistoricalStatus;
+    showRollbackDigestStatus;
   const titleText = (card.item.name ?? "").trim() || card.item.tagName;
   const titleUsesTag = titleText === card.item.tagName;
 
@@ -193,12 +191,6 @@ export function ServiceVersionCard(props: {
                 <div className="serviceVersionStatusValue">
                   <Mono>{shortDigest(rollbackTargetDigest!)}</Mono>
                 </div>
-              </div>
-            ) : null}
-            {showHistoricalStatus ? (
-              <div className="serviceVersionStatusBlock">
-                <div className="serviceVersionStatusLabel">历史语义</div>
-                <div className="serviceVersionStatusValue">已部署过，但不一定是当前可执行 rollback target。</div>
               </div>
             ) : null}
           </div>
