@@ -84,7 +84,6 @@ export const OverviewDefault: Story = {
     });
     await assertRecentUpdateKeyboardNavigation({
       canvasElement,
-      expectStory,
       jobIndex: 1,
       key: "{Enter}",
       returnRoutePath: "/services/stack-prod/svc-prod-api",
@@ -92,7 +91,6 @@ export const OverviewDefault: Story = {
     });
     await assertRecentUpdateKeyboardNavigation({
       canvasElement,
-      expectStory,
       jobIndex: 2,
       key: "[Space]",
       returnRoutePath: "/services/stack-prod/svc-prod-api",
@@ -812,7 +810,7 @@ export const ComposeTagEditorSuggestions: Story = {
     await waitForCondition(() => input.value === "5.2.7");
     input.blur();
     input.focus();
-    await sleep(80);
+    await new Promise((resolve) => setTimeout(resolve, 80));
     expectStory(Number(globalThis.__DOCKREV_MOCK_DEBUG__?.serviceTagSuggestionCalls ?? -1) === 1, "suggestions should not reload");
   },
 };

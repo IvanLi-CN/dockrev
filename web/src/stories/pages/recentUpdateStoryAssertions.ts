@@ -1,7 +1,7 @@
 import { userEvent } from "storybook/test";
 import { currentRoutePathname } from "../../routes";
 
-type ExpectStory = (condition: unknown, message: string) => asserts condition;
+type ExpectStory = (condition: unknown, message: string) => void;
 type WaitForCondition = (
   check: () => boolean,
   timeoutMs?: number,
@@ -27,7 +27,7 @@ export async function assertRecentUpdateReasonPopoverStaysOnRoute({
     Boolean(row.closest(".recentUpdateRow")?.querySelector(".taskResultReasonTrigger")),
   );
   const reasonButton = reasonRow?.closest(".recentUpdateRow")?.querySelector<HTMLButtonElement>(".taskResultReasonTrigger");
-  expectStory(reasonButton, "overview recent update result reason trigger missing");
+  if (!reasonButton) throw new globalThis.Error("overview recent update result reason trigger missing");
   await userEvent.click(reasonButton);
   await waitForCondition(() => Boolean(canvasElement.ownerDocument.querySelector(".taskResultReasonPopover")));
   expectStory(currentRoutePathname() === routePath, "result reason trigger must not navigate away from detail route");
@@ -35,14 +35,12 @@ export async function assertRecentUpdateReasonPopoverStaysOnRoute({
 
 export async function assertRecentUpdateKeyboardNavigation({
   canvasElement,
-  expectStory,
   jobIndex,
   key,
   returnRoutePath,
   waitForCondition,
 }: {
   canvasElement: HTMLElement;
-  expectStory: ExpectStory;
   jobIndex: number;
   key: "{Enter}" | "[Space]";
   returnRoutePath: string;
@@ -50,9 +48,10 @@ export async function assertRecentUpdateKeyboardNavigation({
 }): Promise<void> {
   await waitForCondition(() => recentUpdateLinks(canvasElement).length > jobIndex);
   const row = recentUpdateLinks(canvasElement)[jobIndex];
+  if (!row) throw new globalThis.Error("recent update row missing");
   const jobId = row?.getAttribute("data-recent-update-job-id");
-  expectStory(jobId, "recent update row should expose its target job id");
-  row?.focus();
+  if (!jobId) throw new globalThis.Error("recent update row should expose its target job id");
+  row.focus();
   await userEvent.keyboard(key);
   await waitForCondition(() => currentRoutePathname() === `/queue/${jobId}`);
   window.location.hash = `#${returnRoutePath}`;
@@ -61,19 +60,18 @@ export async function assertRecentUpdateKeyboardNavigation({
 
 export async function assertRecentUpdateClickNavigation({
   canvasElement,
-  expectStory,
   jobIndex,
   waitForCondition,
 }: {
   canvasElement: HTMLElement;
-  expectStory: ExpectStory;
   jobIndex: number;
   waitForCondition: WaitForCondition;
 }): Promise<void> {
   await waitForCondition(() => recentUpdateLinks(canvasElement).length > jobIndex);
   const row = recentUpdateLinks(canvasElement)[jobIndex];
+  if (!row) throw new globalThis.Error("recent update row missing");
   const jobId = row?.getAttribute("data-recent-update-job-id");
-  expectStory(jobId, "recent update row should expose its target job id");
+  if (!jobId) throw new globalThis.Error("recent update row should expose its target job id");
   await userEvent.click(row);
   await waitForCondition(() => currentRoutePathname() === `/queue/${jobId}`);
 }

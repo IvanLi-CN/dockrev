@@ -128,7 +128,6 @@ export const RecentUpdateNavigation: Story = {
     );
     await assertRecentUpdateClickNavigation({
       canvasElement,
-      expectStory,
       jobIndex: 0,
       waitForCondition,
     });
