@@ -7,7 +7,6 @@ use serde::{Deserialize, de::DeserializeOwned};
 use crate::api::types::ServiceResourceSample;
 
 const DEFAULT_DOCKER_SOCKET_PATH: &str = "/var/run/docker.sock";
-const DOCKER_API_VERSION: &str = "v1.24";
 
 #[derive(Clone)]
 pub struct DockerEngineClient {
@@ -55,7 +54,7 @@ impl DockerEngineClient {
                 .context("build Docker Engine unix socket client")?;
             Ok(Self {
                 http,
-                base_url: format!("http://docker/{DOCKER_API_VERSION}"),
+                base_url: "http://docker".to_string(),
             })
         }
 
@@ -78,10 +77,7 @@ impl DockerEngineClient {
             .context("build Docker Engine HTTP client")?;
         Ok(Self {
             http,
-            base_url: format!(
-                "{}/{DOCKER_API_VERSION}",
-                url.as_str().trim_end_matches('/')
-            ),
+            base_url: url.as_str().trim_end_matches('/').to_string(),
         })
     }
 
@@ -438,19 +434,133 @@ fn calculate_block_io_bytes(stats: &DockerStatsResponse) -> Option<(u64, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+
+    use axum::{Json, Router, extract::OriginalUri, routing::get};
+    use serde_json::json;
 
     #[test]
     fn tcp_docker_host_normalizes_to_http_base_url() {
         let client =
             DockerEngineClient::from_docker_host("tcp://docker-socket-proxy:2375").unwrap();
-        assert_eq!(client.base_url, "http://docker-socket-proxy:2375/v1.24");
+        assert_eq!(client.base_url, "http://docker-socket-proxy:2375");
     }
 
     #[test]
     fn http_docker_host_preserves_scheme_and_strips_path() {
         let client =
             DockerEngineClient::from_docker_host("https://docker.example.com/root").unwrap();
-        assert_eq!(client.base_url, "https://docker.example.com/v1.24");
+        assert_eq!(client.base_url, "https://docker.example.com");
+    }
+
+    #[test]
+    fn unix_docker_host_normalizes_to_unversioned_engine_base_url() {
+        let client = DockerEngineClient::from_docker_host("unix:///var/run/docker.sock").unwrap();
+        assert_eq!(client.base_url, "http://docker");
+    }
+
+    #[tokio::test]
+    async fn collect_project_service_samples_uses_unversioned_engine_paths() {
+        async fn list_containers(
+            OriginalUri(uri): OriginalUri,
+            axum::extract::State(seen_paths): axum::extract::State<Arc<Mutex<Vec<String>>>>,
+        ) -> Json<serde_json::Value> {
+            seen_paths
+                .lock()
+                .unwrap()
+                .push(uri.path_and_query().unwrap().as_str().to_string());
+            Json(json!([
+                {
+                    "Id": "container-1",
+                    "Labels": {
+                        "com.docker.compose.service": "web"
+                    }
+                }
+            ]))
+        }
+
+        async fn stats(
+            OriginalUri(uri): OriginalUri,
+            axum::extract::State(seen_paths): axum::extract::State<Arc<Mutex<Vec<String>>>>,
+        ) -> Json<serde_json::Value> {
+            seen_paths
+                .lock()
+                .unwrap()
+                .push(uri.path_and_query().unwrap().as_str().to_string());
+            Json(json!({
+                "cpu_stats": {
+                    "cpu_usage": {
+                        "total_usage": 5_000_000,
+                        "percpu_usage": [2_500_000, 2_500_000]
+                    },
+                    "system_cpu_usage": 20_000_000,
+                    "online_cpus": 2
+                },
+                "precpu_stats": {
+                    "cpu_usage": {
+                        "total_usage": 1_000_000
+                    },
+                    "system_cpu_usage": 12_000_000
+                },
+                "memory_stats": {
+                    "usage": 150_000_000,
+                    "limit": 1_000_000_000,
+                    "stats": {
+                        "inactive_file": 10_000_000
+                    }
+                },
+                "networks": {
+                    "eth0": { "rx_bytes": 1000, "tx_bytes": 2000 }
+                },
+                "blkio_stats": {
+                    "io_service_bytes_recursive": [
+                        { "op": "Read", "value": 4096 },
+                        { "op": "Write", "value": 8192 }
+                    ]
+                },
+                "pids_stats": {
+                    "current": 12
+                }
+            }))
+        }
+
+        let seen_paths = Arc::new(Mutex::new(Vec::<String>::new()));
+        let app = Router::new()
+            .route("/containers/json", get(list_containers))
+            .route("/containers/{id}/stats", get(stats))
+            .with_state(seen_paths.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client =
+            DockerEngineClient::from_http_base(&format!("http://{addr}/docker-root")).unwrap();
+        let samples = client
+            .collect_project_service_samples("demo")
+            .await
+            .unwrap();
+
+        let sample = samples.get("web").unwrap();
+        assert!((sample.cpu_percent - 100.0).abs() < f64::EPSILON);
+        assert_eq!(sample.mem_used_bytes, Some(140_000_000));
+        assert_eq!(sample.mem_limit_bytes, Some(1_000_000_000));
+        assert_eq!(sample.net_rx_bytes, Some(1000));
+        assert_eq!(sample.net_tx_bytes, Some(2000));
+        assert_eq!(sample.block_read_bytes, Some(4096));
+        assert_eq!(sample.block_write_bytes, Some(8192));
+        assert_eq!(sample.pids, Some(12));
+        assert_eq!(sample.container_count, 1);
+        assert_eq!(
+            seen_paths.lock().unwrap().as_slice(),
+            [
+                "/containers/json?filters=%7B%22label%22%3A%5B%22com.docker.compose.project%3Ddemo%22%5D%7D",
+                "/containers/container-1/stats?stream=false",
+            ]
+        );
+
+        server.abort();
     }
 
     #[test]
