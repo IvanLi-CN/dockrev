@@ -1,17 +1,12 @@
 import type { Meta, StoryObj } from "@storybook/react";
-import { userEvent } from "storybook/test";
 import { ServiceDetailPage } from "../../pages/ServiceDetailPage";
 import { currentRoutePathname, type Route } from "../../routes";
 import { PageHarness } from "../mocks/PageHarness";
 import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
 import { expectHistoryColumnsAligned } from "./serviceDetailHistoryAssertions";
-import {
-  buildLongLogsSnapshot,
-  buildMultilineLogsSnapshot,
-  historyReleaseNotes,
-  paginatedHistoryJobs,
-  partialHistoryBackupRecords,
-} from "./serviceDetailPageStoryFixtures";
+import { buildLongLogsSnapshot, buildMultilineLogsSnapshot, historyReleaseNotes, paginatedHistoryJobs, partialHistoryBackupRecords } from "./serviceDetailPageStoryFixtures";
+import { assertRecentUpdateKeyboardNavigation, assertRecentUpdateReasonPopoverStaysOnRoute } from "./recentUpdateStoryAssertions";
+import { expectNearlyEqual, expectStory, findButton, findButtons, findLink, normalizeText, waitForCondition } from "./storyAssertions";
 
 const meta: Meta<typeof ServiceDetailPage> = {
   title: "Pages/ServiceDetailPage",
@@ -24,44 +19,6 @@ const meta: Meta<typeof ServiceDetailPage> = {
 export default meta;
 type Story = StoryObj<typeof ServiceDetailPage>;
 type ServiceSection = "overview" | "history" | "monitoring" | "backup" | "logs" | "settings";
-
-function expectStory(condition: unknown, message: string): asserts condition {
-  if (!condition) throw new globalThis.Error(message);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitForCondition(check: () => boolean, timeoutMs = 3000): Promise<void> {
-  const started = Date.now();
-  while (!check()) {
-    if (Date.now() - started > timeoutMs) throw new globalThis.Error("condition timeout");
-    await sleep(60);
-  }
-}
-
-function normalizeText(value: string | null | undefined): string {
-  return value?.replace(/\s+/g, " ").trim() ?? "";
-}
-
-function expectNearlyEqual(actual: number, expected: number, tolerance: number, message: string): void {
-  if (Math.abs(actual - expected) > tolerance) {
-    throw new globalThis.Error(`${message}: expected ${expected}, got ${actual}`);
-  }
-}
-
-function findButton(root: ParentNode, text: string): HTMLButtonElement | null {
-  return Array.from(root.querySelectorAll<HTMLButtonElement>("button")).find((button) => normalizeText(button.textContent) === text) ?? null;
-}
-
-function findButtons(root: ParentNode, text: string): HTMLButtonElement[] {
-  return Array.from(root.querySelectorAll<HTMLButtonElement>("button")).filter((button) => normalizeText(button.textContent) === text);
-}
-
-function findLink(root: ParentNode, text: string): HTMLAnchorElement | null {
-  return Array.from(root.querySelectorAll<HTMLAnchorElement>("a")).find((link) => normalizeText(link.textContent).includes(text)) ?? null;
-}
 
 function findActionButton(root: ParentNode, action: string, text: string): HTMLButtonElement | null {
   const scope = root.querySelector(`[data-service-detail-action="${action}"]`);
@@ -83,10 +40,6 @@ function tabLabels(root: ParentNode): string[] {
 
 function findHistoryRowByJobId(root: ParentNode, jobId: string): HTMLElement | null {
   return Array.from(root.querySelectorAll<HTMLElement>(".serviceOperationHistoryRow")).find((row) => normalizeText(row.textContent).includes(jobId)) ?? null;
-}
-
-function recentUpdateLinks(root: ParentNode): HTMLButtonElement[] {
-  return Array.from(root.querySelectorAll<HTMLButtonElement>(".recentUpdateLink"));
 }
 
 function findLogRowContaining(root: ParentNode, text: string): HTMLElement | null {
@@ -123,33 +76,28 @@ export const OverviewDefault: Story = {
     expectStory(!findSectionCard(canvasElement, "auto-policy"), "overview should not render settings cards");
     expectStory(findButton(canvasElement, "Stack 详情"), "stack detail top action missing");
     expectStory(Boolean(canvasElement.ownerDocument.querySelector(".detailRouteServiceLinkActive")), "detail service tree should highlight the current service");
-    await waitForCondition(() => recentUpdateLinks(canvasElement).length === 3);
-
-    const reasonRow = recentUpdateLinks(canvasElement).find((row) => Boolean(row.closest(".recentUpdateRow")?.querySelector(".taskResultReasonTrigger")));
-    const reasonButton = reasonRow?.closest(".recentUpdateRow")?.querySelector<HTMLButtonElement>(".taskResultReasonTrigger");
-    expectStory(reasonButton, "overview recent update result reason trigger missing");
-    await userEvent.click(reasonButton);
-    await waitForCondition(() => Boolean(canvasElement.ownerDocument.querySelector(".taskResultReasonPopover")));
-    expectStory(currentRoutePathname() === "/services/stack-prod/svc-prod-api", "result reason trigger must not navigate away from service detail");
-
-    const rowsAfterPopover = recentUpdateLinks(canvasElement);
-    const enterRow = rowsAfterPopover[1];
-    const enterJobId = enterRow?.getAttribute("data-recent-update-job-id");
-    expectStory(enterJobId, "recent update row should expose its target job id");
-    enterRow?.focus();
-    await userEvent.keyboard("{Enter}");
-    await waitForCondition(() => currentRoutePathname() === `/queue/${enterJobId}`);
-
-    window.location.hash = "#/services/stack-prod/svc-prod-api";
-    await waitForCondition(() => currentRoutePathname() === "/services/stack-prod/svc-prod-api");
-    await waitForCondition(() => recentUpdateLinks(canvasElement).length === 3);
-    const rowsAfterEnter = recentUpdateLinks(canvasElement);
-    const spaceRow = rowsAfterEnter[2];
-    const spaceJobId = spaceRow?.getAttribute("data-recent-update-job-id");
-    expectStory(spaceJobId, "space-key navigation row should expose its target job id");
-    spaceRow?.focus();
-    await userEvent.keyboard("[Space]");
-    await waitForCondition(() => currentRoutePathname() === `/queue/${spaceJobId}`);
+    await assertRecentUpdateReasonPopoverStaysOnRoute({
+      canvasElement,
+      expectStory,
+      routePath: "/services/stack-prod/svc-prod-api",
+      waitForCondition,
+    });
+    await assertRecentUpdateKeyboardNavigation({
+      canvasElement,
+      expectStory,
+      jobIndex: 1,
+      key: "{Enter}",
+      returnRoutePath: "/services/stack-prod/svc-prod-api",
+      waitForCondition,
+    });
+    await assertRecentUpdateKeyboardNavigation({
+      canvasElement,
+      expectStory,
+      jobIndex: 2,
+      key: "[Space]",
+      returnRoutePath: "/services/stack-prod/svc-prod-api",
+      waitForCondition,
+    });
   },
 };
 

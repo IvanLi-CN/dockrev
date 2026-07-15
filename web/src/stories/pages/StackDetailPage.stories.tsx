@@ -1,9 +1,10 @@
 import type { Meta, StoryObj } from "@storybook/react";
-import { userEvent } from "storybook/test";
 import { StackDetailPage } from "../../pages/StackDetailPage";
 import { currentRoutePathname } from "../../routes";
 import { PageHarness } from "../mocks/PageHarness";
 import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
+import { assertRecentUpdateClickNavigation } from "./recentUpdateStoryAssertions";
+import { expectStory, findButton, findLink, waitForCondition } from "./storyAssertions";
 
 const meta: Meta<typeof StackDetailPage> = {
   title: "Pages/StackDetailPage",
@@ -14,42 +15,6 @@ const meta: Meta<typeof StackDetailPage> = {
 
 export default meta;
 type Story = StoryObj<typeof StackDetailPage>;
-
-function expectStory(condition: unknown, message: string): asserts condition {
-  if (!condition) throw new globalThis.Error(message);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitForCondition(
-  check: () => boolean,
-  timeoutMs = 3000,
-): Promise<void> {
-  const started = Date.now();
-  while (!check()) {
-    if (Date.now() - started > timeoutMs)
-      throw new globalThis.Error("condition timeout");
-    await sleep(60);
-  }
-}
-
-function findButton(root: ParentNode, text: string): HTMLButtonElement | null {
-  return (
-    Array.from(root.querySelectorAll<HTMLButtonElement>("button")).find(
-      (button) => button.textContent?.replace(/\s+/g, " ").trim() === text,
-    ) ?? null
-  );
-}
-
-function findLink(root: ParentNode, text: string): HTMLAnchorElement | null {
-  return (
-    Array.from(root.querySelectorAll<HTMLAnchorElement>("a")).find((link) =>
-      (link.textContent?.replace(/\s+/g, " ").trim() ?? "").includes(text),
-    ) ?? null
-  );
-}
 
 function findActiveNavLink(
   root: ParentNode,
@@ -73,10 +38,6 @@ function drawerText(doc: Document): string {
       ?.textContent?.replace(/\s+/g, " ")
       .trim() ?? ""
   );
-}
-
-function recentUpdateLinks(root: ParentNode): HTMLButtonElement[] {
-  return Array.from(root.querySelectorAll<HTMLButtonElement>(".recentUpdateLink"));
 }
 
 function render(stackId: string): Story["render"] {
@@ -165,12 +126,12 @@ export const RecentUpdateNavigation: Story = {
     await waitForCondition(
       () => canvasElement.textContent?.includes("最近更新记录") ?? false,
     );
-    await waitForCondition(() => recentUpdateLinks(canvasElement).length === 3);
-    const row = recentUpdateLinks(canvasElement)[0];
-    const jobId = row?.getAttribute("data-recent-update-job-id");
-    expectStory(jobId, "stack recent update row should expose its target job id");
-    await userEvent.click(row);
-    await waitForCondition(() => currentRoutePathname() === `/queue/${jobId}`);
+    await assertRecentUpdateClickNavigation({
+      canvasElement,
+      expectStory,
+      jobIndex: 0,
+      waitForCondition,
+    });
   },
 };
 
