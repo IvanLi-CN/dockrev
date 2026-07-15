@@ -44,6 +44,12 @@ function normalizeText(value: string | null | undefined): string {
   return value?.replace(/\s+/g, " ").trim() ?? "";
 }
 
+function expectNearlyEqual(actual: number, expected: number, tolerance: number, message: string): void {
+  if (Math.abs(actual - expected) > tolerance) {
+    throw new globalThis.Error(`${message}: expected ${expected}, got ${actual}`);
+  }
+}
+
 function findButton(root: ParentNode, text: string): HTMLButtonElement | null {
   return Array.from(root.querySelectorAll<HTMLButtonElement>("button")).find((button) => normalizeText(button.textContent) === text) ?? null;
 }
