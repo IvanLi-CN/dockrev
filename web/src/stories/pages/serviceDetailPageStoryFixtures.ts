@@ -80,6 +80,78 @@ export const historyReleaseNotes = Array.from({ length: 28 }, (_, index) => {
   };
 });
 
+function buildVersionReleaseBody(tagName: string): string {
+  return [
+    `${tagName} release notes`,
+    "",
+    "- 提升服务详情版本阅读流，避免维护窗口里频繁切换抽屉。",
+    "- 统一 update / rollback 语义，确保动作守卫和任务状态解释一致。",
+    "- 保留发布来源与外链，方便排查上游 release 差异。",
+    "- 版本正文允许按视图切换，减少人工阅读原文的负担。",
+    "- 宽屏会把元信息、正文、状态和动作拆成稳定多栏。",
+    "- 窄屏回退到单列卡片，不允许横向滚动。",
+    "- 旧版本在严格 semver 可比较时会弱化处理，但状态标签仍保持可辨识。",
+    "- 当前部署版本会在首屏自动定位并滚动到视口中心。",
+    "- 虚拟列表只保留可视区域附近的卡片节点，降低长列表渲染成本。",
+    "- 每张卡片都保留 GitHub release 外链，便于继续核对上游说明。",
+    "- 缺少翻译或润色时会直接回退原文，不隐藏可读内容。",
+    "- 这个 body 故意超过十行，用于验证折叠与展开行为。",
+  ].join("\n");
+}
+
+export const versionReleaseNotes = [
+  "5.4.4",
+  "5.4.3",
+  "5.4.2",
+  "5.4.1",
+  "5.4.0",
+  "5.3.4",
+  "5.3.3",
+  "5.3.2",
+  "5.3.1",
+  "5.3.0",
+  "5.2.4",
+  "5.2.3",
+  "5.2.2",
+  "5.2.1",
+  "5.2.0",
+  "5.1.9",
+  "5.1.8",
+  "5.1.7",
+  "5.1.6",
+  "5.1.5",
+  "5.1.4",
+  "5.1.3",
+  "5.1.2",
+  "5.1.1",
+  "5.1.0",
+  "5.0.9",
+  "5.0.8",
+  "5.0.7",
+  "5.0.6",
+  "5.0.5",
+  "5.0.4",
+  "5.0.3",
+  "5.0.2",
+  "5.0.1",
+  "5.0.0",
+].map((tagName, index) => ({
+  id: 88_000 + index,
+  tagName,
+  name:
+    tagName === "5.2.1"
+      ? "Service detail release reading flow and rollback guard refinements for maintenance windows"
+      : index % 5 === 0
+        ? `${tagName} maintenance release`
+        : tagName,
+  body: buildVersionReleaseBody(tagName),
+  htmlUrl: `https://github.com/acme/api/releases/tag/${tagName}`,
+  draft: false,
+  prerelease: false,
+  publishedAt: new Date(Date.UTC(2026, 6, 15, 12, 0) - index * 7_200_000).toISOString(),
+  createdAt: new Date(Date.UTC(2026, 6, 15, 11, 40) - index * 7_200_000).toISOString(),
+}));
+
 export const partialHistoryBackupRecords: ServiceBackupRecordsResponse = {
   records: [
     {

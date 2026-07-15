@@ -4,7 +4,14 @@ import { currentRoutePathname, type Route } from "../../routes";
 import { PageHarness } from "../mocks/PageHarness";
 import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
 import { expectHistoryColumnsAligned } from "./serviceDetailHistoryAssertions";
-import { buildLongLogsSnapshot, buildMultilineLogsSnapshot, historyReleaseNotes, paginatedHistoryJobs, partialHistoryBackupRecords } from "./serviceDetailPageStoryFixtures";
+import {
+  buildLongLogsSnapshot,
+  buildMultilineLogsSnapshot,
+  historyReleaseNotes,
+  paginatedHistoryJobs,
+  partialHistoryBackupRecords,
+  versionReleaseNotes,
+} from "./serviceDetailPageStoryFixtures";
 import { assertRecentUpdateKeyboardNavigation, assertRecentUpdateReasonPopoverStaysOnRoute } from "./recentUpdateStoryAssertions";
 import { expectNearlyEqual, expectStory, findButton, findButtons, findLink, normalizeText, waitForCondition } from "./storyAssertions";
 
@@ -18,7 +25,7 @@ const meta: Meta<typeof ServiceDetailPage> = {
 
 export default meta;
 type Story = StoryObj<typeof ServiceDetailPage>;
-type ServiceSection = "overview" | "history" | "monitoring" | "backup" | "logs" | "settings";
+type ServiceSection = "overview" | "versions" | "history" | "monitoring" | "backup" | "logs" | "settings";
 
 function findActionButton(root: ParentNode, action: string, text: string): HTMLButtonElement | null {
   const scope = root.querySelector(`[data-service-detail-action="${action}"]`);
@@ -40,6 +47,18 @@ function tabLabels(root: ParentNode): string[] {
 
 function findHistoryRowByJobId(root: ParentNode, jobId: string): HTMLElement | null {
   return Array.from(root.querySelectorAll<HTMLElement>(".serviceOperationHistoryRow")).find((row) => normalizeText(row.textContent).includes(jobId)) ?? null;
+}
+
+function findVersionCard(root: ParentNode, tagName: string): HTMLElement | null {
+  return root.querySelector<HTMLElement>(`[data-service-version-card="true"][data-release-tag="${tagName}"]`);
+}
+
+function findVersionAction(root: ParentNode, action: "update" | "rollback", tagName: string): HTMLButtonElement | null {
+  return root.querySelector<HTMLButtonElement>(`[data-service-version-action="${action}"][data-release-tag="${tagName}"] button`);
+}
+
+function visibleVersionCards(root: ParentNode): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>('[data-service-version-card="true"]')).filter((card) => card.getBoundingClientRect().height > 0);
 }
 
 function findLogRowContaining(root: ParentNode, text: string): HTMLElement | null {
@@ -71,7 +90,7 @@ export const OverviewDefault: Story = {
     expectStory(currentRoutePathname() === "/services/stack-prod/svc-prod-api", "legacy overview route should stay canonical");
     await waitForCondition(() => findTab(canvasElement, "overview")?.getAttribute("data-state") === "active");
     expectStory(findTab(canvasElement, "overview")?.getAttribute("data-state") === "active", "overview tab should be active");
-    expectStory(JSON.stringify(tabLabels(canvasElement)) === JSON.stringify(["概览", "更新记录", "监控", "日志", "备份", "设置"]), "service detail tabs should follow the reordered sequence");
+    expectStory(JSON.stringify(tabLabels(canvasElement)) === JSON.stringify(["概览", "版本", "更新记录", "监控", "日志", "备份", "设置"]), "service detail tabs should follow the reordered sequence");
     expectStory(!normalizeText(canvasElement.textContent).includes("资源监控"), "overview should not render monitoring panel");
     expectStory(!findSectionCard(canvasElement, "auto-policy"), "overview should not render settings cards");
     expectStory(findButton(canvasElement, "Stack 详情"), "stack detail top action missing");
@@ -102,6 +121,105 @@ export const OverviewDefault: Story = {
 export const OverviewRecentUpdateEvidence: Story = {
   parameters: { dockrevApiScenario: "dashboard-demo" },
   render: render("stack-prod", "svc-prod-api", "overview", "最近更新记录摘要卡保持概览布局，并支持任务详情直达。"),
+};
+
+export const VersionsSection: Story = {
+  parameters: {
+    dockrevApiScenario: "service-detail-history-rollback-action",
+    dockrevGitHubReleasesByServiceId: {
+      "svc-prod-api": {
+        authMode: "anonymous",
+        repo: { fullName: "acme/api", htmlUrl: "https://github.com/acme/api" },
+        items: versionReleaseNotes,
+      },
+    },
+  },
+  render: render("stack-prod", "svc-prod-api", "versions", "版本子页以内联卡片展示 release notes，并以当前部署版本为锚点定位。"),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(findSectionCard(canvasElement, "versions")));
+    await waitForCondition(() => Boolean(findVersionCard(canvasElement, "5.2.1")));
+    const viewport = canvasElement.querySelector<HTMLElement>(".serviceVersionsScrollViewport");
+    const currentCard = findVersionCard(canvasElement, "5.2.1");
+    const actionCard = findVersionCard(canvasElement, "5.2.2");
+    const updateCandidate = findVersionAction(canvasElement, "update", "5.2.3");
+    const updateDisabled = findVersionAction(canvasElement, "update", "5.4.4");
+    const rollbackTarget = findVersionAction(canvasElement, "rollback", "5.2.0");
+    const rollbackHint = findVersionAction(canvasElement, "rollback", "5.2.2");
+    const totalCount = Number(canvasElement.querySelector('[data-service-versions="true"]')?.getAttribute("data-service-versions-total-count") ?? "0");
+    const visibleCount = Number(canvasElement.querySelector('[data-service-versions="true"]')?.getAttribute("data-service-versions-visible-count") ?? "0");
+
+    expectStory(currentRoutePathname() === "/services/stack-prod/svc-prod-api/versions", "versions deep link missing");
+    expectStory(findTab(canvasElement, "versions")?.getAttribute("data-state") === "active", "versions tab should be active");
+    expectStory(Boolean(viewport), "versions viewport missing");
+    expectStory(Boolean(currentCard), "current version card missing");
+    expectStory(
+      getComputedStyle(currentCard ?? canvasElement).gridTemplateColumns.split(" ").filter(Boolean).length === 2,
+      "read-only current version cards should collapse to a two-column layout instead of keeping an empty action rail",
+    );
+    const currentTitle = currentCard?.querySelector<HTMLElement>(".serviceVersionBodyTitle");
+    const currentTag = currentCard?.querySelector<HTMLElement>(".serviceVersionTagText .mono");
+    const currentMetaValue = currentCard?.querySelector<HTMLElement>(".serviceVersionFacts dd");
+    expectStory(
+      Number.parseFloat(getComputedStyle(currentTitle ?? canvasElement).fontSize) >
+        Number.parseFloat(getComputedStyle(currentMetaValue ?? canvasElement).fontSize),
+      "release title should live in the reading column and stay visually above body metadata",
+    );
+    expectStory(
+      normalizeText(currentTitle?.textContent).includes("Service detail release reading flow"),
+      "current version card should render the release title inside the reading column",
+    );
+    expectStory(
+      normalizeText(currentTag?.textContent) === "5.2.1",
+      "version tag should stay in the left metadata rail instead of being replaced by the release title",
+    );
+    expectStory(
+      !currentCard?.querySelector(".serviceVersionCardHeader"),
+      "release title should not be hoisted into a cross-card header rail",
+    );
+    expectStory(
+      !currentCard?.querySelector(".serviceVersionCardAside"),
+      "read-only current version cards should not reserve a dedicated aside rail",
+    );
+    expectStory(
+      normalizeText(currentCard?.textContent).includes("Release") &&
+        !normalizeText(currentCard?.textContent).includes("发布页") &&
+        !normalizeText(currentCard?.textContent).includes("查看 GitHub Release"),
+      "GitHub release entry should collapse to a single direct Release link instead of label-plus-instruction copy",
+    );
+    expectStory(
+      !(currentCard?.querySelector(".serviceVersionCardAside")?.textContent ?? "").includes("5.2.1"),
+      "current version cards should not repeat the same deployed version summary inside the read-only aside",
+    );
+    expectStory(
+      getComputedStyle(actionCard ?? canvasElement).gridTemplateColumns.split(" ").filter(Boolean).length === 3,
+      "actionable desktop version cards should keep a dedicated third rail for status and actions",
+    );
+    expectStory(totalCount > 20 && visibleCount > 0 && visibleCount < totalCount, "versions list should stay virtualized");
+    expectStory(updateCandidate && !updateCandidate.disabled, "candidate version should expose an enabled update action");
+    expectStory(Boolean(updateDisabled?.disabled), "newer non-candidate release should render a disabled update action");
+    expectStory(Boolean(rollbackTarget && !rollbackTarget.disabled), "rollback target version should expose an enabled rollback action");
+    expectStory(Boolean(rollbackHint && !rollbackHint.disabled), "historically deployed old versions should keep an explanatory rollback entry");
+    expectStory(findVersionCard(canvasElement, "5.2.0")?.getAttribute("data-version-card-older") === "true", "older comparable releases should render the greyscale state");
+    expectStory(
+      Math.abs(
+        ((currentCard?.getBoundingClientRect().top ?? 0) + (currentCard?.getBoundingClientRect().height ?? 0) / 2) -
+          ((viewport?.getBoundingClientRect().top ?? 0) + (viewport?.getBoundingClientRect().height ?? 0) / 2),
+      ) < 220,
+      "current deployed version should be centered inside the versions viewport on first render",
+    );
+
+    findButton(canvasElement, "原文")?.click();
+    await waitForCondition(() => canvasElement.querySelector('[data-service-versions="true"]')?.getAttribute("data-service-versions-view") === "original");
+    const expandButton = Array.from(currentCard?.querySelectorAll<HTMLButtonElement>("button") ?? []).find((button) => normalizeText(button.textContent) === "展开");
+    expectStory(expandButton, "long release notes should default to the collapsed state");
+    expectStory(!normalizeText(currentCard?.textContent).includes("故意超过十行"), "collapsed release notes should hide lines beyond the first ten");
+    expandButton.click();
+    await waitForCondition(() => normalizeText(currentCard?.textContent).includes("故意超过十行"));
+
+    rollbackHint?.click();
+    const doc = canvasElement.ownerDocument;
+    await waitForCondition(() => doc.body.textContent?.includes("不会直接创建回滚任务") ?? false);
+  },
 };
 
 export const ArchivedServiceNavigation: Story = {
@@ -493,6 +611,73 @@ export const MobileHistorySection: Story = {
   },
 };
 
+export const VersionsSectionActionGuard: Story = {
+  parameters: {
+    dockrevApiScenario: "dashboard-demo-slow-update",
+    dockrevGitHubReleasesByServiceId: {
+      "svc-prod-api": {
+        authMode: "anonymous",
+        repo: { fullName: "acme/api", htmlUrl: "https://github.com/acme/api" },
+        items: versionReleaseNotes,
+      },
+    },
+  },
+  render: render("stack-prod", "svc-prod-api", "versions", "更新或回滚任务执行期间，同一服务的版本动作必须统一锁定。"),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(findVersionAction(canvasElement, "update", "5.2.3")));
+    findVersionAction(canvasElement, "update", "5.2.3")?.click();
+
+    const doc = canvasElement.ownerDocument;
+    await waitForCondition(() => doc.body.textContent?.includes("确认更新服务 api？") ?? false);
+    findButton(doc, "执行更新")?.click();
+
+    await waitForCondition(() => normalizeText(canvasElement.textContent).includes("当前服务已有更新任务在执行"));
+    await waitForCondition(() => Boolean(globalThis.__DOCKREV_MOCK_DEBUG__?.lastUpdateRequest));
+
+    const lastRequest = globalThis.__DOCKREV_MOCK_DEBUG__?.lastUpdateRequest as Record<string, unknown> | null | undefined;
+    expectStory(lastRequest?.targetTag === "5.2.1", "version-page update must still obey the current deployed targetTag contract");
+    expectStory(typeof lastRequest?.targetDigest === "string" && String(lastRequest.targetDigest).endsWith("9f"), "version-page update must keep the existing candidate digest contract");
+    expectStory(Boolean(findVersionAction(canvasElement, "update", "5.2.3")?.disabled), "candidate update action should lock once a task is running");
+    expectStory(Boolean(findVersionAction(canvasElement, "rollback", "5.2.0")?.disabled), "rollback actions should also lock while the service has an update task in flight");
+    expectStory(Boolean(findButton(canvasElement, "查看任务")), "locked versions state should still expose the active job entrypoint");
+  },
+};
+
+export const MobileVersionsSection: Story = {
+  parameters: {
+    dockrevApiScenario: "service-detail-history-rollback-action",
+    viewport: { defaultViewport: "mobile1" },
+    dockrevGitHubReleasesByServiceId: {
+      "svc-prod-api": {
+        authMode: "anonymous",
+        repo: { fullName: "acme/api", htmlUrl: "https://github.com/acme/api" },
+        items: versionReleaseNotes,
+      },
+    },
+  },
+  render: render("stack-prod", "svc-prod-api", "versions", "移动端版本卡切换为单列堆叠，不出现横向滚动。"),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(findVersionCard(canvasElement, "5.2.1")));
+    const card = findVersionCard(canvasElement, "5.2.1");
+    await waitForCondition(() => visibleVersionCards(canvasElement).length >= 2);
+    const [firstVisibleCard, secondVisibleCard] = visibleVersionCards(canvasElement).sort(
+      (left, right) => left.getBoundingClientRect().top - right.getBoundingClientRect().top,
+    );
+    const gridColumns = getComputedStyle(card ?? canvasElement).gridTemplateColumns.split(" ").filter(Boolean);
+    const primaryButton = findVersionAction(canvasElement, "update", "5.2.3");
+
+    expectStory(findTab(canvasElement, "versions")?.getAttribute("data-state") === "active", "mobile versions tab should stay active");
+    expectStory(gridColumns.length === 1, "mobile versions cards should collapse into a single-column layout");
+    expectStory(Boolean(primaryButton), "mobile versions card should keep the action region");
+    expectStory(card?.scrollWidth != null && card.clientWidth > 0 && card.scrollWidth <= card.clientWidth + 1, "mobile versions cards should not overflow horizontally");
+    expectStory((primaryButton?.getBoundingClientRect().width ?? 0) > 160, "mobile versions actions should expand to a readable tap target width");
+    expectStory(
+      (secondVisibleCard?.getBoundingClientRect().top ?? 0) >= (firstVisibleCard?.getBoundingClientRect().bottom ?? 0) - 1,
+      "mobile versions virtual rows should not overlap after dynamic height measurement",
+    );
+  },
+};
+
 export const LogsSectionVirtualized: Story = {
   parameters: {
     dockrevApiScenario: "dashboard-demo",
@@ -607,6 +792,11 @@ export const TabNavigation: Story = {
   render: render("stack-prod", "svc-prod-api", "overview", "页头 Tabs 直接驱动 service section 路由"),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => findTab(canvasElement, "overview") != null);
+
+    findTab(canvasElement, "versions")?.click();
+    await waitForCondition(() => currentRoutePathname() === "/services/stack-prod/svc-prod-api/versions");
+    await waitForCondition(() => Boolean(findSectionCard(canvasElement, "versions")));
+    expectStory(findTab(canvasElement, "versions")?.getAttribute("data-state") === "active", "versions tab active state missing after switch");
 
     findTab(canvasElement, "history")?.click();
     await waitForCondition(() => currentRoutePathname() === "/services/stack-prod/svc-prod-api/history");

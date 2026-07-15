@@ -35,6 +35,7 @@ import { AutoUpdatePolicyDrawer } from "../components/AutoUpdatePolicyDrawer";
 import { AutoUpdatePolicyResultCard } from "../components/AutoUpdatePolicyResultCard";
 import { RecentUpdateRecords, ServiceOperationHistory, selectRecentServiceUpdateJobs, selectServiceOperationJobs } from "../components/RecentUpdateRecords";
 import { ResponsiveSettingsDrawer } from "../components/ResponsiveSettingsDrawer";
+import { ServiceVersionsSection } from "../components/ServiceVersionsSection";
 import { ImageLinkIcons, RepositoryLinkIcon, splitImageNameForDisplay, splitImageRef } from "../imageLinks";
 import { ServiceComposeTagField } from "./ServiceComposeTagField";
 import { useServiceDetailPageState } from "./useServiceDetailPageState";
@@ -57,9 +58,10 @@ function isDockrevService(svc: Service): boolean {
   return isDockrevImageRef(svc.image.ref);
 }
 
-type ServiceDetailSection = "overview" | "history" | "monitoring" | "backup" | "logs" | "settings";
+type ServiceDetailSection = "overview" | "versions" | "history" | "monitoring" | "backup" | "logs" | "settings";
 
 function serviceDetailSectionLabel(section: ServiceDetailSection): string {
+  if (section === "versions") return "版本";
   if (section === "history") return "更新记录";
   if (section === "monitoring") return "监控";
   if (section === "backup") return "备份";
@@ -175,7 +177,7 @@ function sanitizeReadonlyStackSnapshot(stack: StackDetail): StackDetail {
 export function ServiceDetailPage(props: {
   stackId: string;
   serviceId: string;
-  section?: "overview" | "history" | "monitoring" | "backup" | "logs" | "settings";
+  section?: "overview" | "versions" | "history" | "monitoring" | "backup" | "logs" | "settings";
   onLastScanHint: (lastScan?: string) => void;
   onTopActions: (node: ReactNode) => void;
 }) {
@@ -203,10 +205,15 @@ export function ServiceDetailPage(props: {
     newRuleValue,
     notice,
     backupTargets,
+    applyActiveJob,
+    applySubmitting,
     repoInferBusy,
     requestRefresh,
+    requestApplyUpdate,
     requestRollback,
     rollbackTarget,
+    rollbackActiveJobId,
+    rollbackActiveJobStatus,
     rollbackTargetRefreshing,
     rules,
     semverDowngradeAnomaly,
@@ -478,6 +485,31 @@ export function ServiceDetailPage(props: {
         rollbackBusy={busy || rollbackTargetRefreshing}
         rollbackSourceJobId={readonlyUi || !rollbackTarget?.available ? null : rollbackTarget.sourceUpdateJobId}
       />
+    </div>
+  );
+
+  const renderVersionsSection = () => (
+    <div className="svcDetailSectionStack">
+      {readonlyUi ? (
+        <ServiceDetailReadonlyBlocked
+          detail="版本页需要联网拉取统一 release notes 数据；恢复联网后才能定位当前部署版本并读取完整正文。"
+          title="当前离线，版本页需要联网。"
+        />
+      ) : (
+        <ServiceVersionsSection
+          busy={busy}
+          jobs={serviceOperationJobs}
+          onApplyUpdate={requestApplyUpdate}
+          onRollback={requestRollback}
+          rollbackActiveJobId={rollbackActiveJobId}
+          rollbackActiveJobStatus={rollbackActiveJobStatus}
+          rollbackTarget={rollbackTarget}
+          rollbackTargetRefreshing={rollbackTargetRefreshing}
+          service={effectiveService}
+          updateActiveJob={applyActiveJob}
+          updateSubmitting={applySubmitting}
+        />
+      )}
     </div>
   );
 
@@ -763,6 +795,7 @@ export function ServiceDetailPage(props: {
   );
 
   const renderSection = () => {
+    if (sectionValue === "versions") return renderVersionsSection();
     if (sectionValue === "history") return renderHistorySection();
     if (sectionValue === "monitoring") return renderMonitoringSection();
     if (sectionValue === "backup") return renderBackupSection();
@@ -777,7 +810,7 @@ export function ServiceDetailPage(props: {
         <ReadonlySnapshotNotice
           tone={!isOnline ? "warn" : "info"}
           title={!isOnline ? "当前离线，显示已缓存的服务详情数据。" : "先显示已缓存的服务详情数据，后台会继续刷新。"}
-          detail="仅保留概览、更新记录、监控摘要与备份摘要；日志和设置会继续要求联网。"
+          detail="仅保留概览、更新记录、监控摘要与备份摘要；版本、日志和设置会继续要求联网。"
           fetchedAt={snapshotFetchedAt}
           actionLabel="重试刷新"
           actionDisabled={!isOnline || busy}
@@ -868,6 +901,9 @@ export function ServiceDetailPage(props: {
             <TabsList className="svcDetailTabsList" aria-label="服务详情分区">
               <TabsTrigger className={sectionValue === "overview" ? "svcDetailTab active" : "svcDetailTab"} data-service-detail-tab="overview" value="overview">
                 概览
+              </TabsTrigger>
+              <TabsTrigger className={sectionValue === "versions" ? "svcDetailTab active" : "svcDetailTab"} data-service-detail-tab="versions" value="versions">
+                版本
               </TabsTrigger>
               <TabsTrigger className={sectionValue === "history" ? "svcDetailTab active" : "svcDetailTab"} data-service-detail-tab="history" value="history">
                 更新记录

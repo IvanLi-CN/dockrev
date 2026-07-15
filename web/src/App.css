@@ -7444,9 +7444,563 @@ html[data-theme="light"] .modalOverlay {
     padding: 16px 14px;
   }
 
-  .serviceOperationHistoryPager {
+.serviceOperationHistoryPager {
     justify-content: space-between;
     padding: 2px 2px 0;
+  }
+}
+
+.serviceVersionsSection {
+  display: flex;
+  flex-direction: column;
+}
+
+.serviceVersionsCard {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 0;
+}
+
+.serviceVersionsHeader,
+.serviceVersionsActivityBanner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.serviceVersionsHeaderText {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 76ch;
+}
+
+.serviceVersionsHeaderControls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.serviceVersionsRepoLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
+  background: color-mix(in srgb, var(--dockrev-surface) 92%, transparent);
+  color: color-mix(in srgb, var(--text) 76%, var(--muted) 24%);
+  text-decoration: none;
+}
+
+.serviceVersionsRepoLink:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+}
+
+.serviceVersionsHeaderMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.serviceVersionsChip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
+  background: color-mix(in srgb, var(--dockrev-surface) 92%, transparent);
+  color: color-mix(in srgb, var(--text) 74%, var(--muted) 26%);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.serviceVersionsViewTabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
+  background: color-mix(in srgb, var(--dockrev-surface) 88%, var(--panel2) 12%);
+}
+
+.serviceVersionsViewTab {
+  min-width: 48px;
+  height: 26px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  transition:
+    color 140ms ease,
+    background-color 140ms ease;
+}
+
+.serviceVersionsViewTab:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-wash) 80%, transparent);
+}
+
+.serviceVersionsViewTab:focus-visible,
+.serviceVersionExpandButton:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-primary) 46%, transparent);
+  outline-offset: 2px;
+}
+
+.serviceVersionsViewTabActive {
+  color: var(--text);
+  background: color-mix(in srgb, var(--color-primary) 18%, var(--dockrev-surface) 82%);
+}
+
+.serviceVersionsActivityBanner {
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--color-info) 26%, var(--borderColor) 74%);
+  border-radius: 14px;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-info) 10%, transparent) 0%,
+      transparent 100%
+    ),
+    color-mix(in srgb, var(--panel2) 32%, transparent);
+}
+
+.serviceVersionsActivityTitle {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 680;
+  line-height: 1.35;
+}
+
+.serviceVersionsState {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 14px;
+  border: 1px dashed color-mix(in srgb, var(--borderColor) 74%, transparent);
+  border-radius: 14px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--panel2) 20%, transparent);
+}
+
+.serviceVersionsStateError {
+  display: block;
+  color: var(--text);
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--color-danger) 28%, var(--borderColor) 72%);
+  background: color-mix(in srgb, var(--color-danger) 8%, var(--panel2) 92%);
+}
+
+.serviceVersionsStateTitle,
+.serviceVersionsLoaderTitle {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 680;
+  line-height: 1.35;
+}
+
+.serviceVersionsStateMessage,
+.serviceVersionsLoaderMessage {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.serviceVersionsScrollShell {
+  position: relative;
+}
+
+.serviceVersionsScrollViewport {
+  height: min(72vh, 960px);
+  min-height: 460px;
+  overflow: auto;
+  padding: 4px 0 0;
+  scrollbar-gutter: stable;
+}
+
+.serviceVersionsList {
+  position: relative;
+  width: 100%;
+}
+
+.serviceVersionsListInner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.serviceVersionsVirtualRow {
+  width: 100%;
+}
+
+.serviceVersionsVirtualRowLoader {
+  display: flex;
+}
+
+.serviceVersionCard {
+  min-width: 0;
+  display: grid;
+  grid-template-columns:
+    minmax(220px, 0.94fr)
+    minmax(0, 1.88fr)
+    fit-content(19rem);
+  gap: 18px;
+  padding: 16px 18px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 74%, transparent);
+  border-radius: 14px;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--dockrev-surface) 16%, transparent) 0%,
+      transparent 100%
+    ),
+    color-mix(in srgb, var(--panel2) 18%, transparent);
+}
+
+.serviceVersionCard[data-version-card-has-aside='false'] {
+  grid-template-columns:
+    minmax(220px, 0.94fr)
+    minmax(0, 1.94fr);
+  align-items: start;
+}
+
+.serviceVersionCard[data-version-card-has-aside='false'] .serviceVersionCardBody {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.serviceVersionCardCurrent {
+  border-color: color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-primary) 9%, transparent) 0%,
+      transparent 100%
+    ),
+    color-mix(in srgb, var(--panel2) 22%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 12%, transparent);
+}
+
+.serviceVersionCardOlder {
+  border-color: color-mix(in srgb, var(--borderColor) 68%, transparent);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--panel2) 18%, transparent) 0%,
+      transparent 100%
+    ),
+    color-mix(in srgb, var(--panel) 94%, var(--bg) 6%);
+}
+
+.serviceVersionCardOlder .serviceVersionCardMeta,
+.serviceVersionCardOlder .serviceVersionCardBody {
+  color: color-mix(in srgb, var(--text) 72%, var(--muted) 28%);
+}
+
+.serviceVersionCardMeta,
+.serviceVersionCardBody,
+.serviceVersionCardAside,
+.serviceVersionHeading,
+.serviceVersionStatusStack,
+.serviceVersionActionStack,
+.serviceVersionActionBlock,
+.serviceVersionFacts > div,
+.serviceVersionStatusBlock {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.serviceVersionCardMeta,
+.serviceVersionCardAside {
+  gap: 12px;
+}
+
+.serviceVersionHeading {
+  gap: 10px;
+}
+
+.serviceVersionTagRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 8px 10px;
+  min-width: 0;
+}
+
+.serviceVersionTagText {
+  color: color-mix(in srgb, var(--muted2) 76%, var(--text) 24%);
+  font-size: clamp(24px, 1.85vw, 30px);
+  font-weight: 820;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  min-width: 0;
+}
+
+.serviceVersionTagText .mono {
+  font-family: var(--font-mono);
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+}
+
+.serviceVersionBadges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.serviceVersionFacts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 16px;
+  padding-top: 6px;
+}
+
+.serviceVersionFacts > div {
+  gap: 4px;
+}
+
+.serviceVersionFacts dt,
+.serviceVersionStatusLabel {
+  color: var(--muted2);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.15;
+}
+
+.serviceVersionFacts dd,
+.serviceVersionStatusValue {
+  margin: 4px 0 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 620;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.serviceVersionDateValue {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.serviceVersionLinkRow {
+  display: flex;
+  align-items: center;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--borderColor) 48%, transparent);
+  width: fit-content;
+  color: color-mix(in srgb, var(--muted) 78%, var(--text) 22%);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-decoration: none;
+}
+
+.serviceVersionLinkRow:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.serviceVersionCardBody {
+  gap: 10px;
+  align-self: stretch;
+  padding-inline: 2px;
+}
+
+.serviceVersionBodyShell {
+  width: 100%;
+  max-width: 72ch;
+  min-width: 0;
+}
+
+.serviceVersionBodyTitle {
+  margin-bottom: 10px;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 740;
+  line-height: 1.28;
+  letter-spacing: -0.015em;
+  overflow-wrap: anywhere;
+}
+
+.serviceVersionBody,
+.serviceVersionBodyEmpty {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.62;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.serviceVersionBodyEmpty {
+  color: var(--muted);
+}
+
+.serviceVersionBodyFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.serviceVersionBodyHint,
+.serviceVersionActionHint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.serviceVersionExpandButton {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.serviceVersionStatusStack,
+.serviceVersionActionStack {
+  gap: 10px;
+  justify-content: flex-start;
+}
+
+.serviceVersionStatusBlock {
+  gap: 6px;
+}
+
+.serviceVersionCardAside {
+  gap: 14px;
+  padding-left: 18px;
+  border-left: 1px solid color-mix(in srgb, var(--borderColor) 62%, transparent);
+}
+
+.serviceVersionStatusStack > * + *,
+.serviceVersionActionStack > * + * {
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--borderColor) 52%, transparent);
+}
+
+.serviceVersionActionBlock {
+  gap: 8px;
+}
+
+.serviceVersionActionBlock .btn {
+  width: 100%;
+}
+
+.serviceVersionsLoaderRow {
+  width: 100%;
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.serviceVersionsLoaderCard {
+  width: 100%;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 28%, var(--borderColor) 72%);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--color-warning) 8%, var(--panel2) 92%);
+}
+
+@media (max-width: 1100px) {
+  .serviceVersionsHeader {
+    flex-direction: column;
+  }
+
+  .serviceVersionsHeaderControls {
+    justify-content: flex-start;
+  }
+
+  .serviceVersionCard {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .serviceVersionCard[data-version-card-has-aside='false'] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .serviceVersionCard[data-version-card-has-aside='false'] .serviceVersionCardBody {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .serviceVersionCardAside {
+    padding-left: 0;
+    border-left: 0;
+    padding-top: 12px;
+    border-top: 1px solid color-mix(in srgb, var(--borderColor) 62%, transparent);
+  }
+
+  .serviceVersionTagRow {
+    gap: 8px;
+  }
+
+  .serviceVersionBadges {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 760px) {
+  .serviceVersionsCard {
+    gap: 12px;
+  }
+
+  .serviceVersionsScrollViewport {
+    height: min(68vh, 760px);
+    min-height: 420px;
+    padding-top: 2px;
+  }
+
+  .serviceVersionsActivityBanner {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .serviceVersionCard {
+    padding: 14px;
+    border-radius: 14px;
+  }
+
+  .serviceVersionFacts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .serviceVersionBodyFoot {
+    align-items: flex-start;
   }
 }
 
