@@ -68,14 +68,18 @@
 - `parseRoute()` 必须接受旧路径，并把它解析为服务详情 `overview` 语义；对于 `/versions`、`/history`、`/monitoring`、`/backup`、`/logs` 与 `/settings` 需返回对应 section。
 - 服务详情页顶部必须提供 route-backed tabs，标签固定为 `概览 / 版本 / 更新记录 / 监控 / 日志 / 备份 / 设置`。
 - `预览更新 / 执行更新 / 回滚 / Stack 详情` 必须在各子页保持一致可达；`归档/恢复` 与 `阻止此服务更新` 必须从全局顶部动作下沉到 `设置` 页。
+- 七个服务详情子页必须共用同一张紧凑状态摘要卡：只保留状态标题、当前版本、目标版本与 `newVersionDiscoveryCount` 映射出的“跨 N 个版本”；无候选时目标显示 `-`，计数缺失时显示“跨度未知”，且不得再出现 digest、raw tag、架构、规则或原因等技术明细。
 - `概览` 不得再出现资源监控卡、自动更新结果卡、Compose 信息卡或服务保护卡。
 - `版本` 子页必须复用 `GET /api/services/{service_id}/release-notes` 的统一数据源与 `original | translated | smart` 阅读视图语义，改为页内卡片阅读而不是强依赖右侧抽屉。
+- `版本` 子页页头必须把仓库、来源、当前版本与候选版本 chips 收敛为仓库级 Releases 图标入口：GitHub 图标固定打开 `https://github.com/<owner>/<repo>/releases`，OctoRill 图标仅在 release-notes 响应提供可信 `externalLinks.octoRillReleasesUrl` 时显示，并在新窗口打开对应地址。
 - `版本` 子页首屏必须以当前部署版本为锚点；前端需按 release pages 顺序抓取直到命中当前版本或列表耗尽，并在命中后把该卡片滚动到视口中心。已扫描出的较新版本保留在当前版本上方，更旧版本按需继续分页加载。
+- `版本` 子页在 `>1100px` 时必须拆为左 `220px` 版本目录与右侧版本卡列表；目录与正文都必须保持虚拟化、共享同一分页数据源、独立滚动，并以右侧视口中心版本驱动目录高亮与跟随。目录项固定高度，展示版本号和发布时间：7 天内显示中文相对时间，更早显示 `YYYY-MM-DD`；点击目录项时，对应卡片必须滚动到正文视口中心。任一列表接近末尾时，都必须复用现有去重分页逻辑继续加载旧版本。
 - `版本` 子页的 release card 正文超过 10 行时必须默认折叠，支持原地展开/收起，并继续保持虚拟列表稳定测量，不得因展开造成定位丢失或明显空白。
 - `版本` 子页必须对比当前部署版本、candidate 与既有 rollback target，展示状态徽标与动作区。较新版本统一渲染 `更新` 动作位，但只有与当前 service candidate 对应且不突破现有 explicit target tag 契约的版本可真正发起更新；其余版本必须给出明确禁用原因。
 - `版本` 子页对所有已部署过的历史版本统一渲染 `回滚` 动作位；只有当前 rollback target 对应版本执行真实回滚，其余版本点击后进入解释性提示，不得创建任务。
 - `版本` 子页在同一服务已有 update/rollback 任务提交中、执行中，或 rollback target 刷新中时，必须锁定全部版本动作，并提供查看当前任务状态的稳定入口。
-- `版本` 子页宽屏必须使用多栏宽卡片；窄屏必须切换为单列窄卡片，正文宽度保持正文阅读尺度且不产生横向滚动。
+- `版本` 子页桌面端可执行卡片的右侧状态/动作栏必须固定为 `19rem` 轨道，避免因说明或按钮数量不同导致宽度漂移；无右栏卡片继续使用两栏布局。
+- `版本` 子页宽屏必须使用多栏宽卡片；`≤1100px` 必须完全隐藏版本目录并切换为单列窄卡片，正文宽度保持正文阅读尺度且不产生横向滚动。
 - 仅当 release tag 与当前部署版本都能 strict-semver 比较且 release 更旧时，版本卡片整体才允许置灰；状态徽标与动作提示不得因置灰失去辨识度。
 - `更新记录` 必须复用 `GET /api/jobs` 全量数据，只展示当前服务关联的 `update` 与 `rollback` 任务；服务、Stack 和 all scope 任务均以 `serviceId` 或 summary targets 关联判断，按 `finishedAt ?? startedAt ?? createdAt` 倒序排列。
 - `更新记录` 必须使用记录、状态、备份、来源、时间、操作六列；记录列严格限制为两行：首行操作名与异常或回滚结果摘要，次行 Job ID，摘要必须单行截断，不得出现第三行。`备份` 列也必须固定为两行：首行显示本次实际纳入备份的目标数量，次行显示这些 included targets 的源目标总体积；当任务没有匹配的实际备份记录、匹配记录没有 included targets，或 included targets 存在缺失体积时，必须回退到中性空占位，不得误报“未备份”“失败”或“已跳过”。与操作类型或状态重复的泛化摘要（如“更新完成”“回滚完成”“任务执行失败”）不得显示；仅保留额外诊断结果。桌面端六列表格必须共享稳定列轨道；即使只有部分行出现更新日志按钮或回滚按钮，表头与所有数据行的列边界也不得漂移、挤压或错列。整行支持 click、Enter、Space 进入 `/queue/:jobId`。失败任务的非状态列必须弱化显示，但状态列必须保持完整失败 Badge 的颜色和对比度，且仍保留 hover/focus 定位与行级跳转。记录能可靠解析当前服务的目标 tag（`targetDisplayTag`、`targetTag` 或服务 target 的 `to`）时，操作列必须提供更新日志图标入口，打开既有右侧 release drawer 并定位、高亮对应版本；无可靠 tag 时不得显示误导入口。仅当成功更新任务是当前服务可回滚目标的来源任务时，操作列显示回滚入口；该入口复用服务级回滚确认、鉴权与并发保护，不得声称可回滚到任意历史版本。匹配记录超过 20 条时，前端必须只渲染当前页，并提供带页码状态的上一页/下一页箭头；页码越界时回退到有效页。分页不改变既有全量 jobs 请求或 SSE 合同。
@@ -122,6 +126,8 @@
 - 用户访问 `.../versions`：
   - 共享 hero/banner/top actions 与普通服务详情一致。
   - 内容区展示统一 release notes 版本卡片流，当前版本首屏居中定位。
+  - 页头只保留 GitHub 与可选 OctoRill 两个仓库级 Releases 图标入口，不再重复展示版本 chips。
+  - 宽屏使用 `220px` 左目录 + 右侧正文双虚拟列表；窄屏隐藏目录并保持单列卡片流。
   - 较新版本可见 `更新` 动作位，历史已部署版本可见 `回滚` 动作位，但真实可执行性继续服从现有 update/rollback 合同。
 - 用户访问 `.../history`：
   - 共享 hero/banner/top actions 与普通服务详情一致。
@@ -197,6 +203,18 @@
   When 用户浏览较新版本或历史已部署版本
   Then 版本卡片会显示与当前服务关系相关的状态徽标、外链与动作区；update/rollback 的真实可执行性继续遵守既有显式 target tag 与 rollback target 合同。
 
+- Given 任一服务详情子页
+  When 页面展示共享状态摘要
+  Then 只显示状态标题、当前版本、目标版本与版本跨度，不再展示 digest、raw tag、架构、规则或原因等技术明细。
+
+- Given 服务详情页处于 `版本`
+  When 视口宽度大于 `1100px`
+  Then 页面显示 `220px` 固定宽度的版本目录、GitHub/OctoRill 仓库级图标入口、固定 `19rem` 右侧动作栏，以及由正文中心版本驱动的目录高亮。
+
+- Given 服务详情页处于 `版本`
+  When 视口宽度为 `390x900`
+  Then 版本目录不存在，卡片退化为单列阅读流，且页面不产生横向溢出。
+
 - Given 服务详情页处于 `更新记录`
   When 当前服务关联 update、rollback、Stack scope 与 all scope 任务
   Then 统一表格只显示这些任务，按 `finishedAt ?? startedAt ?? createdAt` 倒序排列，不混入其他服务任务；行 click、Enter、Space 都进入对应 `/queue/:jobId`。若当前回滚目标的来源任务在表中且为成功更新，则仅该行显示回滚按钮，点击不会先触发行级跳转，并进入既有回滚确认。对存在实际备份记录的任务，`备份` 列显示 included targets 数量与源目标总体积；没有匹配记录时显示中性空占位。
@@ -258,7 +276,7 @@
 - Stories to add/update: `web/src/stories/pages/ServiceDetailPage.stories.tsx`
 - Docs pages / state galleries to add/update: `none (reason: repo currently uses page stories/canvas coverage for this surface)`
 - `play` / interaction coverage to add/update: tabs route switching 与顺序断言、旧链接默认概览、更新记录深链/混合列表/备份列命中与空占位/缺失体积回退/分页边界/更新日志定位/空态/click-Enter-Space 跳转/受控回滚入口、备份页记录卡渲染/空态、日志深链与搜索交互、日志自动换行/虚拟列表断言、移动端更新记录无横向滚动、设置抽屉入口、监控页稳定渲染
-- Visual regression baseline changes (if any): 服务详情六子页 mock-only 视觉证据
+- Visual regression baseline changes (if any): 服务详情七子页 mock-only 视觉证据（含 `ui_demo` 版本页桌面/移动端）
 
 ### Quality checks
 
@@ -668,6 +686,36 @@
   PR caption: 移动端版本卡改为单列窄卡，信息按阅读顺序自然下沉。
 
 ![服务详情版本子页移动端窄卡](./assets/service-detail-versions-mobile-card.png)
+
+- source_type: `ui_demo`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `1960x1400`
+  viewport_strategy: `controlled-viewport`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `demo:app / /demo/services/stack-prod/svc-prod-api/versions`
+  state: `desktop split versions layout with repository-level release links`
+  evidence_note: `mock-only ui_demo` 页面级截图，直接验证版本子页在真实应用壳内启用 `220px` 左目录、仓库级 GitHub / OctoRill 图标入口、紧凑状态摘要，以及固定右侧动作栏。目录高亮与正文版本卡同时可见，证明双虚拟列表布局已经落到最终交付面。
+  PR: include
+  PR caption: `ui_demo` 桌面端版本页启用左目录、仓库级图标入口与固定动作栏。
+
+![服务详情版本子页 ui_demo 桌面目录](./assets/service-detail-versions-ui-demo-desktop.png)
+
+- source_type: `ui_demo`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `390x900`
+  viewport_strategy: `controlled-viewport`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `demo:app / /demo/services/stack-prod/svc-prod-api/versions`
+  state: `mobile versions layout without directory`
+  evidence_note: `mock-only ui_demo` 移动端整页截图，直接验证 `≤1100px` 时版本目录完全隐藏，版本卡保持单列纵向阅读流，页面滚动宽度与视口宽度一致，不产生横向溢出。
+  PR: include
+  PR caption: `ui_demo` 移动端版本页隐藏目录并保持无横向溢出。
+
+![服务详情版本子页 ui_demo 移动端无目录](./assets/service-detail-versions-ui-demo-mobile.png)
 
 ## Related PRs
 

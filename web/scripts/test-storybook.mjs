@@ -1504,11 +1504,12 @@ async function runInteractive({ baseUrl, browser }) {
         () => {
           const detail = document.querySelector(".svcBannerDetail");
           if (!detail) return false;
-          const triggers = detail.querySelectorAll(".versionTagsTrigger");
-          if (triggers.length < 3) return false;
-          const left = triggers[0]?.textContent?.trim();
-          const right = triggers[2]?.textContent?.trim();
-          return left === "加载中…" && right === "加载中…";
+          const text = detail.textContent?.replace(/\s+/g, " ").trim() ?? "";
+          return (
+            text.includes("当前 加载中…") &&
+            text.includes("目标 latest") &&
+            text.includes("跨度未知")
+          );
         },
         null,
         { timeout: 10_000 },

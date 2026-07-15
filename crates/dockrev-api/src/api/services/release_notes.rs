@@ -82,6 +82,7 @@ fn octo_rill_page_failure_response(
     cursor: Option<String>,
     limit: u32,
     default_view: ReleaseNotesView,
+    external_links: Option<ServiceReleaseNotesExternalLinks>,
     reason: ServiceReleaseNotesFallbackReason,
 ) -> ServiceReleaseNotesResponse {
     ServiceReleaseNotesResponse {
@@ -98,6 +99,7 @@ fn octo_rill_page_failure_response(
         next_cursor: None,
         has_more: false,
         default_view,
+        external_links,
         items: Vec::new(),
         message: Some(page_failure_message(reason)),
         fallback: None,
@@ -135,6 +137,56 @@ fn is_github_cursor(cursor: Option<&str>) -> bool {
         .is_some_and(|value| value.starts_with("github:"))
 }
 
+fn build_github_releases_url(repo: &ServiceGitHubRepoRef) -> Option<String> {
+    let mut url = url::Url::parse(&repo.html_url).ok()?;
+    {
+        let mut segments = url.path_segments_mut().ok()?;
+        segments.pop_if_empty();
+        segments.push("releases");
+    }
+    Some(url.to_string())
+}
+
+fn split_repo_owner_and_name(full_name: &str) -> Option<(&str, &str)> {
+    let trimmed = full_name.trim();
+    let (owner, repo) = trimmed.split_once('/')?;
+    let owner = owner.trim();
+    let repo = repo.trim();
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    Some((owner, repo))
+}
+
+fn build_octo_rill_releases_url(
+    base_url: Option<&str>,
+    repo: &ServiceGitHubRepoRef,
+) -> Option<String> {
+    let base_url = base_url?.trim();
+    if base_url.is_empty() {
+        return None;
+    }
+    let (owner, repo_name) = split_repo_owner_and_name(&repo.full_name)?;
+    let mut url = url::Url::parse(base_url).ok()?;
+    {
+        let mut segments = url.path_segments_mut().ok()?;
+        segments.pop_if_empty();
+        segments.extend([owner, repo_name, "releases"]);
+    }
+    Some(url.to_string())
+}
+
+fn build_external_links(
+    repo: Option<&ServiceGitHubRepoRef>,
+    octo_rill_base_url: Option<&str>,
+) -> Option<ServiceReleaseNotesExternalLinks> {
+    let repo = repo?;
+    Some(ServiceReleaseNotesExternalLinks {
+        github_releases_url: build_github_releases_url(repo)?,
+        octo_rill_releases_url: build_octo_rill_releases_url(octo_rill_base_url, repo),
+    })
+}
+
 fn github_note_item_from_release(item: ServiceGitHubReleaseItem) -> ServiceReleaseNoteItem {
     ServiceReleaseNoteItem {
         id: format!("github:{}", item.id),
@@ -158,6 +210,7 @@ async fn github_release_notes_response(
     cursor: Option<String>,
     limit: u32,
     default_view: ReleaseNotesView,
+    external_links: Option<ServiceReleaseNotesExternalLinks>,
     fallback: Option<ServiceReleaseNotesFallback>,
 ) -> Result<ServiceReleaseNotesResponse, ApiError> {
     let github_settings = state
@@ -178,6 +231,7 @@ async fn github_release_notes_response(
             next_cursor: None,
             has_more: false,
             default_view,
+            external_links,
             items: Vec::new(),
             message: Some("未能解析该服务的 GitHub 仓库。".to_string()),
             fallback,
@@ -207,6 +261,7 @@ async fn github_release_notes_response(
         next_cursor,
         has_more: response.has_more,
         default_view,
+        external_links,
         items: response
             .items
             .into_iter()
@@ -471,6 +526,10 @@ pub(crate) async fn list_service_release_notes(
     let repo = resolve_service_github_repo_ref(&state, &service_id, settings.repo_url.as_deref())
         .await
         .map_err(map_internal)?;
+    let external_links = build_external_links(
+        repo.as_ref(),
+        release_notes_settings.octo_rill.api_base_url.as_deref(),
+    );
 
     let mut fallback = None;
     if is_github_cursor(query.cursor.as_deref()) {
@@ -516,6 +575,7 @@ pub(crate) async fn list_service_release_notes(
                     has_more: next_cursor.is_some(),
                     next_cursor: next_cursor.map(|cursor| octo_rill_cursor_for_upstream(&cursor)),
                     default_view,
+                    external_links: external_links.clone(),
                     items,
                     message: None,
                     fallback: None,
@@ -532,6 +592,7 @@ pub(crate) async fn list_service_release_notes(
                         query.cursor,
                         limit,
                         default_view,
+                        external_links.clone(),
                         reason,
                     )));
                 }
@@ -548,6 +609,7 @@ pub(crate) async fn list_service_release_notes(
             query.cursor,
             limit,
             default_view,
+            external_links,
             fallback,
         )
         .await?,
@@ -611,6 +673,7 @@ mod tests {
             Some("opaque-next-cursor".to_string()),
             20,
             ReleaseNotesView::Smart,
+            None,
             ServiceReleaseNotesFallbackReason::UpstreamError,
         );
 
@@ -650,5 +713,42 @@ mod tests {
             release_tag_from_url("https://github.com/acme/app/releases/tag/v1.2.3").as_deref(),
             Some("v1.2.3")
         );
+    }
+
+    #[test]
+    fn builds_release_notes_external_links() {
+        let repo = ServiceGitHubRepoRef {
+            full_name: "acme/app".to_string(),
+            html_url: "https://github.com/acme/app".to_string(),
+        };
+        let external_links =
+            build_external_links(Some(&repo), Some("https://octo.example.com/octo-rill"))
+                .expect("external links");
+
+        assert_eq!(
+            external_links.github_releases_url,
+            "https://github.com/acme/app/releases"
+        );
+        assert_eq!(
+            external_links.octo_rill_releases_url.as_deref(),
+            Some("https://octo.example.com/octo-rill/acme/app/releases")
+        );
+    }
+
+    #[test]
+    fn hides_octo_rill_release_link_when_repo_full_name_is_not_owner_repo() {
+        let repo = ServiceGitHubRepoRef {
+            full_name: "invalid".to_string(),
+            html_url: "https://github.com/acme/app".to_string(),
+        };
+        let external_links =
+            build_external_links(Some(&repo), Some("https://octo.example.com/octo-rill"))
+                .expect("external links");
+
+        assert_eq!(
+            external_links.github_releases_url,
+            "https://github.com/acme/app/releases"
+        );
+        assert!(external_links.octo_rill_releases_url.is_none());
     }
 }

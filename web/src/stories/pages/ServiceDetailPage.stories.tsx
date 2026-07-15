@@ -42,6 +42,10 @@ export const OverviewDefault: Story = {
   play: async ({ canvasElement }) => {
     await waitForCondition(() => normalizeText(canvasElement.textContent).includes("最近更新记录"));
     await waitForCondition(() => normalizeText(canvasElement.ownerDocument.body.textContent).includes("服务列表"));
+    const statusSummary = canvasElement.querySelector<HTMLElement>(
+      '[data-service-detail-context="status-summary"] .svcBannerDetail',
+    );
+    const statusSummaryText = normalizeText(statusSummary?.textContent);
     expectStory(currentRoutePathname() === "/services/stack-prod/svc-prod-api", "legacy overview route should stay canonical");
     await waitForCondition(() => findTab(canvasElement, "overview")?.getAttribute("data-state") === "active");
     expectStory(findTab(canvasElement, "overview")?.getAttribute("data-state") === "active", "overview tab should be active");
@@ -50,6 +54,20 @@ export const OverviewDefault: Story = {
     expectStory(!findSectionCard(canvasElement, "auto-policy"), "overview should not render settings cards");
     expectStory(findButton(canvasElement, "Stack 详情"), "stack detail top action missing");
     expectStory(Boolean(canvasElement.ownerDocument.querySelector(".detailRouteServiceLinkActive")), "detail service tree should highlight the current service");
+    expectStory(Boolean(statusSummary), "shared status summary card detail missing");
+    expectStory(
+      statusSummaryText.includes("当前 5.2.1") &&
+        statusSummaryText.includes("目标 5.2.3") &&
+        statusSummaryText.includes("跨"),
+      "shared status summary should only keep current version, target version, and version span",
+    );
+    expectStory(
+      !statusSummaryText.includes("sha256") &&
+        !statusSummaryText.includes("linux/amd64") &&
+        !statusSummaryText.includes("规则") &&
+        !statusSummaryText.includes("原因"),
+      "shared status summary should remove digest, arch, and rule-detail text",
+    );
     await assertRecentUpdateReasonPopoverStaysOnRoute({
       canvasElement,
       expectStory,

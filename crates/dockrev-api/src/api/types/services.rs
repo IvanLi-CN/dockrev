@@ -366,6 +366,14 @@ pub struct ServiceReleaseNoteItem {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ServiceReleaseNotesExternalLinks {
+    pub github_releases_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub octo_rill_releases_url: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ServiceReleaseNotesResponse {
     pub status: ServiceReleaseNotesStatus,
     pub source: ServiceReleaseNotesSource,
@@ -376,6 +384,8 @@ pub struct ServiceReleaseNotesResponse {
     pub next_cursor: Option<String>,
     pub has_more: bool,
     pub default_view: ReleaseNotesView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_links: Option<ServiceReleaseNotesExternalLinks>,
     pub items: Vec<ServiceReleaseNoteItem>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,

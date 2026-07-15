@@ -135,6 +135,16 @@ export const versionReleaseNotes = [
   "5.0.2",
   "5.0.1",
   "5.0.0",
+  "4.9.9",
+  "4.9.8",
+  "4.9.7",
+  "4.9.6",
+  "4.9.5",
+  "4.9.4",
+  "4.9.3",
+  "4.9.2",
+  "4.9.1",
+  "4.9.0",
 ].map((tagName, index) => ({
   id: 88_000 + index,
   tagName,
@@ -148,8 +158,8 @@ export const versionReleaseNotes = [
   htmlUrl: `https://github.com/acme/api/releases/tag/${tagName}`,
   draft: false,
   prerelease: false,
-  publishedAt: new Date(Date.UTC(2026, 6, 15, 12, 0) - index * 7_200_000).toISOString(),
-  createdAt: new Date(Date.UTC(2026, 6, 15, 11, 40) - index * 7_200_000).toISOString(),
+  publishedAt: new Date(Date.UTC(2026, 6, 15, 12, 0) - index * 43_200_000).toISOString(),
+  createdAt: new Date(Date.UTC(2026, 6, 15, 11, 40) - index * 43_200_000).toISOString(),
 }));
 
 export const partialHistoryBackupRecords: ServiceBackupRecordsResponse = {
