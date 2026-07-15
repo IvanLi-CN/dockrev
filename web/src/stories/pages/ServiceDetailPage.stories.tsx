@@ -49,6 +49,40 @@ function expectNearlyEqual(actual: number, expected: number, tolerance: number, 
   }
 }
 
+const historyColumnSelectors = [
+  ".serviceOperationHistoryOperation",
+  ".serviceOperationHistoryStatus",
+  ".serviceOperationHistoryBackup",
+  ".serviceOperationHistorySource",
+  ".serviceOperationHistoryTime",
+  ".serviceOperationHistoryAction",
+] as const;
+
+function historyRowCells(row: ParentNode): HTMLElement[] {
+  return historyColumnSelectors.map((selector) => {
+    const cell = row.querySelector<HTMLElement>(selector);
+    if (!cell) throw new globalThis.Error(`missing history cell for ${selector}`);
+    return cell;
+  });
+}
+
+function expectHistoryColumnsAligned(root: ParentNode): void {
+  const rows = Array.from(root.querySelectorAll<HTMLElement>(".serviceOperationHistoryRow"));
+  expectStory(rows.length > 1, "history alignment check needs at least two rows");
+
+  const baselineCells = historyRowCells(rows[0]!);
+
+  rows.slice(1).forEach((row, rowIndex) => {
+    const rowCells = historyRowCells(row);
+    baselineCells.forEach((baselineCell, columnIndex) => {
+      const baselineRect = baselineCell.getBoundingClientRect();
+      const rowRect = rowCells[columnIndex]!.getBoundingClientRect();
+      expectNearlyEqual(rowRect.left, baselineRect.left, 1, `history row ${rowIndex + 2} column ${columnIndex + 1} should align with the first row`);
+      expectNearlyEqual(rowRect.width, baselineRect.width, 1, `history row ${rowIndex + 2} column ${columnIndex + 1} width should match the first row`);
+    });
+  });
+}
+
 function findButton(root: ParentNode, text: string): HTMLButtonElement | null {
   return Array.from(root.querySelectorAll<HTMLButtonElement>("button")).find((button) => normalizeText(button.textContent) === text) ?? null;
 }
@@ -162,6 +196,7 @@ export const UpdateHistorySection: Story = {
     expectStory(rows.length === 5, "history should include all matching update and rollback jobs only");
     expectStory(normalizeText(rows[0]?.textContent).includes("job-all-api-5-2-4"), "history should sort newest jobs first");
     expectStory(rows.some((row) => normalizeText(row.textContent).includes("回滚") && normalizeText(row.textContent).includes("已回滚")), "rollback record should be rendered in the shared table");
+    expectHistoryColumnsAligned(canvasElement);
     const failedRow = rows.find((row) => normalizeText(row.textContent).includes("job-stack-prod-batch"));
     expectStory(failedRow?.classList.contains("serviceOperationHistoryRowFailed"), "failed history row should be visually de-emphasized");
     expectStory(getComputedStyle(failedRow?.querySelector(".serviceOperationHistoryStatus") ?? canvasElement).opacity === "1", "failed history status must retain full visual prominence");
@@ -201,6 +236,7 @@ export const UpdateHistorySectionEvidence: Story = {
     expectStory(canvasElement.querySelector(".appShell")?.classList.contains("appShellSidebarCollapsed"), "history evidence should render with the primary sidebar collapsed");
     expectStory(findTab(canvasElement, "history")?.getAttribute("data-state") === "active", "history tab should be active");
     expectStory(Boolean(canvasElement.querySelector('[data-service-operation-action="rollback"]')), "history evidence should expose the current rollback action");
+    expectHistoryColumnsAligned(canvasElement);
     expectStory(canvasElement.querySelector(".serviceOperationHistoryRowFailed")?.textContent?.includes("job-stack-prod-batch"), "history evidence should retain the de-emphasized failed row");
     expectStory(getComputedStyle(canvasElement.querySelector(".serviceOperationHistoryRowFailed .serviceOperationHistoryStatus") ?? canvasElement).opacity === "1", "history evidence must retain failed status prominence");
     expectStory(

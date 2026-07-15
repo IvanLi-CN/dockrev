@@ -7052,18 +7052,19 @@ html[data-theme="light"] .modalOverlay {
 .serviceOperationHistoryTable {
   display: flex;
   flex-direction: column;
+  --service-operation-history-columns:
+    minmax(220px, 1fr)
+    108px
+    120px
+    132px
+    112px
+    124px;
 }
 
 .serviceOperationHistoryHeader,
 .serviceOperationHistoryRow {
   display: grid;
-  grid-template-columns:
-    minmax(220px, 2fr)
-    minmax(100px, 0.8fr)
-    minmax(110px, 0.9fr)
-    minmax(120px, 1fr)
-    minmax(110px, 0.8fr)
-    minmax(70px, auto);
+  grid-template-columns: var(--service-operation-history-columns);
   gap: 12px;
   align-items: center;
   padding: 10px 14px;
@@ -7073,6 +7074,11 @@ html[data-theme="light"] .modalOverlay {
   border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 64%, transparent);
   color: var(--muted);
   font-size: 12px;
+}
+
+.serviceOperationHistoryHeader > :last-child {
+  justify-self: end;
+  text-align: right;
 }
 
 .serviceOperationHistoryRow {
