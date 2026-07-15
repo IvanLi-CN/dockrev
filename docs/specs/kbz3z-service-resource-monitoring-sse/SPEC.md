@@ -69,6 +69,7 @@
 - 资源采集通道：
   - 资源监控历史采样与详情页实时采样统一直接读取 Docker Engine API。
   - 默认通过挂载的 `/var/run/docker.sock` 访问；若部署改走 `docker-socket-proxy`，则复用现有 `DOCKER_HOST=tcp://docker-socket-proxy:2375` 入口。
+  - Docker Engine API 请求默认不钉死版本前缀，避免被现代 Engine 的 `MinAPIVersion` 门槛拒绝；兼容性由 Engine 当前默认路由负责。
   - 本次仅替换资源监控采集路径；日志、更新、cleanup 等其它 Docker 操作仍可继续使用现有 CLI 路径。
 - 实时采样 Hub：
   - 同服务多 SSE 连接复用单个 1s 采样器。
@@ -154,7 +155,7 @@ PR: include
 - 2026-03-09: 修复资源监控 SSE 订阅 guard 生命周期，避免活跃连接在约 10 秒后被误回收，并补充持续 streaming 回归测试。
 - 2026-03-11: 完成 Service Detail 资源监控面板中等强度视觉升级，统一工具栏并强化实时状态/响应式层级。
 - 2026-04-28: 修正 Overview 边界：服务详情继续承载图表/SSE，Overview 仅展示聚合最新资源摘要并允许监控关闭时非阻塞降级。
-- 2026-07-15: 历史采样 contract 扩展为 `5/10/30/60/300` 且默认 `5s`，共享窗口 contract 切到 `3m/1h/24h`，前台实时 SSE 继续保持 `1s`；资源监控采集路径切换为直接读取 Docker Engine API（默认 socket，兼容 `DOCKER_HOST`）。
+- 2026-07-15: 历史采样 contract 扩展为 `5/10/30/60/300` 且默认 `5s`，共享窗口 contract 切到 `3m/1h/24h`，前台实时 SSE 继续保持 `1s`；资源监控采集路径切换为直接读取 Docker Engine API（默认 socket，兼容 `DOCKER_HOST`），并移除固定 `/v1.24` 前缀以兼容现代 Docker Engine 的 `MinAPIVersion`。
 
 ## 参考（References）
 
