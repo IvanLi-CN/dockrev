@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -8,20 +8,26 @@ use std::{
 };
 
 use anyhow::Context as _;
-use serde::Deserialize;
+use async_trait::async_trait;
 use tokio::sync::{Mutex, broadcast};
 
+#[cfg(test)]
+use crate::runner::{CommandRunner, CommandSpec};
 use crate::{
     api::types::ServiceResourceSample,
     db::{Db, ServiceResourceSampleInput, ServiceResourceTarget},
-    runner::{CommandRunner, CommandSpec},
+    docker_engine::DockerEngineClient,
 };
+#[cfg(test)]
+use serde::Deserialize;
+#[cfg(test)]
+use std::collections::BTreeSet;
 
 pub const RESOURCE_MONITOR_RETENTION_DAYS: u32 = 30;
-pub const DEFAULT_SAMPLE_INTERVAL_SECONDS: u64 = 10;
+pub const DEFAULT_SAMPLE_INTERVAL_SECONDS: u64 = 5;
 
 pub fn is_valid_sample_interval_seconds(value: u64) -> bool {
-    matches!(value, 10 | 30 | 60 | 300)
+    matches!(value, 5 | 10 | 30 | 60 | 300)
 }
 
 pub fn normalize_sample_interval_seconds(value: u64) -> u64 {
@@ -34,9 +40,9 @@ pub fn normalize_sample_interval_seconds(value: u64) -> u64 {
 
 pub fn parse_window_to_seconds(window: &str) -> Option<u64> {
     match window.trim() {
-        "15m" => Some(15 * 60),
+        "3m" => Some(3 * 60),
         "1h" => Some(60 * 60),
-        "6h" => Some(6 * 60 * 60),
+        "24h" => Some(24 * 60 * 60),
         _ => None,
     }
 }
@@ -44,7 +50,7 @@ pub fn parse_window_to_seconds(window: &str) -> Option<u64> {
 #[derive(Clone)]
 pub struct RealtimeSamplerHub {
     db: Db,
-    runner: Arc<dyn CommandRunner>,
+    collector: Arc<dyn ResourceCollector>,
     samplers: Arc<Mutex<BTreeMap<String, Arc<SamplerEntry>>>>,
 }
 
@@ -89,11 +95,73 @@ impl Drop for SubscriptionGuard {
     }
 }
 
+#[async_trait]
+trait ResourceCollector: Send + Sync {
+    async fn collect_project_service_aggregates(
+        &self,
+        compose_project: &str,
+    ) -> anyhow::Result<BTreeMap<String, ServiceResourceSample>>;
+}
+
+#[derive(Clone)]
+struct DockerApiResourceCollector {
+    client: DockerEngineClient,
+}
+
+impl DockerApiResourceCollector {
+    fn new() -> anyhow::Result<Self> {
+        Ok(Self {
+            client: DockerEngineClient::from_env()?,
+        })
+    }
+}
+
+#[async_trait]
+impl ResourceCollector for DockerApiResourceCollector {
+    async fn collect_project_service_aggregates(
+        &self,
+        compose_project: &str,
+    ) -> anyhow::Result<BTreeMap<String, ServiceResourceSample>> {
+        self.client
+            .collect_project_service_samples(compose_project)
+            .await
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+struct RunnerBackedResourceCollector {
+    runner: Arc<dyn CommandRunner>,
+}
+
+#[cfg(test)]
+#[async_trait]
+impl ResourceCollector for RunnerBackedResourceCollector {
+    async fn collect_project_service_aggregates(
+        &self,
+        compose_project: &str,
+    ) -> anyhow::Result<BTreeMap<String, ServiceResourceSample>> {
+        collect_project_service_aggregates_via_runner(self.runner.as_ref(), compose_project).await
+    }
+}
+
 impl RealtimeSamplerHub {
+    pub fn from_env(db: Db) -> anyhow::Result<Self> {
+        Ok(Self::with_collector(
+            db,
+            Arc::new(DockerApiResourceCollector::new()?),
+        ))
+    }
+
+    #[cfg(test)]
     pub fn new(db: Db, runner: Arc<dyn CommandRunner>) -> Self {
+        Self::with_collector(db, Arc::new(RunnerBackedResourceCollector { runner }))
+    }
+
+    fn with_collector(db: Db, collector: Arc<dyn ResourceCollector>) -> Self {
         Self {
             db,
-            runner,
+            collector,
             samplers: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
@@ -137,12 +205,12 @@ impl RealtimeSamplerHub {
         let Some(target) = target else {
             return Ok(None);
         };
-        sample_for_target(self.runner.as_ref(), &target).await
+        sample_for_target(self.collector.as_ref(), &target).await
     }
 
     fn spawn_sampler_task(&self, service_id: String, entry: Arc<SamplerEntry>) {
         let db = self.db.clone();
-        let runner = self.runner.clone();
+        let collector = self.collector.clone();
         let samplers = self.samplers.clone();
 
         tokio::spawn(async move {
@@ -206,7 +274,7 @@ impl RealtimeSamplerHub {
                     continue;
                 };
 
-                match sample_for_target(runner.as_ref(), &target).await {
+                match sample_for_target(collector.as_ref(), &target).await {
                     Ok(Some(sample)) => {
                         let _ = entry.tx.send(RealtimeMessage::Tick(sample));
                     }
@@ -241,7 +309,12 @@ fn try_remove_idle_sampler_entry(
     false
 }
 
-pub fn spawn_history_sampler(db: Db, runner: Arc<dyn CommandRunner>) {
+pub fn spawn_history_sampler_from_env(db: Db) -> anyhow::Result<()> {
+    spawn_history_sampler_with_collector(db, Arc::new(DockerApiResourceCollector::new()?));
+    Ok(())
+}
+
+fn spawn_history_sampler_with_collector(db: Db, collector: Arc<dyn ResourceCollector>) {
     tokio::spawn(async move {
         let mut last_gc = Instant::now();
 
@@ -269,7 +342,7 @@ pub fn spawn_history_sampler(db: Db, runner: Arc<dyn CommandRunner>) {
 
             let interval_seconds =
                 normalize_sample_interval_seconds(settings.sample_interval_seconds);
-            if let Err(e) = sample_history_once(&db, runner.as_ref()).await {
+            if let Err(e) = sample_history_once(&db, collector.as_ref()).await {
                 tracing::warn!(error = %e, "resource monitor history sampling failed");
             }
 
@@ -290,7 +363,7 @@ async fn gc_history(db: &Db) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn sample_history_once(db: &Db, runner: &dyn CommandRunner) -> anyhow::Result<()> {
+async fn sample_history_once(db: &Db, collector: &dyn ResourceCollector) -> anyhow::Result<()> {
     let targets = db
         .list_service_resource_targets()
         .await
@@ -311,7 +384,7 @@ async fn sample_history_once(db: &Db, runner: &dyn CommandRunner) -> anyhow::Res
     let mut rows = Vec::<ServiceResourceSampleInput>::new();
 
     for (project, project_targets) in by_project {
-        let aggregates = match collect_project_service_aggregates(runner, &project).await {
+        let aggregates = match collector.collect_project_service_aggregates(&project).await {
             Ok(v) => v,
             Err(e) => {
                 tracing::warn!(
@@ -356,10 +429,11 @@ async fn sample_history_once(db: &Db, runner: &dyn CommandRunner) -> anyhow::Res
 }
 
 async fn sample_for_target(
-    runner: &dyn CommandRunner,
+    collector: &dyn ResourceCollector,
     target: &ServiceResourceTarget,
 ) -> anyhow::Result<Option<ServiceResourceSample>> {
-    let aggregates = collect_project_service_aggregates(runner, &target.compose_project)
+    let aggregates = collector
+        .collect_project_service_aggregates(&target.compose_project)
         .await
         .with_context(|| {
             format!(
@@ -386,6 +460,7 @@ async fn sample_for_target(
     }))
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug, Default)]
 struct ServiceAggregate {
     cpu_percent: f64,
@@ -403,6 +478,7 @@ struct ServiceAggregate {
     container_count: u32,
 }
 
+#[cfg(test)]
 impl ServiceAggregate {
     fn into_sample(self) -> ServiceResourceSample {
         ServiceResourceSample {
@@ -420,7 +496,8 @@ impl ServiceAggregate {
     }
 }
 
-async fn collect_project_service_aggregates(
+#[cfg(test)]
+async fn collect_project_service_aggregates_via_runner(
     runner: &dyn CommandRunner,
     compose_project: &str,
 ) -> anyhow::Result<BTreeMap<String, ServiceResourceSample>> {
@@ -598,6 +675,7 @@ async fn collect_project_service_aggregates(
     Ok(out)
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 struct DockerStatsLine {
     #[serde(rename = "ID")]
@@ -614,15 +692,18 @@ struct DockerStatsLine {
     pids: String,
 }
 
+#[cfg(test)]
 fn parse_cpu_percent(raw: &str) -> Option<f64> {
     let cleaned = raw.trim().trim_end_matches('%').trim();
     cleaned.parse::<f64>().ok()
 }
 
+#[cfg(test)]
 fn parse_u64_str(raw: &str) -> Option<u64> {
     raw.trim().parse::<u64>().ok()
 }
 
+#[cfg(test)]
 fn parse_pair_bytes(raw: &str) -> Option<(u64, u64)> {
     let (left, right) = raw.split_once('/')?;
     let a = parse_size_to_bytes(left)?;
@@ -630,6 +711,7 @@ fn parse_pair_bytes(raw: &str) -> Option<(u64, u64)> {
     Some((a, b))
 }
 
+#[cfg(test)]
 fn parse_size_to_bytes(input: &str) -> Option<u64> {
     let trimmed = input
         .trim()
@@ -684,12 +766,13 @@ mod tests {
     }
 
     #[test]
-    fn normalize_sample_interval_seconds_uses_ten_seconds_default() {
+    fn normalize_sample_interval_seconds_uses_five_seconds_default() {
+        assert_eq!(normalize_sample_interval_seconds(5), 5);
         assert_eq!(normalize_sample_interval_seconds(10), 10);
         assert_eq!(normalize_sample_interval_seconds(30), 30);
         assert_eq!(normalize_sample_interval_seconds(60), 60);
         assert_eq!(normalize_sample_interval_seconds(300), 300);
-        assert_eq!(normalize_sample_interval_seconds(7), 10);
+        assert_eq!(normalize_sample_interval_seconds(7), 5);
     }
 
     #[test]

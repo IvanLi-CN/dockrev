@@ -198,7 +198,7 @@ fn ensure_settings_resource_monitor_columns(conn: &rusqlite::Connection) -> anyh
         },
         Col {
             name: "resource_sample_interval_seconds",
-            ddl: "ALTER TABLE settings ADD COLUMN resource_sample_interval_seconds INTEGER NOT NULL DEFAULT 10",
+            ddl: "ALTER TABLE settings ADD COLUMN resource_sample_interval_seconds INTEGER NOT NULL DEFAULT 5",
         },
     ];
 
@@ -216,8 +216,8 @@ fn ensure_settings_resource_monitor_columns(conn: &rusqlite::Connection) -> anyh
     conn.execute(
         r#"
 UPDATE settings
-SET resource_sample_interval_seconds = 10
-WHERE resource_sample_interval_seconds NOT IN (10, 30, 60, 300)
+SET resource_sample_interval_seconds = 5
+WHERE resource_sample_interval_seconds NOT IN (5, 10, 30, 60, 300)
 "#,
         [],
     )?;
@@ -729,7 +729,7 @@ INSERT OR IGNORE INTO settings (
             "/data/backups",
             104857600i64,
             1i64,
-            10i64,
+            5i64,
             0i64,
             "*/30 * * * *",
             1i64,
@@ -1159,7 +1159,7 @@ CREATE TABLE IF NOT EXISTS settings (
   backup_base_dir TEXT NOT NULL,
   backup_skip_targets_over_bytes INTEGER NOT NULL,
   resource_monitor_enabled INTEGER NOT NULL DEFAULT 1,
-  resource_sample_interval_seconds INTEGER NOT NULL DEFAULT 10,
+  resource_sample_interval_seconds INTEGER NOT NULL DEFAULT 5,
   schedule_update_check_enabled INTEGER NOT NULL DEFAULT 0,
   schedule_update_check_cron TEXT NOT NULL DEFAULT '*/30 * * * *',
   schedule_ghcr_webhook_audit_enabled INTEGER NOT NULL DEFAULT 1,

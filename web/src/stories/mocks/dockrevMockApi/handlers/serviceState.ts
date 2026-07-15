@@ -199,8 +199,8 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
       const interval =
         typeof resourceMonitor.sampleIntervalSeconds === 'number' ? resourceMonitor.sampleIntervalSeconds : null
       const normalizedInterval =
-        interval === 10 || interval === 30 || interval === 60 || interval === 300
-          ? (interval as 10 | 30 | 60 | 300)
+        interval === 5 || interval === 10 || interval === 30 || interval === 60 || interval === 300
+          ? (interval as 5 | 10 | 30 | 60 | 300)
           : f.settings.resourceMonitor.sampleIntervalSeconds
 
       f.settings.resourceMonitor = {

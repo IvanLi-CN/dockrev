@@ -316,6 +316,24 @@ async function main() {
       },
     },
     {
+      id: 'components-serviceresourcepanel--window-switch-contract',
+      file: 'service-resource-window-contract.png',
+      viewport: { width: 1280, height: 720 },
+      setup: async (page) => {
+        await page.locator('.svcResourceWindowSwitch').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.getByRole('radio', { name: '3m' }).waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.getByRole('radio', { name: '1h' }).waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.getByRole('radio', { name: '24h' }).waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.locator('.svcResourceWindowSwitch').evaluate((el) => el.scrollIntoView({ block: 'center', behavior: 'auto' }))
+        await page.waitForTimeout(160)
+      },
+      screenshot: async (page, filePath) => {
+        const el = page.locator('.svcResourceCard')
+        await el.waitFor({ timeout: STORY_TIMEOUT_MS })
+        await el.screenshot({ path: filePath })
+      },
+    },
+    {
       id: 'components-statusremark--all-statuses',
       file: 'status-remark-discovery-timeline-open.png',
       setup: async (page) => {

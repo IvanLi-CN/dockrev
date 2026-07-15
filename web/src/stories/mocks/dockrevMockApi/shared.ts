@@ -500,9 +500,9 @@ export function hashString(input: string): number {
   return Math.abs(h)
 }
 
-export function parseResourceWindow(windowRaw: string | null): { window: '15m' | '1h' | '6h'; seconds: number } {
-  if (windowRaw === '15m') return { window: '15m', seconds: 15 * 60 }
-  if (windowRaw === '6h') return { window: '6h', seconds: 6 * 60 * 60 }
+export function parseResourceWindow(windowRaw: string | null): { window: '3m' | '1h' | '24h'; seconds: number } {
+  if (windowRaw === '3m') return { window: '3m', seconds: 3 * 60 }
+  if (windowRaw === '24h') return { window: '24h', seconds: 24 * 60 * 60 }
   return { window: '1h', seconds: 60 * 60 }
 }
 
@@ -633,7 +633,7 @@ export function makeMockDebug(): MockDebug {
 export function makeDefaultSettings(): SettingsResponse {
   return {
     backup: { enabled: true, requireSuccess: true, baseDir: '/var/lib/dockrev/backup', skipTargetsOverBytes: 104857600 },
-    resourceMonitor: { enabled: true, sampleIntervalSeconds: 10, retentionDays: 30 },
+    resourceMonitor: { enabled: true, sampleIntervalSeconds: 5, retentionDays: 30 },
     schedules: {
       updateCheck: { enabled: false, cron: '*/30 * * * *' },
       ghcrWebhookAudit: { enabled: true, cron: '0 3 * * *' },

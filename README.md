@@ -27,7 +27,7 @@ Back-end (Rust):
 - Runtime: Tokio
 - HTTP API: Axum
 - Logging: tracing + tracing-subscriber
-- Docker Engine access: via `docker` CLI against the mounted Unix socket (`/var/run/docker.sock`)
+- Docker Engine access: resource monitoring reads Engine API over the mounted socket / `DOCKER_HOST`; other operational paths still use the `docker` CLI
 - Registry auth: reads `DOCKREV_DOCKER_CONFIG` when configured
 - State: SQLite (planned)
 

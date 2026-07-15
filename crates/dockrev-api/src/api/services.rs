@@ -766,7 +766,7 @@ pub(super) async fn get_service_resource_usage_history(
     let window = q.window.unwrap_or_else(|| "1h".to_string());
     let Some(window_seconds) = resource_usage::parse_window_to_seconds(&window) else {
         return Err(ApiError::invalid_argument(
-            "window must be one of 15m/1h/6h",
+            "window must be one of 3m/1h/24h",
         ));
     };
 
@@ -801,7 +801,7 @@ pub(super) async fn get_service_resource_usage_overview(
     let window = q.window.unwrap_or_else(|| "1h".to_string());
     let Some(window_seconds) = resource_usage::parse_window_to_seconds(&window) else {
         return Err(ApiError::invalid_argument(
-            "window must be one of 15m/1h/6h",
+            "window must be one of 3m/1h/24h",
         ));
     };
     let generated_at = time::OffsetDateTime::now_utc();
