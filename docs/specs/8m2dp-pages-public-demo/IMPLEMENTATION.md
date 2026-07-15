@@ -7,7 +7,7 @@
 - Pages demo 明确关闭 PWA/service worker/install contract：demo build 不注册 SW、不暴露 root-scope install 行为，正式生产 app 的 PWA 行为保持不变。
 - public demo runtime 改为复用共享 `dockrevMockApi`，以 seeded fixture + `sessionStorage` 持久化支撑可交互假写；同一浏览器会话内刷新和深链恢复保持状态，新会话回到 seed 数据。
 - public demo mock scope 额外打开 cleanup 路由族，确保 `/demo/cleanup` 与 GHCR/settings 等 nav-visible 主路由在 Pages 组装产物中稳定可用，不再出现 `unhandled mock route`。
-- overview 桌面端现在使用真正的浮动 `工具面板`：内含服务搜索、资源摘要与当前时间，展开态可自由拖拽，只有点击动作按钮时才会收成贴边气泡，再由气泡展开回浮窗；移动端仍通过 `页面工具` 抽屉提供同类能力。
+- overview 桌面端现在使用真正的浮动 `Demo 控制面板`：已去掉低价值 runtime 状态卡，仅保留 GHCR/cleanup/queue/deploy Demo 场景快捷入口与 session-backed 重置、restore 清理控制；按钮改为单列纵向排版，避免中文+英文说明在窄面板里横向溢出；底部说明改成简短结果描述，不再出现“只允许/不会触达 backend”这类需求式或实现细节文案。展开态可自由拖拽，只有点击动作按钮时才会收成贴边气泡，再由气泡展开回浮窗。默认浮层尺寸估计也同步回落到贴近真实内容高度，避免首屏定位过高或沿用旧 `320px` 高度而把控制面板裁出视口。
 - root `404.html` 在组装阶段注入 inline restore bridge：当 GitHub Pages 命中 `/demo/...` 深链 404 时，先把原始路径写入 session storage，再回跳 `/demo/` 入口恢复真实 pathname 路由，而不是退回 hash routing。
 - docs discoverability 已同步到 README、docs 首页、导航与 FAQ；`docs-pages` workflow 与组装脚本现在一起发布 docs root、`/storybook/` 和 `/demo/`。
 
@@ -32,4 +32,4 @@
 
 ## Notes
 
-- owner-facing 视觉证据见 [SPEC.md](./SPEC.md) 的 `## Visual Evidence`，全部来自 assembled Pages `/demo/` 真正 surface。
+- owner-facing 视觉证据见 [SPEC.md](./SPEC.md) 的 `## Visual Evidence`：主路由与流程仍以 assembled Pages `/demo/` true surface 为准，overview `Demo 控制面板` 使用 mock-only demo-runtime page harness 的 Storybook canvas fallback 固化证据。

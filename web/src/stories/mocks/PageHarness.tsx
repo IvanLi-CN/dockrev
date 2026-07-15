@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { writeDockrevRuntimeMode, type DockrevRuntimeMode } from "../../demo/runtime";
 import {
   APP_SHELL_SIDEBAR_COLLAPSED_STORAGE_KEY,
   AppShell,
@@ -27,6 +28,7 @@ export function PageHarness(props: {
   pageSubtitle?: string;
   sidebarCollapsed?: boolean;
   authIdentity?: TopbarAuthIdentity | null;
+  runtimeMode?: DockrevRuntimeMode | null;
   children: (ctx: {
     route: Route;
     onTopActions: (node: ReactNode) => void;
@@ -51,6 +53,7 @@ function PageHarnessInner(props: {
   pageSubtitle?: string;
   sidebarCollapsed?: boolean;
   authIdentity?: TopbarAuthIdentity | null;
+  runtimeMode?: DockrevRuntimeMode | null;
   children: (ctx: {
     route: Route;
     onTopActions: (node: ReactNode) => void;
@@ -81,6 +84,14 @@ function PageHarnessInner(props: {
     ) : (
       mobileNavContent
     );
+
+  useEffect(() => {
+    const previousMode = props.runtimeMode ?? null
+    writeDockrevRuntimeMode(previousMode)
+    return () => {
+      writeDockrevRuntimeMode(null)
+    }
+  }, [props.runtimeMode])
 
   useEffect(() => {
     if (typeof window === "undefined") return;

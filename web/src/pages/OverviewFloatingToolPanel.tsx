@@ -2,12 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 
 import {
-  HomepageResourceMetrics,
-  HomepageSearchForm,
-  HomepageSidebarClock,
-  type OverviewMetricsSummary,
-} from './OverviewPageChrome'
-import { IconButton } from '../ui'
+  Button,
+  IconButton,
+} from '../ui'
 import {
   OVERVIEW_TOOL_BUBBLE_DEFAULT_SIZE,
   OVERVIEW_TOOL_PANEL_DEFAULT_SIZE,
@@ -24,6 +21,12 @@ import {
   type OverviewToolPanelSize,
   type OverviewToolPanelState,
 } from './overviewToolPanelState'
+import {
+  clearPendingPagesDemoRestoreState,
+  readPublicDemoSessionSummary,
+  resetPublicDemoSessionState,
+} from '../demo/publicDemoControls'
+import { navigate, type Route } from '../routes'
 
 const DESKTOP_MEDIA_QUERY = '(min-width: 961px)'
 const FLOATING_PANEL_EDGE_OFFSET = 10
@@ -103,7 +106,8 @@ function resolveBubbleTopFromButtonCenter(
   bubbleHeight: number,
   panelNode: HTMLElement | null,
 ): number {
-  const buttonNode = panelNode?.querySelector<HTMLButtonElement>('button[aria-label="收起"]') ?? null
+  const buttonNode =
+    panelNode?.querySelector<HTMLButtonElement>('button[aria-label^="收起"]') ?? null
   const panelRect = panelNode?.getBoundingClientRect() ?? null
   const buttonRect = buttonNode?.getBoundingClientRect() ?? null
   const buttonCenterY =
@@ -144,11 +148,6 @@ function useMeasuredSize<T extends HTMLElement>(
 
 export function HomepageFloatingToolPanel(props: {
   pageRef: RefObject<HTMLElement | null>
-  searchDraft: string
-  summary: OverviewMetricsSummary
-  now: Date
-  onSearchDraftChange: (value: string) => void
-  onApplySearch: () => void
 }) {
   const desktop = useMediaQuery(DESKTOP_MEDIA_QUERY, readDesktopMatches)
   const panelRef = useRef<HTMLElement | null>(null)
@@ -409,6 +408,13 @@ export function HomepageFloatingToolPanel(props: {
     if (panelState?.collapsed) return panelState.side
     return snapOverviewToolPanelSide(visibleRect.left, bounds, panelSize.width)
   }, [bounds, panelSize.width, panelState, visibleRect])
+  const demoSummary = readPublicDemoSessionSummary()
+  const routeActions: Array<{ label: string; note: string; route: Route }> = [
+    { label: 'Queue 假写', note: '任务队列与进度', route: { name: 'queue' } },
+    { label: 'GHCR 假写', note: 'Webhook 维护', route: { name: 'ghcr-webhook-registry' } },
+    { label: 'Cleanup 假写', note: '扫描与 apply', route: { name: 'cleanup' } },
+    { label: 'Deploy 检查', note: 'welcome / deploy', route: { name: 'deploy-check' } },
+  ]
 
   if (!desktop || !bounds || !panelState || !visibleRect) return null
 
@@ -423,7 +429,7 @@ export function HomepageFloatingToolPanel(props: {
       >
         <button
           className="homepageToolBubbleButton"
-          aria-label="展开工具面板"
+          aria-label="展开 Demo 控制面板"
           onClick={expandFromBubble}
           onPointerDown={(event) => beginDrag(event, bubbleSize, true)}
           type="button"
@@ -431,7 +437,7 @@ export function HomepageFloatingToolPanel(props: {
           <span className="homepageToolBubbleIconShell" aria-hidden="true">
             <span className="homepageToolGripDots" />
           </span>
-          <span className="homepageToolBubbleCount">{props.summary.activeCount}</span>
+          <span className="homepageToolBubbleCount">DEMO</span>
         </button>
       </div>
     )
@@ -441,7 +447,7 @@ export function HomepageFloatingToolPanel(props: {
     <section
       ref={panelRef}
       className="homepageToolFloatWindow"
-      aria-label="工具面板"
+      aria-label="Demo 控制面板"
       data-dragging={dragging ? 'true' : 'false'}
       data-side={projectedCollapseSide}
       style={{ left: `${visibleRect.left}px`, top: `${visibleRect.top}px` }}
@@ -451,11 +457,11 @@ export function HomepageFloatingToolPanel(props: {
           <span className="homepageToolGripDots" />
         </div>
         <div className="homepageToolFloatMeta">
-          <div className="homepageToolFloatEyebrow">页面工具</div>
-          <div className="homepageToolFloatTitle">工具面板</div>
+          <div className="homepageToolFloatEyebrow">Public Demo</div>
+          <div className="homepageToolFloatTitle">Demo 控制面板</div>
         </div>
         <div className="homepageToolFloatActions">
-          <IconButton onClick={collapse} title="收起" variant="ghost">
+          <IconButton onClick={collapse} title="收起 Demo 控制面板" variant="ghost">
             {projectedCollapseSide === 'left' ? (
               <ChevronLeft aria-hidden="true" size={16} strokeWidth={2.2} />
             ) : (
@@ -466,30 +472,60 @@ export function HomepageFloatingToolPanel(props: {
       </div>
 
       <div className="homepageToolFloatBody">
-        <div className="homepageToolFloatSection homepageToolFloatSearchSlot">
-          <HomepageSearchForm
-            ariaLabel="工具面板搜索服务入口"
-            placeholder="搜索服务入口..."
-            searchDraft={props.searchDraft}
-            onSearchDraftChange={props.onSearchDraftChange}
-            onApplySearch={props.onApplySearch}
-          />
+        <div className="homepageToolFloatSection">
+          <div className="homepageToolFloatLabel">Demo 场景</div>
+          <div className="homepageToolActionGrid">
+            {routeActions.map((action) => (
+              <Button
+                key={action.label}
+                className="homepageToolActionButton"
+                onClick={() => navigate(action.route)}
+                variant="ghost"
+              >
+                <span>{action.label}</span>
+                <span className="homepageToolActionNote">{action.note}</span>
+              </Button>
+            ))}
+          </div>
         </div>
 
         <div className="homepageToolFloatSection">
-          <div className="homepageToolFloatLabel">资源摘要</div>
-          <HomepageResourceMetrics
-            className="homepageToolFloatMetrics"
-            metricsLabel="工具面板资源摘要"
-            summary={props.summary}
-          />
+          <div className="homepageToolFloatLabel">状态控制</div>
+          <div className="homepageToolActionGrid homepageToolActionGridCompact">
+            <Button
+              className="homepageToolActionButton"
+              onClick={() => resetPublicDemoSessionState()}
+              variant="ghost"
+            >
+              <span>重置 Seed</span>
+              <span className="homepageToolActionNote">清空当前会话并回到 /demo/</span>
+            </Button>
+            <Button
+              className="homepageToolActionButton"
+              disabled={!demoSummary.routeRestorePending}
+              onClick={() => {
+                clearPendingPagesDemoRestoreState()
+                setPanelState((current) => (current ? { ...current } : current))
+              }}
+              variant="ghost"
+            >
+              <span>清空 Restore</span>
+              <span className="homepageToolActionNote">移除 404 深链恢复状态</span>
+            </Button>
+            <Button
+              className="homepageToolActionButton"
+              onClick={() => window.location.reload()}
+              variant="ghost"
+            >
+              <span>重载当前页</span>
+              <span className="homepageToolActionNote">重新挂载当前 Demo 会话</span>
+            </Button>
+          </div>
         </div>
 
-        <div className="homepageToolFloatSection">
-          <HomepageSidebarClock now={props.now} />
+        <div className="homepageToolFloatHint">
+          切换 Demo 场景或重置当前会话；不会影响真实环境。
         </div>
-
-        <div className="homepageToolFloatHint">拖拽标题栏可随意移动；只有点击收起才会贴边变成气泡。</div>
       </div>
     </section>
   )

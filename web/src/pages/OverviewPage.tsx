@@ -35,6 +35,7 @@ import {
 } from "../readonlySnapshotCache";
 import { navigate } from "../routes";
 import { buildUpdateServiceTarget } from "../updateTargets";
+import { isDockrevAppDemoRuntime } from "../demo/runtime";
 import {
   homepageSnapshotFromResponse,
   readHomepageSnapshot,
@@ -59,6 +60,7 @@ import {
   HomepageHeaderContent,
   HomepageResourceMetrics,
   HomepageSearchForm,
+  HomepageSidebarClock,
   HomepageTopStrip,
 } from "./OverviewPageChrome";
 import { HomepageFloatingToolPanel } from "./OverviewFloatingToolPanel";
@@ -406,6 +408,7 @@ export function OverviewPage(props: {
   } =
     props;
   const pageRef = useRef<HTMLDivElement | null>(null);
+  const isAppDemoRuntime = isDockrevAppDemoRuntime();
   const { isOnline } = usePwaStatus();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -721,6 +724,11 @@ export function OverviewPage(props: {
     ),
     [applyHeaderSearch, headerSearchOpen, searchDraft, summary],
   );
+  const sidebarNavContent = useMemo(
+    () =>
+      isAppDemoRuntime ? null : <HomepageSidebarClock now={now} />,
+    [isAppDemoRuntime, now],
+  );
   const mobileNavContent = useMemo(
     () => (
       <div className="homepageDrawerNavControls">
@@ -745,8 +753,8 @@ export function OverviewPage(props: {
   }, [onTopbarContent, topbarContent]);
 
   useEffect(() => {
-    onSidebarNavContent(null);
-  }, [onSidebarNavContent]);
+    onSidebarNavContent(sidebarNavContent);
+  }, [onSidebarNavContent, sidebarNavContent]);
 
   useEffect(() => {
     onMobileNavContent(mobileNavContent);
@@ -763,14 +771,9 @@ export function OverviewPage(props: {
   return (
     <div ref={pageRef} className="page homepageDashboardPage">
       <h1 className="srOnly">服务导航</h1>
-      <HomepageFloatingToolPanel
-        pageRef={pageRef}
-        now={now}
-        summary={summary}
-        searchDraft={searchDraft}
-        onSearchDraftChange={setSearchDraft}
-        onApplySearch={applySearch}
-      />
+      {isAppDemoRuntime ? (
+        <HomepageFloatingToolPanel pageRef={pageRef} />
+      ) : null}
       {hasCachedCardsInUse || resourceFromCache ? (
         <ReadonlySnapshotNotice
           tone={!isOnline ? "warn" : "info"}

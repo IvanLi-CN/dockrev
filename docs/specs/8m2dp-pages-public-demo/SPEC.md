@@ -82,8 +82,8 @@
 
 ## Visual Evidence
 
-- source_type: `ui_demo`
-  target_program: `assembled GitHub Pages /demo/ surface`
+- source_type: `storybook_canvas`
+  target_program: `mock-only demo-runtime page harness`
   capture_scope: `browser-viewport`
   sensitive_exclusion: `mock-only seeded data`
   submission_gate: `approved`
@@ -93,8 +93,8 @@
 
 ![Public demo overview](./assets/demo-overview.png)
 
-- source_type: `ui_demo`
-  target_program: `assembled GitHub Pages /demo/ surface`
+- source_type: `storybook_canvas`
+  target_program: `mock-only demo-runtime page harness`
   capture_scope: `browser-viewport`
   sensitive_exclusion: `mock-only seeded data`
   submission_gate: `approved`
@@ -104,8 +104,8 @@
 
 ![Public demo service history](./assets/demo-service-history.png)
 
-- source_type: `ui_demo`
-  target_program: `assembled GitHub Pages /demo/ surface`
+- source_type: `storybook_canvas`
+  target_program: `mock-only demo-runtime page harness`
   capture_scope: `browser-viewport`
   sensitive_exclusion: `mock-only seeded data`
   submission_gate: `approved`
@@ -131,14 +131,15 @@
   capture_scope: `browser-viewport`
   sensitive_exclusion: `mock-only seeded data`
   submission_gate: `approved`
-  story_id_or_title: `Public Demo / Overview Tool Panel`
-  state: `manual collapse only with left-edge drag`
-  evidence_note: 验证 overview 桌面端工具面板可自由拖拽到视口左边缘而不自动收起；只有点击“收起”动作时才会贴边变成气泡，符合最终交互合同。
+  story_id_or_title: `Public Demo / Overview Demo Control Panel`
+  state: `demo-only scene shortcuts with session controls`
+  evidence_note: 验证 overview 桌面端 `Demo 控制面板` 已移除低价值 runtime 状态卡，只保留 Demo 场景快捷入口与会话控制；按钮文案不再溢出，底部说明改成简短结果描述；拖到左侧边缘时仍保持展开，只有点击“收起”动作才会贴边变成气泡。
 
-![Public demo overview tool panel](./assets/demo-overview-tool-panel-edge.png)
+![Public demo overview control panel](./assets/demo-overview-demo-control-panel.png)
 
 ## 变更记录（Change log）
 
 - 2026-07-13：创建规格，冻结 `/demo/` 公共入口、Pages 404 深链恢复、session-backed mock state、PWA-off demo contract 与 Docs/Demo/Storybook 分工。
 - 2026-07-13：实现完成，`/demo/` 作为 GitHub Pages docs 子目录内的正式 public demo 发布面落地，包含 BASE_URL 感知路由、session-backed mock state、cleanup/GHCR 假写能力、root `404.html` 深链恢复与 docs/workflow/gate 同步。
 - 2026-07-14：overview 工具面板最终交互收口为“手动收起 only”，补齐贴边气泡与左侧拖拽不自动收起的 owner-facing 视觉证据。
+- 2026-07-15：overview 浮层语义改为 `Demo 控制面板`，移除与 demo/mock 无关的搜索、资源摘要与时钟；后续再删去低价值 runtime 状态卡，收口成 Demo 场景快捷入口与会话控制。
