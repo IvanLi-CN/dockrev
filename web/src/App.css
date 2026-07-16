@@ -7755,12 +7755,13 @@ html[data-theme="light"] .modalOverlay {
 }
 
 .serviceVersionCard {
+  --service-version-aside-width: 15rem;
   min-width: 0;
   display: grid;
   grid-template-columns:
     minmax(220px, 0.94fr)
-    minmax(0, 1.88fr)
-    19rem;
+    minmax(0, 1.94fr)
+    var(--service-version-aside-width);
   gap: 18px;
   padding: 16px 18px;
   border: 1px solid color-mix(in srgb, var(--borderColor) 74%, transparent);
@@ -7772,18 +7773,6 @@ html[data-theme="light"] .modalOverlay {
       transparent 100%
     ),
     color-mix(in srgb, var(--panel2) 18%, transparent);
-}
-
-.serviceVersionCard[data-version-card-has-aside='false'] {
-  grid-template-columns:
-    minmax(220px, 0.94fr)
-    minmax(0, 1.94fr);
-  align-items: start;
-}
-
-.serviceVersionCard[data-version-card-has-aside='false'] .serviceVersionCardBody {
-  grid-column: 2;
-  grid-row: 1;
 }
 
 .serviceVersionCardCurrent {
@@ -7998,9 +7987,14 @@ html[data-theme="light"] .modalOverlay {
 
 .serviceVersionCardAside {
   gap: 14px;
-  width: 19rem;
+  width: var(--service-version-aside-width);
   padding-left: 18px;
   border-left: 1px solid color-mix(in srgb, var(--borderColor) 62%, transparent);
+}
+
+.serviceVersionCardAsidePlaceholder {
+  flex: 1 1 auto;
+  min-height: 1px;
 }
 
 .serviceVersionStatusStack > * + *,
@@ -8054,21 +8048,16 @@ html[data-theme="light"] .modalOverlay {
     gap: 14px;
   }
 
-  .serviceVersionCard[data-version-card-has-aside='false'] {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .serviceVersionCard[data-version-card-has-aside='false'] .serviceVersionCardBody {
-    grid-column: auto;
-    grid-row: auto;
-  }
-
   .serviceVersionCardAside {
     width: 100%;
     padding-left: 0;
     border-left: 0;
     padding-top: 12px;
     border-top: 1px solid color-mix(in srgb, var(--borderColor) 62%, transparent);
+  }
+
+  .serviceVersionCard[data-version-card-has-aside='false'] .serviceVersionCardAside {
+    display: none;
   }
 
   .serviceVersionTagRow {

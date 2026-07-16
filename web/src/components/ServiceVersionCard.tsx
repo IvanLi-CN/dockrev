@@ -174,8 +174,9 @@ export function ServiceVersionCard(props: {
         ) : null}
       </div>
 
-      {showCardAside ? (
-        <div className="serviceVersionCardAside" data-service-version-card-aside="true">
+      <div className="serviceVersionCardAside" data-service-version-card-aside="true">
+        {showCardAside ? (
+          <>
           <div className="serviceVersionStatusStack">
             {showCandidateStatus ? (
               <div className="serviceVersionStatusBlock">
@@ -250,8 +251,11 @@ export function ServiceVersionCard(props: {
               ) : null}
             </div>
           ) : null}
-        </div>
-      ) : null}
+          </>
+        ) : (
+          <div className="serviceVersionCardAsidePlaceholder" aria-hidden="true" />
+        )}
+      </div>
     </article>
   );
 }

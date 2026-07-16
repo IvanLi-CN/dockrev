@@ -143,21 +143,22 @@ export const VersionsSection: ServiceDetailStory = {
         centeredVersionTag(canvasElement, viewport) === "5.2.1",
       "initial centered card should drive the matching index highlight",
     );
-    expectStory(
-      !currentCard?.querySelector('[data-service-version-card-aside="true"]'),
-      "read-only current version cards should not keep an empty aside rail",
-    );
+    const currentAside = currentCard?.querySelector<HTMLElement>('[data-service-version-card-aside="true"]');
+    expectStory(Boolean(currentAside), "read-only current version cards should still reserve the fixed aside rail");
     expectStory(
       getComputedStyle(candidateCard ?? canvasElement).gridTemplateColumns.split(" ").filter(Boolean).length === 3,
       "actionable desktop version cards should keep the fixed third rail",
     );
-    const asideWidths = Array.from(
-      canvasElement.querySelectorAll<HTMLElement>('[data-service-version-card-aside="true"]'),
-    )
-      .slice(0, 2)
+    const asideWidths = [currentAside, candidateCard?.querySelector<HTMLElement>('[data-service-version-card-aside="true"]'), rollbackCard?.querySelector<HTMLElement>('[data-service-version-card-aside="true"]')]
+      .filter((aside): aside is HTMLElement => Boolean(aside))
       .map((aside) => aside.getBoundingClientRect().width);
-    expectStory(asideWidths.length === 2, "expected two visible action rails for width comparison");
-    expectNearlyEqual(asideWidths[0] ?? 0, asideWidths[1] ?? 0, 1.5, "desktop action rails should keep equal width");
+    expectStory(asideWidths.length === 3, "expected placeholder and actionable rails for width comparison");
+    expectStory(
+      asideWidths.every((width) => width >= 228 && width <= 252),
+      "desktop aside rail should stay within the tightened fixed width budget",
+    );
+    expectNearlyEqual(asideWidths[0] ?? 0, asideWidths[1] ?? 0, 1.5, "desktop placeholder and action rails should keep equal width");
+    expectNearlyEqual(asideWidths[1] ?? 0, asideWidths[2] ?? 0, 1.5, "desktop action rails should keep equal width");
     expectStory(updateCandidate && !updateCandidate.disabled, "candidate version should expose an enabled update action");
     expectStory(Boolean(updateDisabled?.disabled), "newer non-candidate release should render a disabled update action");
     expectStory(Boolean(rollbackTarget && !rollbackTarget.disabled), "rollback target version should expose an enabled rollback action");
