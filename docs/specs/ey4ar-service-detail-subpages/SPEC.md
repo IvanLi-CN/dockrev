@@ -77,6 +77,7 @@
 - `版本` 子页的 release card 正文超过 10 行时必须默认折叠，支持原地展开/收起，并继续保持虚拟列表稳定测量，不得因展开造成定位丢失或明显空白。
 - `版本` 子页必须对比当前部署版本、candidate 与既有 rollback target，展示状态徽标与动作区。较新版本统一渲染 `更新` 动作位，但只有与当前 service candidate 对应且不突破现有 explicit target tag 契约的版本可真正发起更新；其余版本必须给出明确禁用原因。
 - `版本` 子页对所有已部署过的历史版本统一渲染 `回滚` 动作位；只有当前 rollback target 对应版本执行真实回滚，其余版本点击后进入解释性提示，不得创建任务。
+- 当当前 rollback target 的来源更新任务存在实际纳入的备份记录时，`版本` 子页的目标版本卡与服务级回滚确认都必须补充同一份“来源备份”摘要：显示 included targets 数量与源目标总体积；若 included targets 存在缺失体积，则总体积位置回退为 `--`；若没有实际纳入的备份记录，则不显示该状态块。
 - `版本` 子页在同一服务已有 update/rollback 任务提交中、执行中，或 rollback target 刷新中时，必须锁定全部版本动作，并提供查看当前任务状态的稳定入口。
 - `版本` 子页桌面端可执行卡片的右侧状态/动作栏必须固定为 `19rem` 轨道，避免因说明或按钮数量不同导致宽度漂移；无右栏卡片继续使用两栏布局。
 - `版本` 子页宽屏必须使用多栏宽卡片；`≤1100px` 必须完全隐藏版本目录并切换为单列窄卡片，正文宽度保持正文阅读尺度且不产生横向滚动。
@@ -696,7 +697,7 @@
   submission_gate: `approved`
   story_id_or_title: `demo:app / /demo/services/stack-prod/svc-prod-api/versions`
   state: `desktop split versions layout with repository-level release links`
-  evidence_note: `mock-only ui_demo` 页面级截图，直接验证版本子页在真实应用壳内启用 `220px` 左目录、仓库级 GitHub / OctoRill 图标入口、紧凑状态摘要，以及固定右侧动作栏。目录高亮与正文版本卡同时可见，证明双虚拟列表布局已经落到最终交付面。
+  evidence_note: `mock-only ui_demo` 页面级截图，直接验证版本子页在真实应用壳内启用 `220px` 左目录、仓库级 GitHub / OctoRill 图标入口、紧凑状态摘要，以及固定右侧动作栏。目录高亮与正文版本卡同时可见，且当前 rollback target 卡片右栏展示 `来源备份 2 个目标 · 17.6 MiB`，证明双虚拟列表布局与回滚备份摘要都已经落到最终交付面。
   PR: include
   PR caption: `ui_demo` 桌面端版本页启用左目录、仓库级图标入口与固定动作栏。
 
@@ -711,7 +712,7 @@
   submission_gate: `approved`
   story_id_or_title: `demo:app / /demo/services/stack-prod/svc-prod-api/versions`
   state: `mobile versions layout without directory`
-  evidence_note: `mock-only ui_demo` 移动端整页截图，直接验证 `≤1100px` 时版本目录完全隐藏，版本卡保持单列纵向阅读流，页面滚动宽度与视口宽度一致，不产生横向溢出。
+  evidence_note: `mock-only ui_demo` 移动端整页截图，直接验证 `≤1100px` 时版本目录完全隐藏，版本卡保持单列纵向阅读流，页面滚动宽度与视口宽度一致，不产生横向溢出；同一视图内的 rollback target 卡片继续显示 `来源备份` 摘要。
   PR: include
   PR caption: `ui_demo` 移动端版本页隐藏目录并保持无横向溢出。
 

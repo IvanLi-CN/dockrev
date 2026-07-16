@@ -1,6 +1,7 @@
 import { type ServiceReleaseNoteItem, type ServiceRollbackTargetResponse } from "../api";
 import { cn } from "../lib/utils";
 import { shortDigest } from "../pages/serviceDetailUtils";
+import { backupSummaryValue, type ServiceOperationBackupSummary } from "./serviceOperationBackupSummary";
 import { Button, Mono, Pill } from "../ui";
 import { formatReleaseDate, preferredReleaseTimestamp, safeHttpUrl } from "./serviceVersionsSectionUtils";
 
@@ -49,6 +50,7 @@ export function ServiceVersionCard(props: {
   card: ServiceVersionCardModel;
   candidateDisplayVersion: string | null;
   rollbackTarget: ServiceRollbackTargetResponse | null;
+  rollbackBackupSummary: ServiceOperationBackupSummary;
   viewLabel: string;
   sourceLabel: string;
   expanded: boolean;
@@ -69,12 +71,16 @@ export function ServiceVersionCard(props: {
   const showRollbackDigestStatus = Boolean(
     card.rollbackTargetMatch && props.rollbackTarget?.targetDigest,
   );
+  const showRollbackBackupStatus =
+    card.rollbackTargetMatch && props.rollbackBackupSummary.state !== "empty";
   const rollbackTargetDigest = props.rollbackTarget?.targetDigest ?? null;
+  const rollbackBackupValue = showRollbackBackupStatus ? backupSummaryValue(props.rollbackBackupSummary) : null;
   const showCardAside =
     card.showUpdate ||
     card.showRollback ||
     showCandidateStatus ||
-    showRollbackDigestStatus;
+    showRollbackDigestStatus ||
+    showRollbackBackupStatus;
   const titleText = (card.item.name ?? "").trim() || card.item.tagName;
   const titleUsesTag = titleText === card.item.tagName;
 
@@ -192,6 +198,12 @@ export function ServiceVersionCard(props: {
                 <div className="serviceVersionStatusValue">
                   <Mono>{shortDigest(rollbackTargetDigest!)}</Mono>
                 </div>
+              </div>
+            ) : null}
+            {showRollbackBackupStatus ? (
+              <div className="serviceVersionStatusBlock">
+                <div className="serviceVersionStatusLabel">来源备份</div>
+                <div className="serviceVersionStatusValue">{rollbackBackupValue}</div>
               </div>
             ) : null}
           </div>

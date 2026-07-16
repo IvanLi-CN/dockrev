@@ -6,6 +6,7 @@ import {
   type JobListItem,
   type ReleaseNotesView,
   type Service,
+  type ServiceBackupRecordItem,
   type ServiceReleaseNoteItem,
   type ServiceReleaseNotesResponse,
   type ServiceReleaseNotesStatus,
@@ -24,6 +25,7 @@ import {
   releaseVersionForServiceOperation,
   selectServiceOperationJobs,
 } from './RecentUpdateRecords'
+import { summarizeServiceOperationBackups } from './serviceOperationBackupSummary'
 import {
   isDockrevService,
   rollbackVersionLabel,
@@ -56,6 +58,7 @@ type AnchorState =
 type ServiceVersionsSectionProps = {
   service: Service
   jobs: JobListItem[]
+  backupRecords: ServiceBackupRecordItem[]
   rollbackTarget: ServiceRollbackTargetResponse | null
   rollbackTargetRefreshing: boolean
   busy: boolean
@@ -746,7 +749,10 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
       const deployedHistorical = deployedHistoricalVersions.has(normalizeVersion(item.tagName))
       const rollbackTargetMatch = rollbackTargetVersion !== '' && normalizeVersion(item.tagName) === rollbackTargetVersion
       const showUpdate = (!dockrevService && newerThanCurrent) || candidateMatch
-      const showRollback = !dockrevService && (deployedHistorical || rollbackTargetMatch)
+      const showRollback =
+        !dockrevService &&
+        rollbackTargetMatch &&
+        (semverComparison == null || olderThanCurrent)
 
       let updateDisabledReason: string | null = null
       if (showUpdate) {
@@ -795,6 +801,15 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
   const renderedIndexCount = indexVirtualItems.filter((item) => item.index < items.length).length
   const githubReleasesUrl = safeHttpUrl(listResponse?.externalLinks?.githubReleasesUrl)
   const octoRillReleasesUrl = safeHttpUrl(listResponse?.externalLinks?.octoRillReleasesUrl)
+  const rollbackBackupSummaryByJobId = useMemo(
+    () => summarizeServiceOperationBackups(props.backupRecords),
+    [props.backupRecords],
+  )
+  const rollbackBackupSummary = useMemo(() => {
+    const sourceJobId = (props.rollbackTarget?.sourceUpdateJobId ?? '').trim()
+    if (!sourceJobId) return { state: 'empty' as const }
+    return rollbackBackupSummaryByJobId.get(sourceJobId) ?? { state: 'empty' as const }
+  }, [props.rollbackTarget?.sourceUpdateJobId, rollbackBackupSummaryByJobId])
   const openSettings = () => navigate({ name: 'settings' })
 
   return (
@@ -804,7 +819,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
           <div className="serviceVersionsHeaderText">
             <div className="title">版本</div>
             <div className="muted">
-              以当前部署版本为锚点浏览统一 release notes；较新版本提供更新入口，已部署历史版本保留回滚语义说明。
+              以当前部署版本为锚点浏览统一 release notes；较新版本提供更新入口，只有当前 rollback target 保留回滚入口。
             </div>
           </div>
           <div className="serviceVersionsHeaderControls">
@@ -1054,6 +1069,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
                             card={card}
                             candidateDisplayVersion={candidateDisplayVersion}
                             rollbackTarget={props.rollbackTarget}
+                            rollbackBackupSummary={rollbackBackupSummary}
                             viewLabel={viewLabel(viewMode)}
                             sourceLabel={sourceLabel(listResponse)}
                             expanded={expanded}

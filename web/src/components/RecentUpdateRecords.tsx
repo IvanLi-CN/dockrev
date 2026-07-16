@@ -1,10 +1,10 @@
 import type { JobListItem, ServiceBackupRecordItem, StackDetail } from '../api'
 import { ChevronLeft, ChevronRight, RotateCcw, ScrollText } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { formatBytes } from '../pages/settings/helpers'
 import { openGitHubReleaseDrawer } from '../releaseDrawer'
 import { navigate } from '../routes'
 import { IconButton, Mono, Pill } from '../ui'
+import { backupTargetCountLabel, summarizeServiceOperationBackups } from './serviceOperationBackupSummary'
 import { TaskResultReason } from './TaskResultReason'
 
 export const SERVICE_OPERATION_HISTORY_PAGE_SIZE = 20
@@ -148,64 +148,6 @@ function resultReasonSummary(job: JobListItem): string | null {
     job.status === 'failed' ? '任务执行失败' : '',
   ])
   return redundantSummaries.has(summary) ? null : summary
-}
-
-type ServiceOperationBackupSummary =
-  | {
-      state: 'empty'
-    }
-  | {
-      state: 'partial'
-      targetCount: number
-    }
-  | {
-      state: 'ready'
-      targetCount: number
-      sizeLabel: string
-    }
-
-function backupTargetCountLabel(count: number): string {
-  return `${count} 个目标`
-}
-
-export function summarizeServiceOperationBackups(records: ServiceBackupRecordItem[]): Map<string, ServiceOperationBackupSummary> {
-  const summaryByJobId = new Map<string, ServiceOperationBackupSummary>()
-  const recordsByJobId = new Map<string, ServiceBackupRecordItem[]>()
-
-  for (const record of records) {
-    const jobRecords = recordsByJobId.get(record.jobId)
-    if (jobRecords) jobRecords.push(record)
-    else recordsByJobId.set(record.jobId, [record])
-  }
-
-  for (const [jobId, jobRecords] of recordsByJobId.entries()) {
-    const includedAssets = jobRecords.flatMap((record) =>
-      Array.isArray(record.assets) ? record.assets.filter((asset) => asset.status === 'included') : [],
-    )
-
-    if (includedAssets.length === 0) {
-      summaryByJobId.set(jobId, { state: 'empty' })
-      continue
-    }
-
-    const hasMissingSize = includedAssets.some((asset) => asset.sizeBytes == null)
-    if (hasMissingSize) {
-      summaryByJobId.set(jobId, {
-        state: 'partial',
-        targetCount: includedAssets.length,
-      })
-      continue
-    }
-
-    const totalSizeBytes = includedAssets.reduce((sum, asset) => sum + (asset.sizeBytes ?? 0), 0)
-    summaryByJobId.set(jobId, {
-      state: 'ready',
-      targetCount: includedAssets.length,
-      sizeLabel: formatBytes(totalSizeBytes),
-    })
-  }
-
-  return summaryByJobId
 }
 
 export function ServiceOperationHistory(props: {

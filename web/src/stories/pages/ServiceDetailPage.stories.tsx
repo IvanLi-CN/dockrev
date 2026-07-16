@@ -1158,6 +1158,8 @@ export const RollbackConfirmOpen: Story = {
     expectStory(doc.body.textContent?.includes("当前版本"), "rollback confirm current version missing");
     expectStory(doc.body.textContent?.includes("回滚目标"), "rollback confirm target version missing");
     expectStory(doc.body.textContent?.includes("来源任务"), "rollback confirm source job missing");
+    expectStory(doc.body.textContent?.includes("来源备份"), "rollback confirm backup summary missing");
+    expectStory(doc.body.textContent?.includes("2 个目标"), "rollback confirm backup target count missing");
     expectStory(doc.body.textContent?.includes("执行回滚"), "rollback confirm action missing");
   },
 };

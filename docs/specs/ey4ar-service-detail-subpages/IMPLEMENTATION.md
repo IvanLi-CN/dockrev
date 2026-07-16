@@ -29,6 +29,7 @@
 - 服务日志采集同时消费 `docker logs` 的 stdout 与 stderr stream；snapshot 与 SSE live tail 均覆盖仅向 stderr 写日志的容器。
 - 已更新 `PageHarness`、服务树 section 标签与服务详情 Storybook stories，补齐旧链接默认概览、tabs route 切换、更新记录深链/混合列表/空态/click-Enter-Space 跳转/受控回滚入口、备份页状态、日志深链与搜索交互、Human/Raw 日志切换、设置抽屉入口与监控页稳定渲染。
 - 已补齐版本页 Storybook `play` 覆盖：目录/正文双虚拟化、当前版本初始居中、目录点击联动、尾部分页、仓库级图标入口、固定动作栏与移动端无目录/无横向溢出。
+- 版本页的当前 rollback target 现会复用统一的备份摘要聚合：若其来源更新任务存在 included backup assets，则在版本卡右栏与服务级回滚确认中同时显示 `来源备份 = <目标数> · <总体积>`；缺失体积时回退为 `· --`，无实际纳入记录时不渲染该状态块。
 - 已产出 owner-facing mock-only 视觉证据并写回 `SPEC.md`，其中版本页最终验收图来自 `ui_demo` 的桌面与 `390x900` 移动端截图。
 - 服务详情页面与 stories 已收敛到仓库 1200 行文件预算以内，并通过 CI 同款预算检查。
 

@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { ApiError, archiveService, createIgnore, getServiceBackupRecords, getServiceBackupTargets, getServiceRollbackTarget, getServiceSettings, getStack, getStackSettings, listIgnores, newJobEventsSource, restoreService, triggerRuntimeScan, triggerServiceRollback, triggerUpdate, type IgnoreRule, type Service, type ServiceBackupRecordItem, type ServiceBackupTargetsResponse, type ServiceRollbackTargetResponse, type ServiceSettings, type StackDetail, type StackSettings } from '../api'
 import { readUpdateGuardBlockedReason } from '../aggregateUpdateGuard'
 import { normalizeDigest } from '../components/digest'
+import { backupSummaryValue, summarizeServiceOperationBackups } from '../components/serviceOperationBackupSummary'
 import { ServiceUpdateConfirmDetails } from '../components/ServiceUpdateConfirmDetails'
 import { useConfirm } from '../confirm'
 import { DIGEST_SNAPSHOT_UPDATED_EVENT, type DigestSnapshotUpdatedDetail } from '../digestInferenceTracker'
@@ -61,6 +62,13 @@ export function useServiceDetailPageState(props: {
   const rollbackTargetDigestRetryMs = 250
   const rollbackActionBusy = Boolean(rollbackActiveJobId)
   const rollbackHint = rollbackActiveJobId ? '任务进行中，点击查看任务详情' : rollbackTargetRefreshing ? ROLLBACK_TARGET_REFRESH_HINT : !rollbackTarget?.available ? rollbackReasonLabel : undefined
+  const backupSummaryByJobId = useMemo(() => summarizeServiceOperationBackups(backupRecords), [backupRecords])
+  const rollbackBackupSummary = useMemo(() => {
+    const sourceJobId = (rollbackTarget?.sourceUpdateJobId ?? '').trim()
+    if (!sourceJobId) return { state: 'empty' as const }
+    return backupSummaryByJobId.get(sourceJobId) ?? { state: 'empty' as const }
+  }, [backupSummaryByJobId, rollbackTarget?.sourceUpdateJobId])
+  const rollbackBackupValue = rollbackBackupSummary.state === 'empty' ? null : backupSummaryValue(rollbackBackupSummary)
   const fullRefreshRequestIdRef = useRef(0)
   const latestAppliedFullRefreshRequestIdRef = useRef(0)
   const stackRefreshRequestIdRef = useRef(0)
@@ -546,6 +554,14 @@ export function useServiceDetailPageState(props: {
               <div className="modalKvValue">
                 <Mono>{rollbackTarget.sourceUpdateJobId ?? '-'}</Mono>
               </div>
+              {rollbackBackupValue ? (
+                <>
+                  <div className="modalKvLabel">来源备份</div>
+                  <div className="modalKvValue">
+                    <span>{rollbackBackupValue}</span>
+                  </div>
+                </>
+              ) : null}
               <div className="modalKvLabel">完成时间</div>
               <div className="modalKvValue">
                 <Mono>{rollbackTarget.sourceFinishedAt ?? '-'}</Mono>
@@ -596,7 +612,7 @@ export function useServiceDetailPageState(props: {
         setBusy(false)
       }
     })()
-  }, [confirm, refreshStackOnly, rollbackActiveJobId, rollbackTarget, service, stack?.name, stackId])
+  }, [confirm, refreshStackOnly, rollbackActiveJobId, rollbackBackupValue, rollbackTarget, service, stack?.name, stackId])
 
   const requestApplyUpdate = useCallback(() => {
     void (async () => {

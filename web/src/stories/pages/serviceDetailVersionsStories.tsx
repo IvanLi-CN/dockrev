@@ -162,7 +162,12 @@ export const VersionsSection: ServiceDetailStory = {
     expectStory(updateCandidate && !updateCandidate.disabled, "candidate version should expose an enabled update action");
     expectStory(Boolean(updateDisabled?.disabled), "newer non-candidate release should render a disabled update action");
     expectStory(Boolean(rollbackTarget && !rollbackTarget.disabled), "rollback target version should expose an enabled rollback action");
-    expectStory(Boolean(rollbackHint && !rollbackHint.disabled), "historically deployed old versions should keep an explanatory rollback entry");
+    expectStory(
+      normalizeText(findVersionCard(canvasElement, "5.2.0")?.textContent).includes("来源备份") &&
+        normalizeText(findVersionCard(canvasElement, "5.2.0")?.textContent).includes("2 个目标 · 17.6 MiB"),
+      "rollback target card should surface the matched backup summary",
+    );
+    expectStory(!rollbackHint, "non-target historical releases should not expose any rollback entry");
     expectStory(
       !normalizeText(findVersionCard(canvasElement, "5.2.2")?.textContent).includes("不一定是当前可执行 rollback target"),
       "historical releases should not render the noisy rollback-target disclaimer in the card aside",
@@ -186,12 +191,6 @@ export const VersionsSection: ServiceDetailStory = {
     );
     expandButton?.click();
     await waitForCondition(() => normalizeText(currentCard?.textContent).includes("故意超过十行"));
-
-    rollbackHint?.click();
-    const doc = canvasElement.ownerDocument;
-    await waitForCondition(() => doc.body.textContent?.includes("不会直接创建回滚任务") ?? false);
-    findButton(doc, "知道了")?.click();
-    await waitForCondition(() => !(doc.body.textContent?.includes("不会直接创建回滚任务") ?? false));
 
     const initialSelected = selectedIndexTag(canvasElement);
     viewport?.scrollTo({ top: Math.max(0, (viewport?.scrollTop ?? 0) + 280) });
