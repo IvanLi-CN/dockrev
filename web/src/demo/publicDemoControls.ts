@@ -1,6 +1,10 @@
 import { appBasePath } from '../appBase'
 import { buildFixture } from '../stories/mocks/dockrevMockApi/fixturesMisc'
-import type { Fixture } from '../stories/mocks/dockrevMockApi/shared'
+import { versionReleaseNotes } from '../stories/pages/serviceDetailPageStoryFixtures'
+import type {
+  DockrevMockGitHubReleasesDataset,
+  Fixture,
+} from '../stories/mocks/dockrevMockApi/shared'
 import {
   PAGES_DEMO_RESTORE_STORAGE_KEY,
   parsePagesDemoRestoreEntry,
@@ -9,6 +13,19 @@ import {
 export const PUBLIC_DEMO_FIXTURE_STORAGE_KEY = 'dockrev:public-demo:fixture:v1'
 export const PUBLIC_DEMO_SCENARIO = 'settings-configured'
 export const PUBLIC_DEMO_CLEANUP_SCENARIO = 'cleanup-console-storage-normal'
+const PUBLIC_DEMO_VERSION_SERVICE_ID = 'svc-prod-api'
+const PUBLIC_DEMO_VERSION_REPO_URL = 'https://github.com/acme/api'
+
+export const PUBLIC_DEMO_GITHUB_RELEASES_BY_SERVICE_ID = {
+  [PUBLIC_DEMO_VERSION_SERVICE_ID]: {
+    authMode: 'anonymous',
+    repo: {
+      fullName: 'acme/api',
+      htmlUrl: PUBLIC_DEMO_VERSION_REPO_URL,
+    },
+    items: versionReleaseNotes,
+  },
+} satisfies Record<string, DockrevMockGitHubReleasesDataset>
 
 type StoredDemoFixture = {
   version: 1
@@ -39,8 +56,47 @@ function currentDemoBaseUrl(): string | null {
   }
 }
 
+function applyPublicDemoVersionOverrides(next: Fixture) {
+  const service = next.stackById['stack-prod']?.services.find(
+    (item) => item.id === PUBLIC_DEMO_VERSION_SERVICE_ID,
+  )
+  if (service) {
+    service.settings = {
+      ...service.settings,
+      repoUrl: service.settings.repoUrl ?? PUBLIC_DEMO_VERSION_REPO_URL,
+    }
+    service.newVersionDiscoveryCount ??= 2
+  }
+
+  const serviceSettings = next.serviceSettingsById[PUBLIC_DEMO_VERSION_SERVICE_ID]
+  if (serviceSettings) {
+    next.serviceSettingsById[PUBLIC_DEMO_VERSION_SERVICE_ID] = {
+      ...serviceSettings,
+      repoUrl: serviceSettings.repoUrl ?? PUBLIC_DEMO_VERSION_REPO_URL,
+    }
+  }
+
+  if (!next.rollbackTargetByServiceId[PUBLIC_DEMO_VERSION_SERVICE_ID]) {
+    const currentDigest = service?.image.digest ?? ''
+    next.rollbackTargetByServiceId[PUBLIC_DEMO_VERSION_SERVICE_ID] = {
+      available: true,
+      currentDigest,
+      currentDisplayTag: service?.image.resolvedTag ?? service?.image.tag ?? '5.2.1',
+      targetDigest:
+        'sha256:0000000000000000000000000000000000000000000000000000000000000010',
+      targetDisplayTag: '5.2.0',
+      sourceUpdateJobId: 'job-auto-policy-api-5-2-3',
+      sourceFinishedAt: '2026-07-12T13:45:00.000Z',
+      unavailableReason: null,
+      activeJobId: null,
+      activeJobStatus: null,
+    }
+  }
+}
+
 export function applyPublicDemoOverrides(fixture: Fixture): Fixture {
   const next = cloneFixture(fixture)
+  applyPublicDemoVersionOverrides(next)
   const demoBaseUrl = currentDemoBaseUrl()
   if (!demoBaseUrl) return next
 

@@ -3,6 +3,7 @@ import { installDockrevMockApi } from '../stories/mocks/dockrevMockApi/install'
 import {
   loadPublicDemoFixture,
   PUBLIC_DEMO_CLEANUP_SCENARIO,
+  PUBLIC_DEMO_GITHUB_RELEASES_BY_SERVICE_ID,
   PUBLIC_DEMO_SCENARIO,
   savePublicDemoFixture,
 } from './publicDemoControls'
@@ -22,6 +23,7 @@ export function installAppDemoApi(): DemoInstallResult {
   writeDockrevRuntimeMode('app-demo')
   installDockrevMockApi(PUBLIC_DEMO_SCENARIO, {
     cleanupScenario: PUBLIC_DEMO_CLEANUP_SCENARIO,
+    githubReleasesByServiceId: PUBLIC_DEMO_GITHUB_RELEASES_BY_SERVICE_ID,
     initialFixture,
     onStateChange: savePublicDemoFixture,
   })
