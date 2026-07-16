@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useVirtualizer } from '@tanstack/react-virtual'
+import { useVirtualizer, type VirtualItem } from '@tanstack/react-virtual'
 import {
   ApiError,
   getServiceReleaseNotes,
   type JobListItem,
   type ReleaseNotesView,
   type Service,
+  type ServiceBackupRecordItem,
   type ServiceReleaseNoteItem,
   type ServiceReleaseNotesResponse,
   type ServiceReleaseNotesStatus,
@@ -24,16 +25,28 @@ import {
   releaseVersionForServiceOperation,
   selectServiceOperationJobs,
 } from './RecentUpdateRecords'
+import { summarizeServiceOperationBackups } from './serviceOperationBackupSummary'
 import {
   isDockrevService,
   rollbackVersionLabel,
   shortDigest,
 } from '../pages/serviceDetailUtils'
-import { Button, ExternalLinkIcon, Mono, Pill } from '../ui'
+import { Button, GitHubIcon, IconLink, Mono, OctoRillIcon } from '../ui'
+import { ServiceVersionCard } from './ServiceVersionCard'
+import {
+  formatVersionDirectoryTimeLabel,
+  mergeReleaseNoteItems,
+  normalizeVersion,
+  preferredReleaseTimestamp,
+  releaseMatchesVersion,
+  safeHttpUrl,
+} from './serviceVersionsSectionUtils'
 
 const RELEASES_PER_PAGE = 20
 const RELEASE_ROW_GAP = 14
-const BODY_COLLAPSE_LINE_COUNT = 10
+const VERSION_INDEX_ROW_HEIGHT = 54
+const DESKTOP_VERSION_INDEX_QUERY = '(min-width: 1101px)'
+const EMPTY_VIRTUAL_ITEMS: VirtualItem[] = []
 
 type AnchorState =
   | { status: 'idle' }
@@ -45,6 +58,7 @@ type AnchorState =
 type ServiceVersionsSectionProps = {
   service: Service
   jobs: JobListItem[]
+  backupRecords: ServiceBackupRecordItem[]
   rollbackTarget: ServiceRollbackTargetResponse | null
   rollbackTargetRefreshing: boolean
   busy: boolean
@@ -54,53 +68,6 @@ type ServiceVersionsSectionProps = {
   rollbackActiveJobStatus: string | null
   onApplyUpdate: () => void
   onRollback: () => void
-}
-
-function formatReleaseDate(value: string | null | undefined): {
-  dateLine: string
-  timeLine: string | null
-} {
-  const trimmed = (value ?? '').trim()
-  if (!trimmed) return { dateLine: '时间未知', timeLine: null }
-  const parsed = new Date(trimmed)
-  if (Number.isNaN(parsed.valueOf())) return { dateLine: trimmed, timeLine: null }
-  return {
-    dateLine: new Intl.DateTimeFormat(undefined, {
-      dateStyle: 'medium',
-    }).format(parsed),
-    timeLine: new Intl.DateTimeFormat(undefined, {
-      timeStyle: 'short',
-    }).format(parsed),
-  }
-}
-
-function preferredReleaseTimestamp(item: ServiceReleaseNoteItem): string | null {
-  return item.publishedAt?.trim() || item.createdAt?.trim() || null
-}
-
-function normalizeVersion(value: string | null | undefined): string {
-  return (value ?? '').trim().toLowerCase()
-}
-
-function safeHttpUrl(value: string | null | undefined): string {
-  const trimmed = (value ?? '').trim()
-  if (!trimmed) return ''
-  try {
-    const url = new URL(trimmed)
-    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : ''
-  } catch {
-    return ''
-  }
-}
-
-function releaseMatchesVersion(item: ServiceReleaseNoteItem, version: string | null | undefined): boolean {
-  const normalizedVersion = normalizeVersion(version)
-  if (!normalizedVersion) return false
-  const normalizedTag = normalizeVersion(item.tagName)
-  if (normalizedTag === normalizedVersion) return true
-  if (normalizedTag === `v${normalizedVersion}`) return true
-  if (normalizedVersion.startsWith('v') && normalizedTag === normalizedVersion.slice(1)) return true
-  return false
 }
 
 function releaseBodyForView(item: ServiceReleaseNoteItem, view: ReleaseNotesView): { body: string; missing: boolean } {
@@ -189,26 +156,6 @@ function updateLockReason(input: {
   return null
 }
 
-function collapseBody(body: string, expanded: boolean): {
-  visibleBody: string
-  totalLines: number
-  isCollapsible: boolean
-} {
-  const trimmed = body.trim()
-  if (!trimmed) {
-    return { visibleBody: '', totalLines: 0, isCollapsible: false }
-  }
-  const lines = trimmed.split(/\r?\n/)
-  if (expanded || lines.length <= BODY_COLLAPSE_LINE_COUNT) {
-    return { visibleBody: trimmed, totalLines: lines.length, isCollapsible: lines.length > BODY_COLLAPSE_LINE_COUNT }
-  }
-  return {
-    visibleBody: lines.slice(0, BODY_COLLAPSE_LINE_COUNT).join('\n'),
-    totalLines: lines.length,
-    isCollapsible: true,
-  }
-}
-
 function fallbackTone(
   status: ServiceReleaseNotesStatus | 'info',
 ): 'warning' | 'danger' | 'success' {
@@ -230,14 +177,34 @@ function resolveVirtualOffset(
   return 0
 }
 
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return window.matchMedia(query).matches
+  })
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const mediaQuery = window.matchMedia(query)
+    const handleChange = () => setMatches(mediaQuery.matches)
+    handleChange()
+    mediaQuery.addEventListener('change', handleChange)
+    return () => mediaQuery.removeEventListener('change', handleChange)
+  }, [query])
+
+  return matches
+}
+
 export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
   const confirm = useConfirm()
   const serviceId = props.service.id.trim()
-  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const listScrollRef = useRef<HTMLDivElement | null>(null)
+  const indexScrollRef = useRef<HTMLDivElement | null>(null)
   const sessionKey = useMemo(() => {
     const anchorVersion = (props.service.image.resolvedTag ?? '').trim() || props.service.image.tag.trim()
     return `${serviceId}::${anchorVersion}`
   }, [props.service.image.resolvedTag, props.service.image.tag, serviceId])
+  const showDesktopIndex = useMediaQuery(DESKTOP_VERSION_INDEX_QUERY)
   const currentVersion = useMemo(
     () => (props.service.image.resolvedTag ?? '').trim() || props.service.image.tag.trim() || null,
     [props.service.image.resolvedTag, props.service.image.tag],
@@ -279,6 +246,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
   const [loadingMore, setLoadingMore] = useState(false)
   const [loadMoreFailure, setLoadMoreFailure] = useState<ServiceReleaseNotesResponse | null>(null)
   const [viewMode, setViewMode] = useState<ReleaseNotesView>('smart')
+  const [selectedIndex, setSelectedIndex] = useState(0)
   const [anchorState, setAnchorState] = useState<AnchorState>(() =>
     currentVersion ? { status: 'loading' } : { status: 'idle' },
   )
@@ -293,7 +261,8 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     hasMoreRef.current = false
     loadingMoreRef.current = false
     initialCenterKeyRef.current = null
-    if (scrollRef.current) scrollRef.current.scrollTop = 0
+    if (listScrollRef.current) listScrollRef.current.scrollTop = 0
+    if (indexScrollRef.current) indexScrollRef.current.scrollTop = 0
     setInitialLoadState('idle')
     setListResponse(null)
     setItems([])
@@ -301,6 +270,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     setLoadingMore(false)
     setLoadMoreFailure(null)
     setViewMode('smart')
+    setSelectedIndex(0)
     setAnchorState(currentVersion ? { status: 'loading' } : { status: 'idle' })
   }, [currentVersion])
 
@@ -385,7 +355,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
           setLoadMoreFailure(nextResponse)
           break
         }
-        aggregated = [...aggregated, ...nextResponse.items]
+        aggregated = mergeReleaseNoteItems(aggregated, nextResponse.items)
         latestReadyResponse = nextResponse
         foundIndex = aggregated.findIndex((item) => releaseMatchesVersion(item, currentVersion))
         setItems(aggregated)
@@ -428,93 +398,122 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
   }, [currentVersion, requestPage, resetState, serviceId, sessionKey])
 
   const rowCount = items.length + ((hasMoreRef.current || loadingMore || loadMoreFailure) ? 1 : 0)
-  const virtualizer = useVirtualizer({
+  const listVirtualizer = useVirtualizer({
     count: rowCount,
-    getScrollElement: () => scrollRef.current,
+    getScrollElement: () => listScrollRef.current,
     estimateSize: () => 360,
     overscan: 6,
     gap: RELEASE_ROW_GAP,
     getItemKey: (index) => (index < items.length ? items[index]?.id ?? index : `loader:${index}`),
     measureElement: (element) => element.getBoundingClientRect().height,
   })
+  const indexVirtualizer = useVirtualizer({
+    count: rowCount,
+    getScrollElement: () => indexScrollRef.current,
+    estimateSize: () => VERSION_INDEX_ROW_HEIGHT,
+    overscan: 10,
+    gap: 8,
+    getItemKey: (index) => (index < items.length ? items[index]?.id ?? index : `index-loader:${index}`),
+  })
 
   useEffect(() => {
-    virtualizer.measure()
-  }, [expandedIds, items.length, viewMode, virtualizer])
+    listVirtualizer.measure()
+  }, [expandedIds, items.length, viewMode, listVirtualizer])
 
   useEffect(() => {
-    const element = scrollRef.current
+    const element = listScrollRef.current
     if (!element || typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(() => {
-      virtualizer.measure()
+      listVirtualizer.measure()
     })
     observer.observe(element)
     return () => observer.disconnect()
-  }, [virtualizer])
+  }, [listVirtualizer])
+
+  const centerVersionCard = useCallback(
+    (absoluteIndex: number, tagName: string, mode: 'initial' | 'interactive') => {
+      const scrollElement = listScrollRef.current
+      if (!scrollElement || !tagName) return
+      let frameA = 0
+      let frameB = 0
+      let retryTimer = 0
+      const key = `${sessionKey}:${absoluteIndex}`
+      const centerCard = (attemptsRemaining: number) => {
+        const element = listScrollRef.current
+        if (!element) return
+        listVirtualizer.measure()
+        const renderedCard = Array.from(
+          element.querySelectorAll<HTMLElement>('[data-service-version-card="true"]'),
+        ).find((node) => node.getAttribute('data-release-tag') === tagName)
+        let targetOffset = resolveVirtualOffset(
+          listVirtualizer.getOffsetForIndex(absoluteIndex, 'center'),
+        )
+        if (renderedCard) {
+          const viewportRect = element.getBoundingClientRect()
+          const cardRect = renderedCard.getBoundingClientRect()
+          targetOffset =
+            element.scrollTop +
+            (cardRect.top - viewportRect.top) -
+            Math.max(0, (viewportRect.height - cardRect.height) / 2)
+        }
+        targetOffset = Math.max(0, targetOffset)
+        element.scrollTo({ top: targetOffset })
+        if (showDesktopIndex) {
+          indexVirtualizer.scrollToIndex(absoluteIndex, {
+            align: mode === 'initial' ? 'center' : 'auto',
+          })
+        }
+        if (attemptsRemaining <= 0 || !renderedCard) {
+          if (mode === 'initial') initialCenterKeyRef.current = key
+          return
+        }
+        const viewportRect = element.getBoundingClientRect()
+        const cardRect = renderedCard.getBoundingClientRect()
+        const viewportCenter = viewportRect.top + viewportRect.height / 2
+        const cardCenter = cardRect.top + cardRect.height / 2
+        if (Math.abs(cardCenter - viewportCenter) <= Math.max(48, viewportRect.height * 0.18)) {
+          if (mode === 'initial') initialCenterKeyRef.current = key
+          return
+        }
+        retryTimer = window.setTimeout(() => {
+          centerCard(attemptsRemaining - 1)
+        }, 80)
+      }
+
+      frameA = window.requestAnimationFrame(() => {
+        frameB = window.requestAnimationFrame(() => {
+          centerCard(6)
+        })
+      })
+      return () => {
+        window.cancelAnimationFrame(frameA)
+        window.cancelAnimationFrame(frameB)
+        window.clearTimeout(retryTimer)
+      }
+    },
+    [indexVirtualizer, listVirtualizer, sessionKey, showDesktopIndex],
+  )
 
   useEffect(() => {
     if (initialLoadState !== 'ready') return
     if (anchorState.status !== 'found') return
     if (items.length <= anchorState.absoluteIndex) return
-    const scrollElement = scrollRef.current
+    const scrollElement = listScrollRef.current
     if (!scrollElement) return
     const key = `${sessionKey}:${anchorState.absoluteIndex}`
     if (initialCenterKeyRef.current === key && scrollElement.scrollTop > 0) return
+    setSelectedIndex(anchorState.absoluteIndex)
+    return centerVersionCard(
+      anchorState.absoluteIndex,
+      items[anchorState.absoluteIndex]?.tagName ?? '',
+      'initial',
+    )
+  }, [anchorState, centerVersionCard, initialLoadState, items, sessionKey])
 
-    let frameA = 0
-    let frameB = 0
-    let retryTimer = 0
-    const currentCardInView = (element: HTMLDivElement): boolean => {
-      const currentCard = element.querySelector<HTMLElement>('[data-version-card-current="true"]')
-      if (!currentCard) return false
-      const viewportRect = element.getBoundingClientRect()
-      const cardRect = currentCard.getBoundingClientRect()
-      const viewportCenter = viewportRect.top + viewportRect.height / 2
-      const cardCenter = cardRect.top + cardRect.height / 2
-      return Math.abs(cardCenter - viewportCenter) <= Math.max(48, viewportRect.height * 0.18)
-    }
-
-    const centerCurrentCard = (attemptsRemaining: number) => {
-      const element = scrollRef.current
-      if (!element) return
-      virtualizer.measure()
-      const currentCard = element.querySelector<HTMLElement>('[data-version-card-current="true"]')
-      let targetOffset = resolveVirtualOffset(
-        virtualizer.getOffsetForIndex(anchorState.absoluteIndex, 'center'),
-      )
-      if (currentCard) {
-        const viewportRect = element.getBoundingClientRect()
-        const cardRect = currentCard.getBoundingClientRect()
-        targetOffset =
-          element.scrollTop +
-          (cardRect.top - viewportRect.top) -
-          Math.max(0, (viewportRect.height - cardRect.height) / 2)
-      }
-      targetOffset = Math.max(0, targetOffset)
-      element.scrollTo({ top: targetOffset })
-      if (currentCardInView(element) || attemptsRemaining <= 0) {
-        initialCenterKeyRef.current = key
-        return
-      }
-      retryTimer = window.setTimeout(() => {
-        centerCurrentCard(attemptsRemaining - 1)
-      }, 80)
-    }
-
-    frameA = window.requestAnimationFrame(() => {
-      frameB = window.requestAnimationFrame(() => {
-        centerCurrentCard(6)
-      })
-    })
-    return () => {
-      window.cancelAnimationFrame(frameA)
-      window.cancelAnimationFrame(frameB)
-      window.clearTimeout(retryTimer)
-    }
-  }, [anchorState, initialLoadState, items.length, sessionKey, virtualizer])
-
-  const virtualItems = virtualizer.getVirtualItems()
-  const listOffset = virtualItems[0]?.start ?? 0
+  const listVirtualItems = listVirtualizer.getVirtualItems()
+  const indexVirtualItems = showDesktopIndex ? indexVirtualizer.getVirtualItems() : EMPTY_VIRTUAL_ITEMS
+  const listOffset = listVirtualItems[0]?.start ?? 0
+  const indexOffset = indexVirtualItems[0]?.start ?? 0
 
   const loadNextPage = useCallback(async () => {
     if (!serviceId || loadingMoreRef.current || loadingMore || !hasMoreRef.current) return
@@ -534,15 +533,13 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
       nextCursorRef.current = response.nextCursor ?? null
       hasMoreRef.current = response.hasMore && nextCursorRef.current != null
       setLoadMoreFailure(null)
-      let nextItems: ServiceReleaseNoteItem[] = []
-      setItems((prev) => {
-        nextItems = [...prev, ...response.items]
-        return nextItems
-      })
+      const mergedItems = mergeReleaseNoteItems(items, response.items)
+      setItems(mergedItems)
       if (currentVersion) {
-        const foundIndex = nextItems.findIndex((item) => releaseMatchesVersion(item, currentVersion))
+        const foundIndex = mergedItems.findIndex((item) => releaseMatchesVersion(item, currentVersion))
         if (foundIndex >= 0) {
           setAnchorState({ status: 'found', absoluteIndex: foundIndex })
+          setSelectedIndex(foundIndex)
         } else if (!response.hasMore || !response.nextCursor) {
           setAnchorState({
             status: 'notFound',
@@ -556,15 +553,50 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
         setLoadingMore(false)
       }
     }
-  }, [currentVersion, loadingMore, requestPage, serviceId, sessionKey])
+  }, [currentVersion, items, loadingMore, requestPage, serviceId, sessionKey])
 
   useEffect(() => {
-    const lastItem = [...virtualItems].reverse()[0]
-    if (!lastItem) return
-    if (lastItem.index < items.length - 1) return
+    const lastListItem = [...listVirtualItems].reverse()[0]
+    const lastIndexItem = [...indexVirtualItems].reverse()[0]
+    const tailIndex = Math.max(lastListItem?.index ?? -1, lastIndexItem?.index ?? -1)
+    if (tailIndex < items.length - 1) return
     if (!hasMoreRef.current || loadingMore || loadMoreFailure || initialLoadState !== 'ready') return
     void loadNextPage()
-  }, [initialLoadState, items.length, loadMoreFailure, loadNextPage, loadingMore, virtualItems])
+  }, [
+    indexVirtualItems,
+    initialLoadState,
+    items.length,
+    listVirtualItems,
+    loadMoreFailure,
+    loadNextPage,
+    loadingMore,
+  ])
+
+  useEffect(() => {
+    if (items.length === 0) return
+    const scrollElement = listScrollRef.current
+    if (!scrollElement) return
+    const visibleRows = listVirtualItems.filter((row) => row.index < items.length)
+    if (visibleRows.length === 0) return
+    const viewportCenter = scrollElement.scrollTop + scrollElement.clientHeight / 2
+    let nearestIndex = visibleRows[0]?.index ?? 0
+    let nearestDistance = Number.POSITIVE_INFINITY
+    for (const row of visibleRows) {
+      const rowCenter = row.start + row.size / 2
+      const distance = Math.abs(rowCenter - viewportCenter)
+      if (distance < nearestDistance) {
+        nearestDistance = distance
+        nearestIndex = row.index
+      }
+    }
+    setSelectedIndex((prev) => (prev === nearestIndex ? prev : nearestIndex))
+  }, [items.length, listVirtualItems])
+
+  useEffect(() => {
+    if (!showDesktopIndex) return
+    if (selectedIndex >= items.length) return
+    indexVirtualizer.scrollToIndex(selectedIndex, { align: 'auto' })
+  }, [indexVirtualizer, items.length, selectedIndex, showDesktopIndex])
 
   const currentVersionNorm = normalizeVersion(currentVersion)
   const deployedHistoricalVersions = useMemo(() => {
@@ -717,7 +749,10 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
       const deployedHistorical = deployedHistoricalVersions.has(normalizeVersion(item.tagName))
       const rollbackTargetMatch = rollbackTargetVersion !== '' && normalizeVersion(item.tagName) === rollbackTargetVersion
       const showUpdate = (!dockrevService && newerThanCurrent) || candidateMatch
-      const showRollback = !dockrevService && (deployedHistorical || rollbackTargetMatch)
+      const showRollback =
+        !dockrevService &&
+        rollbackTargetMatch &&
+        (semverComparison == null || olderThanCurrent)
 
       let updateDisabledReason: string | null = null
       if (showUpdate) {
@@ -762,7 +797,19 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     viewMode,
   ])
 
-  const renderedCardCount = virtualItems.filter((item) => item.index < cards.length).length
+  const renderedCardCount = listVirtualItems.filter((item) => item.index < cards.length).length
+  const renderedIndexCount = indexVirtualItems.filter((item) => item.index < items.length).length
+  const githubReleasesUrl = safeHttpUrl(listResponse?.externalLinks?.githubReleasesUrl)
+  const octoRillReleasesUrl = safeHttpUrl(listResponse?.externalLinks?.octoRillReleasesUrl)
+  const rollbackBackupSummaryByJobId = useMemo(
+    () => summarizeServiceOperationBackups(props.backupRecords),
+    [props.backupRecords],
+  )
+  const rollbackBackupSummary = useMemo(() => {
+    const sourceJobId = (props.rollbackTarget?.sourceUpdateJobId ?? '').trim()
+    if (!sourceJobId) return { state: 'empty' as const }
+    return rollbackBackupSummaryByJobId.get(sourceJobId) ?? { state: 'empty' as const }
+  }, [props.rollbackTarget?.sourceUpdateJobId, rollbackBackupSummaryByJobId])
   const openSettings = () => navigate({ name: 'settings' })
 
   return (
@@ -772,23 +819,31 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
           <div className="serviceVersionsHeaderText">
             <div className="title">版本</div>
             <div className="muted">
-              以当前部署版本为锚点浏览统一 release notes；较新版本提供更新入口，已部署历史版本保留回滚语义说明。
+              以当前部署版本为锚点浏览统一 release notes；较新版本提供更新入口，只有当前 rollback target 保留回滚入口。
             </div>
           </div>
           <div className="serviceVersionsHeaderControls">
-            {listResponse?.repo?.htmlUrl ? (
-              <a
-                className="serviceVersionsRepoLink"
-                href={listResponse.repo.htmlUrl}
-                rel="noreferrer"
-                target="_blank"
-                title="打开仓库"
+            {githubReleasesUrl ? (
+              <IconLink
+                className="serviceVersionsSourceLink"
+                href={githubReleasesUrl}
+                iconKind="github"
+                linkKind="repo"
+                title="打开 GitHub Releases"
               >
-                <ExternalLinkIcon className="iconSm" />
-                <span>
-                  <Mono>{listResponse.repo.fullName}</Mono>
-                </span>
-              </a>
+                <GitHubIcon className="brandIcon" />
+              </IconLink>
+            ) : null}
+            {octoRillReleasesUrl ? (
+              <IconLink
+                className="serviceVersionsSourceLink"
+                href={octoRillReleasesUrl}
+                iconKind="octorill"
+                linkKind="repo"
+                title="打开 OctoRill Releases"
+              >
+                <OctoRillIcon className="brandIcon" />
+              </IconLink>
             ) : null}
             {listResponse?.status === 'ready' ? (
               <div className="serviceVersionsViewTabs" aria-label="发布说明视图">
@@ -810,19 +865,6 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
             ) : null}
           </div>
         </div>
-
-        {listResponse?.repo ? (
-          <div className="serviceVersionsHeaderMeta">
-            <span className="serviceVersionsChip">
-              <Mono>{listResponse.repo.fullName}</Mono>
-            </span>
-            <span className="serviceVersionsChip">{sourceLabel(listResponse)}</span>
-            <span className="serviceVersionsChip">{`当前 ${currentDisplayVersion}`}</span>
-            {candidateDisplayVersion ? (
-              <span className="serviceVersionsChip">{`候选 ${candidateDisplayVersion}`}</span>
-            ) : null}
-          </div>
-        ) : null}
 
         {activeTaskNotice ? (
           <div className="serviceVersionsActivityBanner" data-service-versions-banner="activity">
@@ -895,264 +937,153 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
 
         {listResponse?.status === 'ready' && items.length > 0 ? (
           <div
-            className="serviceVersionsScrollShell"
+            className="serviceVersionsBodyLayout"
             data-service-versions="true"
+            data-service-versions-layout={showDesktopIndex ? 'desktop' : 'mobile'}
             data-service-versions-total-count={items.length}
-            data-service-versions-visible-count={renderedCardCount}
+            data-service-versions-list-visible-count={renderedCardCount}
+            data-service-versions-index-visible-count={renderedIndexCount}
             data-service-versions-view={viewMode}
           >
-            <div className="serviceVersionsScrollViewport" ref={scrollRef}>
-              <div className="serviceVersionsList" style={{ height: `${virtualizer.getTotalSize()}px` }}>
-                <div className="serviceVersionsListInner" style={{ transform: `translateY(${listOffset}px)` }}>
-                  {virtualItems.map((virtualRow) => {
-                    if (virtualRow.index >= cards.length) {
+            {showDesktopIndex ? (
+              <aside
+                className="serviceVersionsIndexRail"
+                data-service-versions-index="true"
+                aria-label="版本目录"
+              >
+                <div className="serviceVersionsIndexViewport" ref={indexScrollRef}>
+                  <div className="serviceVersionsIndexList" style={{ height: `${indexVirtualizer.getTotalSize()}px` }}>
+                    <div className="serviceVersionsIndexListInner" style={{ transform: `translateY(${indexOffset}px)` }}>
+                      {indexVirtualItems.map((virtualRow) => {
+                        if (virtualRow.index >= items.length) {
+                          return (
+                            <div
+                              key={virtualRow.key}
+                              className="serviceVersionsIndexRow serviceVersionsIndexRowLoader"
+                              data-index={virtualRow.index}
+                            >
+                              <div className="serviceVersionsIndexLoader">
+                                {loadMoreFailure
+                                  ? '目录加载失败，继续向下滚动右侧列表可重试。'
+                                  : loadingMore
+                                    ? '继续加载中…'
+                                    : hasMoreRef.current
+                                      ? '继续加载更旧版本…'
+                                      : ''}
+                              </div>
+                            </div>
+                          )
+                        }
+
+                        const item = items[virtualRow.index]!
+                        const currentMatch = releaseMatchesVersion(item, currentVersion)
+                        const candidateMatch = releaseMatchesVersion(item, candidateVersion)
+                        const selected = virtualRow.index === selectedIndex
+                        return (
+                          <div
+                            key={virtualRow.key}
+                            className="serviceVersionsIndexRow"
+                            data-index={virtualRow.index}
+                          >
+                            <button
+                              type="button"
+                              className={cn(
+                                'serviceVersionsIndexItem',
+                                selected && 'serviceVersionsIndexItemActive',
+                                currentMatch && 'serviceVersionsIndexItemCurrent',
+                              )}
+                              aria-pressed={selected}
+                              data-service-versions-index-item="true"
+                              data-release-tag={item.tagName}
+                              data-service-versions-index-selected={selected ? 'true' : 'false'}
+                              onClick={() => {
+                                setSelectedIndex(virtualRow.index)
+                                void centerVersionCard(virtualRow.index, item.tagName, 'interactive')
+                              }}
+                            >
+                              <span className="serviceVersionsIndexVersion">
+                                <Mono>{item.tagName}</Mono>
+                              </span>
+                              <span className="serviceVersionsIndexMeta">
+                                <span>{formatVersionDirectoryTimeLabel(preferredReleaseTimestamp(item))}</span>
+                                {currentMatch ? (
+                                  <span className="serviceVersionsIndexFlag">当前</span>
+                                ) : candidateMatch ? (
+                                  <span className="serviceVersionsIndexFlag">候选</span>
+                                ) : null}
+                              </span>
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </aside>
+            ) : null}
+
+            <div className="serviceVersionsScrollShell">
+              <div className="serviceVersionsScrollViewport" ref={listScrollRef}>
+                <div className="serviceVersionsList" style={{ height: `${listVirtualizer.getTotalSize()}px` }}>
+                  <div className="serviceVersionsListInner" style={{ transform: `translateY(${listOffset}px)` }}>
+                    {listVirtualItems.map((virtualRow) => {
+                      if (virtualRow.index >= cards.length) {
+                        return (
+                          <div
+                            key={virtualRow.key}
+                            data-index={virtualRow.index}
+                            className="serviceVersionsVirtualRow serviceVersionsVirtualRowLoader"
+                            ref={listVirtualizer.measureElement}
+                          >
+                            {loadMoreFailure ? (
+                              <div className="serviceVersionsLoaderCard">
+                                <div className="serviceVersionsLoaderTitle">加载更旧版本失败</div>
+                                <div className="serviceVersionsLoaderMessage">{loadMoreFailure.message ?? '请稍后重试。'}</div>
+                                <div>
+                                  <Button variant="ghost" onClick={() => void loadNextPage()}>
+                                    重试
+                                  </Button>
+                                </div>
+                              </div>
+                            ) : hasMoreRef.current || loadingMore ? (
+                              <div className="serviceVersionsLoaderRow">
+                                <span className="btnInlineSpinner" aria-hidden="true" />
+                                <span>{loadingMore ? '正在继续加载更旧版本…' : '继续加载更旧版本…'}</span>
+                              </div>
+                            ) : null}
+                          </div>
+                        )
+                      }
+
+                      const card = cards[virtualRow.index]!
+                      const expanded = expandedIds.has(card.item.id)
+
                       return (
                         <div
                           key={virtualRow.key}
                           data-index={virtualRow.index}
-                          className="serviceVersionsVirtualRow serviceVersionsVirtualRowLoader"
-                          ref={virtualizer.measureElement}
+                          ref={listVirtualizer.measureElement}
+                          className="serviceVersionsVirtualRow"
                         >
-                          {loadMoreFailure ? (
-                            <div className="serviceVersionsLoaderCard">
-                              <div className="serviceVersionsLoaderTitle">加载更旧版本失败</div>
-                              <div className="serviceVersionsLoaderMessage">{loadMoreFailure.message ?? '请稍后重试。'}</div>
-                              <div>
-                                <Button variant="ghost" onClick={() => void loadNextPage()}>
-                                  重试
-                                </Button>
-                              </div>
-                            </div>
-                          ) : hasMoreRef.current || loadingMore ? (
-                            <div className="serviceVersionsLoaderRow">
-                              <span className="btnInlineSpinner" aria-hidden="true" />
-                              <span>{loadingMore ? '正在继续加载更旧版本…' : '继续加载更旧版本…'}</span>
-                            </div>
-                          ) : null}
+                          <ServiceVersionCard
+                            card={card}
+                            candidateDisplayVersion={candidateDisplayVersion}
+                            rollbackTarget={props.rollbackTarget}
+                            rollbackBackupSummary={rollbackBackupSummary}
+                            viewLabel={viewLabel(viewMode)}
+                            sourceLabel={sourceLabel(listResponse)}
+                            expanded={expanded}
+                            onToggleExpanded={toggleExpanded}
+                            onApplyUpdate={props.onApplyUpdate}
+                            onRollback={props.onRollback}
+                            onOpenRollbackExplanation={(item) => {
+                              void openRollbackExplanation(item)
+                            }}
+                          />
                         </div>
                       )
-                    }
-
-                    const card = cards[virtualRow.index]!
-                    const linkUrl = safeHttpUrl(card.item.htmlUrl)
-                    const expanded = expandedIds.has(card.item.id)
-                    const bodyState = collapseBody(card.body, expanded)
-                    const releaseDate = formatReleaseDate(preferredReleaseTimestamp(card.item))
-                    const canExecuteRollback =
-                      card.rollbackTargetMatch &&
-                      props.rollbackTarget?.available &&
-                      Boolean(props.rollbackTarget?.targetDigest)
-                    const showCandidateStatus = Boolean(card.candidateMatch && candidateDisplayVersion)
-                    const showRollbackDigestStatus = Boolean(
-                      card.rollbackTargetMatch && props.rollbackTarget?.targetDigest,
-                    )
-                    const rollbackTargetDigest = props.rollbackTarget?.targetDigest ?? null
-                    const showHistoricalStatus = Boolean(
-                      card.deployedHistorical && !card.rollbackTargetMatch,
-                    )
-                    const showCardAside =
-                      card.showUpdate ||
-                      card.showRollback ||
-                      showCandidateStatus ||
-                      showRollbackDigestStatus ||
-                      showHistoricalStatus
-                    const titleText = (card.item.name ?? '').trim() || card.item.tagName
-                    const titleUsesTag = titleText === card.item.tagName
-
-                    return (
-                      <div
-                        key={virtualRow.key}
-                        data-index={virtualRow.index}
-                        ref={virtualizer.measureElement}
-                        className="serviceVersionsVirtualRow"
-                      >
-                      <article
-                        className={cn(
-                          'serviceVersionCard',
-                          card.olderThanCurrent && 'serviceVersionCardOlder',
-                          card.currentMatch && 'serviceVersionCardCurrent',
-                        )}
-                        data-service-version-card="true"
-                        data-release-tag={card.item.tagName}
-                        data-version-card-current={card.currentMatch ? 'true' : 'false'}
-                        data-version-card-older={card.olderThanCurrent ? 'true' : 'false'}
-                        data-version-card-has-actions={
-                          card.showUpdate || card.showRollback ? 'true' : 'false'
-                        }
-                        data-version-card-has-aside={showCardAside ? 'true' : 'false'}
-                      >
-                        <div className="serviceVersionCardMeta">
-                          <div className="serviceVersionHeading">
-                              <div className="serviceVersionTagRow">
-                                <div className="serviceVersionTagText">
-                                  <Mono>{card.item.tagName}</Mono>
-                                </div>
-                                <div className="serviceVersionBadges">
-                                  {card.currentMatch ? <Pill tone="ok">当前部署</Pill> : null}
-                                  {card.candidateMatch ? <Pill tone="info">候选</Pill> : null}
-                                  {card.deployedHistorical ? <Pill tone="muted">已部署历史</Pill> : null}
-                                  {card.rollbackTargetMatch ? <Pill tone="warn">可执行回滚</Pill> : null}
-                                  {card.item.prerelease ? <Pill tone="muted">预发布</Pill> : null}
-                                </div>
-                              </div>
-                            </div>
-
-                            <dl className="serviceVersionFacts">
-                              <div>
-                                <dt>发布时间</dt>
-                                <dd className="serviceVersionDateValue">
-                                  <span>{releaseDate.dateLine}</span>
-                                  {releaseDate.timeLine ? <span>{releaseDate.timeLine}</span> : null}
-                                </dd>
-                              </div>
-                              <div>
-                                <dt>来源</dt>
-                                <dd>{sourceLabel(listResponse)}</dd>
-                              </div>
-                              <div>
-                                <dt>视图</dt>
-                                <dd>{viewLabel(viewMode)}</dd>
-                              </div>
-                              <div>
-                                <dt>状态</dt>
-                                <dd>{card.olderThanCurrent ? '相对当前更旧' : card.currentMatch ? '当前部署中' : '发布记录'}</dd>
-                              </div>
-                            </dl>
-
-                            {linkUrl ? (
-                              <a
-                                className="serviceVersionLinkRow"
-                                href={linkUrl}
-                                rel="noreferrer"
-                                target="_blank"
-                              >
-                                Release
-                              </a>
-                            ) : null}
-                          </div>
-
-                          <div className="serviceVersionCardBody">
-                            <div className="serviceVersionBodyShell">
-                              {!titleUsesTag ? (
-                                <div className="serviceVersionBodyTitle">{titleText}</div>
-                              ) : null}
-                              {bodyState.visibleBody ? (
-                                <div
-                                  className="serviceVersionBody"
-                                  data-service-version-body-expanded={expanded ? 'true' : 'false'}
-                                >
-                                  {bodyState.visibleBody}
-                                </div>
-                              ) : (
-                                <div className="serviceVersionBodyEmpty">该版本没有可展示的正文。</div>
-                              )}
-                            </div>
-                            {card.bodyMissing || bodyState.isCollapsible ? (
-                              <div className="serviceVersionBodyFoot">
-                                {card.bodyMissing ? (
-                                  <span className="serviceVersionBodyHint">当前视图缺少专用内容，已回退原文。</span>
-                                ) : null}
-                                {bodyState.isCollapsible ? (
-                                  <button
-                                    type="button"
-                                    className="serviceVersionExpandButton"
-                                    onClick={() => toggleExpanded(card.item.id)}
-                                  >
-                                    {expanded ? '收起' : '展开'}
-                                  </button>
-                                ) : null}
-                              </div>
-                            ) : null}
-                          </div>
-
-                          {showCardAside ? (
-                          <div className="serviceVersionCardAside">
-                            <div className="serviceVersionStatusStack">
-                              {showCandidateStatus ? (
-                                <div className="serviceVersionStatusBlock">
-                                  <div className="serviceVersionStatusLabel">当前候选</div>
-                                  <div className="serviceVersionStatusValue">
-                                    <Mono>{candidateDisplayVersion}</Mono>
-                                  </div>
-                                </div>
-                              ) : null}
-                              {showRollbackDigestStatus ? (
-                                <div className="serviceVersionStatusBlock">
-                                  <div className="serviceVersionStatusLabel">回滚目标摘要</div>
-                                  <div className="serviceVersionStatusValue">
-                                    <Mono>{shortDigest(rollbackTargetDigest!)}</Mono>
-                                  </div>
-                                </div>
-                              ) : null}
-                              {showHistoricalStatus ? (
-                                <div className="serviceVersionStatusBlock">
-                                  <div className="serviceVersionStatusLabel">历史语义</div>
-                                  <div className="serviceVersionStatusValue">已部署过，但不一定是当前可执行 rollback target。</div>
-                                </div>
-                              ) : null}
-                            </div>
-
-                            {card.showUpdate || card.showRollback ? (
-                              <div className="serviceVersionActionStack">
-                              {card.showUpdate ? (
-                                <div
-                                  className="serviceVersionActionBlock"
-                                  data-service-version-action="update"
-                                  data-release-tag={card.item.tagName}
-                                >
-                                  <Button
-                                    variant="primary"
-                                    disabled={Boolean(card.updateDisabledReason)}
-                                    hint={card.updateDisabledReason ?? undefined}
-                                    onClick={props.onApplyUpdate}
-                                  >
-                                    更新
-                                  </Button>
-                                  {card.updateDisabledReason ? (
-                                    <div className="serviceVersionActionHint">{card.updateDisabledReason}</div>
-                                  ) : (
-                                    <div className="serviceVersionActionHint">发起当前 candidate 对应的服务更新任务。</div>
-                                  )}
-                                </div>
-                              ) : null}
-
-                              {card.showRollback ? (
-                                <div
-                                  className="serviceVersionActionBlock"
-                                  data-service-version-action="rollback"
-                                  data-release-tag={card.item.tagName}
-                                >
-                                  <Button
-                                    variant={canExecuteRollback ? 'danger' : 'ghost'}
-                                    disabled={Boolean(card.rollbackDisabledReason)}
-                                    hint={card.rollbackDisabledReason ?? undefined}
-                                    onClick={() => {
-                                      if (canExecuteRollback) {
-                                        props.onRollback()
-                                        return
-                                      }
-                                      void openRollbackExplanation(card.item)
-                                    }}
-                                  >
-                                    回滚
-                                  </Button>
-                                  <div className="serviceVersionActionHint">
-                                    {card.rollbackDisabledReason
-                                      ? card.rollbackDisabledReason
-                                      : canExecuteRollback
-                                        ? '这个版本正对应后端当前可执行的 rollback target。'
-                                        : '会进入解释性提示，不会直接创建回滚任务。'}
-                                  </div>
-                                </div>
-                              ) : null}
-                              </div>
-                            ) : null}
-                          </div>
-                          ) : null}
-                        </article>
-                      </div>
-                    )
-                  })}
+                    })}
+                  </div>
                 </div>
               </div>
             </div>

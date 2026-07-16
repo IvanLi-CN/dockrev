@@ -422,6 +422,21 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     const octoRill = f.settings.releaseNotes.octoRill
     const configured = Boolean(octoRill.apiBaseUrl?.trim() && octoRill.apiKeyMasked)
     const shouldUseOctoRill = octoRill.enabled && configured && github.status === 'ready'
+    const githubReleasesUrl = github.repo?.htmlUrl ? `${github.repo.htmlUrl.replace(/\/+$/, '')}/releases` : null
+    let octoRillReleasesUrl: string | null = null
+    if (github.repo?.fullName && octoRill.apiBaseUrl?.trim()) {
+      const [owner, repo] = github.repo.fullName.split('/')
+      if (owner?.trim() && repo?.trim()) {
+        try {
+          const releaseUrl = new URL(octoRill.apiBaseUrl.trim())
+          const baseSegments = releaseUrl.pathname.split('/').filter(Boolean)
+          releaseUrl.pathname = `/${[...baseSegments, owner.trim(), repo.trim(), 'releases'].join('/')}`
+          octoRillReleasesUrl = releaseUrl.toString()
+        } catch {
+          octoRillReleasesUrl = null
+        }
+      }
+    }
     const smartSummaryFor = (item: (typeof github.items)[number]) => {
       const title = item.name && item.name !== item.tagName ? item.name : item.tagName
       const subject = /^release\s+\d/i.test(title) || /^\d+(?:\.\d+)+(?:[-+].*)?$/.test(title) ? '本次更新' : title
@@ -442,6 +457,12 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
       nextCursor: github.hasMore ? String(page + 1) : null,
       hasMore: github.hasMore,
       defaultView: octoRill.defaultView,
+      externalLinks: githubReleasesUrl
+        ? {
+            githubReleasesUrl,
+            ...(octoRillReleasesUrl ? { octoRillReleasesUrl } : {}),
+          }
+        : null,
       items: github.items.map((item, index) => ({
         id: shouldUseOctoRill ? `octorill:${item.id}` : `github:${item.id}`,
         tagName: item.tagName,

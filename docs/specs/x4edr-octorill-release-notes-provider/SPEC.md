@@ -54,6 +54,7 @@
 - 统一 release notes API 必须在 OctoRill 开启且配置完整时优先请求 `GET {apiBaseUrl}/api/feed?scope=repo&items=<owner/repo>&types=releases&limit=<limit>[&cursor=<cursor>]`，请求头带 `Authorization: Bearer <apiKey>`。
 - OctoRill feed 映射必须宽容解析：优先使用显式 tag 字段，其次从 `html_url` / `htmlUrl` 的 `/releases/tag/<tag>` 解析，最后用 title/id 兜底。
 - OctoRill 失败必须返回可展示 fallback 原因，并自动回退现有 GitHub Releases 数据。
+- 统一 release notes API 响应必须返回仓库级 `externalLinks.githubReleasesUrl`，并在 `apiBaseUrl` 与 repo full name 都能安全归一化成 `owner/repo` 时返回可选 `externalLinks.octoRillReleasesUrl`，供版本页与抽屉复用同一组 Releases 外链。
 - 发布抽屉与服务详情 `版本` 子页的默认视图都来自 Settings 的 `releaseNotes.octoRill.defaultView`，单次切换只影响当前阅读会话。
 
 ### SHOULD
@@ -89,11 +90,13 @@
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `GET /api/settings` | HTTP API | external | Modify | None | dockrev-api | Web Settings | 新增 `releaseNotes.octoRill` |
 | `PUT /api/settings` | HTTP API | external | Modify | None | dockrev-api | Web Settings | 支持 OctoRill 配置局部保存 |
-| `GET /api/services/{service_id}/release-notes` | HTTP API | external | New | None | dockrev-api | Release drawer | 统一 OctoRill/GitHub release notes 数据源 |
+| `GET /api/services/{service_id}/release-notes` | HTTP API | external | New | None | dockrev-api | Release drawer / Service versions page | 统一 OctoRill/GitHub release notes 数据源，并提供仓库级 Releases 外链 |
 
 ### 契约文档（按 Kind 拆分）
 
-- None
+- `ServiceReleaseNotesResponse.externalLinks`
+  - `githubReleasesUrl`: 必填；可信仓库级 GitHub Releases 列表 URL。
+  - `octoRillReleasesUrl`: 可选；仅当 `apiBaseUrl` 与 repo full name 可安全归一化为 `owner/repo` 时返回，对应 `<apiBaseUrl>/<owner>/<repo>/releases`。
 
 ## 验收标准（Acceptance Criteria）
 
@@ -102,6 +105,8 @@
 - Given OctoRill 请求返回 401，When 打开发布抽屉，Then 顶部显示 OctoRill 鉴权失败，同时列表回退为 GitHub Releases。
 - Given `translated` 或 `smart` 缺失，When 用户选择对应视图，Then UI 明确显示该视图不可用并展示原文。
 - Given `GET /api/settings`，Then 响应不包含 OctoRill API Key 明文，只包含与真实 key 等长的圆点脱敏状态。
+- Given `GET /api/services/{service_id}/release-notes` 且仓库信息可信，When 服务详情 `版本` 子页或发布抽屉读取同一响应，Then 响应会包含 `externalLinks.githubReleasesUrl`，并在可安全构造时附带 `externalLinks.octoRillReleasesUrl`。
+- Given 服务的 repo full name 不是可信 `owner/repo` 形式，When 读取统一 release notes API，Then `externalLinks.octoRillReleasesUrl` 必须省略，而不是猜测构造错误链接。
 - Given `PUT /api/settings` 省略 `apiKey`，Then 已保存 key 保持不变；传 `null` 或空字符串时清除。
 - Given `PUT /api/settings` 提交等长全圆点 `apiKey`，Then 已保存 key 保持不变。
 

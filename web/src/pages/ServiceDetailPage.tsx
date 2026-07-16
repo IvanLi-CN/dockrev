@@ -399,6 +399,7 @@ export function ServiceDetailPage(props: {
         />
       ) : (
         <ServiceVersionsSection
+          backupRecords={effectiveBackupRecords}
           busy={busy}
           jobs={serviceOperationJobs}
           onApplyUpdate={requestApplyUpdate}

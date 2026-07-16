@@ -1,15 +1,14 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ApiError, archiveService, createIgnore, getServiceBackupRecords, getServiceBackupTargets, getServiceRollbackTarget, getServiceSettings, getStack, getStackSettings, listIgnores, newJobEventsSource, restoreService, triggerRuntimeScan, triggerServiceRollback, triggerUpdate, type IgnoreRule, type Service, type ServiceBackupRecordItem, type ServiceBackupTargetsResponse, type ServiceRollbackTargetResponse, type ServiceSettings, type StackDetail, type StackSettings } from '../api'
 import { readUpdateGuardBlockedReason } from '../aggregateUpdateGuard'
-import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
 import { normalizeDigest } from '../components/digest'
+import { backupSummaryValue, summarizeServiceOperationBackups } from '../components/serviceOperationBackupSummary'
 import { ServiceUpdateConfirmDetails } from '../components/ServiceUpdateConfirmDetails'
-import { VersionTagsPopover } from '../components/VersionTagsPopover'
 import { useConfirm } from '../confirm'
 import { DIGEST_SNAPSHOT_UPDATED_EVENT, type DigestSnapshotUpdatedDetail } from '../digestInferenceTracker'
 import { normalizeExternalHttpUrl } from '../imageLinks'
 import { imageRepoFromImageRef } from '../imageRepo'
-import { errorMessage, isDockrevService, normalizeMaybeDigest, rollbackTargetMatchesServiceDigest, rollbackUnavailableReasonLabel, rollbackVersionLabel, ROLLBACK_TARGET_REFRESH_HINT, scanHasFailures, scanIsComplete, shortDigest, shouldPrefetchFloatingCandidate, svcTone, useRollbackTargetInvariantWarning } from './serviceDetailUtils'
+import { errorMessage, isDockrevService, normalizeMaybeDigest, rollbackTargetMatchesServiceDigest, rollbackUnavailableReasonLabel, rollbackVersionLabel, ROLLBACK_TARGET_REFRESH_HINT, scanHasFailures, scanIsComplete, shortDigest, svcTone, useRollbackTargetInvariantWarning } from './serviceDetailUtils'
 import { navigate } from '../routes'
 import { selfUpgradeBaseUrl } from '../runtimeConfig'
 import { Button, Mono } from '../ui'
@@ -63,6 +62,13 @@ export function useServiceDetailPageState(props: {
   const rollbackTargetDigestRetryMs = 250
   const rollbackActionBusy = Boolean(rollbackActiveJobId)
   const rollbackHint = rollbackActiveJobId ? '任务进行中，点击查看任务详情' : rollbackTargetRefreshing ? ROLLBACK_TARGET_REFRESH_HINT : !rollbackTarget?.available ? rollbackReasonLabel : undefined
+  const backupSummaryByJobId = useMemo(() => summarizeServiceOperationBackups(backupRecords), [backupRecords])
+  const rollbackBackupSummary = useMemo(() => {
+    const sourceJobId = (rollbackTarget?.sourceUpdateJobId ?? '').trim()
+    if (!sourceJobId) return { state: 'empty' as const }
+    return backupSummaryByJobId.get(sourceJobId) ?? { state: 'empty' as const }
+  }, [backupSummaryByJobId, rollbackTarget?.sourceUpdateJobId])
+  const rollbackBackupValue = rollbackBackupSummary.state === 'empty' ? null : backupSummaryValue(rollbackBackupSummary)
   const fullRefreshRequestIdRef = useRef(0)
   const latestAppliedFullRefreshRequestIdRef = useRef(0)
   const stackRefreshRequestIdRef = useRef(0)
@@ -548,6 +554,14 @@ export function useServiceDetailPageState(props: {
               <div className="modalKvValue">
                 <Mono>{rollbackTarget.sourceUpdateJobId ?? '-'}</Mono>
               </div>
+              {rollbackBackupValue ? (
+                <>
+                  <div className="modalKvLabel">来源备份</div>
+                  <div className="modalKvValue">
+                    <span>{rollbackBackupValue}</span>
+                  </div>
+                </>
+              ) : null}
               <div className="modalKvLabel">完成时间</div>
               <div className="modalKvValue">
                 <Mono>{rollbackTarget.sourceFinishedAt ?? '-'}</Mono>
@@ -598,7 +612,7 @@ export function useServiceDetailPageState(props: {
         setBusy(false)
       }
     })()
-  }, [confirm, refreshStackOnly, rollbackActiveJobId, rollbackTarget, service, stack?.name, stackId])
+  }, [confirm, refreshStackOnly, rollbackActiveJobId, rollbackBackupValue, rollbackTarget, service, stack?.name, stackId])
 
   const requestApplyUpdate = useCallback(() => {
     void (async () => {
@@ -932,134 +946,28 @@ export function useServiceDetailPageState(props: {
       service.image.resolvedTag,
       service.versionInference?.status,
     )
-    const inferencePending = service.versionInference?.status === 'pending'
-    const currentDigestNode = service.image.digest ? (
-      <span className="mono">{`@${shortDigest(service.image.digest)}`}</span>
-    ) : null
-
-    const currentNode = (
-      <CurrentVersionPopover
-        serviceId={service.id}
-        displayTag={currentTag}
-        imageTag={service.image.tag}
-        imageDigest={service.image.digest ?? null}
-        resolvedTag={service.image.resolvedTag}
-        resolvedTags={service.image.resolvedTags}
-        onLocalResolvedTags={(update) => {
-          patchServiceInStack((prev) => ({
-            ...prev,
-            image: {
-              ...prev.image,
-              resolvedTag: update.resolvedTag,
-              resolvedTags: update.resolvedTags,
-            },
-          }))
-        }}
-        inferenceLoading={inferencePending}
-      />
-    )
-
-    const rawTagTrim = (service.image.tag ?? '').trim()
-    const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentTag)
-    const rawTagNode = showRawTag ? (
-      <>
-        {' · '}raw:{' '}
-        <CurrentVersionPopover
-          serviceId={service.id}
-          displayTag={service.image.tag}
-          imageTag={service.image.tag}
-          imageDigest={service.image.digest ?? null}
-          resolvedTag={service.image.resolvedTag}
-          resolvedTags={service.image.resolvedTags}
-          onLocalResolvedTags={(update) => {
-            patchServiceInStack((prev) => ({
-              ...prev,
-              image: {
-                ...prev.image,
-                resolvedTag: update.resolvedTag,
-                resolvedTags: update.resolvedTags,
-              },
-            }))
-          }}
-          preferSource="rawTag"
-          triggerClassName="versionTagsTrigger mono monoSecondary"
-        >
-          {service.image.tag}
-        </CurrentVersionPopover>
-      </>
-    ) : null
-
-    if (service.ignore?.matched) {
-      return (
-        <>
-          当前: {currentNode}
-          {currentDigestNode}
-          {rawTagNode}
-          {' · '}rule: <Mono>{service.ignore.ruleId}</Mono>
-          {service.ignore.reason ? (
-            <>
-              {' · '}reason: <Mono>{service.ignore.reason}</Mono>
-            </>
-          ) : null}
-        </>
-      )
-    }
-
-    if (!service.candidate) {
-      return (
-        <>
-          当前: {currentNode}
-          {currentDigestNode}
-          {rawTagNode}
-        </>
-      )
-    }
-
-    const candidateDisplayTag = formatCandidateTagDisplay(
+    const candidateTag = service.candidate
+      ? formatCandidateTagDisplay(
       service.candidate.tag,
       service.candidate.resolvedTag ?? null,
       service.versionInference?.status,
     )
-    const candidatePrefetchOnMount = shouldPrefetchFloatingCandidate(
-      service.candidate.tag,
-      service.candidate.resolvedTag ?? null,
-      service.candidate.digest ?? null,
-    )
-    const archNode = service.candidate.arch.length ? (
-      <>
-        {' · '}arch=<Mono>{service.candidate.arch.join(',')}</Mono>
-      </>
-    ) : null
+      : '-'
+    const discoveryCount = service.newVersionDiscoveryCount
+    const versionSpan =
+      typeof discoveryCount === 'number' ? `跨 ${discoveryCount} 个版本` : '跨度未知'
     return (
-      <>
-        当前: {currentNode}
-        {currentDigestNode}
-        {rawTagNode}
-	        {' \u2192 '}候选:{' '}
-		        <VersionTagsPopover
-		          serviceId={service.id}
-		          candidateTag={service.candidate.tag}
-		          candidateDigest={service.candidate.digest ?? null}
-	            prefetchOnMount={candidatePrefetchOnMount}
-		          onLocalResolvedTag={(resolvedTag) => {
-		            patchServiceInStack((prev) => ({
-		              ...prev,
-		              candidate: prev.candidate
-		                ? {
-		                    ...prev.candidate,
-		                    resolvedTag,
-		                  }
-		                : prev.candidate,
-		            }))
-		          }}
-		        >
-		          {candidateDisplayTag}
-		        </VersionTagsPopover>
-	        <span className="mono">{`@${shortDigest(service.candidate.digest)}`}</span>
-	        {archNode}
-	      </>
+      <span className="svcBannerSummary">
+        <span>
+          当前 <Mono>{currentTag || '-'}</Mono>
+        </span>
+        <span>
+          目标 <Mono>{candidateTag || '-'}</Mono>
+        </span>
+        <span>{versionSpan}</span>
+      </span>
     )
-  }, [patchServiceInStack, service])
+  }, [service])
 
   const rawComposeType = typeof stack?.compose?.type === 'string' ? stack.compose.type.trim() : ''
   const composeType = rawComposeType || '-'

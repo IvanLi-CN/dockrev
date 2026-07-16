@@ -19,6 +19,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { octoRillMarkUrl } from './publicAssetUrls'
 export { Input } from '@/components/ui/input'
 export { Label } from '@/components/ui/label'
 export {
@@ -141,6 +142,10 @@ export function GitLabIcon(props: { className?: string }) {
 
 export function DockerIcon(props: { className?: string }) {
   return <BrandGlyph className={props.className} icon={mdiDocker} />
+}
+
+export function OctoRillIcon(props: { className?: string }) {
+  return <img alt="" aria-hidden="true" className={cn('brandIcon', props.className)} src={octoRillMarkUrl} />
 }
 
 export function RepositoryIcon(props: { className?: string }) {

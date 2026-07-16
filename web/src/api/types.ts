@@ -440,6 +440,11 @@ export type ServiceReleaseNoteItem = {
   createdAt?: string | null
 }
 
+export type ServiceReleaseNotesExternalLinks = {
+  githubReleasesUrl: string
+  octoRillReleasesUrl?: string | null
+}
+
 export type ServiceReleaseNotesResponse = {
   status: ServiceReleaseNotesStatus
   source: ServiceReleaseNotesSource
@@ -449,6 +454,7 @@ export type ServiceReleaseNotesResponse = {
   nextCursor?: string | null
   hasMore: boolean
   defaultView: ReleaseNotesView
+  externalLinks?: ServiceReleaseNotesExternalLinks | null
   items: ServiceReleaseNoteItem[]
   message?: string | null
   fallback?: ServiceReleaseNotesFallback | null
