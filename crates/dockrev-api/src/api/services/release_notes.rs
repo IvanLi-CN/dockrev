@@ -203,16 +203,27 @@ fn github_note_item_from_release(item: ServiceGitHubReleaseItem) -> ServiceRelea
     }
 }
 
-async fn github_release_notes_response(
-    state: &Arc<AppState>,
-    _service_id: &str,
+struct GithubReleaseNotesRequest {
     repo: Option<ServiceGitHubRepoRef>,
     cursor: Option<String>,
     limit: u32,
     default_view: ReleaseNotesView,
     external_links: Option<ServiceReleaseNotesExternalLinks>,
     fallback: Option<ServiceReleaseNotesFallback>,
+}
+
+async fn github_release_notes_response(
+    state: &Arc<AppState>,
+    request: GithubReleaseNotesRequest,
 ) -> Result<ServiceReleaseNotesResponse, ApiError> {
+    let GithubReleaseNotesRequest {
+        repo,
+        cursor,
+        limit,
+        default_view,
+        external_links,
+        fallback,
+    } = request;
     let github_settings = state
         .db
         .get_github_packages_settings()
@@ -604,13 +615,14 @@ pub(crate) async fn list_service_release_notes(
     Ok(Json(
         github_release_notes_response(
             &state,
-            &service_id,
-            repo,
-            query.cursor,
-            limit,
-            default_view,
-            external_links,
-            fallback,
+            GithubReleaseNotesRequest {
+                repo,
+                cursor: query.cursor,
+                limit,
+                default_view,
+                external_links,
+                fallback,
+            },
         )
         .await?,
     ))
