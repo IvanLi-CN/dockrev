@@ -533,8 +533,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
                   setLogFollow(true)
                   setLogIsAtBottom(true)
                 }}
-                size="sm"
-                variant="default"
+                variant="primary"
               >
                 跳到最新
               </Button>
