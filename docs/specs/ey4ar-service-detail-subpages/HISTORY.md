@@ -26,6 +26,7 @@
 - 2026-07-16: 版本子页按批注收敛为仓库级图标入口 + 桌面双虚拟列表；左目录固定 `220px`，`≤1100px` 完全隐藏，当前版本与正文中心联动，动作栏固定为 `19rem`。
 - 2026-07-16: 共享状态摘要删除 digest、raw tag、架构、规则与原因技术细节，只保留状态、当前版本、目标版本与版本跨度，以便七个子页统一复用。
 - 2026-07-16: 版本子页的当前 rollback target 与服务级回滚确认新增“来源备份”摘要；仅在来源更新任务实际纳入备份时显示 included targets 数量与源目标总体积，避免把历史备份语义和可执行回滚语义割裂开。
+- 2026-07-17: 修复 Dockrev `版本` 子页 release card 误用普通 service update 的回归；顶部 `升级 Dockrev` 与 candidate 卡现在共用 supervisor 自我升级动作真相源，非 candidate 的更高版本保留禁用解释，supervisor offline 时重试只留在顶部。
 
 ## Key Reasons / Replacements
 

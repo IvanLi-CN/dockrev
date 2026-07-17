@@ -25,6 +25,7 @@ export const withDockrevMockApi: Decorator = (Story, context) => {
     serviceTagSuggestionsById: context.parameters?.dockrevServiceTagSuggestionsById,
     deployCheckReportOverride: context.parameters?.dockrevDeployCheckReportOverride,
     deployWelcomeOverride: context.parameters?.dockrevDeployWelcomeOverride,
+    supervisorSelfUpgradeResponse: context.parameters?.dockrevSupervisorSelfUpgradeResponse,
   } satisfies DockrevMockApiOptions
   window.localStorage.removeItem(HOMEPAGE_SNAPSHOT_KEY)
   window.localStorage.removeItem(HOMEPAGE_NAV_SNAPSHOT_KEY)

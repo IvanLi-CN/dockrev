@@ -162,6 +162,39 @@ export const versionReleaseNotes = [
   createdAt: new Date(Date.UTC(2026, 6, 15, 11, 40) - index * 43_200_000).toISOString(),
 }));
 
+function buildDockrevVersionReleaseBody(tagName: string): string {
+  return [
+    `${tagName} Dockrev release`,
+    '',
+    '- 统一自我升级入口，避免版本页误走普通服务更新链路。',
+    '- 继续保留 supervisor 独立控制面的升级与回滚可见性。',
+    '- 服务详情版本页只允许当前 candidate 对应卡片进入自我升级流程。',
+    '- 非 candidate 的较新版本继续保留解释性动作位，避免误导为跨 tag 升级。',
+    '- 发布说明卡片保持多栏桌面布局与单列移动布局。',
+    '- 这组数据用于 Dockrev 版本页自我升级回归。 ',
+  ].join('\n')
+}
+
+export const dockrevVersionReleaseNotes = [
+  '0.63.0',
+  '0.62.1',
+  '0.62.0',
+  '0.61.0',
+  '0.60.3',
+  '0.60.2',
+  '0.60.1',
+].map((tagName, index) => ({
+  id: 99_000 + index,
+  tagName,
+  name: tagName === '0.62.0' ? 'Dockrev self-upgrade action convergence' : `${tagName} release`,
+  body: buildDockrevVersionReleaseBody(tagName),
+  htmlUrl: `https://github.com/IvanLi-CN/dockrev/releases/tag/${tagName}`,
+  draft: false,
+  prerelease: false,
+  publishedAt: new Date(Date.UTC(2026, 6, 16, 15, 51) - index * 3_600_000).toISOString(),
+  createdAt: new Date(Date.UTC(2026, 6, 16, 15, 30) - index * 3_600_000).toISOString(),
+}))
+
 export const partialHistoryBackupRecords: ServiceBackupRecordsResponse = {
   records: [
     {

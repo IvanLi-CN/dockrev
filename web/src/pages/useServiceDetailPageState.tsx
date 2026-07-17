@@ -8,7 +8,7 @@ import { useConfirm } from '../confirm'
 import { DIGEST_SNAPSHOT_UPDATED_EVENT, type DigestSnapshotUpdatedDetail } from '../digestInferenceTracker'
 import { normalizeExternalHttpUrl } from '../imageLinks'
 import { imageRepoFromImageRef } from '../imageRepo'
-import { errorMessage, isDockrevService, normalizeMaybeDigest, rollbackTargetMatchesServiceDigest, rollbackUnavailableReasonLabel, rollbackVersionLabel, ROLLBACK_TARGET_REFRESH_HINT, scanHasFailures, scanIsComplete, shortDigest, svcTone, useRollbackTargetInvariantWarning } from './serviceDetailUtils'
+import { dockrevSelfUpgradeBusyReason, errorMessage, isDockrevService, normalizeMaybeDigest, openSelfUpgradeUrl, rollbackTargetMatchesServiceDigest, rollbackUnavailableReasonLabel, rollbackVersionLabel, ROLLBACK_TARGET_REFRESH_HINT, scanHasFailures, scanIsComplete, shortDigest, svcTone, useRollbackTargetInvariantWarning } from './serviceDetailUtils'
 import { navigate } from '../routes'
 import { selfUpgradeBaseUrl } from '../runtimeConfig'
 import { Button, Mono } from '../ui'
@@ -696,34 +696,62 @@ export function useServiceDetailPageState(props: {
     trackJob,
   ])
 
+  const openDockrevSelfUpgrade = useCallback(() => {
+    openSelfUpgradeUrl(selfUpgradeUrl)
+  }, [selfUpgradeUrl])
+
+  const retryDockrevSelfUpgrade = useCallback(() => {
+    void checkSupervisor()
+  }, [checkSupervisor])
+
+  const dockrevSelfUpgradeAction = useMemo(() => {
+    if (!service || !isDockrevService(service)) return null
+    const disabledReason =
+      supervisorState.status === 'offline'
+        ? `自我升级不可用（supervisor offline） · ${supervisorErrorAt ?? '-'} · ${supervisorError ?? '-'}`
+        : supervisorState.status === 'checking'
+          ? '检查 supervisor 中…'
+          : busy
+            ? dockrevSelfUpgradeBusyReason()
+          : null
+    return {
+      label: '升级 Dockrev',
+      disabled: busy || supervisorState.status !== 'ok',
+      disabledReason,
+      status: supervisorState.status,
+      retryVisible: supervisorState.status !== 'ok',
+      retryDisabled: busy || supervisorState.status === 'checking',
+      open: openDockrevSelfUpgrade,
+      retry: retryDockrevSelfUpgrade,
+    } as const
+  }, [
+    busy,
+    openDockrevSelfUpgrade,
+    retryDockrevSelfUpgrade,
+    service,
+    supervisorError,
+    supervisorErrorAt,
+    supervisorState.status,
+  ])
+
   const topActions = useMemo(
     () => (
       <>
-        {service && isDockrevService(service) ? (
+        {dockrevSelfUpgradeAction ? (
           <>
             <Button
               variant="primary"
-              disabled={busy || supervisorState.status !== 'ok'}
-              title={
-                supervisorState.status === 'offline'
-                  ? `自我升级不可用（supervisor offline） · ${supervisorErrorAt ?? '-'} · ${supervisorError ?? '-'}`
-                  : supervisorState.status === 'checking'
-                    ? '检查 supervisor 中…'
-                    : undefined
-              }
-              onClick={() => {
-                window.location.href = selfUpgradeUrl
-              }}
+              disabled={dockrevSelfUpgradeAction.disabled}
+              hint={dockrevSelfUpgradeAction.disabledReason ?? undefined}
+              onClick={dockrevSelfUpgradeAction.open}
             >
-              升级 Dockrev
+              {dockrevSelfUpgradeAction.label}
             </Button>
-            {supervisorState.status !== 'ok' ? (
+            {dockrevSelfUpgradeAction.retryVisible ? (
               <Button
                 variant="ghost"
-                disabled={busy || supervisorState.status === 'checking'}
-                onClick={() => {
-                  void checkSupervisor()
-                }}
+                disabled={dockrevSelfUpgradeAction.retryDisabled}
+                onClick={dockrevSelfUpgradeAction.retry}
               >
                 重试
               </Button>
@@ -865,7 +893,7 @@ export function useServiceDetailPageState(props: {
       applyActionBusy,
       applySubmitting,
       busy,
-      checkSupervisor,
+      dockrevSelfUpgradeAction,
       requestApplyUpdate,
       requestRefresh,
       requestRollback,
@@ -876,12 +904,8 @@ export function useServiceDetailPageState(props: {
       rollbackReason,
       rollbackTarget,
       rollbackTargetRefreshing,
-      selfUpgradeUrl,
       service,
       stackId,
-      supervisorError,
-      supervisorErrorAt,
-      supervisorState.status,
     ],
   )
 
@@ -1004,6 +1028,7 @@ export function useServiceDetailPageState(props: {
     composeType,
     dotClass,
     draftRepoUrl,
+    dockrevSelfUpgradeAction,
     error,
     lastSuccessfulRefreshAt,
     newRuleKind,

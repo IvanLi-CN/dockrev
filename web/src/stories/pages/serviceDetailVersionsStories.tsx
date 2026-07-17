@@ -1,5 +1,5 @@
 import { currentRoutePathname } from "../../routes";
-import { versionReleaseNotes } from "./serviceDetailPageStoryFixtures";
+import { dockrevVersionReleaseNotes, versionReleaseNotes } from "./serviceDetailPageStoryFixtures";
 import {
   findSectionCard,
   findTab,
@@ -9,7 +9,7 @@ import {
   type ServiceDetailStory,
   visibleVersionCards,
 } from "./serviceDetailStoryShared";
-import { expectNearlyEqual, expectStory, findButton, normalizeText, waitForCondition } from "./storyAssertions";
+import { expectNearlyEqual, expectStory, findButton, findButtons, normalizeText, waitForCondition } from "./storyAssertions";
 
 function versionsSurface(root: ParentNode): HTMLElement | null {
   return root.querySelector<HTMLElement>('[data-service-versions="true"]');
@@ -59,6 +59,38 @@ function centeredVersionTag(root: ParentNode, viewport: HTMLElement | null): str
 function visibleCount(root: ParentNode, attr: string): number {
   return Number(versionsSurface(root)?.getAttribute(attr) ?? "0");
 }
+
+const dockrevDigest = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`;
+
+const dockrevServiceOverride = {
+  name: "dockrev",
+  image: {
+    ref: "ghcr.io/ivanli-cn/dockrev:0.61.0",
+    tag: "0.61.0",
+    digest: dockrevDigest("6", "10"),
+  },
+  candidate: {
+    tag: "0.62.0",
+    digest: dockrevDigest("7", "20"),
+    archMatch: "match",
+    arch: ["linux/amd64"],
+  },
+  ignore: null,
+} as const;
+
+const dockrevSelfUpgradeStoryParameters = {
+  dockrevApiScenario: "service-detail-history-rollback-action",
+  dockrevServiceOverridesById: {
+    "svc-prod-api": dockrevServiceOverride,
+  },
+  dockrevGitHubReleasesByServiceId: {
+    "svc-prod-api": {
+      authMode: "anonymous",
+      repo: { fullName: "IvanLi-CN/dockrev", htmlUrl: "https://github.com/IvanLi-CN/dockrev" },
+      items: dockrevVersionReleaseNotes,
+    },
+  },
+} as const;
 
 export const VersionsSection: ServiceDetailStory = {
   parameters: {
@@ -255,6 +287,100 @@ export const VersionsSectionActionGuard: ServiceDetailStory = {
     expectStory(Boolean(findVersionAction(canvasElement, "update", "5.2.3")?.disabled), "candidate update action should lock once a task is running");
     expectStory(Boolean(findVersionAction(canvasElement, "rollback", "5.2.0")?.disabled), "rollback actions should also lock while the service has an update task in flight");
     expectStory(Boolean(findButton(canvasElement, "查看任务")), "locked versions state should still expose the active job entrypoint");
+  },
+};
+
+export const DockrevVersionsSelfUpgrade: ServiceDetailStory = {
+  parameters: dockrevSelfUpgradeStoryParameters,
+  render: render("stack-prod", "svc-prod-api", "versions", "Dockrev 版本页的候选卡必须走 supervisor 自我升级，而不是普通服务更新。"),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(findVersionCard(canvasElement, "0.61.0")));
+    const doc = canvasElement.ownerDocument;
+    const candidateAction = findVersionAction(canvasElement, "update", "0.62.0");
+    const newerAction = findVersionAction(canvasElement, "update", "0.63.0");
+    const topAction = findButtons(doc, "升级 Dockrev").find(
+      (button) => !button.closest('[data-service-version-action="update"]'),
+    );
+
+    expectStory(currentRoutePathname() === "/services/stack-prod/svc-prod-api/versions", "dockrev versions deep link missing");
+    expectStory(findTab(canvasElement, "versions")?.getAttribute("data-state") === "active", "dockrev versions tab should stay active");
+    expectStory(Boolean(candidateAction && !candidateAction.disabled), "dockrev candidate card should expose an enabled self-upgrade action");
+    expectStory(Boolean(newerAction?.disabled), "newer non-candidate dockrev release should stay disabled");
+    expectStory(normalizeText(newerAction?.textContent).includes("仅候选可升级"), "non-candidate dockrev release should stop masquerading as a clickable self-upgrade button");
+    expectStory(normalizeText(findVersionCard(canvasElement, "0.63.0")?.textContent).includes("这个版本不是当前候选；当前只能升级候选 0.62.0。"), "non-candidate dockrev release should explain the candidate-only upgrade truth directly");
+    expectStory(normalizeText(findVersionCard(canvasElement, "0.62.0")?.textContent).includes("当前候选 0.62.0 已就绪；点击后进入 Dockrev 自我升级流程。"), "candidate dockrev release should explain the active self-upgrade handoff");
+    expectStory(Boolean(topAction && !topAction.disabled), "top-level dockrev self-upgrade action should stay enabled alongside the candidate card");
+    expectStory(!globalThis.__DOCKREV_MOCK_DEBUG__?.lastUpdateRequest, "dockrev self-upgrade story must start without an ordinary update request");
+
+    candidateAction?.click();
+    await waitForCondition(() => currentRoutePathname() === "/supervisor/");
+    expectStory(!globalThis.__DOCKREV_MOCK_DEBUG__?.lastUpdateRequest, "dockrev candidate action must not trigger a normal service update request");
+  },
+};
+
+export const DockrevVersionsSelfUpgradeVisual: ServiceDetailStory = {
+  parameters: dockrevSelfUpgradeStoryParameters,
+  render: render("stack-prod", "svc-prod-api", "versions", "Dockrev 版本页候选卡与顶部入口共享 supervisor 自我升级语义。"),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(findVersionCard(canvasElement, "0.62.0")));
+    const doc = canvasElement.ownerDocument;
+    const candidateAction = findVersionAction(canvasElement, "update", "0.62.0");
+    const newerAction = findVersionAction(canvasElement, "update", "0.63.0");
+    const topAction = findButtons(doc, "升级 Dockrev").find(
+      (button) => !button.closest('[data-service-version-action="update"]'),
+    );
+    const newerCard = findVersionCard(canvasElement, "0.63.0");
+    const newerAside = newerCard?.querySelector<HTMLElement>('[data-service-version-card-aside="true"]') ?? null;
+    const newerBody = newerCard?.querySelector<HTMLElement>(".serviceVersionCardBody") ?? null;
+    const newerButtonWidth = newerAction?.getBoundingClientRect().width ?? 0;
+    const newerAsideWidth = newerAside?.getBoundingClientRect().width ?? 0;
+    const newerBodyWidth = newerBody?.getBoundingClientRect().width ?? 0;
+
+    expectStory(currentRoutePathname() === "/services/stack-prod/svc-prod-api/versions", "dockrev visual evidence must stay on the versions route");
+    expectStory(Boolean(candidateAction && !candidateAction.disabled), "dockrev candidate card should stay enabled before navigation");
+    expectStory(Boolean(topAction && !topAction.disabled), "top-level dockrev self-upgrade action should stay enabled before navigation");
+    expectStory(Boolean(newerAction?.disabled), "newer non-candidate dockrev release should remain disabled in the visual state");
+    expectStory(normalizeText(newerAction?.textContent).includes("仅候选可升级"), "newer non-candidate dockrev release should use the candidate-only disabled label in the visual state");
+    expectStory(newerAction?.className.includes("btnGhost") ?? false, "newer non-candidate dockrev release should render with the muted disabled ghost affordance");
+    expectStory(normalizeText(findVersionCard(canvasElement, "0.62.0")?.textContent).includes("当前候选 0.62.0 已就绪；点击后进入 Dockrev 自我升级流程。"), "candidate dockrev release should explain the active self-upgrade handoff in the visual state");
+    expectStory(
+      newerAsideWidth > 0 && newerAsideWidth < newerBodyWidth,
+      "dockrev action rail should stay narrower than the main reading column",
+    );
+    expectStory(
+      newerButtonWidth >= 140 && newerButtonWidth < newerBodyWidth,
+      "dockrev self-upgrade button should stay narrower than the main reading column",
+    );
+  },
+};
+
+export const DockrevVersionsSelfUpgradeOffline: ServiceDetailStory = {
+  parameters: {
+    ...dockrevSelfUpgradeStoryParameters,
+    dockrevSupervisorSelfUpgradeResponse: {
+      status: 503,
+      body: { message: "supervisor offline" },
+    },
+  },
+  render: render("stack-prod", "svc-prod-api", "versions", "supervisor offline 时，Dockrev 版本卡与顶部入口都禁用，但重试只保留在顶部。"),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(findVersionCard(canvasElement, "0.62.0")));
+    const doc = canvasElement.ownerDocument;
+    const candidateAction = findVersionAction(canvasElement, "update", "0.62.0");
+    const newerAction = findVersionAction(canvasElement, "update", "0.63.0");
+    const topAction = findButtons(doc, "升级 Dockrev").find(
+      (button) => !button.closest('[data-service-version-action="update"]'),
+    );
+
+    await waitForCondition(() => normalizeText(findVersionCard(canvasElement, "0.62.0")?.textContent).includes("自我升级不可用（supervisor offline）"));
+    expectStory(Boolean(candidateAction?.disabled), "dockrev candidate card should disable itself when supervisor is offline");
+    expectStory(Boolean(topAction?.disabled), "top-level dockrev self-upgrade action should also disable when supervisor is offline");
+    expectStory(Boolean(findButton(doc, "重试")), "offline dockrev self-upgrade should keep the retry entry only in the top actions");
+    expectStory(normalizeText(findVersionCard(canvasElement, "0.62.0")?.textContent).includes("自我升级不可用（supervisor offline）"), "candidate card should surface the offline reason");
+    expectStory(Boolean(newerAction?.disabled), "newer non-candidate dockrev release should remain disabled while offline");
+    expectStory(normalizeText(newerAction?.textContent).includes("仅候选可升级"), "offline non-candidate dockrev release should still keep the candidate-only label");
+    expectStory(normalizeText(findVersionCard(canvasElement, "0.63.0")?.textContent).includes("自我升级不可用（supervisor offline）"), "non-candidate dockrev release should surface the real offline blocker");
+    expectStory(normalizeText(findVersionCard(canvasElement, "0.63.0")?.textContent).includes("当前候选为 0.62.0，此版本不能直接升级。"), "offline non-candidate dockrev release should still explain why this specific card cannot upgrade");
   },
 };
 

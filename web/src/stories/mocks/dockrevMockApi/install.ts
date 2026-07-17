@@ -493,6 +493,7 @@ export function installDockrevMockApi(
       return json({ version: '0.5.0' })
     }
     if (urlPath === '/supervisor/self-upgrade' && method === 'GET') {
+      if (options.supervisorSelfUpgradeResponse) return json(options.supervisorSelfUpgradeResponse.body, { status: options.supervisorSelfUpgradeResponse.status })
       return json({
         state: 'idle',
         opId: 'sup_mock',

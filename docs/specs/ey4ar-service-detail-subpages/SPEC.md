@@ -75,7 +75,7 @@
 - `版本` 子页首屏必须以当前部署版本为锚点；前端需按 release pages 顺序抓取直到命中当前版本或列表耗尽，并在命中后把该卡片滚动到视口中心。已扫描出的较新版本保留在当前版本上方，更旧版本按需继续分页加载。
 - `版本` 子页在 `>1100px` 时必须拆为左 `220px` 版本目录与右侧版本卡列表；目录与正文都必须保持虚拟化、共享同一分页数据源、独立滚动，并以右侧视口中心版本驱动目录高亮与跟随。目录项固定高度，展示版本号和发布时间：7 天内显示中文相对时间，更早显示 `YYYY-MM-DD`；点击目录项时，对应卡片必须滚动到正文视口中心。任一列表接近末尾时，都必须复用现有去重分页逻辑继续加载旧版本。
 - `版本` 子页的 release card 正文超过 10 行时必须默认折叠，支持原地展开/收起，并继续保持虚拟列表稳定测量，不得因展开造成定位丢失或明显空白。
-- `版本` 子页必须对比当前部署版本、candidate 与既有 rollback target，展示状态徽标与动作区。较新版本统一渲染 `更新` 动作位，但只有与当前 service candidate 对应且不突破现有 explicit target tag 契约的版本可真正发起更新；其余版本必须给出明确禁用原因。
+- `版本` 子页必须对比当前部署版本、candidate 与既有 rollback target，展示状态徽标与动作区。较新版本统一渲染动作位：普通服务继续使用 `更新`，且只有与当前 service candidate 对应且不突破现有 explicit target tag 契约的版本可真正发起更新；命中 Dockrev 自身识别时，candidate 对应卡片必须改为 `升级 Dockrev` 并复用顶部 supervisor 自我升级入口，其它更高版本只保留禁用动作位并明确解释“当前只能通过 supervisor 进入现有 candidate 对应的自我升级流程”。若 supervisor 自我升级入口本身处于 offline / checking / busy 等不可用状态，则所有 Dockrev 版本卡优先直接暴露该阻断原因，不再继续引导用户访问不可用入口。
 - `版本` 子页对所有已部署过的历史版本统一渲染 `回滚` 动作位；只有当前 rollback target 对应版本执行真实回滚，其余版本点击后进入解释性提示，不得创建任务。
 - 当当前 rollback target 的来源更新任务存在实际纳入的备份记录时，`版本` 子页的目标版本卡与服务级回滚确认都必须补充同一份“来源备份”摘要：显示 included targets 数量与源目标总体积；若 included targets 存在缺失体积，则总体积位置回退为 `--`；若没有实际纳入的备份记录，则不显示该状态块。
 - `版本` 子页在同一服务已有 update/rollback 任务提交中、执行中，或 rollback target 刷新中时，必须锁定全部版本动作，并提供查看当前任务状态的稳定入口。
@@ -154,7 +154,8 @@
 
 - 旧 bookmark、从服务列表/Stack 详情/概览跳来的 `navigate({ name: 'service', stackId, serviceId })` 调用必须继续可用，不要求调用点立即补 section。
 - 若当前服务是 Dockrev 自身：
-  - 继续保留既有 supervisor 自升级动作逻辑。
+  - 顶部 `升级 Dockrev` 与 `版本` 子页 candidate 卡必须共用同一份 supervisor 自升级动作真相源。
+  - supervisor offline 时，顶部入口与 candidate 卡同时禁用并显示一致 unavailable 语义；重试入口只保留在顶部动作区。
 - 六子页结构仍然生效。
 - 若服务当前没有日志输出：
   - `日志` 子页显示稳定空态而不是失败页。
@@ -215,6 +216,14 @@
 - Given 服务详情页处于 `版本`
   When 视口宽度为 `390x900`
   Then 版本目录不存在，卡片退化为单列阅读流，且页面不产生横向溢出。
+
+- Given 当前服务命中 Dockrev 自身识别且服务详情页处于 `版本`
+  When 页面同时展示 candidate 版本与更高的非 candidate 发布记录
+  Then candidate 卡的主动作文案为 `升级 Dockrev`，点击后只进入 `/supervisor/` 自我升级入口而不会创建普通 service update 任务；更高但非 candidate 的卡片继续渲染禁用动作位，并明确说明当前只能通过 supervisor 进入现有 candidate 对应流程。
+
+- Given 当前服务命中 Dockrev 自身识别且 supervisor offline
+  When 用户查看 `版本` 子页与顶部动作区
+  Then candidate 卡与顶部 `升级 Dockrev` 同时禁用并表达 offline 原因；其它更高的非 candidate 卡也优先表达同一 offline 阻断原因；只有顶部动作区保留 `重试` 入口。
 
 - Given 服务详情页处于 `更新记录`
   When 当前服务关联 update、rollback、Stack scope 与 all scope 任务
@@ -657,6 +666,36 @@
   PR caption: 桌面版本卡采用多栏宽卡而不是更新记录表格复刻。
 
 ![服务详情版本子页桌面宽卡](./assets/service-detail-versions-desktop-card.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `1600x1200`
+  viewport_strategy: `storybook-fullscreen-desktop`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/DockrevVersionsSelfUpgradeVisual`
+  state: `dockrev versions page candidate card shares supervisor action with topbar before navigation`
+  evidence_note: Dockrev 服务详情 `版本` 子页中，顶部与 candidate 卡同时暴露 `升级 Dockrev`，且更高的 `0.63.0` 非 candidate 卡只保留禁用解释。该视图停留在版本页本身，用来证明 candidate 卡已收敛到 supervisor 自我升级语义，而不是普通 `更新` 入口。
+  PR: include
+  PR caption: Dockrev 版本页候选卡与顶部入口共享 supervisor 自我升级语义，非 candidate 版本仅保留禁用解释。
+
+![Dockrev 服务详情版本子页候选卡自我升级态](./assets/service-detail-versions-dockrev-self-upgrade.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `1600x1200`
+  viewport_strategy: `storybook-fullscreen-desktop`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/DockrevVersionsSelfUpgradeOffline`
+  state: `dockrev supervisor offline disables topbar and candidate card`
+  evidence_note: offline Storybook 视图中，顶部 `升级 Dockrev` 与 candidate 卡同时禁用，顶部保留 `重试`；更高的 `0.63.0` 非 candidate 卡也直接表达 `supervisor offline` 阻断原因，而不是继续把用户引导到一个已经离线的入口。
+  PR: include
+  PR caption: supervisor offline 时，Dockrev 所有版本卡优先直接表达离线阻断原因，重试仅保留在顶部。
+
+![Dockrev 服务详情版本子页自我升级离线态](./assets/service-detail-versions-dockrev-self-upgrade-offline.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`
