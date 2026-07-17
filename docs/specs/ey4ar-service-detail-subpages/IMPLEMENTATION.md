@@ -12,6 +12,7 @@
 
 - 已扩展前端服务详情路由，支持 `overview / versions / history / monitoring / logs / backup / settings` 七子页 section 语义，且旧 canonical URL 继续指向概览。
 - 已将服务详情页重构为共享 shell + section 视图，保留统一的 hero、banner、异常提示、全局反馈与高频顶部动作。
+- 已新增 `版本` 子页：首屏改为 locate-first，先调用统一 `release-notes/locate` 拿到当前部署版本附近的锚点窗口；命中时把当前卡片滚动到视口中心，未命中时回到最新窗口首屏并显示 warning banner，不再通过前端线性翻页扫描整段历史。
 - 已将 `ServiceResourcePanel` 迁移到 `监控` 子页，并将自动更新、Compose、服务保护、忽略规则、Webhook 与维护动作集中到 `设置` 子页。
 - 已将服务级备份摘要、备份设置入口与当前服务相关备份记录迁移到 `备份` 子页，并从 `设置` 子页移除重复备份入口。
 - 七个服务详情子页现已共用精简状态摘要：只保留状态、当前版本、目标版本与版本跨度；digest、raw tag、架构、规则与原因明细已从共享 banner 摘要中移除。

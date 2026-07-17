@@ -155,7 +155,7 @@ async fn locate_service_github_release_falls_back_to_anonymous_when_pat_cannot_a
     )
     .await;
 
-    assert_eq!(response.status, ServiceGitHubReleaseLocateStatus::Found);
+    assert_eq!(response.status, GitHubReleaseLocateStatus::Found);
     assert_eq!(response.auth_mode, GitHubReleaseAuthMode::Anonymous);
     assert_eq!(response.matched_tag.as_deref(), Some("1.39.5"));
 }
@@ -232,7 +232,7 @@ async fn locate_service_github_release_finds_release_within_window() {
     )
     .await;
 
-    assert_eq!(response.status, ServiceGitHubReleaseLocateStatus::Found);
+    assert_eq!(response.status, GitHubReleaseLocateStatus::Found);
     assert_eq!(response.page, Some(2));
     assert_eq!(response.index_within_page, Some(0));
     assert_eq!(response.absolute_index, Some(20));
@@ -303,10 +303,7 @@ async fn locate_service_github_release_reports_outside_window_when_direct_hit_is
     )
     .await;
 
-    assert_eq!(
-        response.status,
-        ServiceGitHubReleaseLocateStatus::OutsideWindow
-    );
+    assert_eq!(response.status, GitHubReleaseLocateStatus::OutsideWindow);
     assert_eq!(response.matched_tag.as_deref(), Some("1.39.5"));
     assert_eq!(response.searched_count, 20);
 }

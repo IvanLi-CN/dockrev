@@ -85,13 +85,19 @@ export function render(
   serviceId: string,
   section: ServiceSection = "overview",
   pageSubtitle?: string,
-  options?: { sidebarCollapsed?: boolean },
+  options?: {
+    sidebarCollapsed?: boolean;
+    pageTitle?: string | null;
+    pageSubtitle?: string | null;
+  },
 ): ServiceDetailStory["render"] {
   return () => (
     <PageHarness
       route={routeFor(stackId, serviceId, section)}
-      title="服务详情"
-      pageSubtitle={pageSubtitle}
+      title={options?.pageTitle === undefined ? "服务详情" : options.pageTitle ?? undefined}
+      pageSubtitle={
+        options?.pageSubtitle === undefined ? pageSubtitle : options.pageSubtitle ?? undefined
+      }
       sidebarCollapsed={options?.sidebarCollapsed ?? false}
     >
       {({ route, onTopActions, onLastScanHint }) =>

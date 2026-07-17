@@ -1,8 +1,6 @@
 import type {
   GitHubReleaseAuthMode,
   ServiceGitHubReleaseItem,
-  ServiceGitHubReleaseLocateResponse,
-  ServiceGitHubReleaseLocateStatus,
   ServiceGitHubReleasesResponse,
   ServiceGitHubReleasesStatus,
   ServiceGitHubRepoRef,
@@ -28,51 +26,6 @@ function mockGitHubReleaseErrorMessage(
       : '匿名请求已命中 GitHub API 速率限制，请前往“设置 -> GitHub Packages”配置 PAT 后重试。'
   }
   return '读取 GitHub Releases 失败，请稍后重试。'
-}
-
-function mapListStatusToLocateStatus(
-  status: ServiceGitHubReleasesStatus,
-): ServiceGitHubReleaseLocateStatus {
-  if (status === 'unsupportedRepo') return 'unsupportedRepo'
-  if (status === 'permissionDenied') return 'permissionDenied'
-  if (status === 'rateLimited') return 'rateLimited'
-  return 'upstreamError'
-}
-
-function mockGitHubReleaseLocateMessage(
-  status: ServiceGitHubReleaseLocateStatus,
-  authMode: GitHubReleaseAuthMode,
-  version: string,
-  searchedCount: number,
-): string | null {
-  if (status === 'found') return null
-  if (status === 'outsideWindow') return `已定位到 ${version}，但它不在前 ${searchedCount} 条发布记录内。`
-  if (status === 'notFound') return `在前 ${searchedCount} 条发布记录中未找到 ${version}。`
-  return mockGitHubReleaseErrorMessage(
-    status === 'unsupportedRepo'
-      ? 'unsupportedRepo'
-      : status === 'permissionDenied'
-        ? 'permissionDenied'
-        : status === 'rateLimited'
-          ? 'rateLimited'
-          : 'upstreamError',
-    authMode,
-  )
-}
-
-function mockGitHubReleaseTagVariants(version: string): string[] {
-  const trimmed = version.trim()
-  if (!trimmed) return []
-  const set = new Set<string>()
-  set.add(trimmed)
-  if (trimmed.startsWith('v') && trimmed.length > 1) set.add(trimmed.slice(1))
-  else set.add(`v${trimmed}`)
-  return [...set]
-}
-
-function mockGitHubReleaseMatchesVersion(item: ServiceGitHubReleaseItem, version: string): boolean {
-  const variants = mockGitHubReleaseTagVariants(version).map((value) => value.toLowerCase())
-  return variants.includes(item.tagName.trim().toLowerCase())
 }
 
 function buildDefaultMockGitHubReleaseItems(
@@ -114,7 +67,7 @@ function buildDefaultMockGitHubReleaseItems(
   }))
 }
 
-function buildMockGitHubReleasesDataset(
+export function buildMockGitHubReleasesDataset(
   serviceId: string,
   options: DockrevMockApiOptions,
   findService: (serviceId: string) => FindServiceResult,
@@ -189,109 +142,5 @@ export function buildMockGitHubReleasesResponse(
     hasMore: offset + perPage < items.length,
     items: paged.map((item) => ({ ...item })),
     message: dataset.listMessage ?? null,
-  }
-}
-
-export function buildMockGitHubReleaseLocateResponse(
-  serviceId: string,
-  version: string,
-  perPage: number,
-  limit: number,
-  options: DockrevMockApiOptions,
-  findService: (serviceId: string) => FindServiceResult,
-  parseMockGitHubRepoRef: (input: string | null | undefined) => ServiceGitHubRepoRef | null,
-): ServiceGitHubReleaseLocateResponse {
-  const dataset = buildMockGitHubReleasesDataset(serviceId, options, findService, parseMockGitHubRepoRef)
-  const authMode = dataset.authMode ?? 'anonymous'
-  const trimmedVersion = version.trim()
-  const overrideEntry = Object.entries(dataset.locateByVersion ?? {}).find(
-    ([key]) => key.trim().toLowerCase() === trimmedVersion.toLowerCase(),
-  )
-  if (overrideEntry) {
-    const override = overrideEntry[1]
-    const status = override.status ?? 'notFound'
-    const searchedCount = override.searchedCount ?? Math.min(limit, dataset.items?.length ?? 0)
-    return {
-      status,
-      authMode: override.authMode ?? authMode,
-      repo: override.repo ?? dataset.repo ?? null,
-      version: trimmedVersion,
-      searchedCount,
-      matchedTag: override.matchedTag ?? null,
-      page: override.page ?? null,
-      indexWithinPage: override.indexWithinPage ?? null,
-      absoluteIndex: override.absoluteIndex ?? null,
-      message:
-        override.message ??
-        mockGitHubReleaseLocateMessage(status, override.authMode ?? authMode, trimmedVersion, searchedCount),
-    }
-  }
-
-  const listStatus = dataset.listStatus ?? 'ready'
-  if (listStatus !== 'ready') {
-    const status = mapListStatusToLocateStatus(listStatus)
-    return {
-      status,
-      authMode,
-      repo: dataset.repo ?? null,
-      version: trimmedVersion,
-      searchedCount: 0,
-      matchedTag: null,
-      page: null,
-      indexWithinPage: null,
-      absoluteIndex: null,
-      message: mockGitHubReleaseLocateMessage(status, authMode, trimmedVersion, 0),
-    }
-  }
-
-  const items = dataset.items ?? []
-  const matchIndex = items.findIndex((item) => mockGitHubReleaseMatchesVersion(item, trimmedVersion))
-  const searchedCount = Math.min(limit, items.length)
-
-  if (matchIndex >= 0 && matchIndex < limit) {
-    const page = Math.floor(matchIndex / perPage) + 1
-    const indexWithinPage = matchIndex % perPage
-    const scannedCount = Math.min(limit, Math.min(items.length, page * perPage))
-    return {
-      status: 'found',
-      authMode,
-      repo: dataset.repo ?? null,
-      version: trimmedVersion,
-      searchedCount: scannedCount,
-      matchedTag: items[matchIndex]?.tagName ?? trimmedVersion,
-      page,
-      indexWithinPage,
-      absoluteIndex: matchIndex,
-      message: null,
-    }
-  }
-
-  if (matchIndex >= limit) {
-    const matchedTag = items[matchIndex]?.tagName ?? mockGitHubReleaseTagVariants(trimmedVersion)[0] ?? trimmedVersion
-    return {
-      status: 'outsideWindow',
-      authMode,
-      repo: dataset.repo ?? null,
-      version: trimmedVersion,
-      searchedCount,
-      matchedTag,
-      page: null,
-      indexWithinPage: null,
-      absoluteIndex: null,
-      message: mockGitHubReleaseLocateMessage('outsideWindow', authMode, trimmedVersion, searchedCount),
-    }
-  }
-
-  return {
-    status: 'notFound',
-    authMode,
-    repo: dataset.repo ?? null,
-    version: trimmedVersion,
-    searchedCount,
-    matchedTag: null,
-    page: null,
-    indexWithinPage: null,
-    absoluteIndex: null,
-    message: mockGitHubReleaseLocateMessage('notFound', authMode, trimmedVersion, searchedCount),
   }
 }

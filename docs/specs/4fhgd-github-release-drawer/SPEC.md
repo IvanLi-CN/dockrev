@@ -19,7 +19,7 @@
 - 保持 `DiscoveryHistoryPopover` 的 badge/pill 继续作为单一时间线入口；点击时间线里的某个版本或服务更新记录中带可靠目标 tag 的更新日志入口时，打开同一个 GitHub Releases 抽屉并尝试定位到对应 GitHub Release。
 - 新增 service-scoped GitHub Releases 代理，优先使用系统设置里已保存的 GitHub PAT；缺失 PAT 时匿名访问；权限不足、私有仓库不可见、匿名限流等失败都要在抽屉内明确提示。
 - 抽屉使用 URL query 驱动：`releaseDrawer=github`、`releaseServiceId`、`releaseVersion?`，并且不得覆盖现有页面 query（例如 Overview 的筛选状态）。
-- 抽屉列表按 GitHub Releases 从新到旧分页加载，支持无限滚动与虚拟滚动；当带有目标版本时，先做 locate，最多扫描前 50 条记录，并给出“找到 / 存在但不在前 50 条 / 前 50 条未找到”的明确反馈。
+- 抽屉列表改为服务级统一 release notes 数据源，支持虚拟滚动与双向续拉；当带有目标版本时，必须先走后端 `locate`，直接返回锚点窗口与 `found | outsideWindow | notFound | unavailable` 明确反馈，前端不得再线性扫完整个版本历史。
 - 抽屉记录项至少展示 tag、名称、发布时间、draft/prerelease 标记、release body 预览与 GitHub 外链；命中目标版本时需带平滑滚动动画和短暂高亮。
 
 ### Non-goals
@@ -64,9 +64,13 @@
 - 新增 `GET /api/services/{service_id}/github-releases?page=&perPage=`
   - 返回：`status`、`authMode`、`repo?`、`page`、`perPage`、`hasMore`、`items[]`、`message?`
   - `status` 取值固定为：`ready | unsupportedRepo | permissionDenied | rateLimited | upstreamError`
-- 新增 `GET /api/services/{service_id}/github-releases/locate?version=&perPage=&limit=50`
-  - 返回：`status`、`authMode`、`repo?`、`version`、`searchedCount`、`matchedTag?`、`page?`、`indexWithinPage?`、`absoluteIndex?`、`message?`
-  - `status` 取值固定为：`found | outsideWindow | notFound | unsupportedRepo | permissionDenied | rateLimited | upstreamError`
+- 新增 `GET /api/services/{service_id}/release-notes/locate?version=&limit=`
+  - 返回：`status`、`source`、`repo?`、`items[]`、`nextCursor?`、`previousCursor?`、`fallback?`、`anchor?`
+  - `anchor.status` 取值固定为：`found | outsideWindow | notFound | unavailable`
+  - `anchor` 至少包含：`version`、`matchedTag?`、`indexWithinWindow?`、`absoluteIndex?`、`message?`
+- `GET /api/services/{service_id}/release-notes?cursor=&direction=older|newer&limit=`
+  - 返回：`status`、`source`、`repo?`、`items[]`、`nextCursor?`、`previousCursor?`、`fallback?`
+  - `nextCursor` 持续表示“更旧方向”，`previousCursor` 表示“更新方向”
 - 后端优先使用服务当前已保存的 `repoUrl`，且仅支持解析 GitHub repo URL；若 `repoUrl` 缺失，则复用既有仓库链接推断链路寻找 GitHub repo；显式非 GitHub `repoUrl` 仍返回 `unsupportedRepo`。
 
 ### URL 状态
@@ -102,17 +106,14 @@
 
 ### 定位逻辑
 
-- 当 URL 带 `releaseVersion` 时，抽屉打开后先调用 locate 接口。
-- locate 顺序固定为：
-  - 先按 `version` / `v<version>` / 去掉前缀 `v` 的变体调用 `Get release by tag name`
-  - 再扫描 releases 分页列表，最多前 `50` 条
-- 若 locate 命中并给出 `page/indexWithinPage/absoluteIndex`：
-  - 抽屉必须预加载到目标所在页。
-  - 完成后平滑滚动到目标项，并给该项短暂高亮。
-- 若 direct tag lookup 命中但前 50 条列表里未出现该条目：
-  - 抽屉顶部显示“该版本存在，但不在前 50 条发布记录内”。
-- 若 direct lookup 与前 50 条扫描都未命中：
-  - 抽屉顶部显示“在前 xx 条发布记录中未找到该版本”。
+- 当 URL 带 `releaseVersion` 时，抽屉打开后先调用统一 `release-notes/locate` 接口。
+- locate 命中时：
+  - 后端直接返回包含目标版本的锚点窗口，以及 `anchor.indexWithinWindow / absoluteIndex`。
+  - 抽屉只依赖该窗口完成首屏滚动和短暂高亮，不再预加载目标页并继续客户端扫页。
+- locate 返回 `outsideWindow | notFound | unavailable` 时：
+  - 抽屉首屏回到最新窗口。
+  - 顶部显示对应 warning banner。
+  - 用户仍可继续通过双向 cursor 手动浏览更旧或更新的发布记录。
 
 ### 错误态与权限态
 
@@ -128,8 +129,8 @@
 - Given 服务行展示 `发现 N 次`，When 点击 badge，Then 打开该服务的版本时间线 popover，且不会直接写入 `releaseDrawer=github` URL 状态。
 - Given 时间线气泡里的某个版本项可见，When 点击该版本，Then URL 额外带上 `releaseVersion=...`，抽屉打开并尝试定位该版本。
 - Given 服务更新记录带当前服务的目标 tag，When 点击更新日志图标，Then URL 额外带上 `releaseVersion=...`，同一抽屉打开、预加载并高亮该版本；目标 tag 缺失时不显示入口。
-- Given locate 结果为 `found`，When 抽屉完成预加载，Then 目标 release 出现在可视区附近，滚动带平滑动画，且目标项有可见高亮反馈。
-- Given locate direct tag 命中但扫描前 50 条未出现，When 抽屉渲染完成，Then 顶部显示“存在但不在前 50 条内”的 banner。
+- Given locate 结果为 `found`，When 抽屉完成首屏加载，Then 目标 release 出现在可视区附近，滚动带平滑动画，且目标项有可见高亮反馈。
+- Given locate 结果为 `outsideWindow`，When 抽屉渲染完成，Then 顶部显示“已定位到目标版本，但它不在当前锚点窗口内”的 banner，且列表回到最新窗口首屏。
 - Given 匿名请求对私有仓库失败或命中 GitHub rate limit，When 抽屉展示错误态，Then 文案明确提示权限/限流原因，并提供跳转到 GitHub Packages 设置的入口。
 - Given 服务未配置 GitHub `repoUrl` 且既有推断链路也无法得到 GitHub repo，When 打开抽屉，Then 返回 `unsupportedRepo` 且前端直接展示不支持提示，而不是无限 loading。
 - Given 用户刷新、复制分享链接、或浏览器前进/后退，When 页面恢复，Then 抽屉开关状态与目标版本定位状态保持一致，且不丢失原页面其他 query。
@@ -147,8 +148,8 @@
 - source_type=storybook_canvas · story_id_or_title=`Pages/ServicesPage/Git Hub Release Drawer Target Version From Timeline` · state=`timeline version -> drawer` · evidence_note=`验证 badge 仍先进入版本时间线，而点击时间线里的具体版本后仍会联动打开 GitHub Releases 抽屉，并保留 releaseDrawer/releaseServiceId/releaseVersion 状态。`
   ![Services 时间线联动 GitHub Releases 抽屉](./assets/release-drawer-services-timeline-link.png)
 
-- source_type=storybook_canvas · story_id_or_title=`Components/GitHubReleaseDrawer/Anonymous Located` · state=`anonymous locate hit · scrollable` · evidence_note=`验证匿名模式下带目标版本时，抽屉将访问身份与定位版本收进信息 icon 的悬浮气泡，同时保留右侧外边距与可见滚动条。`
-  ![匿名模式下的滚动版 GitHub Releases 抽屉](./assets/release-drawer-scrollable.png)
+- source_type=storybook_canvas · story_id_or_title=`Components/GitHubReleaseDrawer/Anonymous Located` · state=`locate-first hit · anchor window` · evidence_note=`验证抽屉首屏直接落在后端返回的锚点窗口内，顶部 success banner 明确告知已定位到目标版本，且不会再为了找目标版本继续线性扫页。`
+  ![统一 locate 命中后的发布抽屉锚点窗口](../../screenshots/release-notes-locate/drawer-locate-found.png)
 
 - source_type=storybook_canvas · story_id_or_title=`Components/GitHubReleaseDrawer/Pat Authenticated Short List` · state=`pat authenticated · short list` · evidence_note=`验证已保存 GitHub PAT 时，抽屉在较少 release 数据下仍保持正确的右侧 Drawer 形态；若内容略超出高度，则只允许抽屉内容区自身滚动，并通过信息 icon 的悬浮气泡承载 PAT 身份。`
   ![PAT 身份下的短列表 GitHub Releases 抽屉](./assets/release-drawer-short-list.png)
@@ -156,11 +157,27 @@
 - source_type=storybook_canvas · story_id_or_title=`Components/GitHubReleaseDrawer/Permission Denied` · state=`permission denied` · evidence_note=`验证匿名访问私有仓库失败时，抽屉内给出权限提示并提供跳转到设置页的入口。`
   ![权限不足时的 GitHub Releases 抽屉提示](./assets/release-drawer-permission-denied.png)
 
-- source_type=storybook_canvas · story_id_or_title=`Components/GitHubReleaseDrawer/Outside Window` · state=`outside window` · evidence_note=`验证目标版本存在但不在前 50 条记录内时，抽屉顶部显示 outside-window banner。`
-  ![目标版本位于前 50 条窗口之外时的提示](./assets/release-drawer-outside-window.png)
+- source_type=storybook_canvas · story_id_or_title=`Components/GitHubReleaseDrawer/Outside Window` · state=`outside window` · evidence_note=`验证目标版本存在但不在当前锚点窗口内时，抽屉顶部显示 outside-window banner，同时首屏回到最新窗口而不是继续自动翻页。`
+  ![目标版本位于当前锚点窗口之外时的提示](../../screenshots/release-notes-locate/drawer-outside-window.png)
 
 - source_type=storybook_canvas · story_id_or_title=`Pages/ServiceDetailPage/UpdateHistoryReleaseNotes` · state=`history record target version -> drawer` · evidence_note=`验证更新记录的目标版本入口打开同一右侧抽屉，保留 URL target，并在虚拟列表中高亮定位版本。`
   ![服务更新记录联动发布抽屉](./assets/release-drawer-service-history-target.png)
+
+## Visual Evidence (PR)
+
+- final_set: `release-notes-locate`
+  story_id_or_title: `Components/GitHubReleaseDrawer/Anonymous Located`
+  state: `locate-first hit · anchor window`
+  evidence_note: `最终 PR 采用的抽屉命中证据。抽屉首屏直接使用后端 locate 返回的锚点窗口，顶部 success banner 明确告知已定位到目标版本，前端不再为了找目标版本继续扫页。`
+
+![PR 证据：统一 locate 命中的发布抽屉锚点窗口](../../screenshots/release-notes-locate/drawer-locate-found.png)
+
+- final_set: `release-notes-locate`
+  story_id_or_title: `Components/GitHubReleaseDrawer/Outside Window`
+  state: `outside window`
+  evidence_note: `最终 PR 采用的 outside-window 证据。目标版本存在但不在当前锚点窗口内时，抽屉顶部显示 warning banner，首屏回到最新窗口而不是继续自动翻页。`
+
+![PR 证据：目标版本位于当前锚点窗口之外时的提示](../../screenshots/release-notes-locate/drawer-outside-window.png)
 
 ## 里程碑（Milestones / checklist）
 
@@ -184,3 +201,4 @@
 - 2026-04-10: 根据 owner 回归反馈，撤销“badge 直接打开 Releases 抽屉”的前端交互；恢复单一时间线入口，并把 GitHub Releases 打开职责收窄为时间线版本项跳转。
 - 2026-04-10: 刷新 Services 时间线联动抽屉的视觉证据，并将资产引用统一收口到 repo 内相对路径。
 - 2026-07-12: 扩展同一抽屉的入口到服务更新记录中带可靠目标 tag 的操作；不恢复 badge 直开，也不新增并行 viewer。
+- 2026-07-17: 将“定位当前版本”切换为统一 `release-notes/locate` 后端锚点窗口；抽屉首屏不再依赖前端线性翻页扫描旧版本。

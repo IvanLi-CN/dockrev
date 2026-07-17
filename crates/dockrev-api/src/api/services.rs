@@ -25,15 +25,15 @@ pub(crate) use repo_links::{
     build_repo_link_inference_context, infer_service_repo_link_for_snapshot_target,
 };
 
+pub(super) use github_releases::list_service_github_releases;
 #[allow(unused_imports)]
 pub(crate) use github_releases::resolve_service_github_repo_ref;
 #[cfg(test)]
 use github_releases::{
-    classify_github_releases_failure, github_release_tag_variants,
+    GitHubReleaseLocateStatus, classify_github_releases_failure, github_release_tag_variants,
     list_service_github_releases_with_client, locate_service_github_release_with_client,
 };
-pub(super) use github_releases::{list_service_github_releases, locate_service_github_release};
-pub(super) use release_notes::list_service_release_notes;
+pub(super) use release_notes::{list_service_release_notes, locate_service_release_notes};
 
 pub(super) async fn get_service_settings(
     State(state): State<Arc<AppState>>,

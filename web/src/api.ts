@@ -19,6 +19,7 @@ import type {
   TriggerVersionInferenceRefreshResponse,
   NewVersionDiscoveryTimelineResponse,
   ServiceGitHubReleasesResponse,
+  ServiceReleaseNotesDirection,
   ServiceReleaseNotesResponse,
   VersionInferenceOverviewResponse,
   GetVersionInferenceOverviewInput,
@@ -336,17 +337,35 @@ export async function getServiceGitHubReleases(
 
 export async function getServiceReleaseNotes(
   serviceId: string,
-  input: { cursor?: string | null; limit?: number } = {},
+  input: { cursor?: string | null; direction?: ServiceReleaseNotesDirection; limit?: number } = {},
 ): Promise<ServiceReleaseNotesResponse> {
   const sp = new URLSearchParams()
   const cursor = input.cursor?.trim()
   if (cursor) sp.set('cursor', cursor)
+  if (input.direction) sp.set('direction', input.direction)
   if (typeof input.limit === 'number' && Number.isFinite(input.limit)) {
     sp.set('limit', String(Math.max(1, Math.round(input.limit))))
   }
   const query = sp.toString()
   const resp = await apiFetch(
     `/api/services/${encodeURIComponent(serviceId)}/release-notes${query ? `?${query}` : ''}`,
+  )
+  return (await resp.json()) as ServiceReleaseNotesResponse
+}
+
+export async function locateServiceReleaseNotes(
+  serviceId: string,
+  input: { version: string; limit?: number },
+): Promise<ServiceReleaseNotesResponse> {
+  const sp = new URLSearchParams()
+  const version = input.version.trim()
+  if (version) sp.set('version', version)
+  if (typeof input.limit === 'number' && Number.isFinite(input.limit)) {
+    sp.set('limit', String(Math.max(1, Math.round(input.limit))))
+  }
+  const query = sp.toString()
+  const resp = await apiFetch(
+    `/api/services/${encodeURIComponent(serviceId)}/release-notes/locate${query ? `?${query}` : ''}`,
   )
   return (await resp.json()) as ServiceReleaseNotesResponse
 }

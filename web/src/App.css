@@ -7822,6 +7822,11 @@ html[data-theme="light"] .modalOverlay {
   gap: 12px;
 }
 
+.serviceVersionCardAsidePlaceholder {
+  flex: 1 1 auto;
+  min-height: 1px;
+}
+
 .serviceVersionHeading {
   gap: 10px;
 }

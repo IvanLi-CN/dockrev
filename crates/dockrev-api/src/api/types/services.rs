@@ -277,39 +277,6 @@ pub struct ServiceGitHubReleasesResponse {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum ServiceGitHubReleaseLocateStatus {
-    Found,
-    OutsideWindow,
-    NotFound,
-    UnsupportedRepo,
-    PermissionDenied,
-    RateLimited,
-    UpstreamError,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ServiceGitHubReleaseLocateResponse {
-    pub status: ServiceGitHubReleaseLocateStatus,
-    pub auth_mode: GitHubReleaseAuthMode,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub repo: Option<ServiceGitHubRepoRef>,
-    pub version: String,
-    pub searched_count: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub matched_tag: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub page: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub index_within_page: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub absolute_index: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub enum ServiceReleaseNotesSource {
     OctoRill,
     GitHub,
@@ -364,6 +331,30 @@ pub struct ServiceReleaseNoteItem {
     pub created_at: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ServiceReleaseNotesAnchorStatus {
+    Found,
+    OutsideWindow,
+    NotFound,
+    Unavailable,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceReleaseNotesAnchor {
+    pub status: ServiceReleaseNotesAnchorStatus,
+    pub version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matched_tag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index_within_window: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub absolute_index: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceReleaseNotesExternalLinks {
@@ -382,6 +373,8 @@ pub struct ServiceReleaseNotesResponse {
     pub cursor: Option<String>,
     pub limit: u32,
     pub next_cursor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_cursor: Option<String>,
     pub has_more: bool,
     pub default_view: ReleaseNotesView,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -391,6 +384,8 @@ pub struct ServiceReleaseNotesResponse {
     pub message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fallback: Option<ServiceReleaseNotesFallback>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<ServiceReleaseNotesAnchor>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

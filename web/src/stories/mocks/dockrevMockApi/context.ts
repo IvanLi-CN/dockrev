@@ -1,7 +1,9 @@
 import type {
   NewVersionDiscoveryTimelineResponse,
-  ServiceGitHubReleaseLocateResponse,
+  ServiceGitHubReleaseItem,
   ServiceGitHubReleasesResponse,
+  ServiceGitHubReleasesStatus,
+  ServiceGitHubRepoRef,
   StackDetail,
 } from '../../../api'
 import type { CleanupMockRuntimeState } from '../cleanupMockData'
@@ -42,12 +44,26 @@ export type MockRouteContext = {
     page: number,
     perPage: number,
   ) => ServiceGitHubReleasesResponse
-  buildMockGitHubReleaseLocateResponse: (
+  buildMockGitHubReleasesDataset: (
     serviceId: string,
-    version: string,
-    perPage: number,
-    limit: number,
-  ) => ServiceGitHubReleaseLocateResponse
+  ) => {
+    authMode?: 'pat' | 'anonymous'
+    repo?: ServiceGitHubRepoRef | null
+    listStatus?: ServiceGitHubReleasesStatus
+    listMessage?: string | null
+    items?: ServiceGitHubReleaseItem[]
+    locateByVersion?: Record<
+      string,
+      {
+        status?: 'found' | 'outsideWindow' | 'notFound' | 'unavailable'
+        version?: string
+        matchedTag?: string | null
+        indexWithinWindow?: number | null
+        absoluteIndex?: number | null
+        message?: string | null
+      }
+    >
+  }
   applyMockUpdateSettlement: (
     serviceId: string,
     targetTag: string,
