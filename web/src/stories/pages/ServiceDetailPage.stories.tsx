@@ -2,34 +2,12 @@ import type { Meta } from "@storybook/react";
 import { ServiceDetailPage } from "../../pages/ServiceDetailPage";
 import { currentRoutePathname } from "../../routes";
 import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
+import { expectCompactMonitorSummaryRow, expectMobileMonitorMetricsGrid, expectNoLegacyServiceDetailHero } from "./serviceDetailHeaderAssertions";
 import { expectHistoryColumnsAligned } from "./serviceDetailHistoryAssertions";
-import {
-  buildLongLogsSnapshot,
-  buildMultilineLogsSnapshot,
-  historyReleaseNotes,
-  paginatedHistoryJobs,
-  partialHistoryBackupRecords,
-} from "./serviceDetailPageStoryFixtures";
+import { buildLongLogsSnapshot, buildMultilineLogsSnapshot, historyReleaseNotes, paginatedHistoryJobs, partialHistoryBackupRecords } from "./serviceDetailPageStoryFixtures";
 import { assertRecentUpdateKeyboardNavigation, assertRecentUpdateReasonPopoverStaysOnRoute } from "./recentUpdateStoryAssertions";
-import {
-  drawerText,
-  findActionButton,
-  findHistoryRowByJobId,
-  findLogRowContaining,
-  findSectionCard,
-  findTab,
-  render,
-  tabLabels,
-  type ServiceDetailStory,
-} from "./serviceDetailStoryShared";
-export {
-  DockrevVersionsSelfUpgrade,
-  DockrevVersionsSelfUpgradeVisual,
-  DockrevVersionsSelfUpgradeOffline,
-  MobileVersionsSection,
-  VersionsSection,
-  VersionsSectionActionGuard,
-} from "./serviceDetailVersionsStories";
+import { drawerText, findActionButton, findHistoryRowByJobId, findLogRowContaining, findSectionCard, findTab, render, tabLabels, type ServiceDetailStory } from "./serviceDetailStoryShared";
+export { DockrevVersionsSelfUpgrade, DockrevVersionsSelfUpgradeVisual, DockrevVersionsSelfUpgradeOffline, MobileVersionsSection, VersionsSection, VersionsSectionActionGuard } from "./serviceDetailVersionsStories";
 import { expectNearlyEqual, expectStory, findButton, findButtons, findLink, normalizeText, waitForCondition } from "./storyAssertions";
 
 const meta: Meta<typeof ServiceDetailPage> = {
@@ -49,9 +27,9 @@ export const OverviewDefault: Story = {
   play: async ({ canvasElement }) => {
     await waitForCondition(() => normalizeText(canvasElement.textContent).includes("最近更新记录"));
     await waitForCondition(() => normalizeText(canvasElement.ownerDocument.body.textContent).includes("服务列表"));
-    const statusSummary = canvasElement.querySelector<HTMLElement>(
-      '[data-service-detail-context="status-summary"] .svcBannerDetail',
-    );
+    const monitorRow = canvasElement.querySelector<HTMLElement>('[data-service-detail-context="monitor-summary"]');
+    const statusRail = canvasElement.querySelector<HTMLElement>('[data-service-detail-context="status-summary"]');
+    const statusSummary = statusRail?.querySelector<HTMLElement>(".svcBannerDetail");
     const statusSummaryText = normalizeText(statusSummary?.textContent);
     expectStory(currentRoutePathname() === "/services/stack-prod/svc-prod-api", "legacy overview route should stay canonical");
     await waitForCondition(() => findTab(canvasElement, "overview")?.getAttribute("data-state") === "active");
@@ -61,7 +39,10 @@ export const OverviewDefault: Story = {
     expectStory(!findSectionCard(canvasElement, "auto-policy"), "overview should not render settings cards");
     expectStory(findButton(canvasElement, "Stack 详情"), "stack detail top action missing");
     expectStory(Boolean(canvasElement.ownerDocument.querySelector(".detailRouteServiceLinkActive")), "detail service tree should highlight the current service");
+    expectStory(Boolean(monitorRow), "shared monitor summary row missing");
+    expectStory(Boolean(statusRail), "shared status rail missing");
     expectStory(Boolean(statusSummary), "shared status summary card detail missing");
+    expectCompactMonitorSummaryRow({ monitorRow, expectedServiceName: "api", expectStory });
     expectStory(
       statusSummaryText.includes("当前 5.2.1") &&
         statusSummaryText.includes("目标 5.2.3") &&
@@ -75,6 +56,11 @@ export const OverviewDefault: Story = {
         !statusSummaryText.includes("原因"),
       "shared status summary should remove digest, arch, and rule-detail text",
     );
+    expectStory(!statusRail?.querySelector(".svcDetailSummaryName"), "shared status rail should not repeat the service name");
+    expectStory(!normalizeText(statusRail?.textContent).includes("prod"), "shared status rail should not repeat the stack pill");
+    expectNoLegacyServiceDetailHero({ canvasElement, expectStory, context: "service detail" });
+    expectStory(Boolean(findSectionCard(canvasElement, "service-identifiers")), "overview should carry the service identifiers card");
+    expectStory(normalizeText(findSectionCard(canvasElement, "service-identifiers")?.textContent).includes("Image Ref"), "service identifiers card should include image ref");
     await assertRecentUpdateReasonPopoverStaysOnRoute({
       canvasElement,
       expectStory,
@@ -124,10 +110,15 @@ export const MonitoringSection: Story = {
   render: render("stack-prod", "svc-prod-api", "monitoring", "监控子页只承载资源监控面板"),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => normalizeText(canvasElement.textContent).includes("资源监控"));
+    const monitorRow = canvasElement.querySelector<HTMLElement>('[data-service-detail-context="monitor-summary"]');
     expectStory(currentRoutePathname() === "/services/stack-prod/svc-prod-api/monitoring", "monitoring deep link missing");
     expectStory(findTab(canvasElement, "monitoring")?.getAttribute("data-state") === "active", "monitoring tab should be active");
     expectStory(!normalizeText(canvasElement.textContent).includes("最近更新记录"), "monitoring should not render recent updates");
     expectStory(!findSectionCard(canvasElement, "auto-policy"), "monitoring should not render settings cards");
+    expectStory(Boolean(monitorRow), "monitoring section should retain the shared monitor summary row");
+    expectStory(!normalizeText(monitorRow?.textContent).includes("服务监控摘要"), "monitoring section should keep the compact monitor row without the subtitle");
+    expectNoLegacyServiceDetailHero({ canvasElement, expectStory, context: "service detail deep links" });
+    expectStory(!findSectionCard(canvasElement, "service-identifiers"), "monitoring should not render the overview-only identifiers card");
   },
 };
 
@@ -447,9 +438,12 @@ export const MobileHistorySection: Story = {
   render: render("stack-prod", "svc-prod-api", "history", "移动端更新记录保留两行栅格且不产生横向滚动。"),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => canvasElement.querySelectorAll(".serviceOperationHistoryRow").length === 5);
+    const monitorRow = canvasElement.querySelector<HTMLElement>('[data-service-detail-context="monitor-summary"]');
+    const monitorMetrics = monitorRow?.querySelector<HTMLElement>(".svcDetailMonitorMetrics");
+    const monitorMetricChips = Array.from(monitorRow?.querySelectorAll<HTMLElement>("[data-monitor-metric]") ?? []);
     const table = canvasElement.querySelector<HTMLElement>(".serviceOperationHistoryTable");
     const row = canvasElement.querySelector<HTMLElement>(".serviceOperationHistoryRow");
-    const heroStatusCard = canvasElement.querySelector<HTMLElement>(".detailHeroCardService .detailHeroStatusCard");
+    const statusRail = canvasElement.querySelector<HTMLElement>('[data-service-detail-context="status-summary"]');
     const historyShell = canvasElement.querySelector<HTMLElement>(".serviceOperationHistory");
     const mobileStatus = row?.querySelector<HTMLElement>(".serviceOperationHistoryMobileStatus");
     const desktopStatus = row?.querySelector<HTMLElement>(".serviceOperationHistoryStatus");
@@ -463,12 +457,13 @@ export const MobileHistorySection: Story = {
     expectStory(Boolean(row), "mobile history row missing");
     expectStory(Math.abs((appShell ?? canvasElement).getBoundingClientRect().left) <= 1, "mobile detail shell should render edge-to-edge without Storybook canvas gutters");
     expectStory(getComputedStyle(topbar ?? canvasElement).borderBottomWidth === "0px", "mobile detail topbar should not draw an extra divider above the history tabs");
-    expectStory(
-      getComputedStyle(heroStatusCard ?? canvasElement).borderTopWidth === "0px" &&
-        getComputedStyle(heroStatusCard ?? canvasElement).backgroundImage === "none" &&
-        getComputedStyle(heroStatusCard ?? canvasElement).boxShadow === "none",
-      "mobile service summary should flatten the update status block instead of nesting a second card",
-    );
+    expectStory(Boolean(monitorRow), "mobile history should keep the shared monitor summary row");
+    expectStory(Boolean(statusRail), "mobile history should keep the shared status rail");
+    expectStory(!normalizeText(monitorRow?.textContent).includes("服务监控摘要"), "mobile history should not restore the monitor subtitle");
+    expectStory(!statusRail?.querySelector(".svcDetailSummaryName"), "mobile history should not restore the duplicated service name in the status rail");
+    expectNoLegacyServiceDetailHero({ canvasElement, expectStory, context: "mobile history" });
+    expectMobileMonitorMetricsGrid({ monitorRow, monitorMetrics, monitorMetricChips, expectStory });
+    expectStory((statusRail?.scrollWidth ?? 0) <= (statusRail?.clientWidth ?? 0) + 1, "mobile status rail should wrap instead of overflowing horizontally");
     expectStory(
       getComputedStyle(historyShell ?? canvasElement).borderTopWidth === "0px" &&
         getComputedStyle(historyShell ?? canvasElement).backgroundImage === "none" &&

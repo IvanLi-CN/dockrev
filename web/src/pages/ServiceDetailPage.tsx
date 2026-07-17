@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Cpu, Download, HardDriveDownload, HardDriveUpload, MemoryStick, Upload } from "lucide-react";
 import {
   ApiError,
   createIgnore,
@@ -20,7 +21,7 @@ import { BackupPolicySegmentedControl } from "../components/BackupPolicySegmente
 import { BackupRecordList } from "../components/ServiceBackupRecords";
 import { ReadonlySnapshotNotice } from "../components/ReadonlySnapshotNotice";
 import { navigate } from "../routes";
-import { Button, IconButton, Input, Mono, OverlayScrollArea, Pill, RefreshIcon, SelectField, Switch, Tabs, TabsList, TabsTrigger } from "../ui";
+import { Button, IconButton, Input, Mono, OverlayScrollArea, RefreshIcon, SelectField, Switch, Tabs, TabsList, TabsTrigger } from "../ui";
 import { usePwaStatus } from "../pwaStatus";
 import { buildReadonlySnapshotKey, readReadonlySnapshot, writeReadonlySnapshot } from "../readonlySnapshotCache";
 import { serviceRowStatus } from "../updateStatus";
@@ -43,10 +44,8 @@ import {
   isDockrevService,
   sanitizeReadonlyStackSnapshot,
   ServiceDetailReadonlyBlocked,
-  serviceDetailSectionLabel,
   type BackupTargetsDraft,
   type ServiceDetailSection,
-  svcBadge,
 } from "./serviceDetailPageHelpers";
 import { useServiceDetailPageState } from "./useServiceDetailPageState";
 
@@ -66,6 +65,8 @@ type ServiceDetailSnapshotPayload = {
   monitoring: ServiceResourceSnapshot | null;
 };
 
+type ServiceDetailMonitorSample = ServiceResourceSnapshot["samples"][number];
+
 function readReason(details: unknown): string | null {
   if (!details || typeof details !== "object") return null;
   const reason = (details as Record<string, unknown>).reason;
@@ -74,6 +75,58 @@ function readReason(details: unknown): string | null {
 
 function isMonitorDisabledError(error: unknown): boolean {
   return error instanceof ApiError && error.status === 409 && readReason(error.details) === "resource_monitor_disabled";
+}
+
+function parseMonitorSampleTime(sample: ServiceDetailMonitorSample | null): number | null {
+  if (!sample) return null;
+  const ts = Date.parse(sample.sampledAt);
+  return Number.isFinite(ts) ? ts : null;
+}
+
+function formatMonitorPercent(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "-";
+  return value < 10 ? `${value.toFixed(1)}%` : `${value.toFixed(0)}%`;
+}
+
+function formatMonitorBytes(bytes: number | null | undefined): string {
+  if (bytes == null || !Number.isFinite(bytes)) return "-";
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let value = bytes;
+  let idx = 0;
+  while (value >= 1024 && idx < units.length - 1) {
+    value /= 1024;
+    idx += 1;
+  }
+  const digits = idx === 0 || value >= 100 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(digits)} ${units[idx]}`;
+}
+
+function formatMonitorRate(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return "-";
+  if (value < 1) return "0 B/s";
+  return `${formatMonitorBytes(value)}/s`;
+}
+
+function computeMonitorTerminalRate(
+  previousSample: ServiceDetailMonitorSample | null,
+  latestSample: ServiceDetailMonitorSample | null,
+  pick: (sample: ServiceDetailMonitorSample) => number | null | undefined,
+): number | null {
+  const previousTs = parseMonitorSampleTime(previousSample);
+  const latestTs = parseMonitorSampleTime(latestSample);
+  if (previousTs == null || latestTs == null || latestTs <= previousTs || !previousSample || !latestSample) return null;
+  const previousValue = pick(previousSample);
+  const latestValue = pick(latestSample);
+  if (
+    previousValue == null ||
+    latestValue == null ||
+    !Number.isFinite(previousValue) ||
+    !Number.isFinite(latestValue) ||
+    latestValue < previousValue
+  ) {
+    return null;
+  }
+  return (latestValue - previousValue) / ((latestTs - previousTs) / 1000);
 }
 
 export function ServiceDetailPage(props: {
@@ -135,7 +188,6 @@ export function ServiceDetailPage(props: {
     topActions,
     supervisorErrorAt,
     supervisorState,
-    tone,
     dangerousActions,
   } = useServiceDetailPageState(props);
   const [jobs, setJobs] = useState<JobListItem[]>([]);
@@ -317,6 +369,7 @@ export function ServiceDetailPage(props: {
   const effectiveJobs = snapshotActive ? (snapshotPayload?.jobs ?? jobs) : jobs;
   const effectiveBackupTargets = snapshotActive ? (snapshotPayload?.backupTargets ?? backupTargets) : backupTargets;
   const effectiveBackupRecords = snapshotActive ? (snapshotPayload?.backupRecords ?? backupRecords) : backupRecords;
+  const effectiveMonitoringSnapshot = snapshotActive ? (snapshotPayload?.monitoring ?? monitoringSnapshot) : monitoringSnapshot;
   const readonlyUi = !isOnline || snapshotActive;
 
   useEffect(() => {
@@ -369,11 +422,59 @@ export function ServiceDetailPage(props: {
   const effectiveBannerClass = service != null ? bannerClass : "svcBanner svcBannerMuted";
   const effectiveDotClass = service != null ? dotClass : "svcBannerDot";
   const effectiveBannerDetail = service != null ? bannerDetail : "当前展示本地快照；恢复联网后刷新可获取最新候选与实时状态。";
-  const currentSectionLabel = serviceDetailSectionLabel(sectionValue);
+  const imageNameDisplay = splitImageNameForDisplay(splitImageRef(effectiveService.image.ref).name, effectiveService.image.tag);
+  const latestMonitorSample =
+    effectiveMonitoringSnapshot != null && effectiveMonitoringSnapshot.samples.length > 0
+      ? effectiveMonitoringSnapshot.samples[effectiveMonitoringSnapshot.samples.length - 1] ?? null
+      : null;
+  const previousMonitorSample =
+    effectiveMonitoringSnapshot != null && effectiveMonitoringSnapshot.samples.length > 1
+      ? effectiveMonitoringSnapshot.samples[effectiveMonitoringSnapshot.samples.length - 2] ?? null
+      : null;
+  const latestMonitorDiskReadRate = computeMonitorTerminalRate(previousMonitorSample, latestMonitorSample, (sample) => sample.blockReadBytes);
+  const latestMonitorDiskWriteRate = computeMonitorTerminalRate(previousMonitorSample, latestMonitorSample, (sample) => sample.blockWriteBytes);
+  const latestMonitorRxRate = computeMonitorTerminalRate(previousMonitorSample, latestMonitorSample, (sample) => sample.netRxBytes);
+  const latestMonitorTxRate = computeMonitorTerminalRate(previousMonitorSample, latestMonitorSample, (sample) => sample.netTxBytes);
+  const monitorRowMetrics = [
+    { label: "CPU", value: formatMonitorPercent(latestMonitorSample?.cpuPercent ?? null), icon: <Cpu className="svcDetailMonitorGlyph" aria-hidden="true" /> },
+    { label: "内存", value: formatMonitorBytes(latestMonitorSample?.memUsedBytes ?? null), icon: <MemoryStick className="svcDetailMonitorGlyph" aria-hidden="true" /> },
+    { label: "磁盘读", value: formatMonitorRate(latestMonitorDiskReadRate), icon: <HardDriveDownload className="svcDetailMonitorGlyph" aria-hidden="true" /> },
+    { label: "磁盘写", value: formatMonitorRate(latestMonitorDiskWriteRate), icon: <HardDriveUpload className="svcDetailMonitorGlyph" aria-hidden="true" /> },
+    { label: "下载", value: formatMonitorRate(latestMonitorRxRate), icon: <Download className="svcDetailMonitorGlyph" aria-hidden="true" /> },
+    { label: "上传", value: formatMonitorRate(latestMonitorTxRate), icon: <Upload className="svcDetailMonitorGlyph" aria-hidden="true" /> },
+  ];
 
   const renderOverviewSection = () => (
     <div className="svcDetailSectionStack">
       <RecentUpdateRecords jobs={recentUpdateJobs} />
+      <div className="card serviceDetailIdentifiersCard" data-service-detail-section-card="service-identifiers">
+        <div className="serviceDetailIdentifiersHead">
+          <div>
+            <div className="title">服务标识</div>
+            <div className="muted">镜像引用与内部标识只在概览保留，避免其余子页重复占用页头空间。</div>
+          </div>
+        </div>
+        <div className="serviceDetailIdentifiersGrid">
+          <div className="serviceDetailIdentifierItem">
+            <div className="serviceDetailIdentifierLabel">Image Ref</div>
+            <div className="serviceDetailIdentifierValue">
+              <Mono>{effectiveService.image.ref}</Mono>
+            </div>
+          </div>
+          <div className="serviceDetailIdentifierItem">
+            <div className="serviceDetailIdentifierLabel">Service ID</div>
+            <div className="serviceDetailIdentifierValue">
+              <Mono>{effectiveService.id}</Mono>
+            </div>
+          </div>
+          <div className="serviceDetailIdentifierItem">
+            <div className="serviceDetailIdentifierLabel">Stack ID</div>
+            <div className="serviceDetailIdentifierValue">
+              <Mono>{effectiveStack.id}</Mono>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 
@@ -725,68 +826,43 @@ export function ServiceDetailPage(props: {
         <ReadonlySnapshotNotice tone="warn" title="当前离线。" detail="仅在存在可用缓存时显示只读内容；日志与设置需要联网。" />
       ) : null}
       <section className="detailHeroShell">
-        <div className="svcTitleRow detailHeroCard detailHeroCardService">
-          <div className="svcTitleMain detailHeroPrimary">
-            <div className="detailHeroContext" aria-label="当前详情层级">
-              <span>服务工作区</span>
-              <span className="detailHeroContextDivider" aria-hidden="true">
-                /
-              </span>
-              <span>{currentSectionLabel}</span>
+        <div className="svcDetailMonitorRow" data-service-detail-context="monitor-summary">
+          <div className="svcDetailMonitorIdentity">
+            <div className="svcDetailMonitorName">
+              <Mono>{effectiveService.name}</Mono>
             </div>
-            <div className="svcTitleNameRow detailHeroNameRow">
-              <div className="svcTitleName detailHeroName">
-                <Mono>{effectiveService.name}</Mono>
-              </div>
-              <Pill tone="muted">{effectiveStack.name}</Pill>
-            </div>
-            {(() => {
-              const img = splitImageRef(effectiveService.image.ref);
-              const dn = splitImageNameForDisplay(img.name, effectiveService.image.tag);
-              return (
-                <div className="cellTwoLine detailHeroDescription">
-                  <div className="mono monoPrimary monoSplit imageLinkRow" title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}>
-                    <span className="monoSplitBase">{dn.base}</span>
-                    <ImageLinkIcons imageRef={effectiveService.image.ref} repoUrl={visibleRepoUrl} />
-                  </div>
-                  <div className="mono monoSecondary">{img.registry}</div>
-                </div>
-              );
-            })()}
           </div>
-
-          <div className="detailHeroAside" data-service-detail-context="status-summary">
-            <div className={`${effectiveBannerClass} detailHeroStatusCard`}>
-              <div className="svcBannerTitleRow">
-                <span className={effectiveDotClass} />
-                <div className="svcBannerTitle">{effectiveBannerTitle}</div>
-                <div style={{ marginLeft: "auto" }}>
-                  <Pill tone={tone}>{svcBadge(effectiveService)}</Pill>
-                </div>
+          <div className="svcDetailMonitorMetrics" aria-label="服务监控指标">
+            {monitorRowMetrics.map((metric) => (
+              <div
+                key={metric.label}
+                className="svcDetailMonitorMetric"
+                data-monitor-metric={metric.label}
+                aria-label={`${metric.label} ${metric.value}`}
+                title={`${metric.label} ${metric.value}`}
+              >
+                <span className="svcDetailMonitorMetricIcon" aria-hidden="true">
+                  {metric.icon}
+                </span>
+                <span className="svcDetailMonitorMetricValue">{metric.value}</span>
               </div>
-              <div className="svcBannerDetail">{effectiveBannerDetail}</div>
-            </div>
+            ))}
           </div>
         </div>
-
-        <div className="detailHeroMetaGrid">
-          <div className="detailHeroMetaCard">
-            <div className="detailHeroMetaLabel">Image Ref</div>
-            <div className="detailHeroMetaValue">
-              <Mono>{effectiveService.image.ref}</Mono>
+        <div className={`${effectiveBannerClass} svcDetailSummaryRail`} data-service-detail-context="status-summary">
+          <div className="svcDetailSummaryLead">
+            <div
+              className="mono monoPrimary monoSplit imageLinkRow svcDetailSummaryImage"
+              title={imageNameDisplay.suffix ? `${imageNameDisplay.base}${imageNameDisplay.suffix}` : imageNameDisplay.base}
+            >
+              <span className="monoSplitBase">{imageNameDisplay.base}</span>
+              <ImageLinkIcons imageRef={effectiveService.image.ref} repoUrl={visibleRepoUrl} />
             </div>
           </div>
-          <div className="detailHeroMetaCard">
-            <div className="detailHeroMetaLabel">Service ID</div>
-            <div className="detailHeroMetaValue">
-              <Mono>{effectiveService.id}</Mono>
-            </div>
-          </div>
-          <div className="detailHeroMetaCard">
-            <div className="detailHeroMetaLabel">Stack ID</div>
-            <div className="detailHeroMetaValue">
-              <Mono>{effectiveStack.id}</Mono>
-            </div>
+          <div className="svcDetailSummaryStatus">
+            <span className={effectiveDotClass} />
+            <div className="svcBannerTitle">{effectiveBannerTitle}</div>
+            <div className="svcBannerDetail svcDetailStatusSummary">{effectiveBannerDetail}</div>
           </div>
         </div>
 

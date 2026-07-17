@@ -2078,7 +2078,9 @@ async function runInteractive({ baseUrl, browser }) {
         })
         .waitFor({ timeout: 10_000 });
 
-      const detailHeader = page.locator(".svcTitleRow");
+      const detailHeader = page.locator(
+        '[data-service-detail-context="status-summary"]',
+      );
       const detailRegistryLink = detailHeader.locator(
         '[data-link-kind="registry"]',
       );
