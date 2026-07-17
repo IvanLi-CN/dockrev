@@ -674,13 +674,13 @@
   viewport_strategy: `storybook-fullscreen-desktop`
   sensitive_exclusion: `N/A`
   submission_gate: `approved`
-  story_id_or_title: `Pages/ServiceDetailPage/DockrevVersionsSelfUpgrade`
-  state: `dockrev candidate card shares supervisor action with topbar`
-  evidence_note: Dockrev 服务详情 `版本` 子页中，顶部与 candidate 卡同时暴露 `升级 Dockrev`，且更高的 `0.63.0` 非 candidate 卡只保留禁用解释。该视图证明版本页不再把 candidate 卡当成普通 `更新` 入口，而是收敛到 supervisor 自我升级语义。
+  story_id_or_title: `Pages/ServiceDetailPage/DockrevVersionsSelfUpgradeVisual`
+  state: `dockrev versions page candidate card shares supervisor action with topbar before navigation`
+  evidence_note: Dockrev 服务详情 `版本` 子页中，顶部与 candidate 卡同时暴露 `升级 Dockrev`，且更高的 `0.63.0` 非 candidate 卡只保留禁用解释。该视图停留在版本页本身，用来证明 candidate 卡已收敛到 supervisor 自我升级语义，而不是普通 `更新` 入口。
   PR: include
-  PR caption: Dockrev 版本页 candidate 卡已改为 supervisor 自我升级入口，非 candidate 版本仅保留禁用解释。
+  PR caption: Dockrev 版本页候选卡与顶部入口共享 supervisor 自我升级语义，非 candidate 版本仅保留禁用解释。
 
-![Dockrev 服务详情版本子页自我升级入口](./assets/service-detail-versions-dockrev-self-upgrade.png)
+![Dockrev 服务详情版本子页候选卡自我升级态](./assets/service-detail-versions-dockrev-self-upgrade.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`
