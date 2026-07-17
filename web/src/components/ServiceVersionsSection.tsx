@@ -1111,6 +1111,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
                         </div>
                       )
                     })}
+                  </div>
                 </div>
               </div>
             </div>
