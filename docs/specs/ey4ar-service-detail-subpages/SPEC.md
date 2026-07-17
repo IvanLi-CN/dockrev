@@ -75,7 +75,7 @@
 - `版本` 子页首屏必须以当前部署版本为锚点；前端需按 release pages 顺序抓取直到命中当前版本或列表耗尽，并在命中后把该卡片滚动到视口中心。已扫描出的较新版本保留在当前版本上方，更旧版本按需继续分页加载。
 - `版本` 子页在 `>1100px` 时必须拆为左 `220px` 版本目录与右侧版本卡列表；目录与正文都必须保持虚拟化、共享同一分页数据源、独立滚动，并以右侧视口中心版本驱动目录高亮与跟随。目录项固定高度，展示版本号和发布时间：7 天内显示中文相对时间，更早显示 `YYYY-MM-DD`；点击目录项时，对应卡片必须滚动到正文视口中心。任一列表接近末尾时，都必须复用现有去重分页逻辑继续加载旧版本。
 - `版本` 子页的 release card 正文超过 10 行时必须默认折叠，支持原地展开/收起，并继续保持虚拟列表稳定测量，不得因展开造成定位丢失或明显空白。
-- `版本` 子页必须对比当前部署版本、candidate 与既有 rollback target，展示状态徽标与动作区。较新版本统一渲染动作位：普通服务继续使用 `更新`，且只有与当前 service candidate 对应且不突破现有 explicit target tag 契约的版本可真正发起更新；命中 Dockrev 自身识别时，candidate 对应卡片必须改为 `升级 Dockrev` 并复用顶部 supervisor 自我升级入口，其它更高版本只保留禁用动作位并明确解释“当前只能通过 supervisor 进入现有 candidate 对应的自我升级流程”。若 supervisor 自我升级入口处于 offline / checking / busy，所有 Dockrev 版本卡都必须直接显示同一份 blocker 原因，不得把用户引导到一个当前不可用的入口。
+- `版本` 子页必须对比当前部署版本、candidate 与既有 rollback target，展示状态徽标与动作区。较新版本统一渲染动作位：普通服务继续使用 `更新`，且只有与当前 service candidate 对应且不突破现有 explicit target tag 契约的版本可真正发起更新；命中 Dockrev 自身识别时，candidate 对应卡片必须改为 `升级 Dockrev` 并复用顶部 supervisor 自我升级入口，其它更高版本只保留禁用动作位并明确解释“当前只能通过 supervisor 进入现有 candidate 对应的自我升级流程”。若 supervisor 自我升级入口本身处于 offline / checking / busy 等不可用状态，则所有 Dockrev 版本卡优先直接暴露该阻断原因，不再继续引导用户访问不可用入口。
 - `版本` 子页对所有已部署过的历史版本统一渲染 `回滚` 动作位；只有当前 rollback target 对应版本执行真实回滚，其余版本点击后进入解释性提示，不得创建任务。
 - 当当前 rollback target 的来源更新任务存在实际纳入的备份记录时，`版本` 子页的目标版本卡与服务级回滚确认都必须补充同一份“来源备份”摘要：显示 included targets 数量与源目标总体积；若 included targets 存在缺失体积，则总体积位置回退为 `--`；若没有实际纳入的备份记录，则不显示该状态块。
 - `版本` 子页在同一服务已有 update/rollback 任务提交中、执行中，或 rollback target 刷新中时，必须锁定全部版本动作，并提供查看当前任务状态的稳定入口。
@@ -223,7 +223,7 @@
 
 - Given 当前服务命中 Dockrev 自身识别且 supervisor offline
   When 用户查看 `版本` 子页与顶部动作区
-  Then candidate 卡、非 candidate 的更高版本卡与顶部 `升级 Dockrev` 都直接显示同一份 offline blocker；只有顶部动作区保留 `重试` 入口。
+  Then candidate 卡与顶部 `升级 Dockrev` 同时禁用并表达 offline 原因；其它更高的非 candidate 卡也优先表达同一 offline 阻断原因；只有顶部动作区保留 `重试` 入口。
 
 - Given 服务详情页处于 `更新记录`
   When 当前服务关联 update、rollback、Stack scope 与 all scope 任务
@@ -691,9 +691,9 @@
   submission_gate: `approved`
   story_id_or_title: `Pages/ServiceDetailPage/DockrevVersionsSelfUpgradeOffline`
   state: `dockrev supervisor offline disables topbar and candidate card`
-  evidence_note: offline Storybook 视图中，顶部 `升级 Dockrev` 与 candidate 卡同时禁用，顶部保留 `重试`，而 `0.63.0` 非 candidate 卡继续保持 candidate-only 的说明，不被 offline 文案覆盖。
+  evidence_note: offline Storybook 视图中，顶部 `升级 Dockrev` 与 candidate 卡同时禁用，顶部保留 `重试`；更高的 `0.63.0` 非 candidate 卡也直接表达 `supervisor offline` 阻断原因，而不是继续把用户引导到一个已经离线的入口。
   PR: include
-  PR caption: supervisor offline 时，Dockrev 顶部入口与 candidate 卡同时禁用，重试仅保留在顶部。
+  PR caption: supervisor offline 时，Dockrev 所有版本卡优先直接表达离线阻断原因，重试仅保留在顶部。
 
 ![Dockrev 服务详情版本子页自我升级离线态](./assets/service-detail-versions-dockrev-self-upgrade-offline.png)
 

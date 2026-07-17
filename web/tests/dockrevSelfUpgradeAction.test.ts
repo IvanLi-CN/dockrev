@@ -68,8 +68,7 @@ describe('describeDockrevVersionCardAction', () => {
       candidateDisplayVersion: '0.62.0',
       action: makeAction({
         disabled: true,
-        disabledReason:
-          '自我升级不可用（supervisor offline） · 2026-07-17T03:54:13.408Z · HTTP 503: supervisor offline',
+        disabledReason: '自我升级不可用（supervisor offline） · 2026-07-17T03:54:13.408Z · HTTP 503: supervisor offline',
         status: 'offline',
       }),
     })
