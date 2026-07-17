@@ -2,34 +2,12 @@ import type { Meta } from "@storybook/react";
 import { ServiceDetailPage } from "../../pages/ServiceDetailPage";
 import { currentRoutePathname } from "../../routes";
 import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
+import { expectCompactMonitorSummaryRow, expectMobileMonitorMetricsGrid, expectNoLegacyServiceDetailHero } from "./serviceDetailHeaderAssertions";
 import { expectHistoryColumnsAligned } from "./serviceDetailHistoryAssertions";
-import {
-  buildLongLogsSnapshot,
-  buildMultilineLogsSnapshot,
-  historyReleaseNotes,
-  paginatedHistoryJobs,
-  partialHistoryBackupRecords,
-} from "./serviceDetailPageStoryFixtures";
+import { buildLongLogsSnapshot, buildMultilineLogsSnapshot, historyReleaseNotes, paginatedHistoryJobs, partialHistoryBackupRecords } from "./serviceDetailPageStoryFixtures";
 import { assertRecentUpdateKeyboardNavigation, assertRecentUpdateReasonPopoverStaysOnRoute } from "./recentUpdateStoryAssertions";
-import {
-  drawerText,
-  findActionButton,
-  findHistoryRowByJobId,
-  findLogRowContaining,
-  findSectionCard,
-  findTab,
-  render,
-  tabLabels,
-  type ServiceDetailStory,
-} from "./serviceDetailStoryShared";
-export {
-  DockrevVersionsSelfUpgrade,
-  DockrevVersionsSelfUpgradeVisual,
-  DockrevVersionsSelfUpgradeOffline,
-  MobileVersionsSection,
-  VersionsSection,
-  VersionsSectionActionGuard,
-} from "./serviceDetailVersionsStories";
+import { drawerText, findActionButton, findHistoryRowByJobId, findLogRowContaining, findSectionCard, findTab, render, tabLabels, type ServiceDetailStory } from "./serviceDetailStoryShared";
+export { DockrevVersionsSelfUpgrade, DockrevVersionsSelfUpgradeVisual, DockrevVersionsSelfUpgradeOffline, MobileVersionsSection, VersionsSection, VersionsSectionActionGuard } from "./serviceDetailVersionsStories";
 import { expectNearlyEqual, expectStory, findButton, findButtons, findLink, normalizeText, waitForCondition } from "./storyAssertions";
 
 const meta: Meta<typeof ServiceDetailPage> = {
@@ -52,9 +30,6 @@ export const OverviewDefault: Story = {
     const monitorRow = canvasElement.querySelector<HTMLElement>('[data-service-detail-context="monitor-summary"]');
     const statusRail = canvasElement.querySelector<HTMLElement>('[data-service-detail-context="status-summary"]');
     const statusSummary = statusRail?.querySelector<HTMLElement>(".svcBannerDetail");
-    const monitorRowText = normalizeText(monitorRow?.textContent);
-    const monitorMetricChips = Array.from(monitorRow?.querySelectorAll<HTMLElement>("[data-monitor-metric]") ?? []);
-    const monitorMetricLabels = monitorMetricChips.map((chip) => chip.getAttribute("data-monitor-metric") ?? "");
     const statusSummaryText = normalizeText(statusSummary?.textContent);
     expectStory(currentRoutePathname() === "/services/stack-prod/svc-prod-api", "legacy overview route should stay canonical");
     await waitForCondition(() => findTab(canvasElement, "overview")?.getAttribute("data-state") === "active");
@@ -67,21 +42,7 @@ export const OverviewDefault: Story = {
     expectStory(Boolean(monitorRow), "shared monitor summary row missing");
     expectStory(Boolean(statusRail), "shared status rail missing");
     expectStory(Boolean(statusSummary), "shared status summary card detail missing");
-    expectStory(!canvasElement.ownerDocument.querySelector(".pageHead"), "service detail should not render a redundant page title block");
-    expectStory(
-      monitorRowText.includes("api") && JSON.stringify(monitorMetricLabels) === JSON.stringify(["CPU", "内存", "磁盘读", "磁盘写", "下载", "上传"]),
-      "monitor summary row should expose six icon-backed metric chips",
-    );
-    expectStory(
-      monitorMetricChips.every((chip) => chip.querySelector(".svcDetailMonitorMetricIcon svg")),
-      "monitor summary row should render icons instead of visible text labels",
-    );
-    expectStory(
-      !["CPU", "内存", "磁盘读", "磁盘写", "下载", "上传"].some((label) => monitorRowText.includes(label)),
-      "monitor summary row should hide the metric labels from visible text",
-    );
-    expectStory(!monitorRow?.querySelector('[data-monitor-state="sample-time"]'), "monitor summary row should remove the sample-time chip");
-    expectStory(!monitorRowText.includes("服务监控摘要"), "monitor summary row should remove the redundant subtitle");
+    expectCompactMonitorSummaryRow({ monitorRow, expectedServiceName: "api", expectStory });
     expectStory(
       statusSummaryText.includes("当前 5.2.1") &&
         statusSummaryText.includes("目标 5.2.3") &&
@@ -97,9 +58,7 @@ export const OverviewDefault: Story = {
     );
     expectStory(!statusRail?.querySelector(".svcDetailSummaryName"), "shared status rail should not repeat the service name");
     expectStory(!normalizeText(statusRail?.textContent).includes("prod"), "shared status rail should not repeat the stack pill");
-    expectStory(!canvasElement.querySelector(".detailHeroCardService"), "overview should no longer render the separate service hero card");
-    expectStory(!canvasElement.querySelector(".detailHeroStatusCard"), "overview should no longer render the nested hero status card");
-    expectStory(!canvasElement.querySelector(".detailHeroMetaGrid"), "overview should no longer render the header meta grid");
+    expectNoLegacyServiceDetailHero({ canvasElement, expectStory, context: "service detail" });
     expectStory(Boolean(findSectionCard(canvasElement, "service-identifiers")), "overview should carry the service identifiers card");
     expectStory(normalizeText(findSectionCard(canvasElement, "service-identifiers")?.textContent).includes("Image Ref"), "service identifiers card should include image ref");
     await assertRecentUpdateReasonPopoverStaysOnRoute({
@@ -158,10 +117,8 @@ export const MonitoringSection: Story = {
     expectStory(!findSectionCard(canvasElement, "auto-policy"), "monitoring should not render settings cards");
     expectStory(Boolean(monitorRow), "monitoring section should retain the shared monitor summary row");
     expectStory(!normalizeText(monitorRow?.textContent).includes("服务监控摘要"), "monitoring section should keep the compact monitor row without the subtitle");
-    expectStory(!canvasElement.ownerDocument.querySelector(".pageHead"), "service detail deep links should not restore a page title block");
-    expectStory(!canvasElement.querySelector(".detailHeroCardService"), "monitoring should not restore the separate service hero card");
+    expectNoLegacyServiceDetailHero({ canvasElement, expectStory, context: "service detail deep links" });
     expectStory(!findSectionCard(canvasElement, "service-identifiers"), "monitoring should not render the overview-only identifiers card");
-    expectStory(!canvasElement.querySelector(".detailHeroMetaGrid"), "monitoring should not restore the old header meta grid");
   },
 };
 
@@ -504,32 +461,8 @@ export const MobileHistorySection: Story = {
     expectStory(Boolean(statusRail), "mobile history should keep the shared status rail");
     expectStory(!normalizeText(monitorRow?.textContent).includes("服务监控摘要"), "mobile history should not restore the monitor subtitle");
     expectStory(!statusRail?.querySelector(".svcDetailSummaryName"), "mobile history should not restore the duplicated service name in the status rail");
-    expectStory(!canvasElement.ownerDocument.querySelector(".pageHead"), "mobile history should not restore a page title block");
-    expectStory(!canvasElement.querySelector(".detailHeroCardService"), "mobile history should not render the separate service hero card");
-    expectStory(!canvasElement.querySelector(".detailHeroStatusCard"), "mobile history should not render the old nested hero status card");
-    expectStory(!canvasElement.querySelector(".detailHeroMetaGrid"), "mobile history should not render the old header meta grid");
-    expectStory((monitorRow?.scrollWidth ?? 0) <= (monitorRow?.clientWidth ?? 0) + 1, "mobile monitor summary row should wrap instead of overflowing horizontally");
-    expectStory(Boolean(monitorMetrics), "mobile history should render the monitor metrics grid");
-    expectStory(getComputedStyle(monitorMetrics ?? canvasElement).display === "grid", "mobile monitor metrics should switch to a grid layout");
-    expectStory(monitorMetricChips.length === 6, "mobile history should keep six monitor metric chips");
-    {
-      const metricRects = monitorMetricChips.map((chip) => chip.getBoundingClientRect());
-      const distinctLefts = Array.from(new Set(metricRects.map((rect) => Math.round(rect.left))));
-      const distinctTops = Array.from(new Set(metricRects.map((rect) => Math.round(rect.top))));
-      const sameColumn = (a: number, b: number) => Math.abs(metricRects[a].left - metricRects[b].left) <= 2;
-      const stacked = (a: number, b: number) => metricRects[a].top < metricRects[b].top - 2;
-      expectStory(distinctLefts.length === 3 && distinctTops.length === 2, "mobile monitor metrics should form a two-row, three-column grid");
-      expectStory(
-        metricRects.length === 6 &&
-          sameColumn(0, 1) &&
-          sameColumn(2, 3) &&
-          sameColumn(4, 5) &&
-          stacked(0, 1) &&
-          stacked(2, 3) &&
-          stacked(4, 5),
-        "mobile monitor metrics should pair CPU/内存, 磁盘读/写, 下载/上传 by column",
-      );
-    }
+    expectNoLegacyServiceDetailHero({ canvasElement, expectStory, context: "mobile history" });
+    expectMobileMonitorMetricsGrid({ monitorRow, monitorMetrics, monitorMetricChips, expectStory });
     expectStory((statusRail?.scrollWidth ?? 0) <= (statusRail?.clientWidth ?? 0) + 1, "mobile status rail should wrap instead of overflowing horizontally");
     expectStory(
       getComputedStyle(historyShell ?? canvasElement).borderTopWidth === "0px" &&
