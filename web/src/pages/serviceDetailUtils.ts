@@ -47,6 +47,8 @@ export type DockrevVersionCardAction = {
   disabled: boolean
   disabledReason: string | null
   hint: string
+  buttonVariant: 'primary' | 'ghost'
+  presentation: 'candidate' | 'candidateOnly'
 }
 
 const DOCKREV_BUSY_DISABLED_REASON = '服务动作处理中，请稍后再试。'
@@ -61,12 +63,13 @@ export function describeDockrevVersionCardAction(input: {
   action: DockrevSelfUpgradeActionDescriptor | null
 }): DockrevVersionCardAction {
   const candidateHint = input.candidateDisplayVersion
-    ? `通过 supervisor 进入候选 ${input.candidateDisplayVersion} 对应的自我升级流程。`
-    : '通过 supervisor 进入当前候选对应的自我升级流程。'
+    ? `当前候选 ${input.candidateDisplayVersion} 已就绪；点击后进入 Dockrev 自我升级流程。`
+    : '当前候选已就绪；点击后进入 Dockrev 自我升级流程。'
   const nonCandidateHint = input.candidateDisplayVersion
-    ? `当前只能通过 supervisor 进入候选 ${input.candidateDisplayVersion} 对应的自我升级流程。`
-    : '当前只能通过 supervisor 进入当前候选对应的自我升级流程。'
-  const label = input.action?.label ?? '升级 Dockrev'
+    ? `这个版本不是当前候选；当前只能升级候选 ${input.candidateDisplayVersion}。`
+    : '这个版本不是当前候选；当前只能升级当前候选版本。'
+  const candidateLabel = input.action?.label ?? '升级 Dockrev'
+  const nonCandidateLabel = '仅候选可升级'
   const sharedDisabledReason =
     input.action?.disabled
       ? input.action.disabledReason ?? dockrevSelfUpgradeBusyReason()
@@ -75,35 +78,45 @@ export function describeDockrevVersionCardAction(input: {
   if (!input.candidateMatch) {
     if (sharedDisabledReason) {
       return {
-        label,
+        label: nonCandidateLabel,
         disabled: true,
         disabledReason: sharedDisabledReason,
-        hint: sharedDisabledReason,
+        hint: input.candidateDisplayVersion
+          ? `${sharedDisabledReason} 当前候选为 ${input.candidateDisplayVersion}，此版本不能直接升级。`
+          : `${sharedDisabledReason} 此版本不能直接升级。`,
+        buttonVariant: 'ghost',
+        presentation: 'candidateOnly',
       }
     }
     return {
-      label,
+      label: nonCandidateLabel,
       disabled: true,
       disabledReason: nonCandidateHint,
       hint: nonCandidateHint,
+      buttonVariant: 'ghost',
+      presentation: 'candidateOnly',
     }
   }
 
   if (!input.action) {
     const unavailableReason = '当前无法进入自我升级入口，请稍后重试。'
     return {
-      label,
+      label: candidateLabel,
       disabled: true,
       disabledReason: unavailableReason,
       hint: unavailableReason,
+      buttonVariant: 'primary',
+      presentation: 'candidate',
     }
   }
 
   return {
-    label,
+    label: candidateLabel,
     disabled: input.action.disabled,
     disabledReason: sharedDisabledReason,
     hint: sharedDisabledReason ?? candidateHint,
+    buttonVariant: 'primary',
+    presentation: 'candidate',
   }
 }
 

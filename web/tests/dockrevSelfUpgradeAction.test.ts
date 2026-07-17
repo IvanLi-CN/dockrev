@@ -32,7 +32,9 @@ describe('describeDockrevVersionCardAction', () => {
     expect(result.label).toBe('升级 Dockrev')
     expect(result.disabled).toBe(false)
     expect(result.disabledReason).toBeNull()
-    expect(result.hint).toContain('通过 supervisor 进入候选 0.62.0 对应的自我升级流程')
+    expect(result.hint).toContain('当前候选 0.62.0 已就绪')
+    expect(result.buttonVariant).toBe('primary')
+    expect(result.presentation).toBe('candidate')
   })
 
   test('falls back to the shared busy reason when the descriptor is disabled without a hint', () => {
@@ -57,9 +59,12 @@ describe('describeDockrevVersionCardAction', () => {
       action: makeAction(),
     })
 
+    expect(result.label).toBe('仅候选可升级')
     expect(result.disabled).toBe(true)
-    expect(result.disabledReason).toContain('当前只能通过 supervisor 进入候选 0.62.0 对应的自我升级流程')
-    expect(result.hint).toContain('当前只能通过 supervisor 进入候选 0.62.0 对应的自我升级流程')
+    expect(result.disabledReason).toContain('这个版本不是当前候选；当前只能升级候选 0.62.0。')
+    expect(result.hint).toContain('这个版本不是当前候选；当前只能升级候选 0.62.0。')
+    expect(result.buttonVariant).toBe('ghost')
+    expect(result.presentation).toBe('candidateOnly')
   })
 
   test('surfaces the real offline blocker on non-candidate releases before suggesting supervisor', () => {
@@ -73,9 +78,13 @@ describe('describeDockrevVersionCardAction', () => {
       }),
     })
 
+    expect(result.label).toBe('仅候选可升级')
     expect(result.disabled).toBe(true)
     expect(result.disabledReason).toContain('自我升级不可用（supervisor offline）')
     expect(result.hint).toContain('自我升级不可用（supervisor offline）')
-    expect(result.hint).not.toContain('当前只能通过 supervisor 进入候选 0.62.0 对应的自我升级流程')
+    expect(result.hint).toContain('当前候选为 0.62.0，此版本不能直接升级。')
+    expect(result.hint).not.toContain('通过 supervisor')
+    expect(result.buttonVariant).toBe('ghost')
+    expect(result.presentation).toBe('candidateOnly')
   })
 })

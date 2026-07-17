@@ -8013,6 +8013,23 @@ html[data-theme="light"] .modalOverlay {
   max-width: 10.5rem;
 }
 
+.serviceVersionActionBlock[data-service-version-action-presentation='candidateOnly'] .btn {
+  border-style: dashed;
+}
+
+.serviceVersionActionButtonCandidateOnly.btnGhost:disabled {
+  opacity: 1;
+  color: color-mix(in srgb, var(--muted2) 78%, var(--text) 22%);
+  border-color: color-mix(in srgb, var(--borderColor) 82%, var(--muted2) 18%);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--panel2) 26%, transparent) 0%,
+      color-mix(in srgb, var(--panel) 94%, transparent) 100%
+    );
+  box-shadow: none;
+}
+
 .serviceVersionsLoaderRow {
   width: 100%;
   min-height: 72px;

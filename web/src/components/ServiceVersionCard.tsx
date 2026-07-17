@@ -22,6 +22,8 @@ export type ServiceVersionCardModel = {
   updateActionLabel: string;
   updateActionHint: string;
   updateDisabledReason: string | null;
+  updateActionVariant: "primary" | "ghost";
+  updateActionPresentation: "default" | "candidateOnly";
   rollbackDisabledReason: string | null;
 };
 
@@ -217,10 +219,12 @@ export function ServiceVersionCard(props: {
                 <div
                   className="serviceVersionActionBlock"
                   data-service-version-action="update"
+                  data-service-version-action-presentation={card.updateActionPresentation}
                   data-release-tag={card.item.tagName}
                 >
                   <Button
-                    variant="primary"
+                    className={card.updateActionPresentation === "candidateOnly" ? "serviceVersionActionButtonCandidateOnly" : undefined}
+                    variant={card.updateActionVariant}
                     disabled={card.updateDisabled}
                     hint={card.updateDisabledReason ?? undefined}
                     onClick={props.onApplyUpdate}

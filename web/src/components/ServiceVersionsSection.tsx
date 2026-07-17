@@ -758,6 +758,8 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
       let updateDisabled = false
       let updateActionLabel = '更新'
       let updateActionHint = '发起当前 candidate 对应的服务更新任务。'
+      let updateActionVariant: 'primary' | 'ghost' = 'primary'
+      let updateActionPresentation: 'default' | 'candidateOnly' = 'default'
       if (showUpdate) {
         if (dockrevService) {
           const dockrevAction = describeDockrevVersionCardAction({
@@ -769,6 +771,8 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
           updateDisabled = dockrevAction.disabled
           updateDisabledReason = dockrevAction.disabledReason
           updateActionHint = dockrevAction.hint
+          updateActionVariant = dockrevAction.buttonVariant
+          updateActionPresentation = dockrevAction.presentation === 'candidateOnly' ? 'candidateOnly' : 'default'
         } else {
           updateDisabledReason =
             serviceActionLockReason ??
@@ -803,6 +807,8 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
         updateActionHint,
         updateActionLabel,
         updateDisabledReason,
+        updateActionVariant,
+        updateActionPresentation,
         rollbackDisabledReason,
       }
     })

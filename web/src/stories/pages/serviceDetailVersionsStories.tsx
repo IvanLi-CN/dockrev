@@ -306,8 +306,9 @@ export const DockrevVersionsSelfUpgrade: ServiceDetailStory = {
     expectStory(findTab(canvasElement, "versions")?.getAttribute("data-state") === "active", "dockrev versions tab should stay active");
     expectStory(Boolean(candidateAction && !candidateAction.disabled), "dockrev candidate card should expose an enabled self-upgrade action");
     expectStory(Boolean(newerAction?.disabled), "newer non-candidate dockrev release should stay disabled");
-    expectStory(normalizeText(findVersionCard(canvasElement, "0.63.0")?.textContent).includes("当前只能通过 supervisor 进入候选 0.62.0 对应的自我升级流程"), "non-candidate dockrev release should explain the candidate-only supervisor flow");
-    expectStory(normalizeText(findVersionCard(canvasElement, "0.62.0")?.textContent).includes("通过 supervisor 进入候选 0.62.0 对应的自我升级流程"), "candidate dockrev release should explain the supervisor handoff");
+    expectStory(normalizeText(newerAction?.textContent).includes("仅候选可升级"), "non-candidate dockrev release should stop masquerading as a clickable self-upgrade button");
+    expectStory(normalizeText(findVersionCard(canvasElement, "0.63.0")?.textContent).includes("这个版本不是当前候选；当前只能升级候选 0.62.0。"), "non-candidate dockrev release should explain the candidate-only upgrade truth directly");
+    expectStory(normalizeText(findVersionCard(canvasElement, "0.62.0")?.textContent).includes("当前候选 0.62.0 已就绪；点击后进入 Dockrev 自我升级流程。"), "candidate dockrev release should explain the active self-upgrade handoff");
     expectStory(Boolean(topAction && !topAction.disabled), "top-level dockrev self-upgrade action should stay enabled alongside the candidate card");
     expectStory(!globalThis.__DOCKREV_MOCK_DEBUG__?.lastUpdateRequest, "dockrev self-upgrade story must start without an ordinary update request");
 
@@ -339,7 +340,9 @@ export const DockrevVersionsSelfUpgradeVisual: ServiceDetailStory = {
     expectStory(Boolean(candidateAction && !candidateAction.disabled), "dockrev candidate card should stay enabled before navigation");
     expectStory(Boolean(topAction && !topAction.disabled), "top-level dockrev self-upgrade action should stay enabled before navigation");
     expectStory(Boolean(newerAction?.disabled), "newer non-candidate dockrev release should remain disabled in the visual state");
-    expectStory(normalizeText(findVersionCard(canvasElement, "0.62.0")?.textContent).includes("通过 supervisor 进入候选 0.62.0 对应的自我升级流程"), "candidate dockrev release should explain the supervisor handoff in the visual state");
+    expectStory(normalizeText(newerAction?.textContent).includes("仅候选可升级"), "newer non-candidate dockrev release should use the candidate-only disabled label in the visual state");
+    expectStory(newerAction?.className.includes("btnGhost") ?? false, "newer non-candidate dockrev release should render with the muted disabled ghost affordance");
+    expectStory(normalizeText(findVersionCard(canvasElement, "0.62.0")?.textContent).includes("当前候选 0.62.0 已就绪；点击后进入 Dockrev 自我升级流程。"), "candidate dockrev release should explain the active self-upgrade handoff in the visual state");
     expectStory(
       newerAsideWidth > 0 && newerAsideWidth < newerBodyWidth,
       "dockrev action rail should stay narrower than the main reading column",
@@ -375,7 +378,9 @@ export const DockrevVersionsSelfUpgradeOffline: ServiceDetailStory = {
     expectStory(Boolean(findButton(doc, "重试")), "offline dockrev self-upgrade should keep the retry entry only in the top actions");
     expectStory(normalizeText(findVersionCard(canvasElement, "0.62.0")?.textContent).includes("自我升级不可用（supervisor offline）"), "candidate card should surface the offline reason");
     expectStory(Boolean(newerAction?.disabled), "newer non-candidate dockrev release should remain disabled while offline");
+    expectStory(normalizeText(newerAction?.textContent).includes("仅候选可升级"), "offline non-candidate dockrev release should still keep the candidate-only label");
     expectStory(normalizeText(findVersionCard(canvasElement, "0.63.0")?.textContent).includes("自我升级不可用（supervisor offline）"), "non-candidate dockrev release should surface the real offline blocker");
+    expectStory(normalizeText(findVersionCard(canvasElement, "0.63.0")?.textContent).includes("当前候选为 0.62.0，此版本不能直接升级。"), "offline non-candidate dockrev release should still explain why this specific card cannot upgrade");
   },
 };
 
