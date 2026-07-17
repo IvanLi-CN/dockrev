@@ -5963,7 +5963,12 @@ html[data-theme="light"] .modalOverlay {
   gap: 14px;
 }
 
-.svcTitleRow,
+.svcTitleRow {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .stackDetailHero {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(236px, 288px);
@@ -6134,6 +6139,123 @@ html[data-theme="light"] .modalOverlay {
   margin-top: 0;
 }
 
+.svcDetailMonitorRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 18px;
+  min-width: 0;
+}
+
+.svcDetailMonitorIdentity {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex: 1 1 auto;
+}
+
+.svcDetailMonitorName {
+  min-width: 0;
+  color: var(--text);
+  font-size: 28px;
+  font-weight: 760;
+  line-height: 1.04;
+  letter-spacing: -0.03em;
+  white-space: nowrap;
+}
+
+.svcDetailMonitorMetrics {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.svcDetailMonitorMetric {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 76%, transparent);
+  background: color-mix(in srgb, var(--panel2) 22%, transparent);
+  line-height: 1;
+}
+
+.svcDetailMonitorMetricIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  color: var(--muted2);
+}
+
+.svcDetailMonitorGlyph {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2;
+}
+
+.svcDetailMonitorMetricValue {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.svcDetailSummaryRail {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  flex-wrap: nowrap;
+  min-width: 0;
+  padding: 10px 16px;
+}
+
+.svcDetailSummaryLead,
+.svcDetailSummaryStatus {
+  display: flex;
+  align-items: center;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.svcDetailSummaryLead {
+  flex: 1 1 auto;
+}
+
+.svcDetailSummaryStatus {
+  flex: 0 0 auto;
+}
+
+.svcDetailSummaryImage {
+  min-width: 0;
+  max-width: min(32vw, 360px);
+  white-space: nowrap;
+}
+
+.svcDetailStatusSummary {
+  margin-top: 0;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.svcDetailStatusSummary .svcBannerSummary {
+  width: auto;
+  flex-wrap: nowrap;
+}
+
+.svcDetailStatusSummary .svcBannerSummary > span {
+  white-space: nowrap;
+}
+
 .svcDetailContextSummary {
   display: flex;
   flex-direction: column;
@@ -6182,7 +6304,6 @@ html[data-theme="light"] .modalOverlay {
 }
 
 @media (max-width: 1280px) {
-  .svcTitleRow,
   .stackDetailHero {
     grid-template-columns: 1fr;
   }
@@ -6191,6 +6312,39 @@ html[data-theme="light"] .modalOverlay {
 @media (max-width: 760px) {
   .detailHeroShell {
     gap: 12px;
+  }
+
+  .svcDetailMonitorRow {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .svcDetailMonitorIdentity {
+    width: 100%;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+  }
+
+  .svcDetailMonitorName {
+    font-size: 22px;
+  }
+
+  .svcDetailMonitorMetrics {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: repeat(2, auto);
+    grid-auto-flow: column;
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .svcDetailMonitorMetric {
+    width: 100%;
+    min-width: 0;
+    padding-inline: 8px;
   }
 
   .svcTitleRow,
@@ -6230,6 +6384,32 @@ html[data-theme="light"] .modalOverlay {
 
   .detailHeroStatusCard {
     gap: 8px;
+  }
+
+  .svcDetailSummaryRail {
+    padding: 10px 12px;
+    gap: 8px 12px;
+    flex-wrap: wrap;
+  }
+
+  .svcDetailSummaryLead,
+  .svcDetailSummaryStatus {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .svcDetailSummaryImage,
+  .svcDetailStatusSummary {
+    max-width: 100%;
+  }
+
+  .svcDetailStatusSummary {
+    flex-basis: 100%;
+  }
+
+  .svcDetailStatusSummary .svcBannerSummary {
+    width: 100%;
+    flex-wrap: wrap;
   }
 
   .detailHeroMetaGrid,
@@ -6302,6 +6482,55 @@ html[data-theme="light"] .modalOverlay {
   flex-direction: column;
   gap: 16px;
   margin-top: 16px;
+}
+
+.serviceDetailIdentifiersCard {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.serviceDetailIdentifiersHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.serviceDetailIdentifiersGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 12px 16px;
+}
+
+.serviceDetailIdentifierItem {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--borderColor) 58%, transparent);
+}
+
+.serviceDetailIdentifierLabel {
+  color: var(--muted2);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.serviceDetailIdentifierValue {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.serviceDetailIdentifierValue .mono {
+  display: block;
+  max-width: 100%;
+  line-height: inherit;
+  overflow-wrap: anywhere;
 }
 
 .serviceDetailReadonlyBlock {

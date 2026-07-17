@@ -67,8 +67,11 @@
 - `href()` 对 `section=undefined | overview` 必须输出旧 canonical URL `/services/:stackId/:serviceId`，不得生成新的 `/overview` canonical path。
 - `parseRoute()` 必须接受旧路径，并把它解析为服务详情 `overview` 语义；对于 `/versions`、`/history`、`/monitoring`、`/backup`、`/logs` 与 `/settings` 需返回对应 section。
 - 服务详情页顶部必须提供 route-backed tabs，标签固定为 `概览 / 版本 / 更新记录 / 监控 / 日志 / 备份 / 设置`。
+- 服务详情内容区不得再渲染额外的 page-level 标题/说明块；tabs 上方的共享页头固定为两行：第一行是 `服务名 + 紧凑监控指标`，第二行是共享状态信息带。
+- 第一行监控摘要必须复用现有服务监控样本，不新增接口口径；桌面端展示服务名与紧凑的 `CPU / 内存 / 磁盘读 / 磁盘写 / 下载 / 上传` 六项指标，其中后四项表达磁盘 I/O 与网络速率两对数据。各指标的可见前缀必须使用图标而不是文字 label；语义文案保留在无障碍标签中。监控关闭、离线缓存或暂无样本时用同一行回退表达，且不得再额外出现“服务监控摘要”这类解释性副标题，也不得保留独立的时间 / 状态 chip。窄屏或宽度不足以单行承载六项指标时，指标区必须切换为 `2 x 3` 网格，并按 `CPU / 内存`、`磁盘读 / 磁盘写`、`下载 / 上传` 两两成列配对。
 - `预览更新 / 执行更新 / 回滚 / Stack 详情` 必须在各子页保持一致可达；`归档/恢复` 与 `阻止此服务更新` 必须从全局顶部动作下沉到 `设置` 页。
-- 七个服务详情子页必须共用同一张紧凑状态摘要卡：只保留状态标题、当前版本、目标版本与 `newVersionDiscoveryCount` 映射出的“跨 N 个版本”；无候选时目标显示 `-`，计数缺失时显示“跨度未知”，且不得再出现 digest、raw tag、架构、规则或原因等技术明细。
+- 七个服务详情子页必须在 tabs 上方共用同一条紧凑状态信息带：只保留镜像/仓库简述、状态标题、当前版本、目标版本与 `newVersionDiscoveryCount` 映射出的“跨 N 个版本”；无候选时目标显示 `-`，计数缺失时显示“跨度未知”，且不得再重复服务名、Stack pill、digest、raw tag、架构、规则或原因等技术明细。桌面端优先保持单行，窄屏允许自然换行，但仍必须维持为同一条信息带，不得退回独立右侧状态卡或多张 header meta 卡。
+- `Image Ref / Service ID / Stack ID` 不得继续出现在共享页头；它们只允许作为 `概览` 子页中的一张紧凑“服务标识”卡出现。
 - `概览` 不得再出现资源监控卡、自动更新结果卡、Compose 信息卡或服务保护卡。
 - `版本` 子页必须复用 `GET /api/services/{service_id}/release-notes` 的统一数据源与 `original | translated | smart` 阅读视图语义，改为页内卡片阅读而不是强依赖右侧抽屉。
 - `版本` 子页页头必须把仓库、来源、当前版本与候选版本 chips 收敛为仓库级 Releases 图标入口：GitHub 图标固定打开 `https://github.com/<owner>/<repo>/releases`，OctoRill 图标仅在 release-notes 响应提供可信 `externalLinks.octoRillReleasesUrl` 时显示，并在新窗口打开对应地址。
@@ -210,8 +213,16 @@
   Then 版本卡片会显示与当前服务关系相关的状态徽标、外链与动作区；update/rollback 的真实可执行性继续遵守既有显式 target tag 与 rollback target 合同。
 
 - Given 任一服务详情子页
+  When 页面展示共享页头
+  Then tabs 上方必须先显示一条 `服务名 + 紧凑监控指标` 行，且桌面端包含 `CPU / 内存 / 磁盘读 / 磁盘写 / 下载 / 上传` 六个紧凑指标；窄屏时这些指标改为 `2 x 3` 网格，并按 `CPU / 内存`、`磁盘读 / 磁盘写`、`下载 / 上传` 成列配对；监控关闭、离线缓存或暂无样本时也必须保持为同一行而不是退回独立卡片。
+
+- Given 任一服务详情子页
   When 页面展示共享状态摘要
-  Then 只显示状态标题、当前版本、目标版本与版本跨度，不再展示 digest、raw tag、架构、规则或原因等技术明细。
+  Then tabs 上方只显示一条共享状态信息带，且其内容只包含状态标题、当前版本、目标版本与版本跨度；不得再展示 digest、raw tag、架构、规则、原因、独立状态卡或 header meta cards。
+
+- Given 服务详情页处于 `概览`
+  When 页面渲染完成
+  Then 最近更新记录之后必须出现一张 `服务标识` 卡，完整承接 `Image Ref / Service ID / Stack ID`，且这些字段不再出现在其他子页的共享页头。
 
 - Given 服务详情页处于 `版本`
   When 视口宽度大于 `1100px`
@@ -390,12 +401,12 @@
   sensitive_exclusion: `N/A`
   submission_gate: `approved`
   story_id_or_title: `Pages/ServiceDetailPage/OverviewDefault`
-  state: `legacy route -> overview`
-  evidence_note: 验证旧 `/services/:stackId/:serviceId` 路径仍稳定落到概览子页，顶部高频动作保留在共享页头，主体仅展示运行摘要与最近更新记录。
+  state: `legacy route -> overview with compact monitor row + deduplicated status rail`
+  evidence_note: 验证旧 `/services/:stackId/:serviceId` 路径仍稳定落到概览子页；tabs 上方的共享页头现为两行：第一行展示服务名与 `CPU / 内存 / 磁盘读 / 磁盘写 / 下载 / 上传` 六项监控指标，并已将文字 label 收敛为图标前缀，不再出现“服务监控摘要”副标题或独立时间 chip；第二行只保留镜像简述与 `状态 / 当前版本 / 目标版本 / 版本跨度`，不再重复服务名或 Stack pill。`Image Ref / Service ID / Stack ID` 继续只在概览底部的 `服务标识` 卡出现。
   PR: include
-  PR caption: 服务详情旧链接默认落到概览子页，页头 tabs 与共享高频动作保持稳定可达。
+  PR caption: 服务详情页头收敛为服务名监控行 + 去重后的状态信息带，技术标识字段继续由概览页单独承接。
 
-![服务详情概览子页（桌面）](./assets/service-detail-overview-desktop.png)
+![服务详情概览子页（桌面，单行信息带）](./assets/service-detail-overview-desktop-rail.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`
@@ -553,12 +564,12 @@
   sensitive_exclusion: `N/A`
   submission_gate: `approved`
   story_id_or_title: `Pages/ServiceDetailPage/MobileHistorySection`
-  state: `mobile history with backup summary column`
-  evidence_note: 使用真实 `390x844` 移动端 viewport，并以 Storybook fullscreen canvas 消除外层展示 gutter；截图保持顶部命令条、压缩后的服务摘要、扁平 tabs 轨道与首条 `更新记录` 面板同时可见。服务摘要中的状态信息已并入同一张摘要面板，不再额外嵌套状态卡；history 区也取消外层卡壳，仅保留记录面板本身。验证新增 `备份` 列后仍不产生横向滚动。
+  state: `mobile history with wrapped monitor row + status rail`
+  evidence_note: 使用真实 `390x844` 移动端 viewport，并以 Storybook fullscreen canvas 消除外层展示 gutter；截图保持顶部命令条、仅含服务名与监控指标的首行、去重后的共享状态信息带、扁平 tabs 轨道与首条 `更新记录` 面板同时可见。移动端监控指标区收敛为 `2 x 3` 网格，按 `CPU / 内存`、`磁盘读 / 磁盘写`、`下载 / 上传` 成列配对。两条共享页头都允许自然换行，但不得回退独立状态卡、独立时间 chip，或产生横向滚动。
   PR: include
-  PR caption: 移动端更新记录在加入备份列后仍保持两行栅格，无横向滚动。
+  PR caption: 移动端服务详情保留服务名监控行与去重状态带，窄屏下仍无横向滚动。
 
-![服务详情更新记录子页（移动端）](./assets/service-detail-update-history-mobile.png)
+![服务详情更新记录子页（移动端，状态信息带）](./assets/service-detail-history-mobile-rail.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`
