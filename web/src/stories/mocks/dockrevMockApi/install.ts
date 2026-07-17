@@ -1,7 +1,5 @@
 import type {
   CleanupApplyRequest,
-  CleanupScanRequest,
-  CleanupScanResponse,
   HomepageNavResponse,
   JobDetail,
   JobListItem,
@@ -19,6 +17,14 @@ import { buildFixture } from './fixturesMisc'
 import { buildMockGitHubReleaseLocateResponse, buildMockGitHubReleasesResponse } from './githubReleases'
 import { handleGhcrRoutes } from './handlers/ghcr'
 import { handleServiceStateRoutes } from './handlers/serviceState'
+import {
+  cloneFixture,
+  parseCleanupScanRequest,
+  partialCleanupResponse,
+  resolveMockEventSourcePollInterval,
+  seedIgnoreSequence,
+  seedJobSequence,
+} from './installHelpers'
 import { applyRollbackTargetRaceAfterUpdate, maybeServeRollbackTargetRaceResponse, type RollbackTargetRaceState } from './rollbackRace'
 import type { DockrevApiScenario, DockrevMockApiOptions } from './shared'
 import {
@@ -36,30 +42,6 @@ import {
   summarizeVersionInferenceRows,
   type VersionInferenceOverviewMock,
 } from './shared'
-
-function cloneFixture(fixture: Fixture): Fixture {
-  if (typeof structuredClone === 'function') {
-    return structuredClone(fixture)
-  }
-  return JSON.parse(JSON.stringify(fixture)) as Fixture
-}
-
-function nextNumericSuffix(value: string): number {
-  const match = value.match(/(\d+)(?!.*\d)/)
-  if (!match) return 0
-  const parsed = Number.parseInt(match[1] ?? '0', 10)
-  return Number.isFinite(parsed) ? parsed : 0
-}
-
-function seedIgnoreSequence(fixture: Fixture | null): number {
-  if (!fixture) return 0
-  return fixture.ignores.reduce((max, rule) => Math.max(max, nextNumericSuffix(rule.id)), 0)
-}
-
-function seedJobSequence(fixture: Fixture | null): number {
-  if (!fixture) return 0
-  return fixture.jobs.reduce((max, job) => Math.max(max, nextNumericSuffix(job.id)), 0)
-}
 
 export function installDockrevMockApi(
   scenario: DockrevApiScenario,
@@ -145,46 +127,6 @@ export function installDockrevMockApi(
     scanRuns: new Map(),
   }
 
-  const parseCleanupScanRequest = (body: unknown): CleanupScanRequest => {
-    const parsed = parseJsonBody(body) as CleanupScanRequest | null
-    return {
-      reason: parsed?.reason === 'confirm' ? 'confirm' : 'page',
-      refresh: parsed?.refresh !== false,
-      preset:
-        parsed?.preset === 'conservative' ||
-        parsed?.preset === 'balanced' ||
-        parsed?.preset === 'project_deep_clean' ||
-        parsed?.preset === 'aggressive'
-          ? parsed.preset
-          : 'balanced',
-      scope: parsed?.scope === 'stack' || parsed?.scope === 'service' ? parsed.scope : 'all',
-      stackId: typeof parsed?.stackId === 'string' ? parsed.stackId : undefined,
-      serviceId: typeof parsed?.serviceId === 'string' ? parsed.serviceId : undefined,
-    }
-  }
-
-  const partialCleanupResponse = (response: CleanupScanResponse): CleanupScanResponse => {
-    const firstStack = response.stackGroups[0]
-    const partialStacks = firstStack
-      ? [
-          {
-            ...firstStack,
-            services: firstStack.services.slice(0, 1),
-            stackOrphans: firstStack.stackOrphans.slice(0, 1),
-          },
-        ]
-      : []
-    return {
-      ...response,
-      status: 'pending',
-      refreshing: true,
-      retryAfterMs: 450,
-      serverDiskUsage: null,
-      stackGroups: partialStacks,
-      unownedGroup: null,
-      confirmationFingerprint: null,
-    }
-  }
   const rollbackTargetRaceByServiceId = new Map<string, RollbackTargetRaceState>()
 
   const advanceQueueProgressDemo = (): number | null => {
@@ -222,8 +164,7 @@ export function installDockrevMockApi(
   if (typeof window !== 'undefined') {
     globalThis.EventSource = MockEventSource as unknown as typeof EventSource
   }
-  MockEventSource.pollIntervalMs =
-    scenario === 'queue-progress-smoothing' || scenario === 'queue-long-logs' ? 700 : 4_000
+  MockEventSource.pollIntervalMs = resolveMockEventSourcePollInterval(scenario)
 
   function findService(serviceId: string) {
     if (!state) return null
