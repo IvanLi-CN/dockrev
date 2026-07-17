@@ -5,7 +5,7 @@
 - Backend snapshot workers for cleanup inventory and deploy-check report refresh.
 - Cleanup API contract migration from synchronous scan to snapshot-backed `ready/pending` reads.
 - Deploy-check cached read + async refresh contract.
-- GitHub release drawer fallback to paginated client-side locate.
+- GitHub release drawer fallback to service-level locate-first anchor windows.
 - Digest-tags owner-facing path removal of live manifest scan.
 - Edge-proxy-safe SSE heartbeat unification.
 
@@ -17,7 +17,7 @@
 - Added `POST /api/deploy-check/report/refresh` and converted `GET /api/deploy-check/report` to cached-read envelopes.
 - Parallelized deploy-check local probes and reduced the default local probe timeout to `8s`.
 - Removed the Web UI dependency on live `/api/services/{id}/digest-tags`; owner-facing reads now use snapshot semantics.
-- Removed Web dependency on `/github-releases/locate`; the drawer progressively searches paginated release results on the client.
+- Removed Web dependency on `/github-releases/locate`; the drawer now uses unified `release-notes/locate` anchor windows and `direction=older|newer` cursors instead of client-side progressive scans.
 - Replaced `15s` SSE keepalive intervals with `5s` heartbeat + immediate keepalive comment on connect.
 - Added Storybook coverage for cleanup pending state and deploy-check cached-refreshing / initial-pending states.
 

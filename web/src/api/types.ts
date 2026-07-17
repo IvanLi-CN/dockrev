@@ -386,31 +386,11 @@ export type ServiceGitHubReleasesResponse = {
   message?: string | null
 }
 
-export type ServiceGitHubReleaseLocateStatus =
-  | 'found'
-  | 'outsideWindow'
-  | 'notFound'
-  | 'unsupportedRepo'
-  | 'permissionDenied'
-  | 'rateLimited'
-  | 'upstreamError'
-
-export type ServiceGitHubReleaseLocateResponse = {
-  status: ServiceGitHubReleaseLocateStatus
-  authMode: GitHubReleaseAuthMode
-  repo?: ServiceGitHubRepoRef | null
-  version: string
-  searchedCount: number
-  matchedTag?: string | null
-  page?: number | null
-  indexWithinPage?: number | null
-  absoluteIndex?: number | null
-  message?: string | null
-}
-
 export type ServiceReleaseNotesSource = 'octoRill' | 'gitHub'
 
 export type ServiceReleaseNotesStatus = 'ready' | 'unsupportedRepo' | 'upstreamError'
+
+export type ServiceReleaseNotesDirection = 'older' | 'newer'
 
 export type ServiceReleaseNotesFallbackReason =
   | 'disabled'
@@ -445,6 +425,17 @@ export type ServiceReleaseNotesExternalLinks = {
   octoRillReleasesUrl?: string | null
 }
 
+export type ServiceReleaseNotesAnchorStatus = 'found' | 'outsideWindow' | 'notFound' | 'unavailable'
+
+export type ServiceReleaseNotesAnchor = {
+  status: ServiceReleaseNotesAnchorStatus
+  version: string
+  matchedTag?: string | null
+  indexWithinWindow?: number | null
+  absoluteIndex?: number | null
+  message?: string | null
+}
+
 export type ServiceReleaseNotesResponse = {
   status: ServiceReleaseNotesStatus
   source: ServiceReleaseNotesSource
@@ -452,12 +443,14 @@ export type ServiceReleaseNotesResponse = {
   cursor?: string | null
   limit: number
   nextCursor?: string | null
+  previousCursor?: string | null
   hasMore: boolean
   defaultView: ReleaseNotesView
   externalLinks?: ServiceReleaseNotesExternalLinks | null
   items: ServiceReleaseNoteItem[]
   message?: string | null
   fallback?: ServiceReleaseNotesFallback | null
+  anchor?: ServiceReleaseNotesAnchor | null
 }
 
 export type VersionInferenceOverviewStatus =

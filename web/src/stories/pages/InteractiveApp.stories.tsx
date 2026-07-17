@@ -240,10 +240,8 @@ export const DashboardReleaseDrawerHydrated: Story = {
         locateByVersion: {
           '1.39.5': {
             status: 'found',
-            searchedCount: 20,
             matchedTag: '1.39.5',
-            page: 1,
-            indexWithinPage: 3,
+            indexWithinWindow: 3,
             absoluteIndex: 3,
           },
         },

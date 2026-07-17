@@ -230,10 +230,8 @@ export const UpdateHistoryReleaseNotes: Story = {
         locateByVersion: {
           "5.2.4": {
             status: "found",
-            searchedCount: 28,
             matchedTag: "5.2.4",
-            page: 2,
-            indexWithinPage: 2,
+            indexWithinWindow: 2,
             absoluteIndex: 22,
           },
         },
