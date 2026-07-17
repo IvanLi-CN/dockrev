@@ -24,7 +24,7 @@
 - 不调用 OctoRill 翻译接口生成缺失的 `translated` 或 `smart` 内容。
 - 不扩展通知、日报或新增并行 release notes viewer；服务更新记录可复用既有抽屉定位其可靠目标版本。
 - 不移除或重命名现有 `/api/services/{service_id}/github-releases`。
-- 不引入 Markdown 富文本渲染；发布说明仍按安全纯文本保留换行展示。
+- 不支持任意 HTML 注入、脚本执行或仓库自定义富文本组件；发布说明只允许渲染受限、安全的 Markdown 语义。
 - 不在浏览器保存或直连发送 OctoRill API Key。
 
 ## 范围（Scope）
@@ -60,6 +60,7 @@
 - 统一 release notes API 响应必须返回仓库级 `externalLinks.githubReleasesUrl`，并在 `apiBaseUrl` 与 repo full name 都能安全归一化成 `owner/repo` 时返回可选 `externalLinks.octoRillReleasesUrl`，供版本页与抽屉复用同一组 Releases 外链。
 - OctoRill locate 必须优先复用 public releases 的 highlight/window 能力生成目标版本附近窗口；若当前实例或仓库无法提供该窗口，则回退 GitHub items，并通过 `fallback` 与 `anchor.message` 明确说明已失去 `smart / translated` 阅读态。
 - 发布抽屉与服务详情 `版本` 子页的默认视图都来自 Settings 的 `releaseNotes.octoRill.defaultView`，单次切换只影响当前阅读会话。
+- 发布抽屉与服务详情 `版本` 子页在渲染 GitHub Releases / OctoRill 的 Markdown 正文时，必须保留标题、列表、强调、链接与显式换行语义；不得执行原始 HTML，外链必须继续走安全 URL 归一化。
 
 ### SHOULD
 
@@ -112,6 +113,7 @@
 - Given OctoRill 请求返回 401，When 打开发布抽屉，Then 顶部显示 OctoRill 鉴权失败，同时列表回退为 GitHub Releases。
 - Given OctoRill public-window 无法覆盖目标版本但 GitHub locate 仍可用，When 打开发布抽屉，Then API 返回 GitHub items、保留 fallback 提示，并通过 `anchor.status=outsideWindow | notFound | unavailable` 告知定位结果。
 - Given `translated` 或 `smart` 缺失，When 用户选择对应视图，Then UI 明确显示该视图不可用并展示原文。
+- Given GitHub Releases fallback body 包含 `##` 标题、列表项与 compare 链接，When 在发布抽屉或服务详情 `版本` 子页查看原文，Then UI 必须渲染结构化标题、列表与可点击链接，而不是直接显示原始 Markdown 标记。
 - Given `GET /api/settings`，Then 响应不包含 OctoRill API Key 明文，只包含与真实 key 等长的圆点脱敏状态。
 - Given `GET /api/services/{service_id}/release-notes` 且仓库信息可信，When 服务详情 `版本` 子页或发布抽屉读取同一响应，Then 响应会包含 `externalLinks.githubReleasesUrl`，并在可安全构造时附带 `externalLinks.octoRillReleasesUrl`。
 - Given 服务的 repo full name 不是可信 `owner/repo` 形式，When 读取统一 release notes API，Then `externalLinks.octoRillReleasesUrl` 必须省略，而不是猜测构造错误链接。

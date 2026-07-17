@@ -82,7 +82,7 @@ export const historyReleaseNotes = Array.from({ length: 28 }, (_, index) => {
 
 function buildVersionReleaseBody(tagName: string): string {
   return [
-    `${tagName} release notes`,
+    "## What's Changed",
     "",
     "- 提升服务详情版本阅读流，避免维护窗口里频繁切换抽屉。",
     "- 统一 update / rollback 语义，确保动作守卫和任务状态解释一致。",
@@ -96,6 +96,8 @@ function buildVersionReleaseBody(tagName: string): string {
     "- 每张卡片都保留 GitHub release 外链，便于继续核对上游说明。",
     "- 缺少翻译或润色时会直接回退原文，不隐藏可读内容。",
     "- 这个 body 故意超过十行，用于验证折叠与展开行为。",
+    "",
+    `**Full Changelog**: https://github.com/acme/api/compare/${tagName}-prev...${tagName}`,
   ].join("\n");
 }
 
@@ -164,7 +166,7 @@ export const versionReleaseNotes = [
 
 function buildDockrevVersionReleaseBody(tagName: string): string {
   return [
-    `${tagName} Dockrev release`,
+    "## What's Changed",
     '',
     '- 统一自我升级入口，避免版本页误走普通服务更新链路。',
     '- 继续保留 supervisor 独立控制面的升级与回滚可见性。',
@@ -172,6 +174,8 @@ function buildDockrevVersionReleaseBody(tagName: string): string {
     '- 非 candidate 的较新版本继续保留解释性动作位，避免误导为跨 tag 升级。',
     '- 发布说明卡片保持多栏桌面布局与单列移动布局。',
     '- 这组数据用于 Dockrev 版本页自我升级回归。 ',
+    '',
+    `**Full Changelog**: https://github.com/IvanLi-CN/dockrev/compare/${tagName}-prev...${tagName}`,
   ].join('\n')
 }
 
