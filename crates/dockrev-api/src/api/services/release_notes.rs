@@ -311,13 +311,18 @@ fn release_notes_status_from_github(
     }
 }
 
-fn github_release_notes_response_from_list(
-    response: ServiceGitHubReleasesResponse,
-    limit: u32,
+#[derive(Clone)]
+struct GitHubReleaseNotesResponseOptions {
     default_view: ReleaseNotesView,
     external_links: Option<ServiceReleaseNotesExternalLinks>,
     fallback: Option<ServiceReleaseNotesFallback>,
     anchor: Option<ServiceReleaseNotesAnchor>,
+}
+
+fn github_release_notes_response_from_list(
+    response: ServiceGitHubReleasesResponse,
+    limit: u32,
+    options: GitHubReleaseNotesResponseOptions,
 ) -> ServiceReleaseNotesResponse {
     let page = response.page.max(1);
     let next_cursor = response.has_more.then(|| github_cursor_for_page(page + 1));
@@ -330,25 +335,22 @@ fn github_release_notes_response_from_list(
         next_cursor,
         previous_cursor: github_previous_cursor(page),
         has_more: response.has_more,
-        default_view,
-        external_links,
+        default_view: options.default_view,
+        external_links: options.external_links,
         items: response
             .items
             .into_iter()
             .map(github_note_item_from_release)
             .collect(),
         message: response.message,
-        fallback,
-        anchor,
+        fallback: options.fallback,
+        anchor: options.anchor,
     }
 }
 
 fn unsupported_github_release_notes_response(
-    default_view: ReleaseNotesView,
     limit: u32,
-    external_links: Option<ServiceReleaseNotesExternalLinks>,
-    fallback: Option<ServiceReleaseNotesFallback>,
-    anchor: Option<ServiceReleaseNotesAnchor>,
+    options: GitHubReleaseNotesResponseOptions,
 ) -> ServiceReleaseNotesResponse {
     ServiceReleaseNotesResponse {
         status: ServiceReleaseNotesStatus::UnsupportedRepo,
@@ -359,12 +361,12 @@ fn unsupported_github_release_notes_response(
         next_cursor: None,
         previous_cursor: None,
         has_more: false,
-        default_view,
-        external_links,
+        default_view: options.default_view,
+        external_links: options.external_links,
         items: Vec::new(),
         message: Some("未能解析该服务的 GitHub 仓库。".to_string()),
-        fallback,
-        anchor,
+        fallback: options.fallback,
+        anchor: options.anchor,
     }
 }
 
@@ -373,30 +375,14 @@ async fn github_release_notes_response_from_page(
     repo: Option<ServiceGitHubRepoRef>,
     page: u32,
     limit: u32,
-    default_view: ReleaseNotesView,
-    external_links: Option<ServiceReleaseNotesExternalLinks>,
-    fallback: Option<ServiceReleaseNotesFallback>,
-    anchor: Option<ServiceReleaseNotesAnchor>,
+    options: GitHubReleaseNotesResponseOptions,
 ) -> ServiceReleaseNotesResponse {
     let per_page = normalize_github_releases_per_page(Some(limit));
     let Some(repo_ref) = repo else {
-        return unsupported_github_release_notes_response(
-            default_view,
-            per_page,
-            external_links,
-            fallback,
-            anchor,
-        );
+        return unsupported_github_release_notes_response(per_page, options);
     };
     let response = list_service_github_releases_with_client(client, repo_ref, page, per_page).await;
-    github_release_notes_response_from_list(
-        response,
-        per_page,
-        default_view,
-        external_links,
-        fallback,
-        anchor,
-    )
+    github_release_notes_response_from_list(response, per_page, options)
 }
 
 fn value_string(value: &Value, keys: &[&str]) -> Option<String> {
@@ -692,7 +678,7 @@ async fn fetch_octo_rill_public_release_notes(
         .and_then(|highlight| highlight.resolved.first())
         .and_then(|resolved| resolved.tag_name.clone());
     let (index_within_window, matched_tag) = active_match
-        .or_else(|| fallback_match)
+        .or(fallback_match)
         .map(|(index, tag)| (Some(index), Some(tag)))
         .unwrap_or((None, resolved_tag));
 
@@ -750,18 +736,20 @@ async fn github_locate_release_notes_response(
     let per_page = normalize_github_releases_per_page(Some(limit));
     let Some(repo_ref) = repo.clone() else {
         return unsupported_github_release_notes_response(
-            default_view,
             per_page,
-            external_links,
-            fallback,
-            Some(ServiceReleaseNotesAnchor {
-                status: ServiceReleaseNotesAnchorStatus::Unavailable,
-                version: version.to_string(),
-                matched_tag: None,
-                index_within_window: None,
-                absolute_index: None,
-                message: Some("未能解析该服务的 GitHub 仓库，无法定位当前版本。".to_string()),
-            }),
+            GitHubReleaseNotesResponseOptions {
+                default_view,
+                external_links,
+                fallback,
+                anchor: Some(ServiceReleaseNotesAnchor {
+                    status: ServiceReleaseNotesAnchorStatus::Unavailable,
+                    version: version.to_string(),
+                    matched_tag: None,
+                    index_within_window: None,
+                    absolute_index: None,
+                    message: Some("未能解析该服务的 GitHub 仓库，无法定位当前版本。".to_string()),
+                }),
+            },
         );
     };
 
@@ -773,6 +761,13 @@ async fn github_locate_release_notes_response(
         GITHUB_RELEASE_LOCATE_SCAN_LIMIT,
     )
     .await;
+
+    let response_options = |anchor: ServiceReleaseNotesAnchor| GitHubReleaseNotesResponseOptions {
+        default_view,
+        external_links: external_links.clone(),
+        fallback: fallback.clone(),
+        anchor: Some(anchor),
+    };
 
     match locate.status {
         GitHubReleaseLocateStatus::Found => {
@@ -790,10 +785,7 @@ async fn github_locate_release_notes_response(
                 Some(repo_ref),
                 page,
                 per_page,
-                default_view,
-                external_links.clone(),
-                fallback,
-                Some(anchor),
+                response_options(anchor),
             )
             .await
         }
@@ -815,10 +807,7 @@ async fn github_locate_release_notes_response(
                 Some(repo_ref),
                 1,
                 per_page,
-                default_view,
-                external_links.clone(),
-                fallback,
-                Some(anchor),
+                response_options(anchor),
             )
             .await
         }
@@ -899,14 +888,10 @@ pub(crate) async fn list_service_release_notes(
         // Continue GitHub pagination when the current session is already on the fallback source.
     } else if !release_notes_settings.octo_rill.enabled {
         // Disabled is treated as GitHub primary without a warning banner.
-    } else if repo.is_none() {
-        fallback = Some(build_fallback(
-            ServiceReleaseNotesFallbackReason::UnsupportedRepo,
-        ));
-    } else {
+    } else if let Some(repo_ref) = repo.as_ref() {
         match fetch_octo_rill_public_release_notes(
             &release_notes_settings.octo_rill,
-            repo.as_ref().expect("checked above"),
+            repo_ref,
             octo_rill_upstream_cursor.as_deref(),
             direction,
             limit,
@@ -939,6 +924,10 @@ pub(crate) async fn list_service_release_notes(
                 fallback = Some(build_custom_fallback(failure.reason, failure.message));
             }
         }
+    } else {
+        fallback = Some(build_fallback(
+            ServiceReleaseNotesFallbackReason::UnsupportedRepo,
+        ));
     }
 
     let github_settings = state
@@ -958,10 +947,12 @@ pub(crate) async fn list_service_release_notes(
             repo,
             page,
             limit,
-            default_view,
-            external_links,
-            fallback,
-            None,
+            GitHubReleaseNotesResponseOptions {
+                default_view,
+                external_links,
+                fallback,
+                anchor: None,
+            },
         )
         .await,
     ))
@@ -1004,10 +995,12 @@ pub(crate) async fn locate_service_release_notes(
         release_notes_settings.octo_rill.api_base_url.as_deref(),
     );
 
-    if release_notes_settings.octo_rill.enabled && repo.is_some() {
+    if release_notes_settings.octo_rill.enabled
+        && let Some(repo_ref) = repo.as_ref()
+    {
         match fetch_octo_rill_public_release_notes(
             &release_notes_settings.octo_rill,
-            repo.as_ref().expect("checked above"),
+            repo_ref,
             None,
             ServiceReleaseNotesDirection::Older,
             limit,

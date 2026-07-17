@@ -30,8 +30,7 @@ pub(super) enum GitHubReleaseLocateStatus {
 pub(super) struct GitHubReleaseLocateResult {
     pub status: GitHubReleaseLocateStatus,
     pub auth_mode: GitHubReleaseAuthMode,
-    pub repo: Option<ServiceGitHubRepoRef>,
-    pub version: String,
+    #[allow(dead_code)]
     pub searched_count: u32,
     pub matched_tag: Option<String>,
     pub page: Option<u32>,
@@ -453,8 +452,6 @@ async fn locate_service_github_release_with_client_once(
     let empty = || GitHubReleaseLocateResult {
         status: GitHubReleaseLocateStatus::UnsupportedRepo,
         auth_mode,
-        repo: Some(repo.clone()),
-        version: trimmed_version.clone(),
         searched_count: 0,
         matched_tag: None,
         page: None,
@@ -476,8 +473,6 @@ async fn locate_service_github_release_with_client_once(
         return GitHubReleaseLocateResult {
             status: GitHubReleaseLocateStatus::NotFound,
             auth_mode,
-            repo: Some(repo),
-            version: trimmed_version.clone(),
             searched_count: 0,
             matched_tag: None,
             page: None,
@@ -510,8 +505,6 @@ async fn locate_service_github_release_with_client_once(
                 return GitHubReleaseLocateResult {
                     status,
                     auth_mode,
-                    repo: Some(repo),
-                    version: trimmed_version.clone(),
                     searched_count: 0,
                     matched_tag: None,
                     page: None,
@@ -546,8 +539,6 @@ async fn locate_service_github_release_with_client_once(
                 return GitHubReleaseLocateResult {
                     status,
                     auth_mode,
-                    repo: Some(repo),
-                    version: trimmed_version.clone(),
                     searched_count,
                     matched_tag,
                     page: None,
@@ -573,8 +564,6 @@ async fn locate_service_github_release_with_client_once(
                 return GitHubReleaseLocateResult {
                     status: GitHubReleaseLocateStatus::Found,
                     auth_mode,
-                    repo: Some(repo),
-                    version: trimmed_version.clone(),
                     searched_count: searched_count + scanned_this_page as u32,
                     matched_tag,
                     page: Some(page),
@@ -600,8 +589,6 @@ async fn locate_service_github_release_with_client_once(
     GitHubReleaseLocateResult {
         status,
         auth_mode,
-        repo: Some(repo),
-        version: trimmed_version.clone(),
         searched_count,
         matched_tag,
         page: None,
