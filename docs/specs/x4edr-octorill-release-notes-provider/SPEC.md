@@ -15,6 +15,7 @@
 - Settings 新增 OctoRill 更新日志配置：启用开关、API Base URL、API Key、默认视图 `original | translated | smart`，默认 `smart`。
 - API Key 只在 Dockrev 后端保存；设置读取只返回等长圆点脱敏状态，不把明文 key 暴露给浏览器。
 - 新增服务级统一 release notes API，开启 OctoRill 后优先从 OctoRill repo feed 读取发布记录，并规范化成发布抽屉与服务详情 `版本` 子页都可消费的数据。
+- 统一 release notes API 必须同时提供 locate-first 首屏与双向 cursor 续拉，让发布抽屉和服务详情 `版本` 子页都不再为“定位当前版本”线性扫页。
 - OctoRill 失败、未配置或无可用 feed 时，发布抽屉显示失败原因并自动回退现有 GitHub Releases 数据。
 - 发布抽屉支持原文、翻译、润色切换；缺少翻译/润色时可见降级到原文。
 
@@ -52,9 +53,12 @@
 - API Key 明文必须只在后端持久化；GET 响应只返回脱敏 `apiKeyMasked`，其长度必须与已保存 key 的字符长度一致，并统一使用圆点掩码。
 - `PUT /api/settings` 的 `apiKey` 若是非空全星号或全圆点掩码，应视为保留旧 key，避免浏览器把脱敏回显误写回明文字段。
 - 统一 release notes API 必须在 OctoRill 开启且配置完整时优先请求 `GET {apiBaseUrl}/api/feed?scope=repo&items=<owner/repo>&types=releases&limit=<limit>[&cursor=<cursor>]`，请求头带 `Authorization: Bearer <apiKey>`。
+- `GET /api/services/{service_id}/release-notes/locate?version=<tag>&limit=<1..30>` 必须复用增强版 `ServiceReleaseNotesResponse`，并返回 `previousCursor` 与结构化 `anchor`；`anchor.status` 固定为 `found | outsideWindow | notFound | unavailable`。
+- `GET /api/services/{service_id}/release-notes?cursor=<cursor>&direction=older|newer&limit=<1..30>` 必须支持双向续拉；`nextCursor` 持续表示更旧方向，`previousCursor` 表示更新方向。
 - OctoRill feed 映射必须宽容解析：优先使用显式 tag 字段，其次从 `html_url` / `htmlUrl` 的 `/releases/tag/<tag>` 解析，最后用 title/id 兜底。
 - OctoRill 失败必须返回可展示 fallback 原因，并自动回退现有 GitHub Releases 数据。
 - 统一 release notes API 响应必须返回仓库级 `externalLinks.githubReleasesUrl`，并在 `apiBaseUrl` 与 repo full name 都能安全归一化成 `owner/repo` 时返回可选 `externalLinks.octoRillReleasesUrl`，供版本页与抽屉复用同一组 Releases 外链。
+- OctoRill locate 必须优先复用 public releases 的 highlight/window 能力生成目标版本附近窗口；若当前实例或仓库无法提供该窗口，则回退 GitHub items，并通过 `fallback` 与 `anchor.message` 明确说明已失去 `smart / translated` 阅读态。
 - 发布抽屉与服务详情 `版本` 子页的默认视图都来自 Settings 的 `releaseNotes.octoRill.defaultView`，单次切换只影响当前阅读会话。
 
 ### SHOULD
@@ -69,6 +73,7 @@
 
 - 用户在 Settings 开启 OctoRill、填入 Base URL 与 API Key、选择默认视图后，设置自动保存。
 - 用户从版本时间线、服务更新记录，或服务详情 `版本` 子页进入版本阅读流时，前端调用服务级 release notes API。
+- 当前阅读流若带有目标版本，前端必须先调用 `release-notes/locate`，只渲染后端返回的锚点窗口；后续才通过 `cursor + direction` 双向补页。
 - API 返回 OctoRill 数据时，抽屉使用 OctoRill items 展示，并默认选中 `smart`。
 - API 返回 OctoRill 数据时，服务详情 `版本` 子页也必须复用同一批 items、视图切换规则与 fallback 说明，而不是另起第二套 release 数据源。
 - 用户切换 `original | translated | smart` 时，列表内容即时切换，不改变 URL 和全局设置。
@@ -91,6 +96,7 @@
 | `GET /api/settings` | HTTP API | external | Modify | None | dockrev-api | Web Settings | 新增 `releaseNotes.octoRill` |
 | `PUT /api/settings` | HTTP API | external | Modify | None | dockrev-api | Web Settings | 支持 OctoRill 配置局部保存 |
 | `GET /api/services/{service_id}/release-notes` | HTTP API | external | New | None | dockrev-api | Release drawer / Service versions page | 统一 OctoRill/GitHub release notes 数据源，并提供仓库级 Releases 外链 |
+| `GET /api/services/{service_id}/release-notes/locate` | HTTP API | external | New | None | dockrev-api | Release drawer / Service versions | 返回目标版本锚点窗口与结构化 anchor 状态 |
 
 ### 契约文档（按 Kind 拆分）
 
@@ -102,7 +108,9 @@
 
 - Given Settings 已配置 OctoRill 且默认视图为 `smart`，When 打开发布抽屉，Then 抽屉默认展示 OctoRill 润色内容。
 - Given 当前抽屉有 OctoRill items，When 切换为原文或翻译，Then 内容切换且滚动/定位状态保持可用。
+- Given 打开发布抽屉或服务详情 `版本` 子页时带有目标版本，When locate 命中，Then 首屏直接落在目标版本附近窗口，而不是由前端逐页扫描直到命中。
 - Given OctoRill 请求返回 401，When 打开发布抽屉，Then 顶部显示 OctoRill 鉴权失败，同时列表回退为 GitHub Releases。
+- Given OctoRill public-window 无法覆盖目标版本但 GitHub locate 仍可用，When 打开发布抽屉，Then API 返回 GitHub items、保留 fallback 提示，并通过 `anchor.status=outsideWindow | notFound | unavailable` 告知定位结果。
 - Given `translated` 或 `smart` 缺失，When 用户选择对应视图，Then UI 明确显示该视图不可用并展示原文。
 - Given `GET /api/settings`，Then 响应不包含 OctoRill API Key 明文，只包含与真实 key 等长的圆点脱敏状态。
 - Given `GET /api/services/{service_id}/release-notes` 且仓库信息可信，When 服务详情 `版本` 子页或发布抽屉读取同一响应，Then 响应会包含 `externalLinks.githubReleasesUrl`，并在可安全构造时附带 `externalLinks.octoRillReleasesUrl`。
@@ -166,6 +174,20 @@ PR: include
 
 PR: include
 ![OctoRill 发布记录默认润色视图](./assets/octorill-release-drawer-smart-default.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `element`
+  requested_viewport: `none`
+  viewport_strategy: `storybook-viewport`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Components/GitHubReleaseDrawer / Anonymous Located`
+  state: `unified locate-first anchor window`
+  evidence_note: `验证统一 locate 首屏直接拿到锚点窗口，顶部 success banner 明确告知已定位到目标版本，前端不再为了定位当前版本继续连翻多页。`
+
+PR: include
+![统一 locate 命中的发布抽屉锚点窗口](../../screenshots/release-notes-locate/drawer-locate-found.png)
 
 ## Related PRs
 

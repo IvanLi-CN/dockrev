@@ -72,7 +72,7 @@
 - `概览` 不得再出现资源监控卡、自动更新结果卡、Compose 信息卡或服务保护卡。
 - `版本` 子页必须复用 `GET /api/services/{service_id}/release-notes` 的统一数据源与 `original | translated | smart` 阅读视图语义，改为页内卡片阅读而不是强依赖右侧抽屉。
 - `版本` 子页页头必须把仓库、来源、当前版本与候选版本 chips 收敛为仓库级 Releases 图标入口：GitHub 图标固定打开 `https://github.com/<owner>/<repo>/releases`，OctoRill 图标仅在 release-notes 响应提供可信 `externalLinks.octoRillReleasesUrl` 时显示，并在新窗口打开对应地址。
-- `版本` 子页首屏必须以当前部署版本为锚点；前端需按 release pages 顺序抓取直到命中当前版本或列表耗尽，并在命中后把该卡片滚动到视口中心。已扫描出的较新版本保留在当前版本上方，更旧版本按需继续分页加载。
+- `版本` 子页首屏必须以当前部署版本为锚点；前端需先调用统一 `release-notes/locate`，只渲染后端返回的锚点窗口，并在命中后把该卡片滚动到视口中心。`outsideWindow | notFound | unavailable` 时首屏回到最新窗口并显示 warning banner，较新/更旧版本都改为通过 `cursor + direction` 双向续拉。
 - `版本` 子页在 `>1100px` 时必须拆为左 `220px` 版本目录与右侧版本卡列表；目录与正文都必须保持虚拟化、共享同一分页数据源、独立滚动，并以右侧视口中心版本驱动目录高亮与跟随。目录项固定高度，展示版本号和发布时间：7 天内显示中文相对时间，更早显示 `YYYY-MM-DD`；点击目录项时，对应卡片必须滚动到正文视口中心。任一列表接近末尾时，都必须复用现有去重分页逻辑继续加载旧版本。
 - `版本` 子页的 release card 正文超过 10 行时必须默认折叠，支持原地展开/收起，并继续保持虚拟列表稳定测量，不得因展开造成定位丢失或明显空白。
 - `版本` 子页必须对比当前部署版本、candidate 与既有 rollback target，展示状态徽标与动作区。较新版本统一渲染动作位：普通服务继续使用 `更新`，且只有与当前 service candidate 对应且不突破现有 explicit target tag 契约的版本可真正发起更新；命中 Dockrev 自身识别时，candidate 对应卡片必须改为 `升级 Dockrev` 并复用顶部 supervisor 自我升级入口，其它更高版本只保留禁用动作位并明确解释“当前只能通过 supervisor 进入现有 candidate 对应的自我升级流程”。若 supervisor 自我升级入口本身处于 offline / checking / busy 等不可用状态，则所有 Dockrev 版本卡优先直接暴露该阻断原因，不再继续引导用户访问不可用入口。
@@ -126,7 +126,7 @@
   - 内容区只展示资源监控面板。
 - 用户访问 `.../versions`：
   - 共享 hero/banner/top actions 与普通服务详情一致。
-  - 内容区展示统一 release notes 版本卡片流，当前版本首屏居中定位。
+  - 内容区展示统一 release notes 版本卡片流；命中 locate 时当前版本首屏居中定位，未命中时回到最新窗口首屏并保留 warning banner。
   - 页头只保留 GitHub 与可选 OctoRill 两个仓库级 Releases 图标入口，不再重复展示版本 chips。
   - 宽屏使用 `220px` 左目录 + 右侧正文双虚拟列表；窄屏隐藏目录并保持单列卡片流。
   - 较新版本可见 `更新` 动作位，历史已部署版本可见 `回滚` 动作位，但真实可执行性继续服从现有 update/rollback 合同。
@@ -199,7 +199,11 @@
 
 - Given 服务详情页处于 `版本`
   When 当前 release list 能命中当前部署版本
-  Then 当前版本卡片首屏滚动到视口中心，上方保留较新的已扫描版本，下方按需继续加载较旧版本，且 DOM 只渲染可视窗口附近卡片。
+  Then 当前版本卡片首屏滚动到视口中心，上方保留同一锚点窗口里的较新版本，下方按需继续通过 `direction=older` 加载较旧版本，且 DOM 只渲染可视窗口附近卡片。
+
+- Given 服务详情页处于 `版本`
+  When locate 返回 `outsideWindow | notFound | unavailable`
+  Then 页面显示最新窗口首屏与 warning banner，且不会为了寻找当前版本继续自动线性翻页。
 
 - Given 服务详情页处于 `版本`
   When 用户浏览较新版本或历史已部署版本
@@ -301,6 +305,21 @@
   viewport_strategy: `controlled-viewport`
   sensitive_exclusion: `N/A`
   submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/VersionsSection`
+  state: `service versions locate-first anchor window`
+  evidence_note: `标准桌面 `1600x1200` 页面级视图直接验证服务详情 `版本` 子页首屏落在当前部署版本附近窗口；当前版本卡片被置于视口中心，列表保持虚拟渲染，不再为了定位目标版本自动线性翻页。`
+  PR: include
+  PR caption: 服务详情 `版本` 子页改为 locate-first 首屏锚点窗口，当前部署版本首屏可读且虚拟列表稳定。
+
+![服务详情版本子页首屏锚点窗口](../../screenshots/release-notes-locate/service-versions-anchor.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `1600x1200`
+  viewport_strategy: `controlled-viewport`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
   story_id_or_title: `Pages/ServiceDetailPage/UpdateHistorySection`
   state: `history deep link with backup summary column`
   evidence_note: 标准桌面 `1600x1200` 页面级视图验证 `/history` 深链、重排后的 tabs 顺序，以及新增 `备份` 列在桌面六列表格中的落位。带实际备份记录的行显示 `2 个目标 / 17.6 MiB`，无匹配记录的行保持中性空占位；活动 Tab 已表达当前 section，内容区不重复标题、说明或记录数量。更新记录仅保留外层 section card，表格不再使用嵌套圆角容器。当前 Storybook 未配置桌面 viewport preset，故以受控视口模拟采集。
@@ -308,6 +327,15 @@
   PR caption: 服务详情更新记录子页新增备份摘要列，并按 `概览 / 更新记录 / 监控 / 日志 / 备份 / 设置` 重排顶部 tabs。
 
 ![服务详情更新记录子页（桌面页面级）](./assets/service-detail-update-history-desktop.png)
+
+## Visual Evidence (PR)
+
+- final_set: `release-notes-locate`
+  story_id_or_title: `Pages/ServiceDetailPage/VersionsSection`
+  state: `service versions locate-first anchor window`
+  evidence_note: `最终 PR 采用的版本页证据。桌面宽卡首屏直接落在当前部署版本附近的锚点窗口，当前卡保留与可操作版本卡一致的固定 third rail；列表保持虚拟渲染，不再为了定位目标版本自动线性翻页。`
+
+![PR 证据：服务详情版本子页首屏锚点窗口](../../screenshots/release-notes-locate/service-versions-anchor.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`

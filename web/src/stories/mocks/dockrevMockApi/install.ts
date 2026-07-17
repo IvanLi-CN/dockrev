@@ -16,7 +16,7 @@ import { buildCleanupMockScanResponse, isCleanupMockScenario, resolveCleanupMock
 import type { MockRouteContext } from './context'
 import { buildMockDiscoveryTimeline as buildMockDiscoveryTimelineResponse } from './discoveryTimeline'
 import { buildFixture } from './fixturesMisc'
-import { buildMockGitHubReleaseLocateResponse, buildMockGitHubReleasesResponse } from './githubReleases'
+import { buildMockGitHubReleasesDataset, buildMockGitHubReleasesResponse } from './githubReleases'
 import { handleGhcrRoutes } from './handlers/ghcr'
 import { handleServiceStateRoutes } from './handlers/serviceState'
 import { applyRollbackTargetRaceAfterUpdate, maybeServeRollbackTargetRaceResponse, type RollbackTargetRaceState } from './rollbackRace'
@@ -563,12 +563,9 @@ export function installDockrevMockApi(
             findService,
             parseMockGitHubRepoRef,
           ),
-        buildMockGitHubReleaseLocateResponse: (serviceId, version, perPage, limit) =>
-          buildMockGitHubReleaseLocateResponse(
+        buildMockGitHubReleasesDataset: (serviceId) =>
+          buildMockGitHubReleasesDataset(
             serviceId,
-            version,
-            perPage,
-            limit,
             options,
             findService,
             parseMockGitHubRepoRef,

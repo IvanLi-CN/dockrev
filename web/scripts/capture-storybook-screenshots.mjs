@@ -416,6 +416,33 @@ async function main() {
       },
     },
     {
+      id: 'pages-servicedetailpage--versions-section',
+      file: 'service-versions-anchor.png',
+      viewport: { width: 1600, height: 1200 },
+      setup: async (page) => {
+        await page.locator('[data-service-detail-section-card="versions"]').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.locator('[data-version-card-current="true"]').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.locator('.serviceVersionsScrollViewport').evaluate((el) => {
+          if (!(el instanceof HTMLElement)) return
+          const currentCard = el.querySelector('[data-version-card-current="true"]')
+          if (!(currentCard instanceof HTMLElement)) return
+          const currentRow = currentCard.closest('.serviceVersionsVirtualRow')
+          const previousCard = currentRow?.previousElementSibling?.querySelector('[data-service-version-card="true"]')
+          const targetCard = previousCard instanceof HTMLElement ? previousCard : currentCard
+          const viewportRect = el.getBoundingClientRect()
+          const cardRect = targetCard.getBoundingClientRect()
+          const targetTop = el.scrollTop + (cardRect.top - viewportRect.top) - 14
+          el.scrollTop = Math.max(0, targetTop)
+        })
+        await page.waitForTimeout(220)
+      },
+      screenshot: async (page, filePath) => {
+        const pageSurface = page.locator('.page').first()
+        await pageSurface.waitFor({ timeout: STORY_TIMEOUT_MS })
+        await pageSurface.screenshot({ path: filePath })
+      },
+    },
+    {
       id: 'pages-overviewpage--default',
       file: 'overview-homepage-v2-desktop.png',
       viewport: { width: 1920, height: 1000 },
@@ -550,6 +577,44 @@ async function main() {
       },
       screenshot: async (page, filePath) => {
         const drawer = page.locator('.releaseDrawerContent').first()
+        await drawer.screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'components-githubreleasedrawer--anonymous-located',
+      file: 'drawer-locate-found.png',
+      setup: async (page) => {
+        await page.locator('.releaseDrawerContent').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.locator('[data-release-drawer-banner="success"]').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.locator('[data-release-highlighted="true"]').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.locator('.releaseDrawerScrollViewport').evaluate((el) => {
+          if (!(el instanceof HTMLElement)) return
+          const highlightedCard = el.querySelector('[data-release-highlighted="true"]')
+          if (!(highlightedCard instanceof HTMLElement)) return
+          const viewportRect = el.getBoundingClientRect()
+          const cardRect = highlightedCard.getBoundingClientRect()
+          const targetTop = el.scrollTop + (cardRect.top - viewportRect.top) - 14
+          el.scrollTop = Math.max(0, targetTop)
+        })
+        await page.waitForTimeout(220)
+      },
+      screenshot: async (page, filePath) => {
+        const drawer = page.locator('.releaseDrawerContent').first()
+        await drawer.waitFor({ timeout: STORY_TIMEOUT_MS })
+        await drawer.screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'components-githubreleasedrawer--outside-window',
+      file: 'drawer-outside-window.png',
+      setup: async (page) => {
+        await page.locator('.releaseDrawerContent').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.locator('[data-release-drawer-banner="warning"]').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.waitForTimeout(220)
+      },
+      screenshot: async (page, filePath) => {
+        const drawer = page.locator('.releaseDrawerContent').first()
+        await drawer.waitFor({ timeout: STORY_TIMEOUT_MS })
         await drawer.screenshot({ path: filePath })
       },
     },

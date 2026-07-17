@@ -12,9 +12,9 @@ import type {
   NotificationConfig,
   NotificationTestChannel,
   ServiceGitHubReleaseItem,
-  ServiceGitHubReleaseLocateResponse,
   ServiceGitHubReleasesStatus,
   ServiceGitHubRepoRef,
+  ServiceReleaseNotesAnchor,
   ServiceBackupTargetsResponse,
   ServiceBackupRecordsResponse,
   ServiceRepoLinkInferenceResponse,
@@ -135,7 +135,7 @@ export type DockrevMockGitHubReleasesDataset = {
   listStatus?: ServiceGitHubReleasesStatus
   listMessage?: string | null
   items?: ServiceGitHubReleaseItem[]
-  locateByVersion?: Record<string, Partial<ServiceGitHubReleaseLocateResponse>>
+  locateByVersion?: Record<string, Partial<ServiceReleaseNotesAnchor>>
 }
 
 export const realFetch = globalThis.fetch.bind(globalThis)

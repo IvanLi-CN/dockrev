@@ -19,6 +19,35 @@ import {
   toNotificationsResponse,
 } from '../shared'
 
+function clampReleaseNotesLimit(
+  rawValue: string | null | undefined,
+  { fallback, max }: { fallback: number; max: number },
+): number {
+  const parsed = Number(rawValue ?? String(fallback))
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.min(max, Math.max(1, Math.trunc(parsed)))
+}
+
+function parseReleaseNotesCursor(rawValue: string | null | undefined): number {
+  const parsed = Number(rawValue ?? '0')
+  if (!Number.isFinite(parsed)) return 0
+  return Math.max(0, Math.trunc(parsed))
+}
+
+function normalizeMockReleaseVersion(value: string | null | undefined): string {
+  return (value ?? '').trim().toLowerCase()
+}
+
+function mockReleaseTagMatchesVersion(tagName: string, version: string | null | undefined): boolean {
+  const normalizedVersion = normalizeMockReleaseVersion(version)
+  if (!normalizedVersion) return false
+  const normalizedTag = normalizeMockReleaseVersion(tagName)
+  if (normalizedTag === normalizedVersion) return true
+  if (normalizedTag === `v${normalizedVersion}`) return true
+  if (normalizedVersion.startsWith('v') && normalizedTag === normalizedVersion.slice(1)) return true
+  return false
+}
+
 export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<Response | null> {
   const {
     digestSnapshotPendingAttempts,
@@ -43,6 +72,7 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     urlPathWithQuery,
     buildMockDigestTagData,
     buildMockDiscoveryTimeline,
+    buildMockGitHubReleasesDataset,
     buildMockGitHubReleasesResponse,
   } = ctx
 
@@ -413,19 +443,31 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     return json({ error: 'not found' }, { status: 404 })
   }
 
-  if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/release-notes')) {
+  if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/release-notes/locate')) {
     const parts = urlPath.split('/').filter(Boolean)
     const serviceId = decodeURIComponent(parts[2])
-    const page = Math.max(1, Number(url?.searchParams.get('cursor') ?? '1') || 1)
-    const limit = Math.max(1, Number(url?.searchParams.get('limit') ?? '20') || 20)
-    const github = buildMockGitHubReleasesResponse(serviceId, page, limit)
+    const version = (url?.searchParams.get('version') ?? '').trim()
+    const limit = clampReleaseNotesLimit(url?.searchParams.get('limit'), { fallback: 20, max: 30 })
+    const githubAll = buildMockGitHubReleasesResponse(serviceId, 1, 10_000)
     const octoRill = f.settings.releaseNotes.octoRill
     const configured = Boolean(octoRill.apiBaseUrl?.trim() && octoRill.apiKeyMasked)
-    const shouldUseOctoRill = octoRill.enabled && configured && github.status === 'ready'
-    const githubReleasesUrl = github.repo?.htmlUrl ? `${github.repo.htmlUrl.replace(/\/+$/, '')}/releases` : null
+    const shouldUseOctoRill = octoRill.enabled && configured && githubAll.status === 'ready'
+    const fallback =
+      shouldUseOctoRill || (octoRill.enabled && configured)
+        ? null
+        : {
+            from: 'octoRill' as const,
+            reason: octoRill.enabled ? ('notConfigured' as const) : ('disabled' as const),
+            message: octoRill.enabled
+              ? 'OctoRill API Base URL 或 API Key 未配置完整，已使用 GitHub Releases。'
+              : 'OctoRill 更新日志未启用，已使用 GitHub Releases。',
+          }
+    const githubReleasesUrl = githubAll.repo?.htmlUrl
+      ? `${githubAll.repo.htmlUrl.replace(/\/+$/, '')}/releases`
+      : null
     let octoRillReleasesUrl: string | null = null
-    if (github.repo?.fullName && octoRill.apiBaseUrl?.trim()) {
-      const [owner, repo] = github.repo.fullName.split('/')
+    if (githubAll.repo?.fullName && octoRill.apiBaseUrl?.trim()) {
+      const [owner, repo] = githubAll.repo.fullName.split('/')
       if (owner?.trim() && repo?.trim()) {
         try {
           const releaseUrl = new URL(octoRill.apiBaseUrl.trim())
@@ -437,8 +479,223 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
         }
       }
     }
-    const smartSummaryFor = (item: (typeof github.items)[number]) => {
-      const title = item.name && item.name !== item.tagName ? item.name : item.tagName
+    const externalLinks = githubReleasesUrl
+      ? {
+          githubReleasesUrl,
+          ...(octoRillReleasesUrl ? { octoRillReleasesUrl } : {}),
+        }
+      : null
+    const smartSummaryFor = (title: string) => {
+      const subject = /^release\s+\d/i.test(title) || /^\d+(?:\.\d+)+(?:[-+].*)?$/.test(title) ? '本次更新' : title
+      return [
+        `润色摘要：${subject}主要优化发布说明阅读体验与维护决策效率。`,
+        '',
+        '- 将关键变更压缩成可快速扫读的摘要，减少从原文里反复定位重点。',
+        '- 适合在维护窗口中判断升级收益、影响范围和是否需要继续查看原文。',
+      ].join('\n')
+    }
+    const mapReleaseNotesItems = (items: typeof githubAll.items) =>
+      items.map((item, index) => {
+        const title = item.name && item.name !== item.tagName ? item.name : item.tagName
+        return {
+          id: shouldUseOctoRill ? `octorill:${item.id}` : `github:${item.id}`,
+          tagName: item.tagName,
+          name: item.name,
+          originalBody: item.body,
+          translatedBody:
+            shouldUseOctoRill && index % 4 !== 2
+              ? `翻译：${item.name ?? item.tagName}\n\n${item.body ?? '暂无原始说明'}`
+              : null,
+          smartBody:
+            shouldUseOctoRill && index % 4 !== 3
+              ? smartSummaryFor(title)
+              : null,
+          htmlUrl: item.htmlUrl,
+          draft: item.draft,
+          prerelease: item.prerelease,
+          publishedAt: item.publishedAt,
+          createdAt: item.createdAt,
+        }
+      })
+    const buildReadyWindowResponse = (
+      start: number,
+      anchor:
+        | {
+            status: 'found' | 'outsideWindow' | 'notFound' | 'unavailable'
+            version: string
+            matchedTag?: string | null
+            indexWithinWindow?: number | null
+            absoluteIndex?: number | null
+            message?: string | null
+          }
+        | null,
+    ) => {
+      const maxStart = Math.max(0, githubAll.items.length - limit)
+      const boundedStart = Math.min(Math.max(0, start), maxStart)
+      const windowItems = githubAll.items.slice(boundedStart, boundedStart + limit)
+      return json({
+        status: 'ready',
+        source: shouldUseOctoRill ? 'octoRill' : 'gitHub',
+        repo: githubAll.repo,
+        cursor: boundedStart > 0 ? String(boundedStart) : null,
+        limit,
+        nextCursor: boundedStart + limit < githubAll.items.length ? String(boundedStart + limit) : null,
+        previousCursor: boundedStart > 0 ? String(Math.max(0, boundedStart - limit)) : null,
+        hasMore: boundedStart + limit < githubAll.items.length,
+        defaultView: octoRill.defaultView,
+        externalLinks,
+        items: mapReleaseNotesItems(windowItems),
+        message: githubAll.message,
+        fallback,
+        anchor,
+      })
+    }
+
+    if (githubAll.status !== 'ready') {
+      return json({
+        status: githubAll.status === 'unsupportedRepo' ? 'unsupportedRepo' : 'upstreamError',
+        source: shouldUseOctoRill ? 'octoRill' : 'gitHub',
+        repo: githubAll.repo,
+        cursor: null,
+        limit,
+        nextCursor: null,
+        previousCursor: null,
+        hasMore: false,
+        defaultView: octoRill.defaultView,
+        externalLinks,
+        items: [],
+        message: githubAll.message,
+        fallback,
+        anchor: version
+          ? {
+              status: 'unavailable' as const,
+              version,
+              matchedTag: null,
+              indexWithinWindow: null,
+              absoluteIndex: null,
+              message: githubAll.message ?? `暂时无法定位 ${version}。`,
+            }
+          : null,
+      })
+    }
+
+    const noVersionAnchor = !version
+      ? {
+          status: 'unavailable' as const,
+          version: '',
+          matchedTag: null,
+          indexWithinWindow: null,
+          absoluteIndex: null,
+          message: '未提供需要定位的版本号，当前显示最新窗口。',
+        }
+      : null
+    if (noVersionAnchor) {
+      return buildReadyWindowResponse(0, noVersionAnchor)
+    }
+
+    const dataset = buildMockGitHubReleasesDataset(serviceId)
+    const locateOverride = Object.entries(dataset.locateByVersion ?? {}).find(
+      ([candidateVersion]) =>
+        normalizeMockReleaseVersion(candidateVersion) === normalizeMockReleaseVersion(version),
+    )?.[1]
+    const allItems = githubAll.items
+    const matchIndex = allItems.findIndex((item) => mockReleaseTagMatchesVersion(item.tagName, version))
+    const locateStatus = locateOverride?.status ?? (matchIndex >= 0 ? 'found' : 'notFound')
+
+    if (locateStatus === 'found') {
+      const absoluteIndex = Math.max(0, locateOverride?.absoluteIndex ?? matchIndex)
+      const maxStart = Math.max(0, allItems.length - limit)
+      const preferredStart =
+        locateOverride?.indexWithinWindow != null
+          ? absoluteIndex - locateOverride.indexWithinWindow
+          : absoluteIndex - Math.floor(limit / 2)
+      const windowStart = Math.min(Math.max(0, preferredStart), maxStart)
+      return buildReadyWindowResponse(windowStart, {
+        status: 'found',
+        version,
+        matchedTag: locateOverride?.matchedTag ?? allItems[absoluteIndex]?.tagName ?? version,
+        indexWithinWindow:
+          locateOverride?.indexWithinWindow ?? Math.max(0, absoluteIndex - windowStart),
+        absoluteIndex,
+        message: locateOverride?.message ?? null,
+      })
+    }
+
+    if (locateStatus === 'outsideWindow') {
+      return buildReadyWindowResponse(0, {
+        status: 'outsideWindow',
+        version,
+        matchedTag: locateOverride?.matchedTag ?? (matchIndex >= 0 ? allItems[matchIndex]?.tagName ?? version : version),
+        indexWithinWindow: null,
+        absoluteIndex: locateOverride?.absoluteIndex ?? null,
+        message: locateOverride?.message ?? `已定位到 ${version}，但它不在当前锚点窗口内。`,
+      })
+    }
+
+    if (locateStatus === 'unavailable') {
+      return buildReadyWindowResponse(0, {
+        status: 'unavailable',
+        version,
+        matchedTag: locateOverride?.matchedTag ?? null,
+        indexWithinWindow: null,
+        absoluteIndex: locateOverride?.absoluteIndex ?? null,
+        message: locateOverride?.message ?? `暂时无法定位 ${version}，当前显示最新窗口。`,
+      })
+    }
+
+    return buildReadyWindowResponse(0, {
+      status: 'notFound',
+      version,
+      matchedTag: locateOverride?.matchedTag ?? null,
+      indexWithinWindow: null,
+      absoluteIndex: locateOverride?.absoluteIndex ?? null,
+      message: locateOverride?.message ?? `在发布记录中未找到 ${version}，当前显示最新窗口。`,
+    })
+  }
+
+  if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/release-notes')) {
+    const parts = urlPath.split('/').filter(Boolean)
+    const serviceId = decodeURIComponent(parts[2])
+    const limit = clampReleaseNotesLimit(url?.searchParams.get('limit'), { fallback: 20, max: 100 })
+    const start = parseReleaseNotesCursor(url?.searchParams.get('cursor'))
+    const githubAll = buildMockGitHubReleasesResponse(serviceId, 1, 10_000)
+    const octoRill = f.settings.releaseNotes.octoRill
+    const configured = Boolean(octoRill.apiBaseUrl?.trim() && octoRill.apiKeyMasked)
+    const shouldUseOctoRill = octoRill.enabled && configured && githubAll.status === 'ready'
+    const fallback =
+      shouldUseOctoRill || (octoRill.enabled && configured)
+        ? null
+        : {
+            from: 'octoRill' as const,
+            reason: octoRill.enabled ? ('notConfigured' as const) : ('disabled' as const),
+            message: octoRill.enabled
+              ? 'OctoRill API Base URL 或 API Key 未配置完整，已使用 GitHub Releases。'
+              : 'OctoRill 更新日志未启用，已使用 GitHub Releases。',
+          }
+    const githubReleasesUrl = githubAll.repo?.htmlUrl
+      ? `${githubAll.repo.htmlUrl.replace(/\/+$/, '')}/releases`
+      : null
+    let octoRillReleasesUrl: string | null = null
+    if (githubAll.repo?.fullName && octoRill.apiBaseUrl?.trim()) {
+      const [owner, repo] = githubAll.repo.fullName.split('/')
+      if (owner?.trim() && repo?.trim()) {
+        try {
+          const releaseUrl = new URL(octoRill.apiBaseUrl.trim())
+          const baseSegments = releaseUrl.pathname.split('/').filter(Boolean)
+          releaseUrl.pathname = `/${[...baseSegments, owner.trim(), repo.trim(), 'releases'].join('/')}`
+          octoRillReleasesUrl = releaseUrl.toString()
+        } catch {
+          octoRillReleasesUrl = null
+        }
+      }
+    }
+    const externalLinks = githubReleasesUrl
+      ? {
+          githubReleasesUrl,
+          ...(octoRillReleasesUrl ? { octoRillReleasesUrl } : {}),
+        }
+      : null
+    const smartSummaryFor = (title: string) => {
       const subject = /^release\s+\d/i.test(title) || /^\d+(?:\.\d+)+(?:[-+].*)?$/.test(title) ? '本次更新' : title
       return [
         `润色摘要：${subject}主要优化发布说明阅读体验与维护决策效率。`,
@@ -448,59 +705,66 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
       ].join('\n')
     }
 
-    return json({
-      status: github.status === 'ready' ? 'ready' : github.status === 'unsupportedRepo' ? 'unsupportedRepo' : 'upstreamError',
-      source: shouldUseOctoRill ? 'octoRill' : 'gitHub',
-      repo: github.repo,
-      cursor: page > 1 ? String(page) : null,
-      limit,
-      nextCursor: github.hasMore ? String(page + 1) : null,
-      hasMore: github.hasMore,
-      defaultView: octoRill.defaultView,
-      externalLinks: githubReleasesUrl
-        ? {
-            githubReleasesUrl,
-            ...(octoRillReleasesUrl ? { octoRillReleasesUrl } : {}),
-          }
-        : null,
-      items: github.items.map((item, index) => ({
-        id: shouldUseOctoRill ? `octorill:${item.id}` : `github:${item.id}`,
-        tagName: item.tagName,
-        name: item.name,
-        originalBody: item.body,
-        translatedBody:
-          shouldUseOctoRill && index % 4 !== 2
-            ? `翻译：${item.name ?? item.tagName}\n\n${item.body ?? '暂无原始说明'}`
-            : null,
-        smartBody:
-          shouldUseOctoRill && index % 4 !== 3
-            ? smartSummaryFor(item)
-            : null,
-        htmlUrl: item.htmlUrl,
-        draft: item.draft,
-        prerelease: item.prerelease,
-        publishedAt: item.publishedAt,
-        createdAt: item.createdAt,
-      })),
-      message: github.message,
-      fallback: shouldUseOctoRill
-        ? null
-        : {
-            from: 'octoRill',
-            reason: octoRill.enabled ? 'notConfigured' : 'disabled',
-            message: octoRill.enabled
-              ? 'OctoRill API Base URL 或 API Key 未配置完整，已使用 GitHub Releases。'
-              : 'OctoRill 更新日志未启用，已使用 GitHub Releases。',
-          },
-    })
-  }
+    if (githubAll.status !== 'ready') {
+      return json({
+        status: githubAll.status === 'unsupportedRepo' ? 'unsupportedRepo' : 'upstreamError',
+        source: shouldUseOctoRill ? 'octoRill' : 'gitHub',
+        repo: githubAll.repo,
+        cursor: null,
+        limit,
+        nextCursor: null,
+        previousCursor: null,
+        hasMore: false,
+        defaultView: octoRill.defaultView,
+        externalLinks,
+        items: [],
+        message: githubAll.message,
+        fallback,
+        anchor: null,
+      })
+    }
 
-  if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/github-releases')) {
-    const parts = urlPath.split('/').filter(Boolean)
-    const serviceId = decodeURIComponent(parts[2])
-    const page = Math.max(1, Number(url?.searchParams.get('page') ?? '1') || 1)
-    const perPage = Math.max(1, Number(url?.searchParams.get('perPage') ?? '20') || 20)
-    return json(buildMockGitHubReleasesResponse(serviceId, page, perPage))
+    const maxStart = Math.max(0, githubAll.items.length - limit)
+    const boundedStart = Math.min(Math.max(0, start), maxStart)
+    const windowItems = githubAll.items.slice(boundedStart, boundedStart + limit)
+
+    return json({
+      status: 'ready',
+      source: shouldUseOctoRill ? 'octoRill' : 'gitHub',
+      repo: githubAll.repo,
+      cursor: boundedStart > 0 ? String(boundedStart) : null,
+      limit,
+      nextCursor: boundedStart + limit < githubAll.items.length ? String(boundedStart + limit) : null,
+      previousCursor: boundedStart > 0 ? String(Math.max(0, boundedStart - limit)) : null,
+      hasMore: boundedStart + limit < githubAll.items.length,
+      defaultView: octoRill.defaultView,
+      externalLinks,
+      items: windowItems.map((item, index) => {
+        const title = item.name && item.name !== item.tagName ? item.name : item.tagName
+        return {
+          id: shouldUseOctoRill ? `octorill:${item.id}` : `github:${item.id}`,
+          tagName: item.tagName,
+          name: item.name,
+          originalBody: item.body,
+          translatedBody:
+            shouldUseOctoRill && index % 4 !== 2
+              ? `翻译：${item.name ?? item.tagName}\n\n${item.body ?? '暂无原始说明'}`
+              : null,
+          smartBody:
+            shouldUseOctoRill && index % 4 !== 3
+              ? smartSummaryFor(title)
+              : null,
+          htmlUrl: item.htmlUrl,
+          draft: item.draft,
+          prerelease: item.prerelease,
+          publishedAt: item.publishedAt,
+          createdAt: item.createdAt,
+        }
+      }),
+      message: githubAll.message,
+      fallback,
+      anchor: null,
+    })
   }
 
   if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/new-version-discovery-timeline')) {

@@ -6,8 +6,7 @@ use super::*;
 const DEFAULT_GITHUB_RELEASES_PAGE: u32 = 1;
 const DEFAULT_GITHUB_RELEASES_PER_PAGE: u32 = 20;
 const MAX_GITHUB_RELEASES_PER_PAGE: u32 = 100;
-const DEFAULT_GITHUB_RELEASE_LOCATE_LIMIT: u32 = 50;
-const MAX_GITHUB_RELEASE_LOCATE_LIMIT: u32 = 50;
+pub(super) const GITHUB_RELEASE_LOCATE_SCAN_LIMIT: u32 = 50;
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -16,12 +15,29 @@ pub(crate) struct ServiceGitHubReleasesQuery {
     per_page: Option<u32>,
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ServiceGitHubReleaseLocateQuery {
-    version: Option<String>,
-    per_page: Option<u32>,
-    limit: Option<u32>,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum GitHubReleaseLocateStatus {
+    Found,
+    OutsideWindow,
+    NotFound,
+    UnsupportedRepo,
+    PermissionDenied,
+    RateLimited,
+    UpstreamError,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct GitHubReleaseLocateResult {
+    pub status: GitHubReleaseLocateStatus,
+    pub auth_mode: GitHubReleaseAuthMode,
+    pub repo: Option<ServiceGitHubRepoRef>,
+    pub version: String,
+    pub searched_count: u32,
+    pub matched_tag: Option<String>,
+    pub page: Option<u32>,
+    pub index_within_page: Option<u32>,
+    pub absolute_index: Option<u32>,
+    pub message: Option<String>,
 }
 
 pub(super) fn github_release_auth_mode(mode: github::GitHubAuthMode) -> GitHubReleaseAuthMode {
@@ -84,12 +100,6 @@ pub(super) fn normalize_github_releases_per_page(value: Option<u32>) -> u32 {
     value
         .unwrap_or(DEFAULT_GITHUB_RELEASES_PER_PAGE)
         .clamp(1, MAX_GITHUB_RELEASES_PER_PAGE)
-}
-
-fn normalize_github_release_locate_limit(value: Option<u32>) -> u32 {
-    value
-        .unwrap_or(DEFAULT_GITHUB_RELEASE_LOCATE_LIMIT)
-        .clamp(1, MAX_GITHUB_RELEASE_LOCATE_LIMIT)
 }
 
 pub(super) fn github_release_item_from_api(
@@ -204,42 +214,42 @@ fn github_release_failure_message(
 }
 
 fn github_release_locate_error_message(
-    status: ServiceGitHubReleaseLocateStatus,
+    status: GitHubReleaseLocateStatus,
     auth_mode: GitHubReleaseAuthMode,
     version: &str,
     searched_count: u32,
 ) -> Option<String> {
     Some(match status {
-        ServiceGitHubReleaseLocateStatus::Found => return None,
-        ServiceGitHubReleaseLocateStatus::OutsideWindow => {
+        GitHubReleaseLocateStatus::Found => return None,
+        GitHubReleaseLocateStatus::OutsideWindow => {
             format!("已定位到 {version}，但它不在前 {searched_count} 条发布记录内。")
         }
-        ServiceGitHubReleaseLocateStatus::NotFound => {
+        GitHubReleaseLocateStatus::NotFound => {
             format!("在前 {searched_count} 条发布记录中未找到 {version}。")
         }
-        ServiceGitHubReleaseLocateStatus::UnsupportedRepo => {
+        GitHubReleaseLocateStatus::UnsupportedRepo => {
             github_release_error_message(ServiceGitHubReleasesStatus::UnsupportedRepo, auth_mode)
         }
-        ServiceGitHubReleaseLocateStatus::PermissionDenied => {
+        GitHubReleaseLocateStatus::PermissionDenied => {
             github_release_error_message(ServiceGitHubReleasesStatus::PermissionDenied, auth_mode)
         }
-        ServiceGitHubReleaseLocateStatus::RateLimited => {
+        GitHubReleaseLocateStatus::RateLimited => {
             github_release_error_message(ServiceGitHubReleasesStatus::RateLimited, auth_mode)
         }
-        ServiceGitHubReleaseLocateStatus::UpstreamError => {
+        GitHubReleaseLocateStatus::UpstreamError => {
             github_release_error_message(ServiceGitHubReleasesStatus::UpstreamError, auth_mode)
         }
     })
 }
 
 fn github_release_locate_failure_message(
-    status: ServiceGitHubReleaseLocateStatus,
+    status: GitHubReleaseLocateStatus,
     auth_mode: GitHubReleaseAuthMode,
     version: &str,
     searched_count: u32,
     err: &anyhow::Error,
 ) -> Option<String> {
-    if status == ServiceGitHubReleaseLocateStatus::UpstreamError
+    if status == GitHubReleaseLocateStatus::UpstreamError
         && github_http_status_from_error(err).is_some_and(|status| status == 404)
     {
         return Some(match auth_mode {
@@ -279,17 +289,15 @@ pub(super) fn classify_github_releases_failure(
 fn classify_github_release_locate_failure(
     auth_mode: GitHubReleaseAuthMode,
     err: &anyhow::Error,
-) -> ServiceGitHubReleaseLocateStatus {
+) -> GitHubReleaseLocateStatus {
     match classify_github_releases_failure(auth_mode, err) {
         ServiceGitHubReleasesStatus::PermissionDenied => {
-            ServiceGitHubReleaseLocateStatus::PermissionDenied
+            GitHubReleaseLocateStatus::PermissionDenied
         }
-        ServiceGitHubReleasesStatus::RateLimited => ServiceGitHubReleaseLocateStatus::RateLimited,
-        ServiceGitHubReleasesStatus::UnsupportedRepo => {
-            ServiceGitHubReleaseLocateStatus::UnsupportedRepo
-        }
+        ServiceGitHubReleasesStatus::RateLimited => GitHubReleaseLocateStatus::RateLimited,
+        ServiceGitHubReleasesStatus::UnsupportedRepo => GitHubReleaseLocateStatus::UnsupportedRepo,
         ServiceGitHubReleasesStatus::UpstreamError | ServiceGitHubReleasesStatus::Ready => {
-            ServiceGitHubReleaseLocateStatus::UpstreamError
+            GitHubReleaseLocateStatus::UpstreamError
         }
     }
 }
@@ -400,7 +408,7 @@ pub(super) async fn locate_service_github_release_with_client(
     version: &str,
     per_page: u32,
     limit: u32,
-) -> ServiceGitHubReleaseLocateResponse {
+) -> GitHubReleaseLocateResult {
     let response = locate_service_github_release_with_client_once(
         client,
         repo.clone(),
@@ -412,11 +420,10 @@ pub(super) async fn locate_service_github_release_with_client(
     if response.auth_mode == GitHubReleaseAuthMode::Pat
         && matches!(
             response.status,
-            ServiceGitHubReleaseLocateStatus::PermissionDenied
-                | ServiceGitHubReleaseLocateStatus::UpstreamError
+            GitHubReleaseLocateStatus::PermissionDenied | GitHubReleaseLocateStatus::UpstreamError
         )
         && let Some(message) = response.message.as_deref()
-        && (response.status == ServiceGitHubReleaseLocateStatus::PermissionDenied
+        && (response.status == GitHubReleaseLocateStatus::PermissionDenied
             || message.contains("GitHub 返回 404"))
         && let Ok(anonymous) = client.clone_as_anonymous()
     {
@@ -426,8 +433,7 @@ pub(super) async fn locate_service_github_release_with_client(
         .await;
         if !matches!(
             fallback.status,
-            ServiceGitHubReleaseLocateStatus::PermissionDenied
-                | ServiceGitHubReleaseLocateStatus::UpstreamError
+            GitHubReleaseLocateStatus::PermissionDenied | GitHubReleaseLocateStatus::UpstreamError
         ) {
             return fallback;
         }
@@ -441,11 +447,11 @@ async fn locate_service_github_release_with_client_once(
     version: &str,
     per_page: u32,
     limit: u32,
-) -> ServiceGitHubReleaseLocateResponse {
+) -> GitHubReleaseLocateResult {
     let auth_mode = github_release_auth_mode(client.auth_mode());
     let trimmed_version = version.trim().to_string();
-    let empty = || ServiceGitHubReleaseLocateResponse {
-        status: ServiceGitHubReleaseLocateStatus::UnsupportedRepo,
+    let empty = || GitHubReleaseLocateResult {
+        status: GitHubReleaseLocateStatus::UnsupportedRepo,
         auth_mode,
         repo: Some(repo.clone()),
         version: trimmed_version.clone(),
@@ -455,7 +461,7 @@ async fn locate_service_github_release_with_client_once(
         index_within_page: None,
         absolute_index: None,
         message: github_release_locate_error_message(
-            ServiceGitHubReleaseLocateStatus::UnsupportedRepo,
+            GitHubReleaseLocateStatus::UnsupportedRepo,
             auth_mode,
             &trimmed_version,
             0,
@@ -467,8 +473,8 @@ async fn locate_service_github_release_with_client_once(
 
     let variants = github_release_tag_variants(&trimmed_version);
     if variants.is_empty() {
-        return ServiceGitHubReleaseLocateResponse {
-            status: ServiceGitHubReleaseLocateStatus::NotFound,
+        return GitHubReleaseLocateResult {
+            status: GitHubReleaseLocateStatus::NotFound,
             auth_mode,
             repo: Some(repo),
             version: trimmed_version.clone(),
@@ -478,7 +484,7 @@ async fn locate_service_github_release_with_client_once(
             index_within_page: None,
             absolute_index: None,
             message: github_release_locate_error_message(
-                ServiceGitHubReleaseLocateStatus::NotFound,
+                GitHubReleaseLocateStatus::NotFound,
                 auth_mode,
                 &trimmed_version,
                 0,
@@ -501,7 +507,7 @@ async fn locate_service_github_release_with_client_once(
                     continue;
                 }
                 let status = classify_github_release_locate_failure(auth_mode, &err);
-                return ServiceGitHubReleaseLocateResponse {
+                return GitHubReleaseLocateResult {
                     status,
                     auth_mode,
                     repo: Some(repo),
@@ -537,7 +543,7 @@ async fn locate_service_github_release_with_client_once(
             Ok(result) => result,
             Err(err) => {
                 let status = classify_github_release_locate_failure(auth_mode, &err);
-                return ServiceGitHubReleaseLocateResponse {
+                return GitHubReleaseLocateResult {
                     status,
                     auth_mode,
                     repo: Some(repo),
@@ -564,8 +570,8 @@ async fn locate_service_github_release_with_client_once(
             if github_release_matches_variants(&release.tag_name, &variants) {
                 let absolute_index = searched_count + index_within_page as u32;
                 let matched_tag = Some(release.tag_name.clone());
-                return ServiceGitHubReleaseLocateResponse {
-                    status: ServiceGitHubReleaseLocateStatus::Found,
+                return GitHubReleaseLocateResult {
+                    status: GitHubReleaseLocateStatus::Found,
                     auth_mode,
                     repo: Some(repo),
                     version: trimmed_version.clone(),
@@ -587,11 +593,11 @@ async fn locate_service_github_release_with_client_once(
     }
 
     let status = if matched_tag.is_some() {
-        ServiceGitHubReleaseLocateStatus::OutsideWindow
+        GitHubReleaseLocateStatus::OutsideWindow
     } else {
-        ServiceGitHubReleaseLocateStatus::NotFound
+        GitHubReleaseLocateStatus::NotFound
     };
-    ServiceGitHubReleaseLocateResponse {
+    GitHubReleaseLocateResult {
         status,
         auth_mode,
         repo: Some(repo),
@@ -657,66 +663,5 @@ pub(crate) async fn list_service_github_releases(
 
     Ok(Json(
         list_service_github_releases_with_client(&client, repo, page, per_page).await,
-    ))
-}
-
-pub(crate) async fn locate_service_github_release(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Path(service_id): Path<String>,
-    Query(query): Query<ServiceGitHubReleaseLocateQuery>,
-) -> Result<Json<ServiceGitHubReleaseLocateResponse>, ApiError> {
-    let _user = require_user(&state, &headers).await?;
-    let version = query.version.unwrap_or_default();
-    let trimmed_version = version.trim();
-    if trimmed_version.is_empty() {
-        return Err(ApiError::invalid_argument("version is required"));
-    }
-
-    let settings = state
-        .db
-        .get_service_settings(&service_id)
-        .await
-        .map_err(map_internal)?;
-    let Some(settings) = settings else {
-        return Err(ApiError::not_found("service not found"));
-    };
-
-    let github_settings = state
-        .db
-        .get_github_packages_settings()
-        .await
-        .map_err(map_internal)?;
-    let client = build_service_github_releases_client(&github_settings)?;
-    let auth_mode = github_release_auth_mode(client.auth_mode());
-    let per_page = normalize_github_releases_per_page(query.per_page);
-    let limit = normalize_github_release_locate_limit(query.limit);
-    let Some(repo) =
-        resolve_service_github_repo_ref(&state, &service_id, settings.repo_url.as_deref())
-            .await
-            .map_err(map_internal)?
-    else {
-        return Ok(Json(ServiceGitHubReleaseLocateResponse {
-            status: ServiceGitHubReleaseLocateStatus::UnsupportedRepo,
-            auth_mode,
-            repo: None,
-            version: trimmed_version.to_string(),
-            searched_count: 0,
-            matched_tag: None,
-            page: None,
-            index_within_page: None,
-            absolute_index: None,
-            message: github_release_locate_error_message(
-                ServiceGitHubReleaseLocateStatus::UnsupportedRepo,
-                auth_mode,
-                trimmed_version,
-                0,
-            ),
-        }));
-    };
-
-    Ok(Json(
-        locate_service_github_release_with_client(&client, repo, trimmed_version, per_page, limit)
-            .await,
     ))
 }

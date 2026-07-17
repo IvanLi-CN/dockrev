@@ -103,7 +103,10 @@ export const VersionsSection: ServiceDetailStory = {
       },
     },
   },
-  render: render("stack-prod", "svc-prod-api", "versions", "桌面端版本子页以双虚拟列表展示，并保留统一动作守卫。"),
+  render: render("stack-prod", "svc-prod-api", "versions", undefined, {
+    pageTitle: null,
+    pageSubtitle: null,
+  }),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => Boolean(findSectionCard(canvasElement, "versions")));
     await waitForCondition(() => Boolean(findVersionCard(canvasElement, "5.2.1")));
@@ -175,19 +178,37 @@ export const VersionsSection: ServiceDetailStory = {
         centeredVersionTag(canvasElement, viewport) === "5.2.1",
       "initial centered card should drive the matching index highlight",
     );
+    const currentTitle = currentCard?.querySelector<HTMLElement>(".serviceVersionBodyTitle");
+    const currentTag = currentCard?.querySelector<HTMLElement>(".serviceVersionTagText .mono");
+    const currentMetaValue = currentCard?.querySelector<HTMLElement>(".serviceVersionFacts dd");
     const currentAside = currentCard?.querySelector<HTMLElement>('[data-service-version-card-aside="true"]');
+    const candidateAside = candidateCard?.querySelector<HTMLElement>('[data-service-version-card-aside="true"]');
+    const rollbackAside = rollbackCard?.querySelector<HTMLElement>('[data-service-version-card-aside="true"]');
+    expectStory(
+      Number.parseFloat(getComputedStyle(currentTitle ?? canvasElement).fontSize) >
+        Number.parseFloat(getComputedStyle(currentMetaValue ?? canvasElement).fontSize),
+      "release title should live in the reading column and stay visually above body metadata",
+    );
+    expectStory(
+      normalizeText(currentTitle?.textContent).includes("Service detail release reading flow"),
+      "current version card should render the release title inside the reading column",
+    );
+    expectStory(
+      normalizeText(currentTag?.textContent) === "5.2.1",
+      "version tag should stay in the left metadata rail instead of being replaced by the release title",
+    );
     expectStory(Boolean(currentAside), "read-only current version cards should still reserve the fixed aside rail");
     expectStory(
       getComputedStyle(candidateCard ?? canvasElement).gridTemplateColumns.split(" ").filter(Boolean).length === 3,
       "actionable desktop version cards should keep the fixed third rail",
     );
-    const asideWidths = [currentAside, candidateCard?.querySelector<HTMLElement>('[data-service-version-card-aside="true"]'), rollbackCard?.querySelector<HTMLElement>('[data-service-version-card-aside="true"]')]
+    const asideWidths = [currentAside, candidateAside, rollbackAside]
       .filter((aside): aside is HTMLElement => Boolean(aside))
       .map((aside) => aside.getBoundingClientRect().width);
     expectStory(asideWidths.length === 3, "expected placeholder and actionable rails for width comparison");
     expectStory(
-      asideWidths.every((width) => width >= 228 && width <= 252),
-      "desktop aside rail should stay within the tightened fixed width budget",
+      asideWidths.every((width) => width >= 194 && width <= 202),
+      "desktop aside rail should stay within the compact fixed width budget",
     );
     expectNearlyEqual(asideWidths[0] ?? 0, asideWidths[1] ?? 0, 1.5, "desktop placeholder and action rails should keep equal width");
     expectNearlyEqual(asideWidths[1] ?? 0, asideWidths[2] ?? 0, 1.5, "desktop action rails should keep equal width");
@@ -263,7 +284,10 @@ export const VersionsSectionActionGuard: ServiceDetailStory = {
       },
     },
   },
-  render: render("stack-prod", "svc-prod-api", "versions", "更新或回滚任务执行期间，同一服务的版本动作必须统一锁定。"),
+  render: render("stack-prod", "svc-prod-api", "versions", undefined, {
+    pageTitle: null,
+    pageSubtitle: null,
+  }),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => Boolean(findVersionAction(canvasElement, "update", "5.2.3")));
     findVersionAction(canvasElement, "update", "5.2.3")?.click();
@@ -396,7 +420,10 @@ export const MobileVersionsSection: ServiceDetailStory = {
       },
     },
   },
-  render: render("stack-prod", "svc-prod-api", "versions", "移动端版本卡保持单列，无目录且不得横向溢出。"),
+  render: render("stack-prod", "svc-prod-api", "versions", undefined, {
+    pageTitle: null,
+    pageSubtitle: null,
+  }),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => Boolean(findVersionCard(canvasElement, "5.2.1")));
     const surface = versionsSurface(canvasElement);

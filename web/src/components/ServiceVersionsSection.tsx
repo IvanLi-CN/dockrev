@@ -1,20 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer, type VirtualItem } from '@tanstack/react-virtual'
 import {
-  ApiError,
-  getServiceReleaseNotes,
   type JobListItem,
-  type ReleaseNotesView,
   type Service,
   type ServiceBackupRecordItem,
   type ServiceReleaseNoteItem,
   type ServiceReleaseNotesResponse,
-  type ServiceReleaseNotesStatus,
   type ServiceRollbackTargetResponse,
 } from '../api'
 import { useConfirm } from '../confirm'
 import { cn } from '../lib/utils'
 import { navigate } from '../routes'
+import {
+  findReleaseNoteIndex,
+  releaseNotesBodyForView,
+  releaseNotesShouldOfferSettingsAction,
+  releaseNotesSourceLabel,
+  releaseNotesTagMatchesVersion,
+  releaseNotesViewLabel,
+} from '../releaseNotes'
+import { useServiceReleaseNotesSession } from '../useServiceReleaseNotesSession'
 import { blockedReasonFor, serviceRowStatus } from '../updateStatus'
 import {
   compareStrictSemverTags,
@@ -37,10 +42,8 @@ import { Button, GitHubIcon, IconLink, Mono, OctoRillIcon } from '../ui'
 import { ServiceVersionCard } from './ServiceVersionCard'
 import {
   formatVersionDirectoryTimeLabel,
-  mergeReleaseNoteItems,
   normalizeVersion,
   preferredReleaseTimestamp,
-  releaseMatchesVersion,
   safeHttpUrl,
 } from './serviceVersionsSectionUtils'
 
@@ -49,13 +52,6 @@ const RELEASE_ROW_GAP = 14
 const VERSION_INDEX_ROW_HEIGHT = 54
 const DESKTOP_VERSION_INDEX_QUERY = '(min-width: 1101px)'
 const EMPTY_VIRTUAL_ITEMS: VirtualItem[] = []
-
-type AnchorState =
-  | { status: 'idle' }
-  | { status: 'loading' }
-  | { status: 'found'; absoluteIndex: number }
-  | { status: 'notFound'; message: string }
-  | { status: 'unavailable'; message: string }
 
 type ServiceVersionsSectionProps = {
   service: Service
@@ -71,67 +67,6 @@ type ServiceVersionsSectionProps = {
   rollbackActiveJobStatus: string | null
   onApplyUpdate: () => void
   onRollback: () => void
-}
-
-function releaseBodyForView(item: ServiceReleaseNoteItem, view: ReleaseNotesView): { body: string; missing: boolean } {
-  const original = (item.originalBody ?? '').trim()
-  if (view === 'translated') {
-    const translated = (item.translatedBody ?? '').trim()
-    return translated ? { body: translated, missing: false } : { body: original, missing: true }
-  }
-  if (view === 'smart') {
-    const smart = (item.smartBody ?? '').trim()
-    return smart ? { body: smart, missing: false } : { body: original, missing: true }
-  }
-  return { body: original, missing: false }
-}
-
-function viewLabel(view: ReleaseNotesView): string {
-  if (view === 'original') return '原文'
-  if (view === 'translated') return '翻译'
-  return '润色'
-}
-
-function sourceLabel(response: ServiceReleaseNotesResponse | null | undefined): string {
-  if (!response) return '未知'
-  return response.source === 'octoRill' ? 'OctoRill' : 'GitHub Releases'
-}
-
-function shouldOfferSettingsAction(response: ServiceReleaseNotesResponse | null | undefined): boolean {
-  const fallbackReason = response?.fallback?.reason
-  if (fallbackReason === 'notConfigured' || fallbackReason === 'unauthorized') return true
-  const message = response?.message ?? response?.fallback?.message ?? ''
-  return message.includes('GitHub PAT') || message.includes('token 权限') || message.includes('OctoRill')
-}
-
-function fallbackReleaseErrorMessage(error: unknown): string {
-  if (error instanceof ApiError && error.status === 404) {
-    return '该服务不存在或已被删除，无法读取发布记录。'
-  }
-  if (error instanceof Error) {
-    const message = error.message.trim()
-    if (message) return message
-  }
-  return '发布记录拉取失败，请稍后重试。'
-}
-
-function buildListFailureResponse(
-  error: unknown,
-  cursor: string | null,
-  limit: number,
-): ServiceReleaseNotesResponse {
-  return {
-    status: 'upstreamError',
-    source: 'gitHub',
-    repo: null,
-    cursor,
-    limit,
-    nextCursor: null,
-    hasMore: false,
-    defaultView: 'smart',
-    items: [],
-    message: fallbackReleaseErrorMessage(error),
-  }
 }
 
 function updateLockReason(input: {
@@ -160,7 +95,7 @@ function updateLockReason(input: {
 }
 
 function fallbackTone(
-  status: ServiceReleaseNotesStatus | 'info',
+  status: ServiceReleaseNotesResponse['status'] | 'info',
 ): 'warning' | 'danger' | 'success' {
   if (status === 'upstreamError') return 'danger'
   if (status === 'ready') return 'success'
@@ -235,179 +170,57 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
       props.service.versionInference?.status,
     )
   }, [props.service.candidate, props.service.versionInference?.status])
-  const activeSessionRef = useRef<string | null>(sessionKey)
-  const inFlightPagesRef = useRef<Map<string, Promise<ServiceReleaseNotesResponse | null>>>(new Map())
-  const nextCursorRef = useRef<string | null>(null)
-  const hasMoreRef = useRef(false)
-  const loadingMoreRef = useRef(false)
   const initialCenterKeyRef = useRef<string | null>(null)
 
-  const [initialLoadState, setInitialLoadState] = useState<'idle' | 'loading' | 'ready'>('idle')
-  const [listResponse, setListResponse] = useState<ServiceReleaseNotesResponse | null>(null)
-  const [items, setItems] = useState<ServiceReleaseNoteItem[]>([])
+  const {
+    loadState,
+    response: listResponse,
+    items,
+    viewMode,
+    setViewMode,
+    loadingOlder,
+    loadingNewer,
+    olderFailure,
+    newerFailure,
+    hasOlder,
+    hasNewer,
+    loadOlder,
+    loadNewer,
+  } = useServiceReleaseNotesSession({
+    enabled: Boolean(serviceId),
+    serviceId,
+    targetVersion: currentVersion,
+    locateTargetVersion: Boolean(currentVersion),
+    limit: RELEASES_PER_PAGE,
+  })
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set())
-  const [loadingMore, setLoadingMore] = useState(false)
-  const [loadMoreFailure, setLoadMoreFailure] = useState<ServiceReleaseNotesResponse | null>(null)
-  const [viewMode, setViewMode] = useState<ReleaseNotesView>('smart')
   const [selectedIndex, setSelectedIndex] = useState(0)
-  const [anchorState, setAnchorState] = useState<AnchorState>(() =>
-    currentVersion ? { status: 'loading' } : { status: 'idle' },
-  )
+  const anchorState = listResponse?.anchor ?? null
+  const anchorState = listResponse?.anchor ?? null
 
   useEffect(() => {
-    activeSessionRef.current = sessionKey
-  }, [sessionKey])
-
-  const resetState = useCallback(() => {
-    inFlightPagesRef.current.clear()
-    nextCursorRef.current = null
-    hasMoreRef.current = false
-    loadingMoreRef.current = false
     initialCenterKeyRef.current = null
     if (listScrollRef.current) listScrollRef.current.scrollTop = 0
     if (indexScrollRef.current) indexScrollRef.current.scrollTop = 0
-    setInitialLoadState('idle')
-    setListResponse(null)
-    setItems([])
     setExpandedIds(new Set())
-    setLoadingMore(false)
-    setLoadMoreFailure(null)
-    setViewMode('smart')
     setSelectedIndex(0)
-    setAnchorState(currentVersion ? { status: 'loading' } : { status: 'idle' })
-  }, [currentVersion])
-
-  const requestPage = useCallback(
-    async (expectedSession: string, cursor: string | null) => {
-      const requestKey = `${expectedSession}:${cursor ?? 'first'}`
-      const existing = inFlightPagesRef.current.get(requestKey)
-      if (existing) return await existing
-
-      const request = (async () => {
-        let response: ServiceReleaseNotesResponse
-        try {
-          response = await getServiceReleaseNotes(serviceId, {
-            cursor,
-            limit: RELEASES_PER_PAGE,
-          })
-        } catch (error) {
-          response = buildListFailureResponse(error, cursor, RELEASES_PER_PAGE)
-        }
-        if (activeSessionRef.current !== expectedSession) return null
-        return response
-      })()
-
-      inFlightPagesRef.current.set(requestKey, request)
-      try {
-        return await request
-      } finally {
-        if (inFlightPagesRef.current.get(requestKey) === request) {
-          inFlightPagesRef.current.delete(requestKey)
-        }
-      }
-    },
-    [serviceId],
-  )
-
-  useEffect(() => {
-    resetState()
-    if (!serviceId) return
-    const expectedSession = sessionKey
-    activeSessionRef.current = expectedSession
-    setInitialLoadState('loading')
-
-    let cancelled = false
-
-    void (async () => {
-      const firstResponse = await requestPage(expectedSession, null)
-      if (!firstResponse || cancelled || activeSessionRef.current !== expectedSession) return
-
-      setListResponse(firstResponse)
-      if (firstResponse.status !== 'ready') {
-        setInitialLoadState('ready')
-        if (currentVersion) {
-          setAnchorState({
-            status: 'unavailable',
-            message: firstResponse.message ?? '当前无法定位到服务版本，请稍后重试。',
-          })
-        }
-        return
-      }
-
-      setViewMode(firstResponse.source === 'gitHub' ? 'original' : firstResponse.defaultView)
-
-      let aggregated = [...firstResponse.items]
-      let latestReadyResponse = firstResponse
-      let foundIndex = currentVersion
-        ? aggregated.findIndex((item) => releaseMatchesVersion(item, currentVersion))
-        : -1
-
-      setItems(aggregated)
-
-      while (
-        !cancelled &&
-        activeSessionRef.current === expectedSession &&
-        currentVersion &&
-        foundIndex < 0 &&
-        latestReadyResponse.hasMore &&
-        latestReadyResponse.nextCursor
-      ) {
-        const nextResponse = await requestPage(expectedSession, latestReadyResponse.nextCursor)
-        if (!nextResponse || cancelled || activeSessionRef.current !== expectedSession) return
-        if (nextResponse.status !== 'ready') {
-          setLoadMoreFailure(nextResponse)
-          break
-        }
-        aggregated = mergeReleaseNoteItems(aggregated, nextResponse.items)
-        latestReadyResponse = nextResponse
-        foundIndex = aggregated.findIndex((item) => releaseMatchesVersion(item, currentVersion))
-        setItems(aggregated)
-      }
-
-      nextCursorRef.current = latestReadyResponse.nextCursor ?? null
-      hasMoreRef.current = latestReadyResponse.hasMore && nextCursorRef.current != null
-      setInitialLoadState('ready')
-
-      if (!currentVersion) {
-        setAnchorState({
-          status: 'unavailable',
-          message: '当前服务版本暂不可定位，已从最新发布开始展示。',
-        })
-        return
-      }
-
-      if (foundIndex >= 0) {
-        setAnchorState({ status: 'found', absoluteIndex: foundIndex })
-        return
-      }
-
-      if (latestReadyResponse.hasMore && latestReadyResponse.nextCursor) {
-        setAnchorState({
-          status: 'unavailable',
-          message: `当前版本 ${currentVersion} 定位被中断，请继续向下滚动加载更旧版本。`,
-        })
-        return
-      }
-
-      setAnchorState({
-        status: 'notFound',
-        message: `当前版本 ${currentVersion} 未在发布记录中找到，已从顶部开始浏览。`,
-      })
-    })()
-
-    return () => {
-      cancelled = true
-    }
-  }, [currentVersion, requestPage, resetState, serviceId, sessionKey])
-
-  const rowCount = items.length + ((hasMoreRef.current || loadingMore || loadMoreFailure) ? 1 : 0)
+  }, [sessionKey])
+  const topLoaderVisible = hasNewer || loadingNewer || newerFailure != null
+  const bottomLoaderVisible = hasOlder || loadingOlder || olderFailure != null
+  const topLoaderOffset = topLoaderVisible ? 1 : 0
+  const rowCount = items.length + (topLoaderVisible ? 1 : 0) + (bottomLoaderVisible ? 1 : 0)
   const listVirtualizer = useVirtualizer({
     count: rowCount,
     getScrollElement: () => listScrollRef.current,
     estimateSize: () => 360,
     overscan: 6,
     gap: RELEASE_ROW_GAP,
-    getItemKey: (index) => (index < items.length ? items[index]?.id ?? index : `loader:${index}`),
+    getItemKey: (index) => {
+      if (topLoaderVisible && index === 0) return 'loader:newer'
+      const itemIndex = index - topLoaderOffset
+      if (itemIndex >= 0 && itemIndex < items.length) return items[itemIndex]?.id ?? itemIndex
+      return 'loader:older'
+    },
     measureElement: (element) => element.getBoundingClientRect().height,
   })
   const indexVirtualizer = useVirtualizer({
@@ -416,7 +229,12 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     estimateSize: () => VERSION_INDEX_ROW_HEIGHT,
     overscan: 10,
     gap: 8,
-    getItemKey: (index) => (index < items.length ? items[index]?.id ?? index : `index-loader:${index}`),
+    getItemKey: (index) => {
+      if (topLoaderVisible && index === 0) return 'index-loader:newer'
+      const itemIndex = index - topLoaderOffset
+      if (itemIndex >= 0 && itemIndex < items.length) return items[itemIndex]?.id ?? itemIndex
+      return `index-loader:older:${index}`
+    },
   })
 
   useEffect(() => {
@@ -449,7 +267,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
           element.querySelectorAll<HTMLElement>('[data-service-version-card="true"]'),
         ).find((node) => node.getAttribute('data-release-tag') === tagName)
         let targetOffset = resolveVirtualOffset(
-          listVirtualizer.getOffsetForIndex(absoluteIndex, 'center'),
+          listVirtualizer.getOffsetForIndex(absoluteIndex + topLoaderOffset, 'center'),
         )
         if (renderedCard) {
           const viewportRect = element.getBoundingClientRect()
@@ -462,7 +280,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
         targetOffset = Math.max(0, targetOffset)
         element.scrollTo({ top: targetOffset })
         if (showDesktopIndex) {
-          indexVirtualizer.scrollToIndex(absoluteIndex, {
+          indexVirtualizer.scrollToIndex(absoluteIndex + topLoaderOffset, {
             align: mode === 'initial' ? 'center' : 'auto',
           })
         }
@@ -494,112 +312,101 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
         window.clearTimeout(retryTimer)
       }
     },
-    [indexVirtualizer, listVirtualizer, sessionKey, showDesktopIndex],
+    [indexVirtualizer, listVirtualizer, sessionKey, showDesktopIndex, topLoaderOffset],
   )
 
   useEffect(() => {
-    if (initialLoadState !== 'ready') return
-    if (anchorState.status !== 'found') return
-    if (items.length <= anchorState.absoluteIndex) return
+    if (loadState !== 'ready') return
+    if (anchorState?.status !== 'found') return
+    const anchorIndex = findReleaseNoteIndex(items, currentVersion)
+    if (anchorIndex < 0 || items.length <= anchorIndex) return
     const scrollElement = listScrollRef.current
     if (!scrollElement) return
-    const key = `${sessionKey}:${anchorState.absoluteIndex}`
+    const key = `${sessionKey}:${anchorIndex}`
     if (initialCenterKeyRef.current === key && scrollElement.scrollTop > 0) return
-    setSelectedIndex(anchorState.absoluteIndex)
+    setSelectedIndex(anchorIndex)
     return centerVersionCard(
-      anchorState.absoluteIndex,
-      items[anchorState.absoluteIndex]?.tagName ?? '',
+      anchorIndex,
+      items[anchorIndex]?.tagName ?? '',
       'initial',
     )
-  }, [anchorState, centerVersionCard, initialLoadState, items, sessionKey])
+  }, [anchorState, centerVersionCard, currentVersion, items, loadState, sessionKey])
 
   const listVirtualItems = listVirtualizer.getVirtualItems()
   const indexVirtualItems = showDesktopIndex ? indexVirtualizer.getVirtualItems() : EMPTY_VIRTUAL_ITEMS
   const listOffset = listVirtualItems[0]?.start ?? 0
   const indexOffset = indexVirtualItems[0]?.start ?? 0
 
-  const loadNextPage = useCallback(async () => {
-    if (!serviceId || loadingMoreRef.current || loadingMore || !hasMoreRef.current) return
-    const expectedSession = sessionKey
-    const nextCursor = nextCursorRef.current
-    if (!nextCursor) return
-
-    loadingMoreRef.current = true
-    setLoadingMore(true)
-    try {
-      const response = await requestPage(expectedSession, nextCursor)
-      if (!response || activeSessionRef.current !== expectedSession) return
-      if (response.status !== 'ready') {
-        setLoadMoreFailure(response)
-        return
-      }
-      nextCursorRef.current = response.nextCursor ?? null
-      hasMoreRef.current = response.hasMore && nextCursorRef.current != null
-      setLoadMoreFailure(null)
-      const mergedItems = mergeReleaseNoteItems(items, response.items)
-      setItems(mergedItems)
-      if (currentVersion) {
-        const foundIndex = mergedItems.findIndex((item) => releaseMatchesVersion(item, currentVersion))
-        if (foundIndex >= 0) {
-          setAnchorState({ status: 'found', absoluteIndex: foundIndex })
-          setSelectedIndex(foundIndex)
-        } else if (!response.hasMore || !response.nextCursor) {
-          setAnchorState({
-            status: 'notFound',
-            message: `当前版本 ${currentVersion} 未在发布记录中找到，已从顶部开始浏览。`,
-          })
-        }
-      }
-    } finally {
-      if (activeSessionRef.current === expectedSession) {
-        loadingMoreRef.current = false
-        setLoadingMore(false)
-      }
+  useEffect(() => {
+    const firstListItem = listVirtualItems[0]
+    const firstIndexItem = indexVirtualItems[0]
+    if (
+      (firstListItem?.index === 0 || firstIndexItem?.index === 0) &&
+      topLoaderVisible &&
+      hasNewer &&
+      !loadingNewer &&
+      !newerFailure &&
+      loadState === 'ready'
+    ) {
+      void loadNewer()
     }
-  }, [currentVersion, items, loadingMore, requestPage, serviceId, sessionKey])
+  }, [
+    hasNewer,
+    indexVirtualItems,
+    listVirtualItems,
+    loadNewer,
+    loadState,
+    loadingNewer,
+    newerFailure,
+    topLoaderVisible,
+  ])
 
   useEffect(() => {
     const lastListItem = [...listVirtualItems].reverse()[0]
     const lastIndexItem = [...indexVirtualItems].reverse()[0]
     const tailIndex = Math.max(lastListItem?.index ?? -1, lastIndexItem?.index ?? -1)
-    if (tailIndex < items.length - 1) return
-    if (!hasMoreRef.current || loadingMore || loadMoreFailure || initialLoadState !== 'ready') return
-    void loadNextPage()
+    if (tailIndex < rowCount - 1) return
+    if (!bottomLoaderVisible || !hasOlder || loadingOlder || olderFailure || loadState !== 'ready') return
+    void loadOlder()
   }, [
+    bottomLoaderVisible,
+    hasOlder,
     indexVirtualItems,
-    initialLoadState,
-    items.length,
     listVirtualItems,
-    loadMoreFailure,
-    loadNextPage,
-    loadingMore,
+    loadOlder,
+    loadState,
+    loadingOlder,
+    olderFailure,
+    rowCount,
   ])
 
   useEffect(() => {
     if (items.length === 0) return
     const scrollElement = listScrollRef.current
     if (!scrollElement) return
-    const visibleRows = listVirtualItems.filter((row) => row.index < items.length)
+    const visibleRows = listVirtualItems
+      .map((row) => ({ row, itemIndex: row.index - topLoaderOffset }))
+      .filter(({ itemIndex }) => itemIndex >= 0 && itemIndex < items.length)
     if (visibleRows.length === 0) return
     const viewportCenter = scrollElement.scrollTop + scrollElement.clientHeight / 2
-    let nearestIndex = visibleRows[0]?.index ?? 0
+    let nearestIndex = visibleRows[0]?.itemIndex ?? 0
     let nearestDistance = Number.POSITIVE_INFINITY
-    for (const row of visibleRows) {
+    for (const { row, itemIndex } of visibleRows) {
       const rowCenter = row.start + row.size / 2
       const distance = Math.abs(rowCenter - viewportCenter)
       if (distance < nearestDistance) {
         nearestDistance = distance
-        nearestIndex = row.index
+        nearestIndex = itemIndex
       }
     }
     setSelectedIndex((prev) => (prev === nearestIndex ? prev : nearestIndex))
-  }, [items.length, listVirtualItems])
+  }, [items.length, listVirtualItems, topLoaderOffset])
 
   useEffect(() => {
     if (!showDesktopIndex) return
     if (selectedIndex >= items.length) return
-    indexVirtualizer.scrollToIndex(selectedIndex, { align: 'auto' })
-  }, [indexVirtualizer, items.length, selectedIndex, showDesktopIndex])
+    indexVirtualizer.scrollToIndex(selectedIndex + topLoaderOffset, { align: 'auto' })
+  }, [indexVirtualizer, items.length, selectedIndex, showDesktopIndex, topLoaderOffset])
 
   const currentVersionNorm = normalizeVersion(currentVersion)
   const deployedHistoricalVersions = useMemo(() => {
@@ -634,13 +441,13 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     ],
   )
 
-  const showSettingsAction = shouldOfferSettingsAction(listResponse)
+  const showSettingsAction = releaseNotesShouldOfferSettingsAction(listResponse)
   const fallbackBanner = listResponse?.fallback
     ? { tone: 'warning' as const, message: listResponse.fallback.message }
     : null
   const anchorBanner =
-    anchorState.status === 'notFound' || anchorState.status === 'unavailable'
-      ? { tone: 'warning' as const, message: anchorState.message }
+    anchorState?.status === 'notFound' || anchorState?.status === 'outsideWindow' || anchorState?.status === 'unavailable'
+      ? { tone: 'warning' as const, message: anchorState?.message ?? '' }
       : null
   const listBanner =
     listResponse && listResponse.status !== 'ready' && listResponse.message
@@ -744,8 +551,8 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     const dockrevService = isDockrevService(props.service)
 
     return items.map((item) => {
-      const currentMatch = releaseMatchesVersion(item, currentVersion)
-      const candidateMatch = releaseMatchesVersion(item, candidateComparableVersion)
+      const currentMatch = releaseNotesTagMatchesVersion(item, currentVersion)
+      const candidateMatch = releaseNotesTagMatchesVersion(item, candidateComparableVersion)
       const semverComparison = compareStrictSemverTags(item.tagName, currentComparableVersion)
       const olderThanCurrent = semverComparison != null && semverComparison < 0
       const newerThanCurrent = semverComparison != null && semverComparison > 0
@@ -791,7 +598,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
       }
 
       const rollbackDisabledReason = showRollback ? serviceActionLockReason : null
-      const { body, missing } = releaseBodyForView(item, viewMode)
+      const { body, missing } = releaseNotesBodyForView(item, viewMode)
       return {
         item,
         body,
@@ -825,8 +632,14 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     viewMode,
   ])
 
-  const renderedCardCount = listVirtualItems.filter((item) => item.index < cards.length).length
-  const renderedIndexCount = indexVirtualItems.filter((item) => item.index < items.length).length
+  const renderedCardCount = listVirtualItems.filter((item) => {
+    const cardIndex = item.index - topLoaderOffset
+    return cardIndex >= 0 && cardIndex < cards.length
+  }).length
+  const renderedIndexCount = indexVirtualItems.filter((item) => {
+    const itemIndex = item.index - topLoaderOffset
+    return itemIndex >= 0 && itemIndex < items.length
+  }).length
   const githubReleasesUrl = safeHttpUrl(listResponse?.externalLinks?.githubReleasesUrl)
   const octoRillReleasesUrl = safeHttpUrl(listResponse?.externalLinks?.octoRillReleasesUrl)
   const rollbackBackupSummaryByJobId = useMemo(
@@ -886,14 +699,13 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
                     aria-pressed={viewMode === view}
                     onClick={() => setViewMode(view)}
                   >
-                    {viewLabel(view)}
+                    {releaseNotesViewLabel(view)}
                   </button>
                 ))}
               </div>
             ) : null}
           </div>
         </div>
-
         {activeTaskNotice ? (
           <div className="serviceVersionsActivityBanner" data-service-versions-banner="activity">
             <div>
@@ -942,21 +754,21 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
           </div>
         ) : null}
 
-        {initialLoadState === 'loading' && items.length === 0 ? (
+        {loadState === 'loading' && items.length === 0 ? (
           <div className="serviceVersionsState" data-service-versions-state="loading">
             <span className="btnInlineSpinner" aria-hidden="true" />
             <span>正在加载版本发布记录…</span>
           </div>
         ) : null}
 
-        {initialLoadState === 'ready' && listResponse?.status !== 'ready' ? (
+        {loadState === 'ready' && listResponse?.status !== 'ready' ? (
           <div className="serviceVersionsState serviceVersionsStateError" data-service-versions-state={listResponse?.status}>
             <div className="serviceVersionsStateTitle">无法读取版本发布记录</div>
             <div className="serviceVersionsStateMessage">{listResponse?.message ?? '请稍后重试。'}</div>
           </div>
         ) : null}
 
-        {initialLoadState === 'ready' && listResponse?.status === 'ready' && items.length === 0 ? (
+        {loadState === 'ready' && listResponse?.status === 'ready' && items.length === 0 ? (
           <div className="serviceVersionsState" data-service-versions-state="empty">
             <div className="serviceVersionsStateTitle">暂无发布记录</div>
             <div className="serviceVersionsStateMessage">该仓库当前没有可展示的 Releases。</div>
@@ -983,30 +795,41 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
                   <div className="serviceVersionsIndexList" style={{ height: `${indexVirtualizer.getTotalSize()}px` }}>
                     <div className="serviceVersionsIndexListInner" style={{ transform: `translateY(${indexOffset}px)` }}>
                       {indexVirtualItems.map((virtualRow) => {
-                        if (virtualRow.index >= items.length) {
+                        const isTopLoaderRow = topLoaderVisible && virtualRow.index === 0
+                        const itemIndex = virtualRow.index - topLoaderOffset
+                        if (isTopLoaderRow || itemIndex >= items.length) {
+                          const loaderMessage = isTopLoaderRow
+                            ? newerFailure
+                              ? '加载更新版本失败，请回到顶部重试。'
+                              : loadingNewer
+                                ? '正在继续加载更新版本…'
+                                : hasNewer
+                                  ? '继续上滑以加载更新版本…'
+                                  : ''
+                            : olderFailure
+                              ? '加载更旧版本失败，请继续向下滚动重试。'
+                              : loadingOlder
+                                ? '正在继续加载更旧版本…'
+                                : hasOlder
+                                  ? '继续下滑以加载更旧版本…'
+                                  : ''
                           return (
                             <div
                               key={virtualRow.key}
                               className="serviceVersionsIndexRow serviceVersionsIndexRowLoader"
                               data-index={virtualRow.index}
                             >
-                              <div className="serviceVersionsIndexLoader">
-                                {loadMoreFailure
-                                  ? '目录加载失败，继续向下滚动右侧列表可重试。'
-                                  : loadingMore
-                                    ? '继续加载中…'
-                                    : hasMoreRef.current
-                                      ? '继续加载更旧版本…'
-                                      : ''}
-                              </div>
+                              {loaderMessage ? (
+                                <div className="serviceVersionsIndexLoader">{loaderMessage}</div>
+                              ) : null}
                             </div>
                           )
                         }
 
-                        const item = items[virtualRow.index]!
-                        const currentMatch = releaseMatchesVersion(item, currentVersion)
-                        const candidateMatch = releaseMatchesVersion(item, candidateVersion)
-                        const selected = virtualRow.index === selectedIndex
+                        const item = items[itemIndex]!
+                        const currentMatch = releaseNotesTagMatchesVersion(item, currentVersion)
+                        const candidateMatch = releaseNotesTagMatchesVersion(item, candidateVersion)
+                        const selected = itemIndex === selectedIndex
                         return (
                           <div
                             key={virtualRow.key}
@@ -1025,8 +848,8 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
                               data-release-tag={item.tagName}
                               data-service-versions-index-selected={selected ? 'true' : 'false'}
                               onClick={() => {
-                                setSelectedIndex(virtualRow.index)
-                                void centerVersionCard(virtualRow.index, item.tagName, 'interactive')
+                                setSelectedIndex(itemIndex)
+                                void centerVersionCard(itemIndex, item.tagName, 'interactive')
                               }}
                             >
                               <span className="serviceVersionsIndexVersion">
@@ -1055,7 +878,9 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
                 <div className="serviceVersionsList" style={{ height: `${listVirtualizer.getTotalSize()}px` }}>
                   <div className="serviceVersionsListInner" style={{ transform: `translateY(${listOffset}px)` }}>
                     {listVirtualItems.map((virtualRow) => {
-                      if (virtualRow.index >= cards.length) {
+                      const isTopLoaderRow = topLoaderVisible && virtualRow.index === 0
+                      const cardIndex = virtualRow.index - topLoaderOffset
+                      if (isTopLoaderRow || cardIndex >= cards.length) {
                         return (
                           <div
                             key={virtualRow.key}
@@ -1063,29 +888,45 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
                             className="serviceVersionsVirtualRow serviceVersionsVirtualRowLoader"
                             ref={listVirtualizer.measureElement}
                           >
-                            {loadMoreFailure ? (
+                            {isTopLoaderRow ? (
+                              newerFailure ? (
+                                <div className="serviceVersionsLoaderCard">
+                                  <div className="serviceVersionsLoaderTitle">加载更新版本失败</div>
+                                  <div className="serviceVersionsLoaderMessage">{newerFailure.message ?? '请稍后重试。'}</div>
+                                  <div>
+                                    <Button variant="ghost" onClick={() => void loadNewer()}>
+                                      重试
+                                    </Button>
+                                  </div>
+                                </div>
+                              ) : hasNewer || loadingNewer ? (
+                                <div className="serviceVersionsLoaderRow">
+                                  <span className="btnInlineSpinner" aria-hidden="true" />
+                                  <span>{loadingNewer ? '正在继续加载更新版本…' : '继续上滑以加载更新版本…'}</span>
+                                </div>
+                              ) : null
+                            ) : olderFailure ? (
                               <div className="serviceVersionsLoaderCard">
                                 <div className="serviceVersionsLoaderTitle">加载更旧版本失败</div>
-                                <div className="serviceVersionsLoaderMessage">{loadMoreFailure.message ?? '请稍后重试。'}</div>
+                                <div className="serviceVersionsLoaderMessage">{olderFailure.message ?? '请稍后重试。'}</div>
                                 <div>
-                                  <Button variant="ghost" onClick={() => void loadNextPage()}>
+                                  <Button variant="ghost" onClick={() => void loadOlder()}>
                                     重试
                                   </Button>
                                 </div>
                               </div>
-                            ) : hasMoreRef.current || loadingMore ? (
+                            ) : hasOlder || loadingOlder ? (
                               <div className="serviceVersionsLoaderRow">
                                 <span className="btnInlineSpinner" aria-hidden="true" />
-                                <span>{loadingMore ? '正在继续加载更旧版本…' : '继续加载更旧版本…'}</span>
+                                <span>{loadingOlder ? '正在继续加载更旧版本…' : '继续下滑以加载更旧版本…'}</span>
                               </div>
                             ) : null}
                           </div>
                         )
                       }
 
-                      const card = cards[virtualRow.index]!
+                      const card = cards[cardIndex]!
                       const expanded = expandedIds.has(card.item.id)
-
                       return (
                         <div
                           key={virtualRow.key}
@@ -1098,8 +939,8 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
                             candidateDisplayVersion={candidateDisplayVersion}
                             rollbackTarget={props.rollbackTarget}
                             rollbackBackupSummary={rollbackBackupSummary}
-                            viewLabel={viewLabel(viewMode)}
-                            sourceLabel={sourceLabel(listResponse)}
+                            viewLabel={releaseNotesViewLabel(viewMode)}
+                            sourceLabel={releaseNotesSourceLabel(listResponse)}
                             expanded={expanded}
                             onToggleExpanded={toggleExpanded}
                             onApplyUpdate={() => {

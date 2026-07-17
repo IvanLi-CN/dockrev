@@ -336,10 +336,8 @@ const releaseDrawerLocatedDataset = {
     locateByVersion: {
       '1.39.5': {
         status: 'found',
-        searchedCount: 20,
         matchedTag: '1.39.5',
-        page: 1,
-        indexWithinPage: 12,
+        indexWithinWindow: 12,
         absoluteIndex: 12,
       },
     },
@@ -637,7 +635,6 @@ export const OutsideWindow: Story = {
         locateByVersion: {
           '1.39.5': {
             status: 'outsideWindow',
-            searchedCount: 50,
             matchedTag: '1.39.5',
           },
         },
