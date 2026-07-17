@@ -184,6 +184,8 @@ export const VersionsSection: ServiceDetailStory = {
     const currentAside = currentCard?.querySelector<HTMLElement>('[data-service-version-card-aside="true"]');
     const candidateAside = candidateCard?.querySelector<HTMLElement>('[data-service-version-card-aside="true"]');
     const rollbackAside = rollbackCard?.querySelector<HTMLElement>('[data-service-version-card-aside="true"]');
+    const markdownHeading = currentCard?.querySelector<HTMLElement>(".serviceVersionBody h2");
+    const markdownList = currentCard?.querySelector<HTMLElement>(".serviceVersionBody ul");
     expectStory(
       Number.parseFloat(getComputedStyle(currentTitle ?? canvasElement).fontSize) >
         Number.parseFloat(getComputedStyle(currentMetaValue ?? canvasElement).fontSize),
@@ -196,6 +198,14 @@ export const VersionsSection: ServiceDetailStory = {
     expectStory(
       normalizeText(currentTag?.textContent) === "5.2.1",
       "version tag should stay in the left metadata rail instead of being replaced by the release title",
+    );
+    expectStory(
+      normalizeText(markdownHeading?.textContent) === "What's Changed",
+      "GitHub release markdown headings should render as structured heading elements",
+    );
+    expectStory(
+      Boolean(markdownList?.querySelector("li")),
+      "GitHub release markdown bullet lists should render as list items",
     );
     expectStory(Boolean(currentAside), "read-only current version cards should still reserve the fixed aside rail");
     expectStory(
@@ -244,6 +254,11 @@ export const VersionsSection: ServiceDetailStory = {
     );
     expandButton?.click();
     await waitForCondition(() => normalizeText(currentCard?.textContent).includes("故意超过十行"));
+    const changelogLink = currentCard?.querySelector<HTMLAnchorElement>('.serviceVersionBody a[href*="/compare/"]');
+    expectStory(
+      changelogLink?.href === "https://github.com/acme/api/compare/5.2.1-prev...5.2.1",
+      "expanded release notes should keep the rendered changelog link",
+    );
 
     const initialSelected = selectedIndexTag(canvasElement);
     viewport?.scrollTo({ top: Math.max(0, (viewport?.scrollTop ?? 0) + 280) });

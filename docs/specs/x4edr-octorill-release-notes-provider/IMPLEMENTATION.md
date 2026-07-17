@@ -16,6 +16,7 @@
 - 新增服务级 `GET /api/services/{service_id}/release-notes/locate`，首屏由后端直接返回锚点窗口、`previousCursor` 与结构化 `anchor`；普通 list 路径支持 `direction=older|newer` 双向续拉。
 - OctoRill locate 优先复用 public releases highlight/window 能力；当前实例无法提供目标窗口时，统一回退 GitHub items，并通过 `fallback` 与 `anchor.message` 显式说明失去 `smart / translated`。
 - 发布抽屉改用统一 release notes API，显示来源、fallback banner，并支持 `润色 / 翻译 / 原文` 会话内切换。
+- 发布抽屉与服务详情 `版本` 子页的 release card 现已对 GitHub Releases / OctoRill 的 Markdown 正文做安全渲染，保留标题、列表、强调、链接与显式换行；原始 HTML 仍不会执行。
 - 服务更新记录与服务详情 `版本` 子页都改为 locate-first：首屏只渲染锚点窗口，不再为了“定位当前版本”在线性翻页中自动扫完整个版本历史。
 - Settings 新增 OctoRill 更新日志配置卡片，复用现有自动保存状态与错误提示。
 - Storybook mock API、Settings story 与 Release Drawer story 已覆盖配置卡、等长 API Key 脱敏、默认润色、视图切换与 fallback 分支。
@@ -32,6 +33,7 @@
 - `bun run --cwd web lint`
 - `bun run --cwd web build`
 - `bun run --cwd web build-storybook`
+- `bun test web/tests/serviceVersionCardMarkdown.test.tsx web/tests/releaseNotesLayout.test.ts`
 - `bun test web/tests/releaseDrawer.test.ts`
 - Storybook static + Playwright screenshot capture for `components-githubreleasedrawer--anonymous-located` and `components-githubreleasedrawer--outside-window`
 
@@ -42,9 +44,13 @@
 - `crates/dockrev-api/src/api/types/mod.rs`
 - `crates/dockrev-api/src/api/types/services.rs`
 - `web/src/components/GitHubReleaseDrawer.tsx`
+- `web/src/components/ServiceVersionCard.tsx`
 - `web/src/pages/SettingsPage.tsx`
+- `web/src/stories/pages/serviceDetailPageStoryFixtures.ts`
+- `web/src/stories/pages/serviceDetailVersionsStories.tsx`
 - `web/src/stories/components/GitHubReleaseDrawer.stories.tsx`
 - `web/src/stories/pages/SettingsPage.stories.tsx`
+- `web/tests/serviceVersionCardMarkdown.test.tsx`
 
 ## References
 

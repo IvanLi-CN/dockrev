@@ -1,4 +1,7 @@
 import { type ServiceReleaseNoteItem, type ServiceRollbackTargetResponse } from "../api";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkBreaks from "remark-breaks";
+import remarkGfm from "remark-gfm";
 import { cn } from "../lib/utils";
 import { shortDigest } from "../pages/serviceDetailUtils";
 import { backupSummaryValue, type ServiceOperationBackupSummary } from "./serviceOperationBackupSummary";
@@ -6,6 +9,24 @@ import { Button, Mono, Pill } from "../ui";
 import { formatReleaseDate, preferredReleaseTimestamp, safeHttpUrl } from "./serviceVersionsSectionUtils";
 
 const BODY_COLLAPSE_LINE_COUNT = 10;
+
+const RELEASE_MARKDOWN_COMPONENTS: Components = {
+  a({ node, href, children, ...props }) {
+    void node;
+    const linkUrl = safeHttpUrl(href);
+    if (!linkUrl) return <>{children}</>;
+    return (
+      <a
+        {...props}
+        href={linkUrl}
+        rel="noreferrer"
+        target="_blank"
+      >
+        {children}
+      </a>
+    );
+  },
+};
 
 export type ServiceVersionCardModel = {
   item: ServiceReleaseNoteItem;
@@ -161,7 +182,12 @@ export function ServiceVersionCard(props: {
               className="serviceVersionBody"
               data-service-version-body-expanded={props.expanded ? "true" : "false"}
             >
-              {bodyState.visibleBody}
+              <ReactMarkdown
+                components={RELEASE_MARKDOWN_COMPONENTS}
+                remarkPlugins={[remarkGfm, remarkBreaks]}
+              >
+                {bodyState.visibleBody}
+              </ReactMarkdown>
             </div>
           ) : (
             <div className="serviceVersionBodyEmpty">该版本没有可展示的正文。</div>

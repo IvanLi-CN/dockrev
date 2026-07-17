@@ -8175,8 +8175,85 @@ html[data-theme="light"] .modalOverlay {
   color: var(--text);
   font-size: 13px;
   line-height: 1.62;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.serviceVersionBody > :first-child {
+  margin-top: 0;
+}
+
+.serviceVersionBody > :last-child {
+  margin-bottom: 0;
+}
+
+.serviceVersionBody h1,
+.serviceVersionBody h2,
+.serviceVersionBody h3,
+.serviceVersionBody h4 {
+  margin: 0 0 10px;
+  color: var(--text);
+  font-weight: 730;
+  letter-spacing: -0.01em;
+}
+
+.serviceVersionBody h1 {
+  font-size: 17px;
+}
+
+.serviceVersionBody h2 {
+  font-size: 15px;
+}
+
+.serviceVersionBody h3,
+.serviceVersionBody h4 {
+  font-size: 14px;
+}
+
+.serviceVersionBody p,
+.serviceVersionBody ul,
+.serviceVersionBody ol,
+.serviceVersionBody pre,
+.serviceVersionBody blockquote {
+  margin: 0 0 12px;
+}
+
+.serviceVersionBody ul,
+.serviceVersionBody ol {
+  padding-left: 18px;
+}
+
+.serviceVersionBody ul {
+  list-style: disc;
+}
+
+.serviceVersionBody ol {
+  list-style: decimal;
+}
+
+.serviceVersionBody li + li {
+  margin-top: 4px;
+}
+
+.serviceVersionBody a {
+  color: color-mix(in srgb, var(--color-primary) 76%, var(--text) 24%);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.serviceVersionBody a:hover {
+  color: var(--text);
+}
+
+.serviceVersionBody strong {
+  font-weight: 700;
+}
+
+.serviceVersionBody code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--panel2) 82%, var(--bg) 18%);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.95em;
 }
 
 .serviceVersionBodyEmpty {
