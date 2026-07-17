@@ -196,7 +196,6 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set())
   const [selectedIndex, setSelectedIndex] = useState(0)
   const anchorState = listResponse?.anchor ?? null
-  const anchorState = listResponse?.anchor ?? null
 
   useEffect(() => {
     initialCenterKeyRef.current = null
