@@ -8,6 +8,13 @@ import type {
 import { imageRepoFromImageRef } from '../../../../imageRepo'
 import type { MockRouteContext } from '../context'
 import {
+  buildMockReleaseNotesExternalLinks,
+  buildMockSmartReleaseSummary,
+  clampReleaseNotesLimit,
+  mockReleaseTagMatchesVersion,
+  parseReleaseNotesCursor,
+} from '../releaseNotes'
+import {
   buildResourceHistorySamples,
   buildResourceSsePayload,
   isMaskLiteral,
@@ -18,35 +25,6 @@ import {
   parseResourceWindow,
   toNotificationsResponse,
 } from '../shared'
-
-function clampReleaseNotesLimit(
-  rawValue: string | null | undefined,
-  { fallback, max }: { fallback: number; max: number },
-): number {
-  const parsed = Number(rawValue ?? String(fallback))
-  if (!Number.isFinite(parsed)) return fallback
-  return Math.min(max, Math.max(1, Math.trunc(parsed)))
-}
-
-function parseReleaseNotesCursor(rawValue: string | null | undefined): number {
-  const parsed = Number(rawValue ?? '0')
-  if (!Number.isFinite(parsed)) return 0
-  return Math.max(0, Math.trunc(parsed))
-}
-
-function normalizeMockReleaseVersion(value: string | null | undefined): string {
-  return (value ?? '').trim().toLowerCase()
-}
-
-function mockReleaseTagMatchesVersion(tagName: string, version: string | null | undefined): boolean {
-  const normalizedVersion = normalizeMockReleaseVersion(version)
-  if (!normalizedVersion) return false
-  const normalizedTag = normalizeMockReleaseVersion(tagName)
-  if (normalizedTag === normalizedVersion) return true
-  if (normalizedTag === `v${normalizedVersion}`) return true
-  if (normalizedVersion.startsWith('v') && normalizedTag === normalizedVersion.slice(1)) return true
-  return false
-}
 
 export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<Response | null> {
   const {
@@ -462,38 +440,11 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
               ? 'OctoRill API Base URL 或 API Key 未配置完整，已使用 GitHub Releases。'
               : 'OctoRill 更新日志未启用，已使用 GitHub Releases。',
           }
-    const githubReleasesUrl = githubAll.repo?.htmlUrl
-      ? `${githubAll.repo.htmlUrl.replace(/\/+$/, '')}/releases`
-      : null
-    let octoRillReleasesUrl: string | null = null
-    if (githubAll.repo?.fullName && octoRill.apiBaseUrl?.trim()) {
-      const [owner, repo] = githubAll.repo.fullName.split('/')
-      if (owner?.trim() && repo?.trim()) {
-        try {
-          const releaseUrl = new URL(octoRill.apiBaseUrl.trim())
-          const baseSegments = releaseUrl.pathname.split('/').filter(Boolean)
-          releaseUrl.pathname = `/${[...baseSegments, owner.trim(), repo.trim(), 'releases'].join('/')}`
-          octoRillReleasesUrl = releaseUrl.toString()
-        } catch {
-          octoRillReleasesUrl = null
-        }
-      }
-    }
-    const externalLinks = githubReleasesUrl
-      ? {
-          githubReleasesUrl,
-          ...(octoRillReleasesUrl ? { octoRillReleasesUrl } : {}),
-        }
-      : null
-    const smartSummaryFor = (title: string) => {
-      const subject = /^release\s+\d/i.test(title) || /^\d+(?:\.\d+)+(?:[-+].*)?$/.test(title) ? '本次更新' : title
-      return [
-        `润色摘要：${subject}主要优化发布说明阅读体验与维护决策效率。`,
-        '',
-        '- 将关键变更压缩成可快速扫读的摘要，减少从原文里反复定位重点。',
-        '- 适合在维护窗口中判断升级收益、影响范围和是否需要继续查看原文。',
-      ].join('\n')
-    }
+    const externalLinks = buildMockReleaseNotesExternalLinks(
+      githubAll.repo?.htmlUrl,
+      githubAll.repo?.fullName,
+      octoRill.apiBaseUrl,
+    )
     const mapReleaseNotesItems = (items: typeof githubAll.items) =>
       items.map((item, index) => {
         const title = item.name && item.name !== item.tagName ? item.name : item.tagName
@@ -508,7 +459,7 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
               : null,
           smartBody:
             shouldUseOctoRill && index % 4 !== 3
-              ? smartSummaryFor(title)
+              ? buildMockSmartReleaseSummary(title)
               : null,
           htmlUrl: item.htmlUrl,
           draft: item.draft,
@@ -595,8 +546,7 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
 
     const dataset = buildMockGitHubReleasesDataset(serviceId)
     const locateOverride = Object.entries(dataset.locateByVersion ?? {}).find(
-      ([candidateVersion]) =>
-        normalizeMockReleaseVersion(candidateVersion) === normalizeMockReleaseVersion(version),
+      ([candidateVersion]) => mockReleaseTagMatchesVersion(candidateVersion, version),
     )?.[1]
     const allItems = githubAll.items
     const matchIndex = allItems.findIndex((item) => mockReleaseTagMatchesVersion(item.tagName, version))
@@ -672,38 +622,11 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
               ? 'OctoRill API Base URL 或 API Key 未配置完整，已使用 GitHub Releases。'
               : 'OctoRill 更新日志未启用，已使用 GitHub Releases。',
           }
-    const githubReleasesUrl = githubAll.repo?.htmlUrl
-      ? `${githubAll.repo.htmlUrl.replace(/\/+$/, '')}/releases`
-      : null
-    let octoRillReleasesUrl: string | null = null
-    if (githubAll.repo?.fullName && octoRill.apiBaseUrl?.trim()) {
-      const [owner, repo] = githubAll.repo.fullName.split('/')
-      if (owner?.trim() && repo?.trim()) {
-        try {
-          const releaseUrl = new URL(octoRill.apiBaseUrl.trim())
-          const baseSegments = releaseUrl.pathname.split('/').filter(Boolean)
-          releaseUrl.pathname = `/${[...baseSegments, owner.trim(), repo.trim(), 'releases'].join('/')}`
-          octoRillReleasesUrl = releaseUrl.toString()
-        } catch {
-          octoRillReleasesUrl = null
-        }
-      }
-    }
-    const externalLinks = githubReleasesUrl
-      ? {
-          githubReleasesUrl,
-          ...(octoRillReleasesUrl ? { octoRillReleasesUrl } : {}),
-        }
-      : null
-    const smartSummaryFor = (title: string) => {
-      const subject = /^release\s+\d/i.test(title) || /^\d+(?:\.\d+)+(?:[-+].*)?$/.test(title) ? '本次更新' : title
-      return [
-        `润色摘要：${subject}主要优化发布说明阅读体验与维护决策效率。`,
-        '',
-        '- 将关键变更压缩成可快速扫读的摘要，减少从原文里反复定位重点。',
-        '- 适合在维护窗口中判断升级收益、影响范围和是否需要继续查看原文。',
-      ].join('\n')
-    }
+    const externalLinks = buildMockReleaseNotesExternalLinks(
+      githubAll.repo?.htmlUrl,
+      githubAll.repo?.fullName,
+      octoRill.apiBaseUrl,
+    )
 
     if (githubAll.status !== 'ready') {
       return json({
@@ -752,7 +675,7 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
               : null,
           smartBody:
             shouldUseOctoRill && index % 4 !== 3
-              ? smartSummaryFor(title)
+              ? buildMockSmartReleaseSummary(title)
               : null,
           htmlUrl: item.htmlUrl,
           draft: item.draft,
