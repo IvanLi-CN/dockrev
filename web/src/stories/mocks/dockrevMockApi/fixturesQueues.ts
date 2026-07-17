@@ -723,70 +723,86 @@ export function buildQueueLongLogs(): Fixture {
     finishedAt: nowIso(-88_000),
   })
 
+  const jobLiveLong = makeJob({
+    id: 'job-live-long',
+    status: 'running',
+    createdAt: nowIso(-70_000),
+    startedAt: nowIso(-69_000),
+    finishedAt: null,
+  })
+
   const digest = `sha256:${'9'.repeat(64)}`
   const longToken = `tok_${'a'.repeat(220)}`
   const longImageRef = `ghcr.io/ivanli-cn/example/super/long/repo/name/that/should/wrap@${digest}`
   const longUrl =
     'https://registry.example.com/v2/ivanli-cn/example/manifests/sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef?ns=docker.io&service=registry&scope=repository%3Aivanli-cn%2Fexample%3Apull&offline_token=true&client_id=dockrev-ui&foo=bar&bar=baz&bar2=quux'
 
-  f.jobs = [jobShort, jobLong]
+  const baseLongLogs = [
+    { ts: nowIso(-12_000), level: 'info', msg: 'check started' },
+    {
+      ts: nowIso(-11_500),
+      level: 'warn',
+      msg: `list tags failed for library/postgres: error sending request for url (${longUrl})`,
+    },
+    // Keep a long digest line near the top so automated storybook tests can assert it is visible without scrolling.
+    { ts: nowIso(-11_000), level: 'warn', msg: digest },
+    {
+      ts: nowIso(-10_500),
+      level: 'warn',
+      msg: 'list tags failed for ivanli-cn/catnap: error sending request for url (https://ghcr.io/v2/ivanli-cn/catnap/tags/list)',
+    },
+    {
+      ts: nowIso(-10_200),
+      level: 'info',
+      msg: `pulling image ${longImageRef}`,
+    },
+    {
+      ts: nowIso(-10_150),
+      level: 'warn',
+      msg: `retrying request: ${longToken}`,
+    },
+    {
+      ts: nowIso(-10_120),
+      level: 'info',
+      msg: `running: docker compose pull\n  - service: api\n  - service: worker\n  - service: ui\nprogress: 3/3`,
+    },
+    {
+      ts: nowIso(-10_110),
+      level: 'error',
+      msg: `panic: unexpected response (429 Too Many Requests)\nstack:\n  at registry_client.rs:123:9\n  at jobs/check.rs:88:17`,
+    },
+    ...Array.from({ length: 96 }, (_, i) => ({
+      ts: nowIso(-10_000 + i * 20),
+      level: i % 11 === 0 ? 'error' : i % 7 === 0 ? 'warn' : 'info',
+      msg:
+        i % 9 === 0
+          ? `http error: GET ${longUrl}`
+          : i % 5 === 0
+            ? `digest mismatch: expected=${digest} got=sha256:${'f'.repeat(64)}`
+            : i % 13 === 0
+              ? `json: {"event":"registry_request","status":429,"retry_in_ms":500,"url":"${longUrl}"}`
+              : `line ${String(i + 1).padStart(2, '0')}: ${'x'.repeat(180)}`,
+    })),
+  ]
+  const archivedLongLogs = [...baseLongLogs, { ts: nowIso(-10_000), level: 'info', msg: 'check finished' }]
+  const liveLongLogs = [...baseLongLogs, { ts: nowIso(-10_000), level: 'info', msg: 'waiting for next registry event' }]
+
+  f.jobs = [jobShort, jobLiveLong, jobLong]
   f.jobById = {
     [jobShort.id]: {
       ...jobShort,
       logs: [{ ts: nowIso(-12_000), level: 'info', msg: 'check started' }],
       logsLastId: 1,
     } satisfies JobDetail,
+    [jobLiveLong.id]: {
+      ...jobLiveLong,
+      logs: liveLongLogs,
+      logsLastId: liveLongLogs.length,
+    } satisfies JobDetail,
     [jobLong.id]: {
       ...jobLong,
-      logs: [
-        { ts: nowIso(-12_000), level: 'info', msg: 'check started' },
-        {
-          ts: nowIso(-11_500),
-          level: 'warn',
-          msg: `list tags failed for library/postgres: error sending request for url (${longUrl})`,
-        },
-        // Keep a long digest line near the top so automated storybook tests can assert it is visible without scrolling.
-        { ts: nowIso(-11_000), level: 'warn', msg: digest },
-        {
-          ts: nowIso(-10_500),
-          level: 'warn',
-          msg: 'list tags failed for ivanli-cn/catnap: error sending request for url (https://ghcr.io/v2/ivanli-cn/catnap/tags/list)',
-        },
-        {
-          ts: nowIso(-10_200),
-          level: 'info',
-          msg: `pulling image ${longImageRef}`,
-        },
-        {
-          ts: nowIso(-10_150),
-          level: 'warn',
-          msg: `retrying request: ${longToken}`,
-        },
-        {
-          ts: nowIso(-10_120),
-          level: 'info',
-          msg: `running: docker compose pull\n  - service: api\n  - service: worker\n  - service: ui\nprogress: 3/3`,
-        },
-        {
-          ts: nowIso(-10_110),
-          level: 'error',
-          msg: `panic: unexpected response (429 Too Many Requests)\nstack:\n  at registry_client.rs:123:9\n  at jobs/check.rs:88:17`,
-        },
-        ...Array.from({ length: 96 }, (_, i) => ({
-          ts: nowIso(-10_000 + i * 20),
-          level: i % 11 === 0 ? 'error' : i % 7 === 0 ? 'warn' : 'info',
-          msg:
-            i % 9 === 0
-              ? `http error: GET ${longUrl}`
-              : i % 5 === 0
-                ? `digest mismatch: expected=${digest} got=sha256:${'f'.repeat(64)}`
-                : i % 13 === 0
-                  ? `json: {"event":"registry_request","status":429,"retry_in_ms":500,"url":"${longUrl}"}`
-                  : `line ${String(i + 1).padStart(2, '0')}: ${'x'.repeat(180)}`,
-        })),
-        { ts: nowIso(-10_000), level: 'info', msg: 'check finished' },
-      ],
-      logsLastId: 105,
+      logs: archivedLongLogs,
+      logsLastId: archivedLongLogs.length,
     } satisfies JobDetail,
   }
 

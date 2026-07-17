@@ -222,7 +222,8 @@ export function installDockrevMockApi(
   if (typeof window !== 'undefined') {
     globalThis.EventSource = MockEventSource as unknown as typeof EventSource
   }
-  MockEventSource.pollIntervalMs = scenario === 'queue-progress-smoothing' ? 700 : 4_000
+  MockEventSource.pollIntervalMs =
+    scenario === 'queue-progress-smoothing' || scenario === 'queue-long-logs' ? 700 : 4_000
 
   function findService(serviceId: string) {
     if (!state) return null
@@ -675,6 +676,49 @@ export function installDockrevMockApi(
       const body = newEvents
         .map((evt) => `id: ${evt.id}\nevent: job_event\ndata: ${JSON.stringify(evt.data)}\n\n`)
         .join('')
+      return new Response(body || ': keep-alive\n\n', {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'x-accel-buffering': 'no',
+        },
+      })
+    }
+
+    if (method === 'GET' && /^\/api\/jobs\/[^/]+\/events$/.test(urlPath)) {
+      const params = url?.searchParams ?? new URLSearchParams()
+      const afterId = Number(params.get('afterId') ?? '0') || 0
+      const jobId = decodeURIComponent(urlPath.split('/')[3] ?? '')
+      const live = f.jobById[jobId]
+      if (!live) {
+        return json({ error: 'not found' }, { status: 404 })
+      }
+
+      if (scenario === 'queue-long-logs' && jobId === 'job-live-long' && live.status === 'running' && afterId >= live.logsLastId) {
+        const nextId = live.logsLastId + 1
+        const nextLine = {
+          ts: nowIso(),
+          level: nextId % 4 === 0 ? 'warn' : 'info',
+          msg:
+            nextId % 4 === 0
+              ? `stream tick ${nextId}: retry window still open; keeping the latest registry response in view`
+              : `stream tick ${nextId}: live registry polling continues for the newest digest candidate`,
+        }
+        const nextLogs = [...live.logs, nextLine]
+        live.logs = nextLogs.length > 500 ? nextLogs.slice(-500) : nextLogs
+        live.logsLastId = nextId
+      }
+
+      const startIndex = Math.max(0, afterId)
+      const nextLines = live.logs.slice(startIndex).slice(0, 200)
+      const body = nextLines
+        .map((line, index) => {
+          const eventId = afterId + index + 1
+          return `id: ${eventId}\nevent: job_log\ndata: ${JSON.stringify({ type: 'job_log', ...line })}\n\n`
+        })
+        .join('')
+
       return new Response(body || ': keep-alive\n\n', {
         status: 200,
         headers: {

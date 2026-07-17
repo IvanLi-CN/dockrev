@@ -681,7 +681,8 @@ async function runInteractive({ baseUrl, browser }) {
       await back.click();
       await page.locator(".queueList").waitFor({ timeout: 10_000 });
 
-      await items.nth(1).click();
+      // The queue-long-logs fixture keeps the archived long-log job as the final list item.
+      await items.last().click();
       await page.getByText("job:").waitFor({ timeout: 10_000 });
       await page.getByText("job-long").waitFor({ timeout: 10_000 });
       // Use an exact match so fixture expansions (more lines mentioning the digest) won't break strict mode.
