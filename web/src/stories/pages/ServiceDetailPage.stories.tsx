@@ -22,7 +22,14 @@ import {
   tabLabels,
   type ServiceDetailStory,
 } from "./serviceDetailStoryShared";
-export { MobileVersionsSection, VersionsSection, VersionsSectionActionGuard } from "./serviceDetailVersionsStories";
+export {
+  DockrevVersionsSelfUpgrade,
+  DockrevVersionsSelfUpgradeVisual,
+  DockrevVersionsSelfUpgradeOffline,
+  MobileVersionsSection,
+  VersionsSection,
+  VersionsSectionActionGuard,
+} from "./serviceDetailVersionsStories";
 import { expectNearlyEqual, expectStory, findButton, findButtons, findLink, normalizeText, waitForCondition } from "./storyAssertions";
 
 const meta: Meta<typeof ServiceDetailPage> = {

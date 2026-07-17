@@ -18,6 +18,9 @@ export type ServiceVersionCardModel = {
   olderThanCurrent: boolean;
   showUpdate: boolean;
   showRollback: boolean;
+  updateDisabled: boolean;
+  updateActionLabel: string;
+  updateActionHint: string;
   updateDisabledReason: string | null;
   rollbackDisabledReason: string | null;
 };
@@ -218,17 +221,13 @@ export function ServiceVersionCard(props: {
                 >
                   <Button
                     variant="primary"
-                    disabled={Boolean(card.updateDisabledReason)}
+                    disabled={card.updateDisabled}
                     hint={card.updateDisabledReason ?? undefined}
                     onClick={props.onApplyUpdate}
                   >
-                    更新
+                    {card.updateActionLabel}
                   </Button>
-                  {card.updateDisabledReason ? (
-                    <div className="serviceVersionActionHint">{card.updateDisabledReason}</div>
-                  ) : (
-                    <div className="serviceVersionActionHint">发起当前 candidate 对应的服务更新任务。</div>
-                  )}
+                  <div className="serviceVersionActionHint">{card.updateActionHint}</div>
                 </div>
               ) : null}
 

@@ -27,6 +27,8 @@ import {
 } from './RecentUpdateRecords'
 import { summarizeServiceOperationBackups } from './serviceOperationBackupSummary'
 import {
+  describeDockrevVersionCardAction,
+  type DockrevSelfUpgradeActionDescriptor,
   isDockrevService,
   rollbackVersionLabel,
   shortDigest,
@@ -62,6 +64,7 @@ type ServiceVersionsSectionProps = {
   rollbackTarget: ServiceRollbackTargetResponse | null
   rollbackTargetRefreshing: boolean
   busy: boolean
+  dockrevSelfUpgradeAction: DockrevSelfUpgradeActionDescriptor | null
   updateActiveJob: { jobId: string; status: string } | null
   updateSubmitting: boolean
   rollbackActiveJobId: string | null
@@ -748,25 +751,39 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
       const newerThanCurrent = semverComparison != null && semverComparison > 0
       const deployedHistorical = deployedHistoricalVersions.has(normalizeVersion(item.tagName))
       const rollbackTargetMatch = rollbackTargetVersion !== '' && normalizeVersion(item.tagName) === rollbackTargetVersion
-      const showUpdate = (!dockrevService && newerThanCurrent) || candidateMatch
-      const showRollback =
-        !dockrevService &&
-        rollbackTargetMatch &&
-        (semverComparison == null || olderThanCurrent)
+      const showUpdate = dockrevService ? candidateMatch || newerThanCurrent : newerThanCurrent || candidateMatch
+      const showRollback = !dockrevService && (deployedHistorical || rollbackTargetMatch)
 
       let updateDisabledReason: string | null = null
+      let updateDisabled = false
+      let updateActionLabel = '更新'
+      let updateActionHint = '发起当前 candidate 对应的服务更新任务。'
       if (showUpdate) {
-        updateDisabledReason =
-          serviceActionLockReason ??
-          (serviceRowStatus(props.service) === 'blocked'
-            ? blockedReasonFor(props.service) ?? '当前服务已被阻止更新。'
-            : !props.service.candidate
-              ? '当前没有可执行的候选版本。'
-              : props.service.candidate.archMatch === 'mismatch'
-                ? '架构不匹配（仅提示，不允许更新）。'
-                : !candidateMatch
-                  ? '当前只允许部署现有 candidate 对应版本，不能直接从发布记录跨 tag 发起更新。'
-                  : null)
+        if (dockrevService) {
+          const dockrevAction = describeDockrevVersionCardAction({
+            candidateMatch,
+            candidateDisplayVersion,
+            action: props.dockrevSelfUpgradeAction,
+          })
+          updateActionLabel = dockrevAction.label
+          updateDisabled = dockrevAction.disabled
+          updateDisabledReason = dockrevAction.disabledReason
+          updateActionHint = dockrevAction.hint
+        } else {
+          updateDisabledReason =
+            serviceActionLockReason ??
+            (serviceRowStatus(props.service) === 'blocked'
+              ? blockedReasonFor(props.service) ?? '当前服务已被阻止更新。'
+              : !props.service.candidate
+                ? '当前没有可执行的候选版本。'
+                : props.service.candidate.archMatch === 'mismatch'
+                  ? '架构不匹配（仅提示，不允许更新）。'
+                  : !candidateMatch
+                    ? '当前只允许部署现有 candidate 对应版本，不能直接从发布记录跨 tag 发起更新。'
+                    : null)
+          updateDisabled = updateDisabledReason != null
+          updateActionHint = updateDisabledReason ?? '发起当前 candidate 对应的服务更新任务。'
+        }
       }
 
       const rollbackDisabledReason = showRollback ? serviceActionLockReason : null
@@ -782,16 +799,21 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
         olderThanCurrent,
         showUpdate,
         showRollback,
+        updateDisabled,
+        updateActionHint,
+        updateActionLabel,
         updateDisabledReason,
         rollbackDisabledReason,
       }
     })
   }, [
+    candidateDisplayVersion,
     candidateVersion,
     currentVersion,
     deployedHistoricalVersions,
     items,
     props.rollbackTarget?.targetDisplayTag,
+    props.dockrevSelfUpgradeAction,
     props.service,
     serviceActionLockReason,
     viewMode,
@@ -1074,7 +1096,13 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
                             sourceLabel={sourceLabel(listResponse)}
                             expanded={expanded}
                             onToggleExpanded={toggleExpanded}
-                            onApplyUpdate={props.onApplyUpdate}
+                            onApplyUpdate={() => {
+                              if (isDockrevService(props.service)) {
+                                props.dockrevSelfUpgradeAction?.open()
+                                return
+                              }
+                              props.onApplyUpdate()
+                            }}
                             onRollback={props.onRollback}
                             onOpenRollbackExplanation={(item) => {
                               void openRollbackExplanation(item)
@@ -1083,7 +1111,6 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
                         </div>
                       )
                     })}
-                  </div>
                 </div>
               </div>
             </div>

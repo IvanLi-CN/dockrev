@@ -31,6 +31,96 @@ export function isDockrevService(svc: Service): boolean {
   return isDockrevImageRef(svc.image.ref)
 }
 
+export type DockrevSelfUpgradeActionDescriptor = {
+  label: string
+  disabled: boolean
+  disabledReason: string | null
+  status: 'idle' | 'checking' | 'ok' | 'offline'
+  retryVisible: boolean
+  retryDisabled: boolean
+  open: () => void
+  retry: () => void
+}
+
+export type DockrevVersionCardAction = {
+  label: string
+  disabled: boolean
+  disabledReason: string | null
+  hint: string
+}
+
+const DOCKREV_BUSY_DISABLED_REASON = '服务动作处理中，请稍后再试。'
+
+export function dockrevSelfUpgradeBusyReason(): string {
+  return DOCKREV_BUSY_DISABLED_REASON
+}
+
+export function describeDockrevVersionCardAction(input: {
+  candidateMatch: boolean
+  candidateDisplayVersion: string | null
+  action: DockrevSelfUpgradeActionDescriptor | null
+}): DockrevVersionCardAction {
+  const candidateHint = input.candidateDisplayVersion
+    ? `通过 supervisor 进入候选 ${input.candidateDisplayVersion} 对应的自我升级流程。`
+    : '通过 supervisor 进入当前候选对应的自我升级流程。'
+  const nonCandidateHint = input.candidateDisplayVersion
+    ? `当前只能通过 supervisor 进入候选 ${input.candidateDisplayVersion} 对应的自我升级流程。`
+    : '当前只能通过 supervisor 进入当前候选对应的自我升级流程。'
+  const label = input.action?.label ?? '升级 Dockrev'
+  const sharedDisabledReason =
+    input.action?.disabled
+      ? input.action.disabledReason ?? dockrevSelfUpgradeBusyReason()
+      : null
+
+  if (!input.candidateMatch) {
+    if (sharedDisabledReason) {
+      return {
+        label,
+        disabled: true,
+        disabledReason: sharedDisabledReason,
+        hint: sharedDisabledReason,
+      }
+    }
+    return {
+      label,
+      disabled: true,
+      disabledReason: nonCandidateHint,
+      hint: nonCandidateHint,
+    }
+  }
+
+  if (!input.action) {
+    const unavailableReason = '当前无法进入自我升级入口，请稍后重试。'
+    return {
+      label,
+      disabled: true,
+      disabledReason: unavailableReason,
+      hint: unavailableReason,
+    }
+  }
+
+  return {
+    label,
+    disabled: input.action.disabled,
+    disabledReason: sharedDisabledReason,
+    hint: sharedDisabledReason ?? candidateHint,
+  }
+}
+
+export function openSelfUpgradeUrl(targetUrl: string) {
+  try {
+    const resolved = new URL(targetUrl, window.location.href)
+    // Keep Storybook preview navigation inside the iframe while preserving real app behavior.
+    if (window.location.pathname.endsWith('/iframe.html') && resolved.origin === window.location.origin) {
+      window.location.hash = `#${resolved.pathname}${resolved.search}${resolved.hash}`
+      return
+    }
+  } catch {
+    // Fall back to the browser's native navigation path below.
+  }
+  window.location.assign(targetUrl)
+}
+
 export function svcTone(svc: Service): 'ok' | 'warn' | 'bad' | 'muted' {
   const st = serviceRowStatus(svc)
   if (st === 'updatable') return 'ok'

@@ -98,6 +98,7 @@ export function ServiceDetailPage(props: {
     composeEnvFile,
     composeFiles,
     composeType,
+    dockrevSelfUpgradeAction,
     dotClass,
     draftRepoUrl,
     error,
@@ -401,6 +402,7 @@ export function ServiceDetailPage(props: {
         <ServiceVersionsSection
           backupRecords={effectiveBackupRecords}
           busy={busy}
+          dockrevSelfUpgradeAction={dockrevSelfUpgradeAction}
           jobs={serviceOperationJobs}
           onApplyUpdate={requestApplyUpdate}
           onRollback={requestRollback}
