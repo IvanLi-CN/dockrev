@@ -328,12 +328,26 @@ export const DockrevVersionsSelfUpgradeVisual: ServiceDetailStory = {
     const topAction = findButtons(doc, "升级 Dockrev").find(
       (button) => !button.closest('[data-service-version-action="update"]'),
     );
+    const newerCard = findVersionCard(canvasElement, "0.63.0");
+    const newerAside = newerCard?.querySelector<HTMLElement>('[data-service-version-card-aside="true"]') ?? null;
+    const newerBody = newerCard?.querySelector<HTMLElement>(".serviceVersionCardBody") ?? null;
+    const newerButtonWidth = newerAction?.getBoundingClientRect().width ?? 0;
+    const newerAsideWidth = newerAside?.getBoundingClientRect().width ?? 0;
+    const newerBodyWidth = newerBody?.getBoundingClientRect().width ?? 0;
 
     expectStory(currentRoutePathname() === "/services/stack-prod/svc-prod-api/versions", "dockrev visual evidence must stay on the versions route");
     expectStory(Boolean(candidateAction && !candidateAction.disabled), "dockrev candidate card should stay enabled before navigation");
     expectStory(Boolean(topAction && !topAction.disabled), "top-level dockrev self-upgrade action should stay enabled before navigation");
     expectStory(Boolean(newerAction?.disabled), "newer non-candidate dockrev release should remain disabled in the visual state");
     expectStory(normalizeText(findVersionCard(canvasElement, "0.62.0")?.textContent).includes("通过 supervisor 进入候选 0.62.0 对应的自我升级流程"), "candidate dockrev release should explain the supervisor handoff in the visual state");
+    expectStory(
+      newerAsideWidth > 0 && newerAsideWidth < newerBodyWidth,
+      "dockrev action rail should stay narrower than the main reading column",
+    );
+    expectStory(
+      newerButtonWidth >= 140 && newerButtonWidth < newerBodyWidth,
+      "dockrev self-upgrade button should stay narrower than the main reading column",
+    );
   },
 };
 

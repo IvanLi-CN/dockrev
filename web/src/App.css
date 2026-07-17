@@ -7755,7 +7755,7 @@ html[data-theme="light"] .modalOverlay {
 }
 
 .serviceVersionCard {
-  --service-version-aside-width: 15rem;
+  --service-version-aside-width: 11.5rem;
   min-width: 0;
   display: grid;
   grid-template-columns:
@@ -7988,7 +7988,7 @@ html[data-theme="light"] .modalOverlay {
 .serviceVersionCardAside {
   gap: 14px;
   width: var(--service-version-aside-width);
-  padding-left: 18px;
+  padding-left: 14px;
   border-left: 1px solid color-mix(in srgb, var(--borderColor) 62%, transparent);
 }
 
@@ -8008,7 +8008,9 @@ html[data-theme="light"] .modalOverlay {
 }
 
 .serviceVersionActionBlock .btn {
+  align-self: flex-start;
   width: 100%;
+  max-width: 10.5rem;
 }
 
 .serviceVersionsLoaderRow {
@@ -8058,6 +8060,11 @@ html[data-theme="light"] .modalOverlay {
 
   .serviceVersionCard[data-version-card-has-aside='false'] .serviceVersionCardAside {
     display: none;
+  }
+
+  .serviceVersionActionBlock .btn {
+    align-self: stretch;
+    max-width: none;
   }
 
   .serviceVersionTagRow {
