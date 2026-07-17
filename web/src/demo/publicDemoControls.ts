@@ -11,7 +11,9 @@ import {
 } from './pagesDemoRestore'
 
 export const PUBLIC_DEMO_FIXTURE_STORAGE_KEY = 'dockrev:public-demo:fixture:v1'
-export const PUBLIC_DEMO_SCENARIO = 'settings-configured'
+export const PUBLIC_DEMO_SCENARIOS = ['settings-configured', 'queue-long-logs'] as const
+export type PublicDemoScenario = (typeof PUBLIC_DEMO_SCENARIOS)[number]
+export const PUBLIC_DEMO_SCENARIO: PublicDemoScenario = 'settings-configured'
 export const PUBLIC_DEMO_CLEANUP_SCENARIO = 'cleanup-console-storage-normal'
 const PUBLIC_DEMO_VERSION_SERVICE_ID = 'svc-prod-api'
 const PUBLIC_DEMO_VERSION_REPO_URL = 'https://github.com/acme/api'
@@ -28,7 +30,8 @@ export const PUBLIC_DEMO_GITHUB_RELEASES_BY_SERVICE_ID = {
 } satisfies Record<string, DockrevMockGitHubReleasesDataset>
 
 type StoredDemoFixture = {
-  version: 1
+  version: 2
+  scenario: PublicDemoScenario
   fixture: Fixture
 }
 
@@ -38,7 +41,7 @@ export type PublicDemoSessionSummary = {
   fixtureState: 'seeded' | 'modified'
   hasStoredFixture: boolean
   routeRestorePending: boolean
-  scenario: typeof PUBLIC_DEMO_SCENARIO
+  scenario: PublicDemoScenario
   store: 'sessionStorage'
   writes: 'mock-only'
 }
@@ -53,6 +56,21 @@ function currentDemoBaseUrl(): string | null {
     return new URL(appBasePath(), window.location.origin).toString()
   } catch {
     return null
+  }
+}
+
+function parsePublicDemoScenario(value: string | null | undefined): PublicDemoScenario {
+  return value != null && PUBLIC_DEMO_SCENARIOS.includes(value as PublicDemoScenario)
+    ? (value as PublicDemoScenario)
+    : PUBLIC_DEMO_SCENARIO
+}
+
+export function readPublicDemoScenario(): PublicDemoScenario {
+  if (typeof window === 'undefined') return PUBLIC_DEMO_SCENARIO
+  try {
+    return parsePublicDemoScenario(new URL(window.location.href).searchParams.get('demoScenario'))
+  } catch {
+    return PUBLIC_DEMO_SCENARIO
   }
 }
 
@@ -124,8 +142,8 @@ export function applyPublicDemoOverrides(fixture: Fixture): Fixture {
   return next
 }
 
-export function buildPublicDemoSeedFixture(): Fixture {
-  return applyPublicDemoOverrides(buildFixture(PUBLIC_DEMO_SCENARIO))
+export function buildPublicDemoSeedFixture(scenario: PublicDemoScenario = readPublicDemoScenario()): Fixture {
+  return applyPublicDemoOverrides(buildFixture(scenario))
 }
 
 function readStorage(storage?: Storage | null): Storage | null {
@@ -139,11 +157,12 @@ export function readStoredPublicDemoFixture(
 ): Fixture | null {
   const target = readStorage(storage)
   if (!target) return null
+  const currentScenario = readPublicDemoScenario()
   try {
     const raw = target.getItem(PUBLIC_DEMO_FIXTURE_STORAGE_KEY)
     if (!raw) return null
     const parsed = JSON.parse(raw) as Partial<StoredDemoFixture>
-    if (parsed.version !== 1 || !parsed.fixture) return null
+    if (parsed.version !== 2 || parsed.scenario !== currentScenario || !parsed.fixture) return null
     return applyPublicDemoOverrides(parsed.fixture)
   } catch {
     return null
@@ -157,7 +176,8 @@ export function savePublicDemoFixture(
   const target = readStorage(storage)
   if (!target) return
   const payload: StoredDemoFixture = {
-    version: 1,
+    version: 2,
+    scenario: readPublicDemoScenario(),
     fixture: applyPublicDemoOverrides(fixture),
   }
   target.setItem(PUBLIC_DEMO_FIXTURE_STORAGE_KEY, JSON.stringify(payload))

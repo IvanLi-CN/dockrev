@@ -1,10 +1,28 @@
 import type { Meta, StoryObj } from '@storybook/react'
+import type { ReactNode } from 'react'
 import { JobDetailPage } from '../../pages/JobDetailPage'
 import { PageHarness } from '../mocks/PageHarness'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
+import { expectNearlyEqual, expectStory, findButton, waitForCondition } from './storyAssertions'
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function getLogsSurface(root: ParentNode): HTMLElement | null {
+  return root.querySelector<HTMLElement>('[data-job-detail-log-surface="true"]')
+}
+
+function getLogsViewport(root: ParentNode): HTMLElement | null {
+  return root.querySelector<HTMLElement>('[aria-label="任务日志"]')
+}
+
+function getLogCount(root: ParentNode): number {
+  return Number(getLogsSurface(root)?.getAttribute('data-job-detail-log-count') ?? '0')
+}
+
+function isNearBottom(element: HTMLElement): boolean {
+  return element.scrollHeight - element.scrollTop - element.clientHeight < 48
 }
 
 const meta: Meta<typeof JobDetailPage> = {
@@ -16,25 +34,68 @@ const meta: Meta<typeof JobDetailPage> = {
 export default meta
 type Story = StoryObj<typeof JobDetailPage>
 
+function renderJobDetailSurface(content: ReactNode) {
+  return <div style={{ height: '900px' }}>{content}</div>
+}
+
+function renderLongLogsPage(subtitle: string) {
+  return renderJobDetailSurface(
+    <PageHarness
+      route={{ name: 'job', jobId: 'job-live-long' }}
+      title="任务详情"
+      pageSubtitle={subtitle}
+    >
+      {({ onTopActions }) => <JobDetailPage jobId="job-live-long" onTopActions={onTopActions} />}
+    </PageHarness>
+  )
+}
+
 export const LongLogs: Story = {
   parameters: { dockrevApiScenario: 'queue-long-logs' },
-  render: () => {
-    return (
-      <PageHarness
-        route={{ name: 'job', jobId: 'job-long' }}
-        title="任务详情"
-        pageSubtitle="代表性：长 URL / digest / 多行日志（堆栈/命令输出）应在容器内滚动，且可读可复制"
-      >
-        {({ onTopActions }) => <JobDetailPage jobId="job-long" onTopActions={onTopActions} />}
-      </PageHarness>
-    )
+  render: () => renderLongLogsPage('代表性：长 URL / digest / 多行日志（堆栈/命令输出）应在容器内滚动，且 live tail 默认跟随最新'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => getLogCount(canvasElement) >= 105)
+
+    const viewport = getLogsViewport(canvasElement)
+    expectStory(viewport, 'job detail logs viewport missing')
+
+    await waitForCondition(() => isNearBottom(viewport))
+    expectStory(getLogsSurface(canvasElement)?.getAttribute('data-job-detail-log-follow') === 'true', 'job detail logs should follow by default')
+
+    viewport.scrollTop = Math.max(0, viewport.scrollTop - 240)
+    viewport.dispatchEvent(new Event('scroll'))
+
+    await waitForCondition(() => getLogsSurface(canvasElement)?.getAttribute('data-job-detail-log-follow') === 'false')
+    await waitForCondition(() => Boolean(findButton(canvasElement, '跳到最新')))
+
+    const pausedScrollTop = viewport.scrollTop
+    const pausedCount = getLogCount(canvasElement)
+
+    await waitForCondition(() => getLogCount(canvasElement) > pausedCount, 5_000)
+    expectNearlyEqual(viewport.scrollTop, pausedScrollTop, 6, 'paused follow should preserve the reader scroll position when new logs arrive')
+    expectStory(!isNearBottom(viewport), 'paused follow should keep the viewport away from the bottom')
+
+    findButton(canvasElement, '跳到最新')?.click()
+
+    await waitForCondition(() => getLogsSurface(canvasElement)?.getAttribute('data-job-detail-log-follow') === 'true')
+    await waitForCondition(() => isNearBottom(viewport))
+    await waitForCondition(() => !findButton(canvasElement, '跳到最新'))
+
+    const resumedCount = getLogCount(canvasElement)
+    await waitForCondition(() => getLogCount(canvasElement) > resumedCount, 5_000)
+    expectStory(isNearBottom(viewport), 'resumed follow should keep the viewport pinned to the latest log line')
   },
+}
+
+export const LongLogsPausedFollowEvidence: Story = {
+  parameters: { dockrevApiScenario: 'queue-long-logs' },
+  render: () => renderLongLogsPage('视觉证据：用户上滚查看旧日志时暂停跟随，并提供跳到最新入口'),
 }
 
 export const RunningDualProgress: Story = {
   parameters: { dockrevApiScenario: 'queue-long-logs' },
   render: () => {
-    return (
+    return renderJobDetailSurface(
       <PageHarness
         route={{ name: 'job', jobId: 'job-short' }}
         title="任务详情"
@@ -49,7 +110,7 @@ export const RunningDualProgress: Story = {
 export const UpdateLayerProgress: Story = {
   parameters: { dockrevApiScenario: 'queue-update-layer-progress' },
   render: () => {
-    return (
+    return renderJobDetailSurface(
       <PageHarness
         route={{ name: 'job', jobId: 'job-running' }}
         title="任务详情"
@@ -85,7 +146,7 @@ export const UpdateLayerProgress: Story = {
 export const UpdateDownloadDeterminate: Story = {
   parameters: { dockrevApiScenario: 'queue-update-download-determinate' },
   render: () => {
-    return (
+    return renderJobDetailSurface(
       <PageHarness
         route={{ name: 'job', jobId: 'job-running' }}
         title="任务详情"
@@ -118,7 +179,7 @@ export const UpdateDownloadDeterminate: Story = {
 export const LegacyProgressFallback: Story = {
   parameters: { dockrevApiScenario: 'queue-legacy-progress' },
   render: () => {
-    return (
+    return renderJobDetailSurface(
       <PageHarness
         route={{ name: 'job', jobId: 'job-legacy-running' }}
         title="任务详情"
@@ -133,7 +194,7 @@ export const LegacyProgressFallback: Story = {
 export const HealthRollback: Story = {
   parameters: { dockrevApiScenario: 'queue-health-rollback' },
   render: () => {
-    return (
+    return renderJobDetailSurface(
       <PageHarness
         route={{ name: 'job', jobId: 'job-health-rollback' }}
         title="任务详情"

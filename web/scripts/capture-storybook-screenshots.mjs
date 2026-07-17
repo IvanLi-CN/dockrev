@@ -554,6 +554,35 @@ async function main() {
       },
     },
     {
+      id: 'pages-jobdetailpage--long-logs-paused-follow-evidence',
+      file: 'job-detail-log-follow-paused.png',
+      setup: async (page) => {
+        await page.locator('.jobDetailPage').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.locator('[data-job-detail-log-surface="true"]').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.waitForFunction(
+          () => Number(document.querySelector('[data-job-detail-log-surface="true"]')?.getAttribute('data-job-detail-log-count') ?? '0') >= 105,
+          null,
+          { timeout: STORY_TIMEOUT_MS },
+        )
+        await page.evaluate(() => {
+          const viewport = document.querySelector('[aria-label="任务日志"]')
+          if (!(viewport instanceof HTMLElement)) return
+          viewport.scrollTop = Math.max(0, viewport.scrollTop - 240)
+          viewport.dispatchEvent(new Event('scroll'))
+        })
+        await page.waitForFunction(
+          () => document.querySelector('[data-job-detail-log-surface="true"]')?.getAttribute('data-job-detail-log-follow') === 'false',
+          null,
+          { timeout: STORY_TIMEOUT_MS },
+        )
+        await page.getByRole('button', { name: '跳到最新' }).waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        const pageSurface = page.locator('.jobDetailPage').first()
+        await pageSurface.screenshot({ path: filePath })
+      },
+    },
+    {
       id: 'pages-settingspage--octo-rill-release-notes-card',
       file: 'octorill-settings-card.png',
       setup: async (page) => {

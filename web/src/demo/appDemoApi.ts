@@ -4,7 +4,7 @@ import {
   loadPublicDemoFixture,
   PUBLIC_DEMO_CLEANUP_SCENARIO,
   PUBLIC_DEMO_GITHUB_RELEASES_BY_SERVICE_ID,
-  PUBLIC_DEMO_SCENARIO,
+  readPublicDemoScenario,
   savePublicDemoFixture,
 } from './publicDemoControls'
 
@@ -18,10 +18,11 @@ let installed = false
 export function installAppDemoApi(): DemoInstallResult {
   if (installed) return { enabled: true, mode: 'app' }
 
+  const scenario = readPublicDemoScenario()
   const initialFixture = loadPublicDemoFixture()
   savePublicDemoFixture(initialFixture)
   writeDockrevRuntimeMode('app-demo')
-  installDockrevMockApi(PUBLIC_DEMO_SCENARIO, {
+  installDockrevMockApi(scenario, {
     cleanupScenario: PUBLIC_DEMO_CLEANUP_SCENARIO,
     githubReleasesByServiceId: PUBLIC_DEMO_GITHUB_RELEASES_BY_SERVICE_ID,
     initialFixture,

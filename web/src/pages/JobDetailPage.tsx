@@ -27,6 +27,7 @@ function errorMessage(e: unknown): string {
 }
 
 type LogTimeZone = 'local' | 'utc'
+const LOG_FOLLOW_BOTTOM_THRESHOLD_PX = 48
 
 const LOCAL_TZ = (() => {
   try {
@@ -84,6 +85,14 @@ function formatLogLevel(level: string): string {
   return s.slice(0, 4).toUpperCase()
 }
 
+function isLogViewportNearBottom(element: HTMLElement): boolean {
+  return element.scrollHeight - element.scrollTop - element.clientHeight < LOG_FOLLOW_BOTTOM_THRESHOLD_PX
+}
+
+function scrollLogViewportToBottom(element: HTMLElement): void {
+  element.scrollTop = element.scrollHeight
+}
+
 function normalizeProgress(input: JobProgress | null | undefined): JobProgress | null {
   if (!input) return null
   const total = Number.isFinite(input.total) ? Math.max(0, input.total) : 0
@@ -128,6 +137,9 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [logTz, setLogTz] = useState<LogTimeZone>('local')
+  const [logViewport, setLogViewport] = useState<HTMLElement | null>(null)
+  const [logFollow, setLogFollow] = useState(true)
+  const [logIsAtBottom, setLogIsAtBottom] = useState(true)
 
   const refresh = useCallback(async () => {
     setError(null)
@@ -275,6 +287,33 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
       es?.close()
     }
   }, [jobId, refresh])
+
+  useEffect(() => {
+    setLogFollow(true)
+    setLogIsAtBottom(true)
+  }, [jobId])
+
+  useEffect(() => {
+    if (!logViewport) return
+    const element = logViewport
+    const onScroll = () => {
+      const nearBottom = isLogViewportNearBottom(element)
+      setLogIsAtBottom(nearBottom)
+      if (!nearBottom) setLogFollow(false)
+      else setLogFollow(true)
+    }
+    element.addEventListener('scroll', onScroll)
+    return () => element.removeEventListener('scroll', onScroll)
+  }, [logViewport])
+
+  useEffect(() => {
+    if (!logViewport || !logFollow || logs.length === 0) return
+    const frame = window.requestAnimationFrame(() => {
+      scrollLogViewportToBottom(logViewport)
+      setLogIsAtBottom(true)
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [logFollow, logViewport, logs.length])
 
   useEffect(() => {
     onTopActions(
@@ -484,6 +523,21 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
         <div className="sectionRow">
           <div className="title">日志</div>
           <div style={{ marginLeft: 'auto' }} className="chipRow">
+            {!logFollow && logs.length > 0 ? (
+              <Button
+                data-job-detail-log-jump="true"
+                onClick={() => {
+                  if (logViewport) {
+                    scrollLogViewportToBottom(logViewport)
+                  }
+                  setLogFollow(true)
+                  setLogIsAtBottom(true)
+                }}
+                variant="primary"
+              >
+                跳到最新
+              </Button>
+            ) : null}
             <span className="muted">时区</span>
             <Chip active={logTz === 'local'} onClick={() => setLogTz('local')} title={`浏览器时区：${LOCAL_TZ}`}>
               本地
@@ -494,7 +548,15 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
           </div>
         </div>
 
-        <OverlayScrollArea className="logs" viewportLabel="任务日志">
+        <OverlayScrollArea
+          className="logs"
+          data-job-detail-log-at-bottom={logIsAtBottom ? 'true' : 'false'}
+          data-job-detail-log-count={logs.length}
+          data-job-detail-log-follow={logFollow ? 'true' : 'false'}
+          data-job-detail-log-surface="true"
+          onViewportReady={setLogViewport}
+          viewportLabel="任务日志"
+        >
           {logs.map((l, idx) => (
             <div
               key={`${l.ts}-${idx}`}
