@@ -575,7 +575,15 @@ export function AppShell(props: {
           ) : null}
 
           <OverlayScrollArea
-            className={props.detailSidebarContent ? 'content contentWithDetailSidebar' : 'content'}
+            className={
+              props.route.name === "job"
+                ? props.detailSidebarContent
+                  ? "content contentWithDetailSidebar contentJobDetail"
+                  : "content contentJobDetail"
+                : props.detailSidebarContent
+                  ? "content contentWithDetailSidebar"
+                  : "content"
+            }
             role="main"
             viewportLabel="主内容"
           >
