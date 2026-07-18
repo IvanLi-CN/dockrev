@@ -47,9 +47,7 @@ export function releaseNotesSourceLabel(response: ServiceReleaseNotesResponse | 
 export function releaseNotesShouldOfferSettingsAction(
   response: ServiceReleaseNotesResponse | null | undefined,
 ): boolean {
-  const fallbackReason = response?.fallback?.reason
-  if (fallbackReason === 'notConfigured' || fallbackReason === 'unauthorized') return true
-  const message = response?.message ?? response?.fallback?.message ?? ''
+  const message = response?.message ?? response?.stale?.message ?? ''
   return message.includes('GitHub PAT') || message.includes('token 权限') || message.includes('OctoRill')
 }
 
@@ -78,10 +76,10 @@ export function buildReleaseNotesFailureResponse(
     nextCursor: null,
     previousCursor: null,
     hasMore: false,
-    defaultView: 'smart',
+    defaultView: 'original',
     items: [],
     message: fallbackReleaseNotesErrorMessage(error),
-    fallback: null,
+    stale: null,
     anchor: null,
   }
 }

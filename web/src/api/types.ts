@@ -392,17 +392,10 @@ export type ServiceReleaseNotesStatus = 'ready' | 'unsupportedRepo' | 'upstreamE
 
 export type ServiceReleaseNotesDirection = 'older' | 'newer'
 
-export type ServiceReleaseNotesFallbackReason =
-  | 'disabled'
-  | 'notConfigured'
-  | 'unsupportedRepo'
-  | 'unauthorized'
-  | 'emptyFeed'
-  | 'upstreamError'
+export type ServiceReleaseNotesStaleReason = 'requestFailed'
 
-export type ServiceReleaseNotesFallback = {
-  from: ServiceReleaseNotesSource
-  reason: ServiceReleaseNotesFallbackReason
+export type ServiceReleaseNotesStale = {
+  reason: ServiceReleaseNotesStaleReason
   message: string
 }
 
@@ -449,7 +442,7 @@ export type ServiceReleaseNotesResponse = {
   externalLinks?: ServiceReleaseNotesExternalLinks | null
   items: ServiceReleaseNoteItem[]
   message?: string | null
-  fallback?: ServiceReleaseNotesFallback | null
+  stale?: ServiceReleaseNotesStale | null
   anchor?: ServiceReleaseNotesAnchor | null
 }
 
@@ -628,6 +621,7 @@ export type SettingsResponse = {
     ghcrWebhookAudit: { enabled: boolean; cron: string }
   }
   releaseNotes: {
+    provider: ReleaseNotesProvider
     octoRill: {
       enabled: boolean
       apiBaseUrl?: string | null
@@ -666,6 +660,7 @@ export type PutSettingsInput = {
     ghcrWebhookAudit?: { enabled: boolean; cron: string }
   }
   releaseNotes?: {
+    provider?: ReleaseNotesProvider
     octoRill?: {
       enabled?: boolean
       apiBaseUrl?: string | null
@@ -680,6 +675,7 @@ export type PutSettingsInput = {
 }
 
 export type ReleaseNotesView = 'original' | 'translated' | 'smart'
+export type ReleaseNotesProvider = 'gitHub' | 'octoRill'
 
 export type ServiceResourceUsageWindow = '3m' | '1h' | '24h'
 

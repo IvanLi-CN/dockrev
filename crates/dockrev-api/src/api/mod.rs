@@ -583,23 +583,26 @@ async fn put_settings(
         .await
         .map_err(map_internal)?;
     let mut merged_release_notes = existing_release_notes;
-    if let Some(put) = req.release_notes
-        && let Some(octo_rill) = put.octo_rill
-    {
-        if let Some(enabled) = octo_rill.enabled {
-            merged_release_notes.octo_rill.enabled = enabled;
+    if let Some(put) = req.release_notes {
+        if let Some(provider) = put.provider {
+            merged_release_notes.provider = provider;
         }
-        if let Some(api_base_url) = octo_rill.api_base_url {
-            merged_release_notes.octo_rill.api_base_url = api_base_url;
-        }
-        if let Some(api_key) = octo_rill.api_key {
-            match api_key {
-                Some(value) if is_octo_rill_api_key_mask_literal(value.trim()) => {}
-                other => merged_release_notes.octo_rill.api_key = other,
+        if let Some(octo_rill) = put.octo_rill {
+            if let Some(enabled) = octo_rill.enabled {
+                merged_release_notes.octo_rill.enabled = enabled;
             }
-        }
-        if let Some(default_view) = octo_rill.default_view {
-            merged_release_notes.octo_rill.default_view = default_view;
+            if let Some(api_base_url) = octo_rill.api_base_url {
+                merged_release_notes.octo_rill.api_base_url = api_base_url;
+            }
+            if let Some(api_key) = octo_rill.api_key {
+                match api_key {
+                    Some(value) if is_octo_rill_api_key_mask_literal(value.trim()) => {}
+                    other => merged_release_notes.octo_rill.api_key = other,
+                }
+            }
+            if let Some(default_view) = octo_rill.default_view {
+                merged_release_notes.octo_rill.default_view = default_view;
+            }
         }
     }
     merged_release_notes.octo_rill.api_base_url = merged_release_notes

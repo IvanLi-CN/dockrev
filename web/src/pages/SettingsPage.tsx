@@ -103,7 +103,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     return <div className="muted">加载中…</div>
   }
   return (
-    <div className="page">
+    <div className="page settingsPage">
       <div className="twoCol">
         <div className="settingsCol">
           <div className="card">
@@ -440,33 +440,40 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
 
           <div className="card">
             <div className="title">OctoRill 更新日志</div>
-            <div className="muted">发布抽屉优先读取 OctoRill 仓库 feed；失败时显示原因并回退 GitHub Releases。</div>
+            <div className="muted">统一 release notes 数据源由这里全局决定；版本页和发布抽屉只服从这里的设置，不会在别处自动切换或回退。</div>
 
             <div className="kv">
-              <div className="kvRow">
-                <div className="label">启用 OctoRill</div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <Switch
-                    checked={settings.releaseNotes.octoRill.enabled}
+              <div className="settingsFieldRow">
+                <div className="label settingsFieldLabel">数据源</div>
+                <div className="settingsFieldControl">
+                  <SelectField
+                    className="input"
                     disabled={busy}
+                    value={settings.releaseNotes.provider}
                     onChange={(value) =>
                       updateReleaseNotes(
-                        'releaseNotes.octoRill.enabled',
+                        'releaseNotes.provider',
                         (current) => ({
                           ...current,
-                          octoRill: { ...current.octoRill, enabled: value },
+                          provider: value,
                         }),
                         true,
                       )
                     }
+                    options={[
+                      { value: 'gitHub', label: 'GitHub Releases' },
+                      { value: 'octoRill', label: 'OctoRill' },
+                    ]}
                   />
-                  <div className="muted">{settings.releaseNotes.octoRill.enabled ? 'on' : 'off'}</div>
+                </div>
+                <div className="muted settingsFieldHelp">
+                  设成啥就用啥；若所选源失败，只会显示同源旧结果或错误态，不会跨源补位。
                 </div>
               </div>
 
-              <div className="kvRow">
-                <div className="label">API Base URL</div>
-                <div>
+              <div className="settingsFieldRow">
+                <div className="label settingsFieldLabel">API Base URL</div>
+                <div className="settingsFieldControl">
                   <Input
                     className={octoRillApiBaseUrlInputClassName}
                     disabled={busy}
@@ -479,15 +486,15 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                     }
                     placeholder="https://octo.example.com"
                   />
-                  <div className="muted" style={{ marginTop: 6 }}>
-                    保存时会去掉尾部 <Mono>/</Mono>；不要填写带账号密码的 URL。
-                  </div>
+                </div>
+                <div className="muted settingsFieldHelp">
+                  保存时会去掉尾部 <Mono>/</Mono>；不要填写带账号密码的 URL。
                 </div>
               </div>
 
-              <div className="kvRow">
-                <div className="label">API Key</div>
-                <div>
+              <div className="settingsFieldRow">
+                <div className="label settingsFieldLabel">API Key</div>
+                <div className="settingsFieldControl">
                   <Input
                     className="input"
                     disabled={busy}
@@ -518,30 +525,37 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                     }}
                     placeholder="orill_ak_..."
                   />
-                  <div className="muted" style={{ marginTop: 6 }}>
-                    已保存时显示等长圆点掩码；清空后自动保存会删除当前 key。
-                  </div>
+                </div>
+                <div className="muted settingsFieldHelp">
+                  已保存时显示等长圆点掩码；清空后自动保存会删除当前 key。
                 </div>
               </div>
 
-              <div className="kvRow">
-                <div className="label">默认视图</div>
-                <SelectField
-                  className="input"
-                  disabled={busy}
-                  value={settings.releaseNotes.octoRill.defaultView}
-                  onChange={(value) =>
-                    updateReleaseNotes('releaseNotes.octoRill.defaultView', (current) => ({
-                      ...current,
-                      octoRill: { ...current.octoRill, defaultView: value },
-                    }))
-                  }
-                  options={[
-                    { value: 'smart', label: '润色' },
-                    { value: 'translated', label: '翻译' },
-                    { value: 'original', label: '原文' },
-                  ]}
-                />
+              <div className="settingsFieldRow">
+                <div className="label settingsFieldLabel">默认视图</div>
+                <div className="settingsFieldControl">
+                  <SelectField
+                    className="input"
+                    disabled={busy || settings.releaseNotes.provider !== 'octoRill'}
+                    value={settings.releaseNotes.octoRill.defaultView}
+                    onChange={(value) =>
+                      updateReleaseNotes('releaseNotes.octoRill.defaultView', (current) => ({
+                        ...current,
+                        octoRill: { ...current.octoRill, defaultView: value },
+                      }))
+                    }
+                    options={[
+                      { value: 'smart', label: '润色' },
+                      { value: 'translated', label: '翻译' },
+                      { value: 'original', label: '原文' },
+                    ]}
+                  />
+                </div>
+                <div className="muted settingsFieldHelp">
+                  {settings.releaseNotes.provider === 'octoRill'
+                    ? '仅 OctoRill 数据源会使用这里的默认阅读视图。'
+                    : '当前选择 GitHub Releases，阅读视图固定为原文。'}
+                </div>
               </div>
             </div>
           </div>

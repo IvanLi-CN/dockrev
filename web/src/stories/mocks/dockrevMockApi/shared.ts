@@ -643,6 +643,7 @@ export function makeDefaultSettings(): SettingsResponse {
       ghcrWebhookAudit: { enabled: true, cron: '0 3 * * *' },
     },
     releaseNotes: {
+      provider: 'octoRill',
       octoRill: {
         enabled: true,
         apiBaseUrl: 'https://octo.example.com',

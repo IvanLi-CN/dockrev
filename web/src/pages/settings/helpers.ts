@@ -39,8 +39,8 @@ export function buildSettingsSavePayload(settings: SettingsResponse): PutSetting
     },
     schedules: settings.schedules,
     releaseNotes: {
+      provider: settings.releaseNotes.provider,
       octoRill: {
-        enabled: settings.releaseNotes.octoRill.enabled,
         apiBaseUrl: settings.releaseNotes.octoRill.apiBaseUrl ?? '',
         ...(releaseNotesApiKey !== undefined ? { apiKey: releaseNotesApiKey } : {}),
         defaultView: settings.releaseNotes.octoRill.defaultView,

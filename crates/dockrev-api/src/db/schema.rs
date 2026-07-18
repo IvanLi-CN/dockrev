@@ -1165,6 +1165,7 @@ CREATE TABLE IF NOT EXISTS settings (
   schedule_ghcr_webhook_audit_enabled INTEGER NOT NULL DEFAULT 1,
   schedule_ghcr_webhook_audit_cron TEXT NOT NULL DEFAULT '0 3 * * *',
   public_base_url TEXT,
+  release_notes_provider TEXT NOT NULL DEFAULT 'gitHub',
   release_notes_octo_rill_enabled INTEGER NOT NULL DEFAULT 0,
   release_notes_octo_rill_api_base_url TEXT,
   release_notes_octo_rill_api_key TEXT,

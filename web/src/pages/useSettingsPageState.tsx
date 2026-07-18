@@ -541,6 +541,7 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
       ...rawSettings,
       instance: rawSettings.instance ?? { publicBaseUrl: null },
       releaseNotes: {
+        provider: rawSettings.releaseNotes?.provider ?? 'gitHub',
         octoRill: {
           enabled: rawSettings.releaseNotes?.octoRill.enabled ?? false,
           apiBaseUrl: rawSettings.releaseNotes?.octoRill.apiBaseUrl ?? '',

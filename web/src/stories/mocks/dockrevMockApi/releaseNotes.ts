@@ -1,3 +1,5 @@
+import type { ServiceReleaseNoteItem, ServiceReleaseNotesSource } from '../../../api'
+
 export function clampReleaseNotesLimit(
   rawValue: string | null | undefined,
   { fallback, max }: { fallback: number; max: number },
@@ -63,4 +65,42 @@ export function buildMockSmartReleaseSummary(title: string): string {
     '- 将关键变更压缩成可快速扫读的摘要，减少从原文里反复定位重点。',
     '- 适合在维护窗口中判断升级收益、影响范围和是否需要继续查看原文。',
   ].join('\n')
+}
+
+type MockGitHubReleaseItem = {
+  id: string | number
+  tagName: string
+  name?: string | null
+  body?: string | null
+  htmlUrl: string
+  draft: boolean
+  prerelease: boolean
+  publishedAt?: string | null
+  createdAt?: string | null
+}
+
+export function buildMockReleaseNotesItems(
+  items: MockGitHubReleaseItem[],
+  source: ServiceReleaseNotesSource,
+): ServiceReleaseNoteItem[] {
+  const useOctoRill = source === 'octoRill'
+  return items.map((item, index) => {
+    const title = item.name && item.name !== item.tagName ? item.name : item.tagName
+    return {
+      id: useOctoRill ? `octorill:${item.id}` : `github:${item.id}`,
+      tagName: item.tagName,
+      name: item.name,
+      originalBody: item.body,
+      translatedBody:
+        useOctoRill && index % 4 !== 2
+          ? `翻译：${item.name ?? item.tagName}\n\n${item.body ?? '暂无原始说明'}`
+          : null,
+      smartBody: useOctoRill && index % 4 !== 3 ? buildMockSmartReleaseSummary(title) : null,
+      htmlUrl: item.htmlUrl,
+      draft: item.draft,
+      prerelease: item.prerelease,
+      publishedAt: item.publishedAt,
+      createdAt: item.createdAt,
+    }
+  })
 }

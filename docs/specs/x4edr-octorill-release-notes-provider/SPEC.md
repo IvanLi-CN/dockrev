@@ -6,17 +6,17 @@
 
 - Dockrev 现有发布抽屉只通过 GitHub Releases 读取原始 release body，无法消费 OctoRill 已聚合的仓库更新、中文翻译与阅读润色结果。
 - OctoRill API Key 文档声明外部程序可通过 Bearer `orill_ak_...` 调用 `GET /api/feed?scope=repo&items=owner/repo&types=releases` 获取仓库 release feed，feed item 暴露 `body`、`translated`、`smart` 等阅读态。
-- 用户需要在 Dockrev 设置中配置 OctoRill API Base URL 与 API Key，并在发布抽屉中默认优先显示 OctoRill 的润色更新日志；当 OctoRill 不可用时，仍应保留现有 GitHub Releases 可用性。
+- 用户需要在 Dockrev 设置中显式选择统一 release notes provider，并配置 OctoRill API Base URL / API Key / 默认视图；运行时必须严格服从 `releaseNotes.provider`，禁止由抽屉、版本页或临时状态自行切源。
 
 ## 目标 / 非目标
 
 ### Goals
 
-- Settings 新增 OctoRill 更新日志配置：启用开关、API Base URL、API Key、默认视图 `original | translated | smart`，默认 `smart`。
+- Settings 新增统一 `releaseNotes.provider = gitHub | octoRill`，并保留 OctoRill 的 API Base URL、API Key、默认视图 `original | translated | smart`；provider 是所有 release notes 入口唯一的运行时选源真相源。
 - API Key 只在 Dockrev 后端保存；设置读取只返回等长圆点脱敏状态，不把明文 key 暴露给浏览器。
-- 新增服务级统一 release notes API，开启 OctoRill 后优先从 OctoRill repo feed 读取发布记录，并规范化成发布抽屉与服务详情 `版本` 子页都可消费的数据。
+- 新增服务级统一 release notes API，只请求 Settings 当前选中的单一 provider，并规范化成发布抽屉与服务详情 `版本` 子页都可消费的数据。
 - 统一 release notes API 必须同时提供 locate-first 首屏与双向 cursor 续拉，让发布抽屉和服务详情 `版本` 子页都不再为“定位当前版本”线性扫页。
-- OctoRill 失败、未配置或无可用 feed 时，发布抽屉显示失败原因并自动回退现有 GitHub Releases 数据。
+- 当前 provider 请求失败时，只允许在当前浏览器会话内继续展示 `serviceId + provider` 维度最近一次同源成功结果，并显式标记 `stale`；若不存在同源快照，则直接错误态。
 - 发布抽屉支持原文、翻译、润色切换；缺少翻译/润色时可见降级到原文。
 
 ### Non-goals
@@ -34,7 +34,7 @@
 - `crates/dockrev-api` settings schema/API、OctoRill client、服务级 release notes API 与回归测试。
 - `web/src/api.ts` / `web/src/api/types.ts` release notes 与 settings 类型。
 - `web/src/pages/SettingsPage.tsx`、`web/src/pages/useSettingsPageState.tsx` 与 settings helpers。
-- `web/src/components/GitHubReleaseDrawer.tsx` 的数据源、fallback banner 与视图切换。
+- `web/src/components/GitHubReleaseDrawer.tsx` 的数据源、stale banner 与视图切换。
 - Storybook mocks/stories 与本 spec 的视觉证据。
 
 ### Out of scope
@@ -47,45 +47,45 @@
 
 ### MUST
 
-- `GET /api/settings` 必须返回 `releaseNotes.octoRill.enabled`、`apiBaseUrl`、`apiKeyMasked`、`defaultView`。
-- `PUT /api/settings` 必须支持局部更新 `releaseNotes.octoRill`；`apiKey` 字段省略时保留旧 key，`null` 或空字符串清除旧 key，非空明文覆盖旧 key。
+- `GET /api/settings` 必须返回 `releaseNotes.provider`，并继续返回 `releaseNotes.octoRill.enabled`、`apiBaseUrl`、`apiKeyMasked`、`defaultView`；其中 `octoRill.enabled` 仅保留为兼容/迁移字段，不再参与运行时选源。
+- `PUT /api/settings` 必须支持局部更新 `releaseNotes.provider` 与 `releaseNotes.octoRill`；`apiKey` 字段省略时保留旧 key，`null` 或空字符串清除旧 key，非空明文覆盖旧 key。
 - API Base URL 必须是无 username/password 的 `http(s)` 绝对 URL，并规范化为无尾部 `/` 的 origin/base path。
 - API Key 明文必须只在后端持久化；GET 响应只返回脱敏 `apiKeyMasked`，其长度必须与已保存 key 的字符长度一致，并统一使用圆点掩码。
 - `PUT /api/settings` 的 `apiKey` 若是非空全星号或全圆点掩码，应视为保留旧 key，避免浏览器把脱敏回显误写回明文字段。
-- 统一 release notes API 必须在 OctoRill 开启且配置完整时优先请求 `GET {apiBaseUrl}/api/feed?scope=repo&items=<owner/repo>&types=releases&limit=<limit>[&cursor=<cursor>]`，请求头带 `Authorization: Bearer <apiKey>`。
+- 统一 release notes API 必须只请求 Settings 当前选中的 provider；`provider=octoRill` 时请求 `GET {apiBaseUrl}/api/feed?scope=repo&items=<owner/repo>&types=releases&limit=<limit>[&cursor=<cursor>]`，请求头带 `Authorization: Bearer <apiKey>`；`provider=gitHub` 时只请求 GitHub Releases。
 - `GET /api/services/{service_id}/release-notes/locate?version=<tag>&limit=<1..30>` 必须复用增强版 `ServiceReleaseNotesResponse`，并返回 `previousCursor` 与结构化 `anchor`；`anchor.status` 固定为 `found | outsideWindow | notFound | unavailable`。
 - `GET /api/services/{service_id}/release-notes?cursor=<cursor>&direction=older|newer&limit=<1..30>` 必须支持双向续拉；`nextCursor` 持续表示更旧方向，`previousCursor` 表示更新方向。
 - OctoRill feed 映射必须宽容解析：优先使用显式 tag 字段，其次从 `html_url` / `htmlUrl` 的 `/releases/tag/<tag>` 解析，最后用 title/id 兜底。
-- OctoRill 失败必须返回可展示 fallback 原因，并自动回退现有 GitHub Releases 数据。
+- 统一 release notes API 失败时不得跨源 fallback；返回的 `source` 必须始终等于 Settings 当前选中的 provider，失败原因也必须只描述该 provider 的状态。
 - 统一 release notes API 响应必须返回仓库级 `externalLinks.githubReleasesUrl`，并在 `apiBaseUrl` 与 repo full name 都能安全归一化成 `owner/repo` 时返回可选 `externalLinks.octoRillReleasesUrl`，供版本页与抽屉复用同一组 Releases 外链。
-- OctoRill locate 必须优先复用 public releases 的 highlight/window 能力生成目标版本附近窗口；若当前实例或仓库无法提供该窗口，则回退 GitHub items，并通过 `fallback` 与 `anchor.message` 明确说明已失去 `smart / translated` 阅读态。
-- 发布抽屉与服务详情 `版本` 子页的默认视图都来自 Settings 的 `releaseNotes.octoRill.defaultView`，单次切换只影响当前阅读会话。
+- OctoRill locate 必须优先复用 public releases 的 highlight/window 能力生成目标版本附近窗口；若当前实例或仓库无法提供该窗口，则直接返回 OctoRill 失败或 unavailable 锚点，不得回退 GitHub items。
+- 发布抽屉与服务详情 `版本` 子页的默认视图都来自 Settings：`provider=gitHub` 时固定为 `original`，`provider=octoRill` 时来自 `releaseNotes.octoRill.defaultView`；单次切换只影响当前阅读会话。
 - 发布抽屉与服务详情 `版本` 子页在渲染 GitHub Releases / OctoRill 的 Markdown 正文时，必须保留标题、列表、强调、链接与显式换行语义；不得执行原始 HTML，外链必须继续走安全 URL 归一化。
 
 ### SHOULD
 
 - Settings 的 OctoRill 卡片沿用现有自动保存队列与错误浮层，不引入单独“保存”按钮。
-- 发布抽屉顶部应明确显示当前数据来源或 fallback 状态，避免用户误判。
-- Storybook 应覆盖 OctoRill smart 默认、缺失翻译/润色降级、OctoRill 失败回退 GitHub 与 Settings 配置卡片。
+- 发布抽屉顶部应明确显示当前数据来源或 stale 状态，避免用户误判。
+- Storybook 应覆盖 Settings provider 选择、OctoRill smart 默认、GitHub 单视图、缺失翻译/润色降级，以及同源 stale / 硬错误分支。
 
 ## 功能与行为规格（Functional/Behavior Spec）
 
 ### Core flows
 
-- 用户在 Settings 开启 OctoRill、填入 Base URL 与 API Key、选择默认视图后，设置自动保存。
+- 用户在 Settings 选择统一 provider，并在需要时填写 OctoRill Base URL / API Key / 默认视图后，设置自动保存。
 - 用户从版本时间线、服务更新记录，或服务详情 `版本` 子页进入版本阅读流时，前端调用服务级 release notes API。
 - 当前阅读流若带有目标版本，前端必须先调用 `release-notes/locate`，只渲染后端返回的锚点窗口；后续才通过 `cursor + direction` 双向补页。
 - API 返回 OctoRill 数据时，抽屉使用 OctoRill items 展示，并默认选中 `smart`。
-- API 返回 OctoRill 数据时，服务详情 `版本` 子页也必须复用同一批 items、视图切换规则与 fallback 说明，而不是另起第二套 release 数据源。
+- API 返回 OctoRill 数据时，服务详情 `版本` 子页也必须复用同一批 items、视图切换规则与 provider/stale 说明，而不是另起第二套 release 数据源。
 - 用户切换 `original | translated | smart` 时，列表内容即时切换，不改变 URL 和全局设置。
-- API 返回 fallback 时，抽屉展示警告 banner，并继续展示 GitHub Releases 数据。
+- 同源旧快照存在且当前请求失败时，抽屉与版本页展示 stale warning banner，并继续展示最近一次同源成功结果；无同源快照时直接展示失败态。
 
 ### Edge cases / errors
 
-- OctoRill 未启用、Base URL 缺失或 API Key 缺失时，API 不请求 OctoRill，直接使用 GitHub Releases。
-- OctoRill 返回 401/403 时，fallback reason 显示为鉴权失败。
-- OctoRill 返回非 JSON、网络失败或 5xx 时，fallback reason 显示为上游不可用。
-- OctoRill feed 没有可展示 release item 时，fallback reason 显示为未返回可用发布记录。
+- `provider=octoRill` 但 Base URL 缺失或 API Key 缺失时，API 不得切到 GitHub；必须直接返回 OctoRill 配置错误。
+- OctoRill 返回 401/403 时，失败原因显示为鉴权失败。
+- OctoRill 返回非 JSON、网络失败或 5xx 时，失败原因显示为上游不可用。
+- OctoRill feed 没有可展示 release item 时，失败原因显示为未返回可用发布记录。
 - `translated` 或 `smart` 缺失时，相关视图显示不可用提示并回退原文。
 
 ## 接口契约（Interfaces & Contracts）
@@ -94,9 +94,9 @@
 
 | 接口（Name） | 类型（Kind） | 范围（Scope） | 变更（Change） | 契约文档（Contract Doc） | 负责人（Owner） | 使用方（Consumers） | 备注（Notes） |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `GET /api/settings` | HTTP API | external | Modify | None | dockrev-api | Web Settings | 新增 `releaseNotes.octoRill` |
-| `PUT /api/settings` | HTTP API | external | Modify | None | dockrev-api | Web Settings | 支持 OctoRill 配置局部保存 |
-| `GET /api/services/{service_id}/release-notes` | HTTP API | external | New | None | dockrev-api | Release drawer / Service versions page | 统一 OctoRill/GitHub release notes 数据源，并提供仓库级 Releases 外链 |
+| `GET /api/settings` | HTTP API | external | Modify | None | dockrev-api | Web Settings | 新增 `releaseNotes.provider`，并保留 OctoRill 配置 |
+| `PUT /api/settings` | HTTP API | external | Modify | None | dockrev-api | Web Settings | 支持 provider 与 OctoRill 配置局部保存 |
+| `GET /api/services/{service_id}/release-notes` | HTTP API | external | New | None | dockrev-api | Release drawer / Service versions page | 统一单 provider release notes 数据源，并提供仓库级 Releases 外链 |
 | `GET /api/services/{service_id}/release-notes/locate` | HTTP API | external | New | None | dockrev-api | Release drawer / Service versions | 返回目标版本锚点窗口与结构化 anchor 状态 |
 
 ### 契约文档（按 Kind 拆分）
@@ -107,11 +107,11 @@
 
 ## 验收标准（Acceptance Criteria）
 
-- Given Settings 已配置 OctoRill 且默认视图为 `smart`，When 打开发布抽屉，Then 抽屉默认展示 OctoRill 润色内容。
+- Given Settings 选择 `provider=octoRill` 且默认视图为 `smart`，When 打开发布抽屉，Then 抽屉默认展示 OctoRill 润色内容。
 - Given 当前抽屉有 OctoRill items，When 切换为原文或翻译，Then 内容切换且滚动/定位状态保持可用。
 - Given 打开发布抽屉或服务详情 `版本` 子页时带有目标版本，When locate 命中，Then 首屏直接落在目标版本附近窗口，而不是由前端逐页扫描直到命中。
-- Given OctoRill 请求返回 401，When 打开发布抽屉，Then 顶部显示 OctoRill 鉴权失败，同时列表回退为 GitHub Releases。
-- Given OctoRill public-window 无法覆盖目标版本但 GitHub locate 仍可用，When 打开发布抽屉，Then API 返回 GitHub items、保留 fallback 提示，并通过 `anchor.status=outsideWindow | notFound | unavailable` 告知定位结果。
+- Given OctoRill 请求返回 401 且当前会话无同源快照，When 打开发布抽屉，Then 顶部显示 OctoRill 鉴权失败，且列表直接进入错误态。
+- Given OctoRill public-window 无法覆盖目标版本，When 打开发布抽屉，Then API 不得回退 GitHub items，并通过 `anchor.status=unavailable` 或失败态告知定位结果。
 - Given `translated` 或 `smart` 缺失，When 用户选择对应视图，Then UI 明确显示该视图不可用并展示原文。
 - Given GitHub Releases fallback body 包含 `##` 标题、列表项与 compare 链接，When 在发布抽屉或服务详情 `版本` 子页查看原文，Then UI 必须渲染结构化标题、列表与可点击链接，而不是直接显示原始 Markdown 标记。
 - Given `GET /api/settings`，Then 响应不包含 OctoRill API Key 明文，只包含与真实 key 等长的圆点脱敏状态。
@@ -123,7 +123,7 @@
 ## 验收清单（Acceptance checklist）
 
 - [x] 后端 settings roundtrip、等长 key masking、Base URL validation 与 key preserve/clear 行为被测试覆盖。
-- [x] OctoRill feed mapping、tag 解析与 fallback 被测试覆盖。
+- [x] OctoRill feed mapping、tag 解析与“无跨源 fallback”被测试覆盖。
 - [x] Settings 与发布抽屉 Storybook 状态覆盖核心 UI 分支。
 - [x] 视觉证据写入本 spec 的 `## Visual Evidence`。
 
@@ -132,12 +132,12 @@
 ### Testing
 
 - Unit tests: `cargo test -p dockrev-api` 中的 settings 与 release notes 测试。
-- Integration tests: Storybook mock API 覆盖 Settings 与发布抽屉。
+- Integration tests: Storybook mock API 覆盖 Settings、发布抽屉与版本页的 provider / stale 分支。
 
 ### UI / Storybook
 
 - Stories to add/update: `Pages/SettingsPage`、`Components/GitHubReleaseDrawer`。
-- `play` / interaction coverage: 视图切换、fallback banner、Settings 自动保存状态。
+- `play` / interaction coverage: provider 选择、视图切换、stale banner、Settings 自动保存状态。
 
 ### Quality checks
 
@@ -157,11 +157,11 @@
   sensitive_exclusion: `N/A`
   submission_gate: `approved`
   story_id_or_title: `Pages/SettingsPage / Octo Rill Release Notes Card`
-  state: `configured OctoRill settings`
-  evidence_note: `验证 Settings 中新增 OctoRill 更新日志卡片，包含启用开关、API Base URL、等长 API Key 脱敏与默认视图=润色。`
+  state: `configured octoRill provider`
+  evidence_note: `验证 Settings 中统一 release notes 卡片包含 provider 选择、API Base URL、等长 API Key 脱敏与默认视图。`
 
 PR: include
-![OctoRill 更新日志设置卡](./assets/octorill-settings-card.png)
+![OctoRill 更新日志设置卡](../../screenshots/storybook/octorill-settings-card.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`
@@ -176,6 +176,20 @@ PR: include
 
 PR: include
 ![OctoRill 发布记录默认润色视图](./assets/octorill-release-drawer-smart-default.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `element`
+  requested_viewport: `none`
+  viewport_strategy: `storybook-viewport`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Components/GitHubReleaseDrawer / Git Hub Original Only`
+  state: `gitHub provider original-only`
+  evidence_note: `验证 provider 固定为 GitHub Releases 时，发布抽屉只保留原文阅读面，不显示翻译/润色切换。`
+
+PR: include
+![GitHub 发布记录原文单视图](../../screenshots/storybook/github-release-drawer-original-only.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`

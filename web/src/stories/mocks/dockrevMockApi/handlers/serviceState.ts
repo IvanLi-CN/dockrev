@@ -8,8 +8,8 @@ import type {
 import { imageRepoFromImageRef } from '../../../../imageRepo'
 import type { MockRouteContext } from '../context'
 import {
+  buildMockReleaseNotesItems,
   buildMockReleaseNotesExternalLinks,
-  buildMockSmartReleaseSummary,
   clampReleaseNotesLimit,
   mockReleaseTagMatchesVersion,
   parseReleaseNotesCursor,
@@ -241,6 +241,10 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     }
 
     if (releaseNotes) {
+      const provider = getString(releaseNotes.provider)
+      if (provider === 'gitHub' || provider === 'octoRill') {
+        f.settings.releaseNotes.provider = provider
+      }
       const octoRill = isRecord(releaseNotes.octoRill) ? releaseNotes.octoRill : null
       if (octoRill) {
         const enabled = getBoolean(octoRill.enabled)
@@ -427,47 +431,17 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     const version = (url?.searchParams.get('version') ?? '').trim()
     const limit = clampReleaseNotesLimit(url?.searchParams.get('limit'), { fallback: 20, max: 30 })
     const githubAll = buildMockGitHubReleasesResponse(serviceId, 1, 10_000)
+    const provider = f.settings.releaseNotes.provider
     const octoRill = f.settings.releaseNotes.octoRill
     const configured = Boolean(octoRill.apiBaseUrl?.trim() && octoRill.apiKeyMasked)
-    const shouldUseOctoRill = octoRill.enabled && configured && githubAll.status === 'ready'
-    const fallback =
-      shouldUseOctoRill || (octoRill.enabled && configured)
-        ? null
-        : {
-            from: 'octoRill' as const,
-            reason: octoRill.enabled ? ('notConfigured' as const) : ('disabled' as const),
-            message: octoRill.enabled
-              ? 'OctoRill API Base URL 或 API Key 未配置完整，已使用 GitHub Releases。'
-              : 'OctoRill 更新日志未启用，已使用 GitHub Releases。',
-          }
+    const useOctoRill = provider === 'octoRill'
+    const source = useOctoRill ? 'octoRill' : 'gitHub'
+    const defaultView = useOctoRill ? octoRill.defaultView : 'original'
     const externalLinks = buildMockReleaseNotesExternalLinks(
       githubAll.repo?.htmlUrl,
       githubAll.repo?.fullName,
       octoRill.apiBaseUrl,
     )
-    const mapReleaseNotesItems = (items: typeof githubAll.items) =>
-      items.map((item, index) => {
-        const title = item.name && item.name !== item.tagName ? item.name : item.tagName
-        return {
-          id: shouldUseOctoRill ? `octorill:${item.id}` : `github:${item.id}`,
-          tagName: item.tagName,
-          name: item.name,
-          originalBody: item.body,
-          translatedBody:
-            shouldUseOctoRill && index % 4 !== 2
-              ? `翻译：${item.name ?? item.tagName}\n\n${item.body ?? '暂无原始说明'}`
-              : null,
-          smartBody:
-            shouldUseOctoRill && index % 4 !== 3
-              ? buildMockSmartReleaseSummary(title)
-              : null,
-          htmlUrl: item.htmlUrl,
-          draft: item.draft,
-          prerelease: item.prerelease,
-          publishedAt: item.publishedAt,
-          createdAt: item.createdAt,
-        }
-      })
     const buildReadyWindowResponse = (
       start: number,
       anchor:
@@ -486,26 +460,26 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
       const windowItems = githubAll.items.slice(boundedStart, boundedStart + limit)
       return json({
         status: 'ready',
-        source: shouldUseOctoRill ? 'octoRill' : 'gitHub',
+        source,
         repo: githubAll.repo,
         cursor: boundedStart > 0 ? String(boundedStart) : null,
         limit,
         nextCursor: boundedStart + limit < githubAll.items.length ? String(boundedStart + limit) : null,
         previousCursor: boundedStart > 0 ? String(Math.max(0, boundedStart - limit)) : null,
         hasMore: boundedStart + limit < githubAll.items.length,
-        defaultView: octoRill.defaultView,
+        defaultView,
         externalLinks,
-        items: mapReleaseNotesItems(windowItems),
+        items: buildMockReleaseNotesItems(windowItems, source),
         message: githubAll.message,
-        fallback,
+        stale: null,
         anchor,
       })
     }
 
-    if (githubAll.status !== 'ready') {
+    if (useOctoRill && !configured) {
       return json({
-        status: githubAll.status === 'unsupportedRepo' ? 'unsupportedRepo' : 'upstreamError',
-        source: shouldUseOctoRill ? 'octoRill' : 'gitHub',
+        status: 'upstreamError',
+        source: 'octoRill',
         repo: githubAll.repo,
         cursor: null,
         limit,
@@ -515,8 +489,8 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
         defaultView: octoRill.defaultView,
         externalLinks,
         items: [],
-        message: githubAll.message,
-        fallback,
+        message: 'OctoRill API Base URL 或 API Key 未配置完整。',
+        stale: null,
         anchor: version
           ? {
               status: 'unavailable' as const,
@@ -524,7 +498,43 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
               matchedTag: null,
               indexWithinWindow: null,
               absoluteIndex: null,
-              message: githubAll.message ?? `暂时无法定位 ${version}。`,
+              message: 'OctoRill API Base URL 或 API Key 未配置完整。',
+            }
+          : null,
+      })
+    }
+
+    if (githubAll.status !== 'ready') {
+      return json({
+        status:
+          useOctoRill
+            ? 'upstreamError'
+            : githubAll.status === 'unsupportedRepo'
+              ? 'unsupportedRepo'
+              : 'upstreamError',
+        source,
+        repo: githubAll.repo,
+        cursor: null,
+        limit,
+        nextCursor: null,
+        previousCursor: null,
+        hasMore: false,
+        defaultView,
+        externalLinks,
+        items: [],
+        message:
+          githubAll.message ?? (useOctoRill ? 'OctoRill 公开 Release 暂不可用。' : '读取 GitHub Releases 失败，请稍后重试。'),
+        stale: null,
+        anchor: version
+          ? {
+              status: 'unavailable' as const,
+              version,
+              matchedTag: null,
+              indexWithinWindow: null,
+              absoluteIndex: null,
+              message:
+                githubAll.message ??
+                (useOctoRill ? `OctoRill 未能直接定位 ${version}。` : `暂时无法定位 ${version}。`),
             }
           : null,
       })
@@ -571,6 +581,32 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
       })
     }
 
+    if (useOctoRill) {
+      return json({
+        status: 'upstreamError',
+        source: 'octoRill',
+        repo: githubAll.repo,
+        cursor: null,
+        limit,
+        nextCursor: null,
+        previousCursor: null,
+        hasMore: false,
+        defaultView: octoRill.defaultView,
+        externalLinks,
+        items: [],
+        message: locateOverride?.message ?? `OctoRill 未能直接定位 ${version}。`,
+        stale: null,
+        anchor: {
+          status: 'unavailable' as const,
+          version,
+          matchedTag: locateOverride?.matchedTag ?? null,
+          indexWithinWindow: null,
+          absoluteIndex: locateOverride?.absoluteIndex ?? null,
+          message: locateOverride?.message ?? `OctoRill 未能直接定位 ${version}。`,
+        },
+      })
+    }
+
     if (locateStatus === 'outsideWindow') {
       return buildReadyWindowResponse(0, {
         status: 'outsideWindow',
@@ -609,29 +645,22 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     const limit = clampReleaseNotesLimit(url?.searchParams.get('limit'), { fallback: 20, max: 100 })
     const start = parseReleaseNotesCursor(url?.searchParams.get('cursor'))
     const githubAll = buildMockGitHubReleasesResponse(serviceId, 1, 10_000)
+    const provider = f.settings.releaseNotes.provider
     const octoRill = f.settings.releaseNotes.octoRill
     const configured = Boolean(octoRill.apiBaseUrl?.trim() && octoRill.apiKeyMasked)
-    const shouldUseOctoRill = octoRill.enabled && configured && githubAll.status === 'ready'
-    const fallback =
-      shouldUseOctoRill || (octoRill.enabled && configured)
-        ? null
-        : {
-            from: 'octoRill' as const,
-            reason: octoRill.enabled ? ('notConfigured' as const) : ('disabled' as const),
-            message: octoRill.enabled
-              ? 'OctoRill API Base URL 或 API Key 未配置完整，已使用 GitHub Releases。'
-              : 'OctoRill 更新日志未启用，已使用 GitHub Releases。',
-          }
+    const useOctoRill = provider === 'octoRill'
+    const source = useOctoRill ? 'octoRill' : 'gitHub'
+    const defaultView = useOctoRill ? octoRill.defaultView : 'original'
     const externalLinks = buildMockReleaseNotesExternalLinks(
       githubAll.repo?.htmlUrl,
       githubAll.repo?.fullName,
       octoRill.apiBaseUrl,
     )
 
-    if (githubAll.status !== 'ready') {
+    if (useOctoRill && !configured) {
       return json({
-        status: githubAll.status === 'unsupportedRepo' ? 'unsupportedRepo' : 'upstreamError',
-        source: shouldUseOctoRill ? 'octoRill' : 'gitHub',
+        status: 'upstreamError',
+        source: 'octoRill',
         repo: githubAll.repo,
         cursor: null,
         limit,
@@ -641,8 +670,33 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
         defaultView: octoRill.defaultView,
         externalLinks,
         items: [],
-        message: githubAll.message,
-        fallback,
+        message: 'OctoRill API Base URL 或 API Key 未配置完整。',
+        stale: null,
+        anchor: null,
+      })
+    }
+
+    if (githubAll.status !== 'ready') {
+      return json({
+        status:
+          useOctoRill
+            ? 'upstreamError'
+            : githubAll.status === 'unsupportedRepo'
+              ? 'unsupportedRepo'
+              : 'upstreamError',
+        source,
+        repo: githubAll.repo,
+        cursor: null,
+        limit,
+        nextCursor: null,
+        previousCursor: null,
+        hasMore: false,
+        defaultView,
+        externalLinks,
+        items: [],
+        message:
+          githubAll.message ?? (useOctoRill ? 'OctoRill 公开 Release 暂不可用。' : '读取 GitHub Releases 失败，请稍后重试。'),
+        stale: null,
         anchor: null,
       })
     }
@@ -653,39 +707,18 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
 
     return json({
       status: 'ready',
-      source: shouldUseOctoRill ? 'octoRill' : 'gitHub',
+      source,
       repo: githubAll.repo,
       cursor: boundedStart > 0 ? String(boundedStart) : null,
       limit,
       nextCursor: boundedStart + limit < githubAll.items.length ? String(boundedStart + limit) : null,
       previousCursor: boundedStart > 0 ? String(Math.max(0, boundedStart - limit)) : null,
       hasMore: boundedStart + limit < githubAll.items.length,
-      defaultView: octoRill.defaultView,
+      defaultView,
       externalLinks,
-      items: windowItems.map((item, index) => {
-        const title = item.name && item.name !== item.tagName ? item.name : item.tagName
-        return {
-          id: shouldUseOctoRill ? `octorill:${item.id}` : `github:${item.id}`,
-          tagName: item.tagName,
-          name: item.name,
-          originalBody: item.body,
-          translatedBody:
-            shouldUseOctoRill && index % 4 !== 2
-              ? `翻译：${item.name ?? item.tagName}\n\n${item.body ?? '暂无原始说明'}`
-              : null,
-          smartBody:
-            shouldUseOctoRill && index % 4 !== 3
-              ? buildMockSmartReleaseSummary(title)
-              : null,
-          htmlUrl: item.htmlUrl,
-          draft: item.draft,
-          prerelease: item.prerelease,
-          publishedAt: item.publishedAt,
-          createdAt: item.createdAt,
-        }
-      }),
+      items: buildMockReleaseNotesItems(windowItems, source),
       message: githubAll.message,
-      fallback,
+      stale: null,
       anchor: null,
     })
   }

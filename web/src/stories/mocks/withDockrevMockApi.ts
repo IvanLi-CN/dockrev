@@ -14,6 +14,7 @@ import { OVERVIEW_TOOL_PANEL_STORAGE_KEY } from '../../pages/overviewToolPanelSt
 export const withDockrevMockApi: Decorator = (Story, context) => {
   const scenario = (context.parameters?.dockrevApiScenario ?? 'default') as DockrevApiScenario
   const options = {
+    initialFixture: context.parameters?.dockrevInitialFixture,
     jobsOverride: context.parameters?.dockrevJobsOverride,
     jobsEventsPayload: context.parameters?.dockrevJobsEventsPayload,
     discoveryTimelineByServiceId: context.parameters?.dockrevDiscoveryTimelineByServiceId,

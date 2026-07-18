@@ -73,9 +73,9 @@
 - 七个服务详情子页必须在 tabs 上方共用同一条紧凑状态信息带：只保留镜像/仓库简述、状态标题、当前版本、目标版本与 `newVersionDiscoveryCount` 映射出的“跨 N 个版本”；无候选时目标显示 `-`，计数缺失时显示“跨度未知”，且不得再重复服务名、Stack pill、digest、raw tag、架构、规则或原因等技术明细。桌面端优先保持单行，窄屏允许自然换行，但仍必须维持为同一条信息带，不得退回独立右侧状态卡或多张 header meta 卡。
 - `Image Ref / Service ID / Stack ID` 不得继续出现在共享页头；它们只允许作为 `概览` 子页中的一张紧凑“服务标识”卡出现。
 - `概览` 不得再出现资源监控卡、自动更新结果卡、Compose 信息卡或服务保护卡。
-- `版本` 子页必须复用 `GET /api/services/{service_id}/release-notes` 的统一数据源与 `original | translated | smart` 阅读视图语义，改为页内卡片阅读而不是强依赖右侧抽屉。
+- `版本` 子页必须复用 `GET /api/services/{service_id}/release-notes` 的统一数据源与 Settings 固定 provider 语义；`provider=gitHub` 时只暴露 `original`，`provider=octoRill` 时复用 `original | translated | smart`，并改为页内卡片阅读而不是强依赖右侧抽屉。
 - `版本` 子页页头必须把仓库、来源、当前版本与候选版本 chips 收敛为仓库级 Releases 图标入口：GitHub 图标固定打开 `https://github.com/<owner>/<repo>/releases`，OctoRill 图标仅在 release-notes 响应提供可信 `externalLinks.octoRillReleasesUrl` 时显示，并在新窗口打开对应地址。
-- `版本` 子页首屏必须以当前部署版本为锚点；前端需先调用统一 `release-notes/locate`，只渲染后端返回的锚点窗口，并在命中后把该卡片滚动到视口中心。`outsideWindow | notFound | unavailable` 时首屏回到最新窗口并显示 warning banner，较新/更旧版本都改为通过 `cursor + direction` 双向续拉。
+- `版本` 子页首屏必须以当前部署版本为锚点；前端需先调用统一 `release-notes/locate`，只渲染后端返回的锚点窗口，并在命中后把该卡片滚动到视口中心。请求失败时，只允许继续展示当前浏览器会话内最近一次 `serviceId + provider` 同源成功窗口并标记 stale；若没有同源快照，则直接错误态。较新/更旧版本都改为通过 `cursor + direction` 双向续拉。
 - `版本` 子页在 `>1100px` 时必须拆为左 `220px` 版本目录与右侧版本卡列表；目录与正文都必须保持虚拟化、共享同一分页数据源、独立滚动，并以右侧视口中心版本驱动目录高亮与跟随。目录项固定高度，展示版本号和发布时间：7 天内显示中文相对时间，更早显示 `YYYY-MM-DD`；点击目录项时，对应卡片必须滚动到正文视口中心。任一列表接近末尾时，都必须复用现有去重分页逻辑继续加载旧版本。
 - `版本` 子页的 release card 正文超过 10 行时必须默认折叠，支持原地展开/收起，并继续保持虚拟列表稳定测量，不得因展开造成定位丢失或明显空白。
 - `版本` 子页必须对比当前部署版本、candidate 与既有 rollback target，展示状态徽标与动作区。较新版本统一渲染动作位：普通服务继续使用 `更新`，且只有与当前 service candidate 对应且不突破现有 explicit target tag 契约的版本可真正发起更新；命中 Dockrev 自身识别时，candidate 对应卡片必须改为 `升级 Dockrev` 并复用顶部 supervisor 自我升级入口，其它更高版本只保留禁用动作位并明确解释“当前只能通过 supervisor 进入现有 candidate 对应的自我升级流程”。若 supervisor 自我升级入口本身处于 offline / checking / busy 等不可用状态，则所有 Dockrev 版本卡优先直接暴露该阻断原因，不再继续引导用户访问不可用入口。

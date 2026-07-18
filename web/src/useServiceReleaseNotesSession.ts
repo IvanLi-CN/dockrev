@@ -11,6 +11,79 @@ import { buildReleaseNotesFailureResponse, mergeReleaseNoteItems } from './relea
 
 type PageDirection = 'older' | 'newer'
 
+type CachedReleaseNotesSnapshot = {
+  response: ServiceReleaseNotesResponse
+  items: ServiceReleaseNoteItem[]
+  olderCursor: string | null
+  newerCursor: string | null
+}
+
+const releaseNotesSnapshotCache = new Map<string, CachedReleaseNotesSnapshot>()
+
+function snapshotCacheKey(serviceId: string, source: ServiceReleaseNotesResponse['source']): string {
+  return `${serviceId}::${source}`
+}
+
+function cacheReleaseNotesSnapshot(input: {
+  serviceId: string
+  response: ServiceReleaseNotesResponse
+  items: ServiceReleaseNoteItem[]
+  olderCursor: string | null
+  newerCursor: string | null
+}) {
+  releaseNotesSnapshotCache.set(snapshotCacheKey(input.serviceId, input.response.source), {
+    response: {
+      ...input.response,
+      stale: null,
+      nextCursor: input.olderCursor,
+      previousCursor: input.newerCursor,
+      hasMore: input.olderCursor != null,
+    },
+    items: input.items,
+    olderCursor: input.olderCursor,
+    newerCursor: input.newerCursor,
+  })
+}
+
+function buildStaleSnapshotResponse(
+  serviceId: string,
+  failure: ServiceReleaseNotesResponse,
+): CachedReleaseNotesSnapshot | null {
+  const cached = releaseNotesSnapshotCache.get(snapshotCacheKey(serviceId, failure.source))
+  if (!cached) return null
+  const message = failure.message?.trim() || '当前仅显示该数据源最近一次成功结果。'
+  return {
+    response: {
+      ...cached.response,
+      status: 'ready',
+      source: failure.source,
+      repo: failure.repo ?? cached.response.repo,
+      limit: failure.limit,
+      defaultView: failure.defaultView,
+      externalLinks: failure.externalLinks ?? cached.response.externalLinks,
+      message: failure.message ?? cached.response.message,
+      stale: {
+        reason: 'requestFailed',
+        message,
+      },
+      anchor: failure.anchor ?? cached.response.anchor,
+    },
+    items: cached.items,
+    olderCursor: cached.olderCursor,
+    newerCursor: cached.newerCursor,
+  }
+}
+
+function resetReleaseNotesSnapshotCache() {
+  releaseNotesSnapshotCache.clear()
+}
+
+export const __releaseNotesSessionTestUtils = {
+  cacheReleaseNotesSnapshot,
+  buildStaleSnapshotResponse,
+  resetReleaseNotesSnapshotCache,
+}
+
 type UseServiceReleaseNotesSessionInput = {
   enabled: boolean
   serviceId: string | null
@@ -40,6 +113,9 @@ export function useServiceReleaseNotesSession(
 ): UseServiceReleaseNotesSessionResult {
   const activeSessionRef = useRef<string | null>(null)
   const inFlightPagesRef = useRef<Map<string, Promise<ServiceReleaseNotesResponse | null>>>(new Map())
+  const responseRef = useRef<ServiceReleaseNotesResponse | null>(null)
+  const olderCursorRef = useRef<string | null>(null)
+  const newerCursorRef = useRef<string | null>(null)
 
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'ready'>('idle')
   const [response, setResponse] = useState<ServiceReleaseNotesResponse | null>(null)
@@ -51,6 +127,18 @@ export function useServiceReleaseNotesSession(
   const [loadingNewer, setLoadingNewer] = useState(false)
   const [olderFailure, setOlderFailure] = useState<ServiceReleaseNotesResponse | null>(null)
   const [newerFailure, setNewerFailure] = useState<ServiceReleaseNotesResponse | null>(null)
+
+  useEffect(() => {
+    responseRef.current = response
+  }, [response])
+
+  useEffect(() => {
+    olderCursorRef.current = olderCursor
+  }, [olderCursor])
+
+  useEffect(() => {
+    newerCursorRef.current = newerCursor
+  }, [newerCursor])
 
   const sessionKey = useMemo(() => {
     if (!input.enabled || !input.serviceId) return null
@@ -134,20 +222,38 @@ export function useServiceReleaseNotesSession(
 
       if (cancelled || activeSessionRef.current !== sessionKey) return
 
-      setResponse(nextResponse)
-      setLoadState('ready')
-
       if (nextResponse.status !== 'ready') {
+        const staleSnapshot = buildStaleSnapshotResponse(input.serviceId!, nextResponse)
+        setResponse(staleSnapshot?.response ?? nextResponse)
+        setLoadState('ready')
+        if (staleSnapshot) {
+          setItems(staleSnapshot.items)
+          setOlderCursor(staleSnapshot.olderCursor)
+          setNewerCursor(staleSnapshot.newerCursor)
+          setViewMode(staleSnapshot.response.source === 'gitHub' ? 'original' : staleSnapshot.response.defaultView)
+          return
+        }
         setItems([])
         setOlderCursor(null)
         setNewerCursor(null)
         return
       }
 
+      setResponse(nextResponse)
+      setLoadState('ready')
       setItems(nextResponse.items)
-      setOlderCursor(nextResponse.nextCursor?.trim() || null)
-      setNewerCursor(nextResponse.previousCursor?.trim() || null)
+      const nextOlderCursor = nextResponse.nextCursor?.trim() || null
+      const nextNewerCursor = nextResponse.previousCursor?.trim() || null
+      setOlderCursor(nextOlderCursor)
+      setNewerCursor(nextNewerCursor)
       setViewMode(nextResponse.source === 'gitHub' ? 'original' : nextResponse.defaultView)
+      cacheReleaseNotesSnapshot({
+        serviceId: input.serviceId!,
+        response: nextResponse,
+        items: nextResponse.items,
+        olderCursor: nextOlderCursor,
+        newerCursor: nextNewerCursor,
+      })
     })()
 
     return () => {
@@ -171,11 +277,49 @@ export function useServiceReleaseNotesSession(
       if (!nextResponse || activeSessionRef.current !== sessionKey) return
       if (nextResponse.status !== 'ready') {
         setOlderFailure(nextResponse)
+        setResponse((prev) =>
+          prev
+            ? {
+                ...prev,
+                stale: {
+                  reason: 'requestFailed',
+                  message: nextResponse.message?.trim() || '当前仅显示该数据源最近一次成功结果。',
+                },
+                message: nextResponse.message ?? prev.message,
+                anchor: nextResponse.anchor ?? prev.anchor,
+              }
+            : prev,
+        )
         return
       }
-      setItems((prev) => mergeReleaseNoteItems(prev, nextResponse.items, 'older'))
+      setItems((prev) => {
+        const merged = mergeReleaseNoteItems(prev, nextResponse.items, 'older')
+        const nextOlderCursor = nextResponse.nextCursor?.trim() || null
+        const cachedResponse = responseRef.current ?? nextResponse
+        cacheReleaseNotesSnapshot({
+          serviceId: input.serviceId!,
+          response: {
+            ...cachedResponse,
+            stale: null,
+            message: cachedResponse.stale ? null : cachedResponse.message ?? null,
+          },
+          items: merged,
+          olderCursor: nextOlderCursor,
+          newerCursor: newerCursorRef.current,
+        })
+        return merged
+      })
       setOlderCursor(nextResponse.nextCursor?.trim() || null)
       setOlderFailure(null)
+      setResponse((prev) =>
+        prev
+          ? {
+              ...prev,
+              stale: null,
+              message: prev.stale ? null : prev.message,
+            }
+          : prev,
+      )
     } finally {
       if (activeSessionRef.current === sessionKey) {
         setLoadingOlder(false)
@@ -191,11 +335,49 @@ export function useServiceReleaseNotesSession(
       if (!nextResponse || activeSessionRef.current !== sessionKey) return
       if (nextResponse.status !== 'ready') {
         setNewerFailure(nextResponse)
+        setResponse((prev) =>
+          prev
+            ? {
+                ...prev,
+                stale: {
+                  reason: 'requestFailed',
+                  message: nextResponse.message?.trim() || '当前仅显示该数据源最近一次成功结果。',
+                },
+                message: nextResponse.message ?? prev.message,
+                anchor: nextResponse.anchor ?? prev.anchor,
+              }
+            : prev,
+        )
         return
       }
-      setItems((prev) => mergeReleaseNoteItems(prev, nextResponse.items, 'newer'))
+      setItems((prev) => {
+        const merged = mergeReleaseNoteItems(prev, nextResponse.items, 'newer')
+        const nextNewerCursor = nextResponse.previousCursor?.trim() || null
+        const cachedResponse = responseRef.current ?? nextResponse
+        cacheReleaseNotesSnapshot({
+          serviceId: input.serviceId!,
+          response: {
+            ...cachedResponse,
+            stale: null,
+            message: cachedResponse.stale ? null : cachedResponse.message ?? null,
+          },
+          items: merged,
+          olderCursor: olderCursorRef.current,
+          newerCursor: nextNewerCursor,
+        })
+        return merged
+      })
       setNewerCursor(nextResponse.previousCursor?.trim() || null)
       setNewerFailure(null)
+      setResponse((prev) =>
+        prev
+          ? {
+              ...prev,
+              stale: null,
+              message: prev.stale ? null : prev.message,
+            }
+          : prev,
+      )
     } finally {
       if (activeSessionRef.current === sessionKey) {
         setLoadingNewer(false)
