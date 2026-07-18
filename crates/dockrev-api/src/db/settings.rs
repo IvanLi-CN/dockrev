@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use crate::api::types::ReleaseNotesProvider;
+
 use super::*;
 
 impl Db {
@@ -602,6 +604,7 @@ WHERE id = 'default'
             Ok(conn.query_row(
                 r#"
 SELECT
+  release_notes_provider,
   release_notes_octo_rill_enabled,
   release_notes_octo_rill_api_base_url,
   release_notes_octo_rill_api_key,
@@ -611,17 +614,23 @@ WHERE id = 'default'
 "#,
                 [],
                 |row| {
-                    let raw_view: String = row.get(3)?;
+                    let raw_provider: String = row.get(0)?;
+                    let provider = match raw_provider.as_str() {
+                        "octoRill" => ReleaseNotesProvider::OctoRill,
+                        _ => ReleaseNotesProvider::GitHub,
+                    };
+                    let raw_view: String = row.get(4)?;
                     let default_view = match raw_view.as_str() {
                         "original" => ReleaseNotesView::Original,
                         "translated" => ReleaseNotesView::Translated,
                         _ => ReleaseNotesView::Smart,
                     };
                     Ok(ReleaseNotesSettings {
+                        provider,
                         octo_rill: OctoRillReleaseNotesSettings {
-                            enabled: row.get::<_, i64>(0)? != 0,
-                            api_base_url: row.get(1)?,
-                            api_key: row.get(2)?,
+                            enabled: row.get::<_, i64>(1)? != 0,
+                            api_base_url: row.get(2)?,
+                            api_key: row.get(3)?,
                             default_view,
                         },
                     })
@@ -689,11 +698,12 @@ SET
   schedule_ghcr_webhook_audit_enabled = ?9,
   schedule_ghcr_webhook_audit_cron = ?10,
   public_base_url = ?11,
-  release_notes_octo_rill_enabled = ?12,
-  release_notes_octo_rill_api_base_url = ?13,
-  release_notes_octo_rill_api_key = ?14,
-  release_notes_octo_rill_default_view = ?15,
-  updated_at = ?16
+  release_notes_provider = ?12,
+  release_notes_octo_rill_enabled = ?13,
+  release_notes_octo_rill_api_base_url = ?14,
+  release_notes_octo_rill_api_key = ?15,
+  release_notes_octo_rill_default_view = ?16,
+  updated_at = ?17
 WHERE id = 'default'
 "#,
                 params![
@@ -708,6 +718,10 @@ WHERE id = 'default'
                     schedules.ghcr_webhook_audit.enabled as i64,
                     schedules.ghcr_webhook_audit.cron,
                     public_base_url,
+                    match release_notes.provider {
+                        ReleaseNotesProvider::GitHub => "gitHub",
+                        ReleaseNotesProvider::OctoRill => "octoRill",
+                    },
                     release_notes.octo_rill.enabled as i64,
                     release_notes.octo_rill.api_base_url,
                     release_notes.octo_rill.api_key,

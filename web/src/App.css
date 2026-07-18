@@ -9509,6 +9509,31 @@ html[data-theme="light"] .modalOverlay {
   align-items: center;
 }
 
+.settingsFieldRow {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  grid-template-areas:
+    "label control"
+    ". help";
+  column-gap: 12px;
+  row-gap: 6px;
+  align-items: center;
+}
+
+.settingsFieldLabel {
+  grid-area: label;
+  align-self: center;
+}
+
+.settingsFieldControl {
+  grid-area: control;
+  min-width: 0;
+}
+
+.settingsFieldHelp {
+  grid-area: help;
+}
+
 .settingsInlineSuggestionBubble {
   position: fixed;
   z-index: 1100;
@@ -12227,6 +12252,15 @@ html[data-theme="light"] .btnPrimary {
 
   .kvRow {
     grid-template-columns: 1fr;
+    gap: 3px;
+  }
+
+  .settingsFieldRow {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "label"
+      "control"
+      "help";
     gap: 3px;
   }
 

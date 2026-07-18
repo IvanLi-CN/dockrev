@@ -441,8 +441,8 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
   )
 
   const showSettingsAction = releaseNotesShouldOfferSettingsAction(listResponse)
-  const fallbackBanner = listResponse?.fallback
-    ? { tone: 'warning' as const, message: listResponse.fallback.message }
+  const staleBanner = listResponse?.stale
+    ? { tone: 'warning' as const, message: listResponse.stale.message }
     : null
   const anchorBanner =
     anchorState?.status === 'notFound' || anchorState?.status === 'outsideWindow' || anchorState?.status === 'unavailable'
@@ -685,7 +685,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
                 <OctoRillIcon className="brandIcon" />
               </IconLink>
             ) : null}
-            {listResponse?.status === 'ready' ? (
+            {listResponse?.status === 'ready' && listResponse.source === 'octoRill' ? (
               <div className="serviceVersionsViewTabs" aria-label="发布说明视图">
                 {(['smart', 'translated', 'original'] as const).map((view) => (
                   <button
@@ -722,9 +722,9 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
           </div>
         ) : null}
 
-        {fallbackBanner ? (
-          <div className="releaseDrawerBanner releaseDrawerBanner-warning" data-service-versions-banner="fallback">
-            <span>{fallbackBanner.message}</span>
+        {staleBanner ? (
+          <div className="releaseDrawerBanner releaseDrawerBanner-warning" data-service-versions-banner="stale">
+            <span>{staleBanner.message}</span>
             {showSettingsAction ? (
               <Button variant="ghost" onClick={openSettings}>
                 打开设置

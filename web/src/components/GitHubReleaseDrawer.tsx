@@ -260,8 +260,8 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
   }, [listResponse])
 
   const surfaceBanner = isReady ? locateBanner : listBanner ?? locateBanner
-  const fallbackBanner = listResponse?.fallback
-    ? { tone: 'warning' as const, message: listResponse.fallback.message }
+  const staleBanner = listResponse?.stale
+    ? { tone: 'warning' as const, message: listResponse.stale.message }
     : null
   const loaderVisible = loadState === 'loading' && items.length === 0
   const unsupportedOrErrored = loadState === 'ready' && listResponse && listResponse.status !== 'ready'
@@ -411,7 +411,7 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
               ) : null}
             </div>
           ) : null}
-          {isReady ? (
+          {isReady && listResponse?.source === 'octoRill' ? (
             <div className="releaseDrawerViewTabs" aria-label="发布说明视图">
               {(['smart', 'translated', 'original'] as const).map((view) => (
                 <button
@@ -426,9 +426,9 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
               ))}
             </div>
           ) : null}
-          {fallbackBanner ? (
-            <div className="releaseDrawerBanner releaseDrawerBanner-warning" data-release-drawer-banner="fallback">
-              <span>{fallbackBanner.message}</span>
+          {staleBanner ? (
+            <div className="releaseDrawerBanner releaseDrawerBanner-warning" data-release-drawer-banner="stale">
+              <span>{staleBanner.message}</span>
               {showSettingsAction ? (
                 <Button variant="ghost" onClick={openSettings}>打开设置</Button>
               ) : null}
@@ -448,7 +448,7 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
           {loaderVisible ? (
             <div className="releaseDrawerState" data-release-drawer-state="loading">
               <span className="btnInlineSpinner" aria-hidden="true" />
-              <span>正在加载 GitHub 发布记录…</span>
+              <span>正在加载发布记录…</span>
             </div>
           ) : null}
 
@@ -467,7 +467,7 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
           {emptyReady ? (
             <div className="releaseDrawerState" data-release-drawer-state="empty">
               <div className="releaseDrawerStateTitle">暂无发布记录</div>
-              <div className="releaseDrawerStateMessage">该 GitHub 仓库当前没有可展示的 Releases。</div>
+              <div className="releaseDrawerStateMessage">当前数据源没有可展示的发布记录。</div>
             </div>
           ) : null}
 

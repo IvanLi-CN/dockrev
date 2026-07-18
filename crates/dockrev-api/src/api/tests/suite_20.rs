@@ -1044,6 +1044,7 @@ async fn get_service_backup_targets_resolves_compose_candidates_and_storage_info
                 },
             },
             &crate::api::types::ReleaseNotesSettings {
+                provider: crate::api::types::ReleaseNotesProvider::GitHub,
                 octo_rill: crate::api::types::OctoRillReleaseNotesSettings {
                     enabled: false,
                     api_base_url: None,

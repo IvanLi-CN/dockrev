@@ -124,9 +124,18 @@ pub enum ReleaseNotesView {
     Smart,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ReleaseNotesProvider {
+    #[default]
+    GitHub,
+    OctoRill,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReleaseNotesSettings {
+    pub provider: ReleaseNotesProvider,
     pub octo_rill: OctoRillReleaseNotesSettings,
 }
 
@@ -142,6 +151,7 @@ pub struct OctoRillReleaseNotesSettings {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReleaseNotesSettingsResponse {
+    pub provider: ReleaseNotesProvider,
     pub octo_rill: OctoRillReleaseNotesSettingsResponse,
 }
 
@@ -157,6 +167,7 @@ pub struct OctoRillReleaseNotesSettingsResponse {
 impl From<ReleaseNotesSettings> for ReleaseNotesSettingsResponse {
     fn from(value: ReleaseNotesSettings) -> Self {
         Self {
+            provider: value.provider,
             octo_rill: OctoRillReleaseNotesSettingsResponse {
                 enabled: value.octo_rill.enabled,
                 api_base_url: value.octo_rill.api_base_url,
@@ -170,6 +181,8 @@ impl From<ReleaseNotesSettings> for ReleaseNotesSettingsResponse {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PutReleaseNotesSettings {
+    #[serde(default)]
+    pub provider: Option<ReleaseNotesProvider>,
     #[serde(default)]
     pub octo_rill: Option<PutOctoRillReleaseNotesSettings>,
 }

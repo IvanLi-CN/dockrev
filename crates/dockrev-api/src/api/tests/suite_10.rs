@@ -19,6 +19,10 @@ async fn settings_and_notifications_roundtrip() {
     assert!(settings["resourceMonitor"].is_object());
     assert!(settings["schedules"].is_object());
     assert!(settings["releaseNotes"].is_object());
+    assert_eq!(
+        settings["releaseNotes"]["provider"].as_str(),
+        Some("gitHub")
+    );
     assert!(settings["auth"].is_object());
     assert!(settings["instance"].is_object());
     assert!(settings["instance"]["publicBaseUrl"].is_null());
@@ -56,6 +60,10 @@ async fn settings_and_notifications_roundtrip() {
     assert_eq!(
         settings["schedules"]["ghcrWebhookAudit"]["cron"].as_str(),
         Some("0 3 * * *")
+    );
+    assert_eq!(
+        settings["releaseNotes"]["provider"].as_str(),
+        Some("gitHub")
     );
 
     let put = serde_json::json!({
@@ -192,6 +200,7 @@ async fn settings_and_notifications_roundtrip() {
     let set_octo_rill = serde_json::json!({
         "backup": settings["backup"],
         "releaseNotes": {
+            "provider": "octoRill",
             "octoRill": {
                 "enabled": true,
                 "apiBaseUrl": "https://octo.example.com/octo-rill/",
@@ -226,6 +235,10 @@ async fn settings_and_notifications_roundtrip() {
         .unwrap();
     assert_eq!(resp.status(), 200);
     let settings = response_json(resp).await;
+    assert_eq!(
+        settings["releaseNotes"]["provider"].as_str(),
+        Some("octoRill")
+    );
     assert_eq!(
         settings["releaseNotes"]["octoRill"]["enabled"].as_bool(),
         Some(true)
@@ -284,6 +297,10 @@ async fn settings_and_notifications_roundtrip() {
     assert_eq!(resp.status(), 200);
     let settings = response_json(resp).await;
     assert_eq!(
+        settings["releaseNotes"]["provider"].as_str(),
+        Some("octoRill")
+    );
+    assert_eq!(
         settings["releaseNotes"]["octoRill"]["apiKeyMasked"].as_str(),
         Some("••••••••••••••••••••")
     );
@@ -327,6 +344,10 @@ async fn settings_and_notifications_roundtrip() {
     assert_eq!(resp.status(), 200);
     let settings = response_json(resp).await;
     assert_eq!(
+        settings["releaseNotes"]["provider"].as_str(),
+        Some("octoRill")
+    );
+    assert_eq!(
         settings["releaseNotes"]["octoRill"]["apiKeyMasked"].as_str(),
         Some("••••••••••••••••••••")
     );
@@ -365,6 +386,10 @@ async fn settings_and_notifications_roundtrip() {
         .unwrap();
     assert_eq!(resp.status(), 200);
     let settings = response_json(resp).await;
+    assert_eq!(
+        settings["releaseNotes"]["provider"].as_str(),
+        Some("octoRill")
+    );
     assert!(settings["releaseNotes"]["octoRill"]["apiKeyMasked"].is_null());
 
     let invalid_base_url = serde_json::json!({

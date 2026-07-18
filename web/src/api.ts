@@ -669,6 +669,7 @@ export async function getSettings(): Promise<SettingsResponse> {
   return {
     ...data,
     releaseNotes: data.releaseNotes ?? {
+      provider: 'gitHub',
       octoRill: {
         enabled: false,
         apiBaseUrl: null,

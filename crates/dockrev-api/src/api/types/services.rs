@@ -292,7 +292,7 @@ pub enum ServiceReleaseNotesStatus {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum ServiceReleaseNotesFallbackReason {
+pub enum ServiceReleaseNotesFailureReason {
     Disabled,
     NotConfigured,
     UnsupportedRepo,
@@ -301,11 +301,16 @@ pub enum ServiceReleaseNotesFallbackReason {
     UpstreamError,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ServiceReleaseNotesStaleReason {
+    RequestFailed,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ServiceReleaseNotesFallback {
-    pub from: ServiceReleaseNotesSource,
-    pub reason: ServiceReleaseNotesFallbackReason,
+pub struct ServiceReleaseNotesStale {
+    pub reason: ServiceReleaseNotesStaleReason,
     pub message: String,
 }
 
@@ -383,7 +388,7 @@ pub struct ServiceReleaseNotesResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fallback: Option<ServiceReleaseNotesFallback>,
+    pub stale: Option<ServiceReleaseNotesStale>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anchor: Option<ServiceReleaseNotesAnchor>,
 }

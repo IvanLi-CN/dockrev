@@ -3,6 +3,7 @@ import type { Meta, StoryObj } from '@storybook/react'
 
 import { GitHubReleaseDrawer } from '../../components/GitHubReleaseDrawer'
 import type { DockrevMockGitHubReleasesDataset } from '../mocks/dockrevMockApi'
+import { buildFixture } from '../mocks/dockrevMockApi/fixturesMisc'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
 
 const STORY_REPO = {
@@ -309,6 +310,12 @@ const compactDataset: DockrevMockGitHubReleasesDataset = {
   items: buildReleaseItems([...compactReleaseTags], true),
 }
 
+const gitHubProviderFixture = (() => {
+  const fixture = buildFixture('default')
+  fixture.settings.releaseNotes.provider = 'gitHub'
+  return fixture
+})()
+
 const meta: Meta<typeof GitHubReleaseDrawer> = {
   title: 'Components/GitHubReleaseDrawer',
   tags: ['autodocs'],
@@ -438,6 +445,36 @@ export const OctoRillSmartDefault: Story = {
     const activeView = document.querySelector('.releaseDrawerViewTabActive')
     if (!activeView?.textContent?.includes('润色')) {
       throw new Error('expected smart view tab to be active by default')
+    }
+  },
+}
+
+export const GitHubOriginalOnly: Story = {
+  args: {
+    open: true,
+    serviceId: 'svc-release-drawer-github',
+    onOpenChange: () => {},
+  },
+  parameters: {
+    dockrevApiScenario: 'default',
+    dockrevInitialFixture: gitHubProviderFixture,
+    dockrevGitHubReleasesByServiceId: {
+      'svc-release-drawer-github': baseDataset,
+    },
+  },
+  play: async () => {
+    await new Promise((resolve) => setTimeout(resolve, 360))
+    const drawer = document.querySelector('[data-release-drawer="true"]')
+    if (!(drawer instanceof HTMLElement)) throw new Error('expected release drawer content to render')
+    if (drawer.textContent?.includes('润色摘要') || drawer.textContent?.includes('翻译：')) {
+      throw new Error('expected GitHub provider to keep only the original release body')
+    }
+    if (document.querySelectorAll('.releaseDrawerViewTab').length !== 0) {
+      throw new Error('expected GitHub provider to hide translated/smart view tabs')
+    }
+    const chips = Array.from(document.querySelectorAll('.releaseDrawerChip')).map((node) => node.textContent?.trim() ?? '')
+    if (!chips.includes('GitHub Releases')) {
+      throw new Error('expected GitHub provider source chip')
     }
   },
 }

@@ -151,7 +151,13 @@ export const OctoRillReleaseNotesCard: Story = {
       (node) => node.querySelector('.title')?.textContent?.trim() === 'OctoRill 更新日志',
     )
     if (!card) throw new globalThis.Error('expected OctoRill release notes card')
+    if (!card.textContent?.includes('数据源')) throw new globalThis.Error('expected provider selector row')
+    if (!card.textContent?.includes('设成啥就用啥')) throw new globalThis.Error('expected fixed-provider helper copy')
     if (!card.textContent?.includes('默认视图')) throw new globalThis.Error('expected default view control')
+    const providerTrigger = Array.from(card.querySelectorAll<HTMLElement>('button')).find((node) =>
+      /GitHub Releases|OctoRill/.test(node.textContent?.trim() ?? ''),
+    )
+    if (!providerTrigger) throw new globalThis.Error('expected provider select trigger')
     const apiKeyInput = card.querySelector<HTMLInputElement>('input[type="password"]')
     if (!apiKeyInput) throw new globalThis.Error('expected OctoRill API key password input')
     if (!/^•{20}$/.test(apiKeyInput.value)) {

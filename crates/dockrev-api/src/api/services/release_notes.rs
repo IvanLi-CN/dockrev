@@ -44,7 +44,7 @@ struct OctoRillPublicReleaseNotesSuccess {
 
 #[derive(Debug)]
 struct OctoRillPublicReleaseNotesFailure {
-    reason: ServiceReleaseNotesFallbackReason,
+    reason: ServiceReleaseNotesFailureReason,
     message: String,
 }
 
@@ -100,64 +100,46 @@ fn normalize_release_notes_direction(
     value.unwrap_or_default()
 }
 
-fn fallback_message(reason: ServiceReleaseNotesFallbackReason) -> String {
+fn failure_message(reason: ServiceReleaseNotesFailureReason) -> String {
     match reason {
-        ServiceReleaseNotesFallbackReason::Disabled => {
-            "OctoRill 更新日志未启用，已使用 GitHub Releases。".to_string()
+        ServiceReleaseNotesFailureReason::Disabled => "OctoRill 更新日志未启用。".to_string(),
+        ServiceReleaseNotesFailureReason::NotConfigured => {
+            "OctoRill API Base URL 或 API Key 未配置完整。".to_string()
         }
-        ServiceReleaseNotesFallbackReason::NotConfigured => {
-            "OctoRill API Base URL 或 API Key 未配置完整，已使用 GitHub Releases。".to_string()
-        }
-        ServiceReleaseNotesFallbackReason::UnsupportedRepo => {
+        ServiceReleaseNotesFailureReason::UnsupportedRepo => {
             "未能解析该服务的 GitHub 仓库，无法读取 OctoRill Release Notes。".to_string()
         }
-        ServiceReleaseNotesFallbackReason::Unauthorized => {
-            "OctoRill API Key 无效或权限不足，已回退到 GitHub Releases。".to_string()
+        ServiceReleaseNotesFailureReason::Unauthorized => {
+            "OctoRill API Key 无效或权限不足。".to_string()
         }
-        ServiceReleaseNotesFallbackReason::EmptyFeed => {
-            "OctoRill 没有返回可展示的发布记录，已回退到 GitHub Releases。".to_string()
+        ServiceReleaseNotesFailureReason::EmptyFeed => {
+            "OctoRill 没有返回可展示的发布记录。".to_string()
         }
-        ServiceReleaseNotesFallbackReason::UpstreamError => {
-            "OctoRill 公开 Release 暂不可用，已使用 GitHub Releases；当前会失去润色/翻译内容。"
-                .to_string()
+        ServiceReleaseNotesFailureReason::UpstreamError => {
+            "OctoRill 公开 Release 暂不可用。".to_string()
         }
     }
 }
 
-fn build_fallback(reason: ServiceReleaseNotesFallbackReason) -> ServiceReleaseNotesFallback {
-    build_custom_fallback(reason, fallback_message(reason))
-}
-
-fn build_custom_fallback(
-    reason: ServiceReleaseNotesFallbackReason,
-    message: impl Into<String>,
-) -> ServiceReleaseNotesFallback {
-    ServiceReleaseNotesFallback {
-        from: ServiceReleaseNotesSource::OctoRill,
-        reason,
-        message: message.into(),
-    }
-}
-
-fn page_failure_message(reason: ServiceReleaseNotesFallbackReason) -> String {
+fn page_failure_message(reason: ServiceReleaseNotesFailureReason) -> String {
     match reason {
-        ServiceReleaseNotesFallbackReason::UnsupportedRepo => {
+        ServiceReleaseNotesFailureReason::UnsupportedRepo => {
             "未能解析该服务的 GitHub 仓库，无法继续读取 OctoRill Release Notes。".to_string()
         }
-        ServiceReleaseNotesFallbackReason::Unauthorized => {
+        ServiceReleaseNotesFailureReason::Unauthorized => {
             "OctoRill API Key 无效或权限不足，无法继续读取 OctoRill 发布记录。".to_string()
         }
-        ServiceReleaseNotesFallbackReason::EmptyFeed => {
+        ServiceReleaseNotesFailureReason::EmptyFeed => {
             "OctoRill 没有返回可继续展示的发布记录。".to_string()
         }
-        ServiceReleaseNotesFallbackReason::NotConfigured => {
+        ServiceReleaseNotesFailureReason::NotConfigured => {
             "OctoRill API Base URL 或 API Key 未配置完整，无法继续读取 OctoRill 发布记录。"
                 .to_string()
         }
-        ServiceReleaseNotesFallbackReason::Disabled => {
+        ServiceReleaseNotesFailureReason::Disabled => {
             "OctoRill 更新日志未启用，无法继续读取 OctoRill 发布记录。".to_string()
         }
-        ServiceReleaseNotesFallbackReason::UpstreamError => {
+        ServiceReleaseNotesFailureReason::UpstreamError => {
             "OctoRill 公开 Release 请求失败，无法继续读取后续发布记录。".to_string()
         }
     }
@@ -169,11 +151,11 @@ fn octo_rill_page_failure_response(
     limit: u32,
     default_view: ReleaseNotesView,
     external_links: Option<ServiceReleaseNotesExternalLinks>,
-    reason: ServiceReleaseNotesFallbackReason,
+    reason: ServiceReleaseNotesFailureReason,
 ) -> ServiceReleaseNotesResponse {
     ServiceReleaseNotesResponse {
         status: match reason {
-            ServiceReleaseNotesFallbackReason::UnsupportedRepo => {
+            ServiceReleaseNotesFailureReason::UnsupportedRepo => {
                 ServiceReleaseNotesStatus::UnsupportedRepo
             }
             _ => ServiceReleaseNotesStatus::UpstreamError,
@@ -189,9 +171,32 @@ fn octo_rill_page_failure_response(
         external_links,
         items: Vec::new(),
         message: Some(page_failure_message(reason)),
-        fallback: None,
+        stale: None,
         anchor: None,
     }
+}
+
+fn octo_rill_locate_failure_response(
+    repo: Option<ServiceGitHubRepoRef>,
+    limit: u32,
+    default_view: ReleaseNotesView,
+    external_links: Option<ServiceReleaseNotesExternalLinks>,
+    version: &str,
+    reason: ServiceReleaseNotesFailureReason,
+    message: String,
+) -> ServiceReleaseNotesResponse {
+    let mut response =
+        octo_rill_page_failure_response(repo, None, limit, default_view, external_links, reason);
+    response.message = Some(message.clone());
+    response.anchor = Some(ServiceReleaseNotesAnchor {
+        status: ServiceReleaseNotesAnchorStatus::Unavailable,
+        version: version.to_string(),
+        matched_tag: None,
+        index_within_window: None,
+        absolute_index: None,
+        message: Some(message),
+    });
+    response
 }
 
 fn parse_cursor_as_page(cursor: Option<&str>) -> u32 {
@@ -315,7 +320,6 @@ fn release_notes_status_from_github(
 struct GitHubReleaseNotesResponseOptions {
     default_view: ReleaseNotesView,
     external_links: Option<ServiceReleaseNotesExternalLinks>,
-    fallback: Option<ServiceReleaseNotesFallback>,
     anchor: Option<ServiceReleaseNotesAnchor>,
 }
 
@@ -343,7 +347,7 @@ fn github_release_notes_response_from_list(
             .map(github_note_item_from_release)
             .collect(),
         message: response.message,
-        fallback: options.fallback,
+        stale: None,
         anchor: options.anchor,
     }
 }
@@ -365,7 +369,7 @@ fn unsupported_github_release_notes_response(
         external_links: options.external_links,
         items: Vec::new(),
         message: Some("未能解析该服务的 GitHub 仓库。".to_string()),
-        fallback: options.fallback,
+        stale: None,
         anchor: options.anchor,
     }
 }
@@ -541,33 +545,33 @@ async fn fetch_octo_rill_public_release_notes(
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| OctoRillPublicReleaseNotesFailure {
-            reason: ServiceReleaseNotesFallbackReason::NotConfigured,
-            message: fallback_message(ServiceReleaseNotesFallbackReason::NotConfigured),
+            reason: ServiceReleaseNotesFailureReason::NotConfigured,
+            message: failure_message(ServiceReleaseNotesFailureReason::NotConfigured),
         })?;
     settings
         .api_key
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| OctoRillPublicReleaseNotesFailure {
-            reason: ServiceReleaseNotesFallbackReason::NotConfigured,
-            message: fallback_message(ServiceReleaseNotesFallbackReason::NotConfigured),
+            reason: ServiceReleaseNotesFailureReason::NotConfigured,
+            message: failure_message(ServiceReleaseNotesFailureReason::NotConfigured),
         })?;
     let (owner, repo_name) =
         split_repo_full_name(&repo.full_name).ok_or_else(|| OctoRillPublicReleaseNotesFailure {
-            reason: ServiceReleaseNotesFallbackReason::UnsupportedRepo,
-            message: fallback_message(ServiceReleaseNotesFallbackReason::UnsupportedRepo),
+            reason: ServiceReleaseNotesFailureReason::UnsupportedRepo,
+            message: failure_message(ServiceReleaseNotesFailureReason::UnsupportedRepo),
         })?;
 
     let mut url = url::Url::parse(base_url).map_err(|_| OctoRillPublicReleaseNotesFailure {
-        reason: ServiceReleaseNotesFallbackReason::UpstreamError,
-        message: fallback_message(ServiceReleaseNotesFallbackReason::UpstreamError),
+        reason: ServiceReleaseNotesFailureReason::UpstreamError,
+        message: failure_message(ServiceReleaseNotesFailureReason::UpstreamError),
     })?;
     {
         let mut segments =
             url.path_segments_mut()
                 .map_err(|_| OctoRillPublicReleaseNotesFailure {
-                    reason: ServiceReleaseNotesFallbackReason::UpstreamError,
-                    message: fallback_message(ServiceReleaseNotesFallbackReason::UpstreamError),
+                    reason: ServiceReleaseNotesFailureReason::UpstreamError,
+                    message: failure_message(ServiceReleaseNotesFailureReason::UpstreamError),
                 })?;
         segments.pop_if_empty();
         segments.extend([
@@ -610,37 +614,36 @@ async fn fetch_octo_rill_public_release_notes(
         .default_headers(headers)
         .build()
         .map_err(|_| OctoRillPublicReleaseNotesFailure {
-            reason: ServiceReleaseNotesFallbackReason::UpstreamError,
-            message: fallback_message(ServiceReleaseNotesFallbackReason::UpstreamError),
+            reason: ServiceReleaseNotesFailureReason::UpstreamError,
+            message: failure_message(ServiceReleaseNotesFailureReason::UpstreamError),
         })?;
     let resp = client
         .get(url)
         .send()
         .await
         .map_err(|_| OctoRillPublicReleaseNotesFailure {
-            reason: ServiceReleaseNotesFallbackReason::UpstreamError,
-            message: fallback_message(ServiceReleaseNotesFallbackReason::UpstreamError),
+            reason: ServiceReleaseNotesFailureReason::UpstreamError,
+            message: failure_message(ServiceReleaseNotesFailureReason::UpstreamError),
         })?;
     if !resp.status().is_success() {
         return Err(OctoRillPublicReleaseNotesFailure {
-            reason: ServiceReleaseNotesFallbackReason::UpstreamError,
-            message: fallback_message(ServiceReleaseNotesFallbackReason::UpstreamError),
+            reason: ServiceReleaseNotesFailureReason::UpstreamError,
+            message: failure_message(ServiceReleaseNotesFailureReason::UpstreamError),
         });
     }
     let parsed = resp
         .json::<OctoRillPublicReleaseContentResponse>()
         .await
         .map_err(|_| OctoRillPublicReleaseNotesFailure {
-            reason: ServiceReleaseNotesFallbackReason::UpstreamError,
-            message: fallback_message(ServiceReleaseNotesFallbackReason::UpstreamError),
+            reason: ServiceReleaseNotesFailureReason::UpstreamError,
+            message: failure_message(ServiceReleaseNotesFailureReason::UpstreamError),
         })?;
     if parsed.status != "ready" {
         return Err(OctoRillPublicReleaseNotesFailure {
-            reason: ServiceReleaseNotesFallbackReason::UpstreamError,
-            message: parsed.message.unwrap_or_else(|| {
-                "OctoRill 公开 Release 数据暂未就绪，已改用 GitHub Releases；当前会失去润色/翻译内容。"
-                    .to_string()
-            }),
+            reason: ServiceReleaseNotesFailureReason::UpstreamError,
+            message: parsed
+                .message
+                .unwrap_or_else(|| "OctoRill 公开 Release 数据暂未就绪。".to_string()),
         });
     }
     let items = parsed
@@ -651,8 +654,8 @@ async fn fetch_octo_rill_public_release_notes(
         .collect::<Vec<_>>();
     if items.is_empty() {
         return Err(OctoRillPublicReleaseNotesFailure {
-            reason: ServiceReleaseNotesFallbackReason::EmptyFeed,
-            message: fallback_message(ServiceReleaseNotesFallbackReason::EmptyFeed),
+            reason: ServiceReleaseNotesFailureReason::EmptyFeed,
+            message: failure_message(ServiceReleaseNotesFailureReason::EmptyFeed),
         });
     }
 
@@ -719,7 +722,7 @@ fn octorill_ready_response(
         external_links,
         items: response.items,
         message: None,
-        fallback: None,
+        stale: None,
         anchor,
     }
 }
@@ -731,7 +734,6 @@ async fn github_locate_release_notes_response(
     limit: u32,
     default_view: ReleaseNotesView,
     external_links: Option<ServiceReleaseNotesExternalLinks>,
-    fallback: Option<ServiceReleaseNotesFallback>,
 ) -> ServiceReleaseNotesResponse {
     let per_page = normalize_github_releases_per_page(Some(limit));
     let Some(repo_ref) = repo.clone() else {
@@ -740,7 +742,6 @@ async fn github_locate_release_notes_response(
             GitHubReleaseNotesResponseOptions {
                 default_view,
                 external_links,
-                fallback,
                 anchor: Some(ServiceReleaseNotesAnchor {
                     status: ServiceReleaseNotesAnchorStatus::Unavailable,
                     version: version.to_string(),
@@ -765,7 +766,6 @@ async fn github_locate_release_notes_response(
     let response_options = |anchor: ServiceReleaseNotesAnchor| GitHubReleaseNotesResponseOptions {
         default_view,
         external_links: external_links.clone(),
-        fallback: fallback.clone(),
         anchor: Some(anchor),
     };
 
@@ -831,7 +831,7 @@ async fn github_locate_release_notes_response(
             external_links,
             items: Vec::new(),
             message: locate.message.clone(),
-            fallback,
+            stale: None,
             anchor: Some(ServiceReleaseNotesAnchor {
                 status: ServiceReleaseNotesAnchorStatus::Unavailable,
                 version: version.to_string(),
@@ -865,16 +865,12 @@ pub(crate) async fn list_service_release_notes(
         .get_release_notes_settings()
         .await
         .map_err(map_internal)?;
-    let default_view = release_notes_settings.octo_rill.default_view;
+    let default_view = match release_notes_settings.provider {
+        ReleaseNotesProvider::GitHub => ReleaseNotesView::Original,
+        ReleaseNotesProvider::OctoRill => release_notes_settings.octo_rill.default_view,
+    };
     let direction = normalize_release_notes_direction(query.direction);
     let limit = normalize_release_notes_limit(query.limit);
-    let requested_cursor = query
-        .cursor
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let octo_rill_upstream_cursor =
-        requested_cursor.and_then(upstream_cursor_from_octo_rill_cursor);
     let repo = resolve_service_github_repo_ref(&state, &service_id, settings.repo_url.as_deref())
         .await
         .map_err(map_internal)?;
@@ -883,50 +879,53 @@ pub(crate) async fn list_service_release_notes(
         release_notes_settings.octo_rill.api_base_url.as_deref(),
     );
 
-    let mut fallback = None;
-    if is_github_cursor(query.cursor.as_deref()) {
-        // Continue GitHub pagination when the current session is already on the fallback source.
-    } else if !release_notes_settings.octo_rill.enabled {
-        // Disabled is treated as GitHub primary without a warning banner.
-    } else if let Some(repo_ref) = repo.as_ref() {
-        match fetch_octo_rill_public_release_notes(
-            &release_notes_settings.octo_rill,
-            repo_ref,
-            octo_rill_upstream_cursor.as_deref(),
-            direction,
-            limit,
-            None,
-        )
-        .await
-        {
-            Ok(response) => {
-                return Ok(Json(octorill_ready_response(
+    if release_notes_settings.provider == ReleaseNotesProvider::OctoRill {
+        let Some(repo_ref) = repo.as_ref() else {
+            return Ok(Json(octo_rill_page_failure_response(
+                repo,
+                query.cursor,
+                limit,
+                default_view,
+                external_links,
+                ServiceReleaseNotesFailureReason::UnsupportedRepo,
+            )));
+        };
+        let cursor = query
+            .cursor
+            .clone()
+            .filter(|value| value.starts_with("octo:"));
+        let upstream_cursor = cursor
+            .as_deref()
+            .and_then(upstream_cursor_from_octo_rill_cursor);
+        return Ok(Json(
+            match fetch_octo_rill_public_release_notes(
+                &release_notes_settings.octo_rill,
+                repo_ref,
+                upstream_cursor.as_deref(),
+                direction,
+                limit,
+                None,
+            )
+            .await
+            {
+                Ok(response) => octorill_ready_response(
                     repo,
-                    query.cursor,
+                    cursor,
                     limit,
                     default_view,
-                    external_links.clone(),
+                    external_links,
                     response,
                     None,
-                )));
-            }
-            Err(failure) => {
-                if query.cursor.is_some() {
-                    return Ok(Json(octo_rill_page_failure_response(
-                        repo,
-                        query.cursor,
-                        limit,
-                        default_view,
-                        external_links.clone(),
-                        failure.reason,
-                    )));
-                }
-                fallback = Some(build_custom_fallback(failure.reason, failure.message));
-            }
-        }
-    } else {
-        fallback = Some(build_fallback(
-            ServiceReleaseNotesFallbackReason::UnsupportedRepo,
+                ),
+                Err(failure) => octo_rill_page_failure_response(
+                    repo,
+                    cursor,
+                    limit,
+                    default_view,
+                    external_links,
+                    failure.reason,
+                ),
+            },
         ));
     }
 
@@ -950,7 +949,6 @@ pub(crate) async fn list_service_release_notes(
             GitHubReleaseNotesResponseOptions {
                 default_view,
                 external_links,
-                fallback,
                 anchor: None,
             },
         )
@@ -985,7 +983,10 @@ pub(crate) async fn locate_service_release_notes(
         .get_release_notes_settings()
         .await
         .map_err(map_internal)?;
-    let default_view = release_notes_settings.octo_rill.default_view;
+    let default_view = match release_notes_settings.provider {
+        ReleaseNotesProvider::GitHub => ReleaseNotesView::Original,
+        ReleaseNotesProvider::OctoRill => release_notes_settings.octo_rill.default_view,
+    };
     let limit = normalize_release_notes_locate_limit(query.limit);
     let repo = resolve_service_github_repo_ref(&state, &service_id, settings.repo_url.as_deref())
         .await
@@ -995,42 +996,69 @@ pub(crate) async fn locate_service_release_notes(
         release_notes_settings.octo_rill.api_base_url.as_deref(),
     );
 
-    if release_notes_settings.octo_rill.enabled
-        && let Some(repo_ref) = repo.as_ref()
-    {
-        match fetch_octo_rill_public_release_notes(
-            &release_notes_settings.octo_rill,
-            repo_ref,
-            None,
-            ServiceReleaseNotesDirection::Older,
-            limit,
-            Some(trimmed_version),
-        )
-        .await
-        {
-            Ok(response) if response.index_within_window.is_some() => {
-                let matched_tag = response.matched_tag.clone();
-                let index_within_window = response.index_within_window;
-                return Ok(Json(octorill_ready_response(
+    if release_notes_settings.provider == ReleaseNotesProvider::OctoRill {
+        let Some(repo_ref) = repo.as_ref() else {
+            return Ok(Json(octo_rill_locate_failure_response(
+                repo,
+                limit,
+                default_view,
+                external_links,
+                trimmed_version,
+                ServiceReleaseNotesFailureReason::UnsupportedRepo,
+                "未能解析该服务的 GitHub 仓库，无法定位当前版本。".to_string(),
+            )));
+        };
+        return Ok(Json(
+            match fetch_octo_rill_public_release_notes(
+                &release_notes_settings.octo_rill,
+                repo_ref,
+                None,
+                ServiceReleaseNotesDirection::Older,
+                limit,
+                Some(trimmed_version),
+            )
+            .await
+            {
+                Ok(response) if response.index_within_window.is_some() => {
+                    let matched_tag = response.matched_tag.clone();
+                    let index_within_window = response.index_within_window;
+                    octorill_ready_response(
+                        repo,
+                        None,
+                        limit,
+                        default_view,
+                        external_links,
+                        response,
+                        Some(ServiceReleaseNotesAnchor {
+                            status: ServiceReleaseNotesAnchorStatus::Found,
+                            version: trimmed_version.to_string(),
+                            matched_tag,
+                            index_within_window,
+                            absolute_index: None,
+                            message: None,
+                        }),
+                    )
+                }
+                Ok(_) => octo_rill_locate_failure_response(
                     repo,
-                    None,
                     limit,
                     default_view,
-                    external_links.clone(),
-                    response,
-                    Some(ServiceReleaseNotesAnchor {
-                        status: ServiceReleaseNotesAnchorStatus::Found,
-                        version: trimmed_version.to_string(),
-                        matched_tag,
-                        index_within_window,
-                        absolute_index: None,
-                        message: None,
-                    }),
-                )));
-            }
-            Ok(_) => {}
-            Err(_failure) => {}
-        }
+                    external_links,
+                    trimmed_version,
+                    ServiceReleaseNotesFailureReason::UpstreamError,
+                    format!("OctoRill 未能直接定位 {trimmed_version}。"),
+                ),
+                Err(failure) => octo_rill_locate_failure_response(
+                    repo,
+                    limit,
+                    default_view,
+                    external_links,
+                    trimmed_version,
+                    failure.reason,
+                    failure.message,
+                ),
+            },
+        ));
     }
 
     let github_settings = state
@@ -1039,16 +1067,6 @@ pub(crate) async fn locate_service_release_notes(
         .await
         .map_err(map_internal)?;
     let client = build_service_github_releases_client(&github_settings)?;
-    let fallback = if release_notes_settings.octo_rill.enabled {
-        Some(build_custom_fallback(
-            ServiceReleaseNotesFallbackReason::UpstreamError,
-            format!(
-                "OctoRill 未能直接定位 {trimmed_version}，已改用 GitHub Releases；当前会失去润色/翻译内容。"
-            ),
-        ))
-    } else {
-        None
-    };
 
     Ok(Json(
         github_locate_release_notes_response(
@@ -1058,7 +1076,6 @@ pub(crate) async fn locate_service_release_notes(
             limit,
             default_view,
             external_links,
-            fallback,
         )
         .await,
     ))
@@ -1122,7 +1139,7 @@ mod tests {
             20,
             ReleaseNotesView::Smart,
             None,
-            ServiceReleaseNotesFallbackReason::UpstreamError,
+            ServiceReleaseNotesFailureReason::UpstreamError,
         );
 
         assert_eq!(response.status, ServiceReleaseNotesStatus::UpstreamError);
@@ -1131,7 +1148,7 @@ mod tests {
         assert!(response.previous_cursor.is_none());
         assert!(!response.has_more);
         assert!(response.items.is_empty());
-        assert!(response.fallback.is_none());
+        assert!(response.stale.is_none());
         assert!(!response.message.unwrap().contains("回退"));
     }
 

@@ -610,6 +610,23 @@ async function main() {
       },
     },
     {
+      id: 'components-githubreleasedrawer--git-hub-original-only',
+      file: 'github-release-drawer-original-only.png',
+      setup: async (page) => {
+        await page.locator('.releaseDrawerContent').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.locator('.releaseDrawerChip', { hasText: 'GitHub Releases' }).waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.waitForFunction(
+          () => document.querySelectorAll('.releaseDrawerViewTab').length === 0,
+          null,
+          { timeout: STORY_TIMEOUT_MS },
+        )
+      },
+      screenshot: async (page, filePath) => {
+        const drawer = page.locator('.releaseDrawerContent').first()
+        await drawer.screenshot({ path: filePath })
+      },
+    },
+    {
       id: 'components-githubreleasedrawer--anonymous-located',
       file: 'drawer-locate-found.png',
       setup: async (page) => {
