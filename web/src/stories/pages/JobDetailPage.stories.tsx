@@ -17,6 +17,10 @@ function getLogsViewport(root: ParentNode): HTMLElement | null {
   return root.querySelector<HTMLElement>('[aria-label="任务日志"]')
 }
 
+function getMainViewport(root: ParentNode): HTMLElement | null {
+  return root.querySelector<HTMLElement>('[aria-label="主内容"]')
+}
+
 function getLogCount(root: ParentNode): number {
   return Number(getLogsSurface(root)?.getAttribute('data-job-detail-log-count') ?? '0')
 }
@@ -55,9 +59,18 @@ export const LongLogs: Story = {
   render: () => renderLongLogsPage('代表性：长 URL / digest / 多行日志（堆栈/命令输出）应在容器内滚动，且 live tail 默认跟随最新'),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => getLogCount(canvasElement) >= 105)
+    await waitForCondition(() => Boolean(getMainViewport(canvasElement)))
+    await waitForCondition(() => Boolean(getLogsViewport(canvasElement)))
 
+    const mainViewport = getMainViewport(canvasElement)
     const viewport = getLogsViewport(canvasElement)
+    expectStory(mainViewport, 'job detail main viewport missing')
     expectStory(viewport, 'job detail logs viewport missing')
+    expectStory(
+      mainViewport.scrollHeight <= mainViewport.clientHeight + 2,
+      'job detail page should fit the main viewport without introducing page-level scroll in the common long-logs case',
+    )
+    expectStory(viewport.scrollHeight > viewport.clientHeight, 'job detail logs viewport should remain independently scrollable')
 
     await waitForCondition(() => isNearBottom(viewport))
     expectStory(getLogsSurface(canvasElement)?.getAttribute('data-job-detail-log-follow') === 'true', 'job detail logs should follow by default')
