@@ -6,13 +6,13 @@ use super::github_releases::{
 };
 use super::*;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use reqwest::header::{ACCEPT, HeaderMap, HeaderValue, USER_AGENT};
+use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
 use serde::Deserialize;
 use serde_json::Value;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-enum ServiceReleaseNotesDirection {
+pub(super) enum ServiceReleaseNotesDirection {
     #[default]
     Older,
     Newer,
@@ -34,18 +34,18 @@ pub(crate) struct ServiceReleaseNotesLocateQuery {
 }
 
 #[derive(Debug)]
-struct OctoRillPublicReleaseNotesSuccess {
-    items: Vec<ServiceReleaseNoteItem>,
-    next_cursor: Option<String>,
-    previous_cursor: Option<String>,
-    matched_tag: Option<String>,
-    index_within_window: Option<u32>,
+pub(super) struct OctoRillPublicReleaseNotesSuccess {
+    pub(super) items: Vec<ServiceReleaseNoteItem>,
+    pub(super) next_cursor: Option<String>,
+    pub(super) previous_cursor: Option<String>,
+    pub(super) matched_tag: Option<String>,
+    pub(super) index_within_window: Option<u32>,
 }
 
 #[derive(Debug)]
-struct OctoRillPublicReleaseNotesFailure {
-    reason: ServiceReleaseNotesFailureReason,
-    message: String,
+pub(super) struct OctoRillPublicReleaseNotesFailure {
+    pub(super) reason: ServiceReleaseNotesFailureReason,
+    pub(super) message: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -532,7 +532,7 @@ fn split_repo_full_name(full_name: &str) -> Option<(&str, &str)> {
     Some((owner, repo))
 }
 
-async fn fetch_octo_rill_public_release_notes(
+pub(super) async fn fetch_octo_rill_public_release_notes(
     settings: &OctoRillReleaseNotesSettings,
     repo: &ServiceGitHubRepoRef,
     cursor: Option<&str>,
@@ -548,7 +548,7 @@ async fn fetch_octo_rill_public_release_notes(
             reason: ServiceReleaseNotesFailureReason::NotConfigured,
             message: failure_message(ServiceReleaseNotesFailureReason::NotConfigured),
         })?;
-    settings
+    let api_key = settings
         .api_key
         .as_deref()
         .filter(|value| !value.trim().is_empty())
@@ -574,9 +574,7 @@ async fn fetch_octo_rill_public_release_notes(
                     message: failure_message(ServiceReleaseNotesFailureReason::UpstreamError),
                 })?;
         segments.pop_if_empty();
-        segments.extend([
-            "api", "public", "repos", owner, repo_name, "releases", "content",
-        ]);
+        segments.extend(["api", "public", "repos", owner, repo_name, "releases"]);
     }
     {
         let mut qp = url.query_pairs_mut();
@@ -609,6 +607,15 @@ async fn fetch_octo_rill_public_release_notes(
         HeaderValue::from_static("dockrev octorill public releases"),
     );
     headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
+    headers.insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {api_key}")).map_err(|_| {
+            OctoRillPublicReleaseNotesFailure {
+                reason: ServiceReleaseNotesFailureReason::NotConfigured,
+                message: failure_message(ServiceReleaseNotesFailureReason::NotConfigured),
+            }
+        })?,
+    );
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(8))
         .default_headers(headers)
@@ -625,7 +632,14 @@ async fn fetch_octo_rill_public_release_notes(
             reason: ServiceReleaseNotesFailureReason::UpstreamError,
             message: failure_message(ServiceReleaseNotesFailureReason::UpstreamError),
         })?;
-    if !resp.status().is_success() {
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Err(OctoRillPublicReleaseNotesFailure {
+            reason: ServiceReleaseNotesFailureReason::Unauthorized,
+            message: failure_message(ServiceReleaseNotesFailureReason::Unauthorized),
+        });
+    }
+    if !status.is_success() {
         return Err(OctoRillPublicReleaseNotesFailure {
             reason: ServiceReleaseNotesFailureReason::UpstreamError,
             message: failure_message(ServiceReleaseNotesFailureReason::UpstreamError),

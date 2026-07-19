@@ -5,7 +5,7 @@
 ## 背景 / 问题陈述
 
 - Dockrev 现有发布抽屉只通过 GitHub Releases 读取原始 release body，无法消费 OctoRill 已聚合的仓库更新、中文翻译与阅读润色结果。
-- OctoRill API Key 文档声明外部程序可通过 Bearer `orill_ak_...` 调用 `GET /api/feed?scope=repo&items=owner/repo&types=releases` 获取仓库 release feed，feed item 暴露 `body`、`translated`、`smart` 等阅读态。
+- OctoRill public releases API 允许 Dockrev 后端通过 Bearer `orill_ak_...` 调用 `GET /api/public/repos/<owner>/<repo>/releases` 获取仓库 release 列表，item 直接暴露 `body`、`translated`、`smart` 等阅读态。
 - 用户需要在 Dockrev 设置中显式选择统一 release notes provider，并配置 OctoRill API Base URL / API Key / 默认视图；运行时必须严格服从 `releaseNotes.provider`，禁止由抽屉、版本页或临时状态自行切源。
 
 ## 目标 / 非目标
@@ -52,10 +52,10 @@
 - API Base URL 必须是无 username/password 的 `http(s)` 绝对 URL，并规范化为无尾部 `/` 的 origin/base path。
 - API Key 明文必须只在后端持久化；GET 响应只返回脱敏 `apiKeyMasked`，其长度必须与已保存 key 的字符长度一致，并统一使用圆点掩码。
 - `PUT /api/settings` 的 `apiKey` 若是非空全星号或全圆点掩码，应视为保留旧 key，避免浏览器把脱敏回显误写回明文字段。
-- 统一 release notes API 必须只请求 Settings 当前选中的 provider；`provider=octoRill` 时请求 `GET {apiBaseUrl}/api/feed?scope=repo&items=<owner/repo>&types=releases&limit=<limit>[&cursor=<cursor>]`，请求头带 `Authorization: Bearer <apiKey>`；`provider=gitHub` 时只请求 GitHub Releases。
+- 统一 release notes API 必须只请求 Settings 当前选中的 provider；`provider=octoRill` 时请求 `GET {apiBaseUrl}/api/public/repos/<owner>/<repo>/releases?limit=<limit>[&cursor=<cursor>][&direction=newer][&highlight=tag:<candidate>...][&highlight_active=tag:<preferred>]`，请求头继续带 `Authorization: Bearer <apiKey>`；`provider=gitHub` 时只请求 GitHub Releases。
 - `GET /api/services/{service_id}/release-notes/locate?version=<tag>&limit=<1..30>` 必须复用增强版 `ServiceReleaseNotesResponse`，并返回 `previousCursor` 与结构化 `anchor`；`anchor.status` 固定为 `found | outsideWindow | notFound | unavailable`。
 - `GET /api/services/{service_id}/release-notes?cursor=<cursor>&direction=older|newer&limit=<1..30>` 必须支持双向续拉；`nextCursor` 持续表示更旧方向，`previousCursor` 表示更新方向。
-- OctoRill feed 映射必须宽容解析：优先使用显式 tag 字段，其次从 `html_url` / `htmlUrl` 的 `/releases/tag/<tag>` 解析，最后用 title/id 兜底。
+- OctoRill public releases item 映射必须宽容解析：优先使用显式 tag 字段，其次从 `html_url` / `htmlUrl` 的 `/releases/tag/<tag>` 解析，最后用 title/id 兜底。
 - 统一 release notes API 失败时不得跨源 fallback；返回的 `source` 必须始终等于 Settings 当前选中的 provider，失败原因也必须只描述该 provider 的状态。
 - 统一 release notes API 响应必须返回仓库级 `externalLinks.githubReleasesUrl`，并在 `apiBaseUrl` 与 repo full name 都能安全归一化成 `owner/repo` 时返回可选 `externalLinks.octoRillReleasesUrl`，供版本页与抽屉复用同一组 Releases 外链。
 - OctoRill locate 必须优先复用 public releases 的 highlight/window 能力生成目标版本附近窗口；若当前实例或仓库无法提供该窗口，则直接返回 OctoRill 失败或 unavailable 锚点，不得回退 GitHub items。
@@ -85,7 +85,7 @@
 - `provider=octoRill` 但 Base URL 缺失或 API Key 缺失时，API 不得切到 GitHub；必须直接返回 OctoRill 配置错误。
 - OctoRill 返回 401/403 时，失败原因显示为鉴权失败。
 - OctoRill 返回非 JSON、网络失败或 5xx 时，失败原因显示为上游不可用。
-- OctoRill feed 没有可展示 release item 时，失败原因显示为未返回可用发布记录。
+- OctoRill public releases 没有可展示 release item 时，失败原因显示为未返回可用发布记录。
 - `translated` 或 `smart` 缺失时，相关视图显示不可用提示并回退原文。
 
 ## 接口契约（Interfaces & Contracts）
@@ -123,7 +123,7 @@
 ## 验收清单（Acceptance checklist）
 
 - [x] 后端 settings roundtrip、等长 key masking、Base URL validation 与 key preserve/clear 行为被测试覆盖。
-- [x] OctoRill feed mapping、tag 解析与“无跨源 fallback”被测试覆盖。
+- [x] OctoRill public releases mapping、tag 解析与“无跨源 fallback”被测试覆盖。
 - [x] Settings 与发布抽屉 Storybook 状态覆盖核心 UI 分支。
 - [x] 视觉证据写入本 spec 的 `## Visual Evidence`。
 
