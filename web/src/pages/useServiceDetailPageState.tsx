@@ -126,6 +126,24 @@ export function useServiceDetailPageState(props: {
     }
   }, [applyRollbackTargetSnapshot, rollbackTargetDigestRetryMs, serviceId])
 
+  const primeRollbackTargetRefresh = useCallback((svc: Service | null, source: string) => {
+    if (!svc || isDockrevService(svc)) {
+      setRollbackTarget(null)
+      setRollbackActiveTarget(null)
+      setRollbackTargetRefreshing(false)
+      return
+    }
+    const stableRollbackTarget = rollbackTarget ? rollbackTargetMatchesServiceDigest(svc, rollbackTarget) : false
+    const stableRollbackActiveTarget = rollbackActiveTarget ? rollbackTargetMatchesServiceDigest(svc, rollbackActiveTarget) : false
+    if (stableRollbackTarget || stableRollbackActiveTarget) {
+      setRollbackTargetRefreshing(false)
+      return
+    }
+    setRollbackTarget(null)
+    if (source !== 'rollback-active-poll') setRollbackActiveTarget(null)
+    setRollbackTargetRefreshing(true)
+  }, [rollbackActiveTarget, rollbackTarget])
+
   const refresh = useCallback(async () => {
     const fullRefreshRequestId = ++fullRefreshRequestIdRef.current
     const stackRequestId = ++stackRefreshRequestIdRef.current
@@ -141,8 +159,7 @@ export function useServiceDetailPageState(props: {
         appliedFullRefreshRoot = true
         setStack(st)
         setService(svc)
-        setRollbackTargetRefreshing(Boolean(svc && !isDockrevService(svc)))
-        if (!svc || isDockrevService(svc)) { setRollbackTarget(null); setRollbackActiveTarget(null) }
+        primeRollbackTargetRefresh(svc, 'full-refresh')
       }
 
       const [settingsRes, backupTargetsRes, backupRecordsRes, rulesRes, rollbackRes] = await Promise.allSettled([
@@ -190,7 +207,7 @@ export function useServiceDetailPageState(props: {
       setRollbackTargetRefreshing(false)
       throw error
     }
-  }, [onLastScanHint, serviceId, settleRollbackTargetSnapshot, stackId])
+  }, [onLastScanHint, primeRollbackTargetRefresh, serviceId, settleRollbackTargetSnapshot, stackId])
 
   const refreshStackOnly = useCallback(async (source = 'stack-refresh') => {
     const requestId = ++stackRefreshRequestIdRef.current; let rollbackSnapshotMayBeStale = false
@@ -201,12 +218,8 @@ export function useServiceDetailPageState(props: {
       const svc = st.services.find((s) => s.id === serviceId) ?? null
       setStack(st)
       setService(svc)
-      setRollbackTargetRefreshing(Boolean(svc && !isDockrevService(svc)))
-      if (!svc || isDockrevService(svc)) {
-        setRollbackTarget(null); setRollbackActiveTarget(null)
-        setRollbackTargetRefreshing(false)
-        return
-      }
+      primeRollbackTargetRefresh(svc, source)
+      if (!svc || isDockrevService(svc)) return
       rollbackSnapshotMayBeStale = true
       const target = await getServiceRollbackTarget(serviceId)
       await settleRollbackTargetSnapshot(requestId, svc, target, source)
@@ -216,7 +229,7 @@ export function useServiceDetailPageState(props: {
       setRollbackTargetRefreshing(false)
       throw error
     }
-  }, [serviceId, settleRollbackTargetSnapshot, stackId])
+  }, [primeRollbackTargetRefresh, serviceId, settleRollbackTargetSnapshot, stackId])
 
   const patchServiceInStack = useCallback(
     (patch: (svc: Service) => Service) => {
