@@ -81,6 +81,7 @@ const DEFAULT_RELEASE_NOTES_LIMIT: u32 = 20;
 const MAX_RELEASE_NOTES_LIMIT: u32 = 100;
 const DEFAULT_RELEASE_NOTES_LOCATE_LIMIT: u32 = 20;
 const MAX_RELEASE_NOTES_LOCATE_LIMIT: u32 = 30;
+const OCTORILL_LOCATE_SCAN_PAGE_LIMIT: usize = 20;
 
 fn normalize_release_notes_limit(value: Option<u32>) -> u32 {
     value
@@ -741,6 +742,82 @@ fn octorill_ready_response(
     }
 }
 
+fn found_anchor_for_release_window(
+    version: &str,
+    matched_tag: Option<String>,
+    index_within_window: u32,
+    absolute_index: Option<u32>,
+) -> ServiceReleaseNotesAnchor {
+    ServiceReleaseNotesAnchor {
+        status: ServiceReleaseNotesAnchorStatus::Found,
+        version: version.to_string(),
+        matched_tag,
+        index_within_window: Some(index_within_window),
+        absolute_index,
+        message: None,
+    }
+}
+
+fn octo_rill_locate_needs_window_scan(response: &OctoRillPublicReleaseNotesSuccess) -> bool {
+    response.index_within_window.is_some()
+        && response.items.len() == 1
+        && response.next_cursor.is_none()
+        && response.previous_cursor.is_none()
+}
+
+async fn locate_octo_rill_release_window_from_feed(
+    settings: &OctoRillReleaseNotesSettings,
+    repo_ref: &ServiceGitHubRepoRef,
+    version: &str,
+    limit: u32,
+) -> Result<
+    Option<(
+        Option<String>,
+        OctoRillPublicReleaseNotesSuccess,
+        ServiceReleaseNotesAnchor,
+    )>,
+    OctoRillPublicReleaseNotesFailure,
+> {
+    let mut cursor: Option<String> = None;
+    let mut scanned_pages = 0usize;
+    let mut absolute_start = 0u32;
+
+    loop {
+        if scanned_pages >= OCTORILL_LOCATE_SCAN_PAGE_LIMIT {
+            return Ok(None);
+        }
+        let response = fetch_octo_rill_public_release_notes(
+            settings,
+            repo_ref,
+            cursor.as_deref(),
+            ServiceReleaseNotesDirection::Older,
+            limit,
+            None,
+        )
+        .await?;
+        if let Some(index) = response
+            .items
+            .iter()
+            .position(|item| release_note_matches_version(item, version))
+        {
+            let matched_tag = response.items.get(index).map(|item| item.tag_name.clone());
+            let anchor = found_anchor_for_release_window(
+                version,
+                matched_tag,
+                index as u32,
+                Some(absolute_start + index as u32),
+            );
+            return Ok(Some((cursor, response, anchor)));
+        }
+        scanned_pages += 1;
+        absolute_start = absolute_start.saturating_add(response.items.len() as u32);
+        let Some(next_cursor) = response.next_cursor.clone() else {
+            return Ok(None);
+        };
+        cursor = Some(next_cursor);
+    }
+}
+
 async fn github_locate_release_notes_response(
     client: &github::GitHubClient,
     repo: Option<ServiceGitHubRepoRef>,
@@ -1034,24 +1111,61 @@ pub(crate) async fn locate_service_release_notes(
             .await
             {
                 Ok(response) if response.index_within_window.is_some() => {
-                    let matched_tag = response.matched_tag.clone();
-                    let index_within_window = response.index_within_window;
-                    octorill_ready_response(
-                        repo,
-                        None,
-                        limit,
-                        default_view,
-                        external_links,
-                        response,
-                        Some(ServiceReleaseNotesAnchor {
-                            status: ServiceReleaseNotesAnchorStatus::Found,
-                            version: trimmed_version.to_string(),
-                            matched_tag,
-                            index_within_window,
-                            absolute_index: None,
-                            message: None,
-                        }),
-                    )
+                    if octo_rill_locate_needs_window_scan(&response) {
+                        match locate_octo_rill_release_window_from_feed(
+                            &release_notes_settings.octo_rill,
+                            repo_ref,
+                            trimmed_version,
+                            limit,
+                        )
+                        .await
+                        {
+                            Ok(Some((cursor, window_response, anchor))) => octorill_ready_response(
+                                repo,
+                                cursor,
+                                limit,
+                                default_view,
+                                external_links,
+                                window_response,
+                                Some(anchor),
+                            ),
+                            Ok(None) | Err(_) => {
+                                let matched_tag = response.matched_tag.clone();
+                                let index_within_window = response.index_within_window.unwrap_or(0);
+                                octorill_ready_response(
+                                    repo,
+                                    None,
+                                    limit,
+                                    default_view,
+                                    external_links,
+                                    response,
+                                    Some(found_anchor_for_release_window(
+                                        trimmed_version,
+                                        matched_tag,
+                                        index_within_window,
+                                        None,
+                                    )),
+                                )
+                            }
+                        }
+                    } else {
+                        let matched_tag = response.matched_tag.clone();
+                        let index_within_window = response.index_within_window.unwrap_or(0);
+                        octorill_ready_response(
+                            repo,
+                            None,
+                            limit,
+                            default_view,
+                            external_links,
+                            response,
+                            Some(found_anchor_for_release_window(
+                                trimmed_version,
+                                matched_tag,
+                                index_within_window,
+                                None,
+                            )),
+                        )
+                    }
                 }
                 Ok(_) => octo_rill_locate_failure_response(
                     repo,
@@ -1098,6 +1212,8 @@ pub(crate) async fn locate_service_release_notes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{Json, Router, extract::Query, response::IntoResponse, routing::get};
+    use serde_json::json;
 
     #[test]
     fn parses_octo_rill_release_note_variants() {
@@ -1187,6 +1303,123 @@ mod tests {
             upstream_cursor_from_octo_rill_cursor(&client_cursor).as_deref(),
             Some(upstream)
         );
+    }
+
+    #[derive(Debug, Default, serde::Deserialize)]
+    struct OctoRillReleasesQuery {
+        limit: Option<u32>,
+        cursor: Option<String>,
+    }
+
+    #[test]
+    fn octo_rill_locate_scans_when_highlight_response_collapses_to_single_item() {
+        let response = OctoRillPublicReleaseNotesSuccess {
+            items: vec![ServiceReleaseNoteItem {
+                id: "octorill:1".to_string(),
+                tag_name: "v1.2.3".to_string(),
+                name: Some("v1.2.3".to_string()),
+                original_body: None,
+                translated_body: None,
+                smart_body: None,
+                html_url: "https://github.com/acme/app/releases/tag/v1.2.3".to_string(),
+                draft: false,
+                prerelease: false,
+                published_at: None,
+                created_at: None,
+            }],
+            next_cursor: None,
+            previous_cursor: None,
+            matched_tag: Some("v1.2.3".to_string()),
+            index_within_window: Some(0),
+        };
+
+        assert!(octo_rill_locate_needs_window_scan(&response));
+    }
+
+    #[tokio::test]
+    async fn locate_octo_rill_release_window_from_feed_scans_pages_and_tracks_absolute_index() {
+        async fn releases(Query(query): Query<OctoRillReleasesQuery>) -> impl IntoResponse {
+            assert_eq!(query.limit, Some(2));
+            match query.cursor.as_deref() {
+                None => Json(json!({
+                    "status": "ready",
+                    "next_cursor": "cursor-2",
+                    "items": [
+                        {
+                            "release_id": "125",
+                            "tag_name": "v1.2.5",
+                            "name": "v1.2.5",
+                            "body": "Body",
+                            "html_url": "https://github.com/acme/app/releases/tag/v1.2.5"
+                        },
+                        {
+                            "release_id": "124",
+                            "tag_name": "v1.2.4",
+                            "name": "v1.2.4",
+                            "body": "Body",
+                            "html_url": "https://github.com/acme/app/releases/tag/v1.2.4"
+                        }
+                    ]
+                })),
+                Some("cursor-2") => Json(json!({
+                    "status": "ready",
+                    "items": [
+                        {
+                            "release_id": "123",
+                            "tag_name": "v1.2.3",
+                            "name": "v1.2.3",
+                            "body": "Body",
+                            "html_url": "https://github.com/acme/app/releases/tag/v1.2.3"
+                        },
+                        {
+                            "release_id": "122",
+                            "tag_name": "v1.2.2",
+                            "name": "v1.2.2",
+                            "body": "Body",
+                            "html_url": "https://github.com/acme/app/releases/tag/v1.2.2"
+                        }
+                    ]
+                })),
+                other => panic!("unexpected cursor: {other:?}"),
+            }
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route("/api/public/repos/acme/app/releases", get(releases)),
+            )
+            .await
+            .unwrap();
+        });
+
+        let result = locate_octo_rill_release_window_from_feed(
+            &OctoRillReleaseNotesSettings {
+                enabled: true,
+                api_base_url: Some(format!("http://{addr}/")),
+                api_key: Some("orill_ak_test".to_string()),
+                default_view: ReleaseNotesView::Smart,
+            },
+            &ServiceGitHubRepoRef {
+                full_name: "acme/app".to_string(),
+                html_url: "https://github.com/acme/app".to_string(),
+            },
+            "1.2.3",
+            2,
+        )
+        .await
+        .expect("feed scan should succeed")
+        .expect("feed scan should find the matching window");
+
+        assert_eq!(result.0.as_deref(), Some("cursor-2"));
+        assert_eq!(result.1.items.len(), 2);
+        assert_eq!(result.1.items[0].tag_name, "v1.2.3");
+        assert_eq!(result.2.version, "1.2.3");
+        assert_eq!(result.2.matched_tag.as_deref(), Some("v1.2.3"));
+        assert_eq!(result.2.index_within_window, Some(0));
+        assert_eq!(result.2.absolute_index, Some(2));
     }
 
     #[test]
