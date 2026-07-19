@@ -1118,6 +1118,31 @@ mod tests {
         highlight_active: Option<String>,
     }
 
+    async fn spawn_public_releases_server(router: Router) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        format!("http://{addr}/")
+    }
+
+    fn test_octo_rill_settings(api_base_url: String) -> OctoRillReleaseNotesSettings {
+        OctoRillReleaseNotesSettings {
+            enabled: true,
+            api_base_url: Some(api_base_url),
+            api_key: Some("orill_ak_test".to_string()),
+            default_view: ReleaseNotesView::Smart,
+        }
+    }
+
+    fn test_repo_ref() -> ServiceGitHubRepoRef {
+        ServiceGitHubRepoRef {
+            full_name: "acme/app".to_string(),
+            html_url: "https://github.com/acme/app".to_string(),
+        }
+    }
+
     #[test]
     fn parses_octo_rill_release_note_variants() {
         let item = serde_json::json!({
@@ -1310,28 +1335,14 @@ mod tests {
             }))
         }
 
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(
-                listener,
-                Router::new().route("/api/public/repos/acme/app/releases", get(releases)),
-            )
-            .await
-            .unwrap();
-        });
+        let api_base_url = spawn_public_releases_server(
+            Router::new().route("/api/public/repos/acme/app/releases", get(releases)),
+        )
+        .await;
 
         let response = fetch_octo_rill_public_release_notes(
-            &OctoRillReleaseNotesSettings {
-                enabled: true,
-                api_base_url: Some(format!("http://{addr}/")),
-                api_key: Some("orill_ak_test".to_string()),
-                default_view: ReleaseNotesView::Smart,
-            },
-            &ServiceGitHubRepoRef {
-                full_name: "acme/app".to_string(),
-                html_url: "https://github.com/acme/app".to_string(),
-            },
+            &test_octo_rill_settings(api_base_url),
+            &test_repo_ref(),
             None,
             ServiceReleaseNotesDirection::Older,
             20,
@@ -1379,28 +1390,14 @@ mod tests {
             }))
         }
 
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(
-                listener,
-                Router::new().route("/api/public/repos/acme/app/releases", get(releases)),
-            )
-            .await
-            .unwrap();
-        });
+        let api_base_url = spawn_public_releases_server(
+            Router::new().route("/api/public/repos/acme/app/releases", get(releases)),
+        )
+        .await;
 
         let response = fetch_octo_rill_public_release_notes(
-            &OctoRillReleaseNotesSettings {
-                enabled: true,
-                api_base_url: Some(format!("http://{addr}/")),
-                api_key: Some("orill_ak_test".to_string()),
-                default_view: ReleaseNotesView::Smart,
-            },
-            &ServiceGitHubRepoRef {
-                full_name: "acme/app".to_string(),
-                html_url: "https://github.com/acme/app".to_string(),
-            },
+            &test_octo_rill_settings(api_base_url),
+            &test_repo_ref(),
             Some("opaque-cursor"),
             ServiceReleaseNotesDirection::Newer,
             5,
@@ -1457,28 +1454,14 @@ mod tests {
             }))
         }
 
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(
-                listener,
-                Router::new().route("/api/public/repos/acme/app/releases", get(releases)),
-            )
-            .await
-            .unwrap();
-        });
+        let api_base_url = spawn_public_releases_server(
+            Router::new().route("/api/public/repos/acme/app/releases", get(releases)),
+        )
+        .await;
 
         let response = fetch_octo_rill_public_release_notes(
-            &OctoRillReleaseNotesSettings {
-                enabled: true,
-                api_base_url: Some(format!("http://{addr}/")),
-                api_key: Some("orill_ak_test".to_string()),
-                default_view: ReleaseNotesView::Smart,
-            },
-            &ServiceGitHubRepoRef {
-                full_name: "acme/app".to_string(),
-                html_url: "https://github.com/acme/app".to_string(),
-            },
+            &test_octo_rill_settings(api_base_url),
+            &test_repo_ref(),
             None,
             ServiceReleaseNotesDirection::Older,
             5,
@@ -1500,28 +1483,14 @@ mod tests {
             )
         }
 
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(
-                listener,
-                Router::new().route("/api/public/repos/acme/app/releases", get(releases)),
-            )
-            .await
-            .unwrap();
-        });
+        let api_base_url = spawn_public_releases_server(
+            Router::new().route("/api/public/repos/acme/app/releases", get(releases)),
+        )
+        .await;
 
         let failure = fetch_octo_rill_public_release_notes(
-            &OctoRillReleaseNotesSettings {
-                enabled: true,
-                api_base_url: Some(format!("http://{addr}/")),
-                api_key: Some("orill_ak_test".to_string()),
-                default_view: ReleaseNotesView::Smart,
-            },
-            &ServiceGitHubRepoRef {
-                full_name: "acme/app".to_string(),
-                html_url: "https://github.com/acme/app".to_string(),
-            },
+            &test_octo_rill_settings(api_base_url),
+            &test_repo_ref(),
             None,
             ServiceReleaseNotesDirection::Older,
             5,
