@@ -6,7 +6,7 @@ use super::github_releases::{
 };
 use super::*;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use reqwest::header::{ACCEPT, HeaderMap, HeaderValue, USER_AGENT};
+use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -548,7 +548,7 @@ async fn fetch_octo_rill_public_release_notes(
             reason: ServiceReleaseNotesFailureReason::NotConfigured,
             message: failure_message(ServiceReleaseNotesFailureReason::NotConfigured),
         })?;
-    settings
+    let api_key = settings
         .api_key
         .as_deref()
         .filter(|value| !value.trim().is_empty())
@@ -574,9 +574,7 @@ async fn fetch_octo_rill_public_release_notes(
                     message: failure_message(ServiceReleaseNotesFailureReason::UpstreamError),
                 })?;
         segments.pop_if_empty();
-        segments.extend([
-            "api", "public", "repos", owner, repo_name, "releases", "content",
-        ]);
+        segments.extend(["api", "public", "repos", owner, repo_name, "releases"]);
     }
     {
         let mut qp = url.query_pairs_mut();
@@ -609,6 +607,15 @@ async fn fetch_octo_rill_public_release_notes(
         HeaderValue::from_static("dockrev octorill public releases"),
     );
     headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
+    headers.insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {api_key}")).map_err(|_| {
+            OctoRillPublicReleaseNotesFailure {
+                reason: ServiceReleaseNotesFailureReason::NotConfigured,
+                message: failure_message(ServiceReleaseNotesFailureReason::NotConfigured),
+            }
+        })?,
+    );
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(8))
         .default_headers(headers)
@@ -625,7 +632,14 @@ async fn fetch_octo_rill_public_release_notes(
             reason: ServiceReleaseNotesFailureReason::UpstreamError,
             message: failure_message(ServiceReleaseNotesFailureReason::UpstreamError),
         })?;
-    if !resp.status().is_success() {
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Err(OctoRillPublicReleaseNotesFailure {
+            reason: ServiceReleaseNotesFailureReason::Unauthorized,
+            message: failure_message(ServiceReleaseNotesFailureReason::Unauthorized),
+        });
+    }
+    if !status.is_success() {
         return Err(OctoRillPublicReleaseNotesFailure {
             reason: ServiceReleaseNotesFailureReason::UpstreamError,
             message: failure_message(ServiceReleaseNotesFailureReason::UpstreamError),
@@ -1084,6 +1098,25 @@ pub(crate) async fn locate_service_release_notes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{
+        Json, Router,
+        extract::Query,
+        http::{HeaderMap, StatusCode, Uri},
+        response::IntoResponse,
+        routing::get,
+    };
+    use serde_json::json;
+    use url::form_urlencoded;
+
+    #[derive(Debug, Default, Deserialize)]
+    struct OctoRillReleasesQuery {
+        limit: Option<u32>,
+        cursor: Option<String>,
+        direction: Option<String>,
+        #[serde(default)]
+        highlight: Vec<String>,
+        highlight_active: Option<String>,
+    }
 
     #[test]
     fn parses_octo_rill_release_note_variants() {
@@ -1239,5 +1272,271 @@ mod tests {
         assert!(release_note_matches_version(&item, "1.2.3"));
         assert!(release_note_matches_version(&item, "v1.2.3"));
         assert!(!release_note_matches_version(&item, "1.2.4"));
+    }
+
+    #[tokio::test]
+    async fn fetch_octo_rill_public_release_notes_uses_releases_endpoint_and_maps_items() {
+        async fn releases(
+            headers: HeaderMap,
+            Query(query): Query<OctoRillReleasesQuery>,
+        ) -> impl IntoResponse {
+            assert_eq!(
+                headers
+                    .get("authorization")
+                    .and_then(|value| value.to_str().ok()),
+                Some("Bearer orill_ak_test")
+            );
+            assert_eq!(query.limit, Some(20));
+            assert!(query.cursor.is_none());
+            assert!(query.direction.is_none());
+            assert!(query.highlight.is_empty());
+            assert!(query.highlight_active.is_none());
+
+            Json(json!({
+                "status": "ready",
+                "next_cursor": "cursor-older",
+                "items": [
+                    {
+                        "release_id": "123",
+                        "tag_name": "v1.2.3",
+                        "name": "v1.2.3",
+                        "body": "Original body",
+                        "translated": { "summary_md": "翻译摘要", "body_md": "翻译正文" },
+                        "smart": { "summaryMd": "润色摘要" },
+                        "html_url": "https://github.com/acme/app/releases/tag/v1.2.3",
+                        "published_at": "2026-07-19T00:00:00Z"
+                    }
+                ]
+            }))
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route("/api/public/repos/acme/app/releases", get(releases)),
+            )
+            .await
+            .unwrap();
+        });
+
+        let response = fetch_octo_rill_public_release_notes(
+            &OctoRillReleaseNotesSettings {
+                enabled: true,
+                api_base_url: Some(format!("http://{addr}/")),
+                api_key: Some("orill_ak_test".to_string()),
+                default_view: ReleaseNotesView::Smart,
+            },
+            &ServiceGitHubRepoRef {
+                full_name: "acme/app".to_string(),
+                html_url: "https://github.com/acme/app".to_string(),
+            },
+            None,
+            ServiceReleaseNotesDirection::Older,
+            20,
+            None,
+        )
+        .await
+        .expect("public releases response should map cleanly");
+
+        assert_eq!(response.next_cursor.as_deref(), Some("cursor-older"));
+        assert!(response.previous_cursor.is_none());
+        assert_eq!(response.items.len(), 1);
+        assert_eq!(response.items[0].tag_name, "v1.2.3");
+        assert_eq!(
+            response.items[0].original_body.as_deref(),
+            Some("Original body")
+        );
+        assert_eq!(
+            response.items[0].translated_body.as_deref(),
+            Some("翻译摘要\n\n翻译正文")
+        );
+        assert_eq!(response.items[0].smart_body.as_deref(), Some("润色摘要"));
+    }
+
+    #[tokio::test]
+    async fn fetch_octo_rill_public_release_notes_passes_cursor_and_newer_direction() {
+        async fn releases(Query(query): Query<OctoRillReleasesQuery>) -> impl IntoResponse {
+            assert_eq!(query.limit, Some(5));
+            assert_eq!(query.cursor.as_deref(), Some("opaque-cursor"));
+            assert_eq!(query.direction.as_deref(), Some("newer"));
+            assert!(query.highlight.is_empty());
+            assert!(query.highlight_active.is_none());
+
+            Json(json!({
+                "status": "ready",
+                "previous_cursor": "cursor-newer",
+                "items": [
+                    {
+                        "release_id": "124",
+                        "tag_name": "v1.2.4",
+                        "name": "v1.2.4",
+                        "body": "Body",
+                        "html_url": "https://github.com/acme/app/releases/tag/v1.2.4"
+                    }
+                ]
+            }))
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route("/api/public/repos/acme/app/releases", get(releases)),
+            )
+            .await
+            .unwrap();
+        });
+
+        let response = fetch_octo_rill_public_release_notes(
+            &OctoRillReleaseNotesSettings {
+                enabled: true,
+                api_base_url: Some(format!("http://{addr}/")),
+                api_key: Some("orill_ak_test".to_string()),
+                default_view: ReleaseNotesView::Smart,
+            },
+            &ServiceGitHubRepoRef {
+                full_name: "acme/app".to_string(),
+                html_url: "https://github.com/acme/app".to_string(),
+            },
+            Some("opaque-cursor"),
+            ServiceReleaseNotesDirection::Newer,
+            5,
+            None,
+        )
+        .await
+        .expect("cursor paging should work");
+
+        assert!(response.next_cursor.is_none());
+        assert_eq!(response.previous_cursor.as_deref(), Some("cursor-newer"));
+        assert_eq!(response.items[0].tag_name, "v1.2.4");
+    }
+
+    #[tokio::test]
+    async fn fetch_octo_rill_public_release_notes_uses_highlight_window_for_locate() {
+        async fn releases(uri: Uri) -> impl IntoResponse {
+            let params = form_urlencoded::parse(uri.query().unwrap_or_default().as_bytes())
+                .into_owned()
+                .collect::<Vec<_>>();
+            let highlights = params
+                .iter()
+                .filter_map(|(key, value)| (key == "highlight").then_some(value.clone()))
+                .collect::<Vec<_>>();
+            let highlight_active = params
+                .iter()
+                .find_map(|(key, value)| (key == "highlight_active").then_some(value.clone()));
+
+            assert!(
+                params
+                    .iter()
+                    .any(|(key, value)| key == "limit" && value == "5")
+            );
+            assert_eq!(
+                highlights,
+                vec!["tag:v1.2.3".to_string(), "tag:1.2.3".to_string()]
+            );
+            assert_eq!(highlight_active.as_deref(), Some("tag:v1.2.3"));
+
+            Json(json!({
+                "status": "ready",
+                "items": [
+                    {
+                        "release_id": "123",
+                        "tag_name": "v1.2.3",
+                        "name": "v1.2.3",
+                        "body": "Body",
+                        "html_url": "https://github.com/acme/app/releases/tag/v1.2.3"
+                    }
+                ],
+                "highlight": {
+                    "resolved": [{ "tag_name": "v1.2.3" }],
+                    "active_index": 1
+                }
+            }))
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route("/api/public/repos/acme/app/releases", get(releases)),
+            )
+            .await
+            .unwrap();
+        });
+
+        let response = fetch_octo_rill_public_release_notes(
+            &OctoRillReleaseNotesSettings {
+                enabled: true,
+                api_base_url: Some(format!("http://{addr}/")),
+                api_key: Some("orill_ak_test".to_string()),
+                default_view: ReleaseNotesView::Smart,
+            },
+            &ServiceGitHubRepoRef {
+                full_name: "acme/app".to_string(),
+                html_url: "https://github.com/acme/app".to_string(),
+            },
+            None,
+            ServiceReleaseNotesDirection::Older,
+            5,
+            Some("v1.2.3"),
+        )
+        .await
+        .expect("highlight locate window should map");
+
+        assert_eq!(response.matched_tag.as_deref(), Some("v1.2.3"));
+        assert_eq!(response.index_within_window, Some(0));
+    }
+
+    #[tokio::test]
+    async fn fetch_octo_rill_public_release_notes_maps_unauthorized_status() {
+        async fn releases() -> impl IntoResponse {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({ "message": "unauthorized" })),
+            )
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route("/api/public/repos/acme/app/releases", get(releases)),
+            )
+            .await
+            .unwrap();
+        });
+
+        let failure = fetch_octo_rill_public_release_notes(
+            &OctoRillReleaseNotesSettings {
+                enabled: true,
+                api_base_url: Some(format!("http://{addr}/")),
+                api_key: Some("orill_ak_test".to_string()),
+                default_view: ReleaseNotesView::Smart,
+            },
+            &ServiceGitHubRepoRef {
+                full_name: "acme/app".to_string(),
+                html_url: "https://github.com/acme/app".to_string(),
+            },
+            None,
+            ServiceReleaseNotesDirection::Older,
+            5,
+            None,
+        )
+        .await
+        .expect_err("401 should map to unauthorized");
+
+        assert_eq!(
+            failure.reason,
+            ServiceReleaseNotesFailureReason::Unauthorized
+        );
+        assert_eq!(
+            failure.message,
+            failure_message(ServiceReleaseNotesFailureReason::Unauthorized)
+        );
     }
 }

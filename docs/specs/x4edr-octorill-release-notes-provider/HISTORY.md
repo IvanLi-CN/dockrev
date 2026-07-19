@@ -10,6 +10,7 @@
 - 2026-07-16: 统一 release notes API 响应新增仓库级 `externalLinks`，让服务详情版本页与发布抽屉都能直接打开 GitHub / OctoRill Releases 列表，而不在前端重复猜 URL。
 - 2026-07-17: GitHub Releases fallback 在发布抽屉与服务详情 `版本` 子页改为安全 Markdown 渲染，保留标题、列表、强调与 compare 链接语义，不再把 `##` / `*` 原样暴露给用户。
 - 2026-07-18: 统一 release notes 运行时选源收口到 Settings `releaseNotes.provider`；删除 OctoRill 失败后自动改用 GitHub 的契约，改为“设成啥用啥 + 同源 stale-only”。
+- 2026-07-19: 修正 OctoRill 上游 contract 的真实调用路径；运行时从错误的 `.../releases/content` 改回 `GET /api/public/repos/<owner>/<repo>/releases`，并恢复 locate-first 的 highlight window。
 
 ## Key Reasons / Replacements
 

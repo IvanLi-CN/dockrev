@@ -12,6 +12,7 @@
 
 - 后端 settings schema/API 已支持 `releaseNotes.provider`，并继续保留 `releaseNotes.octoRill` 的 Base URL 规范化、API Key 等长脱敏、保留/覆盖/清除语义与默认视图；运行时选源只看 provider。
 - 新增服务级 `GET /api/services/{service_id}/release-notes`，只请求 Settings 当前选中的单一 provider，失败时不再跨源回退。
+- OctoRill upstream contract 已校正为 `GET /api/public/repos/<owner>/<repo>/releases`；Dockrev 继续带 Bearer API Key，但不再错误调用 `.../releases/content`。
 - 统一 release notes 响应现已补齐 `externalLinks.githubReleasesUrl` 与可选 `externalLinks.octoRillReleasesUrl`，供版本页和发布抽屉共享仓库级 Releases 入口。
 - 新增服务级 `GET /api/services/{service_id}/release-notes/locate`，首屏由后端直接返回锚点窗口、`previousCursor` 与结构化 `anchor`；普通 list 路径支持 `direction=older|newer` 双向续拉。
 - OctoRill locate 优先复用 public releases highlight/window 能力；当前实例无法提供目标窗口时，统一返回 OctoRill 失败或 unavailable 锚点，不再改用 GitHub items。
