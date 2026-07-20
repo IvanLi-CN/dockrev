@@ -731,8 +731,8 @@ export function ServiceResourcePanel(props: {
   const chartContext = historyLoading
     ? `${WINDOW_META_LABELS[windowKey]} · 正在加载历史样本`
     : samples.length > 0
-      ? `${WINDOW_META_LABELS[windowKey]} · ${samples.length} 个${readonly ? '已缓存' : ''}样本`
-      : `${WINDOW_META_LABELS[windowKey]} · 暂无${readonly ? '缓存' : '历史'}样本`
+      ? `${WINDOW_META_LABELS[windowKey]} · ${samples.length} 个${readonly ? '已缓存' : '样本（含实时点）'}`
+      : `${WINDOW_META_LABELS[windowKey]} · 暂无${readonly ? '缓存' : '历史或实时'}样本`
 
   const statCards = [
     {
@@ -782,7 +782,7 @@ export function ServiceResourcePanel(props: {
             <div className="muted svcResourceSubtitle">
               {readonly
                 ? '当前展示最近一次缓存到本地的监控样本；恢复联网后才会继续拉取历史并恢复实时推送。'
-                : '历史趋势 + SSE 实时推送（1 秒），优先帮助你抓住尖峰、漂移和容器压力。'}
+                : '历史样本按设置频率对每个 compose project 采集；页面打开后会叠加 1 秒 SSE 实时点，优先帮助你抓住尖峰、漂移和容器压力。'}
             </div>
           </div>
 
@@ -795,7 +795,7 @@ export function ServiceResourcePanel(props: {
         <div className="svcResourceFacts" aria-label="监控面板概览">
           <div className="svcResourceFact">{WINDOW_META_LABELS[windowKey]}</div>
           <div className="svcResourceFact">
-            {historyLoading ? '加载样本中' : `${samples.length} 个${readonly ? '已缓存' : ''}样本`}
+            {historyLoading ? '加载样本中' : `${samples.length} 个${readonly ? '已缓存' : '样本（含实时点）'}`}
           </div>
           <div className="svcResourceFact">最近更新 {formatSampleTime(latestSample)}</div>
         </div>

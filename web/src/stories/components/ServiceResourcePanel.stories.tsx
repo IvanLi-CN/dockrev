@@ -185,6 +185,15 @@ export const HighVariationCurves: Story = {
 export const WindowSwitchContract: Story = {
   parameters: { dockrevApiScenario: 'default' },
   play: async ({ canvasElement }) => {
+    expectStory(
+      canvasElement.textContent?.includes('页面打开后会叠加 1 秒 SSE 实时点'),
+      'live subtitle should explain that page-opened SSE points are mixed into the chart'
+    )
+    expectStory(
+      canvasElement.textContent?.includes('个样本（含实时点）'),
+      'window facts should clarify that live sample counts include realtime points'
+    )
+
     const labels = ['3m', '1h', '24h'] as const
     for (const label of labels) {
       const button = windowButton(canvasElement, label)

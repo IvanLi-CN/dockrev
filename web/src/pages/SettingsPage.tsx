@@ -295,7 +295,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
 
           <div className="card">
             <div className="title">资源监控</div>
-            <div className="muted">控制服务详情页历史采样与 1s 实时 SSE 推送。</div>
+            <div className="muted">控制服务详情页按 compose project 独立生效的历史采样频率，以及单服务 1s 实时 SSE 推送。</div>
 
             <div className="kv">
               <div className="kvRow">
@@ -317,27 +317,32 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
               </div>
 
               <div className="kvRow">
-                <div className="label">历史采样频率</div>
-                <SelectField
-                  className="input"
-                  disabled={busy || !settings.resourceMonitor.enabled}
-                  onChange={(value) => {
-                    const next = Number(value)
-                    if (![5, 10, 30, 60, 300].includes(next)) return
-                    updateResourceMonitor('settings.resourceMonitor.sampleIntervalSeconds', (current) => ({
-                      ...current,
-                      sampleIntervalSeconds: next as 5 | 10 | 30 | 60 | 300,
-                    }))
-                  }}
-                  options={[
-                    { value: '5', label: '5 秒' },
-                    { value: '10', label: '10 秒' },
-                    { value: '30', label: '30 秒' },
-                    { value: '60', label: '60 秒' },
-                    { value: '300', label: '300 秒' },
-                  ]}
-                  value={String(settings.resourceMonitor.sampleIntervalSeconds)}
-                />
+                <div className="label">历史采样频率（每个 project）</div>
+                <div>
+                  <SelectField
+                    className="input"
+                    disabled={busy || !settings.resourceMonitor.enabled}
+                    onChange={(value) => {
+                      const next = Number(value)
+                      if (![5, 10, 30, 60, 300].includes(next)) return
+                      updateResourceMonitor('settings.resourceMonitor.sampleIntervalSeconds', (current) => ({
+                        ...current,
+                        sampleIntervalSeconds: next as 5 | 10 | 30 | 60 | 300,
+                      }))
+                    }}
+                    options={[
+                      { value: '5', label: '5 秒' },
+                      { value: '10', label: '10 秒' },
+                      { value: '30', label: '30 秒' },
+                      { value: '60', label: '60 秒' },
+                      { value: '300', label: '300 秒' },
+                    ]}
+                    value={String(settings.resourceMonitor.sampleIntervalSeconds)}
+                  />
+                  <div className="muted" style={{ marginTop: 6 }}>
+                    全局设置会对每个 compose project 独立调度；单个 project 过载时会跳过过期 tick，不会并发补跑。
+                  </div>
+                </div>
               </div>
 
               <div className="kvRow">
