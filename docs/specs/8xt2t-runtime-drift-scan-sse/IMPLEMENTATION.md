@@ -10,6 +10,7 @@
   - Moving-tag hardening: if repo-matched `RepoDigests` are unavailable for the running image, the container image ID is persisted as the runtime truth source instead of falling back to the host-local `repo:tag` pointer.
 - Web/API:
   - Runtime scan job events remain surfaced through existing job/SSE paths.
+  - Read-only UI surfaces no longer enqueue runtime scans on page-open; runtime reconciliation stays on scheduled/background scans plus explicit operator-triggered jobs.
   - No external response shape changes.
 
 ## 验证

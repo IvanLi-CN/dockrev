@@ -15,9 +15,7 @@ import {
   getStack,
   listStacks,
   listStacksArchived,
-  newJobEventsSource,
   triggerCheck,
-  triggerRuntimeScan,
   triggerUpdate,
   type Service,
   type ServiceDigestTagsScanSummary,
@@ -67,13 +65,11 @@ export function useServicesPageState(props: {
   onLastScanHint: (lastScan?: string) => void;
   onTopActions: (node: ReactNode) => void;
   manageTopActions?: boolean;
-  manageRuntimeScan?: boolean;
 }) {
   const {
     onLastScanHint,
     onTopActions,
     manageTopActions = true,
-    manageRuntimeScan = true,
   } = props;
   const confirm = useConfirm();
   const [stacks, setStacks] = useState<StackListItem[]>([]);
@@ -517,100 +513,6 @@ export function useServicesPageState(props: {
       if (timer != null) window.clearTimeout(timer);
     };
   }, [pendingInferenceStackIds]);
-
-  useEffect(() => {
-    if (!manageRuntimeScan) return;
-    let closed = false;
-    let es: EventSource | null = null;
-    let timer: number | null = null;
-    const pending = new Set<string>();
-
-    const flush = async () => {
-      timer = null;
-      const ids = Array.from(pending);
-      pending.clear();
-      if (ids.length === 0) return;
-
-      const results = await Promise.all(
-        ids.map(async (id) => {
-          try {
-            return [id, await getStack(id)] as const;
-          } catch {
-            return [id, undefined] as const;
-          }
-        }),
-      );
-
-      if (closed) return;
-      const patch = Object.fromEntries(results);
-      setDetails((prev) => ({ ...prev, ...patch }));
-      setArchivedDetails((prev) => ({ ...prev, ...patch }));
-    };
-
-    const scheduleFlush = (stackId: string) => {
-      if (!stackId) return;
-      pending.add(stackId);
-      if (timer != null) return;
-      timer = window.setTimeout(() => {
-        void flush();
-      }, 200);
-    };
-
-    const start = async () => {
-      let jobId: string | null = null;
-      try {
-        const resp = await triggerRuntimeScan("all");
-        jobId = resp.jobId;
-      } catch (e: unknown) {
-        if (e instanceof ApiError && e.status === 409) {
-          const d = e.details;
-          const existingJobId =
-            d &&
-            typeof d === "object" &&
-            d !== null &&
-            "existingJobId" in d &&
-            typeof (d as Record<string, unknown>).existingJobId === "string"
-              ? ((d as Record<string, unknown>).existingJobId as string)
-              : null;
-          jobId = existingJobId;
-        }
-      }
-
-      if (closed || !jobId) return;
-      es = newJobEventsSource(jobId);
-
-      es.addEventListener("runtime_scan_service", (evt: Event) => {
-        const data = (evt as MessageEvent).data;
-        if (typeof data !== "string" || !data) return;
-        try {
-          const parsed = JSON.parse(data) as unknown;
-          if (!parsed || typeof parsed !== "object") return;
-          const p = parsed as Record<string, unknown>;
-          if (p.type !== "runtime_scan_service") return;
-          if (p.changed !== true) return;
-          const stackId = typeof p.stackId === "string" ? p.stackId : "";
-          if (stackId) scheduleFlush(stackId);
-        } catch {
-          // ignore invalid events
-        }
-      });
-
-      es.addEventListener("runtime_scan_finished", () => {
-        es?.close();
-        void requestRefresh().catch((e: unknown) =>
-          setError(e instanceof Error ? e.message : String(e)),
-        );
-      });
-    };
-
-    void start();
-
-    return () => {
-      closed = true;
-      if (timer != null) window.clearTimeout(timer);
-      es?.close();
-    };
-  }, [manageRuntimeScan, requestRefresh]);
 
   useEffect(() => {
     if (!manageTopActions) return;

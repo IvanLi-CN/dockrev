@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-02-17
-- Last: 2026-06-09
+- Last: 2026-07-20
 - Legacy source: `docs/plan/8xt2t:runtime-drift-scan-sse/PLAN.md` pending delete approval
 
 ## 背景 / 问题陈述
@@ -17,7 +17,7 @@
 ## Goals
 
 - 后端按计划执行 runtime diff scan，对比运行态 digest 与 DB `current_digest`，发现漂移时自动修正当前 digest、resolved tag 与候选状态。
-- 前端访问相关页面时可触发 runtime scan，并通过 SSE 接收 job 事件更新页面。
+- 前端保留 runtime scan 结果的事件可见性，但只读页面打开时不得自动触发 runtime scan；自动漂移发现依赖后台定时 scan，显式操作如 `POST /api/runtime-scans` 仍可按需触发。
 - check 与 runtime scan 复用同一套候选计算与 resolved tag 推断策略。
 - 当运行容器对应 image 无法提供匹配 repo 的 `RepoDigests` 时，使用容器 `.Image` 的 immutable image ID 作为运行态兜底，避免 moving tag 污染 `current_digest`。
 
@@ -31,6 +31,7 @@
 ## 行为规格
 
 - `POST /api/runtime-scans` 支持 `scope=all|stack|service`，创建 `runtime_scan` job 并按 scope 扫描 Docker Compose 项目。
+- 只读页面（如概览、服务列表、服务详情）读取已有 DB 状态，不得在 mount/page-open 阶段隐式触发 `scope=all` 的 runtime scan。
 - runtime scan 先按 compose project/service label 找到运行容器，再读取容器 `.Image` 和 `.State.StartedAt`。
 - 对每个容器 image ID，优先用 `docker image inspect <image-id>` 的 `RepoDigests` 匹配服务 image repo；若唯一匹配到 digest，则该 digest 为运行态 digest。
 - 若没有匹配 repo digest，但容器 `.Image` 非空，则以该 image ID 作为运行态兜底；多副本兜底值不唯一时保持未知，不写入混乱状态。
@@ -43,6 +44,7 @@
 - Given check 与 runtime scan 拿到相同 runtime digest 与 registry tags，When 分别执行，Then resolved tag / resolved tags 结果一致。
 - Given `trtff-api` 仍运行旧 image ID，而同宿主机 `ghcr.io/sequenxe/trtff:latest` 已被其他 stack 拉到新 image，When runtime scan 运行，Then `trtff-api.current_digest` 保留旧 image ID，`candidate_digest` 指向最新 registry digest。
 - Given `ctp-recorder` 已运行新 digest，When 同轮 runtime scan 运行，Then 它的 `current_digest` 为新 digest 且不产生同 digest candidate。
+- Given 用户仅打开概览、服务列表或服务详情页，When 页面完成首屏加载，Then 不会因为 page-open/mount 自动创建新的 `runtime_scan` job。
 
 ## 验证
 
