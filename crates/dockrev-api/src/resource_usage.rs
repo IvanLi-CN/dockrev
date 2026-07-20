@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::Context as _;
 use async_trait::async_trait;
-use tokio::sync::{Mutex, broadcast};
+use tokio::sync::{Mutex, broadcast, watch};
 
 #[cfg(test)]
 use crate::runner::{CommandRunner, CommandSpec};
@@ -58,6 +58,57 @@ pub struct RealtimeSamplerHub {
 struct SamplerEntry {
     tx: broadcast::Sender<RealtimeMessage>,
     subscribers: Arc<AtomicUsize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ProjectHistoryTarget {
+    service_id: String,
+    service_name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ProjectHistorySnapshot {
+    compose_project: String,
+    interval: Duration,
+    services: Vec<ProjectHistoryTarget>,
+}
+
+#[derive(Clone)]
+struct HistoryWorkerHandle {
+    tx: watch::Sender<ProjectHistorySnapshot>,
+    snapshot: ProjectHistorySnapshot,
+}
+
+struct ProjectHistoryRunOutcome {
+    inserted: usize,
+    result: &'static str,
+    error: Option<String>,
+}
+
+impl ProjectHistoryRunOutcome {
+    fn ok(inserted: usize) -> Self {
+        Self {
+            inserted,
+            result: "ok",
+            error: None,
+        }
+    }
+
+    fn empty() -> Self {
+        Self {
+            inserted: 0,
+            result: "empty",
+            error: None,
+        }
+    }
+
+    fn error(error: anyhow::Error) -> Self {
+        Self {
+            inserted: 0,
+            result: "error",
+            error: Some(error.to_string()),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -317,8 +368,16 @@ pub fn spawn_history_sampler_from_env(db: Db) -> anyhow::Result<()> {
 fn spawn_history_sampler_with_collector(db: Db, collector: Arc<dyn ResourceCollector>) {
     tokio::spawn(async move {
         let mut last_gc = Instant::now();
+        let mut workers = BTreeMap::<String, HistoryWorkerHandle>::new();
 
         loop {
+            if last_gc.elapsed() >= Duration::from_secs(60 * 60) {
+                if let Err(e) = gc_history(&db).await {
+                    tracing::warn!(error = %e, "resource monitor history gc failed");
+                }
+                last_gc = Instant::now();
+            }
+
             let settings = match db.get_resource_monitor_settings().await {
                 Ok(v) => v,
                 Err(e) => {
@@ -328,25 +387,27 @@ fn spawn_history_sampler_with_collector(db: Db, collector: Arc<dyn ResourceColle
                 }
             };
 
-            if last_gc.elapsed() >= Duration::from_secs(60 * 60) {
-                if let Err(e) = gc_history(&db).await {
-                    tracing::warn!(error = %e, "resource monitor history gc failed");
-                }
-                last_gc = Instant::now();
-            }
-
             if !settings.enabled {
-                tokio::time::sleep(Duration::from_secs(5)).await;
+                workers.clear();
+                tokio::time::sleep(Duration::from_secs(1)).await;
                 continue;
             }
 
             let interval_seconds =
                 normalize_sample_interval_seconds(settings.sample_interval_seconds);
-            if let Err(e) = sample_history_once(&db, collector.as_ref()).await {
-                tracing::warn!(error = %e, "resource monitor history sampling failed");
-            }
+            let targets = match db.list_service_resource_targets().await {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(error = %e, "resource monitor history targets unavailable");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+            };
 
-            tokio::time::sleep(Duration::from_secs(interval_seconds)).await;
+            let desired = build_project_history_snapshots(targets, interval_seconds);
+            sync_history_workers(&mut workers, desired, &db, &collector);
+
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     });
 }
@@ -363,44 +424,202 @@ async fn gc_history(db: &Db) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn sample_history_once(db: &Db, collector: &dyn ResourceCollector) -> anyhow::Result<()> {
-    let targets = db
-        .list_service_resource_targets()
-        .await
-        .context("list service resource targets")?;
-    if targets.is_empty() {
-        return Ok(());
-    }
-
-    let mut by_project = BTreeMap::<String, Vec<ServiceResourceTarget>>::new();
+fn build_project_history_snapshots(
+    targets: Vec<ServiceResourceTarget>,
+    interval_seconds: u64,
+) -> BTreeMap<String, ProjectHistorySnapshot> {
+    let mut grouped = BTreeMap::<String, Vec<ProjectHistoryTarget>>::new();
     for target in targets {
-        by_project
+        grouped
             .entry(target.compose_project.clone())
             .or_default()
-            .push(target);
+            .push(ProjectHistoryTarget {
+                service_id: target.service_id,
+                service_name: target.service_name,
+            });
     }
 
-    let sampled_at = now_rfc3339()?;
-    let mut rows = Vec::<ServiceResourceSampleInput>::new();
-
-    for (project, project_targets) in by_project {
-        let aggregates = match collector.collect_project_service_aggregates(&project).await {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!(
-                    project = %project,
-                    error = %e,
-                    "resource monitor history sampling skipped project"
-                );
-                continue;
-            }
-        };
-
-        for target in &project_targets {
-            let Some(sample) = aggregates.get(&target.service_name) else {
-                continue;
+    grouped
+        .into_iter()
+        .map(|(compose_project, mut services)| {
+            services.sort_by(|left, right| {
+                left.service_name
+                    .cmp(&right.service_name)
+                    .then_with(|| left.service_id.cmp(&right.service_id))
+            });
+            let snapshot = ProjectHistorySnapshot {
+                compose_project: compose_project.clone(),
+                interval: Duration::from_secs(interval_seconds),
+                services,
             };
-            rows.push(ServiceResourceSampleInput {
+            (compose_project, snapshot)
+        })
+        .collect()
+}
+
+fn sync_history_workers(
+    workers: &mut BTreeMap<String, HistoryWorkerHandle>,
+    desired: BTreeMap<String, ProjectHistorySnapshot>,
+    db: &Db,
+    collector: &Arc<dyn ResourceCollector>,
+) {
+    let stale_projects = workers
+        .keys()
+        .filter(|project| !desired.contains_key(*project))
+        .cloned()
+        .collect::<Vec<_>>();
+    for project in stale_projects {
+        workers.remove(&project);
+    }
+
+    for (project, snapshot) in desired {
+        match workers.get_mut(&project) {
+            Some(existing) if existing.snapshot == snapshot => {}
+            Some(existing) => {
+                let _ = existing.tx.send_replace(snapshot.clone());
+                existing.snapshot = snapshot;
+            }
+            None => {
+                let (tx, rx) = watch::channel(snapshot.clone());
+                spawn_project_history_worker(db.clone(), collector.clone(), rx);
+                workers.insert(project, HistoryWorkerHandle { tx, snapshot });
+            }
+        }
+    }
+}
+
+fn spawn_project_history_worker(
+    db: Db,
+    collector: Arc<dyn ResourceCollector>,
+    mut rx: watch::Receiver<ProjectHistorySnapshot>,
+) {
+    tokio::spawn(async move {
+        let mut snapshot = rx.borrow().clone();
+        let mut next_run_at = Instant::now();
+
+        loop {
+            tokio::select! {
+                changed = rx.changed() => {
+                    if changed.is_err() {
+                        break;
+                    }
+                    snapshot = rx.borrow_and_update().clone();
+                    next_run_at = Instant::now();
+                }
+                _ = tokio::time::sleep_until(next_run_at.into()) => {
+                    let started_at = Instant::now();
+                    let run_snapshot = snapshot.clone();
+                    let outcome = sample_history_project_once(&db, collector.as_ref(), &run_snapshot).await;
+                    let duration = started_at.elapsed();
+
+                    match rx.has_changed() {
+                        Ok(true) => {
+                            log_project_history_run(&run_snapshot, &outcome, duration, 0);
+                            snapshot = rx.borrow_and_update().clone();
+                            next_run_at = Instant::now();
+                        }
+                        Ok(false) => {
+                            let skipped_ticks = advance_fixed_cadence(
+                                &mut next_run_at,
+                                run_snapshot.interval,
+                                Instant::now(),
+                            );
+                            log_project_history_run(&run_snapshot, &outcome, duration, skipped_ticks);
+                        }
+                        Err(_) => {
+                            log_project_history_run(&run_snapshot, &outcome, duration, 0);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+fn advance_fixed_cadence(next_run_at: &mut Instant, interval: Duration, now: Instant) -> u64 {
+    *next_run_at += interval;
+    let mut skipped_ticks = 0u64;
+    while *next_run_at < now {
+        *next_run_at += interval;
+        skipped_ticks = skipped_ticks.saturating_add(1);
+    }
+    skipped_ticks
+}
+
+fn log_project_history_run(
+    snapshot: &ProjectHistorySnapshot,
+    outcome: &ProjectHistoryRunOutcome,
+    duration: Duration,
+    skipped_ticks: u64,
+) {
+    let duration_ms = duration.as_millis() as u64;
+    let interval_seconds = snapshot.interval.as_secs();
+    let service_count = snapshot.services.len();
+
+    match outcome.error.as_deref() {
+        Some(error) => tracing::warn!(
+            compose_project = %snapshot.compose_project,
+            interval_seconds,
+            duration_ms,
+            skipped_ticks,
+            service_count,
+            result = outcome.result,
+            error = %error,
+            "resource monitor history project sample failed"
+        ),
+        None if skipped_ticks > 0 => tracing::info!(
+            compose_project = %snapshot.compose_project,
+            interval_seconds,
+            duration_ms,
+            skipped_ticks,
+            service_count,
+            inserted = outcome.inserted,
+            result = outcome.result,
+            "resource monitor history project sample completed"
+        ),
+        None => tracing::debug!(
+            compose_project = %snapshot.compose_project,
+            interval_seconds,
+            duration_ms,
+            skipped_ticks,
+            service_count,
+            inserted = outcome.inserted,
+            result = outcome.result,
+            "resource monitor history project sample completed"
+        ),
+    }
+}
+
+async fn sample_history_project_once(
+    db: &Db,
+    collector: &dyn ResourceCollector,
+    snapshot: &ProjectHistorySnapshot,
+) -> ProjectHistoryRunOutcome {
+    let aggregates = match collector
+        .collect_project_service_aggregates(&snapshot.compose_project)
+        .await
+        .with_context(|| {
+            format!(
+                "collect history stats for compose project {}",
+                snapshot.compose_project
+            )
+        }) {
+        Ok(v) => v,
+        Err(e) => return ProjectHistoryRunOutcome::error(e),
+    };
+
+    let sampled_at = match now_rfc3339() {
+        Ok(v) => v,
+        Err(e) => return ProjectHistoryRunOutcome::error(e),
+    };
+
+    let rows = snapshot
+        .services
+        .iter()
+        .filter_map(|target| {
+            let sample = aggregates.get(&target.service_name)?;
+            Some(ServiceResourceSampleInput {
                 service_id: target.service_id.clone(),
                 sampled_at: sampled_at.clone(),
                 cpu_percent: sample.cpu_percent,
@@ -412,20 +631,23 @@ async fn sample_history_once(db: &Db, collector: &dyn ResourceCollector) -> anyh
                 block_write_bytes: sample.block_write_bytes,
                 pids: sample.pids,
                 container_count: sample.container_count,
-            });
-        }
-    }
+            })
+        })
+        .collect::<Vec<_>>();
 
     if rows.is_empty() {
-        return Ok(());
+        return ProjectHistoryRunOutcome::empty();
     }
 
-    let inserted = db
+    match db
         .insert_service_resource_samples(&rows)
         .await
-        .context("insert resource samples")?;
-    tracing::debug!(inserted, "resource monitor samples inserted");
-    Ok(())
+        .context("insert resource samples")
+    {
+        Ok(inserted) if inserted > 0 => ProjectHistoryRunOutcome::ok(inserted),
+        Ok(_) => ProjectHistoryRunOutcome::empty(),
+        Err(e) => ProjectHistoryRunOutcome::error(e),
+    }
 }
 
 async fn sample_for_target(
@@ -756,6 +978,99 @@ fn now_rfc3339() -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        api::types::{ComposeConfig, StackBackupConfig},
+        models::{ServiceSeed, StackRecord},
+    };
+
+    #[derive(Clone)]
+    struct TestProjectBehavior {
+        delay: Duration,
+        samples: BTreeMap<String, ServiceResourceSample>,
+    }
+
+    #[derive(Default)]
+    struct TestCollectorState {
+        behaviors: BTreeMap<String, TestProjectBehavior>,
+        calls: BTreeMap<String, usize>,
+        inflight: BTreeMap<String, usize>,
+        max_inflight: BTreeMap<String, usize>,
+        starts: BTreeMap<String, Vec<Instant>>,
+    }
+
+    #[derive(Clone)]
+    struct TestHistoryCollector {
+        state: Arc<Mutex<TestCollectorState>>,
+    }
+
+    impl TestHistoryCollector {
+        fn new(behaviors: BTreeMap<String, TestProjectBehavior>) -> Self {
+            Self {
+                state: Arc::new(Mutex::new(TestCollectorState {
+                    behaviors,
+                    ..Default::default()
+                })),
+            }
+        }
+
+        async fn call_count(&self, project: &str) -> usize {
+            let state = self.state.lock().await;
+            state.calls.get(project).copied().unwrap_or(0)
+        }
+
+        async fn max_inflight(&self, project: &str) -> usize {
+            let state = self.state.lock().await;
+            state.max_inflight.get(project).copied().unwrap_or(0)
+        }
+
+        async fn start_times(&self, project: &str) -> Vec<Instant> {
+            let state = self.state.lock().await;
+            state.starts.get(project).cloned().unwrap_or_default()
+        }
+    }
+
+    #[async_trait]
+    impl ResourceCollector for TestHistoryCollector {
+        async fn collect_project_service_aggregates(
+            &self,
+            compose_project: &str,
+        ) -> anyhow::Result<BTreeMap<String, ServiceResourceSample>> {
+            let behavior = {
+                let mut state = self.state.lock().await;
+                let behavior = state
+                    .behaviors
+                    .get(compose_project)
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("missing test project {compose_project}"))?;
+                *state.calls.entry(compose_project.to_string()).or_default() += 1;
+                let inflight = state
+                    .inflight
+                    .entry(compose_project.to_string())
+                    .or_default();
+                *inflight += 1;
+                let current_inflight = *inflight;
+                let max_inflight = state
+                    .max_inflight
+                    .entry(compose_project.to_string())
+                    .or_default();
+                *max_inflight = (*max_inflight).max(current_inflight);
+                state
+                    .starts
+                    .entry(compose_project.to_string())
+                    .or_default()
+                    .push(Instant::now());
+                behavior
+            };
+
+            tokio::time::sleep(behavior.delay).await;
+
+            let mut state = self.state.lock().await;
+            if let Some(inflight) = state.inflight.get_mut(compose_project) {
+                *inflight = inflight.saturating_sub(1);
+            }
+            Ok(behavior.samples)
+        }
+    }
 
     fn make_entry(subscribers: usize) -> Arc<SamplerEntry> {
         let (tx, _rx) = broadcast::channel(4);
@@ -793,5 +1108,209 @@ mod tests {
 
         assert!(!try_remove_idle_sampler_entry(&mut map, "svc", &entry));
         assert!(map.contains_key("svc"));
+    }
+
+    #[test]
+    fn advance_fixed_cadence_skips_overdue_ticks() {
+        let base = Instant::now();
+        let mut next_run_at = base;
+
+        let skipped = advance_fixed_cadence(
+            &mut next_run_at,
+            Duration::from_secs(5),
+            base + Duration::from_secs(12),
+        );
+
+        assert_eq!(skipped, 2);
+        assert_eq!(next_run_at.duration_since(base), Duration::from_secs(15));
+    }
+
+    #[tokio::test]
+    async fn history_project_worker_does_not_overlap_or_backlog_overdue_ticks() {
+        let db = open_test_db().await;
+        seed_stack_services(&db, "stack-slow", &[("svc-slow", "slow-api")]).await;
+
+        let collector = Arc::new(TestHistoryCollector::new(BTreeMap::from([(
+            "slow-project".to_string(),
+            TestProjectBehavior {
+                delay: Duration::from_millis(95),
+                samples: BTreeMap::from([("slow-api".to_string(), make_sample(62.5, 2_048))]),
+            },
+        )])));
+        let snapshot = ProjectHistorySnapshot {
+            compose_project: "slow-project".to_string(),
+            interval: Duration::from_millis(40),
+            services: vec![ProjectHistoryTarget {
+                service_id: "svc-slow".to_string(),
+                service_name: "slow-api".to_string(),
+            }],
+        };
+
+        let (tx, rx) = watch::channel(snapshot);
+        spawn_project_history_worker(db.clone(), collector.clone(), rx);
+        wait_for_call_count(&collector, "slow-project", 2).await;
+        drop(tx);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        let starts = collector.start_times("slow-project").await;
+        assert!(
+            starts.len() >= 2,
+            "expected at least two runs, got {}",
+            starts.len()
+        );
+        assert_eq!(collector.max_inflight("slow-project").await, 1);
+        assert!(
+            starts[1].duration_since(starts[0]) >= Duration::from_millis(110),
+            "expected overdue ticks to be skipped instead of immediate catch-up: {starts:?}"
+        );
+
+        let rows = db
+            .list_service_resource_samples_since("svc-slow", "1970-01-01T00:00:00Z")
+            .await
+            .unwrap();
+        assert!(
+            !rows.is_empty(),
+            "expected history worker to persist at least one sample"
+        );
+    }
+
+    #[tokio::test]
+    async fn slow_project_worker_does_not_block_fast_project_worker() {
+        let db = open_test_db().await;
+        seed_stack_services(
+            &db,
+            "stack-mixed",
+            &[("svc-fast", "fast-api"), ("svc-slow", "slow-api")],
+        )
+        .await;
+
+        let collector = Arc::new(TestHistoryCollector::new(BTreeMap::from([
+            (
+                "fast-project".to_string(),
+                TestProjectBehavior {
+                    delay: Duration::from_millis(5),
+                    samples: BTreeMap::from([("fast-api".to_string(), make_sample(18.0, 1_024))]),
+                },
+            ),
+            (
+                "slow-project".to_string(),
+                TestProjectBehavior {
+                    delay: Duration::from_millis(95),
+                    samples: BTreeMap::from([("slow-api".to_string(), make_sample(77.0, 4_096))]),
+                },
+            ),
+        ])));
+
+        let (fast_tx, fast_rx) = watch::channel(ProjectHistorySnapshot {
+            compose_project: "fast-project".to_string(),
+            interval: Duration::from_millis(40),
+            services: vec![ProjectHistoryTarget {
+                service_id: "svc-fast".to_string(),
+                service_name: "fast-api".to_string(),
+            }],
+        });
+        let (slow_tx, slow_rx) = watch::channel(ProjectHistorySnapshot {
+            compose_project: "slow-project".to_string(),
+            interval: Duration::from_millis(40),
+            services: vec![ProjectHistoryTarget {
+                service_id: "svc-slow".to_string(),
+                service_name: "slow-api".to_string(),
+            }],
+        });
+
+        spawn_project_history_worker(db.clone(), collector.clone(), fast_rx);
+        spawn_project_history_worker(db.clone(), collector.clone(), slow_rx);
+        wait_for_call_count(&collector, "fast-project", 4).await;
+        drop(fast_tx);
+        drop(slow_tx);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        let fast_calls = collector.call_count("fast-project").await;
+        let slow_calls = collector.call_count("slow-project").await;
+        assert!(
+            fast_calls >= slow_calls.saturating_add(2),
+            "fast worker should continue sampling while slow worker lags: fast={fast_calls} slow={slow_calls}"
+        );
+
+        let fast_rows = db
+            .list_service_resource_samples_since("svc-fast", "1970-01-01T00:00:00Z")
+            .await
+            .unwrap();
+        let slow_rows = db
+            .list_service_resource_samples_since("svc-slow", "1970-01-01T00:00:00Z")
+            .await
+            .unwrap();
+        assert!(
+            fast_rows.len() >= slow_rows.len().saturating_add(2),
+            "expected fast project history cadence to stay ahead: fast={} slow={}",
+            fast_rows.len(),
+            slow_rows.len()
+        );
+    }
+
+    async fn open_test_db() -> Db {
+        let path = std::env::temp_dir().join(format!(
+            "dockrev-resource-usage-{}.sqlite",
+            ulid::Ulid::new()
+        ));
+        Db::open(&path).await.unwrap()
+    }
+
+    async fn seed_stack_services(db: &Db, stack_id: &str, services: &[(&str, &str)]) {
+        let now = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+        let stack = StackRecord {
+            id: stack_id.to_string(),
+            name: stack_id.to_string(),
+            archived: false,
+            compose: ComposeConfig {
+                kind: "compose".to_string(),
+                compose_files: vec!["compose.yml".to_string()],
+                env_file: None,
+            },
+            backup: StackBackupConfig::default(),
+            services: Vec::new(),
+        };
+        let seeds = services
+            .iter()
+            .map(|(service_id, service_name)| ServiceSeed {
+                id: (*service_id).to_string(),
+                name: (*service_name).to_string(),
+                image_ref: format!("ghcr.io/acme/{service_name}:latest"),
+                image_tag: "latest".to_string(),
+                homepage: None,
+                update_guard: None,
+                auto_rollback: false,
+                backup_bind_paths: BTreeMap::new(),
+                backup_volume_names: BTreeMap::new(),
+            })
+            .collect::<Vec<_>>();
+        db.insert_stack(&stack, &seeds, &now).await.unwrap();
+    }
+
+    fn make_sample(cpu_percent: f64, mem_used_bytes: u64) -> ServiceResourceSample {
+        ServiceResourceSample {
+            sampled_at: String::new(),
+            cpu_percent,
+            mem_used_bytes: Some(mem_used_bytes),
+            mem_limit_bytes: Some(16_384),
+            net_rx_bytes: Some(10_000),
+            net_tx_bytes: Some(11_000),
+            block_read_bytes: Some(12_000),
+            block_write_bytes: Some(13_000),
+            pids: Some(7),
+            container_count: 1,
+        }
+    }
+
+    async fn wait_for_call_count(collector: &TestHistoryCollector, project: &str, minimum: usize) {
+        for _ in 0..100 {
+            if collector.call_count(project).await >= minimum {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("timed out waiting for {project} to reach {minimum} calls");
     }
 }

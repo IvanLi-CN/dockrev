@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-03-03
-- Last: 2026-07-15
+- Last: 2026-07-20
 
 ## 背景 / 问题陈述
 
@@ -15,8 +15,8 @@
 
 ### Goals
 
-- 系统设置支持资源监控开关与采样频率（5/10/30/60/300，默认 5）。
-- 历史采样按服务持久化，保留 30 天并自动清理。
+- 系统设置支持资源监控开关与采样频率（5/10/30/60/300，默认 5），其语义是“每个 compose project 的历史采样 cadence”。
+- 历史采样按 service 落库，但由 compose project 维度独立调度，保留 30 天并自动清理。
 - 服务详情页提供 1s SSE 实时流与趋势图（CPU/内存/网络/磁盘 I/O/PIDs）。
 - 服务详情资源监控面板强化头部层级、SSE 状态可见性、统一工具栏与移动端数值排版。
 - 资源监控关闭时，历史与实时接口统一返回 `409 resource_monitor_disabled`。
@@ -26,6 +26,8 @@
 - 服务详情页保留完整趋势图与 1s SSE；Overview 仅允许展示聚合最新摘要，不扩展为列表页图表或逐卡片 SSE。
 - 不引入告警规则、阈值通知、自动扩缩容。
 - 不实现多实例分布式采样去重。
+- 不为单个 compose project 提供独立于全局设置之外的采样频率覆盖。
+- 不新增 API/UI stale、skip、backlog 提示字段；退化仅通过日志暴露。
 
 ## 范围（Scope）
 
@@ -52,6 +54,8 @@
 - `GET /api/services/resource-usage/overview?window=3m|1h|24h`：Overview 聚合最新摘要，只返回 CPU、内存、网络 RX/TX、样本时间、stale 与样本数量，不提供图表序列或 SSE。
 - 监控关闭统一错误：`409` + `details.reason=resource_monitor_disabled`。
   - 例外：Overview 聚合摘要接口返回 `200 enabled=false`，用于导航页非阻塞降级。
+- `resourceMonitor.sampleIntervalSeconds` 的 wire shape 与合法值保持不变，但其契约改为“全局设置，对每个 compose project 独立生效”。
+- `ServiceResourcePanel` 继续沿用当前 `samples.length` 混合语义：既包含历史样本，也包含页面打开后的 `1s` SSE 实时点；本次只修正文案，不改字段含义。
 
 ## 数据与运行时设计
 
@@ -64,8 +68,12 @@
   - `(sampled_at)`
 - 后台历史采样任务：
   - 仅在开关开启时运行。
-  - 按设置频率采样并入库。
+  - 由 coordinator 维护 `compose_project -> worker` 映射，按设置频率对每个 compose project 独立调度。
+  - 同一 compose project 永不并发采样，固定节拍以目标 schedule time 推进，而不是“run 完再 sleep”。
+  - 单轮超时后直接跳过已过期 tick，不补历史欠账、不生成 backlog。
+  - 每轮只对一个 compose project 执行一次 Docker aggregates 采集，并把同一 `sampled_at` fan-out 到该 project 下全部 service 历史表写入。
   - 每小时 GC，删除 30 天前样本。
+  - 退化仅记录结构化日志，至少包含 `compose_project`、`interval_seconds`、`duration_ms`、`skipped_ticks`、`service_count`、`result`。
 - 资源采集通道：
   - 资源监控历史采样与详情页实时采样统一直接读取 Docker Engine API。
   - 默认通过挂载的 `/var/run/docker.sock` 访问；若部署改走 `docker-socket-proxy`，则复用现有 `DOCKER_HOST=tcp://docker-socket-proxy:2375` 入口。
@@ -75,10 +83,12 @@
   - 同服务多 SSE 连接复用单个 1s 采样器。
   - 活跃 SSE 连接必须持有订阅 guard，避免被 10s idle 回收误判为无订阅。
   - 最后订阅断开后 10s 回收。
+  - 本次 cadence 重构不改变 SSE `1s` 语义与事件类型。
 
 ## UI 规格（Service Detail）
 
 - 顶部 Hero：标题、副说明、实时状态 badge 与窗口/样本/最近更新时间 facts 同屏可见。
+- 设置页与监控页文案必须明确：历史采样 cadence 以 compose project 为单位独立生效，页面样本数会混入打开页面后的实时 SSE 点。
 - 实时指标卡：CPU、内存作为主指标卡，网络速率、磁盘 I/O、PIDs 作为次级摘要卡。
 - 图表工具栏：同一区域内提供指标 tabs（CPU/内存/网络/磁盘 I/O/PIDs）与时间窗口切换（3m/1h/24h，默认 1h）。
 - 图表舞台：自研 SVG 趋势图保留单线/双线逻辑，并增强末端锚点、图例当前值与空/错态。所有指标将每个原始样本保持到下一次采样，以 right-continuous 阶梯表达变化，不平均数值、不生成斜线；CPU、内存、网络与磁盘 I/O 仅在阶梯拐角加极小圆角，PIDs 保持严格直角。单线面积填充必须复用对应阶梯路径且保持低视觉权重，双线图不绘制面积。
@@ -87,11 +97,14 @@
 ## 验收标准（Acceptance Criteria）
 
 - 设置页可读写资源监控开关与采样频率，默认开启且默认 5 秒。
+- 历史采样频率必须真实代表“每个 compose project 的 cadence”，不能再退化成整站 sweep 完再 sleep 的语义。
 - 监控关闭后，history/events 返回 `409 resource_monitor_disabled`，前端展示禁用态。
 - 服务详情页在开启状态可看到历史曲线与实时滚动，且实时状态无需查看 footer 即可感知。
 - 图表支持指标切换与窗口切换，空数据/错误态有明确提示。
 - 前台实时 SSE 继续保持 `1s` 采样 cadence，不受历史采样频率设置影响。
 - 既有数据库里保存的合法 `10s` 历史采样配置继续生效，不被自动回写成 `5s`。
+- 慢 compose project 的一次长耗时历史采样不会拖慢其它 project 的出样 cadence。
+- 同一 compose project 当单轮耗时超过 interval 时，不会并发启动第二个采样任务，也不会补跑过期 tick。
 - 所有指标以水平保持和垂直跳变经过每个有效采样点、缺口处断线，不生成连续中间值；折线端点平切并保留最新样本锚点。
 - 磁盘 I/O、网络 I/O 均以速率形式展示。
 - 深色/浅色主题与 375px 宽度下版式稳定，无横向滚动，长数值不炸版。
@@ -156,6 +169,7 @@ PR: include
 - 2026-03-11: 完成 Service Detail 资源监控面板中等强度视觉升级，统一工具栏并强化实时状态/响应式层级。
 - 2026-04-28: 修正 Overview 边界：服务详情继续承载图表/SSE，Overview 仅展示聚合最新资源摘要并允许监控关闭时非阻塞降级。
 - 2026-07-15: 历史采样 contract 扩展为 `5/10/30/60/300` 且默认 `5s`，共享窗口 contract 切到 `3m/1h/24h`，前台实时 SSE 继续保持 `1s`；资源监控采集路径切换为直接读取 Docker Engine API（默认 socket，兼容 `DOCKER_HOST`），并移除固定 `/v1.24` 前缀以兼容现代 Docker Engine 的 `MinAPIVersion`。
+- 2026-07-20: 历史采样改为“每个 compose project 独立固定 cadence + single-flight + skip overdue”，慢 project 不再拖慢整站；settings 与监控页文案同步明确 `sampleIntervalSeconds` 的真实语义，以及页面样本数混入实时 SSE 点的现状。
 
 ## 参考（References）
 
