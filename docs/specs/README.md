@@ -135,3 +135,4 @@
 | sxcmc | Dockrev：服务保护设置补全备份目标直选与备份说明 | 已完成 | `sxcmc-service-backup-target-selector/SPEC.md` | 2026-06-29 | fast-track（service backup-target API + service backup records API + Service detail backup tab + Storybook evidence） |
 | 2jhm2 | Dockrev：AppShell 左侧导航折叠与图标化 | 已实现 | `2jhm2-app-shell-sidebar-collapse-icons/SPEC.md` | 2026-07-04 | fast-track（desktop sidebar collapse + real nav icons + Storybook evidence） |
 | tgc9m | Dockrev：Telegram 内容相关动态卡片通知 | 已实现 | `tgc9m-telegram-dynamic-notification-cards/SPEC.md` | 2026-07-05 | fast-track（dynamic Telegram PNG cards + sendPhoto delivery + disabled text link previews + visual evidence） |
+| 7xt5t | Dockrev：Jobs 队列领取索引与慢告警 | active | `7xt5t-job-queue-claim-performance/SPEC.md` | 2026-07-24 | 已实现，待 PR；fast-track（复合索引 + 限频慢领取 WARN） |
