@@ -1,4 +1,56 @@
 use super::*;
+use std::time::{Duration, Instant};
+
+const SLOW_JOB_CLAIM_WARN_THRESHOLD: Duration = Duration::from_millis(25);
+const SLOW_JOB_CLAIM_WARN_INTERVAL: Duration = Duration::from_secs(60);
+
+const CLAIM_NEXT_QUEUED_JOB_SQL: &str = r#"
+SELECT
+  id,
+  type,
+  scope,
+  stack_id,
+  service_id,
+  status,
+  created_by,
+  reason,
+  created_at,
+  started_at,
+  finished_at,
+  allow_arch_mismatch,
+  backup_mode,
+  summary_json
+FROM jobs
+WHERE type = ?1 AND status = 'queued'
+ORDER BY created_at ASC, id ASC
+LIMIT 1
+"#;
+
+fn should_emit_slow_job_claim_warning(
+    warned_at_by_type: &std::sync::Mutex<BTreeMap<String, Instant>>,
+    job_type: &str,
+    elapsed: Duration,
+    now: Instant,
+) -> bool {
+    if elapsed < SLOW_JOB_CLAIM_WARN_THRESHOLD {
+        return false;
+    }
+
+    let mut warned_at_by_type = warned_at_by_type
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if warned_at_by_type
+        .get(job_type)
+        .is_some_and(|last_warned_at| {
+            now.saturating_duration_since(*last_warned_at) < SLOW_JOB_CLAIM_WARN_INTERVAL
+        })
+    {
+        return false;
+    }
+
+    warned_at_by_type.insert(job_type.to_string(), now);
+    true
+}
 
 impl Db {
     pub async fn insert_job(&self, job: JobListItem) -> anyhow::Result<()> {
@@ -183,88 +235,65 @@ LIMIT 1
         started_at: &str,
     ) -> anyhow::Result<Option<JobListItem>> {
         let job_type = job_type.as_str().to_string();
+        let query_job_type = job_type.clone();
         let started_at = started_at.to_string();
-        self.call(move |conn| {
-            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let item: Option<JobListItem> = tx
-                .query_row(
+        let claim_started_at = Instant::now();
+        let result = self
+            .call(move |conn| {
+                let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                let item: Option<JobListItem> = tx
+                    .query_row(
+                        CLAIM_NEXT_QUEUED_JOB_SQL,
+                        params![query_job_type],
+                        map_job_list_item_row,
+                    )
+                    .optional()?;
+
+                let Some(mut item) = item else {
+                    tx.commit()?;
+                    return Ok(None);
+                };
+
+                let changed = tx.execute(
                     r#"
-SELECT
-  id,
-  type,
-  scope,
-  stack_id,
-  service_id,
-  status,
-  created_by,
-  reason,
-  created_at,
-  started_at,
-  finished_at,
-  allow_arch_mismatch,
-  backup_mode,
-  summary_json
-FROM jobs
-WHERE type = ?1 AND status = 'queued'
-ORDER BY created_at ASC, id ASC
-LIMIT 1
-"#,
-                    params![job_type],
-                    |row| {
-                        let summary_json: String = row.get(13)?;
-                        let summary: serde_json::Value = serde_json::from_str(&summary_json)
-                            .map_err(|e| {
-                                rusqlite::Error::FromSqlConversionFailure(
-                                    0,
-                                    rusqlite::types::Type::Text,
-                                    Box::new(e),
-                                )
-                            })?;
-                        Ok(JobListItem {
-                            id: row.get(0)?,
-                            r#type: JobType::from_str(&row.get::<_, String>(1)?),
-                            scope: JobScope::from_str(&row.get::<_, String>(2)?),
-                            stack_id: row.get(3)?,
-                            service_id: row.get(4)?,
-                            status: row.get(5)?,
-                            created_by: row.get(6)?,
-                            reason: row.get(7)?,
-                            created_at: row.get(8)?,
-                            started_at: row.get(9)?,
-                            finished_at: row.get(10)?,
-                            allow_arch_mismatch: row.get::<_, i64>(11)? != 0,
-                            backup_mode: row.get(12)?,
-                            summary_json: summary,
-                        })
-                    },
-                )
-                .optional()?;
-
-            let Some(mut item) = item else {
-                tx.commit()?;
-                return Ok(None);
-            };
-
-            let changed = tx.execute(
-                r#"
 UPDATE jobs
 SET status = 'running', started_at = ?2
 WHERE id = ?1 AND status = 'queued'
 "#,
-                params![item.id, started_at],
-            )?;
-            if changed == 0 {
-                tx.commit()?;
-                return Ok(None);
-            }
+                    params![item.id, started_at],
+                )?;
+                if changed == 0 {
+                    tx.commit()?;
+                    return Ok(None);
+                }
 
-            item.status = "running".to_string();
-            item.started_at = Some(started_at);
-            tx.commit()?;
-            Ok(Some(item))
-        })
-        .await
-        .context("claim next queued job by type")
+                item.status = "running".to_string();
+                item.started_at = Some(started_at);
+                tx.commit()?;
+                Ok(Some(item))
+            })
+            .await
+            .context("claim next queued job by type");
+
+        let elapsed = claim_started_at.elapsed();
+        if let Ok(item) = result.as_ref()
+            && should_emit_slow_job_claim_warning(
+                &self.slow_job_claim_warnings,
+                &job_type,
+                elapsed,
+                Instant::now(),
+            )
+        {
+            tracing::warn!(
+                job_type = %job_type,
+                duration_ms = elapsed.as_millis() as u64,
+                claimed = item.is_some(),
+                threshold_ms = SLOW_JOB_CLAIM_WARN_THRESHOLD.as_millis() as u64,
+                "slow queued job claim"
+            );
+        }
+
+        result
     }
 
     pub async fn finish_job(
@@ -1294,41 +1323,5 @@ WHERE level = 'event'
 }
 
 #[cfg(test)]
-mod tests {
-    use std::path::Path;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn list_jobs_returns_the_latest_two_thousand_jobs() {
-        let db = Db::open(Path::new(":memory:")).await.unwrap();
-
-        for index in 0..=2_000 {
-            db.insert_job(JobListItem {
-                id: format!("job-{index:04}"),
-                r#type: JobType::Update,
-                scope: JobScope::Service,
-                stack_id: Some("stack-test".to_string()),
-                service_id: Some("service-test".to_string()),
-                status: "success".to_string(),
-                created_at: format!("2026-01-01T00:{:02}:{:02}Z", index / 60, index % 60),
-                created_by: "test".to_string(),
-                reason: "ui".to_string(),
-                started_at: None,
-                finished_at: None,
-                allow_arch_mismatch: false,
-                backup_mode: "inherit".to_string(),
-                summary_json: serde_json::json!({}),
-            })
-            .await
-            .unwrap();
-        }
-
-        let jobs = db.list_jobs().await.unwrap();
-
-        assert_eq!(jobs.len(), 2_000);
-        assert_eq!(jobs.first().map(|job| job.id.as_str()), Some("job-2000"));
-        assert_eq!(jobs.last().map(|job| job.id.as_str()), Some("job-0001"));
-        assert!(!jobs.iter().any(|job| job.id == "job-0000"));
-    }
-}
+#[path = "jobs_tests.rs"]
+mod tests;

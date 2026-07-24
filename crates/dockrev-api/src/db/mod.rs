@@ -1,6 +1,8 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
+    sync::{Arc, Mutex},
+    time::Instant,
 };
 
 use anyhow::Context as _;
@@ -438,6 +440,7 @@ pub struct DiscoveredComposeProjectUpsert {
 #[derive(Clone)]
 pub struct Db {
     conn: Connection,
+    slow_job_claim_warnings: Arc<Mutex<BTreeMap<String, Instant>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -704,7 +707,10 @@ impl Db {
         let path = schema::ensure_parent_dir(path)?;
         let conn = Connection::open(path).await?;
 
-        let db = Self { conn };
+        let db = Self {
+            conn,
+            slow_job_claim_warnings: Arc::new(Mutex::new(BTreeMap::new())),
+        };
         db.init().await?;
         db.ensure_defaults().await?;
         Ok(db)

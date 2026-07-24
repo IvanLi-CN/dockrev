@@ -1373,6 +1373,8 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_stack_id ON jobs(stack_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_type_status_created_at_id
+  ON jobs(type, status, created_at, id);
 
 CREATE TABLE IF NOT EXISTS job_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
