@@ -1196,6 +1196,5 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     if (found) found.svc.archived = false
     return json({}, { status: 204 })
   }
-
   return null
 }

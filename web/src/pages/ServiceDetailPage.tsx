@@ -1186,7 +1186,6 @@ export function ServiceDetailPage(props: {
           </div>
         </div>
       </ResponsiveSettingsDrawer>
-
       {error ? <div className="error">{error}</div> : null}
       {notice ? (
         <div className="success">
