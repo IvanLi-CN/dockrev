@@ -1,5 +1,10 @@
 use super::*;
 
+const SLOW_JOBS_LIST_WARN_THRESHOLD: std::time::Duration = std::time::Duration::from_millis(250);
+const SLOW_JOBS_LIST_WARN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+static SLOW_JOBS_LIST_WARNED_AT: std::sync::OnceLock<std::sync::Mutex<Option<std::time::Instant>>> =
+    std::sync::OnceLock::new();
+
 pub(super) async fn list_jobs(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -42,7 +47,8 @@ pub(super) async fn list_jobs(
         })
         .await
         .map_err(map_internal)?;
-    if started_at.elapsed() >= std::time::Duration::from_millis(250) {
+    let elapsed = started_at.elapsed();
+    if should_emit_slow_jobs_list_warning(elapsed, std::time::Instant::now()) {
         tracing::warn!(
             returned = page.jobs.len(),
             limit,
@@ -51,7 +57,7 @@ pub(super) async fn list_jobs(
             has_status_filter = query.status.is_some(),
             has_stack_id_filter = query.stack_id.is_some(),
             has_service_id_filter = query.service_id.is_some(),
-            duration_ms = started_at.elapsed().as_millis() as u64,
+            duration_ms = elapsed.as_millis() as u64,
             "slow jobs list query"
         );
     }
@@ -59,6 +65,36 @@ pub(super) async fn list_jobs(
         jobs: page.jobs.into_iter().map(|j| j.into_api()).collect(),
         next_cursor: page.next_cursor.map(encode_jobs_cursor),
     }))
+}
+
+fn should_emit_slow_jobs_list_warning(
+    elapsed: std::time::Duration,
+    now: std::time::Instant,
+) -> bool {
+    let warned_at = SLOW_JOBS_LIST_WARNED_AT.get_or_init(|| std::sync::Mutex::new(None));
+    should_emit_slow_jobs_list_warning_with_state(warned_at, elapsed, now)
+}
+
+fn should_emit_slow_jobs_list_warning_with_state(
+    warned_at: &std::sync::Mutex<Option<std::time::Instant>>,
+    elapsed: std::time::Duration,
+    now: std::time::Instant,
+) -> bool {
+    if elapsed < SLOW_JOBS_LIST_WARN_THRESHOLD {
+        return false;
+    }
+
+    let mut warned_at = warned_at
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if warned_at.is_some_and(|last_warned_at| {
+        now.saturating_duration_since(last_warned_at) < SLOW_JOBS_LIST_WARN_INTERVAL
+    }) {
+        return false;
+    }
+
+    *warned_at = Some(now);
+    true
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -104,6 +140,40 @@ fn decode_jobs_cursor(cursor: &str) -> Result<(String, String), ApiError> {
         return Err(ApiError::invalid_jobs_cursor());
     }
     Ok((value.created_at, value.id))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use super::*;
+
+    #[test]
+    fn slow_jobs_list_warning_is_thresholded_and_rate_limited() {
+        let now = Instant::now();
+        let warned_at = std::sync::Mutex::new(None);
+
+        assert!(!should_emit_slow_jobs_list_warning_with_state(
+            &warned_at,
+            SLOW_JOBS_LIST_WARN_THRESHOLD.saturating_sub(std::time::Duration::from_millis(1)),
+            now,
+        ));
+        assert!(should_emit_slow_jobs_list_warning_with_state(
+            &warned_at,
+            SLOW_JOBS_LIST_WARN_THRESHOLD,
+            now,
+        ));
+        assert!(!should_emit_slow_jobs_list_warning_with_state(
+            &warned_at,
+            SLOW_JOBS_LIST_WARN_THRESHOLD,
+            now + std::time::Duration::from_secs(59),
+        ));
+        assert!(should_emit_slow_jobs_list_warning_with_state(
+            &warned_at,
+            SLOW_JOBS_LIST_WARN_THRESHOLD,
+            now + SLOW_JOBS_LIST_WARN_INTERVAL,
+        ));
+    }
 }
 
 pub(super) async fn get_job(

@@ -764,13 +764,9 @@ fn log_partial_collection_failures(compose_project: &str, collection: &ResourceC
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     for failure in &collection.failures {
         let key = format!("{compose_project}:{}", failure.container_id);
-        if warnings
-            .get(&key)
-            .is_some_and(|last| now.saturating_duration_since(*last) < PARTIAL_SAMPLE_WARN_INTERVAL)
-        {
+        if !should_emit_partial_sample_warning(&mut warnings, key, now) {
             continue;
         }
-        warnings.insert(key, now);
         tracing::warn!(
             compose_project,
             service = %failure.service_name,
@@ -781,6 +777,19 @@ fn log_partial_collection_failures(compose_project: &str, collection: &ResourceC
             "resource monitor partial Docker stats collection failure"
         );
     }
+}
+
+fn should_emit_partial_sample_warning(
+    warnings: &mut BTreeMap<String, Instant>,
+    key: String,
+    now: Instant,
+) -> bool {
+    warnings.retain(|_, last| now.saturating_duration_since(*last) < PARTIAL_SAMPLE_WARN_INTERVAL);
+    if warnings.contains_key(&key) {
+        return false;
+    }
+    warnings.insert(key, now);
+    true
 }
 
 #[cfg(test)]
@@ -1083,6 +1092,30 @@ mod tests {
         api::types::{ComposeConfig, StackBackupConfig},
         models::{ServiceSeed, StackRecord},
     };
+
+    #[test]
+    fn partial_sample_warning_state_expires_recreated_container_ids() {
+        let now = Instant::now();
+        let mut warnings = BTreeMap::new();
+
+        assert!(should_emit_partial_sample_warning(
+            &mut warnings,
+            "project:container-old".to_string(),
+            now,
+        ));
+        assert!(!should_emit_partial_sample_warning(
+            &mut warnings,
+            "project:container-old".to_string(),
+            now + Duration::from_secs(1),
+        ));
+        assert!(should_emit_partial_sample_warning(
+            &mut warnings,
+            "project:container-new".to_string(),
+            now + PARTIAL_SAMPLE_WARN_INTERVAL,
+        ));
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings.contains_key("project:container-new"));
+    }
 
     #[derive(Clone)]
     struct TestProjectBehavior {
