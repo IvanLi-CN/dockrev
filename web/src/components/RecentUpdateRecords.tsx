@@ -1,6 +1,6 @@
 import type { JobListItem, ServiceBackupRecordItem, StackDetail } from '../api'
 import { ChevronLeft, ChevronRight, RotateCcw, ScrollText } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { openGitHubReleaseDrawer } from '../releaseDrawer'
 import { navigate } from '../routes'
 import { IconButton, Mono, Pill } from '../ui'
@@ -157,9 +157,12 @@ export function ServiceOperationHistory(props: {
   rollbackSourceJobId?: string | null
   rollbackBusy?: boolean
   onRollback?: () => void
+  page: number
+  hasPrevious: boolean
+  hasNext: boolean
+  onPrevious: () => void
+  onNext: () => void
 }) {
-  const [requestedPage, setRequestedPage] = useState(1)
-  const page = paginateServiceOperationJobs(props.jobs, requestedPage)
   const backupSummaryByJobId = useMemo(() => summarizeServiceOperationBackups(props.backupRecords), [props.backupRecords])
 
   return (
@@ -173,7 +176,7 @@ export function ServiceOperationHistory(props: {
           <span role="columnheader">时间</span>
           <span role="columnheader">操作</span>
         </div>
-        {page.jobs.map((job) => {
+        {props.jobs.map((job) => {
           const reason = resultReasonSummary(job)
           const releaseVersion = releaseVersionForServiceOperation(job, props.serviceId)
           const backupSummary = backupSummaryByJobId.get(job.id) ?? { state: 'empty' as const }
@@ -275,24 +278,24 @@ export function ServiceOperationHistory(props: {
         })}
         {props.jobs.length === 0 ? <div className="serviceOperationHistoryEmpty">当前服务暂无更新或回滚记录。</div> : null}
       </div>
-      {props.jobs.length > SERVICE_OPERATION_HISTORY_PAGE_SIZE ? (
+      {props.hasPrevious || props.hasNext ? (
         <nav className="serviceOperationHistoryPager" aria-label="更新记录分页">
           <span className="serviceOperationHistoryPagerStatus" aria-live="polite">
-            第 {page.page} / {page.totalPages} 页，共 {props.jobs.length} 条
+            第 {props.page} 页，每页 {SERVICE_OPERATION_HISTORY_PAGE_SIZE} 条
           </span>
           <div className="serviceOperationHistoryPagerActions">
             <IconButton
-              disabled={page.page <= 1}
+              disabled={!props.hasPrevious}
               hint="上一页"
-              onClick={() => setRequestedPage((value) => Math.max(1, value - 1))}
+              onClick={props.onPrevious}
               title="上一页"
             >
               <ChevronLeft aria-hidden="true" size={16} strokeWidth={2} />
             </IconButton>
             <IconButton
-              disabled={page.page >= page.totalPages}
+              disabled={!props.hasNext}
               hint="下一页"
-              onClick={() => setRequestedPage((value) => Math.min(page.totalPages, value + 1))}
+              onClick={props.onNext}
               title="下一页"
             >
               <ChevronRight aria-hidden="true" size={16} strokeWidth={2} />

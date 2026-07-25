@@ -78,7 +78,7 @@ export type ServiceBackupRecordAsset = {
 
 export type ServiceBackupRecordItem = {
   backupId: string
-  jobId: string
+  jobId?: string | null
   scope: 'service' | 'stack' | 'all'
   status: string
   createdAt: string
@@ -557,6 +557,20 @@ export type JobListItem = {
   summary: unknown
   progress?: JobProgress | null
   resultReason?: JobResultReason | null
+}
+
+export type ListJobsInput = {
+  cursor?: string | null
+  limit?: number
+  type?: string | string[] | null
+  status?: string | null
+  stackId?: string | null
+  serviceId?: string | null
+}
+
+export type ListJobsResponse = {
+  jobs: JobListItem[]
+  nextCursor?: string | null
 }
 
 export type JobResultReason = {

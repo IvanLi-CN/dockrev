@@ -4,6 +4,22 @@ use std::time::{Duration, Instant};
 const SLOW_JOB_CLAIM_WARN_THRESHOLD: Duration = Duration::from_millis(25);
 const SLOW_JOB_CLAIM_WARN_INTERVAL: Duration = Duration::from_secs(60);
 
+#[derive(Clone, Debug, Default)]
+pub struct JobListFilters {
+    pub types: Vec<String>,
+    pub status: Option<String>,
+    pub stack_id: Option<String>,
+    pub service_id: Option<String>,
+    pub cursor: Option<(String, String)>,
+    pub limit: u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct JobListPage {
+    pub jobs: Vec<JobListItem>,
+    pub next_cursor: Option<(String, String)>,
+}
+
 const CLAIM_NEXT_QUEUED_JOB_SQL: &str = r#"
 SELECT
   id,
@@ -53,44 +69,22 @@ fn should_emit_slow_job_claim_warning(
 }
 
 impl Db {
+    #[cfg(test)]
+    pub async fn list_jobs(&self) -> anyhow::Result<Vec<JobListItem>> {
+        Ok(self
+            .list_jobs_page(JobListFilters {
+                limit: 2_000,
+                ..Default::default()
+            })
+            .await?
+            .jobs)
+    }
+
     pub async fn insert_job(&self, job: JobListItem) -> anyhow::Result<()> {
         self.call(move |conn| {
-            conn.execute(
-                r#"
-INSERT INTO jobs (
-  id,
-  type,
-  scope,
-  stack_id,
-  service_id,
-  status,
-  allow_arch_mismatch,
-  backup_mode,
-  created_by,
-  reason,
-  created_at,
-  started_at,
-  finished_at,
-  summary_json
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
-"#,
-                params![
-                    job.id,
-                    job.r#type.as_str(),
-                    job.scope.as_str(),
-                    job.stack_id,
-                    job.service_id,
-                    job.status,
-                    job.allow_arch_mismatch as i64,
-                    job.backup_mode,
-                    job.created_by,
-                    job.reason,
-                    job.created_at,
-                    job.started_at,
-                    job.finished_at,
-                    serde_json::to_string(&job.summary_json)?
-                ],
-            )?;
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            insert_job_tx(&tx, &job)?;
+            tx.commit()?;
             Ok(())
         })
         .await
@@ -338,7 +332,8 @@ WHERE id = ?1
             }
 
             let summary_json_str = serde_json::to_string(&summary_json)?;
-            conn.execute(
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute(
                 r#"
 UPDATE jobs
 SET status = ?2, finished_at = ?3, summary_json = ?4
@@ -346,18 +341,33 @@ WHERE id = ?1
 "#,
                 params![job_id, status, finished_at, summary_json_str],
             )?;
+            let direct_service_id = tx
+                .query_row(
+                    "SELECT service_id FROM jobs WHERE id = ?1",
+                    params![&job_id],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .optional()?
+                .flatten();
+            replace_job_service_targets_tx(
+                &tx,
+                &job_id,
+                direct_service_id.as_deref(),
+                &summary_json,
+            )?;
             if status == "success"
                 && previous
                     .as_ref()
                     .is_some_and(|(job_type, _)| job_type == "check")
             {
                 new_version_discoveries::record_new_version_discoveries_from_summary_conn(
-                    conn,
+                    &tx,
                     &job_id,
                     &finished_at,
                     &summary_json,
                 )?;
             }
+            tx.commit()?;
             Ok(())
         })
         .await
@@ -454,63 +464,110 @@ WHERE id = ?1
         .context("set job progress")
     }
 
-    pub async fn list_jobs(&self) -> anyhow::Result<Vec<JobListItem>> {
-        self.call(|conn| {
-            let mut stmt = conn.prepare(
+    pub async fn list_jobs_page(&self, filters: JobListFilters) -> anyhow::Result<JobListPage> {
+        let limit = filters.limit.clamp(1, 2_000);
+        self.call(move |conn| {
+            let mut where_clauses = vec!["1 = 1".to_string()];
+            let mut values: Vec<rusqlite::types::Value> = Vec::new();
+            if !filters.types.is_empty() {
+                let placeholders = std::iter::repeat_n("?", filters.types.len())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                where_clauses.push(format!("j.type IN ({placeholders})"));
+                values.extend(filters.types.iter().cloned().map(rusqlite::types::Value::from));
+            }
+            if let Some(status) = filters.status {
+                where_clauses.push("j.status = ?".to_string());
+                values.push(status.into());
+            }
+            if let Some(stack_id) = filters.stack_id {
+                where_clauses.push(
+                    "(j.stack_id = ? OR EXISTS (SELECT 1 FROM job_service_targets jst JOIN services target_service ON target_service.id = jst.service_id WHERE jst.job_id = j.id AND target_service.stack_id = ?))".to_string(),
+                );
+                values.push(stack_id.clone().into());
+                values.push(stack_id.into());
+            }
+            if let Some(service_id) = filters.service_id {
+                where_clauses.push(
+                    "EXISTS (SELECT 1 FROM job_service_targets jst WHERE jst.job_id = j.id AND jst.service_id = ?)".to_string(),
+                );
+                values.push(service_id.into());
+            }
+            if let Some((created_at, id)) = filters.cursor {
+                where_clauses.push("(j.created_at < ? OR (j.created_at = ? AND j.id < ?))".to_string());
+                values.push(created_at.clone().into());
+                values.push(created_at.into());
+                values.push(id.into());
+            }
+            values.push(((limit + 1) as i64).into());
+            let sql = format!(
                 r#"
 SELECT
-  id,
-  type,
-  scope,
-  stack_id,
-  service_id,
-  status,
-  created_by,
-  reason,
-  created_at,
-  started_at,
-  finished_at,
-  allow_arch_mismatch,
-  backup_mode,
-  summary_json
-FROM jobs
-ORDER BY created_at DESC
-LIMIT 2000
+  j.id,
+  j.type,
+  j.scope,
+  j.stack_id,
+  j.service_id,
+  j.status,
+  j.created_by,
+  j.reason,
+  j.created_at,
+  j.started_at,
+  j.finished_at,
+  j.allow_arch_mismatch,
+  j.backup_mode,
+  j.summary_json
+FROM jobs j
+WHERE {}
+ORDER BY j.created_at DESC, j.id DESC
+LIMIT ?
 "#,
-            )?;
-
-            let rows = stmt.query_map([], |row| {
-                let summary_json: String = row.get(13)?;
-                let summary: serde_json::Value =
-                    serde_json::from_str(&summary_json).map_err(|e| {
-                        rusqlite::Error::FromSqlConversionFailure(
-                            0,
-                            rusqlite::types::Type::Text,
-                            Box::new(e),
-                        )
-                    })?;
-                Ok(JobListItem {
-                    id: row.get(0)?,
-                    r#type: JobType::from_str(&row.get::<_, String>(1)?),
-                    scope: JobScope::from_str(&row.get::<_, String>(2)?),
-                    stack_id: row.get(3)?,
-                    service_id: row.get(4)?,
-                    status: row.get(5)?,
-                    created_by: row.get(6)?,
-                    reason: row.get(7)?,
-                    created_at: row.get(8)?,
-                    started_at: row.get(9)?,
-                    finished_at: row.get(10)?,
-                    allow_arch_mismatch: row.get::<_, i64>(11)? != 0,
-                    backup_mode: row.get(12)?,
-                    summary_json: summary,
-                })
-            })?;
-
-            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+                where_clauses.join(" AND ")
+            );
+            let params: Vec<&dyn rusqlite::ToSql> =
+                values.iter().map(|value| value as &dyn rusqlite::ToSql).collect();
+            let mut stmt = conn.prepare(&sql)?;
+            let mut jobs = stmt
+                .query_map(params.as_slice(), map_job_list_item_row)?
+                .collect::<Result<Vec<_>, _>>()?;
+            let next_cursor = if jobs.len() > limit as usize {
+                jobs.truncate(limit as usize);
+                jobs.last()
+                    .map(|job| (job.created_at.clone(), job.id.clone()))
+            } else {
+                None
+            };
+            Ok(JobListPage { jobs, next_cursor })
         })
         .await
-        .context("list jobs")
+        .context("list jobs page")
+    }
+
+    pub async fn purge_expired_terminal_jobs(
+        &self,
+        older_than: &str,
+        batch_size: u32,
+    ) -> anyhow::Result<u64> {
+        let older_than = older_than.to_string();
+        let batch_size = batch_size.clamp(1, 10_000) as i64;
+        self.call(move |conn| {
+            Ok(conn.execute(
+                r#"
+DELETE FROM jobs
+WHERE id IN (
+  SELECT id
+  FROM jobs
+  WHERE status IN ('success', 'failed', 'rolled_back')
+    AND COALESCE(finished_at, created_at) < ?1
+  ORDER BY COALESCE(finished_at, created_at) ASC, id ASC
+  LIMIT ?2
+)
+"#,
+                params![older_than, batch_size],
+            )? as u64)
+        })
+        .await
+        .context("purge expired terminal jobs")
     }
 
     pub async fn list_jobs_by_type_and_statuses(

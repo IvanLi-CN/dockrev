@@ -6,7 +6,7 @@ import {
   deleteIgnore,
   getServiceResourceUsageHistory,
   inferServiceRepoLink,
-  listJobs,
+  listJobsPage,
   newJobsEventsSource,
   putServiceBackupTargets,
   putServiceSettings,
@@ -191,6 +191,9 @@ export function ServiceDetailPage(props: {
     dangerousActions,
   } = useServiceDetailPageState(props);
   const [jobs, setJobs] = useState<JobListItem[]>([]);
+  const [historyCursor, setHistoryCursor] = useState<string | null>(null);
+  const [historyNextCursor, setHistoryNextCursor] = useState<string | null>(null);
+  const [historyCursorStack, setHistoryCursorStack] = useState<(string | null)[]>([]);
   const [monitoringSnapshot, setMonitoringSnapshot] = useState<ServiceResourceSnapshot | null>(null);
   const [snapshotPayload, setSnapshotPayload] = useState<ServiceDetailSnapshotPayload | null>(null);
   const [, setSnapshotStatus] = useState<"missing" | "fresh" | "stale" | "expired" | "unsupported">("missing");
@@ -205,13 +208,15 @@ export function ServiceDetailPage(props: {
   const [serviceSettingsDraft, setServiceSettingsDraft] = useState<ServiceSettings | null>(null);
   const [serviceBackupTargetsDraft, setServiceBackupTargetsDraft] = useState<BackupTargetsDraft>(() => createBackupTargetsDraft(null));
 
-  const refreshRecentJobs = useCallback(async (activateLive = false) => {
-    const nextJobs = await listJobs();
-    setJobs(nextJobs);
+  const refreshRecentJobs = useCallback(async (activateLive = false, cursor: string | null = historyCursor) => {
+    const page = await listJobsPage({ serviceId: props.serviceId, type: ["update", "rollback"], limit: 20, cursor });
+    setJobs(page.jobs);
+    setHistoryCursor(cursor);
+    setHistoryNextCursor(page.nextCursor ?? null);
     if (!activateLive) return;
     setSnapshotActive(false);
     setSnapshotAnchorFetchedAt(null);
-  }, []);
+  }, [historyCursor, props.serviceId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -232,7 +237,10 @@ export function ServiceDetailPage(props: {
   }, [snapshotKey]);
 
   useEffect(() => {
-    void refreshRecentJobs().catch(() => undefined);
+    setHistoryCursor(null);
+    setHistoryNextCursor(null);
+    setHistoryCursorStack([]);
+    void refreshRecentJobs(false, null).catch(() => undefined);
   }, [props.serviceId, refreshRecentJobs]);
 
   useEffect(() => {
@@ -488,6 +496,19 @@ export function ServiceDetailPage(props: {
         onRollback={readonlyUi ? undefined : requestRollback}
         rollbackBusy={busy || rollbackTargetRefreshing}
         rollbackSourceJobId={readonlyUi || !rollbackTarget?.available ? null : rollbackTarget.sourceUpdateJobId}
+        page={historyCursorStack.length + 1}
+        hasPrevious={historyCursorStack.length > 0}
+        hasNext={Boolean(historyNextCursor)}
+        onPrevious={() => {
+          const previous = historyCursorStack[historyCursorStack.length - 1] ?? null;
+          setHistoryCursorStack((stack) => stack.slice(0, -1));
+          void refreshRecentJobs(false, previous);
+        }}
+        onNext={() => {
+          if (!historyNextCursor) return;
+          setHistoryCursorStack((stack) => [...stack, historyCursor]);
+          void refreshRecentJobs(false, historyNextCursor);
+        }}
       />
     </div>
   );

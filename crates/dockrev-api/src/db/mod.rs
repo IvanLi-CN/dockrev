@@ -25,6 +25,8 @@ mod stacks;
 mod stacks_backup_targets;
 mod tag_history;
 
+pub(crate) use jobs::JobListFilters;
+
 pub(crate) use new_version_discoveries::{
     candidate_tag_allows_settled_fallback, canonical_candidate_identity_tag,
     canonical_visible_version_tag, collect_new_version_discovery_candidates_from_rows,
@@ -49,14 +51,14 @@ use crate::api::types::{
 pub struct BackupCleanupItem {
     pub id: String,
     pub stack_id: String,
-    pub job_id: String,
+    pub job_id: Option<String>,
     pub artifact_path: String,
 }
 
 #[derive(Clone, Debug)]
 pub struct ServiceBackupRecordRow {
     pub backup_id: String,
-    pub job_id: String,
+    pub job_id: Option<String>,
     pub scope: String,
     pub status: String,
     pub created_at: String,
@@ -689,6 +691,42 @@ INSERT INTO jobs (
             serde_json::to_string(&job.summary_json)?
         ],
     )?;
+    replace_job_service_targets_tx(tx, &job.id, job.service_id.as_deref(), &job.summary_json)?;
+    Ok(())
+}
+
+fn replace_job_service_targets_tx(
+    tx: &rusqlite::Transaction<'_>,
+    job_id: &str,
+    direct_service_id: Option<&str>,
+    summary: &serde_json::Value,
+) -> anyhow::Result<()> {
+    let mut service_ids = BTreeSet::new();
+    if let Some(service_id) = direct_service_id.filter(|value| !value.is_empty()) {
+        service_ids.insert(service_id.to_string());
+    }
+    if let Some(service_id) = summary.get("serviceId").and_then(serde_json::Value::as_str) {
+        service_ids.insert(service_id.to_string());
+    }
+    if let Some(targets) = summary.get("targets").and_then(serde_json::Value::as_array) {
+        for target in targets {
+            if let Some(service_id) = target.get("serviceId").and_then(serde_json::Value::as_str) {
+                service_ids.insert(service_id.to_string());
+            }
+        }
+    }
+
+    tx.execute(
+        "DELETE FROM job_service_targets WHERE job_id = ?1",
+        params![job_id],
+    )?;
+    for service_id in service_ids {
+        // Historical summaries can mention a service that has since been archived or removed.
+        tx.execute(
+            "INSERT OR IGNORE INTO job_service_targets (job_id, service_id) SELECT ?1, id FROM services WHERE id = ?2",
+            params![job_id, service_id],
+        )?;
+    }
     Ok(())
 }
 

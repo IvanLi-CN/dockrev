@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   getGitHubPackagesWebhookOverview,
   getVersionInferenceOverview,
-  listJobs,
+  listJobsPage,
   newJobsEventsSource,
   type JobListItem,
 } from '../api'
@@ -251,6 +251,9 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
   const [jobsLoaded, setJobsLoaded] = useState(false)
   const [jobsLiveLoaded, setJobsLiveLoaded] = useState(false)
   const [filter, setFilter] = useState<Filter>('all')
+  const [currentCursor, setCurrentCursor] = useState<string | null>(null)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [cursorStack, setCursorStack] = useState<(string | null)[]>([])
   const [error, setError] = useState<string | null>(null)
   const [versionInferenceSummary, setVersionInferenceSummary] = useState<VersionInferenceSummary>(
     DEFAULT_VERSION_INFERENCE_SUMMARY,
@@ -295,20 +298,26 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
     }
   }, [])
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (cursor: string | null = currentCursor) => {
     const requestId = ++refreshRequestIdRef.current
     setError(null)
     try {
-      const nextJobs = await listJobs()
+      const page = await listJobsPage({
+        cursor,
+        limit: 100,
+        status: filter === 'all' ? null : filter,
+      })
       if (requestId !== refreshRequestIdRef.current) return
-      setJobs(nextJobs)
+      setJobs(page.jobs)
+      setCurrentCursor(cursor)
+      setNextCursor(page.nextCursor ?? null)
       setJobsLoaded(true)
       setJobsLiveLoaded(true)
     } catch (e: unknown) {
       if (requestId !== refreshRequestIdRef.current) return
       throw e
     }
-  }, [])
+  }, [currentCursor, filter])
 
   useEffect(() => {
     void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
@@ -524,10 +533,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
     versionInferenceSummary,
   ])
 
-  const filtered = useMemo(() => {
-    if (filter === 'all') return jobs
-    return jobs.filter((j) => j.status === filter)
-  }, [jobs, filter])
+  const filtered = jobs
 
   return (
     <div className="page">
@@ -567,7 +573,13 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
               <button
                 key={k}
                 className={filter === k ? 'chip chipActive' : 'chip'}
-                onClick={() => setFilter(k)}
+                onClick={() => {
+                  if (k === filter) return
+                  setFilter(k)
+                  setCurrentCursor(null)
+                  setNextCursor(null)
+                  setCursorStack([])
+                }}
                 type="button"
               >
                 {k === 'all' ? '全部' : k}
@@ -766,6 +778,33 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
             )
           })}
           {filtered.length === 0 ? <div className="muted">暂无任务</div> : null}
+        </div>
+        <div className="sectionRow" style={{ marginTop: 12 }}>
+          <div className="muted">每页 100 条</div>
+          <div className="chipRow" style={{ marginLeft: 'auto' }}>
+            <Button
+              variant="ghost"
+              disabled={cursorStack.length === 0 || busy}
+              onClick={() => {
+                const previous = cursorStack[cursorStack.length - 1] ?? null
+                setCursorStack((stack) => stack.slice(0, -1))
+                void refresh(previous)
+              }}
+            >
+              上一页
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={!nextCursor || busy}
+              onClick={() => {
+                if (!nextCursor) return
+                setCursorStack((stack) => [...stack, currentCursor])
+                void refresh(nextCursor)
+              }}
+            >
+              下一页
+            </Button>
+          </div>
         </div>
 
         {error ? <div className="error">{error}</div> : null}

@@ -170,6 +170,7 @@ PR: include
 - 2026-04-28: 修正 Overview 边界：服务详情继续承载图表/SSE，Overview 仅展示聚合最新资源摘要并允许监控关闭时非阻塞降级。
 - 2026-07-15: 历史采样 contract 扩展为 `5/10/30/60/300` 且默认 `5s`，共享窗口 contract 切到 `3m/1h/24h`，前台实时 SSE 继续保持 `1s`；资源监控采集路径切换为直接读取 Docker Engine API（默认 socket，兼容 `DOCKER_HOST`），并移除固定 `/v1.24` 前缀以兼容现代 Docker Engine 的 `MinAPIVersion`。
 - 2026-07-20: 历史采样改为“每个 compose project 独立固定 cadence + single-flight + skip overdue”，慢 project 不再拖慢整站；settings 与监控页文案同步明确 `sampleIntervalSeconds` 的真实语义，以及页面样本数混入实时 SSE 点的现状。
+- 2026-07-25: Docker stats 的 nullable block-I/O 字段按空集合兼容；单容器失败改为保留同项目成功样本并限频记录结构化诊断。原始资源样本保留期收敛为 7 天，启动后及每小时按批清理，不自动执行 `VACUUM`。
 
 ## 参考（References）
 

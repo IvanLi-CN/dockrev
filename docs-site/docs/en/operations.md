@@ -51,6 +51,8 @@ Back up at least:
 - Keep job logs for discovery/check/update
 - Monitor spikes in `401`, `409`, `500`
 - Watch webhook delivery dedup behavior for GHCR integration
+- Raw resource samples are retained for 7 days; terminal jobs and their logs for 30 days. Startup and hourly bounded GC perform deletion without automatically running SQLite `VACUUM`.
+- Reclaim SQLite file pages with `VACUUM` only in an approved maintenance window after confirming backups and acceptable service interruption.
 
 ## Shared testbox regression (optional)
 

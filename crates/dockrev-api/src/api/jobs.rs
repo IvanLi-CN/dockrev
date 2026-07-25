@@ -3,12 +3,107 @@ use super::*;
 pub(super) async fn list_jobs(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    Query(query): Query<ListJobsQuery>,
 ) -> Result<Json<ListJobsResponse>, ApiError> {
     let _user = require_user(&state, &headers).await?;
-    let jobs = state.db.list_jobs().await.map_err(map_internal)?;
+    let limit = query.limit.unwrap_or(100);
+    if !(1..=200).contains(&limit) {
+        return Err(ApiError::invalid_argument(
+            "limit must be between 1 and 200",
+        ));
+    }
+    let cursor = query
+        .cursor
+        .as_deref()
+        .map(decode_jobs_cursor)
+        .transpose()?;
+    let types = query
+        .r#type
+        .as_deref()
+        .map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let started_at = std::time::Instant::now();
+    let page = state
+        .db
+        .list_jobs_page(crate::db::JobListFilters {
+            types,
+            status: query.status.clone().filter(|value| !value.is_empty()),
+            stack_id: query.stack_id.clone().filter(|value| !value.is_empty()),
+            service_id: query.service_id.clone().filter(|value| !value.is_empty()),
+            cursor,
+            limit,
+        })
+        .await
+        .map_err(map_internal)?;
+    if started_at.elapsed() >= std::time::Duration::from_millis(250) {
+        tracing::warn!(
+            returned = page.jobs.len(),
+            limit,
+            has_next = page.next_cursor.is_some(),
+            has_type_filter = query.r#type.is_some(),
+            has_status_filter = query.status.is_some(),
+            has_stack_id_filter = query.stack_id.is_some(),
+            has_service_id_filter = query.service_id.is_some(),
+            duration_ms = started_at.elapsed().as_millis() as u64,
+            "slow jobs list query"
+        );
+    }
     Ok(Json(ListJobsResponse {
-        jobs: jobs.into_iter().map(|j| j.into_api()).collect(),
+        jobs: page.jobs.into_iter().map(|j| j.into_api()).collect(),
+        next_cursor: page.next_cursor.map(encode_jobs_cursor),
     }))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ListJobsQuery {
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    limit: Option<u32>,
+    #[serde(default)]
+    r#type: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    stack_id: Option<String>,
+    #[serde(default)]
+    service_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JobsCursor {
+    created_at: String,
+    id: String,
+}
+
+fn encode_jobs_cursor(cursor: (String, String)) -> String {
+    let value = JobsCursor {
+        created_at: cursor.0,
+        id: cursor.1,
+    };
+    let bytes = serde_json::to_vec(&value).expect("jobs cursor serializes");
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+}
+
+fn decode_jobs_cursor(cursor: &str) -> Result<(String, String), ApiError> {
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(cursor)
+        .map_err(|_| ApiError::invalid_jobs_cursor())?;
+    let value: JobsCursor =
+        serde_json::from_slice(&bytes).map_err(|_| ApiError::invalid_jobs_cursor())?;
+    if value.created_at.is_empty() || value.id.is_empty() {
+        return Err(ApiError::invalid_jobs_cursor());
+    }
+    Ok((value.created_at, value.id))
 }
 
 pub(super) async fn get_job(

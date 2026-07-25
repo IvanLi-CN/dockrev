@@ -124,7 +124,23 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
   if (method === 'GET' && urlPath === '/api/jobs') {
     const debug = globalThis.__DOCKREV_MOCK_DEBUG__ ?? (globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug())
     debug.jobsListCalls += 1
-    return json({ jobs: f.jobs })
+    const limit = Math.min(200, Math.max(1, Number(url?.searchParams.get('limit') ?? '100') || 100))
+    const types = new Set((url?.searchParams.get('type') ?? '').split(',').filter(Boolean))
+    const status = url?.searchParams.get('status') ?? null
+    const serviceId = url?.searchParams.get('serviceId') ?? null
+    const stackId = url?.searchParams.get('stackId') ?? null
+    const cursor = url?.searchParams.get('cursor') ?? ''
+    const start = cursor.startsWith('mock:') ? Number(cursor.slice(5)) || 0 : 0
+    const filtered = f.jobs.filter((job) => {
+      if (types.size > 0 && !types.has(job.type)) return false
+      if (status && job.status !== status) return false
+      if (stackId && job.stackId !== stackId) return false
+      if (serviceId && job.serviceId !== serviceId) return false
+      return true
+    })
+    const jobs = filtered.slice(start, start + limit)
+    const nextCursor = start + limit < filtered.length ? `mock:${start + limit}` : null
+    return json({ jobs, nextCursor })
   }
 
   if (method === 'GET' && urlPath.startsWith('/api/jobs/')) {

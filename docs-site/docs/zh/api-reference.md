@@ -166,6 +166,10 @@ curl -X POST \
 
 ### 查询 supervisor 状态
 
+### 分页查询任务
+
+`GET /api/jobs` 支持不透明 `cursor`、`limit`（默认 `100`，最大 `200`）、`type`（逗号分隔）、`status`、`stackId` 与 `serviceId`。响应按 `createdAt DESC, id DESC` 稳定排序，并在有下一页时返回 `nextCursor`；无效游标返回 `400 invalid_jobs_cursor`。
+
 ```bash
 curl -H 'X-Forwarded-User: ops' \
   http://127.0.0.1:50883/supervisor/self-upgrade

@@ -165,6 +165,10 @@ curl -X POST \
 
 ### Read supervisor state
 
+### List jobs with cursor pagination
+
+`GET /api/jobs` accepts an opaque `cursor`, `limit` (default `100`, maximum `200`), comma-separated `type`, `status`, `stackId`, and `serviceId`. Results are stably ordered by `createdAt DESC, id DESC` and include `nextCursor` when another page exists. Invalid cursors return `400 invalid_jobs_cursor`.
+
 ```bash
 curl -H 'X-Forwarded-User: ops' \
   http://127.0.0.1:50883/supervisor/self-upgrade
