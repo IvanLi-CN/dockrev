@@ -164,6 +164,7 @@ export function ServiceOperationHistory(props: {
   page: number
   hasPrevious: boolean
   hasNext: boolean
+  paginationDisabled?: boolean
   onPrevious: () => void
   onNext: () => void
 }) {
@@ -289,7 +290,7 @@ export function ServiceOperationHistory(props: {
           </span>
           <div className="serviceOperationHistoryPagerActions">
             <IconButton
-              disabled={!props.hasPrevious}
+              disabled={!props.hasPrevious || props.paginationDisabled}
               hint="上一页"
               onClick={props.onPrevious}
               title="上一页"
@@ -297,7 +298,7 @@ export function ServiceOperationHistory(props: {
               <ChevronLeft aria-hidden="true" size={16} strokeWidth={2} />
             </IconButton>
             <IconButton
-              disabled={!props.hasNext}
+              disabled={!props.hasNext || props.paginationDisabled}
               hint="下一页"
               onClick={props.onNext}
               title="下一页"

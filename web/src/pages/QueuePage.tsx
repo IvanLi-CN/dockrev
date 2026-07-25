@@ -172,6 +172,10 @@ const QUEUE_SNAPSHOT_STALE_MS = 60_000
 
 type QueueSnapshotPayload = {
   jobs: JobListItem[]
+  filter?: Filter
+  currentCursor?: string | null
+  nextCursor?: string | null
+  cursorStack?: (string | null)[]
   versionInferenceSummary: VersionInferenceSummary
   versionInferenceLoaded: boolean
   ghcrSummary: GhcrWebhookSummary
@@ -289,6 +293,14 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
       if (snapshot.status !== 'fresh') return
       setJobs(snapshot.record.payload.jobs)
       setJobsLoaded(true)
+      const snapshotFilter = snapshot.record.payload.filter ?? 'all'
+      const snapshotCursor = snapshot.record.payload.currentCursor ?? null
+      filterRef.current = snapshotFilter
+      currentCursorRef.current = snapshotCursor
+      setFilter(snapshotFilter)
+      setCurrentCursor(snapshotCursor)
+      setNextCursor(snapshot.record.payload.nextCursor ?? null)
+      setCursorStack(snapshot.record.payload.cursorStack ?? [])
       setVersionInferenceSummary(snapshot.record.payload.versionInferenceSummary)
       setVersionInferenceLoaded(snapshot.record.payload.versionInferenceLoaded)
       setGhcrSummary(snapshot.record.payload.ghcrSummary)
@@ -517,6 +529,10 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
     if (!jobsLoaded && !versionInferenceLoaded && !ghcrLoaded) return
     const payload: QueueSnapshotPayload = {
       jobs,
+      filter,
+      currentCursor,
+      nextCursor,
+      cursorStack,
       versionInferenceSummary,
       versionInferenceLoaded,
       ghcrSummary,
@@ -529,9 +545,13 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
   }, [
     ghcrLoaded,
     ghcrSummary,
+    currentCursor,
+    cursorStack,
+    filter,
     jobs,
     jobsLoaded,
     snapshotAnchorFetchedAt,
+    nextCursor,
     versionInferenceLoaded,
     versionInferenceSummary,
   ])
@@ -790,7 +810,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
           <div className="chipRow" style={{ marginLeft: 'auto' }}>
             <Button
               variant="ghost"
-              disabled={cursorStack.length === 0 || busy}
+              disabled={cursorStack.length === 0 || busy || !isOnline}
               onClick={() => {
                 const previous = cursorStack[cursorStack.length - 1] ?? null
                 setCursorStack((stack) => stack.slice(0, -1))
@@ -801,7 +821,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
             </Button>
             <Button
               variant="ghost"
-              disabled={!nextCursor || busy}
+              disabled={!nextCursor || busy || !isOnline}
               onClick={() => {
                 if (!nextCursor) return
                 setCursorStack((stack) => [...stack, currentCursor])

@@ -61,6 +61,9 @@ const SERVICE_DETAIL_MONITORING_WINDOW: ServiceResourceUsageWindow = "1h";
 type ServiceDetailSnapshotPayload = {
   stack: StackDetail;
   jobs: JobListItem[];
+  historyCursor?: string | null;
+  historyNextCursor?: string | null;
+  historyCursorStack?: (string | null)[];
   backupTargets: ServiceBackupTargetsResponse | null;
   backupRecords: ServiceBackupRecordItem[];
   monitoring: ServiceResourceSnapshot | null;
@@ -183,6 +186,11 @@ export function ServiceDetailPage(props: {
       setSnapshotAnchorFetchedAt(snapshot.record?.fetchedAt ?? null);
       if (snapshot.status !== "fresh") return;
       setSnapshotPayload(snapshot.record.payload);
+      const snapshotHistoryCursor = snapshot.record.payload.historyCursor ?? null;
+      historyCursorRef.current = snapshotHistoryCursor;
+      setHistoryCursor(snapshotHistoryCursor);
+      setHistoryNextCursor(snapshot.record.payload.historyNextCursor ?? null);
+      setHistoryCursorStack(snapshot.record.payload.historyCursorStack ?? []);
       setMonitoringSnapshot(snapshot.record.payload.monitoring ?? null);
       setSnapshotActive(true);
     })();
@@ -325,6 +333,9 @@ export function ServiceDetailPage(props: {
       {
         stack: sanitizeReadonlyStackSnapshot(stack),
         jobs,
+        historyCursor,
+        historyNextCursor,
+        historyCursorStack,
         backupTargets,
         backupRecords,
         monitoring: monitoringSnapshot,
@@ -334,7 +345,7 @@ export function ServiceDetailPage(props: {
         fetchedAt: snapshotAnchorFetchedAt ? Date.parse(snapshotAnchorFetchedAt) || undefined : undefined,
       },
     );
-  }, [backupRecords, backupTargets, jobs, monitoringSnapshot, service, snapshotAnchorFetchedAt, snapshotKey, stack]);
+  }, [backupRecords, backupTargets, historyCursor, historyCursorStack, historyNextCursor, jobs, monitoringSnapshot, service, snapshotAnchorFetchedAt, snapshotKey, stack]);
 
   const snapshotService = useMemo(() => snapshotPayload?.stack.services.find((item) => item.id === props.serviceId) ?? null, [props.serviceId, snapshotPayload]);
   const effectiveStack = stack ?? snapshotPayload?.stack ?? null;
@@ -465,6 +476,7 @@ export function ServiceDetailPage(props: {
         page={historyCursorStack.length + 1}
         hasPrevious={historyCursorStack.length > 0}
         hasNext={Boolean(historyNextCursor)}
+        paginationDisabled={readonlyUi}
         onPrevious={() => {
           const previous = historyCursorStack[historyCursorStack.length - 1] ?? null;
           setHistoryCursorStack((stack) => stack.slice(0, -1));
