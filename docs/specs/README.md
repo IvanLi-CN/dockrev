@@ -136,4 +136,4 @@
 | 2jhm2 | Dockrev：AppShell 左侧导航折叠与图标化 | 已实现 | `2jhm2-app-shell-sidebar-collapse-icons/SPEC.md` | 2026-07-04 | fast-track（desktop sidebar collapse + real nav icons + Storybook evidence） |
 | tgc9m | Dockrev：Telegram 内容相关动态卡片通知 | 已实现 | `tgc9m-telegram-dynamic-notification-cards/SPEC.md` | 2026-07-05 | fast-track（dynamic Telegram PNG cards + sendPhoto delivery + disabled text link previews + visual evidence） |
 | 7xt5t | Dockrev：Jobs 队列领取索引与慢告警 | active | `7xt5t-job-queue-claim-performance/SPEC.md` | 2026-07-24 | 已实现，待 PR；fast-track（复合索引 + 限频慢领取 WARN） |
-| 5xeat | Dockrev：任务历史保留期与游标分页 | 待实现 | `5xeat-job-history-retention-pagination/SPEC.md` | 2026-07-25 | fast-track（101 SQLite 增长治理 + Docker stats 部分成功 + jobs cursor） |
+| 5xeat | Dockrev：任务历史保留期与游标分页 | active | `5xeat-job-history-retention-pagination/SPEC.md` | 2026-07-25 | fast-track（101 SQLite 增长治理 + Docker stats 部分成功 + jobs cursor） |
