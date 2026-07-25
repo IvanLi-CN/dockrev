@@ -635,7 +635,19 @@ export async function listJobsPage(input: ListJobsInput = {}): Promise<ListJobsR
 }
 
 export async function listJobs(input: ListJobsInput = {}): Promise<JobListItem[]> {
-  return (await listJobsPage(input)).jobs
+  const jobs: JobListItem[] = []
+  let cursor = input.cursor ?? null
+
+  // Keep legacy callers bounded at the former API ceiling while specialized
+  // surfaces use listJobsPage for explicit cursor navigation.
+  while (jobs.length < 2000) {
+    const page = await listJobsPage({ ...input, cursor, limit: Math.min(input.limit ?? 200, 200) })
+    jobs.push(...page.jobs)
+    if (!page.nextCursor) break
+    cursor = page.nextCursor
+  }
+
+  return jobs.slice(0, 2000)
 }
 
 export async function getJob(jobId: string): Promise<JobDetail> {

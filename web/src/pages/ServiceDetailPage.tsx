@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Cpu, Download, HardDriveDownload, HardDriveUpload, MemoryStick, Upload } from "lucide-react";
 import {
-  ApiError,
   createIgnore,
   deleteIgnore,
   getServiceResourceUsageHistory,
   inferServiceRepoLink,
+  listJobs,
   listJobsPage,
   newJobsEventsSource,
   putServiceBackupTargets,
@@ -17,6 +17,7 @@ import {
   type ServiceSettings,
   type StackDetail,
 } from "../api";
+import { computeMonitorTerminalRate, formatMonitorBytes, formatMonitorPercent, formatMonitorRate, isMonitorDisabledError } from "./serviceDetailMonitorHelpers";
 import { BackupPolicySegmentedControl } from "../components/BackupPolicySegmentedControl";
 import { BackupRecordList } from "../components/ServiceBackupRecords";
 import { ReadonlySnapshotNotice } from "../components/ReadonlySnapshotNotice";
@@ -30,7 +31,7 @@ import { ServiceLogsPanel } from "../components/ServiceLogsPanel";
 import { createDefaultAutoUpdatePolicy } from "../components/AutoUpdatePolicyEditor";
 import { AutoUpdatePolicyDrawer } from "../components/AutoUpdatePolicyDrawer";
 import { AutoUpdatePolicyResultCard } from "../components/AutoUpdatePolicyResultCard";
-import { RecentUpdateRecords, ServiceOperationHistory, selectRecentServiceUpdateJobs, selectServiceOperationJobs } from "../components/RecentUpdateRecords";
+import { RecentUpdateRecords, ServiceOperationHistory, filterServiceOperationJobs, selectRecentServiceUpdateJobs, selectServiceOperationJobs } from "../components/RecentUpdateRecords";
 import { ResponsiveSettingsDrawer } from "../components/ResponsiveSettingsDrawer";
 import { ServiceVersionsSection } from "../components/ServiceVersionsSection";
 import { ImageLinkIcons, RepositoryLinkIcon, splitImageNameForDisplay, splitImageRef } from "../imageLinks";
@@ -64,70 +65,6 @@ type ServiceDetailSnapshotPayload = {
   backupRecords: ServiceBackupRecordItem[];
   monitoring: ServiceResourceSnapshot | null;
 };
-
-type ServiceDetailMonitorSample = ServiceResourceSnapshot["samples"][number];
-
-function readReason(details: unknown): string | null {
-  if (!details || typeof details !== "object") return null;
-  const reason = (details as Record<string, unknown>).reason;
-  return typeof reason === "string" ? reason : null;
-}
-
-function isMonitorDisabledError(error: unknown): boolean {
-  return error instanceof ApiError && error.status === 409 && readReason(error.details) === "resource_monitor_disabled";
-}
-
-function parseMonitorSampleTime(sample: ServiceDetailMonitorSample | null): number | null {
-  if (!sample) return null;
-  const ts = Date.parse(sample.sampledAt);
-  return Number.isFinite(ts) ? ts : null;
-}
-
-function formatMonitorPercent(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return "-";
-  return value < 10 ? `${value.toFixed(1)}%` : `${value.toFixed(0)}%`;
-}
-
-function formatMonitorBytes(bytes: number | null | undefined): string {
-  if (bytes == null || !Number.isFinite(bytes)) return "-";
-  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
-  let value = bytes;
-  let idx = 0;
-  while (value >= 1024 && idx < units.length - 1) {
-    value /= 1024;
-    idx += 1;
-  }
-  const digits = idx === 0 || value >= 100 ? 0 : value >= 10 ? 1 : 2;
-  return `${value.toFixed(digits)} ${units[idx]}`;
-}
-
-function formatMonitorRate(value: number | null): string {
-  if (value == null || !Number.isFinite(value)) return "-";
-  if (value < 1) return "0 B/s";
-  return `${formatMonitorBytes(value)}/s`;
-}
-
-function computeMonitorTerminalRate(
-  previousSample: ServiceDetailMonitorSample | null,
-  latestSample: ServiceDetailMonitorSample | null,
-  pick: (sample: ServiceDetailMonitorSample) => number | null | undefined,
-): number | null {
-  const previousTs = parseMonitorSampleTime(previousSample);
-  const latestTs = parseMonitorSampleTime(latestSample);
-  if (previousTs == null || latestTs == null || latestTs <= previousTs || !previousSample || !latestSample) return null;
-  const previousValue = pick(previousSample);
-  const latestValue = pick(latestSample);
-  if (
-    previousValue == null ||
-    latestValue == null ||
-    !Number.isFinite(previousValue) ||
-    !Number.isFinite(latestValue) ||
-    latestValue < previousValue
-  ) {
-    return null;
-  }
-  return (latestValue - previousValue) / ((latestTs - previousTs) / 1000);
-}
 
 export function ServiceDetailPage(props: {
   stackId: string;
@@ -191,9 +128,11 @@ export function ServiceDetailPage(props: {
     dangerousActions,
   } = useServiceDetailPageState(props);
   const [jobs, setJobs] = useState<JobListItem[]>([]);
+  const [versionJobs, setVersionJobs] = useState<JobListItem[]>([]);
   const [historyCursor, setHistoryCursor] = useState<string | null>(null);
   const [historyNextCursor, setHistoryNextCursor] = useState<string | null>(null);
   const [historyCursorStack, setHistoryCursorStack] = useState<(string | null)[]>([]);
+  const historyCursorRef = useRef<string | null>(null);
   const [monitoringSnapshot, setMonitoringSnapshot] = useState<ServiceResourceSnapshot | null>(null);
   const [snapshotPayload, setSnapshotPayload] = useState<ServiceDetailSnapshotPayload | null>(null);
   const [, setSnapshotStatus] = useState<"missing" | "fresh" | "stale" | "expired" | "unsupported">("missing");
@@ -208,15 +147,20 @@ export function ServiceDetailPage(props: {
   const [serviceSettingsDraft, setServiceSettingsDraft] = useState<ServiceSettings | null>(null);
   const [serviceBackupTargetsDraft, setServiceBackupTargetsDraft] = useState<BackupTargetsDraft>(() => createBackupTargetsDraft(null));
 
-  const refreshRecentJobs = useCallback(async (activateLive = false, cursor: string | null = historyCursor) => {
+  const refreshRecentJobs = useCallback(async (activateLive = false, cursor: string | null = historyCursorRef.current) => {
     const page = await listJobsPage({ serviceId: props.serviceId, type: ["update", "rollback"], limit: 20, cursor });
     setJobs(page.jobs);
+    historyCursorRef.current = cursor;
     setHistoryCursor(cursor);
     setHistoryNextCursor(page.nextCursor ?? null);
     if (!activateLive) return;
     setSnapshotActive(false);
     setSnapshotAnchorFetchedAt(null);
-  }, [historyCursor, props.serviceId]);
+  }, [props.serviceId]);
+
+  const refreshVersionJobs = useCallback(async () => {
+    setVersionJobs(await listJobs({ serviceId: props.serviceId, type: ["update", "rollback"] }));
+  }, [props.serviceId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -237,6 +181,7 @@ export function ServiceDetailPage(props: {
   }, [snapshotKey]);
 
   useEffect(() => {
+    historyCursorRef.current = null;
     setHistoryCursor(null);
     setHistoryNextCursor(null);
     setHistoryCursorStack([]);
@@ -244,9 +189,14 @@ export function ServiceDetailPage(props: {
   }, [props.serviceId, refreshRecentJobs]);
 
   useEffect(() => {
+    void refreshVersionJobs().catch(() => undefined);
+  }, [refreshVersionJobs]);
+
+  useEffect(() => {
     if (!notice?.jobId) return;
     void refreshRecentJobs().catch(() => undefined);
-  }, [notice?.jobId, refreshRecentJobs]);
+    void refreshVersionJobs().catch(() => undefined);
+  }, [notice?.jobId, refreshRecentJobs, refreshVersionJobs]);
 
   useEffect(() => {
     if (section !== "history" || !isOnline) return undefined;
@@ -413,7 +363,8 @@ export function ServiceDetailPage(props: {
   const serviceProtectionDraft = serviceSettingsDraft ?? settings ?? effectiveService.settings;
   const visibleRepoUrl = serviceSettingsDrawerOpen ? serviceProtectionDraft.repoUrl : draftRepoUrl;
   const recentUpdateJobs = selectRecentServiceUpdateJobs(effectiveJobs, effectiveService.id);
-  const serviceOperationJobs = selectServiceOperationJobs(effectiveJobs, effectiveService.id, effectiveStack.id);
+  const serviceOperationJobs = filterServiceOperationJobs(effectiveJobs, effectiveService.id, effectiveStack.id);
+  const versionOperationJobs = selectServiceOperationJobs(versionJobs, effectiveService.id, effectiveStack.id);
   const sectionValue = section;
   const effectiveBannerTitle =
     service != null
@@ -525,7 +476,7 @@ export function ServiceDetailPage(props: {
           backupRecords={effectiveBackupRecords}
           busy={busy}
           dockrevSelfUpgradeAction={dockrevSelfUpgradeAction}
-          jobs={serviceOperationJobs}
+          jobs={versionOperationJobs}
           onApplyUpdate={requestApplyUpdate}
           onRollback={requestRollback}
           rollbackActiveJobId={rollbackActiveJobId}

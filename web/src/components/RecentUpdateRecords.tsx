@@ -74,6 +74,11 @@ export function selectRecentServiceUpdateJobs(jobs: JobListItem[], serviceId: st
 }
 
 export function selectServiceOperationJobs(jobs: JobListItem[], serviceId: string, stackId?: string): JobListItem[] {
+  return filterServiceOperationJobs(jobs, serviceId, stackId)
+    .sort((a, b) => jobSortTime(b) - jobSortTime(a))
+}
+
+export function filterServiceOperationJobs(jobs: JobListItem[], serviceId: string, stackId?: string): JobListItem[] {
   return jobs
     .filter((job) => {
       if (job.type !== 'update' && job.type !== 'rollback') return false
@@ -83,7 +88,6 @@ export function selectServiceOperationJobs(jobs: JobListItem[], serviceId: strin
       }
       return serviceIdsFromSummary(job.summary).has(serviceId)
     })
-    .sort((a, b) => jobSortTime(b) - jobSortTime(a))
 }
 
 export function paginateServiceOperationJobs(jobs: JobListItem[], requestedPage: number, pageSize = SERVICE_OPERATION_HISTORY_PAGE_SIZE) {

@@ -172,7 +172,7 @@ ORDER BY created_at DESC
 SELECT
   b.id,
   b.job_id,
-  j.scope,
+  COALESCE(j.scope, 'unassociated'),
   b.status,
   b.created_at,
   b.finished_at,
@@ -181,11 +181,13 @@ SELECT
   b.cleanup_after,
   b.deleted_at,
   b.error,
-  j.summary_json
+  COALESCE(j.summary_json, '{}')
 FROM backups b
-JOIN jobs j ON j.id = b.job_id
+LEFT JOIN jobs j ON j.id = b.job_id
 WHERE b.stack_id = ?1
   AND (
+    j.id IS NULL
+    OR
     (j.scope = 'service' AND j.service_id = ?2)
     OR (
       EXISTS (

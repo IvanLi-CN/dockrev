@@ -273,6 +273,8 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
   const [snapshotAnchorFetchedAt, setSnapshotAnchorFetchedAt] = useState<string | null>(null)
   const [snapshotActive, setSnapshotActive] = useState(false)
   const refreshRequestIdRef = useRef(0)
+  const currentCursorRef = useRef<string | null>(null)
+  const filterRef = useRef<Filter>('all')
   const inferenceRequestIdRef = useRef(0)
   const ghcrRequestIdRef = useRef(0)
 
@@ -298,17 +300,18 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
     }
   }, [])
 
-  const refresh = useCallback(async (cursor: string | null = currentCursor) => {
+  const refresh = useCallback(async (cursor: string | null = currentCursorRef.current) => {
     const requestId = ++refreshRequestIdRef.current
     setError(null)
     try {
       const page = await listJobsPage({
         cursor,
         limit: 100,
-        status: filter === 'all' ? null : filter,
+        status: filterRef.current === 'all' ? null : filterRef.current,
       })
       if (requestId !== refreshRequestIdRef.current) return
       setJobs(page.jobs)
+      currentCursorRef.current = cursor
       setCurrentCursor(cursor)
       setNextCursor(page.nextCursor ?? null)
       setJobsLoaded(true)
@@ -317,7 +320,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
       if (requestId !== refreshRequestIdRef.current) return
       throw e
     }
-  }, [currentCursor, filter])
+  }, [])
 
   useEffect(() => {
     void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
@@ -533,7 +536,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
     versionInferenceSummary,
   ])
 
-  const filtered = jobs
+  const filtered = filter === 'all' ? jobs : jobs.filter((job) => job.status === filter)
 
   return (
     <div className="page">
@@ -575,10 +578,13 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
                 className={filter === k ? 'chip chipActive' : 'chip'}
                 onClick={() => {
                   if (k === filter) return
+                  filterRef.current = k
                   setFilter(k)
+                  currentCursorRef.current = null
                   setCurrentCursor(null)
                   setNextCursor(null)
                   setCursorStack([])
+                  void refresh(null).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
                 }}
                 type="button"
               >
