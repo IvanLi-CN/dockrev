@@ -136,6 +136,7 @@ export function ServiceDetailPage(props: {
   const [historyCursor, setHistoryCursor] = useState<string | null>(null);
   const [historyNextCursor, setHistoryNextCursor] = useState<string | null>(null);
   const [historyCursorStack, setHistoryCursorStack] = useState<(string | null)[]>([]);
+  const [historyPaginationBusy, setHistoryPaginationBusy] = useState(false);
   const historyCursorRef = useRef<string | null>(null);
   const currentServiceIdRef = useRef(props.serviceId);
   const historyRequestIdRef = useRef(0);
@@ -154,21 +155,24 @@ export function ServiceDetailPage(props: {
   const [autoPolicyDraft, setAutoPolicyDraft] = useState(() => createDefaultAutoUpdatePolicy("inherit"));
   const [serviceSettingsDraft, setServiceSettingsDraft] = useState<ServiceSettings | null>(null);
   const [serviceBackupTargetsDraft, setServiceBackupTargetsDraft] = useState<BackupTargetsDraft>(() => createBackupTargetsDraft(null));
-
-  const refreshRecentJobs = useCallback(async (activateLive = false, cursor: string | null = historyCursorRef.current) => {
+  const refreshRecentJobs = useCallback(async (activateLive = false, cursor: string | null = historyCursorRef.current, nextCursorStack?: (string | null)[]) => {
     const requestedServiceId = props.serviceId;
     const requestId = ++historyRequestIdRef.current;
-    const page = await listJobsPage({ serviceId: requestedServiceId, type: ["update", "rollback"], limit: 20, cursor });
+    const isPagination = nextCursorStack != null;
+    if (isPagination) setHistoryPaginationBusy(true);
+    const page = await listJobsPage({ serviceId: requestedServiceId, type: ["update", "rollback"], limit: 20, cursor }).finally(() => {
+      if (isPagination) setHistoryPaginationBusy(false);
+    });
     if (requestId !== historyRequestIdRef.current || currentServiceIdRef.current !== requestedServiceId) return;
     setJobs(page.jobs);
     historyCursorRef.current = cursor;
     setHistoryCursor(cursor);
     setHistoryNextCursor(page.nextCursor ?? null);
+    if (nextCursorStack != null) setHistoryCursorStack(nextCursorStack);
     if (!activateLive) return;
     setSnapshotActive(false);
     setSnapshotAnchorFetchedAt(null);
   }, [props.serviceId]);
-
   const refreshVersionJobs = useCallback(async () => {
     const requestedServiceId = props.serviceId;
     const requestId = ++versionJobsRequestIdRef.current;
@@ -391,7 +395,7 @@ export function ServiceDetailPage(props: {
   const policy = settings?.autoUpdatePolicy ?? stackSettings?.autoUpdatePolicy ?? createDefaultAutoUpdatePolicy("inherit");
   const serviceProtectionDraft = serviceSettingsDraft ?? settings ?? effectiveService.settings;
   const visibleRepoUrl = serviceSettingsDrawerOpen ? serviceProtectionDraft.repoUrl : draftRepoUrl;
-  const recentUpdateJobs = selectRecentServiceUpdateJobs(versionJobsLoaded ? versionJobs : effectiveJobs, effectiveService.id);
+  const recentUpdateJobs = selectRecentServiceUpdateJobs(snapshotActive || !versionJobsLoaded ? effectiveJobs : versionJobs, effectiveService.id);
   const serviceOperationJobs = filterServiceOperationJobs(effectiveJobs, effectiveService.id, effectiveStack.id);
   const versionOperationJobs = selectServiceOperationJobs(versionJobs, effectiveService.id, effectiveStack.id);
   const sectionValue = section;
@@ -465,7 +469,6 @@ export function ServiceDetailPage(props: {
       </div>
     </div>
   );
-
   const renderHistorySection = () => (
     <div className="svcDetailSectionStack">
       <ServiceOperationHistory
@@ -479,21 +482,18 @@ export function ServiceDetailPage(props: {
         page={historyCursorStack.length + 1}
         hasPrevious={historyCursorStack.length > 0}
         hasNext={Boolean(historyNextCursor)}
-        paginationDisabled={readonlyUi}
+        paginationDisabled={readonlyUi || historyPaginationBusy}
         onPrevious={() => {
           const previous = historyCursorStack[historyCursorStack.length - 1] ?? null;
-          setHistoryCursorStack((stack) => stack.slice(0, -1));
-          void refreshRecentJobs(false, previous);
+          void refreshRecentJobs(false, previous, historyCursorStack.slice(0, -1));
         }}
         onNext={() => {
           if (!historyNextCursor) return;
-          setHistoryCursorStack((stack) => [...stack, historyCursor]);
-          void refreshRecentJobs(false, historyNextCursor);
+          void refreshRecentJobs(false, historyNextCursor, [...historyCursorStack, historyCursor]);
         }}
       />
     </div>
   );
-
   const renderVersionsSection = () => (
     <div className="svcDetailSectionStack">
       {readonlyUi ? (

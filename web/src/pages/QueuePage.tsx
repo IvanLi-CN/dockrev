@@ -258,6 +258,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
   const [currentCursor, setCurrentCursor] = useState<string | null>(null)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [cursorStack, setCursorStack] = useState<(string | null)[]>([])
+  const [paginationBusy, setPaginationBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [versionInferenceSummary, setVersionInferenceSummary] = useState<VersionInferenceSummary>(
     DEFAULT_VERSION_INFERENCE_SUMMARY,
@@ -321,18 +322,31 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
         limit: 100,
         status: filterRef.current === 'all' ? null : filterRef.current,
       })
-      if (requestId !== refreshRequestIdRef.current) return
+      if (requestId !== refreshRequestIdRef.current) return false
       setJobs(page.jobs)
       currentCursorRef.current = cursor
       setCurrentCursor(cursor)
       setNextCursor(page.nextCursor ?? null)
       setJobsLoaded(true)
       setJobsLiveLoaded(true)
+      return true
     } catch (e: unknown) {
-      if (requestId !== refreshRequestIdRef.current) return
+      if (requestId !== refreshRequestIdRef.current) return false
       throw e
     }
   }, [])
+
+  const navigateCursor = useCallback(async (cursor: string | null, nextStack: (string | null)[]) => {
+    if (paginationBusy) return
+    setPaginationBusy(true)
+    try {
+      if (await refresh(cursor)) setCursorStack(nextStack)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setPaginationBusy(false)
+    }
+  }, [paginationBusy, refresh])
 
   useEffect(() => {
     void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
@@ -810,22 +824,20 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
           <div className="chipRow" style={{ marginLeft: 'auto' }}>
             <Button
               variant="ghost"
-              disabled={cursorStack.length === 0 || busy || !isOnline}
+              disabled={cursorStack.length === 0 || busy || paginationBusy || !isOnline}
               onClick={() => {
                 const previous = cursorStack[cursorStack.length - 1] ?? null
-                setCursorStack((stack) => stack.slice(0, -1))
-                void refresh(previous)
+                void navigateCursor(previous, cursorStack.slice(0, -1))
               }}
             >
               上一页
             </Button>
             <Button
               variant="ghost"
-              disabled={!nextCursor || busy || !isOnline}
+              disabled={!nextCursor || busy || paginationBusy || !isOnline}
               onClick={() => {
                 if (!nextCursor) return
-                setCursorStack((stack) => [...stack, currentCursor])
-                void refresh(nextCursor)
+                void navigateCursor(nextCursor, [...cursorStack, currentCursor])
               }}
             >
               下一页
