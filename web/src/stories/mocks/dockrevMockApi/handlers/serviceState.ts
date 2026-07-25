@@ -130,8 +130,12 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     const cursor = url?.searchParams.get('cursor') ?? ''
     const start = cursor.startsWith('mock:') ? Number(cursor.slice(5)) || 0 : 0
     const filtered = f.jobs.filter((job) => {
-      return !(types.size > 0 && !types.has(job.type)) && !(status && job.status !== status) && !(stackId && job.stackId !== stackId) && !(serviceId && job.serviceId !== serviceId)
-    })
+      const summary = isRecord(job.summary) ? job.summary : {}
+      const targetServiceIds = Array.isArray(summary.targets)
+        ? summary.targets.flatMap((target: unknown) => (isRecord(target) && typeof target.serviceId === 'string' ? [target.serviceId] : []))
+        : []
+      return !(types.size > 0 && !types.has(job.type)) && !(status && job.status !== status) && !(stackId && job.stackId !== stackId) && !(serviceId && job.serviceId !== serviceId && !targetServiceIds.includes(serviceId))
+    }).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
     const jobs = filtered.slice(start, start + limit)
     const nextCursor = start + limit < filtered.length ? `mock:${start + limit}` : null
     return json({ jobs, nextCursor })

@@ -132,6 +132,7 @@ export function ServiceDetailPage(props: {
   } = useServiceDetailPageState(props);
   const [jobs, setJobs] = useState<JobListItem[]>([]);
   const [versionJobs, setVersionJobs] = useState<JobListItem[]>([]);
+  const [versionJobsLoaded, setVersionJobsLoaded] = useState(false);
   const [historyCursor, setHistoryCursor] = useState<string | null>(null);
   const [historyNextCursor, setHistoryNextCursor] = useState<string | null>(null);
   const [historyCursorStack, setHistoryCursorStack] = useState<(string | null)[]>([]);
@@ -174,6 +175,7 @@ export function ServiceDetailPage(props: {
     const versionHistory = await listJobs({ serviceId: requestedServiceId, type: ["update", "rollback"] });
     if (requestId !== versionJobsRequestIdRef.current || currentServiceIdRef.current !== requestedServiceId) return;
     setVersionJobs(versionHistory);
+    setVersionJobsLoaded(true);
   }, [props.serviceId]);
 
   useEffect(() => {
@@ -205,6 +207,7 @@ export function ServiceDetailPage(props: {
     historyCursorRef.current = null;
     setJobs([]);
     setVersionJobs([]);
+    setVersionJobsLoaded(false);
     setHistoryCursor(null);
     setHistoryNextCursor(null);
     setHistoryCursorStack([]);
@@ -388,7 +391,7 @@ export function ServiceDetailPage(props: {
   const policy = settings?.autoUpdatePolicy ?? stackSettings?.autoUpdatePolicy ?? createDefaultAutoUpdatePolicy("inherit");
   const serviceProtectionDraft = serviceSettingsDraft ?? settings ?? effectiveService.settings;
   const visibleRepoUrl = serviceSettingsDrawerOpen ? serviceProtectionDraft.repoUrl : draftRepoUrl;
-  const recentUpdateJobs = selectRecentServiceUpdateJobs(effectiveJobs, effectiveService.id);
+  const recentUpdateJobs = selectRecentServiceUpdateJobs(versionJobsLoaded ? versionJobs : effectiveJobs, effectiveService.id);
   const serviceOperationJobs = filterServiceOperationJobs(effectiveJobs, effectiveService.id, effectiveStack.id);
   const versionOperationJobs = selectServiceOperationJobs(versionJobs, effectiveService.id, effectiveStack.id);
   const sectionValue = section;
