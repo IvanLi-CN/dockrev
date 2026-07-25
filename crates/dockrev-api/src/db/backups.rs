@@ -186,8 +186,6 @@ FROM backups b
 LEFT JOIN jobs j ON j.id = b.job_id
 WHERE b.stack_id = ?1
   AND (
-    j.id IS NULL
-    OR
     (j.scope = 'service' AND j.service_id = ?2)
     OR (
       EXISTS (
@@ -243,5 +241,81 @@ ORDER BY b.created_at DESC, b.id DESC
         })
         .await
         .context("list service backup records")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn purged_job_backup_is_not_listed_for_any_service_history() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        db.call(|conn| {
+            conn.execute_batch(
+                r#"
+INSERT INTO stacks (
+  id, name, compose_type, compose_files_json, backup_targets_json,
+  backup_retention_keep_last, backup_retention_delete_after_stable_seconds,
+  created_at, updated_at, last_check_at
+) VALUES ('stack_1', 'Stack', 'compose', '[]', '[]', 0, 0,
+  '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+INSERT INTO services (
+  id, stack_id, name, image_ref, image_tag, auto_rollback,
+  backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at
+) VALUES
+  ('service_a', 'stack_1', 'a', 'example/a', 'latest', 1, '{}', '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+  ('service_b', 'stack_1', 'b', 'example/b', 'latest', 1, '{}', '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+INSERT INTO jobs (
+  id, type, scope, stack_id, service_id, status, allow_arch_mismatch, backup_mode,
+  created_by, reason, created_at, finished_at, summary_json
+) VALUES (
+  'job_1', 'update', 'service', 'stack_1', 'service_a', 'success', 0, 'inherit',
+  'test', 'test', '2026-01-01T00:00:00Z', '2026-01-01T00:01:00Z', '{}'
+);
+INSERT INTO backups (
+  id, stack_id, job_id, status, created_at, finished_at, artifact_path, size_bytes
+) VALUES (
+  'backup_1', 'stack_1', 'job_1', 'success', '2026-01-01T00:00:00Z',
+  '2026-01-01T00:01:00Z', '/backups/backup_1.tar', 42
+);
+"#,
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            db.purge_expired_terminal_jobs("2026-02-01T00:00:00Z", 100)
+                .await
+                .unwrap(),
+            1
+        );
+        let backup_job_id = db
+            .call(|conn| {
+                Ok(conn.query_row(
+                    "SELECT job_id FROM backups WHERE id = 'backup_1'",
+                    [],
+                    |row| row.get::<_, Option<String>>(0),
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(backup_job_id, None);
+        assert!(
+            db.list_service_backup_records("stack_1", "service_a")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            db.list_service_backup_records("stack_1", "service_b")
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 }
