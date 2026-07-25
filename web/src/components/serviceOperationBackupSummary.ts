@@ -30,6 +30,7 @@ export function summarizeServiceOperationBackups(records: ServiceBackupRecordIte
   const recordsByJobId = new Map<string, ServiceBackupRecordItem[]>()
 
   for (const record of records) {
+    if (!record.jobId) continue
     const jobRecords = recordsByJobId.get(record.jobId)
     if (jobRecords) jobRecords.push(record)
     else recordsByJobId.set(record.jobId, [record])

@@ -169,7 +169,8 @@ pub struct ServiceBackupRecordAsset {
 #[serde(rename_all = "camelCase")]
 pub struct ServiceBackupRecordItem {
     pub backup_id: String,
-    pub job_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
     pub scope: String,
     pub status: String,
     pub created_at: String,

@@ -210,17 +210,19 @@ async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Result<()> {
 
         let _ = tokio::fs::remove_file(&item.artifact_path).await;
         state.db.mark_backup_deleted(&item.id, &now).await?;
-        let _ = state
-            .db
-            .insert_job_log(
-                &item.job_id,
-                &crate::api::types::JobLogLine {
-                    ts: now.clone(),
-                    level: "info".to_string(),
-                    msg: format!("backup deleted: {}", item.artifact_path),
-                },
-            )
-            .await;
+        if let Some(job_id) = item.job_id.as_deref() {
+            let _ = state
+                .db
+                .insert_job_log(
+                    job_id,
+                    &crate::api::types::JobLogLine {
+                        ts: now.clone(),
+                        level: "info".to_string(),
+                        msg: format!("backup deleted: {}", item.artifact_path),
+                    },
+                )
+                .await;
+        }
     }
 
     Ok(())

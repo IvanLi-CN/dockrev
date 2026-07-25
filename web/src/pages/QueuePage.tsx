@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   getGitHubPackagesWebhookOverview,
   getVersionInferenceOverview,
-  listJobs,
+  listJobsPage,
   newJobsEventsSource,
   type JobListItem,
 } from '../api'
@@ -172,6 +172,10 @@ const QUEUE_SNAPSHOT_STALE_MS = 60_000
 
 type QueueSnapshotPayload = {
   jobs: JobListItem[]
+  filter?: Filter
+  currentCursor?: string | null
+  nextCursor?: string | null
+  cursorStack?: (string | null)[]
   versionInferenceSummary: VersionInferenceSummary
   versionInferenceLoaded: boolean
   ghcrSummary: GhcrWebhookSummary
@@ -251,6 +255,10 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
   const [jobsLoaded, setJobsLoaded] = useState(false)
   const [jobsLiveLoaded, setJobsLiveLoaded] = useState(false)
   const [filter, setFilter] = useState<Filter>('all')
+  const [currentCursor, setCurrentCursor] = useState<string | null>(null)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [cursorStack, setCursorStack] = useState<(string | null)[]>([])
+  const [paginationBusy, setPaginationBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [versionInferenceSummary, setVersionInferenceSummary] = useState<VersionInferenceSummary>(
     DEFAULT_VERSION_INFERENCE_SUMMARY,
@@ -270,6 +278,8 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
   const [snapshotAnchorFetchedAt, setSnapshotAnchorFetchedAt] = useState<string | null>(null)
   const [snapshotActive, setSnapshotActive] = useState(false)
   const refreshRequestIdRef = useRef(0)
+  const currentCursorRef = useRef<string | null>(null)
+  const filterRef = useRef<Filter>('all')
   const inferenceRequestIdRef = useRef(0)
   const ghcrRequestIdRef = useRef(0)
 
@@ -284,6 +294,14 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
       if (snapshot.status !== 'fresh') return
       setJobs(snapshot.record.payload.jobs)
       setJobsLoaded(true)
+      const snapshotFilter = snapshot.record.payload.filter ?? 'all'
+      const snapshotCursor = snapshot.record.payload.currentCursor ?? null
+      filterRef.current = snapshotFilter
+      currentCursorRef.current = snapshotCursor
+      setFilter(snapshotFilter)
+      setCurrentCursor(snapshotCursor)
+      setNextCursor(snapshot.record.payload.nextCursor ?? null)
+      setCursorStack(snapshot.record.payload.cursorStack ?? [])
       setVersionInferenceSummary(snapshot.record.payload.versionInferenceSummary)
       setVersionInferenceLoaded(snapshot.record.payload.versionInferenceLoaded)
       setGhcrSummary(snapshot.record.payload.ghcrSummary)
@@ -295,20 +313,40 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
     }
   }, [])
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (cursor: string | null = currentCursorRef.current) => {
     const requestId = ++refreshRequestIdRef.current
     setError(null)
     try {
-      const nextJobs = await listJobs()
-      if (requestId !== refreshRequestIdRef.current) return
-      setJobs(nextJobs)
+      const page = await listJobsPage({
+        cursor,
+        limit: 100,
+        status: filterRef.current === 'all' ? null : filterRef.current,
+      })
+      if (requestId !== refreshRequestIdRef.current) return false
+      setJobs(page.jobs)
+      currentCursorRef.current = cursor
+      setCurrentCursor(cursor)
+      setNextCursor(page.nextCursor ?? null)
       setJobsLoaded(true)
       setJobsLiveLoaded(true)
+      return true
     } catch (e: unknown) {
-      if (requestId !== refreshRequestIdRef.current) return
+      if (requestId !== refreshRequestIdRef.current) return false
       throw e
     }
   }, [])
+
+  const navigateCursor = useCallback(async (cursor: string | null, nextStack: (string | null)[]) => {
+    if (paginationBusy) return
+    setPaginationBusy(true)
+    try {
+      if (await refresh(cursor)) setCursorStack(nextStack)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setPaginationBusy(false)
+    }
+  }, [paginationBusy, refresh])
 
   useEffect(() => {
     void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
@@ -505,6 +543,10 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
     if (!jobsLoaded && !versionInferenceLoaded && !ghcrLoaded) return
     const payload: QueueSnapshotPayload = {
       jobs,
+      filter,
+      currentCursor,
+      nextCursor,
+      cursorStack,
       versionInferenceSummary,
       versionInferenceLoaded,
       ghcrSummary,
@@ -517,17 +559,18 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
   }, [
     ghcrLoaded,
     ghcrSummary,
+    currentCursor,
+    cursorStack,
+    filter,
     jobs,
     jobsLoaded,
     snapshotAnchorFetchedAt,
+    nextCursor,
     versionInferenceLoaded,
     versionInferenceSummary,
   ])
 
-  const filtered = useMemo(() => {
-    if (filter === 'all') return jobs
-    return jobs.filter((j) => j.status === filter)
-  }, [jobs, filter])
+  const filtered = filter === 'all' ? jobs : jobs.filter((job) => job.status === filter)
 
   return (
     <div className="page">
@@ -567,7 +610,16 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
               <button
                 key={k}
                 className={filter === k ? 'chip chipActive' : 'chip'}
-                onClick={() => setFilter(k)}
+                onClick={() => {
+                  if (k === filter) return
+                  filterRef.current = k
+                  setFilter(k)
+                  currentCursorRef.current = null
+                  setCurrentCursor(null)
+                  setNextCursor(null)
+                  setCursorStack([])
+                  void refresh(null).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+                }}
                 type="button"
               >
                 {k === 'all' ? '全部' : k}
@@ -766,6 +818,31 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
             )
           })}
           {filtered.length === 0 ? <div className="muted">暂无任务</div> : null}
+        </div>
+        <div className="sectionRow" style={{ marginTop: 12 }}>
+          <div className="muted">每页 100 条</div>
+          <div className="chipRow" style={{ marginLeft: 'auto' }}>
+            <Button
+              variant="ghost"
+              disabled={cursorStack.length === 0 || busy || paginationBusy || !isOnline}
+              onClick={() => {
+                const previous = cursorStack[cursorStack.length - 1] ?? null
+                void navigateCursor(previous, cursorStack.slice(0, -1))
+              }}
+            >
+              上一页
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={!nextCursor || busy || paginationBusy || !isOnline}
+              onClick={() => {
+                if (!nextCursor) return
+                void navigateCursor(nextCursor, [...cursorStack, currentCursor])
+              }}
+            >
+              下一页
+            </Button>
+          </div>
         </div>
 
         {error ? <div className="error">{error}</div> : null}

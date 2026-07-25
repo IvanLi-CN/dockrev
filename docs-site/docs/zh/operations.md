@@ -78,6 +78,8 @@ cp /data/supervisor/self-upgrade.json /backup/self-upgrade.json.$(date +%F-%H%M%
 - 保留关键 job 日志（check/update/discovery）
 - 监控 401、409、500 的异常峰值
 - 监控 GHCR webhook 的 delivery 去重行为
+- 资源原始样本保留 7 天；终态任务及其日志保留 30 天。清理由启动后和每小时的有界批处理完成，不自动执行 SQLite `VACUUM`。
+- 仅在已批准的维护窗口执行 `VACUUM` 回收 SQLite 文件空闲页，并先确认备份和可接受的服务停顿。
 
 ## 共享测试机回归（可选）
 

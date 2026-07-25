@@ -8,6 +8,19 @@ use crate::api::types::ServiceResourceSample;
 
 const DEFAULT_DOCKER_SOCKET_PATH: &str = "/var/run/docker.sock";
 
+#[derive(Clone, Debug, Default)]
+pub struct ProjectResourceCollection {
+    pub samples: BTreeMap<String, ServiceResourceSample>,
+    pub failures: Vec<ContainerStatsFailure>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ContainerStatsFailure {
+    pub container_id: String,
+    pub service_name: String,
+    pub error: String,
+}
+
 #[derive(Clone)]
 pub struct DockerEngineClient {
     http: reqwest::Client,
@@ -84,34 +97,47 @@ impl DockerEngineClient {
     pub async fn collect_project_service_samples(
         &self,
         compose_project: &str,
-    ) -> anyhow::Result<BTreeMap<String, ServiceResourceSample>> {
+    ) -> anyhow::Result<ProjectResourceCollection> {
         let containers = self.list_project_containers(compose_project).await?;
         if containers.is_empty() {
-            return Ok(BTreeMap::new());
+            return Ok(ProjectResourceCollection::default());
         }
 
         let mut join_set = tokio::task::JoinSet::new();
         for container in containers {
             let client = self.clone();
             join_set.spawn(async move {
-                let sample = client.fetch_container_sample(&container.id).await?;
-                Ok::<_, anyhow::Error>((container.service_name, sample))
+                let result = client.fetch_container_sample(&container.id).await;
+                (container, result)
             });
         }
 
         let mut aggregates = BTreeMap::<String, ServiceAggregate>::new();
+        let mut failures = Vec::new();
         while let Some(joined) = join_set.join_next().await {
-            let (service_name, sample) = joined.context("join Docker container stats task")??;
-            aggregates
-                .entry(service_name)
-                .or_default()
-                .merge_container_sample(sample);
+            let (container, result) = joined.context("join Docker container stats task")?;
+            match result {
+                Ok(sample) => {
+                    aggregates
+                        .entry(container.service_name)
+                        .or_default()
+                        .merge_container_sample(sample);
+                }
+                Err(error) => failures.push(ContainerStatsFailure {
+                    container_id: container.id,
+                    service_name: container.service_name,
+                    error: error.to_string(),
+                }),
+            }
         }
 
-        Ok(aggregates
-            .into_iter()
-            .map(|(service_name, aggregate)| (service_name, aggregate.into_sample()))
-            .collect())
+        Ok(ProjectResourceCollection {
+            samples: aggregates
+                .into_iter()
+                .map(|(service_name, aggregate)| (service_name, aggregate.into_sample()))
+                .collect(),
+            failures,
+        })
     }
 
     async fn list_project_containers(
@@ -338,8 +364,16 @@ struct DockerNetworkStats {
 
 #[derive(Debug, Default, Deserialize)]
 struct DockerBlkioStats {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     io_service_bytes_recursive: Vec<DockerBlkioBytesEntry>,
+}
+
+fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Option::unwrap_or_default)
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -542,7 +576,8 @@ mod tests {
             .await
             .unwrap();
 
-        let sample = samples.get("web").unwrap();
+        let sample = samples.samples.get("web").unwrap();
+        assert!(samples.failures.is_empty());
         assert!((sample.cpu_percent - 100.0).abs() < f64::EPSILON);
         assert_eq!(sample.mem_used_bytes, Some(140_000_000));
         assert_eq!(sample.mem_limit_bytes, Some(1_000_000_000));
@@ -612,6 +647,16 @@ mod tests {
         assert_eq!(calculate_network_bytes(&stats), Some((4000, 6000)));
         assert_eq!(calculate_block_io_bytes(&stats), Some((4096, 8192)));
         assert_eq!(stats.pids_stats.current, Some(12));
+    }
+
+    #[test]
+    fn stats_accept_null_block_io_entries() {
+        let stats: DockerStatsResponse = serde_json::from_value(serde_json::json!({
+            "blkio_stats": { "io_service_bytes_recursive": null }
+        }))
+        .unwrap();
+        assert!(stats.blkio_stats.io_service_bytes_recursive.is_empty());
+        assert_eq!(calculate_block_io_bytes(&stats), None);
     }
 
     #[test]

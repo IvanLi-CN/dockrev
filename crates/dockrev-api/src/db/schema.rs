@@ -7,6 +7,8 @@ use anyhow::Context as _;
 use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 
 use super::*;
+#[path = "schema_job_history_retention.rs"]
+mod schema_job_history_retention;
 mod schema_resource_latest;
 mod schema_settings_release_notes;
 
@@ -689,6 +691,7 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     apply_migration_0010_add_new_version_discoveries(conn)?;
     apply_migration_0011_track_candidate_display_tags_in_new_version_discoveries(conn)?;
     apply_migration_0012_track_image_ref_in_new_version_discoveries(conn)?;
+    schema_job_history_retention::apply(conn)?;
     auto_archive_missing_discovery_projects_on_startup(conn)?;
     Ok(())
 }

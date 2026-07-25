@@ -349,15 +349,23 @@ ORDER BY st.name ASC, sv.name ASC
     pub async fn delete_expired_service_resource_samples(
         &self,
         older_than: &str,
+        batch_size: u32,
     ) -> anyhow::Result<u64> {
         let older_than = older_than.to_string();
+        let batch_size = batch_size.clamp(1, 10_000) as i64;
         self.call(move |conn| {
             Ok(conn.execute(
                 r#"
 DELETE FROM service_resource_samples
-WHERE sampled_at < ?1
+WHERE rowid IN (
+  SELECT rowid
+  FROM service_resource_samples
+  WHERE sampled_at < ?1
+  ORDER BY sampled_at ASC
+  LIMIT ?2
+)
 "#,
-                params![older_than],
+                params![older_than, batch_size],
             )? as u64)
         })
         .await

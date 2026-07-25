@@ -29,6 +29,14 @@ impl ApiError {
         Self::new(StatusCode::BAD_REQUEST, "invalid_argument", message)
     }
 
+    pub fn invalid_jobs_cursor() -> Self {
+        Self::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_jobs_cursor",
+            "invalid jobs cursor",
+        )
+    }
+
     pub fn not_found(message: impl Into<String>) -> Self {
         Self::new(StatusCode::NOT_FOUND, "not_found", message)
     }

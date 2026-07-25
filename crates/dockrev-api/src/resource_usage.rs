@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
@@ -16,15 +16,19 @@ use crate::runner::{CommandRunner, CommandSpec};
 use crate::{
     api::types::ServiceResourceSample,
     db::{Db, ServiceResourceSampleInput, ServiceResourceTarget},
-    docker_engine::DockerEngineClient,
+    docker_engine::{DockerEngineClient, ProjectResourceCollection},
 };
 #[cfg(test)]
 use serde::Deserialize;
 #[cfg(test)]
 use std::collections::BTreeSet;
 
-pub const RESOURCE_MONITOR_RETENTION_DAYS: u32 = 30;
+pub const RESOURCE_MONITOR_RETENTION_DAYS: u32 = 7;
+pub const JOB_HISTORY_RETENTION_DAYS: u32 = 30;
 pub const DEFAULT_SAMPLE_INTERVAL_SECONDS: u64 = 5;
+const PARTIAL_SAMPLE_WARN_INTERVAL: Duration = Duration::from_secs(60);
+static PARTIAL_SAMPLE_WARNINGS: OnceLock<std::sync::Mutex<BTreeMap<String, Instant>>> =
+    OnceLock::new();
 
 pub fn is_valid_sample_interval_seconds(value: u64) -> bool {
     matches!(value, 5 | 10 | 30 | 60 | 300)
@@ -83,6 +87,36 @@ struct ProjectHistoryRunOutcome {
     inserted: usize,
     result: &'static str,
     error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ResourceCollection {
+    samples: BTreeMap<String, ServiceResourceSample>,
+    failures: Vec<ResourceCollectionFailure>,
+}
+
+#[derive(Clone, Debug)]
+struct ResourceCollectionFailure {
+    container_id: String,
+    service_name: String,
+    error: String,
+}
+
+impl From<ProjectResourceCollection> for ResourceCollection {
+    fn from(value: ProjectResourceCollection) -> Self {
+        Self {
+            samples: value.samples,
+            failures: value
+                .failures
+                .into_iter()
+                .map(|failure| ResourceCollectionFailure {
+                    container_id: failure.container_id,
+                    service_name: failure.service_name,
+                    error: failure.error,
+                })
+                .collect(),
+        }
+    }
 }
 
 impl ProjectHistoryRunOutcome {
@@ -151,7 +185,7 @@ trait ResourceCollector: Send + Sync {
     async fn collect_project_service_aggregates(
         &self,
         compose_project: &str,
-    ) -> anyhow::Result<BTreeMap<String, ServiceResourceSample>>;
+    ) -> anyhow::Result<ResourceCollection>;
 }
 
 #[derive(Clone)]
@@ -172,10 +206,12 @@ impl ResourceCollector for DockerApiResourceCollector {
     async fn collect_project_service_aggregates(
         &self,
         compose_project: &str,
-    ) -> anyhow::Result<BTreeMap<String, ServiceResourceSample>> {
-        self.client
+    ) -> anyhow::Result<ResourceCollection> {
+        Ok(self
+            .client
             .collect_project_service_samples(compose_project)
-            .await
+            .await?
+            .into())
     }
 }
 
@@ -191,8 +227,15 @@ impl ResourceCollector for RunnerBackedResourceCollector {
     async fn collect_project_service_aggregates(
         &self,
         compose_project: &str,
-    ) -> anyhow::Result<BTreeMap<String, ServiceResourceSample>> {
-        collect_project_service_aggregates_via_runner(self.runner.as_ref(), compose_project).await
+    ) -> anyhow::Result<ResourceCollection> {
+        Ok(ResourceCollection {
+            samples: collect_project_service_aggregates_via_runner(
+                self.runner.as_ref(),
+                compose_project,
+            )
+            .await?,
+            failures: Vec::new(),
+        })
     }
 }
 
@@ -367,7 +410,7 @@ pub fn spawn_history_sampler_from_env(db: Db) -> anyhow::Result<()> {
 
 fn spawn_history_sampler_with_collector(db: Db, collector: Arc<dyn ResourceCollector>) {
     tokio::spawn(async move {
-        let mut last_gc = Instant::now();
+        let mut last_gc = Instant::now() - Duration::from_secs(60 * 60);
         let mut workers = BTreeMap::<String, HistoryWorkerHandle>::new();
 
         loop {
@@ -416,11 +459,36 @@ async fn gc_history(db: &Db) -> anyhow::Result<()> {
     let now = time::OffsetDateTime::now_utc();
     let older_than = (now - time::Duration::days(RESOURCE_MONITOR_RETENTION_DAYS as i64))
         .format(&time::format_description::well_known::Rfc3339)?;
+    let started_at = Instant::now();
     let deleted = db
-        .delete_expired_service_resource_samples(&older_than)
+        .delete_expired_service_resource_samples(&older_than, 10_000)
         .await
         .context("delete expired resource samples")?;
-    tracing::info!(deleted, "resource monitor history gc completed");
+    if deleted > 0 {
+        tracing::info!(
+            deleted,
+            retention_days = RESOURCE_MONITOR_RETENTION_DAYS,
+            batch_size = 10_000,
+            duration_ms = started_at.elapsed().as_millis() as u64,
+            "resource monitor history gc completed"
+        );
+    }
+    let job_older_than = (now - time::Duration::days(JOB_HISTORY_RETENTION_DAYS as i64))
+        .format(&time::format_description::well_known::Rfc3339)?;
+    let started_at = Instant::now();
+    let deleted_jobs = db
+        .purge_expired_terminal_jobs(&job_older_than, 2_000)
+        .await
+        .context("delete expired terminal jobs")?;
+    if deleted_jobs > 0 {
+        tracing::info!(
+            deleted = deleted_jobs,
+            retention_days = JOB_HISTORY_RETENTION_DAYS,
+            batch_size = 2_000,
+            duration_ms = started_at.elapsed().as_millis() as u64,
+            "terminal job history gc completed"
+        );
+    }
     Ok(())
 }
 
@@ -596,7 +664,7 @@ async fn sample_history_project_once(
     collector: &dyn ResourceCollector,
     snapshot: &ProjectHistorySnapshot,
 ) -> ProjectHistoryRunOutcome {
-    let aggregates = match collector
+    let collection = match collector
         .collect_project_service_aggregates(&snapshot.compose_project)
         .await
         .with_context(|| {
@@ -614,11 +682,12 @@ async fn sample_history_project_once(
         Err(e) => return ProjectHistoryRunOutcome::error(e),
     };
 
+    log_partial_collection_failures(&snapshot.compose_project, &collection);
     let rows = snapshot
         .services
         .iter()
         .filter_map(|target| {
-            let sample = aggregates.get(&target.service_name)?;
+            let sample = collection.samples.get(&target.service_name)?;
             Some(ServiceResourceSampleInput {
                 service_id: target.service_id.clone(),
                 sampled_at: sampled_at.clone(),
@@ -654,7 +723,7 @@ async fn sample_for_target(
     collector: &dyn ResourceCollector,
     target: &ServiceResourceTarget,
 ) -> anyhow::Result<Option<ServiceResourceSample>> {
-    let aggregates = collector
+    let collection = collector
         .collect_project_service_aggregates(&target.compose_project)
         .await
         .with_context(|| {
@@ -664,7 +733,8 @@ async fn sample_for_target(
             )
         })?;
 
-    let Some(sample) = aggregates.get(&target.service_name).cloned() else {
+    log_partial_collection_failures(&target.compose_project, &collection);
+    let Some(sample) = collection.samples.get(&target.service_name).cloned() else {
         return Ok(None);
     };
 
@@ -680,6 +750,46 @@ async fn sample_for_target(
         pids: sample.pids,
         container_count: sample.container_count,
     }))
+}
+
+fn log_partial_collection_failures(compose_project: &str, collection: &ResourceCollection) {
+    if collection.failures.is_empty() {
+        return;
+    }
+
+    let warnings = PARTIAL_SAMPLE_WARNINGS.get_or_init(|| std::sync::Mutex::new(BTreeMap::new()));
+    let now = Instant::now();
+    let mut warnings = warnings
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    for failure in &collection.failures {
+        let key = format!("{compose_project}:{}", failure.container_id);
+        if !should_emit_partial_sample_warning(&mut warnings, key, now) {
+            continue;
+        }
+        tracing::warn!(
+            compose_project,
+            service = %failure.service_name,
+            container_id = %failure.container_id,
+            error = %failure.error,
+            successful_services = collection.samples.len(),
+            failed_containers = collection.failures.len(),
+            "resource monitor partial Docker stats collection failure"
+        );
+    }
+}
+
+fn should_emit_partial_sample_warning(
+    warnings: &mut BTreeMap<String, Instant>,
+    key: String,
+    now: Instant,
+) -> bool {
+    warnings.retain(|_, last| now.saturating_duration_since(*last) < PARTIAL_SAMPLE_WARN_INTERVAL);
+    if warnings.contains_key(&key) {
+        return false;
+    }
+    warnings.insert(key, now);
+    true
 }
 
 #[cfg(test)]
@@ -983,6 +1093,30 @@ mod tests {
         models::{ServiceSeed, StackRecord},
     };
 
+    #[test]
+    fn partial_sample_warning_state_expires_recreated_container_ids() {
+        let now = Instant::now();
+        let mut warnings = BTreeMap::new();
+
+        assert!(should_emit_partial_sample_warning(
+            &mut warnings,
+            "project:container-old".to_string(),
+            now,
+        ));
+        assert!(!should_emit_partial_sample_warning(
+            &mut warnings,
+            "project:container-old".to_string(),
+            now + Duration::from_secs(1),
+        ));
+        assert!(should_emit_partial_sample_warning(
+            &mut warnings,
+            "project:container-new".to_string(),
+            now + PARTIAL_SAMPLE_WARN_INTERVAL,
+        ));
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings.contains_key("project:container-new"));
+    }
+
     #[derive(Clone)]
     struct TestProjectBehavior {
         delay: Duration,
@@ -1034,7 +1168,7 @@ mod tests {
         async fn collect_project_service_aggregates(
             &self,
             compose_project: &str,
-        ) -> anyhow::Result<BTreeMap<String, ServiceResourceSample>> {
+        ) -> anyhow::Result<ResourceCollection> {
             let behavior = {
                 let mut state = self.state.lock().await;
                 let behavior = state
@@ -1068,7 +1202,10 @@ mod tests {
             if let Some(inflight) = state.inflight.get_mut(compose_project) {
                 *inflight = inflight.saturating_sub(1);
             }
-            Ok(behavior.samples)
+            Ok(ResourceCollection {
+                samples: behavior.samples,
+                failures: Vec::new(),
+            })
         }
     }
 

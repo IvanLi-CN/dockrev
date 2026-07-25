@@ -124,7 +124,21 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
   if (method === 'GET' && urlPath === '/api/jobs') {
     const debug = globalThis.__DOCKREV_MOCK_DEBUG__ ?? (globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug())
     debug.jobsListCalls += 1
-    return json({ jobs: f.jobs })
+    const limit = Math.min(200, Math.max(1, Number(url?.searchParams.get('limit') ?? '100') || 100))
+    const types = new Set((url?.searchParams.get('type') ?? '').split(',').filter(Boolean))
+    const [status, serviceId, stackId] = ['status', 'serviceId', 'stackId'].map((name) => url?.searchParams.get(name) ?? null)
+    const cursor = url?.searchParams.get('cursor') ?? ''
+    const start = cursor.startsWith('mock:') ? Number(cursor.slice(5)) || 0 : 0
+    const filtered = f.jobs.filter((job) => {
+      const summary = isRecord(job.summary) ? job.summary : {}
+      const targetServiceIds = Array.isArray(summary.targets)
+        ? summary.targets.flatMap((target: unknown) => (isRecord(target) && typeof target.serviceId === 'string' ? [target.serviceId] : []))
+        : []
+      return !(types.size > 0 && !types.has(job.type)) && !(status && job.status !== status) && !(stackId && job.stackId !== stackId) && !(serviceId && job.serviceId !== serviceId && !targetServiceIds.includes(serviceId))
+    }).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
+    const jobs = filtered.slice(start, start + limit)
+    const nextCursor = start + limit < filtered.length ? `mock:${start + limit}` : null
+    return json({ jobs, nextCursor })
   }
 
   if (method === 'GET' && urlPath.startsWith('/api/jobs/')) {
@@ -1182,6 +1196,5 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     if (found) found.svc.archived = false
     return json({}, { status: 204 })
   }
-
   return null
 }

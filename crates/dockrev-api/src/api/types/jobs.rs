@@ -787,6 +787,8 @@ impl JobListItem {
 #[serde(rename_all = "camelCase")]
 pub struct ListJobsResponse {
     pub jobs: Vec<JobApiListItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

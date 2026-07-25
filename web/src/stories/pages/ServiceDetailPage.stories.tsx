@@ -197,13 +197,13 @@ export const UpdateHistoryPagination: Story = {
     const previous = canvasElement.querySelector<HTMLButtonElement>('button[aria-label="上一页"]');
     const next = canvasElement.querySelector<HTMLButtonElement>('button[aria-label="下一页"]');
 
-    expectStory(normalizeText(pageStatus?.textContent) === "第 1 / 2 页，共 23 条", "history pager should describe the first page");
+    expectStory(normalizeText(pageStatus?.textContent) === "第 1 页，每页 20 条", "history pager should describe the first cursor page");
     expectStory(previous?.disabled, "previous page should be disabled on the first page");
     expectStory(!next?.disabled, "next page should be enabled on the first page");
 
     next?.click();
     await waitForCondition(() => canvasElement.querySelectorAll(".serviceOperationHistoryRow").length === 3);
-    expectStory(normalizeText(pageStatus?.textContent) === "第 2 / 2 页，共 23 条", "history pager should advance to the final page");
+    expectStory(normalizeText(pageStatus?.textContent) === "第 2 页，每页 20 条", "history pager should advance to the final cursor page");
     expectStory(!previous?.disabled, "previous page should be enabled on the final page");
     expectStory(next?.disabled, "next page should be disabled on the final page");
     expectStory(normalizeText(canvasElement.querySelector(".serviceOperationHistoryRow")?.textContent).includes("job-history-page-3"), "final page should render only the remaining records");

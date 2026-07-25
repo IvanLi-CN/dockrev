@@ -1,14 +1,179 @@
 use super::*;
 
+const SLOW_JOBS_LIST_WARN_THRESHOLD: std::time::Duration = std::time::Duration::from_millis(250);
+const SLOW_JOBS_LIST_WARN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+static SLOW_JOBS_LIST_WARNED_AT: std::sync::OnceLock<std::sync::Mutex<Option<std::time::Instant>>> =
+    std::sync::OnceLock::new();
+
 pub(super) async fn list_jobs(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    Query(query): Query<ListJobsQuery>,
 ) -> Result<Json<ListJobsResponse>, ApiError> {
     let _user = require_user(&state, &headers).await?;
-    let jobs = state.db.list_jobs().await.map_err(map_internal)?;
+    let limit = query.limit.unwrap_or(100);
+    if !(1..=200).contains(&limit) {
+        return Err(ApiError::invalid_argument(
+            "limit must be between 1 and 200",
+        ));
+    }
+    let cursor = query
+        .cursor
+        .as_deref()
+        .map(decode_jobs_cursor)
+        .transpose()?;
+    let types = query
+        .r#type
+        .as_deref()
+        .map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let started_at = std::time::Instant::now();
+    let page = state
+        .db
+        .list_jobs_page(crate::db::JobListFilters {
+            types,
+            status: query.status.clone().filter(|value| !value.is_empty()),
+            stack_id: query.stack_id.clone().filter(|value| !value.is_empty()),
+            service_id: query.service_id.clone().filter(|value| !value.is_empty()),
+            cursor,
+            limit,
+        })
+        .await
+        .map_err(map_internal)?;
+    let elapsed = started_at.elapsed();
+    if should_emit_slow_jobs_list_warning(elapsed, std::time::Instant::now()) {
+        tracing::warn!(
+            returned = page.jobs.len(),
+            limit,
+            has_next = page.next_cursor.is_some(),
+            has_type_filter = query.r#type.is_some(),
+            has_status_filter = query.status.is_some(),
+            has_stack_id_filter = query.stack_id.is_some(),
+            has_service_id_filter = query.service_id.is_some(),
+            duration_ms = elapsed.as_millis() as u64,
+            "slow jobs list query"
+        );
+    }
     Ok(Json(ListJobsResponse {
-        jobs: jobs.into_iter().map(|j| j.into_api()).collect(),
+        jobs: page.jobs.into_iter().map(|j| j.into_api()).collect(),
+        next_cursor: page.next_cursor.map(encode_jobs_cursor),
     }))
+}
+
+fn should_emit_slow_jobs_list_warning(
+    elapsed: std::time::Duration,
+    now: std::time::Instant,
+) -> bool {
+    let warned_at = SLOW_JOBS_LIST_WARNED_AT.get_or_init(|| std::sync::Mutex::new(None));
+    should_emit_slow_jobs_list_warning_with_state(warned_at, elapsed, now)
+}
+
+fn should_emit_slow_jobs_list_warning_with_state(
+    warned_at: &std::sync::Mutex<Option<std::time::Instant>>,
+    elapsed: std::time::Duration,
+    now: std::time::Instant,
+) -> bool {
+    if elapsed < SLOW_JOBS_LIST_WARN_THRESHOLD {
+        return false;
+    }
+
+    let mut warned_at = warned_at
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if warned_at.is_some_and(|last_warned_at| {
+        now.saturating_duration_since(last_warned_at) < SLOW_JOBS_LIST_WARN_INTERVAL
+    }) {
+        return false;
+    }
+
+    *warned_at = Some(now);
+    true
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ListJobsQuery {
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    limit: Option<u32>,
+    #[serde(default)]
+    r#type: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    stack_id: Option<String>,
+    #[serde(default)]
+    service_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JobsCursor {
+    created_at: String,
+    id: String,
+}
+
+fn encode_jobs_cursor(cursor: (String, String)) -> String {
+    let value = JobsCursor {
+        created_at: cursor.0,
+        id: cursor.1,
+    };
+    let bytes = serde_json::to_vec(&value).expect("jobs cursor serializes");
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+}
+
+fn decode_jobs_cursor(cursor: &str) -> Result<(String, String), ApiError> {
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(cursor)
+        .map_err(|_| ApiError::invalid_jobs_cursor())?;
+    let value: JobsCursor =
+        serde_json::from_slice(&bytes).map_err(|_| ApiError::invalid_jobs_cursor())?;
+    if value.created_at.is_empty() || value.id.is_empty() {
+        return Err(ApiError::invalid_jobs_cursor());
+    }
+    Ok((value.created_at, value.id))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use super::*;
+
+    #[test]
+    fn slow_jobs_list_warning_is_thresholded_and_rate_limited() {
+        let now = Instant::now();
+        let warned_at = std::sync::Mutex::new(None);
+
+        assert!(!should_emit_slow_jobs_list_warning_with_state(
+            &warned_at,
+            SLOW_JOBS_LIST_WARN_THRESHOLD.saturating_sub(std::time::Duration::from_millis(1)),
+            now,
+        ));
+        assert!(should_emit_slow_jobs_list_warning_with_state(
+            &warned_at,
+            SLOW_JOBS_LIST_WARN_THRESHOLD,
+            now,
+        ));
+        assert!(!should_emit_slow_jobs_list_warning_with_state(
+            &warned_at,
+            SLOW_JOBS_LIST_WARN_THRESHOLD,
+            now + std::time::Duration::from_secs(59),
+        ));
+        assert!(should_emit_slow_jobs_list_warning_with_state(
+            &warned_at,
+            SLOW_JOBS_LIST_WARN_THRESHOLD,
+            now + SLOW_JOBS_LIST_WARN_INTERVAL,
+        ));
+    }
 }
 
 pub(super) async fn get_job(

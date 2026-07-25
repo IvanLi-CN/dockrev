@@ -24,6 +24,8 @@ import type {
   VersionInferenceOverviewResponse,
   GetVersionInferenceOverviewInput,
   JobListItem,
+  ListJobsInput,
+  ListJobsResponse,
   JobDetail,
   IgnoreRule,
   SettingsResponse,
@@ -618,10 +620,34 @@ export async function triggerServiceRollback(serviceId: string): Promise<{ jobId
   return (await resp.json()) as { jobId: string }
 }
 
-export async function listJobs(): Promise<JobListItem[]> {
-  const resp = await apiFetch('/api/jobs')
-  const data = await resp.json()
-  return data.jobs as JobListItem[]
+export async function listJobsPage(input: ListJobsInput = {}): Promise<ListJobsResponse> {
+  const params = new URLSearchParams()
+  if (input.cursor) params.set('cursor', input.cursor)
+  if (input.limit != null) params.set('limit', String(input.limit))
+  const type = Array.isArray(input.type) ? input.type.join(',') : input.type
+  if (type) params.set('type', type)
+  if (input.status) params.set('status', input.status)
+  if (input.stackId) params.set('stackId', input.stackId)
+  if (input.serviceId) params.set('serviceId', input.serviceId)
+  const suffix = params.size > 0 ? `?${params.toString()}` : ''
+  const resp = await apiFetch(`/api/jobs${suffix}`)
+  return (await resp.json()) as ListJobsResponse
+}
+
+export async function listJobs(input: ListJobsInput = {}): Promise<JobListItem[]> {
+  const jobs: JobListItem[] = []
+  let cursor = input.cursor ?? null
+
+  // Keep legacy callers bounded at the former API ceiling while specialized
+  // surfaces use listJobsPage for explicit cursor navigation.
+  while (jobs.length < 2000) {
+    const page = await listJobsPage({ ...input, cursor, limit: Math.min(input.limit ?? 200, 200) })
+    jobs.push(...page.jobs)
+    if (!page.nextCursor) break
+    cursor = page.nextCursor
+  }
+
+  return jobs.slice(0, 2000)
 }
 
 export async function getJob(jobId: string): Promise<JobDetail> {
