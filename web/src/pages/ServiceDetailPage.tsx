@@ -133,6 +133,10 @@ export function ServiceDetailPage(props: {
   const [historyNextCursor, setHistoryNextCursor] = useState<string | null>(null);
   const [historyCursorStack, setHistoryCursorStack] = useState<(string | null)[]>([]);
   const historyCursorRef = useRef<string | null>(null);
+  const currentServiceIdRef = useRef(props.serviceId);
+  const historyRequestIdRef = useRef(0);
+  const versionJobsRequestIdRef = useRef(0);
+  currentServiceIdRef.current = props.serviceId;
   const [monitoringSnapshot, setMonitoringSnapshot] = useState<ServiceResourceSnapshot | null>(null);
   const [snapshotPayload, setSnapshotPayload] = useState<ServiceDetailSnapshotPayload | null>(null);
   const [, setSnapshotStatus] = useState<"missing" | "fresh" | "stale" | "expired" | "unsupported">("missing");
@@ -148,7 +152,10 @@ export function ServiceDetailPage(props: {
   const [serviceBackupTargetsDraft, setServiceBackupTargetsDraft] = useState<BackupTargetsDraft>(() => createBackupTargetsDraft(null));
 
   const refreshRecentJobs = useCallback(async (activateLive = false, cursor: string | null = historyCursorRef.current) => {
-    const page = await listJobsPage({ serviceId: props.serviceId, type: ["update", "rollback"], limit: 20, cursor });
+    const requestedServiceId = props.serviceId;
+    const requestId = ++historyRequestIdRef.current;
+    const page = await listJobsPage({ serviceId: requestedServiceId, type: ["update", "rollback"], limit: 20, cursor });
+    if (requestId !== historyRequestIdRef.current || currentServiceIdRef.current !== requestedServiceId) return;
     setJobs(page.jobs);
     historyCursorRef.current = cursor;
     setHistoryCursor(cursor);
@@ -159,7 +166,11 @@ export function ServiceDetailPage(props: {
   }, [props.serviceId]);
 
   const refreshVersionJobs = useCallback(async () => {
-    setVersionJobs(await listJobs({ serviceId: props.serviceId, type: ["update", "rollback"] }));
+    const requestedServiceId = props.serviceId;
+    const requestId = ++versionJobsRequestIdRef.current;
+    const versionHistory = await listJobs({ serviceId: requestedServiceId, type: ["update", "rollback"] });
+    if (requestId !== versionJobsRequestIdRef.current || currentServiceIdRef.current !== requestedServiceId) return;
+    setVersionJobs(versionHistory);
   }, [props.serviceId]);
 
   useEffect(() => {
@@ -181,7 +192,11 @@ export function ServiceDetailPage(props: {
   }, [snapshotKey]);
 
   useEffect(() => {
+    historyRequestIdRef.current += 1;
+    versionJobsRequestIdRef.current += 1;
     historyCursorRef.current = null;
+    setJobs([]);
+    setVersionJobs([]);
     setHistoryCursor(null);
     setHistoryNextCursor(null);
     setHistoryCursorStack([]);
