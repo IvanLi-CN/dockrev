@@ -1,10 +1,12 @@
 # Dockrev：服务资源监控（SSE 实时推送 + 历史持久化 + 图表）（#kbz3z）
 
+> 当前有效规范以本文为准；实现覆盖与当前状态见 `./IMPLEMENTATION.md`，关键演进原因见 `./HISTORY.md`。
+
 ## 状态
 
-- Status: 已完成
+- Status: active
 - Created: 2026-03-03
-- Last: 2026-07-20
+- Last: 2026-07-26
 
 ## 背景 / 问题陈述
 
@@ -27,7 +29,7 @@
 - 不引入告警规则、阈值通知、自动扩缩容。
 - 不实现多实例分布式采样去重。
 - 不为单个 compose project 提供独立于全局设置之外的采样频率覆盖。
-- 不新增 API/UI stale、skip、backlog 提示字段；退化仅通过日志暴露。
+- 不新增 API/UI stale、skip、backlog 提示字段；采样保护导致的退化仅通过结构化日志暴露。
 
 ## 范围（Scope）
 
@@ -76,6 +78,11 @@
   - 退化仅记录结构化日志，至少包含 `compose_project`、`interval_seconds`、`duration_ms`、`skipped_ticks`、`service_count`、`result`。
 - 资源采集通道：
   - 资源监控历史采样与详情页实时采样统一直接读取 Docker Engine API。
+  - 实时与历史采样必须共享同一个进程级 Docker Engine client 及其保护状态；不得为两条链路分别创建独立的限流器或熔断器。
+  - 共享 client 最多同时执行 4 个 Docker Engine 请求。等待中的请求在熔断已经打开后必须直接降级，不得继续访问 daemon。
+  - 连续 2 次连接错误、请求超时、5xx 或成功响应的解码失败后打开熔断；退避从 5 秒指数增长到最多 60 秒。冷却结束后仅允许一个半开探测，成功后恢复正常采样，失败后继续退避；探测被取消时必须回到带退避的打开状态，不能永久停在半开。
+  - 4xx 容器生命周期竞争仍按局部采集失败处理，不触发熔断；熔断打开、半开与恢复仅记录状态转换级结构化日志。
+  - Docker 控制面退化期间允许实时和历史样本缺失；恢复后由后续既有 cadence 自动续采，不补历史欠账。
   - 默认通过挂载的 `/var/run/docker.sock` 访问；若部署改走 `docker-socket-proxy`，则复用现有 `DOCKER_HOST=tcp://docker-socket-proxy:2375` 入口。
   - Docker Engine API 请求默认不钉死版本前缀，避免被现代 Engine 的 `MinAPIVersion` 门槛拒绝；兼容性由 Engine 当前默认路由负责。
   - 本次仅替换资源监控采集路径；日志、更新、cleanup 等其它 Docker 操作仍可继续使用现有 CLI 路径。
@@ -103,15 +110,19 @@
 - 图表支持指标切换与窗口切换，空数据/错误态有明确提示。
 - 前台实时 SSE 继续保持 `1s` 采样 cadence，不受历史采样频率设置影响。
 - 既有数据库里保存的合法 `10s` 历史采样配置继续生效，不被自动回写成 `5s`。
-- 慢 compose project 的一次长耗时历史采样不会拖慢其它 project 的出样 cadence。
+- Docker Engine 健康时，慢 compose project 的一次长耗时历史采样不会拖慢其它 project 的 worker cadence；当 Engine 控制面退化时，全局保护可主动降级其它 project 的该轮采样以避免放大 daemon 压力。
 - 同一 compose project 当单轮耗时超过 interval 时，不会并发启动第二个采样任务，也不会补跑过期 tick。
+- Docker Engine 连续故障后，实时与历史采样不得分别继续积压请求；熔断期无新增 daemon 请求，冷却后的单个探测成功才恢复采样。
 - 所有指标以水平保持和垂直跳变经过每个有效采样点、缺口处断线，不生成连续中间值；折线端点平切并保留最新样本锚点。
 - 磁盘 I/O、网络 I/O 均以速率形式展示。
 - 深色/浅色主题与 375px 宽度下版式稳定，无横向滚动，长数值不炸版。
 
 ## 质量门槛（Quality Gates）
 
-- `cargo test -p dockrev-api`
+- `cargo fmt --all -- --check`
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- `cargo test --workspace --locked --all-features`
+- `python3 ./.github/scripts/check-file-budgets.py`
 - `bun run --cwd web build`
 - `bun run --cwd web build-storybook`
 
@@ -171,6 +182,7 @@ PR: include
 - 2026-07-15: 历史采样 contract 扩展为 `5/10/30/60/300` 且默认 `5s`，共享窗口 contract 切到 `3m/1h/24h`，前台实时 SSE 继续保持 `1s`；资源监控采集路径切换为直接读取 Docker Engine API（默认 socket，兼容 `DOCKER_HOST`），并移除固定 `/v1.24` 前缀以兼容现代 Docker Engine 的 `MinAPIVersion`。
 - 2026-07-20: 历史采样改为“每个 compose project 独立固定 cadence + single-flight + skip overdue”，慢 project 不再拖慢整站；settings 与监控页文案同步明确 `sampleIntervalSeconds` 的真实语义，以及页面样本数混入实时 SSE 点的现状。
 - 2026-07-25: Docker stats 的 nullable block-I/O 字段按空集合兼容；单容器失败改为保留同项目成功样本并限频记录结构化诊断。原始资源样本保留期收敛为 7 天，启动后及每小时按批清理，不自动执行 `VACUUM`。
+- 2026-07-26: 普通 Docker CLI 命令超时改为终止子进程；资源监控实时与历史采样共享 Docker Engine client，加入全局 4 请求限流、2 次连续可恢复故障熔断、5s 至 60s 指数退避与单半开探测，避免 daemon 退化时请求堆积。
 
 ## 参考（References）
 

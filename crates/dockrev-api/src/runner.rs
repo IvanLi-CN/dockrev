@@ -52,6 +52,7 @@ impl CommandRunner for TokioCommandRunner {
         for (k, v) in &spec.env {
             cmd.env(k, v);
         }
+        cmd.kill_on_drop(true);
 
         let output = tokio::time::timeout(timeout, cmd.output()).await??;
         Ok(CommandOutput {
@@ -171,5 +172,41 @@ impl CommandRunner for TokioCommandRunner {
         tokio::time::timeout(timeout, fut)
             .await
             .map_err(|_| anyhow::anyhow!("command timed out after {:?}", timeout))?
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn run_kills_timed_out_process_before_it_can_run_delayed_side_effect() {
+        let marker = std::env::temp_dir().join(format!(
+            "dockrev-runner-timeout-{}-{}.marker",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let command = format!("sleep 0.2; touch {}", marker.display());
+
+        let result = TokioCommandRunner
+            .run(
+                CommandSpec {
+                    program: "sh".to_string(),
+                    args: vec!["-c".to_string(), command],
+                    env: Vec::new(),
+                },
+                Duration::from_millis(20),
+            )
+            .await;
+
+        assert!(result.is_err());
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(
+            !marker.exists(),
+            "timed-out command still ran its delayed side effect"
+        );
     }
 }

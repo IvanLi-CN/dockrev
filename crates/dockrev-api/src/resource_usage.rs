@@ -194,10 +194,8 @@ struct DockerApiResourceCollector {
 }
 
 impl DockerApiResourceCollector {
-    fn new() -> anyhow::Result<Self> {
-        Ok(Self {
-            client: DockerEngineClient::from_env()?,
-        })
+    fn from_client(client: DockerEngineClient) -> Self {
+        Self { client }
     }
 }
 
@@ -240,11 +238,11 @@ impl ResourceCollector for RunnerBackedResourceCollector {
 }
 
 impl RealtimeSamplerHub {
-    pub fn from_env(db: Db) -> anyhow::Result<Self> {
-        Ok(Self::with_collector(
+    pub fn with_docker_engine(db: Db, client: DockerEngineClient) -> Self {
+        Self::with_collector(
             db,
-            Arc::new(DockerApiResourceCollector::new()?),
-        ))
+            Arc::new(DockerApiResourceCollector::from_client(client)),
+        )
     }
 
     #[cfg(test)]
@@ -403,9 +401,11 @@ fn try_remove_idle_sampler_entry(
     false
 }
 
-pub fn spawn_history_sampler_from_env(db: Db) -> anyhow::Result<()> {
-    spawn_history_sampler_with_collector(db, Arc::new(DockerApiResourceCollector::new()?));
-    Ok(())
+pub fn spawn_history_sampler(db: Db, client: DockerEngineClient) {
+    spawn_history_sampler_with_collector(
+        db,
+        Arc::new(DockerApiResourceCollector::from_client(client)),
+    );
 }
 
 fn spawn_history_sampler_with_collector(db: Db, collector: Arc<dyn ResourceCollector>) {
@@ -1092,6 +1092,15 @@ mod tests {
         api::types::{ComposeConfig, StackBackupConfig},
         models::{ServiceSeed, StackRecord},
     };
+
+    #[test]
+    fn realtime_and_history_collectors_share_docker_engine_protection() {
+        let client = DockerEngineClient::for_test_http_base("http://docker.test").unwrap();
+        let realtime = DockerApiResourceCollector::from_client(client.clone());
+        let history = DockerApiResourceCollector::from_client(client);
+
+        assert!(realtime.client.shares_protection_with(&history.client));
+    }
 
     #[test]
     fn partial_sample_warning_state_expires_recreated_container_ids() {
