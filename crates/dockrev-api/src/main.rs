@@ -103,8 +103,11 @@ async fn main() -> anyhow::Result<()> {
         },
     )?);
     let runner = std::sync::Arc::new(runner::TokioCommandRunner);
-    let resource_hub =
-        std::sync::Arc::new(resource_usage::RealtimeSamplerHub::from_env(db.clone())?);
+    let docker_engine = docker_engine::DockerEngineClient::from_env()?;
+    let resource_hub = std::sync::Arc::new(resource_usage::RealtimeSamplerHub::with_docker_engine(
+        db.clone(),
+        docker_engine.clone(),
+    ));
     let service_log_hub =
         std::sync::Arc::new(service_logs::ServiceLogHub::new(db.clone(), runner.clone()));
     let snapshot_worker = std::sync::Arc::new(snapshot_worker::SnapshotWorker::new(
@@ -159,7 +162,7 @@ async fn main() -> anyhow::Result<()> {
     repo_link_backfill::spawn_tasks(state.clone());
     schedules::spawn_tasks(state.clone());
     auto_update::spawn_tasks(state.clone());
-    resource_usage::spawn_history_sampler_from_env(state.db.clone())?;
+    resource_usage::spawn_history_sampler(state.db.clone(), docker_engine);
     if let Err(err) = repo_link_backfill::enqueue_startup_backfill_if_needed(state.as_ref()).await {
         tracing::warn!(error = %err, "failed to enqueue startup repo link backfill");
     }

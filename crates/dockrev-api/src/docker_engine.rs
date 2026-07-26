@@ -1,12 +1,277 @@
-use std::{collections::BTreeMap, path::PathBuf, time::Duration};
+use std::{
+    collections::BTreeMap,
+    path::PathBuf,
+    sync::{Arc, Mutex, MutexGuard},
+    time::{Duration, Instant},
+};
 
 use anyhow::Context as _;
 use reqwest::Url;
 use serde::{Deserialize, de::DeserializeOwned};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
 
 use crate::api::types::ServiceResourceSample;
 
 const DEFAULT_DOCKER_SOCKET_PATH: &str = "/var/run/docker.sock";
+const DOCKER_ENGINE_MAX_IN_FLIGHT_REQUESTS: usize = 4;
+const DOCKER_ENGINE_FAILURE_THRESHOLD: u32 = 2;
+const DOCKER_ENGINE_INITIAL_BACKOFF: Duration = Duration::from_secs(5);
+const DOCKER_ENGINE_MAX_BACKOFF: Duration = Duration::from_secs(60);
+
+#[derive(Clone, Copy)]
+struct DockerEngineProtectionConfig {
+    max_in_flight_requests: usize,
+    failure_threshold: u32,
+    initial_backoff: Duration,
+    max_backoff: Duration,
+}
+
+impl Default for DockerEngineProtectionConfig {
+    fn default() -> Self {
+        Self {
+            max_in_flight_requests: DOCKER_ENGINE_MAX_IN_FLIGHT_REQUESTS,
+            failure_threshold: DOCKER_ENGINE_FAILURE_THRESHOLD,
+            initial_backoff: DOCKER_ENGINE_INITIAL_BACKOFF,
+            max_backoff: DOCKER_ENGINE_MAX_BACKOFF,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct DockerEngineProtection {
+    permits: Arc<Semaphore>,
+    circuit: Arc<Mutex<DockerEngineCircuit>>,
+    circuit_opened: watch::Sender<u64>,
+    config: DockerEngineProtectionConfig,
+}
+
+#[derive(Clone, Copy)]
+struct DockerEngineCircuit {
+    consecutive_failures: u32,
+    mode: DockerEngineCircuitMode,
+}
+
+impl Default for DockerEngineCircuit {
+    fn default() -> Self {
+        Self {
+            consecutive_failures: 0,
+            mode: DockerEngineCircuitMode::Closed,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum DockerEngineCircuitMode {
+    Closed,
+    Open {
+        retry_at: Instant,
+        backoff: Duration,
+    },
+    HalfOpen {
+        backoff: Duration,
+    },
+}
+
+#[derive(Clone, Copy)]
+enum DockerEngineCircuitAdmission {
+    Closed,
+    HalfOpenProbe,
+}
+
+#[derive(Clone, Copy)]
+enum DockerEngineRequestHealth {
+    Responsive,
+    RecoverableFailure,
+}
+
+struct ProtectedDockerEngineRequest {
+    protection: DockerEngineProtection,
+    _permit: Option<OwnedSemaphorePermit>,
+    admission: DockerEngineCircuitAdmission,
+    completed: bool,
+}
+
+impl ProtectedDockerEngineRequest {
+    fn complete(&mut self) {
+        self.completed = true;
+    }
+}
+
+impl Drop for ProtectedDockerEngineRequest {
+    fn drop(&mut self) {
+        if !self.completed {
+            self.protection.abandon_admission(self.admission);
+        }
+    }
+}
+
+impl DockerEngineProtection {
+    fn new(config: DockerEngineProtectionConfig) -> Self {
+        let (circuit_opened, _) = watch::channel(0u64);
+        Self {
+            permits: Arc::new(Semaphore::new(config.max_in_flight_requests)),
+            circuit: Arc::new(Mutex::new(DockerEngineCircuit::default())),
+            circuit_opened,
+            config,
+        }
+    }
+
+    async fn begin_request(&self) -> anyhow::Result<ProtectedDockerEngineRequest> {
+        // Subscribe before admission so an open transition cannot be missed while waiting.
+        let mut circuit_opened = self.circuit_opened.subscribe();
+        let admission = self.admit()?;
+        let mut request = ProtectedDockerEngineRequest {
+            protection: self.clone(),
+            _permit: None,
+            admission,
+            completed: false,
+        };
+        let permit = loop {
+            tokio::select! {
+                permit = self.permits.clone().acquire_owned() => {
+                    break permit.map_err(|_| anyhow::anyhow!("Docker Engine request limiter closed"))?;
+                }
+                changed = circuit_opened.changed() => {
+                    changed.map_err(|_| anyhow::anyhow!("Docker Engine circuit state notifier closed"))?;
+                    self.validate_admission(admission)?;
+                }
+            }
+        };
+        request._permit = Some(permit);
+        self.validate_admission(admission)?;
+        Ok(request)
+    }
+
+    fn admit(&self) -> anyhow::Result<DockerEngineCircuitAdmission> {
+        let mut circuit = self.lock_circuit();
+        match circuit.mode {
+            DockerEngineCircuitMode::Closed => Ok(DockerEngineCircuitAdmission::Closed),
+            DockerEngineCircuitMode::Open { retry_at, backoff } => {
+                let now = Instant::now();
+                if now < retry_at {
+                    return Err(anyhow::anyhow!(
+                        "Docker Engine circuit breaker open; retry after {} ms",
+                        retry_at.saturating_duration_since(now).as_millis()
+                    ));
+                }
+                circuit.mode = DockerEngineCircuitMode::HalfOpen { backoff };
+                tracing::info!(
+                    backoff_ms = backoff.as_millis() as u64,
+                    "Docker Engine circuit breaker entering half-open probe"
+                );
+                Ok(DockerEngineCircuitAdmission::HalfOpenProbe)
+            }
+            DockerEngineCircuitMode::HalfOpen { .. } => Err(anyhow::anyhow!(
+                "Docker Engine circuit breaker probe already in progress"
+            )),
+        }
+    }
+
+    fn validate_admission(&self, admission: DockerEngineCircuitAdmission) -> anyhow::Result<()> {
+        let circuit = self.lock_circuit();
+        let valid = matches!(
+            (admission, circuit.mode),
+            (
+                DockerEngineCircuitAdmission::Closed,
+                DockerEngineCircuitMode::Closed
+            ) | (
+                DockerEngineCircuitAdmission::HalfOpenProbe,
+                DockerEngineCircuitMode::HalfOpen { .. }
+            )
+        );
+        if valid {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "Docker Engine circuit breaker opened while request waited for capacity"
+            ))
+        }
+    }
+
+    fn record_result(
+        &self,
+        admission: DockerEngineCircuitAdmission,
+        health: DockerEngineRequestHealth,
+    ) {
+        let mut circuit = self.lock_circuit();
+        match (admission, health, circuit.mode) {
+            (
+                DockerEngineCircuitAdmission::Closed,
+                DockerEngineRequestHealth::Responsive,
+                DockerEngineCircuitMode::Closed,
+            ) => circuit.consecutive_failures = 0,
+            (
+                DockerEngineCircuitAdmission::HalfOpenProbe,
+                DockerEngineRequestHealth::Responsive,
+                DockerEngineCircuitMode::HalfOpen { .. },
+            ) => {
+                circuit.consecutive_failures = 0;
+                circuit.mode = DockerEngineCircuitMode::Closed;
+                tracing::info!("Docker Engine circuit breaker recovered");
+            }
+            (
+                DockerEngineCircuitAdmission::Closed,
+                DockerEngineRequestHealth::RecoverableFailure,
+                DockerEngineCircuitMode::Closed,
+            ) => {
+                circuit.consecutive_failures = circuit.consecutive_failures.saturating_add(1);
+                if circuit.consecutive_failures >= self.config.failure_threshold {
+                    self.open_circuit(
+                        &mut circuit,
+                        self.config.initial_backoff,
+                        "failure threshold reached",
+                    );
+                }
+            }
+            (
+                DockerEngineCircuitAdmission::HalfOpenProbe,
+                DockerEngineRequestHealth::RecoverableFailure,
+                DockerEngineCircuitMode::HalfOpen { backoff },
+            ) => {
+                let next_backoff = backoff.saturating_mul(2).min(self.config.max_backoff);
+                self.open_circuit(&mut circuit, next_backoff, "half-open probe failed");
+            }
+            _ => {}
+        }
+    }
+
+    fn abandon_admission(&self, admission: DockerEngineCircuitAdmission) {
+        if !matches!(admission, DockerEngineCircuitAdmission::HalfOpenProbe) {
+            return;
+        }
+
+        let mut circuit = self.lock_circuit();
+        if let DockerEngineCircuitMode::HalfOpen { backoff } = circuit.mode {
+            self.open_circuit(&mut circuit, backoff, "half-open probe cancelled");
+        }
+    }
+
+    fn lock_circuit(&self) -> MutexGuard<'_, DockerEngineCircuit> {
+        self.circuit
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn open_circuit(
+        &self,
+        circuit: &mut DockerEngineCircuit,
+        backoff: Duration,
+        reason: &'static str,
+    ) {
+        circuit.consecutive_failures = 0;
+        circuit.mode = DockerEngineCircuitMode::Open {
+            retry_at: Instant::now() + backoff,
+            backoff,
+        };
+        self.circuit_opened
+            .send_modify(|version| *version = version.wrapping_add(1));
+        tracing::warn!(
+            reason,
+            backoff_ms = backoff.as_millis() as u64,
+            "Docker Engine circuit breaker opened"
+        );
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct ProjectResourceCollection {
@@ -25,6 +290,7 @@ pub struct ContainerStatsFailure {
 pub struct DockerEngineClient {
     http: reqwest::Client,
     base_url: String,
+    protection: DockerEngineProtection,
 }
 
 impl DockerEngineClient {
@@ -65,10 +331,7 @@ impl DockerEngineClient {
                 .unix_socket(socket_path)
                 .build()
                 .context("build Docker Engine unix socket client")?;
-            Ok(Self {
-                http,
-                base_url: "http://docker".to_string(),
-            })
+            Ok(Self::with_http_client(http, "http://docker".to_string()))
         }
 
         #[cfg(not(unix))]
@@ -81,6 +344,13 @@ impl DockerEngineClient {
     }
 
     fn from_http_base(raw: &str) -> anyhow::Result<Self> {
+        Self::from_http_base_with_protection(raw, DockerEngineProtectionConfig::default())
+    }
+
+    fn from_http_base_with_protection(
+        raw: &str,
+        protection_config: DockerEngineProtectionConfig,
+    ) -> anyhow::Result<Self> {
         let mut url = Url::parse(raw).context("parse DOCKER_HOST as URL")?;
         url.set_query(None);
         url.set_fragment(None);
@@ -91,7 +361,27 @@ impl DockerEngineClient {
         Ok(Self {
             http,
             base_url: url.as_str().trim_end_matches('/').to_string(),
+            protection: DockerEngineProtection::new(protection_config),
         })
+    }
+
+    fn with_http_client(http: reqwest::Client, base_url: String) -> Self {
+        Self {
+            http,
+            base_url,
+            protection: DockerEngineProtection::new(DockerEngineProtectionConfig::default()),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test_http_base(raw: &str) -> anyhow::Result<Self> {
+        Self::from_http_base(raw)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shares_protection_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.protection.permits, &other.protection.permits)
+            && Arc::ptr_eq(&self.protection.circuit, &other.protection.circuit)
     }
 
     pub async fn collect_project_service_samples(
@@ -206,25 +496,59 @@ impl DockerEngineClient {
     where
         T: DeserializeOwned,
     {
+        let mut request = self.protection.begin_request().await?;
+        let admission = request.admission;
         let url = format!("{}{}", self.base_url, path);
-        let resp = self
+        let response = self
             .http
             .get(&url)
             .query(query)
             .timeout(timeout)
             .send()
-            .await
-            .with_context(|| format!("request Docker Engine {path}"))?;
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!(
-                "Docker Engine request {path} failed status={status} body={body}"
-            ));
-        }
-        resp.json::<T>()
-            .await
-            .with_context(|| format!("decode Docker Engine response for {path}"))
+            .await;
+        let (result, health) = match response {
+            Err(error) => {
+                let health = if error.is_timeout() || error.is_connect() {
+                    DockerEngineRequestHealth::RecoverableFailure
+                } else {
+                    DockerEngineRequestHealth::Responsive
+                };
+                (
+                    Err(error).with_context(|| format!("request Docker Engine {path}")),
+                    health,
+                )
+            }
+            Ok(response) => {
+                let status = response.status();
+                if !status.is_success() {
+                    let body = response.text().await.unwrap_or_default();
+                    let health = if status.is_server_error() {
+                        DockerEngineRequestHealth::RecoverableFailure
+                    } else {
+                        DockerEngineRequestHealth::Responsive
+                    };
+                    (
+                        Err(anyhow::anyhow!(
+                            "Docker Engine request {path} failed status={status} body={body}"
+                        )),
+                        health,
+                    )
+                } else {
+                    match response.json::<T>().await {
+                        Ok(value) => (Ok(value), DockerEngineRequestHealth::Responsive),
+                        Err(error) => (
+                            Err(error).with_context(|| {
+                                format!("decode Docker Engine response for {path}")
+                            }),
+                            DockerEngineRequestHealth::RecoverableFailure,
+                        ),
+                    }
+                }
+            }
+        };
+        self.protection.record_result(admission, health);
+        request.complete();
+        result
     }
 }
 
@@ -468,10 +792,115 @@ fn calculate_block_io_bytes(stats: &DockerStatsResponse) -> Option<(u64, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex};
+    use std::{
+        collections::VecDeque,
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicU64, AtomicUsize, Ordering},
+        },
+    };
 
-    use axum::{Json, Router, extract::OriginalUri, routing::get};
+    use axum::{
+        Json, Router,
+        extract::{OriginalUri, State},
+        http::StatusCode,
+        routing::get,
+    };
     use serde_json::json;
+
+    #[derive(Clone)]
+    struct ProtectionTestState {
+        statuses: Arc<Mutex<VecDeque<StatusCode>>>,
+        requests: Arc<AtomicUsize>,
+        active: Arc<AtomicUsize>,
+        max_active: Arc<AtomicUsize>,
+        response_delay_ms: Arc<AtomicU64>,
+    }
+
+    impl ProtectionTestState {
+        fn new(statuses: impl IntoIterator<Item = StatusCode>) -> Self {
+            Self {
+                statuses: Arc::new(Mutex::new(statuses.into_iter().collect())),
+                requests: Arc::new(AtomicUsize::new(0)),
+                active: Arc::new(AtomicUsize::new(0)),
+                max_active: Arc::new(AtomicUsize::new(0)),
+                response_delay_ms: Arc::new(AtomicU64::new(0)),
+            }
+        }
+    }
+
+    async fn protected_response(
+        State(state): State<ProtectionTestState>,
+    ) -> (StatusCode, Json<serde_json::Value>) {
+        state.requests.fetch_add(1, Ordering::SeqCst);
+        let active = state.active.fetch_add(1, Ordering::SeqCst) + 1;
+        let mut observed = state.max_active.load(Ordering::SeqCst);
+        while active > observed {
+            match state.max_active.compare_exchange(
+                observed,
+                active,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => break,
+                Err(current) => observed = current,
+            }
+        }
+
+        let delay = state.response_delay_ms.load(Ordering::SeqCst);
+        if delay > 0 {
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+        }
+        state.active.fetch_sub(1, Ordering::SeqCst);
+        let status = state
+            .statuses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(StatusCode::OK);
+        (status, Json(json!({})))
+    }
+
+    async fn protected_test_client(
+        state: ProtectionTestState,
+        config: DockerEngineProtectionConfig,
+    ) -> (DockerEngineClient, tokio::task::JoinHandle<()>) {
+        let app = Router::new()
+            .route("/health", get(protected_response))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (
+            DockerEngineClient::from_http_base_with_protection(&format!("http://{addr}"), config)
+                .unwrap(),
+            server,
+        )
+    }
+
+    async fn wait_for_request_count(state: &ProtectionTestState, expected: usize) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if state.requests.load(Ordering::SeqCst) >= expected {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    fn test_protection_config() -> DockerEngineProtectionConfig {
+        DockerEngineProtectionConfig {
+            max_in_flight_requests: 4,
+            failure_threshold: 2,
+            initial_backoff: Duration::from_millis(20),
+            max_backoff: Duration::from_millis(80),
+        }
+    }
 
     #[test]
     fn tcp_docker_host_normalizes_to_http_base_url() {
@@ -491,6 +920,227 @@ mod tests {
     fn unix_docker_host_normalizes_to_unversioned_engine_base_url() {
         let client = DockerEngineClient::from_docker_host("unix:///var/run/docker.sock").unwrap();
         assert_eq!(client.base_url, "http://docker");
+    }
+
+    #[tokio::test]
+    async fn docker_engine_request_limit_is_shared_across_client_clones() {
+        let state = ProtectionTestState::new(std::iter::repeat_n(StatusCode::OK, 12));
+        state.response_delay_ms.store(40, Ordering::SeqCst);
+        let (client, server) = protected_test_client(state.clone(), test_protection_config()).await;
+        let mut requests = tokio::task::JoinSet::new();
+        for _ in 0..12 {
+            let client = client.clone();
+            requests.spawn(async move {
+                client
+                    .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
+                    .await
+            });
+        }
+
+        while let Some(result) = requests.join_next().await {
+            result.unwrap().unwrap();
+        }
+
+        assert_eq!(state.requests.load(Ordering::SeqCst), 12);
+        assert_eq!(state.max_active.load(Ordering::SeqCst), 4);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn queued_request_degrades_when_the_circuit_opens() {
+        let protection = DockerEngineProtection::new(test_protection_config());
+        let mut in_flight = Vec::new();
+        for _ in 0..DOCKER_ENGINE_MAX_IN_FLIGHT_REQUESTS {
+            in_flight.push(protection.begin_request().await.unwrap());
+        }
+
+        let queued_protection = protection.clone();
+        let queued = tokio::spawn(async move { queued_protection.begin_request().await });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while protection.circuit_opened.receiver_count() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        {
+            let mut circuit = protection.lock_circuit();
+            protection.open_circuit(
+                &mut circuit,
+                Duration::from_millis(20),
+                "test circuit opened",
+            );
+        }
+
+        let result = tokio::time::timeout(Duration::from_millis(100), queued)
+            .await
+            .unwrap()
+            .unwrap();
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => panic!("queued request unexpectedly acquired a permit after circuit opened"),
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("opened while request waited for capacity")
+        );
+        drop(in_flight);
+    }
+
+    #[tokio::test]
+    async fn docker_engine_circuit_breaker_backs_off_and_recovers_with_one_probe() {
+        let state = ProtectionTestState::new([
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::OK,
+            StatusCode::OK,
+        ]);
+        let (client, server) = protected_test_client(state.clone(), test_protection_config()).await;
+
+        for _ in 0..2 {
+            assert!(
+                client
+                    .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
+                    .await
+                    .is_err()
+            );
+        }
+        assert_eq!(state.requests.load(Ordering::SeqCst), 2);
+        assert!(
+            client
+                .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("circuit breaker open")
+        );
+        assert_eq!(state.requests.load(Ordering::SeqCst), 2);
+
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        assert!(
+            client
+                .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
+                .await
+                .is_err()
+        );
+        assert_eq!(state.requests.load(Ordering::SeqCst), 3);
+
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        assert!(
+            client
+                .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
+                .await
+                .is_err()
+        );
+        assert_eq!(state.requests.load(Ordering::SeqCst), 3);
+
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        state.response_delay_ms.store(40, Ordering::SeqCst);
+        let probe_client = client.clone();
+        let probe = tokio::spawn(async move {
+            probe_client
+                .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
+                .await
+        });
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        assert!(
+            client
+                .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("probe already in progress")
+        );
+        assert_eq!(state.requests.load(Ordering::SeqCst), 4);
+        probe.await.unwrap().unwrap();
+
+        client
+            .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
+            .await
+            .unwrap();
+        assert_eq!(state.requests.load(Ordering::SeqCst), 5);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn cancelled_half_open_probe_reopens_the_circuit() {
+        let state = ProtectionTestState::new([
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::OK,
+            StatusCode::OK,
+        ]);
+        let (client, server) = protected_test_client(state.clone(), test_protection_config()).await;
+
+        for _ in 0..2 {
+            assert!(
+                client
+                    .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
+                    .await
+                    .is_err()
+            );
+        }
+
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        state.response_delay_ms.store(100, Ordering::SeqCst);
+        let probe_client = client.clone();
+        let probe = tokio::spawn(async move {
+            probe_client
+                .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
+                .await
+        });
+        wait_for_request_count(&state, 3).await;
+        probe.abort();
+        assert!(probe.await.unwrap_err().is_cancelled());
+
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        state.response_delay_ms.store(0, Ordering::SeqCst);
+        client
+            .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
+            .await
+            .unwrap();
+        assert_eq!(state.requests.load(Ordering::SeqCst), 4);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn docker_engine_client_errors_do_not_trip_the_circuit_breaker() {
+        let state = ProtectionTestState::new([
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::NOT_FOUND,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::OK,
+        ]);
+        let (client, server) = protected_test_client(state.clone(), test_protection_config()).await;
+
+        assert!(
+            client
+                .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
+                .await
+                .is_err()
+        );
+        assert!(
+            client
+                .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
+                .await
+                .is_err()
+        );
+        assert!(
+            client
+                .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
+                .await
+                .is_err()
+        );
+        client
+            .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
+            .await
+            .unwrap();
+
+        assert_eq!(state.requests.load(Ordering::SeqCst), 4);
+        server.abort();
     }
 
     #[tokio::test]
