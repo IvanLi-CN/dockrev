@@ -9,18 +9,18 @@
 
 ## 背景 / 问题陈述
 
-- 顶部右侧当前仍是硬编码的 `鉴权：Forward Auth` 静态 chip，无法直接告诉操作者“当前是谁”以及这次请求是怎么被放行的。
+- 桌面壳层此前将身份入口放在顶部右侧，既与详情页顶部操作竞争空间，也无法在侧栏折叠时保留稳定入口。
 - 现有仓库已经在 `GET /api/settings.auth` 中返回当前用户、当前组、鉴权模式与命中方式，但这些运行态细节只出现在设置页，只读信息离日常入口太远。
-- 现有 UI 已具备 hover-open / click-pin 的 popover 基座，因此这次 follow-up 需要把已有 auth 真相源搬到壳层头部，而不是重新设计一套新的认证 UI。
+- 现有 UI 已具备 hover-open / click-pin 的 popover 基座，因此这次 follow-up 需要复用已有 auth 真相源与交互，而不是重新设计一套新的认证 UI。
 
 ## 目标 / 非目标
 
 ### Goals
 
-- 把顶部静态鉴权 chip 替换为用户信息入口，默认优先显示当前身份，而不是认证系统名。
-- 统一桌面端 hover-open / click-pin 与移动端 click-open 的交互，不新增后端 API。
+- 桌面身份入口放在主导航底部元信息区首位，默认优先显示当前身份，而不是认证系统名；折叠时保留头像图标入口。
+- 统一桌面端 hover-open / click-pin 与移动端顶栏 click-open 的交互，不新增后端 API。
 - 在弹层中只读展示当前用户、当前组、认证来源、鉴权模式、命中方式、用户头与组头。
-- 让 `AppShell` 和 `SupervisorMisroute` 头部使用同一组件与同一文案映射。
+- 让 `AppShell` 桌面侧栏、移动顶栏与 `SupervisorMisroute` 继续使用同一组件与同一文案映射。
 - 补齐 Storybook 组件态与壳层集成态，并把最终视觉证据写入本 spec。
 
 ### Non-goals
@@ -59,13 +59,15 @@
 
 ## 验收标准（Acceptance Criteria）
 
-- Given 当前请求已识别 `currentUser=alice`，When 页面渲染顶部入口，Then 触发器默认显示 `alice`，而不是 `鉴权：Forward Auth`。
+- Given 当前请求已识别 `currentUser=alice`，When 桌面 AppShell 渲染侧栏身份入口，Then 展开态触发器默认显示 `alice`，而不是 `鉴权：Forward Auth`。
 - Given 当前请求没有用户头但有组命中，When 页面渲染顶部入口，Then 触发器显示 `组：<首个组>`。
 - Given 当前请求是开发环境匿名路径，When 页面渲染顶部入口，Then 触发器显示 `匿名开发`。
-- Given 用户在桌面端 hover 或 click 顶部入口，When 弹层展开，Then 固定显示当前用户、当前组、认证来源、鉴权模式、命中方式、用户头与组头；缺失字段统一回退 `-`。
+- Given 用户在桌面端 hover 或 click 侧栏身份入口，When 弹层展开，Then 固定显示当前用户、当前组、认证来源、鉴权模式、命中方式、用户头与组头；缺失字段统一回退 `-`。
+- Given 用户再次 click 已 pin 的身份入口，When 弹层仍展开，Then 触发器关闭弹层而不是再次 pin。
 - Given 用户点击 `Esc` 或弹层外部区域，When popover 已打开，Then 弹层关闭。
-- Given 页面宽度 <= 640px，When 顶部入口渲染，Then 入口仍可见，不再沿用旧的隐藏规则。
-- Given `AppShell` 与 `SupervisorMisroute` 都渲染头部，When 展示顶部身份入口，Then 两处使用同一组件与同一文案映射。
+- Given 页面宽度 <= 960px，When AppShell 顶栏渲染，Then 移动身份入口仍可见，不再沿用桌面侧栏布局。
+- Given 页面跨越 `960px` 断点，When AppShell 切换身份入口位置，Then 非当前断点的入口与其 portal 弹层均不保留。
+- Given `AppShell` 与 `SupervisorMisroute` 都渲染身份入口，When 展示身份信息，Then 两处使用同一组件与同一文案映射。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
 
@@ -96,6 +98,17 @@
   ![顶部用户身份移动端紧凑入口](./assets/topbar-user-identity-mobile.png)
 - Storybook canvas: 正常概览页首屏布局中的顶部身份入口展开态。
   ![概览页顶部用户身份弹层](./assets/overview-layout-topbar-user-popover.png)
+- Mock-only ui_demo: 折叠桌面侧栏的头像入口与 portal 浮层。
+  - source_type: `ui_demo`
+    target_program: `mock-only`
+    capture_scope: `browser-viewport`
+    requested_viewport: `1440x900`
+    viewport_strategy: `controlled-browser-viewport`
+    sensitive_exclusion: `N/A`
+    submission_gate: `approved`
+    state: `collapsed desktop sidebar with identity popover open`
+PR: include
+  ![折叠侧栏用户身份浮层](./assets/sidebar-user-identity-collapsed.png)
 
 ## 风险 / 开放问题 / 假设（Risks, Open Questions, Assumptions）
 

@@ -9,6 +9,7 @@ function expectStory(condition: unknown, message: string): asserts condition {
 
 function StorySurface(props: {
   authIdentity: ComponentProps<typeof TopbarUserIdentity>['authIdentity']
+  placement?: ComponentProps<typeof TopbarUserIdentity>['placement']
   width?: number
 }) {
   return (
@@ -20,10 +21,10 @@ function StorySurface(props: {
         background: 'var(--panel2)',
         border: '1px solid var(--borderColor)',
         display: 'flex',
-        justifyContent: 'flex-end',
+        justifyContent: props.placement === 'sidebar' ? 'flex-start' : 'flex-end',
       }}
     >
-      <TopbarUserIdentity authIdentity={props.authIdentity} />
+      <TopbarUserIdentity authIdentity={props.authIdentity} placement={props.placement} />
     </div>
   )
 }
@@ -63,6 +64,13 @@ export const CurrentUser: Story = {
     expectStory(popover, 'topbar identity popover should open after clicking trigger')
     expectStory(popover?.textContent?.includes('当前用户'), 'topbar identity popover should render the current user row')
     expectStory(popover?.textContent?.includes('用户或组任一命中'), 'topbar identity popover should map authorization mode')
+
+    trigger?.click()
+    await new Promise((resolve) => setTimeout(resolve, 160))
+    expectStory(
+      !doc.querySelector('.topbarUserPopover'),
+      'Clicking an open identity trigger should close its pinned popover',
+    )
   },
 }
 
@@ -147,6 +155,33 @@ export const AvatarImage: Story = {
   play: async ({ canvasElement }) => {
     const avatar = canvasElement.querySelector<HTMLImageElement>('.topbarUserAvatarImage')
     expectStory(avatar?.getAttribute('src') === '/brand-mark.png', 'topbar user trigger should render avatar URL')
+  },
+}
+
+export const SidebarPlacement: Story = {
+  args: {
+    placement: 'sidebar',
+    width: 268,
+    authIdentity: buildTopbarAuthIdentityFromSettings({
+      allowAnonymousInDev: true,
+      allowedGroupMasked: 'o**s',
+      allowedUserMasked: 'al***ce',
+      authorizationMode: 'user_or_group',
+      currentGroups: ['o**s'],
+      currentUser: 'alice',
+      forwardHeaderName: 'X-Forwarded-User',
+      groupHeaderName: 'Remote-Groups',
+      matchedBy: 'user',
+    }),
+  },
+  play: async ({ canvasElement }) => {
+    const trigger = canvasElement.querySelector<HTMLButtonElement>('.topbarUserTrigger')
+    expectStory(trigger?.textContent?.includes('alice'), 'Sidebar identity should keep the current user label')
+    trigger?.click()
+    await new Promise((resolve) => setTimeout(resolve, 160))
+
+    const popover = canvasElement.ownerDocument.querySelector<HTMLElement>('.topbarUserPopover')
+    expectStory(popover?.getAttribute('data-side') === 'right', 'Sidebar identity should open into the workspace through a portal')
   },
 }
 
