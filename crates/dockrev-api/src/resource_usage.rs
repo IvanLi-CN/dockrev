@@ -466,15 +466,15 @@ impl ResourceSamplingCoordinator {
                     let invalidated = entry.invalidated;
                     entry.invalidated = false;
                     if invalidated {
-                        entry.completed_at = None;
-                        entry.result = None;
+                        let result = CachedProjectCollection::Failed(
+                            "resource collection invalidated".to_string(),
+                        );
+                        entry.completed_at = Some(Instant::now());
+                        entry.result = Some(result.clone());
                         entry
                             .changed
                             .send_modify(|version| *version = version.wrapping_add(1));
-                        ready.insert(
-                            compose_project.clone(),
-                            Err(anyhow::anyhow!("resource collection invalidated")),
-                        );
+                        ready.insert(compose_project.clone(), result.into_result());
                         continue;
                     }
                     entry.completed_at = Some(Instant::now());

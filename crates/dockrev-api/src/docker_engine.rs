@@ -17,7 +17,8 @@ const DOCKER_ENGINE_MAX_IN_FLIGHT_REQUESTS: usize = 4;
 const DOCKER_ENGINE_FAILURE_THRESHOLD: u32 = 2;
 const DOCKER_ENGINE_INITIAL_BACKOFF: Duration = Duration::from_secs(5);
 const DOCKER_ENGINE_MAX_BACKOFF: Duration = Duration::from_secs(60);
-const CPU_BASELINE_MAX_AGE: Duration = Duration::from_secs(60);
+// Keep the baseline across the longest supported 300s cadence plus scheduler drift.
+const CPU_BASELINE_MAX_AGE: Duration = Duration::from_secs(600);
 
 #[derive(Clone, Copy)]
 struct DockerEngineProtectionConfig {
@@ -581,7 +582,9 @@ impl DockerEngineClient {
         compose_project: &str,
         stats: &DockerStatsResponse,
     ) -> f64 {
-        let current = CpuBaseline::from_stats(compose_project, stats);
+        let Some(current) = CpuBaseline::from_stats(compose_project, stats) else {
+            return 0.0;
+        };
         let mut baselines = self
             .cpu_baselines
             .lock()
@@ -791,13 +794,13 @@ struct CpuBaseline {
 }
 
 impl CpuBaseline {
-    fn from_stats(compose_project: &str, stats: &DockerStatsResponse) -> Self {
-        Self {
+    fn from_stats(compose_project: &str, stats: &DockerStatsResponse) -> Option<Self> {
+        Some(Self {
             compose_project: compose_project.to_string(),
             total_usage: stats.cpu_stats.cpu_usage.total_usage,
-            system_cpu_usage: stats.cpu_stats.system_cpu_usage.unwrap_or_default(),
+            system_cpu_usage: stats.cpu_stats.system_cpu_usage?,
             last_seen_at: Instant::now(),
-        }
+        })
     }
 }
 

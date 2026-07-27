@@ -598,6 +598,18 @@ fn pruning_expires_old_requested_cpu_baselines() {
     );
 }
 
+#[test]
+fn incomplete_cpu_stats_do_not_install_a_baseline() {
+    let client = DockerEngineClient::for_test_http_base("http://docker.test").unwrap();
+    let stats = DockerStatsResponse::default();
+
+    assert_eq!(
+        client.cpu_percent_from_baseline("demo-container", "demo", &stats),
+        0.0
+    );
+    assert!(client.cpu_baselines.lock().unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn batch_collection_discovers_25_projects_and_74_containers_once() {
     async fn list_containers(
