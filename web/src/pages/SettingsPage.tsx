@@ -295,7 +295,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
 
           <div className="card">
             <div className="title">资源监控</div>
-            <div className="muted">控制服务详情页按 compose project 独立生效的历史采样频率，以及单服务 1s 实时 SSE 推送。</div>
+            <div className="muted">控制全局协调的历史采样周期，以及单服务 1s 实时 SSE 推送。</div>
 
             <div className="kv">
               <div className="kvRow">
@@ -317,7 +317,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
               </div>
 
               <div className="kvRow">
-                <div className="label">历史采样频率（每个 project）</div>
+                <div className="label">历史采样频率（全局周期）</div>
                 <div>
                   <SelectField
                     className="input"
@@ -340,7 +340,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                     value={String(settings.resourceMonitor.sampleIntervalSeconds)}
                   />
                   <div className="muted" style={{ marginTop: 6 }}>
-                    全局设置会对每个 compose project 独立调度；单个 project 过载时会跳过过期 tick，不会并发补跑。
+                    每个周期只发现一次运行容器；历史与活跃 SSE 复用项目采集，过期周期会跳过且不补跑。
                   </div>
                 </div>
               </div>

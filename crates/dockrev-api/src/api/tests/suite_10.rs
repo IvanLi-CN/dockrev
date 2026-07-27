@@ -43,7 +43,7 @@ async fn settings_and_notifications_roundtrip() {
     );
     assert_eq!(
         settings["resourceMonitor"]["retentionDays"].as_u64(),
-        Some(30)
+        Some(1)
     );
     assert_eq!(
         settings["schedules"]["updateCheck"]["enabled"].as_bool(),
@@ -120,7 +120,7 @@ async fn settings_and_notifications_roundtrip() {
     );
     assert_eq!(
         settings["resourceMonitor"]["retentionDays"].as_u64(),
-        Some(30)
+        Some(1)
     );
     assert_eq!(
         settings["schedules"]["updateCheck"]["enabled"].as_bool(),

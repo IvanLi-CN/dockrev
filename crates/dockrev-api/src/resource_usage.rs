@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{
         Arc, OnceLock,
         atomic::{AtomicUsize, Ordering},
@@ -20,13 +20,15 @@ use crate::{
 };
 #[cfg(test)]
 use serde::Deserialize;
-#[cfg(test)]
-use std::collections::BTreeSet;
 
-pub const RESOURCE_MONITOR_RETENTION_DAYS: u32 = 7;
+pub const RESOURCE_MONITOR_RETENTION_DAYS: u32 = 1;
 pub const JOB_HISTORY_RETENTION_DAYS: u32 = 30;
 pub const DEFAULT_SAMPLE_INTERVAL_SECONDS: u64 = 5;
 const PARTIAL_SAMPLE_WARN_INTERVAL: Duration = Duration::from_secs(60);
+const RESOURCE_COLLECTION_CACHE_MAX_AGE: Duration = Duration::from_secs(1);
+const RESOURCE_HISTORY_GC_INTERVAL: Duration = Duration::from_secs(60);
+const RESOURCE_HISTORY_GC_BATCH_SIZE: u32 = 10_000;
+const RESOURCE_HISTORY_GC_MAX_BATCHES: usize = 10;
 static PARTIAL_SAMPLE_WARNINGS: OnceLock<std::sync::Mutex<BTreeMap<String, Instant>>> =
     OnceLock::new();
 
@@ -54,7 +56,7 @@ pub fn parse_window_to_seconds(window: &str) -> Option<u64> {
 #[derive(Clone)]
 pub struct RealtimeSamplerHub {
     db: Db,
-    collector: Arc<dyn ResourceCollector>,
+    coordinator: ResourceSamplingCoordinator,
     samplers: Arc<Mutex<BTreeMap<String, Arc<SamplerEntry>>>>,
 }
 
@@ -75,12 +77,6 @@ struct ProjectHistorySnapshot {
     compose_project: String,
     interval: Duration,
     services: Vec<ProjectHistoryTarget>,
-}
-
-#[derive(Clone)]
-struct HistoryWorkerHandle {
-    tx: watch::Sender<ProjectHistorySnapshot>,
-    snapshot: ProjectHistorySnapshot,
 }
 
 struct ProjectHistoryRunOutcome {
@@ -117,6 +113,119 @@ impl From<ProjectResourceCollection> for ResourceCollection {
                 .collect(),
         }
     }
+}
+
+#[derive(Clone)]
+enum CachedProjectCollection {
+    Ready(ResourceCollection),
+    Failed(String),
+}
+
+impl CachedProjectCollection {
+    fn into_result(self) -> anyhow::Result<ResourceCollection> {
+        match self {
+            Self::Ready(collection) => Ok(collection),
+            Self::Failed(error) => Err(anyhow::anyhow!(error)),
+        }
+    }
+}
+
+struct CollectionCancellationGuard {
+    state: Arc<Mutex<ResourceSamplingCoordinatorState>>,
+    projects: BTreeSet<String>,
+    armed: bool,
+}
+
+impl CollectionCancellationGuard {
+    fn new(
+        state: Arc<Mutex<ResourceSamplingCoordinatorState>>,
+        projects: BTreeSet<String>,
+    ) -> Self {
+        Self {
+            state,
+            projects,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for CollectionCancellationGuard {
+    fn drop(&mut self) {
+        if !self.armed || self.projects.is_empty() {
+            return;
+        }
+
+        let state = self.state.clone();
+        let projects = std::mem::take(&mut self.projects);
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        handle.spawn(async move {
+            let mut state = state.lock().await;
+            for project in projects {
+                let Some(entry) = state.projects.get_mut(&project) else {
+                    continue;
+                };
+                if !entry.in_flight {
+                    continue;
+                }
+                entry.in_flight = false;
+                entry.completed_at = None;
+                entry.result = None;
+                entry
+                    .changed
+                    .send_modify(|version| *version = version.wrapping_add(1));
+            }
+        });
+    }
+}
+
+struct ProjectCollectionState {
+    in_flight: bool,
+    completed_at: Option<Instant>,
+    result: Option<CachedProjectCollection>,
+    changed: watch::Sender<u64>,
+}
+
+impl ProjectCollectionState {
+    fn new() -> Self {
+        let (changed, _) = watch::channel(0u64);
+        Self {
+            in_flight: false,
+            completed_at: None,
+            result: None,
+            changed,
+        }
+    }
+}
+
+fn evict_stale_project_collection_states(
+    state: &mut ResourceSamplingCoordinatorState,
+    requested_projects: &BTreeSet<String>,
+    now: Instant,
+) {
+    state.projects.retain(|project, entry| {
+        entry.in_flight
+            || requested_projects.contains(project)
+            || entry.completed_at.is_some_and(|completed_at| {
+                now.saturating_duration_since(completed_at) < RESOURCE_COLLECTION_CACHE_MAX_AGE
+            })
+    });
+}
+
+#[derive(Default)]
+struct ResourceSamplingCoordinatorState {
+    projects: BTreeMap<String, ProjectCollectionState>,
+}
+
+#[derive(Clone)]
+pub struct ResourceSamplingCoordinator {
+    collector: Arc<dyn ResourceCollector>,
+    state: Arc<Mutex<ResourceSamplingCoordinatorState>>,
 }
 
 impl ProjectHistoryRunOutcome {
@@ -186,6 +295,21 @@ trait ResourceCollector: Send + Sync {
         &self,
         compose_project: &str,
     ) -> anyhow::Result<ResourceCollection>;
+
+    async fn collect_projects_service_aggregates(
+        &self,
+        compose_projects: &BTreeSet<String>,
+    ) -> anyhow::Result<BTreeMap<String, ResourceCollection>> {
+        let mut collections = BTreeMap::new();
+        for compose_project in compose_projects {
+            collections.insert(
+                compose_project.clone(),
+                self.collect_project_service_aggregates(compose_project)
+                    .await?,
+            );
+        }
+        Ok(collections)
+    }
 }
 
 #[derive(Clone)]
@@ -210,6 +334,19 @@ impl ResourceCollector for DockerApiResourceCollector {
             .collect_project_service_samples(compose_project)
             .await?
             .into())
+    }
+
+    async fn collect_projects_service_aggregates(
+        &self,
+        compose_projects: &BTreeSet<String>,
+    ) -> anyhow::Result<BTreeMap<String, ResourceCollection>> {
+        Ok(self
+            .client
+            .collect_projects_service_samples(compose_projects)
+            .await?
+            .into_iter()
+            .map(|(project, collection)| (project, collection.into()))
+            .collect())
     }
 }
 
@@ -237,25 +374,131 @@ impl ResourceCollector for RunnerBackedResourceCollector {
     }
 }
 
+impl ResourceSamplingCoordinator {
+    pub fn with_docker_engine(client: DockerEngineClient) -> Self {
+        Self::with_collector(Arc::new(DockerApiResourceCollector::from_client(client)))
+    }
+
+    fn with_collector(collector: Arc<dyn ResourceCollector>) -> Self {
+        Self {
+            collector,
+            state: Arc::new(Mutex::new(ResourceSamplingCoordinatorState::default())),
+        }
+    }
+
+    async fn clear_cached_collections(&self) {
+        let mut state = self.state.lock().await;
+        state.projects.retain(|_, entry| entry.in_flight);
+    }
+
+    async fn collect_project(&self, compose_project: &str) -> anyhow::Result<ResourceCollection> {
+        self.collect_projects(&BTreeSet::from([compose_project.to_string()]))
+            .await?
+            .remove(compose_project)
+            .unwrap_or_else(|| Ok(ResourceCollection::default()))
+    }
+
+    async fn collect_projects(
+        &self,
+        compose_projects: &BTreeSet<String>,
+    ) -> anyhow::Result<BTreeMap<String, anyhow::Result<ResourceCollection>>> {
+        'retry: loop {
+            let now = Instant::now();
+            let mut ready = BTreeMap::new();
+            let mut owned = BTreeSet::new();
+            let mut waiting = Vec::new();
+            {
+                let mut state = self.state.lock().await;
+                evict_stale_project_collection_states(&mut state, compose_projects, now);
+                for compose_project in compose_projects {
+                    let entry = state
+                        .projects
+                        .entry(compose_project.clone())
+                        .or_insert_with(ProjectCollectionState::new);
+                    if let (Some(completed_at), Some(result)) =
+                        (entry.completed_at, entry.result.clone())
+                        && now.saturating_duration_since(completed_at)
+                            < RESOURCE_COLLECTION_CACHE_MAX_AGE
+                    {
+                        ready.insert(compose_project.clone(), result.into_result());
+                    } else if entry.in_flight {
+                        waiting.push((compose_project.clone(), entry.changed.subscribe()));
+                    } else {
+                        entry.in_flight = true;
+                        owned.insert(compose_project.clone());
+                    }
+                }
+            }
+
+            if !owned.is_empty() {
+                let mut cancellation_guard =
+                    CollectionCancellationGuard::new(self.state.clone(), owned.clone());
+                let batch_result = self
+                    .collector
+                    .collect_projects_service_aggregates(&owned)
+                    .await;
+                let mut state = self.state.lock().await;
+                for compose_project in &owned {
+                    let result = match &batch_result {
+                        Ok(collections) => CachedProjectCollection::Ready(
+                            collections
+                                .get(compose_project)
+                                .cloned()
+                                .unwrap_or_default(),
+                        ),
+                        Err(error) => CachedProjectCollection::Failed(error.to_string()),
+                    };
+                    let entry = state
+                        .projects
+                        .get_mut(compose_project)
+                        .expect("owned project state must exist");
+                    entry.in_flight = false;
+                    entry.completed_at = Some(Instant::now());
+                    entry.result = Some(result.clone());
+                    entry
+                        .changed
+                        .send_modify(|version| *version = version.wrapping_add(1));
+                    ready.insert(compose_project.clone(), result.into_result());
+                }
+                cancellation_guard.disarm();
+            }
+
+            for (compose_project, mut changed) in waiting {
+                let _ = changed.changed().await;
+                let Some(result) = self
+                    .state
+                    .lock()
+                    .await
+                    .projects
+                    .get(&compose_project)
+                    .and_then(|entry| entry.result.clone())
+                else {
+                    continue 'retry;
+                };
+                ready.insert(compose_project, result.into_result());
+            }
+            return Ok(ready);
+        }
+    }
+}
+
 impl RealtimeSamplerHub {
-    pub fn with_docker_engine(db: Db, client: DockerEngineClient) -> Self {
-        Self::with_collector(
+    pub fn with_coordinator(db: Db, coordinator: ResourceSamplingCoordinator) -> Self {
+        Self {
             db,
-            Arc::new(DockerApiResourceCollector::from_client(client)),
-        )
+            coordinator,
+            samplers: Arc::new(Mutex::new(BTreeMap::new())),
+        }
     }
 
     #[cfg(test)]
     pub fn new(db: Db, runner: Arc<dyn CommandRunner>) -> Self {
-        Self::with_collector(db, Arc::new(RunnerBackedResourceCollector { runner }))
-    }
-
-    fn with_collector(db: Db, collector: Arc<dyn ResourceCollector>) -> Self {
-        Self {
+        Self::with_coordinator(
             db,
-            collector,
-            samplers: Arc::new(Mutex::new(BTreeMap::new())),
-        }
+            ResourceSamplingCoordinator::with_collector(Arc::new(RunnerBackedResourceCollector {
+                runner,
+            })),
+        )
     }
 
     pub async fn subscribe(&self, service_id: &str) -> RealtimeSubscription {
@@ -297,12 +540,12 @@ impl RealtimeSamplerHub {
         let Some(target) = target else {
             return Ok(None);
         };
-        sample_for_target(self.collector.as_ref(), &target).await
+        sample_for_target(&self.coordinator, &target).await
     }
 
     fn spawn_sampler_task(&self, service_id: String, entry: Arc<SamplerEntry>) {
         let db = self.db.clone();
-        let collector = self.collector.clone();
+        let coordinator = self.coordinator.clone();
         let samplers = self.samplers.clone();
 
         tokio::spawn(async move {
@@ -341,6 +584,7 @@ impl RealtimeSamplerHub {
                     }
                 };
                 if !settings.enabled {
+                    coordinator.clear_cached_collections().await;
                     let _ = entry.tx.send(RealtimeMessage::Error(
                         "resource_monitor_disabled".to_string(),
                     ));
@@ -366,7 +610,7 @@ impl RealtimeSamplerHub {
                     continue;
                 };
 
-                match sample_for_target(collector.as_ref(), &target).await {
+                match sample_for_target(&coordinator, &target).await {
                     Ok(Some(sample)) => {
                         let _ = entry.tx.send(RealtimeMessage::Tick(sample));
                     }
@@ -401,26 +645,13 @@ fn try_remove_idle_sampler_entry(
     false
 }
 
-pub fn spawn_history_sampler(db: Db, client: DockerEngineClient) {
-    spawn_history_sampler_with_collector(
-        db,
-        Arc::new(DockerApiResourceCollector::from_client(client)),
-    );
-}
-
-fn spawn_history_sampler_with_collector(db: Db, collector: Arc<dyn ResourceCollector>) {
+pub fn spawn_history_sampler(db: Db, coordinator: ResourceSamplingCoordinator) {
+    spawn_history_gc_task(db.clone());
     tokio::spawn(async move {
-        let mut last_gc = Instant::now() - Duration::from_secs(60 * 60);
-        let mut workers = BTreeMap::<String, HistoryWorkerHandle>::new();
+        let mut interval = Duration::from_secs(DEFAULT_SAMPLE_INTERVAL_SECONDS);
+        let mut next_run_at = Instant::now();
 
         loop {
-            if last_gc.elapsed() >= Duration::from_secs(60 * 60) {
-                if let Err(e) = gc_history(&db).await {
-                    tracing::warn!(error = %e, "resource monitor history gc failed");
-                }
-                last_gc = Instant::now();
-            }
-
             let settings = match db.get_resource_monitor_settings().await {
                 Ok(v) => v,
                 Err(e) => {
@@ -431,13 +662,18 @@ fn spawn_history_sampler_with_collector(db: Db, collector: Arc<dyn ResourceColle
             };
 
             if !settings.enabled {
-                workers.clear();
+                coordinator.clear_cached_collections().await;
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 continue;
             }
 
             let interval_seconds =
                 normalize_sample_interval_seconds(settings.sample_interval_seconds);
+            let configured_interval = Duration::from_secs(interval_seconds);
+            if configured_interval != interval {
+                interval = configured_interval;
+                next_run_at = Instant::now();
+            }
             let targets = match db.list_service_resource_targets().await {
                 Ok(v) => v,
                 Err(e) => {
@@ -447,10 +683,35 @@ fn spawn_history_sampler_with_collector(db: Db, collector: Arc<dyn ResourceColle
                 }
             };
 
-            let desired = build_project_history_snapshots(targets, interval_seconds);
-            sync_history_workers(&mut workers, desired, &db, &collector);
+            if Instant::now() >= next_run_at {
+                let snapshots = build_project_history_snapshots(targets, interval_seconds);
+                let started_at = Instant::now();
+                let outcomes = sample_history_cycle_once(&db, &coordinator, &snapshots).await;
+                let duration = started_at.elapsed();
+                let skipped_ticks =
+                    advance_fixed_cadence(&mut next_run_at, interval, Instant::now());
+                for snapshot in snapshots.values() {
+                    let outcome = outcomes
+                        .get(&snapshot.compose_project)
+                        .expect("history cycle must return every project outcome");
+                    log_project_history_run(snapshot, outcome, duration, skipped_ticks);
+                }
+                continue;
+            }
 
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            let poll_deadline = std::cmp::min(next_run_at, Instant::now() + Duration::from_secs(1));
+            tokio::time::sleep_until(poll_deadline.into()).await;
+        }
+    });
+}
+
+fn spawn_history_gc_task(db: Db) {
+    tokio::spawn(async move {
+        loop {
+            if let Err(e) = gc_history(&db).await {
+                tracing::warn!(error = %e, "resource monitor history gc failed");
+            }
+            tokio::time::sleep(RESOURCE_HISTORY_GC_INTERVAL).await;
         }
     });
 }
@@ -460,15 +721,27 @@ async fn gc_history(db: &Db) -> anyhow::Result<()> {
     let older_than = (now - time::Duration::days(RESOURCE_MONITOR_RETENTION_DAYS as i64))
         .format(&time::format_description::well_known::Rfc3339)?;
     let started_at = Instant::now();
-    let deleted = db
-        .delete_expired_service_resource_samples(&older_than, 10_000)
-        .await
-        .context("delete expired resource samples")?;
+    let mut deleted = 0u64;
+    let mut batches = 0usize;
+    while batches < RESOURCE_HISTORY_GC_MAX_BATCHES {
+        let deleted_batch = db
+            .delete_expired_service_resource_samples(&older_than, RESOURCE_HISTORY_GC_BATCH_SIZE)
+            .await
+            .context("delete expired resource samples")?;
+        deleted += deleted_batch;
+        batches += 1;
+        if deleted_batch < u64::from(RESOURCE_HISTORY_GC_BATCH_SIZE) {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
     if deleted > 0 {
         tracing::info!(
             deleted,
             retention_days = RESOURCE_MONITOR_RETENTION_DAYS,
-            batch_size = 10_000,
+            batch_size = RESOURCE_HISTORY_GC_BATCH_SIZE,
+            batches,
+            max_batches = RESOURCE_HISTORY_GC_MAX_BATCHES,
             duration_ms = started_at.elapsed().as_millis() as u64,
             "resource monitor history gc completed"
         );
@@ -525,86 +798,6 @@ fn build_project_history_snapshots(
         .collect()
 }
 
-fn sync_history_workers(
-    workers: &mut BTreeMap<String, HistoryWorkerHandle>,
-    desired: BTreeMap<String, ProjectHistorySnapshot>,
-    db: &Db,
-    collector: &Arc<dyn ResourceCollector>,
-) {
-    let stale_projects = workers
-        .keys()
-        .filter(|project| !desired.contains_key(*project))
-        .cloned()
-        .collect::<Vec<_>>();
-    for project in stale_projects {
-        workers.remove(&project);
-    }
-
-    for (project, snapshot) in desired {
-        match workers.get_mut(&project) {
-            Some(existing) if existing.snapshot == snapshot => {}
-            Some(existing) => {
-                let _ = existing.tx.send_replace(snapshot.clone());
-                existing.snapshot = snapshot;
-            }
-            None => {
-                let (tx, rx) = watch::channel(snapshot.clone());
-                spawn_project_history_worker(db.clone(), collector.clone(), rx);
-                workers.insert(project, HistoryWorkerHandle { tx, snapshot });
-            }
-        }
-    }
-}
-
-fn spawn_project_history_worker(
-    db: Db,
-    collector: Arc<dyn ResourceCollector>,
-    mut rx: watch::Receiver<ProjectHistorySnapshot>,
-) {
-    tokio::spawn(async move {
-        let mut snapshot = rx.borrow().clone();
-        let mut next_run_at = Instant::now();
-
-        loop {
-            tokio::select! {
-                changed = rx.changed() => {
-                    if changed.is_err() {
-                        break;
-                    }
-                    snapshot = rx.borrow_and_update().clone();
-                    next_run_at = Instant::now();
-                }
-                _ = tokio::time::sleep_until(next_run_at.into()) => {
-                    let started_at = Instant::now();
-                    let run_snapshot = snapshot.clone();
-                    let outcome = sample_history_project_once(&db, collector.as_ref(), &run_snapshot).await;
-                    let duration = started_at.elapsed();
-
-                    match rx.has_changed() {
-                        Ok(true) => {
-                            log_project_history_run(&run_snapshot, &outcome, duration, 0);
-                            snapshot = rx.borrow_and_update().clone();
-                            next_run_at = Instant::now();
-                        }
-                        Ok(false) => {
-                            let skipped_ticks = advance_fixed_cadence(
-                                &mut next_run_at,
-                                run_snapshot.interval,
-                                Instant::now(),
-                            );
-                            log_project_history_run(&run_snapshot, &outcome, duration, skipped_ticks);
-                        }
-                        Err(_) => {
-                            log_project_history_run(&run_snapshot, &outcome, duration, 0);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    });
-}
-
 fn advance_fixed_cadence(next_run_at: &mut Instant, interval: Duration, now: Instant) -> u64 {
     *next_run_at += interval;
     let mut skipped_ticks = 0u64;
@@ -659,30 +852,51 @@ fn log_project_history_run(
     }
 }
 
-async fn sample_history_project_once(
+async fn sample_history_cycle_once(
     db: &Db,
-    collector: &dyn ResourceCollector,
-    snapshot: &ProjectHistorySnapshot,
-) -> ProjectHistoryRunOutcome {
-    let collection = match collector
-        .collect_project_service_aggregates(&snapshot.compose_project)
-        .await
-        .with_context(|| {
-            format!(
-                "collect history stats for compose project {}",
-                snapshot.compose_project
-            )
-        }) {
-        Ok(v) => v,
-        Err(e) => return ProjectHistoryRunOutcome::error(e),
+    coordinator: &ResourceSamplingCoordinator,
+    snapshots: &BTreeMap<String, ProjectHistorySnapshot>,
+) -> BTreeMap<String, ProjectHistoryRunOutcome> {
+    let projects = snapshots.keys().cloned().collect::<BTreeSet<_>>();
+    let collections = match coordinator.collect_projects(&projects).await {
+        Ok(collections) => collections,
+        Err(error) => {
+            return snapshots
+                .keys()
+                .map(|project| {
+                    (
+                        project.clone(),
+                        ProjectHistoryRunOutcome::error(anyhow::anyhow!(error.to_string())),
+                    )
+                })
+                .collect();
+        }
     };
+    let mut outcomes = BTreeMap::new();
+    for (project, snapshot) in snapshots {
+        let outcome = match collections.get(project) {
+            Some(Ok(collection)) => {
+                sample_history_project_collection(db, snapshot, collection).await
+            }
+            Some(Err(error)) => ProjectHistoryRunOutcome::error(anyhow::anyhow!(error.to_string())),
+            None => ProjectHistoryRunOutcome::empty(),
+        };
+        outcomes.insert(project.clone(), outcome);
+    }
+    outcomes
+}
 
+async fn sample_history_project_collection(
+    db: &Db,
+    snapshot: &ProjectHistorySnapshot,
+    collection: &ResourceCollection,
+) -> ProjectHistoryRunOutcome {
     let sampled_at = match now_rfc3339() {
         Ok(v) => v,
         Err(e) => return ProjectHistoryRunOutcome::error(e),
     };
 
-    log_partial_collection_failures(&snapshot.compose_project, &collection);
+    log_partial_collection_failures(&snapshot.compose_project, collection);
     let rows = snapshot
         .services
         .iter()
@@ -720,11 +934,11 @@ async fn sample_history_project_once(
 }
 
 async fn sample_for_target(
-    collector: &dyn ResourceCollector,
+    coordinator: &ResourceSamplingCoordinator,
     target: &ServiceResourceTarget,
 ) -> anyhow::Result<Option<ServiceResourceSample>> {
-    let collection = collector
-        .collect_project_service_aggregates(&target.compose_project)
+    let collection = coordinator
+        .collect_project(&target.compose_project)
         .await
         .with_context(|| {
             format!(
@@ -1086,377 +1300,5 @@ fn now_rfc3339() -> anyhow::Result<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        api::types::{ComposeConfig, StackBackupConfig},
-        models::{ServiceSeed, StackRecord},
-    };
-
-    #[test]
-    fn realtime_and_history_collectors_share_docker_engine_protection() {
-        let client = DockerEngineClient::for_test_http_base("http://docker.test").unwrap();
-        let realtime = DockerApiResourceCollector::from_client(client.clone());
-        let history = DockerApiResourceCollector::from_client(client);
-
-        assert!(realtime.client.shares_protection_with(&history.client));
-    }
-
-    #[test]
-    fn partial_sample_warning_state_expires_recreated_container_ids() {
-        let now = Instant::now();
-        let mut warnings = BTreeMap::new();
-
-        assert!(should_emit_partial_sample_warning(
-            &mut warnings,
-            "project:container-old".to_string(),
-            now,
-        ));
-        assert!(!should_emit_partial_sample_warning(
-            &mut warnings,
-            "project:container-old".to_string(),
-            now + Duration::from_secs(1),
-        ));
-        assert!(should_emit_partial_sample_warning(
-            &mut warnings,
-            "project:container-new".to_string(),
-            now + PARTIAL_SAMPLE_WARN_INTERVAL,
-        ));
-        assert_eq!(warnings.len(), 1);
-        assert!(warnings.contains_key("project:container-new"));
-    }
-
-    #[derive(Clone)]
-    struct TestProjectBehavior {
-        delay: Duration,
-        samples: BTreeMap<String, ServiceResourceSample>,
-    }
-
-    #[derive(Default)]
-    struct TestCollectorState {
-        behaviors: BTreeMap<String, TestProjectBehavior>,
-        calls: BTreeMap<String, usize>,
-        inflight: BTreeMap<String, usize>,
-        max_inflight: BTreeMap<String, usize>,
-        starts: BTreeMap<String, Vec<Instant>>,
-    }
-
-    #[derive(Clone)]
-    struct TestHistoryCollector {
-        state: Arc<Mutex<TestCollectorState>>,
-    }
-
-    impl TestHistoryCollector {
-        fn new(behaviors: BTreeMap<String, TestProjectBehavior>) -> Self {
-            Self {
-                state: Arc::new(Mutex::new(TestCollectorState {
-                    behaviors,
-                    ..Default::default()
-                })),
-            }
-        }
-
-        async fn call_count(&self, project: &str) -> usize {
-            let state = self.state.lock().await;
-            state.calls.get(project).copied().unwrap_or(0)
-        }
-
-        async fn max_inflight(&self, project: &str) -> usize {
-            let state = self.state.lock().await;
-            state.max_inflight.get(project).copied().unwrap_or(0)
-        }
-
-        async fn start_times(&self, project: &str) -> Vec<Instant> {
-            let state = self.state.lock().await;
-            state.starts.get(project).cloned().unwrap_or_default()
-        }
-    }
-
-    #[async_trait]
-    impl ResourceCollector for TestHistoryCollector {
-        async fn collect_project_service_aggregates(
-            &self,
-            compose_project: &str,
-        ) -> anyhow::Result<ResourceCollection> {
-            let behavior = {
-                let mut state = self.state.lock().await;
-                let behavior = state
-                    .behaviors
-                    .get(compose_project)
-                    .cloned()
-                    .ok_or_else(|| anyhow::anyhow!("missing test project {compose_project}"))?;
-                *state.calls.entry(compose_project.to_string()).or_default() += 1;
-                let inflight = state
-                    .inflight
-                    .entry(compose_project.to_string())
-                    .or_default();
-                *inflight += 1;
-                let current_inflight = *inflight;
-                let max_inflight = state
-                    .max_inflight
-                    .entry(compose_project.to_string())
-                    .or_default();
-                *max_inflight = (*max_inflight).max(current_inflight);
-                state
-                    .starts
-                    .entry(compose_project.to_string())
-                    .or_default()
-                    .push(Instant::now());
-                behavior
-            };
-
-            tokio::time::sleep(behavior.delay).await;
-
-            let mut state = self.state.lock().await;
-            if let Some(inflight) = state.inflight.get_mut(compose_project) {
-                *inflight = inflight.saturating_sub(1);
-            }
-            Ok(ResourceCollection {
-                samples: behavior.samples,
-                failures: Vec::new(),
-            })
-        }
-    }
-
-    fn make_entry(subscribers: usize) -> Arc<SamplerEntry> {
-        let (tx, _rx) = broadcast::channel(4);
-        Arc::new(SamplerEntry {
-            tx,
-            subscribers: Arc::new(AtomicUsize::new(subscribers)),
-        })
-    }
-
-    #[test]
-    fn normalize_sample_interval_seconds_uses_five_seconds_default() {
-        assert_eq!(normalize_sample_interval_seconds(5), 5);
-        assert_eq!(normalize_sample_interval_seconds(10), 10);
-        assert_eq!(normalize_sample_interval_seconds(30), 30);
-        assert_eq!(normalize_sample_interval_seconds(60), 60);
-        assert_eq!(normalize_sample_interval_seconds(300), 300);
-        assert_eq!(normalize_sample_interval_seconds(7), 5);
-    }
-
-    #[test]
-    fn try_remove_idle_sampler_entry_removes_when_subscribers_is_zero() {
-        let mut map = BTreeMap::new();
-        let entry = make_entry(0);
-        map.insert("svc".to_string(), entry.clone());
-
-        assert!(try_remove_idle_sampler_entry(&mut map, "svc", &entry));
-        assert!(map.is_empty());
-    }
-
-    #[test]
-    fn try_remove_idle_sampler_entry_keeps_entry_when_subscribers_exist() {
-        let mut map = BTreeMap::new();
-        let entry = make_entry(1);
-        map.insert("svc".to_string(), entry.clone());
-
-        assert!(!try_remove_idle_sampler_entry(&mut map, "svc", &entry));
-        assert!(map.contains_key("svc"));
-    }
-
-    #[test]
-    fn advance_fixed_cadence_skips_overdue_ticks() {
-        let base = Instant::now();
-        let mut next_run_at = base;
-
-        let skipped = advance_fixed_cadence(
-            &mut next_run_at,
-            Duration::from_secs(5),
-            base + Duration::from_secs(12),
-        );
-
-        assert_eq!(skipped, 2);
-        assert_eq!(next_run_at.duration_since(base), Duration::from_secs(15));
-    }
-
-    #[tokio::test]
-    async fn history_project_worker_does_not_overlap_or_backlog_overdue_ticks() {
-        let db = open_test_db().await;
-        seed_stack_services(&db, "stack-slow", &[("svc-slow", "slow-api")]).await;
-
-        let collector = Arc::new(TestHistoryCollector::new(BTreeMap::from([(
-            "slow-project".to_string(),
-            TestProjectBehavior {
-                delay: Duration::from_millis(95),
-                samples: BTreeMap::from([("slow-api".to_string(), make_sample(62.5, 2_048))]),
-            },
-        )])));
-        let snapshot = ProjectHistorySnapshot {
-            compose_project: "slow-project".to_string(),
-            interval: Duration::from_millis(40),
-            services: vec![ProjectHistoryTarget {
-                service_id: "svc-slow".to_string(),
-                service_name: "slow-api".to_string(),
-            }],
-        };
-
-        let (tx, rx) = watch::channel(snapshot);
-        spawn_project_history_worker(db.clone(), collector.clone(), rx);
-        wait_for_call_count(&collector, "slow-project", 2).await;
-        drop(tx);
-        tokio::time::sleep(Duration::from_millis(20)).await;
-
-        let starts = collector.start_times("slow-project").await;
-        assert!(
-            starts.len() >= 2,
-            "expected at least two runs, got {}",
-            starts.len()
-        );
-        assert_eq!(collector.max_inflight("slow-project").await, 1);
-        assert!(
-            starts[1].duration_since(starts[0]) >= Duration::from_millis(110),
-            "expected overdue ticks to be skipped instead of immediate catch-up: {starts:?}"
-        );
-
-        let rows = db
-            .list_service_resource_samples_since("svc-slow", "1970-01-01T00:00:00Z")
-            .await
-            .unwrap();
-        assert!(
-            !rows.is_empty(),
-            "expected history worker to persist at least one sample"
-        );
-    }
-
-    #[tokio::test]
-    async fn slow_project_worker_does_not_block_fast_project_worker() {
-        let db = open_test_db().await;
-        seed_stack_services(
-            &db,
-            "stack-mixed",
-            &[("svc-fast", "fast-api"), ("svc-slow", "slow-api")],
-        )
-        .await;
-
-        let collector = Arc::new(TestHistoryCollector::new(BTreeMap::from([
-            (
-                "fast-project".to_string(),
-                TestProjectBehavior {
-                    delay: Duration::from_millis(5),
-                    samples: BTreeMap::from([("fast-api".to_string(), make_sample(18.0, 1_024))]),
-                },
-            ),
-            (
-                "slow-project".to_string(),
-                TestProjectBehavior {
-                    delay: Duration::from_millis(95),
-                    samples: BTreeMap::from([("slow-api".to_string(), make_sample(77.0, 4_096))]),
-                },
-            ),
-        ])));
-
-        let (fast_tx, fast_rx) = watch::channel(ProjectHistorySnapshot {
-            compose_project: "fast-project".to_string(),
-            interval: Duration::from_millis(40),
-            services: vec![ProjectHistoryTarget {
-                service_id: "svc-fast".to_string(),
-                service_name: "fast-api".to_string(),
-            }],
-        });
-        let (slow_tx, slow_rx) = watch::channel(ProjectHistorySnapshot {
-            compose_project: "slow-project".to_string(),
-            interval: Duration::from_millis(40),
-            services: vec![ProjectHistoryTarget {
-                service_id: "svc-slow".to_string(),
-                service_name: "slow-api".to_string(),
-            }],
-        });
-
-        spawn_project_history_worker(db.clone(), collector.clone(), fast_rx);
-        spawn_project_history_worker(db.clone(), collector.clone(), slow_rx);
-        wait_for_call_count(&collector, "fast-project", 4).await;
-        drop(fast_tx);
-        drop(slow_tx);
-        tokio::time::sleep(Duration::from_millis(20)).await;
-
-        let fast_calls = collector.call_count("fast-project").await;
-        let slow_calls = collector.call_count("slow-project").await;
-        assert!(
-            fast_calls >= slow_calls.saturating_add(2),
-            "fast worker should continue sampling while slow worker lags: fast={fast_calls} slow={slow_calls}"
-        );
-
-        let fast_rows = db
-            .list_service_resource_samples_since("svc-fast", "1970-01-01T00:00:00Z")
-            .await
-            .unwrap();
-        let slow_rows = db
-            .list_service_resource_samples_since("svc-slow", "1970-01-01T00:00:00Z")
-            .await
-            .unwrap();
-        assert!(
-            fast_rows.len() >= slow_rows.len().saturating_add(2),
-            "expected fast project history cadence to stay ahead: fast={} slow={}",
-            fast_rows.len(),
-            slow_rows.len()
-        );
-    }
-
-    async fn open_test_db() -> Db {
-        let path = std::env::temp_dir().join(format!(
-            "dockrev-resource-usage-{}.sqlite",
-            ulid::Ulid::new()
-        ));
-        Db::open(&path).await.unwrap()
-    }
-
-    async fn seed_stack_services(db: &Db, stack_id: &str, services: &[(&str, &str)]) {
-        let now = time::OffsetDateTime::now_utc()
-            .format(&time::format_description::well_known::Rfc3339)
-            .unwrap();
-        let stack = StackRecord {
-            id: stack_id.to_string(),
-            name: stack_id.to_string(),
-            archived: false,
-            compose: ComposeConfig {
-                kind: "compose".to_string(),
-                compose_files: vec!["compose.yml".to_string()],
-                env_file: None,
-            },
-            backup: StackBackupConfig::default(),
-            services: Vec::new(),
-        };
-        let seeds = services
-            .iter()
-            .map(|(service_id, service_name)| ServiceSeed {
-                id: (*service_id).to_string(),
-                name: (*service_name).to_string(),
-                image_ref: format!("ghcr.io/acme/{service_name}:latest"),
-                image_tag: "latest".to_string(),
-                homepage: None,
-                update_guard: None,
-                auto_rollback: false,
-                backup_bind_paths: BTreeMap::new(),
-                backup_volume_names: BTreeMap::new(),
-            })
-            .collect::<Vec<_>>();
-        db.insert_stack(&stack, &seeds, &now).await.unwrap();
-    }
-
-    fn make_sample(cpu_percent: f64, mem_used_bytes: u64) -> ServiceResourceSample {
-        ServiceResourceSample {
-            sampled_at: String::new(),
-            cpu_percent,
-            mem_used_bytes: Some(mem_used_bytes),
-            mem_limit_bytes: Some(16_384),
-            net_rx_bytes: Some(10_000),
-            net_tx_bytes: Some(11_000),
-            block_read_bytes: Some(12_000),
-            block_write_bytes: Some(13_000),
-            pids: Some(7),
-            container_count: 1,
-        }
-    }
-
-    async fn wait_for_call_count(collector: &TestHistoryCollector, project: &str, minimum: usize) {
-        for _ in 0..100 {
-            if collector.call_count(project).await >= minimum {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        panic!("timed out waiting for {project} to reach {minimum} calls");
-    }
-}
+#[path = "resource_usage_tests.rs"]
+mod tests;

@@ -637,7 +637,7 @@ export function makeMockDebug(): MockDebug {
 export function makeDefaultSettings(): SettingsResponse {
   return {
     backup: { enabled: true, requireSuccess: true, baseDir: '/var/lib/dockrev/backup', skipTargetsOverBytes: 104857600 },
-    resourceMonitor: { enabled: true, sampleIntervalSeconds: 5, retentionDays: 30 },
+    resourceMonitor: { enabled: true, sampleIntervalSeconds: 5, retentionDays: 1 },
     schedules: {
       updateCheck: { enabled: false, cron: '*/30 * * * *' },
       ghcrWebhookAudit: { enabled: true, cron: '0 3 * * *' },

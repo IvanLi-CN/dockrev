@@ -538,7 +538,7 @@ WHERE id = 'default'
                         enabled: row.get::<_, i64>(0)? != 0,
                         sample_interval_seconds:
                             crate::resource_usage::normalize_sample_interval_seconds(raw_interval),
-                        retention_days: 30,
+                        retention_days: crate::resource_usage::RESOURCE_MONITOR_RETENTION_DAYS,
                     })
                 },
             )?)

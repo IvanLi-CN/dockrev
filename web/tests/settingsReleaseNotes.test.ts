@@ -14,7 +14,7 @@ function makeSettings(provider: SettingsResponse['releaseNotes']['provider']): S
     resourceMonitor: {
       enabled: true,
       sampleIntervalSeconds: 60,
-      retentionDays: 30,
+      retentionDays: 1,
     },
     schedules: {
       updateCheck: { enabled: false, cron: '*/30 * * * *' },
