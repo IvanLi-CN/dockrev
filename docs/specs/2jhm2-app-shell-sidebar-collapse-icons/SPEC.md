@@ -65,7 +65,7 @@
 
 ### Desktop Expanded
 
-![Desktop expanded sidebar](assets/app-shell-sidebar-expanded.png)
+![Desktop expanded sidebar](./assets/app-shell-sidebar-expanded.png)
 
 - source_type: storybook_canvas
 - target_program: mock-only
@@ -76,7 +76,7 @@
 
 ### Desktop Collapsed
 
-![Desktop collapsed sidebar](assets/app-shell-sidebar-collapsed.png)
+![Desktop collapsed sidebar](./assets/app-shell-sidebar-collapsed.png)
 
 - source_type: storybook_canvas
 - target_program: mock-only
@@ -87,7 +87,7 @@
 
 ### Desktop Header Alignment
 
-![Desktop overview header aligned with primary navigation](assets/app-shell-header-aligned-overview.png)
+![Desktop overview header aligned with primary navigation](./assets/app-shell-header-aligned-overview.png)
 
 - source_type: ui_demo
 - target_program: mock-only
@@ -99,7 +99,7 @@
 
 ### Mobile Drawer
 
-![Mobile drawer with icons](assets/app-shell-mobile-drawer.png)
+![Mobile drawer with icons](./assets/app-shell-mobile-drawer.png)
 
 - source_type: storybook_canvas
 - target_program: mock-only
