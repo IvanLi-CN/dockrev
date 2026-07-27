@@ -50,6 +50,14 @@ function scrollToOctoRillCard(root: HTMLElement): void {
   octoRillCard?.scrollIntoView({ block: 'center', behavior: 'auto' })
 }
 
+function scrollToResourceMonitorCard(root: HTMLElement): HTMLElement | undefined {
+  const card = Array.from(root.querySelectorAll<HTMLElement>('.card')).find(
+    (node) => node.querySelector('.title')?.textContent?.trim() === '资源监控',
+  )
+  card?.scrollIntoView({ block: 'center', behavior: 'auto' })
+  return card
+}
+
 function setInputValue(input: HTMLInputElement, value: string): void {
   const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
   descriptor?.set?.call(input, value)
@@ -73,6 +81,25 @@ export const DefaultLight: Story = {
   globals: {
     theme: 'light',
     backgrounds: { value: 'light' },
+  },
+}
+
+export const ResourceMonitorCoordinator: Story = {
+  parameters: { dockrevApiScenario: 'settings-configured' },
+  render: () => renderSettingsPage('验证全局协调的历史采样周期与实时采集复用语义'),
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    const card = scrollToResourceMonitorCard(canvasElement)
+    if (!card) throw new globalThis.Error('expected resource monitor settings card')
+    if (!card.textContent?.includes('历史采样频率（全局周期）')) {
+      throw new globalThis.Error('expected global history cadence label')
+    }
+    if (!card.textContent?.includes('每个周期只发现一次运行容器')) {
+      throw new globalThis.Error('expected coordinator sampling explanation')
+    }
+    if (!card.textContent?.includes('1 天（固定）')) {
+      throw new globalThis.Error('expected one-day retention')
+    }
   },
 }
 

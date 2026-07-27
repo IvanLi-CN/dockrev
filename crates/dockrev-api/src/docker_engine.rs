@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::PathBuf,
     sync::{Arc, Mutex, MutexGuard},
     time::{Duration, Instant},
@@ -17,6 +17,8 @@ const DOCKER_ENGINE_MAX_IN_FLIGHT_REQUESTS: usize = 4;
 const DOCKER_ENGINE_FAILURE_THRESHOLD: u32 = 2;
 const DOCKER_ENGINE_INITIAL_BACKOFF: Duration = Duration::from_secs(5);
 const DOCKER_ENGINE_MAX_BACKOFF: Duration = Duration::from_secs(60);
+// Keep the baseline across the longest supported 300s cadence plus scheduler drift.
+const CPU_BASELINE_MAX_AGE: Duration = Duration::from_secs(600);
 
 #[derive(Clone, Copy)]
 struct DockerEngineProtectionConfig {
@@ -291,6 +293,7 @@ pub struct DockerEngineClient {
     http: reqwest::Client,
     base_url: String,
     protection: DockerEngineProtection,
+    cpu_baselines: Arc<Mutex<BTreeMap<String, CpuBaseline>>>,
 }
 
 impl DockerEngineClient {
@@ -362,6 +365,7 @@ impl DockerEngineClient {
             http,
             base_url: url.as_str().trim_end_matches('/').to_string(),
             protection: DockerEngineProtection::new(protection_config),
+            cpu_baselines: Arc::new(Mutex::new(BTreeMap::new())),
         })
     }
 
@@ -370,6 +374,7 @@ impl DockerEngineClient {
             http,
             base_url,
             protection: DockerEngineProtection::new(DockerEngineProtectionConfig::default()),
+            cpu_baselines: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -384,36 +389,72 @@ impl DockerEngineClient {
             && Arc::ptr_eq(&self.protection.circuit, &other.protection.circuit)
     }
 
+    #[cfg(test)]
+    pub(crate) fn shares_sampling_state_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.cpu_baselines, &other.cpu_baselines)
+    }
+
     pub async fn collect_project_service_samples(
         &self,
         compose_project: &str,
     ) -> anyhow::Result<ProjectResourceCollection> {
-        let containers = self.list_project_containers(compose_project).await?;
-        if containers.is_empty() {
-            return Ok(ProjectResourceCollection::default());
+        let compose_projects = BTreeSet::from([compose_project.to_string()]);
+        Ok(self
+            .collect_projects_service_samples(&compose_projects)
+            .await?
+            .remove(compose_project)
+            .unwrap_or_default())
+    }
+
+    pub async fn collect_projects_service_samples(
+        &self,
+        compose_projects: &BTreeSet<String>,
+    ) -> anyhow::Result<BTreeMap<String, ProjectResourceCollection>> {
+        let mut collections = compose_projects
+            .iter()
+            .map(|project| (project.clone(), ProjectResourceCollection::default()))
+            .collect::<BTreeMap<_, _>>();
+        if compose_projects.is_empty() {
+            return Ok(collections);
         }
 
+        let listing = self
+            .list_compose_project_containers(compose_projects)
+            .await?;
+        self.prune_cpu_baselines(
+            compose_projects,
+            &listing.active_container_ids,
+            listing.global_discovery,
+        );
+        let containers = listing.containers;
+
+        let mut aggregates = BTreeMap::<String, BTreeMap<String, ServiceAggregate>>::new();
         let mut join_set = tokio::task::JoinSet::new();
         for container in containers {
             let client = self.clone();
             join_set.spawn(async move {
-                let result = client.fetch_container_sample(&container.id).await;
+                let result = client
+                    .fetch_container_sample(&container.id, &container.compose_project)
+                    .await;
                 (container, result)
             });
         }
 
-        let mut aggregates = BTreeMap::<String, ServiceAggregate>::new();
-        let mut failures = Vec::new();
         while let Some(joined) = join_set.join_next().await {
             let (container, result) = joined.context("join Docker container stats task")?;
+            let collection = collections
+                .get_mut(&container.compose_project)
+                .expect("listed project must have a collection");
             match result {
                 Ok(sample) => {
                     aggregates
+                        .entry(container.compose_project)
+                        .or_default()
                         .entry(container.service_name)
                         .or_default()
                         .merge_container_sample(sample);
                 }
-                Err(error) => failures.push(ContainerStatsFailure {
+                Err(error) => collection.failures.push(ContainerStatsFailure {
                     container_id: container.id,
                     service_name: container.service_name,
                     error: error.to_string(),
@@ -421,62 +462,110 @@ impl DockerEngineClient {
             }
         }
 
-        Ok(ProjectResourceCollection {
-            samples: aggregates
+        for (project, collection) in &mut collections {
+            collection.samples = aggregates
+                .remove(project)
+                .unwrap_or_default()
                 .into_iter()
                 .map(|(service_name, aggregate)| (service_name, aggregate.into_sample()))
-                .collect(),
-            failures,
-        })
+                .collect();
+        }
+        Ok(collections)
     }
 
-    async fn list_project_containers(
+    async fn list_compose_project_containers(
         &self,
-        compose_project: &str,
-    ) -> anyhow::Result<Vec<ProjectContainer>> {
-        let filters = serde_json::json!({
-            "label": [format!("com.docker.compose.project={compose_project}")]
-        });
-        let rows: Vec<DockerContainerSummary> = self
-            .get_json(
+        compose_projects: &BTreeSet<String>,
+    ) -> anyhow::Result<ContainerListing> {
+        let global_discovery = compose_projects.len() != 1;
+        let rows: Vec<DockerContainerSummary> = if !global_discovery {
+            let compose_project = compose_projects
+                .first()
+                .expect("single project collection must have a project");
+            let filters = serde_json::json!({
+                "label": [format!("com.docker.compose.project={compose_project}")]
+            });
+            self.get_json(
                 "/containers/json",
                 &[("filters", filters.to_string())],
                 Duration::from_secs(8),
             )
             .await
-            .with_context(|| {
-                format!("list Docker containers for compose project {compose_project}")
-            })?;
-        Ok(rows
+        } else {
+            self.get_json("/containers/json", &[], Duration::from_secs(8))
+                .await
+        }
+        .context("list running Docker containers for resource monitoring")?;
+        let active_container_ids = rows
+            .iter()
+            .map(|row| row.id.clone())
+            .collect::<BTreeSet<_>>();
+        let containers = rows
             .into_iter()
             .filter_map(|row| {
+                let compose_project = row.labels.get("com.docker.compose.project")?.clone();
+                if !compose_projects.contains(&compose_project) {
+                    return None;
+                }
                 row.labels
                     .get("com.docker.compose.service")
                     .cloned()
                     .filter(|service_name| !service_name.is_empty())
                     .map(|service_name| ProjectContainer {
                         id: row.id,
+                        compose_project,
                         service_name,
                     })
             })
-            .collect())
+            .collect();
+        Ok(ContainerListing {
+            containers,
+            active_container_ids,
+            global_discovery,
+        })
+    }
+
+    fn prune_cpu_baselines(
+        &self,
+        compose_projects: &BTreeSet<String>,
+        active_container_ids: &BTreeSet<String>,
+        global_discovery: bool,
+    ) {
+        let mut baselines = self
+            .cpu_baselines
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let now = Instant::now();
+        baselines.retain(|container_id, baseline| {
+            let active = active_container_ids.contains(container_id);
+            let fresh = baseline.last_seen_at <= now
+                && now.saturating_duration_since(baseline.last_seen_at) < CPU_BASELINE_MAX_AGE;
+            if compose_projects.contains(&baseline.compose_project) {
+                return active && fresh;
+            }
+            fresh && (!global_discovery || active)
+        });
     }
 
     async fn fetch_container_sample(
         &self,
         container_id: &str,
+        compose_project: &str,
     ) -> anyhow::Result<ContainerResourceSample> {
         let path = format!("/containers/{container_id}/stats");
         let stats: DockerStatsResponse = self
             .get_json(
                 &path,
-                &[("stream", "false".to_string())],
+                &[
+                    ("stream", "false".to_string()),
+                    ("one-shot", "true".to_string()),
+                ],
                 Duration::from_secs(20),
             )
             .await
             .with_context(|| format!("fetch Docker stats for container {container_id}"))?;
         Ok(ContainerResourceSample {
-            cpu_percent: calculate_cpu_percent(&stats).unwrap_or_default(),
+            cpu_percent: self.cpu_percent_from_baseline(container_id, compose_project, &stats),
             mem_used_bytes: calculate_memory_usage(&stats).map(|(used, _)| used),
             mem_limit_bytes: calculate_memory_usage(&stats).map(|(_, limit)| limit),
             net_rx_bytes: calculate_network_bytes(&stats).map(|(rx, _)| rx),
@@ -485,6 +574,25 @@ impl DockerEngineClient {
             block_write_bytes: calculate_block_io_bytes(&stats).map(|(_, write)| write),
             pids: stats.pids_stats.current,
         })
+    }
+
+    fn cpu_percent_from_baseline(
+        &self,
+        container_id: &str,
+        compose_project: &str,
+        stats: &DockerStatsResponse,
+    ) -> f64 {
+        let Some(current) = CpuBaseline::from_stats(compose_project, stats) else {
+            return 0.0;
+        };
+        let mut baselines = self
+            .cpu_baselines
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous = baselines.insert(container_id.to_string(), current);
+        previous
+            .and_then(|previous| calculate_cpu_percent_from_baseline(&previous, stats))
+            .unwrap_or_default()
     }
 
     async fn get_json<T>(
@@ -555,7 +663,14 @@ impl DockerEngineClient {
 #[derive(Clone, Debug)]
 struct ProjectContainer {
     id: String,
+    compose_project: String,
     service_name: String,
+}
+
+struct ContainerListing {
+    containers: Vec<ProjectContainer>,
+    active_container_ids: BTreeSet<String>,
+    global_discovery: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -645,8 +760,6 @@ struct DockerStatsResponse {
     #[serde(default)]
     cpu_stats: DockerCpuStats,
     #[serde(default)]
-    precpu_stats: DockerCpuStats,
-    #[serde(default)]
     memory_stats: DockerMemoryStats,
     #[serde(default)]
     networks: BTreeMap<String, DockerNetworkStats>,
@@ -670,6 +783,25 @@ struct DockerCpuUsage {
     total_usage: u64,
     #[serde(default)]
     percpu_usage: Vec<u64>,
+}
+
+#[derive(Clone)]
+struct CpuBaseline {
+    compose_project: String,
+    total_usage: u64,
+    system_cpu_usage: u64,
+    last_seen_at: Instant,
+}
+
+impl CpuBaseline {
+    fn from_stats(compose_project: &str, stats: &DockerStatsResponse) -> Option<Self> {
+        Some(Self {
+            compose_project: compose_project.to_string(),
+            total_usage: stats.cpu_stats.cpu_usage.total_usage,
+            system_cpu_usage: stats.cpu_stats.system_cpu_usage?,
+            last_seen_at: Instant::now(),
+        })
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -713,16 +845,19 @@ struct DockerPidsStats {
     current: Option<u64>,
 }
 
-fn calculate_cpu_percent(stats: &DockerStatsResponse) -> Option<f64> {
+fn calculate_cpu_percent_from_baseline(
+    previous: &CpuBaseline,
+    stats: &DockerStatsResponse,
+) -> Option<f64> {
     let cpu_delta = stats
         .cpu_stats
         .cpu_usage
         .total_usage
-        .checked_sub(stats.precpu_stats.cpu_usage.total_usage)? as f64;
+        .checked_sub(previous.total_usage)? as f64;
     let system_delta = stats
         .cpu_stats
         .system_cpu_usage?
-        .checked_sub(stats.precpu_stats.system_cpu_usage?)? as f64;
+        .checked_sub(previous.system_cpu_usage)? as f64;
     if cpu_delta <= 0.0 || system_delta <= 0.0 {
         return None;
     }
@@ -790,558 +925,5 @@ fn calculate_block_io_bytes(stats: &DockerStatsResponse) -> Option<(u64, u64)> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::{
-        collections::VecDeque,
-        sync::{
-            Arc, Mutex,
-            atomic::{AtomicU64, AtomicUsize, Ordering},
-        },
-    };
-
-    use axum::{
-        Json, Router,
-        extract::{OriginalUri, State},
-        http::StatusCode,
-        routing::get,
-    };
-    use serde_json::json;
-
-    #[derive(Clone)]
-    struct ProtectionTestState {
-        statuses: Arc<Mutex<VecDeque<StatusCode>>>,
-        requests: Arc<AtomicUsize>,
-        active: Arc<AtomicUsize>,
-        max_active: Arc<AtomicUsize>,
-        response_delay_ms: Arc<AtomicU64>,
-    }
-
-    impl ProtectionTestState {
-        fn new(statuses: impl IntoIterator<Item = StatusCode>) -> Self {
-            Self {
-                statuses: Arc::new(Mutex::new(statuses.into_iter().collect())),
-                requests: Arc::new(AtomicUsize::new(0)),
-                active: Arc::new(AtomicUsize::new(0)),
-                max_active: Arc::new(AtomicUsize::new(0)),
-                response_delay_ms: Arc::new(AtomicU64::new(0)),
-            }
-        }
-    }
-
-    async fn protected_response(
-        State(state): State<ProtectionTestState>,
-    ) -> (StatusCode, Json<serde_json::Value>) {
-        state.requests.fetch_add(1, Ordering::SeqCst);
-        let active = state.active.fetch_add(1, Ordering::SeqCst) + 1;
-        let mut observed = state.max_active.load(Ordering::SeqCst);
-        while active > observed {
-            match state.max_active.compare_exchange(
-                observed,
-                active,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            ) {
-                Ok(_) => break,
-                Err(current) => observed = current,
-            }
-        }
-
-        let delay = state.response_delay_ms.load(Ordering::SeqCst);
-        if delay > 0 {
-            tokio::time::sleep(Duration::from_millis(delay)).await;
-        }
-        state.active.fetch_sub(1, Ordering::SeqCst);
-        let status = state
-            .statuses
-            .lock()
-            .unwrap()
-            .pop_front()
-            .unwrap_or(StatusCode::OK);
-        (status, Json(json!({})))
-    }
-
-    async fn protected_test_client(
-        state: ProtectionTestState,
-        config: DockerEngineProtectionConfig,
-    ) -> (DockerEngineClient, tokio::task::JoinHandle<()>) {
-        let app = Router::new()
-            .route("/health", get(protected_response))
-            .with_state(state);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        (
-            DockerEngineClient::from_http_base_with_protection(&format!("http://{addr}"), config)
-                .unwrap(),
-            server,
-        )
-    }
-
-    async fn wait_for_request_count(state: &ProtectionTestState, expected: usize) {
-        tokio::time::timeout(Duration::from_secs(1), async {
-            loop {
-                if state.requests.load(Ordering::SeqCst) >= expected {
-                    return;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap();
-    }
-
-    fn test_protection_config() -> DockerEngineProtectionConfig {
-        DockerEngineProtectionConfig {
-            max_in_flight_requests: 4,
-            failure_threshold: 2,
-            initial_backoff: Duration::from_millis(20),
-            max_backoff: Duration::from_millis(80),
-        }
-    }
-
-    #[test]
-    fn tcp_docker_host_normalizes_to_http_base_url() {
-        let client =
-            DockerEngineClient::from_docker_host("tcp://docker-socket-proxy:2375").unwrap();
-        assert_eq!(client.base_url, "http://docker-socket-proxy:2375");
-    }
-
-    #[test]
-    fn http_docker_host_preserves_scheme_and_strips_path() {
-        let client =
-            DockerEngineClient::from_docker_host("https://docker.example.com/root").unwrap();
-        assert_eq!(client.base_url, "https://docker.example.com");
-    }
-
-    #[test]
-    fn unix_docker_host_normalizes_to_unversioned_engine_base_url() {
-        let client = DockerEngineClient::from_docker_host("unix:///var/run/docker.sock").unwrap();
-        assert_eq!(client.base_url, "http://docker");
-    }
-
-    #[tokio::test]
-    async fn docker_engine_request_limit_is_shared_across_client_clones() {
-        let state = ProtectionTestState::new(std::iter::repeat_n(StatusCode::OK, 12));
-        state.response_delay_ms.store(40, Ordering::SeqCst);
-        let (client, server) = protected_test_client(state.clone(), test_protection_config()).await;
-        let mut requests = tokio::task::JoinSet::new();
-        for _ in 0..12 {
-            let client = client.clone();
-            requests.spawn(async move {
-                client
-                    .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
-                    .await
-            });
-        }
-
-        while let Some(result) = requests.join_next().await {
-            result.unwrap().unwrap();
-        }
-
-        assert_eq!(state.requests.load(Ordering::SeqCst), 12);
-        assert_eq!(state.max_active.load(Ordering::SeqCst), 4);
-        server.abort();
-    }
-
-    #[tokio::test]
-    async fn queued_request_degrades_when_the_circuit_opens() {
-        let protection = DockerEngineProtection::new(test_protection_config());
-        let mut in_flight = Vec::new();
-        for _ in 0..DOCKER_ENGINE_MAX_IN_FLIGHT_REQUESTS {
-            in_flight.push(protection.begin_request().await.unwrap());
-        }
-
-        let queued_protection = protection.clone();
-        let queued = tokio::spawn(async move { queued_protection.begin_request().await });
-        tokio::time::timeout(Duration::from_secs(1), async {
-            while protection.circuit_opened.receiver_count() == 0 {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap();
-
-        {
-            let mut circuit = protection.lock_circuit();
-            protection.open_circuit(
-                &mut circuit,
-                Duration::from_millis(20),
-                "test circuit opened",
-            );
-        }
-
-        let result = tokio::time::timeout(Duration::from_millis(100), queued)
-            .await
-            .unwrap()
-            .unwrap();
-        let error = match result {
-            Err(error) => error,
-            Ok(_) => panic!("queued request unexpectedly acquired a permit after circuit opened"),
-        };
-        assert!(
-            error
-                .to_string()
-                .contains("opened while request waited for capacity")
-        );
-        drop(in_flight);
-    }
-
-    #[tokio::test]
-    async fn docker_engine_circuit_breaker_backs_off_and_recovers_with_one_probe() {
-        let state = ProtectionTestState::new([
-            StatusCode::INTERNAL_SERVER_ERROR,
-            StatusCode::INTERNAL_SERVER_ERROR,
-            StatusCode::INTERNAL_SERVER_ERROR,
-            StatusCode::OK,
-            StatusCode::OK,
-        ]);
-        let (client, server) = protected_test_client(state.clone(), test_protection_config()).await;
-
-        for _ in 0..2 {
-            assert!(
-                client
-                    .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
-                    .await
-                    .is_err()
-            );
-        }
-        assert_eq!(state.requests.load(Ordering::SeqCst), 2);
-        assert!(
-            client
-                .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("circuit breaker open")
-        );
-        assert_eq!(state.requests.load(Ordering::SeqCst), 2);
-
-        tokio::time::sleep(Duration::from_millis(30)).await;
-        assert!(
-            client
-                .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
-                .await
-                .is_err()
-        );
-        assert_eq!(state.requests.load(Ordering::SeqCst), 3);
-
-        tokio::time::sleep(Duration::from_millis(25)).await;
-        assert!(
-            client
-                .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
-                .await
-                .is_err()
-        );
-        assert_eq!(state.requests.load(Ordering::SeqCst), 3);
-
-        tokio::time::sleep(Duration::from_millis(25)).await;
-        state.response_delay_ms.store(40, Ordering::SeqCst);
-        let probe_client = client.clone();
-        let probe = tokio::spawn(async move {
-            probe_client
-                .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
-                .await
-        });
-        tokio::time::sleep(Duration::from_millis(5)).await;
-        assert!(
-            client
-                .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("probe already in progress")
-        );
-        assert_eq!(state.requests.load(Ordering::SeqCst), 4);
-        probe.await.unwrap().unwrap();
-
-        client
-            .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
-            .await
-            .unwrap();
-        assert_eq!(state.requests.load(Ordering::SeqCst), 5);
-        server.abort();
-    }
-
-    #[tokio::test]
-    async fn cancelled_half_open_probe_reopens_the_circuit() {
-        let state = ProtectionTestState::new([
-            StatusCode::INTERNAL_SERVER_ERROR,
-            StatusCode::INTERNAL_SERVER_ERROR,
-            StatusCode::OK,
-            StatusCode::OK,
-        ]);
-        let (client, server) = protected_test_client(state.clone(), test_protection_config()).await;
-
-        for _ in 0..2 {
-            assert!(
-                client
-                    .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
-                    .await
-                    .is_err()
-            );
-        }
-
-        tokio::time::sleep(Duration::from_millis(25)).await;
-        state.response_delay_ms.store(100, Ordering::SeqCst);
-        let probe_client = client.clone();
-        let probe = tokio::spawn(async move {
-            probe_client
-                .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
-                .await
-        });
-        wait_for_request_count(&state, 3).await;
-        probe.abort();
-        assert!(probe.await.unwrap_err().is_cancelled());
-
-        tokio::time::sleep(Duration::from_millis(25)).await;
-        state.response_delay_ms.store(0, Ordering::SeqCst);
-        client
-            .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
-            .await
-            .unwrap();
-        assert_eq!(state.requests.load(Ordering::SeqCst), 4);
-        server.abort();
-    }
-
-    #[tokio::test]
-    async fn docker_engine_client_errors_do_not_trip_the_circuit_breaker() {
-        let state = ProtectionTestState::new([
-            StatusCode::INTERNAL_SERVER_ERROR,
-            StatusCode::NOT_FOUND,
-            StatusCode::INTERNAL_SERVER_ERROR,
-            StatusCode::OK,
-        ]);
-        let (client, server) = protected_test_client(state.clone(), test_protection_config()).await;
-
-        assert!(
-            client
-                .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
-                .await
-                .is_err()
-        );
-        assert!(
-            client
-                .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
-                .await
-                .is_err()
-        );
-        assert!(
-            client
-                .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
-                .await
-                .is_err()
-        );
-        client
-            .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
-            .await
-            .unwrap();
-
-        assert_eq!(state.requests.load(Ordering::SeqCst), 4);
-        server.abort();
-    }
-
-    #[tokio::test]
-    async fn collect_project_service_samples_uses_unversioned_engine_paths() {
-        async fn list_containers(
-            OriginalUri(uri): OriginalUri,
-            axum::extract::State(seen_paths): axum::extract::State<Arc<Mutex<Vec<String>>>>,
-        ) -> Json<serde_json::Value> {
-            seen_paths
-                .lock()
-                .unwrap()
-                .push(uri.path_and_query().unwrap().as_str().to_string());
-            Json(json!([
-                {
-                    "Id": "container-1",
-                    "Labels": {
-                        "com.docker.compose.service": "web"
-                    }
-                }
-            ]))
-        }
-
-        async fn stats(
-            OriginalUri(uri): OriginalUri,
-            axum::extract::State(seen_paths): axum::extract::State<Arc<Mutex<Vec<String>>>>,
-        ) -> Json<serde_json::Value> {
-            seen_paths
-                .lock()
-                .unwrap()
-                .push(uri.path_and_query().unwrap().as_str().to_string());
-            Json(json!({
-                "cpu_stats": {
-                    "cpu_usage": {
-                        "total_usage": 5_000_000,
-                        "percpu_usage": [2_500_000, 2_500_000]
-                    },
-                    "system_cpu_usage": 20_000_000,
-                    "online_cpus": 2
-                },
-                "precpu_stats": {
-                    "cpu_usage": {
-                        "total_usage": 1_000_000
-                    },
-                    "system_cpu_usage": 12_000_000
-                },
-                "memory_stats": {
-                    "usage": 150_000_000,
-                    "limit": 1_000_000_000,
-                    "stats": {
-                        "inactive_file": 10_000_000
-                    }
-                },
-                "networks": {
-                    "eth0": { "rx_bytes": 1000, "tx_bytes": 2000 }
-                },
-                "blkio_stats": {
-                    "io_service_bytes_recursive": [
-                        { "op": "Read", "value": 4096 },
-                        { "op": "Write", "value": 8192 }
-                    ]
-                },
-                "pids_stats": {
-                    "current": 12
-                }
-            }))
-        }
-
-        let seen_paths = Arc::new(Mutex::new(Vec::<String>::new()));
-        let app = Router::new()
-            .route("/containers/json", get(list_containers))
-            .route("/containers/{id}/stats", get(stats))
-            .with_state(seen_paths.clone());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-
-        let client =
-            DockerEngineClient::from_http_base(&format!("http://{addr}/docker-root")).unwrap();
-        let samples = client
-            .collect_project_service_samples("demo")
-            .await
-            .unwrap();
-
-        let sample = samples.samples.get("web").unwrap();
-        assert!(samples.failures.is_empty());
-        assert!((sample.cpu_percent - 100.0).abs() < f64::EPSILON);
-        assert_eq!(sample.mem_used_bytes, Some(140_000_000));
-        assert_eq!(sample.mem_limit_bytes, Some(1_000_000_000));
-        assert_eq!(sample.net_rx_bytes, Some(1000));
-        assert_eq!(sample.net_tx_bytes, Some(2000));
-        assert_eq!(sample.block_read_bytes, Some(4096));
-        assert_eq!(sample.block_write_bytes, Some(8192));
-        assert_eq!(sample.pids, Some(12));
-        assert_eq!(sample.container_count, 1);
-        assert_eq!(
-            seen_paths.lock().unwrap().as_slice(),
-            [
-                "/containers/json?filters=%7B%22label%22%3A%5B%22com.docker.compose.project%3Ddemo%22%5D%7D",
-                "/containers/container-1/stats?stream=false",
-            ]
-        );
-
-        server.abort();
-    }
-
-    #[test]
-    fn stats_calculations_match_docker_style_fields() {
-        let stats: DockerStatsResponse = serde_json::from_value(serde_json::json!({
-            "cpu_stats": {
-                "cpu_usage": {
-                    "total_usage": 5_000_000,
-                    "percpu_usage": [2_500_000, 2_500_000]
-                },
-                "system_cpu_usage": 20_000_000,
-                "online_cpus": 2
-            },
-            "precpu_stats": {
-                "cpu_usage": {
-                    "total_usage": 1_000_000
-                },
-                "system_cpu_usage": 12_000_000
-            },
-            "memory_stats": {
-                "usage": 150_000_000,
-                "limit": 1_000_000_000,
-                "stats": {
-                    "inactive_file": 10_000_000
-                }
-            },
-            "networks": {
-                "eth0": { "rx_bytes": 1000, "tx_bytes": 2000 },
-                "eth1": { "rx_bytes": 3000, "tx_bytes": 4000 }
-            },
-            "blkio_stats": {
-                "io_service_bytes_recursive": [
-                    { "op": "Read", "value": 4096 },
-                    { "op": "Write", "value": 8192 }
-                ]
-            },
-            "pids_stats": {
-                "current": 12
-            }
-        }))
-        .unwrap();
-
-        let cpu = calculate_cpu_percent(&stats).unwrap();
-        assert!((cpu - 100.0).abs() < f64::EPSILON);
-        assert_eq!(
-            calculate_memory_usage(&stats),
-            Some((140_000_000, 1_000_000_000))
-        );
-        assert_eq!(calculate_network_bytes(&stats), Some((4000, 6000)));
-        assert_eq!(calculate_block_io_bytes(&stats), Some((4096, 8192)));
-        assert_eq!(stats.pids_stats.current, Some(12));
-    }
-
-    #[test]
-    fn stats_accept_null_block_io_entries() {
-        let stats: DockerStatsResponse = serde_json::from_value(serde_json::json!({
-            "blkio_stats": { "io_service_bytes_recursive": null }
-        }))
-        .unwrap();
-        assert!(stats.blkio_stats.io_service_bytes_recursive.is_empty());
-        assert_eq!(calculate_block_io_bytes(&stats), None);
-    }
-
-    #[test]
-    fn service_aggregate_sums_container_samples() {
-        let mut aggregate = ServiceAggregate::default();
-        aggregate.merge_container_sample(ContainerResourceSample {
-            cpu_percent: 12.5,
-            mem_used_bytes: Some(10),
-            mem_limit_bytes: Some(100),
-            net_rx_bytes: Some(20),
-            net_tx_bytes: Some(30),
-            block_read_bytes: Some(40),
-            block_write_bytes: Some(50),
-            pids: Some(2),
-        });
-        aggregate.merge_container_sample(ContainerResourceSample {
-            cpu_percent: 7.5,
-            mem_used_bytes: Some(20),
-            mem_limit_bytes: Some(100),
-            net_rx_bytes: Some(10),
-            net_tx_bytes: Some(20),
-            block_read_bytes: Some(30),
-            block_write_bytes: Some(40),
-            pids: Some(3),
-        });
-
-        let sample = aggregate.into_sample();
-        assert_eq!(sample.cpu_percent, 20.0);
-        assert_eq!(sample.mem_used_bytes, Some(30));
-        assert_eq!(sample.mem_limit_bytes, Some(200));
-        assert_eq!(sample.net_rx_bytes, Some(30));
-        assert_eq!(sample.net_tx_bytes, Some(50));
-        assert_eq!(sample.block_read_bytes, Some(70));
-        assert_eq!(sample.block_write_bytes, Some(90));
-        assert_eq!(sample.pids, Some(5));
-        assert_eq!(sample.container_count, 2);
-    }
-}
+#[path = "docker_engine_tests.rs"]
+mod tests;

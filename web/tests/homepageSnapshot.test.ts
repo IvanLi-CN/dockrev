@@ -32,12 +32,12 @@ class MemoryStorage {
 const overview: ServiceResourceOverviewResponse = {
   enabled: true,
   window: '1h',
-  generatedAt: '2026-05-07T00:00:00.000Z',
+  generatedAt: '2099-05-07T00:00:00.000Z',
   staleAfterSeconds: 60,
   services: [
     {
       serviceId: 'svc-api',
-      sampledAt: '2026-05-07T00:00:00.000Z',
+      sampledAt: '2099-05-07T00:00:00.000Z',
       cpuPercent: 12,
       memUsedBytes: 128,
       memLimitBytes: 256,
@@ -104,8 +104,8 @@ const card: HomepageSnapshotCard = {
 }
 
 const homepageResponse: HomepageNavResponse = {
-  generatedAt: '2026-05-07T00:00:00.000Z',
-  lastCheckAt: '2026-05-07T00:00:00.000Z',
+  generatedAt: '2099-05-07T00:00:00.000Z',
+  lastCheckAt: '2099-05-07T00:00:00.000Z',
   resourceSummary: overview,
   items: [],
 }
@@ -133,14 +133,14 @@ describe('homepage snapshot cache', () => {
 
   test('marks cached resource summary stale while preserving values', () => {
     const snapshot = homepageSnapshotFromResponse({
-      generatedAt: '2026-05-07T00:00:00.000Z',
+      generatedAt: '2099-05-07T00:00:00.000Z',
       lastCheckAt: null,
       resourceSummary: overview,
       cards: [card],
     })
 
     expect(
-      homepageSnapshotIsResourceStale(snapshot, Date.parse('2026-05-07T00:02:01.000Z')),
+      homepageSnapshotIsResourceStale(snapshot, Date.parse('2099-05-07T00:02:01.000Z')),
     ).toBe(true)
 
     const stale = markHomepageSnapshotResourceStale(snapshot)
@@ -154,7 +154,7 @@ describe('homepage snapshot cache', () => {
       HOMEPAGE_NAV_SNAPSHOT_KEY,
       JSON.stringify({
         version: 1,
-        generatedAt: '2026-05-07T00:00:00.000Z',
+        generatedAt: '2099-05-07T00:00:00.000Z',
         cards: [
           {
             id: 'svc-api',
@@ -178,7 +178,7 @@ describe('homepage snapshot cache', () => {
       HOMEPAGE_RESOURCE_SUMMARY_KEY,
       JSON.stringify({
         version: 1,
-        generatedAt: '2026-05-07T00:00:00.000Z',
+        generatedAt: '2099-05-07T00:00:00.000Z',
         overview,
       }),
     )
@@ -197,7 +197,7 @@ describe('homepage snapshot cache', () => {
       HOMEPAGE_NAV_SNAPSHOT_KEY,
       JSON.stringify({
         version: 1,
-        generatedAt: '2026-05-07T00:00:00.000Z',
+        generatedAt: '2099-05-07T00:00:00.000Z',
         cards: [
           {
             id: 'svc-api',
