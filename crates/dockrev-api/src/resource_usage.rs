@@ -186,6 +186,7 @@ impl Drop for CollectionCancellationGuard {
 
 struct ProjectCollectionState {
     in_flight: bool,
+    invalidated: bool,
     completed_at: Option<Instant>,
     result: Option<CachedProjectCollection>,
     changed: watch::Sender<u64>,
@@ -196,6 +197,7 @@ impl ProjectCollectionState {
         let (changed, _) = watch::channel(0u64);
         Self {
             in_flight: false,
+            invalidated: false,
             completed_at: None,
             result: None,
             changed,
@@ -388,7 +390,14 @@ impl ResourceSamplingCoordinator {
 
     async fn clear_cached_collections(&self) {
         let mut state = self.state.lock().await;
-        state.projects.retain(|_, entry| entry.in_flight);
+        state.projects.retain(|_, entry| {
+            if entry.in_flight {
+                entry.invalidated = true;
+                true
+            } else {
+                false
+            }
+        });
     }
 
     async fn collect_project(&self, compose_project: &str) -> anyhow::Result<ResourceCollection> {
@@ -425,6 +434,7 @@ impl ResourceSamplingCoordinator {
                         waiting.push((compose_project.clone(), entry.changed.subscribe()));
                     } else {
                         entry.in_flight = true;
+                        entry.invalidated = false;
                         owned.insert(compose_project.clone());
                     }
                 }
@@ -453,6 +463,20 @@ impl ResourceSamplingCoordinator {
                         .get_mut(compose_project)
                         .expect("owned project state must exist");
                     entry.in_flight = false;
+                    let invalidated = entry.invalidated;
+                    entry.invalidated = false;
+                    if invalidated {
+                        entry.completed_at = None;
+                        entry.result = None;
+                        entry
+                            .changed
+                            .send_modify(|version| *version = version.wrapping_add(1));
+                        ready.insert(
+                            compose_project.clone(),
+                            Err(anyhow::anyhow!("resource collection invalidated")),
+                        );
+                        continue;
+                    }
                     entry.completed_at = Some(Instant::now());
                     entry.result = Some(result.clone());
                     entry

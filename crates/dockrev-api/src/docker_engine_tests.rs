@@ -252,7 +252,7 @@ async fn docker_engine_circuit_breaker_backs_off_and_recovers_with_one_probe() {
             .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
             .await
     });
-    tokio::time::sleep(Duration::from_millis(5)).await;
+    wait_for_request_count(&state, 4).await;
     assert!(
         client
             .get_json::<serde_json::Value>("/health", &[], Duration::from_secs(1))
@@ -567,6 +567,35 @@ fn global_pruning_preserves_active_containers_outside_partial_batch() {
     assert!(baselines.contains_key("demo-running"));
     assert!(baselines.contains_key("other-running"));
     assert!(!baselines.contains_key("removed-running"));
+}
+
+#[test]
+fn pruning_expires_old_requested_cpu_baselines() {
+    let client = DockerEngineClient::for_test_http_base("http://docker.test").unwrap();
+    let compose_projects = BTreeSet::from(["demo".to_string()]);
+    let stale = CpuBaseline {
+        compose_project: "demo".to_string(),
+        total_usage: 1,
+        system_cpu_usage: 2,
+        last_seen_at: Instant::now()
+            .checked_sub(CPU_BASELINE_MAX_AGE + Duration::from_secs(1))
+            .unwrap(),
+    };
+    {
+        let mut baselines = client.cpu_baselines.lock().unwrap();
+        baselines.insert("demo-stale".to_string(), stale);
+    }
+
+    let active_container_ids = BTreeSet::from(["demo-stale".to_string()]);
+    client.prune_cpu_baselines(&compose_projects, &active_container_ids, false);
+
+    assert!(
+        !client
+            .cpu_baselines
+            .lock()
+            .unwrap()
+            .contains_key("demo-stale")
+    );
 }
 
 #[tokio::test]

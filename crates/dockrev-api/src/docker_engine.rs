@@ -537,12 +537,12 @@ impl DockerEngineClient {
         let now = Instant::now();
         baselines.retain(|container_id, baseline| {
             let active = active_container_ids.contains(container_id);
+            let fresh = baseline.last_seen_at <= now
+                && now.saturating_duration_since(baseline.last_seen_at) < CPU_BASELINE_MAX_AGE;
             if compose_projects.contains(&baseline.compose_project) {
-                return active;
+                return active && fresh;
             }
-            baseline.last_seen_at <= now
-                && now.saturating_duration_since(baseline.last_seen_at) < CPU_BASELINE_MAX_AGE
-                && (!global_discovery || active)
+            fresh && (!global_discovery || active)
         });
     }
 
