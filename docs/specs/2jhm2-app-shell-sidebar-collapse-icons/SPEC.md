@@ -72,7 +72,6 @@
 - capture_scope: `.appShell`
 - requested_viewport: 1440x900
 - viewport_strategy: devtools-emulate
-- PR: include
 
 ### Desktop Collapsed
 
@@ -83,9 +82,10 @@
 - capture_scope: `.appShell`
 - requested_viewport: 1440x900
 - viewport_strategy: devtools-emulate
-- PR: include
 
 ### Desktop Header Alignment
+
+- PR: include
 
 ![Desktop overview header aligned with primary navigation](./assets/app-shell-header-aligned-overview.png)
 
@@ -95,7 +95,6 @@
 - requested_viewport: 1440x900
 - viewport_strategy: controlled browser viewport
 - state: normal desktop route with sidebar identity at footer top
-- PR: include
 
 ### Mobile Drawer
 
