@@ -136,6 +136,7 @@
   viewport_strategy: `storybook-viewport`
   sensitive_exclusion: `N/A (mock-only data; resource-monitor card only)`
   submission_gate: `owner-approved`
+  evidence_binding_sha: `37bd80eddca7cf97aad283700a028487f301ad67`
   story_id_or_title: `Pages/SettingsPage/ResourceMonitorCoordinator`
   state: `global coordinator settings`
   evidence_note: 资源监控卡片明确展示全局历史采样周期、每周期一次运行容器发现、历史/SSE 项目采集复用和固定 1 天原始留存。
