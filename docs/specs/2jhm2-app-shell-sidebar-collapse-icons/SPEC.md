@@ -85,7 +85,7 @@
 
 ### Desktop Header Alignment
 
-- PR: include
+PR: include
 
 ![Desktop overview header aligned with primary navigation](./assets/app-shell-header-aligned-overview.png)
 

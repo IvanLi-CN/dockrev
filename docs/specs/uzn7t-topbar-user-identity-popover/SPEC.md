@@ -105,7 +105,7 @@
     sensitive_exclusion: `N/A`
     submission_gate: `approved`
     state: `collapsed desktop sidebar with identity popover open`
-    PR: include
+PR: include
   ![折叠侧栏用户身份浮层](./assets/sidebar-user-identity-collapsed.png)
 
 ## 风险 / 开放问题 / 假设（Risks, Open Questions, Assumptions）
