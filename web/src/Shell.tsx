@@ -310,7 +310,7 @@ export function AppShell(props: {
       <ConfirmProvider>
         <div className={shellClassName}>
           <header className="topbar">
-            <div className="topbarDesktopBrand" aria-hidden="true">
+            <div className="topbarDesktopBrand">
               <div className="brand">
                 <BrandLogo />
               </div>

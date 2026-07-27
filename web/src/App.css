@@ -10568,6 +10568,24 @@ html[data-theme="light"] .modalOverlay {
   padding: 0 22px;
 }
 
+.appShell.appShellSidebarCollapsed:not(.appShellWithDetailSidebar) .topbarDesktopBrand {
+  padding: 0 18px;
+}
+
+.appShell.appShellSidebarCollapsed:not(.appShellWithDetailSidebar)
+  .topbarDesktopBrand
+  .brandLogoThemeSwitch {
+  width: 36px;
+  overflow: hidden;
+}
+
+.appShell.appShellSidebarCollapsed:not(.appShellWithDetailSidebar)
+  .topbarDesktopBrand
+  .brandLogo {
+  width: 136px;
+  max-width: none;
+}
+
 .topbarMain {
   min-width: 0;
   min-height: 68px;
@@ -10598,8 +10616,8 @@ html[data-theme="light"] .modalOverlay {
   min-width: 0;
 }
 
-.topbarMain .topbarLeft,
-.topbarUserSlotTopbar {
+.appShell .topbarMain .topbarLeft,
+.appShell .topbarUserSlotTopbar {
   display: none;
 }
 
@@ -11733,8 +11751,8 @@ html[data-theme="light"] .btnPrimary {
     justify-content: space-between;
   }
 
-  .topbarMain .topbarLeft,
-  .topbarUserSlotTopbar {
+  .appShell .topbarMain .topbarLeft,
+  .appShell .topbarUserSlotTopbar {
     display: flex;
   }
 

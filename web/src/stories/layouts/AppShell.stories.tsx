@@ -178,6 +178,18 @@ export const CollapsedSidebar: Story = {
     expectDesktopActiveNavBaseline(canvasElement)
     expectDesktopHeaderAlignment(canvasElement)
 
+    const desktopBrand = canvasElement.querySelector<HTMLElement>('.topbarDesktopBrand')
+    const headerWorkspace = canvasElement.querySelector<HTMLElement>('.topbarMain')
+    expectStory(desktopBrand && headerWorkspace, 'Collapsed shell should render the desktop brand and workspace')
+    expectStory(
+      desktopBrand.getBoundingClientRect().right <= headerWorkspace.getBoundingClientRect().left + 1,
+      'Collapsed desktop brand should stay inside the primary navigation header track',
+    )
+    expectStory(
+      desktopBrand.querySelector('[role="img"]')?.getAttribute('aria-label') === 'Dockrev',
+      'Desktop brand should retain its accessible name',
+    )
+
     const identityTrigger = canvasElement.querySelector<HTMLButtonElement>('.sidebarMeta .topbarUserTrigger')
     expectStory(identityTrigger, 'Collapsed sidebar should keep the user identity trigger available')
     expectStory(identityTrigger?.getAttribute('aria-label')?.includes('alice'), 'Collapsed identity trigger should retain its accessible name')

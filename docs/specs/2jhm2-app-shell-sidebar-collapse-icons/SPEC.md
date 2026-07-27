@@ -96,6 +96,21 @@ PR: include
 - viewport_strategy: controlled browser viewport
 - state: normal desktop route with sidebar identity at footer top
 
+### Collapsed Header Regression
+
+PR: include
+
+![Collapsed overview header keeps its brand inside the navigation track](./assets/app-shell-header-collapsed-no-overflow.png)
+
+- source_type: ui_demo
+- target_program: mock-only
+- capture_scope: browser viewport
+- requested_viewport: controlled desktop viewport
+- viewport_strategy: controlled browser viewport
+- sensitive_exclusion: N/A
+- submission_gate: approved
+- state: collapsed overview route with compact header brand
+
 ### Mobile Drawer
 
 ![Mobile drawer with icons](./assets/app-shell-mobile-drawer.png)
