@@ -35,6 +35,24 @@ function expectDesktopActiveNavBaseline(root: ParentNode) {
   )
 }
 
+function expectDesktopHeaderAlignment(root: ParentNode, detail = false) {
+  const headerWorkspace = root.querySelector<HTMLElement>('.topbarMain')
+  const content = root.querySelector<HTMLElement>('.content')
+  expectStory(headerWorkspace && content, 'AppShell should render a header workspace and content region')
+
+  const headerLeft = headerWorkspace.getBoundingClientRect().left
+  const contentLeft = content.getBoundingClientRect().left
+  expectStory(Math.abs(headerLeft - contentLeft) <= 1, 'Header workspace should start on the main route column boundary')
+
+  if (!detail) return
+  const detailSidebar = root.querySelector<HTMLElement>('.detailSidebar')
+  expectStory(detailSidebar, 'Detail shell should render its service navigation rail')
+  expectStory(
+    Math.abs(detailSidebar.getBoundingClientRect().right - contentLeft) <= 1,
+    'Header workspace should start after the service navigation rail',
+  )
+}
+
 function setSidebarCollapsedPreference(collapsed: boolean) {
   if (typeof window === 'undefined') return
   window.localStorage.setItem(APP_SHELL_SIDEBAR_COLLAPSED_STORAGE_KEY, collapsed ? '1' : '0')
@@ -138,6 +156,7 @@ export const Overview: Story = {
   render: render({ name: 'overview' }),
   play: async ({ canvasElement }) => {
     expectDesktopActiveNavBaseline(canvasElement)
+    expectDesktopHeaderAlignment(canvasElement)
   },
 }
 export const CollapsedSidebar: Story = {
@@ -157,6 +176,27 @@ export const CollapsedSidebar: Story = {
     const activeLink = canvasElement.querySelector<HTMLAnchorElement>('.navItemActive')
     expectStory(activeLink?.getAttribute('aria-label') === '运维大盘', 'Collapsed active nav item should keep an aria-label')
     expectDesktopActiveNavBaseline(canvasElement)
+    expectDesktopHeaderAlignment(canvasElement)
+
+    const desktopBrand = canvasElement.querySelector<HTMLElement>('.topbarDesktopBrand')
+    const headerWorkspace = canvasElement.querySelector<HTMLElement>('.topbarMain')
+    expectStory(desktopBrand && headerWorkspace, 'Collapsed shell should render the desktop brand and workspace')
+    expectStory(
+      desktopBrand.getBoundingClientRect().right <= headerWorkspace.getBoundingClientRect().left + 1,
+      'Collapsed desktop brand should stay inside the primary navigation header track',
+    )
+    expectStory(
+      desktopBrand.querySelector('[role="img"]')?.getAttribute('aria-label') === 'Dockrev',
+      'Desktop brand should retain its accessible name',
+    )
+
+    const identityTrigger = canvasElement.querySelector<HTMLButtonElement>('.sidebarMeta .topbarUserTrigger')
+    expectStory(identityTrigger, 'Collapsed sidebar should keep the user identity trigger available')
+    expectStory(identityTrigger?.getAttribute('aria-label')?.includes('alice'), 'Collapsed identity trigger should retain its accessible name')
+    expectStory(
+      !canvasElement.querySelector('.topbarUserSlotTopbar'),
+      'Desktop AppShell should not mount the mobile identity trigger',
+    )
   },
 }
 export const SidebarToggleInteraction: Story = {
@@ -183,6 +223,7 @@ export const DetailSidebarDesktop: Story = {
     expectStory(detailSidebar?.textContent?.includes('prod'), 'Detail sidebar should render stack names')
     expectStory(detailSidebar?.textContent?.includes('api'), 'Detail sidebar should render service names')
     expectStory(detailSidebar?.textContent?.includes('web'), 'Detail sidebar should render sibling services')
+    expectDesktopHeaderAlignment(canvasElement, true)
   },
 }
 export const MobileBottomNavAndDrawer: Story = {
@@ -201,19 +242,32 @@ export const MobileBottomNavAndDrawer: Story = {
     expectStory(drawer?.textContent?.includes('服务导航'), 'Mobile drawer should be dedicated to the service tree')
     expectStory(drawer?.textContent?.includes('prod'), 'Mobile drawer should render stack names')
     expectStory(drawer?.textContent?.includes('api'), 'Mobile drawer should render service names')
+
+    const identityTrigger = canvasElement.querySelector<HTMLButtonElement>('.topbarUserSlotTopbar .topbarUserTrigger')
+    expectStory(identityTrigger, 'Mobile header should retain the user identity trigger')
+    expectStory(
+      !canvasElement.querySelector('.topbarUserSlotSidebar'),
+      'Mobile AppShell should not mount the desktop sidebar identity trigger',
+    )
   },
 }
-export const OverviewWithIdentityPopover: Story = {
+export const OverviewWithSidebarIdentityPopover: Story = {
   render: render({ name: 'overview' }),
   play: async ({ canvasElement }) => {
-    const trigger = canvasElement.querySelector<HTMLButtonElement>('.topbarUserTrigger')
-    expectStory(trigger?.textContent?.includes('alice'), 'AppShell topbar should show the current user trigger')
+    const trigger = canvasElement.querySelector<HTMLButtonElement>('.sidebarMeta .topbarUserTrigger')
+    expectStory(trigger?.textContent?.includes('alice'), 'AppShell sidebar should show the current user trigger')
+
+    const topbarIdentity = canvasElement.querySelector<HTMLElement>('.topbarUserSlotTopbar')
+    expectStory(
+      topbarIdentity?.ownerDocument.defaultView?.getComputedStyle(topbarIdentity).display === 'none',
+      'Desktop header should not duplicate the user identity trigger',
+    )
     trigger?.click()
     await new Promise((resolve) => setTimeout(resolve, 160))
 
     const doc = canvasElement.ownerDocument
     const popover = doc.querySelector<HTMLElement>('.topbarUserPopover')
-    expectStory(popover?.textContent?.includes('Forward Auth'), 'AppShell topbar popover should expose auth source details')
+    expectStory(popover?.textContent?.includes('Forward Auth'), 'AppShell sidebar popover should expose auth source details')
   },
 }
 export const Queue: Story = { render: render({ name: 'queue' }) }
