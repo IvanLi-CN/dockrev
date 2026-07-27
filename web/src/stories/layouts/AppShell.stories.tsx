@@ -193,6 +193,10 @@ export const CollapsedSidebar: Story = {
     const identityTrigger = canvasElement.querySelector<HTMLButtonElement>('.sidebarMeta .topbarUserTrigger')
     expectStory(identityTrigger, 'Collapsed sidebar should keep the user identity trigger available')
     expectStory(identityTrigger?.getAttribute('aria-label')?.includes('alice'), 'Collapsed identity trigger should retain its accessible name')
+    expectStory(
+      !canvasElement.querySelector('.topbarUserSlotTopbar'),
+      'Desktop AppShell should not mount the mobile identity trigger',
+    )
   },
 }
 export const SidebarToggleInteraction: Story = {
@@ -241,6 +245,10 @@ export const MobileBottomNavAndDrawer: Story = {
 
     const identityTrigger = canvasElement.querySelector<HTMLButtonElement>('.topbarUserSlotTopbar .topbarUserTrigger')
     expectStory(identityTrigger, 'Mobile header should retain the user identity trigger')
+    expectStory(
+      !canvasElement.querySelector('.topbarUserSlotSidebar'),
+      'Mobile AppShell should not mount the desktop sidebar identity trigger',
+    )
   },
 }
 export const OverviewWithSidebarIdentityPopover: Story = {

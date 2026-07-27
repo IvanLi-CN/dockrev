@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ShieldCheck, UserRound } from 'lucide-react'
 import { Mono, Popover, PopoverContent, PopoverTrigger } from '../ui'
 import { buildFallbackTopbarAuthIdentity, type TopbarAuthIdentity } from '../topbarAuthIdentity'
@@ -33,6 +33,7 @@ export function TopbarUserIdentity(props: {
   const authIdentity = props.authIdentity ?? buildFallbackTopbarAuthIdentity()
   const placement = props.placement ?? 'topbar'
   const hoverCapable = useHoverCapable()
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
   const { contentProps, open, triggerProps } = useHoverPinnedPopover({
     hoverEnabled: hoverCapable,
   })
@@ -44,6 +45,7 @@ export function TopbarUserIdentity(props: {
           <button
             type="button"
             className="chipStatic chipStaticUser topbarUserTrigger"
+            ref={triggerRef}
             aria-label={`当前身份：${authIdentity.triggerLabel}`}
             title={authIdentity.triggerLabel}
             {...triggerProps}
@@ -67,7 +69,13 @@ export function TopbarUserIdentity(props: {
           align="end"
           onPointerEnter={contentProps.onPointerEnter}
           onPointerLeave={contentProps.onPointerLeave}
-          onPointerDownOutside={contentProps.onPointerDownOutside}
+          onPointerDownOutside={(event) => {
+            if (triggerRef.current?.contains(event.target as Node)) {
+              event.preventDefault()
+              return
+            }
+            contentProps.onPointerDownOutside?.(event)
+          }}
           onFocusOutside={contentProps.onFocusOutside}
           onEscapeKeyDown={contentProps.onEscapeKeyDown}
           onOpenAutoFocus={contentProps.onOpenAutoFocus}

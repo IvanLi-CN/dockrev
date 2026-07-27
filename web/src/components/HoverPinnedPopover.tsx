@@ -54,7 +54,7 @@ export function useHoverPinnedPopover(options: HoverPinnedPopoverOptions = {}) {
     clearHoverCloseTimer()
     const next = !pinnedRef.current
     setPinnedState(next)
-    setHoverOpen(hoverEnabled ? true : next)
+    setHoverOpen(next && hoverEnabled)
     return next
   }, [clearHoverCloseTimer, hoverEnabled, setPinnedState])
 

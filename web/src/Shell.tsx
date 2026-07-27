@@ -362,7 +362,7 @@ export function AppShell(props: {
                 {props.topActions ? (
                   <div className="topActions">{props.topActions}</div>
                 ) : null}
-                <TopbarUserIdentity authIdentity={props.authIdentity} />
+                {mobileMenuMediaMatches ? <TopbarUserIdentity authIdentity={props.authIdentity} /> : null}
               </div>
             </div>
           </header>
@@ -493,10 +493,9 @@ export function AppShell(props: {
             ) : null}
 
             <div className="sidebarMeta">
-              <TopbarUserIdentity
-                authIdentity={props.authIdentity}
-                placement="sidebar"
-              />
+              {!mobileMenuMediaMatches ? (
+                <TopbarUserIdentity authIdentity={props.authIdentity} placement="sidebar" />
+              ) : null}
               <div className="sidebarMetaDivider" aria-hidden="true" />
               <div className="sidebarMetaTop">
                 {!sidebarCollapsed ? (

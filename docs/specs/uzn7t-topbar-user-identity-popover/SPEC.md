@@ -63,8 +63,10 @@
 - Given 当前请求没有用户头但有组命中，When 页面渲染顶部入口，Then 触发器显示 `组：<首个组>`。
 - Given 当前请求是开发环境匿名路径，When 页面渲染顶部入口，Then 触发器显示 `匿名开发`。
 - Given 用户在桌面端 hover 或 click 侧栏身份入口，When 弹层展开，Then 固定显示当前用户、当前组、认证来源、鉴权模式、命中方式、用户头与组头；缺失字段统一回退 `-`。
+- Given 用户再次 click 已 pin 的身份入口，When 弹层仍展开，Then 触发器关闭弹层而不是再次 pin。
 - Given 用户点击 `Esc` 或弹层外部区域，When popover 已打开，Then 弹层关闭。
 - Given 页面宽度 <= 960px，When AppShell 顶栏渲染，Then 移动身份入口仍可见，不再沿用桌面侧栏布局。
+- Given 页面跨越 `960px` 断点，When AppShell 切换身份入口位置，Then 非当前断点的入口与其 portal 弹层均不保留。
 - Given `AppShell` 与 `SupervisorMisroute` 都渲染身份入口，When 展示身份信息，Then 两处使用同一组件与同一文案映射。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）

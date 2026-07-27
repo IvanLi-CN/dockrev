@@ -64,6 +64,13 @@ export const CurrentUser: Story = {
     expectStory(popover, 'topbar identity popover should open after clicking trigger')
     expectStory(popover?.textContent?.includes('当前用户'), 'topbar identity popover should render the current user row')
     expectStory(popover?.textContent?.includes('用户或组任一命中'), 'topbar identity popover should map authorization mode')
+
+    trigger?.click()
+    await new Promise((resolve) => setTimeout(resolve, 160))
+    expectStory(
+      !doc.querySelector('.topbarUserPopover'),
+      'Clicking an open identity trigger should close its pinned popover',
+    )
   },
 }
 
