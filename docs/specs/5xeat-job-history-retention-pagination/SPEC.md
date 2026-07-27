@@ -6,7 +6,7 @@ Keep SQLite job and resource history bounded while preserving backup audit metad
 
 ## Requirements
 
-- Resource samples older than 24 hours are removed in bounded batches at startup and then once per minute, with at most `10 x 10,000` rows per run and a scheduler yield between batches. No automatic `VACUUM` is performed; SQLite compaction remains an operator maintenance-window action.
+- Resource samples older than 24 hours are removed in bounded batches at startup and then once per minute, with at most `10 x 10,000` rows per run and a scheduler yield between batches. GC is independent from sampler in-flight invalidation and never repopulates sampling caches. No automatic `VACUUM` is performed; SQLite compaction remains an operator maintenance-window action.
 - Terminal `success`, `failed`, and `rolled_back` jobs older than 30 days are deleted in bounded batches using `finished_at`, falling back to `created_at`. Queued and running jobs are never selected.
 - Deleting a job must preserve its backup record and set `backups.job_id` to `NULL`.
 - `GET /api/jobs` accepts opaque `cursor`, `limit` (default 100, maximum 200), `type`, `status`, `stackId`, and `serviceId`; it returns `jobs` and optional `nextCursor` sorted by `created_at DESC, id DESC`.

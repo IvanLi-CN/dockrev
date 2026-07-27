@@ -57,6 +57,7 @@
 - 监控关闭统一错误：`409` + `details.reason=resource_monitor_disabled`。
   - 例外：Overview 聚合摘要接口返回 `200 enabled=false`，用于导航页非阻塞降级。
 - `resourceMonitor.sampleIntervalSeconds` 的 wire shape 与合法值保持不变，但其契约为“全局协调历史采样周期”；`resourceMonitor.retentionDays` 固定为 `1`。
+- CPU 原始计数基线至少保留超过最长 `300s` cadence 的窗口；缺少 `system_cpu_usage` 等累计计数的 one-shot 响应不得安装基线，避免生成伪差分。
 - `ServiceResourcePanel` 继续沿用当前 `samples.length` 混合语义：既包含历史样本，也包含页面打开后的 `1s` SSE 实时点；本次只修正文案，不改字段含义。
 
 ## 数据与运行时设计
@@ -112,6 +113,7 @@
 - Docker Engine 健康时，历史周期与活跃 SSE 不会重复采集同一 compose project；当 Engine 控制面退化时，全局保护可主动降级当前周期样本以避免放大 daemon 压力。
 - 协调器仅保留不足一秒、正在进行或当前请求所需的项目采集状态，避免已删除项目长期占用进程内存；单项目 SSE 发现继续使用 Compose project label 过滤。
 - 项目级采集 future 被取消时，协调器必须清除该项目的 `in-flight` 状态并通知等待者重新抢占采集；资源监控关闭期间必须清除已缓存完成结果，仅保留正在进行的采集状态以避免竞态。
+- 监控关闭期间若已有采集进行中，完成结果必须标记为失效并以错误传播给等待者，不能重新填充缓存或触发等待者隐式重试。
 - 单一全局周期耗时超过 interval 时，不会并发启动下一轮，也不会补跑过期 tick。
 - Docker Engine 连续故障后，实时与历史采样不得分别继续积压请求；熔断期无新增 daemon 请求，冷却后的单个探测成功才恢复采样。
 - 所有指标以水平保持和垂直跳变经过每个有效采样点、缺口处断线，不生成连续中间值；折线端点平切并保留最新样本锚点。
@@ -201,6 +203,7 @@ PR: include
 - 2026-07-25: Docker stats 的 nullable block-I/O 字段按空集合兼容；单容器失败改为保留同项目成功样本并限频记录结构化诊断。原始资源样本保留期收敛为 7 天，启动后及每小时按批清理，不自动执行 `VACUUM`。
 - 2026-07-26: 普通 Docker CLI 命令超时改为终止子进程；资源监控实时与历史采样共享 Docker Engine client，加入全局 4 请求限流、2 次连续可恢复故障熔断、5s 至 60s 指数退避与单半开探测，避免 daemon 退化时请求堆积。
 - 2026-07-27: 101 实测确认 `stats?stream=false` 每容器等待约两秒，而 `one-shot=true` 约十毫秒；采样重构为单一全局协调器、应用侧 CPU 差分基线和 24 小时分批留存，避免 per-project 历史 worker 放大扫描与 SQLite 积压。
+- 2026-07-27: 收紧基线与失效语义：基线窗口覆盖最长支持 cadence，缺少累计 CPU 计数不安装基线；监控关闭时已开始的采集只向等待者传播失效，不重新写入缓存或隐式重试。
 
 ## 参考（References）
 
