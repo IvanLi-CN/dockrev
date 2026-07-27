@@ -11712,6 +11712,32 @@ html[data-theme="light"] .btnPrimary {
       var(--app-shell-primary-nav-width) var(--app-shell-detail-nav-width) minmax(0, 1fr);
   }
 
+  .appShellWithDetailSidebar .topbarMain {
+    padding: 0 14px;
+  }
+
+  .appShellWithDetailSidebar .topbarRight {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .appShellWithDetailSidebar .topActions {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .appShellWithDetailSidebar .topActions::-webkit-scrollbar {
+    display: none;
+  }
+
+  .appShellWithDetailSidebar .topbarRight .topActions .btn {
+    flex: 0 0 auto;
+    width: max-content;
+    min-width: max-content;
+  }
+
   .content {
     padding: 26px 20px 30px;
   }

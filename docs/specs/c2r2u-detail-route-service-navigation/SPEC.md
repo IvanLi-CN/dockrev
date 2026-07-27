@@ -164,6 +164,20 @@
 
 ![服务详情页页头与服务树对齐](./assets/service-detail-header-aligned.png)
 
+PR: include
+
+![窄桌面详情页操作条保持在主内容工作区](./assets/service-detail-narrow-actions-contained.png)
+
+- source_type: `ui_demo`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `980x900`
+  viewport_strategy: `controlled-browser-viewport`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  state: `expanded primary navigation with a narrow desktop service detail route`
+  evidence_note: 操作条在主内容工作区内保持完整文字；窄桌面时由容器处理横向约束，不侵入品牌区。
+
 - source_type: `storybook_canvas`
   target_program: `mock-only`
   capture_scope: `browser-viewport`
