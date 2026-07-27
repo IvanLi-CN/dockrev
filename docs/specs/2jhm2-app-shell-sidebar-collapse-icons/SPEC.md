@@ -46,6 +46,8 @@
 - `AppShell` 的主导航配置是桌面 sidebar 与移动 drawer 的单一图标/标签来源。
 - 桌面折叠状态使用 `dockrev:shell:sidebarCollapsed:v1` 写入 `localStorage`；存储失败不阻断导航。
 - 折叠态隐藏导航文字、section label、最近扫描文本和 Powered 文案；主导航链接通过 `aria-label` 继续暴露可访问名称。
+- 桌面侧栏底部的身份入口位于元信息区首位；展开时显示头像与身份标签，折叠时保留可访问的头像图标入口。
+- 普通桌面路由的页头品牌区与主导航宽度共用 AppShell 列变量；该对齐不额外绘制可见竖分隔线。
 - 移动端仍由 topbar hamburger 打开 drawer；drawer 内导航项显示图标 + 文本。
 
 ## 验收标准（Acceptance Criteria）
@@ -54,6 +56,7 @@
 - Given sidebar 处于折叠态，When 刷新或重新挂载 AppShell，Then 保留折叠状态。
 - Given 任一主导航项，When 查看桌面与移动 drawer，Then 都显示真实图标且不再使用圆点作为桌面导航标识。
 - Given 使用键盘聚焦导航和折叠按钮，Then 焦点环可见且不会丢失当前页高亮。
+- Given 桌面 sidebar 处于展开或折叠态，When 使用身份入口，Then 都可打开完整身份信息，且折叠态仍有可访问名称。
 - Given 执行前端门禁，Then `lint`、`build`、`build-storybook`、`test-storybook` 通过。
 
 ## Visual Evidence
@@ -80,6 +83,18 @@
 - capture_scope: `.appShell`
 - requested_viewport: 1440x900
 - viewport_strategy: devtools-emulate
+- PR: include
+
+### Desktop Header Alignment
+
+![Desktop overview header aligned with primary navigation](assets/app-shell-header-aligned-overview.png)
+
+- source_type: ui_demo
+- target_program: mock-only
+- capture_scope: browser viewport
+- requested_viewport: 1440x900
+- viewport_strategy: controlled browser viewport
+- state: normal desktop route with sidebar identity at footer top
 - PR: include
 
 ### Mobile Drawer

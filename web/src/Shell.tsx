@@ -310,6 +310,11 @@ export function AppShell(props: {
       <ConfirmProvider>
         <div className={shellClassName}>
           <header className="topbar">
+            <div className="topbarDesktopBrand" aria-hidden="true">
+              <div className="brand">
+                <BrandLogo />
+              </div>
+            </div>
             <div className="topbarMain">
               <div className="topbarLeft">
                 {hasMobileDrawerContent ? (
@@ -357,9 +362,7 @@ export function AppShell(props: {
                 {props.topActions ? (
                   <div className="topActions">{props.topActions}</div>
                 ) : null}
-                <div className="topbarUserSlot">
-                  <TopbarUserIdentity authIdentity={props.authIdentity} />
-                </div>
+                <TopbarUserIdentity authIdentity={props.authIdentity} />
               </div>
             </div>
           </header>
@@ -490,6 +493,10 @@ export function AppShell(props: {
             ) : null}
 
             <div className="sidebarMeta">
+              <TopbarUserIdentity
+                authIdentity={props.authIdentity}
+                placement="sidebar"
+              />
               <div className="sidebarMetaDivider" aria-hidden="true" />
               <div className="sidebarMetaTop">
                 {!sidebarCollapsed ? (

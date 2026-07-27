@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ShieldCheck, UserRound } from 'lucide-react'
-import { Mono } from '../ui'
+import { Mono, Popover, PopoverContent, PopoverTrigger } from '../ui'
 import { buildFallbackTopbarAuthIdentity, type TopbarAuthIdentity } from '../topbarAuthIdentity'
 import { useHoverPinnedPopover } from './HoverPinnedPopover'
 
@@ -24,60 +24,54 @@ function useHoverCapable(): boolean {
   return hoverCapable
 }
 
-export function TopbarUserIdentity(props: { authIdentity?: TopbarAuthIdentity | null }) {
+export type UserIdentityPlacement = 'topbar' | 'sidebar'
+
+export function TopbarUserIdentity(props: {
+  authIdentity?: TopbarAuthIdentity | null
+  placement?: UserIdentityPlacement
+}) {
   const authIdentity = props.authIdentity ?? buildFallbackTopbarAuthIdentity()
+  const placement = props.placement ?? 'topbar'
   const hoverCapable = useHoverCapable()
-  const containerRef = useRef<HTMLDivElement | null>(null)
-  const { close, contentProps, open, triggerProps } = useHoverPinnedPopover({
+  const { contentProps, open, triggerProps } = useHoverPinnedPopover({
     hoverEnabled: hoverCapable,
   })
 
-  useEffect(() => {
-    if (!open) return
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const container = containerRef.current
-      if (!container?.contains(event.target as Node)) close()
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close()
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [close, open])
-
   return (
-    <div className="topbarUserSlot" ref={containerRef}>
-      <button
-        type="button"
-        className="chipStatic chipStaticUser topbarUserTrigger"
-        aria-haspopup="dialog"
-        aria-label={`当前身份：${authIdentity.triggerLabel}`}
-        title={authIdentity.triggerLabel}
-        {...triggerProps}
-      >
-        <span className="topbarUserTriggerIcon" aria-hidden="true">
-          {authIdentity.avatarUrl ? (
-            <img className="topbarUserAvatarImage" src={authIdentity.avatarUrl} alt="" loading="lazy" decoding="async" />
-          ) : (
-            <UserRound size={14} strokeWidth={2.1} />
-          )}
-        </span>
-        <span className="topbarUserTriggerLabel">{authIdentity.triggerLabel}</span>
-      </button>
+    <Popover open={open} onOpenChange={() => {}}>
+      <div className={`topbarUserSlot topbarUserSlot${placement === 'sidebar' ? 'Sidebar' : 'Topbar'}`}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className="chipStatic chipStaticUser topbarUserTrigger"
+            aria-label={`当前身份：${authIdentity.triggerLabel}`}
+            title={authIdentity.triggerLabel}
+            {...triggerProps}
+          >
+            <span className="topbarUserTriggerIcon" aria-hidden="true">
+              {authIdentity.avatarUrl ? (
+                <img className="topbarUserAvatarImage" src={authIdentity.avatarUrl} alt="" loading="lazy" decoding="async" />
+              ) : (
+                <UserRound size={14} strokeWidth={2.1} />
+              )}
+            </span>
+            <span className="topbarUserTriggerLabel">{authIdentity.triggerLabel}</span>
+          </button>
+        </PopoverTrigger>
 
-      {open ? (
-        <div
+        <PopoverContent
           className="topbarUserPopover"
           role="dialog"
           aria-label="当前身份"
+          side={placement === 'sidebar' ? 'right' : 'bottom'}
+          align="end"
           onPointerEnter={contentProps.onPointerEnter}
           onPointerLeave={contentProps.onPointerLeave}
+          onPointerDownOutside={contentProps.onPointerDownOutside}
+          onFocusOutside={contentProps.onFocusOutside}
+          onEscapeKeyDown={contentProps.onEscapeKeyDown}
+          onOpenAutoFocus={contentProps.onOpenAutoFocus}
+          onCloseAutoFocus={contentProps.onCloseAutoFocus}
         >
           <div className="topbarUserPopoverHeader">
             <div className="topbarUserPopoverTitleWrap">
@@ -127,8 +121,8 @@ export function TopbarUserIdentity(props: { authIdentity?: TopbarAuthIdentity | 
             </div>
           </div>
 
-        </div>
-      ) : null}
-    </div>
+        </PopoverContent>
+      </div>
+    </Popover>
   )
 }

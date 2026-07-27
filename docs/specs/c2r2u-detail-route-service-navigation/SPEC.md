@@ -52,6 +52,7 @@
 
 - `AppShell` 必须显式区分主导航、详情页服务树侧栏与移动端抽屉内容，不能继续把详情页导航塞进 Overview 专用 sidebar slot。
 - 桌面端在 `StackDetailPage` 与 `ServiceDetailPage` 上必须显示 `主导航 / 服务树侧栏 / 主内容` 三段式布局，并保留现有主导航折叠能力。
+- 详情页页头必须与三列壳层共用列变量：品牌区覆盖主导航与服务树，操作区从主内容列开始；仅对齐，不新增可见竖分隔线。
 - 服务树必须严格按 `Stack -> Service` 真实部署层级渲染，不得引入额外 `group` 层。
 - 当前路由对应的 Stack / Service 节点必须高亮；首次进入详情页时仅当前 Stack 默认展开。
 - 点击 Stack 标题必须进入对应 Stack 详情；展开按钮只能改变展开状态，不得替代跳转。
@@ -98,6 +99,10 @@
 - Given `StackDetailPage`
   When 在桌面端打开页面
   Then 页面显示 `主导航 / 服务树侧栏 / 主内容` 三列结构，且当前 Stack 默认展开并高亮。
+
+- Given 任一桌面详情页
+  When 页头与服务树渲染
+  Then 右侧操作工作区、服务树右边缘与主内容左边缘对齐，且页头不出现额外竖分隔线。
 
 - Given `ServiceDetailPage/logs`
   When 在服务树中点击同 Stack 的另一个 Service
@@ -147,6 +152,17 @@
   PR caption: 服务详情页桌面端采用 `主导航 / 服务树 / 主内容` 三列壳层，并在当前服务节点保持高亮。
 
 ![服务详情页桌面三列壳层](./assets/service-detail-desktop.png)
+
+- source_type: `ui_demo`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `1440x900`
+  viewport_strategy: `controlled-browser-viewport`
+  state: `desktop detail header aligned to service tree`
+  evidence_note: 验证详情页品牌区覆盖主导航与服务树，右侧顶部操作与主内容从同一列起始，未新增页头竖分隔线。
+  PR: include
+
+![服务详情页页头与服务树对齐](./assets/service-detail-header-aligned.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`

@@ -5,12 +5,14 @@ import * as AppShellStories from './AppShell.stories'
 
 # AppShell Navigation
 
-Desktop navigation supports the normal expanded shell, the compact icon-only shell, and a detail layout with a dedicated service tree rail. On mobile, primary navigation moves to the bottom bar while the drawer is reserved for page-level secondary content such as the service tree.
+Desktop navigation supports the normal expanded shell, the compact icon-only shell, and a detail layout with a dedicated service tree rail. The header uses the same column boundary as the route workspace: primary navigation for standard pages, and primary navigation plus the service rail for detail pages. Identity moves into the desktop navigation footer and remains a compact topbar control on mobile.
 
 <Canvas of={AppShellStories.Overview} />
 
 <Canvas of={AppShellStories.CollapsedSidebar} />
 
 <Canvas of={AppShellStories.DetailSidebarDesktop} />
+
+<Canvas of={AppShellStories.OverviewWithSidebarIdentityPopover} />
 
 <Canvas of={AppShellStories.MobileBottomNavAndDrawer} />

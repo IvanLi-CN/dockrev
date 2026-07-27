@@ -2431,9 +2431,6 @@ html[data-theme="light"] .releaseDrawerContent {
 }
 
 .topbarUserPopover {
-  position: absolute;
-  top: calc(100% + 10px);
-  right: 0;
   z-index: 1100;
   width: min(360px, calc(100vw - 28px));
   min-width: min(300px, calc(100vw - 28px));
@@ -10515,8 +10512,11 @@ html[data-theme="light"] .modalOverlay {
    =========================================================== */
 
 .appShell {
+  --app-shell-primary-nav-width: 292px;
+  --app-shell-detail-nav-width: 0px;
+  --app-shell-header-left-width: var(--app-shell-primary-nav-width);
   grid-template-rows: auto 1fr;
-  grid-template-columns: 292px 1fr;
+  grid-template-columns: var(--app-shell-primary-nav-width) minmax(0, 1fr);
   background:
     radial-gradient(
       900px 340px at -18% -6%,
@@ -10531,27 +10531,48 @@ html[data-theme="light"] .modalOverlay {
 }
 
 .appShell.appShellSidebarCollapsed {
-  grid-template-columns: 72px 1fr;
+  --app-shell-primary-nav-width: 72px;
+  grid-template-columns: var(--app-shell-primary-nav-width) minmax(0, 1fr);
 }
 
 .appShell.appShellWithDetailSidebar {
-  grid-template-columns: 264px 304px minmax(0, 1fr);
+  --app-shell-primary-nav-width: 264px;
+  --app-shell-detail-nav-width: 304px;
+  --app-shell-header-left-width: calc(
+    var(--app-shell-primary-nav-width) + var(--app-shell-detail-nav-width)
+  );
+  grid-template-columns:
+    var(--app-shell-primary-nav-width) var(--app-shell-detail-nav-width) minmax(0, 1fr);
 }
 
 .appShell.appShellWithDetailSidebar.appShellSidebarCollapsed {
-  grid-template-columns: 72px 304px minmax(0, 1fr);
+  --app-shell-primary-nav-width: 72px;
+  grid-template-columns:
+    var(--app-shell-primary-nav-width) var(--app-shell-detail-nav-width) minmax(0, 1fr);
 }
 
 .topbar {
+  display: grid;
+  grid-template-columns: var(--app-shell-header-left-width) minmax(0, 1fr);
   min-height: 68px;
-  padding: 0 22px;
+  padding: 0;
   background: color-mix(in srgb, var(--panel2) 78%, transparent);
   border-bottom: 1px solid var(--borderColor);
   backdrop-filter: blur(12px) saturate(130%);
 }
 
+.topbarDesktopBrand {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  padding: 0 22px;
+}
+
 .topbarMain {
+  min-width: 0;
   min-height: 68px;
+  padding: 0 22px;
+  justify-content: flex-end;
 }
 
 .topbarGlobalContent {
@@ -10560,9 +10581,7 @@ html[data-theme="light"] .modalOverlay {
 
 .appShellWithTopbarContent .topbarMain {
   display: grid;
-  grid-template-columns:
-    minmax(150px, max-content) minmax(320px, 1fr)
-    max-content;
+  grid-template-columns: minmax(320px, 1fr) max-content;
   column-gap: 18px;
 }
 
@@ -10577,6 +10596,11 @@ html[data-theme="light"] .modalOverlay {
 .topbarRight,
 .topActions {
   min-width: 0;
+}
+
+.topbarMain .topbarLeft,
+.topbarUserSlotTopbar {
+  display: none;
 }
 
 .topbarRight {
@@ -10866,6 +10890,15 @@ html[data-theme="light"] .brandLogoThemeSwitch {
   padding: 0 12px 10px;
 }
 
+.topbarUserSlotSidebar {
+  width: 100%;
+}
+
+.topbarUserSlotSidebar .topbarUserTrigger {
+  width: 100%;
+  max-width: none;
+}
+
 .sidebarMetaDivider {
   margin: 20px 0 14px;
   background: linear-gradient(
@@ -10934,6 +10967,26 @@ html[data-theme="light"] .brandLogoThemeSwitch {
 .appShellSidebarCollapsed .sidebarMetaDivider {
   width: 44px;
   margin: 18px auto 12px;
+}
+
+.appShellSidebarCollapsed .topbarUserSlotSidebar {
+  display: flex;
+  justify-content: center;
+}
+
+.appShellSidebarCollapsed .topbarUserSlotSidebar .topbarUserTrigger {
+  width: 36px;
+  min-width: 36px;
+  max-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  justify-content: center;
+  padding: 0;
+  border-radius: 999px;
+}
+
+.appShellSidebarCollapsed .topbarUserSlotSidebar .topbarUserTriggerLabel {
+  display: none;
 }
 
 .appShellSidebarCollapsed .sidebarMetaTop {
@@ -11619,19 +11672,26 @@ html[data-theme="light"] .btnPrimary {
 
 @media (max-width: 1160px) {
   .appShell {
-    grid-template-columns: 248px 1fr;
+    --app-shell-primary-nav-width: 248px;
+    grid-template-columns: var(--app-shell-primary-nav-width) minmax(0, 1fr);
   }
 
   .appShell.appShellSidebarCollapsed {
-    grid-template-columns: 72px 1fr;
+    --app-shell-primary-nav-width: 72px;
+    grid-template-columns: var(--app-shell-primary-nav-width) minmax(0, 1fr);
   }
 
   .appShell.appShellWithDetailSidebar {
-    grid-template-columns: 248px 288px minmax(0, 1fr);
+    --app-shell-primary-nav-width: 248px;
+    --app-shell-detail-nav-width: 288px;
+    grid-template-columns:
+      var(--app-shell-primary-nav-width) var(--app-shell-detail-nav-width) minmax(0, 1fr);
   }
 
   .appShell.appShellWithDetailSidebar.appShellSidebarCollapsed {
-    grid-template-columns: 72px 288px minmax(0, 1fr);
+    --app-shell-primary-nav-width: 72px;
+    grid-template-columns:
+      var(--app-shell-primary-nav-width) var(--app-shell-detail-nav-width) minmax(0, 1fr);
   }
 
   .content {
@@ -11657,12 +11717,25 @@ html[data-theme="light"] .btnPrimary {
   }
 
   .topbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
     min-height: 66px;
     padding: 0 14px;
   }
 
+  .topbarDesktopBrand {
+    display: none;
+  }
+
   .topbarMain {
     min-height: 66px;
+    padding: 0;
+    justify-content: space-between;
+  }
+
+  .topbarMain .topbarLeft,
+  .topbarUserSlotTopbar {
+    display: flex;
   }
 
   .appShellWithTopbarContent .topbarMain {
