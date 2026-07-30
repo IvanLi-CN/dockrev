@@ -82,6 +82,73 @@
   gap: 16px;
 }
 
+.serviceSplitAction[data-slot='button-group'] {
+  min-width: 0;
+}
+
+.serviceSplitAction[data-slot='button-group'] > :first-child.btn,
+.serviceSplitAction[data-slot='button-group'] > :first-child.btnTooltipAnchor > .btn {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.serviceSplitAction[data-slot='button-group'] > :first-child.btnTooltipAnchor {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.appShellWithDetailSidebar .topActions .serviceSplitAction[data-slot='button-group'] > .serviceSplitActionMenuTrigger {
+  flex: 0 0 36px;
+  width: 36px;
+  min-width: 36px;
+  padding-inline: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.serviceSplitActionMenuTrigger > .serviceSplitActionMenuIcon {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2.25;
+  opacity: 0.8;
+  transition: transform 150ms ease;
+}
+
+.serviceSplitActionMenuTrigger[data-state='open'] > .serviceSplitActionMenuIcon {
+  transform: rotate(180deg);
+}
+
+.serviceSplitActionPrimaryContent {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.serviceStackDetailActionContent {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.serviceStackDetailActionIcon {
+  display: block;
+  flex: 0 0 auto;
+  height: 16px;
+  width: 16px;
+}
+
+.serviceSplitActionPrimaryIcon,
+.serviceSplitActionMenuItemIcon {
+  display: block;
+  flex: 0 0 auto;
+  height: 15px;
+  width: 15px;
+}
+
+.serviceSplitActionIconSolid {
+  fill: currentColor;
+}
+
 .themeToggle {
   display: inline-flex;
   align-items: center;
@@ -6151,74 +6218,10 @@ html[data-theme="light"] .modalOverlay {
   margin-top: 0;
 }
 
-.svcDetailMonitorRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px 18px;
-  min-width: 0;
-}
-
-.svcDetailMonitorIdentity {
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  flex: 1 1 auto;
-}
-
-.svcDetailMonitorName {
-  min-width: 0;
-  color: var(--text);
-  font-size: 28px;
-  font-weight: 760;
-  line-height: 1.04;
-  letter-spacing: -0.03em;
-  white-space: nowrap;
-}
-
-.svcDetailMonitorMetrics {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 8px;
-  min-width: 0;
-}
-
-.svcDetailMonitorMetric {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 7px 10px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--borderColor) 76%, transparent);
-  background: color-mix(in srgb, var(--panel2) 22%, transparent);
-  line-height: 1;
-}
-
-.svcDetailMonitorMetricIcon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: 14px;
-  height: 14px;
-  color: var(--muted2);
-}
-
 .svcDetailMonitorGlyph {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   stroke-width: 2;
-}
-
-.svcDetailMonitorMetricValue {
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
 }
 
 .svcDetailSummaryRail {
@@ -6324,39 +6327,6 @@ html[data-theme="light"] .modalOverlay {
 @media (max-width: 760px) {
   .detailHeroShell {
     gap: 12px;
-  }
-
-  .svcDetailMonitorRow {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .svcDetailMonitorIdentity {
-    width: 100%;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px 10px;
-  }
-
-  .svcDetailMonitorName {
-    font-size: 22px;
-  }
-
-  .svcDetailMonitorMetrics {
-    width: 100%;
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    grid-template-rows: repeat(2, auto);
-    grid-auto-flow: column;
-    align-items: stretch;
-    justify-content: stretch;
-  }
-
-  .svcDetailMonitorMetric {
-    width: 100%;
-    min-width: 0;
-    padding-inline: 8px;
   }
 
   .svcTitleRow,
@@ -10597,6 +10567,12 @@ html[data-theme="light"] .modalOverlay {
   padding-bottom: 0;
 }
 
+.appShellWithDetailSidebar .topbarMain {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  column-gap: 18px;
+}
+
 .appShellWithTopbarContent .topbarMain {
   display: grid;
   grid-template-columns: minmax(320px, 1fr) max-content;
@@ -10608,6 +10584,99 @@ html[data-theme="light"] .modalOverlay {
   flex-direction: column;
   justify-content: center;
   gap: 2px;
+}
+
+.topbarRouteTitle {
+  align-items: center;
+  align-self: stretch;
+  color: var(--text);
+  display: flex;
+  font-size: 18px;
+  font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbarServiceContext {
+  align-items: center;
+  container-type: inline-size;
+  display: flex;
+  gap: 16px;
+  min-width: 0;
+}
+
+.topbarServiceContext .topbarRouteTitle {
+  flex: 0 1 auto;
+}
+
+.topbarServiceMetrics {
+  display: flex;
+  flex: 0 0 auto;
+  margin-left: auto;
+  min-width: 0;
+}
+
+.topbarServiceMonitorSummary,
+.topbarServiceMonitorGroup,
+.topbarServiceMonitorMetric,
+.topbarServiceMonitorMetricIcon {
+  align-items: center;
+  display: inline-flex;
+}
+
+.topbarServiceMonitorSummary {
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.topbarServiceMonitorGroup {
+  gap: 4px;
+  min-width: max-content;
+}
+
+.topbarServiceMonitorMetric {
+  background: color-mix(in srgb, var(--panel2) 22%, transparent);
+  border: 1px solid color-mix(in srgb, var(--borderColor) 76%, transparent);
+  border-radius: 999px;
+  gap: 4px;
+  line-height: 1;
+  padding: 5px 7px;
+}
+
+.topbarServiceMonitorMetricIcon {
+  color: var(--muted2);
+  flex: 0 0 auto;
+  height: 12px;
+  justify-content: center;
+  width: 12px;
+}
+
+.topbarServiceMonitorMetricValue {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+@container (max-width: 560px) {
+  .topbarServiceMonitorGroup[data-monitor-group="network"] {
+    display: none;
+  }
+}
+
+@container (max-width: 390px) {
+  .topbarServiceMonitorGroup[data-monitor-group="disk"] {
+    display: none;
+  }
+}
+
+@container (max-width: 180px) {
+  .topbarServiceMonitorGroup[data-monitor-group="compute"] {
+    display: none;
+  }
 }
 
 .topbarLeft,
@@ -10697,6 +10766,39 @@ html[data-theme="light"] .modalOverlay {
     var(--color-primary) 28%
   ) !important;
   filter: none;
+}
+
+.appShellWithDetailSidebar .topbarRight .serviceSplitAction[data-slot='button-group'] > :first-child.btn,
+.appShellWithDetailSidebar .topbarRight .serviceSplitAction[data-slot='button-group'] > :first-child.btnTooltipAnchor > .btn {
+  flex: 0 0 auto;
+  width: max-content;
+  min-width: 0;
+  border-right-width: 0;
+}
+
+.appShellWithDetailSidebar .topbarRight .serviceSplitAction[data-slot='button-group'] > .serviceSplitActionMenuTrigger {
+  border-left-width: 0;
+}
+
+.appShellWithDetailSidebar .topbarRight .serviceSplitAction[data-slot='button-group'] > :first-child.btn,
+.appShellWithDetailSidebar .topbarRight .serviceSplitAction[data-slot='button-group'] > :first-child.btnTooltipAnchor > .btn,
+.appShellWithDetailSidebar .topbarRight .serviceSplitAction[data-slot='button-group'] > .serviceSplitActionMenuTrigger {
+  box-shadow: none !important;
+}
+
+.appShellWithDetailSidebar .topbarRight .serviceSplitAction[data-slot='button-group'] > .serviceSplitActionMenuTrigger {
+  position: relative;
+}
+
+.appShellWithDetailSidebar .topbarRight .serviceSplitAction[data-slot='button-group'] > .serviceSplitActionMenuTrigger::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 1px;
+  height: 16px;
+  content: '';
+  background: color-mix(in srgb, var(--borderColor) 72%, transparent);
+  transform: translateY(-50%);
 }
 
 .brand {
@@ -11798,29 +11900,68 @@ html[data-theme="light"] .btnPrimary {
   }
 
   .appShellWithDetailSidebar .topbar {
-    padding-bottom: 8px;
-    border-bottom-color: transparent;
+    padding: 0;
   }
 
   .appShellWithDetailSidebar .topbarMain {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
     grid-template-areas:
-      'left global user'
+      'left context user'
       'actions actions actions';
     min-height: 0;
-    align-items: start;
-    column-gap: 10px;
-    row-gap: 8px;
-    padding-top: 10px;
+    align-items: center;
+    column-gap: 8px;
+    row-gap: 0;
+    padding: 0 14px;
+    background-image: linear-gradient(
+      color-mix(in srgb, var(--borderColor) 54%, transparent),
+      color-mix(in srgb, var(--borderColor) 54%, transparent)
+    );
+    background-position: 0 56px;
+    background-repeat: no-repeat;
+    background-size: 100% 1px;
   }
 
   .appShellWithDetailSidebar .topbarLeft {
     grid-area: left;
+    min-height: 56px;
+  }
+
+  .appShellWithDetailSidebar .topbarLeft .brandLogoThemeSwitch {
+    width: 36px;
+    height: 36px;
+    overflow: hidden;
+  }
+
+  .appShellWithDetailSidebar .topbarLeft .brandLogoThemeSwitch .brandLogo {
+    width: 124px;
+    max-width: none;
+    height: 36px;
+    object-position: left center;
   }
 
   .appShellWithDetailSidebar .topbarGlobalContent {
     grid-area: global;
+  }
+
+  .appShellWithDetailSidebar .topbarServiceContext {
+    grid-area: context;
+    align-self: stretch;
+    min-width: 0;
+    min-height: 56px;
+    overflow: hidden;
+  }
+
+  .appShellWithDetailSidebar .topbarServiceContext .topbarRouteTitle {
+    align-self: stretch;
+    align-items: center;
+    font-size: 15px;
+    width: 100%;
+  }
+
+  .appShellWithDetailSidebar .topbarServiceMetrics {
+    display: none;
   }
 
   .appShellWithDetailSidebar .topbarRight {
@@ -11829,11 +11970,12 @@ html[data-theme="light"] .btnPrimary {
 
   .appShellWithDetailSidebar .topActions {
     grid-area: actions;
-    min-width: 0;
-    gap: 8px;
+    align-self: stretch;
+    min-height: 52px;
+    min-width: max-content;
+    gap: 6px;
     justify-content: flex-start;
-    overflow-x: auto;
-    scrollbar-width: none;
+    overflow: visible;
     padding: 0;
     border: 0;
     background: transparent;
@@ -11846,11 +11988,37 @@ html[data-theme="light"] .btnPrimary {
 
   .appShellWithDetailSidebar .topActions .btn {
     flex: 0 0 auto;
-    height: 32px;
-    min-height: 32px;
-    padding: 0 12px;
+    height: 44px;
+    min-height: 44px;
+    padding: 0 4px;
     font-size: 12px;
     white-space: nowrap;
+  }
+
+  .appShellWithDetailSidebar .topActions .serviceSplitAction[data-slot='button-group'] > .serviceSplitActionMenuTrigger {
+    flex-basis: 44px;
+    width: 44px;
+    min-width: 44px;
+  }
+
+  .appShellWithDetailSidebar .topActions .serviceSplitActionPrimaryContent {
+    gap: 4px;
+  }
+
+  .appShellWithDetailSidebar .topActions .serviceSplitActionPrimaryIcon {
+    height: 16px;
+    width: 16px;
+  }
+
+  .appShellWithDetailSidebar .topActions .serviceStackDetailAction {
+    flex: 0 0 44px;
+    width: 44px;
+    min-width: 44px;
+    padding: 0;
+  }
+
+  .appShellWithDetailSidebar .topActions .serviceStackDetailActionLabel {
+    display: none;
   }
 
   .appShellWithDetailSidebar .topbarUserSlot {

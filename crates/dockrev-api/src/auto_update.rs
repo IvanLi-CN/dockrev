@@ -446,7 +446,21 @@ fn build_auto_update_target(service: &crate::api::types::Service) -> Option<Upda
 }
 
 fn permanent_enqueue_error(error: &ApiError) -> bool {
-    matches!(error.code(), "invalid_argument" | "conflict" | "not_found")
+    if error.code() != "conflict" {
+        return matches!(error.code(), "invalid_argument" | "not_found");
+    }
+
+    !matches!(
+        error.detail_str("reason"),
+        Some(
+            "rollback_in_progress"
+                | "service_lifecycle_in_progress"
+                | "service_update_in_progress"
+                | "stack_update_in_progress"
+                | "global_update_in_progress"
+                | "service_operation_in_progress"
+        )
+    )
 }
 
 async fn enqueue_pending(
@@ -771,6 +785,18 @@ mod tests {
         assert!(validate_policy_for_scope(&policy, "stack").is_ok());
         policy.rules[0].delay.min_age_seconds = 901;
         assert!(validate_policy_for_scope(&policy, "stack").is_err());
+    }
+
+    #[test]
+    fn keeps_auto_update_pending_for_transient_service_operation_conflicts() {
+        let conflict = ApiError::conflict("service operation in progress").with_details(json!({
+            "reason": "service_lifecycle_in_progress",
+            "existingJobId": "job-lifecycle-1",
+        }));
+        assert!(!permanent_enqueue_error(&conflict));
+
+        let stale_candidate = ApiError::conflict("target digest no longer matches latest scan");
+        assert!(permanent_enqueue_error(&stale_candidate));
     }
 
     #[test]

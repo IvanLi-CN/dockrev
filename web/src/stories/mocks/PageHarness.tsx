@@ -32,6 +32,7 @@ export function PageHarness(props: {
   children: (ctx: {
     route: Route;
     onTopActions: (node: ReactNode) => void;
+    onPageTitle: (title: string) => void;
     onTopbarContent: (node: ReactNode) => void;
     onSidebarNavContent: (node: ReactNode) => void;
     onMobileNavContent: (node: ReactNode) => void;
@@ -57,6 +58,7 @@ function PageHarnessInner(props: {
   children: (ctx: {
     route: Route;
     onTopActions: (node: ReactNode) => void;
+    onPageTitle: (title: string) => void;
     onTopbarContent: (node: ReactNode) => void;
     onSidebarNavContent: (node: ReactNode) => void;
     onMobileNavContent: (node: ReactNode) => void;
@@ -64,6 +66,7 @@ function PageHarnessInner(props: {
   }) => ReactNode;
 }) {
   const [topActions, setTopActions] = useState<ReactNode>(null);
+  const [pageTitle, setPageTitle] = useState(props.title ?? "");
   const [topbarContent, setTopbarContent] = useState<ReactNode>(null);
   const [sidebarNavContent, setSidebarNavContent] = useState<ReactNode>(null);
   const [mobileNavContent, setMobileNavContent] = useState<ReactNode>(null);
@@ -161,7 +164,7 @@ function PageHarnessInner(props: {
     <>
       <AppShell
         route={route}
-        title={props.title}
+        title={pageTitle}
         pageSubtitle={props.pageSubtitle}
         topActions={topActions}
         topbarContent={topbarContent}
@@ -182,6 +185,7 @@ function PageHarnessInner(props: {
         {props.children({
           route,
           onTopActions: setTopActions,
+          onPageTitle: setPageTitle,
           onTopbarContent: setTopbarContent,
           onSidebarNavContent: setSidebarNavContent,
           onMobileNavContent: setMobileNavContent,

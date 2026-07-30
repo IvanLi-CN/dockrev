@@ -1092,3 +1092,174 @@ services:
     let reset_data: serde_json::Value = serde_json::from_str(&reset.data).unwrap();
     assert_eq!(reset_data["reason"].as_str(), Some("buffer_gap_reset"));
 }
+
+#[tokio::test]
+async fn service_lifecycle_status_and_start_task_are_service_scoped() {
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+    let (_stack_id, service_id, _compose_path) = seed_manual_rollback_service(&state).await;
+
+    let status = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/lifecycle-status"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(status.status(), 200);
+    assert_eq!(response_json(status).await["state"].as_str(), Some("stopped"));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/services/{service_id}/lifecycle"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"action":"start"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let job_id = response_json(response).await["jobId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let job = wait_for_job_terminal(&state, &job_id).await;
+    assert_eq!(job.r#type.as_str(), "service_lifecycle");
+    assert_eq!(job.scope.as_str(), "service");
+    assert_eq!(job.service_id.as_deref(), Some(service_id.as_str()));
+    assert_eq!(job.summary_json["action"].as_str(), Some("start"));
+    assert_eq!(job.status, "success");
+}
+
+#[tokio::test]
+async fn service_lifecycle_conflict_exposes_existing_service_operation_job() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let (stack_id, service_id, _compose_path) = seed_manual_rollback_service(&state).await;
+    let now = test_now_rfc3339();
+    let job_id = ids::new_job_id();
+    let job = crate::api::types::JobRecord::new_running(
+        job_id.clone(),
+        crate::api::types::JobType::Rollback,
+        crate::api::types::JobScope::Service,
+        Some(stack_id),
+        Some(service_id.clone()),
+        &now,
+    );
+    state.db.insert_job(job.to_db()).await.unwrap();
+
+    let status = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/lifecycle-status"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let payload = response_json(status).await;
+    assert_eq!(payload["activeJob"]["id"].as_str(), Some(job_id.as_str()));
+    assert_eq!(payload["activeJob"]["type"].as_str(), Some("rollback"));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/services/{service_id}/lifecycle"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"action":"start"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 409);
+    assert_eq!(response_json(response).await["error"]["details"]["existingJobId"].as_str(), Some(job_id.as_str()));
+}
+
+#[tokio::test]
+async fn service_operation_claim_allows_only_one_concurrent_lifecycle_job() {
+    let state = test_state(":memory:").await;
+    let (stack_id, service_id, _compose_path) = seed_manual_rollback_service(&state).await;
+    let now = test_now_rfc3339();
+    let first_id = ids::new_job_id();
+    let second_id = ids::new_job_id();
+    let first = crate::api::types::JobRecord::new_running(
+        first_id.clone(),
+        crate::api::types::JobType::ServiceLifecycle,
+        crate::api::types::JobScope::Service,
+        Some(stack_id.clone()),
+        Some(service_id.clone()),
+        &now,
+    );
+    let second = crate::api::types::JobRecord::new_running(
+        second_id.clone(),
+        crate::api::types::JobType::ServiceLifecycle,
+        crate::api::types::JobScope::Service,
+        Some(stack_id.clone()),
+        Some(service_id.clone()),
+        &now,
+    );
+    let target = crate::db::ServiceOperationTarget {
+        service_id,
+        stack_id,
+    };
+
+    let (first_result, second_result) = tokio::join!(
+        state.db.insert_service_operation_job_if_unblocked(
+            first.to_db(),
+            vec![target.clone()],
+        ),
+        state
+            .db
+            .insert_service_operation_job_if_unblocked(second.to_db(), vec![target]),
+    );
+    let first_result = first_result.unwrap();
+    let second_result = second_result.unwrap();
+    assert_ne!(first_result.is_none(), second_result.is_none());
+
+    let (accepted_id, conflict) = match (first_result, second_result) {
+        (None, Some(conflict)) => (first_id, conflict),
+        (Some(conflict), None) => (second_id, conflict),
+        _ => unreachable!("exactly one lifecycle job must acquire the service claim"),
+    };
+    assert_eq!(conflict.id, accepted_id);
+}
+
+#[tokio::test]
+async fn service_lifecycle_does_not_block_on_read_only_update_preview() {
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+    let (stack_id, service_id, _compose_path) = seed_manual_rollback_service(&state).await;
+    let now = test_now_rfc3339();
+    let job_id = ids::new_job_id();
+    let mut preview = crate::api::types::JobRecord::new_running(
+        job_id,
+        crate::api::types::JobType::Update,
+        crate::api::types::JobScope::Service,
+        Some(stack_id),
+        Some(service_id.clone()),
+        &now,
+    );
+    preview.summary_json = serde_json::json!({ "mode": "dry-run" });
+    state.db.insert_job(preview.to_db()).await.unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/services/{service_id}/lifecycle"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"action":"start"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+}

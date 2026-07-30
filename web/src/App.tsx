@@ -120,6 +120,7 @@ export default function App() {
     readGitHubReleaseDrawerState(),
   );
   const [pageActions, setPageActions] = useState<ReactNode>(null);
+  const [servicePageTitle, setServicePageTitle] = useState<string>("");
   const [topbarContent, setTopbarContent] = useState<ReactNode>(null);
   const [sidebarNavContent, setSidebarNavContent] = useState<ReactNode>(null);
   const [mobileNavContent, setMobileNavContent] = useState<ReactNode>(null);
@@ -146,6 +147,13 @@ export default function App() {
   const previousRoutePathRef = useRef<string | null>(null);
 
   const head = useMemo(() => pageTitle(route), [route]);
+  const resolvedHead = useMemo(
+    () =>
+      route.name === "service" && servicePageTitle
+        ? { ...head, title: servicePageTitle }
+        : head,
+    [head, route.name, servicePageTitle],
+  );
   const detailSidebarContent = useMemo(() => {
     if (route.name !== "stack" && route.name !== "service") return null;
     return <DetailRouteServiceTree route={route} variant="desktop" />;
@@ -161,11 +169,15 @@ export default function App() {
   }, [pageActions]);
 
   useEffect(() => {
-    if (route.name !== "overview") {
+    if (route.name !== "overview" && route.name !== "service") {
       setTopbarContent(null);
       setSidebarNavContent(null);
       setMobileNavContent(null);
     }
+  }, [route.name]);
+
+  useEffect(() => {
+    if (route.name !== "service") setServicePageTitle("");
   }, [route.name]);
 
   const refreshAuthIdentity = useCallback(async () => {
@@ -352,8 +364,8 @@ export default function App() {
     return (
       <AppShell
         route={route}
-        title={head.title}
-        pageSubtitle={head.pageSubtitle}
+        title={resolvedHead.title}
+        pageSubtitle={resolvedHead.pageSubtitle}
         topActions={null}
         authIdentity={authIdentity}
         lastScanHint={lastScanHint}
@@ -371,8 +383,8 @@ export default function App() {
     <>
       <AppShell
         route={route}
-        title={head.title}
-        pageSubtitle={head.pageSubtitle}
+        title={resolvedHead.title}
+        pageSubtitle={resolvedHead.pageSubtitle}
         topActions={topActions}
         topbarContent={topbarContent}
         sidebarNavContent={sidebarNavContent}
@@ -448,6 +460,8 @@ export default function App() {
             section={route.section}
             onLastScanHint={setLastScanHint}
             onTopActions={setPageActions}
+            onPageTitle={setServicePageTitle}
+            onTopbarContent={setTopbarContent}
           />
         ) : null}
       </AppShell>

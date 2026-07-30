@@ -34,6 +34,7 @@ import { AutoUpdatePolicyResultCard } from "../components/AutoUpdatePolicyResult
 import { RecentUpdateRecords, ServiceOperationHistory, filterServiceOperationJobs, selectRecentServiceUpdateJobs, selectServiceOperationJobs } from "../components/RecentUpdateRecords";
 import { ResponsiveSettingsDrawer } from "../components/ResponsiveSettingsDrawer";
 import { ServiceVersionsSection } from "../components/ServiceVersionsSection";
+import { ServiceStackDetailAction } from "../components/ServiceSplitActionButton";
 import { ImageLinkIcons, RepositoryLinkIcon, splitImageNameForDisplay, splitImageRef } from "../imageLinks";
 import { ServiceComposeTagField } from "./ServiceComposeTagField";
 import {
@@ -75,8 +76,10 @@ export function ServiceDetailPage(props: {
   section?: "overview" | "versions" | "history" | "monitoring" | "backup" | "logs" | "settings";
   onLastScanHint: (lastScan?: string) => void;
   onTopActions: (node: ReactNode) => void;
+  onPageTitle?: (title: string) => void;
+  onTopbarContent?: (node: ReactNode) => void;
 }) {
-  const { onTopActions } = props;
+  const { onPageTitle, onTopActions, onTopbarContent } = props;
   const section = props.section ?? "overview";
   const { isOnline } = usePwaStatus();
   const snapshotKey = buildReadonlySnapshotKey("service-detail", `${props.stackId}:${props.serviceId}`);
@@ -155,12 +158,13 @@ export function ServiceDetailPage(props: {
   const [autoPolicyDraft, setAutoPolicyDraft] = useState(() => createDefaultAutoUpdatePolicy("inherit"));
   const [serviceSettingsDraft, setServiceSettingsDraft] = useState<ServiceSettings | null>(null);
   const [serviceBackupTargetsDraft, setServiceBackupTargetsDraft] = useState<BackupTargetsDraft>(() => createBackupTargetsDraft(null));
+
   const refreshRecentJobs = useCallback(async (activateLive = false, cursor: string | null = historyCursorRef.current, nextCursorStack?: (string | null)[]) => {
     const requestedServiceId = props.serviceId;
     const requestId = ++historyRequestIdRef.current;
     const isPagination = nextCursorStack != null;
     if (isPagination) setHistoryPaginationBusy(true);
-    const page = await listJobsPage({ serviceId: requestedServiceId, type: ["update", "rollback"], limit: 20, cursor }).finally(() => {
+    const page = await listJobsPage({ serviceId: requestedServiceId, type: ["update", "rollback", "service_lifecycle"], limit: 20, cursor }).finally(() => {
       if (isPagination) setHistoryPaginationBusy(false);
     });
     if (requestId !== historyRequestIdRef.current || currentServiceIdRef.current !== requestedServiceId) return;
@@ -176,7 +180,7 @@ export function ServiceDetailPage(props: {
   const refreshVersionJobs = useCallback(async () => {
     const requestedServiceId = props.serviceId;
     const requestId = ++versionJobsRequestIdRef.current;
-    const versionHistory = await listJobs({ serviceId: requestedServiceId, type: ["update", "rollback"] });
+    const versionHistory = await listJobs({ serviceId: requestedServiceId, type: ["update", "rollback", "service_lifecycle"] });
     if (requestId !== versionJobsRequestIdRef.current || currentServiceIdRef.current !== requestedServiceId) return;
     setVersionJobs(versionHistory);
     setVersionJobsLoaded(true);
@@ -362,14 +366,93 @@ export function ServiceDetailPage(props: {
   const effectiveBackupRecords = snapshotActive ? (snapshotPayload?.backupRecords ?? backupRecords) : backupRecords;
   const effectiveMonitoringSnapshot = snapshotActive ? (snapshotPayload?.monitoring ?? monitoringSnapshot) : monitoringSnapshot;
   const readonlyUi = !isOnline || snapshotActive;
+  const latestMonitorSample =
+    effectiveMonitoringSnapshot != null && effectiveMonitoringSnapshot.samples.length > 0
+      ? effectiveMonitoringSnapshot.samples[effectiveMonitoringSnapshot.samples.length - 1] ?? null
+      : null;
+  const previousMonitorSample =
+    effectiveMonitoringSnapshot != null && effectiveMonitoringSnapshot.samples.length > 1
+      ? effectiveMonitoringSnapshot.samples[effectiveMonitoringSnapshot.samples.length - 2] ?? null
+      : null;
+  const latestMonitorDiskReadRate = computeMonitorTerminalRate(previousMonitorSample, latestMonitorSample, (sample) => sample.blockReadBytes);
+  const latestMonitorDiskWriteRate = computeMonitorTerminalRate(previousMonitorSample, latestMonitorSample, (sample) => sample.blockWriteBytes);
+  const latestMonitorRxRate = computeMonitorTerminalRate(previousMonitorSample, latestMonitorSample, (sample) => sample.netRxBytes);
+  const latestMonitorTxRate = computeMonitorTerminalRate(previousMonitorSample, latestMonitorSample, (sample) => sample.netTxBytes);
+  const monitorMetricGroups = useMemo(
+    () => [
+      {
+        key: "compute",
+        metrics: [
+          { label: "CPU", value: formatMonitorPercent(latestMonitorSample?.cpuPercent ?? null), icon: <Cpu className="svcDetailMonitorGlyph" aria-hidden="true" /> },
+          { label: "内存", value: formatMonitorBytes(latestMonitorSample?.memUsedBytes ?? null), icon: <MemoryStick className="svcDetailMonitorGlyph" aria-hidden="true" /> },
+        ],
+      },
+      {
+        key: "disk",
+        metrics: [
+          { label: "磁盘读", value: formatMonitorRate(latestMonitorDiskReadRate), icon: <HardDriveDownload className="svcDetailMonitorGlyph" aria-hidden="true" /> },
+          { label: "磁盘写", value: formatMonitorRate(latestMonitorDiskWriteRate), icon: <HardDriveUpload className="svcDetailMonitorGlyph" aria-hidden="true" /> },
+        ],
+      },
+      {
+        key: "network",
+        metrics: [
+          { label: "下载", value: formatMonitorRate(latestMonitorRxRate), icon: <Download className="svcDetailMonitorGlyph" aria-hidden="true" /> },
+          { label: "上传", value: formatMonitorRate(latestMonitorTxRate), icon: <Upload className="svcDetailMonitorGlyph" aria-hidden="true" /> },
+        ],
+      },
+    ],
+    [
+      latestMonitorDiskReadRate,
+      latestMonitorDiskWriteRate,
+      latestMonitorRxRate,
+      latestMonitorSample?.cpuPercent,
+      latestMonitorSample?.memUsedBytes,
+      latestMonitorTxRate,
+    ],
+  );
+  const topbarMonitorSummary = useMemo(() => {
+    if (!effectiveStack || !effectiveService) return null;
+
+    return (
+      <div className="topbarServiceMonitorSummary" data-service-detail-context="monitor-summary" aria-label="服务监控指标">
+        {monitorMetricGroups.map((group) => (
+          <div key={group.key} className="topbarServiceMonitorGroup" data-monitor-group={group.key}>
+            {group.metrics.map((metric) => (
+              <div
+                key={metric.label}
+                className="topbarServiceMonitorMetric"
+                data-monitor-metric={metric.label}
+                aria-label={`${metric.label} ${metric.value}`}
+                title={`${metric.label} ${metric.value}`}
+              >
+                <span className="topbarServiceMonitorMetricIcon" aria-hidden="true">
+                  {metric.icon}
+                </span>
+                <span className="topbarServiceMonitorMetricValue">{metric.value}</span>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    );
+  }, [effectiveService, effectiveStack, monitorMetricGroups]);
+
+  useEffect(() => {
+    onPageTitle?.(effectiveService?.name ?? "");
+    return () => onPageTitle?.("");
+  }, [effectiveService?.name, onPageTitle]);
+
+  useEffect(() => {
+    onTopbarContent?.(topbarMonitorSummary);
+    return () => onTopbarContent?.(null);
+  }, [onTopbarContent, topbarMonitorSummary]);
 
   useEffect(() => {
     if (readonlyUi) {
       onTopActions(
         <>
-          <Button disabled={busy} onClick={() => navigate({ name: "stack", stackId: props.stackId })}>
-            Stack 详情
-          </Button>
+          <ServiceStackDetailAction disabled={busy} onClick={() => navigate({ name: "stack", stackId: props.stackId })} />
           <Button disabled={busy || !isOnline} onClick={() => void requestRefresh()}>
             刷新
           </Button>
@@ -415,27 +498,6 @@ export function ServiceDetailPage(props: {
   const effectiveDotClass = service != null ? dotClass : "svcBannerDot";
   const effectiveBannerDetail = service != null ? bannerDetail : "当前展示本地快照；恢复联网后刷新可获取最新候选与实时状态。";
   const imageNameDisplay = splitImageNameForDisplay(splitImageRef(effectiveService.image.ref).name, effectiveService.image.tag);
-  const latestMonitorSample =
-    effectiveMonitoringSnapshot != null && effectiveMonitoringSnapshot.samples.length > 0
-      ? effectiveMonitoringSnapshot.samples[effectiveMonitoringSnapshot.samples.length - 1] ?? null
-      : null;
-  const previousMonitorSample =
-    effectiveMonitoringSnapshot != null && effectiveMonitoringSnapshot.samples.length > 1
-      ? effectiveMonitoringSnapshot.samples[effectiveMonitoringSnapshot.samples.length - 2] ?? null
-      : null;
-  const latestMonitorDiskReadRate = computeMonitorTerminalRate(previousMonitorSample, latestMonitorSample, (sample) => sample.blockReadBytes);
-  const latestMonitorDiskWriteRate = computeMonitorTerminalRate(previousMonitorSample, latestMonitorSample, (sample) => sample.blockWriteBytes);
-  const latestMonitorRxRate = computeMonitorTerminalRate(previousMonitorSample, latestMonitorSample, (sample) => sample.netRxBytes);
-  const latestMonitorTxRate = computeMonitorTerminalRate(previousMonitorSample, latestMonitorSample, (sample) => sample.netTxBytes);
-  const monitorRowMetrics = [
-    { label: "CPU", value: formatMonitorPercent(latestMonitorSample?.cpuPercent ?? null), icon: <Cpu className="svcDetailMonitorGlyph" aria-hidden="true" /> },
-    { label: "内存", value: formatMonitorBytes(latestMonitorSample?.memUsedBytes ?? null), icon: <MemoryStick className="svcDetailMonitorGlyph" aria-hidden="true" /> },
-    { label: "磁盘读", value: formatMonitorRate(latestMonitorDiskReadRate), icon: <HardDriveDownload className="svcDetailMonitorGlyph" aria-hidden="true" /> },
-    { label: "磁盘写", value: formatMonitorRate(latestMonitorDiskWriteRate), icon: <HardDriveUpload className="svcDetailMonitorGlyph" aria-hidden="true" /> },
-    { label: "下载", value: formatMonitorRate(latestMonitorRxRate), icon: <Download className="svcDetailMonitorGlyph" aria-hidden="true" /> },
-    { label: "上传", value: formatMonitorRate(latestMonitorTxRate), icon: <Upload className="svcDetailMonitorGlyph" aria-hidden="true" /> },
-  ];
-
   const renderOverviewSection = () => (
     <div className="svcDetailSectionStack">
       <RecentUpdateRecords jobs={recentUpdateJobs} />
@@ -828,29 +890,6 @@ export function ServiceDetailPage(props: {
         <ReadonlySnapshotNotice tone="warn" title="当前离线。" detail="仅在存在可用缓存时显示只读内容；日志与设置需要联网。" />
       ) : null}
       <section className="detailHeroShell">
-        <div className="svcDetailMonitorRow" data-service-detail-context="monitor-summary">
-          <div className="svcDetailMonitorIdentity">
-            <div className="svcDetailMonitorName">
-              <Mono>{effectiveService.name}</Mono>
-            </div>
-          </div>
-          <div className="svcDetailMonitorMetrics" aria-label="服务监控指标">
-            {monitorRowMetrics.map((metric) => (
-              <div
-                key={metric.label}
-                className="svcDetailMonitorMetric"
-                data-monitor-metric={metric.label}
-                aria-label={`${metric.label} ${metric.value}`}
-                title={`${metric.label} ${metric.value}`}
-              >
-                <span className="svcDetailMonitorMetricIcon" aria-hidden="true">
-                  {metric.icon}
-                </span>
-                <span className="svcDetailMonitorMetricValue">{metric.value}</span>
-              </div>
-            ))}
-          </div>
-        </div>
         <div className={`${effectiveBannerClass} svcDetailSummaryRail`} data-service-detail-context="status-summary">
           <div className="svcDetailSummaryLead">
             <div
@@ -1189,7 +1228,7 @@ export function ServiceDetailPage(props: {
       {error ? <div className="error">{error}</div> : null}
       {notice ? (
         <div className="success">
-          已创建{notice.kind === "rollback" ? "回滚" : "更新"}任务 <Mono>{notice.jobId}</Mono> ·{" "}
+          已创建{notice.kind === "rollback" ? "回滚" : notice.kind === "lifecycle" ? "生命周期" : "更新"}任务 <Mono>{notice.jobId}</Mono> ·{" "}
           <Button variant="ghost" disabled={busy} onClick={() => navigate({ name: "queue" })}>
             查看队列
           </Button>

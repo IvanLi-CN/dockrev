@@ -81,7 +81,7 @@ export function selectServiceOperationJobs(jobs: JobListItem[], serviceId: strin
 export function filterServiceOperationJobs(jobs: JobListItem[], serviceId: string, stackId?: string): JobListItem[] {
   return jobs
     .filter((job) => {
-      if (job.type !== 'update' && job.type !== 'rollback') return false
+      if (job.type !== 'update' && job.type !== 'rollback' && job.type !== 'service_lifecycle') return false
       if (job.serviceId === serviceId) return true
       if (stackId && job.scope === 'stack' && job.stackId === stackId) {
         return serviceIdsFromSummary(job.summary).has(serviceId)
@@ -128,8 +128,18 @@ function reasonLabel(reason: string): string {
   return reason
 }
 
-function operationLabel(type: string): string {
-  return type === 'rollback' ? '回滚' : '更新'
+function operationLabel(job: JobListItem): string {
+  if (job.type === 'rollback') return '回滚'
+  if (job.type === 'service_lifecycle') {
+    const action = job.summary && typeof job.summary === 'object' && 'action' in job.summary
+      ? (job.summary as { action?: unknown }).action
+      : null
+    if (action === 'start') return '启动'
+    if (action === 'stop') return '停止'
+    if (action === 'restart') return '重启'
+    return '服务生命周期'
+  }
+  return '更新'
 }
 
 function statusLabel(status: string): string {
@@ -148,7 +158,7 @@ function resultReasonSummary(job: JobListItem): string | null {
 
   const redundantSummaries = new Set([
     statusLabel(job.status),
-    job.type === 'update' ? '更新完成' : '回滚完成',
+    job.type === 'update' ? '更新完成' : job.type === 'rollback' ? '回滚完成' : '',
     job.status === 'failed' ? '任务执行失败' : '',
   ])
   return redundantSummaries.has(summary) ? null : summary
@@ -172,7 +182,7 @@ export function ServiceOperationHistory(props: {
 
   return (
     <section className="serviceOperationHistory" data-service-detail-section-card="update-history">
-      <div className="serviceOperationHistoryTable" role="table" aria-label="更新和回滚记录">
+      <div className="serviceOperationHistoryTable" role="table" aria-label="服务操作记录">
         <div className="serviceOperationHistoryHeader" role="row">
           <span role="columnheader">记录</span>
           <span role="columnheader">状态</span>
@@ -208,7 +218,7 @@ export function ServiceOperationHistory(props: {
               <div className="serviceOperationHistoryOperation" data-label="操作">
                 <div className="serviceOperationHistoryOperationHeader">
                   <div className="serviceOperationHistoryOperationSummary">
-                    <div className="serviceOperationHistoryOperationTitle">{operationLabel(job.type)}</div>
+                    <div className="serviceOperationHistoryOperationTitle">{operationLabel(job)}</div>
                     {reason ? (
                       <span className="serviceOperationHistoryReason" title={job.resultReason?.detail ?? reason}>
                         {reason}
@@ -281,7 +291,7 @@ export function ServiceOperationHistory(props: {
             </div>
           )
         })}
-        {props.jobs.length === 0 ? <div className="serviceOperationHistoryEmpty">当前服务暂无更新或回滚记录。</div> : null}
+        {props.jobs.length === 0 ? <div className="serviceOperationHistoryEmpty">当前服务暂无操作记录。</div> : null}
       </div>
       {props.hasPrevious || props.hasNext ? (
         <nav className="serviceOperationHistoryPager" aria-label="更新记录分页">

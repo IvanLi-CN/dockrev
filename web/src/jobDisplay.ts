@@ -24,6 +24,7 @@ export function formatJobTypeLabel(type: string): string {
   if (raw === 'repo_link_backfill') return '仓库链接补齐'
   if (raw === 'update') return '更新任务'
   if (raw === 'rollback') return '回滚任务'
+  if (raw === 'service_lifecycle') return '服务生命周期'
   return raw
 }
 
@@ -76,5 +77,6 @@ function resolveJobTypeTone(type: string): JobTypeTone {
   if (type === 'repo_link_backfill') return 'discovery'
   if (type === 'update') return 'update'
   if (type === 'rollback') return 'rollback'
+  if (type === 'service_lifecycle') return 'update'
   return 'default'
 }

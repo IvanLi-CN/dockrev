@@ -104,7 +104,7 @@ export function render(
       route={routeFor(stackId, serviceId, section)}
       sidebarCollapsed={resolvedOptions?.sidebarCollapsed ?? false}
     >
-      {({ route, onTopActions, onLastScanHint }) =>
+      {({ route, onTopActions, onLastScanHint, onPageTitle, onTopbarContent }) =>
         route.name === "service" ? (
           <ServiceDetailPage
             stackId={route.stackId}
@@ -112,6 +112,8 @@ export function render(
             section={route.section}
             onLastScanHint={onLastScanHint}
             onTopActions={onTopActions}
+            onPageTitle={onPageTitle}
+            onTopbarContent={onTopbarContent}
           />
         ) : null
       }

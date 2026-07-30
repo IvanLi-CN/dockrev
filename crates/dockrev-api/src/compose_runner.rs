@@ -87,10 +87,46 @@ impl ComposeStack {
         cmd
     }
 
+    pub fn start_service_without_pull(
+        &self,
+        cfg: &ComposeRunnerConfig,
+        service: &str,
+    ) -> CommandSpec {
+        let mut cmd = self.base_command(cfg);
+        // Starting a stopped service must never select a newer remote image. A
+        // Compose CLI without this option fails safely instead of pulling.
+        cmd.args.extend([
+            "up".to_string(),
+            "-d".to_string(),
+            "--pull".to_string(),
+            "never".to_string(),
+        ]);
+        cmd.args.push(service.to_string());
+        cmd
+    }
+
     pub fn ps_q_service(&self, cfg: &ComposeRunnerConfig, service: &str) -> CommandSpec {
         let mut cmd = self.base_command(cfg);
         cmd.args
             .extend(["ps".to_string(), "-q".to_string(), service.to_string()]);
+        cmd
+    }
+
+    pub fn ps_all_q_service(&self, cfg: &ComposeRunnerConfig, service: &str) -> CommandSpec {
+        let mut cmd = self.base_command(cfg);
+        cmd.args.extend([
+            "ps".to_string(),
+            "-a".to_string(),
+            "-q".to_string(),
+            service.to_string(),
+        ]);
+        cmd
+    }
+
+    pub fn restart_service(&self, cfg: &ComposeRunnerConfig, service: &str) -> CommandSpec {
+        let mut cmd = self.base_command(cfg);
+        cmd.args
+            .extend(["restart".to_string(), service.to_string()]);
         cmd
     }
 }
@@ -215,6 +251,73 @@ mod tests {
                 "-d".to_string(),
                 "web".to_string(),
                 "worker".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn lifecycle_commands_keep_compose_context_and_do_not_pull_on_start() {
+        let stack = ComposeStack {
+            project_name: "myproj".to_string(),
+            compose: ComposeConfig {
+                kind: "path".to_string(),
+                compose_files: vec!["/srv/app/docker-compose.yml".to_string()],
+                env_file: None,
+            },
+        };
+        let cfg = ComposeRunnerConfig {
+            compose_bin: "docker".to_string(),
+            env: Vec::new(),
+        };
+
+        let start = stack.start_service_without_pull(&cfg, "web");
+        assert_eq!(
+            start.args[start.args.len() - 5..],
+            [
+                "up".to_string(),
+                "-d".to_string(),
+                "--pull".to_string(),
+                "never".to_string(),
+                "web".to_string(),
+            ]
+        );
+
+        let stop = stack.stop_services(&cfg, &["web".to_string()]);
+        assert_eq!(
+            stop.args[stop.args.len() - 2..],
+            ["stop".to_string(), "web".to_string()]
+        );
+
+        let restart = stack.restart_service(&cfg, "web");
+        assert_eq!(
+            restart.args[restart.args.len() - 2..],
+            ["restart".to_string(), "web".to_string()]
+        );
+
+        let all = stack.ps_all_q_service(&cfg, "web");
+        assert_eq!(
+            all.args[all.args.len() - 4..],
+            [
+                "ps".to_string(),
+                "-a".to_string(),
+                "-q".to_string(),
+                "web".to_string()
+            ]
+        );
+
+        let v1 = ComposeRunnerConfig {
+            compose_bin: "docker-compose".to_string(),
+            env: Vec::new(),
+        };
+        let v1_start = stack.start_service_without_pull(&v1, "web");
+        assert_eq!(
+            v1_start.args[v1_start.args.len() - 5..],
+            [
+                "up".to_string(),
+                "-d".to_string(),
+                "--pull".to_string(),
+                "never".to_string(),
+                "web".to_string(),
             ]
         );
     }

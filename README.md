@@ -159,7 +159,8 @@ Environment variables (Supervisor):
 - Preview (dry-run): Service detail “预览更新”
 - Apply (one-click):
   - Services: “更新全部” / “更新此 stack” + service row “执行更新”
-  - Service detail: “执行更新”
+  - Service detail: split dropdown with “预览更新 / 更新 / 回滚”; the primary action is “更新” when a candidate exists, otherwise “回滚”.
+- Lifecycle (service detail only): split dropdown with “启动 / 停止 / 重启”. Running services default to “停止”, stopped services default to “启动”; start invokes `up -d --pull never` and fails rather than falling back to a pull-capable CLI path, while stop and restart require confirmation. Partial or unknown replica state remains discoverable but disabled, and Dockrev itself keeps its Supervisor-only upgrade action.
 - Dockrev self-upgrade:
   - For the Dockrev service, “升级 Dockrev” jumps to the supervisor console (disabled unless `GET {selfUpgradeBaseUrl}/self-upgrade` returns 2xx; a 401 means Forward Auth is missing or Dockrev authorization denied the request).
 

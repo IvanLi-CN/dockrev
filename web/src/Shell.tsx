@@ -266,6 +266,21 @@ export function AppShell(props: {
       : hasMobileDrawerContent
         ? "页面工具"
         : "主导航");
+  const serviceTopbarContext =
+    props.route.name === "service" && (props.title || props.topbarContent) ? (
+      <div className="topbarServiceContext">
+        {props.title ? (
+          <div className="topbarRouteTitle" data-slot="service-title">
+            {props.title}
+          </div>
+        ) : null}
+        {props.topbarContent ? (
+          <div className="topbarServiceMetrics" data-slot="service-metrics">
+            {props.topbarContent}
+          </div>
+        ) : null}
+      </div>
+    ) : null;
   const shellClassName = [
     "appShell",
     props.topbarContent ? "appShellWithTopbarContent" : null,
@@ -355,7 +370,8 @@ export function AppShell(props: {
                   </div>
                 </div>
               </div>
-              {props.topbarContent ? (
+              {serviceTopbarContext}
+              {props.route.name !== "service" && props.topbarContent ? (
                 <div className="topbarGlobalContent">{props.topbarContent}</div>
               ) : null}
               <div className="topbarRight">
@@ -594,7 +610,7 @@ export function AppShell(props: {
             viewportLabel="主内容"
           >
             <ShellStatusStrip />
-            {props.title || props.pageSubtitle ? (
+            {(props.title || props.pageSubtitle) && props.route.name !== "service" ? (
               <div className="pageHead">
                 {props.title ? <div className="h1">{props.title}</div> : null}
                 {props.pageSubtitle ? (

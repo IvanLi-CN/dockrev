@@ -25,7 +25,7 @@ mod stacks;
 mod stacks_backup_targets;
 mod tag_history;
 
-pub(crate) use jobs::JobListFilters;
+pub(crate) use jobs::{JobListFilters, ServiceOperationTarget};
 
 pub(crate) use new_version_discoveries::{
     candidate_tag_allows_settled_fallback, canonical_candidate_identity_tag,

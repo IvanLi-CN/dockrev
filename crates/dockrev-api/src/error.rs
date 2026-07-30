@@ -75,6 +75,10 @@ impl ApiError {
     pub fn code(&self) -> &'static str {
         self.code
     }
+
+    pub(crate) fn detail_str(&self, key: &str) -> Option<&str> {
+        self.details.get(key).and_then(Value::as_str)
+    }
 }
 
 #[derive(Serialize)]

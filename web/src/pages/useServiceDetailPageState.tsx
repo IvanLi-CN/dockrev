@@ -1,9 +1,11 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ApiError, archiveService, createIgnore, getServiceBackupRecords, getServiceBackupTargets, getServiceRollbackTarget, getServiceSettings, getStack, getStackSettings, listIgnores, restoreService, triggerServiceRollback, triggerUpdate, type IgnoreRule, type Service, type ServiceBackupRecordItem, type ServiceBackupTargetsResponse, type ServiceRollbackTargetResponse, type ServiceSettings, type StackDetail, type StackSettings } from '../api'
+import { Download, Eye, Play, RotateCcw, RotateCw, Square } from 'lucide-react'
+import { ApiError, archiveService, createIgnore, getServiceBackupRecords, getServiceBackupTargets, getServiceLifecycleStatus, getServiceRollbackTarget, getServiceSettings, getStack, getStackSettings, listIgnores, restoreService, triggerServiceLifecycle, triggerServiceRollback, triggerUpdate, type IgnoreRule, type Service, type ServiceBackupRecordItem, type ServiceBackupTargetsResponse, type ServiceLifecycleAction, type ServiceLifecycleStatusResponse, type ServiceRollbackTargetResponse, type ServiceSettings, type StackDetail, type StackSettings } from '../api'
 import { readUpdateGuardBlockedReason } from '../aggregateUpdateGuard'
 import { normalizeDigest } from '../components/digest'
 import { backupSummaryValue, summarizeServiceOperationBackups } from '../components/serviceOperationBackupSummary'
 import { ServiceUpdateConfirmDetails } from '../components/ServiceUpdateConfirmDetails'
+import { ServiceSplitActionButton, ServiceStackDetailAction } from '../components/ServiceSplitActionButton'
 import { useConfirm } from '../confirm'
 import { DIGEST_SNAPSHOT_UPDATED_EVENT, type DigestSnapshotUpdatedDetail } from '../digestInferenceTracker'
 import { normalizeExternalHttpUrl } from '../imageLinks'
@@ -18,6 +20,15 @@ import { buildUpdateServiceTarget } from '../updateTargets'
 import { usePageResumeRefresh } from '../usePageResumeRefresh'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay, inferResolvedTagsFromSnapshot, isStrictSemverTag } from '../versionDisplay'
+
+function conflictingJobId(error: ApiError): string | null {
+  const details = error.details
+  const existingJobId =
+    details && typeof details === 'object' && 'existingJobId' in details
+      ? (details as Record<string, unknown>).existingJobId
+      : null
+  return typeof existingJobId === 'string' && existingJobId.trim() ? existingJobId : null
+}
 
 export function useServiceDetailPageState(props: {
   stackId: string
@@ -36,10 +47,10 @@ export function useServiceDetailPageState(props: {
   const [busy, setBusy] = useState(false)
   const [repoInferBusy, setRepoInferBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<{ jobId: string; kind: 'update' | 'rollback' } | null>(null)
+  const [notice, setNotice] = useState<{ jobId: string; kind: 'update' | 'rollback' | 'lifecycle' } | null>(null)
   const [rollbackTarget, setRollbackTarget] = useState<ServiceRollbackTargetResponse | null>(null)
   const [rollbackActiveTarget, setRollbackActiveTarget] = useState<ServiceRollbackTargetResponse | null>(null)
-  const { beginSubmitting, endSubmitting, trackJob, isTargetBusy, getActiveJobByTarget, isTargetSubmitting } =
+  const { beginSubmitting, endSubmitting, trackJob, getActiveJobByTarget, isTargetSubmitting } =
     useUpdateActionTracker()
   const { state: supervisorState, check: checkSupervisor } = useSupervisorHealth()
   const supervisorErrorAt = supervisorState.status === 'offline' ? supervisorState.errorAt : undefined
@@ -49,10 +60,10 @@ export function useServiceDetailPageState(props: {
     () => resolveUpdateActionTargetKey('service', stackId, serviceId),
     [serviceId, stackId],
   )
-  const applyActionBusy = applyActionKey ? isTargetBusy(applyActionKey) : false
   const applyActiveJob = applyActionKey ? getActiveJobByTarget(applyActionKey) : null
   const applySubmitting = applyActionKey ? isTargetSubmitting(applyActionKey) : false
   const [rollbackTargetRefreshing, setRollbackTargetRefreshing] = useState(false)
+  const [lifecycleStatus, setLifecycleStatus] = useState<ServiceLifecycleStatusResponse | null>(null)
   const [lastSuccessfulRefreshAt, setLastSuccessfulRefreshAt] = useState<string | null>(null)
   const rollbackStatusSource = rollbackTarget ?? rollbackActiveTarget
   const rollbackActiveJobId = (rollbackStatusSource?.activeJobId ?? '').trim() || null
@@ -60,7 +71,6 @@ export function useServiceDetailPageState(props: {
   const rollbackReason = rollbackTarget?.unavailableReason ?? rollbackActiveTarget?.unavailableReason ?? null
   const rollbackReasonLabel = rollbackUnavailableReasonLabel(rollbackReason)
   const rollbackTargetDigestRetryMs = 250
-  const rollbackActionBusy = Boolean(rollbackActiveJobId)
   const rollbackHint = rollbackActiveJobId ? '任务进行中，点击查看任务详情' : rollbackTargetRefreshing ? ROLLBACK_TARGET_REFRESH_HINT : !rollbackTarget?.available ? rollbackReasonLabel : undefined
   const backupSummaryByJobId = useMemo(() => summarizeServiceOperationBackups(backupRecords), [backupRecords])
   const rollbackBackupSummary = useMemo(() => {
@@ -257,9 +267,48 @@ export function useServiceDetailPageState(props: {
     onError: (e: unknown) => setError(errorMessage(e)),
   })
 
+  const refreshLifecycleStatus = useCallback(async () => {
+    if (!service || isDockrevService(service)) {
+      setLifecycleStatus(null)
+      return
+    }
+    const next = await getServiceLifecycleStatus(service.id)
+    setLifecycleStatus(next)
+  }, [service])
+
   useEffect(() => {
     void requestRefresh().catch((e: unknown) => setError(errorMessage(e)))
   }, [requestRefresh, serviceId, stackId])
+
+  useEffect(() => {
+    if (!service || isDockrevService(service)) {
+      setLifecycleStatus(null)
+      return
+    }
+    let cancelled = false
+    let timer: number | null = null
+    const refreshStatus = async () => {
+      try {
+        const next = await getServiceLifecycleStatus(service.id)
+        if (cancelled) return
+        setLifecycleStatus(next)
+        if (next.activeJob?.id) {
+          timer = window.setTimeout(() => {
+            void refreshStatus()
+          }, 1200)
+        }
+      } catch {
+        if (!cancelled) {
+          setLifecycleStatus({ state: 'unknown', unavailableReason: 'lifecycle_status_unavailable' })
+        }
+      }
+    }
+    void refreshStatus()
+    return () => {
+      cancelled = true
+      if (timer != null) window.clearTimeout(timer)
+    }
+  }, [lifecycleStatus?.activeJob?.id, service])
 
   useEffect(() => {
     let closed = false
@@ -538,15 +587,12 @@ export function useServiceDetailPageState(props: {
           if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
           else if (e.status === 409) {
             const details = e.details
-            const existingJobId =
-              details && typeof details === 'object' && details !== null && 'existingJobId' in details
-                ? (details as Record<string, unknown>).existingJobId
-                : null
+            const existingJobId = conflictingJobId(e)
             const reason =
               details && typeof details === 'object' && details !== null && 'reason' in details
                 ? (details as Record<string, unknown>).reason
                 : null
-            if (typeof existingJobId === 'string' && existingJobId.trim()) {
+            if (existingJobId) {
               navigate({ name: 'job', jobId: existingJobId })
             } else if (typeof reason === 'string' && reason.trim()) {
               setError(rollbackUnavailableReasonLabel(reason) ?? e.message)
@@ -563,6 +609,79 @@ export function useServiceDetailPageState(props: {
       }
     })()
   }, [confirm, refreshStackOnly, rollbackActiveJobId, rollbackBackupValue, rollbackTarget, service, stack?.name, stackId])
+
+  const requestLifecycleAction = useCallback((action: ServiceLifecycleAction) => {
+    void (async () => {
+      if (!service) return
+      const activeJobId = lifecycleStatus?.activeJob?.id
+      if (activeJobId) {
+        navigate({ name: 'job', jobId: activeJobId })
+        return
+      }
+      if (action !== 'start') {
+        const actionLabel = action === 'stop' ? '停止' : '重启'
+        const ok = await confirm({
+          title: `确认${actionLabel}服务 ${service.name}？`,
+          body: <div className="modalLead">该操作会立即影响服务运行状态。</div>,
+          confirmText: actionLabel,
+          cancelText: '取消',
+          confirmVariant: action === 'stop' ? 'danger' : 'primary',
+          badgeText: null,
+        })
+        if (!ok) return
+      }
+      setBusy(true)
+      setError(null)
+      setNotice(null)
+      try {
+        const resp = await triggerServiceLifecycle(service.id, action)
+        setNotice({ jobId: resp.jobId, kind: 'lifecycle' })
+        await refreshLifecycleStatus()
+      } catch (e: unknown) {
+        if (e instanceof ApiError && e.status === 409) {
+          const existingJobId = conflictingJobId(e)
+          if (existingJobId) {
+            navigate({ name: 'job', jobId: existingJobId })
+          } else {
+            setError(e.message)
+          }
+          await refreshLifecycleStatus().catch(() => undefined)
+        } else {
+          setError(errorMessage(e))
+        }
+      } finally {
+        setBusy(false)
+      }
+    })()
+  }, [confirm, lifecycleStatus?.activeJob?.id, refreshLifecycleStatus, service])
+
+  const requestPreviewUpdate = useCallback(() => {
+    void (async () => {
+      if (!service || !service.candidate) return
+      setBusy(true)
+      setError(null)
+      setNotice(null)
+      try {
+        const resp = await triggerUpdate({
+          scope: 'service',
+          stackId,
+          ...(await buildUpdateServiceTarget(service)),
+          mode: 'dry-run',
+          allowArchMismatch: false,
+          backupMode: 'inherit',
+        })
+        setNotice({ jobId: resp.jobId, kind: 'update' })
+      } catch (e: unknown) {
+        if (e instanceof ApiError && e.status === 401) setError('需要登录/鉴权（Forward Auth）')
+        else if (e instanceof ApiError && e.status === 409) {
+          setError('扫描结果已变化，请刷新并重新扫描后再更新')
+          await requestRefresh()
+        } else setError(errorMessage(e))
+      } finally {
+        setBusy(false)
+      }
+    })()
+  }, [requestRefresh, service, stackId])
 
   const requestApplyUpdate = useCallback(() => {
     void (async () => {
@@ -596,7 +715,7 @@ export function useServiceDetailPageState(props: {
             }}
           />
         ),
-        confirmText: '执行更新',
+        confirmText: '更新',
         cancelText: '取消',
         confirmVariant: 'primary',
         badgeText: null,
@@ -620,9 +739,15 @@ export function useServiceDetailPageState(props: {
         if (e instanceof ApiError) {
           if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
           else if (e.status === 409) {
-            const guardReason = readUpdateGuardBlockedReason(e)
-            if (guardReason) setError(guardReason)
-            else {
+            const existingJobId = conflictingJobId(e)
+            if (existingJobId) {
+              navigate({ name: 'job', jobId: existingJobId })
+            } else {
+              const guardReason = readUpdateGuardBlockedReason(e)
+              if (guardReason) {
+                setError(guardReason)
+                return
+              }
               setError('扫描结果已变化，请刷新并重新扫描后再更新')
               await requestRefresh()
             }
@@ -684,180 +809,75 @@ export function useServiceDetailPageState(props: {
     supervisorState.status,
   ])
 
-  const topActions = useMemo(
-    () => (
+  const topActions = useMemo(() => {
+    if (dockrevSelfUpgradeAction) {
+      return (
+        <>
+          <Button variant="primary" disabled={dockrevSelfUpgradeAction.disabled} hint={dockrevSelfUpgradeAction.disabledReason ?? undefined} onClick={dockrevSelfUpgradeAction.open}>
+            {dockrevSelfUpgradeAction.label}
+          </Button>
+          {dockrevSelfUpgradeAction.retryVisible ? <Button variant="ghost" disabled={dockrevSelfUpgradeAction.retryDisabled} onClick={dockrevSelfUpgradeAction.retry}>重试</Button> : null}
+          <ServiceStackDetailAction disabled={busy} onClick={() => navigate({ name: 'stack', stackId })} />
+        </>
+      )
+    }
+
+    const candidateReason = !service
+      ? '服务信息加载中'
+      : service.ignore?.matched
+        ? service.ignore.reason ?? '被阻止'
+        : serviceRowStatus(service) === 'blocked'
+          ? blockedReasonFor(service) ?? '被阻止'
+        : !service.candidate
+          ? '无候选版本'
+          : service.candidate.archMatch === 'mismatch'
+            ? '架构不匹配（仅提示，不允许更新）'
+            : undefined
+    const previewDisabled = busy || Boolean(candidateReason)
+    const applyDisabled = applySubmitting && !applyActiveJob
+      ? true
+      : !applyActiveJob && (busy || Boolean(candidateReason))
+    const applyDescription = applyActiveJob
+      ? '任务进行中，点击查看任务详情'
+      : applySubmitting
+        ? '正在提交更新任务'
+        : candidateReason
+    const rollbackLabel = rollbackActiveJobId
+      ? rollbackActiveJobStatus === 'queued' ? '回滚排队中…' : '回滚中…'
+      : rollbackTargetRefreshing ? '回滚信息刷新中…' : '回滚'
+    const rollbackDisabled = !rollbackActiveJobId && (busy || rollbackTargetRefreshing || !rollbackTarget?.available)
+    const updateItems = [
+      { id: 'preview-update', label: '预览更新', icon: Eye, description: candidateReason, disabled: previewDisabled, onSelect: requestPreviewUpdate },
+      { id: 'execute-update', label: applyActiveJob ? (applyActiveJob.status === 'queued' ? '更新排队中…' : '更新中…') : '更新', icon: Download, description: applyDescription, disabled: applyDisabled, loading: Boolean(applyActiveJob || applySubmitting), loadingClickable: Boolean(applyActiveJob), onSelect: () => applyActiveJob ? navigate({ name: 'job', jobId: applyActiveJob.jobId }) : requestApplyUpdate() },
+      { id: 'rollback', label: rollbackLabel, icon: RotateCcw, description: rollbackHint, disabled: rollbackDisabled, loading: Boolean(rollbackActiveJobId), loadingClickable: Boolean(rollbackActiveJobId), onSelect: requestRollback },
+    ]
+    const updatePrimary = service?.candidate ? updateItems[1] : updateItems[2]
+    const activeLifecycle = lifecycleStatus?.activeJob
+    const lifecycleState = lifecycleStatus?.state ?? 'unknown'
+    const lifecycleReason = lifecycleStatus?.unavailableReason === 'partial_replicas_running'
+      ? '部分副本正在运行，请先处理运行态异常'
+      : lifecycleStatus?.unavailableReason === 'lifecycle_status_unavailable'
+        ? '无法读取服务运行状态，请刷新后重试'
+        : lifecycleStatus?.unavailableReason
+    const lifecycleItem = (action: ServiceLifecycleAction, label: string) => {
+      const compatible = (action === 'start' && lifecycleState === 'stopped') || ((action === 'stop' || action === 'restart') && lifecycleState === 'running')
+      const description = activeLifecycle ? '任务进行中，点击查看任务详情' : lifecycleReason ?? (compatible ? undefined : '当前服务状态不支持该操作')
+      const icon = action === 'start' ? Play : action === 'stop' ? Square : RotateCw
+      return { id: `lifecycle-${action}`, label, icon, iconVariant: action === 'stop' ? 'solid' as const : undefined, description, disabled: !activeLifecycle && (busy || !compatible), onSelect: () => activeLifecycle ? navigate({ name: 'job', jobId: activeLifecycle.id }) : requestLifecycleAction(action) }
+    }
+    const lifecycleItems = [lifecycleItem('start', '启动'), lifecycleItem('stop', '停止'), lifecycleItem('restart', '重启')]
+    const lifecyclePrimary = activeLifecycle
+      ? { ...lifecycleItems.find((item) => item.id === `lifecycle-${activeLifecycle.action ?? 'restart'}`)!, label: activeLifecycle.status === 'queued' ? '操作排队中…' : '操作进行中…', disabled: false, loading: true, loadingClickable: true, description: '任务进行中，点击查看任务详情' }
+      : lifecycleState === 'stopped' ? lifecycleItems[0] : lifecycleItems[1]
+
+    return (
       <>
-        {dockrevSelfUpgradeAction ? (
-          <>
-            <Button
-              variant="primary"
-              disabled={dockrevSelfUpgradeAction.disabled}
-              hint={dockrevSelfUpgradeAction.disabledReason ?? undefined}
-              onClick={dockrevSelfUpgradeAction.open}
-            >
-              {dockrevSelfUpgradeAction.label}
-            </Button>
-            {dockrevSelfUpgradeAction.retryVisible ? (
-              <Button
-                variant="ghost"
-                disabled={dockrevSelfUpgradeAction.retryDisabled}
-                onClick={dockrevSelfUpgradeAction.retry}
-              >
-                重试
-              </Button>
-            ) : null}
-          </>
-        ) : (
-          <>
-            <Button
-              variant="primary"
-              disabled={
-                busy ||
-                !service ||
-                service.ignore?.matched ||
-                !service.candidate ||
-                service.candidate.archMatch === 'mismatch'
-              }
-              title={
-                !service
-                  ? undefined
-                  : service.ignore?.matched
-                    ? service.ignore.reason ?? '被阻止'
-                    : !service.candidate
-                      ? '无候选版本'
-                      : service.candidate.archMatch === 'mismatch'
-                        ? '架构不匹配（仅提示，不允许更新）'
-                        : undefined
-              }
-              onClick={() => {
-                void (async () => {
-                  if (!service || !service.candidate) return
-                  setBusy(true)
-                  setError(null)
-                  setNotice(null)
-                  try {
-                    const resp = await triggerUpdate({
-                      scope: 'service',
-                      stackId,
-                      ...(await buildUpdateServiceTarget(service)),
-                      mode: 'dry-run',
-                      allowArchMismatch: false,
-                      backupMode: 'inherit',
-                    })
-                    setNotice({ jobId: resp.jobId, kind: 'update' })
-                  } catch (e: unknown) {
-                    if (e instanceof ApiError) {
-                      if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
-                      else if (e.status === 409) {
-                        setError('扫描结果已变化，请刷新并重新扫描后再更新')
-                        await requestRefresh()
-                      } else setError(e.message)
-                    } else {
-                      setError(errorMessage(e))
-                    }
-                  } finally {
-                    setBusy(false)
-                  }
-                })()
-              }}
-            >
-              预览更新
-            </Button>
-            <Button
-              variant="primary"
-              disabled={
-                applySubmitting && !applyActiveJob
-                  ? true
-                  : applyActiveJob
-                    ? false
-                    : busy ||
-                      !service ||
-                      serviceRowStatus(service) === 'blocked' ||
-                      !service.candidate ||
-                      service.candidate.archMatch === 'mismatch'
-              }
-              loading={applyActionBusy}
-              loadingClickable={Boolean(applyActiveJob)}
-              hint={applyActiveJob ? '任务进行中，点击查看任务详情' : undefined}
-              title={
-                applyActiveJob
-                  ? '任务进行中，点击查看任务详情'
-                  : !service
-                    ? undefined
-                    : serviceRowStatus(service) === 'blocked'
-                      ? blockedReasonFor(service) ?? '被阻止'
-                      : !service.candidate
-                        ? '无候选版本'
-                        : service.candidate.archMatch === 'mismatch'
-                          ? '架构不匹配（仅提示，不允许更新）'
-                          : undefined
-              }
-              onClick={() => {
-                void (async () => {
-                  if (applyActiveJob) {
-                    navigate({ name: 'job', jobId: applyActiveJob.jobId })
-                    return
-                  }
-                  requestApplyUpdate()
-                })()
-              }}
-            >
-              {applyActiveJob?.status === 'queued'
-                ? '排队中…'
-                : applyActiveJob
-                  ? '更新中…'
-                  : applySubmitting
-                    ? '提交中…'
-                    : '执行更新'}
-            </Button>
-            <Button
-              variant="ghost"
-              disabled={rollbackActiveJobId ? false : busy || rollbackTargetRefreshing || !rollbackTarget?.available}
-              loading={rollbackActionBusy || rollbackTargetRefreshing}
-              loadingClickable={Boolean(rollbackActiveJobId)}
-              hint={rollbackHint}
-              title={rollbackActiveJobId ? '任务进行中，点击查看任务详情' : undefined}
-              onClick={requestRollback}
-            >
-              {rollbackActiveJobId
-                ? rollbackReason === 'rollback_in_progress'
-                  ? rollbackActiveJobStatus === 'queued'
-                    ? '排队中…'
-                    : '回滚中…'
-                  : rollbackActiveJobStatus === 'queued'
-                    ? '排队中…'
-                    : '任务进行中…'
-                : rollbackTargetRefreshing
-                  ? '刷新中…'
-                  : '回滚'}
-            </Button>
-          </>
-        )}
-        <Button variant="ghost" disabled={busy} onClick={() => navigate({ name: 'stack', stackId })}>
-          Stack 详情
-        </Button>
+        <ServiceSplitActionButton ariaLabel="更新操作" items={updateItems} primary={updatePrimary} />
+        <ServiceSplitActionButton ariaLabel="服务生命周期" items={lifecycleItems} primary={lifecyclePrimary} />
+        <ServiceStackDetailAction disabled={busy} onClick={() => navigate({ name: 'stack', stackId })} />
       </>
-    ),
-    [
-      applyActiveJob,
-      applyActionBusy,
-      applySubmitting,
-      busy,
-      dockrevSelfUpgradeAction,
-      requestApplyUpdate,
-      requestRefresh,
-      requestRollback,
-      rollbackActionBusy,
-      rollbackActiveJobId,
-      rollbackActiveJobStatus,
-      rollbackHint,
-      rollbackReason,
-      rollbackTarget,
-      rollbackTargetRefreshing,
-      service,
-      stackId,
-    ],
-  )
+    )
+  }, [applyActiveJob, applySubmitting, busy, dockrevSelfUpgradeAction, lifecycleStatus, requestApplyUpdate, requestLifecycleAction, requestPreviewUpdate, requestRollback, rollbackActiveJobId, rollbackActiveJobStatus, rollbackHint, rollbackTarget?.available, rollbackTargetRefreshing, service, stackId])
 
   const dangerousActions = useMemo(
     () => (

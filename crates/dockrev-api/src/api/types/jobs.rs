@@ -233,6 +233,76 @@ pub struct TriggerRollbackResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum ServiceLifecycleAction {
+    Start,
+    Stop,
+    Restart,
+}
+
+impl ServiceLifecycleAction {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Start => "start",
+            Self::Stop => "stop",
+            Self::Restart => "restart",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceLifecycleState {
+    Running,
+    Stopped,
+    Partial,
+    Unknown,
+}
+
+impl ServiceLifecycleState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Stopped => "stopped",
+            Self::Partial => "partial",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceLifecycleActiveJob {
+    pub id: String,
+    pub r#type: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<ServiceLifecycleAction>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceLifecycleStatusResponse {
+    pub state: ServiceLifecycleState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_job: Option<ServiceLifecycleActiveJob>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unavailable_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriggerServiceLifecycleRequest {
+    pub action: ServiceLifecycleAction,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriggerServiceLifecycleResponse {
+    pub job_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum JobScope {
     Service,
     Stack,
@@ -269,6 +339,7 @@ pub enum JobType {
     RepoLinkBackfill,
     Update,
     Rollback,
+    ServiceLifecycle,
 }
 
 impl JobType {
@@ -284,6 +355,7 @@ impl JobType {
             Self::RepoLinkBackfill => "repo_link_backfill",
             Self::Update => "update",
             Self::Rollback => "rollback",
+            Self::ServiceLifecycle => "service_lifecycle",
         }
     }
 
@@ -298,6 +370,7 @@ impl JobType {
             "github_packages_webhook_sync_repo" => Self::GitHubPackagesWebhookSyncRepo,
             "repo_link_backfill" => Self::RepoLinkBackfill,
             "rollback" => Self::Rollback,
+            "service_lifecycle" => Self::ServiceLifecycle,
             _ => Self::Update,
         }
     }

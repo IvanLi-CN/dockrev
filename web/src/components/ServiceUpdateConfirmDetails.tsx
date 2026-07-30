@@ -167,7 +167,7 @@ export function ServiceUpdateConfirmDetails(props: {
 
   return (
     <>
-      <div className="modalLead">将对该服务执行更新（apply）。</div>
+      <div className="modalLead">将更新此服务（apply）。</div>
       <div className="modalKvGrid">
         <div className="modalKvLabel">镜像</div>
         <div className="modalKvValue">

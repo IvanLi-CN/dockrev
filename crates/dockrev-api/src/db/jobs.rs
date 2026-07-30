@@ -20,6 +20,12 @@ pub struct JobListPage {
     pub next_cursor: Option<(String, String)>,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct ServiceOperationTarget {
+    pub(crate) service_id: String,
+    pub(crate) stack_id: String,
+}
+
 const CLAIM_NEXT_QUEUED_JOB_SQL: &str = r#"
 SELECT
   id,
@@ -41,6 +47,48 @@ WHERE type = ?1 AND status = 'queued'
 ORDER BY created_at ASC, id ASC
 LIMIT 1
 "#;
+
+fn service_operation_job_blocks_targets(
+    job: &JobListItem,
+    targets: &[ServiceOperationTarget],
+) -> bool {
+    if job.r#type.as_str() == "update"
+        && job
+            .summary_json
+            .get("mode")
+            .and_then(|value| value.as_str())
+            == Some("dry-run")
+    {
+        return false;
+    }
+
+    targets.iter().any(|target| match job.r#type.as_str() {
+        "rollback" | "service_lifecycle" => {
+            job.service_id.as_deref() == Some(target.service_id.as_str())
+        }
+        "update" => match job.scope {
+            JobScope::All => true,
+            JobScope::Stack => job.stack_id.as_deref() == Some(target.stack_id.as_str()),
+            JobScope::Service => job.service_id.as_deref() == Some(target.service_id.as_str()),
+        },
+        _ => false,
+    })
+}
+
+fn is_better_service_operation_conflict(
+    candidate: &JobListItem,
+    current: Option<&JobListItem>,
+) -> bool {
+    let Some(current) = current else {
+        return true;
+    };
+    let candidate_rank = usize::from(candidate.status == "running");
+    let current_rank = usize::from(current.status == "running");
+    candidate_rank > current_rank
+        || (candidate_rank == current_rank
+            && (candidate.created_at > current.created_at
+                || (candidate.created_at == current.created_at && candidate.id > current.id)))
+}
 
 fn should_emit_slow_job_claim_warning(
     warned_at_by_type: &std::sync::Mutex<BTreeMap<String, Instant>>,
@@ -89,6 +137,68 @@ impl Db {
         })
         .await
         .context("insert job")
+    }
+
+    /// Atomically reserves all requested services for a mutating service operation.
+    ///
+    /// Read-only update previews are intentionally excluded: they must remain usable
+    /// while another service operation is in progress.
+    pub async fn insert_service_operation_job_if_unblocked(
+        &self,
+        job: JobListItem,
+        targets: Vec<ServiceOperationTarget>,
+    ) -> anyhow::Result<Option<JobListItem>> {
+        self.call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let candidates = {
+                let mut statement = tx.prepare(
+                    r#"
+SELECT
+  id,
+  type,
+  scope,
+  stack_id,
+  service_id,
+  status,
+  created_by,
+  reason,
+  created_at,
+  started_at,
+  finished_at,
+  allow_arch_mismatch,
+  backup_mode,
+  summary_json
+FROM jobs
+WHERE type IN ('update', 'rollback', 'service_lifecycle')
+  AND status IN ('queued', 'running')
+ORDER BY
+  CASE status WHEN 'running' THEN 0 ELSE 1 END,
+  created_at DESC,
+  id DESC
+"#,
+                )?;
+                statement
+                    .query_map([], map_job_list_item_row)?
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+
+            let mut conflict: Option<JobListItem> = None;
+            for candidate in candidates {
+                if service_operation_job_blocks_targets(&candidate, &targets)
+                    && is_better_service_operation_conflict(&candidate, conflict.as_ref())
+                {
+                    conflict = Some(candidate);
+                }
+            }
+
+            if conflict.is_none() {
+                insert_job_tx(&tx, &job)?;
+            }
+            tx.commit()?;
+            Ok(conflict)
+        })
+        .await
+        .context("atomically insert service operation job")
     }
 
     pub async fn insert_or_reuse_webhook_check_job_for_service(
