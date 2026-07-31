@@ -70,7 +70,7 @@
 - margin_policy: `trim_only`
 - evidence_surface: `page`
 - sensitive_exclusion: `N/A`
-- submission_gate: `pending-owner-approval`
+- submission_gate: `approved`
 - story_id_or_title: `Pages/ServiceDetailPage/LifecycleRunning`
 - state: `wide topbar, all metric groups`
 - evidence_note: `服务名位于 AppShell 顶栏，资源摘要紧随其后并处于操作组之前；宽屏容纳 CPU/内存、磁盘读/写与下载/上传三个完整指标组，正文不再保留重复摘要。边缘空白检查无需裁剪。`
@@ -85,7 +85,7 @@
 - margin_policy: `trim_only`
 - evidence_surface: `page`
 - sensitive_exclusion: `N/A`
-- submission_gate: `pending-owner-approval`
+- submission_gate: `approved`
 - story_id_or_title: `Pages/ServiceDetailPage/LifecycleRunning`
 - state: `compact desktop, network hidden`
 - evidence_note: `顶栏可用宽度不足时先完整隐藏下载/上传组；CPU/内存与磁盘读/写仍作为完整成对组显示，且顶栏没有横向溢出。边缘空白检查无需裁剪。`
@@ -134,7 +134,7 @@ PR: include
 - margin_policy: `trim_only`
 - evidence_surface: `page`
 - sensitive_exclusion: `N/A`
-- submission_gate: `pending-owner-approval`
+- submission_gate: `approved`
 - story_id_or_title: `Pages/ServiceDetailPage/MobileSettingsOfflineReadonly`
 - state: `mobile readonly service action menu open`
 - evidence_note: `离线或缓存快照状态继续使用单一 44px 服务操作入口；刷新项保持可发现但禁用，Stack 详情仍可导航，页头没有恢复独立操作按钮。边缘空白检查无需裁剪。`
