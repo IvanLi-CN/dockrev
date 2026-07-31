@@ -64,6 +64,8 @@ export function useServiceDetailPageState(props: {
   const applySubmitting = applyActionKey ? isTargetSubmitting(applyActionKey) : false
   const [rollbackTargetRefreshing, setRollbackTargetRefreshing] = useState(false)
   const [lifecycleStatus, setLifecycleStatus] = useState<ServiceLifecycleStatusResponse | null>(null)
+  const [lifecycleSettledJobId, setLifecycleSettledJobId] = useState<string | null>(null)
+  const lifecycleActiveJobIdRef = useRef<string | null>(null)
   const [lastSuccessfulRefreshAt, setLastSuccessfulRefreshAt] = useState<string | null>(null)
   const rollbackStatusSource = rollbackTarget ?? rollbackActiveTarget
   const rollbackActiveJobId = (rollbackStatusSource?.activeJobId ?? '').trim() || null
@@ -270,6 +272,7 @@ export function useServiceDetailPageState(props: {
   const refreshLifecycleStatus = useCallback(async () => {
     if (!service || isDockrevService(service)) {
       setLifecycleStatus(null)
+      lifecycleActiveJobIdRef.current = null
       return
     }
     const next = await getServiceLifecycleStatus(service.id)
@@ -279,6 +282,11 @@ export function useServiceDetailPageState(props: {
   useEffect(() => {
     void requestRefresh().catch((e: unknown) => setError(errorMessage(e)))
   }, [requestRefresh, serviceId, stackId])
+
+  useEffect(() => {
+    lifecycleActiveJobIdRef.current = null
+    setLifecycleSettledJobId(null)
+  }, [serviceId])
 
   useEffect(() => {
     if (!service || isDockrevService(service)) {
@@ -291,8 +299,14 @@ export function useServiceDetailPageState(props: {
       try {
         const next = await getServiceLifecycleStatus(service.id)
         if (cancelled) return
+        const previousActiveJobId = lifecycleActiveJobIdRef.current
+        const nextActiveJobId = next.activeJob?.id ?? null
+        lifecycleActiveJobIdRef.current = nextActiveJobId
         setLifecycleStatus(next)
-        if (next.activeJob?.id) {
+        if (previousActiveJobId && !nextActiveJobId) {
+          setLifecycleSettledJobId(previousActiveJobId)
+        }
+        if (nextActiveJobId) {
           timer = window.setTimeout(() => {
             void refreshStatus()
           }, 1200)
@@ -300,6 +314,11 @@ export function useServiceDetailPageState(props: {
       } catch {
         if (!cancelled) {
           setLifecycleStatus({ state: 'unknown', unavailableReason: 'lifecycle_status_unavailable' })
+          if (lifecycleActiveJobIdRef.current) {
+            timer = window.setTimeout(() => {
+              void refreshStatus()
+            }, 2400)
+          }
         }
       }
     }
@@ -635,6 +654,7 @@ export function useServiceDetailPageState(props: {
       setNotice(null)
       try {
         const resp = await triggerServiceLifecycle(service.id, action)
+        lifecycleActiveJobIdRef.current = resp.jobId
         setNotice({ jobId: resp.jobId, kind: 'lifecycle' })
         await refreshLifecycleStatus()
       } catch (e: unknown) {
@@ -1017,6 +1037,7 @@ export function useServiceDetailPageState(props: {
     dockrevSelfUpgradeAction,
     error,
     lastSuccessfulRefreshAt,
+    lifecycleSettledJobId,
     newRuleKind,
     newRuleNote,
     newRuleValue,

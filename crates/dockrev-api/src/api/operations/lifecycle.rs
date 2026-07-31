@@ -57,6 +57,20 @@ pub(crate) fn lifecycle_state_from_counts(all: usize, running: usize) -> Service
     }
 }
 
+fn lifecycle_state_for_compose(
+    all: usize,
+    running: usize,
+    is_plugin: bool,
+) -> (ServiceLifecycleState, Option<&'static str>) {
+    if all == 0 && !is_plugin {
+        return (
+            ServiceLifecycleState::Unknown,
+            Some("container_missing_for_compose_v1"),
+        );
+    }
+    (lifecycle_state_from_counts(all, running), None)
+}
+
 async fn resolve_lifecycle_subject(
     state: &Arc<AppState>,
     service_id: &str,
@@ -117,10 +131,15 @@ async fn read_lifecycle_state(
         .run(compose.ps_q_service(&config, &service.name), timeout)
         .await;
     match (all, running) {
-        (Ok(all), Ok(running)) if all.status == 0 && running.status == 0 => (
-            lifecycle_state_from_counts(command_ids(&all.stdout), command_ids(&running.stdout)),
-            None,
-        ),
+        (Ok(all), Ok(running)) if all.status == 0 && running.status == 0 => {
+            let all_count = command_ids(&all.stdout);
+            let (lifecycle_state, unavailable_reason) = lifecycle_state_for_compose(
+                all_count,
+                command_ids(&running.stdout),
+                crate::compose_runner::is_docker_plugin(&config.compose_bin),
+            );
+            (lifecycle_state, unavailable_reason.map(str::to_string))
+        }
         _ => (
             ServiceLifecycleState::Unknown,
             Some("lifecycle_status_unavailable".to_string()),
@@ -235,25 +254,17 @@ pub(crate) async fn trigger_service_lifecycle(
                 service_id: service.id.clone(),
                 stack_id: stack.id.clone(),
             }],
+            Some(JobLogLine {
+                ts: now.clone(),
+                level: "info".to_string(),
+                msg: format!("service lifecycle {} started", req.action.as_str()),
+            }),
         )
         .await
         .map_err(map_internal)?
     {
         return Err(service_operation_conflict_error(&conflict));
     }
-    state
-        .db
-        .insert_job_log(
-            &job_id,
-            &JobLogLine {
-                ts: now.clone(),
-                level: "info".to_string(),
-                msg: format!("service lifecycle {} started", req.action.as_str()),
-            },
-        )
-        .await
-        .map_err(map_internal)?;
-
     let run_state = state.clone();
     let run_job_id = job_id.clone();
     tokio::spawn(async move {
@@ -277,7 +288,7 @@ async fn run_service_lifecycle_job(
                     compose.start_service_without_pull(&config, &service.name)
                 }
                 ServiceLifecycleAction::Stop => {
-                    compose.stop_services(&config, &[service.name.clone()])
+                    compose.stop_services(&config, std::slice::from_ref(&service.name))
                 }
                 ServiceLifecycleAction::Restart => compose.restart_service(&config, &service.name),
             };
@@ -373,6 +384,17 @@ mod tests {
         assert_eq!(
             lifecycle_state_from_counts(1, 2),
             ServiceLifecycleState::Unknown
+        );
+        assert_eq!(
+            lifecycle_state_for_compose(0, 0, false),
+            (
+                ServiceLifecycleState::Unknown,
+                Some("container_missing_for_compose_v1")
+            )
+        );
+        assert_eq!(
+            lifecycle_state_for_compose(0, 0, true),
+            (ServiceLifecycleState::Stopped, None)
         );
     }
 }

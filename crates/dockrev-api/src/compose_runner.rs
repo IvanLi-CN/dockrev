@@ -93,14 +93,19 @@ impl ComposeStack {
         service: &str,
     ) -> CommandSpec {
         let mut cmd = self.base_command(cfg);
-        // Starting a stopped service must never select a newer remote image. A
-        // Compose CLI without this option fails safely instead of pulling.
-        cmd.args.extend([
-            "up".to_string(),
-            "-d".to_string(),
-            "--pull".to_string(),
-            "never".to_string(),
-        ]);
+        if is_docker_plugin(&cfg.compose_bin) {
+            cmd.args.extend([
+                "up".to_string(),
+                "-d".to_string(),
+                "--pull".to_string(),
+                "never".to_string(),
+                "--no-recreate".to_string(),
+            ]);
+        } else {
+            // Compose V1 has no `up --pull never`; `start` only starts an
+            // existing container and fails safely when one does not exist.
+            cmd.args.push("start".to_string());
+        }
         cmd.args.push(service.to_string());
         cmd
     }
@@ -131,7 +136,7 @@ impl ComposeStack {
     }
 }
 
-fn is_docker_plugin(compose_bin: &str) -> bool {
+pub(crate) fn is_docker_plugin(compose_bin: &str) -> bool {
     let bin = compose_bin.to_ascii_lowercase();
     bin == "docker" || bin.ends_with("/docker") || bin.ends_with("\\docker")
 }
@@ -272,12 +277,13 @@ mod tests {
 
         let start = stack.start_service_without_pull(&cfg, "web");
         assert_eq!(
-            start.args[start.args.len() - 5..],
+            start.args[start.args.len() - 6..],
             [
                 "up".to_string(),
                 "-d".to_string(),
                 "--pull".to_string(),
                 "never".to_string(),
+                "--no-recreate".to_string(),
                 "web".to_string(),
             ]
         );
@@ -311,14 +317,8 @@ mod tests {
         };
         let v1_start = stack.start_service_without_pull(&v1, "web");
         assert_eq!(
-            v1_start.args[v1_start.args.len() - 5..],
-            [
-                "up".to_string(),
-                "-d".to_string(),
-                "--pull".to_string(),
-                "never".to_string(),
-                "web".to_string(),
-            ]
+            v1_start.args[v1_start.args.len() - 2..],
+            ["start".to_string(), "web".to_string()]
         );
     }
 }

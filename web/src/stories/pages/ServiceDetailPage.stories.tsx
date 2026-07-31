@@ -410,6 +410,32 @@ export const SettingsOfflineReadonly: Story = {
   },
 };
 
+export const MobileSettingsOfflineReadonly: Story = {
+  parameters: {
+    dockrevApiScenario: "dashboard-demo",
+    pwaStatus: { isOnline: false },
+    viewport: { defaultViewport: "mobile1" },
+  },
+  render: render("stack-prod", "svc-prod-api", "settings", "移动端离线详情使用统一服务操作入口"),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => normalizeText(canvasElement.textContent).includes("设置页需要联网"));
+    const doc = canvasElement.ownerDocument;
+    const menuButton = doc.querySelector<HTMLButtonElement>(".serviceMobileActionMenuTrigger");
+    expectStory(menuButton, "offline mobile detail should expose the unified service action menu");
+    expectStory(
+      doc.querySelectorAll<HTMLElement>(".topActions > .serviceStackDetailAction, .topActions > .btn").length === 0,
+      "offline mobile detail should not expose standalone header actions",
+    );
+    menuButton?.click();
+    await waitForCondition(() => normalizeText(doc.body.textContent).includes("Stack 详情"));
+    expectStory(
+      doc.querySelector('[data-service-mobile-action-item="refresh"]')?.getAttribute("aria-disabled") === "true",
+      "offline refresh should remain visible and disabled",
+    );
+    expectStory(Boolean(doc.querySelector('[data-service-mobile-action-item="stack-detail"]')), "stack detail action missing");
+  },
+};
+
 export const MobileLogsSection: Story = {
   parameters: {
     dockrevApiScenario: "dashboard-demo",

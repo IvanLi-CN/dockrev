@@ -212,29 +212,40 @@ pub(crate) async fn enqueue_update_job(
     let mut job_db = job.to_db();
     job_db.created_by = created_by;
     job_db.reason = reason;
-    if operation_targets.is_empty() {
+    let has_operation_targets = !operation_targets.is_empty();
+    if !has_operation_targets {
         state.db.insert_job(job_db).await.map_err(map_internal)?;
     } else if let Some(conflict) = state
         .db
-        .insert_service_operation_job_if_unblocked(job_db, operation_targets)
+        .insert_service_operation_job_if_unblocked(
+            job_db,
+            operation_targets,
+            Some(JobLogLine {
+                ts: now.clone(),
+                level: "info".to_string(),
+                msg: "update started".to_string(),
+            }),
+        )
         .await
         .map_err(map_internal)?
     {
         return Err(service_operation_conflict_error(&conflict));
     }
 
-    state
-        .db
-        .insert_job_log(
-            &job_id,
-            &JobLogLine {
-                ts: now.clone(),
-                level: "info".to_string(),
-                msg: "update started".to_string(),
-            },
-        )
-        .await
-        .map_err(map_internal)?;
+    if !has_operation_targets {
+        state
+            .db
+            .insert_job_log(
+                &job_id,
+                &JobLogLine {
+                    ts: now.clone(),
+                    level: "info".to_string(),
+                    msg: "update started".to_string(),
+                },
+            )
+            .await
+            .map_err(map_internal)?;
+    }
     let init_progress = make_job_progress(
         "prepare",
         "preparing update job".to_string(),
@@ -312,27 +323,23 @@ pub(crate) async fn enqueue_service_rollback_job(
     job_db.reason = reason;
     if let Some(conflict) = state
         .db
-        .insert_service_operation_job_if_unblocked(job_db, vec![operation_target])
+        .insert_service_operation_job_if_unblocked(
+            job_db,
+            vec![operation_target],
+            Some(JobLogLine {
+                ts: now.clone(),
+                level: "info".to_string(),
+                msg: TransitionJobKind::Rollback
+                    .initial_log_message()
+                    .to_string(),
+            }),
+        )
         .await
         .map_err(map_internal)?
     {
         return Err(service_operation_conflict_error(&conflict));
     }
 
-    state
-        .db
-        .insert_job_log(
-            &job_id,
-            &JobLogLine {
-                ts: now.clone(),
-                level: "info".to_string(),
-                msg: TransitionJobKind::Rollback
-                    .initial_log_message()
-                    .to_string(),
-            },
-        )
-        .await
-        .map_err(map_internal)?;
     let init_progress = make_job_progress(
         "prepare",
         TransitionJobKind::Rollback

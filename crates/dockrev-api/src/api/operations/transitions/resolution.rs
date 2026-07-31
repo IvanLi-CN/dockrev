@@ -294,34 +294,17 @@ pub(crate) async fn find_pending_service_operation_conflict(
         }
     }
 
-    let pending_updates = state
+    if let Some(job) = state
         .db
-        .list_jobs_by_type_and_statuses(JobType::Update, &["queued", "running"], 200)
+        .find_latest_pending_update_blocking_service(stack_id, service_id)
         .await
-        .map_err(map_internal)?;
-
-    for job in pending_updates {
-        if job
-            .summary_json
-            .get("mode")
-            .and_then(|value| value.as_str())
-            == Some("dry-run")
-        {
-            continue;
-        }
-        let blocks_service = matches!(job.scope, JobScope::All)
-            || (matches!(job.scope, JobScope::Stack) && job.stack_id.as_deref() == Some(stack_id))
-            || (matches!(job.scope, JobScope::Service)
-                && job.service_id.as_deref() == Some(service_id));
-        if !blocks_service {
-            continue;
-        }
-        if better_pending_job(&job, best.as_ref().map(|item| &item.job)) {
-            best = Some(PendingRollbackConflict {
-                reason: service_operation_conflict_reason(&job).to_string(),
-                job,
-            });
-        }
+        .map_err(map_internal)?
+        && better_pending_job(&job, best.as_ref().map(|item| &item.job))
+    {
+        best = Some(PendingRollbackConflict {
+            reason: service_operation_conflict_reason(&job).to_string(),
+            job,
+        });
     }
 
     Ok(best)

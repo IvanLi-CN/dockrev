@@ -176,9 +176,13 @@ export default function App() {
     }
   }, [route.name]);
 
+  const serviceRouteKey =
+    route.name === "service" ? `${route.stackId}:${route.serviceId}` : null;
+
   useEffect(() => {
-    if (route.name !== "service") setServicePageTitle("");
-  }, [route.name]);
+    setServicePageTitle("");
+    if (serviceRouteKey !== null) setTopbarContent(null);
+  }, [serviceRouteKey]);
 
   const refreshAuthIdentity = useCallback(async () => {
     if (authIdentityRefreshInFlightRef.current) return null;

@@ -50,6 +50,7 @@ LIMIT 1
 
 fn service_operation_job_blocks_targets(
     job: &JobListItem,
+    persisted_service_ids: &[String],
     targets: &[ServiceOperationTarget],
 ) -> bool {
     if job.r#type.as_str() == "update"
@@ -60,6 +61,23 @@ fn service_operation_job_blocks_targets(
             == Some("dry-run")
     {
         return false;
+    }
+
+    if job.r#type.as_str() == "update" {
+        if !persisted_service_ids.is_empty() {
+            return targets.iter().any(|target| {
+                persisted_service_ids
+                    .iter()
+                    .any(|service_id| service_id == &target.service_id)
+            });
+        }
+        if job
+            .summary_json
+            .get("targets")
+            .is_some_and(|value| value.is_array())
+        {
+            return false;
+        }
     }
 
     targets.iter().any(|target| match job.r#type.as_str() {
@@ -147,6 +165,7 @@ impl Db {
         &self,
         job: JobListItem,
         targets: Vec<ServiceOperationTarget>,
+        initial_log: Option<JobLogLine>,
     ) -> anyhow::Result<Option<JobListItem>> {
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -184,8 +203,18 @@ ORDER BY
 
             let mut conflict: Option<JobListItem> = None;
             for candidate in candidates {
-                if service_operation_job_blocks_targets(&candidate, &targets)
-                    && is_better_service_operation_conflict(&candidate, conflict.as_ref())
+                let persisted_service_ids = {
+                    let mut statement =
+                        tx.prepare("SELECT service_id FROM job_service_targets WHERE job_id = ?1")?;
+                    statement
+                        .query_map([&candidate.id], |row| row.get::<_, String>(0))?
+                        .collect::<Result<Vec<_>, _>>()?
+                };
+                if service_operation_job_blocks_targets(
+                    &candidate,
+                    &persisted_service_ids,
+                    &targets,
+                ) && is_better_service_operation_conflict(&candidate, conflict.as_ref())
                 {
                     conflict = Some(candidate);
                 }
@@ -193,6 +222,12 @@ ORDER BY
 
             if conflict.is_none() {
                 insert_job_tx(&tx, &job)?;
+                if let Some(line) = initial_log {
+                    tx.execute(
+                        "INSERT INTO job_logs (job_id, ts, level, msg) VALUES (?1, ?2, ?3, ?4)",
+                        params![job.id, line.ts, line.level, line.msg],
+                    )?;
+                }
             }
             tx.commit()?;
             Ok(conflict)
@@ -955,6 +990,80 @@ LIMIT 1
         })
         .await
         .context("find latest pending job by type and service id")
+    }
+
+    pub async fn find_latest_pending_update_blocking_service(
+        &self,
+        stack_id: &str,
+        service_id: &str,
+    ) -> anyhow::Result<Option<JobListItem>> {
+        let stack_id = stack_id.to_string();
+        let service_id = service_id.to_string();
+        self.call(move |conn| {
+            conn.query_row(
+                r#"
+SELECT
+  j.id, j.type, j.scope, j.stack_id, j.service_id, j.status,
+  j.created_by, j.reason, j.created_at, j.started_at, j.finished_at,
+  j.allow_arch_mismatch, j.backup_mode, j.summary_json
+FROM jobs j
+WHERE j.type = 'update'
+  AND j.status IN ('queued', 'running')
+  AND COALESCE(json_extract(j.summary_json, '$.mode'), '') != 'dry-run'
+  AND (
+    EXISTS (
+      SELECT 1 FROM job_service_targets jst
+      WHERE jst.job_id = j.id AND jst.service_id = ?2
+    )
+    OR (
+      NOT EXISTS (SELECT 1 FROM job_service_targets jst WHERE jst.job_id = j.id)
+      AND json_type(j.summary_json, '$.targets') IS NULL
+      AND (
+        j.scope = 'all'
+        OR (j.scope = 'stack' AND j.stack_id = ?1)
+        OR (j.scope = 'service' AND j.service_id = ?2)
+      )
+    )
+  )
+ORDER BY
+  CASE j.status WHEN 'running' THEN 0 ELSE 1 END,
+  j.created_at DESC,
+  j.id DESC
+LIMIT 1
+"#,
+                params![stack_id, service_id],
+                |row| {
+                    let summary_json: String = row.get(13)?;
+                    let summary = serde_json::from_str(&summary_json).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            0,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?;
+                    Ok(JobListItem {
+                        id: row.get(0)?,
+                        r#type: JobType::from_str(&row.get::<_, String>(1)?),
+                        scope: JobScope::from_str(&row.get::<_, String>(2)?),
+                        stack_id: row.get(3)?,
+                        service_id: row.get(4)?,
+                        status: row.get(5)?,
+                        created_by: row.get(6)?,
+                        reason: row.get(7)?,
+                        created_at: row.get(8)?,
+                        started_at: row.get(9)?,
+                        finished_at: row.get(10)?,
+                        allow_arch_mismatch: row.get::<_, i64>(11)? != 0,
+                        backup_mode: row.get(12)?,
+                        summary_json: summary,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+        })
+        .await
+        .context("find latest pending update blocking service")
     }
 
     pub async fn find_latest_running_check_job(

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Cpu, Download, HardDriveDownload, HardDriveUpload, MemoryStick, Upload } from "lucide-react";
+import { Cpu, Download, HardDriveDownload, HardDriveUpload, Layers3, MemoryStick, RotateCw, Upload } from "lucide-react";
 import {
   createIgnore,
   deleteIgnore,
@@ -34,7 +34,7 @@ import { AutoUpdatePolicyResultCard } from "../components/AutoUpdatePolicyResult
 import { RecentUpdateRecords, ServiceOperationHistory, filterServiceOperationJobs, selectRecentServiceUpdateJobs, selectServiceOperationJobs } from "../components/RecentUpdateRecords";
 import { ResponsiveSettingsDrawer } from "../components/ResponsiveSettingsDrawer";
 import { ServiceVersionsSection } from "../components/ServiceVersionsSection";
-import { ServiceStackDetailAction } from "../components/ServiceSplitActionButton";
+import { ServiceMobileActionMenu, ServiceStackDetailAction } from "../components/ServiceSplitActionButton";
 import { ImageLinkIcons, RepositoryLinkIcon, splitImageNameForDisplay, splitImageRef } from "../imageLinks";
 import { ServiceComposeTagField } from "./ServiceComposeTagField";
 import {
@@ -99,6 +99,7 @@ export function ServiceDetailPage(props: {
     draftRepoUrl,
     error,
     lastSuccessfulRefreshAt,
+    lifecycleSettledJobId,
     newRuleKind,
     newRuleNote,
     newRuleValue,
@@ -231,6 +232,12 @@ export function ServiceDetailPage(props: {
     void refreshRecentJobs().catch(() => undefined);
     void refreshVersionJobs().catch(() => undefined);
   }, [notice?.jobId, refreshRecentJobs, refreshVersionJobs]);
+
+  useEffect(() => {
+    if (!lifecycleSettledJobId) return;
+    void refreshRecentJobs(true).catch(() => undefined);
+    void refreshVersionJobs().catch(() => undefined);
+  }, [lifecycleSettledJobId, refreshRecentJobs, refreshVersionJobs]);
 
   useEffect(() => {
     if (section !== "history" || !isOnline) return undefined;
@@ -441,7 +448,7 @@ export function ServiceDetailPage(props: {
   useEffect(() => {
     onPageTitle?.(effectiveService?.name ?? "");
     return () => onPageTitle?.("");
-  }, [effectiveService?.name, onPageTitle]);
+  }, [effectiveService?.id, effectiveService?.name, onPageTitle]);
 
   useEffect(() => {
     onTopbarContent?.(topbarMonitorSummary);
@@ -452,10 +459,36 @@ export function ServiceDetailPage(props: {
     if (readonlyUi) {
       onTopActions(
         <>
-          <ServiceStackDetailAction disabled={busy} onClick={() => navigate({ name: "stack", stackId: props.stackId })} />
-          <Button disabled={busy || !isOnline} onClick={() => void requestRefresh()}>
-            刷新
-          </Button>
+          <div className="serviceDesktopActions">
+            <ServiceStackDetailAction disabled={busy} onClick={() => navigate({ name: "stack", stackId: props.stackId })} />
+            <Button disabled={busy || !isOnline} onClick={() => void requestRefresh()}>
+              刷新
+            </Button>
+          </div>
+          <ServiceMobileActionMenu
+            groups={[
+              {
+                id: "readonly",
+                items: [
+                  {
+                    id: "refresh",
+                    label: "刷新",
+                    icon: RotateCw,
+                    disabled: busy || !isOnline,
+                    description: !isOnline ? "当前离线，无法刷新服务详情" : undefined,
+                    onSelect: () => void requestRefresh(),
+                  },
+                  {
+                    id: "stack-detail",
+                    label: "Stack 详情",
+                    icon: Layers3,
+                    disabled: busy,
+                    onSelect: () => navigate({ name: "stack", stackId: props.stackId }),
+                  },
+                ],
+              },
+            ]}
+          />
         </>,
       );
       return () => onTopActions(null);

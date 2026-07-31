@@ -74,7 +74,7 @@ export function selectOverviewJobsForCard(jobs: JobListItem[], options?: Overvie
 }
 
 export function toOverviewJobCardItem(job: JobListItem): OverviewJobCardItem {
-  const readable = formatJobReadableDisplay(job.type, job.scope)
+  const readable = formatJobReadableDisplay(job.type, job.scope, job.summary)
   const visual = getOverviewJobProgressVisual(job)
   return {
     jobId: job.id,

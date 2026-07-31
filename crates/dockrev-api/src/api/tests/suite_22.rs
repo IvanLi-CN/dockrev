@@ -1095,7 +1095,13 @@ services:
 
 #[tokio::test]
 async fn service_lifecycle_status_and_start_task_are_service_scoped() {
-    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+    let state = test_state_with_compose_bin(
+        ":memory:",
+        Arc::new(FakeRegistry),
+        Arc::new(FakeRunner),
+        "docker",
+    )
+    .await;
     let app = api::router(state.clone());
     let (_stack_id, service_id, _compose_path) = seed_manual_rollback_service(&state).await;
 
@@ -1135,6 +1141,11 @@ async fn service_lifecycle_status_and_start_task_are_service_scoped() {
     assert_eq!(job.service_id.as_deref(), Some(service_id.as_str()));
     assert_eq!(job.summary_json["action"].as_str(), Some("start"));
     assert_eq!(job.status, "success");
+    let logs = state.db.list_job_logs(&job_id).await.unwrap();
+    assert_eq!(
+        logs.first().map(|line| line.msg.as_str()),
+        Some("service lifecycle start started")
+    );
 }
 
 #[tokio::test]
@@ -1215,10 +1226,11 @@ async fn service_operation_claim_allows_only_one_concurrent_lifecycle_job() {
         state.db.insert_service_operation_job_if_unblocked(
             first.to_db(),
             vec![target.clone()],
+            None,
         ),
         state
             .db
-            .insert_service_operation_job_if_unblocked(second.to_db(), vec![target]),
+            .insert_service_operation_job_if_unblocked(second.to_db(), vec![target], None),
     );
     let first_result = first_result.unwrap();
     let second_result = second_result.unwrap();
@@ -1234,7 +1246,13 @@ async fn service_operation_claim_allows_only_one_concurrent_lifecycle_job() {
 
 #[tokio::test]
 async fn service_lifecycle_does_not_block_on_read_only_update_preview() {
-    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+    let state = test_state_with_compose_bin(
+        ":memory:",
+        Arc::new(FakeRegistry),
+        Arc::new(FakeRunner),
+        "docker",
+    )
+    .await;
     let app = api::router(state.clone());
     let (stack_id, service_id, _compose_path) = seed_manual_rollback_service(&state).await;
     let now = test_now_rfc3339();
@@ -1262,4 +1280,116 @@ async fn service_lifecycle_does_not_block_on_read_only_update_preview() {
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
+}
+
+#[tokio::test]
+async fn service_lifecycle_does_not_block_on_unselected_stack_update_target() {
+    let state = test_state(":memory:").await;
+    let compose_dir = format!("/tmp/dockrev-targeted-update-{}", ulid::Ulid::new());
+    std::fs::create_dir_all(&compose_dir).unwrap();
+    let compose_path = format!("{compose_dir}/compose.yml");
+    std::fs::write(
+        &compose_path,
+        "services:\n  api:\n    image: ghcr.io/acme/api:1.0\n  web:\n    image: ghcr.io/acme/web:1.0\n",
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "targeted-update", &compose_path).await;
+    let api_id = service_id_by_name(&state, &stack_id, "api").await;
+    let web_id = service_id_by_name(&state, &stack_id, "web").await;
+    let now = test_now_rfc3339();
+    let mut update = crate::api::types::JobRecord::new_running(
+        ids::new_job_id(),
+        crate::api::types::JobType::Update,
+        crate::api::types::JobScope::Stack,
+        Some(stack_id.clone()),
+        None,
+        &now,
+    );
+    update.summary_json = serde_json::json!({
+        "mode": "apply",
+        "targets": [{ "serviceId": web_id }],
+    });
+    state.db.insert_job(update.to_db()).await.unwrap();
+
+    let target = crate::db::ServiceOperationTarget {
+        service_id: api_id,
+        stack_id,
+    };
+    let lifecycle = crate::api::types::JobRecord::new_running(
+        ids::new_job_id(),
+        crate::api::types::JobType::ServiceLifecycle,
+        crate::api::types::JobScope::Service,
+        Some(target.stack_id.clone()),
+        Some(target.service_id.clone()),
+        &now,
+    );
+
+    let conflict = state
+        .db
+        .insert_service_operation_job_if_unblocked(lifecycle.to_db(), vec![target], None)
+        .await
+        .unwrap();
+    assert!(conflict.is_none());
+}
+
+#[tokio::test]
+async fn service_lifecycle_does_not_block_on_empty_target_update() {
+    let state = test_state(":memory:").await;
+    let (stack_id, service_id, _compose_path) = seed_manual_rollback_service(&state).await;
+    let now = test_now_rfc3339();
+    let mut update = crate::api::types::JobRecord::new_running(
+        ids::new_job_id(),
+        crate::api::types::JobType::Update,
+        crate::api::types::JobScope::All,
+        None,
+        None,
+        &now,
+    );
+    update.summary_json = serde_json::json!({ "mode": "apply", "targets": [] });
+    state.db.insert_job(update.to_db()).await.unwrap();
+
+    let conflict = state
+        .db
+        .find_latest_pending_update_blocking_service(&stack_id, &service_id)
+        .await
+        .unwrap();
+    assert!(conflict.is_none());
+}
+
+#[tokio::test]
+async fn lifecycle_conflict_lookup_is_not_limited_by_unrelated_update_queue_depth() {
+    let state = test_state(":memory:").await;
+    let (stack_id, service_id, _compose_path) = seed_manual_rollback_service(&state).await;
+    let blocking_id = ids::new_job_id();
+    let blocking = crate::api::types::JobRecord::new_running(
+        blocking_id.clone(),
+        crate::api::types::JobType::Update,
+        crate::api::types::JobScope::All,
+        None,
+        None,
+        "2026-01-01T00:00:00Z",
+    );
+    state.db.insert_job(blocking.to_db()).await.unwrap();
+
+    for index in 0..201 {
+        let unrelated = crate::api::types::JobRecord::new_running(
+            ids::new_job_id(),
+            crate::api::types::JobType::Update,
+            crate::api::types::JobScope::Service,
+            Some("stack-unrelated".to_string()),
+            Some(format!("service-unrelated-{index}")),
+            &format!("2026-02-01T00:{:02}:{:02}Z", index / 60, index % 60),
+        );
+        state.db.insert_job(unrelated.to_db()).await.unwrap();
+    }
+
+    let conflict = crate::api::find_pending_service_operation_conflict(
+        &state,
+        &stack_id,
+        &service_id,
+    )
+    .await
+    .unwrap()
+    .expect("global update must still block the service");
+    assert_eq!(conflict.job.id, blocking_id);
 }

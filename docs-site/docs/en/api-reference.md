@@ -66,7 +66,7 @@ This page documents every HTTP route exposed in:
 
 - Service lifecycle contract:
   - `GET /api/services/{service_id}/lifecycle-status` returns `state=running|stopped|partial|unknown`, plus `activeJob` for a queued or running update, rollback, or lifecycle task on that service.
-  - `POST /api/services/{service_id}/lifecycle` accepts `{ "action": "start" | "stop" | "restart" }`. Start explicitly uses `up -d --pull never`; a Compose CLI that cannot honour it fails instead of falling back to a pull-capable path. Stop and restart use their corresponding Compose commands.
+  - `POST /api/services/{service_id}/lifecycle` accepts `{ "action": "start" | "stop" | "restart" }`. Compose V2 starts with `up -d --pull never --no-recreate`; Compose V1 uses `start`, which only starts an existing container. Neither path pulls an image or replaces an existing container. Start is unavailable under Compose V1 when no container exists. Stop and restart use their corresponding Compose commands.
   - Updates, rollbacks, and lifecycle tasks are serialized per service. Conflicts return `409` with `existingJobId`. The Dockrev service does not expose this lifecycle operation.
 
 ### 4) Jobs / Events
