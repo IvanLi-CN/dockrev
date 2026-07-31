@@ -19,13 +19,15 @@ mod new_version_notifications;
 mod repo_links;
 mod resource_usage;
 mod schema;
+mod service_operations;
 mod settings;
 mod snapshots;
 mod stacks;
 mod stacks_backup_targets;
 mod tag_history;
 
-pub(crate) use jobs::{JobListFilters, ServiceOperationTarget};
+pub(crate) use jobs::JobListFilters;
+pub(crate) use service_operations::ServiceOperationTarget;
 
 pub(crate) use new_version_discoveries::{
     candidate_tag_allows_settled_fallback, canonical_candidate_identity_tag,
@@ -511,7 +513,7 @@ pub enum PendingJobUpsert {
     Reused(Box<JobListItem>),
 }
 
-fn map_job_list_item_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobListItem> {
+pub(super) fn map_job_list_item_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobListItem> {
     let summary_json: String = row.get(13)?;
     let summary: serde_json::Value = serde_json::from_str(&summary_json).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
@@ -654,7 +656,10 @@ fn merge_job_summary_value(summary: &mut serde_json::Value, fields: &serde_json:
     }
 }
 
-fn insert_job_tx(tx: &rusqlite::Transaction<'_>, job: &JobListItem) -> anyhow::Result<()> {
+pub(super) fn insert_job_tx(
+    tx: &rusqlite::Transaction<'_>,
+    job: &JobListItem,
+) -> anyhow::Result<()> {
     tx.execute(
         r#"
 INSERT INTO jobs (

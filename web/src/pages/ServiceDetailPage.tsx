@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Cpu, Download, HardDriveDownload, HardDriveUpload, Layers3, MemoryStick, RotateCw, Upload } from "lucide-react";
+import { Layers3, RotateCw } from "lucide-react";
 import {
   createIgnore,
   deleteIgnore,
@@ -17,7 +17,7 @@ import {
   type ServiceSettings,
   type StackDetail,
 } from "../api";
-import { computeMonitorTerminalRate, formatMonitorBytes, formatMonitorPercent, formatMonitorRate, isMonitorDisabledError } from "./serviceDetailMonitorHelpers";
+import { isMonitorDisabledError } from "./serviceDetailMonitorHelpers";
 import { BackupPolicySegmentedControl } from "../components/BackupPolicySegmentedControl";
 import { BackupRecordList } from "../components/ServiceBackupRecords";
 import { ReadonlySnapshotNotice } from "../components/ReadonlySnapshotNotice";
@@ -27,6 +27,7 @@ import { usePwaStatus } from "../pwaStatus";
 import { buildReadonlySnapshotKey, readReadonlySnapshot, writeReadonlySnapshot } from "../readonlySnapshotCache";
 import { serviceRowStatus } from "../updateStatus";
 import { ServiceResourcePanel, type ServiceResourceSnapshot } from "../components/ServiceResourcePanel";
+import { ServiceTopbarMonitorSummary } from "../components/ServiceTopbarMonitorSummary";
 import { ServiceLogsPanel } from "../components/ServiceLogsPanel";
 import { createDefaultAutoUpdatePolicy } from "../components/AutoUpdatePolicyEditor";
 import { AutoUpdatePolicyDrawer } from "../components/AutoUpdatePolicyDrawer";
@@ -50,15 +51,12 @@ import {
   type ServiceDetailSection,
 } from "./serviceDetailPageHelpers";
 import { useServiceDetailPageState } from "./useServiceDetailPageState";
-
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message;
   return String(e);
 }
-
 const SERVICE_DETAIL_SNAPSHOT_STALE_MS = 60_000;
 const SERVICE_DETAIL_MONITORING_WINDOW: ServiceResourceUsageWindow = "1h";
-
 type ServiceDetailSnapshotPayload = {
   stack: StackDetail;
   jobs: JobListItem[];
@@ -69,7 +67,6 @@ type ServiceDetailSnapshotPayload = {
   backupRecords: ServiceBackupRecordItem[];
   monitoring: ServiceResourceSnapshot | null;
 };
-
 export function ServiceDetailPage(props: {
   stackId: string;
   serviceId: string;
@@ -159,7 +156,6 @@ export function ServiceDetailPage(props: {
   const [autoPolicyDraft, setAutoPolicyDraft] = useState(() => createDefaultAutoUpdatePolicy("inherit"));
   const [serviceSettingsDraft, setServiceSettingsDraft] = useState<ServiceSettings | null>(null);
   const [serviceBackupTargetsDraft, setServiceBackupTargetsDraft] = useState<BackupTargetsDraft>(() => createBackupTargetsDraft(null));
-
   const refreshRecentJobs = useCallback(async (activateLive = false, cursor: string | null = historyCursorRef.current, nextCursorStack?: (string | null)[]) => {
     const requestedServiceId = props.serviceId;
     const requestId = ++historyRequestIdRef.current;
@@ -186,7 +182,6 @@ export function ServiceDetailPage(props: {
     setVersionJobs(versionHistory);
     setVersionJobsLoaded(true);
   }, [props.serviceId]);
-
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -373,77 +368,10 @@ export function ServiceDetailPage(props: {
   const effectiveBackupRecords = snapshotActive ? (snapshotPayload?.backupRecords ?? backupRecords) : backupRecords;
   const effectiveMonitoringSnapshot = snapshotActive ? (snapshotPayload?.monitoring ?? monitoringSnapshot) : monitoringSnapshot;
   const readonlyUi = !isOnline || snapshotActive;
-  const latestMonitorSample =
-    effectiveMonitoringSnapshot != null && effectiveMonitoringSnapshot.samples.length > 0
-      ? effectiveMonitoringSnapshot.samples[effectiveMonitoringSnapshot.samples.length - 1] ?? null
-      : null;
-  const previousMonitorSample =
-    effectiveMonitoringSnapshot != null && effectiveMonitoringSnapshot.samples.length > 1
-      ? effectiveMonitoringSnapshot.samples[effectiveMonitoringSnapshot.samples.length - 2] ?? null
-      : null;
-  const latestMonitorDiskReadRate = computeMonitorTerminalRate(previousMonitorSample, latestMonitorSample, (sample) => sample.blockReadBytes);
-  const latestMonitorDiskWriteRate = computeMonitorTerminalRate(previousMonitorSample, latestMonitorSample, (sample) => sample.blockWriteBytes);
-  const latestMonitorRxRate = computeMonitorTerminalRate(previousMonitorSample, latestMonitorSample, (sample) => sample.netRxBytes);
-  const latestMonitorTxRate = computeMonitorTerminalRate(previousMonitorSample, latestMonitorSample, (sample) => sample.netTxBytes);
-  const monitorMetricGroups = useMemo(
-    () => [
-      {
-        key: "compute",
-        metrics: [
-          { label: "CPU", value: formatMonitorPercent(latestMonitorSample?.cpuPercent ?? null), icon: <Cpu className="svcDetailMonitorGlyph" aria-hidden="true" /> },
-          { label: "内存", value: formatMonitorBytes(latestMonitorSample?.memUsedBytes ?? null), icon: <MemoryStick className="svcDetailMonitorGlyph" aria-hidden="true" /> },
-        ],
-      },
-      {
-        key: "disk",
-        metrics: [
-          { label: "磁盘读", value: formatMonitorRate(latestMonitorDiskReadRate), icon: <HardDriveDownload className="svcDetailMonitorGlyph" aria-hidden="true" /> },
-          { label: "磁盘写", value: formatMonitorRate(latestMonitorDiskWriteRate), icon: <HardDriveUpload className="svcDetailMonitorGlyph" aria-hidden="true" /> },
-        ],
-      },
-      {
-        key: "network",
-        metrics: [
-          { label: "下载", value: formatMonitorRate(latestMonitorRxRate), icon: <Download className="svcDetailMonitorGlyph" aria-hidden="true" /> },
-          { label: "上传", value: formatMonitorRate(latestMonitorTxRate), icon: <Upload className="svcDetailMonitorGlyph" aria-hidden="true" /> },
-        ],
-      },
-    ],
-    [
-      latestMonitorDiskReadRate,
-      latestMonitorDiskWriteRate,
-      latestMonitorRxRate,
-      latestMonitorSample?.cpuPercent,
-      latestMonitorSample?.memUsedBytes,
-      latestMonitorTxRate,
-    ],
-  );
   const topbarMonitorSummary = useMemo(() => {
     if (!effectiveStack || !effectiveService) return null;
-
-    return (
-      <div className="topbarServiceMonitorSummary" data-service-detail-context="monitor-summary" aria-label="服务监控指标">
-        {monitorMetricGroups.map((group) => (
-          <div key={group.key} className="topbarServiceMonitorGroup" data-monitor-group={group.key}>
-            {group.metrics.map((metric) => (
-              <div
-                key={metric.label}
-                className="topbarServiceMonitorMetric"
-                data-monitor-metric={metric.label}
-                aria-label={`${metric.label} ${metric.value}`}
-                title={`${metric.label} ${metric.value}`}
-              >
-                <span className="topbarServiceMonitorMetricIcon" aria-hidden="true">
-                  {metric.icon}
-                </span>
-                <span className="topbarServiceMonitorMetricValue">{metric.value}</span>
-              </div>
-            ))}
-          </div>
-        ))}
-      </div>
-    );
-  }, [effectiveService, effectiveStack, monitorMetricGroups]);
+    return <ServiceTopbarMonitorSummary snapshot={effectiveMonitoringSnapshot} />;
+  }, [effectiveMonitoringSnapshot, effectiveService, effectiveStack]);
 
   useEffect(() => {
     onPageTitle?.(effectiveService?.name ?? "");

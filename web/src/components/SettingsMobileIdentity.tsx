@@ -1,10 +1,11 @@
 import { ShieldCheck, UserRound } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import type { TopbarAuthIdentity } from '../topbarAuthIdentity'
+import type { SettingsResponse } from '../api'
+import { buildTopbarAuthIdentityFromSettings } from '../topbarAuthIdentity'
 
-export function SettingsMobileIdentity(props: { authIdentity: TopbarAuthIdentity }) {
-  const { authIdentity } = props
+export function SettingsMobileIdentity(props: { auth: SettingsResponse['auth'] }) {
+  const authIdentity = buildTopbarAuthIdentityFromSettings(props.auth)
   const displayName = authIdentity.currentUser === '-' ? authIdentity.triggerLabel : authIdentity.currentUser
 
   return (

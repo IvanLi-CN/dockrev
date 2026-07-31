@@ -29,9 +29,7 @@ normalizeNotificationEvents,
 normalizeWebhookState,
 webhookStateLabel
 } from './settings/helpers'
-import { buildTopbarAuthIdentityFromSettings } from '../topbarAuthIdentity'
 import { useSettingsPageState } from './useSettingsPageState'
-
 export function SettingsPage(props: { section?: SettingsSection; onTopActions: (node: React.ReactNode) => void }) {
   const {
     autoSaveIssue,
@@ -102,22 +100,18 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
     updateSchedules,
     webPushEndpoint,
   } = useSettingsPageState(props)
-
   if (!settings || !notifications || !githubPackages) {
     return <div className="muted">加载中…</div>
   }
   return (
     <div className="page settingsPage" data-mobile-settings-section={props.section ?? 'index'}>
-      {!props.section ? (
-        <SettingsMobileIdentity authIdentity={buildTopbarAuthIdentityFromSettings(settings.auth)} />
-      ) : null}
+      {!props.section ? <SettingsMobileIdentity auth={settings.auth} /> : null}
       <SettingsMobileNavigation section={props.section} />
       <div className="twoCol settingsContentGrid">
         <div className="settingsCol">
           <div className="card settingsSectionCard" data-settings-section="account" data-mobile-active={props.section === 'account' || undefined}>
             <div className="title">鉴权（Forward Auth）</div>
             <div className="muted">认证由入口代理负责；Dockrev 按用户/组执行项目侧鉴权（运行时只读）</div>
-
             <div className="kv">
               <div className="kvRow">
                 <div className="label">用户头</div>
