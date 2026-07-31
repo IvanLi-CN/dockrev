@@ -10,6 +10,7 @@
 - 自动更新遇到同服务操作锁时释放 pending claim 供后续调度重试；候选失效等非暂时冲突仍保留既有跳过语义。
 - no-pull/no-recreate 约束优先：Compose V2 使用 `up --pull never --no-recreate`，Compose V1 使用仅作用于已有容器的 `start`；不得以默认 pull policy 启动服务或替换已有容器。
 - Compose V1 查询不到既有容器时返回 `container_missing_for_compose_v1` 并禁用启动，避免创建注定失败的 `start` 任务。
+- Compose V2 服务启动必须追加 `--no-deps`，使实际变更范围保持在服务级任务锁内。
 - 服务详情的视觉证据必须在完成 live refresh 后捕获；只读缓存快照会收束写操作，不能作为运行态操作栏的验收图。
 - 服务详情操作菜单采用项目的 shadcn/Radix `ButtonGroup` 与 `DropdownMenu`，由组件库处理焦点、方向键和 Escape 关闭语义；仅保留与 Dockrev 操作栏对齐的紧凑尺寸样式。
 - 顶部操作栏的旧主按钮固定宽度规则不适用于 split dropdown 的图标 trigger；该 trigger 固定为 36px，主按钮仍沿用既有宽度。

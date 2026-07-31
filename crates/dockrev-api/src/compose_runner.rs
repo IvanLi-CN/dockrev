@@ -100,6 +100,7 @@ impl ComposeStack {
                 "--pull".to_string(),
                 "never".to_string(),
                 "--no-recreate".to_string(),
+                "--no-deps".to_string(),
             ]);
         } else {
             // Compose V1 has no `up --pull never`; `start` only starts an
@@ -277,13 +278,14 @@ mod tests {
 
         let start = stack.start_service_without_pull(&cfg, "web");
         assert_eq!(
-            start.args[start.args.len() - 6..],
+            start.args[start.args.len() - 7..],
             [
                 "up".to_string(),
                 "-d".to_string(),
                 "--pull".to_string(),
                 "never".to_string(),
                 "--no-recreate".to_string(),
+                "--no-deps".to_string(),
                 "web".to_string(),
             ]
         );

@@ -31,7 +31,7 @@
 - `running` 默认主动作是“停止”；`stopped` 默认主动作是“启动”。
 - `partial` 表示多副本服务仅部分运行；`unknown` 表示 Compose 查询失败或结果无法判定。两种状态都保持菜单可见但不可执行；原因只在悬浮时显示为浮动提示，点击不可执行项时以 toast 提示。
 - 启动直接提交；停止和重启必须经现有确认交互确认后才创建任务。
-- 启动不得拉取镜像或替换已有容器：Compose V2 执行 `up -d --pull never --no-recreate <service>`，Compose V1 执行仅启动已有容器的 `start <service>`；若 V1 下容器尚不存在，状态接口返回不可用并禁止提交启动任务。停止执行对应 `stop <service>`；重启执行对应 `restart <service>`。
+- 启动不得拉取镜像、替换已有容器或影响依赖服务：Compose V2 执行 `up -d --pull never --no-recreate --no-deps <service>`，Compose V1 执行仅启动已有容器的 `start <service>`；若 V1 下容器尚不存在，状态接口返回不可用并禁止提交启动任务。停止执行对应 `stop <service>`；重启执行对应 `restart <service>`。
 - 同服务的 update、rollback、service_lifecycle 若有 queued 或 running 任务，新的同服务操作必须以 `409` 返回既有任务 ID。服务 status 响应也必须暴露该活动任务，前端可直接跳转详情。
 - Dockrev 自身服务不显示 lifecycle 菜单，继续只使用既有 Supervisor 自升级入口。
 - 当前默认主动作仅由 split button 的主按钮表达；不可用动作仍可发现，但不在菜单内展示原因。

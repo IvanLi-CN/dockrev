@@ -67,7 +67,7 @@ description: Dockrev API 与 Supervisor API 的全量接口清单。
 
 - 服务生命周期契约：
   - `GET /api/services/{service_id}/lifecycle-status` 返回 `state=running|stopped|partial|unknown`，并在存在同服务更新、回滚或生命周期任务时返回 `activeJob`。
-  - `POST /api/services/{service_id}/lifecycle` 请求体为 `{ "action": "start" | "stop" | "restart" }`。Compose V2 启动执行 `up -d --pull never --no-recreate`，Compose V1 执行 `start`（仅启动已有容器）；两者都不会拉取镜像或替换已有容器。Compose V1 不存在容器时返回不可用。停止和重启分别执行对应 Compose 命令。
+  - `POST /api/services/{service_id}/lifecycle` 请求体为 `{ "action": "start" | "stop" | "restart" }`。Compose V2 启动执行 `up -d --pull never --no-recreate --no-deps`，Compose V1 执行 `start`（仅启动已有容器）；两者都不会拉取镜像、替换已有容器或启动依赖服务。Compose V1 不存在容器时返回不可用。停止和重启分别执行对应 Compose 命令。
   - 同一服务的更新、回滚与生命周期任务串行；冲突返回 `409` 和 `existingJobId`。Dockrev 自身服务不支持该生命周期接口。
 
 ### 4) Jobs / Events
