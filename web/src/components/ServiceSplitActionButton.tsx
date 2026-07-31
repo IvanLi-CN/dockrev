@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { ChevronDown, Layers3, type LucideIcon } from 'lucide-react'
+import { Fragment, useState } from 'react'
+import { ChevronDown, Ellipsis, Layers3, type LucideIcon } from 'lucide-react'
 import { Button as UiButton } from './ui/button'
 import { ButtonGroup } from './ui/button-group'
 import {
@@ -7,6 +7,7 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from './ui/dropdown-menu'
 import { Toast, ToastProvider, ToastTitle, ToastViewport } from './ui/toast'
@@ -22,6 +23,116 @@ export type ServiceSplitActionItem = {
   loading?: boolean
   loadingClickable?: boolean
   onSelect: () => void
+}
+
+export type ServiceMobileActionGroup = {
+  id: string
+  items: ServiceSplitActionItem[]
+}
+
+function ServiceActionMenuItem(props: {
+  item: ServiceSplitActionItem
+  dataAttribute: 'data-service-mobile-action-item' | 'data-service-split-item'
+  onUnavailable: (message: string) => void
+}) {
+  const { item } = props
+  const ItemIcon = item.icon
+  const unavailable = Boolean(item.disabled)
+  const unavailableMessage = item.description?.trim() || '当前操作暂不可用'
+  const itemIconClassName = `serviceSplitActionMenuItemIcon${item.iconVariant === 'solid' ? ' serviceSplitActionIconSolid' : ''}`
+  const dataProps = { [props.dataAttribute]: item.id }
+  const menuItem = (
+    <DropdownMenuItem
+      aria-disabled={unavailable || undefined}
+      className="min-h-9 py-2 aria-disabled:cursor-not-allowed aria-disabled:opacity-70"
+      {...dataProps}
+      onSelect={() => {
+        if (unavailable) {
+          props.onUnavailable(unavailableMessage)
+          return
+        }
+        item.onSelect()
+      }}
+    >
+      <ItemIcon aria-hidden="true" className={itemIconClassName} />
+      <span>{item.label}</span>
+    </DropdownMenuItem>
+  )
+
+  return unavailable ? (
+    <Tooltip>
+      <TooltipTrigger asChild>{menuItem}</TooltipTrigger>
+      <TooltipContent className="max-w-[min(18rem,calc(100vw-2rem))] whitespace-normal leading-5" side="bottom">
+        {unavailableMessage}
+      </TooltipContent>
+    </Tooltip>
+  ) : menuItem
+}
+
+export function ServiceMobileActionMenu(props: {
+  ariaLabel?: string
+  groups: ServiceMobileActionGroup[]
+}) {
+  const ariaLabel = props.ariaLabel ?? '服务操作'
+  const groups = props.groups.filter((group) => group.items.length > 0)
+  const [unavailableToast, setUnavailableToast] = useState<{ id: number; message: string } | null>(null)
+
+  return (
+    <ToastProvider duration={3200}>
+      <TooltipProvider delayDuration={160}>
+        <div className="serviceMobileActionMenu">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <UiButton
+                aria-label={ariaLabel}
+                className="btn btnGhost serviceMobileActionMenuTrigger"
+                size="icon"
+                type="button"
+                variant="ghost"
+              >
+                <Ellipsis aria-hidden="true" className="serviceMobileActionMenuTriggerIcon" />
+              </UiButton>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              aria-label={ariaLabel}
+              className="serviceMobileActionMenuContent w-max min-w-[9rem] max-w-[calc(100vw-1.5rem)] border-border/90 shadow-[0_18px_42px_rgba(1,8,20,0.5)]"
+            >
+              {groups.map((group, groupIndex) => (
+                <Fragment key={group.id}>
+                  {groupIndex > 0 ? <DropdownMenuSeparator data-service-mobile-action-separator="true" /> : null}
+                  <DropdownMenuGroup data-service-mobile-action-group={group.id}>
+                    {group.items.map((item) => (
+                      <ServiceActionMenuItem
+                        dataAttribute="data-service-mobile-action-item"
+                        item={item}
+                        key={item.id}
+                        onUnavailable={(message) => setUnavailableToast({ id: Date.now(), message })}
+                      />
+                    ))}
+                  </DropdownMenuGroup>
+                </Fragment>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </TooltipProvider>
+      {unavailableToast ? (
+        <Toast
+          data-service-mobile-action-toast="true"
+          data-testid="service-mobile-action-toast"
+          key={unavailableToast.id}
+          onOpenChange={(open) => {
+            if (!open) setUnavailableToast(null)
+          }}
+          open
+        >
+          <ToastTitle>{unavailableToast.message}</ToastTitle>
+        </Toast>
+      ) : null}
+      <ToastViewport />
+    </ToastProvider>
+  )
 }
 
 export function ServiceStackDetailAction(props: {
@@ -91,37 +202,14 @@ export function ServiceSplitActionButton(props: {
             >
               <DropdownMenuGroup>
                 {props.items.map((item) => {
-                  const ItemIcon = item.icon
-                  const unavailable = Boolean(item.disabled)
-                  const unavailableMessage = item.description?.trim() || '当前操作暂不可用'
-                  const itemIconClassName = `serviceSplitActionMenuItemIcon${item.iconVariant === 'solid' ? ' serviceSplitActionIconSolid' : ''}`
-                  const menuItem = (
-                    <DropdownMenuItem
-                      aria-disabled={unavailable || undefined}
-                      className="min-h-9 py-2 aria-disabled:cursor-not-allowed aria-disabled:opacity-70"
-                      data-service-split-item={item.id}
+                  return (
+                    <ServiceActionMenuItem
+                      dataAttribute="data-service-split-item"
+                      item={item}
                       key={item.id}
-                      onSelect={() => {
-                        if (unavailable) {
-                          setUnavailableToast({ id: Date.now(), message: unavailableMessage })
-                          return
-                        }
-                        item.onSelect()
-                      }}
-                    >
-                      <ItemIcon aria-hidden="true" className={itemIconClassName} />
-                      <span>{item.label}</span>
-                    </DropdownMenuItem>
+                      onUnavailable={(message) => setUnavailableToast({ id: Date.now(), message })}
+                    />
                   )
-
-                  return unavailable ? (
-                    <Tooltip key={item.id}>
-                      <TooltipTrigger asChild>{menuItem}</TooltipTrigger>
-                      <TooltipContent className="max-w-[min(18rem,calc(100vw-2rem))] whitespace-normal leading-5" side="bottom">
-                        {unavailableMessage}
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : menuItem
                 })}
               </DropdownMenuGroup>
             </DropdownMenuContent>

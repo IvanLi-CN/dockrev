@@ -80,17 +80,18 @@ export function expectMobileServiceHeaderLayers({
   const brandLogo = doc.querySelector<HTMLElement>(".topbarLeft .brandLogoThemeSwitch");
   const userTrigger = doc.querySelector<HTMLElement>(".topbarUserSlotTopbar .topbarUserTrigger");
   const title = doc.querySelector<HTMLElement>('[data-slot="service-title"]');
+  const topbarMain = doc.querySelector<HTMLElement>(".appShellWithDetailSidebar .topbarMain");
   const actions = doc.querySelector<HTMLElement>(".topActions");
-  const stackAction = doc.querySelector<HTMLElement>(".serviceStackDetailAction");
-  const stackActionLabel = stackAction?.querySelector<HTMLElement>(".serviceStackDetailActionLabel");
-  const actionButtons = Array.from(actions?.querySelectorAll<HTMLElement>("button") ?? []);
+  const mobileActionTrigger = doc.querySelector<HTMLElement>(".serviceMobileActionMenuTrigger");
+  const desktopActions = doc.querySelector<HTMLElement>(".serviceDesktopActions");
 
   const brandRect = brandLogo?.getBoundingClientRect();
   const titleRect = title?.getBoundingClientRect();
-  const actionsRect = actions?.getBoundingClientRect();
+  const triggerRect = mobileActionTrigger?.getBoundingClientRect();
+  const topbarRect = topbarMain?.getBoundingClientRect();
   const centerY = (rect?: DOMRect) => ((rect?.top ?? 0) + (rect?.bottom ?? 0)) / 2;
 
-  expectStory(Boolean(menuButton && brandLogo && title && actions), "mobile service header should expose both global and service layers");
+  expectStory(Boolean(menuButton && brandLogo && title && actions && mobileActionTrigger), "mobile service header should expose the service action entry");
   expectStory(!userTrigger, "mobile service header should move user identity into settings");
   expectStory(
     (brandRect?.width ?? Number.POSITIVE_INFINITY) <= 36,
@@ -106,20 +107,20 @@ export function expectMobileServiceHeaderLayers({
     "mobile service name and brand icon should be vertically centered",
   );
   expectStory(
-    (actionsRect?.top ?? 0) >= (menuButton?.getBoundingClientRect().bottom ?? Number.MAX_SAFE_INTEGER) - 1,
-    "mobile service actions should occupy the second header row",
+    Math.abs(centerY(triggerRect) - centerY(brandRect)) <= 2,
+    "mobile service action entry and brand icon should be vertically centered",
   );
   expectStory(
-    (actions?.scrollWidth ?? 0) <= (actions?.clientWidth ?? 0) + 1,
-    "mobile service actions should fit without a horizontal scroller",
+    (triggerRect?.height ?? 0) >= 44 && (triggerRect?.width ?? 0) >= 44,
+    "mobile service action entry should keep a 44px touch target",
   );
   expectStory(
-    actionButtons.every((button) => button.getBoundingClientRect().height >= 44),
-    "mobile service actions should keep 44px touch targets",
+    getComputedStyle(desktopActions ?? doc.body).display === "none",
+    "mobile service header should hide the desktop split actions",
   );
-  expectStory(stackAction?.getAttribute("aria-label") === "Stack 详情", "mobile stack action should keep an accessible name");
   expectStory(
-    getComputedStyle(stackActionLabel ?? doc.body).display === "none",
-    "mobile stack action should use its icon instead of consuming a text column",
+    (topbarRect?.height ?? Number.POSITIVE_INFINITY) <= 68,
+    "mobile service header should remain a single row",
   );
+  expectStory(mobileActionTrigger?.getAttribute("aria-label") === "服务操作", "mobile action entry should keep an accessible name");
 }

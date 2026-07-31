@@ -9,6 +9,7 @@
 - 将服务详情顶部的更新动作收束为一个 split dropdown：有候选时默认“更新”，无候选时默认“回滚”，菜单始终可发现“预览更新 / 更新 / 回滚”。
 - 提供服务级 `启动 / 停止 / 重启` split dropdown，并把真实执行过程记录为可审计的队列任务。
 - 在 AppShell 顶栏显示当前服务名，并在名称与操作组之间显示服务资源摘要；正文不再重复服务标题或资源摘要。资源摘要按 `CPU + 内存`、`磁盘读 + 写`、`下载 + 上传` 三个不可拆分组随可用宽度逐级隐藏。
+- 移动端服务详情页头保持单行，右上角使用一个服务操作入口代替独立操作行；入口菜单按更新、生命周期、Stack 三组平铺，并以水平分隔线区分。
 - 生命周期任务与同一服务的 update、rollback 完全串行，并显示在服务操作历史中。
 
 ### Non-goals
@@ -34,6 +35,7 @@
 - 同服务的 update、rollback、service_lifecycle 若有 queued 或 running 任务，新的同服务操作必须以 `409` 返回既有任务 ID。服务 status 响应也必须暴露该活动任务，前端可直接跳转详情。
 - Dockrev 自身服务不显示 lifecycle 菜单，继续只使用既有 Supervisor 自升级入口。
 - 当前默认主动作仅由 split button 的主按钮表达；不可用动作仍可发现，但不在菜单内展示原因。
+- 桌面端保留两个 split button；移动端只显示一个 44px 服务操作入口。菜单直接列出更新三项、生命周期三项与 Stack 详情，不使用二级菜单或组标题，组间使用 UI 库分隔线。
 - 操作历史应包含 update、rollback 和 service_lifecycle；生命周期项显示“启动 / 停止 / 重启”而不是泛化类型名。
 
 ## 验收标准
@@ -42,6 +44,7 @@
 - Given 服务详情已加载，When 查看页面，Then 当前服务名显示在 AppShell 顶栏，正文不再重复渲染服务标题。
 - Given 服务详情顶栏空间缩小时，When 资源摘要无法完整容纳，Then 先整体隐藏网络组，再隐藏磁盘组，最后才隐藏 CPU 与内存组；任一组内的两个指标不得拆开、折行或造成横向溢出。
 - Given 服务正在运行，When 打开详情页，Then 生命周期 split button 主动作为“停止”；服务停止时为“启动”。
+- Given 在 393 × 852 移动视口打开服务详情，When 查看页头，Then Logo、服务名和服务操作入口处于同一行；展开入口后显示三组平铺菜单项及两条组间分隔线，页面不再保留第二行服务操作。
 - Given 状态为 partial 或 unknown，When 打开详情页，Then 生命周期菜单保留可见但不可执行，且原因可读取。
 - Given 用户点击停止或重启，When 未确认或关闭确认对话框，Then 不创建生命周期任务。
 - Given 某服务已有 queued/running update、rollback 或 lifecycle 任务，When 再提交该服务的任一此类操作，Then 后端返回冲突和既有任务 ID。
@@ -94,63 +97,34 @@ PR: none
 - source_type: `storybook_canvas`
 - target_program: `mock-only`
 - capture_scope: `browser-viewport`
-- requested_viewport: `mobile1 (320x568)`
-- viewport_strategy: `devtools-emulate` (matches the story-bound `mobile1` viewport; direct canvas capture avoids Storybook chrome)
+- requested_viewport: `393x852 CSS px`
+- viewport_strategy: `storybook-viewport`
 - margin_policy: `trim_only`
 - evidence_surface: `page`
 - sensitive_exclusion: `N/A`
 - submission_gate: `pending-owner-approval`
 - story_id_or_title: `Pages/ServiceDetailPage/LifecycleRunningMobile`
-- state: `mobile icon-logo header, monitor summary hidden`
-- evidence_note: `移动端页头首行使用图标 Logo，当前服务名紧邻 Logo 右侧并沿 Y 轴居中；第二行承载更新、生命周期和 Stack 详情操作，所有操作保持 44px 触摸高度，且页面没有横向溢出。边缘空白检查无需裁剪。`
+- state: `mobile single-row header, action menu closed`
+- evidence_note: `移动端页头保持单行：图标 Logo、当前服务名和 44px 服务操作入口沿 Y 轴居中；资源摘要和旧的第二行操作均不占用页头空间。边缘空白检查无需裁剪。`
 
-![Lifecycle running topbar metrics narrow](./assets/lifecycle-running-topbar-metrics-narrow.png)
-
-- source_type: `storybook_canvas`
-- target_program: `mock-only`
-- capture_scope: `browser-viewport`
-- requested_viewport: `420x820`
-- viewport_strategy: `browser-resize-fallback` (isolated iframe capture; story also declares mobile1)
-- margin_policy: `trim_only`
-- evidence_surface: `page`
-- sensitive_exclusion: `N/A`
-- submission_gate: `pending-owner-approval`
-- story_id_or_title: `Pages/ServiceDetailPage/LifecycleRunning`
-- state: `running`, lifecycle menu open
-- evidence_note: `生命周期主按钮和菜单分别使用实心停止方块、启动播放和重启顺时针回转图标；菜单由最长动作项自然撑开，图标与文字沿 Y 轴居中；不可用原因不占用行内布局，菜单不显示额外的默认标记。边缘空白检查无需裁剪。`
-
-![Lifecycle running lifecycle menu narrow](./assets/lifecycle-running-lifecycle-menu-narrow.png)
+![Service detail mobile actions closed](./assets/service-detail-mobile-actions-closed.png)
 
 - source_type: `storybook_canvas`
 - target_program: `mock-only`
 - capture_scope: `browser-viewport`
-- requested_viewport: `420x820`
-- viewport_strategy: `browser-resize-fallback` (isolated iframe capture; story also declares mobile1)
+- requested_viewport: `393x852 CSS px`
+- viewport_strategy: `storybook-viewport`
 - margin_policy: `trim_only`
 - evidence_surface: `page`
 - sensitive_exclusion: `N/A`
 - submission_gate: `pending-owner-approval`
-- story_id_or_title: `Pages/ServiceDetailPage/LifecycleUnknown`
-- state: `unknown`, unavailable item hovered
-- evidence_note: `生命周期菜单宽度由最长操作项自然撑开，只显示图标与动作名；不可执行原因不占用面板行高，悬浮“启动”显示完整浮动 Tooltip。边缘空白检查无需裁剪。`
+- story_id_or_title: `Pages/ServiceDetailPage/LifecycleRunningMobile`
+- state: `mobile service action menu open`
+- evidence_note: `右上角入口展开后，预览更新/更新/回滚、启动/停止/重启、Stack 详情按三组直接平铺；两条 UI 库分隔线表达组边界，面板按最长内容自然定宽，没有二级菜单或额外说明文字。边缘空白检查无需裁剪。`
 
-![Lifecycle unknown tooltip narrow](./assets/lifecycle-unknown-tooltip-page-narrow.png)
-
-- source_type: `storybook_canvas`
-- target_program: `mock-only`
-- capture_scope: `browser-viewport`
-- requested_viewport: `420x820`
-- viewport_strategy: `browser-resize-fallback` (isolated iframe capture; story also declares mobile1)
-- margin_policy: `trim_only`
-- evidence_surface: `page`
-- sensitive_exclusion: `N/A`
-- submission_gate: `pending-owner-approval`
-- story_id_or_title: `Pages/ServiceDetailPage/LifecycleUnknown`
-- state: `unknown`, unavailable item clicked
-- evidence_note: `点击不可执行的生命周期项关闭菜单并显示同一原因的 Toast；不会提交生命周期任务。边缘空白检查无需裁剪。`
-
-![Lifecycle unknown toast narrow](./assets/lifecycle-unknown-toast-page-narrow.png)
+![Service detail mobile actions open](./assets/service-detail-mobile-actions-open.png)
 
 ## 变更记录
 
 - 2026-07-30: 创建规格，冻结服务生命周期任务、操作菜单、串行边界、文档和 Storybook 验收契约。
+- 2026-07-31: 移动端页头收束为单行，并以三组平铺服务操作菜单替代第二行操作。

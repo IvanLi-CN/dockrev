@@ -1,11 +1,11 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Download, Eye, Play, RotateCcw, RotateCw, Square } from 'lucide-react'
+import { ArrowUpCircle, Download, Eye, Layers3, Play, RotateCcw, RotateCw, Square } from 'lucide-react'
 import { ApiError, archiveService, createIgnore, getServiceBackupRecords, getServiceBackupTargets, getServiceLifecycleStatus, getServiceRollbackTarget, getServiceSettings, getStack, getStackSettings, listIgnores, restoreService, triggerServiceLifecycle, triggerServiceRollback, triggerUpdate, type IgnoreRule, type Service, type ServiceBackupRecordItem, type ServiceBackupTargetsResponse, type ServiceLifecycleAction, type ServiceLifecycleStatusResponse, type ServiceRollbackTargetResponse, type ServiceSettings, type StackDetail, type StackSettings } from '../api'
 import { readUpdateGuardBlockedReason } from '../aggregateUpdateGuard'
 import { normalizeDigest } from '../components/digest'
 import { backupSummaryValue, summarizeServiceOperationBackups } from '../components/serviceOperationBackupSummary'
 import { ServiceUpdateConfirmDetails } from '../components/ServiceUpdateConfirmDetails'
-import { ServiceSplitActionButton, ServiceStackDetailAction } from '../components/ServiceSplitActionButton'
+import { ServiceMobileActionMenu, ServiceSplitActionButton, ServiceStackDetailAction } from '../components/ServiceSplitActionButton'
 import { useConfirm } from '../confirm'
 import { DIGEST_SNAPSHOT_UPDATED_EVENT, type DigestSnapshotUpdatedDetail } from '../digestInferenceTracker'
 import { normalizeExternalHttpUrl } from '../imageLinks'
@@ -811,13 +811,21 @@ export function useServiceDetailPageState(props: {
 
   const topActions = useMemo(() => {
     if (dockrevSelfUpgradeAction) {
+      const selfUpgradeItems = [
+        { id: 'dockrev-upgrade', label: dockrevSelfUpgradeAction.label, icon: ArrowUpCircle, description: dockrevSelfUpgradeAction.disabledReason ?? undefined, disabled: dockrevSelfUpgradeAction.disabled, onSelect: dockrevSelfUpgradeAction.open },
+        ...(dockrevSelfUpgradeAction.retryVisible ? [{ id: 'dockrev-upgrade-retry', label: '重试', icon: RotateCw, disabled: dockrevSelfUpgradeAction.retryDisabled, onSelect: dockrevSelfUpgradeAction.retry }] : []),
+      ]
+      const stackItem = { id: 'stack-details', label: 'Stack 详情', icon: Layers3, disabled: busy, onSelect: () => navigate({ name: 'stack' as const, stackId }) }
       return (
         <>
-          <Button variant="primary" disabled={dockrevSelfUpgradeAction.disabled} hint={dockrevSelfUpgradeAction.disabledReason ?? undefined} onClick={dockrevSelfUpgradeAction.open}>
-            {dockrevSelfUpgradeAction.label}
-          </Button>
-          {dockrevSelfUpgradeAction.retryVisible ? <Button variant="ghost" disabled={dockrevSelfUpgradeAction.retryDisabled} onClick={dockrevSelfUpgradeAction.retry}>重试</Button> : null}
-          <ServiceStackDetailAction disabled={busy} onClick={() => navigate({ name: 'stack', stackId })} />
+          <div className="serviceDesktopActions">
+            <Button variant="primary" disabled={dockrevSelfUpgradeAction.disabled} hint={dockrevSelfUpgradeAction.disabledReason ?? undefined} onClick={dockrevSelfUpgradeAction.open}>
+              {dockrevSelfUpgradeAction.label}
+            </Button>
+            {dockrevSelfUpgradeAction.retryVisible ? <Button variant="ghost" disabled={dockrevSelfUpgradeAction.retryDisabled} onClick={dockrevSelfUpgradeAction.retry}>重试</Button> : null}
+            <ServiceStackDetailAction disabled={busy} onClick={() => navigate({ name: 'stack', stackId })} />
+          </div>
+          <ServiceMobileActionMenu groups={[{ id: 'upgrade', items: selfUpgradeItems }, { id: 'stack', items: [stackItem] }]} />
         </>
       )
     }
@@ -869,12 +877,20 @@ export function useServiceDetailPageState(props: {
     const lifecyclePrimary = activeLifecycle
       ? { ...lifecycleItems.find((item) => item.id === `lifecycle-${activeLifecycle.action ?? 'restart'}`)!, label: activeLifecycle.status === 'queued' ? '操作排队中…' : '操作进行中…', disabled: false, loading: true, loadingClickable: true, description: '任务进行中，点击查看任务详情' }
       : lifecycleState === 'stopped' ? lifecycleItems[0] : lifecycleItems[1]
+    const stackItem = { id: 'stack-details', label: 'Stack 详情', icon: Layers3, disabled: busy, onSelect: () => navigate({ name: 'stack' as const, stackId }) }
 
     return (
       <>
-        <ServiceSplitActionButton ariaLabel="更新操作" items={updateItems} primary={updatePrimary} />
-        <ServiceSplitActionButton ariaLabel="服务生命周期" items={lifecycleItems} primary={lifecyclePrimary} />
-        <ServiceStackDetailAction disabled={busy} onClick={() => navigate({ name: 'stack', stackId })} />
+        <div className="serviceDesktopActions">
+          <ServiceSplitActionButton ariaLabel="更新操作" items={updateItems} primary={updatePrimary} />
+          <ServiceSplitActionButton ariaLabel="服务生命周期" items={lifecycleItems} primary={lifecyclePrimary} />
+          <ServiceStackDetailAction disabled={busy} onClick={() => navigate({ name: 'stack', stackId })} />
+        </div>
+        <ServiceMobileActionMenu groups={[
+          { id: 'update', items: updateItems },
+          { id: 'lifecycle', items: lifecycleItems },
+          { id: 'stack', items: [stackItem] },
+        ]} />
       </>
     )
   }, [applyActiveJob, applySubmitting, busy, dockrevSelfUpgradeAction, lifecycleStatus, requestApplyUpdate, requestLifecycleAction, requestPreviewUpdate, requestRollback, rollbackActiveJobId, rollbackActiveJobStatus, rollbackHint, rollbackTarget?.available, rollbackTargetRefreshing, service, stackId])

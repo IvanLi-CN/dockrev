@@ -2,7 +2,7 @@ import type { Meta } from "@storybook/react";
 import { ServiceDetailPage } from "../../pages/ServiceDetailPage";
 import { currentRoutePathname } from "../../routes";
 import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
-import { expectMobileServiceHeaderLayers, expectMobileTopbarMonitorHidden, expectNoLegacyServiceDetailHero, expectTopbarMonitorSummary } from "./serviceDetailHeaderAssertions";
+import { expectMobileTopbarMonitorHidden, expectNoLegacyServiceDetailHero, expectTopbarMonitorSummary } from "./serviceDetailHeaderAssertions";
 import { expectHistoryColumnsAligned } from "./serviceDetailHistoryAssertions";
 import { buildLongLogsSnapshot, buildMultilineLogsSnapshot, historyReleaseNotes, paginatedHistoryJobs, partialHistoryBackupRecords } from "./serviceDetailPageStoryFixtures";
 import { assertRecentUpdateKeyboardNavigation, assertRecentUpdateReasonPopoverStaysOnRoute } from "./recentUpdateStoryAssertions";
@@ -1225,17 +1225,33 @@ export const LifecycleRunning: Story = {
 };
 
 export const LifecycleRunningMobile: Story = {
+  globals: {
+    viewport: { value: "dockrevMobile", isRotated: false },
+  },
   parameters: {
     dockrevApiScenario: "service-detail-lifecycle-running",
-    viewport: { defaultViewport: "mobile1" },
+    viewport: {
+      options: {
+        dockrevMobile: {
+          name: "现代中国智能手机 (393 × 852)",
+          styles: { width: "393px", height: "852px" },
+          type: "mobile",
+        },
+      },
+    },
   },
   render: render("stack-prod", "svc-prod-api", "overview", "移动端首行使用图标 Logo，并在右侧显示当前服务名。"),
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument;
-    await waitForCondition(() => findButton(doc, "停止") != null);
-    expectStory(Boolean(findButton(doc, "更新")), "mobile running service should retain the update action");
-    expectStory(Boolean(findButton(doc, "停止")), "mobile running service should retain the lifecycle action");
-    expectMobileServiceHeaderLayers({ doc, expectStory });
+    await waitForCondition(() => Boolean(doc.querySelector('[aria-label="服务操作"]')));
+    doc.querySelector<HTMLButtonElement>('[aria-label="服务操作"]')?.click();
+    await waitForCondition(() => Boolean(doc.querySelector('[role="menu"][aria-label="服务操作"]')));
+    expectStory(doc.querySelectorAll('[data-service-mobile-action-group]').length === 3, "mobile service menu should expose three flat groups");
+    expectStory(doc.querySelectorAll('[data-service-mobile-action-separator]').length === 2, "mobile service menu should separate its three groups");
+    expectStory(Boolean(doc.querySelector('[data-service-mobile-action-item="execute-update"]')), "mobile service menu should retain update");
+    expectStory(Boolean(doc.querySelector('[data-service-mobile-action-item="lifecycle-stop"]')), "mobile service menu should retain lifecycle actions");
+    expectStory(Boolean(doc.querySelector('[data-service-mobile-action-item="stack-details"]')), "mobile service menu should retain Stack details");
+    expectStory(!doc.querySelector('[data-slot="dropdown-menu-sub-trigger"]'), "mobile service menu should not introduce nested menus");
   },
 };
 
@@ -1262,9 +1278,20 @@ export const LifecyclePartial: Story = {
 };
 
 export const LifecycleUnknown: Story = {
+  globals: {
+    viewport: { value: "dockrevMobile", isRotated: false },
+  },
   parameters: {
     dockrevApiScenario: "service-detail-lifecycle-unknown",
-    viewport: { defaultViewport: "mobile1" },
+    viewport: {
+      options: {
+        dockrevMobile: {
+          name: "现代中国智能手机 (393 × 852)",
+          styles: { width: "393px", height: "852px" },
+          type: "mobile",
+        },
+      },
+    },
   },
   render: render("stack-prod", "svc-prod-api", "overview", "运行态未知时只保留可发现的生命周期菜单。"),
   play: async ({ canvasElement }) => {
@@ -1272,9 +1299,9 @@ export const LifecycleUnknown: Story = {
     await waitForCondition(() => Boolean(findButton(doc, "停止")));
     const trigger = findButton(doc, "停止");
     expectStory(trigger?.disabled, "unknown lifecycle state must disable its primary action");
-    doc.querySelector<HTMLButtonElement>('[aria-label="服务生命周期菜单"]')?.click();
-    await waitForCondition(() => Boolean(doc.querySelector('[data-service-split-item="lifecycle-restart"]')));
-    expectStory(doc.querySelector<HTMLButtonElement>('[data-service-split-item="lifecycle-restart"]')?.getAttribute("aria-disabled") === "true", "unknown lifecycle menu actions must stay unavailable");
+    doc.querySelector<HTMLButtonElement>('[aria-label="服务操作"]')?.click();
+    await waitForCondition(() => Boolean(doc.querySelector('[data-service-mobile-action-item="lifecycle-restart"]')));
+    expectStory(doc.querySelector<HTMLButtonElement>('[data-service-mobile-action-item="lifecycle-restart"]')?.getAttribute("aria-disabled") === "true", "unknown lifecycle menu actions must stay unavailable");
   },
 };
 

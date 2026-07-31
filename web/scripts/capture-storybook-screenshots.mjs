@@ -684,6 +684,31 @@ async function main() {
         await page.locator('.readonlySnapshotNotice-warn').screenshot({ path: filePath })
       },
     },
+    {
+      id: 'pages-servicedetailpage--lifecycle-running-mobile',
+      file: 'service-detail-mobile-actions-closed.png',
+      viewport: { width: 393, height: 852 },
+      setup: async (page) => {
+        await page.locator('[aria-label="服务操作"]').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.keyboard.press('Escape')
+        await page.locator('[role="menu"][aria-label="服务操作"]').waitFor({ state: 'hidden', timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        await page.screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'pages-servicedetailpage--lifecycle-running-mobile',
+      file: 'service-detail-mobile-actions-open.png',
+      viewport: { width: 393, height: 852 },
+      setup: async (page) => {
+        await page.locator('[aria-label="服务操作"]').click()
+        await page.locator('[role="menu"][aria-label="服务操作"]').waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        await page.screenshot({ path: filePath })
+      },
+    },
   ]
 
   try {

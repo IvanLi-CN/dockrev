@@ -149,6 +149,14 @@
   fill: currentColor;
 }
 
+.serviceDesktopActions {
+  display: contents;
+}
+
+.serviceMobileActionMenu {
+  display: none;
+}
+
 .themeToggle {
   display: inline-flex;
   align-items: center;
@@ -11915,21 +11923,13 @@ html[data-theme="light"] .btnPrimary {
   .appShellWithDetailSidebar .topbarMain {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
-    grid-template-areas:
-      'left context user'
-      'actions actions actions';
-    min-height: 0;
+    grid-template-areas: 'left context actions';
+    min-height: 56px;
     align-items: center;
     column-gap: 8px;
     row-gap: 0;
     padding: 0 14px;
-    background-image: linear-gradient(
-      color-mix(in srgb, var(--borderColor) 54%, transparent),
-      color-mix(in srgb, var(--borderColor) 54%, transparent)
-    );
-    background-position: 0 56px;
-    background-repeat: no-repeat;
-    background-size: 100% 1px;
+    background-image: none;
   }
 
   .appShellWithDetailSidebar .topbarLeft {
@@ -11979,11 +11979,11 @@ html[data-theme="light"] .btnPrimary {
 
   .appShellWithDetailSidebar .topActions {
     grid-area: actions;
-    align-self: stretch;
-    min-height: 52px;
-    min-width: max-content;
-    gap: 6px;
-    justify-content: flex-start;
+    align-self: center;
+    min-height: 44px;
+    min-width: 44px;
+    gap: 0;
+    justify-content: flex-end;
     overflow: visible;
     padding: 0;
     border: 0;
@@ -12002,6 +12002,29 @@ html[data-theme="light"] .btnPrimary {
     padding: 0 4px;
     font-size: 12px;
     white-space: nowrap;
+  }
+
+  .appShellWithDetailSidebar .topActions .serviceDesktopActions {
+    display: none;
+  }
+
+  .appShellWithDetailSidebar .topActions .serviceMobileActionMenu {
+    display: block;
+    width: 44px;
+    height: 44px;
+  }
+
+  .appShellWithDetailSidebar .topActions .serviceMobileActionMenuTrigger {
+    width: 44px !important;
+    min-width: 44px !important;
+    height: 44px !important;
+    min-height: 44px !important;
+    padding: 0;
+  }
+
+  .serviceMobileActionMenuTriggerIcon {
+    width: 20px;
+    height: 20px;
   }
 
   .appShellWithDetailSidebar .topActions .serviceSplitAction[data-slot='button-group'] > .serviceSplitActionMenuTrigger {
