@@ -62,8 +62,6 @@
 
 ## Visual Evidence
 
-PR: none
-
 - source_type: `storybook_canvas`
 - target_program: `mock-only`
 - capture_scope: `browser-viewport`
@@ -102,10 +100,12 @@ PR: none
 - margin_policy: `trim_only`
 - evidence_surface: `page`
 - sensitive_exclusion: `N/A`
-- submission_gate: `pending-owner-approval`
+- submission_gate: `approved`
 - story_id_or_title: `Pages/ServiceDetailPage/LifecycleRunningMobile`
 - state: `mobile single-row header, action menu closed`
 - evidence_note: `移动端页头保持单行：图标 Logo、当前服务名和 44px 服务操作入口沿 Y 轴居中；资源摘要和旧的第二行操作均不占用页头空间。边缘空白检查无需裁剪。`
+
+PR: include
 
 ![Service detail mobile actions closed](./assets/service-detail-mobile-actions-closed.png)
 
@@ -117,10 +117,12 @@ PR: none
 - margin_policy: `trim_only`
 - evidence_surface: `page`
 - sensitive_exclusion: `N/A`
-- submission_gate: `pending-owner-approval`
+- submission_gate: `approved`
 - story_id_or_title: `Pages/ServiceDetailPage/LifecycleRunningMobile`
 - state: `mobile service action menu open`
 - evidence_note: `右上角入口展开后，预览更新/更新/回滚、启动/停止/重启、Stack 详情按三组直接平铺；两条 UI 库分隔线表达组边界，面板按最长内容自然定宽，没有二级菜单或额外说明文字。边缘空白检查无需裁剪。`
+
+PR: include
 
 ![Service detail mobile actions open](./assets/service-detail-mobile-actions-open.png)
 
@@ -128,3 +130,4 @@ PR: none
 
 - 2026-07-30: 创建规格，冻结服务生命周期任务、操作菜单、串行边界、文档和 Storybook 验收契约。
 - 2026-07-31: 移动端页头收束为单行，并以三组平铺服务操作菜单替代第二行操作。
+- 2026-07-31: 主人确认移动端关闭态与展开态证据；移除已被当前布局取代且不再被规范引用的旧截图。
