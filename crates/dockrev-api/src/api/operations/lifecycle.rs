@@ -183,6 +183,13 @@ pub(crate) async fn trigger_service_lifecycle(
 ) -> Result<Json<TriggerServiceLifecycleResponse>, ApiError> {
     let user = require_user(&state, &headers).await?;
     let (stack, service) = resolve_lifecycle_subject(&state, &service_id).await?;
+    if stack.archived || service.archived == Some(true) {
+        return Err(
+            ApiError::conflict("archived service cannot be managed").with_details(json!({
+                "reason": if stack.archived { "stack_archived" } else { "service_archived" },
+            })),
+        );
+    }
     if updater::is_dockrev_image_ref(
         &service.image.reference,
         Some(state.config.dockrev_image_repo.as_str()),

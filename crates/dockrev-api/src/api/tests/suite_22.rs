@@ -1149,6 +1149,46 @@ async fn service_lifecycle_status_and_start_task_are_service_scoped() {
 }
 
 #[tokio::test]
+async fn service_lifecycle_rejects_archived_services_and_stacks() {
+    for archive_stack in [false, true] {
+        let state = test_state(":memory:").await;
+        let app = api::router(state.clone());
+        let (stack_id, service_id, _compose_path) = seed_manual_rollback_service(&state).await;
+        let now = test_now_rfc3339();
+        if archive_stack {
+            state
+                .db
+                .set_stack_archived(&stack_id, true, Some("test"), &now)
+                .await
+                .unwrap();
+        } else {
+            state
+                .db
+                .set_service_archived(&service_id, true, Some("test"), &now)
+                .await
+                .unwrap();
+        }
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/services/{service_id}/lifecycle"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"action":"start"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 409);
+        assert_eq!(
+            response_json(response).await["error"]["details"]["reason"].as_str(),
+            Some(if archive_stack { "stack_archived" } else { "service_archived" }),
+        );
+    }
+}
+
+#[tokio::test]
 async fn service_lifecycle_conflict_exposes_existing_service_operation_job() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());

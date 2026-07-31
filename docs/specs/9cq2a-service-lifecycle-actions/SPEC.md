@@ -34,6 +34,7 @@
 - 启动不得拉取镜像、替换已有容器或影响依赖服务：Compose V2 执行 `up -d --pull never --no-recreate --no-deps <service>`，Compose V1 执行仅启动已有容器的 `start <service>`；若 V1 下容器尚不存在，状态接口返回不可用并禁止提交启动任务。停止执行对应 `stop <service>`；重启执行对应 `restart <service>`。
 - 同服务的 update、rollback、service_lifecycle 若有 queued 或 running 任务，新的同服务操作必须以 `409` 返回既有任务 ID。服务 status 响应也必须暴露该活动任务，前端可直接跳转详情。
 - Dockrev 自身服务不显示 lifecycle 菜单，继续只使用既有 Supervisor 自升级入口。
+- 已归档的服务或所属 Stack 不接受生命周期写操作；历史详情保持可读。
 - 当前默认主动作仅由 split button 的主按钮表达；不可用动作仍可发现，但不在菜单内展示原因。
 - 桌面端保留两个 split button；移动端只显示一个 44px 服务操作入口。菜单直接列出更新三项、生命周期三项与 Stack 详情，不使用二级菜单或组标题，组间使用 UI 库分隔线。
 - 操作历史应包含 update、rollback 和 service_lifecycle；生命周期项显示“启动 / 停止 / 重启”而不是泛化类型名。
