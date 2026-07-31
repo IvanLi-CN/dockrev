@@ -243,8 +243,10 @@ export const MobileBottomNavAndDrawer: Story = {
     expectStory(drawer?.textContent?.includes('prod'), 'Mobile drawer should render stack names')
     expectStory(drawer?.textContent?.includes('api'), 'Mobile drawer should render service names')
 
-    const identityTrigger = canvasElement.querySelector<HTMLButtonElement>('.topbarUserSlotTopbar .topbarUserTrigger')
-    expectStory(identityTrigger, 'Mobile header should retain the user identity trigger')
+    expectStory(
+      !canvasElement.querySelector('.topbarUserSlotTopbar'),
+      'Mobile header should move the user identity entry into settings',
+    )
     expectStory(
       !canvasElement.querySelector('.topbarUserSlotSidebar'),
       'Mobile AppShell should not mount the desktop sidebar identity trigger',

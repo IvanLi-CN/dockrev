@@ -4,6 +4,7 @@ import { PageHarness } from '../mocks/PageHarness'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
 import { derivePublicBaseUrlSuggestion } from '../../publicBaseUrlSuggestion'
 import { currentRoutePathname } from '../../routes'
+import type { SettingsSection } from '../../routes'
 
 const meta: Meta<typeof SettingsPage> = {
   title: 'Pages/SettingsPage',
@@ -28,12 +29,14 @@ function preparePublicBaseUrlSuggestionStorage(mode: 'clear' | 'dismissed' = 'cl
 
 function renderSettingsPage(
   pageSubtitle = 'Forward Auth · 用户/组鉴权 · 通知配置 · 备份默认策略',
-  options?: { publicBaseUrlSuggestion?: 'clear' | 'dismissed' },
+  options?: { publicBaseUrlSuggestion?: 'clear' | 'dismissed'; section?: SettingsSection },
 ) {
   preparePublicBaseUrlSuggestionStorage(options?.publicBaseUrlSuggestion ?? 'clear')
   return (
-    <PageHarness route={{ name: 'settings' }} title="系统设置" pageSubtitle={pageSubtitle}>
-      {({ onTopActions }) => <SettingsPage onTopActions={onTopActions} />}
+    <PageHarness route={{ name: 'settings', section: options?.section }} title="系统设置" pageSubtitle={pageSubtitle}>
+      {({ route, onTopActions }) => (
+        <SettingsPage section={route.name === 'settings' ? route.section : undefined} onTopActions={onTopActions} />
+      )}
     </PageHarness>
   )
 }
@@ -82,6 +85,58 @@ export const DefaultLight: Story = {
     theme: 'light',
     backgrounds: { value: 'light' },
   },
+}
+
+export const MobileIdentityFirst: Story = {
+  parameters: {
+    dockrevApiScenario: 'settings-configured',
+    viewport: { defaultViewport: 'mobile' },
+    docs: {
+      description: {
+        story: '在 393 × 852 CSS px 视口验证当前账户位于移动设置页首项，页头不再显示头像入口。',
+      },
+    },
+  },
+  render: () => renderSettingsPage(),
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    const settingsPage = canvasElement.querySelector<HTMLElement>('.settingsPage')
+    const identity = settingsPage?.querySelector<HTMLElement>('.settingsMobileIdentity')
+    if (!settingsPage || !identity) throw new globalThis.Error('expected mobile settings identity')
+    if (settingsPage.firstElementChild !== identity) {
+      throw new globalThis.Error('mobile identity must be the first settings page item')
+    }
+    if (!identity.textContent?.includes('alice') || !identity.textContent?.includes('Forward Auth')) {
+      throw new globalThis.Error('expected current identity summary')
+    }
+    if (identity.getBoundingClientRect().height > 100) {
+      throw new globalThis.Error('mobile identity summary must stay within 100px')
+    }
+    const destinations = settingsPage.querySelectorAll<HTMLButtonElement>('.settingsMobileIndexItem')
+    if (destinations.length !== 8) throw new globalThis.Error('expected eight mobile settings destinations')
+    if (canvasElement.ownerDocument.querySelector('.topbarUserSlotTopbar')) {
+      throw new globalThis.Error('mobile topbar identity entry should not render')
+    }
+    destinations[0]?.click()
+    for (let attempt = 0; attempt < 20 && currentRoutePathname() !== '/settings/account'; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    if (currentRoutePathname() !== '/settings/account') {
+      throw new globalThis.Error('mobile account destination should open a second-level route')
+    }
+    const activeCards = settingsPage.querySelectorAll<HTMLElement>('.settingsSectionCard[data-mobile-active="true"]')
+    if (activeCards.length !== 1 || activeCards[0]?.dataset.settingsSection !== 'account') {
+      throw new globalThis.Error('account route should expose only the account settings section')
+    }
+  },
+}
+
+export const MobileAccountSubpage: Story = {
+  parameters: {
+    dockrevApiScenario: 'settings-configured',
+    viewport: { defaultViewport: 'mobile' },
+  },
+  render: () => renderSettingsPage('Forward Auth · 用户/组鉴权', { section: 'account' }),
 }
 
 export const ResourceMonitorCoordinator: Story = {

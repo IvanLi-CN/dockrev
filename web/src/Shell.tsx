@@ -283,6 +283,7 @@ export function AppShell(props: {
     ) : null;
   const shellClassName = [
     "appShell",
+    props.route.name === "settings" ? "appShellSettings" : null,
     props.topbarContent ? "appShellWithTopbarContent" : null,
     hasDetailSidebar ? "appShellWithDetailSidebar" : null,
     sidebarCollapsed ? "appShellSidebarCollapsed" : null,
@@ -378,7 +379,6 @@ export function AppShell(props: {
                 {props.topActions ? (
                   <div className="topActions">{props.topActions}</div>
                 ) : null}
-                {mobileMenuMediaMatches ? <TopbarUserIdentity authIdentity={props.authIdentity} /> : null}
               </div>
             </div>
           </header>

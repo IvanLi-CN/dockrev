@@ -444,7 +444,7 @@ export default function App() {
           <GhcrWebhookRegistryPage onTopActions={setPageActions} />
         ) : null}
         {route.name === "settings" ? (
-          <SettingsPage onTopActions={setPageActions} />
+          <SettingsPage section={route.section} onTopActions={setPageActions} />
         ) : null}
         {route.name === "stack" ? (
           <StackDetailPage

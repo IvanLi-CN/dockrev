@@ -452,7 +452,7 @@ export const MobileHistorySection: Story = {
     const title = row?.querySelector<HTMLElement>(".serviceOperationHistoryOperationTitle");
     const topbar = canvasElement.ownerDocument.querySelector<HTMLElement>(".topbar");
     const menuButton = canvasElement.ownerDocument.querySelector<HTMLElement>(".mobileMenuButton");
-    const userTrigger = canvasElement.ownerDocument.querySelector<HTMLElement>(".topbarUserSlot .topbarUserTrigger");
+    const brandLogo = canvasElement.ownerDocument.querySelector<HTMLElement>(".topbarLeft .brandLogoThemeSwitch");
     const appShell = canvasElement.ownerDocument.querySelector<HTMLElement>(".appShell");
     expectStory(findTab(canvasElement, "history")?.getAttribute("data-state") === "active", "mobile history tab should stay active");
     expectStory(Boolean(table), "mobile history table missing");
@@ -480,8 +480,8 @@ export const MobileHistorySection: Story = {
       "mobile history status pill should sit to the right of the card title",
     );
     expectStory(
-      Math.abs((menuButton?.getBoundingClientRect().top ?? 0) - (userTrigger?.getBoundingClientRect().top ?? 0)) <= 2,
-      "mobile detail topbar should keep menu, brand row, and user trigger on the same first-row baseline",
+      Math.abs((menuButton?.getBoundingClientRect().top ?? 0) - (brandLogo?.getBoundingClientRect().top ?? 0)) <= 2,
+      "mobile detail topbar should keep menu and brand on the same first-row baseline",
     );
     expectStory(row?.scrollWidth != null && row.clientWidth > 0 && row.scrollWidth <= row.clientWidth + 1, "mobile history rows should not overflow horizontally");
     expectStory(getComputedStyle(row ?? canvasElement).gridTemplateAreas.includes("backup source time"), "mobile history should use the compact two-row grid with the backup column");

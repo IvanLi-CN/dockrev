@@ -9647,6 +9647,15 @@ html[data-theme="light"] .modalOverlay {
   gap: 16px;
 }
 
+.settingsMobileIdentity {
+  display: none;
+}
+
+.settingsMobileIndex,
+.settingsMobileSubpageHeader {
+  display: none;
+}
+
 .settingHead {
   display: flex;
   align-items: center;
@@ -14675,6 +14684,192 @@ html[data-theme="light"] .homepageHeaderSearchPopover {
 }
 
 @media (max-width: 960px) {
+  .appShellSettings .topActions {
+    display: none;
+  }
+
+  .settingsMobileIdentity {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    box-sizing: border-box;
+    height: 76px;
+    max-height: 100px;
+    min-width: 0;
+    margin-bottom: 8px;
+    padding: 8px 2px 10px;
+    border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
+  }
+
+  .settingsMobileIndex {
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
+  }
+
+  .settingsMobileIndexItem.btn {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr) 18px;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    height: 60px;
+    min-height: 60px;
+    padding: 0 4px;
+    border: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 76%, transparent);
+    border-radius: 0;
+    background: transparent;
+    color: var(--text);
+    text-align: left;
+  }
+
+  .settingsMobileIndexItem.btn:hover:not(:disabled) {
+    transform: none;
+    background: color-mix(in srgb, var(--dockrev-surface-strong) 70%, transparent);
+  }
+
+  .settingsMobileIndexIcon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--panel2) 76%, transparent);
+    color: var(--color-primary);
+  }
+
+  .settingsMobileIndexCopy {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+  }
+
+  .settingsMobileIndexTitle {
+    overflow: hidden;
+    font-size: 13px;
+    font-weight: 680;
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .settingsMobileIndexDescription {
+    overflow: hidden;
+    color: var(--muted2);
+    font-size: 10px;
+    font-weight: 500;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .settingsMobileIndexChevron {
+    color: var(--muted2);
+  }
+
+  .settingsMobileSubpageHeader {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 48px;
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
+  }
+
+  .settingsMobileBackButton.btn {
+    width: 40px;
+    height: 40px;
+    min-height: 40px;
+    padding: 0;
+    border-radius: 9px;
+  }
+
+  .settingsMobileSubpageTitle {
+    color: var(--text);
+    font-size: 16px;
+    font-weight: 700;
+  }
+
+  .settingsPage[data-mobile-settings-section='index'] .settingsContentGrid {
+    display: none;
+  }
+
+  .settingsPage:not([data-mobile-settings-section='index']) .settingsSectionCard:not([data-mobile-active='true']) {
+    display: none;
+  }
+
+  .settingsPage:not([data-mobile-settings-section='index']) .settingsCol:has(.settingsSectionCard[data-mobile-active='true']) {
+    display: flex;
+  }
+
+  .settingsPage:not([data-mobile-settings-section='index']) .settingsCol:not(:has(.settingsSectionCard[data-mobile-active='true'])) {
+    display: none;
+  }
+
+  .settingsMobileIdentityAvatar {
+    width: 44px;
+    height: 44px;
+    border: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+    background: color-mix(in srgb, var(--panel2) 82%, transparent);
+    color: var(--color-primary);
+  }
+
+  .settingsMobileIdentityFallback {
+    background: color-mix(in srgb, var(--panel2) 82%, transparent);
+  }
+
+  .settingsMobileIdentityBody {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+  }
+
+  .settingsMobileIdentityHeading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .settingsMobileIdentityName {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text);
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .settingsMobileIdentityBadge {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 4px;
+    height: 22px;
+    padding: 0 7px;
+    border-color: color-mix(in srgb, var(--borderColor) 88%, transparent);
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1;
+  }
+
+  .settingsMobileIdentityMeta {
+    overflow: hidden;
+    color: var(--muted2);
+    font-size: 11px;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .homepageMobileNavModule {
     display: block;
     margin-top: -2px;

@@ -9,7 +9,10 @@ setGitHubPackagesRepoSelected
 import {
 NotificationChannelCard
 } from '../components/NotificationChannelCard'
+import { SettingsMobileIdentity } from '../components/SettingsMobileIdentity'
+import { SettingsMobileNavigation } from '../components/SettingsMobileNavigation'
 import { navigate } from '../routes'
+import type { SettingsSection } from '../routes'
 import {
 SETTINGS_GHCR_WEBHOOK_ID
 } from '../settingsFocus'
@@ -26,9 +29,10 @@ normalizeNotificationEvents,
 normalizeWebhookState,
 webhookStateLabel
 } from './settings/helpers'
+import { buildTopbarAuthIdentityFromSettings } from '../topbarAuthIdentity'
 import { useSettingsPageState } from './useSettingsPageState'
 
-export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => void }) {
+export function SettingsPage(props: { section?: SettingsSection; onTopActions: (node: React.ReactNode) => void }) {
   const {
     autoSaveIssue,
     autoSavePhase,
@@ -103,10 +107,14 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     return <div className="muted">加载中…</div>
   }
   return (
-    <div className="page settingsPage">
-      <div className="twoCol">
+    <div className="page settingsPage" data-mobile-settings-section={props.section ?? 'index'}>
+      {!props.section ? (
+        <SettingsMobileIdentity authIdentity={buildTopbarAuthIdentityFromSettings(settings.auth)} />
+      ) : null}
+      <SettingsMobileNavigation section={props.section} />
+      <div className="twoCol settingsContentGrid">
         <div className="settingsCol">
-          <div className="card">
+          <div className="card settingsSectionCard" data-settings-section="account" data-mobile-active={props.section === 'account' || undefined}>
             <div className="title">鉴权（Forward Auth）</div>
             <div className="muted">认证由入口代理负责；Dockrev 按用户/组执行项目侧鉴权（运行时只读）</div>
 
@@ -164,7 +172,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             </div>
           </div>
 
-          <div className="card">
+          <div className="card settingsSectionCard" data-settings-section="maintenance" data-mobile-active={props.section === 'maintenance' || undefined}>
             <div className="title">自我升级</div>
             <div className="muted">Dockrev 更新 Dockrev：由独立 supervisor 提供页面与执行者（默认 {selfUpgradeUrl}）</div>
 
@@ -214,7 +222,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             </div>
           </div>
 
-          <div className="card">
+          <div className="card settingsSectionCard" data-settings-section="maintenance" data-mobile-active={props.section === 'maintenance' || undefined}>
             <div className="title">部署检查</div>
             <div className="muted">手动打开部署检查清单页，不会修改“自动打开”偏好。</div>
 
@@ -231,7 +239,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             </div>
           </div>
 
-          <div className="card">
+          <div className="card settingsSectionCard" data-settings-section="backup" data-mobile-active={props.section === 'backup' || undefined}>
             <div className="title">备份默认策略</div>
             <div className="muted">默认 fail-closed；目标过大可按阈值跳过（force 可覆盖）</div>
 
@@ -293,7 +301,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             </div>
           </div>
 
-          <div className="card">
+          <div className="card settingsSectionCard" data-settings-section="monitoring" data-mobile-active={props.section === 'monitoring' || undefined}>
             <div className="title">资源监控</div>
             <div className="muted">控制全局协调的历史采样周期，以及单服务 1s 实时 SSE 推送。</div>
 
@@ -352,7 +360,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             </div>
           </div>
 
-          <div className="card">
+          <div className="card settingsSectionCard" data-settings-section="schedules" data-mobile-active={props.section === 'schedules' || undefined}>
             <div className="title">定时任务</div>
             <div className="muted">cron 按服务端本地时区解释（TZ）；5 段表达式会自动补秒=0。</div>
 
@@ -443,7 +451,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             </div>
           </div>
 
-          <div className="card">
+          <div className="card settingsSectionCard" data-settings-section="release-notes" data-mobile-active={props.section === 'release-notes' || undefined}>
             <div className="title">OctoRill 更新日志</div>
             <div className="muted">统一 release notes 数据源由这里全局决定；版本页和发布抽屉只服从这里的设置，不会在别处自动切换或回退。</div>
 
@@ -565,7 +573,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             </div>
           </div>
 
-          <div className="card">
+          <div className="card settingsSectionCard" data-settings-section="integrations" data-mobile-active={props.section === 'integrations' || undefined}>
             <div className="title">实例 Public Base URL</div>
             <div className="muted">用于在通知中生成可点击的绝对链接（服务详情 / 任务详情）。</div>
 
@@ -620,7 +628,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             </div>
           </div>
 
-          <div className="card">
+          <div className="card settingsSectionCard" data-settings-section="notifications" data-mobile-active={props.section === 'notifications' || undefined}>
             <div className="title">通知</div>
             <div className="muted">先选择通知事件，再为每个渠道配置发送方式。</div>
 
@@ -941,7 +949,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
         </div>
 
         <div className="settingsCol">
-          <div className="card" id={SETTINGS_GHCR_WEBHOOK_ID}>
+          <div className="card settingsSectionCard" data-settings-section="integrations" data-mobile-active={props.section === 'integrations' || undefined} id={SETTINGS_GHCR_WEBHOOK_ID}>
           <div className="title">GitHub Packages（GHCR）Webhook</div>
           <div className="muted">在 GHCR 发布新版本时自动触发 Dockrev 扫描（事件：package.published）</div>
           <div className="muted">添加后会自动创建后台任务注册 webhook；可在 GHCR 维护页查看状态并执行删除/重试。</div>

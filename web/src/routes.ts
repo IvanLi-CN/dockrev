@@ -12,7 +12,7 @@ export type Route =
   | { name: 'ghcr-webhook-inbox' }
   | { name: 'ghcr-webhook-registry' }
   | { name: 'deploy-check' }
-  | { name: 'settings' }
+  | { name: 'settings'; section?: SettingsSection }
   | { name: 'stack'; stackId: string }
   | {
       name: 'service'
@@ -21,6 +21,32 @@ export type Route =
       section?: 'overview' | 'versions' | 'history' | 'monitoring' | 'backup' | 'logs' | 'settings'
     }
   | { name: 'supervisor-misroute'; basePath: string; pathname: string }
+
+export type SettingsSection =
+  | 'account'
+  | 'maintenance'
+  | 'backup'
+  | 'monitoring'
+  | 'schedules'
+  | 'release-notes'
+  | 'notifications'
+  | 'integrations'
+
+function normalizeSettingsSection(value: string | null | undefined): SettingsSection | null {
+  if (
+    value === 'account' ||
+    value === 'maintenance' ||
+    value === 'backup' ||
+    value === 'monitoring' ||
+    value === 'schedules' ||
+    value === 'release-notes' ||
+    value === 'notifications' ||
+    value === 'integrations'
+  ) {
+    return value
+  }
+  return null
+}
 
 function normalizeServiceSection(
   value: string | null | undefined,
@@ -57,6 +83,10 @@ export function parseRoute(pathname: string): Route {
   if (parts.length === 1 && parts[0] === 'version-inference') return { name: 'version-inference' }
   if (parts.length === 1 && parts[0] === 'deploy-check') return { name: 'deploy-check' }
   if (parts.length === 1 && parts[0] === 'settings') return { name: 'settings' }
+  if (parts.length === 2 && parts[0] === 'settings') {
+    const section = normalizeSettingsSection(parts[1])
+    if (section) return { name: 'settings', section }
+  }
   if (parts.length === 2 && parts[0] === 'services') {
     return { name: 'stack', stackId: parts[1] }
   }
@@ -96,7 +126,7 @@ export function href(route: Route): string {
       case 'deploy-check':
         return '/deploy-check'
       case 'settings':
-        return '/settings'
+        return route.section ? `/settings/${route.section}` : '/settings'
       case 'stack':
         return `/services/${encodeURIComponent(route.stackId)}`
       case 'service':

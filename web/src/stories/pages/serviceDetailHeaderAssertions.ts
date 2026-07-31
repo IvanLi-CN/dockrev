@@ -78,7 +78,7 @@ export function expectMobileServiceHeaderLayers({
 }) {
   const menuButton = doc.querySelector<HTMLElement>(".mobileMenuButton");
   const brandLogo = doc.querySelector<HTMLElement>(".topbarLeft .brandLogoThemeSwitch");
-  const userTrigger = doc.querySelector<HTMLElement>(".topbarUserSlot .topbarUserTrigger");
+  const userTrigger = doc.querySelector<HTMLElement>(".topbarUserSlotTopbar .topbarUserTrigger");
   const title = doc.querySelector<HTMLElement>('[data-slot="service-title"]');
   const actions = doc.querySelector<HTMLElement>(".topActions");
   const stackAction = doc.querySelector<HTMLElement>(".serviceStackDetailAction");
@@ -90,7 +90,8 @@ export function expectMobileServiceHeaderLayers({
   const actionsRect = actions?.getBoundingClientRect();
   const centerY = (rect?: DOMRect) => ((rect?.top ?? 0) + (rect?.bottom ?? 0)) / 2;
 
-  expectStory(Boolean(menuButton && brandLogo && userTrigger && title && actions), "mobile service header should expose both global and service layers");
+  expectStory(Boolean(menuButton && brandLogo && title && actions), "mobile service header should expose both global and service layers");
+  expectStory(!userTrigger, "mobile service header should move user identity into settings");
   expectStory(
     (brandRect?.width ?? Number.POSITIVE_INFINITY) <= 36,
     "mobile service header should use the icon-only brand mark",
