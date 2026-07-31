@@ -222,6 +222,14 @@ ORDER BY
 
             if conflict.is_none() {
                 insert_job_tx(&tx, &job)?;
+                // Retain the reservation source of truth alongside the job. This is
+                // intentionally independent of the serialized update summary.
+                for target in &targets {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO job_service_targets (job_id, service_id) SELECT ?1, id FROM services WHERE id = ?2",
+                        params![&job.id, &target.service_id],
+                    )?;
+                }
                 if let Some(line) = initial_log {
                     tx.execute(
                         "INSERT INTO job_logs (job_id, ts, level, msg) VALUES (?1, ?2, ?3, ?4)",

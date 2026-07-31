@@ -1245,6 +1245,50 @@ async fn service_operation_claim_allows_only_one_concurrent_lifecycle_job() {
 }
 
 #[tokio::test]
+async fn service_operation_claim_persists_explicit_update_targets() {
+    let state = test_state(":memory:").await;
+    let (stack_id, service_id, _compose_path) = seed_manual_rollback_service(&state).await;
+    let now = test_now_rfc3339();
+    let update_id = ids::new_job_id();
+    let lifecycle_id = ids::new_job_id();
+    let mut update = crate::api::types::JobRecord::new_running(
+        update_id.clone(),
+        crate::api::types::JobType::Update,
+        crate::api::types::JobScope::All,
+        None,
+        None,
+        &now,
+    );
+    update.summary_json = serde_json::json!({ "mode": "apply", "targets": [] });
+    let target = crate::db::ServiceOperationTarget {
+        service_id: service_id.clone(),
+        stack_id: stack_id.clone(),
+    };
+    assert!(state
+        .db
+        .insert_service_operation_job_if_unblocked(update.to_db(), vec![target.clone()], None)
+        .await
+        .unwrap()
+        .is_none());
+
+    let lifecycle = crate::api::types::JobRecord::new_running(
+        lifecycle_id,
+        crate::api::types::JobType::ServiceLifecycle,
+        crate::api::types::JobScope::Service,
+        Some(stack_id),
+        Some(service_id),
+        &now,
+    );
+    let conflict = state
+        .db
+        .insert_service_operation_job_if_unblocked(lifecycle.to_db(), vec![target], None)
+        .await
+        .unwrap()
+        .expect("the update reservation should block the lifecycle operation");
+    assert_eq!(conflict.id, update_id);
+}
+
+#[tokio::test]
 async fn service_lifecycle_does_not_block_on_read_only_update_preview() {
     let state = test_state_with_compose_bin(
         ":memory:",
