@@ -16,6 +16,7 @@ import { buildMockDiscoveryTimeline as buildMockDiscoveryTimelineResponse } from
 import { buildFixture } from './fixturesMisc'
 import { buildMockGitHubReleasesDataset, buildMockGitHubReleasesResponse } from './githubReleases'
 import { handleGhcrRoutes } from './handlers/ghcr'
+import { handleServiceLifecycleRoute } from './handlers/serviceLifecycle'
 import { handleServiceStateRoutes } from './handlers/serviceState'
 import {
   cloneFixture,
@@ -1015,6 +1016,8 @@ export function installDockrevMockApi(
       }, updateFinishDelayMs)
       return json({ jobId })
     }
+    const lifecycleResponse = handleServiceLifecycleRoute({ scenario, method, urlPath, init, fixture: f, findService, jobSeqRef, json })
+    if (lifecycleResponse) return lifecycleResponse
     if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/rollback-target')) {
       const serviceId = decodeURIComponent(urlPath.split('/').slice(3, -1).join('/'))
       const found = findService(serviceId)

@@ -1256,19 +1256,19 @@ async function runInteractive({ baseUrl, browser }) {
   {
     const page = await openStory("pages-servicedetailpage--version-anomaly-updatable");
     try {
-      const applyBtn = page.getByRole("button", { name: "执行更新" });
+      const applyBtn = page.getByRole("button", { name: "更新", exact: true });
       await applyBtn.waitFor({ timeout: 10_000 });
       await applyBtn.click();
 
       const modal = getModal(page);
       await modal.waitFor({ timeout: 10_000 });
-      await modal.getByRole("button", { name: "执行更新" }).click();
+      await modal.getByRole("button", { name: "更新", exact: true }).click();
 
       await page.waitForFunction(
         () => {
           const btn = Array.from(document.querySelectorAll("button")).find(
             (item) =>
-              ["执行更新", "更新中…", "排队中…", "提交中…"].includes(
+              ["更新", "更新中…", "排队中…", "提交中…"].includes(
                 item.textContent?.trim() ?? "",
               ),
           );
@@ -1436,19 +1436,19 @@ async function runInteractive({ baseUrl, browser }) {
   {
     const page = await openStory("pages-servicedetailpage--version-anomaly-updatable");
     try {
-      const applyBtn = page.getByRole("button", { name: "执行更新" });
+      const applyBtn = page.getByRole("button", { name: "更新", exact: true });
       await applyBtn.waitFor({ timeout: 10_000 });
       await applyBtn.click();
 
       const modal = getModal(page);
       await modal.waitFor({ timeout: 10_000 });
-      await modal.getByRole("button", { name: "执行更新" }).click();
+      await modal.getByRole("button", { name: "更新", exact: true }).click();
 
       await page.waitForFunction(
         () => {
           const btn = Array.from(document.querySelectorAll("button")).find(
             (item) =>
-              ["执行更新", "更新中…", "排队中…", "提交中…"].includes(
+              ["更新", "更新中…", "排队中…", "提交中…"].includes(
                 item.textContent?.trim() ?? "",
               ),
           );

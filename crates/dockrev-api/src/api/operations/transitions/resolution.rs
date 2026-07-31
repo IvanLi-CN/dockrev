@@ -86,8 +86,28 @@ impl TransitionJobKind {
 
 #[derive(Clone, Debug)]
 pub(crate) struct PendingRollbackConflict {
-    reason: String,
-    job: JobListItem,
+    pub(crate) reason: String,
+    pub(crate) job: JobListItem,
+}
+
+pub(crate) fn service_operation_conflict_reason(job: &JobListItem) -> &'static str {
+    match job.r#type.as_str() {
+        "rollback" => "rollback_in_progress",
+        "service_lifecycle" => "service_lifecycle_in_progress",
+        "update" => match job.scope {
+            JobScope::All => "global_update_in_progress",
+            JobScope::Stack => "stack_update_in_progress",
+            JobScope::Service => "service_update_in_progress",
+        },
+        _ => "service_operation_in_progress",
+    }
+}
+
+pub(crate) fn service_operation_conflict_error(job: &JobListItem) -> ApiError {
+    ApiError::conflict("service operation in progress").with_details(json!({
+        "reason": service_operation_conflict_reason(job),
+        "existingJobId": job.id,
+    }))
 }
 
 #[derive(Clone, Debug)]
@@ -250,45 +270,41 @@ pub(crate) async fn find_pending_rollback_conflict(
     stack_id: &str,
     service_id: &str,
 ) -> Result<Option<PendingRollbackConflict>, ApiError> {
-    if let Some(job) = state
-        .db
-        .find_latest_pending_job_by_type_and_service_id(JobType::Rollback, service_id)
-        .await
-        .map_err(map_internal)?
-    {
-        return Ok(Some(PendingRollbackConflict {
-            reason: "rollback_in_progress".to_string(),
-            job,
-        }));
-    }
+    find_pending_service_operation_conflict(state, stack_id, service_id).await
+}
 
-    let pending_updates = state
-        .db
-        .list_jobs_by_type_and_statuses(JobType::Update, &["queued", "running"], 200)
-        .await
-        .map_err(map_internal)?;
-
+pub(crate) async fn find_pending_service_operation_conflict(
+    state: &Arc<AppState>,
+    stack_id: &str,
+    service_id: &str,
+) -> Result<Option<PendingRollbackConflict>, ApiError> {
     let mut best: Option<PendingRollbackConflict> = None;
-    for job in pending_updates {
-        let reason = match job.scope {
-            JobScope::All => Some("global_update_in_progress"),
-            JobScope::Stack if job.stack_id.as_deref() == Some(stack_id) => {
-                Some("stack_update_in_progress")
-            }
-            JobScope::Service if job.service_id.as_deref() == Some(service_id) => {
-                Some("service_update_in_progress")
-            }
-            _ => None,
-        };
-        let Some(reason) = reason else {
-            continue;
-        };
-        if better_pending_job(&job, best.as_ref().map(|item| &item.job)) {
+    for job_type in [JobType::Rollback, JobType::ServiceLifecycle] {
+        if let Some(job) = state
+            .db
+            .find_latest_pending_job_by_type_and_service_id(job_type, service_id)
+            .await
+            .map_err(map_internal)?
+            && better_pending_job(&job, best.as_ref().map(|item| &item.job))
+        {
             best = Some(PendingRollbackConflict {
-                reason: reason.to_string(),
+                reason: service_operation_conflict_reason(&job).to_string(),
                 job,
             });
         }
+    }
+
+    if let Some(job) = state
+        .db
+        .find_latest_pending_update_blocking_service(stack_id, service_id)
+        .await
+        .map_err(map_internal)?
+        && better_pending_job(&job, best.as_ref().map(|item| &item.job))
+    {
+        best = Some(PendingRollbackConflict {
+            reason: service_operation_conflict_reason(&job).to_string(),
+            job,
+        });
     }
 
     Ok(best)

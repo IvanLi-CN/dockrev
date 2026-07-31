@@ -169,6 +169,7 @@ type ButtonProps = {
   title?: string
   hint?: string
   ariaPressed?: boolean
+  ariaLabel?: string
 }
 
 function mapButtonVariant(variant: AppButtonVariant | undefined): 'default' | 'destructive' | 'ghost' {
@@ -237,6 +238,7 @@ export function Button(props: ButtonProps) {
     <PrimitiveButton
       className={cn('btn', buttonVariantClass(variant), props.className)}
       disabled={disabled}
+      aria-label={props.ariaLabel}
       aria-busy={props.loading ? true : undefined}
       aria-pressed={props.ariaPressed}
       data-hint={props.hint ?? undefined}

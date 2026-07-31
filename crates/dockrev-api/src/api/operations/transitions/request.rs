@@ -174,6 +174,25 @@ pub(crate) async fn enqueue_update_job(
     let validated_targets = resolve_validated_update_targets(&state, &req, &stack_ids).await?;
     req.targets = Some(validated_targets);
 
+    let operation_targets = if req.mode.as_str() == "apply" {
+        let mut operation_targets = Vec::new();
+        for target in req.targets.as_deref().unwrap_or_default() {
+            let stack_id = state
+                .db
+                .get_service_stack_id(&target.service_id)
+                .await
+                .map_err(map_internal)?
+                .ok_or_else(|| ApiError::not_found("service not found"))?;
+            operation_targets.push(crate::db::ServiceOperationTarget {
+                service_id: target.service_id.clone(),
+                stack_id,
+            });
+        }
+        operation_targets
+    } else {
+        Vec::new()
+    };
+
     let job_id = ids::new_job_id();
     let mut job = JobRecord::new_running(
         job_id.clone(),
@@ -193,20 +212,40 @@ pub(crate) async fn enqueue_update_job(
     let mut job_db = job.to_db();
     job_db.created_by = created_by;
     job_db.reason = reason;
-    state.db.insert_job(job_db).await.map_err(map_internal)?;
-
-    state
+    let has_operation_targets = !operation_targets.is_empty();
+    if !has_operation_targets {
+        state.db.insert_job(job_db).await.map_err(map_internal)?;
+    } else if let Some(conflict) = state
         .db
-        .insert_job_log(
-            &job_id,
-            &JobLogLine {
+        .insert_service_operation_job_if_unblocked(
+            job_db,
+            operation_targets,
+            Some(JobLogLine {
                 ts: now.clone(),
                 level: "info".to_string(),
                 msg: "update started".to_string(),
-            },
+            }),
         )
         .await
-        .map_err(map_internal)?;
+        .map_err(map_internal)?
+    {
+        return Err(service_operation_conflict_error(&conflict));
+    }
+
+    if !has_operation_targets {
+        state
+            .db
+            .insert_job_log(
+                &job_id,
+                &JobLogLine {
+                    ts: now.clone(),
+                    level: "info".to_string(),
+                    msg: "update started".to_string(),
+                },
+            )
+            .await
+            .map_err(map_internal)?;
+    }
     let init_progress = make_job_progress(
         "prepare",
         "preparing update job".to_string(),
@@ -240,6 +279,10 @@ pub(crate) async fn enqueue_service_rollback_job(
         .target
         .clone()
         .ok_or_else(|| rollback_unavailable_error(&resolved.response))?;
+    let operation_target = crate::db::ServiceOperationTarget {
+        service_id: target.service_id.clone(),
+        stack_id: resolved.stack_id.clone(),
+    };
 
     let req = TriggerUpdateRequest {
         scope: JobScope::Service,
@@ -278,22 +321,25 @@ pub(crate) async fn enqueue_service_rollback_job(
     let mut job_db = job.to_db();
     job_db.created_by = created_by;
     job_db.reason = reason;
-    state.db.insert_job(job_db).await.map_err(map_internal)?;
-
-    state
+    if let Some(conflict) = state
         .db
-        .insert_job_log(
-            &job_id,
-            &JobLogLine {
+        .insert_service_operation_job_if_unblocked(
+            job_db,
+            vec![operation_target],
+            Some(JobLogLine {
                 ts: now.clone(),
                 level: "info".to_string(),
                 msg: TransitionJobKind::Rollback
                     .initial_log_message()
                     .to_string(),
-            },
+            }),
         )
         .await
-        .map_err(map_internal)?;
+        .map_err(map_internal)?
+    {
+        return Err(service_operation_conflict_error(&conflict));
+    }
+
     let init_progress = make_job_progress(
         "prepare",
         TransitionJobKind::Rollback

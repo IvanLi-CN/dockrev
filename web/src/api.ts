@@ -620,6 +620,35 @@ export async function triggerServiceRollback(serviceId: string): Promise<{ jobId
   return (await resp.json()) as { jobId: string }
 }
 
+export type ServiceLifecycleAction = 'start' | 'stop' | 'restart'
+export type ServiceLifecycleState = 'running' | 'stopped' | 'partial' | 'unknown'
+export type ServiceLifecycleStatusResponse = {
+  state: ServiceLifecycleState
+  activeJob?: {
+    id: string
+    type: string
+    status: string
+    action?: ServiceLifecycleAction | null
+  } | null
+  unavailableReason?: string | null
+}
+
+export async function getServiceLifecycleStatus(serviceId: string): Promise<ServiceLifecycleStatusResponse> {
+  const resp = await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/lifecycle-status`)
+  return (await resp.json()) as ServiceLifecycleStatusResponse
+}
+
+export async function triggerServiceLifecycle(
+  serviceId: string,
+  action: ServiceLifecycleAction,
+): Promise<{ jobId: string }> {
+  const resp = await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/lifecycle`, {
+    method: 'POST',
+    body: JSON.stringify({ action }),
+  })
+  return (await resp.json()) as { jobId: string }
+}
+
 export async function listJobsPage(input: ListJobsInput = {}): Promise<ListJobsResponse> {
   const params = new URLSearchParams()
   if (input.cursor) params.set('cursor', input.cursor)

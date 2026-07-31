@@ -27,6 +27,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
+| 9cq2a | Dockrev：服务详情操作下拉与生命周期任务 | active | `9cq2a-service-lifecycle-actions/SPEC.md` | 2026-07-30 | fast-track（服务级 lifecycle queue、split dropdown、页头服务名与 Storybook evidence） |
 | 8m2dp | Dockrev：GitHub Pages 公共 Web Demo（/demo/）正式化 | 已完成 | `8m2dp-pages-public-demo/SPEC.md` | 2026-07-13 | fast-track（Pages `/demo/` public surface + BASE_URL 路由 + session mock state + docs discoverability） |
 | c2r2u | Dockrev：详情页双侧栏与 Stack→Service 树导航 | active | `c2r2u-detail-route-service-navigation/SPEC.md` | 2026-07-09 | fast-track（detail AppShell + Stack→Service tree + mobile drawer/bottom nav + Storybook evidence） |
 | r8kpa | Dockrev：Web PWA 离线壳、更新提示与分级缓存 | 部分完成（5/6） | `r8kpa-web-pwa-offline-shell/SPEC.md` | 2026-07-12 | fast-track（PWA shell + update prompt + readonly snapshot cache 已收口；service history 纳入 fresh snapshot read model） |

@@ -723,7 +723,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
 
         <div className="queueList">
           {filtered.map((j) => {
-            const readable = formatJobReadableDisplay(j.type, j.scope)
+            const readable = formatJobReadableDisplay(j.type, j.scope, j.summary)
             const progressLabel = formatProgressLabel(j)
             const progress = getProgressMetrics(j)
             const plannedPercent = progress?.plannedPercent ?? null

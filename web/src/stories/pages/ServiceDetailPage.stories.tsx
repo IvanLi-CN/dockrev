@@ -2,7 +2,7 @@ import type { Meta } from "@storybook/react";
 import { ServiceDetailPage } from "../../pages/ServiceDetailPage";
 import { currentRoutePathname } from "../../routes";
 import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
-import { expectCompactMonitorSummaryRow, expectMobileMonitorMetricsGrid, expectNoLegacyServiceDetailHero } from "./serviceDetailHeaderAssertions";
+import { expectMobileTopbarMonitorHidden, expectNoLegacyServiceDetailHero, expectTopbarMonitorSummary } from "./serviceDetailHeaderAssertions";
 import { expectHistoryColumnsAligned } from "./serviceDetailHistoryAssertions";
 import { buildLongLogsSnapshot, buildMultilineLogsSnapshot, historyReleaseNotes, paginatedHistoryJobs, partialHistoryBackupRecords } from "./serviceDetailPageStoryFixtures";
 import { assertRecentUpdateKeyboardNavigation, assertRecentUpdateReasonPopoverStaysOnRoute } from "./recentUpdateStoryAssertions";
@@ -27,7 +27,7 @@ export const OverviewDefault: Story = {
   play: async ({ canvasElement }) => {
     await waitForCondition(() => normalizeText(canvasElement.textContent).includes("最近更新记录"));
     await waitForCondition(() => normalizeText(canvasElement.ownerDocument.body.textContent).includes("服务列表"));
-    const monitorRow = canvasElement.querySelector<HTMLElement>('[data-service-detail-context="monitor-summary"]');
+    const monitorSummary = canvasElement.ownerDocument.querySelector<HTMLElement>('[data-service-detail-context="monitor-summary"]');
     const statusRail = canvasElement.querySelector<HTMLElement>('[data-service-detail-context="status-summary"]');
     const statusSummary = statusRail?.querySelector<HTMLElement>(".svcBannerDetail");
     const statusSummaryText = normalizeText(statusSummary?.textContent);
@@ -39,10 +39,14 @@ export const OverviewDefault: Story = {
     expectStory(!findSectionCard(canvasElement, "auto-policy"), "overview should not render settings cards");
     expectStory(findButton(canvasElement, "Stack 详情"), "stack detail top action missing");
     expectStory(Boolean(canvasElement.ownerDocument.querySelector(".detailRouteServiceLinkActive")), "detail service tree should highlight the current service");
-    expectStory(Boolean(monitorRow), "shared monitor summary row missing");
+    expectStory(Boolean(monitorSummary), "topbar monitor summary missing");
+    expectStory(!canvasElement.querySelector('[data-service-detail-context="monitor-summary"]'), "service detail body should not retain the monitor summary row");
     expectStory(Boolean(statusRail), "shared status rail missing");
     expectStory(Boolean(statusSummary), "shared status summary card detail missing");
-    expectCompactMonitorSummaryRow({ monitorRow, expectedServiceName: "api", expectStory });
+    expectTopbarMonitorSummary({ monitorSummary, expectStory });
+    await waitForCondition(() => normalizeText(canvasElement.ownerDocument.querySelector(".topbarRouteTitle")?.textContent) === "api");
+    expectStory(!canvasElement.ownerDocument.querySelector(".pageHead .h1"), "service detail must not repeat the service name in the body");
+    expectStory(!normalizeText(monitorSummary?.textContent).includes("api"), "topbar monitor summary should not repeat the service name");
     expectStory(
       statusSummaryText.includes("当前 5.2.1") &&
         statusSummaryText.includes("目标 5.2.3") &&
@@ -110,13 +114,13 @@ export const MonitoringSection: Story = {
   render: render("stack-prod", "svc-prod-api", "monitoring", "监控子页只承载资源监控面板"),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => normalizeText(canvasElement.textContent).includes("资源监控"));
-    const monitorRow = canvasElement.querySelector<HTMLElement>('[data-service-detail-context="monitor-summary"]');
+    const monitorSummary = canvasElement.ownerDocument.querySelector<HTMLElement>('[data-service-detail-context="monitor-summary"]');
     expectStory(currentRoutePathname() === "/services/stack-prod/svc-prod-api/monitoring", "monitoring deep link missing");
     expectStory(findTab(canvasElement, "monitoring")?.getAttribute("data-state") === "active", "monitoring tab should be active");
     expectStory(!normalizeText(canvasElement.textContent).includes("最近更新记录"), "monitoring should not render recent updates");
     expectStory(!findSectionCard(canvasElement, "auto-policy"), "monitoring should not render settings cards");
-    expectStory(Boolean(monitorRow), "monitoring section should retain the shared monitor summary row");
-    expectStory(!normalizeText(monitorRow?.textContent).includes("服务监控摘要"), "monitoring section should keep the compact monitor row without the subtitle");
+    expectStory(Boolean(monitorSummary), "monitoring section should retain the topbar monitor summary");
+    expectStory(!normalizeText(monitorSummary?.textContent).includes("服务监控摘要"), "monitoring section should keep the compact topbar monitor summary without the subtitle");
     expectNoLegacyServiceDetailHero({ canvasElement, expectStory, context: "service detail deep links" });
     expectStory(!findSectionCard(canvasElement, "service-identifiers"), "monitoring should not render the overview-only identifiers card");
   },
@@ -268,7 +272,7 @@ export const UpdateHistoryEmpty: Story = {
   render: render("stack-prod", "svc-prod-api", "history", "更新记录空态保持稳定可读"),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => Boolean(findSectionCard(canvasElement, "update-history")));
-    expectStory(normalizeText(canvasElement.textContent).includes("当前服务暂无更新或回滚记录"), "history empty state missing");
+    expectStory(normalizeText(canvasElement.textContent).includes("当前服务暂无操作记录"), "history empty state missing");
   },
 };
 
@@ -406,6 +410,32 @@ export const SettingsOfflineReadonly: Story = {
   },
 };
 
+export const MobileSettingsOfflineReadonly: Story = {
+  parameters: {
+    dockrevApiScenario: "dashboard-demo",
+    pwaStatus: { isOnline: false },
+    viewport: { defaultViewport: "mobile1" },
+  },
+  render: render("stack-prod", "svc-prod-api", "settings", "移动端离线详情使用统一服务操作入口"),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => normalizeText(canvasElement.textContent).includes("设置页需要联网"));
+    const doc = canvasElement.ownerDocument;
+    const menuButton = doc.querySelector<HTMLButtonElement>(".serviceMobileActionMenuTrigger");
+    expectStory(menuButton, "offline mobile detail should expose the unified service action menu");
+    expectStory(
+      doc.querySelectorAll<HTMLElement>(".topActions > .serviceStackDetailAction, .topActions > .btn").length === 0,
+      "offline mobile detail should not expose standalone header actions",
+    );
+    menuButton?.click();
+    await waitForCondition(() => normalizeText(doc.body.textContent).includes("Stack 详情"));
+    expectStory(
+      doc.querySelector('[data-service-mobile-action-item="refresh"]')?.getAttribute("aria-disabled") === "true",
+      "offline refresh should remain visible and disabled",
+    );
+    expectStory(Boolean(doc.querySelector('[data-service-mobile-action-item="stack-detail"]')), "stack detail action missing");
+  },
+};
+
 export const MobileLogsSection: Story = {
   parameters: {
     dockrevApiScenario: "dashboard-demo",
@@ -438,9 +468,7 @@ export const MobileHistorySection: Story = {
   render: render("stack-prod", "svc-prod-api", "history", "移动端更新记录保留两行栅格且不产生横向滚动。"),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => canvasElement.querySelectorAll(".serviceOperationHistoryRow").length === 5);
-    const monitorRow = canvasElement.querySelector<HTMLElement>('[data-service-detail-context="monitor-summary"]');
-    const monitorMetrics = monitorRow?.querySelector<HTMLElement>(".svcDetailMonitorMetrics");
-    const monitorMetricChips = Array.from(monitorRow?.querySelectorAll<HTMLElement>("[data-monitor-metric]") ?? []);
+    const monitorSummary = canvasElement.ownerDocument.querySelector<HTMLElement>('[data-service-detail-context="monitor-summary"]');
     const table = canvasElement.querySelector<HTMLElement>(".serviceOperationHistoryTable");
     const row = canvasElement.querySelector<HTMLElement>(".serviceOperationHistoryRow");
     const statusRail = canvasElement.querySelector<HTMLElement>('[data-service-detail-context="status-summary"]');
@@ -450,19 +478,20 @@ export const MobileHistorySection: Story = {
     const title = row?.querySelector<HTMLElement>(".serviceOperationHistoryOperationTitle");
     const topbar = canvasElement.ownerDocument.querySelector<HTMLElement>(".topbar");
     const menuButton = canvasElement.ownerDocument.querySelector<HTMLElement>(".mobileMenuButton");
-    const userTrigger = canvasElement.ownerDocument.querySelector<HTMLElement>(".topbarUserSlot .topbarUserTrigger");
+    const brandLogo = canvasElement.ownerDocument.querySelector<HTMLElement>(".topbarLeft .brandLogoThemeSwitch");
     const appShell = canvasElement.ownerDocument.querySelector<HTMLElement>(".appShell");
     expectStory(findTab(canvasElement, "history")?.getAttribute("data-state") === "active", "mobile history tab should stay active");
     expectStory(Boolean(table), "mobile history table missing");
     expectStory(Boolean(row), "mobile history row missing");
     expectStory(Math.abs((appShell ?? canvasElement).getBoundingClientRect().left) <= 1, "mobile detail shell should render edge-to-edge without Storybook canvas gutters");
     expectStory(getComputedStyle(topbar ?? canvasElement).borderBottomWidth === "0px", "mobile detail topbar should not draw an extra divider above the history tabs");
-    expectStory(Boolean(monitorRow), "mobile history should keep the shared monitor summary row");
+    expectStory(Boolean(monitorSummary), "mobile history should keep the topbar monitor summary");
+    expectStory(!canvasElement.querySelector('[data-service-detail-context="monitor-summary"]'), "mobile history should not restore the monitor summary row in the body");
     expectStory(Boolean(statusRail), "mobile history should keep the shared status rail");
-    expectStory(!normalizeText(monitorRow?.textContent).includes("服务监控摘要"), "mobile history should not restore the monitor subtitle");
+    expectStory(!normalizeText(monitorSummary?.textContent).includes("服务监控摘要"), "mobile history should not restore the monitor subtitle");
     expectStory(!statusRail?.querySelector(".svcDetailSummaryName"), "mobile history should not restore the duplicated service name in the status rail");
     expectNoLegacyServiceDetailHero({ canvasElement, expectStory, context: "mobile history" });
-    expectMobileMonitorMetricsGrid({ monitorRow, monitorMetrics, monitorMetricChips, expectStory });
+    expectMobileTopbarMonitorHidden({ monitorSummary, expectStory });
     expectStory((statusRail?.scrollWidth ?? 0) <= (statusRail?.clientWidth ?? 0) + 1, "mobile status rail should wrap instead of overflowing horizontally");
     expectStory(
       getComputedStyle(historyShell ?? canvasElement).borderTopWidth === "0px" &&
@@ -477,8 +506,8 @@ export const MobileHistorySection: Story = {
       "mobile history status pill should sit to the right of the card title",
     );
     expectStory(
-      Math.abs((menuButton?.getBoundingClientRect().top ?? 0) - (userTrigger?.getBoundingClientRect().top ?? 0)) <= 2,
-      "mobile detail topbar should keep menu, brand row, and user trigger on the same first-row baseline",
+      Math.abs((menuButton?.getBoundingClientRect().top ?? 0) - (brandLogo?.getBoundingClientRect().top ?? 0)) <= 2,
+      "mobile detail topbar should keep menu and brand on the same first-row baseline",
     );
     expectStory(row?.scrollWidth != null && row.clientWidth > 0 && row.scrollWidth <= row.clientWidth + 1, "mobile history rows should not overflow horizontally");
     expectStory(getComputedStyle(row ?? canvasElement).gridTemplateAreas.includes("backup source time"), "mobile history should use the compact two-row grid with the backup column");
@@ -1019,6 +1048,16 @@ export const ResolvedTag: Story = {
 export const Blocked: Story = {
   parameters: { dockrevApiScenario: "dashboard-demo" },
   render: render("stack-prod", "svc-prod-worker", "overview"),
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => Boolean(findButton(doc, "更新")))
+    expectStory(findButton(doc, "更新")?.disabled, "blocked service must disable the update primary action")
+    doc.querySelector<HTMLButtonElement>('[aria-label="更新操作菜单"]')?.click()
+    await waitForCondition(() => Boolean(doc.querySelector('[data-service-split-item="preview-update"]')))
+    const preview = doc.querySelector<HTMLButtonElement>('[data-service-split-item="preview-update"]')
+    expectStory(preview?.disabled, "blocked service must disable preview updates")
+    expectStory(Boolean(preview?.querySelector('small')), "blocked update must explain why it is unavailable")
+  },
 };
 
 export const NoCandidate: Story = {
@@ -1066,12 +1105,14 @@ export const RollbackUnavailable: Story = {
   render: render("stack-prod", "svc-prod-api", "overview"),
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument;
-    await waitForCondition(() => findButton(doc, "回滚") != null);
+    const toggle = doc.querySelector<HTMLButtonElement>('[aria-label="更新操作菜单"]');
+    toggle?.click();
+    await waitForCondition(() => Boolean(doc.querySelector('[data-service-split-item="rollback"]')));
 
-    const trigger = findButton(doc, "回滚");
+    const trigger = doc.querySelector<HTMLButtonElement>('[data-service-split-item="rollback"]');
     expectStory(trigger, "rollback action missing");
     expectStory(trigger.disabled, "rollback action should be disabled when no target is available");
-    expectStory(trigger.getAttribute("data-hint")?.includes("未找到可回滚到升级前版本的成功升级记录"), "rollback disabled reason missing");
+    expectStory(normalizeText(trigger.textContent).includes("未找到可回滚到升级前版本的成功升级记录"), "rollback disabled reason missing");
   },
 };
 
@@ -1080,10 +1121,12 @@ export const RollbackActive: Story = {
   render: render("stack-prod", "svc-prod-api", "overview"),
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument;
-    await waitForCondition(() => findButton(doc, "回滚中…") != null);
+    doc.querySelector<HTMLButtonElement>('[aria-label="更新操作菜单"]')?.click();
+    await waitForCondition(() => Boolean(doc.querySelector('[data-service-split-item="rollback"]')));
 
-    const trigger = findButton(doc, "回滚中…");
+    const trigger = doc.querySelector<HTMLButtonElement>('[data-service-split-item="rollback"]');
     expectStory(trigger, "active rollback action missing");
+    expectStory(normalizeText(trigger.textContent).includes("回滚中…"), "active rollback label missing");
     trigger.click();
 
     await waitForCondition(() => window.location.hash.includes("/queue/job-rollback-service"));
@@ -1095,89 +1138,34 @@ export const RollbackRefreshRaceAfterUpdate: Story = {
   render: render("stack-prod", "svc-prod-api", "overview"),
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument;
-    await waitForCondition(() => findButton(doc, "执行更新") != null);
+    await waitForCondition(() => findButton(doc, "更新") != null);
 
-    const updateTrigger = findButton(doc, "执行更新");
+    const updateTrigger = findButton(doc, "更新");
     expectStory(updateTrigger, "service update action missing");
     updateTrigger.click();
 
     await waitForCondition(() => doc.body.textContent?.includes("确认更新服务 api？") ?? false);
-    const confirmButtons = findButtons(doc.body, "执行更新").filter((button) => !button.disabled);
+    const confirmButtons = findButtons(doc.body, "更新").filter((button) => !button.disabled);
     const confirmTrigger = confirmButtons.at(-1) ?? null;
     expectStory(confirmTrigger, "service update confirm action missing");
     confirmTrigger.click();
 
-    await waitForCondition(() => findButton(doc, "刷新中…") != null, 8_000);
-    const refreshingRollback = findButton(doc, "刷新中…");
+    const toggle = doc.querySelector<HTMLButtonElement>('[aria-label="更新操作菜单"]');
+    toggle?.click();
+    await waitForCondition(() => normalizeText(doc.querySelector('[data-service-split-item="rollback"]')?.textContent).includes("回滚信息刷新中…"), 8_000);
+    const refreshingRollback = doc.querySelector<HTMLButtonElement>('[data-service-split-item="rollback"]');
     expectStory(refreshingRollback, "rollback refresh state missing during update settlement");
     expectStory(refreshingRollback.disabled, "rollback refresh state should stay disabled");
-    expectStory(refreshingRollback.getAttribute("data-hint") === "回滚信息刷新中…", "rollback refresh hint should hide stale unavailable reason");
+    expectStory(normalizeText(refreshingRollback.textContent).includes("回滚信息刷新中…"), "rollback refresh hint should hide stale unavailable reason");
 
     await waitForCondition(() => {
       const rollback = findButton(doc, "回滚");
-      return Boolean(rollback && !rollback.disabled && !rollback.getAttribute("data-hint") && rollback.getAttribute("aria-busy") !== "true");
+      return Boolean(rollback && !rollback.disabled && rollback.getAttribute("aria-busy") !== "true");
     }, 8_000);
 
     const rollback = findButton(doc, "回滚");
     expectStory(rollback, "rollback action missing after update settlement");
     expectStory(!rollback.disabled, "rollback action should recover to enabled state after refresh settles");
-    expectStory(!rollback.getAttribute("data-hint")?.includes("未找到可回滚到升级前版本的成功升级记录"), "rollback action should never restore stale unavailable history hint");
+    expectStory(!normalizeText(rollback.textContent).includes("未找到可回滚到升级前版本的成功升级记录"), "rollback action should never restore stale unavailable history hint");
   },
-};
-
-export const UpdateConfirmOpen: Story = {
-  parameters: { dockrevApiScenario: "dashboard-demo" },
-  render: render("stack-prod", "svc-prod-api", "overview"),
-  play: async ({ canvasElement }) => {
-    const doc = canvasElement.ownerDocument;
-    await waitForCondition(() => findButton(doc, "执行更新") != null);
-
-    const updateTrigger = findButton(doc, "执行更新");
-    expectStory(updateTrigger, "service update action missing");
-    updateTrigger.click();
-
-    await waitForCondition(() => doc.body.textContent?.includes("确认更新服务 api？") ?? false);
-    expectStory(doc.body.textContent?.includes("版本"), "service update confirm version summary missing");
-    expectStory(doc.body.textContent?.includes("目标 digest"), "service update confirm target digest missing");
-    expectStory(doc.body.textContent?.includes("架构策略"), "service update confirm arch policy missing");
-  },
-};
-
-export const RollbackConfirmOpen: Story = {
-  parameters: { dockrevApiScenario: "service-detail-rollback-confirm-open" },
-  render: render("stack-prod", "svc-prod-api", "overview"),
-  play: async ({ canvasElement }) => {
-    const doc = canvasElement.ownerDocument;
-    await waitForCondition(() => findButton(doc, "回滚") != null);
-
-    const trigger = findButton(doc, "回滚");
-    expectStory(trigger, "rollback action missing");
-    trigger.click();
-
-    await waitForCondition(() => doc.body.textContent?.includes("确认回滚服务 api？") ?? false);
-    expectStory(doc.body.textContent?.includes("当前版本"), "rollback confirm current version missing");
-    expectStory(doc.body.textContent?.includes("回滚目标"), "rollback confirm target version missing");
-    expectStory(doc.body.textContent?.includes("来源任务"), "rollback confirm source job missing");
-    expectStory(doc.body.textContent?.includes("来源备份"), "rollback confirm backup summary missing");
-    expectStory(doc.body.textContent?.includes("2 个目标"), "rollback confirm backup target count missing");
-    expectStory(doc.body.textContent?.includes("执行回滚"), "rollback confirm action missing");
-  },
-};
-
-export const RepoLinkEditing: Story = {
-  parameters: { dockrevApiScenario: "repo-link-editing" },
-  render: render("stack-prod", "svc-prod-api", "settings"),
-  play: async ({ canvasElement }) => {
-    const doc = canvasElement.ownerDocument;
-    await waitForCondition(() => findActionButton(doc, "open-service-settings", "打开") != null);
-    findActionButton(doc, "open-service-settings", "打开")?.click();
-    await waitForCondition(() => doc.body.textContent?.includes("服务保护设置") ?? false);
-    const helper = Array.from(doc.body.querySelectorAll<HTMLElement>(".muted")).find((node) => node.textContent?.includes("清空并保存会禁用后续自动补齐"));
-    expectStory(helper, "repoUrl auto-backfill helper copy missing in service detail story");
-  },
-};
-
-export const Error: Story = {
-  parameters: { dockrevApiScenario: "error" },
-  render: render("stack-prod", "svc-prod-api", "overview"),
 };

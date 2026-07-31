@@ -40,6 +40,8 @@ description: Dockrev API 与 Supervisor API 的全量接口清单。
 | POST | `/api/stacks/{stack_id}/restore` | Forward Auth | 取消归档 stack | `200` `404` `401` |
 | POST | `/api/services/{service_id}/archive` | Forward Auth | 归档 service | `200` `404` `401` |
 | POST | `/api/services/{service_id}/restore` | Forward Auth | 取消归档 service | `200` `404` `401` |
+| GET | `/api/services/{service_id}/lifecycle-status` | Forward Auth | 查询服务 Compose 生命周期状态与活动服务操作任务 | `200` `404` `401` |
+| POST | `/api/services/{service_id}/lifecycle` | Forward Auth | 创建服务启动、停止或重启任务 | `200` `400` `404` `401` `409` |
 | GET | `/api/services/{service_id}/digest-tags` | Forward Auth | 查询 digest tags 调试视图（已改为 snapshot-backed；缺失或刷新中时返回 `202 pending`） | `200` `202` `404` `401` |
 | GET | `/api/services/{service_id}/digest-tags-snapshot` | Forward Auth | 查询 digest tags 快照（目标 digest 正在刷新时返回 `202 pending`） | `200` `202` `404` `401` |
 | POST | `/api/services/{service_id}/version-inference/refresh` | Forward Auth | 触发指定 digest 的局部版本推断刷新（请求体必须带 `digest`） | `202` `400` `404` `401` |
@@ -62,6 +64,11 @@ description: Dockrev API 与 Supervisor API 的全量接口清单。
   - `scope=service`：必须显式携带 `serviceId + targetTag + targetDigest + pullTags`。
   - `scope=stack|all`：必须显式携带 `targets[]`，元素为 `{ serviceId, targetTag, targetDigest, pullTags }`。
   - 同一服务仍可继续使用 `mode=dry-run` 做预检查。
+
+- 服务生命周期契约：
+  - `GET /api/services/{service_id}/lifecycle-status` 返回 `state=running|stopped|partial|unknown`，并在存在同服务更新、回滚或生命周期任务时返回 `activeJob`。
+  - `POST /api/services/{service_id}/lifecycle` 请求体为 `{ "action": "start" | "stop" | "restart" }`。Compose V2 启动执行 `up -d --pull never --no-recreate --no-deps`，Compose V1 执行 `start`（仅启动已有容器）；两者都不会拉取镜像、替换已有容器或启动依赖服务。Compose V1 不存在容器时返回不可用。停止和重启分别执行对应 Compose 命令。
+  - 同一服务的更新、回滚与生命周期任务串行；冲突返回 `409` 和 `existingJobId`。Dockrev 自身服务不支持该生命周期接口。
 
 ### 4) Jobs / Events
 

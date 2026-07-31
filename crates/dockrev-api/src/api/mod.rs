@@ -172,6 +172,14 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(trigger_service_rollback),
         )
         .route(
+            "/api/services/{service_id}/lifecycle-status",
+            get(get_service_lifecycle_status),
+        )
+        .route(
+            "/api/services/{service_id}/lifecycle",
+            post(trigger_service_lifecycle),
+        )
+        .route(
             "/api/version-inference/overview",
             get(get_version_inference_overview),
         )

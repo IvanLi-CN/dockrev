@@ -11,7 +11,16 @@ export type JobReadableDisplay = {
 
 export type JobTypeTone = 'check' | 'cleanup' | 'discovery' | 'runtimeScan' | 'ghcrWebhook' | 'update' | 'rollback' | 'default'
 
-export function formatJobTypeLabel(type: string): string {
+function lifecycleActionLabel(summary?: unknown): string | null {
+  if (!summary || typeof summary !== 'object' || Array.isArray(summary) || !('action' in summary)) return null
+  const action = (summary as { action?: unknown }).action
+  if (action === 'start') return '启动任务'
+  if (action === 'stop') return '停止任务'
+  if (action === 'restart') return '重启任务'
+  return null
+}
+
+export function formatJobTypeLabel(type: string, summary?: unknown): string {
   const raw = normalize(type)
   if (raw === '-') return raw
   if (raw === 'check') return '检查任务'
@@ -24,6 +33,7 @@ export function formatJobTypeLabel(type: string): string {
   if (raw === 'repo_link_backfill') return '仓库链接补齐'
   if (raw === 'update') return '更新任务'
   if (raw === 'rollback') return '回滚任务'
+  if (raw === 'service_lifecycle') return lifecycleActionLabel(summary) ?? '服务生命周期'
   return raw
 }
 
@@ -45,9 +55,9 @@ export function formatJobReadableName(type: string, scope: string): string {
   return `${typeLabel} · ${scopeLabel}`
 }
 
-export function formatJobReadableDisplay(type: string, scope: string): JobReadableDisplay {
+export function formatJobReadableDisplay(type: string, scope: string, summary?: unknown): JobReadableDisplay {
   const rawType = normalize(type)
-  const typeLabel = formatJobTypeLabel(type)
+  const typeLabel = formatJobTypeLabel(type, summary)
   const scopeLabel = formatJobScopeLabel(scope)
   const typeTone = resolveJobTypeTone(rawType)
   if (typeLabel === '-' && scopeLabel === '-') return { primaryLabel: '-', scopeTag: null, typeTone: 'default' }
@@ -76,5 +86,6 @@ function resolveJobTypeTone(type: string): JobTypeTone {
   if (type === 'repo_link_backfill') return 'discovery'
   if (type === 'update') return 'update'
   if (type === 'rollback') return 'rollback'
+  if (type === 'service_lifecycle') return 'update'
   return 'default'
 }

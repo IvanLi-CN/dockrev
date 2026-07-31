@@ -79,12 +79,21 @@ async fn test_state_with(
     registry: Arc<dyn RegistryClient>,
     runner: Arc<dyn CommandRunner>,
 ) -> Arc<AppState> {
+    test_state_with_compose_bin(db_path, registry, runner, "docker-compose").await
+}
+
+async fn test_state_with_compose_bin(
+    db_path: &str,
+    registry: Arc<dyn RegistryClient>,
+    runner: Arc<dyn CommandRunner>,
+    compose_bin: &str,
+) -> Arc<AppState> {
     let config = Config {
         app_effective_version: "0.1.0".to_string(),
         http_addr: "127.0.0.1:0".to_string(),
         db_path: PathBuf::from(db_path),
         docker_config_path: None,
-        compose_bin: "docker-compose".to_string(),
+        compose_bin: compose_bin.to_string(),
         auth_forward_header_name: "X-Forwarded-User".parse().unwrap(),
         auth_group_header_name: "Remote-Groups".parse().unwrap(),
         auth_allowed_user: None,

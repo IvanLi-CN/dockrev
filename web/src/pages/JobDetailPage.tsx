@@ -363,7 +363,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
   const displayedCompletedPercent = isCompletedIndeterminateRunning ? null : knownProgressPercent
   const displayedPlannedPercent = isPlannedIndeterminateRunning ? null : knownPlannedPercent
   const readable = job
-    ? formatJobReadableDisplay(job.type, job.scope)
+    ? formatJobReadableDisplay(job.type, job.scope, job.summary)
     : { primaryLabel: '-', scopeTag: null, typeTone: 'default' as const }
   const plannedProgressLabel =
     displayedPlannedPercent !== null ? `${displayedPlannedPercent}%` : isRunning ? 'running' : job?.status ?? '-'

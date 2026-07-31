@@ -356,7 +356,12 @@ export function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fi
   if (
     scenario === 'dashboard-demo' ||
     scenario === 'dashboard-demo-slow-update' ||
-    scenario === 'overview-homepage-slow-refresh'
+    scenario === 'overview-homepage-slow-refresh' ||
+    scenario === 'service-detail-lifecycle-running' ||
+    scenario === 'service-detail-lifecycle-stopped' ||
+    scenario === 'service-detail-lifecycle-partial' ||
+    scenario === 'service-detail-lifecycle-unknown' ||
+    scenario === 'service-detail-lifecycle-active'
   ) return buildDashboardDemo()
   if (scenario === 'dashboard-demo-hydrated-update') {
     const fixture = buildDashboardDemo()

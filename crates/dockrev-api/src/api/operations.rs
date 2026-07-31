@@ -3,7 +3,9 @@ use super::*;
 use std::collections::HashSet;
 
 use crate::service_check;
+mod lifecycle;
 mod transitions;
+pub(crate) use lifecycle::*;
 pub(crate) use transitions::*;
 
 pub(super) const CHECK_PROGRESS_LOG_INTERVAL: Duration = Duration::from_millis(500);

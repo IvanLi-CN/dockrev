@@ -54,13 +54,13 @@ impl Drop for TempDirCleanup {
 }
 
 #[derive(Clone, Debug)]
-struct DockerCliAuthBridge {
+pub(crate) struct DockerCliAuthBridge {
     docker_config_dir: PathBuf,
     _cleanup: TempDirCleanup,
 }
 
 impl DockerCliAuthBridge {
-    fn stage(docker_config_path: &Path) -> anyhow::Result<Self> {
+    pub(crate) fn stage(docker_config_path: &Path) -> anyhow::Result<Self> {
         let temp_root = std::env::temp_dir().join(format!("dockrev-auth-config-{}", Ulid::new()));
         let docker_config_dir = temp_root.join(".docker");
         let source_dir = docker_config_path
@@ -97,7 +97,7 @@ impl DockerCliAuthBridge {
         })
     }
 
-    fn env(&self) -> Vec<(String, String)> {
+    pub(crate) fn env(&self) -> Vec<(String, String)> {
         // Keep compose `${HOME}` interpolation untouched; only point Docker CLI tools at the staged config.
         vec![(
             "DOCKER_CONFIG".to_string(),
@@ -1446,7 +1446,7 @@ fn is_registry_rate_limit_failure_text(input: &str) -> bool {
         || lower.contains("rate limit")
 }
 
-fn sanitize_project_name(name: &str) -> String {
+pub(crate) fn sanitize_project_name(name: &str) -> String {
     let mut out = String::new();
     for ch in name.chars() {
         if ch.is_ascii_alphanumeric() {

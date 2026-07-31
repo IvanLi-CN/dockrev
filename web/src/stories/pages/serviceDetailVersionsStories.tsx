@@ -309,7 +309,7 @@ export const VersionsSectionActionGuard: ServiceDetailStory = {
 
     const doc = canvasElement.ownerDocument;
     await waitForCondition(() => doc.body.textContent?.includes("确认更新服务 api？") ?? false);
-    findButton(doc, "执行更新")?.click();
+    findButton(doc, "更新")?.click();
 
     await waitForCondition(() => normalizeText(canvasElement.textContent).includes("当前服务已有更新任务在执行"));
     await waitForCondition(() => Boolean(globalThis.__DOCKREV_MOCK_DEBUG__?.lastUpdateRequest));

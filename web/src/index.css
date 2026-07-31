@@ -110,6 +110,18 @@ body {
   background-attachment: fixed;
 }
 
+@media (max-width: 960px) {
+  html,
+  body {
+    scrollbar-width: none;
+  }
+
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar {
+    display: none;
+  }
+}
+
 a {
   color: inherit;
   text-decoration: none;

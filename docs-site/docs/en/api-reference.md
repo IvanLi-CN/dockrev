@@ -40,6 +40,8 @@ This page documents every HTTP route exposed in:
 | POST | `/api/stacks/{stack_id}/restore` | Forward Auth | Restore stack | `200` `404` `401` |
 | POST | `/api/services/{service_id}/archive` | Forward Auth | Archive service | `200` `404` `401` |
 | POST | `/api/services/{service_id}/restore` | Forward Auth | Restore service | `200` `404` `401` |
+| GET | `/api/services/{service_id}/lifecycle-status` | Forward Auth | Read the service Compose lifecycle state and active service-operation job | `200` `404` `401` |
+| POST | `/api/services/{service_id}/lifecycle` | Forward Auth | Create a service start, stop, or restart task | `200` `400` `404` `401` `409` |
 | GET | `/api/services/{service_id}/digest-tags` | Forward Auth | Fetch the digest-tags debug view (now snapshot-backed; returns `202 pending` while the snapshot is missing or refreshing) | `200` `202` `404` `401` |
 | GET | `/api/services/{service_id}/digest-tags-snapshot` | Forward Auth | Fetch digest-tag snapshot (`202 pending` while the target digest is refreshing) | `200` `202` `404` `401` |
 | POST | `/api/services/{service_id}/version-inference/refresh` | Forward Auth | Trigger digest-scoped version inference refresh (`digest` body required) | `202` `400` `404` `401` |
@@ -61,6 +63,11 @@ This page documents every HTTP route exposed in:
 - `POST /api/updates` contract:
   - `scope=service`: requires explicit `serviceId + targetTag + targetDigest + pullTags`.
   - `scope=stack|all`: requires explicit `targets[]`, each entry shaped as `{ serviceId, targetTag, targetDigest, pullTags }`.
+
+- Service lifecycle contract:
+  - `GET /api/services/{service_id}/lifecycle-status` returns `state=running|stopped|partial|unknown`, plus `activeJob` for a queued or running update, rollback, or lifecycle task on that service.
+  - `POST /api/services/{service_id}/lifecycle` accepts `{ "action": "start" | "stop" | "restart" }`. Compose V2 starts with `up -d --pull never --no-recreate --no-deps`; Compose V1 uses `start`, which only starts an existing container. Neither path pulls an image, replaces an existing container, or starts dependencies. Start is unavailable under Compose V1 when no container exists. Stop and restart use their corresponding Compose commands.
+  - Updates, rollbacks, and lifecycle tasks are serialized per service. Conflicts return `409` with `existingJobId`. The Dockrev service does not expose this lifecycle operation.
 
 ### 4) Jobs / Events
 
