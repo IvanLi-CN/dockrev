@@ -170,10 +170,10 @@ pub(crate) async fn lifecycle_states_for_stack(
 
     let mut states = vec![ServiceLifecycleState::Unknown; services.len()];
     while let Some(result) = tasks.join_next().await {
-        if let Ok((index, lifecycle_state)) = result {
-            if let Some(state) = states.get_mut(index) {
-                *state = lifecycle_state;
-            }
+        if let Ok((index, lifecycle_state)) = result
+            && let Some(state) = states.get_mut(index)
+        {
+            *state = lifecycle_state;
         }
     }
     states
