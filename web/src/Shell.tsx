@@ -402,7 +402,9 @@ export function AppShell(props: {
             <div className="mobileMenuDrawerHead">
               <div className="mobileMenuDrawerBrand">
                 <BrandLogo />
-                <div className="mobileMenuDrawerTitle">{mobileDrawerTitle}</div>
+                {props.route.name !== "stack" && props.route.name !== "service" ? (
+                  <div className="mobileMenuDrawerTitle">{mobileDrawerTitle}</div>
+                ) : null}
               </div>
               <button
                 type="button"

@@ -41,9 +41,17 @@ pub struct StackResponse {
     pub id: String,
     pub name: String,
     pub compose: ComposeConfig,
-    pub services: Vec<Service>,
+    pub services: Vec<StackServiceResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub archived: Option<bool>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackServiceResponse {
+    #[serde(flatten)]
+    pub service: Service,
+    pub lifecycle_state: ServiceLifecycleState,
 }
 
 pub use crate::models::StackRecord;

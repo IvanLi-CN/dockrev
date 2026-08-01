@@ -62,7 +62,8 @@ import type {
   AddGitHubPackagesTargetRequest,
   AddGitHubPackagesTargetResponse,
   RemoveGitHubPackagesTargetRequest,
-  RemoveGitHubPackagesTargetResponse
+  RemoveGitHubPackagesTargetResponse,
+  ServiceLifecycleState
 } from './api/types'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -621,7 +622,6 @@ export async function triggerServiceRollback(serviceId: string): Promise<{ jobId
 }
 
 export type ServiceLifecycleAction = 'start' | 'stop' | 'restart'
-export type ServiceLifecycleState = 'running' | 'stopped' | 'partial' | 'unknown'
 export type ServiceLifecycleStatusResponse = {
   state: ServiceLifecycleState
   activeJob?: {

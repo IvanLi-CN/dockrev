@@ -16,6 +16,8 @@
 - 在现有主导航右侧增加 `Stack → Service` 树形导航，支持当前节点高亮、当前 Stack 默认展开、点击 Stack 标题进入 Stack 详情、点击 Service 叶子进入对应服务详情并保留当前 section。
 - 移动端切换为 `底部主导航 + 服务树抽屉`，复用同一份树模型与高亮语义，避免正文首屏被挤压。
 - 复用现有 Stack / Service 读模型与 Storybook 页级 stories，确保详情页壳层与导航在 mock-only 环境下可稳定验证并产出视觉证据。
+- Stack 详情读模型的 `services[]` 必须附带只读 `lifecycleState`（`running | stopped | partial | unknown`）；服务树左侧状态点只表达该运行态，版本 chip 右上角的 Signal Cyan dot 只表达可直接更新。
+- 详情树在页面可见时对已展开 Stack 每 30 秒补刷，页面隐藏时暂停并在恢复可见时立即补刷；Dockrev 内部更新、回滚、生命周期和 Compose 标签保存结算后定向刷新对应 Stack，并合并重复请求。
 
 ### Non-goals
 
@@ -38,11 +40,12 @@
 - `web/src/stories/mocks/PageHarness.tsx`
 - `web/src/stories/pages/ServiceDetailPage.stories.tsx`
 - `web/src/stories/pages/StackDetailPage.stories.tsx`
+- `crates/dockrev-api/src/api/stacks.rs` 与 `crates/dockrev-api/src/api/operations/lifecycle.rs` 的 Stack 详情运行态读模型
 - 本 spec 目录及其视觉证据资产
 
 ### Out of scope
 
-- Rust 服务端、任务调度、日志 / 监控 / 备份后端路径
+- 任务调度、日志 / 监控 / 备份后端路径
 - `/services` 首页与 Overview homepage 的整体 IA 调整
 - Stack / Service 详情页内部业务卡片的权限模型或写操作合同
 
@@ -93,6 +96,8 @@
   - 不渲染详情页服务树侧栏。
 - 当服务树正在加载或为空时：
   - 详情页侧栏必须显示稳定的 loading / empty / error 状态，而不是留白。
+- 当单个服务的 Compose 生命周期查询失败时：
+  - 该服务显示 `unknown`，不阻断同一 Stack 其他服务和详情响应。
 
 ## 验收标准（Acceptance Criteria）
 
@@ -115,6 +120,14 @@
 - Given Overview 页现有 stories
   When 渲染原有 sidebar/mobile 内容
   Then 旧 slot 行为保持稳定，不因详情页壳层扩展而回归。
+
+- Given 一个展开的 Stack
+  When 服务树渲染服务叶子
+  Then 左侧点按 `running / partial / stopped / unknown` 分别显示绿色 / 琥珀 / 中性灰运行态，版本 chip 只在可更新行的右上角显示青色点。
+
+- Given 详情页处于可见状态
+  When 30 秒轮询或应用内操作结算触发刷新
+  Then 只刷新对应 Stack，重复触发合并为一次请求；页面隐藏时轮询暂停，恢复可见立即补刷。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
 
@@ -234,3 +247,31 @@ PR: include
   PR caption: 移动端通过“服务导航”抽屉承载同一份 `Stack -> Service` 树结构。
 
 ![服务详情页移动端服务导航抽屉](./assets/service-detail-mobile-drawer.png)
+
+- source_type: `ui_demo`
+- target_program: `mock-only`
+- capture_scope: `browser-viewport`
+- requested_viewport: `1440x900`
+- viewport_strategy: `controlled-browser-viewport`
+- sensitive_exclusion: `N/A`
+- submission_gate: `approved`
+- story_id_or_title: `ui_demo service detail / stack-prod / svc-prod-api`
+- state: `desktop runtime state and update signal`
+- evidence_note: 服务树左侧点明确区分运行中、部分运行、已停止；可更新服务的版本 chip 右上显示青色 dot，当前服务行保持高亮。
+- PR: include
+
+![服务树桌面运行态与版本更新信号](./assets/service-tree-runtime-desktop.png)
+
+- source_type: `ui_demo`
+- target_program: `mock-only`
+- capture_scope: `browser-viewport`
+- requested_viewport: `390x844`
+- viewport_strategy: `controlled-browser-viewport`
+- sensitive_exclusion: `N/A`
+- submission_gate: `approved`
+- story_id_or_title: `ui_demo mobile service drawer`
+- state: `mobile compact service tree`
+- evidence_note: 移动抽屉删除抽屉头中重复的“服务导航”标题，保留树内容区域标题；列表占满标题与最近扫描之间的可用高度，服务叶子保持至少 40px 行高，额外树形缩进压缩并保留短连接线。
+- PR: include
+
+![服务树移动抽屉紧凑布局](./assets/service-tree-runtime-mobile.png)

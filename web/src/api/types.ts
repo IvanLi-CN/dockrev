@@ -152,6 +152,8 @@ export type ServiceImage = {
   resolvedTags?: string[] | null
 }
 
+export type ServiceLifecycleState = 'running' | 'stopped' | 'partial' | 'unknown'
+
 export type VersionInferenceState = {
   status: 'ready' | 'pending' | string
   reason?: string | null
@@ -162,6 +164,7 @@ export type Service = {
   id: string
   name: string
   image: ServiceImage
+  lifecycleState?: ServiceLifecycleState
   homepage?: ServiceHomepage | null
   candidate?: {
     tag: string

@@ -37,6 +37,7 @@ import { ResponsiveSettingsDrawer } from "../components/ResponsiveSettingsDrawer
 import { ServiceVersionsSection } from "../components/ServiceVersionsSection";
 import { ServiceMobileActionMenu, ServiceStackDetailAction } from "../components/ServiceSplitActionButton";
 import { ImageLinkIcons, RepositoryLinkIcon, splitImageNameForDisplay, splitImageRef } from "../imageLinks";
+import { publishServiceTreeRefresh } from "../serviceTreeRefresh";
 import { ServiceComposeTagField } from "./ServiceComposeTagField";
 import {
   backupPolicyHint,
@@ -221,7 +222,6 @@ export function ServiceDetailPage(props: {
   useEffect(() => {
     void refreshVersionJobs().catch(() => undefined);
   }, [refreshVersionJobs]);
-
   useEffect(() => {
     if (!notice?.jobId) return;
     void refreshRecentJobs().catch(() => undefined);
@@ -963,7 +963,7 @@ export function ServiceDetailPage(props: {
 
       <ResponsiveSettingsDrawer description="写回原始 Compose 文件里的镜像 tag；保存后不会自动执行 compose up。" onOpenChange={setTagDrawerOpen} open={tagDrawerOpen} title="部署 tag">
         <div className="settingsDrawerSection">
-          <ServiceComposeTagField busy={settingsBusy} currentTag={effectiveService.image.tag} onError={setError} onSaved={requestRefresh} serviceId={props.serviceId} />
+          <ServiceComposeTagField busy={settingsBusy} currentTag={effectiveService.image.tag} onError={setError} onSaved={() => requestRefresh().then(() => publishServiceTreeRefresh({ stackId: props.stackId, serviceId: props.serviceId, reason: "compose-tag-saved" }))} serviceId={props.serviceId} />
         </div>
       </ResponsiveSettingsDrawer>
 

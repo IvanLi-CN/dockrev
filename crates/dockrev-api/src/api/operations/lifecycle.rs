@@ -147,6 +147,38 @@ async fn read_lifecycle_state(
     }
 }
 
+pub(crate) async fn lifecycle_states_for_stack(
+    state: &Arc<AppState>,
+    stack: &StackRecord,
+    services: &[Service],
+) -> Vec<ServiceLifecycleState> {
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(
+        crate::config::FIXED_CHECK_PARALLELISM,
+    ));
+    let mut tasks = tokio::task::JoinSet::new();
+
+    for (index, service) in services.iter().cloned().enumerate() {
+        let state = Arc::clone(state);
+        let stack = stack.clone();
+        let semaphore = Arc::clone(&semaphore);
+        tasks.spawn(async move {
+            let _permit = semaphore.acquire_owned().await.ok();
+            let (lifecycle_state, _) = read_lifecycle_state(&state, &stack, &service).await;
+            (index, lifecycle_state)
+        });
+    }
+
+    let mut states = vec![ServiceLifecycleState::Unknown; services.len()];
+    while let Some(result) = tasks.join_next().await {
+        if let Ok((index, lifecycle_state)) = result
+            && let Some(state) = states.get_mut(index)
+        {
+            *state = lifecycle_state;
+        }
+    }
+    states
+}
+
 pub(crate) async fn get_service_lifecycle_status(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,

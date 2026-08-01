@@ -23,8 +23,10 @@
 完整 HTTP 定义见 [contracts/http-api.md](./contracts/http-api.md)。
 
 - `GET /api/services/{serviceId}/lifecycle-status` 读取该服务的实时 Compose 生命周期状态和会阻塞操作的活跃任务。
+- `GET /api/stacks/{id}` 返回的 `services[]` 同步附带只读 `lifecycleState`，供详情服务树批量展示运行态；它不改变服务级 lifecycle API 或写操作权限。
 - `POST /api/services/{serviceId}/lifecycle` 接收 `{ "action": "start" | "stop" | "restart" }`，成功返回 `{ "jobId": "..." }`。
 - 任务类型为 `service_lifecycle`；摘要必须携带动作，供队列、详情和服务历史展示。
+- 生命周期任务结算后必须发布对应 Stack 的定向详情树刷新事件，避免服务树继续显示旧运行态。
 
 ## 行为规格
 

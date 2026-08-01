@@ -646,8 +646,8 @@ html[data-theme="light"] .brandLogoForLight {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin-left: 10px;
-  padding: 0 0 0 18px;
+  margin-left: 6px;
+  padding: 0 0 0 10px;
 }
 
 .detailRouteServiceList::before {
@@ -668,7 +668,7 @@ html[data-theme="light"] .brandLogoForLight {
   align-items: center;
   gap: 10px;
   min-height: 34px;
-  padding: 6px 10px 6px 12px;
+  padding: 6px 8px 6px 8px;
   border: 1px solid transparent;
   border-radius: 10px;
   color: var(--muted);
@@ -682,8 +682,8 @@ html[data-theme="light"] .brandLogoForLight {
   content: "";
   position: absolute;
   top: 50%;
-  left: -18px;
-  width: 10px;
+  left: -10px;
+  width: 6px;
   height: 1px;
   background: color-mix(in srgb, var(--borderColor) 76%, transparent);
   transform: translateY(-50%);
@@ -729,17 +729,17 @@ html[data-theme="light"] .brandLogoForLight {
   box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 32%, transparent);
 }
 
-.detailRouteStatusDot-updatable {
+.detailRouteStatusDotLifecycle-running {
   background: var(--color-success);
 }
 
-.detailRouteStatusDot-hint {
+.detailRouteStatusDotLifecycle-partial {
   background: var(--color-warning);
 }
 
-.detailRouteStatusDot-archMismatch,
-.detailRouteStatusDot-blocked {
-  background: var(--color-error);
+.detailRouteStatusDotLifecycle-stopped,
+.detailRouteStatusDotLifecycle-unknown {
+  background: var(--muted2);
 }
 
 .detailRouteServiceName {
@@ -756,6 +756,7 @@ html[data-theme="light"] .brandLogoForLight {
 }
 
 .detailRouteServiceMeta {
+  position: relative;
   display: inline-flex;
   min-width: 0;
   max-width: 104px;
@@ -768,6 +769,18 @@ html[data-theme="light"] .brandLogoForLight {
   color: var(--muted2);
   font-size: 9px;
   line-height: 1;
+}
+
+.detailRouteServiceUpdateDot {
+  position: absolute;
+  top: -3px;
+  right: -2px;
+  width: 5px;
+  height: 5px;
+  border: 1px solid var(--panel);
+  border-radius: 999px;
+  background: var(--color-info);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-info) 30%, transparent);
 }
 
 .detailRouteServiceMeta .mono {
@@ -12216,6 +12229,28 @@ html[data-theme="light"] .btnPrimary {
     padding: 14px 0 12px;
   }
 
+  .mobileMenuEmbeddedContent:has(.detailRouteTreeMobile) {
+    display: flex;
+    min-height: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+    overflow: hidden;
+    border-bottom: 0;
+  }
+
+  .mobileMenuEmbeddedContent:has(.detailRouteTreeMobile) .detailRouteTreeMobile {
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+  }
+
+  .mobileMenuEmbeddedContent:has(.detailRouteTreeMobile) .detailRouteTreeList {
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
   .mobileMenuEmbeddedContent .homepageTopStrip {
     grid-template-columns: 1fr;
     gap: 10px;
@@ -12518,8 +12553,8 @@ html[data-theme="light"] .btnPrimary {
   }
 
   .detailRouteTreeMobile .detailRouteServiceList {
-    margin-left: 14px;
-    padding-left: 18px;
+    margin-left: 6px;
+    padding-left: 10px;
   }
 
   .detailRouteTreeMobile .detailRouteStackLink,

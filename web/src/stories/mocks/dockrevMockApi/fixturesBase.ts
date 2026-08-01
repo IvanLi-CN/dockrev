@@ -50,6 +50,7 @@ export function buildDashboardDemo(): Fixture {
   const serviceProdApi = {
     id: 'svc-prod-api',
     name: 'api',
+    lifecycleState: 'running',
     image: { ref: 'ghcr.io/acme/api:5.2.1', tag: '5.2.1', digest: d('a', 'b1') },
     candidate: { tag: '5.2.3', digest: d('b', '9f'), archMatch: 'match', arch: ['linux/amd64'] },
     ignore: null,
@@ -66,6 +67,7 @@ export function buildDashboardDemo(): Fixture {
   const serviceProdWeb = {
     id: 'svc-prod-web',
     name: 'web',
+    lifecycleState: 'partial',
     image: { ref: 'harbor.local/ops/web', tag: '5.2', digest: d('c', 'c2') },
     candidate: { tag: '5.2.7', digest: d('d', '7a'), archMatch: 'match', arch: ['linux/amd64'] },
     ignore: null,
@@ -82,6 +84,7 @@ export function buildDashboardDemo(): Fixture {
   const serviceProdWorker = {
     id: 'svc-prod-worker',
     name: 'worker',
+    lifecycleState: 'stopped',
     image: { ref: 'ghcr.io/acme/worker:5.2.0', tag: '5.2.0', digest: d('e', 'aa') },
     candidate: { tag: '5.2.2', digest: d('f', '0d'), archMatch: 'match', arch: ['linux/amd64'] },
     ignore: { matched: true, ruleId: 'ignore-prod-worker', reason: '备份失败（fail-closed）' },
@@ -98,6 +101,7 @@ export function buildDashboardDemo(): Fixture {
   const infraSvcA = {
     id: 'svc-infra-loki',
     name: 'loki',
+    lifecycleState: 'unknown',
     image: { ref: 'ghcr.io/grafana/loki', tag: '2.9.0', digest: 'sha256:1111111111111111111111111111111111111111111111111111111111111111' },
     candidate: { tag: '2.9.1', digest: 'sha256:2222222222222222222222222222222222222222222222222222222222222222', archMatch: 'unknown', arch: ['linux/amd64', 'linux/arm64'] },
     ignore: null,

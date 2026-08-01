@@ -10,6 +10,7 @@ import { useConfirm } from '../confirm'
 import { DIGEST_SNAPSHOT_UPDATED_EVENT, type DigestSnapshotUpdatedDetail } from '../digestInferenceTracker'
 import { normalizeExternalHttpUrl } from '../imageLinks'
 import { imageRepoFromImageRef } from '../imageRepo'
+import { publishServiceTreeRefresh } from '../serviceTreeRefresh'
 import { dockrevSelfUpgradeBusyReason, errorMessage, isDockrevService, normalizeMaybeDigest, openSelfUpgradeUrl, rollbackTargetMatchesServiceDigest, rollbackUnavailableReasonLabel, rollbackVersionLabel, ROLLBACK_TARGET_REFRESH_HINT, scanHasFailures, scanIsComplete, shortDigest, svcTone, useRollbackTargetInvariantWarning } from './serviceDetailUtils'
 import { navigate } from '../routes'
 import { selfUpgradeBaseUrl } from '../runtimeConfig'
@@ -66,6 +67,7 @@ export function useServiceDetailPageState(props: {
   const [lifecycleStatus, setLifecycleStatus] = useState<ServiceLifecycleStatusResponse | null>(null)
   const [lifecycleSettledJobId, setLifecycleSettledJobId] = useState<string | null>(null)
   const lifecycleActiveJobIdRef = useRef<string | null>(null)
+  const rollbackActiveJobIdRef = useRef<string | null>(null)
   const [lastSuccessfulRefreshAt, setLastSuccessfulRefreshAt] = useState<string | null>(null)
   const rollbackStatusSource = rollbackTarget ?? rollbackActiveTarget
   const rollbackActiveJobId = (rollbackStatusSource?.activeJobId ?? '').trim() || null
@@ -305,6 +307,7 @@ export function useServiceDetailPageState(props: {
         setLifecycleStatus(next)
         if (previousActiveJobId && !nextActiveJobId) {
           setLifecycleSettledJobId(previousActiveJobId)
+          publishServiceTreeRefresh({ stackId, serviceId, reason: 'lifecycle-job-settled' })
         }
         if (nextActiveJobId) {
           timer = window.setTimeout(() => {
@@ -327,7 +330,7 @@ export function useServiceDetailPageState(props: {
       cancelled = true
       if (timer != null) window.clearTimeout(timer)
     }
-  }, [lifecycleStatus?.activeJob?.id, service])
+  }, [lifecycleStatus?.activeJob?.id, service, serviceId, stackId])
 
   useEffect(() => {
     let closed = false
@@ -403,6 +406,14 @@ export function useServiceDetailPageState(props: {
       if (timer != null) window.clearTimeout(timer)
     }
   }, [refreshStackOnly, rollbackActiveJobId])
+
+  useEffect(() => {
+    const previousActiveJobId = rollbackActiveJobIdRef.current
+    rollbackActiveJobIdRef.current = rollbackActiveJobId
+    if (previousActiveJobId && !rollbackActiveJobId) {
+      publishServiceTreeRefresh({ stackId, serviceId, reason: 'rollback-job-settled' })
+    }
+  }, [rollbackActiveJobId, serviceId, stackId])
 
   useRollbackTargetInvariantWarning(service, rollbackTarget)
 
@@ -600,6 +611,7 @@ export function useServiceDetailPageState(props: {
       try {
         const resp = await triggerServiceRollback(service.id)
         setNotice({ jobId: resp.jobId, kind: 'rollback' })
+        publishServiceTreeRefresh({ stackId, serviceId, reason: 'rollback-job-started' })
         await refreshStackOnly()
       } catch (e: unknown) {
         if (e instanceof ApiError) {
@@ -627,7 +639,7 @@ export function useServiceDetailPageState(props: {
         setBusy(false)
       }
     })()
-  }, [confirm, refreshStackOnly, rollbackActiveJobId, rollbackBackupValue, rollbackTarget, service, stack?.name, stackId])
+  }, [confirm, refreshStackOnly, rollbackActiveJobId, rollbackBackupValue, rollbackTarget, service, serviceId, stack?.name, stackId])
 
   const requestLifecycleAction = useCallback((action: ServiceLifecycleAction) => {
     void (async () => {
@@ -656,6 +668,7 @@ export function useServiceDetailPageState(props: {
         const resp = await triggerServiceLifecycle(service.id, action)
         lifecycleActiveJobIdRef.current = resp.jobId
         setNotice({ jobId: resp.jobId, kind: 'lifecycle' })
+        publishServiceTreeRefresh({ stackId, serviceId, reason: 'lifecycle-job-started' })
         await refreshLifecycleStatus()
       } catch (e: unknown) {
         if (e instanceof ApiError && e.status === 409) {
@@ -673,7 +686,7 @@ export function useServiceDetailPageState(props: {
         setBusy(false)
       }
     })()
-  }, [confirm, lifecycleStatus?.activeJob?.id, refreshLifecycleStatus, service])
+  }, [confirm, lifecycleStatus?.activeJob?.id, refreshLifecycleStatus, service, serviceId, stackId])
 
   const requestPreviewUpdate = useCallback(() => {
     void (async () => {
