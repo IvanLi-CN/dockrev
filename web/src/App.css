@@ -12229,6 +12229,28 @@ html[data-theme="light"] .btnPrimary {
     padding: 14px 0 12px;
   }
 
+  .mobileMenuEmbeddedContent:has(.detailRouteTreeMobile) {
+    display: flex;
+    min-height: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+    overflow: hidden;
+    border-bottom: 0;
+  }
+
+  .mobileMenuEmbeddedContent:has(.detailRouteTreeMobile) .detailRouteTreeMobile {
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+  }
+
+  .mobileMenuEmbeddedContent:has(.detailRouteTreeMobile) .detailRouteTreeList {
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
   .mobileMenuEmbeddedContent .homepageTopStrip {
     grid-template-columns: 1fr;
     gap: 10px;
