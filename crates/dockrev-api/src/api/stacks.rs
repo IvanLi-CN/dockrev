@@ -854,13 +854,23 @@ pub(super) async fn get_stack(
     };
     enrich_services_with_version_inference(&state, &mut stack.services).await?;
     enrich_services_with_new_version_discovery_counts(&state, &mut stack.services).await?;
+    let lifecycle_states = lifecycle_states_for_stack(&state, &stack, &stack.services).await;
+    let services = stack
+        .services
+        .into_iter()
+        .zip(lifecycle_states)
+        .map(|(service, lifecycle_state)| StackServiceResponse {
+            service,
+            lifecycle_state,
+        })
+        .collect();
 
     Ok(Json(GetStackResponse {
         stack: StackResponse {
             id: stack.id,
             name: stack.name,
             compose: stack.compose,
-            services: stack.services,
+            services,
             archived: Some(stack.archived),
         },
     }))

@@ -1,8 +1,10 @@
 import { ChevronDown, ChevronRight } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { getStack, listStacks, listStacksArchived, type Service, type StackDetail, type StackListItem, type StackStatus } from '../api'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { getStack, listStacks, listStacksArchived, type Service, type ServiceLifecycleState, type StackDetail, type StackListItem, type StackStatus } from '../api'
 import { currentHref, navigate, type Route } from '../routes'
+import { SERVICE_TREE_REFRESH_EVENT, type ServiceTreeRefreshDetail } from '../serviceTreeRefresh'
 import { Mono } from '../ui'
+import { UPDATE_JOB_SETTLED_EVENT, type UpdateJobSettledDetail } from '../updateActionTracking'
 import { serviceRowStatus, statusLabel } from '../updateStatus'
 
 type DetailRoute = Extract<Route, { name: 'stack' | 'service' }>
@@ -10,7 +12,11 @@ type DetailRoute = Extract<Route, { name: 'stack' | 'service' }>
 type TreeStack = StackListItem & {
   detail: StackDetail | null
   detailStatus: 'idle' | 'loading' | 'loaded' | 'error'
+  detailRevision: number
+  detailLoadedRevision: number
 }
+
+const SERVICE_TREE_POLL_INTERVAL_MS = 30_000
 
 function isDetailRoute(route: Route): route is DetailRoute {
   return route.name === 'stack' || route.name === 'service'
@@ -28,6 +34,23 @@ function serviceVersionLabel(service: Service): string {
   const resolved = (service.image.resolvedTag ?? '').trim()
   const raw = (service.image.tag ?? '').trim()
   return resolved || raw || '-'
+}
+
+function lifecycleStateLabel(state: ServiceLifecycleState): string {
+  switch (state) {
+    case 'running':
+      return '运行中'
+    case 'stopped':
+      return '已停止'
+    case 'partial':
+      return '部分运行'
+    default:
+      return '未知'
+  }
+}
+
+function lifecycleStateClassName(state: ServiceLifecycleState): string {
+  return `detailRouteStatusDot detailRouteStatusDotLifecycle-${state}`
 }
 
 export function serviceSectionLabel(section: Extract<Route, { name: 'service' }>['section'] | undefined): string {
@@ -68,8 +91,11 @@ export function DetailRouteServiceTree(props: {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expandedStackIds, setExpandedStackIds] = useState<string[]>([])
+  const [detailFetchTick, setDetailFetchTick] = useState(0)
   const inFlightStackIdsRef = useRef<Set<string>>(new Set())
+  const stacksRef = useRef<TreeStack[]>([])
   const mountedRef = useRef(true)
+  stacksRef.current = stacks
 
   const detailRoute = isDetailRoute(props.route) ? props.route : null
   const activeStackId = detailRoute ? currentStackId(detailRoute) : null
@@ -81,6 +107,7 @@ export function DetailRouteServiceTree(props: {
   }, [activeStackId])
 
   useEffect(() => {
+    mountedRef.current = true
     return () => {
       mountedRef.current = false
     }
@@ -88,12 +115,19 @@ export function DetailRouteServiceTree(props: {
 
   useEffect(() => {
     const pendingStackIds = expandedStackIds.filter((stackId) =>
-      stacks.some((stack) => stack.id === stackId && stack.detailStatus === 'idle') &&
-      !inFlightStackIdsRef.current.has(stackId),
+      stacksRef.current.some((stack) =>
+        stack.id === stackId &&
+        (stack.detailStatus === 'idle' || stack.detailRevision > stack.detailLoadedRevision),
+      ) && !inFlightStackIdsRef.current.has(stackId),
     )
     if (pendingStackIds.length === 0) return
 
     const pendingStackIdSet = new Set(pendingStackIds)
+    const requestedRevisions = new Map(
+      stacksRef.current
+        .filter((stack) => pendingStackIdSet.has(stack.id))
+        .map((stack) => [stack.id, stack.detailRevision]),
+    )
     for (const stackId of pendingStackIds) inFlightStackIdsRef.current.add(stackId)
 
     setStacks((current) =>
@@ -105,9 +139,15 @@ export function DetailRouteServiceTree(props: {
     void Promise.all(
       pendingStackIds.map(async (stackId) => {
         try {
-          return { stackId, detail: await getStack(stackId), detailStatus: 'loaded' as const }
+          const detail = await getStack(stackId)
+          return {
+            stackId,
+            revision: requestedRevisions.get(stackId) ?? 0,
+            detail,
+            detailStatus: 'loaded' as const,
+          }
         } catch {
-          return { stackId, detail: null, detailStatus: 'error' as const }
+          return { stackId, revision: requestedRevisions.get(stackId) ?? 0, detail: null, detailStatus: 'error' as const }
         }
       }),
     ).then((results) => {
@@ -118,11 +158,16 @@ export function DetailRouteServiceTree(props: {
         current.map((stack) => {
           const next = byId.get(stack.id)
           if (!next) return stack
-          return { ...stack, detail: next.detail, detailStatus: next.detailStatus }
+          return {
+            ...stack,
+            detail: next.detail,
+            detailStatus: next.detailStatus,
+            detailLoadedRevision: Math.max(stack.detailLoadedRevision, next.revision),
+          }
         }),
       )
     })
-  }, [expandedStackIds, stacks])
+  }, [detailFetchTick, expandedStackIds])
 
   useEffect(() => {
     let cancelled = false
@@ -149,8 +194,11 @@ export function DetailRouteServiceTree(props: {
             ...stack,
             detail: null,
             detailStatus: 'idle',
+            detailRevision: 0,
+            detailLoadedRevision: 0,
           })),
         )
+        setDetailFetchTick((current) => current + 1)
       } catch (value: unknown) {
         if (cancelled) return
         setError(value instanceof Error ? value.message : String(value))
@@ -165,6 +213,58 @@ export function DetailRouteServiceTree(props: {
       cancelled = true
     }
   }, [])
+
+  const requestStackRefresh = useCallback((stackId: string) => {
+    setStacks((current) =>
+      current.map((stack) =>
+        stack.id === stackId ? { ...stack, detailRevision: stack.detailRevision + 1 } : stack,
+      ),
+    )
+    setDetailFetchTick((current) => current + 1)
+  }, [])
+
+  useEffect(() => {
+    const matchesStack = (stackId: string | null | undefined) =>
+      Boolean(stackId && expandedStackIds.includes(stackId))
+
+    const onRefresh = (event: Event) => {
+      const detail = event instanceof CustomEvent ? (event.detail as ServiceTreeRefreshDetail | null) : null
+      if (detail?.stackId && matchesStack(detail.stackId)) requestStackRefresh(detail.stackId)
+    }
+    const onUpdateSettled = (event: Event) => {
+      const detail = event instanceof CustomEvent ? (event.detail as UpdateJobSettledDetail | null) : null
+      if (!detail) return
+      if (detail.scope === 'all' || detail.target === 'all') {
+        for (const stackId of expandedStackIds) requestStackRefresh(stackId)
+        return
+      }
+      const stackId = detail.stackId ?? (detail.target.startsWith('stack:') ? detail.target.slice(6) : null)
+      if (stackId && matchesStack(stackId)) requestStackRefresh(stackId)
+    }
+
+    window.addEventListener(SERVICE_TREE_REFRESH_EVENT, onRefresh)
+    window.addEventListener(UPDATE_JOB_SETTLED_EVENT, onUpdateSettled)
+    return () => {
+      window.removeEventListener(SERVICE_TREE_REFRESH_EVENT, onRefresh)
+      window.removeEventListener(UPDATE_JOB_SETTLED_EVENT, onUpdateSettled)
+    }
+  }, [expandedStackIds, requestStackRefresh])
+
+  useEffect(() => {
+    const refreshExpandedStacks = () => {
+      if (document.visibilityState !== 'visible') return
+      for (const stackId of expandedStackIds) requestStackRefresh(stackId)
+    }
+    const timer = window.setInterval(refreshExpandedStacks, SERVICE_TREE_POLL_INTERVAL_MS)
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshExpandedStacks()
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [expandedStackIds, requestStackRefresh])
 
   const treeClassName = props.variant === 'mobile' ? 'detailRouteTree detailRouteTreeMobile' : 'detailRouteTree'
   const showState = useMemo(() => loading || Boolean(error) || stacks.length === 0, [error, loading, stacks.length])
@@ -190,7 +290,10 @@ export function DetailRouteServiceTree(props: {
       section: activeServiceSection,
     }
     const rowStatus = serviceRowStatus(service)
-    const title = `${service.name} · ${statusLabel(rowStatus)}`
+    const lifecycleState = service.lifecycleState ?? 'unknown'
+    const version = serviceVersionLabel(service)
+    const updateLabel = rowStatus === 'updatable' ? '有可用更新' : statusLabel(rowStatus)
+    const title = `${service.name} · ${lifecycleStateLabel(lifecycleState)} · 当前版本 ${version} · ${updateLabel}`
 
     return (
       <a
@@ -198,16 +301,18 @@ export function DetailRouteServiceTree(props: {
         href={currentHref(nextRoute)}
         className={active ? 'detailRouteServiceLink detailRouteServiceLinkActive' : 'detailRouteServiceLink'}
         aria-current={active ? 'page' : undefined}
+        aria-label={title}
         title={title}
         onClick={(event) => {
           event.preventDefault()
           navigate(nextRoute)
         }}
       >
-        <span className={`detailRouteStatusDot detailRouteStatusDot-${rowStatus}`} aria-hidden="true" />
+        <span className={lifecycleStateClassName(lifecycleState)} aria-hidden="true" />
         <span className="detailRouteServiceName">{service.name}</span>
-        <span className="detailRouteServiceMeta">
+        <span className="detailRouteServiceMeta" aria-label={`当前版本 ${version}`}>
           <Mono>{serviceVersionLabel(service)}</Mono>
+          {rowStatus === 'updatable' ? <span className="detailRouteServiceUpdateDot" aria-label="有可用更新" /> : null}
         </span>
       </a>
     )
