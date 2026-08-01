@@ -38,6 +38,8 @@ description: Dockrev API 与 Supervisor API 的全量接口清单。
 | GET | `/api/stacks/{stack_id}` | Forward Auth | 查询 stack 详情 | `200` `404` `401` |
 | POST | `/api/stacks/{stack_id}/archive` | Forward Auth | 归档 stack | `200` `404` `401` |
 | POST | `/api/stacks/{stack_id}/restore` | Forward Auth | 取消归档 stack | `200` `404` `401` |
+| GET | `/api/stacks/{stack_id}/lifecycle-status` | Forward Auth | 查询 Stack Compose 生命周期聚合状态与活动服务操作任务 | `200` `404` `401` |
+| POST | `/api/stacks/{stack_id}/lifecycle` | Forward Auth | 创建 Stack 启动、停止或重启任务 | `200` `400` `404` `401` `409` |
 | POST | `/api/services/{service_id}/archive` | Forward Auth | 归档 service | `200` `404` `401` |
 | POST | `/api/services/{service_id}/restore` | Forward Auth | 取消归档 service | `200` `404` `401` |
 | GET | `/api/services/{service_id}/lifecycle-status` | Forward Auth | 查询服务 Compose 生命周期状态与活动服务操作任务 | `200` `404` `401` |
@@ -66,9 +68,11 @@ description: Dockrev API 与 Supervisor API 的全量接口清单。
   - 同一服务仍可继续使用 `mode=dry-run` 做预检查。
 
 - 服务生命周期契约：
+  - `GET /api/stacks/{stack_id}/lifecycle-status` 聚合 Stack 内服务状态，并返回覆盖任一服务的 queued/running update、rollback、service lifecycle 或 stack lifecycle 任务。
+  - `POST /api/stacks/{stack_id}/lifecycle` 请求体同样为 `{ "action": "start" | "stop" | "restart" }`。Compose V2 启动执行项目级 `up -d --pull never --no-recreate`，Compose V1 执行项目级 `start`；停止和重启执行项目级对应命令。
   - `GET /api/services/{service_id}/lifecycle-status` 返回 `state=running|stopped|partial|unknown`，并在存在同服务更新、回滚或生命周期任务时返回 `activeJob`。
   - `POST /api/services/{service_id}/lifecycle` 请求体为 `{ "action": "start" | "stop" | "restart" }`。Compose V2 启动执行 `up -d --pull never --no-recreate --no-deps`，Compose V1 执行 `start`（仅启动已有容器）；两者都不会拉取镜像、替换已有容器或启动依赖服务。Compose V1 不存在容器时返回不可用。停止和重启分别执行对应 Compose 命令。
-  - 同一服务的更新、回滚与生命周期任务串行；冲突返回 `409` 和 `existingJobId`。Dockrev 自身服务不支持该生命周期接口。
+  - Stack 生命周期锁定其中全部服务，与 update、rollback 和 service lifecycle 双向互斥；冲突返回 `409` 和 `existingJobId`。Dockrev 自身服务以及包含 Dockrev 的 Stack 不支持普通生命周期接口。
 
 ### 4) Jobs / Events
 

@@ -8,12 +8,14 @@
 
 ## Coverage / rollout summary
 
-- 规范、HTTP 契约与验收边界已冻结，等待实现与视觉证据回填。
+- `stack_lifecycle` 已接入 HTTP、Compose runner、队列审计、任务目标持久化与双向冲突锁。
+- 服务树已接入 shadcn/Radix ContextMenu、实时状态、直接提交、禁用原因、Supervisor 例外和 Toast 任务入口。
+- mock API 与 Storybook 状态/交互覆盖已完成，Web 与 Storybook 构建及全量故事测试通过。
 
 ## Remaining Gaps
 
-- Stack 生命周期 API、队列、冲突锁与 Compose runner。
-- 服务树 ContextMenu、Toast、Storybook 与 `ui_demo` 证据。
+- mock-only `ui_demo` 桌面与移动视觉证据及主人验收。
+- 全量仓库验证、review convergence 与 merge-ready PR。
 
 ## References
 

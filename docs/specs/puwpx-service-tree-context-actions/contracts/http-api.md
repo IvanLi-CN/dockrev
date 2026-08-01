@@ -29,7 +29,7 @@
 - `action`: `start | stop | restart`。
 - 成功：`200 { "jobId": "..." }`。
 - 目标不存在：`404`；归档、自托管或状态不兼容：`409`；活动任务冲突：`409` 并返回 `existingJobId`。
-- 创建任务类型 `stack_lifecycle`，`scope=stack`，摘要携带 `stackId`、`action` 与实际服务 ID 集合。
+- 创建任务类型 `stack_lifecycle`，`scope=stack`，任务记录携带 `stackId`，摘要携带 `stackName`、`action` 与实际服务 ID 集合。
 
 ## Service lifecycle compatibility
 
