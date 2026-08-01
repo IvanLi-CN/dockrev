@@ -322,7 +322,7 @@ export function DetailRouteServiceTree(props: {
     <div className={treeClassName}>
       <div className="detailRouteTreeIntro">
         <div className="detailRouteTreeTitleRow">
-          {props.variant === 'desktop' ? <div className="detailRouteTreeTitle">服务导航</div> : null}
+          <div className="detailRouteTreeTitle">服务导航</div>
           {!showState ? (
             <div className="detailRouteTreeMeta" aria-label="导航统计">
               <Mono>{stacks.length}</Mono>
