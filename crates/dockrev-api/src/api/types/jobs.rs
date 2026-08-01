@@ -301,6 +301,10 @@ pub struct TriggerServiceLifecycleResponse {
     pub job_id: String,
 }
 
+pub type StackLifecycleStatusResponse = ServiceLifecycleStatusResponse;
+pub type TriggerStackLifecycleRequest = TriggerServiceLifecycleRequest;
+pub type TriggerStackLifecycleResponse = TriggerServiceLifecycleResponse;
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum JobScope {
@@ -340,6 +344,7 @@ pub enum JobType {
     Update,
     Rollback,
     ServiceLifecycle,
+    StackLifecycle,
 }
 
 impl JobType {
@@ -356,6 +361,7 @@ impl JobType {
             Self::Update => "update",
             Self::Rollback => "rollback",
             Self::ServiceLifecycle => "service_lifecycle",
+            Self::StackLifecycle => "stack_lifecycle",
         }
     }
 
@@ -371,6 +377,7 @@ impl JobType {
             "repo_link_backfill" => Self::RepoLinkBackfill,
             "rollback" => Self::Rollback,
             "service_lifecycle" => Self::ServiceLifecycle,
+            "stack_lifecycle" => Self::StackLifecycle,
             _ => Self::Update,
         }
     }

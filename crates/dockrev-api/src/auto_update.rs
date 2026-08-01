@@ -455,6 +455,7 @@ fn permanent_enqueue_error(error: &ApiError) -> bool {
         Some(
             "rollback_in_progress"
                 | "service_lifecycle_in_progress"
+                | "stack_lifecycle_in_progress"
                 | "service_update_in_progress"
                 | "stack_update_in_progress"
                 | "global_update_in_progress"
@@ -794,6 +795,13 @@ mod tests {
             "existingJobId": "job-lifecycle-1",
         }));
         assert!(!permanent_enqueue_error(&conflict));
+
+        let stack_conflict =
+            ApiError::conflict("service operation in progress").with_details(json!({
+                "reason": "stack_lifecycle_in_progress",
+                "existingJobId": "job-stack-lifecycle-1",
+            }));
+        assert!(!permanent_enqueue_error(&stack_conflict));
 
         let stale_candidate = ApiError::conflict("target digest no longer matches latest scan");
         assert!(permanent_enqueue_error(&stale_candidate));

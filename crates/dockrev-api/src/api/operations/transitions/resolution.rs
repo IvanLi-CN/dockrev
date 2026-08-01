@@ -94,6 +94,7 @@ pub(crate) fn service_operation_conflict_reason(job: &JobListItem) -> &'static s
     match job.r#type.as_str() {
         "rollback" => "rollback_in_progress",
         "service_lifecycle" => "service_lifecycle_in_progress",
+        "stack_lifecycle" => "stack_lifecycle_in_progress",
         "update" => match job.scope {
             JobScope::All => "global_update_in_progress",
             JobScope::Stack => "stack_update_in_progress",
@@ -297,6 +298,19 @@ pub(crate) async fn find_pending_service_operation_conflict(
     if let Some(job) = state
         .db
         .find_latest_pending_update_blocking_service(stack_id, service_id)
+        .await
+        .map_err(map_internal)?
+        && better_pending_job(&job, best.as_ref().map(|item| &item.job))
+    {
+        best = Some(PendingRollbackConflict {
+            reason: service_operation_conflict_reason(&job).to_string(),
+            job,
+        });
+    }
+
+    if let Some(job) = state
+        .db
+        .find_latest_pending_stack_lifecycle_blocking_service(stack_id, service_id)
         .await
         .map_err(map_internal)?
         && better_pending_job(&job, best.as_ref().map(|item| &item.job))

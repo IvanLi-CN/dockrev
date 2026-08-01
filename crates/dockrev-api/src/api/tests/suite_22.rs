@@ -1149,6 +1149,168 @@ async fn service_lifecycle_status_and_start_task_are_service_scoped() {
 }
 
 #[tokio::test]
+async fn stack_lifecycle_status_and_start_task_are_stack_scoped() {
+    let state = test_state_with_compose_bin(
+        ":memory:",
+        Arc::new(FakeRegistry),
+        Arc::new(FakeRunner),
+        "docker",
+    )
+    .await;
+    let app = api::router(state.clone());
+    let (stack_id, service_id, _compose_path) = seed_manual_rollback_service(&state).await;
+
+    let status = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}/lifecycle-status"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(status.status(), 200);
+    assert_eq!(response_json(status).await["state"].as_str(), Some("stopped"));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/stacks/{stack_id}/lifecycle"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"action":"start"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let job_id = response_json(response).await["jobId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let job = wait_for_job_terminal(&state, &job_id).await;
+    assert_eq!(job.r#type.as_str(), "stack_lifecycle");
+    assert_eq!(job.scope.as_str(), "stack");
+    assert_eq!(job.stack_id.as_deref(), Some(stack_id.as_str()));
+    assert_eq!(job.service_id, None);
+    assert_eq!(job.summary_json["action"].as_str(), Some("start"));
+    assert_eq!(
+        job.summary_json["serviceIds"].as_array().unwrap(),
+        &[serde_json::Value::String(service_id)]
+    );
+    assert_eq!(job.status, "success");
+}
+
+#[tokio::test]
+async fn stack_lifecycle_claim_blocks_service_lifecycle_and_update() {
+    let state = test_state(":memory:").await;
+    let (stack_id, service_id, _compose_path) = seed_manual_rollback_service(&state).await;
+    let now = test_now_rfc3339();
+    let stack_job_id = ids::new_job_id();
+    let stack_job = crate::api::types::JobRecord::new_running(
+        stack_job_id.clone(),
+        crate::api::types::JobType::StackLifecycle,
+        crate::api::types::JobScope::Stack,
+        Some(stack_id.clone()),
+        None,
+        &now,
+    );
+    let target = crate::db::ServiceOperationTarget {
+        service_id: service_id.clone(),
+        stack_id: stack_id.clone(),
+    };
+    assert!(state
+        .db
+        .insert_service_operation_job_if_unblocked(
+            stack_job.to_db(),
+            vec![target.clone()],
+            None,
+        )
+        .await
+        .unwrap()
+        .is_none());
+
+    for job_type in [
+        crate::api::types::JobType::ServiceLifecycle,
+        crate::api::types::JobType::Update,
+    ] {
+        let job = crate::api::types::JobRecord::new_running(
+            ids::new_job_id(),
+            job_type,
+            crate::api::types::JobScope::Service,
+            Some(stack_id.clone()),
+            Some(service_id.clone()),
+            &now,
+        );
+        let conflict = state
+            .db
+            .insert_service_operation_job_if_unblocked(job.to_db(), vec![target.clone()], None)
+            .await
+            .unwrap()
+            .expect("stack lifecycle must reserve every service target");
+        assert_eq!(conflict.id, stack_job_id);
+    }
+
+    let read_conflict = crate::api::find_pending_service_operation_conflict(
+        &state,
+        &stack_id,
+        &service_id,
+    )
+    .await
+    .unwrap()
+    .expect("service status must expose the stack lifecycle lock");
+    assert_eq!(read_conflict.job.id, stack_job_id);
+    assert_eq!(read_conflict.reason, "stack_lifecycle_in_progress");
+}
+
+#[tokio::test]
+async fn service_lifecycle_claim_blocks_stack_lifecycle() {
+    let state = test_state(":memory:").await;
+    let (stack_id, service_id, _compose_path) = seed_manual_rollback_service(&state).await;
+    let now = test_now_rfc3339();
+    let service_job_id = ids::new_job_id();
+    let service_job = crate::api::types::JobRecord::new_running(
+        service_job_id.clone(),
+        crate::api::types::JobType::ServiceLifecycle,
+        crate::api::types::JobScope::Service,
+        Some(stack_id.clone()),
+        Some(service_id.clone()),
+        &now,
+    );
+    let target = crate::db::ServiceOperationTarget {
+        service_id,
+        stack_id: stack_id.clone(),
+    };
+    assert!(state
+        .db
+        .insert_service_operation_job_if_unblocked(
+            service_job.to_db(),
+            vec![target.clone()],
+            None,
+        )
+        .await
+        .unwrap()
+        .is_none());
+
+    let stack_job = crate::api::types::JobRecord::new_running(
+        ids::new_job_id(),
+        crate::api::types::JobType::StackLifecycle,
+        crate::api::types::JobScope::Stack,
+        Some(stack_id),
+        None,
+        &now,
+    );
+    let conflict = state
+        .db
+        .insert_service_operation_job_if_unblocked(stack_job.to_db(), vec![target], None)
+        .await
+        .unwrap()
+        .expect("service lifecycle must block the containing stack lifecycle");
+    assert_eq!(conflict.id, service_job_id);
+}
+
+#[tokio::test]
 async fn service_lifecycle_rejects_archived_services_and_stacks() {
     for archive_stack in [false, true] {
         let state = test_state(":memory:").await;
