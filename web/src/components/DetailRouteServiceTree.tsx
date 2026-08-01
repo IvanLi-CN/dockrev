@@ -6,6 +6,7 @@ import { SERVICE_TREE_REFRESH_EVENT, type ServiceTreeRefreshDetail } from '../se
 import { Mono } from '../ui'
 import { UPDATE_JOB_SETTLED_EVENT, type UpdateJobSettledDetail } from '../updateActionTracking'
 import { serviceRowStatus, statusLabel } from '../updateStatus'
+import { ServiceTreeContextActions } from './ServiceTreeContextActions'
 
 type DetailRoute = Extract<Route, { name: 'stack' | 'service' }>
 
@@ -296,8 +297,12 @@ export function DetailRouteServiceTree(props: {
     const title = `${service.name} · ${lifecycleStateLabel(lifecycleState)} · 当前版本 ${version} · ${updateLabel}`
 
     return (
-      <a
+      <ServiceTreeContextActions
         key={service.id}
+        target={{ kind: 'service', stackId: stack.id, service }}
+        onRefresh={requestStackRefresh}
+      >
+        <a
         href={currentHref(nextRoute)}
         className={active ? 'detailRouteServiceLink detailRouteServiceLinkActive' : 'detailRouteServiceLink'}
         aria-current={active ? 'page' : undefined}
@@ -307,14 +312,15 @@ export function DetailRouteServiceTree(props: {
           event.preventDefault()
           navigate(nextRoute)
         }}
-      >
-        <span className={lifecycleStateClassName(lifecycleState)} aria-hidden="true" />
-        <span className="detailRouteServiceName">{service.name}</span>
-        <span className="detailRouteServiceMeta" aria-label={`当前版本 ${version}`}>
-          <Mono>{serviceVersionLabel(service)}</Mono>
-          {rowStatus === 'updatable' ? <span className="detailRouteServiceUpdateDot" aria-label="有可用更新" /> : null}
-        </span>
-      </a>
+        >
+          <span className={lifecycleStateClassName(lifecycleState)} aria-hidden="true" />
+          <span className="detailRouteServiceName">{service.name}</span>
+          <span className="detailRouteServiceMeta" aria-label={`当前版本 ${version}`}>
+            <Mono>{serviceVersionLabel(service)}</Mono>
+            {rowStatus === 'updatable' ? <span className="detailRouteServiceUpdateDot" aria-label="有可用更新" /> : null}
+          </span>
+        </a>
+      </ServiceTreeContextActions>
     )
   }
 
@@ -382,29 +388,34 @@ export function DetailRouteServiceTree(props: {
                   >
                     {expanded ? <ChevronDown size={15} strokeWidth={2.2} /> : <ChevronRight size={15} strokeWidth={2.2} />}
                   </button>
-                  <a
-                    href={currentHref({ name: 'stack', stackId: stack.id })}
-                    className={
-                      stackActive
-                        ? 'detailRouteStackLink detailRouteStackLinkActive'
-                        : stackCurrent
-                          ? 'detailRouteStackLink detailRouteStackLinkCurrent'
-                          : 'detailRouteStackLink'
-                    }
-                    aria-current={stackActive ? 'page' : undefined}
-                    onClick={(event) => {
-                      event.preventDefault()
-                      navigate({ name: 'stack', stackId: stack.id })
-                    }}
+                  <ServiceTreeContextActions
+                    target={{ kind: 'stack', stackId: stack.id, stack: stack.detail, archived: stack.archived }}
+                    onRefresh={requestStackRefresh}
                   >
-                    <span className="detailRouteStackTitle">
-                      <span className={stackStatusClassName(stack.status)} aria-hidden="true" />
-                      <span className="detailRouteStackLabel">{stack.name}</span>
-                    </span>
-                    <span className="detailRouteStackMeta">
-                      <Mono>{serviceCount}</Mono>
-                    </span>
-                  </a>
+                    <a
+                      href={currentHref({ name: 'stack', stackId: stack.id })}
+                      className={
+                        stackActive
+                          ? 'detailRouteStackLink detailRouteStackLinkActive'
+                          : stackCurrent
+                            ? 'detailRouteStackLink detailRouteStackLinkCurrent'
+                            : 'detailRouteStackLink'
+                      }
+                      aria-current={stackActive ? 'page' : undefined}
+                      onClick={(event) => {
+                        event.preventDefault()
+                        navigate({ name: 'stack', stackId: stack.id })
+                      }}
+                    >
+                      <span className="detailRouteStackTitle">
+                        <span className={stackStatusClassName(stack.status)} aria-hidden="true" />
+                        <span className="detailRouteStackLabel">{stack.name}</span>
+                      </span>
+                      <span className="detailRouteStackMeta">
+                        <Mono>{serviceCount}</Mono>
+                      </span>
+                    </a>
+                  </ServiceTreeContextActions>
                 </div>
                 {expanded ? (
                   <div className="detailRouteServiceList" role="list" aria-label={`${stack.name} 服务`}>
