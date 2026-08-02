@@ -112,8 +112,17 @@ fn active_job_from_conflict(conflict: &PendingRollbackConflict) -> ServiceLifecy
     }
 }
 
+fn active_stack_services(stack: &StackRecord) -> Vec<Service> {
+    stack
+        .services
+        .iter()
+        .filter(|service| !service.archived.unwrap_or(false))
+        .cloned()
+        .collect()
+}
+
 fn stack_has_dockrev(state: &AppState, stack: &StackRecord) -> bool {
-    stack.services.iter().any(|service| {
+    active_stack_services(stack).iter().any(|service| {
         updater::is_dockrev_image_ref(
             &service.image.reference,
             Some(state.config.dockrev_image_repo.as_str()),
@@ -125,13 +134,14 @@ async fn read_stack_lifecycle_state(
     state: &Arc<AppState>,
     stack: &StackRecord,
 ) -> (ServiceLifecycleState, Option<String>) {
-    if stack.services.is_empty() {
+    let services = active_stack_services(stack);
+    if services.is_empty() {
         return (
             ServiceLifecycleState::Unknown,
             Some("stack_has_no_services".to_string()),
         );
     }
-    let states = lifecycle_states_for_stack(state, stack, &stack.services).await;
+    let states = lifecycle_states_for_stack(state, stack, &services).await;
     if states
         .iter()
         .any(|service_state| matches!(service_state, ServiceLifecycleState::Unknown))
@@ -164,7 +174,7 @@ async fn find_stack_lifecycle_conflict(
     stack: &StackRecord,
 ) -> Result<Option<PendingRollbackConflict>, ApiError> {
     let mut best = None;
-    for service in &stack.services {
+    for service in active_stack_services(stack) {
         if let Some(conflict) =
             find_pending_service_operation_conflict(state, &stack.id, &service.id).await?
             && better_pending_job(
@@ -243,6 +253,8 @@ pub(crate) async fn trigger_stack_lifecycle(
             "reason": unavailable_reason.unwrap_or_else(|| lifecycle_state.as_str().to_string()),
         })));
     }
+
+    let services = active_stack_services(&stack);
     let action_allowed = matches!(
         (&req.action, &lifecycle_state),
         (
@@ -279,13 +291,12 @@ pub(crate) async fn trigger_stack_lifecycle(
         "action": req.action.as_str(),
         "stackName": stack.name,
         "initialState": lifecycle_state.as_str(),
-        "serviceIds": stack.services.iter().map(|service| service.id.as_str()).collect::<Vec<_>>(),
+        "serviceIds": services.iter().map(|service| service.id.as_str()).collect::<Vec<_>>(),
     });
     let mut job_db = job.to_db();
     job_db.created_by = user.principal;
     job_db.reason = "ui".to_string();
-    let targets = stack
-        .services
+    let targets = services
         .iter()
         .map(|service| crate::db::ServiceOperationTarget {
             service_id: service.id.clone(),

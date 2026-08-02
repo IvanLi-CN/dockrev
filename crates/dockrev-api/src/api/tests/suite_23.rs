@@ -54,7 +54,13 @@ async fn stack_lifecycle_status_and_start_task_are_stack_scoped() {
 
 #[tokio::test]
 async fn stack_lifecycle_claim_blocks_service_lifecycle_and_update() {
-    let state = test_state(":memory:").await;
+    let state = test_state_with_compose_bin(
+        ":memory:",
+        Arc::new(FakeRegistry),
+        Arc::new(FakeRunner),
+        "docker",
+    )
+    .await;
     let (stack_id, service_id, _compose_path) = seed_manual_rollback_service(&state).await;
     let now = test_now_rfc3339();
     let stack_job_id = ids::new_job_id();
@@ -162,8 +168,53 @@ async fn service_lifecycle_claim_blocks_stack_lifecycle() {
 
 #[tokio::test]
 async fn stack_lifecycle_rejects_archived_and_dockrev_stacks() {
-    let state = test_state(":memory:").await;
+    let state = test_state_with_compose_bin(
+        ":memory:",
+        Arc::new(FakeRegistry),
+        Arc::new(FakeRunner),
+        "docker",
+    )
+    .await;
     let app = api::router(state.clone());
+
+    let mixed_compose_path = format!("/tmp/dockrev-stack-lifecycle-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &mixed_compose_path,
+        "services:\n  active:\n    image: ghcr.io/acme/active:latest\n  archived:\n    image: ghcr.io/acme/archived:latest\n",
+    )
+    .unwrap();
+    let mixed_stack_id = seed_stack_from_compose(&state, "mixed", &mixed_compose_path).await;
+    std::fs::remove_file(&mixed_compose_path).unwrap();
+    let mixed_services = state.db.list_services_for_check(&mixed_stack_id).await.unwrap();
+    let archived_service = mixed_services
+        .iter()
+        .find(|service| service.name == "archived")
+        .unwrap();
+    state
+        .db
+        .set_service_archived(
+            &archived_service.id,
+            true,
+            Some("test"),
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+    let mixed_status = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{mixed_stack_id}/lifecycle-status"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(mixed_status.status(), 200);
+    let mixed_status_json = response_json(mixed_status).await;
+    assert_eq!(mixed_status_json["state"].as_str(), Some("stopped"));
+    assert_eq!(mixed_status_json["unavailableReason"], serde_json::Value::Null);
+
     let (stack_id, _service_id, _compose_path) = seed_manual_rollback_service(&state).await;
     let now = test_now_rfc3339();
     state

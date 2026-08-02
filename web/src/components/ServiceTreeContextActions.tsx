@@ -105,13 +105,19 @@ export function ServiceTreeContextActions(props: {
   const trackedJobIdRef = useRef<string | null>(null)
   const [status, setStatus] = useState<ServiceLifecycleStatusResponse | null>(null)
   const [stackDetail, setStackDetail] = useState<StackDetail | null>(props.target.kind === 'stack' ? props.target.stack ?? null : null)
+  const [serviceDetail, setServiceDetail] = useState<Service | null>(props.target.kind === 'service' ? props.target.service : null)
   const [notice, setNotice] = useState<Notice | null>(null)
   const [submitting, setSubmitting] = useState(false)
-  const target = props.target.kind === 'stack' ? { ...props.target, stack: stackDetail } : props.target
+  const target = useMemo(
+    () => props.target.kind === 'stack'
+      ? { ...props.target, stack: stackDetail }
+      : { ...props.target, service: serviceDetail ?? props.target.service },
+    [props.target, serviceDetail, stackDetail],
+  )
   const lifecycleState = status?.state ?? 'unknown'
   const lifecycleReason = submitting
     ? '操作正在提交'
-    : props.target.kind === 'service' && props.target.service.archived
+    : target.kind === 'service' && target.service.archived
       ? '归档服务不可操作'
     : reasonLabel(status?.unavailableReason ?? (!status ? 'lifecycle_status_loading' : null))
   const lifecycleDisabled = Boolean(lifecycleReason)
@@ -134,15 +140,21 @@ export function ServiceTreeContextActions(props: {
   const loadState = useCallback(async () => {
     setStatus(null)
     try {
-      if (props.target.kind === 'stack') {
+      const contextTarget = props.target
+      if (contextTarget.kind === 'stack') {
         const [nextStatus, detail] = await Promise.all([
-          getStackLifecycleStatus(props.target.stackId),
-          props.target.stack ? Promise.resolve(props.target.stack) : getStack(props.target.stackId),
+          getStackLifecycleStatus(contextTarget.stackId),
+          getStack(contextTarget.stackId),
         ])
         setStatus(nextStatus)
         setStackDetail(detail)
       } else {
-        setStatus(await getServiceLifecycleStatus(props.target.service.id))
+        const [nextStatus, detail] = await Promise.all([
+          getServiceLifecycleStatus(contextTarget.service.id),
+          getStack(contextTarget.stackId),
+        ])
+        setStatus(nextStatus)
+        setServiceDetail(detail.services.find((service) => service.id === contextTarget.service.id) ?? contextTarget.service)
       }
     } catch (error) {
       setStatus({ state: 'unknown', unavailableReason: errorNotice(error).message })
@@ -174,17 +186,17 @@ export function ServiceTreeContextActions(props: {
   }, [props, trackJob])
 
   const submitUpdate = useCallback(async () => {
-    if (props.target.kind === 'service' && isDockrevImageRef(props.target.service.image.ref)) {
+    if (target.kind === 'service' && isDockrevImageRef(target.service.image.ref)) {
       openSelfUpgradeUrl(selfUpgradeBaseUrl())
       return
     }
     setSubmitting(true)
     try {
-      const result = props.target.kind === 'service'
+      const result = target.kind === 'service'
         ? await triggerUpdate({
             scope: 'service',
             stackId: props.target.stackId,
-            ...(await buildUpdateServiceTarget(props.target.service)),
+            ...(await buildUpdateServiceTarget(target.service)),
             mode: 'apply',
             allowArchMismatch: false,
             backupMode: 'inherit',
@@ -217,7 +229,7 @@ export function ServiceTreeContextActions(props: {
     } finally {
       setSubmitting(false)
     }
-  }, [props, stackDetail, trackJob])
+  }, [props, stackDetail, target, trackJob])
 
   const trigger = useMemo(() => cloneElement(props.children, {
     onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
