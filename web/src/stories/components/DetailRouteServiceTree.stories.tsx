@@ -81,6 +81,8 @@ export const ServiceContextMenuRunning: Story = {
     await waitForCondition(() => Boolean(body.queryByText('重启')))
     const labels = body.getAllByRole('menuitem').map((item) => item.textContent?.trim())
     expectStory(labels.join('|') === '重启|停止|更新', 'running menu should keep restart, stop, separator, update order')
+    const updateItem = body.getByText('更新').closest('[role="menuitem"]')
+    expectStory(Boolean(updateItem?.querySelector('svg[data-lucide="download"]')), 'update action should use the same download icon as the service detail action')
     await userEvent.click(body.getByText('重启'))
     await waitForCondition(() => globalThis.__DOCKREV_MOCK_DEBUG__?.lastLifecycleRequest?.action === 'restart')
     expectStory(globalThis.__DOCKREV_MOCK_DEBUG__?.lastLifecycleRequest?.id === 'svc-prod-api', 'restart should submit the selected service directly')

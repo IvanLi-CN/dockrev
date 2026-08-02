@@ -1,4 +1,4 @@
-import { Play, RefreshCw, RotateCw, Square } from 'lucide-react'
+import { Download, Play, RotateCw, Square } from 'lucide-react'
 import { cloneElement, type HTMLAttributes, type KeyboardEvent, type ReactElement, useCallback, useMemo, useState } from 'react'
 import {
   ApiError,
@@ -218,7 +218,7 @@ export function ServiceTreeContextActions(props: {
           ) : null}
           <ContextMenuSeparator />
           <ContextMenuItem disabled={Boolean(updateReason) || submitting} title={updateReason ?? undefined} onSelect={() => void submitUpdate()}>
-            <RefreshCw /><ActionLabel label="更新" reason={updateReason ?? (submitting ? '操作正在提交' : undefined)} />
+            <Download /><ActionLabel label="更新" reason={updateReason ?? (submitting ? '操作正在提交' : undefined)} />
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
