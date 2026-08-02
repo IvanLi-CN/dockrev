@@ -356,7 +356,11 @@ export function useServiceDetailPageState(props: {
         }
       } catch {
         if (!cancelled) {
-          setLifecycleStatus({ state: 'unknown', unavailableReason: 'lifecycle_status_unavailable' })
+          setLifecycleStatus((previous) => ({
+            state: 'unknown',
+            unavailableReason: 'lifecycle_status_unavailable',
+            activeJob: previous?.activeJob ?? null,
+          }))
           if (lifecycleActiveJobIdRef.current) {
             timer = window.setTimeout(() => {
               void refreshStatus()
