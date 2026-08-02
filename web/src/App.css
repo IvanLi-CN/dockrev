@@ -86,6 +86,17 @@
   min-width: 0;
 }
 
+.serviceSplitActionDisabledAnchor {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.serviceSplitActionDisabledAnchor:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
 .serviceSplitAction[data-slot='button-group'] > :first-child.btn,
 .serviceSplitAction[data-slot='button-group'] > :first-child.btnTooltipAnchor > .btn {
   border-top-right-radius: 0;

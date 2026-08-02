@@ -81,3 +81,34 @@ export const LifecycleUnavailable: Story = {
     expect(within(menu).queryByText('部分副本正在运行，请先处理运行态异常')).not.toBeInTheDocument()
   },
 }
+
+export const GroupDisabledByServiceOperation: Story = {
+  args: {
+    ariaLabel: '服务生命周期',
+    disabled: true,
+    disabledReason: '服务正在更新，完成后才能启动、停止或重启。',
+    primary: { id: 'lifecycle-stop', label: '停止', icon: Square, iconVariant: 'solid', onSelect: noop },
+    items: [
+      { id: 'lifecycle-start', label: '启动', icon: Play, disabled: true, onSelect: noop },
+      { id: 'lifecycle-stop', label: '停止', icon: Square, iconVariant: 'solid', disabled: true, onSelect: noop },
+      { id: 'lifecycle-restart', label: '重启', icon: RotateCw, disabled: true, onSelect: noop },
+    ],
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const documentBody = within(canvasElement.ownerDocument.body)
+    const group = await canvas.findByRole('group', { name: '服务生命周期' })
+    const anchor = group.parentElement
+    expect(anchor).toHaveClass('serviceSplitActionDisabledAnchor')
+    expect(group).toHaveAttribute('aria-disabled', 'true')
+    expect(within(group).getByRole('button', { name: '停止' })).toBeDisabled()
+    expect(within(group).getByRole('button', { name: '服务生命周期菜单' })).toBeDisabled()
+
+    await userEvent.hover(anchor as HTMLElement)
+    expect(await documentBody.findByRole('tooltip')).toHaveTextContent('服务正在更新，完成后才能启动、停止或重启。')
+
+    fireEvent.click(anchor as HTMLElement)
+    expect(await documentBody.findByRole('tooltip')).toHaveTextContent('服务正在更新，完成后才能启动、停止或重启。')
+    expect(documentBody.queryByRole('menu', { name: '服务生命周期' })).not.toBeInTheDocument()
+  },
+}

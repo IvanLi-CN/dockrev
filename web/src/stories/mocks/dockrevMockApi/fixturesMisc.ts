@@ -377,6 +377,35 @@ export function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fi
     }
     return fixture
   }
+  if (scenario === 'service-action-progress') {
+    const fixture = buildDashboardDemo()
+    const service = fixture.stackById['stack-prod']?.services.find((item) => item.id === 'svc-prod-api')
+    fixture.jobs = fixture.jobs.map((job) =>
+      job.id === 'job-1' ? { ...job, serviceId: 'svc-prod-api' } : job,
+    )
+    const runningJob = fixture.jobById['job-1']
+    if (runningJob) {
+      fixture.jobById['job-1'] = {
+        ...runningJob,
+        serviceId: 'svc-prod-api',
+      }
+    }
+    if (service) service.candidate = null
+    const currentDigest = service?.image.digest ?? ''
+    fixture.rollbackTargetByServiceId['svc-prod-api'] = {
+      available: false,
+      currentDigest,
+      currentDisplayTag: service?.image.resolvedTag ?? service?.image.tag ?? null,
+      targetDigest: null,
+      targetDisplayTag: null,
+      sourceUpdateJobId: null,
+      sourceFinishedAt: null,
+      unavailableReason: 'update_in_progress',
+      activeJobId: 'job-1',
+      activeJobStatus: 'running',
+    }
+    return fixture
+  }
   if (
     scenario === 'service-detail-rollback-available' ||
     scenario === 'service-detail-rollback-confirm-open'
@@ -464,6 +493,12 @@ export function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fi
       unavailableReason: 'rollback_in_progress',
       activeJobId: 'job-rollback-service',
       activeJobStatus: 'running',
+    }
+    const sourceJob = fixture.jobById['job-rollback-api-5-2-2']
+    if (sourceJob) {
+      const activeJob = { ...sourceJob, id: 'job-rollback-service', status: 'running', finishedAt: null }
+      fixture.jobs = [activeJob, ...fixture.jobs]
+      fixture.jobById[activeJob.id] = activeJob
     }
     return fixture
   }

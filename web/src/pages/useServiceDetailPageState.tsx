@@ -31,6 +31,19 @@ function conflictingJobId(error: ApiError): string | null {
   return typeof existingJobId === 'string' && existingJobId.trim() ? existingJobId : null
 }
 
+type ServiceOperationOwner = 'update' | 'rollback' | 'lifecycle'
+
+function serviceOperationOwner(type: string | null | undefined): ServiceOperationOwner | null {
+  if (type === 'update') return 'update'
+  if (type === 'rollback') return 'rollback'
+  if (type === 'service_lifecycle') return 'lifecycle'
+  return null
+}
+
+function activeServiceOperation(status: string | null | undefined): boolean {
+  return status === 'queued' || status === 'running'
+}
+
 export function useServiceDetailPageState(props: {
   stackId: string
   serviceId: string
@@ -69,9 +82,24 @@ export function useServiceDetailPageState(props: {
   const lifecycleActiveJobIdRef = useRef<string | null>(null)
   const rollbackActiveJobIdRef = useRef<string | null>(null)
   const [lastSuccessfulRefreshAt, setLastSuccessfulRefreshAt] = useState<string | null>(null)
-  const rollbackStatusSource = rollbackTarget ?? rollbackActiveTarget
-  const rollbackActiveJobId = (rollbackStatusSource?.activeJobId ?? '').trim() || null
-  const rollbackActiveJobStatus = (rollbackStatusSource?.activeJobStatus ?? '').trim() || null
+  const lifecycleJob = lifecycleStatus?.activeJob ?? null
+  const lifecycleOwner = lifecycleJob && activeServiceOperation(lifecycleJob.status)
+    ? serviceOperationOwner(lifecycleJob.type)
+    : null
+  const activeOperation = useMemo(
+    () => lifecycleJob && lifecycleOwner
+      ? { owner: lifecycleOwner, id: lifecycleJob.id, status: lifecycleJob.status, action: lifecycleJob.action ?? null }
+      : applyActiveJob
+        ? { owner: 'update' as const, id: applyActiveJob.jobId, status: applyActiveJob.status, action: null }
+        : null,
+    [applyActiveJob, lifecycleJob, lifecycleOwner],
+  )
+  const activeOperationOwner = activeOperation?.owner ?? null
+  const activeUpdateJob = activeOperationOwner === 'update' ? activeOperation : null
+  const activeRollbackJob = activeOperationOwner === 'rollback' ? activeOperation : null
+  const activeLifecycleJob = activeOperationOwner === 'lifecycle' ? activeOperation : null
+  const rollbackActiveJobId = activeRollbackJob?.id ?? null
+  const rollbackActiveJobStatus = activeRollbackJob?.status ?? null
   const rollbackReason = rollbackTarget?.unavailableReason ?? rollbackActiveTarget?.unavailableReason ?? null
   const rollbackReasonLabel = rollbackUnavailableReasonLabel(rollbackReason)
   const rollbackTargetDigestRetryMs = 250
@@ -281,6 +309,18 @@ export function useServiceDetailPageState(props: {
     setLifecycleStatus(next)
   }, [service])
 
+  const seedLifecycleActiveJob = useCallback(
+    (jobId: string, type: 'rollback' | 'service_lifecycle', action: ServiceLifecycleAction | null = null) => {
+      lifecycleActiveJobIdRef.current = jobId
+      setLifecycleStatus((previous) => ({
+        state: previous?.state ?? 'unknown',
+        unavailableReason: previous?.unavailableReason ?? null,
+        activeJob: { id: jobId, type, status: 'queued', action },
+      }))
+    },
+    [],
+  )
+
   useEffect(() => {
     void requestRefresh().catch((e: unknown) => setError(errorMessage(e)))
   }, [requestRefresh, serviceId, stackId])
@@ -316,7 +356,11 @@ export function useServiceDetailPageState(props: {
         }
       } catch {
         if (!cancelled) {
-          setLifecycleStatus({ state: 'unknown', unavailableReason: 'lifecycle_status_unavailable' })
+          setLifecycleStatus((previous) => ({
+            state: 'unknown',
+            unavailableReason: 'lifecycle_status_unavailable',
+            activeJob: previous?.activeJob ?? null,
+          }))
           if (lifecycleActiveJobIdRef.current) {
             timer = window.setTimeout(() => {
               void refreshStatus()
@@ -610,9 +654,11 @@ export function useServiceDetailPageState(props: {
       setNotice(null)
       try {
         const resp = await triggerServiceRollback(service.id)
+        seedLifecycleActiveJob(resp.jobId, 'rollback')
         setNotice({ jobId: resp.jobId, kind: 'rollback' })
         publishServiceTreeRefresh({ stackId, serviceId, reason: 'rollback-job-started' })
         await refreshStackOnly()
+        await refreshLifecycleStatus()
       } catch (e: unknown) {
         if (e instanceof ApiError) {
           if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
@@ -639,12 +685,12 @@ export function useServiceDetailPageState(props: {
         setBusy(false)
       }
     })()
-  }, [confirm, refreshStackOnly, rollbackActiveJobId, rollbackBackupValue, rollbackTarget, service, serviceId, stack?.name, stackId])
+  }, [confirm, refreshLifecycleStatus, refreshStackOnly, rollbackActiveJobId, rollbackBackupValue, rollbackTarget, seedLifecycleActiveJob, service, serviceId, stack?.name, stackId])
 
   const requestLifecycleAction = useCallback((action: ServiceLifecycleAction) => {
     void (async () => {
       if (!service) return
-      const activeJobId = lifecycleStatus?.activeJob?.id
+      const activeJobId = activeLifecycleJob?.id
       if (activeJobId) {
         navigate({ name: 'job', jobId: activeJobId })
         return
@@ -666,7 +712,7 @@ export function useServiceDetailPageState(props: {
       setNotice(null)
       try {
         const resp = await triggerServiceLifecycle(service.id, action)
-        lifecycleActiveJobIdRef.current = resp.jobId
+        seedLifecycleActiveJob(resp.jobId, 'service_lifecycle', action)
         setNotice({ jobId: resp.jobId, kind: 'lifecycle' })
         publishServiceTreeRefresh({ stackId, serviceId, reason: 'lifecycle-job-started' })
         await refreshLifecycleStatus()
@@ -686,7 +732,7 @@ export function useServiceDetailPageState(props: {
         setBusy(false)
       }
     })()
-  }, [confirm, lifecycleStatus?.activeJob?.id, refreshLifecycleStatus, service, serviceId, stackId])
+  }, [activeLifecycleJob?.id, confirm, refreshLifecycleStatus, seedLifecycleActiveJob, service, serviceId, stackId])
 
   const requestPreviewUpdate = useCallback(() => {
     void (async () => {
@@ -768,6 +814,7 @@ export function useServiceDetailPageState(props: {
         })
         setNotice({ jobId: resp.jobId, kind: 'update' })
         if (applyActionKey) trackJob(applyActionKey, resp.jobId, 'queued')
+        void refreshLifecycleStatus().catch(() => undefined)
       } catch (e: unknown) {
         if (e instanceof ApiError) {
           if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
@@ -798,6 +845,7 @@ export function useServiceDetailPageState(props: {
     confirm,
     endSubmitting,
     patchServiceInStack,
+    refreshLifecycleStatus,
     requestRefresh,
     service,
     stackId,
@@ -878,22 +926,55 @@ export function useServiceDetailPageState(props: {
     const applyDisabled = applySubmitting && !applyActiveJob
       ? true
       : !applyActiveJob && (busy || Boolean(candidateReason))
-    const applyDescription = applyActiveJob
+    const applyDescription = activeUpdateJob
       ? '任务进行中，点击查看任务详情'
       : applySubmitting
         ? '正在提交更新任务'
         : candidateReason
-    const rollbackLabel = rollbackActiveJobId
+    const rollbackLabel = activeRollbackJob
       ? rollbackActiveJobStatus === 'queued' ? '回滚排队中…' : '回滚中…'
       : rollbackTargetRefreshing ? '回滚信息刷新中…' : '回滚'
-    const rollbackDisabled = !rollbackActiveJobId && (busy || rollbackTargetRefreshing || !rollbackTarget?.available)
+    const rollbackDisabled = !activeRollbackJob && (busy || rollbackTargetRefreshing || !rollbackTarget?.available)
+    const operationBusyReason = activeOperationOwner === 'update'
+      ? '服务正在更新，完成后才能启动、停止或重启。'
+      : activeOperationOwner === 'rollback'
+        ? '服务正在回滚，完成后才能启动、停止或重启。'
+        : activeOperationOwner === 'lifecycle'
+          ? `服务正在${activeOperation?.action === 'start' ? '启动' : activeOperation?.action === 'stop' ? '停止' : '重启'}，完成后才能更新或回滚。`
+          : undefined
+    const updateGroupDisabledReason = activeOperationOwner === 'lifecycle' ? operationBusyReason : undefined
+    const lifecycleGroupDisabledReason = activeOperationOwner === 'update' || activeOperationOwner === 'rollback' ? operationBusyReason : undefined
     const updateItems = [
-      { id: 'preview-update', label: '预览更新', icon: Eye, description: candidateReason, disabled: previewDisabled, onSelect: requestPreviewUpdate },
-      { id: 'execute-update', label: applyActiveJob ? (applyActiveJob.status === 'queued' ? '更新排队中…' : '更新中…') : '更新', icon: Download, description: applyDescription, disabled: applyDisabled, loading: Boolean(applyActiveJob || applySubmitting), loadingClickable: Boolean(applyActiveJob), onSelect: () => applyActiveJob ? navigate({ name: 'job', jobId: applyActiveJob.jobId }) : requestApplyUpdate() },
-      { id: 'rollback', label: rollbackLabel, icon: RotateCcw, description: rollbackHint, disabled: rollbackDisabled, loading: Boolean(rollbackActiveJobId), loadingClickable: Boolean(rollbackActiveJobId), onSelect: requestRollback },
+      {
+        id: 'preview-update',
+        label: '预览更新',
+        icon: Eye,
+        description: activeOperationOwner ? operationBusyReason : candidateReason,
+        disabled: Boolean(activeOperationOwner) || previewDisabled,
+        onSelect: requestPreviewUpdate,
+      },
+      {
+        id: 'execute-update',
+        label: activeUpdateJob ? (activeUpdateJob.status === 'queued' ? '更新排队中…' : '更新中…') : '更新',
+        icon: Download,
+        description: activeUpdateJob ? '任务进行中，点击查看任务详情' : activeOperationOwner ? operationBusyReason : applyDescription,
+        disabled: activeUpdateJob ? false : Boolean(activeOperationOwner) || applyDisabled,
+        loading: Boolean(activeUpdateJob || applySubmitting),
+        loadingClickable: Boolean(activeUpdateJob),
+        onSelect: () => activeUpdateJob ? navigate({ name: 'job', jobId: activeUpdateJob.id }) : requestApplyUpdate(),
+      },
+      {
+        id: 'rollback',
+        label: rollbackLabel,
+        icon: RotateCcw,
+        description: activeRollbackJob ? '任务进行中，点击查看任务详情' : activeOperationOwner ? operationBusyReason : rollbackHint,
+        disabled: activeRollbackJob ? false : Boolean(activeOperationOwner) || rollbackDisabled,
+        loading: Boolean(activeRollbackJob),
+        loadingClickable: Boolean(activeRollbackJob),
+        onSelect: requestRollback,
+      },
     ]
-    const updatePrimary = service?.candidate ? updateItems[1] : updateItems[2]
-    const activeLifecycle = lifecycleStatus?.activeJob
+    const updatePrimary = activeUpdateJob || activeRollbackJob ? (activeUpdateJob ? updateItems[1] : updateItems[2]) : service?.candidate ? updateItems[1] : updateItems[2]
     const lifecycleState = lifecycleStatus?.state ?? 'unknown'
     const lifecycleReason = lifecycleStatus?.unavailableReason === 'partial_replicas_running'
       ? '部分副本正在运行，请先处理运行态异常'
@@ -902,21 +983,32 @@ export function useServiceDetailPageState(props: {
         : lifecycleStatus?.unavailableReason
     const lifecycleItem = (action: ServiceLifecycleAction, label: string) => {
       const compatible = (action === 'start' && lifecycleState === 'stopped') || ((action === 'stop' || action === 'restart') && lifecycleState === 'running')
-      const description = activeLifecycle ? '任务进行中，点击查看任务详情' : lifecycleReason ?? (compatible ? undefined : '当前服务状态不支持该操作')
+      const isActiveAction = Boolean(activeLifecycleJob && activeLifecycleJob.action === action)
+      const description = activeLifecycleJob
+        ? isActiveAction ? '任务进行中，点击查看任务详情' : '其他生命周期任务进行中'
+        : activeOperationOwner ? operationBusyReason : lifecycleReason ?? (compatible ? undefined : '当前服务状态不支持该操作')
       const icon = action === 'start' ? Play : action === 'stop' ? Square : RotateCw
-      return { id: `lifecycle-${action}`, label, icon, iconVariant: action === 'stop' ? 'solid' as const : undefined, description, disabled: !activeLifecycle && (busy || !compatible), onSelect: () => activeLifecycle ? navigate({ name: 'job', jobId: activeLifecycle.id }) : requestLifecycleAction(action) }
+      return {
+        id: `lifecycle-${action}`,
+        label,
+        icon,
+        iconVariant: action === 'stop' ? 'solid' as const : undefined,
+        description,
+        disabled: activeLifecycleJob ? !isActiveAction : Boolean(activeOperationOwner) || busy || !compatible,
+        onSelect: () => activeLifecycleJob && isActiveAction ? navigate({ name: 'job', jobId: activeLifecycleJob.id }) : requestLifecycleAction(action),
+      }
     }
     const lifecycleItems = [lifecycleItem('start', '启动'), lifecycleItem('stop', '停止'), lifecycleItem('restart', '重启')]
-    const lifecyclePrimary = activeLifecycle
-      ? { ...lifecycleItems.find((item) => item.id === `lifecycle-${activeLifecycle.action ?? 'restart'}`)!, label: activeLifecycle.status === 'queued' ? '操作排队中…' : '操作进行中…', disabled: false, loading: true, loadingClickable: true, description: '任务进行中，点击查看任务详情' }
+    const lifecyclePrimary = activeLifecycleJob
+      ? { ...lifecycleItems.find((item) => item.id === `lifecycle-${activeLifecycleJob.action ?? 'restart'}`)!, label: activeLifecycleJob.status === 'queued' ? '操作排队中…' : '操作进行中…', disabled: false, loading: true, loadingClickable: true, description: '任务进行中，点击查看任务详情' }
       : lifecycleState === 'stopped' ? lifecycleItems[0] : lifecycleItems[1]
     const stackItem = { id: 'stack-details', label: 'Stack 详情', icon: Layers3, disabled: busy, onSelect: () => navigate({ name: 'stack' as const, stackId }) }
 
     return (
       <>
         <div className="serviceDesktopActions">
-          <ServiceSplitActionButton ariaLabel="更新操作" items={updateItems} primary={updatePrimary} />
-          <ServiceSplitActionButton ariaLabel="服务生命周期" items={lifecycleItems} primary={lifecyclePrimary} />
+          <ServiceSplitActionButton ariaLabel="更新操作" disabled={Boolean(updateGroupDisabledReason)} disabledReason={updateGroupDisabledReason} items={updateItems} primary={updatePrimary} />
+          <ServiceSplitActionButton ariaLabel="服务生命周期" disabled={Boolean(lifecycleGroupDisabledReason)} disabledReason={lifecycleGroupDisabledReason} items={lifecycleItems} primary={lifecyclePrimary} />
           <ServiceStackDetailAction disabled={busy} onClick={() => navigate({ name: 'stack', stackId })} />
         </div>
         <ServiceMobileActionMenu groups={[
@@ -926,7 +1018,7 @@ export function useServiceDetailPageState(props: {
         ]} />
       </>
     )
-  }, [applyActiveJob, applySubmitting, busy, dockrevSelfUpgradeAction, lifecycleStatus, requestApplyUpdate, requestLifecycleAction, requestPreviewUpdate, requestRollback, rollbackActiveJobId, rollbackActiveJobStatus, rollbackHint, rollbackTarget?.available, rollbackTargetRefreshing, service, stackId])
+  }, [activeLifecycleJob, activeOperation, activeOperationOwner, activeRollbackJob, activeUpdateJob, applyActiveJob, applySubmitting, busy, dockrevSelfUpgradeAction, lifecycleStatus, requestApplyUpdate, requestLifecycleAction, requestPreviewUpdate, requestRollback, rollbackActiveJobStatus, rollbackHint, rollbackTarget?.available, rollbackTargetRefreshing, service, stackId])
 
   const dangerousActions = useMemo(
     () => (
@@ -1067,7 +1159,9 @@ export function useServiceDetailPageState(props: {
     semverDowngradeAnomaly,
     service,
     serviceId,
-    applyActiveJob,
+    applyActiveJob: activeUpdateJob
+      ? { jobId: activeUpdateJob.id, status: activeUpdateJob.status }
+      : null,
     applySubmitting,
     setBusy,
     setError,

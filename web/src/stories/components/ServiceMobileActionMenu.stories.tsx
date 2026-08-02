@@ -58,3 +58,37 @@ export const ThreeFlatGroups: Story = {
     await expect(trigger).toHaveFocus()
   },
 }
+
+export const OwnershipDisabledItem: Story = {
+  args: {
+    groups: [
+      {
+        id: 'update',
+        items: [
+          { id: 'execute-update', label: '更新中…', icon: Download, loading: true, loadingClickable: true, onSelect: noop },
+          { id: 'rollback', label: '回滚', icon: RotateCcw, disabled: true, description: '服务正在更新，完成后才能回滚。', onSelect: noop },
+        ],
+      },
+      {
+        id: 'lifecycle',
+        items: [
+          { id: 'lifecycle-stop', label: '停止', icon: Square, iconVariant: 'solid', disabled: true, description: '服务正在更新，完成后才能启动、停止或重启。', onSelect: noop },
+          { id: 'lifecycle-restart', label: '重启', icon: RotateCw, disabled: true, description: '服务正在更新，完成后才能启动、停止或重启。', onSelect: noop },
+        ],
+      },
+    ],
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const documentBody = within(canvasElement.ownerDocument.body)
+    const trigger = await canvas.findByRole('button', { name: '服务操作' })
+    await userEvent.click(trigger)
+    const menu = await documentBody.findByRole('menu', { name: '服务操作' })
+    const lifecycleStop = within(menu).getByRole('menuitem', { name: '停止' })
+    expect(lifecycleStop).toHaveAttribute('aria-disabled', 'true')
+    await userEvent.hover(lifecycleStop)
+    expect(await documentBody.findByRole('tooltip')).toHaveTextContent('服务正在更新，完成后才能启动、停止或重启。')
+    await userEvent.click(lifecycleStop)
+    expect(await documentBody.findByTestId('service-mobile-action-toast')).toHaveTextContent('服务正在更新，完成后才能启动、停止或重启。')
+  },
+}
