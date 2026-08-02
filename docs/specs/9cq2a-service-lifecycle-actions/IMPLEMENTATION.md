@@ -10,6 +10,7 @@
 
 - 服务级 lifecycle API 已提供实时 Compose 状态、`start | stop | restart` 任务提交和活动任务直达信息；Compose V2 启动使用 `up -d --pull never --no-recreate`，Compose V1 使用仅启动已有容器的 `start`，两条路径都不会拉取或替换已有容器。
 - 活动 lifecycle 任务结算后，服务详情会立即刷新最近记录、版本记录与操作历史，不依赖重新加载页面。
+- 服务详情以 `lifecycle-status.activeJob.type` 作为服务级操作 owner；更新、回滚和 lifecycle 只在所属动作组显示进度，非 owner 桌面 split button 整组禁用并给出占用 Tooltip，移动端菜单项禁用并保留 Toast。
 - `service_lifecycle` 与同一服务的 apply update、rollback 采用同一冲突保护；任务占锁、调用方提供的实际服务目标和首条日志在同一 SQLite 事务提交，避免日志失败留下永久活动锁；定向 Stack/全局更新按持久化的实际服务目标占锁，仅对缺少目标记录的旧活动任务回退到 scope 判断；任务摘要、队列显示与服务操作历史均保留并展示具体动作。
 - 服务详情页已使用两个可访问 split dropdown；有候选时更新动作统一使用“更新”标签，生命周期按实时运行态切换默认项。split group、菜单语义、焦点和键盘关闭均由项目的 shadcn/Radix `ButtonGroup` 与 `DropdownMenu` 负责；主动作和菜单项使用 Lucide 语义图标，其中停止为实心方块，菜单图标与文字块沿 Y 轴居中；split 主动作按图标与标签自然收缩，不继承普通顶部 primary button 的固定宽度；菜单禁用原因通过 Radix Tooltip 与 Toast 呈现，不占用菜单行高，面板由最长操作项自然撑开并受视口安全上限约束；桌面图标 trigger 固定为 36px，移动端提升为 44px 触摸目标，箭头为 16px 并随 Radix 展开状态翻转，静态表面以居中的 16px 中性短线标明动作区，Dockrev 自身服务仍只显示 Supervisor 自升级。
 - 生命周期任务创建后只在活动期间轮询该服务的 lifecycle status；结算后立即以服务级 Compose 查询收敛按钮状态。

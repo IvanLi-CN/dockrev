@@ -154,6 +154,25 @@ export const LifecycleActive: Story = {
   },
 };
 
+export const ServiceActionProgress: Story = {
+  parameters: { dockrevApiScenario: "service-action-progress" },
+  render: render("stack-prod", "svc-prod-api", "overview", "更新占用服务时，生命周期操作整组置灰。"),
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument;
+    await waitForCondition(() => Boolean(findButton(doc, "更新中…")));
+    const update = findButton(doc, "更新中…");
+    expectStory(update?.getAttribute("aria-busy") === "true", "active update should remain the primary progress state");
+    const lifecycleGroup = doc.querySelector<HTMLElement>('[data-service-split-action="服务生命周期"]');
+    expectStory(lifecycleGroup?.getAttribute("aria-disabled") === "true", "lifecycle group should be disabled by update ownership");
+    const lifecycleMenu = lifecycleGroup?.querySelector<HTMLButtonElement>('[aria-label="服务生命周期菜单"]');
+    expectStory(Boolean(lifecycleMenu?.disabled), "lifecycle menu trigger should be disabled by update ownership");
+    lifecycleGroup?.parentElement?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await waitForCondition(() => Boolean(doc.querySelector('[role="tooltip"]')));
+    expectStory(doc.body.textContent?.includes("服务正在更新，完成后才能启动、停止或重启。"), "ownership reason tooltip missing");
+    expectStory(!normalizeText(update?.textContent).includes("回滚中…"), "active update must not fall back to rollback label");
+  },
+};
+
 export const LifecycleStopConfirmOpen: Story = {
   parameters: { dockrevApiScenario: "service-detail-lifecycle-running" },
   render: render("stack-prod", "svc-prod-api", "overview"),

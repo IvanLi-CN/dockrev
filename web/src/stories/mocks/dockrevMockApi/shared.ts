@@ -46,6 +46,7 @@ export type DockrevApiScenario =
   | 'dashboard-demo'
   | 'dashboard-demo-slow-update'
   | 'dashboard-demo-hydrated-update'
+  | 'service-action-progress'
   | 'service-detail-rollback-available'
   | 'service-detail-rollback-unavailable'
   | 'service-detail-rollback-active'

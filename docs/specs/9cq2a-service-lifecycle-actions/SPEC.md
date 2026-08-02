@@ -11,6 +11,7 @@
 - 在 AppShell 顶栏显示当前服务名，并在名称与操作组之间显示服务资源摘要；正文不再重复服务标题或资源摘要。资源摘要按 `CPU + 内存`、`磁盘读 + 写`、`下载 + 上传` 三个不可拆分组随可用宽度逐级隐藏。
 - 移动端服务详情页头保持单行，右上角使用一个服务操作入口代替独立操作行；入口菜单按更新、生命周期、Stack 三组平铺，并以水平分隔线区分。
 - 生命周期任务与同一服务的 update、rollback 完全串行，并显示在服务操作历史中。
+- 服务级活动任务由 `lifecycle-status.activeJob.type` 归属到唯一动作组；owner 组显示进度并可进入任务详情，非 owner 组不允许提交操作。
 
 ### Non-goals
 
@@ -40,6 +41,8 @@
 - 当前默认主动作仅由 split button 的主按钮表达；不可用动作仍可发现，但不在菜单内展示原因。
 - 桌面端保留两个 split button；移动端只显示一个 44px 服务操作入口。菜单直接列出更新三项、生命周期三项与 Stack 详情，不使用二级菜单或组标题，组间使用 UI 库分隔线。
 - 操作历史应包含 update、rollback 和 service_lifecycle；生命周期项显示“启动 / 停止 / 重启”而不是泛化类型名。
+- 桌面端在 update 或 rollback 占用服务时，完整禁用生命周期 split button（主按钮与箭头），保留“启动/停止”默认文案并通过 Tooltip 说明占用原因；生命周期占用时对称禁用更新组。
+- 移动端仍可打开服务操作菜单，非 owner 动作项保持可发现但禁用，点击继续使用 Toast 提示原因。
 
 ## 验收标准
 
@@ -53,6 +56,7 @@
 - Given 某服务已有 queued/running update、rollback 或 lifecycle 任务，When 再提交该服务的任一此类操作，Then 后端返回冲突和既有任务 ID。
 - Given Dockrev 自身服务，When 打开详情页，Then 不显示 lifecycle menu。
 - Given 任务完成，When 服务详情刷新，Then 生命周期状态用一次服务级 Compose 查询收敛，不触发全量 runtime scan。
+- Given 更新任务处于 `queued/running` 且候选版本在结算前消失，When 服务详情刷新，Then 更新组保持“更新排队中…/更新中…”而不是切换到“回滚中…”。
 
 ## 验证
 
@@ -143,6 +147,40 @@ PR: include
 - evidence_note: `离线或缓存快照状态继续使用单一 44px 服务操作入口；刷新项保持可发现但禁用，Stack 详情仍可导航，页头没有恢复独立操作按钮。边缘空白检查无需裁剪。`
 
 ![Service detail mobile readonly actions open](./assets/service-detail-mobile-offline-actions-open-393x852.png)
+
+- source_type: `ui_demo`
+- target_program: `mock-only`
+- capture_scope: `browser-viewport`
+- requested_viewport: `1440x900 CSS px`
+- viewport_strategy: `devtools-emulate`
+- margin_policy: `trim_only`
+- evidence_surface: `page`
+- sensitive_exclusion: `N/A`
+- submission_gate: `approved`
+- story_id_or_title: `?demoScenario=service-action-progress`
+- state: `desktop update owner with lifecycle group disabled`
+- evidence_note: `更新任务在候选已消失时仍显示“更新中…”，生命周期主按钮与菜单箭头同步置灰，点击可见占用 Tooltip。`
+
+PR: none
+
+![Service action progress desktop](./assets/service-action-progress-desktop.png)
+
+- source_type: `ui_demo`
+- target_program: `mock-only`
+- capture_scope: `browser-viewport`
+- requested_viewport: `393x852 CSS px`
+- viewport_strategy: `devtools-emulate`
+- margin_policy: `trim_only`
+- evidence_surface: `page`
+- sensitive_exclusion: `N/A`
+- submission_gate: `approved`
+- story_id_or_title: `?demoScenario=service-action-progress`
+- state: `mobile owner menu open`
+- evidence_note: `移动端保留统一服务操作菜单，更新项可进入任务，生命周期和回滚等非 owner 项保持禁用。`
+
+PR: none
+
+![Service action progress mobile](./assets/service-action-progress-mobile-393x852.png)
 
 ## 变更记录
 

@@ -27,6 +27,16 @@ export function handleServiceLifecycleRoute(input: {
         activeJob: { id: 'job-lifecycle-restart', type: 'service_lifecycle', status: 'running', action: 'restart' },
         unavailableReason: 'service_lifecycle_in_progress',
       },
+      'service-detail-rollback-active': {
+        state: 'running',
+        activeJob: { id: 'job-rollback-service', type: 'rollback', status: 'running', action: null },
+        unavailableReason: 'rollback_in_progress',
+      },
+      'service-action-progress': {
+        state: 'running',
+        activeJob: { id: 'job-1', type: 'update', status: 'running', action: null },
+        unavailableReason: 'update_in_progress',
+      },
     }
     return json(stateByScenario[scenario] ?? { state: 'stopped' })
   }
