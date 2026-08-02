@@ -117,7 +117,7 @@
 - state: `desktop update owner with lifecycle group disabled`
 - evidence_note: `更新任务在候选已消失时仍显示“更新中…”，生命周期主按钮与菜单箭头同步置灰，点击可见占用 Tooltip。`
 
-PR: none
+PR: include
 
 ![Service action progress desktop](./assets/service-action-progress-desktop.png)
 
@@ -134,7 +134,7 @@ PR: none
 - state: `mobile owner menu open`
 - evidence_note: `移动端保留统一服务操作菜单，更新项可进入任务，生命周期和回滚等非 owner 项保持禁用。`
 
-PR: none
+PR: include
 
 ![Service action progress mobile](./assets/service-action-progress-mobile-393x852.png)
 
