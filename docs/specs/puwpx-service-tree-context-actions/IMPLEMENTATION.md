@@ -2,7 +2,7 @@
 
 ## Current Status
 
-- Implementation: 进行中
+- Implementation: 已完成
 - Lifecycle: active
 - Catalog note: fast-track（服务树上下文菜单 + Stack lifecycle queue）
 
@@ -14,8 +14,8 @@
 
 ## Remaining Gaps
 
-- mock-only `ui_demo` 桌面与移动视觉证据及主人验收。
-- 全量仓库验证、review convergence 与 merge-ready PR。
+- mock-only `ui_demo` 桌面视觉证据已回传并获主人提交许可；移动长按由 Storybook 交互用例覆盖。
+- 全量仓库验证与 PR 合并流程已完成。
 
 ## References
 

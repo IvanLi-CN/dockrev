@@ -83,7 +83,11 @@
 
 ## Visual Evidence
 
-待实现完成后写入最终 mock-only `ui_demo` 证据。
+最终 mock-only `ui_demo` 桌面右键菜单证据：
+
+![服务树更新快捷操作菜单](./assets/service-tree-context-menu-update-icon.jpg)
+
+截图显示运行态服务菜单按“重启、停止、分隔线、更新”排列，更新项使用下载箭头；移动长按行为由 Storybook `play` 用例覆盖。
 
 ## Related PRs
 
