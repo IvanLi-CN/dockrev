@@ -309,6 +309,18 @@ export function useServiceDetailPageState(props: {
     setLifecycleStatus(next)
   }, [service])
 
+  const seedLifecycleActiveJob = useCallback(
+    (jobId: string, type: 'rollback' | 'service_lifecycle', action: ServiceLifecycleAction | null = null) => {
+      lifecycleActiveJobIdRef.current = jobId
+      setLifecycleStatus((previous) => ({
+        state: previous?.state ?? 'unknown',
+        unavailableReason: previous?.unavailableReason ?? null,
+        activeJob: { id: jobId, type, status: 'queued', action },
+      }))
+    },
+    [],
+  )
+
   useEffect(() => {
     void requestRefresh().catch((e: unknown) => setError(errorMessage(e)))
   }, [requestRefresh, serviceId, stackId])
@@ -638,6 +650,7 @@ export function useServiceDetailPageState(props: {
       setNotice(null)
       try {
         const resp = await triggerServiceRollback(service.id)
+        seedLifecycleActiveJob(resp.jobId, 'rollback')
         setNotice({ jobId: resp.jobId, kind: 'rollback' })
         publishServiceTreeRefresh({ stackId, serviceId, reason: 'rollback-job-started' })
         await refreshStackOnly()
@@ -668,7 +681,7 @@ export function useServiceDetailPageState(props: {
         setBusy(false)
       }
     })()
-  }, [confirm, refreshLifecycleStatus, refreshStackOnly, rollbackActiveJobId, rollbackBackupValue, rollbackTarget, service, serviceId, stack?.name, stackId])
+  }, [confirm, refreshLifecycleStatus, refreshStackOnly, rollbackActiveJobId, rollbackBackupValue, rollbackTarget, seedLifecycleActiveJob, service, serviceId, stack?.name, stackId])
 
   const requestLifecycleAction = useCallback((action: ServiceLifecycleAction) => {
     void (async () => {
@@ -695,7 +708,7 @@ export function useServiceDetailPageState(props: {
       setNotice(null)
       try {
         const resp = await triggerServiceLifecycle(service.id, action)
-        lifecycleActiveJobIdRef.current = resp.jobId
+        seedLifecycleActiveJob(resp.jobId, 'service_lifecycle', action)
         setNotice({ jobId: resp.jobId, kind: 'lifecycle' })
         publishServiceTreeRefresh({ stackId, serviceId, reason: 'lifecycle-job-started' })
         await refreshLifecycleStatus()
@@ -715,7 +728,7 @@ export function useServiceDetailPageState(props: {
         setBusy(false)
       }
     })()
-  }, [activeLifecycleJob?.id, confirm, refreshLifecycleStatus, service, serviceId, stackId])
+  }, [activeLifecycleJob?.id, confirm, refreshLifecycleStatus, seedLifecycleActiveJob, service, serviceId, stackId])
 
   const requestPreviewUpdate = useCallback(() => {
     void (async () => {
@@ -797,7 +810,7 @@ export function useServiceDetailPageState(props: {
         })
         setNotice({ jobId: resp.jobId, kind: 'update' })
         if (applyActionKey) trackJob(applyActionKey, resp.jobId, 'queued')
-        await refreshLifecycleStatus().catch(() => undefined)
+        void refreshLifecycleStatus().catch(() => undefined)
       } catch (e: unknown) {
         if (e instanceof ApiError) {
           if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
