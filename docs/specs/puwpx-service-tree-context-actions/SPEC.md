@@ -83,6 +83,8 @@
 
 ## Visual Evidence
 
+PR: include
+
 最终 mock-only `ui_demo` 桌面右键菜单证据：
 
 ![服务树更新快捷操作菜单](./assets/service-tree-context-menu-update-icon.jpg)
