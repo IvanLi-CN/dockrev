@@ -1351,6 +1351,62 @@ async fn service_lifecycle_rejects_archived_services_and_stacks() {
 }
 
 #[tokio::test]
+async fn stack_lifecycle_rejects_archived_and_dockrev_stacks() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let (stack_id, _service_id, _compose_path) = seed_manual_rollback_service(&state).await;
+    let now = test_now_rfc3339();
+    state
+        .db
+        .set_stack_archived(&stack_id, true, Some("test"), &now)
+        .await
+        .unwrap();
+
+    let archived = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/stacks/{stack_id}/lifecycle"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"action":"start"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(archived.status(), 409);
+    assert_eq!(
+        response_json(archived).await["error"]["details"]["reason"].as_str(),
+        Some("stack_archived"),
+    );
+
+    let compose_path = format!("/tmp/dockrev-stack-lifecycle-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        "services:\n  dockrev:\n    image: ghcr.io/ivanli-cn/dockrev:latest\n",
+    )
+    .unwrap();
+    let dockrev_stack_id = seed_stack_from_compose(&state, "dockrev", &compose_path).await;
+    std::fs::remove_file(&compose_path).unwrap();
+    let dockrev = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/stacks/{dockrev_stack_id}/lifecycle"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"action":"start"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(dockrev.status(), 409);
+    assert_eq!(
+        response_json(dockrev).await["error"]["details"]["reason"].as_str(),
+        Some("dockrev_stack_managed_via_supervisor"),
+    );
+}
+
+#[tokio::test]
 async fn service_lifecycle_conflict_exposes_existing_service_operation_job() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());

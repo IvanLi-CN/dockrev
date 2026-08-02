@@ -116,6 +116,28 @@ export const ServiceContextMenuKeyboardStopped: Story = {
   },
 }
 
+export const StackContextMenuPartial: Story = {
+  render: render('desktop'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(canvasElement.querySelector('.detailRouteStackLink')))
+    const stack = Array.from(canvasElement.querySelectorAll<HTMLAnchorElement>('.detailRouteStackLink'))
+      .find((row) => row.textContent?.includes('prod'))
+    expectStory(Boolean(stack), 'mixed-state stack row should exist')
+    fireEvent.contextMenu(stack!)
+    const body = within(document.body)
+    await waitForCondition(() => Boolean(body.queryByRole('menu')))
+    const labels = body.getAllByRole('menuitem').map((item) => item.textContent?.trim())
+    expectStory(labels.join('|') === '重启仅部分副本正在运行|停止仅部分副本正在运行|更新', 'partial stack menu should keep lifecycle actions before the separated update action')
+    expectStory(Boolean(body.getByText('重启').closest('[data-disabled]')), 'partial stack restart should show its unavailable reason')
+    expectStory(Boolean(body.getByText('停止').closest('[data-disabled]')), 'partial stack stop should show its unavailable reason')
+    await userEvent.click(body.getByText('更新'))
+    await waitForCondition(() => Boolean(globalThis.__DOCKREV_MOCK_DEBUG__?.lastUpdateRequest))
+    const update = globalThis.__DOCKREV_MOCK_DEBUG__?.lastUpdateRequest as Record<string, unknown>
+    expectStory(update.scope === 'stack', 'stack context update should remain stack-scoped')
+    expectStory(update.backupMode === 'inherit', 'stack context update should inherit backup policy')
+  },
+}
+
 export const ServiceContextMenuLongPress: Story = {
   parameters: { viewport: { defaultViewport: 'mobile1' } },
   render: render('mobile'),
