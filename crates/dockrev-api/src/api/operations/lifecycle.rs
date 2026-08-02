@@ -131,13 +131,15 @@ async fn read_stack_lifecycle_state(
             Some("stack_has_no_services".to_string()),
         );
     }
-    let mut states = Vec::with_capacity(stack.services.len());
-    for service in &stack.services {
-        let (service_state, reason) = read_lifecycle_state(state, stack, service).await;
-        if matches!(service_state, ServiceLifecycleState::Unknown) {
-            return (ServiceLifecycleState::Unknown, reason);
-        }
-        states.push(service_state);
+    let states = lifecycle_states_for_stack(state, stack, &stack.services).await;
+    if states
+        .iter()
+        .any(|service_state| matches!(service_state, ServiceLifecycleState::Unknown))
+    {
+        return (
+            ServiceLifecycleState::Unknown,
+            Some("lifecycle_status_unavailable".to_string()),
+        );
     }
     if states
         .iter()

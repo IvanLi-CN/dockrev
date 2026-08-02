@@ -162,7 +162,7 @@ export function ServiceDetailPage(props: {
     const requestId = ++historyRequestIdRef.current;
     const isPagination = nextCursorStack != null;
     if (isPagination) setHistoryPaginationBusy(true);
-    const page = await listJobsPage({ serviceId: requestedServiceId, type: ["update", "rollback", "service_lifecycle"], limit: 20, cursor }).finally(() => {
+    const page = await listJobsPage({ serviceId: requestedServiceId, type: ["update", "rollback", "service_lifecycle", "stack_lifecycle"], limit: 20, cursor }).finally(() => {
       if (isPagination) setHistoryPaginationBusy(false);
     });
     if (requestId !== historyRequestIdRef.current || currentServiceIdRef.current !== requestedServiceId) return;
@@ -178,7 +178,7 @@ export function ServiceDetailPage(props: {
   const refreshVersionJobs = useCallback(async () => {
     const requestedServiceId = props.serviceId;
     const requestId = ++versionJobsRequestIdRef.current;
-    const versionHistory = await listJobs({ serviceId: requestedServiceId, type: ["update", "rollback", "service_lifecycle"] });
+    const versionHistory = await listJobs({ serviceId: requestedServiceId, type: ["update", "rollback", "service_lifecycle", "stack_lifecycle"] });
     if (requestId !== versionJobsRequestIdRef.current || currentServiceIdRef.current !== requestedServiceId) return;
     setVersionJobs(versionHistory);
     setVersionJobsLoaded(true);
