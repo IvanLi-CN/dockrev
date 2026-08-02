@@ -35,6 +35,10 @@ export function serviceIdsFromSummary(summary: unknown): Set<string> {
   if (!isRecord(summary)) return serviceIds
 
   if (typeof summary.serviceId === 'string') serviceIds.add(summary.serviceId)
+  const summaryServiceIds = Array.isArray(summary.serviceIds) ? summary.serviceIds : []
+  for (const serviceId of summaryServiceIds) {
+    if (typeof serviceId === 'string') serviceIds.add(serviceId)
+  }
   const targets = Array.isArray(summary.targets) ? summary.targets : []
   for (const target of targets) {
     if (!isRecord(target)) continue
