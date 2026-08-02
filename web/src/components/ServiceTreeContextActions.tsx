@@ -108,6 +108,8 @@ export function ServiceTreeContextActions(props: {
   const lifecycleState = status?.state ?? 'unknown'
   const lifecycleReason = submitting
     ? '操作正在提交'
+    : props.target.kind === 'service' && props.target.service.archived
+      ? '归档服务不可操作'
     : reasonLabel(status?.unavailableReason ?? (!status ? 'lifecycle_status_loading' : null))
   const lifecycleDisabled = Boolean(lifecycleReason)
   const showStart = lifecycleState === 'stopped'

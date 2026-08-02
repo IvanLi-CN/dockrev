@@ -720,6 +720,14 @@ fn replace_job_service_targets_tx(
             }
         }
     }
+    if let Some(target_ids) = summary
+        .get("serviceIds")
+        .and_then(serde_json::Value::as_array)
+    {
+        for service_id in target_ids.iter().filter_map(serde_json::Value::as_str) {
+            service_ids.insert(service_id.to_string());
+        }
+    }
 
     tx.execute(
         "DELETE FROM job_service_targets WHERE job_id = ?1",
