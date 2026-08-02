@@ -34,6 +34,7 @@ export function formatJobTypeLabel(type: string, summary?: unknown): string {
   if (raw === 'update') return '更新任务'
   if (raw === 'rollback') return '回滚任务'
   if (raw === 'service_lifecycle') return lifecycleActionLabel(summary) ?? '服务生命周期'
+  if (raw === 'stack_lifecycle') return lifecycleActionLabel(summary) ?? 'Stack 生命周期'
   return raw
 }
 
@@ -86,6 +87,6 @@ function resolveJobTypeTone(type: string): JobTypeTone {
   if (type === 'repo_link_backfill') return 'discovery'
   if (type === 'update') return 'update'
   if (type === 'rollback') return 'rollback'
-  if (type === 'service_lifecycle') return 'update'
+  if (type === 'service_lifecycle' || type === 'stack_lifecycle') return 'update'
   return 'default'
 }

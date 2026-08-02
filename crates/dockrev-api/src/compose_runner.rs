@@ -75,6 +75,34 @@ impl ComposeStack {
         cmd
     }
 
+    pub fn start_stack_without_pull(&self, cfg: &ComposeRunnerConfig) -> CommandSpec {
+        let mut cmd = self.base_command(cfg);
+        if is_docker_plugin(&cfg.compose_bin) {
+            cmd.args.extend([
+                "up".to_string(),
+                "-d".to_string(),
+                "--pull".to_string(),
+                "never".to_string(),
+                "--no-recreate".to_string(),
+            ]);
+        } else {
+            cmd.args.push("start".to_string());
+        }
+        cmd
+    }
+
+    pub fn stop_stack(&self, cfg: &ComposeRunnerConfig) -> CommandSpec {
+        let mut cmd = self.base_command(cfg);
+        cmd.args.push("stop".to_string());
+        cmd
+    }
+
+    pub fn restart_stack(&self, cfg: &ComposeRunnerConfig) -> CommandSpec {
+        let mut cmd = self.base_command(cfg);
+        cmd.args.push("restart".to_string());
+        cmd
+    }
+
     pub fn up_service_no_pull(&self, cfg: &ComposeRunnerConfig, service: &str) -> CommandSpec {
         let mut cmd = self.base_command(cfg);
         cmd.args.extend([
@@ -187,6 +215,48 @@ mod tests {
         let cmd = stack.ps_q_service(&cfg, "web");
         assert_eq!(cmd.program, "docker-compose");
         assert_ne!(cmd.args[0], "compose");
+    }
+
+    #[test]
+    fn stack_lifecycle_commands_preserve_existing_containers() {
+        let stack = ComposeStack {
+            project_name: "myproj".to_string(),
+            compose: ComposeConfig {
+                kind: "path".to_string(),
+                compose_files: vec!["/srv/app/docker-compose.yml".to_string()],
+                env_file: None,
+            },
+        };
+        let plugin = ComposeRunnerConfig {
+            compose_bin: "docker".to_string(),
+            env: Vec::new(),
+        };
+        let v1 = ComposeRunnerConfig {
+            compose_bin: "docker-compose".to_string(),
+            env: Vec::new(),
+        };
+
+        let plugin_start = stack.start_stack_without_pull(&plugin);
+        assert_eq!(
+            plugin_start.args[plugin_start.args.len() - 5..],
+            ["up", "-d", "--pull", "never", "--no-recreate"]
+        );
+        assert_eq!(
+            stack
+                .start_stack_without_pull(&v1)
+                .args
+                .last()
+                .map(String::as_str),
+            Some("start")
+        );
+        assert_eq!(
+            stack.stop_stack(&plugin).args.last().map(String::as_str),
+            Some("stop")
+        );
+        assert_eq!(
+            stack.restart_stack(&plugin).args.last().map(String::as_str),
+            Some("restart")
+        );
     }
 
     #[test]

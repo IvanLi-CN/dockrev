@@ -36,11 +36,18 @@ fn blocks_targets(
             return false;
         }
     }
+    if job.r#type.as_str() == "stack_lifecycle" && !persisted_service_ids.is_empty() {
+        return targets.iter().any(|target| {
+            persisted_service_ids
+                .iter()
+                .any(|service_id| service_id == &target.service_id)
+        });
+    }
     targets.iter().any(|target| match job.r#type.as_str() {
         "rollback" | "service_lifecycle" => {
             job.service_id.as_deref() == Some(target.service_id.as_str())
         }
-        "update" => match job.scope {
+        "update" | "stack_lifecycle" => match job.scope {
             JobScope::All => true,
             JobScope::Stack => job.stack_id.as_deref() == Some(target.stack_id.as_str()),
             JobScope::Service => job.service_id.as_deref() == Some(target.service_id.as_str()),
@@ -76,7 +83,7 @@ impl Db {
 SELECT id, type, scope, stack_id, service_id, status, created_by, reason, created_at,
   started_at, finished_at, allow_arch_mismatch, backup_mode, summary_json
 FROM jobs
-WHERE type IN ('update', 'rollback', 'service_lifecycle') AND status IN ('queued', 'running')
+WHERE type IN ('update', 'rollback', 'service_lifecycle', 'stack_lifecycle') AND status IN ('queued', 'running')
 ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END, created_at DESC, id DESC
 "#,
                 )?;
@@ -157,5 +164,44 @@ LIMIT 1
         })
         .await
         .context("find latest pending update blocking service")
+    }
+
+    pub async fn find_latest_pending_stack_lifecycle_blocking_service(
+        &self,
+        stack_id: &str,
+        service_id: &str,
+    ) -> anyhow::Result<Option<JobListItem>> {
+        let stack_id = stack_id.to_string();
+        let service_id = service_id.to_string();
+        self.call(move |conn| {
+            conn.query_row(
+                r#"
+SELECT j.id, j.type, j.scope, j.stack_id, j.service_id, j.status,
+  j.created_by, j.reason, j.created_at, j.started_at, j.finished_at,
+  j.allow_arch_mismatch, j.backup_mode, j.summary_json
+FROM jobs j
+WHERE j.type = 'stack_lifecycle'
+  AND j.status IN ('queued', 'running')
+  AND (
+    EXISTS (
+      SELECT 1 FROM job_service_targets jst
+      WHERE jst.job_id = j.id AND jst.service_id = ?2
+    )
+    OR (
+      NOT EXISTS (SELECT 1 FROM job_service_targets jst WHERE jst.job_id = j.id)
+      AND j.scope = 'stack' AND j.stack_id = ?1
+    )
+  )
+ORDER BY CASE j.status WHEN 'running' THEN 0 ELSE 1 END, j.created_at DESC, j.id DESC
+LIMIT 1
+"#,
+                params![stack_id, service_id],
+                map_job_list_item_row,
+            )
+            .optional()
+            .map_err(Into::into)
+        })
+        .await
+        .context("find latest pending stack lifecycle blocking service")
     }
 }

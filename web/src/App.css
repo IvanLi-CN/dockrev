@@ -721,6 +721,53 @@ html[data-theme="light"] .brandLogoForLight {
   background: var(--color-primary);
 }
 
+.serviceTreeContextMenu {
+  min-width: 184px;
+  max-width: min(300px, calc(100vw - 16px));
+}
+
+.serviceTreeContextMenu [data-slot="context-menu-item"] {
+  min-height: 36px;
+}
+
+.serviceTreeContextActionLabel {
+  min-width: 0;
+  display: flex;
+  flex: 1 1 auto;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.serviceTreeContextReason {
+  max-width: 168px;
+  overflow: hidden;
+  color: var(--muted2);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.serviceTreeActionToastTitle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.serviceTreeActionToastTitle button {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--color-primary);
+  cursor: pointer;
+  font: inherit;
+}
+
+.serviceTreeActionToastTitle button:hover {
+  text-decoration: underline;
+}
+
 .detailRouteStatusDot {
   width: 7px;
   height: 7px;

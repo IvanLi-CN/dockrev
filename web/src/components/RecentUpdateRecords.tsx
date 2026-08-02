@@ -35,6 +35,10 @@ export function serviceIdsFromSummary(summary: unknown): Set<string> {
   if (!isRecord(summary)) return serviceIds
 
   if (typeof summary.serviceId === 'string') serviceIds.add(summary.serviceId)
+  const summaryServiceIds = Array.isArray(summary.serviceIds) ? summary.serviceIds : []
+  for (const serviceId of summaryServiceIds) {
+    if (typeof serviceId === 'string') serviceIds.add(serviceId)
+  }
   const targets = Array.isArray(summary.targets) ? summary.targets : []
   for (const target of targets) {
     if (!isRecord(target)) continue
@@ -81,7 +85,7 @@ export function selectServiceOperationJobs(jobs: JobListItem[], serviceId: strin
 export function filterServiceOperationJobs(jobs: JobListItem[], serviceId: string, stackId?: string): JobListItem[] {
   return jobs
     .filter((job) => {
-      if (job.type !== 'update' && job.type !== 'rollback' && job.type !== 'service_lifecycle') return false
+      if (job.type !== 'update' && job.type !== 'rollback' && job.type !== 'service_lifecycle' && job.type !== 'stack_lifecycle') return false
       if (job.serviceId === serviceId) return true
       if (stackId && job.scope === 'stack' && job.stackId === stackId) {
         return serviceIdsFromSummary(job.summary).has(serviceId)
@@ -102,7 +106,7 @@ export function selectRecentStackUpdateJobs(jobs: JobListItem[], stack: StackDet
   const stackServiceIds = new Set(stack.services.map((service) => service.id))
   return jobs
     .filter((job) => {
-      if (job.type !== 'update') return false
+      if (job.type !== 'update' && job.type !== 'stack_lifecycle') return false
       if (job.stackId === stack.id) return true
       for (const serviceId of serviceIdsFromSummary(job.summary)) {
         if (stackServiceIds.has(serviceId)) return true
@@ -130,7 +134,7 @@ function reasonLabel(reason: string): string {
 
 function operationLabel(job: JobListItem): string {
   if (job.type === 'rollback') return '回滚'
-  if (job.type === 'service_lifecycle') {
+  if (job.type === 'service_lifecycle' || job.type === 'stack_lifecycle') {
     const action = job.summary && typeof job.summary === 'object' && 'action' in job.summary
       ? (job.summary as { action?: unknown }).action
       : null
