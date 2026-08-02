@@ -1,6 +1,6 @@
 import type { JobListItem, ServiceLifecycleAction, ServiceLifecycleStatusResponse, StackDetail } from '../../../../api'
 import type { DockrevApiScenario, Fixture } from '../shared'
-import { nowIso, parseJsonBody } from '../shared'
+import { makeMockDebug, nowIso, parseJsonBody } from '../shared'
 
 type ServiceLookup = { stack: StackDetail; svc: StackDetail['services'][number] } | null
 
@@ -38,26 +38,49 @@ export function handleServiceLifecycleRoute(input: {
         unavailableReason: 'update_in_progress',
       },
     }
-    return json(stateByScenario[scenario] ?? { state: 'stopped' })
+    return json(stateByScenario[scenario] ?? { state: findService(serviceId)?.svc.lifecycleState ?? 'unknown' })
   }
-  if (method !== 'POST' || !urlPath.startsWith('/api/services/') || !urlPath.endsWith('/lifecycle')) return null
 
-  const serviceId = decodeURIComponent(urlPath.split('/').slice(3, -1).join('/'))
-  const found = findService(serviceId)
-  if (!found) return json({ error: { code: 'not_found', message: 'service not found' } }, { status: 404 })
+  const stackLifecycleMatch = urlPath.startsWith('/api/stacks/') && urlPath.endsWith('/lifecycle')
+  const stackLifecycleStatusMatch = urlPath.startsWith('/api/stacks/') && urlPath.endsWith('/lifecycle-status')
+  if (method === 'GET' && stackLifecycleStatusMatch) {
+    const stackId = decodeURIComponent(urlPath.split('/').slice(3, -1).join('/'))
+    const stack = fixture.stackById[stackId]
+    if (!stack) return json({ error: { code: 'not_found', message: 'stack not found' } }, { status: 404 })
+    const states = stack.services.map((service) => service.lifecycleState ?? 'unknown')
+    const state = states.length === 0 || states.includes('unknown')
+      ? 'unknown'
+      : states.every((value) => value === 'running')
+        ? 'running'
+        : states.every((value) => value === 'stopped')
+          ? 'stopped'
+          : 'partial'
+    return json({ state, unavailableReason: state === 'partial' ? 'stack_services_have_mixed_states' : undefined })
+  }
+
+  const serviceLifecycleMatch = urlPath.startsWith('/api/services/') && urlPath.endsWith('/lifecycle')
+  if (method !== 'POST' || (!serviceLifecycleMatch && !stackLifecycleMatch)) return null
+
+  const targetId = decodeURIComponent(urlPath.split('/').slice(3, -1).join('/'))
+  const found = serviceLifecycleMatch ? findService(targetId) : null
+  const stack = stackLifecycleMatch ? fixture.stackById[targetId] : found?.stack
+  if (!stack || (serviceLifecycleMatch && !found)) return json({ error: { code: 'not_found', message: 'lifecycle target not found' } }, { status: 404 })
   const action = (parseJsonBody(init?.body) as { action?: ServiceLifecycleAction } | null)?.action
   if (action !== 'start' && action !== 'stop' && action !== 'restart') {
     return json({ error: { code: 'invalid_argument', message: 'invalid lifecycle action' } }, { status: 400 })
   }
   jobSeqRef.value += 1
-  const jobId = `job-lifecycle-${action}-${jobSeqRef.value}`
+  const kind = stackLifecycleMatch ? 'stack' : 'service'
+  const jobId = `job-${kind}-lifecycle-${action}-${jobSeqRef.value}`
   const createdAt = nowIso(-500)
+  const debug = globalThis.__DOCKREV_MOCK_DEBUG__ ?? (globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug())
+  debug.lastLifecycleRequest = { kind, id: targetId, action }
   const job: JobListItem = {
     id: jobId,
-    type: 'service_lifecycle',
-    scope: 'service',
-    stackId: found.stack.id,
-    serviceId,
+    type: stackLifecycleMatch ? 'stack_lifecycle' : 'service_lifecycle',
+    scope: stackLifecycleMatch ? 'stack' : 'service',
+    stackId: stack.id,
+    serviceId: found?.svc.id ?? null,
     status: 'running',
     createdBy: 'ivan',
     reason: 'ui',
@@ -66,7 +89,7 @@ export function handleServiceLifecycleRoute(input: {
     finishedAt: null,
     allowArchMismatch: false,
     backupMode: 'inherit',
-    summary: { action, serviceName: found.svc.name },
+    summary: stackLifecycleMatch ? { action, stackName: stack.name } : { action, serviceName: found?.svc.name },
   }
   fixture.jobs = [job, ...fixture.jobs]
   fixture.jobById[jobId] = {

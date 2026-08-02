@@ -649,6 +649,22 @@ export async function triggerServiceLifecycle(
   return (await resp.json()) as { jobId: string }
 }
 
+export async function getStackLifecycleStatus(stackId: string): Promise<ServiceLifecycleStatusResponse> {
+  const resp = await apiFetch(`/api/stacks/${encodeURIComponent(stackId)}/lifecycle-status`)
+  return (await resp.json()) as ServiceLifecycleStatusResponse
+}
+
+export async function triggerStackLifecycle(
+  stackId: string,
+  action: ServiceLifecycleAction,
+): Promise<{ jobId: string }> {
+  const resp = await apiFetch(`/api/stacks/${encodeURIComponent(stackId)}/lifecycle`, {
+    method: 'POST',
+    body: JSON.stringify({ action }),
+  })
+  return (await resp.json()) as { jobId: string }
+}
+
 export async function listJobsPage(input: ListJobsInput = {}): Promise<ListJobsResponse> {
   const params = new URLSearchParams()
   if (input.cursor) params.set('cursor', input.cursor)

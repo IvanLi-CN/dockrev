@@ -138,3 +138,4 @@
 | tgc9m | Dockrev：Telegram 内容相关动态卡片通知 | 已实现 | `tgc9m-telegram-dynamic-notification-cards/SPEC.md` | 2026-07-05 | fast-track（dynamic Telegram PNG cards + sendPhoto delivery + disabled text link previews + visual evidence） |
 | 7xt5t | Dockrev：Jobs 队列领取索引与慢告警 | active | `7xt5t-job-queue-claim-performance/SPEC.md` | 2026-07-24 | 已实现，待 PR；fast-track（复合索引 + 限频慢领取 WARN） |
 | 5xeat | Dockrev：任务历史保留期与游标分页 | active | `5xeat-job-history-retention-pagination/SPEC.md` | 2026-07-25 | fast-track（101 SQLite 增长治理 + Docker stats 部分成功 + jobs cursor） |
+| puwpx | Dockrev：服务树上下文快捷操作 | active | `puwpx-service-tree-context-actions/SPEC.md` | 2026-08-01 | fast-track（Stack/Service ContextMenu + stack lifecycle queue + Storybook/ui_demo evidence） |

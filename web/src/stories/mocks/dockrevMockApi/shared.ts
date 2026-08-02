@@ -282,6 +282,7 @@ export type MockDebug = {
   lastUpdateRequest: unknown | null
   lastUpdateUrl: string | null
   lastUpdateMethod: string | null
+  lastLifecycleRequest: { kind: 'stack' | 'service'; id: string; action: string } | null
   stackDetailCalls: number
   stackDetailCallsById: Record<string, number>
   digestTagsSnapshotCalls: number
@@ -625,6 +626,7 @@ export function makeMockDebug(): MockDebug {
     lastUpdateRequest: null,
     lastUpdateUrl: null,
     lastUpdateMethod: null,
+    lastLifecycleRequest: null,
     stackDetailCalls: 0,
     stackDetailCallsById: {},
     digestTagsSnapshotCalls: 0,

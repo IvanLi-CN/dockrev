@@ -180,6 +180,14 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(trigger_service_lifecycle),
         )
         .route(
+            "/api/stacks/{stack_id}/lifecycle-status",
+            get(get_stack_lifecycle_status),
+        )
+        .route(
+            "/api/stacks/{stack_id}/lifecycle",
+            post(trigger_stack_lifecycle),
+        )
+        .route(
             "/api/version-inference/overview",
             get(get_version_inference_overview),
         )

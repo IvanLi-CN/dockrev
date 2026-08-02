@@ -1,3 +1,4 @@
+import { createElement } from 'react'
 import type { Decorator } from '@storybook/react'
 import {
   installDockrevMockApi,
@@ -10,6 +11,7 @@ import {
   HOMEPAGE_SNAPSHOT_KEY,
 } from '../../pages/homepageSnapshot'
 import { OVERVIEW_TOOL_PANEL_STORAGE_KEY } from '../../pages/overviewToolPanelState'
+import { UpdateActionTrackerProvider } from '../../updateActionTracking'
 
 export const withDockrevMockApi: Decorator = (Story, context) => {
   const scenario = (context.parameters?.dockrevApiScenario ?? 'default') as DockrevApiScenario
@@ -45,5 +47,5 @@ export const withDockrevMockApi: Decorator = (Story, context) => {
     window.localStorage.setItem(HOMEPAGE_RESOURCE_SUMMARY_KEY, JSON.stringify(resourceSnapshot))
   }
   installDockrevMockApi(scenario, options)
-  return Story()
+  return createElement(UpdateActionTrackerProvider, null, Story())
 }

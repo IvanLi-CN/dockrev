@@ -86,7 +86,10 @@ async fn resolve_lifecycle_subject(
 }
 
 fn active_job_from_conflict(conflict: &PendingRollbackConflict) -> ServiceLifecycleActiveJob {
-    let action = if matches!(conflict.job.r#type, JobType::ServiceLifecycle) {
+    let action = if matches!(
+        conflict.job.r#type,
+        JobType::ServiceLifecycle | JobType::StackLifecycle
+    ) {
         conflict
             .job
             .summary_json
@@ -107,6 +110,314 @@ fn active_job_from_conflict(conflict: &PendingRollbackConflict) -> ServiceLifecy
         status: conflict.job.status.clone(),
         action,
     }
+}
+
+fn active_stack_services(stack: &StackRecord) -> Vec<Service> {
+    stack
+        .services
+        .iter()
+        .filter(|service| !service.archived.unwrap_or(false))
+        .cloned()
+        .collect()
+}
+
+fn stack_has_archived_service(stack: &StackRecord) -> bool {
+    stack
+        .services
+        .iter()
+        .any(|service| service.archived.unwrap_or(false))
+}
+
+fn stack_has_dockrev(state: &AppState, stack: &StackRecord) -> bool {
+    stack.services.iter().any(|service| {
+        updater::is_dockrev_image_ref(
+            &service.image.reference,
+            Some(state.config.dockrev_image_repo.as_str()),
+        )
+    })
+}
+
+async fn read_stack_lifecycle_state(
+    state: &Arc<AppState>,
+    stack: &StackRecord,
+) -> (ServiceLifecycleState, Option<String>) {
+    let services = active_stack_services(stack);
+    if services.is_empty() {
+        return (
+            ServiceLifecycleState::Unknown,
+            Some("stack_has_no_services".to_string()),
+        );
+    }
+    let states = lifecycle_states_for_stack(state, stack, &services).await;
+    if states
+        .iter()
+        .any(|service_state| matches!(service_state, ServiceLifecycleState::Unknown))
+    {
+        return (
+            ServiceLifecycleState::Unknown,
+            Some("lifecycle_status_unavailable".to_string()),
+        );
+    }
+    if states
+        .iter()
+        .all(|value| matches!(value, ServiceLifecycleState::Running))
+    {
+        (ServiceLifecycleState::Running, None)
+    } else if states
+        .iter()
+        .all(|value| matches!(value, ServiceLifecycleState::Stopped))
+    {
+        (ServiceLifecycleState::Stopped, None)
+    } else {
+        (
+            ServiceLifecycleState::Partial,
+            Some("stack_services_have_mixed_states".to_string()),
+        )
+    }
+}
+
+async fn find_stack_lifecycle_conflict(
+    state: &Arc<AppState>,
+    stack: &StackRecord,
+) -> Result<Option<PendingRollbackConflict>, ApiError> {
+    let mut best = None;
+    for service in active_stack_services(stack) {
+        if let Some(conflict) =
+            find_pending_service_operation_conflict(state, &stack.id, &service.id).await?
+            && better_pending_job(
+                &conflict.job,
+                best.as_ref()
+                    .map(|item: &PendingRollbackConflict| &item.job),
+            )
+        {
+            best = Some(conflict);
+        }
+    }
+    Ok(best)
+}
+
+pub(crate) async fn get_stack_lifecycle_status(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(stack_id): Path<String>,
+) -> Result<Json<StackLifecycleStatusResponse>, ApiError> {
+    let _user = require_user(&state, &headers).await?;
+    let stack = state
+        .db
+        .get_stack(&stack_id)
+        .await
+        .map_err(map_internal)?
+        .ok_or_else(|| ApiError::not_found("stack not found"))?;
+    let conflict = find_stack_lifecycle_conflict(&state, &stack).await?;
+    let (state_value, mut unavailable_reason) = read_stack_lifecycle_state(&state, &stack).await;
+    if stack.archived {
+        unavailable_reason = Some("stack_archived".to_string());
+    } else if stack_has_archived_service(&stack) {
+        unavailable_reason = Some("stack_contains_archived_service".to_string());
+    } else if stack_has_dockrev(state.as_ref(), &stack) {
+        unavailable_reason = Some("dockrev_stack_managed_via_supervisor".to_string());
+    }
+    if let Some(conflict) = conflict.as_ref() {
+        unavailable_reason.get_or_insert_with(|| conflict.reason.clone());
+    }
+    Ok(Json(StackLifecycleStatusResponse {
+        state: state_value,
+        active_job: conflict.as_ref().map(active_job_from_conflict),
+        unavailable_reason,
+    }))
+}
+
+pub(crate) async fn trigger_stack_lifecycle(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(stack_id): Path<String>,
+    Json(req): Json<TriggerStackLifecycleRequest>,
+) -> Result<Json<TriggerStackLifecycleResponse>, ApiError> {
+    let user = require_user(&state, &headers).await?;
+    let stack = state
+        .db
+        .get_stack(&stack_id)
+        .await
+        .map_err(map_internal)?
+        .ok_or_else(|| ApiError::not_found("stack not found"))?;
+    if stack.archived {
+        return Err(ApiError::conflict("archived stack cannot be managed")
+            .with_details(json!({ "reason": "stack_archived" })));
+    }
+    if stack_has_archived_service(&stack) {
+        return Err(
+            ApiError::conflict("stack contains archived services").with_details(json!({
+                "reason": "stack_contains_archived_service",
+            })),
+        );
+    }
+    if stack_has_dockrev(state.as_ref(), &stack) {
+        return Err(
+            ApiError::conflict("dockrev stack is managed via supervisor")
+                .with_details(json!({ "reason": "dockrev_stack_managed_via_supervisor" })),
+        );
+    }
+    if let Some(conflict) = find_stack_lifecycle_conflict(&state, &stack).await? {
+        return Err(service_operation_conflict_error(&conflict.job));
+    }
+    let (lifecycle_state, unavailable_reason) = read_stack_lifecycle_state(&state, &stack).await;
+    if matches!(
+        lifecycle_state,
+        ServiceLifecycleState::Partial | ServiceLifecycleState::Unknown
+    ) {
+        return Err(ApiError::conflict("stack lifecycle is unavailable").with_details(json!({
+            "reason": unavailable_reason.unwrap_or_else(|| lifecycle_state.as_str().to_string()),
+        })));
+    }
+
+    let services = active_stack_services(&stack);
+    let action_allowed = matches!(
+        (&req.action, &lifecycle_state),
+        (
+            ServiceLifecycleAction::Start,
+            ServiceLifecycleState::Stopped
+        ) | (ServiceLifecycleAction::Stop, ServiceLifecycleState::Running)
+            | (
+                ServiceLifecycleAction::Restart,
+                ServiceLifecycleState::Running
+            )
+    );
+    if !action_allowed {
+        return Err(
+            ApiError::conflict("lifecycle action is incompatible with stack state").with_details(
+                json!({
+                    "reason": "lifecycle_action_incompatible",
+                    "state": lifecycle_state.as_str(),
+                }),
+            ),
+        );
+    }
+
+    let now = now_rfc3339().map_err(map_internal)?;
+    let job_id = ids::new_job_id();
+    let mut job = JobRecord::new_running(
+        job_id.clone(),
+        JobType::StackLifecycle,
+        JobScope::Stack,
+        Some(stack.id.clone()),
+        None,
+        &now,
+    );
+    job.summary_json = json!({
+        "action": req.action.as_str(),
+        "stackName": stack.name,
+        "initialState": lifecycle_state.as_str(),
+        "serviceIds": services.iter().map(|service| service.id.as_str()).collect::<Vec<_>>(),
+    });
+    let mut job_db = job.to_db();
+    job_db.created_by = user.principal;
+    job_db.reason = "ui".to_string();
+    let targets = services
+        .iter()
+        .map(|service| crate::db::ServiceOperationTarget {
+            service_id: service.id.clone(),
+            stack_id: stack.id.clone(),
+        })
+        .collect();
+    if let Some(conflict) = state
+        .db
+        .insert_service_operation_job_if_unblocked(
+            job_db,
+            targets,
+            Some(JobLogLine {
+                ts: now,
+                level: "info".to_string(),
+                msg: format!("stack lifecycle {} started", req.action.as_str()),
+            }),
+        )
+        .await
+        .map_err(map_internal)?
+    {
+        return Err(service_operation_conflict_error(&conflict));
+    }
+    let run_state = state.clone();
+    let run_job_id = job_id.clone();
+    tokio::spawn(async move {
+        run_stack_lifecycle_job(run_state, run_job_id, stack, req.action).await;
+    });
+    Ok(Json(TriggerStackLifecycleResponse { job_id }))
+}
+
+async fn run_stack_lifecycle_job(
+    state: Arc<AppState>,
+    job_id: String,
+    stack: StackRecord,
+    action: ServiceLifecycleAction,
+) {
+    let compose = lifecycle_compose_stack(&stack);
+    let outcome = match lifecycle_compose_config(state.as_ref()) {
+        Ok((config, _auth_bridge)) => {
+            let command = match action {
+                ServiceLifecycleAction::Start => compose.start_stack_without_pull(&config),
+                ServiceLifecycleAction::Stop => compose.stop_stack(&config),
+                ServiceLifecycleAction::Restart => compose.restart_stack(&config),
+            };
+            let runner = DbLoggingRunner {
+                db: state.db.clone(),
+                inner: state.runner.clone(),
+                job_id: job_id.clone(),
+            };
+            runner
+                .run(
+                    command,
+                    Duration::from_secs(LIFECYCLE_ACTION_TIMEOUT_SECONDS),
+                )
+                .await
+                .and_then(|output| {
+                    if output.status == 0 {
+                        Ok(())
+                    } else {
+                        Err(anyhow::anyhow!(
+                            "compose lifecycle command exited with {}",
+                            output.status
+                        ))
+                    }
+                })
+        }
+        Err(error) => Err(error),
+    };
+    let finished_at = now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
+    let (status, error) = match outcome {
+        Ok(()) => ("success", None),
+        Err(error) => ("failed", Some(error.to_string())),
+    };
+    let _ = state
+        .db
+        .insert_job_log(
+            &job_id,
+            &JobLogLine {
+                ts: finished_at.clone(),
+                level: if status == "success" { "info" } else { "error" }.to_string(),
+                msg: format!(
+                    "stack lifecycle {} {}",
+                    action.as_str(),
+                    if status == "success" {
+                        "finished"
+                    } else {
+                        "failed"
+                    }
+                ),
+            },
+        )
+        .await;
+    let _ = state
+        .db
+        .finish_job(
+            &job_id,
+            status,
+            &finished_at,
+            &json!({
+                "action": action.as_str(),
+                "stackName": stack.name,
+                "error": error,
+            }),
+        )
+        .await;
 }
 
 async fn read_lifecycle_state(
