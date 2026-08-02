@@ -51,6 +51,7 @@ const reasonLabels: Record<string, string> = {
   container_missing_for_compose_v1: 'Compose V1 未找到已有容器',
   stack_has_no_services: 'Stack 内没有服务',
   stack_archived: '归档 Stack 不可操作',
+  stack_contains_archived_service: 'Stack 包含归档服务不可操作',
   service_archived: '归档服务不可操作',
   dockrev_service_managed_via_supervisor: 'Dockrev 服务由 Supervisor 管理',
   dockrev_stack_managed_via_supervisor: '包含 Dockrev 的 Stack 不支持生命周期操作',

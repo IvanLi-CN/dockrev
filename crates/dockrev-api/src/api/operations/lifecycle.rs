@@ -121,6 +121,13 @@ fn active_stack_services(stack: &StackRecord) -> Vec<Service> {
         .collect()
 }
 
+fn stack_has_archived_service(stack: &StackRecord) -> bool {
+    stack
+        .services
+        .iter()
+        .any(|service| service.archived.unwrap_or(false))
+}
+
 fn stack_has_dockrev(state: &AppState, stack: &StackRecord) -> bool {
     stack.services.iter().any(|service| {
         updater::is_dockrev_image_ref(
@@ -205,6 +212,8 @@ pub(crate) async fn get_stack_lifecycle_status(
     let (state_value, mut unavailable_reason) = read_stack_lifecycle_state(&state, &stack).await;
     if stack.archived {
         unavailable_reason = Some("stack_archived".to_string());
+    } else if stack_has_archived_service(&stack) {
+        unavailable_reason = Some("stack_contains_archived_service".to_string());
     } else if stack_has_dockrev(state.as_ref(), &stack) {
         unavailable_reason = Some("dockrev_stack_managed_via_supervisor".to_string());
     }
@@ -234,6 +243,13 @@ pub(crate) async fn trigger_stack_lifecycle(
     if stack.archived {
         return Err(ApiError::conflict("archived stack cannot be managed")
             .with_details(json!({ "reason": "stack_archived" })));
+    }
+    if stack_has_archived_service(&stack) {
+        return Err(
+            ApiError::conflict("stack contains archived services").with_details(json!({
+                "reason": "stack_contains_archived_service",
+            })),
+        );
     }
     if stack_has_dockrev(state.as_ref(), &stack) {
         return Err(

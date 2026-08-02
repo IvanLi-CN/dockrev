@@ -213,7 +213,28 @@ async fn stack_lifecycle_rejects_archived_and_dockrev_stacks() {
     assert_eq!(mixed_status.status(), 200);
     let mixed_status_json = response_json(mixed_status).await;
     assert_eq!(mixed_status_json["state"].as_str(), Some("stopped"));
-    assert_eq!(mixed_status_json["unavailableReason"], serde_json::Value::Null);
+    assert_eq!(
+        mixed_status_json["unavailableReason"].as_str(),
+        Some("stack_contains_archived_service")
+    );
+
+    let mixed_trigger = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/stacks/{mixed_stack_id}/lifecycle"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"action":"start"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(mixed_trigger.status(), 409);
+    assert_eq!(
+        response_json(mixed_trigger).await["error"]["details"]["reason"].as_str(),
+        Some("stack_contains_archived_service")
+    );
 
     let (stack_id, _service_id, _compose_path) = seed_manual_rollback_service(&state).await;
     let now = test_now_rfc3339();
@@ -291,6 +312,6 @@ async fn stack_lifecycle_rejects_archived_and_dockrev_stacks() {
     assert_eq!(archived_dockrev.status(), 409);
     assert_eq!(
         response_json(archived_dockrev).await["error"]["details"]["reason"].as_str(),
-        Some("dockrev_stack_managed_via_supervisor"),
+        Some("stack_contains_archived_service"),
     );
 }
