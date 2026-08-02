@@ -1,5 +1,5 @@
 import { Download, Play, RotateCw, Square } from 'lucide-react'
-import { cloneElement, type HTMLAttributes, type KeyboardEvent, type ReactElement, useCallback, useMemo, useState } from 'react'
+import { cloneElement, type HTMLAttributes, type KeyboardEvent, type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ApiError,
   getServiceLifecycleStatus,
@@ -18,6 +18,7 @@ import { selfUpgradeBaseUrl, isDockrevImageRef } from '../runtimeConfig'
 import { navigate } from '../routes'
 import { buildUpdateServiceTarget, buildUpdateServiceTargets } from '../updateTargets'
 import { openSelfUpgradeUrl } from '../pages/serviceDetailUtils'
+import { UPDATE_JOB_SETTLED_EVENT, resolveUpdateActionTargetKey, useUpdateActionTracker, type UpdateJobSettledDetail } from '../updateActionTracking'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -100,6 +101,8 @@ export function ServiceTreeContextActions(props: {
   children: ReactElement<HTMLAttributes<HTMLElement>>
   onRefresh: (stackId: string) => void
 }) {
+  const { trackJob } = useUpdateActionTracker()
+  const trackedJobIdRef = useRef<string | null>(null)
   const [status, setStatus] = useState<ServiceLifecycleStatusResponse | null>(null)
   const [stackDetail, setStackDetail] = useState<StackDetail | null>(props.target.kind === 'stack' ? props.target.stack ?? null : null)
   const [notice, setNotice] = useState<Notice | null>(null)
@@ -114,6 +117,19 @@ export function ServiceTreeContextActions(props: {
   const lifecycleDisabled = Boolean(lifecycleReason)
   const showStart = lifecycleState === 'stopped'
   const updateReason = updateDisabledReason(target)
+  const refreshStack = props.onRefresh
+  const targetStackId = props.target.stackId
+
+  useEffect(() => {
+    const onSettled = (event: Event) => {
+      const detail = event instanceof CustomEvent ? event.detail as UpdateJobSettledDetail | null : null
+      if (!detail || detail.jobId !== trackedJobIdRef.current) return
+      trackedJobIdRef.current = null
+      refreshStack(targetStackId)
+    }
+    window.addEventListener(UPDATE_JOB_SETTLED_EVENT, onSettled)
+    return () => window.removeEventListener(UPDATE_JOB_SETTLED_EVENT, onSettled)
+  }, [refreshStack, targetStackId])
 
   const loadState = useCallback(async () => {
     setStatus(null)
@@ -139,6 +155,15 @@ export function ServiceTreeContextActions(props: {
       const result = props.target.kind === 'stack'
         ? await triggerStackLifecycle(props.target.stackId, action)
         : await triggerServiceLifecycle(props.target.service.id, action)
+      const targetKey = resolveUpdateActionTargetKey(
+        props.target.kind === 'stack' ? 'stack' : 'service',
+        props.target.stackId,
+        props.target.kind === 'service' ? props.target.service.id : undefined,
+      )
+      if (targetKey) {
+        trackedJobIdRef.current = result.jobId
+        trackJob(targetKey, result.jobId, 'queued')
+      }
       setNotice({ id: Date.now(), message: `${action === 'start' ? '启动' : action === 'stop' ? '停止' : '重启'}任务已创建`, jobId: result.jobId })
       props.onRefresh(props.target.stackId)
     } catch (error) {
@@ -146,7 +171,7 @@ export function ServiceTreeContextActions(props: {
     } finally {
       setSubmitting(false)
     }
-  }, [props])
+  }, [props, trackJob])
 
   const submitUpdate = useCallback(async () => {
     if (props.target.kind === 'service' && isDockrevImageRef(props.target.service.image.ref)) {
@@ -176,6 +201,15 @@ export function ServiceTreeContextActions(props: {
               backupMode: 'inherit',
             })
           })()
+      const targetKey = resolveUpdateActionTargetKey(
+        props.target.kind === 'stack' ? 'stack' : 'service',
+        props.target.stackId,
+        props.target.kind === 'service' ? props.target.service.id : undefined,
+      )
+      if (targetKey) {
+        trackedJobIdRef.current = result.jobId
+        trackJob(targetKey, result.jobId, 'queued')
+      }
       setNotice({ id: Date.now(), message: '更新任务已创建', jobId: result.jobId })
       props.onRefresh(props.target.stackId)
     } catch (error) {
@@ -183,7 +217,7 @@ export function ServiceTreeContextActions(props: {
     } finally {
       setSubmitting(false)
     }
-  }, [props, stackDetail])
+  }, [props, stackDetail, trackJob])
 
   const trigger = useMemo(() => cloneElement(props.children, {
     onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
