@@ -122,7 +122,7 @@ fn active_stack_services(stack: &StackRecord) -> Vec<Service> {
 }
 
 fn stack_has_dockrev(state: &AppState, stack: &StackRecord) -> bool {
-    active_stack_services(stack).iter().any(|service| {
+    stack.services.iter().any(|service| {
         updater::is_dockrev_image_ref(
             &service.image.reference,
             Some(state.config.dockrev_image_repo.as_str()),

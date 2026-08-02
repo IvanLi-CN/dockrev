@@ -249,7 +249,7 @@ async fn stack_lifecycle_rejects_archived_and_dockrev_stacks() {
     .unwrap();
     let dockrev_stack_id = seed_stack_from_compose(&state, "dockrev", &compose_path).await;
     std::fs::remove_file(&compose_path).unwrap();
-    let dockrev = app
+    let dockrev = app.clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -263,6 +263,34 @@ async fn stack_lifecycle_rejects_archived_and_dockrev_stacks() {
     assert_eq!(dockrev.status(), 409);
     assert_eq!(
         response_json(dockrev).await["error"]["details"]["reason"].as_str(),
+        Some("dockrev_stack_managed_via_supervisor"),
+    );
+
+    let dockrev_service = state.db.list_services_for_check(&dockrev_stack_id).await.unwrap()[0].clone();
+    state
+        .db
+        .set_service_archived(
+            &dockrev_service.id,
+            true,
+            Some("test"),
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+    let archived_dockrev = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/stacks/{dockrev_stack_id}/lifecycle"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"action":"start"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(archived_dockrev.status(), 409);
+    assert_eq!(
+        response_json(archived_dockrev).await["error"]["details"]["reason"].as_str(),
         Some("dockrev_stack_managed_via_supervisor"),
     );
 }

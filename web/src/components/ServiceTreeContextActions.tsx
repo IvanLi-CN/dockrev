@@ -123,6 +123,7 @@ export function ServiceTreeContextActions(props: {
   const lifecycleDisabled = Boolean(lifecycleReason)
   const showStart = lifecycleState === 'stopped'
   const updateReason = updateDisabledReason(target)
+  const isDockrevService = target.kind === 'service' && isDockrevImageRef(target.service.image.ref)
   const refreshStack = props.onRefresh
   const targetStackId = props.target.stackId
 
@@ -250,21 +251,25 @@ export function ServiceTreeContextActions(props: {
       <ContextMenu onOpenChange={(open) => { if (open) void loadState() }}>
         <ContextMenuTrigger asChild>{trigger}</ContextMenuTrigger>
         <ContextMenuContent className="serviceTreeContextMenu" aria-label="快捷操作">
-          {showStart ? (
-            <ContextMenuItem disabled={lifecycleDisabled} title={lifecycleReason} onSelect={() => void submitLifecycle('start')}>
-              <Play /><ActionLabel label="启动" reason={lifecycleReason} />
-            </ContextMenuItem>
-          ) : (
-            <ContextMenuItem disabled={lifecycleDisabled} title={lifecycleReason} onSelect={() => void submitLifecycle('restart')}>
-              <RotateCw /><ActionLabel label="重启" reason={lifecycleReason} />
-            </ContextMenuItem>
-          )}
-          {!showStart ? (
-            <ContextMenuItem disabled={lifecycleDisabled} title={lifecycleReason} onSelect={() => void submitLifecycle('stop')}>
-              <Square /><ActionLabel label="停止" reason={lifecycleReason} />
-            </ContextMenuItem>
+          {!isDockrevService ? (
+            <>
+              {showStart ? (
+                <ContextMenuItem disabled={lifecycleDisabled} title={lifecycleReason} onSelect={() => void submitLifecycle('start')}>
+                  <Play /><ActionLabel label="启动" reason={lifecycleReason} />
+                </ContextMenuItem>
+              ) : (
+                <ContextMenuItem disabled={lifecycleDisabled} title={lifecycleReason} onSelect={() => void submitLifecycle('restart')}>
+                  <RotateCw /><ActionLabel label="重启" reason={lifecycleReason} />
+                </ContextMenuItem>
+              )}
+              {!showStart ? (
+                <ContextMenuItem disabled={lifecycleDisabled} title={lifecycleReason} onSelect={() => void submitLifecycle('stop')}>
+                  <Square /><ActionLabel label="停止" reason={lifecycleReason} />
+                </ContextMenuItem>
+              ) : null}
+              <ContextMenuSeparator />
+            </>
           ) : null}
-          <ContextMenuSeparator />
           <ContextMenuItem disabled={Boolean(updateReason) || submitting} title={updateReason ?? undefined} onSelect={() => void submitUpdate()}>
             <Download /><ActionLabel label="更新" reason={updateReason ?? (submitting ? '操作正在提交' : undefined)} />
           </ContextMenuItem>
