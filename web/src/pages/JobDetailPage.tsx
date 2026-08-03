@@ -164,6 +164,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
   const [logFollow, setLogFollow] = useState(true)
   const [logIsAtBottom, setLogIsAtBottom] = useState(true)
   const [showEvents, setShowEvents] = useState(readShowEventsPreference)
+  const [manualRefreshVersion, setManualRefreshVersion] = useState(0)
   const liveCommandOutputRef = useRef(false)
   const pendingSummarySuppressionsRef = useRef(0)
   const visibleLogs = useMemo(
@@ -397,7 +398,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
       stopPolling()
       es?.close()
     }
-  }, [jobId, refresh])
+  }, [jobId, manualRefreshVersion, refresh])
 
   useEffect(() => {
     setLogFollow(true)
@@ -440,6 +441,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
               setBusy(true)
               try {
                 await refresh()
+                setManualRefreshVersion((version) => version + 1)
               } catch (e: unknown) {
                 setError(errorMessage(e))
               } finally {
