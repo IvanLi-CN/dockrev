@@ -634,24 +634,33 @@ export function installDockrevMockApi(
         return json({ error: 'not found' }, { status: 404 })
       }
 
+      let transientBody = ''
       if (scenario === 'queue-long-logs' && jobId === 'job-live-long' && live.status === 'running' && afterId >= live.logsLastId) {
         const nextId = live.logsLastId + 1
-        const nextLine = {
+        const liveLine = {
           ts: nowIso(),
-          level: nextId % 4 === 0 ? 'warn' : 'info',
           msg:
             nextId % 4 === 0
               ? `stream tick ${nextId}: retry window still open; keeping the latest registry response in view`
               : `stream tick ${nextId}: live registry polling continues for the newest digest candidate`,
         }
+        const nextLine = {
+          ts: liveLine.ts,
+          level: 'info',
+          msg: `status=0 stdout=${liveLine.msg} stderr=`,
+        }
         const nextLogs = [...live.logs, nextLine]
         live.logs = nextLogs.length > 500 ? nextLogs.slice(-500) : nextLogs
         live.logsLastId = nextId
+        transientBody = [
+          `event: job_live_log\ndata: ${JSON.stringify({ type: 'job_live_log', ts: liveLine.ts, stream: 'stdout', msg: liveLine.msg })}\n\n`,
+          `event: job_live_command_complete\ndata: ${JSON.stringify({ type: 'job_live_command_complete', hadOutput: true })}\n\n`,
+        ].join('')
       }
 
       const startIndex = Math.max(0, afterId)
       const nextLines = live.logs.slice(startIndex).slice(0, 200)
-      const body = nextLines
+      const body = transientBody + nextLines
         .map((line, index) => {
           const eventId = afterId + index + 1
           return `id: ${eventId}\nevent: job_log\ndata: ${JSON.stringify({ type: 'job_log', ...line })}\n\n`

@@ -349,6 +349,10 @@ async fn run_stack_lifecycle_job(
     stack: StackRecord,
     action: ServiceLifecycleAction,
 ) {
+    let _live_log_cleanup = crate::job_live_logs::JobLiveLogCleanupGuard::new(
+        state.job_live_log_hub.clone(),
+        job_id.clone(),
+    );
     let compose = lifecycle_compose_stack(&stack);
     let outcome = match lifecycle_compose_config(state.as_ref()) {
         Ok((config, _auth_bridge)) => {
@@ -361,6 +365,7 @@ async fn run_stack_lifecycle_job(
                 db: state.db.clone(),
                 inner: state.runner.clone(),
                 job_id: job_id.clone(),
+                live_log_hub: state.job_live_log_hub.clone(),
             };
             runner
                 .run(
@@ -630,6 +635,10 @@ async fn run_service_lifecycle_job(
     service: Service,
     action: ServiceLifecycleAction,
 ) {
+    let _live_log_cleanup = crate::job_live_logs::JobLiveLogCleanupGuard::new(
+        state.job_live_log_hub.clone(),
+        job_id.clone(),
+    );
     let compose = lifecycle_compose_stack(&stack);
     let outcome = match lifecycle_compose_config(state.as_ref()) {
         Ok((config, _auth_bridge)) => {
@@ -646,6 +655,7 @@ async fn run_service_lifecycle_job(
                 db: state.db.clone(),
                 inner: state.runner.clone(),
                 job_id: job_id.clone(),
+                live_log_hub: state.job_live_log_hub.clone(),
             };
             runner
                 .run(

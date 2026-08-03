@@ -105,6 +105,40 @@ export const LongLogsPausedFollowEvidence: Story = {
   render: () => renderLongLogsPage('视觉证据：用户上滚查看旧日志时暂停跟随，并提供跳到最新入口'),
 }
 
+export const LiveOutputAndEventToggle: Story = {
+  parameters: { dockrevApiScenario: 'queue-long-logs' },
+  render: () => renderLongLogsPage('实时输出逐行增长；EVEN 默认隐藏并可按浏览器偏好打开'),
+  beforeEach: () => {
+    try {
+      window.localStorage.removeItem('dockrev.job-detail.show-events')
+    } catch {
+      // Storybook should still exercise the default when storage is unavailable.
+    }
+  },
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => getLogCount(canvasElement) >= 105)
+    expectStory(!canvasElement.querySelector('.logLine-event'), 'EVEN logs should be hidden by default')
+
+    const toggle = canvasElement.querySelector<HTMLElement>('[data-job-detail-log-show-events="true"]')
+    expectStory(toggle, 'EVEN visibility switch missing')
+    toggle?.click()
+    await waitForCondition(() => Boolean(canvasElement.querySelector('.logLine-event')))
+    expectStory(
+      canvasElement.textContent?.includes('event audit: registry snapshot was refreshed') === true,
+      'EVEN log should appear after enabling the switch',
+    )
+
+    await waitForCondition(
+      () => (canvasElement.textContent?.match(/live registry polling continues for the newest digest candidate/g) ?? []).length > 0,
+      5_000,
+    )
+    expectStory(
+      (canvasElement.textContent?.match(/status=0 stdout=stream tick/g) ?? []).length === 0,
+      'live output should suppress the following persisted command summary on the same connection',
+    )
+  },
+}
+
 export const RunningDualProgress: Story = {
   parameters: { dockrevApiScenario: 'queue-long-logs' },
   render: () => {

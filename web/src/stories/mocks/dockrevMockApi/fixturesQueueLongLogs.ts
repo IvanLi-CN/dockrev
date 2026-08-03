@@ -102,7 +102,12 @@ export function buildQueueLongLogs(): Fixture {
       level: 'error',
       msg: 'panic: unexpected response (429 Too Many Requests)\nstack:\n  at registry_client.rs:123:9\n  at jobs/check.rs:88:17',
     },
-    ...Array.from({ length: 96 }, (_, i) => ({
+    {
+      ts: nowIso(-10_080),
+      level: 'event',
+      msg: 'event audit: registry snapshot was refreshed',
+    },
+    ...Array.from({ length: 98 }, (_, i) => ({
       ts: nowIso(-10_000 + i * 20),
       level: i % 11 === 0 ? 'error' : i % 7 === 0 ? 'warn' : 'info',
       msg:

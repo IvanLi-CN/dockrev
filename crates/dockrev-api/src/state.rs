@@ -3,8 +3,8 @@ use std::sync::Arc;
 use crate::{
     cleanup_scan_runs::CleanupScanRunHub, cleanup_snapshot_worker::CleanupSnapshotWorker,
     config::Config, db::Db, deploy_check_refresh_worker::DeployCheckRefreshWorker,
-    registry::RegistryClient, resource_usage::RealtimeSamplerHub, runner::CommandRunner,
-    service_logs::ServiceLogHub, snapshot_worker::SnapshotWorker,
+    job_live_logs::JobLiveLogHub, registry::RegistryClient, resource_usage::RealtimeSamplerHub,
+    runner::CommandRunner, service_logs::ServiceLogHub, snapshot_worker::SnapshotWorker,
 };
 
 #[derive(Clone)]
@@ -19,6 +19,7 @@ pub struct AppState {
     pub deploy_check_refresh_worker: Arc<DeployCheckRefreshWorker>,
     pub resource_hub: Arc<RealtimeSamplerHub>,
     pub service_log_hub: Arc<ServiceLogHub>,
+    pub job_live_log_hub: Arc<JobLiveLogHub>,
 }
 
 impl AppState {
@@ -46,6 +47,7 @@ impl AppState {
             deploy_check_refresh_worker,
             resource_hub,
             service_log_hub,
+            job_live_log_hub: Arc::new(JobLiveLogHub::new()),
         })
     }
 }

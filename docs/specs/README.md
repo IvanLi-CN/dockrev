@@ -27,6 +27,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
+| 5dnjc | Dockrev：任务日志实时输出与事件可见性 | active | `5dnjc-job-live-output-event-visibility/SPEC.md` | 2026-08-03 | fast-track（无持久化 job_live_log SSE、命令摘要去重、EVEN 默认隐藏与浏览器偏好） |
 | 9cq2a | Dockrev：服务详情操作下拉与生命周期任务 | active | `9cq2a-service-lifecycle-actions/SPEC.md` | 2026-07-30 | fast-track（服务级 lifecycle queue、split dropdown、页头服务名与 Storybook evidence） |
 | 8m2dp | Dockrev：GitHub Pages 公共 Web Demo（/demo/）正式化 | 已完成 | `8m2dp-pages-public-demo/SPEC.md` | 2026-07-13 | fast-track（Pages `/demo/` public surface + BASE_URL 路由 + session mock state + docs discoverability） |
 | c2r2u | Dockrev：详情页双侧栏与 Stack→Service 树导航 | active | `c2r2u-detail-route-service-navigation/SPEC.md` | 2026-07-09 | fast-track（detail AppShell + Stack→Service tree + mobile drawer/bottom nav + Storybook evidence） |
