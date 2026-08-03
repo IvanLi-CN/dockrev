@@ -97,6 +97,10 @@ pub(crate) async fn run_update_job(
     job_id: String,
     req: TriggerUpdateRequest,
 ) -> anyhow::Result<()> {
+    let _live_log_cleanup = crate::job_live_logs::JobLiveLogCleanupGuard::new(
+        state.job_live_log_hub.clone(),
+        job_id.clone(),
+    );
     let job_kind = state
         .db
         .get_job(&job_id)
@@ -165,6 +169,7 @@ pub(crate) async fn run_update_job(
                 db: state.db.clone(),
                 inner: state.runner.clone(),
                 job_id: job_id.clone(),
+                live_log_hub: state.job_live_log_hub.clone(),
             };
 
             let mut stack_summary = serde_json::Map::new();

@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getJob, newJobEventsSource, type JobDetail, type JobLogLine, type JobProgress } from '../api'
 import { formatJobMachineName, formatJobReadableDisplay } from '../jobDisplay'
 import { formatJobProgressDownload, parseJobProgressDownload } from '../jobProgressDownload'
 import { TaskResultReason } from '../components/TaskResultReason'
 import { navigate } from '../routes'
-import { Button, Chip, Mono, OverlayScrollArea, Pill } from '../ui'
+import { Button, Chip, Mono, OverlayScrollArea, Pill, Switch } from '../ui'
 
 function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' | 'info' {
   if (status === 'success') return 'ok'
@@ -28,6 +28,7 @@ function errorMessage(e: unknown): string {
 
 type LogTimeZone = 'local' | 'utc'
 const LOG_FOLLOW_BOTTOM_THRESHOLD_PX = 48
+const SHOW_EVENTS_STORAGE_KEY = 'dockrev.job-detail.show-events'
 
 const LOCAL_TZ = (() => {
   try {
@@ -93,6 +94,28 @@ function scrollLogViewportToBottom(element: HTMLElement): void {
   element.scrollTop = element.scrollHeight
 }
 
+function readShowEventsPreference(): boolean {
+  try {
+    return window.localStorage.getItem(SHOW_EVENTS_STORAGE_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+function writeShowEventsPreference(value: boolean): void {
+  try {
+    window.localStorage.setItem(SHOW_EVENTS_STORAGE_KEY, String(value))
+  } catch {
+    // Private browsing and disabled storage should leave the default off state intact.
+  }
+}
+
+function isCommandSummary(msg: string): boolean {
+  return /^status=\S+\s+stdout=/.test(msg.trim())
+}
+
+type DisplayLogLine = JobLogLine & { durableId?: string; transient?: boolean }
+
 function normalizeProgress(input: JobProgress | null | undefined): JobProgress | null {
   if (!input) return null
   const total = Number.isFinite(input.total) ? Math.max(0, input.total) : 0
@@ -132,7 +155,7 @@ function getKnownPlannedProgressPercent(progress: JobProgress): number | null {
 export function JobDetailPage(props: { jobId: string; onTopActions: (node: React.ReactNode) => void }) {
   const { jobId, onTopActions } = props
   const [job, setJob] = useState<JobDetail | null>(null)
-  const [logs, setLogs] = useState<JobLogLine[]>([])
+  const [logs, setLogs] = useState<DisplayLogLine[]>([])
   const [progress, setProgress] = useState<JobProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -140,6 +163,13 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
   const [logViewport, setLogViewport] = useState<HTMLElement | null>(null)
   const [logFollow, setLogFollow] = useState(true)
   const [logIsAtBottom, setLogIsAtBottom] = useState(true)
+  const [showEvents, setShowEvents] = useState(readShowEventsPreference)
+  const liveCommandOutputRef = useRef(false)
+  const pendingSummarySuppressionsRef = useRef(0)
+  const visibleLogs = useMemo(
+    () => logs.filter((log) => showEvents || log.level.trim().toLowerCase() !== 'event'),
+    [logs, showEvents],
+  )
 
   const refresh = useCallback(async () => {
     setError(null)
@@ -147,8 +177,14 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
     setJob(j)
     setLogs(j.logs)
     setProgress(normalizeProgress(j.progress))
+    liveCommandOutputRef.current = false
+    pendingSummarySuppressionsRef.current = 0
     return j
   }, [jobId])
+
+  useEffect(() => {
+    writeShowEventsPreference(showEvents)
+  }, [showEvents])
 
   useEffect(() => {
     let closed = false
@@ -156,6 +192,8 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
     let pollTimer: number | null = null
     let refreshTimer: number | null = null
     let errorStreak = 0
+    let hasOpenedOnce = false
+    let restarting = false
 
     const stopPolling = () => {
       if (pollTimer != null) window.clearInterval(pollTimer)
@@ -206,6 +244,21 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
         es.addEventListener('open', () => {
           errorStreak = 0
           stopPolling()
+          if (!hasOpenedOnce) {
+            hasOpenedOnce = true
+            return
+          }
+          // Reconcile durable history before reconnecting so the old source cannot
+          // replay rows concurrently with a snapshot that already contains them.
+          if (restarting) return
+          restarting = true
+          es?.close()
+          es = null
+          hasOpenedOnce = false
+          void start().finally(() => {
+            restarting = false
+            if (!es) startPolling()
+          })
         })
 
         es.addEventListener('job_log', (evt: Event) => {
@@ -219,10 +272,67 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
             const ts = typeof p.ts === 'string' ? p.ts : ''
             const level = typeof p.level === 'string' ? p.level : ''
             const msg = typeof p.msg === 'string' ? p.msg : ''
+            const durableId = typeof p.id === 'number' || typeof p.id === 'string' ? String(p.id) : ''
+            if (isCommandSummary(msg) && pendingSummarySuppressionsRef.current > 0) {
+              pendingSummarySuppressionsRef.current -= 1
+              return
+            }
             setLogs((prev) => {
-              const next = [...prev, { ts, level, msg }]
+              if (
+                (durableId && prev.some((log) => log.durableId === durableId)) ||
+                (level.trim().toLowerCase() === 'event' &&
+                  prev.some(
+                    (log) =>
+                      !log.transient &&
+                      log.level.trim().toLowerCase() === 'event' &&
+                      log.ts === ts &&
+                      log.msg === msg,
+                  ))
+              ) {
+                return prev
+              }
+              const next = [...prev, { ts, level, msg, durableId: durableId || undefined }]
               return next.length > 500 ? next.slice(-500) : next
             })
+          } catch {
+            // ignore invalid events
+          }
+        })
+
+        es.addEventListener('job_live_log', (evt: Event) => {
+          const data = (evt as MessageEvent).data
+          if (typeof data !== 'string' || !data) return
+          try {
+            const parsed = JSON.parse(data) as unknown
+            if (!parsed || typeof parsed !== 'object') return
+            const p = parsed as Record<string, unknown>
+            if (p.type !== 'job_live_log') return
+            const ts = typeof p.ts === 'string' ? p.ts : new Date().toISOString()
+            const stream = typeof p.stream === 'string' ? p.stream : 'stdout'
+            const msg = typeof p.msg === 'string' ? p.msg : ''
+            liveCommandOutputRef.current = true
+            setLogs((prev) => {
+              const next = [...prev, { ts, level: stream === 'stderr' ? 'warn' : 'info', msg, transient: true }]
+              return next.length > 500 ? next.slice(-500) : next
+            })
+          } catch {
+            // ignore invalid events
+          }
+        })
+
+        es.addEventListener('job_live_command_complete', (evt: Event) => {
+          const data = (evt as MessageEvent).data
+          if (typeof data !== 'string' || !data) return
+          try {
+            const parsed = JSON.parse(data) as unknown
+            if (!parsed || typeof parsed !== 'object') return
+            const p = parsed as Record<string, unknown>
+            if (p.type !== 'job_live_command_complete') return
+            const summaryPersisted = p.summaryPersisted !== false
+            if (summaryPersisted && liveCommandOutputRef.current) {
+              pendingSummarySuppressionsRef.current += 1
+            }
+            liveCommandOutputRef.current = false
           } catch {
             // ignore invalid events
           }
@@ -261,6 +371,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
         })
 
         es.onerror = () => {
+          if (restarting) return
           errorStreak += 1
           // The backend closes the SSE stream shortly after a job is finished (idle window).
           // Refresh once on close/error so status/finishedAt become up-to-date.
@@ -307,13 +418,13 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
   }, [logViewport])
 
   useEffect(() => {
-    if (!logViewport || !logFollow || logs.length === 0) return
+    if (!logViewport || !logFollow || visibleLogs.length === 0) return
     const frame = window.requestAnimationFrame(() => {
       scrollLogViewportToBottom(logViewport)
       setLogIsAtBottom(true)
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [logFollow, logViewport, logs.length])
+  }, [logFollow, logViewport, visibleLogs.length])
 
   useEffect(() => {
     onTopActions(
@@ -523,7 +634,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
         <div className="sectionRow">
           <div className="title">日志</div>
           <div style={{ marginLeft: 'auto' }} className="chipRow">
-            {!logFollow && logs.length > 0 ? (
+            {!logFollow && visibleLogs.length > 0 ? (
               <Button
                 data-job-detail-log-jump="true"
                 onClick={() => {
@@ -545,19 +656,28 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
             <Chip active={logTz === 'utc'} onClick={() => setLogTz('utc')} title="后端存储的 job log ts 为 RFC3339（UTC）">
               UTC
             </Chip>
+            <label className="chipRow" style={{ marginLeft: 8 }}>
+              <Switch
+                aria-label="显示 EVEN"
+                checked={showEvents}
+                data-job-detail-log-show-events="true"
+                onChange={setShowEvents}
+              />
+              <span className="muted">显示 EVEN</span>
+            </label>
           </div>
         </div>
 
         <OverlayScrollArea
           className="logs"
           data-job-detail-log-at-bottom={logIsAtBottom ? 'true' : 'false'}
-          data-job-detail-log-count={logs.length}
+          data-job-detail-log-count={visibleLogs.length}
           data-job-detail-log-follow={logFollow ? 'true' : 'false'}
           data-job-detail-log-surface="true"
           onViewportReady={setLogViewport}
           viewportLabel="任务日志"
         >
-          {logs.map((l, idx) => (
+          {visibleLogs.map((l, idx) => (
             <div
               key={`${l.ts}-${idx}`}
               className={`logLine logLine-${(l.level ?? '').trim().toLowerCase() || 'unknown'}`}
@@ -569,7 +689,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
               <span className="logMsg">{l.msg}</span>
             </div>
           ))}
-          {logs.length === 0 ? <div className="muted">无日志</div> : null}
+          {visibleLogs.length === 0 ? <div className="muted">无日志</div> : null}
         </OverlayScrollArea>
       </div>
     </div>
