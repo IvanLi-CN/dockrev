@@ -518,7 +518,7 @@ fn spawn_source_follower(
     source: ServiceLogSource,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let (raw_tx, mut raw_rx) = mpsc::unbounded_channel::<String>();
+        let (raw_tx, mut raw_rx) = mpsc::unbounded_channel::<ServiceLogRawChunk>();
         let processor_tx = tx.clone();
         let processor_handle = tokio::spawn(async move {
             let mut parser = ServiceLogFrameParser::default();
@@ -545,7 +545,9 @@ fn spawn_source_follower(
                 let Some(raw_line) = next_line else {
                     break;
                 };
-                if let Some(line) = parser.push_physical_line(&raw_line) {
+                if let Some(line) =
+                    parser.push_physical_line(&raw_line.text, raw_line.forced_fragment)
+                {
                     let _ = processor_tx.send(CollectorMessage::Line(line));
                 }
             }
@@ -556,33 +558,39 @@ fn spawn_source_follower(
 
         {
             let stdout_tx = raw_tx.clone();
-            let mut on_stdout = move |chunk: String| {
-                send_log_chunk_lines(&stdout_tx, &chunk);
-            };
+            let mut stdout_buffer = LineChunkBuffer::default();
             let stderr_tx = raw_tx.clone();
-            let mut on_stderr = move |chunk: String| {
-                send_log_chunk_lines(&stderr_tx, &chunk);
-            };
+            let mut stderr_buffer = LineChunkBuffer::default();
+            {
+                let mut on_stdout = |chunk: Vec<u8>| {
+                    stdout_buffer.push(&stdout_tx, &chunk);
+                };
+                let mut on_stderr = |chunk: Vec<u8>| {
+                    stderr_buffer.push(&stderr_tx, &chunk);
+                };
 
-            let _ = runner
-                .run_stream(
-                    CommandSpec {
-                        program: "docker".to_string(),
-                        args: vec![
-                            "logs".to_string(),
-                            "--timestamps".to_string(),
-                            "--follow".to_string(),
-                            "--tail".to_string(),
-                            "0".to_string(),
-                            source.id,
-                        ],
-                        env: Vec::new(),
-                    },
-                    Duration::from_secs(SERVICE_LOG_FOLLOW_TIMEOUT_SECONDS),
-                    &mut on_stdout,
-                    &mut on_stderr,
-                )
-                .await;
+                let _ = runner
+                    .run_stream(
+                        CommandSpec {
+                            program: "docker".to_string(),
+                            args: vec![
+                                "logs".to_string(),
+                                "--timestamps".to_string(),
+                                "--follow".to_string(),
+                                "--tail".to_string(),
+                                "0".to_string(),
+                                source.id,
+                            ],
+                            env: Vec::new(),
+                        },
+                        Duration::from_secs(SERVICE_LOG_FOLLOW_TIMEOUT_SECONDS),
+                        &mut on_stdout,
+                        &mut on_stderr,
+                    )
+                    .await;
+            }
+            stdout_buffer.finish(&stdout_tx);
+            stderr_buffer.finish(&stderr_tx);
         }
         drop(raw_tx);
         let _ = processor_handle.await;
@@ -645,10 +653,74 @@ async fn collect_service_logs(
     Ok(ServiceLogCollectorState { lines })
 }
 
-fn send_log_chunk_lines(tx: &mpsc::UnboundedSender<String>, chunk: &str) {
-    for raw_line in chunk.lines() {
-        let _ = tx.send(raw_line.to_string());
+#[derive(Default)]
+struct LineChunkBuffer {
+    pending: Vec<u8>,
+}
+
+const MAX_PENDING_SERVICE_LOG_BYTES: usize = 64 * 1024;
+
+#[derive(Debug)]
+struct ServiceLogRawChunk {
+    text: String,
+    forced_fragment: bool,
+}
+
+impl LineChunkBuffer {
+    fn push(&mut self, tx: &mpsc::UnboundedSender<ServiceLogRawChunk>, chunk: &[u8]) {
+        self.pending.extend_from_slice(chunk);
+        while let Some(delimiter) = self
+            .pending
+            .iter()
+            .position(|byte| *byte == b'\n' || *byte == b'\r')
+        {
+            let delimiter_byte = self.pending[delimiter];
+            let mut line = self.pending.drain(..=delimiter).collect::<Vec<_>>();
+            line.pop();
+            if delimiter_byte == b'\r' && self.pending.first() == Some(&b'\n') {
+                self.pending.remove(0);
+            } else if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            let _ = tx.send(ServiceLogRawChunk {
+                text: String::from_utf8_lossy(&line).to_string(),
+                forced_fragment: false,
+            });
+        }
+        while self.pending.len() > MAX_PENDING_SERVICE_LOG_BYTES {
+            let line = take_bounded_utf8_prefix(&mut self.pending, MAX_PENDING_SERVICE_LOG_BYTES);
+            let _ = tx.send(ServiceLogRawChunk {
+                text: String::from_utf8_lossy(&line).to_string(),
+                forced_fragment: true,
+            });
+        }
     }
+
+    fn finish(&mut self, tx: &mpsc::UnboundedSender<ServiceLogRawChunk>) {
+        if self.pending.last() == Some(&b'\r') {
+            self.pending.pop();
+        }
+        if !self.pending.is_empty() {
+            let _ = tx.send(ServiceLogRawChunk {
+                text: String::from_utf8_lossy(&self.pending).to_string(),
+                forced_fragment: false,
+            });
+            self.pending.clear();
+        }
+    }
+}
+
+fn take_bounded_utf8_prefix(bytes: &mut Vec<u8>, max: usize) -> Vec<u8> {
+    let limit = bytes.len().min(max);
+    if limit == 0 {
+        return Vec::new();
+    }
+    let boundary = match std::str::from_utf8(&bytes[..limit]) {
+        Ok(_) => limit,
+        Err(error) if error.valid_up_to() > 0 => error.valid_up_to(),
+        Err(_) => 1,
+    };
+    bytes.drain(..boundary).collect()
 }
 
 async fn discover_active_source(
@@ -804,7 +876,11 @@ struct ServiceLogFrameParser {
 }
 
 impl ServiceLogFrameParser {
-    fn push_physical_line(&mut self, raw_line: &str) -> Option<ServiceLogLine> {
+    fn push_physical_line(
+        &mut self,
+        raw_line: &str,
+        forced_fragment: bool,
+    ) -> Option<ServiceLogLine> {
         let trimmed = raw_line.trim_end_matches('\r').trim_end_matches('\n');
         if trimmed.trim().is_empty() && self.current.is_none() {
             return None;
@@ -812,6 +888,12 @@ impl ServiceLogFrameParser {
 
         let (ts, raw) = split_docker_log_line(trimmed);
         if ts.is_empty() {
+            if let Some(current) = self.current.as_mut() {
+                if !forced_fragment {
+                    current.raw.push('\n');
+                }
+                current.raw.push_str(trimmed);
+            }
             return None;
         }
         let next = PendingServiceLogLine {
@@ -862,7 +944,7 @@ fn parse_service_log_lines(output: &str) -> Vec<ServiceLogLine> {
     let mut parser = ServiceLogFrameParser::default();
     let mut lines = output
         .lines()
-        .filter_map(|raw_line| parser.push_physical_line(raw_line))
+        .filter_map(|raw_line| parser.push_physical_line(raw_line, false))
         .collect::<Vec<_>>();
     if let Some(line) = parser.finish() {
         lines.push(line);
@@ -1367,8 +1449,12 @@ mod tracing_tests;
 
 #[cfg(test)]
 mod tests {
-    use super::parse_service_log_lines;
+    use super::{
+        LineChunkBuffer, MAX_PENDING_SERVICE_LOG_BYTES, ServiceLogFrameParser,
+        parse_service_log_lines, take_bounded_utf8_prefix,
+    };
     use crate::api::types::ServiceLogMetaFormat;
+    use tokio::sync::mpsc;
 
     #[test]
     fn parse_service_log_lines_drops_truncated_leading_continuation() {
@@ -1393,6 +1479,105 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].raw, "    standalone indented output");
         assert_eq!(lines[1].raw, "worker ready");
+    }
+
+    #[test]
+    fn line_chunk_buffer_bounds_newline_free_output_without_loss() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut buffer = LineChunkBuffer::default();
+        buffer.push(&tx, &vec![b'x'; MAX_PENDING_SERVICE_LOG_BYTES + 1]);
+
+        let emitted = rx
+            .try_recv()
+            .expect("oversized partial output should flush");
+        assert_eq!(emitted.text.len(), MAX_PENDING_SERVICE_LOG_BYTES);
+        assert!(emitted.forced_fragment);
+        buffer.finish(&tx);
+        assert_eq!(
+            rx.try_recv().expect("tail should be preserved").text.len(),
+            1
+        );
+        assert!(buffer.pending.is_empty());
+    }
+
+    #[test]
+    fn line_chunk_buffer_keeps_utf8_code_points_intact_at_forced_boundary() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut buffer = LineChunkBuffer::default();
+        let mut chunk = vec![b'x'; MAX_PENDING_SERVICE_LOG_BYTES - 1];
+        chunk.extend_from_slice("界".as_bytes());
+        chunk.extend_from_slice("尾".as_bytes());
+        buffer.push(&tx, &chunk);
+
+        let emitted = rx
+            .try_recv()
+            .expect("oversized partial output should flush");
+        assert!(emitted.forced_fragment);
+        assert!(emitted.text.ends_with('x'));
+        assert!(!emitted.text.contains('\u{fffd}'));
+        buffer.finish(&tx);
+        let tail = rx.try_recv().expect("utf8 tail should be preserved");
+        assert_eq!(tail.text, "界尾");
+        assert!(!tail.forced_fragment);
+    }
+
+    #[test]
+    fn bounded_utf8_prefix_leaves_incomplete_code_point_for_next_chunk() {
+        let mut bytes = "x界".as_bytes().to_vec();
+        let prefix = take_bounded_utf8_prefix(&mut bytes, 2);
+        assert_eq!(prefix, b"x");
+        assert_eq!(bytes, "界".as_bytes());
+    }
+
+    #[test]
+    fn service_log_parser_rejoins_bounded_continuation_chunks() {
+        let timestamp = "2026-07-01T08:12:51.833074000Z ";
+        let first_chunk = format!("{timestamp}{}", "x".repeat(MAX_PENDING_SERVICE_LOG_BYTES));
+        let mut parser = ServiceLogFrameParser::default();
+
+        assert!(parser.push_physical_line(&first_chunk, false).is_none());
+        assert!(parser.push_physical_line("tail", true).is_none());
+
+        let line = parser
+            .finish()
+            .expect("continuation should complete the line");
+        assert!(line.raw.ends_with("tail"));
+    }
+
+    #[test]
+    fn line_chunk_buffer_splits_carriage_return_progress() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut buffer = LineChunkBuffer::default();
+        buffer.push(&tx, b"first\rsecond");
+
+        assert_eq!(
+            rx.try_recv().expect("carriage return should flush").text,
+            "first"
+        );
+        buffer.finish(&tx);
+        assert_eq!(
+            rx.try_recv().expect("final partial line should flush").text,
+            "second"
+        );
+    }
+
+    #[test]
+    fn service_log_parser_separates_live_unstamped_continuations() {
+        let mut parser = ServiceLogFrameParser::default();
+        assert!(
+            parser
+                .push_physical_line("2026-07-01T08:12:51.833074000Z worker failed", false)
+                .is_none()
+        );
+        assert!(
+            parser
+                .push_physical_line("    database is locked", false)
+                .is_none()
+        );
+        let line = parser
+            .finish()
+            .expect("continuation should complete the line");
+        assert_eq!(line.raw, "worker failed\n    database is locked");
     }
 
     #[test]

@@ -257,6 +257,7 @@ pub(super) fn resolve_sse_after_id(headers: &HeaderMap, query_after_id: i64) -> 
 
 #[derive(Default)]
 struct LiveCommandState {
+    command_seq: u64,
     complete: bool,
 }
 
@@ -398,27 +399,33 @@ pub(super) async fn job_events(
             // while a reconnect or a busy job is also producing database rows.
             if let Some(live_subscription) = live_subscription.as_mut() {
                 match live_subscription.try_recv() {
-                    Ok(crate::job_live_logs::JobLiveEvent::Log(log)) => {
-                        if live_commands.back().is_none_or(|command| command.complete) {
-                            live_commands.push_back(LiveCommandState::default());
+                    Ok(crate::job_live_logs::JobLiveEvent::Terminal(terminal)) => {
+                        if live_commands
+                            .back()
+                            .is_none_or(|command| command.command_seq != terminal.command_seq)
+                        {
+                            live_commands.push_back(LiveCommandState {
+                                command_seq: terminal.command_seq,
+                                complete: false,
+                            });
                         }
                         let evt = json!({
-                            "type": "job_live_log",
+                            "type": "job_live_terminal",
                             "jobId": sse_job_id,
-                            "ts": log.ts,
-                            "stream": log.stream,
-                            "msg": log.msg,
+                            "ts": terminal.ts,
+                            "commandSeq": terminal.command_seq,
+                            "lines": terminal.lines,
                         });
                         yield Ok::<Event, Infallible>(
                             Event::default()
-                                .event("job_live_log")
+                                .event("job_live_terminal")
                                 .data(evt.to_string()),
                         );
                         continue;
                     }
                     Ok(crate::job_live_logs::JobLiveEvent::CommandComplete(done)) => {
-                        if done.had_output
-                            && let Some(command) = live_commands.back_mut()
+                        if let Some(command) = live_commands.back_mut()
+                            && command.command_seq == done.command_seq
                             && !command.complete
                         {
                             if done.summary_persisted {
@@ -430,6 +437,7 @@ pub(super) async fn job_events(
                         let evt = json!({
                             "type": "job_live_command_complete",
                             "jobId": sse_job_id,
+                            "commandSeq": done.command_seq,
                             "hadOutput": done.had_output,
                             "summaryPersisted": done.summary_persisted,
                         });
@@ -487,26 +495,32 @@ pub(super) async fn job_events(
                     tokio::select! {
                         live = live_subscription.recv() => {
                             match live {
-                                Ok(crate::job_live_logs::JobLiveEvent::Log(log)) => {
-                                    if live_commands.back().is_none_or(|command| command.complete) {
-                                        live_commands.push_back(LiveCommandState::default());
+                                Ok(crate::job_live_logs::JobLiveEvent::Terminal(terminal)) => {
+                                    if live_commands
+                                        .back()
+                                        .is_none_or(|command| command.command_seq != terminal.command_seq)
+                                    {
+                                        live_commands.push_back(LiveCommandState {
+                                            command_seq: terminal.command_seq,
+                                            complete: false,
+                                        });
                                     }
                                     let evt = json!({
-                                        "type": "job_live_log",
+                                        "type": "job_live_terminal",
                                         "jobId": sse_job_id,
-                                        "ts": log.ts,
-                                        "stream": log.stream,
-                                        "msg": log.msg,
+                                        "ts": terminal.ts,
+                                        "commandSeq": terminal.command_seq,
+                                        "lines": terminal.lines,
                                     });
                                     yield Ok::<Event, Infallible>(
                                         Event::default()
-                                            .event("job_live_log")
+                                            .event("job_live_terminal")
                                             .data(evt.to_string()),
                                     );
                                 }
                                 Ok(crate::job_live_logs::JobLiveEvent::CommandComplete(done)) => {
-                                    if done.had_output
-                                        && let Some(command) = live_commands.back_mut()
+                                    if let Some(command) = live_commands.back_mut()
+                                        && command.command_seq == done.command_seq
                                         && !command.complete
                                     {
                                         if done.summary_persisted {
@@ -518,6 +532,7 @@ pub(super) async fn job_events(
                                     let evt = json!({
                                         "type": "job_live_command_complete",
                                         "jobId": sse_job_id,
+                                        "commandSeq": done.command_seq,
                                         "hadOutput": done.had_output,
                                         "summaryPersisted": done.summary_persisted,
                                     });
@@ -590,26 +605,32 @@ pub(super) async fn job_events(
                                 crate::job_live_logs::JobLiveEvent::CommandComplete(_)
                             );
                             match live {
-                                crate::job_live_logs::JobLiveEvent::Log(log) => {
-                                    if live_commands.back().is_none_or(|command| command.complete) {
-                                        live_commands.push_back(LiveCommandState::default());
+                                crate::job_live_logs::JobLiveEvent::Terminal(terminal) => {
+                                    if live_commands
+                                        .back()
+                                        .is_none_or(|command| command.command_seq != terminal.command_seq)
+                                    {
+                                        live_commands.push_back(LiveCommandState {
+                                            command_seq: terminal.command_seq,
+                                            complete: false,
+                                        });
                                     }
                                     let evt = json!({
-                                        "type": "job_live_log",
+                                        "type": "job_live_terminal",
                                         "jobId": sse_job_id,
-                                        "ts": log.ts,
-                                        "stream": log.stream,
-                                        "msg": log.msg,
+                                        "ts": terminal.ts,
+                                        "commandSeq": terminal.command_seq,
+                                        "lines": terminal.lines,
                                     });
                                     yield Ok::<Event, Infallible>(
                                         Event::default()
-                                            .event("job_live_log")
+                                            .event("job_live_terminal")
                                             .data(evt.to_string()),
                                     );
                                 }
                                 crate::job_live_logs::JobLiveEvent::CommandComplete(done) => {
-                                    if done.had_output
-                                        && let Some(command) = live_commands.back_mut()
+                                    if let Some(command) = live_commands.back_mut()
+                                        && command.command_seq == done.command_seq
                                         && !command.complete
                                     {
                                         if done.summary_persisted {
@@ -621,6 +642,7 @@ pub(super) async fn job_events(
                                     let evt = json!({
                                         "type": "job_live_command_complete",
                                         "jobId": sse_job_id,
+                                        "commandSeq": done.command_seq,
                                         "hadOutput": done.had_output,
                                         "summaryPersisted": done.summary_persisted,
                                     });

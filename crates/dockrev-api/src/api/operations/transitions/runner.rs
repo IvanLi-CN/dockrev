@@ -14,8 +14,8 @@ impl crate::runner::CommandRunner for DbLoggingRunner {
         spec: crate::runner::CommandSpec,
         timeout: std::time::Duration,
     ) -> anyhow::Result<crate::runner::CommandOutput> {
-        let mut on_stdout = |_chunk: String| {};
-        let mut on_stderr = |_chunk: String| {};
+        let mut on_stdout = |_chunk: Vec<u8>| {};
+        let mut on_stderr = |_chunk: Vec<u8>| {};
         self.run_stream(spec, timeout, &mut on_stdout, &mut on_stderr)
             .await
     }
@@ -24,8 +24,8 @@ impl crate::runner::CommandRunner for DbLoggingRunner {
         &self,
         spec: crate::runner::CommandSpec,
         timeout: std::time::Duration,
-        on_stdout: &mut (dyn FnMut(String) + Send),
-        on_stderr: &mut (dyn FnMut(String) + Send),
+        on_stdout: &mut (dyn FnMut(Vec<u8>) + Send),
+        on_stderr: &mut (dyn FnMut(Vec<u8>) + Send),
     ) -> anyhow::Result<crate::runner::CommandOutput> {
         let start = now_rfc3339()?;
         let msg = format!("$ {} {}", spec.program, spec.args.join(" "));
@@ -41,20 +41,21 @@ impl crate::runner::CommandRunner for DbLoggingRunner {
             )
             .await;
 
-        let mut captured_stdout = String::new();
-        let mut captured_stderr = String::new();
-        let mut stdout_emitter =
-            LiveLineEmitter::new(self.live_log_hub.clone(), self.job_id.clone(), "stdout");
-        let mut stderr_emitter =
-            LiveLineEmitter::new(self.live_log_hub.clone(), self.job_id.clone(), "stderr");
-        let mut tap_stdout = |chunk: String| {
-            captured_stdout.push_str(&chunk);
-            stdout_emitter.push(&chunk);
+        let mut captured_stdout = Vec::new();
+        let mut captured_stderr = Vec::new();
+        let command_seq = self.live_log_hub.begin_command(&self.job_id);
+        let terminal =
+            TerminalEmitter::new(self.live_log_hub.clone(), self.job_id.clone(), command_seq);
+        let stdout_terminal = terminal.clone();
+        let stderr_terminal = terminal.clone();
+        let mut tap_stdout = |chunk: Vec<u8>| {
+            captured_stdout.extend_from_slice(&chunk);
+            stdout_terminal.push(&chunk);
             on_stdout(chunk);
         };
-        let mut tap_stderr = |chunk: String| {
-            captured_stderr.push_str(&chunk);
-            stderr_emitter.push(&chunk);
+        let mut tap_stderr = |chunk: Vec<u8>| {
+            captured_stderr.extend_from_slice(&chunk);
+            stderr_terminal.push(&chunk);
             on_stderr(chunk);
         };
 
@@ -62,33 +63,36 @@ impl crate::runner::CommandRunner for DbLoggingRunner {
             .inner
             .run_stream(spec, timeout, &mut tap_stdout, &mut tap_stderr)
             .await;
-        let stdout_had_output = stdout_emitter.finish();
-        let stderr_had_output = stderr_emitter.finish();
-        let mut had_live_output = stdout_had_output || stderr_had_output;
         let out = match result {
             Ok(out) => out,
             Err(error) => {
-                self.live_log_hub
-                    .publish_command_complete(&self.job_id, had_live_output, false);
+                self.live_log_hub.publish_command_complete(
+                    &self.job_id,
+                    command_seq,
+                    terminal.finish(),
+                    false,
+                );
                 return Err(error);
             }
         };
-        if captured_stdout.is_empty() {
-            captured_stdout = out.stdout.clone();
+        if captured_stdout.is_empty() && !out.stdout.is_empty() {
+            captured_stdout.extend_from_slice(out.stdout.as_bytes());
             if !out.stdout.is_empty() {
-                stdout_emitter.push(&out.stdout);
-                had_live_output |= stdout_emitter.finish();
-                on_stdout(out.stdout.clone());
+                terminal.push(out.stdout.as_bytes());
+                on_stdout(out.stdout.as_bytes().to_vec());
             }
         }
-        if captured_stderr.is_empty() {
-            captured_stderr = out.stderr.clone();
+        if captured_stderr.is_empty() && !out.stderr.is_empty() {
+            captured_stderr.extend_from_slice(out.stderr.as_bytes());
             if !out.stderr.is_empty() {
-                stderr_emitter.push(&out.stderr);
-                had_live_output |= stderr_emitter.finish();
-                on_stderr(out.stderr.clone());
+                terminal.push(out.stderr.as_bytes());
+                on_stderr(out.stderr.as_bytes().to_vec());
             }
         }
+
+        let had_live_output = terminal.finish();
+        let captured_stdout = String::from_utf8_lossy(&captured_stdout).to_string();
+        let captured_stderr = String::from_utf8_lossy(&captured_stderr).to_string();
 
         let ts = now_rfc3339()?;
         let msg = format!(
@@ -116,6 +120,7 @@ impl crate::runner::CommandRunner for DbLoggingRunner {
 
         self.live_log_hub.publish_command_complete(
             &self.job_id,
+            command_seq,
             had_live_output,
             summary_persisted,
         );
@@ -128,59 +133,74 @@ impl crate::runner::CommandRunner for DbLoggingRunner {
     }
 }
 
-struct LiveLineEmitter {
-    hub: Arc<crate::job_live_logs::JobLiveLogHub>,
-    job_id: String,
-    stream: &'static str,
-    pending: String,
-    had_output: bool,
+#[derive(Clone)]
+struct TerminalEmitter {
+    state: Arc<std::sync::Mutex<TerminalEmitterState>>,
 }
 
-impl LiveLineEmitter {
+struct TerminalEmitterState {
+    parser: vt100::Parser,
+    hub: Arc<crate::job_live_logs::JobLiveLogHub>,
+    job_id: String,
+    command_seq: u64,
+    last_emit: std::time::Instant,
+    had_output: bool,
+    had_visible_output: bool,
+}
+
+impl TerminalEmitter {
     fn new(
         hub: Arc<crate::job_live_logs::JobLiveLogHub>,
         job_id: String,
-        stream: &'static str,
+        command_seq: u64,
     ) -> Self {
         Self {
-            hub,
-            job_id,
-            stream,
-            pending: String::new(),
-            had_output: false,
+            state: Arc::new(std::sync::Mutex::new(TerminalEmitterState {
+                parser: vt100::Parser::new(200, 240, 2000),
+                hub,
+                job_id,
+                command_seq,
+                last_emit: std::time::Instant::now(),
+                had_output: false,
+                had_visible_output: false,
+            })),
         }
     }
 
-    fn push(&mut self, chunk: &str) {
-        self.pending.push_str(chunk);
-        while let Some(newline) = self.pending.find('\n') {
-            let line = self.pending[..newline]
-                .strip_suffix('\r')
-                .unwrap_or(&self.pending[..newline])
-                .to_string();
-            self.pending.drain(..=newline);
-            self.emit(line);
+    fn push(&self, chunk: &[u8]) {
+        if chunk.is_empty() {
+            return;
+        }
+        let mut state = self.state.lock().expect("terminal emitter lock poisoned");
+        state.parser.process(chunk);
+        state.had_output = true;
+        if state.last_emit.elapsed() >= std::time::Duration::from_millis(50) {
+            state.publish_snapshot();
         }
     }
 
-    fn finish(&mut self) -> bool {
-        if !self.pending.is_empty() {
-            let line = std::mem::take(&mut self.pending);
-            self.emit(line);
+    fn finish(&self) -> bool {
+        let mut state = self.state.lock().expect("terminal emitter lock poisoned");
+        if state.had_output {
+            state.publish_snapshot();
+            return state.had_visible_output;
         }
-        self.had_output
+        false
     }
+}
 
-    fn emit(&mut self, msg: String) {
-        self.had_output = true;
-        self.hub.publish_log(
-            &self.job_id,
-            crate::job_live_logs::JobLiveLog {
-                ts: now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string()),
-                stream: self.stream,
-                msg,
-            },
+impl TerminalEmitterState {
+    fn publish_snapshot(&mut self) -> bool {
+        let terminal = crate::job_live_logs::terminal_snapshot(
+            &self.parser,
+            now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string()),
+            self.command_seq,
         );
+        let has_visible_lines = terminal.lines.iter().any(|line| !line.segments.is_empty());
+        self.hub.publish_terminal(&self.job_id, terminal);
+        self.last_emit = std::time::Instant::now();
+        self.had_visible_output |= has_visible_lines;
+        has_visible_lines
     }
 }
 
@@ -261,26 +281,18 @@ mod tests {
             .await
             .unwrap();
 
-        let mut messages = Vec::new();
-        for _ in 0..4 {
-            messages.push(live.recv().await.unwrap());
-        }
+        let first = live.recv().await.unwrap();
+        let second = live.recv().await.unwrap();
         assert!(matches!(
-            &messages[0],
-            crate::job_live_logs::JobLiveEvent::Log(log) if log.msg == "first"
+            first,
+            crate::job_live_logs::JobLiveEvent::Terminal(terminal)
+                if terminal.command_seq == 1
+                    && terminal.lines.iter().any(|line| line.segments.iter().any(|segment| segment.text.contains("first")))
         ));
         assert!(matches!(
-            &messages[1],
-            crate::job_live_logs::JobLiveEvent::Log(log) if log.msg == "second"
-        ));
-        assert!(matches!(
-            &messages[2],
-            crate::job_live_logs::JobLiveEvent::Log(log) if log.stream == "stderr" && log.msg == "warning"
-        ));
-        assert!(matches!(
-            &messages[3],
+            second,
             crate::job_live_logs::JobLiveEvent::CommandComplete(done)
-                if done.had_output && done.summary_persisted
+                if done.command_seq == 1 && done.had_output && done.summary_persisted
         ));
 
         let logs = db.list_job_logs("job-1").await.unwrap();
@@ -292,5 +304,24 @@ mod tests {
                 .iter()
                 .any(|log| log.msg == "first" || log.msg == "second")
         );
+    }
+
+    #[tokio::test]
+    async fn control_only_terminal_output_does_not_suppress_summary() {
+        let hub = Arc::new(crate::job_live_logs::JobLiveLogHub::new());
+        let mut live = hub.subscribe("job-control-only").await;
+        let command_seq = hub.begin_command("job-control-only");
+        let terminal =
+            TerminalEmitter::new(hub.clone(), "job-control-only".to_string(), command_seq);
+
+        terminal.push(b"\x1b[2J\x1b[H");
+        assert!(!terminal.finish());
+
+        let event = live.recv().await.unwrap();
+        assert!(matches!(
+            event,
+            crate::job_live_logs::JobLiveEvent::Terminal(snapshot)
+                if snapshot.command_seq == command_seq && snapshot.lines.is_empty()
+        ));
     }
 }

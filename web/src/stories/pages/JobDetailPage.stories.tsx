@@ -107,7 +107,7 @@ export const LongLogsPausedFollowEvidence: Story = {
 
 export const LiveOutputAndEventToggle: Story = {
   parameters: { dockrevApiScenario: 'queue-long-logs' },
-  render: () => renderLongLogsPage('实时输出逐行增长；EVEN 默认隐藏并可按浏览器偏好打开'),
+  render: () => renderLongLogsPage('实时终端快照替换进度行；EVEN 默认隐藏并可按浏览器偏好打开'),
   beforeEach: () => {
     try {
       window.localStorage.removeItem('dockrev.job-detail.show-events')
@@ -118,6 +118,15 @@ export const LiveOutputAndEventToggle: Story = {
   play: async ({ canvasElement }) => {
     await waitForCondition(() => getLogCount(canvasElement) >= 105)
     expectStory(!canvasElement.querySelector('.logLine-event'), 'EVEN logs should be hidden by default')
+    await waitForCondition(() => Boolean(canvasElement.querySelector('.logLine-terminal')))
+    expectStory(
+      canvasElement.querySelectorAll('.logLine-terminal .logLvl-warn, .logLine-terminal .logLvl-warning').length === 0,
+      'live terminal rows should not be classified as WARN',
+    )
+    expectStory(
+      [...canvasElement.querySelectorAll('.logLine-terminal .logLvl')].every((node) => node.textContent === ''),
+      'live terminal rows should keep an empty fixed-width level column',
+    )
 
     const toggle = canvasElement.querySelector<HTMLElement>('[data-job-detail-log-show-events="true"]')
     expectStory(toggle, 'EVEN visibility switch missing')
