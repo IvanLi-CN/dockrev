@@ -140,6 +140,7 @@ struct TerminalEmitter {
 
 struct TerminalEmitterState {
     parser: vt100::Parser,
+    line_discipline: crate::job_live_logs::TerminalLineDiscipline,
     hub: Arc<crate::job_live_logs::JobLiveLogHub>,
     job_id: String,
     command_seq: u64,
@@ -157,6 +158,7 @@ impl TerminalEmitter {
         Self {
             state: Arc::new(std::sync::Mutex::new(TerminalEmitterState {
                 parser: vt100::Parser::new(200, 240, 2000),
+                line_discipline: crate::job_live_logs::TerminalLineDiscipline::default(),
                 hub,
                 job_id,
                 command_seq,
@@ -172,7 +174,8 @@ impl TerminalEmitter {
             return;
         }
         let mut state = self.state.lock().expect("terminal emitter lock poisoned");
-        state.parser.process(chunk);
+        let normalized = state.line_discipline.normalize(chunk);
+        state.parser.process(&normalized);
         state.had_output = true;
         if state.last_emit.elapsed() >= std::time::Duration::from_millis(50) {
             state.publish_snapshot();

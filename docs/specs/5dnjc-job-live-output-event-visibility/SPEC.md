@@ -22,6 +22,7 @@
 - `CommandRunner::run_stream` 以 `Vec<u8>` 原始块回调，不在 runner 层按换行切分；更新器和 service-log collector 自己维护跨块 line buffer。
 - `job_live_terminal` 是仅内存广播的 per-job SSE 事件，不设置 SSE `id`，不会写入数据库或参与 Last-Event-ID。payload 包含 `jobId`、`ts`、transient `commandSeq` 和 `lines`；每行由带 `text`、可选 `fg/bg`、`bold`、`dim`、`underline` 的安全 segments 组成。
 - parser 尺寸固定为 240 列、200 屏幕行、2000 行滚屏；尾部空行裁剪。50ms 窗口内只发送最后快照，命令完成时强制发送最终快照。
+- 进入 VT100 parser 前应用有状态的终端行规整：裸 `LF` 转为 `CRLF`，已有 `CRLF`、独立 `CR`、ANSI/CSI 和跨 chunk 边界保持不变，使管道输出符合终端换行语义。
 - stdout/stderr 按原始块到达顺序合并，保留常见 ANSI 颜色、粗体、暗淡、下划线以及 `\r`、退格、擦行、光标移动等 VT100/CSI 语义。
 - `job_live_command_complete` 是仅内存广播的短暂完成标记，包含 `commandSeq`、`hadOutput` 和 `summaryPersisted`。它不设置 SSE `id`，不会影响 Last-Event-ID；只有 `summaryPersisted=true` 时前端才会抑制后续摘要。
 - hub 在任务终态释放；没有断线补播或历史缓存。
