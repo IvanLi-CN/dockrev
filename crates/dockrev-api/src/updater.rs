@@ -1073,43 +1073,60 @@ where
         let mut last_status_emit = std::time::Instant::now()
             .checked_sub(Duration::from_secs(5))
             .unwrap_or_else(std::time::Instant::now);
-        let mut on_stdout = |_chunk: String| {};
-        let mut on_stderr = |chunk: String| {
-            for line in chunk.lines() {
-                let snapshot = tracker.observe_line(line).or_else(|| {
-                    parse_pull_fraction_from_line(line).map(|fraction| PullProgressSnapshot {
-                        fraction: Some(fraction.clamp(0.0, 1.0)),
-                        fraction_source: Some(PullProgressFractionSource::Bytes),
-                        download: None,
-                    })
-                });
-                let Some(mut snapshot) = snapshot else {
-                    continue;
-                };
+        let mut observe_line = |line: &str| {
+            let snapshot = tracker.observe_line(line).or_else(|| {
+                parse_pull_fraction_from_line(line).map(|fraction| PullProgressSnapshot {
+                    fraction: Some(fraction.clamp(0.0, 1.0)),
+                    fraction_source: Some(PullProgressFractionSource::Bytes),
+                    download: None,
+                })
+            });
+            let Some(mut snapshot) = snapshot else {
+                return;
+            };
+            if let Some(fraction) = snapshot.fraction {
+                snapshot.fraction = Some(fraction.clamp(0.0, 0.99));
+            }
+            let fraction_changed = snapshot
+                .fraction
+                .is_some_and(|fraction| fraction > last_fraction + 0.01);
+            let signature = pull_progress_signature(&snapshot);
+            let status_changed = signature != last_signature
+                && last_status_emit.elapsed() >= Duration::from_millis(600);
+            if fraction_changed || status_changed {
                 if let Some(fraction) = snapshot.fraction {
-                    snapshot.fraction = Some(fraction.clamp(0.0, 0.99));
+                    last_fraction = fraction;
                 }
-                let fraction_changed = snapshot
-                    .fraction
-                    .is_some_and(|fraction| fraction > last_fraction + 0.01);
-                let signature = pull_progress_signature(&snapshot);
-                let status_changed = signature != last_signature
-                    && last_status_emit.elapsed() >= Duration::from_millis(600);
-                if fraction_changed || status_changed {
-                    if let Some(fraction) = snapshot.fraction {
-                        last_fraction = fraction;
-                    }
-                    last_signature = signature;
-                    last_status_emit = std::time::Instant::now();
-                    on_progress(snapshot);
-                }
+                last_signature = signature;
+                last_status_emit = std::time::Instant::now();
+                on_progress(snapshot);
             }
         };
+        let mut stderr_line_buffer = Vec::new();
+        let run_result = {
+            let mut on_stdout = |_chunk: Vec<u8>| {};
+            let mut on_stderr = |chunk: Vec<u8>| {
+                stderr_line_buffer.extend_from_slice(&chunk);
+                while let Some(delimiter) = stderr_line_buffer
+                    .iter()
+                    .position(|byte| *byte == b'\n' || *byte == b'\r')
+                {
+                    let delimiter_byte = stderr_line_buffer[delimiter];
+                    let mut line = stderr_line_buffer.drain(..=delimiter).collect::<Vec<_>>();
+                    line.pop();
+                    if delimiter_byte == b'\r' && stderr_line_buffer.first() == Some(&b'\n') {
+                        stderr_line_buffer.remove(0);
+                    }
+                    let line = String::from_utf8_lossy(&line);
+                    observe_line(&line);
+                }
+            };
+            runner
+                .run_stream(spec.clone(), timeout, &mut on_stdout, &mut on_stderr)
+                .await
+        };
 
-        let out = match runner
-            .run_stream(spec.clone(), timeout, &mut on_stdout, &mut on_stderr)
-            .await
-        {
+        let out = match run_result {
             Ok(out) => out,
             Err(err) => {
                 if is_registry_rate_limit_failure_text(&err.to_string()) {
@@ -1132,6 +1149,13 @@ where
                 continue;
             }
         };
+        if !stderr_line_buffer.is_empty() {
+            if stderr_line_buffer.last() == Some(&b'\r') {
+                stderr_line_buffer.pop();
+            }
+            let line = String::from_utf8_lossy(&stderr_line_buffer);
+            observe_line(&line);
+        }
 
         if out.status == 0 {
             return Ok(());

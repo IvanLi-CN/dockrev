@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use std::process::Stdio;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
 #[derive(Clone, Debug)]
@@ -27,15 +27,15 @@ pub trait CommandRunner: Send + Sync {
         &self,
         spec: CommandSpec,
         timeout: Duration,
-        on_stdout: &mut (dyn FnMut(String) + Send),
-        on_stderr: &mut (dyn FnMut(String) + Send),
+        on_stdout: &mut (dyn FnMut(Vec<u8>) + Send),
+        on_stderr: &mut (dyn FnMut(Vec<u8>) + Send),
     ) -> anyhow::Result<CommandOutput> {
         let out = self.run(spec, timeout).await?;
         if !out.stdout.is_empty() {
-            on_stdout(out.stdout.clone());
+            on_stdout(out.stdout.as_bytes().to_vec());
         }
         if !out.stderr.is_empty() {
-            on_stderr(out.stderr.clone());
+            on_stderr(out.stderr.as_bytes().to_vec());
         }
         Ok(out)
     }
@@ -66,12 +66,12 @@ impl CommandRunner for TokioCommandRunner {
         &self,
         spec: CommandSpec,
         timeout: Duration,
-        on_stdout: &mut (dyn FnMut(String) + Send),
-        on_stderr: &mut (dyn FnMut(String) + Send),
+        on_stdout: &mut (dyn FnMut(Vec<u8>) + Send),
+        on_stderr: &mut (dyn FnMut(Vec<u8>) + Send),
     ) -> anyhow::Result<CommandOutput> {
         enum StreamEvent {
-            Stdout(String),
-            Stderr(String),
+            Stdout(Vec<u8>),
+            Stderr(Vec<u8>),
             StdoutDone,
             StderrDone,
         }
@@ -100,15 +100,14 @@ impl CommandRunner for TokioCommandRunner {
 
             let tx_out = tx.clone();
             let out_task = tokio::spawn(async move {
-                let mut reader = BufReader::new(stdout);
-                let mut line = String::new();
+                let mut reader = stdout;
+                let mut buffer = [0_u8; 8192];
                 loop {
-                    line.clear();
-                    let n = reader.read_line(&mut line).await?;
+                    let n = reader.read(&mut buffer).await?;
                     if n == 0 {
                         break;
                     }
-                    let _ = tx_out.send(StreamEvent::Stdout(line.clone()));
+                    let _ = tx_out.send(StreamEvent::Stdout(buffer[..n].to_vec()));
                 }
                 let _ = tx_out.send(StreamEvent::StdoutDone);
                 anyhow::Ok(())
@@ -116,15 +115,14 @@ impl CommandRunner for TokioCommandRunner {
 
             let tx_err = tx.clone();
             let err_task = tokio::spawn(async move {
-                let mut reader = BufReader::new(stderr);
-                let mut line = String::new();
+                let mut reader = stderr;
+                let mut buffer = [0_u8; 8192];
                 loop {
-                    line.clear();
-                    let n = reader.read_line(&mut line).await?;
+                    let n = reader.read(&mut buffer).await?;
                     if n == 0 {
                         break;
                     }
-                    let _ = tx_err.send(StreamEvent::Stderr(line.clone()));
+                    let _ = tx_err.send(StreamEvent::Stderr(buffer[..n].to_vec()));
                 }
                 let _ = tx_err.send(StreamEvent::StderrDone);
                 anyhow::Ok(())
@@ -132,19 +130,19 @@ impl CommandRunner for TokioCommandRunner {
 
             drop(tx);
 
-            let mut stdout_all = String::new();
-            let mut stderr_all = String::new();
+            let mut stdout_all = Vec::new();
+            let mut stderr_all = Vec::new();
             let mut stdout_done = false;
             let mut stderr_done = false;
 
             while !(stdout_done && stderr_done) {
                 match rx.recv().await {
                     Some(StreamEvent::Stdout(chunk)) => {
-                        stdout_all.push_str(&chunk);
+                        stdout_all.extend_from_slice(&chunk);
                         on_stdout(chunk);
                     }
                     Some(StreamEvent::Stderr(chunk)) => {
-                        stderr_all.push_str(&chunk);
+                        stderr_all.extend_from_slice(&chunk);
                         on_stderr(chunk);
                     }
                     Some(StreamEvent::StdoutDone) => {
@@ -164,8 +162,8 @@ impl CommandRunner for TokioCommandRunner {
 
             Ok(CommandOutput {
                 status: wait_status.code().unwrap_or(-1),
-                stdout: stdout_all,
-                stderr: stderr_all,
+                stdout: String::from_utf8_lossy(&stdout_all).to_string(),
+                stderr: String::from_utf8_lossy(&stderr_all).to_string(),
             })
         };
 
@@ -208,5 +206,33 @@ mod tests {
             !marker.exists(),
             "timed-out command still ran its delayed side effect"
         );
+    }
+
+    #[tokio::test]
+    async fn run_stream_emits_raw_bytes_including_carriage_returns() {
+        let mut stdout_chunks = Vec::new();
+        let mut stderr_chunks = Vec::new();
+        let mut on_stdout = |chunk: Vec<u8>| stdout_chunks.extend(chunk);
+        let mut on_stderr = |chunk: Vec<u8>| stderr_chunks.extend(chunk);
+
+        TokioCommandRunner
+            .run_stream(
+                CommandSpec {
+                    program: "sh".to_string(),
+                    args: vec![
+                        "-c".to_string(),
+                        "printf 'layer 1\\r'; printf 'layer 2\\n' >&2".to_string(),
+                    ],
+                    env: Vec::new(),
+                },
+                Duration::from_secs(1),
+                &mut on_stdout,
+                &mut on_stderr,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(stdout_chunks, b"layer 1\r");
+        assert_eq!(stderr_chunks, b"layer 2\n");
     }
 }

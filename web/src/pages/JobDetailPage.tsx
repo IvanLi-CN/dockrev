@@ -114,7 +114,56 @@ function isCommandSummary(msg: string): boolean {
   return /^status=\S+\s+stdout=/.test(msg.trim())
 }
 
-type DisplayLogLine = JobLogLine & { durableId?: string; transient?: boolean }
+type TerminalSegment = {
+  text: string
+  fg?: string
+  bg?: string
+  bold?: boolean
+  dim?: boolean
+  underline?: boolean
+}
+
+type DisplayLogLine = JobLogLine & {
+  durableId?: string
+  transient?: boolean
+  terminalCommandSeq?: number
+  terminalSegments?: TerminalSegment[]
+  terminalFrozen?: boolean
+}
+
+function parseTerminalSegments(value: unknown): TerminalSegment[] | null {
+  if (!Array.isArray(value)) return null
+  const segments = value.flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const record = item as Record<string, unknown>
+    if (typeof record.text !== 'string' || !record.text) return []
+    return [
+      {
+        text: record.text,
+        ...(typeof record.fg === 'string' ? { fg: record.fg } : {}),
+        ...(typeof record.bg === 'string' ? { bg: record.bg } : {}),
+        ...(record.bold === true ? { bold: true } : {}),
+        ...(record.dim === true ? { dim: true } : {}),
+        ...(record.underline === true ? { underline: true } : {}),
+      },
+    ]
+  })
+  return segments.length > 0 ? segments : []
+}
+
+function parseTerminalLines(value: unknown): TerminalSegment[][] {
+  if (!Array.isArray(value)) return []
+  return value.map((line) => {
+    if (!line || typeof line !== 'object') return []
+    return parseTerminalSegments((line as Record<string, unknown>).segments) ?? []
+  })
+}
+
+function safeTerminalColor(value: string | undefined): string | undefined {
+  if (!value) return undefined
+  if (/^rgb\((?:\s*\d{1,3}\s*,){2}\s*\d{1,3}\s*\)$/.test(value)) return value
+  return undefined
+}
 
 function normalizeProgress(input: JobProgress | null | undefined): JobProgress | null {
   if (!input) return null
@@ -166,6 +215,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
   const [showEvents, setShowEvents] = useState(readShowEventsPreference)
   const [manualRefreshVersion, setManualRefreshVersion] = useState(0)
   const liveCommandOutputRef = useRef(false)
+  const activeLiveCommandSeqRef = useRef<number | null>(null)
   const pendingSummarySuppressionsRef = useRef(0)
   const visibleLogs = useMemo(
     () => logs.filter((log) => showEvents || log.level.trim().toLowerCase() !== 'event'),
@@ -179,6 +229,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
     setLogs(j.logs)
     setProgress(normalizeProgress(j.progress))
     liveCommandOutputRef.current = false
+    activeLiveCommandSeqRef.current = null
     pendingSummarySuppressionsRef.current = 0
     return j
   }, [jobId])
@@ -309,12 +360,43 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
             const p = parsed as Record<string, unknown>
             if (p.type !== 'job_live_log') return
             const ts = typeof p.ts === 'string' ? p.ts : new Date().toISOString()
-            const stream = typeof p.stream === 'string' ? p.stream : 'stdout'
             const msg = typeof p.msg === 'string' ? p.msg : ''
             liveCommandOutputRef.current = true
             setLogs((prev) => {
-              const next = [...prev, { ts, level: stream === 'stderr' ? 'warn' : 'info', msg, transient: true }]
+              const next = [...prev, { ts, level: '', msg, transient: true }]
               return next.length > 500 ? next.slice(-500) : next
+            })
+          } catch {
+            // ignore invalid events
+          }
+        })
+
+        es.addEventListener('job_live_terminal', (evt: Event) => {
+          const data = (evt as MessageEvent).data
+          if (typeof data !== 'string' || !data) return
+          try {
+            const parsed = JSON.parse(data) as unknown
+            if (!parsed || typeof parsed !== 'object') return
+            const p = parsed as Record<string, unknown>
+            if (p.type !== 'job_live_terminal') return
+            const commandSeq = typeof p.commandSeq === 'number' && Number.isSafeInteger(p.commandSeq) ? p.commandSeq : null
+            if (commandSeq === null) return
+            const ts = typeof p.ts === 'string' ? p.ts : new Date().toISOString()
+            const terminalLines = parseTerminalLines(p.lines)
+            liveCommandOutputRef.current = true
+            activeLiveCommandSeqRef.current = commandSeq
+            setLogs((prev) => {
+              const retained = prev.filter((log) => log.terminalCommandSeq !== commandSeq || log.terminalFrozen)
+              const next = terminalLines.map((segments) => ({
+                ts,
+                level: '',
+                msg: '',
+                transient: true,
+                terminalCommandSeq: commandSeq,
+                terminalSegments: segments,
+              }))
+              const combined = [...retained, ...next]
+              return combined.length > 500 ? combined.slice(-500) : combined
             })
           } catch {
             // ignore invalid events
@@ -329,11 +411,21 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
             if (!parsed || typeof parsed !== 'object') return
             const p = parsed as Record<string, unknown>
             if (p.type !== 'job_live_command_complete') return
+            const commandSeq = typeof p.commandSeq === 'number' && Number.isSafeInteger(p.commandSeq) ? p.commandSeq : null
+            const hadOutput = p.hadOutput === true
             const summaryPersisted = p.summaryPersisted !== false
-            if (summaryPersisted && liveCommandOutputRef.current) {
+            if (summaryPersisted && hadOutput && liveCommandOutputRef.current) {
               pendingSummarySuppressionsRef.current += 1
             }
+            if (commandSeq !== null) {
+              setLogs((prev) =>
+                prev.map((log) =>
+                  log.terminalCommandSeq === commandSeq ? { ...log, terminalFrozen: true } : log,
+                ),
+              )
+            }
             liveCommandOutputRef.current = false
+            activeLiveCommandSeqRef.current = null
           } catch {
             // ignore invalid events
           }
@@ -425,7 +517,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
       setLogIsAtBottom(true)
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [logFollow, logViewport, visibleLogs.length])
+  }, [logFollow, logViewport, visibleLogs])
 
   useEffect(() => {
     onTopActions(
@@ -682,13 +774,32 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
           {visibleLogs.map((l, idx) => (
             <div
               key={`${l.ts}-${idx}`}
-              className={`logLine logLine-${(l.level ?? '').trim().toLowerCase() || 'unknown'}`}
+              className={`logLine ${l.terminalSegments ? 'logLine-terminal' : `logLine-${(l.level ?? '').trim().toLowerCase() || 'unknown'}`}`}
             >
               <span className="mono logTs" title={formatLogTitle(l.ts)}>
                 {formatLogTs(l.ts, logTz)}
               </span>
-              <span className={`mono logLvl logLvl-${(l.level ?? '').trim().toLowerCase()}`}>{formatLogLevel(l.level)}</span>
-              <span className="logMsg">{l.msg}</span>
+              <span className={`mono logLvl logLvl-${(l.level ?? '').trim().toLowerCase()}`}>
+                {l.terminalSegments ? '' : formatLogLevel(l.level)}
+              </span>
+              <span className="logMsg">
+                {l.terminalSegments
+                  ? l.terminalSegments.map((segment, segmentIndex) => (
+                      <span
+                        key={`${segment.text}-${segmentIndex}`}
+                        style={{
+                          color: safeTerminalColor(segment.fg),
+                          backgroundColor: safeTerminalColor(segment.bg),
+                          fontWeight: segment.bold ? 700 : undefined,
+                          opacity: segment.dim ? 0.65 : undefined,
+                          textDecoration: segment.underline ? 'underline' : undefined,
+                        }}
+                      >
+                        {segment.text}
+                      </span>
+                    ))
+                  : l.msg}
+              </span>
             </div>
           ))}
           {visibleLogs.length === 0 ? <div className="muted">无日志</div> : null}

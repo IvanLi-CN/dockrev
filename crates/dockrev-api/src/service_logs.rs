@@ -518,7 +518,7 @@ fn spawn_source_follower(
     source: ServiceLogSource,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let (raw_tx, mut raw_rx) = mpsc::unbounded_channel::<String>();
+        let (raw_tx, mut raw_rx) = mpsc::unbounded_channel::<ServiceLogRawChunk>();
         let processor_tx = tx.clone();
         let processor_handle = tokio::spawn(async move {
             let mut parser = ServiceLogFrameParser::default();
@@ -545,7 +545,9 @@ fn spawn_source_follower(
                 let Some(raw_line) = next_line else {
                     break;
                 };
-                if let Some(line) = parser.push_physical_line(&raw_line) {
+                if let Some(line) =
+                    parser.push_physical_line(&raw_line.text, raw_line.forced_fragment)
+                {
                     let _ = processor_tx.send(CollectorMessage::Line(line));
                 }
             }
@@ -556,33 +558,39 @@ fn spawn_source_follower(
 
         {
             let stdout_tx = raw_tx.clone();
-            let mut on_stdout = move |chunk: String| {
-                send_log_chunk_lines(&stdout_tx, &chunk);
-            };
+            let mut stdout_buffer = LineChunkBuffer::default();
             let stderr_tx = raw_tx.clone();
-            let mut on_stderr = move |chunk: String| {
-                send_log_chunk_lines(&stderr_tx, &chunk);
-            };
+            let mut stderr_buffer = LineChunkBuffer::default();
+            {
+                let mut on_stdout = |chunk: Vec<u8>| {
+                    stdout_buffer.push(&stdout_tx, &chunk);
+                };
+                let mut on_stderr = |chunk: Vec<u8>| {
+                    stderr_buffer.push(&stderr_tx, &chunk);
+                };
 
-            let _ = runner
-                .run_stream(
-                    CommandSpec {
-                        program: "docker".to_string(),
-                        args: vec![
-                            "logs".to_string(),
-                            "--timestamps".to_string(),
-                            "--follow".to_string(),
-                            "--tail".to_string(),
-                            "0".to_string(),
-                            source.id,
-                        ],
-                        env: Vec::new(),
-                    },
-                    Duration::from_secs(SERVICE_LOG_FOLLOW_TIMEOUT_SECONDS),
-                    &mut on_stdout,
-                    &mut on_stderr,
-                )
-                .await;
+                let _ = runner
+                    .run_stream(
+                        CommandSpec {
+                            program: "docker".to_string(),
+                            args: vec![
+                                "logs".to_string(),
+                                "--timestamps".to_string(),
+                                "--follow".to_string(),
+                                "--tail".to_string(),
+                                "0".to_string(),
+                                source.id,
+                            ],
+                            env: Vec::new(),
+                        },
+                        Duration::from_secs(SERVICE_LOG_FOLLOW_TIMEOUT_SECONDS),
+                        &mut on_stdout,
+                        &mut on_stderr,
+                    )
+                    .await;
+            }
+            stdout_buffer.finish(&stdout_tx);
+            stderr_buffer.finish(&stderr_tx);
         }
         drop(raw_tx);
         let _ = processor_handle.await;
@@ -645,10 +653,74 @@ async fn collect_service_logs(
     Ok(ServiceLogCollectorState { lines })
 }
 
-fn send_log_chunk_lines(tx: &mpsc::UnboundedSender<String>, chunk: &str) {
-    for raw_line in chunk.lines() {
-        let _ = tx.send(raw_line.to_string());
+#[derive(Default)]
+struct LineChunkBuffer {
+    pending: Vec<u8>,
+}
+
+const MAX_PENDING_SERVICE_LOG_BYTES: usize = 64 * 1024;
+
+#[derive(Debug)]
+struct ServiceLogRawChunk {
+    text: String,
+    forced_fragment: bool,
+}
+
+impl LineChunkBuffer {
+    fn push(&mut self, tx: &mpsc::UnboundedSender<ServiceLogRawChunk>, chunk: &[u8]) {
+        self.pending.extend_from_slice(chunk);
+        while let Some(delimiter) = self
+            .pending
+            .iter()
+            .position(|byte| *byte == b'\n' || *byte == b'\r')
+        {
+            let delimiter_byte = self.pending[delimiter];
+            let mut line = self.pending.drain(..=delimiter).collect::<Vec<_>>();
+            line.pop();
+            if delimiter_byte == b'\r' && self.pending.first() == Some(&b'\n') {
+                self.pending.remove(0);
+            } else if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            let _ = tx.send(ServiceLogRawChunk {
+                text: String::from_utf8_lossy(&line).to_string(),
+                forced_fragment: false,
+            });
+        }
+        while self.pending.len() > MAX_PENDING_SERVICE_LOG_BYTES {
+            let line = take_bounded_utf8_prefix(&mut self.pending, MAX_PENDING_SERVICE_LOG_BYTES);
+            let _ = tx.send(ServiceLogRawChunk {
+                text: String::from_utf8_lossy(&line).to_string(),
+                forced_fragment: true,
+            });
+        }
     }
+
+    fn finish(&mut self, tx: &mpsc::UnboundedSender<ServiceLogRawChunk>) {
+        if self.pending.last() == Some(&b'\r') {
+            self.pending.pop();
+        }
+        if !self.pending.is_empty() {
+            let _ = tx.send(ServiceLogRawChunk {
+                text: String::from_utf8_lossy(&self.pending).to_string(),
+                forced_fragment: false,
+            });
+            self.pending.clear();
+        }
+    }
+}
+
+fn take_bounded_utf8_prefix(bytes: &mut Vec<u8>, max: usize) -> Vec<u8> {
+    let limit = bytes.len().min(max);
+    if limit == 0 {
+        return Vec::new();
+    }
+    let boundary = match std::str::from_utf8(&bytes[..limit]) {
+        Ok(_) => limit,
+        Err(error) if error.valid_up_to() > 0 => error.valid_up_to(),
+        Err(_) => 1,
+    };
+    bytes.drain(..boundary).collect()
 }
 
 async fn discover_active_source(
@@ -804,7 +876,11 @@ struct ServiceLogFrameParser {
 }
 
 impl ServiceLogFrameParser {
-    fn push_physical_line(&mut self, raw_line: &str) -> Option<ServiceLogLine> {
+    fn push_physical_line(
+        &mut self,
+        raw_line: &str,
+        forced_fragment: bool,
+    ) -> Option<ServiceLogLine> {
         let trimmed = raw_line.trim_end_matches('\r').trim_end_matches('\n');
         if trimmed.trim().is_empty() && self.current.is_none() {
             return None;
@@ -812,6 +888,12 @@ impl ServiceLogFrameParser {
 
         let (ts, raw) = split_docker_log_line(trimmed);
         if ts.is_empty() {
+            if let Some(current) = self.current.as_mut() {
+                if !forced_fragment {
+                    current.raw.push('\n');
+                }
+                current.raw.push_str(trimmed);
+            }
             return None;
         }
         let next = PendingServiceLogLine {
@@ -862,7 +944,7 @@ fn parse_service_log_lines(output: &str) -> Vec<ServiceLogLine> {
     let mut parser = ServiceLogFrameParser::default();
     let mut lines = output
         .lines()
-        .filter_map(|raw_line| parser.push_physical_line(raw_line))
+        .filter_map(|raw_line| parser.push_physical_line(raw_line, false))
         .collect::<Vec<_>>();
     if let Some(line) = parser.finish() {
         lines.push(line);
@@ -1366,95 +1448,5 @@ fn highlight_keys(attributes: &BTreeMap<String, Value>) -> Vec<String> {
 mod tracing_tests;
 
 #[cfg(test)]
-mod tests {
-    use super::parse_service_log_lines;
-    use crate::api::types::ServiceLogMetaFormat;
-
-    #[test]
-    fn parse_service_log_lines_drops_truncated_leading_continuation() {
-        let lines = parse_service_log_lines(
-            "2026-07-01T08:12:51.833074000Z Caused by:\n\
-             2026-07-01T08:12:51.833081000Z     (code: 5) database is locked\n\
-             2026-07-01T08:12:53.763043000Z worker ready\n",
-        );
-
-        assert_eq!(lines.len(), 1);
-        assert_eq!(lines[0].raw, "worker ready");
-        assert_eq!(lines[0].ts, "2026-07-01T08:12:53.763043000Z");
-    }
-
-    #[test]
-    fn parse_service_log_lines_preserves_leading_indented_entry() {
-        let lines = parse_service_log_lines(
-            "2026-07-01T08:12:51.833081000Z     standalone indented output\n\
-             2026-07-01T08:12:53.763043000Z worker ready\n",
-        );
-
-        assert_eq!(lines.len(), 2);
-        assert_eq!(lines[0].raw, "    standalone indented output");
-        assert_eq!(lines[1].raw, "worker ready");
-    }
-
-    #[test]
-    fn parse_service_log_lines_removes_only_docker_separator_space() {
-        let lines = parse_service_log_lines(
-            "2026-07-01T08:12:51.833063000Z worker ready\n\
-             2026-07-01T08:12:51.833070000Z \n\
-             2026-07-01T08:12:51.833081000Z     standalone indented output\n",
-        );
-
-        assert_eq!(lines.len(), 2);
-        assert_eq!(lines[0].raw, "worker ready\n");
-        assert_eq!(lines[1].raw, "    standalone indented output");
-    }
-
-    #[test]
-    fn parse_service_log_lines_adds_json_metadata() {
-        let lines = parse_service_log_lines(
-            "2026-07-06T16:15:16.433978000Z {\"timestamp\":\"2026-07-06T16:15:16.433978Z\",\"level\":\"INFO\",\"message\":\"runtime perf\",\"component\":\"admin_read\",\"event\":\"dashboard_overview_phase\",\"elapsed_ms\":24,\"route\":\"/api/dashboard/overview\"}\n",
-        );
-
-        assert_eq!(lines.len(), 1);
-        let meta = lines[0].meta.as_ref().expect("json metadata");
-        assert_eq!(meta.format, ServiceLogMetaFormat::Json);
-        assert_eq!(meta.level.as_deref(), Some("info"));
-        assert_eq!(
-            meta.timestamp.as_deref(),
-            Some("2026-07-06T16:15:16.433978Z")
-        );
-        assert_eq!(meta.message.as_deref(), Some("runtime perf"));
-        assert_eq!(meta.attributes["component"].as_str(), Some("admin_read"));
-        assert_eq!(
-            meta.attributes["event"].as_str(),
-            Some("dashboard_overview_phase")
-        );
-        assert_eq!(meta.attributes["elapsed_ms"].as_i64(), Some(24));
-        assert!(meta.highlights.contains(&"component".to_string()));
-        assert!(meta.highlights.contains(&"event".to_string()));
-    }
-
-    #[test]
-    fn parse_service_log_lines_adds_logfmt_metadata() {
-        let lines = parse_service_log_lines(
-            "2026-07-06T16:15:16.433978000Z level=warn msg=\"slow query\" route=/api/services elapsed_ms=242 degraded=true\n",
-        );
-
-        let meta = lines[0].meta.as_ref().expect("logfmt metadata");
-        assert_eq!(meta.format, ServiceLogMetaFormat::Logfmt);
-        assert_eq!(meta.level.as_deref(), Some("warn"));
-        assert_eq!(meta.message.as_deref(), Some("slow query"));
-        assert_eq!(meta.attributes["route"].as_str(), Some("/api/services"));
-        assert_eq!(meta.attributes["elapsed_ms"].as_i64(), Some(242));
-        assert_eq!(meta.attributes["degraded"].as_bool(), Some(true));
-    }
-
-    #[test]
-    fn parse_service_log_lines_falls_back_to_text_metadata() {
-        let lines = parse_service_log_lines("2026-07-06T16:15:16.433978000Z worker ready\n");
-
-        let meta = lines[0].meta.as_ref().expect("text metadata");
-        assert_eq!(meta.format, ServiceLogMetaFormat::Text);
-        assert_eq!(meta.message.as_deref(), Some("worker ready"));
-        assert!(meta.attributes.is_empty());
-    }
-}
+#[path = "service_logs_tests.rs"]
+mod tests;
