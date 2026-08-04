@@ -8,6 +8,30 @@ use tokio::sync::broadcast;
 
 const JOB_LIVE_LOG_BROADCAST_CAPACITY: usize = 512;
 
+#[derive(Default)]
+pub(crate) struct TerminalLineDiscipline {
+    previous_was_carriage_return: bool,
+}
+
+impl TerminalLineDiscipline {
+    pub(crate) fn normalize(&mut self, input: &[u8]) -> Vec<u8> {
+        let mut output = Vec::with_capacity(input.len());
+        for &byte in input {
+            if byte == b'\n' {
+                if !self.previous_was_carriage_return {
+                    output.push(b'\r');
+                }
+                output.push(byte);
+                self.previous_was_carriage_return = false;
+            } else {
+                output.push(byte);
+                self.previous_was_carriage_return = byte == b'\r';
+            }
+        }
+        output
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct JobLiveTerminalSegment {
@@ -308,6 +332,47 @@ fn xterm_color(index: u8) -> (u8, u8, u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_line_discipline_converts_bare_lf_to_crlf() {
+        let mut discipline = TerminalLineDiscipline::default();
+        assert_eq!(discipline.normalize(b"first\nsecond"), b"first\r\nsecond");
+    }
+
+    #[test]
+    fn terminal_line_discipline_preserves_crlf_and_lone_cr() {
+        let mut discipline = TerminalLineDiscipline::default();
+        assert_eq!(
+            discipline.normalize(b"first\r\nsecond\rthird"),
+            b"first\r\nsecond\rthird"
+        );
+    }
+
+    #[test]
+    fn terminal_line_discipline_preserves_crlf_across_chunks() {
+        let mut discipline = TerminalLineDiscipline::default();
+        assert_eq!(discipline.normalize(b"first\r"), b"first\r");
+        assert_eq!(discipline.normalize(b"\nsecond"), b"\nsecond");
+    }
+
+    #[test]
+    fn terminal_line_discipline_keeps_bare_lf_rows_at_column_zero() {
+        let mut discipline = TerminalLineDiscipline::default();
+        let mut parser = vt100::Parser::new(4, 40, 2000);
+        parser.process(&discipline.normalize(b"a\nb"));
+        let snapshot = terminal_snapshot(&parser, "ts".to_string(), 1);
+        let lines = snapshot
+            .lines
+            .iter()
+            .map(|line| {
+                line.segments
+                    .iter()
+                    .map(|segment| segment.text.as_str())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(lines, ["a", "b"]);
+    }
 
     #[tokio::test]
     async fn close_releases_live_entry_without_replay_buffer() {
