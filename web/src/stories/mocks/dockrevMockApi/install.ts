@@ -651,8 +651,7 @@ export function installDockrevMockApi(
           ? { ts: liveLine.ts, level: 'info', msg: `status=0 stdout=${liveLine.msg} stderr=` }
           : { ts: liveLine.ts, level: 'info', msg: terminalActive ? `terminal heartbeat ${liveTerminalStateRef.frame}: ${liveLine.msg}` : liveLine.msg }
         const nextLogs = [...live.logs, nextLine]
-        live.logs = nextLogs.length > 500 ? nextLogs.slice(-500) : nextLogs
-        live.logsLastId = nextId
+        live.logs = nextLogs.length > 500 ? nextLogs.slice(-500) : nextLogs; live.logsLastId = nextId
         transientBody = terminalActive
           ? [
               `event: job_live_terminal\ndata: ${JSON.stringify({ type: 'job_live_terminal', ts: liveLine.ts, commandSeq, lines: terminalLines(`${liveLine.msg} · 63.3MB`, liveTerminalStateRef.frame) })}\n\n`,
@@ -663,8 +662,7 @@ export function installDockrevMockApi(
             ].join('')
           : ''
         if (commandComplete) {
-          liveTerminalStateRef.commandSeq = liveTerminalStateRef.frame = liveTerminalStateRef.polls = 0
-          liveTerminalStateRef.completed = true
+          liveTerminalStateRef.commandSeq = liveTerminalStateRef.frame = liveTerminalStateRef.polls = 0; liveTerminalStateRef.completed = true
         }
       }
 
