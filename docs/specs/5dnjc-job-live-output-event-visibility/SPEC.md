@@ -61,4 +61,4 @@
   PR: include
   ![mobile](assets/job-detail-terminal-mobile.png)
 - 图片经 `trim_whitespace.py --margin-policy trim_only` 处理，结果为 `unchanged`；Storybook 交互场景为 `Pages/JobDetailPage/LiveOutputAndEventToggle`，覆盖默认隐藏、打开开关、实时输出与摘要去重。
-- 主人验收使用的不可变快照：`/Users/ivan/.codex/user-inline-assets/dockrev__f83adb76/2026/08/05/20260805T100057Z-dockrev-terminal-desktop-trimmed-b660d018.png`、`/Users/ivan/.codex/user-inline-assets/dockrev__f83adb76/2026/08/05/20260805T100057Z-dockrev-terminal-mobile-trimmed-50251156.png`。
+- 主人验收使用的不可变快照：`/Users/ivan/.codex/user-inline-assets/dockrev__f83adb76/2026/08/05/20260805T104125Z-dockrev-terminal-desktop-active-trimmed-2bd3de4b.png`、`/Users/ivan/.codex/user-inline-assets/dockrev__f83adb76/2026/08/05/20260805T104125Z-dockrev-terminal-mobile-active-trimmed-aea96128.png`。
