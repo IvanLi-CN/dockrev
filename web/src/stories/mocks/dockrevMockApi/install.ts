@@ -118,7 +118,7 @@ export function installDockrevMockApi(
   const digestSnapshotPendingAttempts = new Map<string, number>()
   const forcedDigestSnapshotPendingAttempts = new Map<string, number>()
   const jobsEventsSeqRef = { value: 4_000 + initialJobSeq }
-  const liveTerminalCommandSeqRef = { value: 0 }, liveTerminalStateRef = { commandSeq: 0, frame: 0, polls: 0 }
+  const liveTerminalCommandSeqRef = { value: 0 }, liveTerminalStateRef = { commandSeq: 0, frame: 0, polls: 0, completed: false }
   const terminalLines = (message: string, frame: number) => [{ segments: [{ text: '253f286a856e Pulling fs layer 0B', fg: 'rgb(92, 92, 255)', bold: true }] }, { segments: [{ text: `${message} · frame ${frame}`, dim: true }] }]
   const queueProgressDemoSteps = [40, 44, 48, 52, 56, 60, 65, 70, 75, 80, 85, 90, 94, 97]
   let queueProgressDemoStep = 0
@@ -639,27 +639,33 @@ export function installDockrevMockApi(
       let transientBody = ''
       if (scenario === 'queue-long-logs' && jobId === 'job-live-long' && live.status === 'running' && afterId >= live.logsLastId) {
         const nextId = live.logsLastId + 1
-        if (liveTerminalStateRef.commandSeq === 0) {
+        const terminalActive = !liveTerminalStateRef.completed
+        if (terminalActive && liveTerminalStateRef.commandSeq === 0) {
           liveTerminalStateRef.commandSeq = ++liveTerminalCommandSeqRef.value
           liveTerminalStateRef.frame = liveTerminalStateRef.polls = 0
         }
         liveTerminalStateRef.frame += 1; liveTerminalStateRef.polls += 1
-        const commandSeq = liveTerminalStateRef.commandSeq, commandComplete = liveTerminalStateRef.polls >= 4
+        const commandSeq = liveTerminalStateRef.commandSeq, commandComplete = terminalActive && liveTerminalStateRef.polls >= 4
         const liveLine = { ts: nowIso(), msg: nextId % 4 === 0 ? `stream tick ${nextId}: retry window still open; keeping the latest registry response in view` : `stream tick ${nextId}: live registry polling continues for the newest digest candidate` }
         const nextLine = commandComplete
           ? { ts: liveLine.ts, level: 'info', msg: `status=0 stdout=${liveLine.msg} stderr=` }
-          : { ts: liveLine.ts, level: 'info', msg: `terminal heartbeat ${liveTerminalStateRef.frame}: ${liveLine.msg}` }
+          : { ts: liveLine.ts, level: 'info', msg: terminalActive ? `terminal heartbeat ${liveTerminalStateRef.frame}: ${liveLine.msg}` : liveLine.msg }
         const nextLogs = [...live.logs, nextLine]
         live.logs = nextLogs.length > 500 ? nextLogs.slice(-500) : nextLogs
         live.logsLastId = nextId
-        transientBody = [
-          `event: job_live_terminal\ndata: ${JSON.stringify({ type: 'job_live_terminal', ts: liveLine.ts, commandSeq, lines: terminalLines(`${liveLine.msg} · 63.3MB`, liveTerminalStateRef.frame) })}\n\n`,
-          `event: job_live_terminal\ndata: ${JSON.stringify({ type: 'job_live_terminal', ts: liveLine.ts, commandSeq, lines: terminalLines(`${liveLine.msg} · 64.1MB`, liveTerminalStateRef.frame) })}\n\n`,
-          commandComplete
-            ? `event: job_live_command_complete\ndata: ${JSON.stringify({ type: 'job_live_command_complete', commandSeq, hadOutput: true })}\n\n`
-            : '',
-        ].join('')
-        if (commandComplete) liveTerminalStateRef.commandSeq = liveTerminalStateRef.frame = liveTerminalStateRef.polls = 0
+        transientBody = terminalActive
+          ? [
+              `event: job_live_terminal\ndata: ${JSON.stringify({ type: 'job_live_terminal', ts: liveLine.ts, commandSeq, lines: terminalLines(`${liveLine.msg} · 63.3MB`, liveTerminalStateRef.frame) })}\n\n`,
+              `event: job_live_terminal\ndata: ${JSON.stringify({ type: 'job_live_terminal', ts: liveLine.ts, commandSeq, lines: terminalLines(`${liveLine.msg} · 64.1MB`, liveTerminalStateRef.frame) })}\n\n`,
+              commandComplete
+                ? `event: job_live_command_complete\ndata: ${JSON.stringify({ type: 'job_live_command_complete', commandSeq, hadOutput: true })}\n\n`
+                : '',
+            ].join('')
+          : ''
+        if (commandComplete) {
+          liveTerminalStateRef.commandSeq = liveTerminalStateRef.frame = liveTerminalStateRef.polls = 0
+          liveTerminalStateRef.completed = true
+        }
       }
 
       const startIndex = Math.max(0, afterId)

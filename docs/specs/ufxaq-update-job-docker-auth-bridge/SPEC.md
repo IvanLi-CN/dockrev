@@ -49,7 +49,7 @@
 
 - 当 `DOCKREV_DOCKER_CONFIG` 已配置时，update job 在真正执行命令前必须生成单次 job 级别的临时 Docker CLI 配置目录，并将原文件复制到 `<tmp-workspace>/.docker/config.json`。
 - 所有由 updater 发出的 compose/docker CLI 命令都必须继承同一组 `DOCKER_CONFIG` env，且不得覆写进程原有 `HOME`。
-- `docker` plugin 模式下原有 `COMPOSE_PROGRESS=plain` 不能丢失，必须与 auth env 共存。
+- `docker` plugin 模式下带流式进度的 pull 必须使用 `COMPOSE_PROGRESS=tty` 与 `COMPOSE_ANSI=always`，并与 auth env 共存；不得退回 `plain`，否则 layer 更新会失去终端原地刷新语义。
 - `DOCKREV_DOCKER_CONFIG` 未配置时，update job 命令环境保持当前行为，不额外注入 auth env。
 - 若 `DOCKREV_DOCKER_CONFIG` 指向真实文件名 `config.json`，临时 Docker CLI 配置目录还必须复制其 `contexts/` 元数据。
 - 相关临时目录必须在 job 生命周期结束后清理，不引入新的持久状态。
@@ -90,7 +90,7 @@ None
 ## 验收标准（Acceptance Criteria）
 
 - Given `DOCKREV_DOCKER_CONFIG=/data/docker-config.json` 这类非默认文件路径，When update job 生成 `docker-compose pull/up` 与 `docker pull`，Then 命令都带有可复用的 `DOCKER_CONFIG` env，而不是依赖 `/root/.docker/config.json`。
-- Given `DOCKREV_COMPOSE_BIN=docker`，When 执行带流式进度的 pull，Then `COMPOSE_PROGRESS=plain` 与 auth env 同时存在。
+- Given `DOCKREV_COMPOSE_BIN=docker`，When 执行带流式进度的 pull，Then `COMPOSE_PROGRESS=tty`、`COMPOSE_ANSI=always` 与 auth env 同时存在。
 - Given `DOCKREV_DOCKER_CONFIG` 未配置，When 执行同一条 update job，Then 命令 env 不新增 auth 相关变量。
 - Given dry-run 模式，When 触发 update job，Then 不执行命令，也不创建 auth workspace。
 - Given `DOCKREV_DOCKER_CONFIG` 指向真实文件名 `config.json`，When update job 创建 auth bridge，Then `contexts/` 元数据也会被复制到临时 workspace。

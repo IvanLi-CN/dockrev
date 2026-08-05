@@ -119,6 +119,12 @@ export const LiveOutputAndEventToggle: Story = {
     await waitForCondition(() => getLogCount(canvasElement) >= 105)
     expectStory(!canvasElement.querySelector('.logLine-event'), 'EVEN logs should be hidden by default')
     await waitForCondition(() => Boolean(canvasElement.querySelector('.logLine-terminal')))
+    const terminalRowCount = canvasElement.querySelectorAll('.logLine-terminal').length
+    await sleep(4_500)
+    expectStory(
+      canvasElement.querySelectorAll('.logLine-terminal').length === terminalRowCount,
+      'one running terminal command should replace its snapshot instead of stacking frozen progress rows',
+    )
     expectStory(
       canvasElement.querySelectorAll('.logLine-terminal .logLvl-warn, .logLine-terminal .logLvl-warning').length === 0,
       'live terminal rows should not be classified as WARN',

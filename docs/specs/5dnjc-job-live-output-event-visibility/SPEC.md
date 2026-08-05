@@ -24,6 +24,7 @@
 - parser 尺寸固定为 240 列、200 屏幕行、2000 行滚屏；尾部空行裁剪。50ms 窗口内只发送最后快照，命令完成时强制发送最终快照。
 - 进入 VT100 parser 前应用有状态的终端行规整：裸 `LF` 转为 `CRLF`，已有 `CRLF`、独立 `CR`、ANSI/CSI 和跨 chunk 边界保持不变，使管道输出符合终端换行语义。
 - stdout/stderr 按原始块到达顺序合并，保留常见 ANSI 颜色、粗体、暗淡、下划线以及 `\r`、退格、擦行、光标移动等 VT100/CSI 语义。
+- Docker Compose plugin 的流式 pull 使用 `COMPOSE_PROGRESS=tty` 与 `COMPOSE_ANSI=always` 保留 layer 原地更新控制序列；进度摘要解析只消费清理控制序列后的副本，实时终端仍消费原始字节。
 - `job_live_command_complete` 是仅内存广播的短暂完成标记，包含 `commandSeq`、`hadOutput` 和 `summaryPersisted`。它不设置 SSE `id`，不会影响 Last-Event-ID；只有 `summaryPersisted=true` 时前端才会抑制后续摘要。
 - hub 在任务终态释放；没有断线补播或历史缓存。
 - 旧客户端忽略未知的 `job_live_terminal`，仍能看到带 SSE id 的持久化命令摘要。
@@ -53,7 +54,11 @@
 ## Visual Evidence
 
 - 来源：现有 mock-only `ui_demo`（`queue-long-logs`），未使用真实后端或登录态。
-- 桌面证据覆盖实时终端快照、ANSI 样式、空等级列、日志区域跟随和默认关闭的“显示 EVEN”开关：[desktop](assets/job-detail-terminal-desktop.png)。
-- `393x852` 证据覆盖窄屏终端进度、空等级列、默认关闭的开关和移动底部导航：[mobile](assets/job-detail-terminal-mobile.png)。
+- 桌面证据覆盖实时终端快照、ANSI 样式、空等级列、日志区域跟随和默认关闭的“显示 EVEN”开关。
+  PR: include
+  ![desktop](assets/job-detail-terminal-desktop.png)
+- `393x852` 证据覆盖窄屏终端进度、空等级列、默认关闭的开关和移动底部导航。
+  PR: include
+  ![mobile](assets/job-detail-terminal-mobile.png)
 - 图片经 `trim_whitespace.py --margin-policy trim_only` 处理，结果为 `unchanged`；Storybook 交互场景为 `Pages/JobDetailPage/LiveOutputAndEventToggle`，覆盖默认隐藏、打开开关、实时输出与摘要去重。
-- 主人验收使用的不可变快照：`/Users/ivan/.codex/user-inline-assets/dockrev__f83adb76/2026/08/03/20260803T201322Z-job-detail-terminal-desktop-d9d6fc26.png`、`/Users/ivan/.codex/user-inline-assets/dockrev__f83adb76/2026/08/03/20260803T201322Z-job-detail-terminal-mobile-c361df80.png`。
+- 主人验收使用的不可变快照：`/Users/ivan/.codex/user-inline-assets/dockrev__f83adb76/2026/08/05/20260805T100057Z-dockrev-terminal-desktop-trimmed-b660d018.png`、`/Users/ivan/.codex/user-inline-assets/dockrev__f83adb76/2026/08/05/20260805T100057Z-dockrev-terminal-mobile-trimmed-50251156.png`。
