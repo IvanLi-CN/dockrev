@@ -18,6 +18,8 @@
 
 进一步收口：累计此前已发送的可见终端快照，避免清屏后的命令摘要重复；service-log 强制分片保留 UTF-8 code point 边界，并为无时间戳实时续行恢复换行分隔。
 
+PR 收口验证补充：ui_demo 的 terminal mock 保持单命令快照替换与完成冻结语义，并压回 `web/src/stories/mocks/dockrevMockApi/install.ts` 的 1200 行预算；行为与终端 SSE 契约不变。
+
 修正管道输出的终端行规整：VT100 的裸 `LF` 只下移光标而不回到第 0 列，导致 Docker layer 进度呈阶梯状右移。新增跨 chunk 的有状态规整器，仅将裸 `LF` 转为 `CRLF`，不重复转换已有 `CRLF` 或改变独立 `CR`，并在进入 parser 前统一应用。
 
 门禁收口：将 service-log 解析回归测试拆到独立测试模块，压缩 mock terminal 场景的重复排版；运行时契约与测试覆盖保持不变。
