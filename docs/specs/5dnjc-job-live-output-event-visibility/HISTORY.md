@@ -10,11 +10,15 @@
 
 线上任务详情显示 Docker layer `Downloading` 进度重复堆叠，且实时 stderr 被前端映射为 WARN。根因是原始控制序列被按字符串行切分，`\r` 更新被误当作新行。
 
+后续复核发现 Docker Compose plugin 被强制设置为 `COMPOSE_PROGRESS=plain`，即使 VT100 parser 正确工作也只能收到逐行输出，无法原地更新 layer。pull 改为 `COMPOSE_PROGRESS=tty` 与 `COMPOSE_ANSI=always`，同时让进度摘要解析忽略 ANSI 控制序列，终端快照继续消费原始字节。
+
 改为 `vt100` 0.16 后端终端模拟：runner 传递原始 `Vec<u8>` 块，stdout/stderr 合并解析，`job_live_terminal` 只发送无 id、无持久化的完整可见行快照；使用 240x200 屏幕、2000 行滚屏和 50ms 节流。每个命令使用 transient `commandSeq`，前端按序替换快照、命令完成后冻结，并让实时行等级列留空。旧的持久化摘要、REST 结构、Last-Event-ID 和断线恢复不变。
 
 收口审查补充：纯 VT100 控制序列或清屏导致最终快照为空时，不抑制后续持久化命令摘要；订阅断开、跨块回车进度和无换行 service-log 缓冲均保持有界且可清理。
 
 进一步收口：累计此前已发送的可见终端快照，避免清屏后的命令摘要重复；service-log 强制分片保留 UTF-8 code point 边界，并为无时间戳实时续行恢复换行分隔。
+
+PR 收口验证补充：ui_demo 的 terminal mock 保持单命令快照替换与完成冻结语义，并压回 `web/src/stories/mocks/dockrevMockApi/install.ts` 的 1200 行预算；行为与终端 SSE 契约不变。
 
 修正管道输出的终端行规整：VT100 的裸 `LF` 只下移光标而不回到第 0 列，导致 Docker layer 进度呈阶梯状右移。新增跨 chunk 的有状态规整器，仅将裸 `LF` 转为 `CRLF`，不重复转换已有 `CRLF` 或改变独立 `CR`，并在进入 parser 前统一应用。
 

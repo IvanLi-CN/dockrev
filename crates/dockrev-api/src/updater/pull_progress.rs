@@ -148,7 +148,8 @@ fn short_layer_id(layer_id: &str) -> String {
 }
 
 fn parse_pull_line_observation(line: &str) -> Option<PullLineObservation> {
-    let trimmed = line.trim();
+    let sanitized = strip_terminal_control_sequences(line);
+    let trimmed = sanitized.trim();
     if trimmed.is_empty() {
         return None;
     }
@@ -215,8 +216,9 @@ fn parse_pull_line_observation(line: &str) -> Option<PullLineObservation> {
 }
 
 pub(super) fn parse_pull_fraction_from_line(line: &str) -> Option<f64> {
+    let sanitized = strip_terminal_control_sequences(line);
     let mut best: Option<f64> = None;
-    for token in line.split_whitespace() {
+    for token in sanitized.split_whitespace() {
         let clean = token
             .trim()
             .trim_matches(|c| matches!(c, '[' | ']' | '(' | ')' | ','));
@@ -238,6 +240,54 @@ pub(super) fn parse_pull_fraction_from_line(line: &str) -> Option<f64> {
         }
     }
     best
+}
+
+fn strip_terminal_control_sequences(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] != 0x1b {
+            if !bytes[index].is_ascii_control() || bytes[index] == b'\t' {
+                output.push(bytes[index]);
+            }
+            index += 1;
+            continue;
+        }
+
+        index += 1;
+        let Some(&kind) = bytes.get(index) else {
+            break;
+        };
+        match kind {
+            b'[' => {
+                index += 1;
+                while let Some(&byte) = bytes.get(index) {
+                    index += 1;
+                    if (0x40..=0x7e).contains(&byte) {
+                        break;
+                    }
+                }
+            }
+            b']' => {
+                index += 1;
+                while let Some(&byte) = bytes.get(index) {
+                    index += 1;
+                    if byte == 0x07 {
+                        break;
+                    }
+                    if byte == 0x1b && bytes.get(index) == Some(&b'\\') {
+                        index += 1;
+                        break;
+                    }
+                }
+            }
+            _ => index += 1,
+        }
+    }
+
+    String::from_utf8_lossy(&output).into_owned()
 }
 
 fn parse_size_to_bytes(input: &str) -> Option<f64> {

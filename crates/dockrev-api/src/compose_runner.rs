@@ -53,10 +53,13 @@ impl ComposeStack {
         services: &[String],
     ) -> CommandSpec {
         let mut cmd = self.pull_services(cfg, services);
-        // Docker Compose v2 supports COMPOSE_PROGRESS=plain for stable machine-friendly output.
+        // Keep Compose in terminal progress mode so layer updates overwrite their screen rows.
+        // The command is piped rather than attached to a TTY, so ANSI must be explicit too.
         if is_docker_plugin(&cfg.compose_bin) {
             cmd.env
-                .push(("COMPOSE_PROGRESS".to_string(), "plain".to_string()));
+                .push(("COMPOSE_PROGRESS".to_string(), "tty".to_string()));
+            cmd.env
+                .push(("COMPOSE_ANSI".to_string(), "always".to_string()));
         }
         cmd
     }
@@ -260,7 +263,7 @@ mod tests {
     }
 
     #[test]
-    fn docker_compose_plugin_progress_env_keeps_auth_env() {
+    fn docker_compose_plugin_progress_env_keeps_auth_env_and_terminal_output() {
         let stack = ComposeStack {
             project_name: "myproj".to_string(),
             compose: ComposeConfig {
@@ -286,7 +289,8 @@ mod tests {
                     "DOCKER_CONFIG".to_string(),
                     "/tmp/dockrev-auth-config/.docker".to_string()
                 ),
-                ("COMPOSE_PROGRESS".to_string(), "plain".to_string()),
+                ("COMPOSE_PROGRESS".to_string(), "tty".to_string()),
+                ("COMPOSE_ANSI".to_string(), "always".to_string()),
             ]
         );
     }
@@ -315,7 +319,10 @@ mod tests {
         );
         assert_eq!(
             pull_cmd.env,
-            vec![("COMPOSE_PROGRESS".to_string(), "plain".to_string())]
+            vec![
+                ("COMPOSE_PROGRESS".to_string(), "tty".to_string()),
+                ("COMPOSE_ANSI".to_string(), "always".to_string()),
+            ]
         );
 
         let up_cmd = stack.up_services(&cfg, &services);

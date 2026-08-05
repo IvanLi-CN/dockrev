@@ -34,6 +34,20 @@ fn pull_progress_tracker_reports_unknown_total_download_bytes() {
 }
 
 #[test]
+fn pull_progress_tracker_ignores_compose_terminal_control_sequences() {
+    let mut tracker = PullProgressTracker::default();
+    let snapshot = tracker
+        .observe_line("\x1b[2K67b14b8982fc Downloading 3.146MB")
+        .expect("compose tty download status should be parsed");
+    let download = snapshot.download.expect("download state");
+
+    assert_eq!(
+        download.active_layers,
+        vec!["67b14b8982fc Downloading".to_string()]
+    );
+}
+
+#[test]
 fn pull_progress_tracker_reports_determinate_ratio_when_total_is_known() {
     let mut tracker = PullProgressTracker::default();
     let snapshot = tracker
