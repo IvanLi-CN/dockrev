@@ -43,6 +43,7 @@ impl crate::runner::CommandRunner for DbLoggingRunner {
 
         let mut captured_stdout = Vec::new();
         let mut captured_stderr = Vec::new();
+        let compose_pull = is_compose_pull(&spec);
         let command_seq = self.live_log_hub.begin_command(&self.job_id);
         let terminal =
             TerminalEmitter::new(self.live_log_hub.clone(), self.job_id.clone(), command_seq);
@@ -93,13 +94,13 @@ impl crate::runner::CommandRunner for DbLoggingRunner {
         let had_live_output = terminal.finish();
         let captured_stdout = String::from_utf8_lossy(&captured_stdout).to_string();
         let captured_stderr = String::from_utf8_lossy(&captured_stderr).to_string();
+        let (summary_stdout, summary_stderr) =
+            command_summary_output(compose_pull, out.status, &captured_stdout, &captured_stderr);
 
         let ts = now_rfc3339()?;
         let msg = format!(
             "status={} stdout={} stderr={}",
-            out.status,
-            truncate(&captured_stdout, 2000),
-            truncate(&captured_stderr, 2000)
+            out.status, summary_stdout, summary_stderr
         );
         let summary_persisted = self
             .db
@@ -218,6 +219,71 @@ pub(crate) fn truncate(input: &str, max: usize) -> String {
     format!("{}...(truncated)", &input[..max])
 }
 
+fn is_compose_pull(spec: &crate::runner::CommandSpec) -> bool {
+    let command_start = if crate::compose_runner::is_docker_plugin(&spec.program) {
+        if spec.args.first().is_none_or(|arg| arg != "compose") {
+            return false;
+        }
+        1
+    } else if is_standalone_compose(&spec.program) {
+        0
+    } else {
+        return false;
+    };
+
+    compose_subcommand(&spec.args[command_start..]) == Some("pull")
+}
+
+fn compose_subcommand(args: &[String]) -> Option<&str> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index) {
+        if !arg.starts_with('-') {
+            return Some(arg);
+        }
+        index += if compose_option_takes_value(arg) {
+            2
+        } else {
+            1
+        };
+    }
+    None
+}
+
+fn compose_option_takes_value(arg: &str) -> bool {
+    matches!(
+        arg,
+        "-f" | "--file"
+            | "-p"
+            | "--project-name"
+            | "--project-directory"
+            | "--env-file"
+            | "--profile"
+            | "--ansi"
+            | "--parallel"
+            | "--progress"
+    )
+}
+
+fn is_standalone_compose(program: &str) -> bool {
+    let program = program.to_ascii_lowercase();
+    let program = program.strip_suffix(".exe").unwrap_or(&program);
+    program == "docker-compose"
+        || program.ends_with("/docker-compose")
+        || program.ends_with("\\docker-compose")
+}
+
+fn command_summary_output(
+    compose_pull: bool,
+    status: i32,
+    stdout: &str,
+    stderr: &str,
+) -> (String, String) {
+    if compose_pull && status == 0 {
+        return (String::new(), String::new());
+    }
+    (truncate(stdout, 2000), truncate(stderr, 2000))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,6 +291,8 @@ mod tests {
     use std::{path::Path, time::Duration};
 
     struct StaticRunner;
+
+    struct ComposePullProgressRunner;
 
     #[async_trait::async_trait]
     impl crate::runner::CommandRunner for StaticRunner {
@@ -237,6 +305,26 @@ mod tests {
                 status: 0,
                 stdout: "first\nsecond\n".to_string(),
                 stderr: "warning\n".to_string(),
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::runner::CommandRunner for ComposePullProgressRunner {
+        async fn run(
+            &self,
+            _spec: crate::runner::CommandSpec,
+            _timeout: Duration,
+        ) -> anyhow::Result<crate::runner::CommandOutput> {
+            Ok(crate::runner::CommandOutput {
+                status: 0,
+                stdout: String::new(),
+                stderr: [
+                    "f99586fca4fe Downloading 1.049MB",
+                    "f99586fca4fe Downloading 2.097MB",
+                    "f99586fca4fe Downloading 3.146MB",
+                ]
+                .join("\n"),
             })
         }
     }
@@ -307,6 +395,113 @@ mod tests {
                 .iter()
                 .any(|log| log.msg == "first" || log.msg == "second")
         );
+    }
+
+    #[tokio::test]
+    async fn successful_compose_pull_does_not_persist_transient_progress_in_summary() {
+        let db = crate::db::Db::open(Path::new(":memory:")).await.unwrap();
+        db.insert_job(crate::api::types::JobListItem {
+            id: "job-pull".to_string(),
+            r#type: crate::api::types::JobType::Update,
+            scope: crate::api::types::JobScope::All,
+            stack_id: None,
+            service_id: None,
+            status: "running".to_string(),
+            created_at: "2026-08-06T00:00:00Z".to_string(),
+            created_by: "test".to_string(),
+            reason: "test".to_string(),
+            started_at: Some("2026-08-06T00:00:00Z".to_string()),
+            finished_at: None,
+            allow_arch_mismatch: false,
+            backup_mode: "inherit".to_string(),
+            summary_json: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+
+        let runner = DbLoggingRunner {
+            db: db.clone(),
+            inner: Arc::new(ComposePullProgressRunner),
+            job_id: "job-pull".to_string(),
+            live_log_hub: Arc::new(crate::job_live_logs::JobLiveLogHub::new()),
+        };
+
+        runner
+            .run(
+                crate::runner::CommandSpec {
+                    program: "docker-compose".to_string(),
+                    args: vec!["pull".to_string(), "web".to_string()],
+                    env: Vec::new(),
+                },
+                Duration::from_secs(1),
+            )
+            .await
+            .unwrap();
+
+        let logs = db.list_job_logs("job-pull").await.unwrap();
+        assert_eq!(logs.len(), 2);
+        assert_eq!(logs[1].msg, "status=0 stdout= stderr=");
+    }
+
+    #[test]
+    fn command_summary_keeps_failed_pull_and_non_pull_output() {
+        assert_eq!(
+            command_summary_output(true, 1, "", "pull failed"),
+            (String::new(), "pull failed".to_string())
+        );
+        assert_eq!(
+            command_summary_output(false, 0, "container-id", ""),
+            ("container-id".to_string(), String::new())
+        );
+    }
+
+    #[test]
+    fn compose_pull_detection_requires_the_compose_subcommand() {
+        let plugin = crate::runner::CommandSpec {
+            program: "docker".to_string(),
+            args: vec![
+                "compose".to_string(),
+                "-f".to_string(),
+                "stack.yml".to_string(),
+                "pull".to_string(),
+            ],
+            env: Vec::new(),
+        };
+        let standalone = crate::runner::CommandSpec {
+            program: "/usr/local/bin/docker-compose".to_string(),
+            args: vec![
+                "-f".to_string(),
+                "stack.yml".to_string(),
+                "pull".to_string(),
+            ],
+            env: Vec::new(),
+        };
+        let docker_pull = crate::runner::CommandSpec {
+            program: "docker".to_string(),
+            args: vec!["pull".to_string(), "example/image".to_string()],
+            env: Vec::new(),
+        };
+        let stop_pull = crate::runner::CommandSpec {
+            program: "docker-compose".to_string(),
+            args: vec!["stop".to_string(), "pull".to_string()],
+            env: Vec::new(),
+        };
+        let plugin_exec_pull = crate::runner::CommandSpec {
+            program: "docker".to_string(),
+            args: vec![
+                "compose".to_string(),
+                "exec".to_string(),
+                "api".to_string(),
+                "pull".to_string(),
+            ],
+            env: Vec::new(),
+        };
+
+        assert!(is_compose_pull(&plugin));
+        assert!(is_compose_pull(&standalone));
+        assert!(!is_compose_pull(&docker_pull));
+        assert!(!is_compose_pull(&stop_pull));
+        assert!(!is_compose_pull(&plugin_exec_pull));
     }
 
     #[tokio::test]

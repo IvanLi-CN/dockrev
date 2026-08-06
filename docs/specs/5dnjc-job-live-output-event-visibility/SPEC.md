@@ -7,13 +7,13 @@
 ## 目标
 
 - 为更新、回滚、启动、停止、重启等服务操作增加无持久化的 `job_live_terminal` SSE 输出。后端将原始 stdout/stderr 字节块按到达顺序合并到 VT100 模拟器，实时发送完整可见屏幕快照。
-- 保持现有 `job_logs` 聚合摘要、断线恢复、Last-Event-ID 和审计内容不变。
+- 保持 `job_logs` REST 结构、断线恢复和 Last-Event-ID 不变；成功的 Compose pull 摘要只保留退出状态，不持久化 transient stdout/stderr 进度帧，失败输出继续保留用于诊断。
 - 增加短暂的 `job_live_command_complete` 事件和 transient `commandSeq`，使前端在同一连接内冻结终端块并抑制已实时展示过输出的后续命令摘要。
 - 在任务日志工具栏增加 `显示 EVEN` 开关。`level=event` 的持久化记录默认隐藏，偏好通过当前浏览器 `localStorage` 记忆。
 
 ## 范围与非目标
 
-实时输出覆盖所有经过服务操作执行器的 lifecycle/update/rollback 命令。原始输出不逐行写入数据库，不断线缓存、不补播；连接断开或刷新后只恢复数据库中的历史摘要。数据库日志 REST 结构不增加 `commandId`，进度计算与任务执行语义不变。
+实时输出覆盖所有经过服务操作执行器的 lifecycle/update/rollback 命令。原始输出不逐行写入数据库，不断线缓存、不补播；连接断开或刷新后只恢复数据库中的命令与结果摘要，成功 Compose pull 的 transient progress 不随摘要补播。数据库日志 REST 结构不增加 `commandId`，进度计算与任务执行语义不变。
 
 ## 行为契约
 
@@ -26,13 +26,14 @@
 - stdout/stderr 按原始块到达顺序合并，保留常见 ANSI 颜色、粗体、暗淡、下划线以及 `\r`、退格、擦行、光标移动等 VT100/CSI 语义。
 - Docker Compose plugin 的流式 pull 使用 `COMPOSE_PROGRESS=tty` 与 `COMPOSE_ANSI=always` 保留 layer 原地更新控制序列；进度摘要解析只消费清理控制序列后的副本，实时终端仍消费原始字节。
 - `job_live_command_complete` 是仅内存广播的短暂完成标记，包含 `commandSeq`、`hadOutput` 和 `summaryPersisted`。它不设置 SSE `id`，不会影响 Last-Event-ID；只有 `summaryPersisted=true` 时前端才会抑制后续摘要。
+- 成功的 `docker compose pull` 与 `docker-compose pull` 持久化 `status=0 stdout= stderr=`，不把已通过临时终端展示的下载进度嵌入聚合摘要；失败 pull 仍保留截断后的 stdout/stderr。
 - hub 在任务终态释放；没有断线补播或历史缓存。
-- 旧客户端忽略未知的 `job_live_terminal`，仍能看到带 SSE id 的持久化命令摘要。
+- 旧客户端忽略未知的 `job_live_terminal`，仍能看到带 SSE id 的持久化命令与结果摘要。
 - 既有带数据库 id 的 `job_log`、命名事件和断线恢复保持兼容。
 
 ### 前端日志
 
-- 当前 EventSource 连接中，同一 `commandSeq` 的终端快照替换同一临时终端块，命令完成后冻结；下一条匹配的 `status=... stdout=... stderr=...` 持久化摘要只渲染一次。刷新或重连恢复的数据库摘要不做推断去重。
+- 当前 EventSource 连接中，同一 `commandSeq` 的终端快照替换同一临时终端块，命令完成后冻结；下一条匹配的 `status=... stdout=... stderr=...` 持久化摘要只渲染一次。刷新或重连恢复数据库摘要时不做推断去重，但成功 pull 只恢复精简结果，不恢复 transient progress。
 - 实时终端输出没有日志等级：等级列保留固定宽度但为空，不把 stderr 映射为 WARN；ANSI 样式通过受限 React/CSS spans 渲染。
 - `level=event` 记录只有在“显示 EVEN”打开时渲染；开关默认关闭，读取或写入 `localStorage` 失败时安全回退为关闭。
 - 开关跨任务详情复用同一浏览器偏好。
@@ -40,7 +41,7 @@
 ## 验收标准
 
 - 运行服务操作时，原始 stdout/stderr 经 VT100 终端模拟按屏幕快照即时到达任务详情，Docker layer 的回车进度不重复堆叠，结束后不在数据库生成额外逐行记录。
-- 同一未刷新连接不重复显示实时输出和命令摘要；刷新/重连后历史摘要完整可见。
+- 同一未刷新连接不重复显示实时输出和命令摘要；刷新/重连后命令与结果摘要完整可见，成功 pull 的下载进度不重复出现。
 - EVEN 默认不可见，开关立即生效并跨任务、刷新保留；存储不可用时不影响日志页面。
 - Rust runner/hub 生命周期、跨块控制序列、无持久化、Web 快照替换/冻结/筛选、Storybook play 和 ui_demo 逐行增长/开关/跟随行为均有验证。
 
@@ -54,11 +55,11 @@
 ## Visual Evidence
 
 - 来源：现有 mock-only `ui_demo`（`queue-long-logs`），未使用真实后端或登录态。
-- 桌面证据覆盖实时终端快照、ANSI 样式、空等级列、日志区域跟随和默认关闭的“显示 EVEN”开关。
+- 桌面证据覆盖成功 pull 的历史摘要：末尾仅保留 `status=0 stdout= stderr=` 与后续结果，不出现 `Downloading ...` progress 帧；“显示 EVEN”默认关闭。
   PR: include
-  ![desktop](./assets/job-detail-terminal-desktop.png)
-- `393x852` 证据覆盖窄屏终端进度、空等级列、默认关闭的开关和移动底部导航。
+  ![desktop](./assets/job-detail-compact-pull-history-desktop.jpg)
+- `393x852` 证据覆盖同一精简历史摘要、默认关闭的开关和移动底部导航。
   PR: include
-  ![mobile](./assets/job-detail-terminal-mobile.png)
-- 图片经 `trim_whitespace.py --margin-policy trim_only` 处理，结果为 `unchanged`；Storybook 交互场景为 `Pages/JobDetailPage/LiveOutputAndEventToggle`，覆盖默认隐藏、打开开关、实时输出与摘要去重。
-- 主人验收使用的不可变快照：`/Users/ivan/.codex/user-inline-assets/dockrev__f83adb76/2026/08/05/20260805T104125Z-dockrev-terminal-desktop-active-trimmed-2bd3de4b.png`、`/Users/ivan/.codex/user-inline-assets/dockrev__f83adb76/2026/08/05/20260805T104125Z-dockrev-terminal-mobile-active-trimmed-aea96128.png`。
+  ![mobile](./assets/job-detail-compact-pull-history-mobile.jpg)
+- 图片经 `trim_whitespace.py --margin-policy trim_only` 处理，结果为 `unchanged`；Storybook 交互场景为 `Pages/JobDetailPage/CompactSuccessfulPullHistory`，覆盖成功 pull 精简摘要的历史呈现。
+- 主人验收使用的不可变快照：`/Users/ivan/.codex/user-inline-assets/dockrev__f83adb76/2026/08/06/20260806T111641Z-dockrev-compact-pull-desktop-final-73cb7a9a.png`、`/Users/ivan/.codex/user-inline-assets/dockrev__f83adb76/2026/08/06/20260806T111641Z-dockrev-compact-pull-mobile-trimmed-afd927a4.png`。
