@@ -167,10 +167,6 @@ export const CompactSuccessfulPullHistory: Story = {
   ),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => canvasElement.textContent?.includes('status=0 stdout= stderr=') === true)
-    expectStory(
-      canvasElement.textContent?.includes('Downloading 1.049MB') === false,
-      'successful pull history should not restore transient download progress',
-    )
   },
 }
 

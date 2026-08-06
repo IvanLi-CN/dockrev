@@ -220,13 +220,52 @@ pub(crate) fn truncate(input: &str, max: usize) -> String {
 }
 
 fn is_compose_pull(spec: &crate::runner::CommandSpec) -> bool {
-    if !spec.args.iter().any(|arg| arg == "pull") {
+    let command_start = if crate::compose_runner::is_docker_plugin(&spec.program) {
+        if spec.args.first().is_none_or(|arg| arg != "compose") {
+            return false;
+        }
+        1
+    } else if is_standalone_compose(&spec.program) {
+        0
+    } else {
         return false;
+    };
+
+    compose_subcommand(&spec.args[command_start..]) == Some("pull")
+}
+
+fn compose_subcommand(args: &[String]) -> Option<&str> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index) {
+        if !arg.starts_with('-') {
+            return Some(arg);
+        }
+        index += if compose_option_takes_value(arg) {
+            2
+        } else {
+            1
+        };
     }
-    if crate::compose_runner::is_docker_plugin(&spec.program) {
-        return spec.args.first().is_some_and(|arg| arg == "compose");
-    }
-    let program = spec.program.to_ascii_lowercase();
+    None
+}
+
+fn compose_option_takes_value(arg: &str) -> bool {
+    matches!(
+        arg,
+        "-f" | "--file"
+            | "-p"
+            | "--project-name"
+            | "--project-directory"
+            | "--env-file"
+            | "--profile"
+            | "--ansi"
+            | "--parallel"
+            | "--progress"
+    )
+}
+
+fn is_standalone_compose(program: &str) -> bool {
+    let program = program.to_ascii_lowercase();
     let program = program.strip_suffix(".exe").unwrap_or(&program);
     program == "docker-compose"
         || program.ends_with("/docker-compose")
@@ -417,7 +456,7 @@ mod tests {
     }
 
     #[test]
-    fn compose_pull_detection_covers_plugin_and_standalone_without_matching_docker_pull() {
+    fn compose_pull_detection_requires_the_compose_subcommand() {
         let plugin = crate::runner::CommandSpec {
             program: "docker".to_string(),
             args: vec![
@@ -442,10 +481,27 @@ mod tests {
             args: vec!["pull".to_string(), "example/image".to_string()],
             env: Vec::new(),
         };
+        let stop_pull = crate::runner::CommandSpec {
+            program: "docker-compose".to_string(),
+            args: vec!["stop".to_string(), "pull".to_string()],
+            env: Vec::new(),
+        };
+        let plugin_exec_pull = crate::runner::CommandSpec {
+            program: "docker".to_string(),
+            args: vec![
+                "compose".to_string(),
+                "exec".to_string(),
+                "api".to_string(),
+                "pull".to_string(),
+            ],
+            env: Vec::new(),
+        };
 
         assert!(is_compose_pull(&plugin));
         assert!(is_compose_pull(&standalone));
         assert!(!is_compose_pull(&docker_pull));
+        assert!(!is_compose_pull(&stop_pull));
+        assert!(!is_compose_pull(&plugin_exec_pull));
     }
 
     #[tokio::test]
