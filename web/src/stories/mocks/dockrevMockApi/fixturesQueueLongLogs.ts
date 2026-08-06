@@ -120,7 +120,11 @@ export function buildQueueLongLogs(): Fixture {
               : `line ${String(i + 1).padStart(2, '0')}: ${'x'.repeat(180)}`,
     })),
   ]
-  const archivedLongLogs = [...baseLongLogs, { ts: nowIso(-10_000), level: 'info', msg: 'check finished' }]
+  const archivedLongLogs = [
+    ...baseLongLogs,
+    { ts: nowIso(-10_040), level: 'info', msg: 'status=0 stdout= stderr=' },
+    { ts: nowIso(-10_000), level: 'info', msg: 'check finished' },
+  ]
   const liveLongLogs = [...baseLongLogs, { ts: nowIso(-10_000), level: 'info', msg: 'waiting for next registry event' }]
 
   f.jobs = [jobShort, jobLiveLong, jobLong]

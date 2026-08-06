@@ -154,6 +154,26 @@ export const LiveOutputAndEventToggle: Story = {
   },
 }
 
+export const CompactSuccessfulPullHistory: Story = {
+  parameters: { dockrevApiScenario: 'queue-long-logs' },
+  render: () => renderJobDetailSurface(
+    <PageHarness
+      route={{ name: 'job', jobId: 'job-long' }}
+      title="任务详情"
+      pageSubtitle="历史成功 pull 只保留退出状态，不补播 transient 下载进度"
+    >
+      {({ onTopActions }) => <JobDetailPage jobId="job-long" onTopActions={onTopActions} />}
+    </PageHarness>,
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => canvasElement.textContent?.includes('status=0 stdout= stderr=') === true)
+    expectStory(
+      canvasElement.textContent?.includes('Downloading 1.049MB') === false,
+      'successful pull history should not restore transient download progress',
+    )
+  },
+}
+
 export const RunningDualProgress: Story = {
   parameters: { dockrevApiScenario: 'queue-long-logs' },
   render: () => {
