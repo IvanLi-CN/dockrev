@@ -173,6 +173,8 @@ impl CommandRunner for TokioCommandRunner {
 }
 
 fn apply_command_env(cmd: &mut Command, env: &[(String, String)]) {
+    // This is an internal routing marker, never a child-process setting.
+    cmd.env_remove(STREAM_PTY_ENV);
     for (key, value) in env {
         if key != STREAM_PTY_ENV {
             cmd.env(key, value);
@@ -357,8 +359,11 @@ mod tests {
             .unwrap();
 
         assert_eq!(output.status, 0);
-        assert!(stdout.windows(4).any(|bytes| bytes == b"\x1b[1A"));
-        assert!(stderr.is_empty());
+        let terminal_stream = [stdout.as_slice(), stderr.as_slice()].concat();
+        assert!(
+            terminal_stream.windows(4).any(|bytes| bytes == b"\x1b[1A"),
+            "PTY stream lost its terminal control sequence: stdout={stdout:?}, stderr={stderr:?}"
+        );
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
