@@ -824,6 +824,8 @@ export function installDockrevMockApi(
     }
 
     // stacks
+    const lifecycleResponse = handleServiceLifecycleRoute({ scenario, method, urlPath, init, fixture: f, findService, jobSeqRef, json })
+    if (lifecycleResponse) return lifecycleResponse
     if (method === 'GET' && (urlPathWithQuery === '/api/stacks' || urlPathWithQuery.startsWith('/api/stacks?'))) {
       const query = url?.search ? url.search.slice(1) : urlPathWithQuery.includes('?') ? urlPathWithQuery.split('?')[1] : ''
       const params = new URLSearchParams(query)
@@ -1033,8 +1035,6 @@ export function installDockrevMockApi(
       }, updateFinishDelayMs)
       return json({ jobId })
     }
-    const lifecycleResponse = handleServiceLifecycleRoute({ scenario, method, urlPath, init, fixture: f, findService, jobSeqRef, json })
-    if (lifecycleResponse) return lifecycleResponse
     if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/rollback-target')) {
       const serviceId = decodeURIComponent(urlPath.split('/').slice(3, -1).join('/'))
       const found = findService(serviceId)

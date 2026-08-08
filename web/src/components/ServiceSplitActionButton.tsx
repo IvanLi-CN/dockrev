@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react'
+import { Fragment, useLayoutEffect, useRef, useState } from 'react'
 import { ChevronDown, Ellipsis, Layers3, type LucideIcon } from 'lucide-react'
 import { Button as UiButton } from './ui/button'
 import { ButtonGroup } from './ui/button-group'
@@ -165,65 +165,81 @@ export function ServiceSplitActionButton(props: {
 }) {
   const PrimaryIcon = props.primary.icon
   const primaryIconClassName = `serviceSplitActionPrimaryIcon${props.primary.iconVariant === 'solid' ? ' serviceSplitActionIconSolid' : ''}`
+  const actionGroupRef = useRef<HTMLSpanElement | null>(null)
+  const [actionGroupWidth, setActionGroupWidth] = useState<number | null>(null)
   const [unavailableToast, setUnavailableToast] = useState<{ id: number; message: string } | null>(null)
   const [groupTooltipOpen, setGroupTooltipOpen] = useState(false)
   const groupDisabled = Boolean(props.disabled)
   const groupDisabledReason = groupDisabled ? props.disabledReason?.trim() : ''
 
+  useLayoutEffect(() => {
+    const element = actionGroupRef.current
+    if (!element) return
+    const updateWidth = () => setActionGroupWidth(Math.ceil(element.getBoundingClientRect().width))
+    updateWidth()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(updateWidth)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+
   const actionGroup = (
-    <ButtonGroup
-      aria-disabled={groupDisabled || undefined}
-      aria-label={props.ariaLabel}
-      className="serviceSplitAction"
-      data-service-split-action={props.ariaLabel}
-    >
-      <Button
-        variant="primary"
-        disabled={groupDisabled || props.primary.disabled}
-        hint={groupDisabledReason || props.primary.description}
-        loading={props.primary.loading}
-        loadingClickable={props.primary.loadingClickable}
-        onClick={props.primary.onSelect}
+    <span className="serviceSplitActionMeasure" ref={actionGroupRef}>
+      <ButtonGroup
+        aria-disabled={groupDisabled || undefined}
+        aria-label={props.ariaLabel}
+        className="serviceSplitAction"
+        data-service-split-action={props.ariaLabel}
       >
-        {props.primary.loading ? props.primary.label : (
-          <span className="serviceSplitActionPrimaryContent">
-            <PrimaryIcon aria-hidden="true" className={primaryIconClassName} />
-            <span>{props.primary.label}</span>
-          </span>
-        )}
-      </Button>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <UiButton
-            aria-label={`${props.ariaLabel}菜单`}
-            className="btn btnPrimary serviceSplitActionMenuTrigger"
-            disabled={groupDisabled}
-            size="icon"
-            type="button"
-          >
-            <ChevronDown aria-hidden="true" className="serviceSplitActionMenuIcon" />
-          </UiButton>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="end"
-          aria-label={props.ariaLabel}
-          className="w-max min-w-0 max-w-[calc(100vw-2rem)] border-border/90 shadow-[0_18px_42px_rgba(1,8,20,0.5)]"
+        <Button
+          variant="primary"
+          disabled={groupDisabled || props.primary.disabled}
+          hint={groupDisabledReason || props.primary.description}
+          loading={props.primary.loading}
+          loadingClickable={props.primary.loadingClickable}
+          onClick={props.primary.onSelect}
         >
-          <DropdownMenuGroup>
-            {props.items.map((item) => {
-              return (
-                <ServiceActionMenuItem
-                  dataAttribute="data-service-split-item"
-                  item={item}
-                  key={item.id}
-                  onUnavailable={(message) => setUnavailableToast({ id: Date.now(), message })}
-                />
-              )
-            })}
-          </DropdownMenuGroup>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </ButtonGroup>
+          {props.primary.loading ? props.primary.label : (
+            <span className="serviceSplitActionPrimaryContent">
+              <PrimaryIcon aria-hidden="true" className={primaryIconClassName} />
+              <span>{props.primary.label}</span>
+            </span>
+          )}
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <UiButton
+              aria-label={`${props.ariaLabel}菜单`}
+              className="btn btnPrimary serviceSplitActionMenuTrigger"
+              disabled={groupDisabled}
+              size="icon"
+              type="button"
+            >
+              <ChevronDown aria-hidden="true" className="serviceSplitActionMenuIcon" />
+            </UiButton>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            aria-label={props.ariaLabel}
+            className="w-max min-w-0 max-w-[calc(100vw-2rem)] border-border/90 shadow-[0_18px_42px_rgba(1,8,20,0.5)]"
+            style={actionGroupWidth ? { minWidth: actionGroupWidth } : undefined}
+          >
+            <DropdownMenuGroup>
+              {props.items.map((item) => {
+                return (
+                  <ServiceActionMenuItem
+                    dataAttribute="data-service-split-item"
+                    item={item}
+                    key={item.id}
+                    onUnavailable={(message) => setUnavailableToast({ id: Date.now(), message })}
+                  />
+                )
+              })}
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </ButtonGroup>
+    </span>
   )
 
   const actionGroupWithTooltip = groupDisabledReason ? (

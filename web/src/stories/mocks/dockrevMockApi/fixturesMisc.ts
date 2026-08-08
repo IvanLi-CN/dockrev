@@ -361,7 +361,12 @@ export function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fi
     scenario === 'service-detail-lifecycle-stopped' ||
     scenario === 'service-detail-lifecycle-partial' ||
     scenario === 'service-detail-lifecycle-unknown' ||
-    scenario === 'service-detail-lifecycle-active'
+    scenario === 'service-detail-lifecycle-active' ||
+    scenario === 'stack-detail-lifecycle-running' ||
+    scenario === 'stack-detail-lifecycle-stopped' ||
+    scenario === 'stack-detail-lifecycle-partial' ||
+    scenario === 'stack-detail-lifecycle-unknown' ||
+    scenario === 'stack-detail-lifecycle-active'
   ) return buildDashboardDemo()
   if (scenario === 'dashboard-demo-hydrated-update') {
     const fixture = buildDashboardDemo()

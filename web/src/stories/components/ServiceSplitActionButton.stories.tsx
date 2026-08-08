@@ -32,10 +32,12 @@ export const UpdatePreferred: Story = {
     await userEvent.click(toggle)
 
     const menu = await documentBody.findByRole('menu', { name: '更新操作' })
+    const group = await canvas.findByRole('group', { name: '更新操作' })
     expect(toggle).toHaveAttribute('data-state', 'open')
     expect(menu).toHaveClass('w-max')
     expect(menu).toHaveClass('min-w-0')
     expect(menu).not.toHaveClass('w-40')
+    expect(menu.getBoundingClientRect().width).toBeGreaterThanOrEqual(group.getBoundingClientRect().width)
     expect(within(menu).getByText('回滚')).toBeInTheDocument()
     expect(within(menu).queryByText('默认')).not.toBeInTheDocument()
     expect(within(menu).queryByText('当前没有可回滚的升级记录')).not.toBeInTheDocument()
@@ -65,7 +67,7 @@ export const LifecycleUnavailable: Story = {
     ariaLabel: '服务生命周期',
     primary: { id: 'lifecycle-stop', label: '停止', icon: Square, iconVariant: 'solid', description: '部分副本正在运行，请先处理运行态异常', disabled: true, onSelect: noop },
     items: [
-      { id: 'lifecycle-start', label: '启动', icon: Play, description: '部分副本正在运行，请先处理运行态异常', disabled: true, onSelect: noop },
+      { id: 'lifecycle-start', label: '启动', icon: Play, iconVariant: 'solid', description: '部分副本正在运行，请先处理运行态异常', disabled: true, onSelect: noop },
       { id: 'lifecycle-stop', label: '停止', icon: Square, iconVariant: 'solid', description: '部分副本正在运行，请先处理运行态异常', disabled: true, onSelect: noop },
       { id: 'lifecycle-restart', label: '重启', icon: RotateCw, description: '部分副本正在运行，请先处理运行态异常', disabled: true, onSelect: noop },
     ],
@@ -77,6 +79,7 @@ export const LifecycleUnavailable: Story = {
     await userEvent.click(toggle)
 
     const menu = await documentBody.findByRole('menu', { name: '服务生命周期' })
+    expect(menu.querySelector('[data-service-split-item="lifecycle-start"] .serviceSplitActionIconSolid')).toBeInTheDocument()
     expect(menu.querySelector('[data-service-split-item="lifecycle-stop"] .serviceSplitActionIconSolid')).toBeInTheDocument()
     expect(within(menu).queryByText('部分副本正在运行，请先处理运行态异常')).not.toBeInTheDocument()
   },
@@ -89,7 +92,7 @@ export const GroupDisabledByServiceOperation: Story = {
     disabledReason: '服务正在更新，完成后才能启动、停止或重启。',
     primary: { id: 'lifecycle-stop', label: '停止', icon: Square, iconVariant: 'solid', onSelect: noop },
     items: [
-      { id: 'lifecycle-start', label: '启动', icon: Play, disabled: true, onSelect: noop },
+      { id: 'lifecycle-start', label: '启动', icon: Play, iconVariant: 'solid', disabled: true, onSelect: noop },
       { id: 'lifecycle-stop', label: '停止', icon: Square, iconVariant: 'solid', disabled: true, onSelect: noop },
       { id: 'lifecycle-restart', label: '重启', icon: RotateCw, disabled: true, onSelect: noop },
     ],
@@ -98,7 +101,7 @@ export const GroupDisabledByServiceOperation: Story = {
     const canvas = within(canvasElement)
     const documentBody = within(canvasElement.ownerDocument.body)
     const group = await canvas.findByRole('group', { name: '服务生命周期' })
-    const anchor = group.parentElement
+    const anchor = group.closest('.serviceSplitActionDisabledAnchor')
     expect(anchor).toHaveClass('serviceSplitActionDisabledAnchor')
     expect(group).toHaveAttribute('aria-disabled', 'true')
     expect(within(group).getByRole('button', { name: '停止' })).toBeDisabled()

@@ -29,7 +29,7 @@ export const ThreeFlatGroups: Story = {
       {
         id: 'lifecycle',
         items: [
-          { id: 'lifecycle-start', label: '启动', icon: Play, onSelect: noop },
+          { id: 'lifecycle-start', label: '启动', icon: Play, iconVariant: 'solid', onSelect: noop },
           { id: 'lifecycle-stop', label: '停止', icon: Square, iconVariant: 'solid', onSelect: noop },
           { id: 'lifecycle-restart', label: '重启', icon: RotateCw, onSelect: noop },
         ],
