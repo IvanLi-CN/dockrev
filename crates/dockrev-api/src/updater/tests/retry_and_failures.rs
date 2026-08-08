@@ -220,6 +220,124 @@ fn pull_progress_tracker_ignores_lines_without_pull_progress() {
 }
 
 #[derive(Default)]
+struct PtyProgressRunner {
+    calls: Mutex<usize>,
+}
+
+#[async_trait::async_trait]
+impl CommandRunner for PtyProgressRunner {
+    async fn run(&self, _spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+        unreachable!("pull progress must use the streaming command path")
+    }
+
+    async fn run_stream(
+        &self,
+        _spec: CommandSpec,
+        _timeout: Duration,
+        on_stdout: &mut (dyn FnMut(Vec<u8>) + Send),
+        _on_stderr: &mut (dyn FnMut(Vec<u8>) + Send),
+    ) -> anyhow::Result<CommandOutput> {
+        *self.calls.lock().unwrap() += 1;
+        on_stdout(b"4f4fb700ef54 Pulling fs layer 0B\r4f4fb700ef54 Download".to_vec());
+        on_stdout(b"ing 2MB/4MB\r".to_vec());
+        Ok(CommandOutput {
+            status: 0,
+            stdout: "4f4fb700ef54 Pulling fs layer 0B\r4f4fb700ef54 Downloading 2MB/4MB\r"
+                .to_string(),
+            stderr: String::new(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn pull_progress_reads_carriage_return_frames_from_pty_stdout() {
+    let runner = PtyProgressRunner::default();
+    let mut progress = Vec::new();
+
+    run_checked_with_pull_progress(
+        &runner,
+        CommandSpec {
+            program: "docker-compose".to_string(),
+            args: vec!["pull".to_string(), "web".to_string()],
+            env: Vec::new(),
+        },
+        Duration::from_millis(100),
+        "pull_services",
+        IdempotentRetryPolicy {
+            max_attempts: 1,
+            base_ms: 1,
+            max_ms: 2,
+        },
+        |snapshot| progress.push(snapshot),
+    )
+    .await
+    .expect("PTY stdout progress should be parsed");
+
+    assert_eq!(*runner.calls.lock().unwrap(), 1);
+    assert!(
+        progress
+            .iter()
+            .any(|snapshot| snapshot.fraction == Some(0.5)),
+        "expected a byte-fraction progress update from PTY stdout"
+    );
+}
+
+#[derive(Default)]
+struct PtyPullRateLimitRunner {
+    calls: Mutex<usize>,
+}
+
+#[async_trait::async_trait]
+impl CommandRunner for PtyPullRateLimitRunner {
+    async fn run(&self, _spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+        unreachable!("pull progress must use the streaming command path")
+    }
+
+    async fn run_stream(
+        &self,
+        _spec: CommandSpec,
+        _timeout: Duration,
+        on_stdout: &mut (dyn FnMut(Vec<u8>) + Send),
+        _on_stderr: &mut (dyn FnMut(Vec<u8>) + Send),
+    ) -> anyhow::Result<CommandOutput> {
+        *self.calls.lock().unwrap() += 1;
+        let message = "toomanyrequests: You have reached your pull rate limit";
+        on_stdout(message.as_bytes().to_vec());
+        Ok(CommandOutput {
+            status: 1,
+            stdout: message.to_string(),
+            stderr: String::new(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn pull_rate_limit_from_pty_stdout_is_not_retried() {
+    let runner = PtyPullRateLimitRunner::default();
+    let err = run_checked_with_pull_progress(
+        &runner,
+        CommandSpec {
+            program: "docker-compose".to_string(),
+            args: vec!["pull".to_string(), "web".to_string()],
+            env: Vec::new(),
+        },
+        Duration::from_millis(100),
+        "pull_services",
+        IdempotentRetryPolicy {
+            max_attempts: 3,
+            base_ms: 1,
+            max_ms: 2,
+        },
+        |_| {},
+    )
+    .await
+    .expect_err("PTY stdout rate limit failures should fail fast");
+
+    assert!(err.to_string().contains("registry rate limited"));
+    assert_eq!(*runner.calls.lock().unwrap(), 1);
+}
+
+#[derive(Default)]
 struct FlakyInspectRunner {
     calls: Mutex<usize>,
 }

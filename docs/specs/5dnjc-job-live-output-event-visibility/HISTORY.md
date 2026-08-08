@@ -32,6 +32,8 @@ PR 收口验证补充：ui_demo 的 terminal mock 保持单命令快照替换与
 
 ## 2026-08-08
 
-共享测试机复现显示，默认的 `docker-compose` 调用在管道输出时若未显式设置终端进度环境，只产生普通换行文本，导致每个 layer 状态成为新的可见行。`COMPOSE_PROGRESS=tty` 与 `COMPOSE_ANSI=always` 会恢复 `CSI 2A` 等光标覆盖序列。
+共享测试机复现显示，Compose V2 standalone 在管道输出中设置 `COMPOSE_PROGRESS=tty` 与 `COMPOSE_ANSI=always` 后会输出 `CSI 2A` 等光标覆盖序列，因此该环境从 plugin 专用条件提升到所有 Compose pull 调用。
 
-将该环境设置从 plugin 专用条件提升到所有 Compose pull 调用，确保默认 standalone 调用与 `docker compose` plugin 进入相同的 VT100 屏幕更新路径。
+后续使用真实 Compose V1 容器再次复现：即使设置相同环境，非 TTY 管道仍只输出普通换行文本；相同命令置于 PTY 后观测到 47 个光标上移序列。standalone `docker-compose` 因而改由 runner 内部 `script` 包装获得 PTY，内部环境标记在 spawn 前剥离，并在发布镜像安装 `util-linux` 提供该程序。超时回归覆盖包装后的子进程不会继续执行延迟副作用。
+
+收口审查继续修正 PTY 包装语义：`script -e` 传播子命令退出码，防止失败 pull 被误报为成功；PTY 合并到 stdout 的进度和失败文本与 stderr 按回调到达顺序共同解析。共享测试机确认 util-linux `script -e -c "exit 7"` 返回退出码 7；回归覆盖 CR 分隔的 stdout 进度帧与 stdout 限流失败不重试。

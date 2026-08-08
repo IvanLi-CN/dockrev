@@ -5,6 +5,8 @@ use std::process::Stdio;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
+pub const STREAM_PTY_ENV: &str = "DOCKREV_STREAM_PTY";
+
 #[derive(Clone, Debug)]
 pub struct CommandSpec {
     pub program: String,
@@ -49,9 +51,7 @@ impl CommandRunner for TokioCommandRunner {
     async fn run(&self, spec: CommandSpec, timeout: Duration) -> anyhow::Result<CommandOutput> {
         let mut cmd = Command::new(&spec.program);
         cmd.args(&spec.args);
-        for (k, v) in &spec.env {
-            cmd.env(k, v);
-        }
+        apply_command_env(&mut cmd, &spec.env);
         cmd.kill_on_drop(true);
 
         let output = tokio::time::timeout(timeout, cmd.output()).await??;
@@ -76,11 +76,10 @@ impl CommandRunner for TokioCommandRunner {
             StderrDone,
         }
 
-        let mut cmd = Command::new(&spec.program);
-        cmd.args(&spec.args);
-        for (k, v) in &spec.env {
-            cmd.env(k, v);
-        }
+        let (program, args) = stream_command(&spec);
+        let mut cmd = Command::new(program);
+        cmd.args(args);
+        apply_command_env(&mut cmd, &spec.env);
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
         cmd.kill_on_drop(true);
@@ -173,6 +172,67 @@ impl CommandRunner for TokioCommandRunner {
     }
 }
 
+fn apply_command_env(cmd: &mut Command, env: &[(String, String)]) {
+    for (key, value) in env {
+        if key != STREAM_PTY_ENV {
+            cmd.env(key, value);
+        }
+    }
+}
+
+fn stream_command(spec: &CommandSpec) -> (String, Vec<String>) {
+    if !requires_stream_pty(spec) {
+        return (spec.program.clone(), spec.args.clone());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // BSD script accepts a command argv after the transcript file instead
+        // of util-linux's `-c` form.
+        let mut args = vec![
+            "-q".to_string(),
+            "-e".to_string(),
+            "-F".to_string(),
+            "/dev/null".to_string(),
+        ];
+        args.push(spec.program.clone());
+        args.extend(spec.args.iter().cloned());
+        ("script".to_string(), args)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        // `script` is supplied by the runtime image and gives Compose V1 a real
+        // terminal while retaining the runner's normal streamed byte capture.
+        let command = std::iter::once(shell_quote(&spec.program))
+            .chain(spec.args.iter().map(|arg| shell_quote(arg)))
+            .collect::<Vec<_>>()
+            .join(" ");
+        (
+            "script".to_string(),
+            vec![
+                "-q".to_string(),
+                "-e".to_string(),
+                "-f".to_string(),
+                "-c".to_string(),
+                format!("exec {command}"),
+                "/dev/null".to_string(),
+            ],
+        )
+    }
+}
+
+fn requires_stream_pty(spec: &CommandSpec) -> bool {
+    spec.env
+        .iter()
+        .any(|(key, value)| key == STREAM_PTY_ENV && value == "1")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\\"'\\\"'"))
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
@@ -234,5 +294,129 @@ mod tests {
 
         assert_eq!(stdout_chunks, b"layer 1\r");
         assert_eq!(stderr_chunks, b"layer 2\n");
+    }
+
+    #[test]
+    fn stream_command_uses_a_pty_without_forwarding_its_routing_marker() {
+        let spec = CommandSpec {
+            program: "docker-compose".to_string(),
+            args: vec!["pull".to_string(), "web service".to_string()],
+            env: vec![
+                ("DOCKER_CONFIG".to_string(), "/tmp/config".to_string()),
+                (STREAM_PTY_ENV.to_string(), "1".to_string()),
+            ],
+        };
+
+        let (program, args) = stream_command(&spec);
+
+        assert_eq!(program, "script");
+        if cfg!(target_os = "macos") {
+            assert_eq!(
+                args,
+                [
+                    "-q",
+                    "-e",
+                    "-F",
+                    "/dev/null",
+                    "docker-compose",
+                    "pull",
+                    "web service"
+                ]
+            );
+        } else {
+            assert_eq!(args[..4], ["-q", "-e", "-f", "-c"]);
+            assert_eq!(args[5], "/dev/null");
+            assert_eq!(args[4], "exec 'docker-compose' 'pull' 'web service'");
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[tokio::test]
+    async fn run_stream_pty_marker_is_not_forwarded_to_the_command() {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let mut on_stdout = |chunk: Vec<u8>| stdout.extend(chunk);
+        let mut on_stderr = |chunk: Vec<u8>| stderr.extend(chunk);
+
+        let output = TokioCommandRunner
+            .run_stream(
+                CommandSpec {
+                    program: "sh".to_string(),
+                    args: vec![
+                        "-c".to_string(),
+                        "test -z \"${DOCKREV_STREAM_PTY+x}\"; printf '\\033[1Aprogress\\r'"
+                            .to_string(),
+                    ],
+                    env: vec![(STREAM_PTY_ENV.to_string(), "1".to_string())],
+                },
+                Duration::from_secs(1),
+                &mut on_stdout,
+                &mut on_stderr,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(output.status, 0);
+        assert!(stdout.windows(4).any(|bytes| bytes == b"\x1b[1A"));
+        assert!(stderr.is_empty());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[tokio::test]
+    async fn run_stream_pty_propagates_child_exit_status() {
+        let mut discard_stdout = |_chunk: Vec<u8>| {};
+        let mut discard_stderr = |_chunk: Vec<u8>| {};
+
+        let output = TokioCommandRunner
+            .run_stream(
+                CommandSpec {
+                    program: "sh".to_string(),
+                    args: vec!["-c".to_string(), "exit 7".to_string()],
+                    env: vec![(STREAM_PTY_ENV.to_string(), "1".to_string())],
+                },
+                Duration::from_secs(1),
+                &mut discard_stdout,
+                &mut discard_stderr,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(output.status, 7);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[tokio::test]
+    async fn run_stream_pty_kills_timed_out_child_before_delayed_side_effect() {
+        let marker = std::env::temp_dir().join(format!(
+            "dockrev-stream-pty-timeout-{}-{}.marker",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let command = format!("sleep 0.2; touch {}", marker.display());
+        let mut discard_stdout = |_chunk: Vec<u8>| {};
+        let mut discard_stderr = |_chunk: Vec<u8>| {};
+
+        let result = TokioCommandRunner
+            .run_stream(
+                CommandSpec {
+                    program: "sh".to_string(),
+                    args: vec!["-c".to_string(), command],
+                    env: vec![(STREAM_PTY_ENV.to_string(), "1".to_string())],
+                },
+                Duration::from_millis(20),
+                &mut discard_stdout,
+                &mut discard_stderr,
+            )
+            .await;
+
+        assert!(result.is_err());
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(
+            !marker.exists(),
+            "timed-out PTY command still ran its delayed side effect"
+        );
     }
 }

@@ -24,7 +24,7 @@
 - parser 尺寸固定为 240 列、200 屏幕行、2000 行滚屏；尾部空行裁剪。50ms 窗口内只发送最后快照，命令完成时强制发送最终快照。
 - 进入 VT100 parser 前应用有状态的终端行规整：裸 `LF` 转为 `CRLF`，已有 `CRLF`、独立 `CR`、ANSI/CSI 和跨 chunk 边界保持不变，使管道输出符合终端换行语义。
 - stdout/stderr 按原始块到达顺序合并，保留常见 ANSI 颜色、粗体、暗淡、下划线以及 `\r`、退格、擦行、光标移动等 VT100/CSI 语义。
-- Docker Compose 的流式 pull 无论以 `docker compose` plugin 还是 `docker-compose` standalone 调用，均使用 `COMPOSE_PROGRESS=tty` 与 `COMPOSE_ANSI=always` 保留 layer 原地更新控制序列；进度摘要解析只消费清理控制序列后的副本，实时终端仍消费原始字节。
+- `docker compose` plugin 的流式 pull 使用 `COMPOSE_PROGRESS=tty` 与 `COMPOSE_ANSI=always` 保留 layer 原地更新控制序列。standalone `docker-compose` 除相同环境外还经 Unix `script -e` 获得 PTY 并传播子命令退出码，确保 Compose V1 不会因管道退化为逐行文本；内部 PTY 路由标记不会传给子进程，发布镜像提供 `script`。pull 进度与失败分类按 stdout/stderr 回调到达顺序共用跨块缓冲，进度摘要解析只消费清理控制序列后的副本，实时终端仍消费原始字节。
 - `job_live_command_complete` 是仅内存广播的短暂完成标记，包含 `commandSeq`、`hadOutput` 和 `summaryPersisted`。它不设置 SSE `id`，不会影响 Last-Event-ID；只有 `summaryPersisted=true` 时前端才会抑制后续摘要。
 - 成功的 `docker compose pull` 与 `docker-compose pull` 持久化 `status=0 stdout= stderr=`，不把已通过临时终端展示的下载进度嵌入聚合摘要；失败 pull 仍保留截断后的 stdout/stderr。
 - hub 在任务终态释放；没有断线补播或历史缓存。
@@ -61,7 +61,7 @@
   ![mobile](./assets/job-detail-compact-pull-history-mobile.jpg)
 - 图片经 `trim_whitespace.py --margin-policy trim_only` 处理，结果为 `unchanged`；Storybook 交互场景为 `Pages/JobDetailPage/CompactSuccessfulPullHistory`，覆盖成功 pull 精简摘要的历史呈现。
 - 主人验收使用的不可变快照：`/Users/ivan/.codex/user-inline-assets/dockrev__f83adb76/2026/08/06/20260806T111641Z-dockrev-compact-pull-desktop-final-73cb7a9a.png`、`/Users/ivan/.codex/user-inline-assets/dockrev__f83adb76/2026/08/06/20260806T111641Z-dockrev-compact-pull-mobile-trimmed-afd927a4.png`。
-- standalone `docker-compose` 的隔离原始字节复现证明，设置 `COMPOSE_PROGRESS=tty` 和 `COMPOSE_ANSI=always` 后会输出 VT100 光标覆盖序列；同一 `commandSeq` 在页面中仅保留两个无等级的终端快照行，`WARN` 计数为零。
+- 共享测试机的原始字节复现表明，Compose V1 在管道中没有光标覆盖序列而会逐行追加；经 PTY 后产生 `CSI 2A` 光标上移。可复现命令、Compose 版本和字节特征见 [Compose V1 PTY reproduction](./COMPOSE-V1-PTY-REPRODUCTION.md)。以下图片只验证前端消费终端快照的呈现：同一 `commandSeq` 在页面中仅保留两个无等级终端行，`WARN` 计数为零。
   PR: include
   ![standalone Compose terminal overwrite desktop](./assets/standalone-compose-terminal-overwrite-desktop.png)
 - `393x852` 证据覆盖相同终端快照替换、默认关闭的 EVEN 开关和窄屏日志区域；截图由 mock-only `ui_demo` 生成。

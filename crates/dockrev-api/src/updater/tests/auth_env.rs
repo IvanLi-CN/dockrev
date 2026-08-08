@@ -40,7 +40,7 @@ async fn update_job_injects_docker_auth_env_into_compose_and_docker_commands() {
         .find(|spec| spec.args == vec!["image", "tag", "sha256:new", "ghcr.io/org/web:1.0"])
         .expect("docker tag command should exist");
 
-    assert_eq!(compose_pull.env.len(), 3);
+    assert_eq!(compose_pull.env.len(), 4);
     assert_eq!(compose_pull.env[0].0, "DOCKER_CONFIG");
     assert!(compose_pull.env[0].1.ends_with("/.docker"));
     assert_eq!(
@@ -48,6 +48,7 @@ async fn update_job_injects_docker_auth_env_into_compose_and_docker_commands() {
         [
             ("COMPOSE_PROGRESS".to_string(), "tty".to_string()),
             ("COMPOSE_ANSI".to_string(), "always".to_string()),
+            (crate::runner::STREAM_PTY_ENV.to_string(), "1".to_string()),
         ]
     );
 
@@ -127,6 +128,7 @@ async fn update_job_without_docker_config_keeps_only_pull_terminal_env() {
         vec![
             ("COMPOSE_PROGRESS".to_string(), "tty".to_string()),
             ("COMPOSE_ANSI".to_string(), "always".to_string()),
+            (crate::runner::STREAM_PTY_ENV.to_string(), "1".to_string()),
         ]
     );
     assert!(

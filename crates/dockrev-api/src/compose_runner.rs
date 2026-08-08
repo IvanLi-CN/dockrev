@@ -1,4 +1,7 @@
-use crate::{api::types::ComposeConfig, runner::CommandSpec};
+use crate::{
+    api::types::ComposeConfig,
+    runner::{CommandSpec, STREAM_PTY_ENV},
+};
 
 #[derive(Clone, Debug)]
 pub struct ComposeRunnerConfig {
@@ -60,6 +63,12 @@ impl ComposeStack {
             .push(("COMPOSE_PROGRESS".to_string(), "tty".to_string()));
         cmd.env
             .push(("COMPOSE_ANSI".to_string(), "always".to_string()));
+        if !is_docker_plugin(&cfg.compose_bin) {
+            // Compose V1 ignores COMPOSE_PROGRESS when its output is piped. Route
+            // standalone invocations through the runner's PTY without exposing
+            // the implementation marker to the child process.
+            cmd.env.push((STREAM_PTY_ENV.to_string(), "1".to_string()));
+        }
         cmd
     }
 
@@ -295,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn standalone_compose_progress_env_keeps_terminal_output() {
+    fn standalone_compose_progress_env_routes_through_a_terminal() {
         let stack = ComposeStack {
             project_name: "myproj".to_string(),
             compose: ComposeConfig {
@@ -316,6 +325,7 @@ mod tests {
             vec![
                 ("COMPOSE_PROGRESS".to_string(), "tty".to_string()),
                 ("COMPOSE_ANSI".to_string(), "always".to_string()),
+                (crate::runner::STREAM_PTY_ENV.to_string(), "1".to_string()),
             ]
         );
     }
