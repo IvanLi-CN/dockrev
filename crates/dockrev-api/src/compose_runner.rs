@@ -55,12 +55,11 @@ impl ComposeStack {
         let mut cmd = self.pull_services(cfg, services);
         // Keep Compose in terminal progress mode so layer updates overwrite their screen rows.
         // The command is piped rather than attached to a TTY, so ANSI must be explicit too.
-        if is_docker_plugin(&cfg.compose_bin) {
-            cmd.env
-                .push(("COMPOSE_PROGRESS".to_string(), "tty".to_string()));
-            cmd.env
-                .push(("COMPOSE_ANSI".to_string(), "always".to_string()));
-        }
+        // `docker-compose` can be the standalone invocation for the same V2 implementation.
+        cmd.env
+            .push(("COMPOSE_PROGRESS".to_string(), "tty".to_string()));
+        cmd.env
+            .push(("COMPOSE_ANSI".to_string(), "always".to_string()));
         cmd
     }
 
@@ -289,6 +288,32 @@ mod tests {
                     "DOCKER_CONFIG".to_string(),
                     "/tmp/dockrev-auth-config/.docker".to_string()
                 ),
+                ("COMPOSE_PROGRESS".to_string(), "tty".to_string()),
+                ("COMPOSE_ANSI".to_string(), "always".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn standalone_compose_progress_env_keeps_terminal_output() {
+        let stack = ComposeStack {
+            project_name: "myproj".to_string(),
+            compose: ComposeConfig {
+                kind: "path".to_string(),
+                compose_files: vec!["/srv/app/docker-compose.yml".to_string()],
+                env_file: None,
+            },
+        };
+        let cfg = ComposeRunnerConfig {
+            compose_bin: "docker-compose".to_string(),
+            env: Vec::new(),
+        };
+
+        let cmd = stack.pull_services_with_progress(&cfg, &["web".to_string()]);
+
+        assert_eq!(
+            cmd.env,
+            vec![
                 ("COMPOSE_PROGRESS".to_string(), "tty".to_string()),
                 ("COMPOSE_ANSI".to_string(), "always".to_string()),
             ]

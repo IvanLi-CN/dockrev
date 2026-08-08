@@ -29,3 +29,9 @@ PR 收口验证补充：ui_demo 的 terminal mock 保持单命令快照替换与
 线上复核发现成功的 `docker-compose pull` 虽不再逐行落库，但 `DbLoggingRunner` 仍把整段 transient 下载历史嵌入单条 `status=0 stdout=... stderr=...` 聚合摘要。刷新、重连或错过临时完成标记后，该摘要会完整恢复，表现为下载进度再次大段刷屏。
 
 成功的 plugin/standalone Compose pull 改为只持久化命令和退出状态，不再把 stdout/stderr 进度体写入摘要；失败 pull 继续保存截断后的输出。这样断线恢复仍保留可审计结果，同时与“下载进度不持久化、不补播”的主契约一致。
+
+## 2026-08-08
+
+共享测试机复现显示，默认的 `docker-compose` 调用在管道输出时若未显式设置终端进度环境，只产生普通换行文本，导致每个 layer 状态成为新的可见行。`COMPOSE_PROGRESS=tty` 与 `COMPOSE_ANSI=always` 会恢复 `CSI 2A` 等光标覆盖序列。
+
+将该环境设置从 plugin 专用条件提升到所有 Compose pull 调用，确保默认 standalone 调用与 `docker compose` plugin 进入相同的 VT100 屏幕更新路径。

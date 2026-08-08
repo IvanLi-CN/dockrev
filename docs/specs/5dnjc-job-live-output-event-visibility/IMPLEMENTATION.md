@@ -6,7 +6,7 @@
 
 ## 计划覆盖
 
-- Rust：原始字节块 runner、VT100 0.16 parser、stdout/stderr 合并、管道裸 `LF` 的有状态 `CRLF` 行规整、50ms 快照节流、transient `commandSeq`、命令完成标记、SSE 多路复用和任务终态清理；订阅断开释放最后一个 hub 条目，Compose plugin pull 使用 `COMPOSE_PROGRESS=tty` 与 `COMPOSE_ANSI=always`，成功 plugin/standalone Compose pull 的持久化结果只保留状态，失败输出仍保留，进度摘要解析清理 ANSI 控制序列后再计算，service-log partial buffer 限制为 64 KiB，并在强制分片时保持 UTF-8 边界和实时续行换行。
+- Rust：原始字节块 runner、VT100 0.16 parser、stdout/stderr 合并、管道裸 `LF` 的有状态 `CRLF` 行规整、50ms 快照节流、transient `commandSeq`、命令完成标记、SSE 多路复用和任务终态清理；订阅断开释放最后一个 hub 条目，Compose pull 的 plugin/standalone 调用均使用 `COMPOSE_PROGRESS=tty` 与 `COMPOSE_ANSI=always`，成功 plugin/standalone Compose pull 的持久化结果只保留状态，失败输出仍保留，进度摘要解析清理 ANSI 控制序列后再计算，service-log partial buffer 限制为 64 KiB，并在强制分片时保持 UTF-8 边界和实时续行换行。
 - Web：同一 `commandSeq` 的终端快照替换与冻结、空等级列、受限 ANSI 样式、同连接内摘要顺序去重、EVEN localStorage 偏好和日志工具栏开关；同长度快照更新时仍保持自动跟随，暂停跟随不回跳。
 - Storybook/ui_demo：终端回车进度替换、样式 segments、实时增长、去重、EVEN 开关、自动跟随与暂停跟随场景。
 - 收口结构：service-log 解析回归测试移到独立模块，mock terminal 场景保持行为不变并满足仓库单文件预算（`install.ts` 保持在 1200 行上限内）。
