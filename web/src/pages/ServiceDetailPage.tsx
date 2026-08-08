@@ -852,7 +852,7 @@ export function ServiceDetailPage(props: {
         <ReadonlySnapshotNotice tone="warn" title="当前离线。" detail="仅在存在可用缓存时显示只读内容；日志与设置需要联网。" />
       ) : null}
       <section className="detailHeroShell">
-        <div className={`${effectiveBannerClass} svcDetailSummaryRail`} data-service-detail-context="status-summary">
+        <div className={`${effectiveBannerClass} svcDetailSummaryRail`} data-service-detail-context="status-summary" aria-live={operationProgress ? "polite" : undefined} role={operationProgress ? "status" : undefined}>
           <div className="svcDetailSummaryLead">
             <div
               className="mono monoPrimary monoSplit imageLinkRow svcDetailSummaryImage"
@@ -862,21 +862,12 @@ export function ServiceDetailPage(props: {
               <ImageLinkIcons imageRef={effectiveService.image.ref} repoUrl={visibleRepoUrl} />
             </div>
           </div>
-          <div
-            className="svcDetailSummaryStatus"
-            aria-live={operationProgress ? "polite" : undefined}
-            role={operationProgress ? "status" : undefined}
-          >
-            {operationProgress ? (
-              <LoaderCircle aria-hidden="true" className="svcBannerActivityIcon" />
-            ) : (
-              <span className={effectiveDotClass} />
-            )}
+          <div className="svcDetailSummaryStatus">
+            {operationProgress ? <LoaderCircle aria-hidden="true" className="svcBannerActivityIcon" /> : <span className={effectiveDotClass} />}
             <div className="svcBannerTitle">{effectiveBannerTitle}</div>
             <div className="svcBannerDetail svcDetailStatusSummary">{effectiveBannerDetail}</div>
           </div>
         </div>
-
         <OverlayScrollArea className="svcDetailTabsShell" data-service-detail-tabs-shell="true" options={{ overflow: { x: "scroll", y: "hidden" } }}>
           <Tabs
             onValueChange={(value) => {
