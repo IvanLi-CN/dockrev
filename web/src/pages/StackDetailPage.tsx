@@ -1,10 +1,16 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { ArrowLeft, Play, RefreshCw, RotateCw, Square } from 'lucide-react'
 import {
+  ApiError,
   getStack,
+  getStackLifecycleStatus,
   getStackSettings,
   listJobs,
   putStackSettings,
+  triggerStackLifecycle,
   type JobListItem,
+  type ServiceLifecycleAction,
+  type ServiceLifecycleStatusResponse,
   type StackDetail,
   type StackSettings,
 } from '../api'
@@ -13,9 +19,12 @@ import { AutoUpdatePolicyDrawer } from '../components/AutoUpdatePolicyDrawer'
 import { AutoUpdatePolicyResultCard } from '../components/AutoUpdatePolicyResultCard'
 import { RecentUpdateRecords, selectRecentStackUpdateJobs } from '../components/RecentUpdateRecords'
 import { ReadonlySnapshotNotice } from '../components/ReadonlySnapshotNotice'
+import { ServiceMobileActionMenu, ServiceSplitActionButton } from '../components/ServiceSplitActionButton'
+import { useConfirm } from '../confirm'
 import { usePwaStatus } from '../pwaStatus'
 import { buildReadonlySnapshotKey, readReadonlySnapshot, writeReadonlySnapshot } from '../readonlySnapshotCache'
 import { navigate } from '../routes'
+import { publishServiceTreeRefresh } from '../serviceTreeRefresh'
 import { Button, Mono, Pill } from '../ui'
 import { serviceRowStatus } from '../updateStatus'
 
@@ -39,6 +48,33 @@ function statusTone(status: ReturnType<typeof serviceRowStatus>): 'ok' | 'warn' 
   return 'muted'
 }
 
+const lifecycleReasonLabels: Record<string, string> = {
+  lifecycle_status_loading: '正在读取实时状态',
+  lifecycle_status_unavailable: '暂时无法读取运行状态，请刷新后重试',
+  partial_replicas_running: '仅部分服务正在运行，请先处理运行态异常',
+  stack_services_have_mixed_states: 'Stack 内服务运行状态不一致',
+  stack_archived: '归档 Stack 不可操作',
+  stack_contains_archived_service: 'Stack 包含归档服务不可操作',
+  dockrev_stack_managed_via_supervisor: '包含 Dockrev 的 Stack 不支持生命周期操作',
+  stack_lifecycle_in_progress: 'Stack 生命周期任务正在执行',
+  stack_update_in_progress: 'Stack 更新任务正在执行',
+  global_update_in_progress: '全局更新任务正在执行',
+  container_missing_for_compose_v1: 'Compose V1 未找到已有容器',
+  stack_has_no_services: 'Stack 内没有服务',
+  rollback_in_progress: '回滚任务正在执行',
+  service_lifecycle_in_progress: '服务生命周期任务正在执行',
+  service_update_in_progress: '服务更新任务正在执行',
+}
+
+function lifecycleReasonLabel(reason: string | null | undefined): string | undefined {
+  if (!reason) return undefined
+  return lifecycleReasonLabels[reason] ?? reason
+}
+
+function activeOperation(status: string | null | undefined): boolean {
+  return status === 'queued' || status === 'running'
+}
+
 const STACK_DETAIL_SNAPSHOT_STALE_MS = 60_000
 
 type StackDetailSnapshotPayload = {
@@ -54,6 +90,7 @@ export function StackDetailPage(props: {
 }) {
   const { stackId, onLastScanHint, onTopActions } = props
   const { isOnline } = usePwaStatus()
+  const confirm = useConfirm()
   const snapshotKey = buildReadonlySnapshotKey('stack-detail', stackId)
   const [stack, setStack] = useState<StackDetail | null>(null)
   const [settings, setSettings] = useState<StackSettings | null>(null)
@@ -63,6 +100,13 @@ export function StackDetailPage(props: {
   const [autoPolicyDraft, setAutoPolicyDraft] = useState(() => createDefaultAutoUpdatePolicy('override'))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [lifecycleStatus, setLifecycleStatus] = useState<ServiceLifecycleStatusResponse | null>(null)
+  const [lifecycleSubmitting, setLifecycleSubmitting] = useState(false)
+  const lifecycleActiveJobIdRef = useRef<string | null>(null)
+  const refreshRequestIdRef = useRef(0)
+  const lifecycleStatusRequestIdRef = useRef(0)
+  const stackIdRef = useRef(stackId)
+  stackIdRef.current = stackId
   const [, setSnapshotStatus] = useState<'missing' | 'fresh' | 'stale' | 'expired' | 'unsupported'>(
     'missing',
   )
@@ -71,13 +115,17 @@ export function StackDetailPage(props: {
   const [snapshotActive, setSnapshotActive] = useState(false)
 
   const refresh = useCallback(async () => {
+    const requestedStackId = stackId
+    if (stackIdRef.current !== requestedStackId) return
+    const requestId = ++refreshRequestIdRef.current
     setError(null)
     onLastScanHint(undefined)
     const [stackRes, settingsRes, jobsRes] = await Promise.all([
-      getStack(stackId),
-      getStackSettings(stackId),
+      getStack(requestedStackId),
+      getStackSettings(requestedStackId),
       listJobs().catch(() => []),
     ])
+    if (stackIdRef.current !== requestedStackId || requestId !== refreshRequestIdRef.current) return
     setStack(stackRes)
     setSettings(settingsRes)
     setCachedPolicy(settingsRes.autoUpdatePolicy ?? null)
@@ -85,6 +133,84 @@ export function StackDetailPage(props: {
     setSnapshotActive(false)
     setSnapshotAnchorFetchedAt(null)
   }, [onLastScanHint, stackId])
+
+  const refreshLifecycleStatus = useCallback(async () => {
+    const requestedStackId = stackId
+    if (stackIdRef.current !== requestedStackId) return null
+    const requestId = ++lifecycleStatusRequestIdRef.current
+    const next = await getStackLifecycleStatus(requestedStackId)
+    if (stackIdRef.current !== requestedStackId || requestId !== lifecycleStatusRequestIdRef.current) return null
+    setLifecycleStatus(next)
+    return next
+  }, [stackId])
+
+  const refreshAll = useCallback(async () => {
+    await Promise.all([
+      refresh(),
+      refreshLifecycleStatus().catch(() => undefined),
+    ])
+  }, [refresh, refreshLifecycleStatus])
+
+  const activeLifecycleJob = lifecycleStatus?.activeJob && activeOperation(lifecycleStatus.activeJob.status)
+    ? lifecycleStatus.activeJob
+    : null
+  const activeLifecycleJobId = activeLifecycleJob?.id ?? null
+  const activeLifecycleJobType = activeLifecycleJob?.type ?? null
+  const activeLifecycleJobStatus = activeLifecycleJob?.status ?? null
+  const activeLifecycleJobAction = activeLifecycleJob?.action ?? null
+  const stackArchived = Boolean(stack?.archived)
+  const lifecycleStatusLoading = lifecycleStatus === null
+
+  const requestLifecycleAction = useCallback((action: ServiceLifecycleAction) => {
+    void (async () => {
+      if (!stack || stack.id !== stackId || stackIdRef.current !== stackId) return
+      if (activeLifecycleJobId && activeLifecycleJobType === 'stack_lifecycle' && activeLifecycleJobStatus && activeOperation(activeLifecycleJobStatus)) {
+        navigate({ name: 'job', jobId: activeLifecycleJobId })
+        return
+      }
+      if (action !== 'start') {
+        const actionLabel = action === 'stop' ? '停止' : '重启'
+        const ok = await confirm({
+          title: `确认${actionLabel} Stack ${stack.name}？`,
+          body: <div className="modalLead">该操作会立即影响 Stack 内的 {stack.services.length} 个服务。</div>,
+          confirmText: actionLabel,
+          cancelText: '取消',
+          confirmVariant: action === 'stop' ? 'danger' : 'primary',
+          badgeText: null,
+        })
+        if (!ok) return
+      }
+      if (stack.id !== stackId || stackIdRef.current !== stackId) return
+      setLifecycleSubmitting(true)
+      setError(null)
+      try {
+        const result = await triggerStackLifecycle(stack.id, action)
+        lifecycleActiveJobIdRef.current = result.jobId
+        setLifecycleStatus((previous) => ({
+          state: previous?.state ?? (action === 'start' ? 'stopped' : 'running'),
+          activeJob: { id: result.jobId, type: 'stack_lifecycle', status: 'queued', action },
+          unavailableReason: null,
+        }))
+        publishServiceTreeRefresh({ stackId, reason: 'lifecycle-job-started' })
+        const refreshed = await refreshLifecycleStatus().catch(() => null)
+        if (refreshed && !refreshed.activeJob) {
+          setLifecycleStatus((previous) => previous?.activeJob?.id === result.jobId ? { ...refreshed, activeJob: previous.activeJob } : refreshed)
+        }
+      } catch (e: unknown) {
+        if (e instanceof ApiError && e.status === 409) {
+          const details = e.details && typeof e.details === 'object' ? e.details as Record<string, unknown> : null
+          const existingJobId = typeof details?.existingJobId === 'string' ? details.existingJobId : null
+          if (existingJobId) navigate({ name: 'job', jobId: existingJobId })
+          else setError(e.message)
+          await refreshLifecycleStatus().catch(() => undefined)
+        } else {
+          setError(errorMessage(e))
+        }
+      } finally {
+        setLifecycleSubmitting(false)
+      }
+    })()
+  }, [activeLifecycleJobId, activeLifecycleJobStatus, activeLifecycleJobType, confirm, refreshLifecycleStatus, stack, stackId])
 
   useEffect(() => {
     let cancelled = false
@@ -110,6 +236,47 @@ export function StackDetailPage(props: {
   }, [refresh])
 
   useEffect(() => {
+    lifecycleActiveJobIdRef.current = null
+    setLifecycleStatus(null)
+    setStack(null)
+    setSettings(null)
+    setJobs([])
+  }, [stackId])
+
+  useEffect(() => {
+    let cancelled = false
+    let timer: number | null = null
+    const refreshStatus = async () => {
+      try {
+        const previousActiveJobId = lifecycleActiveJobIdRef.current
+        const next = await refreshLifecycleStatus()
+        if (cancelled || !next) return
+        const nextActiveJobId = next.activeJob?.id ?? null
+        lifecycleActiveJobIdRef.current = nextActiveJobId
+        setLifecycleStatus(next)
+        if (previousActiveJobId && !nextActiveJobId) {
+          await refresh().catch(() => undefined)
+          publishServiceTreeRefresh({ stackId, reason: 'lifecycle-job-settled' })
+        }
+        if (nextActiveJobId) timer = window.setTimeout(() => void refreshStatus(), 1200)
+      } catch {
+        if (cancelled) return
+        setLifecycleStatus((previous) => ({
+          state: 'unknown',
+          unavailableReason: 'lifecycle_status_unavailable',
+          activeJob: previous?.activeJob ?? null,
+        }))
+        if (isOnline) timer = window.setTimeout(() => void refreshStatus(), 2400)
+      }
+    }
+    void refreshStatus()
+    return () => {
+      cancelled = true
+      if (timer != null) window.clearTimeout(timer)
+    }
+  }, [isOnline, lifecycleStatus?.activeJob?.id, refresh, refreshLifecycleStatus, stackId])
+
+  useEffect(() => {
     if (!stack) return
     void writeReadonlySnapshot(
       snapshotKey,
@@ -126,18 +293,79 @@ export function StackDetailPage(props: {
   }, [cachedPolicy, jobs, settings?.autoUpdatePolicy, snapshotAnchorFetchedAt, snapshotKey, stack])
 
   useEffect(() => {
+    const lifecycleJob = activeLifecycleJobType === 'stack_lifecycle' && activeLifecycleJobId && activeLifecycleJobStatus
+      ? { id: activeLifecycleJobId, action: activeLifecycleJobAction, status: activeLifecycleJobStatus }
+      : null
+    const hasOtherActiveJob = Boolean(activeLifecycleJobId && activeLifecycleJobType !== 'stack_lifecycle')
+    const lifecycleState = lifecycleStatus?.state ?? 'unknown'
+    const lifecycleReason = lifecycleSubmitting
+      ? '操作正在提交'
+      : !isOnline
+        ? '离线时无法操作 Stack'
+        : stackArchived
+          ? '归档 Stack 不可操作'
+      : lifecycleReasonLabel(lifecycleStatus?.unavailableReason ?? (lifecycleStatusLoading ? 'lifecycle_status_loading' : null))
+    const lifecycleItems = (['start', 'stop', 'restart'] as ServiceLifecycleAction[]).map((action) => {
+      const compatible = (action === 'start' && lifecycleState === 'stopped') ||
+        ((action === 'stop' || action === 'restart') && lifecycleState === 'running')
+      const activeAction = Boolean(lifecycleJob && lifecycleJob.action === action)
+      const icon = action === 'start' ? Play : action === 'stop' ? Square : RotateCw
+      return {
+        id: `lifecycle-${action}`,
+        label: action === 'start' ? '启动' : action === 'stop' ? '停止' : '重启',
+        icon,
+        iconVariant: action === 'start' || action === 'stop' ? 'solid' as const : undefined,
+        description: lifecycleJob
+          ? activeAction ? '任务进行中，点击查看任务详情' : '其他生命周期任务进行中'
+          : hasOtherActiveJob ? lifecycleReasonLabel(lifecycleStatus?.unavailableReason) ?? '其他任务正在执行'
+            : lifecycleReason ?? (compatible ? undefined : '当前 Stack 状态不支持该操作'),
+        disabled: lifecycleJob ? !activeAction : hasOtherActiveJob || Boolean(lifecycleReason) || busy || lifecycleSubmitting || !compatible,
+        onSelect: () => lifecycleJob && activeAction ? navigate({ name: 'job', jobId: lifecycleJob.id }) : requestLifecycleAction(action),
+        loading: Boolean(lifecycleJob && activeAction),
+        loadingClickable: Boolean(lifecycleJob && activeAction),
+      }
+    })
+    const lifecyclePrimary = lifecycleJob
+      ? { ...lifecycleItems.find((item) => item.id === `lifecycle-${lifecycleJob.action ?? 'restart'}`)!, label: lifecycleJob.status === 'queued' ? '操作排队中…' : '操作进行中…', disabled: false, loading: true, loadingClickable: true }
+      : lifecycleState === 'stopped' ? lifecycleItems[0] : lifecycleItems[1]
+    const lifecycleGroupDisabledReason = lifecycleJob
+      ? undefined
+      : hasOtherActiveJob
+        ? lifecycleReasonLabel(lifecycleStatus?.unavailableReason) ?? '其他任务正在执行'
+        : lifecycleSubmitting
+          ? '操作正在提交'
+          : !isOnline
+            ? '离线时无法操作 Stack'
+            : busy
+              ? '正在保存 Stack 设置'
+              : lifecycleReason ?? undefined
     onTopActions(
       <>
-        <Button disabled={busy} onClick={() => navigate({ name: 'services' })}>
-          返回服务
-        </Button>
-        <Button disabled={busy || !isOnline} onClick={() => void refresh()}>
-          刷新
-        </Button>
+        <div className="serviceDesktopActions">
+          <ServiceSplitActionButton
+            ariaLabel="Stack 生命周期"
+            disabled={Boolean(lifecycleGroupDisabledReason)}
+            disabledReason={lifecycleGroupDisabledReason}
+            items={lifecycleItems}
+            primary={lifecyclePrimary}
+          />
+          <Button disabled={busy} onClick={() => navigate({ name: 'services' })}>返回服务</Button>
+          <Button disabled={busy || !isOnline} onClick={() => void refreshAll()}>刷新</Button>
+        </div>
+        <ServiceMobileActionMenu
+          ariaLabel="Stack 操作"
+          groups={[
+            { id: 'lifecycle', items: lifecycleItems },
+            { id: 'navigation', items: [
+              { id: 'return-services', label: '返回服务', icon: ArrowLeft, disabled: busy, onSelect: () => navigate({ name: 'services' }) },
+              { id: 'refresh', label: '刷新', icon: RefreshCw, disabled: busy || !isOnline, description: !isOnline ? '离线时无法刷新' : undefined, onSelect: () => void refreshAll() },
+            ] },
+          ]}
+        />
       </>,
     )
     return () => onTopActions(null)
-  }, [busy, isOnline, onTopActions, refresh])
+  }, [activeLifecycleJobAction, activeLifecycleJobId, activeLifecycleJobStatus, activeLifecycleJobType, busy, isOnline, lifecycleStatus?.state, lifecycleStatus?.unavailableReason, lifecycleStatusLoading, lifecycleSubmitting, onTopActions, refresh, refreshAll, requestLifecycleAction, stackArchived])
 
   if (!stack) {
     if (!isOnline) {

@@ -47,6 +47,18 @@ export function handleServiceLifecycleRoute(input: {
     const stackId = decodeURIComponent(urlPath.split('/').slice(3, -1).join('/'))
     const stack = fixture.stackById[stackId]
     if (!stack) return json({ error: { code: 'not_found', message: 'stack not found' } }, { status: 404 })
+    const stateByScenario: Partial<Record<DockrevApiScenario, ServiceLifecycleStatusResponse>> = {
+      'stack-detail-lifecycle-running': { state: 'running' },
+      'stack-detail-lifecycle-stopped': { state: 'stopped' },
+      'stack-detail-lifecycle-partial': { state: 'partial', unavailableReason: 'stack_services_have_mixed_states' },
+      'stack-detail-lifecycle-unknown': { state: 'unknown', unavailableReason: 'lifecycle_status_unavailable' },
+      'stack-detail-lifecycle-active': {
+        state: 'running',
+        activeJob: { id: 'job-stack-lifecycle-restart', type: 'stack_lifecycle', status: 'running', action: 'restart' },
+        unavailableReason: 'stack_lifecycle_in_progress',
+      },
+    }
+    if (stateByScenario[scenario]) return json(stateByScenario[scenario])
     const states = stack.services.map((service) => service.lifecycleState ?? 'unknown')
     const state = states.length === 0 || states.includes('unknown')
       ? 'unknown'
