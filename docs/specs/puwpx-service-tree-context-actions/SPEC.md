@@ -93,7 +93,7 @@
 
 PR: include
 
-最终 mock-only `ui_demo` Stack 生命周期入口证据（绑定当前工作树 SHA；桌面默认视口与 `393x852` 移动视口）：
+最终 mock-only Storybook canvas Stack 生命周期入口证据（桌面默认视口与 `393x852` 移动视口）：
 
 ![Stack 生命周期桌面入口](./assets/stack-lifecycle-desktop.png)
 
@@ -103,7 +103,7 @@ PR: include
 
 ![服务树更新快捷操作菜单](./assets/service-tree-context-menu-update-icon.jpg)
 
-截图显示 Stack 顶栏在桌面提供状态感知 split action，移动端将生命周期、返回服务和刷新收进更多菜单；服务树更新菜单按“重启、停止、分隔线、更新”排列，移动长按行为由 Storybook `play` 用例覆盖。
+截图显示 Stack 顶栏在桌面提供状态感知 split action，移动端将生命周期、返回服务和刷新收进更多菜单；截图来源为确定性 mock Storybook canvas，服务树更新菜单按“重启、停止、分隔线、更新”排列，移动长按行为由 Storybook `play` 用例覆盖。
 
 ## Related PRs
 

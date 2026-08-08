@@ -17,7 +17,7 @@
 
 ## Remaining Gaps
 
-- mock-only `/demo/` 桌面与 `393x852` 移动视觉证据已落盘到 `assets/stack-lifecycle-desktop.png` 与 `assets/stack-lifecycle-mobile.png`，并生成不可变聊天快照；Impeccable detector 与 spec drift check 已通过。
+- mock-only Storybook canvas 桌面与 `393x852` 移动视觉证据已落盘到 `assets/stack-lifecycle-desktop.png` 与 `assets/stack-lifecycle-mobile.png`，并生成不可变聊天快照；Impeccable detector 与 spec drift check 已通过。
 - 本地实现已达到功能验证门槛；未执行远端 push、PR 或合并。
 
 ## References
