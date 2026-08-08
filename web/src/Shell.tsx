@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { getDockrevVersion } from './api'
 import { AppShellStatusBanner } from './components/AppShellStatusBanner'
+import { PwaUpdateBubble } from './components/PwaUpdateBubble'
 import { usePwaStatus } from './pwaStatus'
 import { Button, GitHubIcon, Mono, OverlayScrollArea, ToggleGroup, ToggleGroupItem } from './ui'
 import { ConfirmProvider } from './ConfirmProvider'
@@ -86,31 +87,8 @@ function ShellStatusStrip() {
   const {
     isOnline,
     offlineReady,
-    updateAvailable,
     dismissOfflineReady,
-    dismissUpdate,
-    applyUpdate,
   } = usePwaStatus()
-
-  if (updateAvailable) {
-    return (
-      <AppShellStatusBanner
-        tone="update"
-        title="发现新版本，可刷新更新。"
-        detail="当前页面不会自动切换；确认后才载入新的前端资源。"
-        actions={
-          <>
-          <Button onClick={() => void applyUpdate()} variant="primary">
-            刷新更新
-          </Button>
-          <Button onClick={dismissUpdate} variant="ghost">
-            稍后
-          </Button>
-          </>
-        }
-      />
-    )
-  }
 
   if (!isOnline) {
     return (
@@ -653,6 +631,7 @@ export function AppShell(props: {
               );
             })}
           </nav>
+          <PwaUpdateBubble />
         </div>
       </ConfirmProvider>
     </UpdateActionTrackerProvider>

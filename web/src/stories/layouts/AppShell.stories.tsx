@@ -159,6 +159,45 @@ export const Overview: Story = {
     expectDesktopHeaderAlignment(canvasElement)
   },
 }
+
+export const UpdateReadyBubble: Story = {
+  render: render({ name: 'overview' }),
+  parameters: {
+    pwaStatus: {
+      updatePhase: 'ready',
+      updatePromptVisible: true,
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const bubble = canvasElement.querySelector<HTMLElement>('.pwaUpdateBubble')
+    expectStory(bubble, 'Ready updates should render outside the content scroll area')
+    expectStory(!canvasElement.querySelector('.shellStatusBanner-update'), 'Ready updates should not consume content flow')
+  },
+}
+
+export const UpdateReadyBubbleMobile: Story = {
+  render: render({ name: 'overview' }),
+  parameters: {
+    pwaStatus: {
+      updatePhase: 'ready',
+      updatePromptVisible: true,
+    },
+    viewport: { defaultViewport: 'mobile1' },
+  },
+  play: async ({ canvasElement }) => {
+    const bubble = canvasElement.querySelector<HTMLElement>('.pwaUpdateBubble')
+    const bottomNav = canvasElement.querySelector<HTMLElement>('.mobileBottomNav')
+    expectStory(bubble && bottomNav, 'Mobile shell should render both the update bubble and bottom navigation')
+    expectStory(
+      bubble.getBoundingClientRect().bottom <= bottomNav.getBoundingClientRect().top,
+      'Mobile update bubble should clear the bottom navigation',
+    )
+    expectStory(
+      bubble.scrollWidth <= bubble.clientWidth,
+      'Mobile update bubble should not overflow at the story viewport width',
+    )
+  },
+}
 export const CollapsedSidebar: Story = {
   render: render({ name: 'services' }, { sidebarCollapsed: true }),
   play: async ({ canvasElement }) => {

@@ -1,12 +1,21 @@
 /// <reference lib="webworker" />
 
 import { clientsClaim } from 'workbox-core'
-import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from 'workbox-precaching'
+import { addPlugins, cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from 'workbox-precaching'
 import { NavigationRoute, registerRoute } from 'workbox-routing'
 
 declare let self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: Array<{ url: string; revision: string | null }>
 }
+
+addPlugins([
+  {
+    async requestWillFetch({ request }) {
+      // Browsers without Fetch Priority ignore this progressive enhancement.
+      return new Request(request, { priority: 'low' })
+    },
+  },
+])
 
 precacheAndRoute(self.__WB_MANIFEST)
 cleanupOutdatedCaches()
@@ -17,21 +26,21 @@ registerRoute(
     allowlist: [
       /^\/$/,
       /^\/overview$/,
+      /^\/queue$/,
+      /^\/queue\/(?:version-inference|ghcr-webhooks|ghcr-webhook-inbox)$/,
+      /^\/queue\/[^/]+$/,
       /^\/services$/,
       /^\/services\/[^/]+$/,
-      /^\/services\/[^/]+\/[^/]+(?:\/(?:overview|monitoring|backup|logs|settings))?$/,
-      /^\/queue$/,
-      /^\/queue\/version-inference$/,
+      /^\/services\/[^/]+\/[^/]+(?:\/(?:overview|versions|history|monitoring|backup|logs|settings))?$/,
+      /^\/cleanup$/,
+      /^\/version-inference$/,
+      /^\/deploy-check$/,
+      /^\/settings(?:\/(?:account|maintenance|backup|monitoring|schedules|release-notes|notifications|integrations|ghcr-webhooks))?$/,
     ],
     denylist: [
       /^\/api(?:\/|$)/,
       /^\/assets(?:\/|$)/,
-      /^\/cleanup(?:\/|$)/,
-      /^\/settings(?:\/|$)/,
-      /^\/deploy-check(?:\/|$)/,
-      /^\/queue\/ghcr-webhooks(?:\/|$)/,
-      /^\/queue\/ghcr-webhook-inbox(?:\/|$)/,
-      /^\/queue\/[^/]+$/,
+      /^\/supervisor(?:\/|$)/,
     ],
   }),
 )

@@ -1,0 +1,18 @@
+import { Canvas, Meta } from '@storybook/addon-docs/blocks'
+import * as PwaUpdateBubbleStories from './PwaUpdateBubble.stories'
+
+<Meta of={PwaUpdateBubbleStories} />
+
+# PWA Update Bubble
+
+The update surface remains outside the application document flow. It distinguishes resource preparation, a fully cached waiting worker, and a retryable failed preparation without changing the current page.
+
+<Canvas of={PwaUpdateBubbleStories.Downloading} />
+
+<Canvas of={PwaUpdateBubbleStories.Ready} />
+
+<Canvas of={PwaUpdateBubbleStories.ReadyWhileOffline} />
+
+<Canvas of={PwaUpdateBubbleStories.Failed} />
+
+<Canvas of={PwaUpdateBubbleStories.ReadyMobile} />
