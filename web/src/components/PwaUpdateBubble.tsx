@@ -69,6 +69,12 @@ export function PwaUpdateBubble() {
         <span>{copy.detail}</span>
       </div>
       <div className="pwaUpdateBubbleActions">
+        <Button onClick={dismissUpdate} variant="ghost">
+          <span className="btnInlineContent">
+            <Clock3 aria-hidden="true" size={14} strokeWidth={2.2} />
+            稍后
+          </span>
+        </Button>
         {isFailed ? (
           <Button onClick={() => void checkForUpdates()} variant="primary">
             <span className="btnInlineContent">
@@ -84,12 +90,6 @@ export function PwaUpdateBubble() {
             </span>
           </Button>
         )}
-        <Button onClick={dismissUpdate} variant="ghost">
-          <span className="btnInlineContent">
-            <Clock3 aria-hidden="true" size={14} strokeWidth={2.2} />
-            稍后
-          </span>
-        </Button>
       </div>
     </div>
   )
