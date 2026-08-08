@@ -332,7 +332,7 @@
   PR: include
   PR caption: 服务详情 `版本` 子页改为 locate-first 首屏锚点窗口，当前部署版本首屏可读且虚拟列表稳定。
 
-![服务详情版本子页首屏锚点窗口](../../screenshots/release-notes-locate/service-versions-anchor.png)
+![服务详情版本子页首屏锚点窗口](docs/screenshots/release-notes-locate/service-versions-anchor.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`
@@ -356,7 +356,7 @@
   state: `service versions locate-first anchor window`
   evidence_note: `最终 PR 采用的版本页证据。桌面宽卡首屏直接落在当前部署版本附近的锚点窗口，当前卡保留与可操作版本卡一致的固定 third rail；列表保持虚拟渲染，不再为了定位目标版本自动线性翻页。`
 
-![PR 证据：服务详情版本子页首屏锚点窗口](../../screenshots/release-notes-locate/service-versions-anchor.png)
+![PR 证据：服务详情版本子页首屏锚点窗口](docs/screenshots/release-notes-locate/service-versions-anchor.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`
