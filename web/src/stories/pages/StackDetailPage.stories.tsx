@@ -254,8 +254,8 @@ export const LifecycleStopConfirmation: Story = {
     const menuTrigger = action.querySelector<HTMLButtonElement>('[aria-label="Stack 生命周期菜单"]')!;
     menuTrigger.click();
     const body = within(doc.body);
-    await waitForCondition(() => Boolean(body.queryByText("停止")));
-    await userEvent.click(body.getByText("停止"));
+    await waitForCondition(() => Boolean(body.queryByRole("menuitem", { name: "停止" })));
+    await userEvent.click(body.getByRole("menuitem", { name: "停止" }));
     await waitForCondition(() => Boolean(body.queryByText("确认停止 Stack prod？")));
     expectStory(body.getByText("该操作会立即影响 Stack 内的 3 个服务。"), "confirmation should include Stack service count");
     await userEvent.click(body.getByText("取消"));
@@ -263,8 +263,8 @@ export const LifecycleStopConfirmation: Story = {
     expectStory(!globalThis.__DOCKREV_MOCK_DEBUG__?.lastLifecycleRequest, "cancelled Stack stop should not submit a request");
 
     menuTrigger.click();
-    await waitForCondition(() => Boolean(body.queryByText("停止")));
-    await userEvent.click(body.getByText("停止"));
+    await waitForCondition(() => Boolean(body.queryByRole("menuitem", { name: "停止" })));
+    await userEvent.click(body.getByRole("menuitem", { name: "停止" }));
     await waitForCondition(() => Boolean(body.queryByText("确认停止 Stack prod？")));
     await userEvent.click(body.getByRole("button", { name: "停止" }));
     await waitForCondition(() => globalThis.__DOCKREV_MOCK_DEBUG__?.lastLifecycleRequest?.kind === "stack");

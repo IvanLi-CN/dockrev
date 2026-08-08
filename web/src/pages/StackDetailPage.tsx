@@ -163,7 +163,7 @@ export function StackDetailPage(props: {
 
   const requestLifecycleAction = useCallback((action: ServiceLifecycleAction) => {
     void (async () => {
-      if (!stack) return
+      if (!stack || stack.id !== stackId || stackIdRef.current !== stackId) return
       if (activeLifecycleJobId && activeLifecycleJobType === 'stack_lifecycle' && activeLifecycleJobStatus && activeOperation(activeLifecycleJobStatus)) {
         navigate({ name: 'job', jobId: activeLifecycleJobId })
         return
@@ -180,6 +180,7 @@ export function StackDetailPage(props: {
         })
         if (!ok) return
       }
+      if (stack.id !== stackId || stackIdRef.current !== stackId) return
       setLifecycleSubmitting(true)
       setError(null)
       try {
@@ -237,6 +238,9 @@ export function StackDetailPage(props: {
   useEffect(() => {
     lifecycleActiveJobIdRef.current = null
     setLifecycleStatus(null)
+    setStack(null)
+    setSettings(null)
+    setJobs([])
   }, [stackId])
 
   useEffect(() => {
@@ -244,9 +248,9 @@ export function StackDetailPage(props: {
     let timer: number | null = null
     const refreshStatus = async () => {
       try {
-        const next = await getStackLifecycleStatus(stackId)
-        if (cancelled) return
         const previousActiveJobId = lifecycleActiveJobIdRef.current
+        const next = await refreshLifecycleStatus()
+        if (cancelled || !next) return
         const nextActiveJobId = next.activeJob?.id ?? null
         lifecycleActiveJobIdRef.current = nextActiveJobId
         setLifecycleStatus(next)
@@ -270,7 +274,7 @@ export function StackDetailPage(props: {
       cancelled = true
       if (timer != null) window.clearTimeout(timer)
     }
-  }, [isOnline, lifecycleStatus?.activeJob?.id, refresh, stackId])
+  }, [isOnline, lifecycleStatus?.activeJob?.id, refresh, refreshLifecycleStatus, stackId])
 
   useEffect(() => {
     if (!stack) return

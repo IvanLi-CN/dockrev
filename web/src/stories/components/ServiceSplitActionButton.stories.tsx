@@ -101,7 +101,7 @@ export const GroupDisabledByServiceOperation: Story = {
     const canvas = within(canvasElement)
     const documentBody = within(canvasElement.ownerDocument.body)
     const group = await canvas.findByRole('group', { name: '服务生命周期' })
-    const anchor = group.parentElement
+    const anchor = group.closest('.serviceSplitActionDisabledAnchor')
     expect(anchor).toHaveClass('serviceSplitActionDisabledAnchor')
     expect(group).toHaveAttribute('aria-disabled', 'true')
     expect(within(group).getByRole('button', { name: '停止' })).toBeDisabled()
