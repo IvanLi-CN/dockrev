@@ -338,7 +338,7 @@ export function StackDetailPage(props: {
             ? '离线时无法操作 Stack'
             : busy
               ? '正在保存 Stack 设置'
-              : undefined
+              : lifecycleReason ?? undefined
     onTopActions(
       <>
         <div className="serviceDesktopActions">
