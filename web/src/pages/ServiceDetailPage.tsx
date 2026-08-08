@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Layers3, RotateCw } from "lucide-react";
+import { Layers3, LoaderCircle, RotateCw } from "lucide-react";
 import {
   createIgnore,
   deleteIgnore,
@@ -102,6 +102,7 @@ export function ServiceDetailPage(props: {
     newRuleNote,
     newRuleValue,
     notice,
+    operationProgress,
     backupTargets,
     applyActiveJob,
     applySubmitting,
@@ -851,23 +852,22 @@ export function ServiceDetailPage(props: {
         <ReadonlySnapshotNotice tone="warn" title="当前离线。" detail="仅在存在可用缓存时显示只读内容；日志与设置需要联网。" />
       ) : null}
       <section className="detailHeroShell">
-        <div className={`${effectiveBannerClass} svcDetailSummaryRail`} data-service-detail-context="status-summary">
+        <div className={`${effectiveBannerClass} svcDetailSummaryRail`} data-service-detail-context="status-summary" aria-live={operationProgress ? "polite" : undefined} role={operationProgress ? "status" : undefined}>
           <div className="svcDetailSummaryLead">
             <div
               className="mono monoPrimary monoSplit imageLinkRow svcDetailSummaryImage"
               title={imageNameDisplay.suffix ? `${imageNameDisplay.base}${imageNameDisplay.suffix}` : imageNameDisplay.base}
             >
               <span className="monoSplitBase">{imageNameDisplay.base}</span>
-              <ImageLinkIcons imageRef={effectiveService.image.ref} repoUrl={visibleRepoUrl} />
+              {!operationProgress ? <ImageLinkIcons imageRef={effectiveService.image.ref} repoUrl={visibleRepoUrl} /> : null}
             </div>
           </div>
           <div className="svcDetailSummaryStatus">
-            <span className={effectiveDotClass} />
+            {operationProgress ? <LoaderCircle aria-hidden="true" className="svcBannerActivityIcon" /> : <span className={effectiveDotClass} />}
             <div className="svcBannerTitle">{effectiveBannerTitle}</div>
             <div className="svcBannerDetail svcDetailStatusSummary">{effectiveBannerDetail}</div>
           </div>
         </div>
-
         <OverlayScrollArea className="svcDetailTabsShell" data-service-detail-tabs-shell="true" options={{ overflow: { x: "scroll", y: "hidden" } }}>
           <Tabs
             onValueChange={(value) => {

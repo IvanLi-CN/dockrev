@@ -71,6 +71,7 @@
 - 第一行监控摘要必须复用现有服务监控样本，不新增接口口径；桌面端展示服务名与紧凑的 `CPU / 内存 / 磁盘读 / 磁盘写 / 下载 / 上传` 六项指标，其中后四项表达磁盘 I/O 与网络速率两对数据。各指标的可见前缀必须使用图标而不是文字 label；语义文案保留在无障碍标签中。监控关闭、离线缓存或暂无样本时用同一行回退表达，且不得再额外出现“服务监控摘要”这类解释性副标题，也不得保留独立的时间 / 状态 chip。窄屏或宽度不足以单行承载六项指标时，指标区必须切换为 `2 x 3` 网格，并按 `CPU / 内存`、`磁盘读 / 磁盘写`、`下载 / 上传` 两两成列配对。
 - `预览更新 / 执行更新 / 回滚 / Stack 详情` 必须在各子页保持一致可达；`归档/恢复` 与 `阻止此服务更新` 必须从全局顶部动作下沉到 `设置` 页。
 - 七个服务详情子页必须在 tabs 上方共用同一条紧凑状态信息带：只保留镜像/仓库简述、状态标题、当前版本、目标版本与 `newVersionDiscoveryCount` 映射出的“跨 N 个版本”；无候选时目标显示 `-`，计数缺失时显示“跨度未知”，且不得再重复服务名、Stack pill、digest、raw tag、架构、规则或原因等技术明细。桌面端优先保持单行，窄屏允许自然换行，但仍必须维持为同一条信息带，不得退回独立右侧状态卡或多张 header meta 卡。
+- 同一服务存在 update 提交态、活动 update 或活动 rollback 时，共享状态信息带必须优先于静态候选状态，依次使用 `更新任务提交中 / 更新排队中 / 更新中 / 回滚排队中 / 回滚中` 表达真实阶段；活动态统一切换为主题信息色并显示加载图标，动画必须遵守 reduced-motion。状态信息带只负责展示，不得增加点击、链接或键盘导航语义，并继续保留当前版本、目标版本与版本跨度摘要。
 - `Image Ref / Service ID / Stack ID` 不得继续出现在共享页头；它们只允许作为 `概览` 子页中的一张紧凑“服务标识”卡出现。
 - `概览` 不得再出现资源监控卡、自动更新结果卡、Compose 信息卡或服务保护卡。
 - `版本` 子页必须复用 `GET /api/services/{service_id}/release-notes` 的统一数据源与 Settings 固定 provider 语义；`provider=gitHub` 时只暴露 `original`，`provider=octoRill` 时复用 `original | translated | smart`，并改为页内卡片阅读而不是强依赖右侧抽屉。
@@ -81,7 +82,7 @@
 - `版本` 子页必须对比当前部署版本、candidate 与既有 rollback target，展示状态徽标与动作区。较新版本统一渲染动作位：普通服务继续使用 `更新`，且只有与当前 service candidate 对应且不突破现有 explicit target tag 契约的版本可真正发起更新；命中 Dockrev 自身识别时，candidate 对应卡片必须改为 `升级 Dockrev` 并复用顶部 supervisor 自我升级入口，其它更高版本只保留禁用动作位并明确解释“当前只能通过 supervisor 进入现有 candidate 对应的自我升级流程”。若 supervisor 自我升级入口本身处于 offline / checking / busy 等不可用状态，则所有 Dockrev 版本卡优先直接暴露该阻断原因，不再继续引导用户访问不可用入口。
 - `版本` 子页对所有已部署过的历史版本统一渲染 `回滚` 动作位；只有当前 rollback target 对应版本执行真实回滚，其余版本点击后进入解释性提示，不得创建任务。
 - 当当前 rollback target 的来源更新任务存在实际纳入的备份记录时，`版本` 子页的目标版本卡与服务级回滚确认都必须补充同一份“来源备份”摘要：显示 included targets 数量与源目标总体积；若 included targets 存在缺失体积，则总体积位置回退为 `--`；若没有实际纳入的备份记录，则不显示该状态块。
-- `版本` 子页在同一服务已有 update/rollback 任务提交中、执行中，或 rollback target 刷新中时，必须锁定全部版本动作，并提供查看当前任务状态的稳定入口。
+- `版本` 子页在同一服务已有 update/rollback 任务提交中、执行中，或 rollback target 刷新中时，必须锁定不属于当前活动任务的版本动作。普通服务的 candidate 目录 chip 与 candidate 卡更新按钮必须同步 update 阶段：提交时显示 `提交中` 且按钮不可点击，Job 建立后按状态显示 `排队中 / 更新中`，按钮保持加载态并可直接进入对应任务详情；顶部更新动作继续提供同一任务入口。版本页不得额外渲染独立的活动任务横幅或横幅式“查看任务”入口。
 - `版本` 子页桌面端可执行卡片的右侧状态/动作栏必须固定为 `19rem` 轨道，避免因说明或按钮数量不同导致宽度漂移；无右栏卡片继续使用两栏布局。
 - `版本` 子页宽屏必须使用多栏宽卡片；`≤1100px` 必须完全隐藏版本目录并切换为单列窄卡片，正文宽度保持正文阅读尺度且不产生横向滚动。
 - 仅当 release tag 与当前部署版本都能 strict-semver 比较且 release 更旧时，版本卡片整体才允许置灰；状态徽标与动作提示不得因置灰失去辨识度。
@@ -220,6 +221,14 @@
   When 页面展示共享状态摘要
   Then tabs 上方只显示一条共享状态信息带，且其内容只包含状态标题、当前版本、目标版本与版本跨度；不得再展示 digest、raw tag、架构、规则、原因、独立状态卡或 header meta cards。
 
+- Given 当前服务正在提交或执行 update/rollback 任务
+  When 用户查看任一服务详情子页
+  Then 共享状态信息带优先显示对应提交、排队或执行阶段，使用主题信息色与 reduced-motion 兼容的加载图标，同时保持不可点击并保留当前版本、目标版本与跨度摘要。
+
+- Given 普通服务的 update 已从 candidate 版本卡发起
+  When 任务从提交态进入 queued/running
+  Then candidate 目录 chip 与 candidate 卡按钮依次显示 `提交中 / 排队中 / 更新中`；提交态按钮不可点击，Job 建立后的加载按钮可直接进入对应任务详情，其他版本动作保持锁定，且版本内容区不出现独立活动任务横幅。
+
 - Given 服务详情页处于 `概览`
   When 页面渲染完成
   Then 最近更新记录之后必须出现一张 `服务标识` 卡，完整承接 `Image Ref / Service ID / Stack ID`，且这些字段不再出现在其他子页的共享页头。
@@ -291,6 +300,7 @@
 ### Testing
 
 - `cargo test -p dockrev-api`
+- `bun run --cwd web test`
 - `bun run --cwd web lint`
 - `bun run --cwd web build`
 - `bun run --cwd web build-storybook`
@@ -300,7 +310,7 @@
 
 - Stories to add/update: `web/src/stories/pages/ServiceDetailPage.stories.tsx`
 - Docs pages / state galleries to add/update: `none (reason: repo currently uses page stories/canvas coverage for this surface)`
-- `play` / interaction coverage to add/update: tabs route switching 与顺序断言、旧链接默认概览、更新记录深链/混合列表/备份列命中与空占位/缺失体积回退/分页边界/更新日志定位/空态/click-Enter-Space 跳转/受控回滚入口、备份页记录卡渲染/空态、日志深链与搜索交互、日志自动换行/虚拟列表断言、移动端更新记录无横向滚动、设置抽屉入口、监控页稳定渲染
+- `play` / interaction coverage to add/update: tabs route switching 与顺序断言、旧链接默认概览、版本页活动 update 的共享信息带/candidate chip/可点击加载按钮/独立横幅移除、更新记录深链/混合列表/备份列命中与空占位/缺失体积回退/分页边界/更新日志定位/空态/click-Enter-Space 跳转/受控回滚入口、备份页记录卡渲染/空态、日志深链与搜索交互、日志自动换行/虚拟列表断言、移动端更新记录无横向滚动、设置抽屉入口、监控页稳定渲染
 - Visual regression baseline changes (if any): 服务详情七子页 mock-only 视觉证据（含 `ui_demo` 版本页桌面/移动端）
 
 ### Quality checks
@@ -319,10 +329,7 @@
   story_id_or_title: `Pages/ServiceDetailPage/VersionsSection`
   state: `service versions locate-first anchor window`
   evidence_note: `标准桌面 `1600x1200` 页面级视图直接验证服务详情 `版本` 子页首屏落在当前部署版本附近窗口；当前版本卡片被置于视口中心，列表保持虚拟渲染，不再为了定位目标版本自动线性翻页。`
-  PR: include
-  PR caption: 服务详情 `版本` 子页改为 locate-first 首屏锚点窗口，当前部署版本首屏可读且虚拟列表稳定。
-
-![服务详情版本子页首屏锚点窗口](../../screenshots/release-notes-locate/service-versions-anchor.png)
+![服务详情版本子页首屏锚点窗口](./assets/service-versions-anchor.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`
@@ -334,10 +341,37 @@
   story_id_or_title: `Pages/ServiceDetailPage/UpdateHistorySection`
   state: `history deep link with backup summary column`
   evidence_note: 标准桌面 `1600x1200` 页面级视图验证 `/history` 深链、重排后的 tabs 顺序，以及新增 `备份` 列在桌面六列表格中的落位。带实际备份记录的行显示 `2 个目标 / 17.6 MiB`，无匹配记录的行保持中性空占位；活动 Tab 已表达当前 section，内容区不重复标题、说明或记录数量。更新记录仅保留外层 section card，表格不再使用嵌套圆角容器。当前 Storybook 未配置桌面 viewport preset，故以受控视口模拟采集。
-  PR: include
-  PR caption: 服务详情更新记录子页新增备份摘要列，并按 `概览 / 更新记录 / 监控 / 日志 / 备份 / 设置` 重排顶部 tabs。
-
 ![服务详情更新记录子页（桌面页面级）](./assets/service-detail-update-history-desktop.png)
+
+- source_type: `ui_demo`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `1600x1000`
+  viewport_strategy: `controlled-viewport`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `demo:app / /demo/services/stack-prod/svc-prod-api/versions?demoScenario=dashboard-demo-hydrated-update`
+  state: `desktop active update progress synchronization`
+  evidence_note: `mock-only ui_demo` 桌面截图验证活动更新优先接管共享状态信息带，信息带使用主题蓝色与加载图标并保留当前版本、目标版本和跨度；左侧候选目录同步显示 `更新中`，候选卡按钮保留加载反馈与任务详情入口，同时页面中不再出现独立活动任务横幅。
+  PR: include
+  PR caption: 活动更新统一显示在共享蓝色状态信息带，并同步候选目录与候选卡任务入口。
+
+![服务详情版本子页更新中桌面联动](./assets/service-detail-versions-update-progress-desktop.png)
+
+- source_type: `ui_demo`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `390x900`
+  viewport_strategy: `controlled-viewport`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `demo:app / /demo/services/stack-prod/svc-prod-api/versions?demoScenario=dashboard-demo-hydrated-update`
+  state: `mobile active update status rail`
+  evidence_note: `mock-only ui_demo` 移动端截图验证共享蓝色状态信息带在 `390x900` 下完整展示 `更新中`、当前版本、目标版本与跨度，加载图标和单列页面均无横向溢出；桌面候选目录在该断点按合同隐藏，页面中没有独立活动任务横幅。
+  PR: include
+  PR caption: 移动端更新中状态收敛到共享信息带，并保持无横向溢出。
+
+![服务详情版本子页更新中移动状态带](./assets/service-detail-versions-update-progress-mobile.png)
 
 ## Visual Evidence (PR)
 
@@ -346,7 +380,7 @@
   state: `service versions locate-first anchor window`
   evidence_note: `最终 PR 采用的版本页证据。桌面宽卡首屏直接落在当前部署版本附近的锚点窗口，当前卡保留与可操作版本卡一致的固定 third rail；列表保持虚拟渲染，不再为了定位目标版本自动线性翻页。`
 
-![PR 证据：服务详情版本子页首屏锚点窗口](../../screenshots/release-notes-locate/service-versions-anchor.png)
+![PR 证据：服务详情版本子页首屏锚点窗口](./assets/service-versions-anchor.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`

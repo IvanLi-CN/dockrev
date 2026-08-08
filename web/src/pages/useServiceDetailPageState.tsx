@@ -11,6 +11,7 @@ import { DIGEST_SNAPSHOT_UPDATED_EVENT, type DigestSnapshotUpdatedDetail } from 
 import { normalizeExternalHttpUrl } from '../imageLinks'
 import { imageRepoFromImageRef } from '../imageRepo'
 import { publishServiceTreeRefresh } from '../serviceTreeRefresh'
+import { describeServiceOperationProgress } from '../serviceOperationProgress'
 import { dockrevSelfUpgradeBusyReason, errorMessage, isDockrevService, normalizeMaybeDigest, openSelfUpgradeUrl, rollbackTargetMatchesServiceDigest, rollbackUnavailableReasonLabel, rollbackVersionLabel, ROLLBACK_TARGET_REFRESH_HINT, scanHasFailures, scanIsComplete, shortDigest, svcTone, useRollbackTargetInvariantWarning } from './serviceDetailUtils'
 import { navigate } from '../routes'
 import { selfUpgradeBaseUrl } from '../runtimeConfig'
@@ -87,10 +88,12 @@ export function useServiceDetailPageState(props: {
     ? serviceOperationOwner(lifecycleJob.type)
     : null
   const activeOperation = useMemo(
-    () => lifecycleJob && lifecycleOwner
-      ? { owner: lifecycleOwner, id: lifecycleJob.id, status: lifecycleJob.status, action: lifecycleJob.action ?? null }
+    () => lifecycleOwner === 'update' && applyActiveJob
+      ? { owner: 'update' as const, id: applyActiveJob.jobId, status: applyActiveJob.status, action: null, targetVersion: applyActiveJob.targetVersion }
+      : lifecycleJob && lifecycleOwner
+      ? { owner: lifecycleOwner, id: lifecycleJob.id, status: lifecycleJob.status, action: lifecycleJob.action ?? null, ...(lifecycleOwner === 'update' ? { targetVersion: applyActiveJob?.targetVersion } : {}) }
       : applyActiveJob
-        ? { owner: 'update' as const, id: applyActiveJob.jobId, status: applyActiveJob.status, action: null }
+        ? { owner: 'update' as const, id: applyActiveJob.jobId, status: applyActiveJob.status, action: null, targetVersion: applyActiveJob.targetVersion }
         : null,
     [applyActiveJob, lifecycleJob, lifecycleOwner],
   )
@@ -100,6 +103,14 @@ export function useServiceDetailPageState(props: {
   const activeLifecycleJob = activeOperationOwner === 'lifecycle' ? activeOperation : null
   const rollbackActiveJobId = activeRollbackJob?.id ?? null
   const rollbackActiveJobStatus = activeRollbackJob?.status ?? null
+  const operationProgress = useMemo(
+    () => describeServiceOperationProgress({
+      updateSubmitting: applySubmitting,
+      updateStatus: activeUpdateJob?.status,
+      rollbackStatus: rollbackActiveJobStatus,
+    }),
+    [activeUpdateJob?.status, applySubmitting, rollbackActiveJobStatus],
+  )
   const rollbackReason = rollbackTarget?.unavailableReason ?? rollbackActiveTarget?.unavailableReason ?? null
   const rollbackReasonLabel = rollbackUnavailableReasonLabel(rollbackReason)
   const rollbackTargetDigestRetryMs = 250
@@ -813,7 +824,7 @@ export function useServiceDetailPageState(props: {
           backupMode: 'inherit',
         })
         setNotice({ jobId: resp.jobId, kind: 'update' })
-        if (applyActionKey) trackJob(applyActionKey, resp.jobId, 'queued')
+        if (applyActionKey) trackJob(applyActionKey, resp.jobId, 'queued', service.candidate?.resolvedTag ?? service.candidate?.tag ?? null)
         void refreshLifecycleStatus().catch(() => undefined)
       } catch (e: unknown) {
         if (e instanceof ApiError) {
@@ -1050,8 +1061,9 @@ export function useServiceDetailPageState(props: {
   const settingsBusy = busy || repoInferBusy
 
   const tone = useMemo(() => (service ? svcTone(service) : 'muted'), [service])
-  const bannerClass =
-    tone === 'ok' ? 'svcBanner svcBannerOk' : tone === 'warn' ? 'svcBanner svcBannerWarn' : tone === 'bad' ? 'svcBanner svcBannerBad' : 'svcBanner svcBannerMuted'
+  const bannerClass = operationProgress
+    ? 'svcBanner svcBannerInfo'
+    : tone === 'ok' ? 'svcBanner svcBannerOk' : tone === 'warn' ? 'svcBanner svcBannerWarn' : tone === 'bad' ? 'svcBanner svcBannerBad' : 'svcBanner svcBannerMuted'
   const dotClass =
     tone === 'ok'
       ? 'svcBannerDot svcBannerDotOk'
@@ -1062,6 +1074,7 @@ export function useServiceDetailPageState(props: {
           : 'svcBannerDot'
 
   const bannerTitle = useMemo(() => {
+    if (operationProgress) return operationProgress.bannerLabel
     if (!service) return '加载中…'
     const st = serviceRowStatus(service)
     if (st === 'blocked') {
@@ -1071,7 +1084,7 @@ export function useServiceDetailPageState(props: {
     if (st === 'archMismatch') return '架构不匹配（仅提示，不允许更新）'
     if (st === 'hint') return '需确认（arch 未知）'
     return '可更新'
-  }, [service])
+  }, [operationProgress, service])
 
   const bannerDetail = useMemo<ReactNode>(() => {
     if (!service) return null
@@ -1147,6 +1160,7 @@ export function useServiceDetailPageState(props: {
     newRuleNote,
     newRuleValue,
     notice,
+    operationProgress,
     repoInferBusy,
     requestRefresh,
     requestApplyUpdate,
@@ -1160,7 +1174,7 @@ export function useServiceDetailPageState(props: {
     service,
     serviceId,
     applyActiveJob: activeUpdateJob
-      ? { jobId: activeUpdateJob.id, status: activeUpdateJob.status }
+      ? { jobId: activeUpdateJob.id, status: activeUpdateJob.status, targetVersion: activeUpdateJob.targetVersion }
       : null,
     applySubmitting,
     setBusy,

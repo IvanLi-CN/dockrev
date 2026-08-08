@@ -22,6 +22,7 @@ export type UpdateActionJobStatus = 'queued' | 'running' | string
 export type ActiveUpdateJob = {
   jobId: string
   status: UpdateActionJobStatus
+  targetVersion?: string | null
 }
 
 type HydratedActiveUpdateJob = ActiveUpdateJob & {
@@ -41,7 +42,7 @@ export type UpdateJobSettledDetail = {
 type UpdateActionTracker = {
   beginSubmitting: (target: UpdateActionTargetKey) => void
   endSubmitting: (target: UpdateActionTargetKey) => void
-  trackJob: (target: UpdateActionTargetKey, jobId: string, status?: UpdateActionJobStatus) => void
+  trackJob: (target: UpdateActionTargetKey, jobId: string, status?: UpdateActionJobStatus, targetVersion?: string | null) => void
   isTargetBusy: (target: UpdateActionTargetKey) => boolean
   getActiveJobByTarget: (target: UpdateActionTargetKey) => ActiveUpdateJob | null
   isTargetSubmitting: (target: UpdateActionTargetKey) => boolean
@@ -80,9 +81,18 @@ function resolveUpdateJobRecency(job: Pick<JobListItem, 'createdAt' | 'startedAt
   return Number.NEGATIVE_INFINITY
 }
 
+function resolveUpdateJobTargetVersion(summary: unknown): string | null {
+  if (!summary || typeof summary !== 'object' || Array.isArray(summary)) return null
+  const value = summary as Record<string, unknown>
+  for (const key of ['targetDisplayTag', 'targetTag', 'to']) {
+    if (typeof value[key] === 'string' && value[key].trim()) return value[key].trim()
+  }
+  return null
+}
+
 export function pickLatestActiveUpdateJobs(
   jobs: Array<
-    Pick<JobListItem, 'id' | 'type' | 'scope' | 'stackId' | 'serviceId' | 'status' | 'createdAt' | 'startedAt' | 'progress'>
+    Pick<JobListItem, 'id' | 'type' | 'scope' | 'stackId' | 'serviceId' | 'status' | 'createdAt' | 'startedAt' | 'progress' | 'summary'>
   >,
 ): HydratedActiveUpdateJob[] {
   const latestByTarget = new Map<
@@ -98,10 +108,12 @@ export function pickLatestActiveUpdateJobs(
     const target = resolveUpdateActionTargetKey(job.scope, job.stackId, job.serviceId)
     if (!target) continue
 
+    const targetVersion = resolveUpdateJobTargetVersion(job.summary)
     const candidate = {
       target,
       jobId: job.id,
       status: job.status,
+      ...(targetVersion ? { targetVersion } : {}),
     } satisfies HydratedActiveUpdateJob
     const recency = resolveUpdateJobRecency(job)
     const existing = latestByTarget.get(target)
@@ -245,13 +257,17 @@ function useProvideUpdateActionTracker(): UpdateActionTracker {
   }, [])
 
   const trackJob = useCallback(
-    (target: UpdateActionTargetKey, jobId: string, status: UpdateActionJobStatus = 'queued') => {
+    (target: UpdateActionTargetKey, jobId: string, status: UpdateActionJobStatus = 'queued', targetVersion?: string | null) => {
       const previous = activeByTargetRef.current.get(target)
       if (previous && previous.jobId !== jobId) {
         clearJobTimer(previous.jobId)
         errorCountsRef.current.delete(previous.jobId)
       }
-      activeByTargetRef.current.set(target, { jobId, status })
+      const resolvedTargetVersion = targetVersion ?? previous?.targetVersion ?? null
+      activeByTargetRef.current.set(
+        target,
+        resolvedTargetVersion ? { jobId, status, targetVersion: resolvedTargetVersion } : { jobId, status },
+      )
       errorCountsRef.current.delete(jobId)
       clearJobTimer(jobId)
       publishActive()

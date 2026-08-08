@@ -11,7 +11,12 @@ import {
 } from './pagesDemoRestore'
 
 export const PUBLIC_DEMO_FIXTURE_STORAGE_KEY = 'dockrev:public-demo:fixture:v1'
-export const PUBLIC_DEMO_SCENARIOS = ['settings-configured', 'queue-long-logs', 'service-action-progress'] as const
+export const PUBLIC_DEMO_SCENARIOS = [
+  'settings-configured',
+  'queue-long-logs',
+  'service-action-progress',
+  'dashboard-demo-hydrated-update',
+] as const
 export type PublicDemoScenario = (typeof PUBLIC_DEMO_SCENARIOS)[number]
 export const PUBLIC_DEMO_SCENARIO: PublicDemoScenario = 'settings-configured'
 export const PUBLIC_DEMO_CLEANUP_SCENARIO = 'cleanup-console-storage-normal'

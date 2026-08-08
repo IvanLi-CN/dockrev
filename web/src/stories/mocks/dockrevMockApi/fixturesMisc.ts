@@ -371,13 +371,14 @@ export function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fi
   if (scenario === 'dashboard-demo-hydrated-update') {
     const fixture = buildDashboardDemo()
     fixture.jobs = fixture.jobs.map((job) =>
-      job.id === 'job-1' ? { ...job, serviceId: 'svc-prod-api' } : job,
+      job.id === 'job-1' ? { ...job, serviceId: 'svc-prod-api', summary: { targetDisplayTag: '5.2.3' } } : job,
     )
     const runningJob = fixture.jobById['job-1']
     if (runningJob) {
       fixture.jobById['job-1'] = {
         ...runningJob,
         serviceId: 'svc-prod-api',
+        summary: { targetDisplayTag: '5.2.3' },
       }
     }
     return fixture
@@ -386,13 +387,14 @@ export function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fi
     const fixture = buildDashboardDemo()
     const service = fixture.stackById['stack-prod']?.services.find((item) => item.id === 'svc-prod-api')
     fixture.jobs = fixture.jobs.map((job) =>
-      job.id === 'job-1' ? { ...job, serviceId: 'svc-prod-api' } : job,
+      job.id === 'job-1' ? { ...job, serviceId: 'svc-prod-api', summary: { targetDisplayTag: '5.2.3' } } : job,
     )
     const runningJob = fixture.jobById['job-1']
     if (runningJob) {
       fixture.jobById['job-1'] = {
         ...runningJob,
         serviceId: 'svc-prod-api',
+        summary: { targetDisplayTag: '5.2.3' },
       }
     }
     if (service) service.candidate = null
