@@ -230,9 +230,9 @@ fn requires_stream_pty(spec: &CommandSpec) -> bool {
         .any(|(key, value)| key == STREAM_PTY_ENV && value == "1")
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\\"'\\\"'"))
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 #[cfg(all(test, unix))]
@@ -330,6 +330,11 @@ mod tests {
             assert_eq!(args[5], "/dev/null");
             assert_eq!(args[4], "exec 'docker-compose' 'pull' 'web service'");
         }
+    }
+
+    #[test]
+    fn shell_quote_preserves_embedded_single_quotes() {
+        assert_eq!(shell_quote("it's ready"), "'it'\"'\"'s ready'");
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
