@@ -127,6 +127,13 @@ export function StackDetailPage(props: {
     return next
   }, [stackId])
 
+  const refreshAll = useCallback(async () => {
+    await Promise.all([
+      refresh(),
+      refreshLifecycleStatus().catch(() => undefined),
+    ])
+  }, [refresh, refreshLifecycleStatus])
+
   const activeLifecycleJob = lifecycleStatus?.activeJob && activeOperation(lifecycleStatus.activeJob.status)
     ? lifecycleStatus.activeJob
     : null
@@ -238,7 +245,7 @@ export function StackDetailPage(props: {
           unavailableReason: 'lifecycle_status_unavailable',
           activeJob: previous?.activeJob ?? null,
         }))
-        if (lifecycleActiveJobIdRef.current) timer = window.setTimeout(() => void refreshStatus(), 2400)
+        if (isOnline) timer = window.setTimeout(() => void refreshStatus(), 2400)
       }
     }
     void refreshStatus()
@@ -246,7 +253,7 @@ export function StackDetailPage(props: {
       cancelled = true
       if (timer != null) window.clearTimeout(timer)
     }
-  }, [lifecycleStatus?.activeJob?.id, refresh, stackId])
+  }, [isOnline, lifecycleStatus?.activeJob?.id, refresh, stackId])
 
   useEffect(() => {
     if (!stack) return
@@ -322,7 +329,7 @@ export function StackDetailPage(props: {
             primary={lifecyclePrimary}
           />
           <Button disabled={busy} onClick={() => navigate({ name: 'services' })}>返回服务</Button>
-          <Button disabled={busy || !isOnline} onClick={() => void refresh()}>刷新</Button>
+          <Button disabled={busy || !isOnline} onClick={() => void refreshAll()}>刷新</Button>
         </div>
         <ServiceMobileActionMenu
           ariaLabel="Stack 操作"
@@ -330,14 +337,14 @@ export function StackDetailPage(props: {
             { id: 'lifecycle', items: lifecycleItems },
             { id: 'navigation', items: [
               { id: 'return-services', label: '返回服务', icon: ArrowLeft, disabled: busy, onSelect: () => navigate({ name: 'services' }) },
-              { id: 'refresh', label: '刷新', icon: RefreshCw, disabled: busy || !isOnline, description: !isOnline ? '离线时无法刷新' : undefined, onSelect: () => void refresh() },
+              { id: 'refresh', label: '刷新', icon: RefreshCw, disabled: busy || !isOnline, description: !isOnline ? '离线时无法刷新' : undefined, onSelect: () => void refreshAll() },
             ] },
           ]}
         />
       </>,
     )
     return () => onTopActions(null)
-  }, [activeLifecycleJobAction, activeLifecycleJobId, activeLifecycleJobStatus, activeLifecycleJobType, busy, isOnline, lifecycleStatus?.state, lifecycleStatus?.unavailableReason, lifecycleStatusLoading, lifecycleSubmitting, onTopActions, refresh, requestLifecycleAction, stackArchived])
+  }, [activeLifecycleJobAction, activeLifecycleJobId, activeLifecycleJobStatus, activeLifecycleJobType, busy, isOnline, lifecycleStatus?.state, lifecycleStatus?.unavailableReason, lifecycleStatusLoading, lifecycleSubmitting, onTopActions, refresh, refreshAll, requestLifecycleAction, stackArchived])
 
   if (!stack) {
     if (!isOnline) {
