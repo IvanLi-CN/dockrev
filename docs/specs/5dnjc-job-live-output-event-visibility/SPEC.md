@@ -56,10 +56,16 @@
 
 - 来源：现有 mock-only `ui_demo`（`queue-long-logs`），未使用真实后端或登录态。
 - 桌面证据覆盖成功 pull 的历史摘要：末尾仅保留 `status=0 stdout= stderr=` 与后续结果，不出现 `Downloading ...` progress 帧；“显示 EVEN”默认关闭。
-  PR: include
   ![desktop](./assets/job-detail-compact-pull-history-desktop.jpg)
 - `393x852` 证据覆盖同一精简历史摘要、默认关闭的开关和移动底部导航。
-  PR: include
   ![mobile](./assets/job-detail-compact-pull-history-mobile.jpg)
 - 图片经 `trim_whitespace.py --margin-policy trim_only` 处理，结果为 `unchanged`；Storybook 交互场景为 `Pages/JobDetailPage/CompactSuccessfulPullHistory`，覆盖成功 pull 精简摘要的历史呈现。
 - 主人验收使用的不可变快照：`/Users/ivan/.codex/user-inline-assets/dockrev__f83adb76/2026/08/06/20260806T111641Z-dockrev-compact-pull-desktop-final-73cb7a9a.png`、`/Users/ivan/.codex/user-inline-assets/dockrev__f83adb76/2026/08/06/20260806T111641Z-dockrev-compact-pull-mobile-trimmed-afd927a4.png`。
+- standalone `docker-compose` 的隔离原始字节复现证明，设置 `COMPOSE_PROGRESS=tty` 和 `COMPOSE_ANSI=always` 后会输出 VT100 光标覆盖序列；同一 `commandSeq` 在页面中仅保留两个无等级的终端快照行，`WARN` 计数为零。
+  PR: include
+  ![standalone Compose terminal overwrite desktop](./assets/standalone-compose-terminal-overwrite-desktop.png)
+- `393x852` 证据覆盖相同终端快照替换、默认关闭的 EVEN 开关和窄屏日志区域；截图由 mock-only `ui_demo` 生成。
+  PR: include
+  ![standalone Compose terminal overwrite mobile](./assets/standalone-compose-terminal-overwrite-mobile.png)
+- 本次图片经 `trim_whitespace.py --margin-policy trim_only --evidence-surface page` 处理，结果均为 `unchanged`；桌面使用默认 `1280x720` 视口，移动端使用 `393x852` 视口。
+- 本次主人验收使用的不可变快照：`/Users/ivan/.codex/user-inline-assets/dockrev__f83adb76/2026/08/08/20260808T090819Z-standalone-compose-terminal-overwrite-desktop-8ed3c690.png`、`/Users/ivan/.codex/user-inline-assets/dockrev__f83adb76/2026/08/08/20260808T090819Z-standalone-compose-terminal-overwrite-mobile-c2276477.png`。
