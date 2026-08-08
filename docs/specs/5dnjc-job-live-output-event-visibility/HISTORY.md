@@ -29,3 +29,11 @@ PR 收口验证补充：ui_demo 的 terminal mock 保持单命令快照替换与
 线上复核发现成功的 `docker-compose pull` 虽不再逐行落库，但 `DbLoggingRunner` 仍把整段 transient 下载历史嵌入单条 `status=0 stdout=... stderr=...` 聚合摘要。刷新、重连或错过临时完成标记后，该摘要会完整恢复，表现为下载进度再次大段刷屏。
 
 成功的 plugin/standalone Compose pull 改为只持久化命令和退出状态，不再把 stdout/stderr 进度体写入摘要；失败 pull 继续保存截断后的输出。这样断线恢复仍保留可审计结果，同时与“下载进度不持久化、不补播”的主契约一致。
+
+## 2026-08-08
+
+共享测试机复现显示，Compose V2 standalone 在管道输出中设置 `COMPOSE_PROGRESS=tty` 与 `COMPOSE_ANSI=always` 后会输出 `CSI 2A` 等光标覆盖序列，因此该环境从 plugin 专用条件提升到所有 Compose pull 调用。
+
+后续使用真实 Compose V1 容器再次复现：即使设置相同环境，非 TTY 管道仍只输出普通换行文本；相同命令置于 PTY 后观测到 47 个光标上移序列。standalone `docker-compose` 因而改由 runner 内部 `script` 包装获得 PTY，内部环境标记在 spawn 前剥离，并在发布镜像安装 `util-linux` 提供该程序。超时回归覆盖包装后的子进程不会继续执行延迟副作用。
+
+收口审查继续修正 PTY 包装语义：`script -e` 传播子命令退出码，防止失败 pull 被误报为成功；PTY 合并到 stdout 的进度和失败文本与 stderr 按回调到达顺序共同解析。共享测试机确认 util-linux `script -e -c "exit 7"` 返回退出码 7；回归覆盖 CR 分隔的 stdout 进度帧与 stdout 限流失败不重试。

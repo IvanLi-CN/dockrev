@@ -19,6 +19,7 @@ use crate::{
 
 mod planning;
 mod pull_progress;
+mod pull_progress_stream;
 
 #[allow(unused_imports)]
 pub use planning::UpdateServiceSelection;
@@ -30,10 +31,10 @@ use planning::{
     retry_backoff_delay, should_sync_local_tag, tag_pull_warning_value,
 };
 pub use planning::{is_dockrev_image_ref, select_update_services};
-use pull_progress::{
-    PullProgressFractionSource, PullProgressSnapshot, PullProgressTracker,
-    parse_pull_fraction_from_line, pull_progress_message, pull_progress_signature,
-};
+use pull_progress::pull_progress_message;
+#[cfg(test)]
+use pull_progress::{PullProgressTracker, parse_pull_fraction_from_line};
+use pull_progress_stream::run_checked_with_pull_progress;
 
 #[derive(Clone, Debug)]
 struct TempFileCleanup(std::path::PathBuf);
@@ -1053,144 +1054,6 @@ fn strip_tag_and_digest(image_ref: &str) -> Option<String> {
         return Some(without_digest.to_string());
     }
     Some(left.to_string())
-}
-
-async fn run_checked_with_pull_progress<F>(
-    runner: &dyn CommandRunner,
-    spec: CommandSpec,
-    timeout: Duration,
-    step: &str,
-    retry_policy: IdempotentRetryPolicy,
-    mut on_progress: F,
-) -> anyhow::Result<()>
-where
-    F: FnMut(PullProgressSnapshot) + Send,
-{
-    let mut last_fraction = 0.0f64;
-    let mut last_signature = String::new();
-    for attempt in 1..=retry_policy.max_attempts {
-        let mut tracker = PullProgressTracker::default();
-        let mut last_status_emit = std::time::Instant::now()
-            .checked_sub(Duration::from_secs(5))
-            .unwrap_or_else(std::time::Instant::now);
-        let mut observe_line = |line: &str| {
-            let snapshot = tracker.observe_line(line).or_else(|| {
-                parse_pull_fraction_from_line(line).map(|fraction| PullProgressSnapshot {
-                    fraction: Some(fraction.clamp(0.0, 1.0)),
-                    fraction_source: Some(PullProgressFractionSource::Bytes),
-                    download: None,
-                })
-            });
-            let Some(mut snapshot) = snapshot else {
-                return;
-            };
-            if let Some(fraction) = snapshot.fraction {
-                snapshot.fraction = Some(fraction.clamp(0.0, 0.99));
-            }
-            let fraction_changed = snapshot
-                .fraction
-                .is_some_and(|fraction| fraction > last_fraction + 0.01);
-            let signature = pull_progress_signature(&snapshot);
-            let status_changed = signature != last_signature
-                && last_status_emit.elapsed() >= Duration::from_millis(600);
-            if fraction_changed || status_changed {
-                if let Some(fraction) = snapshot.fraction {
-                    last_fraction = fraction;
-                }
-                last_signature = signature;
-                last_status_emit = std::time::Instant::now();
-                on_progress(snapshot);
-            }
-        };
-        let mut stderr_line_buffer = Vec::new();
-        let run_result = {
-            let mut on_stdout = |_chunk: Vec<u8>| {};
-            let mut on_stderr = |chunk: Vec<u8>| {
-                stderr_line_buffer.extend_from_slice(&chunk);
-                while let Some(delimiter) = stderr_line_buffer
-                    .iter()
-                    .position(|byte| *byte == b'\n' || *byte == b'\r')
-                {
-                    let delimiter_byte = stderr_line_buffer[delimiter];
-                    let mut line = stderr_line_buffer.drain(..=delimiter).collect::<Vec<_>>();
-                    line.pop();
-                    if delimiter_byte == b'\r' && stderr_line_buffer.first() == Some(&b'\n') {
-                        stderr_line_buffer.remove(0);
-                    }
-                    let line = String::from_utf8_lossy(&line);
-                    observe_line(&line);
-                }
-            };
-            runner
-                .run_stream(spec.clone(), timeout, &mut on_stdout, &mut on_stderr)
-                .await
-        };
-
-        let out = match run_result {
-            Ok(out) => out,
-            Err(err) => {
-                if is_registry_rate_limit_failure_text(&err.to_string()) {
-                    return Err(anyhow::Error::new(UpdateStepFailure::new(
-                        step,
-                        retry_policy,
-                        attempt,
-                        format!("registry rate limited: {err}"),
-                    )));
-                }
-                if attempt >= retry_policy.max_attempts {
-                    return Err(anyhow::Error::new(UpdateStepFailure::new(
-                        step,
-                        retry_policy,
-                        attempt,
-                        err.to_string(),
-                    )));
-                }
-                tokio::time::sleep(retry_backoff_delay(retry_policy, attempt)).await;
-                continue;
-            }
-        };
-        if !stderr_line_buffer.is_empty() {
-            if stderr_line_buffer.last() == Some(&b'\r') {
-                stderr_line_buffer.pop();
-            }
-            let line = String::from_utf8_lossy(&stderr_line_buffer);
-            observe_line(&line);
-        }
-
-        if out.status == 0 {
-            return Ok(());
-        }
-
-        let failure_message = format!(
-            "command failed: status={} stderr={}",
-            out.status, out.stderr
-        );
-        if is_registry_rate_limit_failure_text(&failure_message) {
-            return Err(anyhow::Error::new(UpdateStepFailure::new(
-                step,
-                retry_policy,
-                attempt,
-                format!("registry rate limited: {failure_message}"),
-            )));
-        }
-
-        if attempt >= retry_policy.max_attempts {
-            return Err(anyhow::Error::new(UpdateStepFailure::new(
-                step,
-                retry_policy,
-                attempt,
-                failure_message,
-            )));
-        }
-        tokio::time::sleep(retry_backoff_delay(retry_policy, attempt)).await;
-    }
-
-    Err(anyhow::Error::new(UpdateStepFailure::new(
-        step,
-        retry_policy,
-        retry_policy.max_attempts,
-        "retry loop exhausted unexpectedly",
-    )))
 }
 
 #[allow(clippy::too_many_arguments)]

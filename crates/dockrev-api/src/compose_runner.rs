@@ -1,4 +1,7 @@
-use crate::{api::types::ComposeConfig, runner::CommandSpec};
+use crate::{
+    api::types::ComposeConfig,
+    runner::{CommandSpec, STREAM_PTY_ENV},
+};
 
 #[derive(Clone, Debug)]
 pub struct ComposeRunnerConfig {
@@ -55,11 +58,16 @@ impl ComposeStack {
         let mut cmd = self.pull_services(cfg, services);
         // Keep Compose in terminal progress mode so layer updates overwrite their screen rows.
         // The command is piped rather than attached to a TTY, so ANSI must be explicit too.
-        if is_docker_plugin(&cfg.compose_bin) {
-            cmd.env
-                .push(("COMPOSE_PROGRESS".to_string(), "tty".to_string()));
-            cmd.env
-                .push(("COMPOSE_ANSI".to_string(), "always".to_string()));
+        // `docker-compose` can be the standalone invocation for the same V2 implementation.
+        cmd.env
+            .push(("COMPOSE_PROGRESS".to_string(), "tty".to_string()));
+        cmd.env
+            .push(("COMPOSE_ANSI".to_string(), "always".to_string()));
+        if !is_docker_plugin(&cfg.compose_bin) {
+            // Compose V1 ignores COMPOSE_PROGRESS when its output is piped. Route
+            // standalone invocations through the runner's PTY without exposing
+            // the implementation marker to the child process.
+            cmd.env.push((STREAM_PTY_ENV.to_string(), "1".to_string()));
         }
         cmd
     }
@@ -291,6 +299,33 @@ mod tests {
                 ),
                 ("COMPOSE_PROGRESS".to_string(), "tty".to_string()),
                 ("COMPOSE_ANSI".to_string(), "always".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn standalone_compose_progress_env_routes_through_a_terminal() {
+        let stack = ComposeStack {
+            project_name: "myproj".to_string(),
+            compose: ComposeConfig {
+                kind: "path".to_string(),
+                compose_files: vec!["/srv/app/docker-compose.yml".to_string()],
+                env_file: None,
+            },
+        };
+        let cfg = ComposeRunnerConfig {
+            compose_bin: "docker-compose".to_string(),
+            env: Vec::new(),
+        };
+
+        let cmd = stack.pull_services_with_progress(&cfg, &["web".to_string()]);
+
+        assert_eq!(
+            cmd.env,
+            vec![
+                ("COMPOSE_PROGRESS".to_string(), "tty".to_string()),
+                ("COMPOSE_ANSI".to_string(), "always".to_string()),
+                (crate::runner::STREAM_PTY_ENV.to_string(), "1".to_string()),
             ]
         );
     }
