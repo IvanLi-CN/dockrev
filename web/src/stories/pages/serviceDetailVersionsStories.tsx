@@ -369,6 +369,30 @@ export const VersionsSectionActionGuard: ServiceDetailStory = {
   },
 };
 
+export const ActiveUpdateWithoutCandidate: ServiceDetailStory = {
+  parameters: {
+    dockrevApiScenario: "service-action-progress",
+    dockrevGitHubReleasesByServiceId: {
+      "svc-prod-api": {
+        authMode: "anonymous",
+        repo: { fullName: "acme/api", htmlUrl: "https://github.com/acme/api" },
+        items: versionReleaseNotes,
+      },
+    },
+  },
+  render: render("stack-prod", "svc-prod-api", "versions"),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(findVersionAction(canvasElement, "update", "5.2.3")));
+    const action = findVersionAction(canvasElement, "update", "5.2.3");
+    const index = versionsIndexItem(canvasElement, "5.2.3");
+    expectStory(normalizeText(index?.querySelector(".serviceVersionsIndexFlag")?.textContent) === "更新中", "active target should remain visible in the version index after candidate disappearance");
+    expectStory(action?.getAttribute("aria-busy") === "true", "active target should retain its loading state after candidate disappearance");
+    expectStory(!action?.disabled, "active target should remain clickable after candidate disappearance");
+    action?.click();
+    await waitForCondition(() => currentRoutePathname().startsWith("/queue/job-1"));
+  },
+};
+
 export const DockrevVersionsSelfUpgrade: ServiceDetailStory = {
   parameters: dockrevSelfUpgradeStoryParameters,
   render: render("stack-prod", "svc-prod-api", "versions", "Dockrev 版本页的候选卡必须走 supervisor 自我升级，而不是普通服务更新。"),

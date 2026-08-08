@@ -88,10 +88,18 @@ export function useServiceDetailPageState(props: {
     ? serviceOperationOwner(lifecycleJob.type)
     : null
   const activeOperation = useMemo(
-    () => lifecycleJob && lifecycleOwner
-      ? { owner: lifecycleOwner, id: lifecycleJob.id, status: lifecycleJob.status, action: lifecycleJob.action ?? null }
+    () => lifecycleOwner === 'update' && applyActiveJob
+      ? { owner: 'update' as const, id: applyActiveJob.jobId, status: applyActiveJob.status, action: null, targetVersion: applyActiveJob.targetVersion }
+      : lifecycleJob && lifecycleOwner
+      ? {
+          owner: lifecycleOwner,
+          id: lifecycleJob.id,
+          status: lifecycleJob.status,
+          action: lifecycleJob.action ?? null,
+          ...(lifecycleOwner === 'update' ? { targetVersion: applyActiveJob?.targetVersion } : {}),
+        }
       : applyActiveJob
-        ? { owner: 'update' as const, id: applyActiveJob.jobId, status: applyActiveJob.status, action: null }
+        ? { owner: 'update' as const, id: applyActiveJob.jobId, status: applyActiveJob.status, action: null, targetVersion: applyActiveJob.targetVersion }
         : null,
     [applyActiveJob, lifecycleJob, lifecycleOwner],
   )
@@ -822,7 +830,7 @@ export function useServiceDetailPageState(props: {
           backupMode: 'inherit',
         })
         setNotice({ jobId: resp.jobId, kind: 'update' })
-        if (applyActionKey) trackJob(applyActionKey, resp.jobId, 'queued')
+        if (applyActionKey) trackJob(applyActionKey, resp.jobId, 'queued', service.candidate?.resolvedTag ?? service.candidate?.tag ?? null)
         void refreshLifecycleStatus().catch(() => undefined)
       } catch (e: unknown) {
         if (e instanceof ApiError) {
@@ -1172,7 +1180,7 @@ export function useServiceDetailPageState(props: {
     service,
     serviceId,
     applyActiveJob: activeUpdateJob
-      ? { jobId: activeUpdateJob.id, status: activeUpdateJob.status }
+      ? { jobId: activeUpdateJob.id, status: activeUpdateJob.status, targetVersion: activeUpdateJob.targetVersion }
       : null,
     applySubmitting,
     setBusy,

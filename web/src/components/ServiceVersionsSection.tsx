@@ -62,7 +62,7 @@ type ServiceVersionsSectionProps = {
   rollbackTargetRefreshing: boolean
   busy: boolean
   dockrevSelfUpgradeAction: DockrevSelfUpgradeActionDescriptor | null
-  updateActiveJob: { jobId: string; status: string } | null
+  updateActiveJob: { jobId: string; status: string; targetVersion?: string | null } | null
   updateSubmitting: boolean
   rollbackActiveJobId: string | null
   rollbackActiveJobStatus: string | null
@@ -148,6 +148,11 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     }),
     [props.rollbackActiveJobStatus, props.updateActiveJob?.status, props.updateSubmitting],
   )
+  const activeUpdateTargetVersion = useMemo(() => {
+    if (!props.updateActiveJob) return null
+    const activeJob = props.jobs.find((job) => job.id === props.updateActiveJob?.jobId)
+    return activeJob ? releaseVersionForServiceOperation(activeJob, serviceId) : props.updateActiveJob.targetVersion ?? null
+  }, [props.jobs, props.updateActiveJob, serviceId])
   const currentVersion = useMemo(
     () => (props.service.image.resolvedTag ?? '').trim() || props.service.image.tag.trim() || null,
     [props.service.image.resolvedTag, props.service.image.tag],
@@ -517,6 +522,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     return items.map((item) => {
       const currentMatch = releaseNotesTagMatchesVersion(item, currentVersion)
       const candidateMatch = releaseNotesTagMatchesVersion(item, candidateComparableVersion)
+      const activeUpdateTargetMatch = operationProgress?.kind === 'update' && releaseNotesTagMatchesVersion(item, activeUpdateTargetVersion)
       const semverComparison = compareStrictSemverTags(item.tagName, currentComparableVersion)
       const olderThanCurrent = semverComparison != null && semverComparison < 0
       const newerThanCurrent = semverComparison != null && semverComparison > 0
@@ -546,7 +552,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
           updateActionHint = dockrevAction.hint
           updateActionVariant = dockrevAction.buttonVariant
           updateActionPresentation = dockrevAction.presentation === 'candidateOnly' ? 'candidateOnly' : 'default'
-        } else if (candidateMatch && operationProgress?.kind === 'update') {
+        } else if (activeUpdateTargetMatch) {
           updateActionLabel = operationProgress.actionLabel
           updateLoading = true
           updateLoadingClickable = Boolean(props.updateActiveJob)
@@ -604,6 +610,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     dockrevService,
     items,
     operationProgress,
+    activeUpdateTargetVersion,
     props.rollbackTarget?.targetDisplayTag,
     props.dockrevSelfUpgradeAction,
     props.service,
@@ -822,7 +829,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
                                 <span>{formatVersionDirectoryTimeLabel(preferredReleaseTimestamp(item))}</span>
                                 {currentMatch ? (
                                   <span className="serviceVersionsIndexFlag">当前</span>
-                                ) : candidateMatch ? (
+                                ) : candidateMatch || (operationProgress?.kind === 'update' && releaseNotesTagMatchesVersion(item, activeUpdateTargetVersion)) ? (
                                   <span className="serviceVersionsIndexFlag">
                                     {!dockrevService && operationProgress?.kind === 'update'
                                       ? operationProgress.compactLabel
