@@ -1,4 +1,4 @@
-import { Download, RefreshCw } from 'lucide-react'
+import { Clock3, Download, RefreshCw } from 'lucide-react'
 import { useRef, useState } from 'react'
 
 import { usePwaStatus } from '../pwaStatus'
@@ -71,15 +71,24 @@ export function PwaUpdateBubble() {
       <div className="pwaUpdateBubbleActions">
         {isFailed ? (
           <Button onClick={() => void checkForUpdates()} variant="primary">
-            重新检查
+            <span className="btnInlineContent">
+              <RefreshCw aria-hidden="true" size={14} strokeWidth={2.2} />
+              重新检查
+            </span>
           </Button>
         ) : (
           <Button disabled={isDownloading} onClick={() => void applyUpdate()} variant="primary">
-            立即更新
+            <span className="btnInlineContent">
+              <RefreshCw aria-hidden="true" size={14} strokeWidth={2.2} />
+              立即更新
+            </span>
           </Button>
         )}
         <Button onClick={dismissUpdate} variant="ghost">
-          稍后
+          <span className="btnInlineContent">
+            <Clock3 aria-hidden="true" size={14} strokeWidth={2.2} />
+            稍后
+          </span>
         </Button>
       </div>
     </div>
