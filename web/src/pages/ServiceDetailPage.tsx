@@ -859,7 +859,7 @@ export function ServiceDetailPage(props: {
               title={imageNameDisplay.suffix ? `${imageNameDisplay.base}${imageNameDisplay.suffix}` : imageNameDisplay.base}
             >
               <span className="monoSplitBase">{imageNameDisplay.base}</span>
-              <ImageLinkIcons imageRef={effectiveService.image.ref} repoUrl={visibleRepoUrl} />
+              {!operationProgress ? <ImageLinkIcons imageRef={effectiveService.image.ref} repoUrl={visibleRepoUrl} /> : null}
             </div>
           </div>
           <div className="svcDetailSummaryStatus">

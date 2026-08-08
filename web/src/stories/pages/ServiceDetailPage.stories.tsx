@@ -1121,6 +1121,11 @@ export const RollbackActive: Story = {
   render: render("stack-prod", "svc-prod-api", "overview"),
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument;
+    await waitForCondition(() => normalizeText(canvasElement.querySelector('[data-service-detail-context="status-summary"]')?.textContent).includes("回滚中"));
+    const statusRail = canvasElement.querySelector<HTMLElement>('[data-service-detail-context="status-summary"]');
+    expectStory(statusRail?.classList.contains("svcBannerInfo"), "active rollback should switch the shared status rail to the info theme");
+    expectStory(Boolean(statusRail?.querySelector(".svcBannerActivityIcon")), "active rollback should render the animated status icon");
+    expectStory(!statusRail?.querySelector("button, a, [tabindex]"), "active rollback status rail must remain non-interactive");
     doc.querySelector<HTMLButtonElement>('[aria-label="更新操作菜单"]')?.click();
     await waitForCondition(() => Boolean(doc.querySelector('[data-service-split-item="rollback"]')));
 

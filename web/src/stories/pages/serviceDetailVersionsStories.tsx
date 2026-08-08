@@ -311,6 +311,16 @@ export const VersionsSectionActionGuard: ServiceDetailStory = {
     await waitForCondition(() => doc.body.textContent?.includes("确认更新服务 api？") ?? false);
     findButton(doc, "更新")?.click();
 
+    await waitForCondition(() => normalizeText(canvasElement.querySelector('[data-service-detail-context="status-summary"]')?.textContent).includes("更新任务提交中"));
+    const submittingCandidateIndex = versionsIndexItem(canvasElement, "5.2.3");
+    const submittingCandidateAction = findVersionAction(canvasElement, "update", "5.2.3");
+    expectStory(
+      normalizeText(submittingCandidateIndex?.querySelector(".serviceVersionsIndexFlag")?.textContent) === "提交中",
+      "candidate index chip should expose the submitting phase",
+    );
+    expectStory(submittingCandidateAction?.disabled, "candidate update action should stay disabled while the job is being submitted");
+    expectStory(submittingCandidateAction?.getAttribute("aria-busy") === "true", "submitting candidate action should expose its loading state");
+
     await waitForCondition(() => {
       const text = normalizeText(canvasElement.querySelector('[data-service-detail-context="status-summary"]')?.textContent);
       return text.includes("更新排队中") || text.includes("更新中");
