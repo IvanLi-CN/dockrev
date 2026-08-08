@@ -329,9 +329,6 @@
   story_id_or_title: `Pages/ServiceDetailPage/VersionsSection`
   state: `service versions locate-first anchor window`
   evidence_note: `标准桌面 `1600x1200` 页面级视图直接验证服务详情 `版本` 子页首屏落在当前部署版本附近窗口；当前版本卡片被置于视口中心，列表保持虚拟渲染，不再为了定位目标版本自动线性翻页。`
-  PR: include
-  PR caption: 服务详情 `版本` 子页改为 locate-first 首屏锚点窗口，当前部署版本首屏可读且虚拟列表稳定。
-
 ![服务详情版本子页首屏锚点窗口](docs/screenshots/release-notes-locate/service-versions-anchor.png)
 
 - source_type: `storybook_canvas`
@@ -344,10 +341,37 @@
   story_id_or_title: `Pages/ServiceDetailPage/UpdateHistorySection`
   state: `history deep link with backup summary column`
   evidence_note: 标准桌面 `1600x1200` 页面级视图验证 `/history` 深链、重排后的 tabs 顺序，以及新增 `备份` 列在桌面六列表格中的落位。带实际备份记录的行显示 `2 个目标 / 17.6 MiB`，无匹配记录的行保持中性空占位；活动 Tab 已表达当前 section，内容区不重复标题、说明或记录数量。更新记录仅保留外层 section card，表格不再使用嵌套圆角容器。当前 Storybook 未配置桌面 viewport preset，故以受控视口模拟采集。
-  PR: include
-  PR caption: 服务详情更新记录子页新增备份摘要列，并按 `概览 / 更新记录 / 监控 / 日志 / 备份 / 设置` 重排顶部 tabs。
-
 ![服务详情更新记录子页（桌面页面级）](./assets/service-detail-update-history-desktop.png)
+
+- source_type: `ui_demo`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `1600x1000`
+  viewport_strategy: `controlled-viewport`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `demo:app / /demo/services/stack-prod/svc-prod-api/versions?demoScenario=dashboard-demo-hydrated-update`
+  state: `desktop active update progress synchronization`
+  evidence_note: `mock-only ui_demo` 桌面截图验证活动更新优先接管共享状态信息带，信息带使用主题蓝色与加载图标并保留当前版本、目标版本和跨度；左侧候选目录同步显示 `更新中`，候选卡按钮保留加载反馈与任务详情入口，同时页面中不再出现独立活动任务横幅。
+  PR: include
+  PR caption: 活动更新统一显示在共享蓝色状态信息带，并同步候选目录与候选卡任务入口。
+
+![服务详情版本子页更新中桌面联动](./assets/service-detail-versions-update-progress-desktop.png)
+
+- source_type: `ui_demo`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `390x900`
+  viewport_strategy: `controlled-viewport`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `demo:app / /demo/services/stack-prod/svc-prod-api/versions?demoScenario=dashboard-demo-hydrated-update`
+  state: `mobile active update status rail`
+  evidence_note: `mock-only ui_demo` 移动端截图验证共享蓝色状态信息带在 `390x900` 下完整展示 `更新中`、当前版本、目标版本与跨度，加载图标和单列页面均无横向溢出；桌面候选目录在该断点按合同隐藏，页面中没有独立活动任务横幅。
+  PR: include
+  PR caption: 移动端更新中状态收敛到共享信息带，并保持无横向溢出。
+
+![服务详情版本子页更新中移动状态带](./assets/service-detail-versions-update-progress-mobile.png)
 
 ## Visual Evidence (PR)
 
@@ -805,36 +829,6 @@
   PR caption: `ui_demo` 移动端版本页隐藏目录并保持无横向溢出。
 
 ![服务详情版本子页 ui_demo 移动端无目录](./assets/service-detail-versions-ui-demo-mobile.png)
-
-- source_type: `ui_demo`
-  target_program: `mock-only`
-  capture_scope: `browser-viewport`
-  requested_viewport: `1600x1000`
-  viewport_strategy: `controlled-viewport`
-  sensitive_exclusion: `N/A`
-  submission_gate: `approved`
-  story_id_or_title: `demo:app / /demo/services/stack-prod/svc-prod-api/versions?demoScenario=dashboard-demo-hydrated-update`
-  state: `desktop active update progress synchronization`
-  evidence_note: `mock-only ui_demo` 桌面截图验证活动更新优先接管共享状态信息带，信息带使用主题蓝色与加载图标并保留当前版本、目标版本和跨度；左侧候选目录同步显示 `更新中`，候选卡按钮保留加载反馈与任务详情入口，同时页面中不再出现独立活动任务横幅。
-  PR: include
-  PR caption: 活动更新统一显示在共享蓝色状态信息带，并同步候选目录与候选卡任务入口。
-
-![服务详情版本子页更新中桌面联动](./assets/service-detail-versions-update-progress-desktop.png)
-
-- source_type: `ui_demo`
-  target_program: `mock-only`
-  capture_scope: `browser-viewport`
-  requested_viewport: `390x900`
-  viewport_strategy: `controlled-viewport`
-  sensitive_exclusion: `N/A`
-  submission_gate: `approved`
-  story_id_or_title: `demo:app / /demo/services/stack-prod/svc-prod-api/versions?demoScenario=dashboard-demo-hydrated-update`
-  state: `mobile active update status rail`
-  evidence_note: `mock-only ui_demo` 移动端截图验证共享蓝色状态信息带在 `390x900` 下完整展示 `更新中`、当前版本、目标版本与跨度，加载图标和单列页面均无横向溢出；桌面候选目录在该断点按合同隐藏，页面中没有独立活动任务横幅。
-  PR: include
-  PR caption: 移动端更新中状态收敛到共享信息带，并保持无横向溢出。
-
-![服务详情版本子页更新中移动状态带](./assets/service-detail-versions-update-progress-mobile.png)
 
 ## Related PRs
 
