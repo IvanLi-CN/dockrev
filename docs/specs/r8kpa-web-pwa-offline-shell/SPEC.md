@@ -91,7 +91,7 @@
 
 PR: include
 
-![PWA update bubble desktop](assets/pwa-update-bubble-desktop.png)
+![PWA update bubble desktop](./assets/pwa-update-bubble-desktop.png)
 
 - source_type: storybook_canvas
 - target_program: mock-only
@@ -106,7 +106,7 @@ PR: include
 
 PR: include
 
-![PWA update bubble mobile](assets/pwa-update-bubble-mobile.png)
+![PWA update bubble mobile](./assets/pwa-update-bubble-mobile.png)
 
 - source_type: storybook_canvas
 - target_program: mock-only
@@ -119,7 +119,7 @@ PR: include
 
 ### Offline Snapshot Notice
 
-![Offline snapshot notice](assets/offline-snapshot-notice.png)
+![Offline snapshot notice](./assets/offline-snapshot-notice.png)
 
 - source_type: storybook_canvas
 - target_program: mock-only
@@ -130,7 +130,7 @@ PR: include
 
 ### Service Monitoring Offline Snapshot
 
-![Service monitoring offline snapshot](assets/service-resource-offline-snapshot.png)
+![Service monitoring offline snapshot](./assets/service-resource-offline-snapshot.png)
 
 - source_type: storybook_canvas
 - target_program: mock-only
@@ -141,7 +141,7 @@ PR: include
 
 ### Service Update History Fresh Snapshot
 
-![Service update history fresh snapshot (page-level)](assets/service-detail-update-history-snapshot.png)
+![Service update history fresh snapshot (page-level)](./assets/service-detail-update-history-snapshot.png)
 
 - source_type: storybook_canvas
 - target_program: mock-only
@@ -153,7 +153,7 @@ PR: include
 
 ### Service Settings Offline Gate
 
-![Service settings offline gate](assets/service-detail-settings-offline-readonly.png)
+![Service settings offline gate](./assets/service-detail-settings-offline-readonly.png)
 
 - source_type: storybook_canvas
 - target_program: mock-only
