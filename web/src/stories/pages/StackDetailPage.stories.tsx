@@ -235,9 +235,12 @@ export const LifecycleActiveJob: Story = {
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument;
     await waitForCondition(() => Boolean(doc.querySelector('[data-service-split-action="Stack 生命周期"]')));
-    expectStory(doc.querySelector('[data-service-split-action="Stack 生命周期"]')?.textContent?.includes("操作进行中…"), "active Stack job should remain visible in the top action");
-    const primary = doc.querySelector<HTMLButtonElement>('[data-service-split-action="Stack 生命周期"] button');
+    const action = doc.querySelector('[data-service-split-action="Stack 生命周期"]');
+    expectStory(action?.textContent?.includes("操作进行中…"), "active Stack job should remain visible in the top action");
+    const primary = action?.querySelector<HTMLButtonElement>('button');
     expectStory(primary && !primary.disabled, "active Stack job should be clickable");
+    await new Promise((resolve) => setTimeout(resolve, 1400));
+    expectStory(doc.querySelector('[data-service-split-action="Stack 生命周期"]') === action, "active lifecycle polling should preserve the top action tree");
   },
 };
 

@@ -127,14 +127,21 @@ export function StackDetailPage(props: {
     return next
   }, [stackId])
 
+  const activeLifecycleJob = lifecycleStatus?.activeJob && activeOperation(lifecycleStatus.activeJob.status)
+    ? lifecycleStatus.activeJob
+    : null
+  const activeLifecycleJobId = activeLifecycleJob?.id ?? null
+  const activeLifecycleJobType = activeLifecycleJob?.type ?? null
+  const activeLifecycleJobStatus = activeLifecycleJob?.status ?? null
+  const activeLifecycleJobAction = activeLifecycleJob?.action ?? null
+  const stackArchived = Boolean(stack?.archived)
+  const lifecycleStatusLoading = lifecycleStatus === null
+
   const requestLifecycleAction = useCallback((action: ServiceLifecycleAction) => {
     void (async () => {
       if (!stack) return
-      const activeJob = lifecycleStatus?.activeJob?.type === 'stack_lifecycle' && activeOperation(lifecycleStatus.activeJob.status)
-        ? lifecycleStatus.activeJob
-        : null
-      if (activeJob && activeOperation(activeJob.status)) {
-        navigate({ name: 'job', jobId: activeJob.id })
+      if (activeLifecycleJobId && activeLifecycleJobType === 'stack_lifecycle' && activeLifecycleJobStatus && activeOperation(activeLifecycleJobStatus)) {
+        navigate({ name: 'job', jobId: activeLifecycleJobId })
         return
       }
       if (action !== 'start') {
@@ -178,7 +185,7 @@ export function StackDetailPage(props: {
         setLifecycleSubmitting(false)
       }
     })()
-  }, [confirm, lifecycleStatus?.activeJob, refreshLifecycleStatus, stack, stackId])
+  }, [activeLifecycleJobId, activeLifecycleJobStatus, activeLifecycleJobType, confirm, refreshLifecycleStatus, stack, stackId])
 
   useEffect(() => {
     let cancelled = false
@@ -258,19 +265,18 @@ export function StackDetailPage(props: {
   }, [cachedPolicy, jobs, settings?.autoUpdatePolicy, snapshotAnchorFetchedAt, snapshotKey, stack])
 
   useEffect(() => {
-    const activeJob = lifecycleStatus?.activeJob && activeOperation(lifecycleStatus.activeJob.status)
-      ? lifecycleStatus.activeJob
+    const lifecycleJob = activeLifecycleJobType === 'stack_lifecycle' && activeLifecycleJobId && activeLifecycleJobStatus
+      ? { id: activeLifecycleJobId, action: activeLifecycleJobAction, status: activeLifecycleJobStatus }
       : null
-    const lifecycleJob = activeJob?.type === 'stack_lifecycle' ? activeJob : null
-    const otherActiveJob = activeJob && activeJob.type !== 'stack_lifecycle' ? activeJob : null
+    const hasOtherActiveJob = Boolean(activeLifecycleJobId && activeLifecycleJobType !== 'stack_lifecycle')
     const lifecycleState = lifecycleStatus?.state ?? 'unknown'
     const lifecycleReason = lifecycleSubmitting
       ? '操作正在提交'
       : !isOnline
         ? '离线时无法操作 Stack'
-        : stack?.archived
+        : stackArchived
           ? '归档 Stack 不可操作'
-      : lifecycleReasonLabel(lifecycleStatus?.unavailableReason ?? (!lifecycleStatus ? 'lifecycle_status_loading' : null))
+      : lifecycleReasonLabel(lifecycleStatus?.unavailableReason ?? (lifecycleStatusLoading ? 'lifecycle_status_loading' : null))
     const lifecycleItems = (['start', 'stop', 'restart'] as ServiceLifecycleAction[]).map((action) => {
       const compatible = (action === 'start' && lifecycleState === 'stopped') ||
         ((action === 'stop' || action === 'restart') && lifecycleState === 'running')
@@ -283,9 +289,9 @@ export function StackDetailPage(props: {
         iconVariant: action === 'start' || action === 'stop' ? 'solid' as const : undefined,
         description: lifecycleJob
           ? activeAction ? '任务进行中，点击查看任务详情' : '其他生命周期任务进行中'
-          : otherActiveJob ? lifecycleReasonLabel(lifecycleStatus?.unavailableReason) ?? '其他任务正在执行'
+          : hasOtherActiveJob ? lifecycleReasonLabel(lifecycleStatus?.unavailableReason) ?? '其他任务正在执行'
             : lifecycleReason ?? (compatible ? undefined : '当前 Stack 状态不支持该操作'),
-        disabled: lifecycleJob ? !activeAction : Boolean(otherActiveJob) || Boolean(lifecycleReason) || busy || lifecycleSubmitting || !compatible,
+        disabled: lifecycleJob ? !activeAction : hasOtherActiveJob || Boolean(lifecycleReason) || busy || lifecycleSubmitting || !compatible,
         onSelect: () => lifecycleJob && activeAction ? navigate({ name: 'job', jobId: lifecycleJob.id }) : requestLifecycleAction(action),
         loading: Boolean(lifecycleJob && activeAction),
         loadingClickable: Boolean(lifecycleJob && activeAction),
@@ -296,7 +302,7 @@ export function StackDetailPage(props: {
       : lifecycleState === 'stopped' ? lifecycleItems[0] : lifecycleItems[1]
     const lifecycleGroupDisabledReason = lifecycleJob
       ? undefined
-      : otherActiveJob
+      : hasOtherActiveJob
         ? lifecycleReasonLabel(lifecycleStatus?.unavailableReason) ?? '其他任务正在执行'
         : lifecycleSubmitting
           ? '操作正在提交'
@@ -331,7 +337,7 @@ export function StackDetailPage(props: {
       </>,
     )
     return () => onTopActions(null)
-  }, [busy, isOnline, lifecycleStatus, lifecycleSubmitting, onTopActions, refresh, requestLifecycleAction, stack])
+  }, [activeLifecycleJobAction, activeLifecycleJobId, activeLifecycleJobStatus, activeLifecycleJobType, busy, isOnline, lifecycleStatus?.state, lifecycleStatus?.unavailableReason, lifecycleStatusLoading, lifecycleSubmitting, onTopActions, refresh, requestLifecycleAction, stackArchived])
 
   if (!stack) {
     if (!isOnline) {
