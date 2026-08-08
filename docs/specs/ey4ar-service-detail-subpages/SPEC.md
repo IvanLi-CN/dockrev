@@ -809,9 +809,9 @@
   submission_gate: `approved`
   story_id_or_title: `demo:app / /demo/services/stack-prod/svc-prod-api/versions`
   state: `desktop split versions layout with repository-level release links`
-  evidence_note: `mock-only ui_demo` 页面级截图，直接验证版本子页在真实应用壳内启用 `220px` 左目录、仓库级 GitHub / OctoRill 图标入口、紧凑状态摘要，以及固定右侧动作栏。目录高亮与正文版本卡同时可见，且当前 rollback target 卡片右栏展示 `来源备份 2 个目标 · 17.6 MiB`，证明双虚拟列表布局与回滚备份摘要都已经落到最终交付面。
+  evidence_note: `mock-only ui_demo` 页面级截图，直接验证版本子页在真实应用壳内启用折叠后的主导航图标 rail、服务目录、仓库级 GitHub / OctoRill 图标入口、紧凑状态摘要，以及固定右侧动作栏。目录高亮与正文版本卡同时可见，且当前 rollback target 卡片右栏展示 `来源备份 2 个目标 · 17.6 MiB`，证明双虚拟列表布局与回滚备份摘要都已经落到最终交付面。
   PR: include
-  PR caption: `ui_demo` 桌面端版本页启用左目录、仓库级图标入口与固定动作栏。
+  PR caption: `ui_demo` 桌面端版本页折叠主导航，同时保留左目录、仓库级图标入口与固定动作栏。
 
 ![服务详情版本子页 ui_demo 桌面目录](./assets/service-detail-versions-ui-demo-desktop.png)
 
