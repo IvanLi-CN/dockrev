@@ -29,6 +29,8 @@ import { DeployWelcomePage } from "./pages/DeployWelcomePage";
 import { UnauthorizedPage } from "./pages/UnauthorizedPage";
 import { useRoute } from "./useRoute";
 import { usePageResumeRefresh } from "./usePageResumeRefresh";
+import { usePwaStatus } from "./pwaStatus";
+import { shouldApplyUpdateOnPathnameNavigation } from "./pwaUpdateLifecycle";
 import {
   AUTH_RECOVERED_EVENT,
   AUTH_REQUIRED_EVENT,
@@ -116,6 +118,7 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string } {
 
 export default function App() {
   const route = useRoute();
+  const { applyUpdateOnNavigation } = usePwaStatus();
   const [releaseDrawerState, setReleaseDrawerState] = useState(() =>
     readGitHubReleaseDrawerState(),
   );
@@ -145,6 +148,7 @@ export default function App() {
   const authIdentityRefreshInFlightRef = useRef(false);
   const suppressNextAuthRecoveredRef = useRef(false);
   const previousRoutePathRef = useRef<string | null>(null);
+  const previousUpdateNavigationPathRef = useRef<string | null>(null);
 
   const head = useMemo(() => pageTitle(route), [route]);
   const resolvedHead = useMemo(
@@ -340,6 +344,17 @@ export default function App() {
 
     setReleaseDrawerState(readGitHubReleaseDrawerState());
   }, [releaseDrawerState.open, route]);
+
+  useEffect(() => {
+    const nextPathname = currentRoutePathname();
+    const previousPathname = previousUpdateNavigationPathRef.current;
+    previousUpdateNavigationPathRef.current = nextPathname;
+
+    if (shouldApplyUpdateOnPathnameNavigation(previousPathname, nextPathname)) {
+      // The URL has already changed, so a controllerchange reload returns to this target route.
+      void applyUpdateOnNavigation();
+    }
+  }, [applyUpdateOnNavigation, route]);
 
   if (route.name === "supervisor-misroute") {
     return (

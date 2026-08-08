@@ -15163,6 +15163,73 @@ html[data-theme="light"] .homepageHeaderSearchPopover {
   background: color-mix(in srgb, var(--dockrev-nav-active-bg) 44%, var(--panel) 56%);
 }
 
+.pwaUpdateBubble {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 80;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px 12px;
+  width: min(360px, calc(100vw - 40px));
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 42%, var(--surface-border-strong) 58%);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 92%, var(--dockrev-nav-active-bg) 8%);
+  box-shadow: 0 16px 42px rgba(2, 6, 23, 0.3);
+}
+
+.pwaUpdateBubbleIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+}
+
+.pwaUpdateBubbleText {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pwaUpdateBubbleText strong {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.pwaUpdateBubbleText span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.pwaUpdateBubbleActions {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pwaUpdateBubble-downloading .pwaUpdateBubbleIcon {
+  color: var(--color-info);
+  background: color-mix(in srgb, var(--color-info) 12%, transparent);
+}
+
+.pwaUpdateBubble-failed {
+  border-color: color-mix(in srgb, var(--color-warning) 40%, var(--surface-border-strong) 60%);
+}
+
+.pwaUpdateBubble-failed .pwaUpdateBubbleIcon {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+}
+
 .shellStatusBanner-offline {
   border-color: color-mix(in srgb, var(--color-warning) 38%, var(--surface-border-strong) 62%);
   background: color-mix(in srgb, var(--color-warning) 10%, var(--panel2) 90%);
@@ -15237,7 +15304,7 @@ html[data-theme="light"] .homepageHeaderSearchPopover {
   color: var(--color-error);
 }
 
-@media (max-width: 820px) {
+@media (max-width: 960px) {
   .shellStatusBanner,
   .readonlySnapshotNotice {
     flex-direction: column;
@@ -15246,5 +15313,19 @@ html[data-theme="light"] .homepageHeaderSearchPopover {
 
   .shellStatusBannerActions {
     justify-content: flex-start;
+  }
+
+  .pwaUpdateBubble {
+    right: 12px;
+    bottom: calc(88px + env(safe-area-inset-bottom));
+    width: calc(100vw - 24px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pwaUpdateBubble,
+  .pwaUpdateBubble * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
   }
 }

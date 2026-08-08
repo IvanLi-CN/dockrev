@@ -13,20 +13,6 @@ const meta: Meta<typeof AppShellStatusBanner> = {
 export default meta
 type Story = StoryObj<typeof AppShellStatusBanner>
 
-export const UpdateReady: Story = {
-  args: {
-    tone: 'update',
-    title: '发现新版本，可刷新更新。',
-    detail: '当前页面不会自动切换；确认后才载入新的前端资源。',
-    actions: (
-      <>
-        <Button variant="primary">刷新更新</Button>
-        <Button variant="ghost">稍后</Button>
-      </>
-    ),
-  },
-}
-
 export const OfflineMode: Story = {
   args: {
     tone: 'offline',

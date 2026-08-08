@@ -665,13 +665,25 @@ async function main() {
       },
     },
     {
-      id: 'components-appshellstatusbanner--update-ready',
-      file: 'pwa-update-banner.png',
+      id: 'layouts-appshell--update-ready-bubble',
+      file: 'pwa-update-bubble-desktop.png',
       setup: async (page) => {
-        await page.locator('.shellStatusBanner-update').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.locator('.pwaUpdateBubble').waitFor({ timeout: STORY_TIMEOUT_MS })
       },
       screenshot: async (page, filePath) => {
-        await page.locator('.shellStatusBanner-update').screenshot({ path: filePath })
+        await page.screenshot({ path: filePath, fullPage: false })
+      },
+    },
+    {
+      id: 'layouts-appshell--update-ready-bubble-mobile',
+      file: 'pwa-update-bubble-mobile.png',
+      viewport: { width: 393, height: 852 },
+      setup: async (page) => {
+        await page.locator('.pwaUpdateBubble').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.locator('.mobileBottomNav').waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        await page.screenshot({ path: filePath, fullPage: false })
       },
     },
     {

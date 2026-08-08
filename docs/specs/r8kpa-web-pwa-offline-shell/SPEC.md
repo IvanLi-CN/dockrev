@@ -2,8 +2,8 @@
 
 ## 状态
 
-- Status: 部分完成（5/6）
-- Last: 2026-07-08
+- Status: 实现中
+- Last: 2026-08-08
 
 ## 背景 / 问题陈述
 
@@ -17,8 +17,8 @@
 
 - 把现有 Web 前端升级为真正可安装的 PWA：提供有效 `manifest.webmanifest`、安装图标、app shell precache、SPA navigation fallback，并保留现有 Web Push 行为。
 - 引入统一的客户端只读快照缓存层：静态资源走 precache，持久只读快照落 IndexedDB，易失上下文仅保留内存态。
-- 离线覆盖精确限定为主要只读页：`/`、`/overview`、`/services`、stack detail、service detail 的只读子页、`/queue`、`/queue/version-inference`。
-- 更新检查以 service worker 更新为主：页面激活时检查，页面可见时每 1 小时低频检查；发现新版本时只做非阻塞提示，需用户确认后才切换。
+- 所有正式前端路由在已缓存 app shell 后都可离线重载入口；业务数据和写操作仍按各页面原有联网门控执行。
+- 更新检查以 service worker 更新为主：页面激活时检查，页面可见时每 1 小时低频检查；新版本在后台预缓存完成后，用户可立即更新，或在下一次页级导航自动切换。
 - 首页旧 `localStorage` 快照在首轮读取时迁移到统一持久缓存层。
 
 ### Non-goals
@@ -50,42 +50,71 @@
 
 - Rust 服务端、数据库 schema、API contract 变更。
 - 推送通知业务语义与通知事件配置模型。
-- Cleanup、Settings、Deploy Welcome、GHCR Registry 维护等联网必需页的离线化。
+- Cleanup、Settings、Deploy Welcome、GHCR Registry 维护等联网必需页的业务数据离线化或离线写。
 
 ## 需求 / 行为合同
 
-- service worker 使用 `vite-plugin-pwa` `injectManifest` 路线统一生成，并在同一个 worker 中同时承载 precache、SPA navigation fallback、Push、通知点击跳转与手动 `skipWaiting`。
+- service worker 使用 `vite-plugin-pwa` `injectManifest` 路线统一生成，并在同一个 worker 中同时承载低优先级 precache、SPA navigation fallback、Push、通知点击跳转与 `skipWaiting`。
 - 应用启动即注册 service worker；通知设置页改为复用全局注册结果，不再自行注册单独 worker。
 - 持久快照统一记录 `fetchedAt`、`staleAt`、`expireAt`、`schemaVersion`、`sourceVersion`；只有仍处于 `fresh` 窗口内的快照允许展示，超过新鲜窗口或超过 7 天都必须回退为需联网态。
 - 纳入持久缓存的 read model 固定为：首页 launcher、概览/服务列表、stack detail、service detail 的 overview/history/monitoring/backup 只读摘要、队列列表、版本推测总览。
 - service detail 的 history 仅回放现有 60 秒 fresh snapshot 中的 jobs；离线时不得建立 jobs SSE，联网且 history 激活时才允许实时刷新。
 - 日志内容、认证态、通知敏感字段、设置表单值、写操作上下文与高时效流式数据不得落持久缓存。
 - 离线时页面只允许展示仍处于 `fresh` 窗口内的本地只读数据，并把所有需要联网的写操作显式禁用或隐藏；不可继续展示非新鲜快照，也不得向用户暴露“数据过时”类提示。
-- 更新检测触发器固定为：`focus`、`visibilitychange -> visible`、`pageshow(persisted)` 与页面可见期间每 1 小时轮询；同一版本 ready 期间全局提示去重。
-- 新版本就绪判定以 service worker 更新结果为准；`/api/version` 仅继续用于展示文本，不作为切换真相源。
+- 更新检测触发器固定为：`focus`、`visibilitychange -> visible`、`pageshow(persisted)` 与页面可见期间每 1 小时轮询；同一 waiting worker 期间全局提示去重。
+- 更新状态机固定为 `idle / downloading / ready / failed`。`updatefound` 进入 `downloading`；只有 Workbox worker 进入 `waiting` 才进入 `ready`，因此 `ready` 表示全部 precache 资源已完成。任何资源下载失败都保留旧版本并进入可重试状态。
+- precache 请求通过 Workbox `requestWillFetch` 以 Fetch Priority `low` 调度；不支持该能力的浏览器使用默认调度。
+- `ready` 后，“立即更新”和下一次 pathname 变化均走同一 single-flight `SKIP_WAITING` 激活。目标 URL 必须先由应用导航或浏览器历史提交，再由新 worker 接管重载；相同 pathname、查询参数变化和抽屉等内部状态不触发。
+- “稍后”只隐藏更新气泡，不取消 waiting worker；下一次页级导航仍自动切换。激活失败时旧版目标页保留，waiting worker 与重试入口保留。
+- 更新提示固定为不占主内容文档流的右下浮动气泡。下载态禁用更新按钮且不显示 tooltip；离线且尚未 ready 时，气泡仅在已有 hover/focus 期间保留，二者离开后隐藏；ready 后即使离线也可激活。
+- navigation fallback 覆盖 `routes.ts` 的全部正式前端路由，并继续排除 `/api`、静态资产与 `/supervisor` 控制面。fallback 仅启动 app shell，不缓存管理数据或开放离线写。
+- `/api/version` 仅继续用于展示文本，不作为切换真相源。
 
 ## 验收标准（Acceptance Criteria）
 
-- Given 用户首次联网访问并完成资源缓存，When 随后断网刷新应用，Then app shell 仍可启动并进入纳入范围的只读路由。
+- Given 用户首次联网访问并完成资源缓存，When 随后断网刷新任一正式前端路由，Then app shell 仍可启动；页面业务数据和写操作仍遵循原有联网门控。
 - Given 离线进入缓存命中的只读页，When 数据来自本地快照，Then 页面只显示仍处于 `fresh` 窗口内的缓存数据，且所有写操作不会被误导性地保留为可点击。
 - Given 本地快照已经离开 `fresh` 窗口或超过 7 天，When 用户离线进入对应页面，Then 页面不再展示该快照，而是直接回到需联网态。
 - Given Chromium PWA installability 检查，When 页面具备有效 manifest、icons 与 service worker，Then 用户可安装到桌面/主屏。
-- Given 发布了新的前端构建，When 页面在激活事件或 1 小时轮询中检测到新版本，Then 只出现单一全局提示，且只有用户确认后才切换到新资源。
+- Given 发布了新的前端构建，When `updatefound` 发生，Then 更新状态进入 `downloading` 且“立即更新”不可用；只有 worker 成为 `waiting` 后才进入可更新状态。
+- Given worker 已 `ready`，When 用户点击“立即更新”，Then 当前 URL 被新 worker 接管并重载；When 用户选择“稍后”后进行应用内导航或浏览器前进/后退，Then 目标 pathname 先提交并由新 worker 重载。
+- Given 更新下载或激活失败，When 用户继续使用当前页面，Then 旧版本不中断并保留重新检查或再次激活的入口。
+- Given 离线且 worker 未 ready，When 更新气泡没有 hover/focus，Then 气泡隐藏；Given worker 已 ready，Then 离线状态仍可更新。
+- Given 窄屏 `393x852` 或 `320px` 宽度，When 更新气泡显示，Then 它不改变内容区尺寸、不遮挡底部导航，并保持可键盘聚焦、`aria-live="polite"` 和 reduced-motion 兼容。
 - Given 现有 Web Push 已启用，When 升级到新的 worker 实现，Then 订阅、通知展示与通知点击跳转行为保持可用。
 
 ## Visual Evidence
 
 视觉证据在实现完成后补充到本 spec 的 `assets/` 目录，并绑定到 Storybook mock-only 场景；离线新鲜快照回放更新记录时，记录列仍严格保持操作与补充结果摘要、Job ID 两行，结果摘要单行截断，并省略已由操作类型或状态表达的泛化内容。匹配记录超过 20 条时，fresh snapshot 在本地按页浏览，且仅渲染当前页。失败记录可以弱化非状态信息，但状态 Badge 必须保持完整颜色与对比度。
 
-### Update Prompt Banner
+### PWA Update Bubble Desktop
 
-![PWA update prompt banner](assets/pwa-update-banner.png)
+PR: include
+
+![PWA update bubble desktop](assets/pwa-update-bubble-desktop.png)
 
 - source_type: storybook_canvas
 - target_program: mock-only
-- capture_scope: `.shellStatusBanner-update`
+- capture_scope: `browser-viewport`
 - requested_viewport: 1440x900
 - viewport_strategy: storybook-static
+- story_id_or_title: `Layouts/AppShell/UpdateReadyBubble`
+- state: ready, fixed outside the app content flow
+- PR: include
+
+### PWA Update Bubble Mobile
+
+PR: include
+
+![PWA update bubble mobile](assets/pwa-update-bubble-mobile.png)
+
+- source_type: storybook_canvas
+- target_program: mock-only
+- capture_scope: `browser-viewport`
+- requested_viewport: 393x852
+- viewport_strategy: storybook-viewport
+- story_id_or_title: `Layouts/AppShell/UpdateReadyBubbleMobile`
+- state: ready above bottom navigation
 - PR: include
 
 ### Offline Snapshot Notice
