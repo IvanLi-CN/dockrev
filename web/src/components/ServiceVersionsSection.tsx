@@ -11,6 +11,7 @@ import {
 import { useConfirm } from '../confirm'
 import { cn } from '../lib/utils'
 import { navigate } from '../routes'
+import { describeServiceOperationProgress } from '../serviceOperationProgress'
 import {
   findReleaseNoteIndex,
   releaseNotesBodyForView,
@@ -102,11 +103,6 @@ function fallbackTone(
   return 'warning'
 }
 
-function activityLabel(status: string | null | undefined, kind: 'update' | 'rollback'): string {
-  if (status === 'queued') return '排队中…'
-  return kind === 'update' ? '更新中…' : '回滚中…'
-}
-
 function resolveVirtualOffset(
   value: number | readonly [number, string] | null | undefined,
 ): number {
@@ -143,6 +139,15 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     return `${serviceId}::${anchorVersion}`
   }, [props.service.image.resolvedTag, props.service.image.tag, serviceId])
   const showDesktopIndex = useMediaQuery(DESKTOP_VERSION_INDEX_QUERY)
+  const dockrevService = isDockrevService(props.service)
+  const operationProgress = useMemo(
+    () => describeServiceOperationProgress({
+      updateSubmitting: props.updateSubmitting,
+      updateStatus: props.updateActiveJob?.status,
+      rollbackStatus: props.rollbackActiveJobStatus,
+    }),
+    [props.rollbackActiveJobStatus, props.updateActiveJob?.status, props.updateSubmitting],
+  )
   const currentVersion = useMemo(
     () => (props.service.image.resolvedTag ?? '').trim() || props.service.image.tag.trim() || null,
     [props.service.image.resolvedTag, props.service.image.tag],
@@ -456,44 +461,6 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
         }
       : null
 
-  const activeTaskNotice = useMemo(() => {
-    if (props.updateSubmitting && !props.updateActiveJob) {
-      return {
-        title: '更新任务提交中',
-        detail: '同一服务只允许一个版本动作在执行，列表内按钮暂不可再次点击。',
-        jobId: null,
-      }
-    }
-    if (props.updateActiveJob) {
-      return {
-        title: activityLabel(props.updateActiveJob.status, 'update'),
-        detail: '当前服务已有更新任务在执行，版本列表动作已锁定。',
-        jobId: props.updateActiveJob.jobId,
-      }
-    }
-    if (props.rollbackActiveJobId) {
-      return {
-        title: activityLabel(props.rollbackActiveJobStatus, 'rollback'),
-        detail: '当前服务已有回滚任务在执行，版本列表动作已锁定。',
-        jobId: props.rollbackActiveJobId,
-      }
-    }
-    if (props.rollbackTargetRefreshing) {
-      return {
-        title: '回滚目标刷新中',
-        detail: '等待后端重新解析可执行回滚目标期间，版本动作暂不可点击。',
-        jobId: null,
-      }
-    }
-    return null
-  }, [
-    props.rollbackActiveJobId,
-    props.rollbackActiveJobStatus,
-    props.rollbackTargetRefreshing,
-    props.updateActiveJob,
-    props.updateSubmitting,
-  ])
-
   const toggleExpanded = useCallback((id: string) => {
     setExpandedIds((prev) => {
       const next = new Set(prev)
@@ -547,8 +514,6 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     const currentComparableVersion = (props.service.image.resolvedTag ?? '').trim() || props.service.image.tag.trim()
     const candidateComparableVersion = candidateVersion
     const rollbackTargetVersion = normalizeVersion(props.rollbackTarget?.targetDisplayTag)
-    const dockrevService = isDockrevService(props.service)
-
     return items.map((item) => {
       const currentMatch = releaseNotesTagMatchesVersion(item, currentVersion)
       const candidateMatch = releaseNotesTagMatchesVersion(item, candidateComparableVersion)
@@ -562,6 +527,8 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
 
       let updateDisabledReason: string | null = null
       let updateDisabled = false
+      let updateLoading = false
+      let updateLoadingClickable = false
       let updateActionLabel = '更新'
       let updateActionHint = '发起当前 candidate 对应的服务更新任务。'
       let updateActionVariant: 'primary' | 'ghost' = 'primary'
@@ -579,6 +546,15 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
           updateActionHint = dockrevAction.hint
           updateActionVariant = dockrevAction.buttonVariant
           updateActionPresentation = dockrevAction.presentation === 'candidateOnly' ? 'candidateOnly' : 'default'
+        } else if (candidateMatch && operationProgress?.kind === 'update') {
+          updateActionLabel = operationProgress.actionLabel
+          updateLoading = true
+          updateLoadingClickable = Boolean(props.updateActiveJob)
+          updateDisabled = !props.updateActiveJob
+          updateDisabledReason = props.updateActiveJob ? null : '正在提交更新任务'
+          updateActionHint = props.updateActiveJob
+            ? '任务进行中，点击查看任务详情'
+            : '正在提交更新任务'
         } else {
           updateDisabledReason =
             serviceActionLockReason ??
@@ -610,6 +586,8 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
         showUpdate,
         showRollback,
         updateDisabled,
+        updateLoading,
+        updateLoadingClickable,
         updateActionHint,
         updateActionLabel,
         updateDisabledReason,
@@ -623,10 +601,13 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     candidateVersion,
     currentVersion,
     deployedHistoricalVersions,
+    dockrevService,
     items,
+    operationProgress,
     props.rollbackTarget?.targetDisplayTag,
     props.dockrevSelfUpgradeAction,
     props.service,
+    props.updateActiveJob,
     serviceActionLockReason,
     viewMode,
   ])
@@ -705,23 +686,6 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
             ) : null}
           </div>
         </div>
-        {activeTaskNotice ? (
-          <div className="serviceVersionsActivityBanner" data-service-versions-banner="activity">
-            <div>
-              <div className="serviceVersionsActivityTitle">{activeTaskNotice.title}</div>
-              <div className="muted">{activeTaskNotice.detail}</div>
-            </div>
-            {activeTaskNotice.jobId ? (
-              <Button
-                variant="ghost"
-                onClick={() => navigate({ name: 'job', jobId: activeTaskNotice.jobId! })}
-              >
-                查看任务
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
-
         {staleBanner ? (
           <div className="releaseDrawerBanner releaseDrawerBanner-warning" data-service-versions-banner="stale">
             <span>{staleBanner.message}</span>
@@ -859,7 +823,11 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
                                 {currentMatch ? (
                                   <span className="serviceVersionsIndexFlag">当前</span>
                                 ) : candidateMatch ? (
-                                  <span className="serviceVersionsIndexFlag">候选</span>
+                                  <span className="serviceVersionsIndexFlag">
+                                    {!dockrevService && operationProgress?.kind === 'update'
+                                      ? operationProgress.compactLabel
+                                      : '候选'}
+                                  </span>
                                 ) : null}
                               </span>
                             </button>
@@ -945,6 +913,10 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
                             onApplyUpdate={() => {
                               if (isDockrevService(props.service)) {
                                 props.dockrevSelfUpgradeAction?.open()
+                                return
+                              }
+                              if (props.updateActiveJob) {
+                                navigate({ name: 'job', jobId: props.updateActiveJob.jobId })
                                 return
                               }
                               props.onApplyUpdate()

@@ -37,6 +37,11 @@ export function handleServiceLifecycleRoute(input: {
         activeJob: { id: 'job-1', type: 'update', status: 'running', action: null },
         unavailableReason: 'update_in_progress',
       },
+      'dashboard-demo-hydrated-update': {
+        state: 'running',
+        activeJob: { id: 'job-1', type: 'update', status: 'running', action: null },
+        unavailableReason: 'update_in_progress',
+      },
     }
     return json(stateByScenario[scenario] ?? { state: findService(serviceId)?.svc.lifecycleState ?? 'unknown' })
   }

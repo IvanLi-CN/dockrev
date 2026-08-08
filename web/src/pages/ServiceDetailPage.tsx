@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Layers3, RotateCw } from "lucide-react";
+import { Layers3, LoaderCircle, RotateCw } from "lucide-react";
 import {
   createIgnore,
   deleteIgnore,
@@ -102,6 +102,7 @@ export function ServiceDetailPage(props: {
     newRuleNote,
     newRuleValue,
     notice,
+    operationProgress,
     backupTargets,
     applyActiveJob,
     applySubmitting,
@@ -861,8 +862,16 @@ export function ServiceDetailPage(props: {
               <ImageLinkIcons imageRef={effectiveService.image.ref} repoUrl={visibleRepoUrl} />
             </div>
           </div>
-          <div className="svcDetailSummaryStatus">
-            <span className={effectiveDotClass} />
+          <div
+            className="svcDetailSummaryStatus"
+            aria-live={operationProgress ? "polite" : undefined}
+            role={operationProgress ? "status" : undefined}
+          >
+            {operationProgress ? (
+              <LoaderCircle aria-hidden="true" className="svcBannerActivityIcon" />
+            ) : (
+              <span className={effectiveDotClass} />
+            )}
             <div className="svcBannerTitle">{effectiveBannerTitle}</div>
             <div className="svcBannerDetail svcDetailStatusSummary">{effectiveBannerDetail}</div>
           </div>

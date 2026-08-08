@@ -7761,8 +7761,7 @@ html[data-theme="light"] .modalOverlay {
   padding: 0;
 }
 
-.serviceVersionsHeader,
-.serviceVersionsActivityBanner {
+.serviceVersionsHeader {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -7843,26 +7842,6 @@ html[data-theme="light"] .modalOverlay {
 .serviceVersionsViewTabActive {
   color: var(--text);
   background: color-mix(in srgb, var(--color-primary) 18%, var(--dockrev-surface) 82%);
-}
-
-.serviceVersionsActivityBanner {
-  padding: 12px 14px;
-  border: 1px solid color-mix(in srgb, var(--color-info) 26%, var(--borderColor) 74%);
-  border-radius: 14px;
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--color-info) 10%, transparent) 0%,
-      transparent 100%
-    ),
-    color-mix(in srgb, var(--panel2) 32%, transparent);
-}
-
-.serviceVersionsActivityTitle {
-  color: var(--text);
-  font-size: 14px;
-  font-weight: 680;
-  line-height: 1.35;
 }
 
 .serviceVersionsState {
@@ -8485,11 +8464,6 @@ html[data-theme="light"] .modalOverlay {
     padding-top: 2px;
   }
 
-  .serviceVersionsActivityBanner {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
   .serviceVersionCard {
     padding: 14px;
     border-radius: 14px;
@@ -8848,6 +8822,15 @@ html[data-theme="light"] .modalOverlay {
   );
 }
 
+.svcBannerInfo {
+  border-color: color-mix(in srgb, var(--color-primary) 28%, transparent);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-primary) 16%, transparent),
+    color-mix(in srgb, var(--color-primary) 5%, transparent)
+  );
+}
+
 .svcBannerWarn {
   border-color: rgba(245, 158, 11, 0.18);
   background: linear-gradient(
@@ -8898,6 +8881,21 @@ html[data-theme="light"] .modalOverlay {
 
 .svcBannerDotBad {
   background: rgba(251, 113, 133, 0.9);
+}
+
+.svcBannerActivityIcon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--color-primary);
+  stroke-width: 2.2;
+  animation: btnInlineSpin 0.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .svcBannerActivityIcon {
+    animation: none;
+  }
 }
 
 .svcBannerTitle {

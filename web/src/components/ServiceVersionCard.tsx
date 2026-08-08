@@ -40,6 +40,8 @@ export type ServiceVersionCardModel = {
   showUpdate: boolean;
   showRollback: boolean;
   updateDisabled: boolean;
+  updateLoading: boolean;
+  updateLoadingClickable: boolean;
   updateActionLabel: string;
   updateActionHint: string;
   updateDisabledReason: string | null;
@@ -253,6 +255,8 @@ export function ServiceVersionCard(props: {
                     variant={card.updateActionVariant}
                     disabled={card.updateDisabled}
                     hint={card.updateDisabledReason ?? undefined}
+                    loading={card.updateLoading}
+                    loadingClickable={card.updateLoadingClickable}
                     onClick={props.onApplyUpdate}
                   >
                     {card.updateActionLabel}

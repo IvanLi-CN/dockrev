@@ -36,6 +36,8 @@ function buildCardModel(body: string): ServiceVersionCardModel {
     showUpdate: false,
     showRollback: false,
     updateDisabled: false,
+    updateLoading: false,
+    updateLoadingClickable: false,
     updateActionLabel: '更新',
     updateActionHint: '发起更新',
     updateDisabledReason: null,
