@@ -992,7 +992,7 @@ export function useServiceDetailPageState(props: {
         id: `lifecycle-${action}`,
         label,
         icon,
-        iconVariant: action === 'stop' ? 'solid' as const : undefined,
+        iconVariant: action === 'start' || action === 'stop' ? 'solid' as const : undefined,
         description,
         disabled: activeLifecycleJob ? !isActiveAction : Boolean(activeOperationOwner) || busy || !compatible,
         onSelect: () => activeLifecycleJob && isActiveAction ? navigate({ name: 'job', jobId: activeLifecycleJob.id }) : requestLifecycleAction(action),

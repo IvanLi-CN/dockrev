@@ -280,7 +280,7 @@ export function StackDetailPage(props: {
         id: `lifecycle-${action}`,
         label: action === 'start' ? '启动' : action === 'stop' ? '停止' : '重启',
         icon,
-        iconVariant: action === 'stop' ? 'solid' as const : undefined,
+        iconVariant: action === 'start' || action === 'stop' ? 'solid' as const : undefined,
         description: lifecycleJob
           ? activeAction ? '任务进行中，点击查看任务详情' : '其他生命周期任务进行中'
           : otherActiveJob ? lifecycleReasonLabel(lifecycleStatus?.unavailableReason) ?? '其他任务正在执行'

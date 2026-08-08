@@ -67,7 +67,7 @@ export const LifecycleUnavailable: Story = {
     ariaLabel: '服务生命周期',
     primary: { id: 'lifecycle-stop', label: '停止', icon: Square, iconVariant: 'solid', description: '部分副本正在运行，请先处理运行态异常', disabled: true, onSelect: noop },
     items: [
-      { id: 'lifecycle-start', label: '启动', icon: Play, description: '部分副本正在运行，请先处理运行态异常', disabled: true, onSelect: noop },
+      { id: 'lifecycle-start', label: '启动', icon: Play, iconVariant: 'solid', description: '部分副本正在运行，请先处理运行态异常', disabled: true, onSelect: noop },
       { id: 'lifecycle-stop', label: '停止', icon: Square, iconVariant: 'solid', description: '部分副本正在运行，请先处理运行态异常', disabled: true, onSelect: noop },
       { id: 'lifecycle-restart', label: '重启', icon: RotateCw, description: '部分副本正在运行，请先处理运行态异常', disabled: true, onSelect: noop },
     ],
@@ -79,6 +79,7 @@ export const LifecycleUnavailable: Story = {
     await userEvent.click(toggle)
 
     const menu = await documentBody.findByRole('menu', { name: '服务生命周期' })
+    expect(menu.querySelector('[data-service-split-item="lifecycle-start"] .serviceSplitActionIconSolid')).toBeInTheDocument()
     expect(menu.querySelector('[data-service-split-item="lifecycle-stop"] .serviceSplitActionIconSolid')).toBeInTheDocument()
     expect(within(menu).queryByText('部分副本正在运行，请先处理运行态异常')).not.toBeInTheDocument()
   },
@@ -91,7 +92,7 @@ export const GroupDisabledByServiceOperation: Story = {
     disabledReason: '服务正在更新，完成后才能启动、停止或重启。',
     primary: { id: 'lifecycle-stop', label: '停止', icon: Square, iconVariant: 'solid', onSelect: noop },
     items: [
-      { id: 'lifecycle-start', label: '启动', icon: Play, disabled: true, onSelect: noop },
+      { id: 'lifecycle-start', label: '启动', icon: Play, iconVariant: 'solid', disabled: true, onSelect: noop },
       { id: 'lifecycle-stop', label: '停止', icon: Square, iconVariant: 'solid', disabled: true, onSelect: noop },
       { id: 'lifecycle-restart', label: '重启', icon: RotateCw, disabled: true, onSelect: noop },
     ],

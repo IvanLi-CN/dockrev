@@ -275,7 +275,7 @@ export function ServiceTreeContextActions(props: {
             <>
               {showStart ? (
                 <ContextMenuItem disabled={lifecycleDisabled} title={lifecycleReason} onSelect={() => void submitLifecycle('start')}>
-                  <Play /><ActionLabel label="启动" reason={lifecycleReason} />
+                  <Play className="serviceSplitActionIconSolid" /><ActionLabel label="启动" reason={lifecycleReason} />
                 </ContextMenuItem>
               ) : (
                 <ContextMenuItem disabled={lifecycleDisabled} title={lifecycleReason} onSelect={() => void submitLifecycle('restart')}>
