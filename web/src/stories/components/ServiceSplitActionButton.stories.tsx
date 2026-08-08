@@ -32,10 +32,12 @@ export const UpdatePreferred: Story = {
     await userEvent.click(toggle)
 
     const menu = await documentBody.findByRole('menu', { name: '更新操作' })
+    const group = await canvas.findByRole('group', { name: '更新操作' })
     expect(toggle).toHaveAttribute('data-state', 'open')
     expect(menu).toHaveClass('w-max')
     expect(menu).toHaveClass('min-w-0')
     expect(menu).not.toHaveClass('w-40')
+    expect(menu.getBoundingClientRect().width).toBeGreaterThanOrEqual(group.getBoundingClientRect().width)
     expect(within(menu).getByText('回滚')).toBeInTheDocument()
     expect(within(menu).queryByText('默认')).not.toBeInTheDocument()
     expect(within(menu).queryByText('当前没有可回滚的升级记录')).not.toBeInTheDocument()
