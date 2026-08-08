@@ -15214,6 +15214,7 @@ html[data-theme="light"] .homepageHeaderSearchPopover {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  justify-content: flex-end;
 }
 
 .pwaUpdateBubble-downloading .pwaUpdateBubbleIcon {
