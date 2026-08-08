@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { fireEvent, userEvent, within } from 'storybook/test'
 import { DetailRouteServiceTree } from '../../components/DetailRouteServiceTree'
+import { ConfirmProvider } from '../../ConfirmProvider'
 import { SERVICE_TREE_REFRESH_EVENT } from '../../serviceTreeRefresh'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
 import { expectStory, waitForCondition } from '../pages/storyAssertions'
@@ -10,7 +11,7 @@ const route = { name: 'service', stackId: 'stack-prod', serviceId: 'svc-prod-api
 const meta: Meta<typeof DetailRouteServiceTree> = {
   title: 'Components/DetailRouteServiceTree',
   component: DetailRouteServiceTree,
-  decorators: [withDockrevMockApi],
+  decorators: [withDockrevMockApi, (Story) => <ConfirmProvider><Story /></ConfirmProvider>],
   tags: ['autodocs'],
   parameters: { dockrevApiScenario: 'dashboard-demo' },
 }
@@ -137,6 +138,35 @@ export const StackContextMenuPartial: Story = {
     const update = globalThis.__DOCKREV_MOCK_DEBUG__?.lastUpdateRequest as Record<string, unknown>
     expectStory(update.scope === 'stack', 'stack context update should remain stack-scoped')
     expectStory(update.backupMode === 'inherit', 'stack context update should inherit backup policy')
+  },
+}
+
+export const StackContextMenuRunning: Story = {
+  parameters: { dockrevApiScenario: 'stack-detail-lifecycle-running' },
+  render: render('desktop'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(canvasElement.querySelector('.detailRouteStackLink')))
+    const stack = Array.from(canvasElement.querySelectorAll<HTMLAnchorElement>('.detailRouteStackLink'))
+      .find((row) => row.textContent?.includes('prod'))
+    expectStory(Boolean(stack), 'running Stack row should exist')
+    fireEvent.contextMenu(stack!)
+    const body = within(document.body)
+    await waitForCondition(() => Boolean(body.queryByRole('menu')))
+    await userEvent.click(body.getByText('停止'))
+    await waitForCondition(() => Boolean(body.queryByText('确认停止 Stack prod？')))
+    expectStory(body.getByText('该操作会立即影响 Stack 内的 3 个服务。'), 'Stack confirmation should include service count')
+    await userEvent.click(body.getByText('取消'))
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    expectStory(!globalThis.__DOCKREV_MOCK_DEBUG__?.lastLifecycleRequest, 'cancelled Stack stop should not submit')
+
+    fireEvent.contextMenu(stack!)
+    await waitForCondition(() => Boolean(body.queryByRole('menu')))
+    await userEvent.click(body.getByText('停止'))
+    await waitForCondition(() => Boolean(body.queryByText('确认停止 Stack prod？')))
+    await userEvent.click(body.getByRole('button', { name: '停止' }))
+    await waitForCondition(() => globalThis.__DOCKREV_MOCK_DEBUG__?.lastLifecycleRequest?.kind === 'stack')
+    const request = globalThis.__DOCKREV_MOCK_DEBUG__?.lastLifecycleRequest as { kind: string; action: string } | null | undefined
+    expectStory(request?.action === 'stop', 'confirmed Stack stop should submit stop')
   },
 }
 

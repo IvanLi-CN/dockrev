@@ -18,6 +18,7 @@ import { selfUpgradeBaseUrl, isDockrevImageRef } from '../runtimeConfig'
 import { navigate } from '../routes'
 import { buildUpdateServiceTarget, buildUpdateServiceTargets } from '../updateTargets'
 import { openSelfUpgradeUrl } from '../pages/serviceDetailUtils'
+import { useConfirm } from '../confirm'
 import { UPDATE_JOB_SETTLED_EVENT, resolveUpdateActionTargetKey, useUpdateActionTracker, type UpdateJobSettledDetail } from '../updateActionTracking'
 import {
   ContextMenu,
@@ -102,6 +103,7 @@ export function ServiceTreeContextActions(props: {
   children: ReactElement<HTMLAttributes<HTMLElement>>
   onRefresh: (stackId: string) => void
 }) {
+  const confirm = useConfirm()
   const { trackJob } = useUpdateActionTracker()
   const trackedJobIdRef = useRef<string | null>(null)
   const [status, setStatus] = useState<ServiceLifecycleStatusResponse | null>(null)
@@ -164,6 +166,23 @@ export function ServiceTreeContextActions(props: {
   }, [props.target])
 
   const submitLifecycle = useCallback(async (action: ServiceLifecycleAction) => {
+    if (props.target.kind === 'stack' && action !== 'start') {
+      const detail = stackDetail ?? props.target.stack
+      if (!detail) {
+        setNotice({ id: Date.now(), message: 'Stack 信息仍在加载，请稍后重试' })
+        return
+      }
+      const actionLabel = action === 'stop' ? '停止' : '重启'
+      const ok = await confirm({
+        title: `确认${actionLabel} Stack ${detail.name}？`,
+        body: <div className="modalLead">该操作会立即影响 Stack 内的 {detail.services.length} 个服务。</div>,
+        confirmText: actionLabel,
+        cancelText: '取消',
+        confirmVariant: action === 'stop' ? 'danger' : 'primary',
+        badgeText: null,
+      })
+      if (!ok) return
+    }
     setSubmitting(true)
     try {
       const result = props.target.kind === 'stack'
@@ -185,7 +204,7 @@ export function ServiceTreeContextActions(props: {
     } finally {
       setSubmitting(false)
     }
-  }, [props, trackJob])
+  }, [confirm, props, stackDetail, trackJob])
 
   const submitUpdate = useCallback(async () => {
     if (target.kind === 'service' && isDockrevImageRef(target.service.image.ref)) {

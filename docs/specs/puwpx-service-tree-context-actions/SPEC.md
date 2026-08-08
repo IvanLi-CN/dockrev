@@ -11,21 +11,22 @@
 ### Goals
 
 - 为 Stack 名称状态区和完整 Service 行提供右键、触摸长按、Context Menu 键及 `Shift+F10` 上下文菜单。
-- 直接提交启动、重启、停止和更新任务，并在原页面提供可跳转任务详情的反馈。
+- 为 Stack 详情页顶部提供桌面 split action 与移动操作菜单，支持启动、停止和重启。
+- Stack 启动直接提交；停止和重启须确认后提交，并在原页面提供可跳转任务详情的反馈。
 - 新增原生 Stack 生命周期任务，并与 Stack 内服务的更新、回滚和生命周期任务形成双向冲突保护。
 
 ### Non-goals
 
-- 不改变服务详情页 split action 的既有确认规则。
+- 不改变 Service 详情页与 Service 右键的既有确认规则。
 - 不允许普通生命周期接口操作 Dockrev 自身服务。
-- 不增加二级菜单、组标题或常驻操作按钮。
+- 不增加二级菜单或组标题；Stack 详情顶部生命周期操作属于本主题范围内的既有操作栏。
 
 ## 范围（Scope）
 
 ### In scope
 
 - 详情路由桌面服务树与移动服务导航抽屉。
-- Service 与 Stack 的运行态快捷操作、更新快捷操作、任务反馈和定向刷新。
+- Service 与 Stack 的运行态快捷操作、更新快捷操作、Stack 详情顶部操作、任务反馈和定向刷新。
 - Stack 生命周期 HTTP、队列任务、Compose runner、冲突锁和审计摘要。
 
 ### Out of scope
@@ -39,7 +40,10 @@
 
 - `stopped` 只显示“启动”；`running` 显示“重启、停止”；`partial/unknown` 显示禁用的“重启、停止”并暴露原因。
 - 生命周期项与“更新”之间使用库内 Separator；Dockrev 自身 Service 仅显示 Supervisor 更新入口。
-- 上下文菜单动作不弹确认，直接提交；成功、冲突和失败均通过 Toast 反馈，成功或冲突时提供任务详情入口。
+- Service 上下文菜单动作不弹确认，直接提交；成功、冲突和失败均通过 Toast 反馈，成功或冲突时提供任务详情入口。
+- Stack 上下文菜单与详情顶部的启动动作直接提交；停止和重启动作先确认。确认框必须显示 Stack 名称和受影响服务数，取消不得创建任务。
+- Stack 详情顶部桌面端使用状态感知的 split action，移动端将生命周期、返回服务和刷新收进既有更多菜单。
+- Stack 详情顶部活动生命周期任务显示排队/进行中状态，可进入对应 Job；任务结算后刷新 Stack 运行态。
 - Stack 生命周期任务必须锁定 Stack 内全部服务；同 Stack update/rollback/service lifecycle 与 stack lifecycle 必须双向互斥。
 - 包含 Dockrev 自身服务、已归档或运行态不可判定的 Stack 不得提交生命周期任务。
 
@@ -51,6 +55,7 @@
 ## 功能与行为规格（Functional/Behavior Spec）
 
 - Stack 触发区仅包含名称、状态点和服务数量；Service 触发区覆盖完整可导航行。
+- Stack 详情顶部操作与服务树上下文菜单共享同一 Stack lifecycle 状态与冲突原因。
 - 状态为 `partial/unknown` 时不推断修复动作；“重启、停止”保留可发现但不可执行。
 - Service 更新仅在存在可执行候选时启用；Stack 更新使用现有聚合候选过滤，并提交 `mode=apply`、`backupMode=inherit`、`allowArchMismatch=false`。
 - Dockrev 自身 Service 的“更新”打开 Supervisor；包含 Dockrev 的 Stack 仍可更新其他合格目标，但生命周期项禁用。
@@ -69,7 +74,10 @@
 
 - Given 键盘焦点位于 Stack 或 Service 条目，When 按 Context Menu 键或 `Shift+F10`，Then 菜单在目标附近打开且关闭后焦点返回原条目。
 - Given 目标已停止，When 打开菜单，Then 只显示“启动”、Separator 和“更新”；Given 目标运行中，Then 显示“重启、停止”、Separator 和“更新”。
-- Given 用户选择任一可执行动作，When API 接受提交，Then 不出现确认框、不切页，并显示带任务入口的成功 Toast。
+- Given 用户选择 Stack 启动，When API 接受提交，Then 不出现确认框、不切页，并显示带任务入口的成功反馈。
+- Given 用户选择 Stack 停止或重启，When 未确认或关闭确认对话框，Then 不创建生命周期任务；确认后才提交对应 Stack action。
+- Given Stack 详情已加载，When 状态为 running/stopped，Then 顶部主动作分别为停止/启动，菜单始终保留启动、停止、重启三项。
+- Given Stack 详情存在 queued/running 生命周期任务，When 查看顶部操作，Then 主按钮显示进行中状态并可进入对应 Job；任务结算后运行态刷新。
 - Given Stack 内任一服务已有 apply update、rollback 或 lifecycle 任务，When 提交 Stack lifecycle，Then 返回 `409` 与 `existingJobId`；反向提交亦然。
 - Given Stack 包含 Dockrev 自身服务，When 打开菜单，Then 生命周期项禁用并说明需通过宿主机或 Supervisor 操作。
 - Given 在移动抽屉滚动服务树，When 指针移动超过长按阈值，Then 不打开菜单且不创建任务。
@@ -85,11 +93,17 @@
 
 PR: include
 
-最终 mock-only `ui_demo` 桌面右键菜单证据：
+最终 mock-only `ui_demo` Stack 生命周期入口证据（绑定当前工作树 SHA；桌面默认视口与 `393x852` 移动视口）：
+
+![Stack 生命周期桌面入口](./assets/stack-lifecycle-desktop.png)
+
+![Stack 生命周期移动操作菜单](./assets/stack-lifecycle-mobile.png)
+
+既有服务树右键证据仍保留：
 
 ![服务树更新快捷操作菜单](./assets/service-tree-context-menu-update-icon.jpg)
 
-截图显示运行态服务菜单按“重启、停止、分隔线、更新”排列，更新项使用下载箭头；移动长按行为由 Storybook `play` 用例覆盖。
+截图显示 Stack 顶栏在桌面提供状态感知 split action，移动端将生命周期、返回服务和刷新收进更多菜单；服务树更新菜单按“重启、停止、分隔线、更新”排列，移动长按行为由 Storybook `play` 用例覆盖。
 
 ## Related PRs
 
