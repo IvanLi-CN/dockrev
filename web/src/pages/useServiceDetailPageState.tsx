@@ -91,13 +91,7 @@ export function useServiceDetailPageState(props: {
     () => lifecycleOwner === 'update' && applyActiveJob
       ? { owner: 'update' as const, id: applyActiveJob.jobId, status: applyActiveJob.status, action: null, targetVersion: applyActiveJob.targetVersion }
       : lifecycleJob && lifecycleOwner
-      ? {
-          owner: lifecycleOwner,
-          id: lifecycleJob.id,
-          status: lifecycleJob.status,
-          action: lifecycleJob.action ?? null,
-          ...(lifecycleOwner === 'update' ? { targetVersion: applyActiveJob?.targetVersion } : {}),
-        }
+      ? { owner: lifecycleOwner, id: lifecycleJob.id, status: lifecycleJob.status, action: lifecycleJob.action ?? null, ...(lifecycleOwner === 'update' ? { targetVersion: applyActiveJob?.targetVersion } : {}) }
       : applyActiveJob
         ? { owner: 'update' as const, id: applyActiveJob.jobId, status: applyActiveJob.status, action: null, targetVersion: applyActiveJob.targetVersion }
         : null,
