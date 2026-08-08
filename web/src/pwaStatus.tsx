@@ -1,6 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type PropsWithChildren } from 'react'
 import { useRegisterSW } from 'virtual:pwa-register/react'
-import { createPwaUpdateActivator, createPwaUpdateLifecycleController, type PwaUpdatePhase } from './pwaUpdateLifecycle'
+import {
+  createPwaUpdateActivator,
+  createPwaUpdateLifecycleController,
+  phaseAfterSuccessfulUpdateCheck,
+  type PwaUpdatePhase,
+} from './pwaUpdateLifecycle'
 
 const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000
 
@@ -115,6 +120,17 @@ function LivePwaStatusProvider(props: PropsWithChildren) {
       if (!registration) return
       try {
         await registration.update()
+        const nextPhase = phaseAfterSuccessfulUpdateCheck(
+          updatePhaseRef.current,
+          Boolean(registration.waiting),
+        )
+        if (nextPhase === 'idle' && updatePhaseRef.current !== 'idle') {
+          updatePhaseRef.current = 'idle'
+          setUpdatePhase('idle')
+          setUpdatePromptVisible(false)
+        } else if (nextPhase === 'ready' && updatePhaseRef.current !== 'ready') {
+          transitionUpdatePhase('ready')
+        }
       } catch (error) {
         console.warn('[dockrev] service worker update check failed', error)
         if (updatePhaseRef.current !== 'ready') {
@@ -124,7 +140,7 @@ function LivePwaStatusProvider(props: PropsWithChildren) {
         }
       }
     },
-    [],
+    [transitionUpdatePhase],
   )
 
   useEffect(() => {

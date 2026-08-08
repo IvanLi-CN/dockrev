@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { AppShell } from "./Shell";
+import { PwaUpdateBubble } from "./components/PwaUpdateBubble";
 import { DetailRouteServiceTree } from "./components/DetailRouteServiceTree";
 import type { Route } from "./routes";
 import { currentRoutePathname, navigate } from "./routes";
@@ -395,7 +396,12 @@ export default function App() {
   }
 
   if (route.name === "deploy-check") {
-    return <DeployWelcomePage />;
+    return (
+      <>
+        <DeployWelcomePage />
+        <PwaUpdateBubble />
+      </>
+    );
   }
 
   return (

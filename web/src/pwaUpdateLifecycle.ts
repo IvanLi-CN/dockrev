@@ -118,6 +118,14 @@ export function shouldApplyUpdateOnPathnameNavigation(previousPathname: string |
   return previousPathname !== null && previousPathname !== nextPathname
 }
 
+export function phaseAfterSuccessfulUpdateCheck(
+  currentPhase: PwaUpdatePhase,
+  hasWaitingWorker: boolean,
+): PwaUpdatePhase {
+  if (hasWaitingWorker) return 'ready'
+  return currentPhase === 'failed' ? 'idle' : currentPhase
+}
+
 export function shouldHidePwaUpdateBubble(options: {
   engaged: boolean
   isOnline: boolean

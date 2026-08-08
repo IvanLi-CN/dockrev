@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   createPwaUpdateActivator,
   createPwaUpdateLifecycleController,
+  phaseAfterSuccessfulUpdateCheck,
   shouldHidePwaUpdateBubble,
   shouldApplyUpdateOnPathnameNavigation,
   type ServiceWorkerLike,
@@ -165,6 +166,16 @@ describe('pathname navigation update gate', () => {
   test('allows app navigation and browser history path changes', () => {
     expect(shouldApplyUpdateOnPathnameNavigation('/services', '/queue')).toBe(true)
     expect(shouldApplyUpdateOnPathnameNavigation('/queue/job-1', '/services')).toBe(true)
+  })
+})
+
+describe('successful update checks', () => {
+  test('clears a failed prompt when no waiting worker remains', () => {
+    expect(phaseAfterSuccessfulUpdateCheck('failed', false)).toBe('idle')
+  })
+
+  test('keeps a waiting worker ready after a successful check', () => {
+    expect(phaseAfterSuccessfulUpdateCheck('failed', true)).toBe('ready')
   })
 })
 
