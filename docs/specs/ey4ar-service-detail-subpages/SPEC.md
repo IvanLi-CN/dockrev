@@ -539,6 +539,40 @@
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `1440x1000`
+  viewport_strategy: `controlled-viewport`
+  margin_policy: `trim_only`
+  evidence_surface: `page`
+  sensitive_exclusion: `N/A`
+  submission_gate: `pending-owner-approval`
+  story_id_or_title: `Pages/ServiceDetailPage/LogsSectionLightContrast`
+  state: `light Human terminal contrast`
+  evidence_note: 亮色服务日志使用完整浅色终端，表头、时间、Human 正文、结构化元数据与等级标签相对各自表面均通过运行时 WCAG AA 对比检查。
+  PR: include
+  PR caption: 服务日志在亮色主题中使用可读的浅色终端与结构化 Human 视图。
+
+![服务详情日志亮色 Human 终端](./assets/service-detail-logs-light-human.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `393x852`
+  viewport_strategy: `controlled-viewport`
+  margin_policy: `trim_only`
+  evidence_surface: `page`
+  sensitive_exclusion: `N/A`
+  submission_gate: `pending-owner-approval`
+  story_id_or_title: `Pages/ServiceDetailPage/MobileLogsSectionLightContrast`
+  state: `light Raw ANSI terminal`
+  evidence_note: 移动端 Raw 视图保留 ANSI 绿色、红色、青色与警告色，并在浅色终端中保持可读；日志列继续按原始单行横向查看。
+  PR: include
+  PR caption: 服务日志移动 Raw ANSI 输出在亮色主题中保持可读。
+
+![服务详情日志亮色 Raw ANSI（移动端）](./assets/service-detail-logs-light-raw-mobile.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
   capture_scope: `element`
   requested_viewport: `1440x900`
   viewport_strategy: `storybook-canvas`
