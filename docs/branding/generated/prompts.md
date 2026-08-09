@@ -104,14 +104,12 @@ Constraints: spell all text exactly, no watermark, no official Docker whale, no 
   - `dockrev-github-social-preview-imagegen-candidate.png`
 - Prompt summary: flat/semi-flat Dockrev product marketing visuals matching the accepted logo/icon direction; exact `Dockrev` and `Self-hosted Docker/Compose update manager` copy; dark ops dashboard; no official Docker/GitHub marks.
 
-## SVG asset revision
+## Canonical vector assets
 
-- Owner selected icon candidate A and requested SVG redraws rather than shipping raster traces.
-- Final icon and logo SVGs use clean vector paths with flat theme colors, ignoring raster pixel defects from the generated reference.
-- Web and docs assets include dark and light variants:
-  - dark: `#36bffa`, `#22c55e`, `#e8f1ff`
-  - light: `#0c79cf`, `#138347`, `#102842`
-- Web topbar uses `dockrev-logo-dark.svg` and `dockrev-logo-light.svg`, switching by `html[data-theme]`.
-- Final Web evidence screenshots:
-  - `rendered-evidence/web-logo-dark-theme-balanced-136.png`
-  - `rendered-evidence/web-logo-light-theme-balanced-136.png`
+- `docs/branding/dockrev-icon-source.svg` is the canonical square icon geometry.
+- `docs/branding/dockrev-logo-source.svg` is the canonical horizontal dark-theme lockup generated from the icon geometry and outlined wordmark glyphs.
+- `docs/branding/generate_brand_assets.py` derives transparent marks, dark/light horizontal lockups, PNG sizes, PWA icons, Apple Touch icons, and multi-size ICO files without raster tracing.
+- Web and docs horizontal assets include dark and light variants:
+  - dark mark: `#20b8ff` through `#1cb4fb`; check: `#16d563` through `#10cd5c`; wordmark: `#e8f1ff`
+  - light mark: `#0d86dd` through `#086cba`; check: `#16934e` through `#138347`; wordmark: `#102842`
+- App icons and favicons retain the canonical deep-ops background in every theme so the product identity remains stable outside the application shell.
