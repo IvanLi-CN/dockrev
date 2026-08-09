@@ -443,6 +443,36 @@ async function main() {
       },
     },
     {
+      id: 'pages-servicedetailpage--logs-section-light-contrast',
+      file: 'service-detail-logs-light-human.png',
+      viewport: { width: 1440, height: 1000 },
+      setup: async (page) => {
+        await page.locator('.serviceLogsTerminal').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.getByRole('button', { name: 'Human' }).click()
+        await page.locator('.serviceLogHumanMsg').first().waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        const pageSurface = page.locator('.page').first()
+        await pageSurface.waitFor({ timeout: STORY_TIMEOUT_MS })
+        await pageSurface.screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'pages-servicedetailpage--mobile-logs-section-light-contrast',
+      file: 'service-detail-logs-light-raw-mobile.png',
+      viewport: { width: 393, height: 852 },
+      setup: async (page) => {
+        await page.locator('.serviceLogsTerminal').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.getByRole('button', { name: 'Raw' }).click()
+        await page.locator('.serviceLogRow[data-view="raw"]').first().waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.locator('.serviceLogsTerminal').evaluate((el) => el.scrollIntoView({ block: 'start', behavior: 'auto' }))
+        await page.waitForTimeout(160)
+      },
+      screenshot: async (page, filePath) => {
+        await page.screenshot({ path: filePath, fullPage: false })
+      },
+    },
+    {
       id: 'pages-overviewpage--default',
       file: 'overview-homepage-v2-desktop.png',
       viewport: { width: 1920, height: 1000 },

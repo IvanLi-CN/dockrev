@@ -204,6 +204,101 @@ function getModal(page) {
   return page.locator('[role="alertdialog"]:visible, [role="dialog"]:visible').first();
 }
 
+async function assertServiceLogsLightContrast({ baseUrl, browser }) {
+  const page = await browser.newPage();
+  try {
+    const base = normalizeBaseUrl(baseUrl);
+    const url = new URL("iframe.html", base);
+    url.searchParams.set("id", "pages-servicedetailpage--logs-section-light-contrast");
+    url.searchParams.set("viewMode", "story");
+    await page.goto(url.toString(), { waitUntil: "domcontentloaded" });
+    await page.locator(".serviceLogsTerminal").waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "Human" }).click();
+    await page.locator(".serviceLogHumanMsg").first().waitFor({ timeout: 10_000 });
+
+    const assertPairs = async (mode) => {
+      await page.evaluate((expectedMode) => {
+        const parseRgb = (value, label) => {
+          const channels = value.match(/[\d.]+/g)?.map(Number) ?? [];
+          if (channels.length < 3) {
+            throw new Error(`${label} should resolve to an RGB color, got ${value}`);
+          }
+          if ((channels[3] ?? 1) < 0.999) {
+            throw new Error(`${label} should be opaque, got ${value}`);
+          }
+          return channels;
+        };
+        const relativeLuminance = ([red, green, blue]) => {
+          const channel = (value) => {
+            const normalized = value / 255;
+            return normalized <= 0.04045
+              ? normalized / 12.92
+              : ((normalized + 0.055) / 1.055) ** 2.4;
+          };
+          return 0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue);
+        };
+        const expectReadableText = (foreground, background, label) => {
+          const fg = parseRgb(getComputedStyle(foreground).color, `${label} foreground`);
+          const bg = parseRgb(getComputedStyle(background).backgroundColor, `${label} background`);
+          const ratio =
+            (Math.max(relativeLuminance(fg), relativeLuminance(bg)) + 0.05) /
+            (Math.min(relativeLuminance(fg), relativeLuminance(bg)) + 0.05);
+          if (ratio < 4.5) {
+            throw new Error(`${label} should meet WCAG AA contrast, got ${ratio.toFixed(2)}:1`);
+          }
+        };
+        const terminal = document.querySelector(".serviceLogsTerminal");
+        const terminalHead = document.querySelector(".serviceLogsTerminalHead");
+        if (!terminal || !terminalHead) throw new Error("Light service logs terminal is missing.");
+        if (document.documentElement.dataset.theme !== "light") {
+          throw new Error("Light service logs story did not apply light theme tokens.");
+        }
+        parseRgb(getComputedStyle(terminal).backgroundColor, "light logs terminal surface");
+        parseRgb(getComputedStyle(terminalHead).backgroundColor, "light logs terminal header surface");
+        expectReadableText(terminalHead, terminalHead, "light logs terminal header");
+        if (expectedMode === "human") {
+          const humanMessage = document.querySelector(".serviceLogHumanMsg");
+          const timestamp = document.querySelector(".serviceLogTs");
+          const format = document.querySelector(".serviceLogMetaFormat");
+          if (!humanMessage || !timestamp || !format) {
+            throw new Error("Light Human log fixtures are incomplete.");
+          }
+          expectReadableText(humanMessage, terminal, "light human log message");
+          expectReadableText(timestamp, terminal, "light log timestamp");
+          expectReadableText(format, format, "light log format badge");
+          for (const level of document.querySelectorAll(".serviceLogLevel")) {
+            expectReadableText(level, level, `light ${level.dataset.level ?? "unknown"} level badge`);
+          }
+          for (const chip of document.querySelectorAll(".serviceLogMetaChip")) {
+            const key = chip.querySelector(".serviceLogMetaKey");
+            const value = chip.querySelector(".serviceLogMetaValue");
+            if (!key || !value) throw new Error("Light metadata chip is incomplete.");
+            expectReadableText(key, chip, "light metadata key");
+            expectReadableText(value, chip, "light metadata value");
+          }
+          return;
+        }
+        const ansiSegments = Array.from(
+          document.querySelectorAll(".serviceLogMsg span[style]"),
+        ).filter((segment) => segment.style.color.length > 0);
+        if (ansiSegments.length === 0) {
+          throw new Error("Raw log view did not render ANSI-colored segments.");
+        }
+        for (const segment of ansiSegments) {
+          expectReadableText(segment, terminal, "light raw ANSI segment");
+        }
+      }, mode);
+    };
+
+    await assertPairs("human");
+    await page.getByRole("button", { name: "Raw" }).click();
+    await page.locator('.serviceLogRow[data-view="raw"]').first().waitFor({ timeout: 10_000 });
+    await assertPairs("raw");
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
 async function assertHoverPinKeepsPopoverOpen({
   page,
   trigger,
@@ -476,6 +571,8 @@ async function runInteractive({ baseUrl, browser }) {
     );
     return page;
   };
+
+  await assertServiceLogsLightContrast({ baseUrl, browser });
 
   // 0) Group guide line alignment must remain stable (no JS measuring).
   {
@@ -2166,6 +2263,7 @@ async function runInteractive({ baseUrl, browser }) {
 async function main() {
   const { url: cliUrl, passthrough } = parseArgs(process.argv.slice(2));
   const targetUrl = cliUrl ?? process.env.TARGET_URL ?? null;
+  const lightLogsOnly = process.env.DOCKREV_TEST_STORYBOOK_LIGHT_LOGS_ONLY === "1";
 
   if (targetUrl) {
     if (passthrough.length > 0) {
@@ -2178,8 +2276,12 @@ async function main() {
     const browser = await chromium.launch();
     const storyIds = await getStoryIds(targetUrl);
     try {
-      await runSmoke({ baseUrl: targetUrl, storyIds, browser });
-      await runInteractive({ baseUrl: targetUrl, browser });
+      if (lightLogsOnly) {
+        await assertServiceLogsLightContrast({ baseUrl: targetUrl, browser });
+      } else {
+        await runSmoke({ baseUrl: targetUrl, storyIds, browser });
+        await runInteractive({ baseUrl: targetUrl, browser });
+      }
     } finally {
       await browser.close().catch(() => {});
     }
@@ -2218,8 +2320,12 @@ async function main() {
     const browser = await chromium.launch();
     const storyIds = await getStoryIds(localUrl);
     try {
-      await runSmoke({ baseUrl: localUrl, storyIds, browser });
-      await runInteractive({ baseUrl: localUrl, browser });
+      if (lightLogsOnly) {
+        await assertServiceLogsLightContrast({ baseUrl: localUrl, browser });
+      } else {
+        await runSmoke({ baseUrl: localUrl, storyIds, browser });
+        await runInteractive({ baseUrl: localUrl, browser });
+      }
     } finally {
       await browser.close().catch(() => {});
     }

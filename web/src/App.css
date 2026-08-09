@@ -5664,10 +5664,7 @@ html[data-theme="light"] .modalOverlay {
 .serviceLogsTerminal {
   --service-log-col-time: 170px;
   --service-log-col-level: 64px;
-  position: relative;
-  border: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
-  border-radius: 16px;
-  background:
+  --service-log-terminal-background:
     linear-gradient(
       180deg,
       color-mix(in srgb, #081321 92%, var(--color-primary) 8%) 0%,
@@ -5678,10 +5675,96 @@ html[data-theme="light"] .modalOverlay {
       color-mix(in srgb, var(--color-primary) 14%, transparent) 0%,
       transparent 34%
     );
-  overflow: hidden;
-  box-shadow:
+  --service-log-terminal-border: color-mix(in srgb, var(--borderColor) 82%, transparent);
+  --service-log-terminal-shadow:
     inset 0 0 0 1px color-mix(in srgb, white 4%, transparent),
     0 18px 38px rgba(1, 8, 20, 0.28);
+  --service-log-terminal-head-background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.04),
+    rgba(255, 255, 255, 0.01)
+  );
+  --service-log-terminal-head-border: color-mix(in srgb, var(--borderColor) 60%, transparent);
+  --service-log-terminal-head-text: color-mix(in srgb, var(--muted2) 86%, white 14%);
+  --service-log-text: var(--text);
+  --service-log-text-strong: color-mix(in srgb, var(--text) 92%, white 8%);
+  --service-log-text-muted: color-mix(in srgb, var(--muted2) 74%, white 26%);
+  --service-log-text-subtle: color-mix(in srgb, var(--muted2) 82%, white 18%);
+  --service-log-row-hover: rgba(255, 255, 255, 0.04);
+  --service-log-level-border: color-mix(in srgb, var(--borderColor) 68%, transparent);
+  --service-log-level-default-background: color-mix(in srgb, white 4%, transparent);
+  --service-log-level-default-text: var(--muted2);
+  --service-log-level-error-background: color-mix(in srgb, var(--color-error) 16%, transparent);
+  --service-log-level-error-text: var(--color-error);
+  --service-log-level-warn-background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  --service-log-level-warn-text: var(--color-warning);
+  --service-log-level-info-background: color-mix(in srgb, var(--color-info) 16%, transparent);
+  --service-log-level-info-text: var(--color-info);
+  --service-log-level-muted-background: color-mix(in srgb, var(--muted2) 14%, transparent);
+  --service-log-level-muted-text: var(--muted2);
+  --service-log-meta-format-border: color-mix(in srgb, var(--color-info) 36%, transparent);
+  --service-log-meta-format-background: color-mix(in srgb, var(--color-info) 10%, transparent);
+  --service-log-meta-format-text: color-mix(in srgb, var(--color-info) 78%, white 22%);
+  --service-log-meta-chip-border: color-mix(in srgb, var(--borderColor) 60%, transparent);
+  --service-log-meta-chip-background: color-mix(in srgb, white 5%, transparent);
+  --service-log-meta-key: color-mix(in srgb, var(--muted2) 76%, white 24%);
+  --service-log-meta-value: color-mix(in srgb, var(--text) 80%, white 20%);
+  --service-log-multiline-border: color-mix(in srgb, var(--color-info) 42%, transparent);
+  --service-log-ansi-red: #f87171;
+  --service-log-ansi-green: #4ade80;
+  --service-log-ansi-yellow: #fbbf24;
+  --service-log-ansi-blue: #60a5fa;
+  --service-log-ansi-magenta: #f472b6;
+  --service-log-ansi-cyan: #22d3ee;
+  --service-log-ansi-white: #e5e7eb;
+  --service-log-ansi-muted: #94a3b8;
+  position: relative;
+  border: 1px solid var(--service-log-terminal-border);
+  border-radius: 16px;
+  background: var(--service-log-terminal-background);
+  overflow: hidden;
+  box-shadow: var(--service-log-terminal-shadow);
+}
+
+html[data-theme="light"] .serviceLogsTerminal {
+  --service-log-terminal-background: #f7faff;
+  --service-log-terminal-border: #c7d8e8;
+  --service-log-terminal-shadow: 0 16px 32px rgba(49, 95, 142, 0.12);
+  --service-log-terminal-head-background: #f2f7fc;
+  --service-log-terminal-head-border: #ccdeed;
+  --service-log-terminal-head-text: #31506c;
+  --service-log-text: #102d47;
+  --service-log-text-strong: #102d47;
+  --service-log-text-muted: #48647d;
+  --service-log-text-subtle: #48647d;
+  --service-log-row-hover: #eaf2fa;
+  --service-log-level-border: #c8d8e8;
+  --service-log-level-default-background: #edf4fa;
+  --service-log-level-default-text: #495f75;
+  --service-log-level-error-background: #fee8ed;
+  --service-log-level-error-text: #9a1434;
+  --service-log-level-warn-background: #fff2de;
+  --service-log-level-warn-text: #8a5108;
+  --service-log-level-info-background: #e9f4ff;
+  --service-log-level-info-text: #075a8e;
+  --service-log-level-muted-background: #edf2f7;
+  --service-log-level-muted-text: #495f75;
+  --service-log-meta-format-border: #b7d8ef;
+  --service-log-meta-format-background: #e9f4ff;
+  --service-log-meta-format-text: #075a8e;
+  --service-log-meta-chip-border: #cad9e7;
+  --service-log-meta-chip-background: #edf4fa;
+  --service-log-meta-key: #48647d;
+  --service-log-meta-value: #102d47;
+  --service-log-multiline-border: #4b91bf;
+  --service-log-ansi-red: #9a1434;
+  --service-log-ansi-green: #086b45;
+  --service-log-ansi-yellow: #8a5108;
+  --service-log-ansi-blue: #075a8e;
+  --service-log-ansi-magenta: #a22166;
+  --service-log-ansi-cyan: #077487;
+  --service-log-ansi-white: #1d3953;
+  --service-log-ansi-muted: #48647d;
 }
 
 .serviceLogsTerminalHead {
@@ -5692,14 +5775,9 @@ html[data-theme="light"] .modalOverlay {
   gap: 12px;
   align-items: center;
   padding: 10px 18px;
-  border-bottom: 1px solid
-    color-mix(in srgb, var(--borderColor) 60%, transparent);
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.04),
-    rgba(255, 255, 255, 0.01)
-  );
-  color: color-mix(in srgb, var(--muted2) 86%, white 14%);
+  border-bottom: 1px solid var(--service-log-terminal-head-border);
+  background: var(--service-log-terminal-head-background);
+  color: var(--service-log-terminal-head-text);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -5796,7 +5874,7 @@ html[data-theme="light"] .modalOverlay {
 }
 
 .serviceLogRow:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--service-log-row-hover);
 }
 
 .serviceLogRow[data-multiline="true"] {
@@ -5809,12 +5887,12 @@ html[data-theme="light"] .modalOverlay {
   min-width: 0;
   flex-direction: column;
   gap: 2px;
-  color: color-mix(in srgb, var(--muted2) 74%, white 26%);
+  color: var(--service-log-text-muted);
   font-variant-numeric: tabular-nums;
 }
 
 .serviceLogTsDate {
-  color: color-mix(in srgb, var(--muted2) 82%, white 18%);
+  color: var(--service-log-text-subtle);
   font-size: 10px;
   line-height: 1.2;
 }
@@ -5829,35 +5907,40 @@ html[data-theme="light"] .modalOverlay {
   align-items: center;
   justify-content: center;
   padding: 2px 6px;
-  border: 1px solid color-mix(in srgb, var(--borderColor) 68%, transparent);
+  border: 1px solid var(--service-log-level-border);
   border-radius: 999px;
-  background: color-mix(in srgb, white 4%, transparent);
+  background: var(--service-log-level-default-background);
+  color: var(--service-log-level-default-text);
   font-size: 10px;
   line-height: 1.2;
 }
 
 .serviceLogLevel[data-level="error"] {
-  background: color-mix(in srgb, var(--color-error) 16%, transparent);
+  background: var(--service-log-level-error-background);
+  color: var(--service-log-level-error-text);
 }
 
 .serviceLogLevel[data-level="warn"] {
-  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  background: var(--service-log-level-warn-background);
+  color: var(--service-log-level-warn-text);
 }
 
 .serviceLogLevel[data-level="info"] {
-  background: color-mix(in srgb, var(--color-info) 16%, transparent);
+  background: var(--service-log-level-info-background);
+  color: var(--service-log-level-info-text);
 }
 
 .serviceLogLevel[data-level="debug"],
 .serviceLogLevel[data-level="trace"],
 .serviceLogLevel[data-level="unknown"] {
-  background: color-mix(in srgb, var(--muted2) 14%, transparent);
+  background: var(--service-log-level-muted-background);
+  color: var(--service-log-level-muted-text);
 }
 
 .serviceLogLevelInline {
   border-style: dashed;
-  color: color-mix(in srgb, var(--muted2) 76%, white 24%);
-  background: color-mix(in srgb, var(--muted2) 8%, transparent);
+  color: var(--service-log-level-muted-text);
+  background: var(--service-log-level-muted-background);
 }
 
 .serviceLogLevelInline::before {
@@ -5866,7 +5949,7 @@ html[data-theme="light"] .modalOverlay {
 
 .serviceLogMsg {
   min-width: 0;
-  color: var(--text);
+  color: var(--service-log-text);
 }
 
 .serviceLogRow[data-view="human"] .serviceLogMsg {
@@ -5877,7 +5960,7 @@ html[data-theme="light"] .modalOverlay {
 }
 
 .serviceLogHumanMsg {
-  color: color-mix(in srgb, var(--text) 92%, white 8%);
+  color: var(--service-log-text-strong);
   font-weight: 580;
 }
 
@@ -5886,10 +5969,10 @@ html[data-theme="light"] .modalOverlay {
   align-items: center;
   height: 18px;
   padding: 0 6px;
-  border: 1px solid color-mix(in srgb, var(--color-info) 36%, transparent);
+  border: 1px solid var(--service-log-meta-format-border);
   border-radius: 999px;
-  color: color-mix(in srgb, var(--color-info) 78%, white 22%);
-  background: color-mix(in srgb, var(--color-info) 10%, transparent);
+  color: var(--service-log-meta-format-text);
+  background: var(--service-log-meta-format-background);
   font-size: 9px;
   font-weight: 700;
   line-height: 1;
@@ -5909,16 +5992,16 @@ html[data-theme="light"] .modalOverlay {
   min-width: 0;
   align-items: center;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--borderColor) 60%, transparent);
+  border: 1px solid var(--service-log-meta-chip-border);
   border-radius: 999px;
-  background: color-mix(in srgb, white 5%, transparent);
+  background: var(--service-log-meta-chip-background);
   line-height: 1.15;
 }
 
 .serviceLogMetaKey {
   flex: 0 0 auto;
   padding: 3px 5px 3px 7px;
-  color: color-mix(in srgb, var(--muted2) 76%, white 24%);
+  color: var(--service-log-meta-key);
   font-size: 10px;
 }
 
@@ -5926,7 +6009,7 @@ html[data-theme="light"] .modalOverlay {
   min-width: 0;
   overflow: hidden;
   padding: 3px 7px 3px 0;
-  color: color-mix(in srgb, var(--text) 80%, white 20%);
+  color: var(--service-log-meta-value);
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5934,7 +6017,7 @@ html[data-theme="light"] .modalOverlay {
 
 .serviceLogRow[data-multiline="true"] .serviceLogMsg {
   padding-left: 10px;
-  border-left: 2px solid color-mix(in srgb, var(--color-info) 42%, transparent);
+  border-left: 2px solid var(--service-log-multiline-border);
 }
 
 .serviceLogsTerminal[data-wrap="on"] .serviceLogMsg {
