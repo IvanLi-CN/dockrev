@@ -29,6 +29,7 @@
 - 日志实现语义已收敛为“单服务日志流”，不再在产品接口或界面上暴露容器聚合模型。
 - 日志解析已按 Dozzle-like grouped log 语义保留 Docker timestamp 元信息，并将应用输出中的空行、缩进行、`Caused by:` 等 continuation 合并进同一逻辑日志记录；未结构化的 inline tracing 行仍由前端避免重复渲染等级文本。
 - 服务日志 API 已在 `ServiceLogLine` 上提供可选结构化 `meta`，支持 `json / logfmt / text` 归一化；其中 Rust `tracing` 默认文本输出会在 text meta 中提取应用级 `level/message/timestamp` 与 `key=value` attributes，前端默认 Human 视图渲染结构化摘要与 metadata chips，并保留 Raw 视图用于查看原始输出。
+- 服务日志终端已收敛为局部主题令牌：亮色模式使用完整浅色终端，并为表头、正文、时间、元数据、等级、悬浮与 ANSI 前景色提供独立值；暗色模式维持既有终端外观。Storybook 的亮色场景与交互测试会在 Human / Raw 两种模式下校验计算后的文字对比度。
 - 服务日志采集同时消费 `docker logs` 的 stdout 与 stderr stream；snapshot 与 SSE live tail 均覆盖仅向 stderr 写日志的容器。
 - 已更新 `PageHarness`、服务树 section 标签与服务详情 Storybook stories，补齐旧链接默认概览、tabs route 切换、更新记录深链/混合列表/空态/click-Enter-Space 跳转/受控回滚入口、备份页状态、日志深链与搜索交互、Human/Raw 日志切换、设置抽屉入口与监控页稳定渲染。
 - 已补齐版本页 Storybook `play` 覆盖：目录/正文双虚拟化、当前版本初始居中、目录点击联动、尾部分页、仓库级图标入口、固定动作栏与移动端无目录/无横向溢出。
