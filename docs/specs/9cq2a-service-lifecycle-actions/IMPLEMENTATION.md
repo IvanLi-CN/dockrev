@@ -22,6 +22,7 @@
 - 本轮最终验证覆盖 Compose V2 plugin/standalone、V1 拒绝、空容器 `stopped` 判定、写入口门禁，以及 321 个 Storybook 故事全量 smoke。
 - Apply 更新的 Compose V2 门禁位于共享 enqueue 边界，覆盖 UI、Webhook 与自动更新；DryRun 保持只读可用，生命周期写入口在读取状态前拒绝不支持的 Compose 版本。
 - 回归覆盖 required core 非 PASS 的前端硬门禁、App 启动时的失败重定向与 `neverAutoOpen` 绕过防护；当前 Storybook smoke 覆盖 323 个故事。
+- Apply enqueue 在 Compose V2 探测前完成目标存在性与现有操作冲突预检，保留既有 404/409 错误优先级且不创建任务。
 
 ## References
 

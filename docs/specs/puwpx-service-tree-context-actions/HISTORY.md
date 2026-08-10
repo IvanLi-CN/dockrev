@@ -14,6 +14,7 @@
 - Stack 右键停止/重启与 Stack 详情统一确认，Service 右键继续保留直接执行，以保持既有 Service 快捷操作契约不变。
 - Compose 生命周期统一收敛到 V2+：plugin 与 standalone 共用 no-pull/no-recreate 启动命令，V1 通过 `compose_v2_required` 门禁拒绝；空容器但配置有效的 Stack 显示 `stopped`。
 - Apply 更新门禁覆盖 UI、Webhook 与自动策略 enqueue；DryRun 保持可用，生命周期写操作在查询状态前确认 Compose V2 能力。
+- Compose V2 探测前完成 Apply 目标存在性和操作冲突预检，避免能力错误遮蔽既有资源错误。
 
 ## Key Reasons / Replacements
 

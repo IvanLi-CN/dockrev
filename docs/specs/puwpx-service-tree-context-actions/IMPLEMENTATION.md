@@ -19,6 +19,7 @@
 - 最终验证覆盖 Compose V2 plugin/standalone、V1 拒绝、空容器 `stopped` 判定和生命周期写入口门禁。
 - 生命周期入口在状态查询前确认 Compose V2；更新 Apply 在共享 enqueue 边界覆盖 Webhook 与自动策略，DryRun 不受写门禁影响。
 - App 级 deploy-check 失败/通过 mock 场景与 required core 非 PASS 回归已加入，Storybook smoke 当前覆盖 323 个故事。
+- Apply enqueue 在 Compose V2 门禁前保留服务目标 404 与操作冲突 409 的既有错误优先级。
 
 ## Remaining Gaps
 
