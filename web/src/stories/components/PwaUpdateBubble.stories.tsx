@@ -52,11 +52,18 @@ export const Downloading: Story = {
 export const Ready: Story = {
   render: () => <ReadyDismissibleStory />,
   play: async ({ canvasElement }) => {
-    const later = canvasElement.querySelector<HTMLButtonElement>('.pwaUpdateBubble .btnGhost')
-    expectStory(later, 'Ready updates should provide a later action')
-    later.click()
-    await new Promise((resolve) => window.setTimeout(resolve, 0))
-    expectStory(!canvasElement.querySelector('.pwaUpdateBubble'), 'Later should hide the prompt without changing update readiness')
+    try {
+      const later = canvasElement.querySelector<HTMLButtonElement>('.pwaUpdateBubble .btnGhost')
+      expectStory(later, 'Ready updates should provide a later action')
+      later.click()
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+      expectStory(!canvasElement.querySelector('.pwaUpdateBubble'), 'Later should hide the prompt without changing update readiness')
+    } catch (error) {
+      queueMicrotask(() => {
+        throw error
+      })
+      throw error
+    }
   },
 }
 
