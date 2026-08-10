@@ -11,15 +11,17 @@ function expectStory(condition: unknown, message: string): asserts condition {
 function ReadyDismissibleStory() {
   const [visible, setVisible] = useState(true)
   return (
-    <PwaStatusMockProvider
-      value={{
-        dismissUpdate: () => setVisible(false),
-        updatePhase: 'ready',
-        updatePromptVisible: visible,
-      }}
-    >
-      <PwaUpdateBubble />
-    </PwaStatusMockProvider>
+    <div>
+      <PwaStatusMockProvider
+        value={{
+          dismissUpdate: () => setVisible(false),
+          updatePhase: 'ready',
+          updatePromptVisible: visible,
+        }}
+      >
+        <PwaUpdateBubble />
+      </PwaStatusMockProvider>
+    </div>
   )
 }
 
