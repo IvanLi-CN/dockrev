@@ -51,6 +51,9 @@ import {
 const RELEASES_PER_PAGE = 20
 const RELEASE_ROW_GAP = 14
 const VERSION_INDEX_ROW_HEIGHT = 54
+const VERSION_CARD_CENTER_TOLERANCE = 48
+const VERSION_CARD_CENTER_MAX_ATTEMPTS = 24
+const VERSION_CARD_CENTER_STABLE_MEASUREMENTS = 3
 const DESKTOP_VERSION_INDEX_QUERY = '(min-width: 1101px)'
 const EMPTY_VIRTUAL_ITEMS: VirtualItem[] = []
 
@@ -134,6 +137,9 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
   const serviceId = props.service.id.trim()
   const listScrollRef = useRef<HTMLDivElement | null>(null)
   const indexScrollRef = useRef<HTMLDivElement | null>(null)
+  const centerRequestIdRef = useRef(0)
+  const centeringIndexRef = useRef<number | null>(null)
+  const cancelCenterRequestRef = useRef<(() => void) | null>(null)
   const sessionKey = useMemo(() => {
     const anchorVersion = (props.service.image.resolvedTag ?? '').trim() || props.service.image.tag.trim()
     return `${serviceId}::${anchorVersion}`
@@ -208,12 +214,20 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
   const anchorState = listResponse?.anchor ?? null
 
   useEffect(() => {
+    cancelCenterRequestRef.current?.()
     initialCenterKeyRef.current = null
     if (listScrollRef.current) listScrollRef.current.scrollTop = 0
     if (indexScrollRef.current) indexScrollRef.current.scrollTop = 0
     setExpandedIds(new Set())
     setSelectedIndex(0)
   }, [sessionKey])
+
+  useEffect(
+    () => () => {
+      cancelCenterRequestRef.current?.()
+    },
+    [],
+  )
   const topLoaderVisible = hasNewer || loadingNewer || newerFailure != null
   const bottomLoaderVisible = hasOlder || loadingOlder || olderFailure != null
   const topLoaderOffset = topLoaderVisible ? 1 : 0
@@ -264,13 +278,42 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     (absoluteIndex: number, tagName: string, mode: 'initial' | 'interactive') => {
       const scrollElement = listScrollRef.current
       if (!scrollElement || !tagName) return
+      cancelCenterRequestRef.current?.()
+      const requestId = centerRequestIdRef.current + 1
+      centerRequestIdRef.current = requestId
+      centeringIndexRef.current = absoluteIndex
       let frameA = 0
       let frameB = 0
       let retryTimer = 0
+      let cancelled = false
+      let stableMeasurements = 0
       const key = `${sessionKey}:${absoluteIndex}`
+
+      const finishCentering = () => {
+        if (centerRequestIdRef.current !== requestId) return
+        centeringIndexRef.current = null
+        cancelCenterRequestRef.current = null
+        if (mode === 'initial') initialCenterKeyRef.current = key
+      }
+
+      const cancelCentering = () => {
+        cancelled = true
+        window.cancelAnimationFrame(frameA)
+        window.cancelAnimationFrame(frameB)
+        window.clearTimeout(retryTimer)
+        if (centerRequestIdRef.current !== requestId) return
+        centeringIndexRef.current = null
+        cancelCenterRequestRef.current = null
+      }
+
+      cancelCenterRequestRef.current = cancelCentering
       const centerCard = (attemptsRemaining: number) => {
+        if (cancelled || centerRequestIdRef.current !== requestId) return
         const element = listScrollRef.current
-        if (!element) return
+        if (!element) {
+          finishCentering()
+          return
+        }
         listVirtualizer.measure()
         const renderedCard = Array.from(
           element.querySelectorAll<HTMLElement>('[data-service-version-card="true"]'),
@@ -293,18 +336,28 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
             align: mode === 'initial' ? 'center' : 'auto',
           })
         }
-        if (attemptsRemaining <= 0 || !renderedCard) {
-          if (mode === 'initial') initialCenterKeyRef.current = key
+
+        if (renderedCard) {
+          const viewportRect = element.getBoundingClientRect()
+          const cardRect = renderedCard.getBoundingClientRect()
+          const viewportCenter = viewportRect.top + viewportRect.height / 2
+          const cardCenter = cardRect.top + cardRect.height / 2
+          if (Math.abs(cardCenter - viewportCenter) <= VERSION_CARD_CENTER_TOLERANCE) {
+            stableMeasurements += 1
+            if (stableMeasurements >= VERSION_CARD_CENTER_STABLE_MEASUREMENTS) {
+              finishCentering()
+              return
+            }
+          } else {
+            stableMeasurements = 0
+          }
+        }
+
+        if (attemptsRemaining <= 0) {
+          finishCentering()
           return
         }
-        const viewportRect = element.getBoundingClientRect()
-        const cardRect = renderedCard.getBoundingClientRect()
-        const viewportCenter = viewportRect.top + viewportRect.height / 2
-        const cardCenter = cardRect.top + cardRect.height / 2
-        if (Math.abs(cardCenter - viewportCenter) <= Math.max(48, viewportRect.height * 0.18)) {
-          if (mode === 'initial') initialCenterKeyRef.current = key
-          return
-        }
+
         retryTimer = window.setTimeout(() => {
           centerCard(attemptsRemaining - 1)
         }, 80)
@@ -312,17 +365,18 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
 
       frameA = window.requestAnimationFrame(() => {
         frameB = window.requestAnimationFrame(() => {
-          centerCard(6)
+          centerCard(VERSION_CARD_CENTER_MAX_ATTEMPTS)
         })
       })
-      return () => {
-        window.cancelAnimationFrame(frameA)
-        window.cancelAnimationFrame(frameB)
-        window.clearTimeout(retryTimer)
-      }
+      return cancelCentering
     },
     [indexVirtualizer, listVirtualizer, sessionKey, showDesktopIndex, topLoaderOffset],
   )
+  const centerVersionCardRef = useRef(centerVersionCard)
+
+  useEffect(() => {
+    centerVersionCardRef.current = centerVersionCard
+  }, [centerVersionCard])
 
   useEffect(() => {
     if (loadState !== 'ready') return
@@ -334,12 +388,12 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     const key = `${sessionKey}:${anchorIndex}`
     if (initialCenterKeyRef.current === key && scrollElement.scrollTop > 0) return
     setSelectedIndex(anchorIndex)
-    return centerVersionCard(
+    return centerVersionCardRef.current(
       anchorIndex,
       items[anchorIndex]?.tagName ?? '',
       'initial',
     )
-  }, [anchorState, centerVersionCard, currentVersion, items, loadState, sessionKey])
+  }, [anchorState, currentVersion, items, loadState, sessionKey])
 
   const listVirtualItems = listVirtualizer.getVirtualItems()
   const indexVirtualItems = showDesktopIndex ? indexVirtualizer.getVirtualItems() : EMPTY_VIRTUAL_ITEMS
@@ -391,17 +445,29 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
 
   useEffect(() => {
     if (items.length === 0) return
+    if (centeringIndexRef.current != null) return
     const scrollElement = listScrollRef.current
     if (!scrollElement) return
-    const visibleRows = listVirtualItems
-      .map((row) => ({ row, itemIndex: row.index - topLoaderOffset }))
-      .filter(({ itemIndex }) => itemIndex >= 0 && itemIndex < items.length)
+    const viewportRect = scrollElement.getBoundingClientRect()
+    const visibleRows = Array.from(
+      scrollElement.querySelectorAll<HTMLElement>('.serviceVersionsVirtualRow:not(.serviceVersionsVirtualRowLoader)'),
+    )
+      .map((row) => ({
+        row,
+        itemIndex: Number(row.getAttribute('data-index')) - topLoaderOffset,
+      }))
+      .filter(({ row, itemIndex }) => {
+        if (!Number.isInteger(itemIndex) || itemIndex < 0 || itemIndex >= items.length) return false
+        const rowRect = row.getBoundingClientRect()
+        return rowRect.bottom > viewportRect.top && rowRect.top < viewportRect.bottom
+      })
     if (visibleRows.length === 0) return
-    const viewportCenter = scrollElement.scrollTop + scrollElement.clientHeight / 2
+    const viewportCenter = viewportRect.top + viewportRect.height / 2
     let nearestIndex = visibleRows[0]?.itemIndex ?? 0
     let nearestDistance = Number.POSITIVE_INFINITY
     for (const { row, itemIndex } of visibleRows) {
-      const rowCenter = row.start + row.size / 2
+      const rowRect = row.getBoundingClientRect()
+      const rowCenter = rowRect.top + rowRect.height / 2
       const distance = Math.abs(rowCenter - viewportCenter)
       if (distance < nearestDistance) {
         nearestDistance = distance
@@ -818,8 +884,8 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
                               data-release-tag={item.tagName}
                               data-service-versions-index-selected={selected ? 'true' : 'false'}
                               onClick={() => {
-                                setSelectedIndex(itemIndex)
                                 void centerVersionCard(itemIndex, item.tagName, 'interactive')
+                                setSelectedIndex(itemIndex)
                               }}
                             >
                               <span className="serviceVersionsIndexVersion">

@@ -110,6 +110,21 @@ export const VersionsSection: ServiceDetailStory = {
   play: async ({ canvasElement }) => {
     await waitForCondition(() => Boolean(findSectionCard(canvasElement, "versions")));
     await waitForCondition(() => Boolean(findVersionCard(canvasElement, "5.2.1")));
+    const nearbyIndexItem = versionsIndexItem(canvasElement, "5.2.0");
+    expectStory(nearbyIndexItem, "nearby version index item should be available for navigation");
+    nearbyIndexItem?.click();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    expectStory(
+      selectedIndexTag(canvasElement) === "5.2.0",
+      "clicked index item should stay selected while its card is being centered",
+    );
+    await waitForCondition(
+      () =>
+        selectedIndexTag(canvasElement) === "5.2.0" &&
+        centeredVersionTag(canvasElement, versionsViewport(canvasElement)) === "5.2.0",
+    );
+
+    versionsIndexItem(canvasElement, "5.2.1")?.click();
     await waitForCondition(() => selectedIndexTag(canvasElement) === "5.2.1");
 
     const surface = versionsSurface(canvasElement);
@@ -178,6 +193,7 @@ export const VersionsSection: ServiceDetailStory = {
         centeredVersionTag(canvasElement, viewport) === "5.2.1",
       "initial centered card should drive the matching index highlight",
     );
+
     const currentTitle = currentCard?.querySelector<HTMLElement>(".serviceVersionBodyTitle");
     const currentTag = currentCard?.querySelector<HTMLElement>(".serviceVersionTagText .mono");
     const currentMetaValue = currentCard?.querySelector<HTMLElement>(".serviceVersionFacts dd");
