@@ -41,3 +41,4 @@
 - 服务操作预约、页头资源摘要与生命周期 mock/stories 分拆为专属模块，维持项目单文件预算门禁而不改变 API、组件状态或视觉输出。
 - 2026-08-01：生命周期结算接入详情服务树的 Stack 定向刷新；树读模型复用同一 Compose 判定，但保持服务树只读，不改变生命周期操作权限。
 - 服务操作进度统一以服务级活动任务类型决定 owner；桌面端整组禁用非 owner split button，移动端沿用菜单项禁用与 Toast，并修复更新结算期间候选消失导致的错误回滚文案。
+- Compose V2 写门禁收敛到共享 Apply enqueue 边界，DryRun 保持只读；生命周期在状态读取前拒绝不支持版本，前端 required core 非 PASS 强制留在 deploy-check。

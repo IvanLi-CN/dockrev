@@ -20,6 +20,8 @@
 - 稳定 mock-only Storybook 证据已写入 `SPEC.md`；桌面证据覆盖资源摘要与 split action，393 × 852 移动证据覆盖单行页头及三组服务操作菜单。
 - Stack 详情树复用了本 spec 的服务级 lifecycle 结算路径：启动、停止、重启任务结算后发布 Stack 定向刷新事件，树节点即时收敛到 `running / stopped / partial / unknown`。
 - 本轮最终验证覆盖 Compose V2 plugin/standalone、V1 拒绝、空容器 `stopped` 判定、写入口门禁，以及 321 个 Storybook 故事全量 smoke。
+- Apply 更新的 Compose V2 门禁位于共享 enqueue 边界，覆盖 UI、Webhook 与自动更新；DryRun 保持只读可用，生命周期写入口在读取状态前拒绝不支持的 Compose 版本。
+- 回归覆盖 required core 非 PASS 的前端硬门禁、App 启动时的失败重定向与 `neverAutoOpen` 绕过防护；当前 Storybook smoke 覆盖 323 个故事。
 
 ## References
 
