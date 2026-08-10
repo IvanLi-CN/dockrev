@@ -112,6 +112,7 @@ pub(crate) async fn trigger_update(
         }
     }
 
+    crate::compose_capability::require_v2_api(&*state.runner, &state.config).await?;
     let job_id = enqueue_update_job(
         state,
         user.principal,
@@ -147,6 +148,7 @@ pub(crate) async fn trigger_service_rollback(
         log_trigger_service_rollback_conflict(&resolved);
         return Err(rollback_unavailable_error(&resolved.response));
     }
+    crate::compose_capability::require_v2_api(&*state.runner, &state.config).await?;
 
     let job_id =
         enqueue_service_rollback_job(state, user.principal, "ui".to_string(), resolved, now)

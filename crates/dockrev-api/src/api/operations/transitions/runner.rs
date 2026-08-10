@@ -220,7 +220,7 @@ pub(crate) fn truncate(input: &str, max: usize) -> String {
 }
 
 fn is_compose_pull(spec: &crate::runner::CommandSpec) -> bool {
-    let command_start = if crate::compose_runner::is_docker_plugin(&spec.program) {
+    let command_start = if crate::compose_capability::uses_docker_subcommand(&spec.program) {
         if spec.args.first().is_none_or(|arg| arg != "compose") {
             return false;
         }

@@ -1149,6 +1149,36 @@ async fn service_lifecycle_status_and_start_task_are_service_scoped() {
 }
 
 #[tokio::test]
+async fn service_lifecycle_write_rejects_compose_v1_before_creating_job() {
+    let state = test_state_with_compose_bin(
+        ":memory:",
+        Arc::new(FakeRegistry),
+        Arc::new(ComposeV1Runner),
+        "docker-compose",
+    )
+    .await;
+    let app = api::router(state.clone());
+    let (_stack_id, service_id, _compose_path) = seed_manual_rollback_service(&state).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/services/{service_id}/lifecycle"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"action":"start"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 503);
+    let body = response_json(response).await;
+    assert_eq!(body["error"]["code"].as_str(), Some("compose_v2_required"));
+    assert_eq!(body["error"]["details"]["reason"].as_str(), Some("compose_v2_required"));
+    assert!(state.db.list_jobs().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn service_lifecycle_rejects_archived_services_and_stacks() {
     for archive_stack in [false, true] {
         let state = test_state(":memory:").await;

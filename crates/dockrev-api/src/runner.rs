@@ -204,8 +204,8 @@ fn stream_command(spec: &CommandSpec) -> (String, Vec<String>) {
 
     #[cfg(not(target_os = "macos"))]
     {
-        // `script` is supplied by the runtime image and gives Compose V1 a real
-        // terminal while retaining the runner's normal streamed byte capture.
+        // `script` is supplied by the runtime image and gives standalone Compose
+        // a real terminal while retaining the runner's normal streamed byte capture.
         let command = std::iter::once(shell_quote(&spec.program))
             .chain(spec.args.iter().map(|arg| shell_quote(arg)))
             .collect::<Vec<_>>()

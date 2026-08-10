@@ -58,6 +58,19 @@ impl ApiError {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", message)
     }
 
+    pub fn compose_v2_required(compose_bin: &str, evidence: &str) -> Self {
+        Self::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "compose_v2_required",
+            "Compose V2 is required for container operations.",
+        )
+        .with_details(serde_json::json!({
+            "reason": "compose_v2_required",
+            "composeBin": compose_bin,
+            "evidence": evidence,
+        }))
+    }
+
     fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
         Self {
             status,

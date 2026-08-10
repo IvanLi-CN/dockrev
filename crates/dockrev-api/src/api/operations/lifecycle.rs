@@ -57,18 +57,8 @@ pub(crate) fn lifecycle_state_from_counts(all: usize, running: usize) -> Service
     }
 }
 
-fn lifecycle_state_for_compose(
-    all: usize,
-    running: usize,
-    is_plugin: bool,
-) -> (ServiceLifecycleState, Option<&'static str>) {
-    if all == 0 && !is_plugin {
-        return (
-            ServiceLifecycleState::Unknown,
-            Some("container_missing_for_compose_v1"),
-        );
-    }
-    (lifecycle_state_from_counts(all, running), None)
+fn lifecycle_state_for_compose(all: usize, running: usize) -> ServiceLifecycleState {
+    lifecycle_state_from_counts(all, running)
 }
 
 async fn resolve_lifecycle_subject(
@@ -292,6 +282,7 @@ pub(crate) async fn trigger_stack_lifecycle(
             ),
         );
     }
+    crate::compose_capability::require_v2_api(&*state.runner, &state.config).await?;
 
     let now = now_rfc3339().map_err(map_internal)?;
     let job_id = ids::new_job_id();
@@ -356,33 +347,39 @@ async fn run_stack_lifecycle_job(
     let compose = lifecycle_compose_stack(&stack);
     let outcome = match lifecycle_compose_config(state.as_ref()) {
         Ok((config, _auth_bridge)) => {
-            let command = match action {
-                ServiceLifecycleAction::Start => compose.start_stack_without_pull(&config),
-                ServiceLifecycleAction::Stop => compose.stop_stack(&config),
-                ServiceLifecycleAction::Restart => compose.restart_stack(&config),
-            };
-            let runner = DbLoggingRunner {
-                db: state.db.clone(),
-                inner: state.runner.clone(),
-                job_id: job_id.clone(),
-                live_log_hub: state.job_live_log_hub.clone(),
-            };
-            runner
-                .run(
-                    command,
-                    Duration::from_secs(LIFECYCLE_ACTION_TIMEOUT_SECONDS),
-                )
-                .await
-                .and_then(|output| {
-                    if output.status == 0 {
-                        Ok(())
-                    } else {
-                        Err(anyhow::anyhow!(
-                            "compose lifecycle command exited with {}",
-                            output.status
-                        ))
-                    }
-                })
+            if let Err(error) =
+                crate::compose_capability::require_v2(&*state.runner, &state.config).await
+            {
+                Err(error)
+            } else {
+                let command = match action {
+                    ServiceLifecycleAction::Start => compose.start_stack_without_pull(&config),
+                    ServiceLifecycleAction::Stop => compose.stop_stack(&config),
+                    ServiceLifecycleAction::Restart => compose.restart_stack(&config),
+                };
+                let runner = DbLoggingRunner {
+                    db: state.db.clone(),
+                    inner: state.runner.clone(),
+                    job_id: job_id.clone(),
+                    live_log_hub: state.job_live_log_hub.clone(),
+                };
+                runner
+                    .run(
+                        command,
+                        Duration::from_secs(LIFECYCLE_ACTION_TIMEOUT_SECONDS),
+                    )
+                    .await
+                    .and_then(|output| {
+                        if output.status == 0 {
+                            Ok(())
+                        } else {
+                            Err(anyhow::anyhow!(
+                                "compose lifecycle command exited with {}",
+                                output.status
+                            ))
+                        }
+                    })
+            }
         }
         Err(error) => Err(error),
     };
@@ -438,6 +435,28 @@ async fn read_lifecycle_state(
         );
     };
     let timeout = Duration::from_secs(LIFECYCLE_STATUS_TIMEOUT_SECONDS);
+    let services = state
+        .runner
+        .run(compose.config_services(&config), timeout)
+        .await;
+    let service_exists = match services {
+        Ok(output) if output.status == 0 => output
+            .stdout
+            .lines()
+            .any(|name| name.trim() == service.name),
+        _ => {
+            return (
+                ServiceLifecycleState::Unknown,
+                Some("lifecycle_status_unavailable".to_string()),
+            );
+        }
+    };
+    if !service_exists {
+        return (
+            ServiceLifecycleState::Unknown,
+            Some("compose_service_not_found".to_string()),
+        );
+    }
     let all = state
         .runner
         .run(compose.ps_all_q_service(&config, &service.name), timeout)
@@ -449,12 +468,10 @@ async fn read_lifecycle_state(
     match (all, running) {
         (Ok(all), Ok(running)) if all.status == 0 && running.status == 0 => {
             let all_count = command_ids(&all.stdout);
-            let (lifecycle_state, unavailable_reason) = lifecycle_state_for_compose(
-                all_count,
-                command_ids(&running.stdout),
-                crate::compose_runner::is_docker_plugin(&config.compose_bin),
-            );
-            (lifecycle_state, unavailable_reason.map(str::to_string))
+            (
+                lifecycle_state_for_compose(all_count, command_ids(&running.stdout)),
+                None,
+            )
         }
         _ => (
             ServiceLifecycleState::Unknown,
@@ -582,6 +599,7 @@ pub(crate) async fn trigger_service_lifecycle(
             ),
         );
     }
+    crate::compose_capability::require_v2_api(&*state.runner, &state.config).await?;
 
     let now = now_rfc3339().map_err(map_internal)?;
     let job_id = ids::new_job_id();
@@ -642,37 +660,45 @@ async fn run_service_lifecycle_job(
     let compose = lifecycle_compose_stack(&stack);
     let outcome = match lifecycle_compose_config(state.as_ref()) {
         Ok((config, _auth_bridge)) => {
-            let command = match action {
-                ServiceLifecycleAction::Start => {
-                    compose.start_service_without_pull(&config, &service.name)
-                }
-                ServiceLifecycleAction::Stop => {
-                    compose.stop_services(&config, std::slice::from_ref(&service.name))
-                }
-                ServiceLifecycleAction::Restart => compose.restart_service(&config, &service.name),
-            };
-            let runner = DbLoggingRunner {
-                db: state.db.clone(),
-                inner: state.runner.clone(),
-                job_id: job_id.clone(),
-                live_log_hub: state.job_live_log_hub.clone(),
-            };
-            runner
-                .run(
-                    command,
-                    Duration::from_secs(LIFECYCLE_ACTION_TIMEOUT_SECONDS),
-                )
-                .await
-                .and_then(|output| {
-                    if output.status == 0 {
-                        Ok(())
-                    } else {
-                        Err(anyhow::anyhow!(
-                            "compose lifecycle command exited with {}",
-                            output.status
-                        ))
+            if let Err(error) =
+                crate::compose_capability::require_v2(&*state.runner, &state.config).await
+            {
+                Err(error)
+            } else {
+                let command = match action {
+                    ServiceLifecycleAction::Start => {
+                        compose.start_service_without_pull(&config, &service.name)
                     }
-                })
+                    ServiceLifecycleAction::Stop => {
+                        compose.stop_services(&config, std::slice::from_ref(&service.name))
+                    }
+                    ServiceLifecycleAction::Restart => {
+                        compose.restart_service(&config, &service.name)
+                    }
+                };
+                let runner = DbLoggingRunner {
+                    db: state.db.clone(),
+                    inner: state.runner.clone(),
+                    job_id: job_id.clone(),
+                    live_log_hub: state.job_live_log_hub.clone(),
+                };
+                runner
+                    .run(
+                        command,
+                        Duration::from_secs(LIFECYCLE_ACTION_TIMEOUT_SECONDS),
+                    )
+                    .await
+                    .and_then(|output| {
+                        if output.status == 0 {
+                            Ok(())
+                        } else {
+                            Err(anyhow::anyhow!(
+                                "compose lifecycle command exited with {}",
+                                output.status
+                            ))
+                        }
+                    })
+            }
         }
         Err(error) => Err(error),
     };
@@ -746,15 +772,8 @@ mod tests {
             ServiceLifecycleState::Unknown
         );
         assert_eq!(
-            lifecycle_state_for_compose(0, 0, false),
-            (
-                ServiceLifecycleState::Unknown,
-                Some("container_missing_for_compose_v1")
-            )
-        );
-        assert_eq!(
-            lifecycle_state_for_compose(0, 0, true),
-            (ServiceLifecycleState::Stopped, None)
+            lifecycle_state_for_compose(0, 0),
+            ServiceLifecycleState::Stopped
         );
     }
 }

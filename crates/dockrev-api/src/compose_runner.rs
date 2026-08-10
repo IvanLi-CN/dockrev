@@ -1,5 +1,6 @@
 use crate::{
     api::types::ComposeConfig,
+    compose_capability::uses_docker_subcommand,
     runner::{CommandSpec, STREAM_PTY_ENV},
 };
 
@@ -19,7 +20,7 @@ impl ComposeStack {
     pub fn base_command(&self, cfg: &ComposeRunnerConfig) -> CommandSpec {
         let mut args: Vec<String> = Vec::new();
 
-        if is_docker_plugin(&cfg.compose_bin) {
+        if uses_docker_subcommand(&cfg.compose_bin) {
             args.push("compose".to_string());
         }
 
@@ -58,15 +59,12 @@ impl ComposeStack {
         let mut cmd = self.pull_services(cfg, services);
         // Keep Compose in terminal progress mode so layer updates overwrite their screen rows.
         // The command is piped rather than attached to a TTY, so ANSI must be explicit too.
-        // `docker-compose` can be the standalone invocation for the same V2 implementation.
         cmd.env
             .push(("COMPOSE_PROGRESS".to_string(), "tty".to_string()));
         cmd.env
             .push(("COMPOSE_ANSI".to_string(), "always".to_string()));
-        if !is_docker_plugin(&cfg.compose_bin) {
-            // Compose V1 ignores COMPOSE_PROGRESS when its output is piped. Route
-            // standalone invocations through the runner's PTY without exposing
-            // the implementation marker to the child process.
+        if !uses_docker_subcommand(&cfg.compose_bin) {
+            // Standalone Compose V2 needs a PTY for terminal progress rendering.
             cmd.env.push((STREAM_PTY_ENV.to_string(), "1".to_string()));
         }
         cmd
@@ -88,17 +86,13 @@ impl ComposeStack {
 
     pub fn start_stack_without_pull(&self, cfg: &ComposeRunnerConfig) -> CommandSpec {
         let mut cmd = self.base_command(cfg);
-        if is_docker_plugin(&cfg.compose_bin) {
-            cmd.args.extend([
-                "up".to_string(),
-                "-d".to_string(),
-                "--pull".to_string(),
-                "never".to_string(),
-                "--no-recreate".to_string(),
-            ]);
-        } else {
-            cmd.args.push("start".to_string());
-        }
+        cmd.args.extend([
+            "up".to_string(),
+            "-d".to_string(),
+            "--pull".to_string(),
+            "never".to_string(),
+            "--no-recreate".to_string(),
+        ]);
         cmd
     }
 
@@ -132,20 +126,14 @@ impl ComposeStack {
         service: &str,
     ) -> CommandSpec {
         let mut cmd = self.base_command(cfg);
-        if is_docker_plugin(&cfg.compose_bin) {
-            cmd.args.extend([
-                "up".to_string(),
-                "-d".to_string(),
-                "--pull".to_string(),
-                "never".to_string(),
-                "--no-recreate".to_string(),
-                "--no-deps".to_string(),
-            ]);
-        } else {
-            // Compose V1 has no `up --pull never`; `start` only starts an
-            // existing container and fails safely when one does not exist.
-            cmd.args.push("start".to_string());
-        }
+        cmd.args.extend([
+            "up".to_string(),
+            "-d".to_string(),
+            "--pull".to_string(),
+            "never".to_string(),
+            "--no-recreate".to_string(),
+            "--no-deps".to_string(),
+        ]);
         cmd.args.push(service.to_string());
         cmd
     }
@@ -168,17 +156,19 @@ impl ComposeStack {
         cmd
     }
 
+    pub fn config_services(&self, cfg: &ComposeRunnerConfig) -> CommandSpec {
+        let mut cmd = self.base_command(cfg);
+        cmd.args
+            .extend(["config".to_string(), "--services".to_string()]);
+        cmd
+    }
+
     pub fn restart_service(&self, cfg: &ComposeRunnerConfig, service: &str) -> CommandSpec {
         let mut cmd = self.base_command(cfg);
         cmd.args
             .extend(["restart".to_string(), service.to_string()]);
         cmd
     }
-}
-
-pub(crate) fn is_docker_plugin(compose_bin: &str) -> bool {
-    let bin = compose_bin.to_ascii_lowercase();
-    bin == "docker" || bin.ends_with("/docker") || bin.ends_with("\\docker")
 }
 
 #[cfg(test)]
@@ -210,7 +200,7 @@ mod tests {
     }
 
     #[test]
-    fn docker_compose_v1_builds_args() {
+    fn standalone_compose_v2_builds_args() {
         let stack = ComposeStack {
             project_name: "myproj".to_string(),
             compose: ComposeConfig {
@@ -242,7 +232,7 @@ mod tests {
             compose_bin: "docker".to_string(),
             env: Vec::new(),
         };
-        let v1 = ComposeRunnerConfig {
+        let standalone = ComposeRunnerConfig {
             compose_bin: "docker-compose".to_string(),
             env: Vec::new(),
         };
@@ -253,12 +243,8 @@ mod tests {
             ["up", "-d", "--pull", "never", "--no-recreate"]
         );
         assert_eq!(
-            stack
-                .start_stack_without_pull(&v1)
-                .args
-                .last()
-                .map(String::as_str),
-            Some("start")
+            stack.start_stack_without_pull(&standalone).args[4..],
+            ["up", "-d", "--pull", "never", "--no-recreate"]
         );
         assert_eq!(
             stack.stop_stack(&plugin).args.last().map(String::as_str),
@@ -304,7 +290,7 @@ mod tests {
     }
 
     #[test]
-    fn standalone_compose_progress_env_routes_through_a_terminal() {
+    fn standalone_compose_v2_progress_env_routes_through_a_terminal() {
         let stack = ComposeStack {
             project_name: "myproj".to_string(),
             compose: ComposeConfig {
@@ -425,14 +411,22 @@ mod tests {
             ]
         );
 
-        let v1 = ComposeRunnerConfig {
+        let standalone = ComposeRunnerConfig {
             compose_bin: "docker-compose".to_string(),
             env: Vec::new(),
         };
-        let v1_start = stack.start_service_without_pull(&v1, "web");
+        let v1_start = stack.start_service_without_pull(&standalone, "web");
         assert_eq!(
-            v1_start.args[v1_start.args.len() - 2..],
-            ["start".to_string(), "web".to_string()]
+            v1_start.args[v1_start.args.len() - 7..],
+            [
+                "up".to_string(),
+                "-d".to_string(),
+                "--pull".to_string(),
+                "never".to_string(),
+                "--no-recreate".to_string(),
+                "--no-deps".to_string(),
+                "web".to_string(),
+            ]
         );
     }
 }
