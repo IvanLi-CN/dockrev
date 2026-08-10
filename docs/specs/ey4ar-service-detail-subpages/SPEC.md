@@ -94,6 +94,7 @@
 - `日志` 必须独占服务级实时日志面板，不得混入监控卡或配置卡。
 - `日志` 必须通过 `GET /api/services/{service_id}/logs?tail=500` 提供最近缓冲 snapshot，并通过 `GET /api/services/{service_id}/logs/events?afterId=` 建立 SSE 增量续流；SSE 继续支持 `Last-Event-ID`、`Cache-Control: no-cache` 与 `X-Accel-Buffering: no`。
 - `日志` 必须保留 ANSI 颜色渲染，同时维护 strip-ANSI 文本用于大小写不敏感的当前缓冲过滤搜索。
+- `日志` 终端必须使用服务日志局部主题令牌；亮色主题提供不透明浅色终端、表头、行悬浮、时间、Human 正文、元数据、等级与 ANSI 前景色，Human 和 Raw 两种模式中的文字相对各自终端表面均至少达到 WCAG AA `4.5:1`，暗色主题继续保持既有终端语义。
 - `日志` 必须在 `ServiceLogLine` 中保留 `ts/raw/plain`，并允许后端返回可选 `meta`：`format=json|logfmt|text`、应用级 `level`、应用时间戳、主消息、结构化 attributes 与重点字段列表。
 - `日志` 默认展示 Human 视图：优先使用 `meta.message` 与应用级 `meta.level`，将 `component/event/route/phase/elapsed_ms` 等重点 attributes 渲染为紧凑元数据；缺少 `meta` 时回退到原有 ANSI/关键词推断。
 - `日志` 必须提供 Human / Raw 显式切换；Raw 视图必须保留原始输出与 ANSI 分段渲染，Human 视图不得把长 metadata 截断到视口外。
@@ -272,6 +273,10 @@
   When 用户切换自动换行
   Then 页面在“原始单行横向滚动查看”和“当前视口内折行查看”之间切换，且两种模式都继续使用虚拟列表渲染。
 
+- Given 服务详情页处于亮色主题的 `日志`
+  When 用户查看 Human 或切换到 Raw
+  Then 浅色终端表面、表头、时间、正文、元数据、等级与 ANSI 语义色均保持可读，且不会回退为暗色嵌入面。
+
 - Given 服务详情页处于 `设置`
   When 用户查看页面主体
   Then 可看到自动更新摘要、Compose 信息、部署 tag、服务保护、忽略规则、Webhook 与危险动作，且不再看到最近更新记录卡，也不再看到备份目标编辑入口。
@@ -310,7 +315,7 @@
 
 - Stories to add/update: `web/src/stories/pages/ServiceDetailPage.stories.tsx`
 - Docs pages / state galleries to add/update: `none (reason: repo currently uses page stories/canvas coverage for this surface)`
-- `play` / interaction coverage to add/update: tabs route switching 与顺序断言、旧链接默认概览、版本页活动 update 的共享信息带/candidate chip/可点击加载按钮/独立横幅移除、更新记录深链/混合列表/备份列命中与空占位/缺失体积回退/分页边界/更新日志定位/空态/click-Enter-Space 跳转/受控回滚入口、备份页记录卡渲染/空态、日志深链与搜索交互、日志自动换行/虚拟列表断言、移动端更新记录无横向滚动、设置抽屉入口、监控页稳定渲染
+- `play` / interaction coverage to add/update: tabs route switching 与顺序断言、旧链接默认概览、版本页活动 update 的共享信息带/candidate chip/可点击加载按钮/独立横幅移除、更新记录深链/混合列表/备份列命中与空占位/缺失体积回退/分页边界/更新日志定位/空态/click-Enter-Space 跳转/受控回滚入口、备份页记录卡渲染/空态、日志深链与搜索交互、日志自动换行/虚拟列表断言、亮色终端 Human/Raw ANSI 的计算对比度、移动端更新记录无横向滚动、设置抽屉入口、监控页稳定渲染
 - Visual regression baseline changes (if any): 服务详情七子页 mock-only 视觉证据（含 `ui_demo` 版本页桌面/移动端）
 
 ### Quality checks
@@ -353,9 +358,6 @@
   story_id_or_title: `demo:app / /demo/services/stack-prod/svc-prod-api/versions?demoScenario=dashboard-demo-hydrated-update`
   state: `desktop active update progress synchronization`
   evidence_note: `mock-only ui_demo` 桌面截图验证活动更新优先接管共享状态信息带，信息带使用主题蓝色与加载图标并保留当前版本、目标版本和跨度；左侧候选目录同步显示 `更新中`，候选卡按钮保留加载反馈与任务详情入口，同时页面中不再出现独立活动任务横幅。
-  PR: include
-  PR caption: 活动更新统一显示在共享蓝色状态信息带，并同步候选目录与候选卡任务入口。
-
 ![服务详情版本子页更新中桌面联动](./assets/service-detail-versions-update-progress-desktop.png)
 
 - source_type: `ui_demo`
@@ -368,10 +370,41 @@
   story_id_or_title: `demo:app / /demo/services/stack-prod/svc-prod-api/versions?demoScenario=dashboard-demo-hydrated-update`
   state: `mobile active update status rail`
   evidence_note: `mock-only ui_demo` 移动端截图验证共享蓝色状态信息带在 `390x900` 下完整展示 `更新中`、当前版本、目标版本与跨度，加载图标和单列页面均无横向溢出；桌面候选目录在该断点按合同隐藏，页面中没有独立活动任务横幅。
-  PR: include
-  PR caption: 移动端更新中状态收敛到共享信息带，并保持无横向溢出。
-
 ![服务详情版本子页更新中移动状态带](./assets/service-detail-versions-update-progress-mobile.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `1440x1000`
+  viewport_strategy: `controlled-viewport`
+  margin_policy: `trim_only`
+  evidence_surface: `page`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/LogsSectionLightContrast`
+  state: `light Human terminal contrast`
+  evidence_note: 亮色服务日志使用完整浅色终端，表头、时间、Human 正文、结构化元数据与等级标签相对各自表面均通过运行时 WCAG AA 对比检查。
+  PR: include
+  PR caption: 服务日志在亮色主题中使用可读的浅色终端与结构化 Human 视图。
+
+![服务详情日志亮色 Human 终端](./assets/service-detail-logs-light-human.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `393x852`
+  viewport_strategy: `controlled-viewport`
+  margin_policy: `trim_only`
+  evidence_surface: `page`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/MobileLogsSectionLightContrast`
+  state: `light Raw ANSI terminal`
+  evidence_note: 移动端 Raw 视图保留 ANSI 绿色、红色、青色与警告色，并在浅色终端中保持可读；日志列继续按原始单行横向查看。
+  PR: include
+  PR caption: 服务日志移动 Raw ANSI 输出在亮色主题中保持可读。
+
+![服务详情日志亮色 Raw ANSI（移动端）](./assets/service-detail-logs-light-raw-mobile.png)
 
 ## Visual Evidence (PR)
 

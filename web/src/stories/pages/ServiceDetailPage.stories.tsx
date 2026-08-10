@@ -4,6 +4,7 @@ import { currentRoutePathname } from "../../routes";
 import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
 import { expectMobileTopbarMonitorHidden, expectNoLegacyServiceDetailHero, expectTopbarMonitorSummary } from "./serviceDetailHeaderAssertions";
 import { expectHistoryColumnsAligned } from "./serviceDetailHistoryAssertions";
+import { expectLightServiceLogsContrast } from "./serviceLogsLightContrastStory";
 import { buildLongLogsSnapshot, buildMultilineLogsSnapshot, historyReleaseNotes, paginatedHistoryJobs, partialHistoryBackupRecords } from "./serviceDetailPageStoryFixtures";
 import { assertRecentUpdateKeyboardNavigation, assertRecentUpdateReasonPopoverStaysOnRoute } from "./recentUpdateStoryAssertions";
 import { drawerText, findActionButton, findHistoryRowByJobId, findLogRowContaining, findSectionCard, findTab, render, tabLabels, type ServiceDetailStory } from "./serviceDetailStoryShared";
@@ -392,6 +393,26 @@ export const LogsSection: Story = {
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
     await waitForCondition(() => normalizeText(canvasElement.textContent).includes("runtime perf"));
+  },
+};
+
+export const LogsSectionLightContrast: Story = {
+  globals: {
+    backgrounds: { value: "light" },
+    theme: "light",
+  },
+  parameters: { dockrevApiScenario: "dashboard-demo" },
+  render: render("stack-prod", "svc-prod-api", "logs", "亮色主题下日志正文、状态与原始 ANSI 输出保持可读。"),
+  play: async ({ canvasElement }) => {
+    await expectLightServiceLogsContrast(canvasElement);
+  },
+};
+
+export const MobileLogsSectionLightContrast: Story = {
+  ...LogsSectionLightContrast,
+  parameters: {
+    ...LogsSectionLightContrast.parameters,
+    viewport: { defaultViewport: "dockrevMobile" },
   },
 };
 

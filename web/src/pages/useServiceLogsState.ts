@@ -17,6 +17,16 @@ const ANSI_INFO_PATTERN = new RegExp(`${ESC}\\[(?:[0-9;]*;)?(?:32|36)m`)
 const ANSI_DEBUG_PATTERN = new RegExp(`${ESC}\\[(?:[0-9;]*;)?90m`)
 const INLINE_TRACING_LEVEL_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\S+\s+(TRACE|DEBUG|INFO|WARN|WARNING|ERROR|ERR|FATAL|CRITICAL)\b/i
+const ANSI_FOREGROUND_TOKENS: Partial<Record<number, string>> = {
+  31: 'var(--service-log-ansi-red)',
+  32: 'var(--service-log-ansi-green)',
+  33: 'var(--service-log-ansi-yellow)',
+  34: 'var(--service-log-ansi-blue)',
+  35: 'var(--service-log-ansi-magenta)',
+  36: 'var(--service-log-ansi-cyan)',
+  37: 'var(--service-log-ansi-white)',
+  90: 'var(--service-log-ansi-muted)',
+}
 
 export type ServiceLogLevel = 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'unknown'
 
@@ -77,14 +87,8 @@ function ansiSegments(input: string): ServiceLogRenderSegment[] {
     }
     for (const code of codes) {
       if (code === 1) bold = true
-      if (code === 31) foreground = '#f87171'
-      if (code === 32) foreground = '#4ade80'
-      if (code === 33) foreground = '#fbbf24'
-      if (code === 34) foreground = '#60a5fa'
-      if (code === 35) foreground = '#f472b6'
-      if (code === 36) foreground = '#22d3ee'
-      if (code === 37) foreground = '#e5e7eb'
-      if (code === 90) foreground = '#94a3b8'
+      const foregroundToken = ANSI_FOREGROUND_TOKENS[code]
+      if (foregroundToken) foreground = foregroundToken
     }
     lastIndex = index + match[0].length
   }
