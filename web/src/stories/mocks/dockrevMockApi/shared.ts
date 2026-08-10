@@ -128,6 +128,7 @@ export type DockrevMockApiOptions = {
   serviceLogsByServiceId?: Record<string, ServiceLogsMockDataset>
   serviceTagSuggestionsById?: Record<string, ServiceTagSuggestionItem[]>
   deployCheckReportOverride?: Partial<DeployCheckReportEnvelope>
+  deployCheckReportSequence?: DeployCheckReportEnvelope[]
   deployWelcomeOverride?: Partial<DeployWelcomeResponse>
   supervisorSelfUpgradeResponse?: {
     status: number

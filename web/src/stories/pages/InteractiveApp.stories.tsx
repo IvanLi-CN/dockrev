@@ -281,6 +281,36 @@ export const DeployCheckGatePassed: Story = {
   },
 }
 
+export const DeployCheckGateRefreshBlocked: Story = {
+  parameters: {
+    dockrevApiScenario: 'settings-configured',
+    dockrevDeployCheckReportSequence: [
+      makeDeployCheckEnvelope(false),
+      makeDeployCheckEnvelope(false),
+      makeDeployCheckEnvelope(false),
+      makeDeployCheckEnvelope(false),
+      makeDeployCheckEnvelope(true),
+    ],
+    dockrevDeployWelcomeOverride: { neverAutoOpen: true },
+  },
+  render: () => {
+    return (
+      <>
+        <LocationReset pathname="/" />
+        <App />
+      </>
+    )
+  },
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(canvasElement.querySelector('.appShell')))
+    await sleep(350)
+    window.dispatchEvent(new Event('focus'))
+    await waitForCondition(() => window.location.hash === '#/deploy-check')
+    const dashboardButton = Array.from(canvasElement.querySelectorAll('button')).find((button) => button.textContent?.includes('进入 Dashboard'))
+    expectStory(Boolean(dashboardButton?.disabled), 'foreground deploy-check failure must disable Dashboard entry')
+  },
+}
+
 export const Cleanup: Story = {
   parameters: { dockrevApiScenario: 'cleanup-console-storage-normal' },
   render: () => {

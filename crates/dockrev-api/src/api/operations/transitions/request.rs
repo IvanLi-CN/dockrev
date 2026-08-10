@@ -173,9 +173,6 @@ pub(crate) async fn enqueue_update_job(
         .map_err(map_internal)?;
     let validated_targets = resolve_validated_update_targets(&state, &req, &stack_ids).await?;
     req.targets = Some(validated_targets);
-    if matches!(&req.mode, UpdateMode::Apply) {
-        crate::compose_capability::require_v2_api(&*state.runner, &state.config).await?;
-    }
 
     let operation_targets = if req.mode.as_str() == "apply" {
         let mut operation_targets = Vec::new();
@@ -195,6 +192,20 @@ pub(crate) async fn enqueue_update_job(
     } else {
         Vec::new()
     };
+    if matches!(&req.mode, UpdateMode::Apply) {
+        for target in &operation_targets {
+            if let Some(conflict) = find_pending_service_operation_conflict(
+                &state,
+                &target.stack_id,
+                &target.service_id,
+            )
+            .await?
+            {
+                return Err(service_operation_conflict_error(&conflict.job));
+            }
+        }
+        crate::compose_capability::require_v2_api(&*state.runner, &state.config).await?;
+    }
 
     let job_id = ids::new_job_id();
     let mut job = JobRecord::new_running(

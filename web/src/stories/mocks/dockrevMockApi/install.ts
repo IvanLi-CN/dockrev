@@ -131,6 +131,7 @@ export function installDockrevMockApi(
   }
 
   const rollbackTargetRaceByServiceId = new Map<string, RollbackTargetRaceState>()
+  let deployCheckReportSequenceIndex = 0
 
   const advanceQueueProgressDemo = (): number | null => {
     if (!state || scenario !== 'queue-progress-smoothing') return null
@@ -525,6 +526,12 @@ export function installDockrevMockApi(
         digestSnapshotPendingAttempts,
         forcedDigestSnapshotPendingAttempts,
         cleanupRuntime,
+      }
+
+      if (method === 'GET' && urlPath === '/api/deploy-check/report' && options.deployCheckReportSequence?.length) {
+        const sequence = options.deployCheckReportSequence
+        const report = sequence[Math.min(deployCheckReportSequenceIndex++, sequence.length - 1)]
+        return json(report)
       }
 
       const ghcrResponse = await handleGhcrRoutes(routeCtx)
