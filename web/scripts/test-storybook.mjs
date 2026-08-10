@@ -574,6 +574,139 @@ async function runInteractive({ baseUrl, browser }) {
 
   await assertServiceLogsLightContrast({ baseUrl, browser });
 
+  // Version directory navigation must converge even when the target card is not rendered yet.
+  {
+    const page = await openStory("pages-servicedetailpage--versions-section");
+    try {
+      await page.setViewportSize({ width: 1800, height: 1200 });
+      const viewport = page.locator(".serviceVersionsScrollViewport").first();
+      await viewport.evaluate((element) => {
+        element.scrollTop = element.scrollHeight;
+        element.dispatchEvent(new Event("scroll"));
+      });
+      const targetIndex = page
+        .locator('[data-service-versions-index-selected][data-release-tag="5.0.4"]')
+        .first();
+      await viewport.waitFor({ timeout: 10_000 });
+      await targetIndex.waitFor({ timeout: 10_000 });
+      await viewport.evaluate((element) => {
+        element.scrollTop = 0;
+        element.dispatchEvent(new Event("scroll"));
+      });
+      await page.locator(".serviceVersionsIndexViewport").evaluate((element) => {
+        element.scrollTop = element.scrollHeight;
+        element.dispatchEvent(new Event("scroll"));
+      });
+      await targetIndex.waitFor({ timeout: 10_000 });
+      await page.waitForTimeout(100);
+
+      if (
+        (await viewport.locator('[data-service-version-card="true"][data-release-tag="5.0.4"]').count()) !== 0
+      ) {
+        throw new Error("Expected the distant 5.0.4 card to start outside the virtual window.");
+      }
+
+      await targetIndex.click();
+      await page.waitForFunction(
+        () => {
+          const target = document.querySelector(
+            '[data-service-versions-index-selected][data-release-tag="5.0.4"]',
+          );
+          return (
+            target?.getAttribute("aria-pressed") === "true" &&
+            target.getAttribute("data-service-versions-index-selected") === "true"
+          );
+        },
+        null,
+        { timeout: 1_000 },
+      );
+
+      await page.waitForFunction(
+        () => {
+          const scrollElement = document.querySelector(".serviceVersionsScrollViewport");
+          const selected = document.querySelector('[data-service-versions-index-selected="true"]');
+          if (!(scrollElement instanceof HTMLElement) || !(selected instanceof HTMLElement)) return false;
+          const viewportRect = scrollElement.getBoundingClientRect();
+          const viewportCenter = viewportRect.top + viewportRect.height / 2;
+          const centered = Array.from(
+            scrollElement.querySelectorAll('[data-service-version-card="true"]'),
+          )
+            .map((card) => {
+              const rect = card.getBoundingClientRect();
+              return {
+                tag: card.getAttribute("data-release-tag"),
+                distance: Math.abs(rect.top + rect.height / 2 - viewportCenter),
+              };
+            })
+            .sort((left, right) => left.distance - right.distance)[0];
+          return (
+            selected.getAttribute("data-release-tag") === "5.0.4" &&
+            centered?.tag === "5.0.4" &&
+            centered.distance <= 48
+          );
+        },
+        null,
+        { timeout: 10_000 },
+      );
+
+      const newerIndex = page
+        .locator('[data-service-versions-index-selected][data-release-tag="5.0.9"]')
+        .first();
+      await newerIndex.click();
+      await viewport.dispatchEvent("wheel", { deltaY: 500 });
+      await viewport.evaluate((element) => {
+        element.scrollTop += 500;
+        element.dispatchEvent(new Event("scroll"));
+      });
+      await page.waitForFunction(
+        () => {
+          const scrollElement = document.querySelector(".serviceVersionsScrollViewport");
+          const selected = document.querySelector('[data-service-versions-index-selected="true"]');
+          if (!(scrollElement instanceof HTMLElement) || !(selected instanceof HTMLElement)) return false;
+          const rect = scrollElement.getBoundingClientRect();
+          const center = rect.top + rect.height / 2;
+          const nearest = Array.from(scrollElement.querySelectorAll('[data-service-version-card="true"]'))
+            .map((card) => {
+              const cardRect = card.getBoundingClientRect();
+              return { tag: card.getAttribute("data-release-tag"), distance: Math.abs(cardRect.top + cardRect.height / 2 - center) };
+            })
+            .sort((left, right) => left.distance - right.distance)[0];
+          return nearest?.tag === selected.getAttribute("data-release-tag");
+        },
+        null,
+        { timeout: 10_000 },
+      );
+
+      const handoff = await viewport.evaluate((scrollElement) => {
+        const selected = document.querySelector('[data-service-versions-index-selected="true"]');
+        const viewportRect = scrollElement.getBoundingClientRect();
+        const viewportCenter = viewportRect.top + viewportRect.height / 2;
+        const centered = Array.from(
+          scrollElement.querySelectorAll('[data-service-version-card="true"]'),
+        )
+          .map((card) => {
+            const rect = card.getBoundingClientRect();
+            return {
+              tag: card.getAttribute("data-release-tag"),
+              distance: Math.abs(rect.top + rect.height / 2 - viewportCenter),
+            };
+          })
+          .sort((left, right) => left.distance - right.distance)[0];
+        return {
+          selected: selected?.getAttribute("data-release-tag"),
+          centered: centered?.tag,
+        };
+      });
+      if (!handoff.selected || handoff.selected !== handoff.centered) {
+        throw new Error(
+          `Expected user scrolling to take over version selection: ${JSON.stringify(handoff)}`,
+        );
+      }
+    } finally {
+      await page.close().catch(() => {});
+    }
+  }
+
   // 0) Group guide line alignment must remain stable (no JS measuring).
   {
     const storyIds = ["pages-servicespage--guide-line-long-names"];
