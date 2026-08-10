@@ -25,6 +25,7 @@ WORDMARK_SOURCE = VECTOR_DIR / "dockrev-text-pango.svg"
 SOCIAL_PREVIEW_SOURCE = GENERATED_DIR / "dockrev-github-social-preview-imagegen-candidate.png"
 PRODUCT_POSTER_SOURCE = GENERATED_DIR / "dockrev-product-poster-imagegen-candidate.png"
 SOCIAL_FONT = REPO_DIR / "crates" / "dockrev-api" / "assets" / "fonts" / "NotoSansCJKsc-Regular.otf"
+PNG_DETERMINISTIC_OPTIONS = ["-strip", "-define", "png:exclude-chunk=tIME"]
 
 DARK_CYAN = ("#20b8ff", "#1eb6fe", "#1cb4fb")
 DARK_GREEN = ("#16d563", "#10cd5c")
@@ -251,6 +252,7 @@ def generate_raster_assets(icon_dark: Path, icon_square: Path, logo_dark: Path) 
                 "-composite",
                 "-depth",
                 "8",
+                *PNG_DETERMINISTIC_OPTIONS,
                 str(logo_candidate),
             ],
             check=True,
@@ -388,6 +390,7 @@ def generate_social_preview() -> None:
                 "Self-hosted Docker/Compose\nupdate manager",
                 "-depth",
                 "8",
+                *PNG_DETERMINISTIC_OPTIONS,
                 str(preview),
             ],
             check=True,
@@ -471,12 +474,22 @@ def generate_product_poster() -> None:
                 "+repage",
                 "-depth",
                 "8",
+                *PNG_DETERMINISTIC_OPTIONS,
                 str(poster),
             ],
             check=True,
         )
         subprocess.run(
-            ["magick", str(poster), "-resize", "1440x2070!", "-depth", "8", str(poster_large)],
+            [
+                "magick",
+                str(poster),
+                "-resize",
+                "1440x2070!",
+                "-depth",
+                "8",
+                *PNG_DETERMINISTIC_OPTIONS,
+                str(poster_large),
+            ],
             check=True,
         )
         copy_to(
@@ -577,6 +590,7 @@ def generate_contact_sheet() -> None:
                 "Product poster 1024x1472",
                 "-depth",
                 "8",
+                *PNG_DETERMINISTIC_OPTIONS,
                 str(sheet),
             ],
             check=True,
