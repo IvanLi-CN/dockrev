@@ -132,7 +132,6 @@ export function installDockrevMockApi(
 
   const rollbackTargetRaceByServiceId = new Map<string, RollbackTargetRaceState>()
   let deployCheckReportSequenceIndex = 0
-
   const advanceQueueProgressDemo = (): number | null => {
     if (!state || scenario !== 'queue-progress-smoothing') return null
     if (queueProgressDemoStep >= queueProgressDemoSteps.length - 1) queueProgressDemoDirection = -1
@@ -528,12 +527,7 @@ export function installDockrevMockApi(
         cleanupRuntime,
       }
 
-      if (method === 'GET' && urlPath === '/api/deploy-check/report' && options.deployCheckReportSequence?.length) {
-        const sequence = options.deployCheckReportSequence
-        const report = sequence[Math.min(deployCheckReportSequenceIndex++, sequence.length - 1)]
-        return json(report)
-      }
-
+      if (method === 'GET' && urlPath === '/api/deploy-check/report' && options.deployCheckReportSequence?.length) { const sequence = options.deployCheckReportSequence; return json(sequence[Math.min(deployCheckReportSequenceIndex++, sequence.length - 1)]) }
       const ghcrResponse = await handleGhcrRoutes(routeCtx)
       if (ghcrResponse) return ghcrResponse
 
@@ -541,7 +535,6 @@ export function installDockrevMockApi(
         // Use an existing repo tag so the version link in UI can be exercised in Storybook.
         return json({ version: '0.5.0' })
       }
-
     if (urlPath === '/api/version-inference/overview' && method === 'GET') {
       const params = url?.searchParams ?? new URLSearchParams()
       const page = Math.max(1, Number(params.get('page') ?? '1') || 1)

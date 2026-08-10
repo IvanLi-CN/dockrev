@@ -80,8 +80,12 @@ PY
 )"
 GIT_SHA="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo nogit)"
 if [[ -z "$RUN_ID" ]]; then
-  RUN_ID="$(date -u +%Y%m%d_%H%M%S)_${GIT_SHA}"
+  RUN_ID="$(date -u +%Y%m%d_%H%M%S)_${GIT_SHA}_$(python3 -c 'import secrets; print(secrets.token_hex(4))')"
 fi
+[[ "$RUN_ID" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$ ]] || {
+  echo "run id must be a single safe slug (letters, digits, _ or -)" >&2
+  exit 2
+}
 WORKSPACE_SLUG="${REPO_NAME}__${PATH_HASH8}"
 REMOTE_BASE="/srv/codex/workspaces/$USER"
 REMOTE_WORKSPACE="${REMOTE_BASE}/${WORKSPACE_SLUG}"
@@ -129,12 +133,17 @@ printf '==> Running real Compose V2 regression on shared testbox\n'
 ssh -o BatchMode=yes "$TESTBOX" \
   env \
     REMOTE_RUN="$REMOTE_RUN" \
+    REMOTE_WORKSPACE="$REMOTE_WORKSPACE" \
     RUN_ID="$RUN_ID" \
     FIXTURE_PROJECT="$FIXTURE_PROJECT" \
     KEEP_RUN="$KEEP_RUN" \
   'bash -s' > "$SUMMARY_TMP" <<'REMOTE_SCRIPT'
 set -euo pipefail
 
+case "$REMOTE_RUN" in
+  "$REMOTE_WORKSPACE/runs/$RUN_ID") ;;
+  *) echo "remote run path escaped the expected workspace" >&2; exit 2 ;;
+esac
 cd "$REMOTE_RUN"
 mkdir -p fixture bin artifacts
 
@@ -248,7 +257,15 @@ wait_deploy_report() {
   local payload
   for _ in $(seq 1 90); do
     payload="$(curl_body GET /api/deploy-check/report)"
-    if [[ "$(json_get status "$payload")" == "ready" && "$(json_get refreshing "$payload")" == "False" ]]; then
+    if python3 - "$payload" <<'PY'
+import json, sys
+payload = json.loads(sys.argv[1])
+if payload.get("status") != "ready" or payload.get("refreshing") is not False:
+    raise SystemExit(1)
+if payload.get("lastError"):
+    raise SystemExit("deploy-check refresh failed: " + str(payload["lastError"]))
+PY
+    then
       printf '%s' "$payload"
       return 0
     fi
@@ -351,7 +368,11 @@ cleanup_remote() {
   stop_server
   compose_fixture down -v --remove-orphans >/dev/null 2>&1 || true
   if [[ "$KEEP_RUN" != "1" ]]; then
-    rm -rf "$REMOTE_RUN"
+    if [[ "$REMOTE_RUN" == "$REMOTE_WORKSPACE/runs/$RUN_ID" ]]; then
+      rm -rf -- "$REMOTE_RUN"
+    else
+      echo "refusing to clean an escaped remote run path" >&2
+    fi
   fi
 }
 trap cleanup_remote EXIT
