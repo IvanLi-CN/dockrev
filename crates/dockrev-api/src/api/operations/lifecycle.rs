@@ -224,6 +224,7 @@ pub(crate) async fn trigger_stack_lifecycle(
     Json(req): Json<TriggerStackLifecycleRequest>,
 ) -> Result<Json<TriggerStackLifecycleResponse>, ApiError> {
     let user = require_user(&state, &headers).await?;
+    crate::compose_capability::require_v2_api(&*state.runner, &state.config).await?;
     let stack = state
         .db
         .get_stack(&stack_id)
@@ -282,8 +283,6 @@ pub(crate) async fn trigger_stack_lifecycle(
             ),
         );
     }
-    crate::compose_capability::require_v2_api(&*state.runner, &state.config).await?;
-
     let now = now_rfc3339().map_err(map_internal)?;
     let job_id = ids::new_job_id();
     let mut job = JobRecord::new_running(
@@ -547,6 +546,7 @@ pub(crate) async fn trigger_service_lifecycle(
     Json(req): Json<TriggerServiceLifecycleRequest>,
 ) -> Result<Json<TriggerServiceLifecycleResponse>, ApiError> {
     let user = require_user(&state, &headers).await?;
+    crate::compose_capability::require_v2_api(&*state.runner, &state.config).await?;
     let (stack, service) = resolve_lifecycle_subject(&state, &service_id).await?;
     if stack.archived || service.archived == Some(true) {
         return Err(
@@ -599,8 +599,6 @@ pub(crate) async fn trigger_service_lifecycle(
             ),
         );
     }
-    crate::compose_capability::require_v2_api(&*state.runner, &state.config).await?;
-
     let now = now_rfc3339().map_err(map_internal)?;
     let job_id = ids::new_job_id();
     let mut job = JobRecord::new_running(

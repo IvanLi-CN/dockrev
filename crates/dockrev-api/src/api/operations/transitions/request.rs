@@ -112,7 +112,6 @@ pub(crate) async fn trigger_update(
         }
     }
 
-    crate::compose_capability::require_v2_api(&*state.runner, &state.config).await?;
     let job_id = enqueue_update_job(
         state,
         user.principal,
@@ -142,14 +141,13 @@ pub(crate) async fn trigger_service_rollback(
     Path(service_id): Path<String>,
 ) -> Result<Json<TriggerRollbackResponse>, ApiError> {
     let user = require_user(&state, &headers).await?;
+    crate::compose_capability::require_v2_api(&*state.runner, &state.config).await?;
     let now = now_rfc3339().map_err(map_internal)?;
     let resolved = resolve_service_rollback_target(&state, &service_id).await?;
     if !resolved.response.available {
         log_trigger_service_rollback_conflict(&resolved);
         return Err(rollback_unavailable_error(&resolved.response));
     }
-    crate::compose_capability::require_v2_api(&*state.runner, &state.config).await?;
-
     let job_id =
         enqueue_service_rollback_job(state, user.principal, "ui".to_string(), resolved, now)
             .await?;
@@ -170,6 +168,9 @@ pub(crate) async fn enqueue_update_job(
     mut req: TriggerUpdateRequest,
     now: String,
 ) -> Result<String, ApiError> {
+    if matches!(req.mode, UpdateMode::Apply) {
+        crate::compose_capability::require_v2_api(&*state.runner, &state.config).await?;
+    }
     let stack_ids = resolve_stack_ids_for_update(&state, &req)
         .await
         .map_err(map_internal)?;

@@ -6,9 +6,12 @@ import {
 } from './api'
 
 export function hasBlockingDeployCheckFailure(report: DeployCheckReportResponse): boolean {
+  const requiredCoreChecks = report.checks.filter(
+    (check) => check.required && check.group === 'core',
+  )
   return (
     report.overall.result === 'fail' ||
-    report.checks.some((check) => check.required && check.status === 'fail')
+    requiredCoreChecks.some((check) => check.status !== 'pass')
   )
 }
 
