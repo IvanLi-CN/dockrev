@@ -89,9 +89,71 @@ function makeRefreshingEnvelope(): DeployCheckReportEnvelope {
   }
 }
 
+function makeBlockedEnvelope(): DeployCheckReportEnvelope {
+  return { ...makeRefreshingEnvelope(), refreshing: false }
+}
+
+function makePassingEnvelope(): DeployCheckReportEnvelope {
+  const envelope = makeRefreshingEnvelope()
+  if (!envelope.report) throw new globalThis.Error('passing fixture requires a report')
+  const report = envelope.report
+  return {
+    ...envelope,
+    refreshing: false,
+    report: {
+      ...report,
+      overall: {
+        result: 'pass',
+        blockingCheckIds: [],
+        summary: 'All required capabilities are available',
+      },
+      checks: report.checks.map((check) =>
+        check.id === 'core.compose_access'
+          ? {
+              ...check,
+              status: 'pass',
+              summary: 'compose paths are readable',
+              evidence: '/srv/app/docker-compose.yml readable',
+            }
+          : check,
+      ),
+    },
+  }
+}
+
 export const Default: Story = {
-  parameters: { dockrevApiScenario: 'settings-configured' },
+  parameters: {
+    dockrevApiScenario: 'settings-configured',
+    dockrevDeployCheckReportOverride: makePassingEnvelope(),
+  },
   render: () => renderPage(),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => canvasElement.textContent?.includes('整体结论') ?? false)
+    const dashboardButton = Array.from(canvasElement.querySelectorAll('button')).find((button) => button.textContent?.includes('进入 Dashboard'))
+    expectStory(dashboardButton && !dashboardButton.disabled, 'passing report should allow entering Dashboard')
+  },
+}
+
+export const BlockedCoreFailure: Story = {
+  parameters: {
+    dockrevApiScenario: 'settings-configured',
+    dockrevDeployCheckReportOverride: makeBlockedEnvelope(),
+    dockrevDeployWelcomeOverride: { neverAutoOpen: true },
+  },
+  render: () => renderPage('核心检查失败时必须停留在故障门禁页，不能绕过进入 Dashboard'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => canvasElement.textContent?.includes('BLOCKING') ?? false)
+    const dashboardButton = Array.from(canvasElement.querySelectorAll('button')).find((button) => button.textContent?.includes('进入 Dashboard'))
+    expectStory(Boolean(dashboardButton?.disabled), 'blocking report should disable Dashboard entry')
+  },
+}
+
+export const BlockedCoreFailureMobile: Story = {
+  ...BlockedCoreFailure,
+  parameters: {
+    ...BlockedCoreFailure.parameters,
+    viewport: { defaultViewport: 'mobile1' },
+  },
 }
 
 export const CachedReportRefreshing: Story = {

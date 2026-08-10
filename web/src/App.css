@@ -10066,6 +10066,16 @@ html[data-theme="light"] .serviceLogsTerminal {
     linear-gradient(160deg, #05090f 0%, #0a111d 42%, #081216 100%);
 }
 
+.deployGateLoading {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: var(--text, #e8f1ff);
+  background: var(--canvas, #080d15);
+  font-size: 14px;
+}
+
 .deployWelcomeMain {
   width: min(1160px, 100%);
   margin: 0 auto;

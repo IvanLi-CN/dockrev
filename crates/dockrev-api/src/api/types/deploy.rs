@@ -117,6 +117,8 @@ pub struct DeployCheckReportEnvelope {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retry_after_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub report: Option<DeployCheckReportResponse>,
 }
 

@@ -147,7 +147,7 @@ pub(crate) async fn trigger_service_rollback(
         log_trigger_service_rollback_conflict(&resolved);
         return Err(rollback_unavailable_error(&resolved.response));
     }
-
+    crate::compose_capability::require_v2_api(&*state.runner, &state.config).await?;
     let job_id =
         enqueue_service_rollback_job(state, user.principal, "ui".to_string(), resolved, now)
             .await?;
@@ -192,6 +192,20 @@ pub(crate) async fn enqueue_update_job(
     } else {
         Vec::new()
     };
+    if matches!(&req.mode, UpdateMode::Apply) {
+        for target in &operation_targets {
+            if let Some(conflict) = find_pending_service_operation_conflict(
+                &state,
+                &target.stack_id,
+                &target.service_id,
+            )
+            .await?
+            {
+                return Err(service_operation_conflict_error(&conflict.job));
+            }
+        }
+        crate::compose_capability::require_v2_api(&*state.runner, &state.config).await?;
+    }
 
     let job_id = ids::new_job_id();
     let mut job = JobRecord::new_running(

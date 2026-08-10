@@ -39,6 +39,10 @@ import {
   getSettings,
   type AuthRequiredDetails,
 } from "./api";
+import {
+  hasBlockingDeployCheckFailure,
+  refreshDeployCheckReportUntilReady,
+} from "./deployCheck";
 import { TopbarUserIdentity } from "./components/TopbarUserIdentity";
 import { GitHubReleaseDrawer } from "./components/GitHubReleaseDrawer";
 import {
@@ -138,6 +142,9 @@ export default function App() {
     loaded: false,
     neverAutoOpen: true,
   });
+  const [deployCheckGate, setDeployCheckGate] = useState<
+    "loading" | "pass" | "fail"
+  >("loading");
   const [authFailure, setAuthFailure] = useState<AuthRequiredDetails | null>(
     null,
   );
@@ -217,6 +224,28 @@ export default function App() {
     { onError: () => {} },
   );
 
+  const refreshDeployCheckGate = useCallback(async () => {
+    const envelope = await refreshDeployCheckReportUntilReady();
+    const report = envelope.report;
+    if (!report) {
+      throw new Error("deploy-check report unavailable");
+    }
+    setDeployCheckGate(hasBlockingDeployCheckFailure(report) ? "fail" : "pass");
+  }, []);
+  usePageResumeRefresh(refreshDeployCheckGate, {
+    onError: () => setDeployCheckGate("fail"),
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    void refreshDeployCheckGate().catch(() => {
+      if (!cancelled) setDeployCheckGate("fail");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshDeployCheckGate]);
+
   useEffect(() => {
     let cancelled = false;
     void getDeployWelcome()
@@ -238,6 +267,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (deployCheckGate === "fail" && route.name !== "deploy-check") {
+      navigate({ name: "deploy-check" });
+      return;
+    }
+    if (deployCheckGate !== "pass") return;
     if (!deployWelcomeState.loaded || deployWelcomeState.neverAutoOpen) return;
     if (route.name !== "overview") return;
     if (typeof window === "undefined") return;
@@ -245,7 +279,7 @@ export default function App() {
     if (window.sessionStorage.getItem(key) === "1") return;
     window.sessionStorage.setItem(key, "1");
     navigate({ name: "deploy-check" });
-  }, [deployWelcomeState, route.name]);
+  }, [deployCheckGate, deployWelcomeState, route.name]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -401,6 +435,16 @@ export default function App() {
         <DeployWelcomePage />
         <PwaUpdateBubble />
       </>
+    );
+  }
+
+  if (deployCheckGate !== "pass") {
+    return (
+      <div className="deployGateLoading" role="status" aria-live="polite">
+        {deployCheckGate === "loading"
+          ? "正在验证部署检查…"
+          : "部署检查未通过，正在打开故障门禁…"}
+      </div>
     );
   }
 

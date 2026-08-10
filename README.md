@@ -89,6 +89,20 @@ cd web
 bun run storybook:start
 ```
 
+Shared testbox Compose regression (high-cost integration test):
+
+```bash
+./scripts/verify_shared_testbox_compose_v2.sh --json-out /tmp/dockrev-compose-v2.json
+```
+
+The script synchronizes the current checkout to an isolated `/srv/codex/**` run on
+`codex-testbox`, uses a unique Compose project, builds the current Dockrev binary,
+and runs real plugin, standalone, and simulated Compose V1 cases. It verifies the
+deploy-check executor result, empty `ps -a` -> `stopped`, the actual no-pull
+`up -d --pull never --no-recreate [--no-deps]` command, and the V1
+`503 compose_v2_required` write gate. The run cleans only its own containers,
+networks, images, and remote directory; use `--keep-run` only for manual review.
+
 Codex UI/UX skill (UI UX Pro Max):
 
 ```bash
@@ -160,7 +174,7 @@ Environment variables (Supervisor):
 - Apply (one-click):
   - Services: “更新全部” / “更新此 stack” + service row “执行更新”
   - Service detail: split dropdown with “预览更新 / 更新 / 回滚”; the primary action is “更新” when a candidate exists, otherwise “回滚”. When an update, rollback, or lifecycle task is active, only its owning action group shows progress and can open the task; the other desktop group is disabled with an occupancy tooltip, while mobile keeps the menu discoverable and disables non-owner items with the existing toast.
-- Lifecycle: the service detail split dropdown keeps its existing confirmation rules. Running services default to “停止”, stopped services default to “启动”; start uses `up -d --pull never --no-recreate --no-deps` with Compose V2 and `start` with Compose V1, so neither path pulls, replaces an existing container, or starts dependencies. Compose V1 reports Start as unavailable when no container exists. Stop and restart require confirmation. Partial or unknown replica state remains discoverable but disabled, and Dockrev itself keeps its Supervisor-only upgrade action. In the detail service navigation, right-click, touch long press, the Context Menu key, or `Shift+F10` opens direct Stack/Service shortcuts for start or restart, stop, and update. Stack start uses project-level `up -d --pull never --no-recreate` with Compose V2 and `start` with Compose V1; service start also adds `--no-deps`.
+- Lifecycle: the service detail split dropdown keeps its existing confirmation rules. Running services default to “停止”, stopped services default to “启动”; Compose V2 start uses `up -d --pull never --no-recreate --no-deps`, so it does not pull, replace an existing container, or start dependencies. Compose V1, an unparseable version, or a failed version probe is rejected by the deploy-check/write gate with `compose_v2_required`. Stop and restart require confirmation. Partial or unknown replica state remains discoverable but disabled, and Dockrev itself keeps its Supervisor-only upgrade action. In the detail service navigation, right-click, touch long press, the Context Menu key, or `Shift+F10` opens direct Stack/Service shortcuts for start or restart, stop, and update. Stack start uses project-level `up -d --pull never --no-recreate`; service start also adds `--no-deps`.
 - Dockrev self-upgrade:
   - For the Dockrev service, “升级 Dockrev” jumps to the supervisor console (disabled unless `GET {selfUpgradeBaseUrl}/self-upgrade` returns 2xx; a 401 means Forward Auth is missing or Dockrev authorization denied the request).
 

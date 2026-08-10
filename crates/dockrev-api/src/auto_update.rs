@@ -446,6 +446,9 @@ fn build_auto_update_target(service: &crate::api::types::Service) -> Option<Upda
 }
 
 fn permanent_enqueue_error(error: &ApiError) -> bool {
+    if error.code() == "compose_v2_required" {
+        return false;
+    }
     if error.code() != "conflict" {
         return matches!(error.code(), "invalid_argument" | "not_found");
     }
@@ -805,6 +808,12 @@ mod tests {
 
         let stale_candidate = ApiError::conflict("target digest no longer matches latest scan");
         assert!(permanent_enqueue_error(&stale_candidate));
+    }
+
+    #[test]
+    fn keeps_auto_update_pending_for_compose_v2_capability_failures() {
+        let capability_failure = ApiError::compose_v2_required("docker-compose", "v1");
+        assert!(!permanent_enqueue_error(&capability_failure));
     }
 
     #[test]

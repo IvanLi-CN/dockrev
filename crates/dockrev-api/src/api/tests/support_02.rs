@@ -3,7 +3,11 @@ impl CommandRunner for ScriptedRunner {
     async fn run(&self, spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
         self.calls.lock().unwrap().push(spec.args.clone());
         let args = spec.args;
-        let (status, stdout) = if args.first().map(|s| s.as_str()) == Some("ps")
+        let (status, stdout) = if args.ends_with(&["version".to_string()]) {
+            (0, "Docker Compose version v2.40.0\n".to_string())
+        } else if args.ends_with(&["config".to_string(), "--services".to_string()]) {
+            (0, "api\nweb\nworker\nactive\narchived\n".to_string())
+        } else if args.first().map(|s| s.as_str()) == Some("ps")
             && args.get(1).map(|s| s.as_str()) == Some("-q")
         {
             (0, "cid1\n".to_string())
@@ -239,7 +243,11 @@ impl CommandRunner for CheckAndRuntimeScanRunner {
         self.calls.lock().unwrap().push(spec.args.clone());
         let args = spec.args;
 
-        let (status, stdout) = if args.first().map(|s| s.as_str()) == Some("ps")
+        let (status, stdout) = if args.ends_with(&["version".to_string()]) {
+            (0, "Docker Compose version v2.40.0\n".to_string())
+        } else if args.ends_with(&["config".to_string(), "--services".to_string()]) {
+            (0, "web\napi\n".to_string())
+        } else if args.first().map(|s| s.as_str()) == Some("ps")
             && args.get(1).map(|s| s.as_str()) == Some("-q")
         {
             (0, format!("{}\n", self.runtime_container_ids().join("\n")))
@@ -350,6 +358,13 @@ impl UpdateAndRuntimeScanRunner {
 impl CommandRunner for UpdateAndRuntimeScanRunner {
     async fn run(&self, spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
         let args = spec.args;
+        if args.ends_with(&["version".to_string()]) {
+            return Ok(CommandOutput {
+                status: 0,
+                stdout: "Docker Compose version v2.40.0\n".to_string(),
+                stderr: String::new(),
+            });
+        }
         let updated_now = *self.updated.lock().unwrap();
 
         let (status, stdout) = if (args.first().map(|s| s.as_str()) == Some("ps")
@@ -496,6 +511,13 @@ struct HealthRollbackUpdateRunner {
 #[async_trait::async_trait]
 impl CommandRunner for HealthRollbackUpdateRunner {
     async fn run(&self, spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+        if spec.args.ends_with(&["version".to_string()]) {
+            return Ok(CommandOutput {
+                status: 0,
+                stdout: "Docker Compose version v2.40.0\n".to_string(),
+                stderr: String::new(),
+            });
+        }
         let mut step = self.step.lock().unwrap();
         let out = match *step {
             0 if spec

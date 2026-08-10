@@ -8,8 +8,8 @@
 - Dockrev 自身服务排除在普通生命周期入口之外。
 - 只读的 `dry-run` 更新不占用服务运行态串行锁；只有实际 apply 更新、回滚和生命周期任务互相排队，避免预览阻塞紧急恢复操作。
 - 自动更新遇到同服务操作锁时释放 pending claim 供后续调度重试；候选失效等非暂时冲突仍保留既有跳过语义。
-- no-pull/no-recreate 约束优先：Compose V2 使用 `up --pull never --no-recreate`，Compose V1 使用仅作用于已有容器的 `start`；不得以默认 pull policy 启动服务或替换已有容器。
-- Compose V1 查询不到既有容器时返回 `container_missing_for_compose_v1` 并禁用启动，避免创建注定失败的 `start` 任务。
+- no-pull/no-recreate 约束优先：Compose plugin 与 standalone 均要求 V2+，统一使用 `up --pull never --no-recreate`；V1 不再保留生命周期兼容路径。
+- 版本探测、配置解析、服务存在性和写入口门禁共用稳定原因 `compose_v2_required`；只读状态继续可用，合法配置下零容器返回 `stopped`。
 - Compose V2 服务启动必须追加 `--no-deps`，使实际变更范围保持在服务级任务锁内。
 - 服务详情的视觉证据必须在完成 live refresh 后捕获；只读缓存快照会收束写操作，不能作为运行态操作栏的验收图。
 - 服务详情操作菜单采用项目的 shadcn/Radix `ButtonGroup` 与 `DropdownMenu`，由组件库处理焦点、方向键和 Escape 关闭语义；仅保留与 Dockrev 操作栏对齐的紧凑尺寸样式。
@@ -37,6 +37,9 @@
 - 更新任务在候选刷新消失前保持更新主动作优先；`rollback-target.activeJobId` 不再独立产生回滚文案。
 - 服务详情路由在 `stackId` 或 `serviceId` 变化时先清空 AppShell 服务上下文，再由新页面状态回填，避免直接切换服务时短暂显示旧名称或指标。
 - 视觉证据目录只保留当前规范引用的截图；移动端关闭态与展开态经主人确认后作为 PR 证据，旧版菜单与过渡布局截图删除。
+- Compose V2 capability gate、空容器 stopped 判定与写入口稳定错误合同已完成最终 Rust/Web/Storybook 验证。
 - 服务操作预约、页头资源摘要与生命周期 mock/stories 分拆为专属模块，维持项目单文件预算门禁而不改变 API、组件状态或视觉输出。
 - 2026-08-01：生命周期结算接入详情服务树的 Stack 定向刷新；树读模型复用同一 Compose 判定，但保持服务树只读，不改变生命周期操作权限。
 - 服务操作进度统一以服务级活动任务类型决定 owner；桌面端整组禁用非 owner split button，移动端沿用菜单项禁用与 Toast，并修复更新结算期间候选消失导致的错误回滚文案。
+- Compose V2 写门禁收敛到共享 Apply enqueue 边界，DryRun 保持只读；生命周期在状态读取前拒绝不支持版本，前端 required core 非 PASS 强制留在 deploy-check。
+- Apply 门禁前置只读目标与冲突预检，Compose 能力失败不再遮蔽服务不存在或已有操作冲突响应。

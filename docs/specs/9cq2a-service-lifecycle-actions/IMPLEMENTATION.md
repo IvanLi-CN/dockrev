@@ -8,7 +8,8 @@
 
 ## Coverage
 
-- 服务级 lifecycle API 已提供实时 Compose 状态、`start | stop | restart` 任务提交和活动任务直达信息；Compose V2 启动使用 `up -d --pull never --no-recreate`，Compose V1 使用仅启动已有容器的 `start`，两条路径都不会拉取或替换已有容器。
+- 服务级 lifecycle API 已提供实时 Compose 状态、`start | stop | restart` 任务提交和活动任务直达信息；plugin 与 standalone Compose V2 统一使用 `up -d --pull never --no-recreate [--no-deps]`，V1/不可解析版本由 `compose_v2_required` 门禁拒绝。
+- 生命周期读取先执行 Compose `config --services`，再读取 `ps -a` 与运行态；合法配置下零容器明确为 `stopped`，配置、服务定义或任一查询失败保持 `unknown`。
 - 活动 lifecycle 任务结算后，服务详情会立即刷新最近记录、版本记录与操作历史，不依赖重新加载页面。
 - 服务详情以 `lifecycle-status.activeJob.type` 作为服务级操作 owner；更新、回滚和 lifecycle 只在所属动作组显示进度，非 owner 桌面 split button 整组禁用并给出占用 Tooltip，移动端菜单项禁用并保留 Toast。
 - `service_lifecycle` 与同一服务的 apply update、rollback 采用同一冲突保护；任务占锁、调用方提供的实际服务目标和首条日志在同一 SQLite 事务提交，避免日志失败留下永久活动锁；定向 Stack/全局更新按持久化的实际服务目标占锁，仅对缺少目标记录的旧活动任务回退到 scope 判断；任务摘要、队列显示与服务操作历史均保留并展示具体动作。
@@ -18,6 +19,10 @@
 - 服务详情通过页面状态把当前服务名与资源摘要渲染到 AppShell 顶栏：摘要位于名称和操作组之间，正文不再渲染重复的服务标题或资源摘要。摘要使用容器宽度控制三个不可拆分指标组的可见性，按网络、磁盘、CPU/内存顺序渐进隐藏。移动端资源摘要整体隐藏，页头保持单行，以图标 Logo、当前服务名和 44px 服务操作入口构成；入口使用 shadcn/Radix DropdownMenu，将更新、生命周期与 Stack 三组动作直接平铺并以库内分隔线区分。离线或缓存快照状态也复用同一移动入口，刷新项保持可见但禁用，避免只读分支重新挤入独立页头按钮。
 - 稳定 mock-only Storybook 证据已写入 `SPEC.md`；桌面证据覆盖资源摘要与 split action，393 × 852 移动证据覆盖单行页头及三组服务操作菜单。
 - Stack 详情树复用了本 spec 的服务级 lifecycle 结算路径：启动、停止、重启任务结算后发布 Stack 定向刷新事件，树节点即时收敛到 `running / stopped / partial / unknown`。
+- 本轮最终验证覆盖 Compose V2 plugin/standalone、V1 拒绝、空容器 `stopped` 判定、写入口门禁，以及 321 个 Storybook 故事全量 smoke。
+- Apply 更新的 Compose V2 门禁位于共享 enqueue 边界，覆盖 UI、Webhook 与自动更新；DryRun 保持只读可用，生命周期写入口在读取状态前拒绝不支持的 Compose 版本。
+- 回归覆盖 required core 非 PASS 的前端硬门禁、App 启动时的失败重定向与 `neverAutoOpen` 绕过防护；当前 Storybook smoke 覆盖 323 个故事。
+- Apply enqueue 在 Compose V2 探测前完成目标存在性与现有操作冲突预检，保留既有 404/409 错误优先级且不创建任务。
 
 ## References
 

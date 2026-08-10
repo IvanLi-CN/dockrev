@@ -108,6 +108,11 @@ pub(crate) async fn run_update_job(
         .map(|job| TransitionJobKind::from_job_type(&job.r#type))
         .unwrap_or(TransitionJobKind::Update);
     let outcome: anyhow::Result<UpdateJobOutcome> = async {
+        if matches!(job_kind, TransitionJobKind::Rollback)
+            || matches!(&req.mode, UpdateMode::Apply)
+        {
+            crate::compose_capability::require_v2(&*state.runner, &state.config).await?;
+        }
         let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
             .unwrap_or_else(|| "linux/amd64".to_string());
         let backup_settings = state.db.get_backup_settings().await?;

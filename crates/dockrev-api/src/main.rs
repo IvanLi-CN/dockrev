@@ -8,6 +8,7 @@ mod cleanup;
 mod cleanup_scan_runs;
 mod cleanup_snapshot_worker;
 mod compose;
+mod compose_capability;
 mod compose_runner;
 mod config;
 mod cron_expr;

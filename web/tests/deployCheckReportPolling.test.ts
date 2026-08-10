@@ -2,12 +2,97 @@ import { describe, expect, test } from 'bun:test'
 
 import type { DeployCheckReportEnvelope } from '../src/api'
 import {
+  hasBlockingDeployCheckFailure,
   shouldKeepDeployCheckLoading,
   shouldKeepPollingDeployCheckReport,
   shouldTriggerDeployCheckReportRefresh,
-} from '../src/pages/DeployWelcomePage'
+} from '../src/deployCheck'
 
 describe('deploy-check report polling', () => {
+  test('treats any required core failure as a hard gate', () => {
+    expect(
+      hasBlockingDeployCheckFailure({
+        overall: { result: 'pass', blockingCheckIds: [], summary: 'inconsistent fixture' },
+        generatedAt: '2026-06-26T14:23:00.000Z',
+        checks: [
+          {
+            id: 'core.update_executor_ready',
+            title: '更新执行器可用',
+            group: 'core',
+            required: true,
+            status: 'fail',
+            summary: 'compose_v2_required',
+            impact: 'writes blocked',
+            evidence: 'Compose V1',
+            recommendation: 'install Compose V2+',
+          },
+        ],
+      }),
+    ).toBe(true)
+  })
+
+  test('treats a required core check that is not PASS as a hard gate', () => {
+    expect(
+      hasBlockingDeployCheckFailure({
+        overall: { result: 'pass', blockingCheckIds: [], summary: 'inconsistent fixture' },
+        generatedAt: '2026-06-26T14:23:00.000Z',
+        checks: [
+          {
+            id: 'core.update_executor_ready',
+            title: '更新执行器可用',
+            group: 'core',
+            required: true,
+            status: 'na',
+            summary: 'executor status unavailable',
+            impact: 'writes blocked',
+            evidence: 'no report evidence',
+            recommendation: 'install Compose V2+',
+          },
+        ],
+      }),
+    ).toBe(true)
+  })
+
+  test('fails closed when required core evidence is missing or non-canonical', () => {
+    expect(
+      hasBlockingDeployCheckFailure({
+        overall: { result: 'pass', blockingCheckIds: [], summary: 'missing checks' },
+        generatedAt: '2026-06-26T14:23:00.000Z',
+        checks: [],
+      }),
+    ).toBe(true)
+    expect(
+      hasBlockingDeployCheckFailure({
+        overall: { result: 'pass', blockingCheckIds: [], summary: 'legacy group' },
+        generatedAt: '2026-06-26T14:23:00.000Z',
+        checks: [
+          {
+            id: 'core.update_executor_ready',
+            title: '更新执行器可用',
+            group: 'legacy',
+            required: true,
+            status: 'pass',
+            summary: 'executor available',
+            impact: 'writes blocked',
+            evidence: 'Compose V2',
+            recommendation: '',
+          },
+        ],
+      }),
+    ).toBe(false)
+  })
+
+  test('does not treat a stale cached PASS with refresh error as settled', () => {
+    expect(
+      shouldTriggerDeployCheckReportRefresh({
+        status: 'ready',
+        refreshing: false,
+        lastError: 'deploy-check refresh failed',
+        report: null,
+      }),
+    ).toBe(false)
+  })
+
   test('keeps polling while cached report is still marked refreshing', () => {
     const envelope: DeployCheckReportEnvelope = {
       status: 'ready',

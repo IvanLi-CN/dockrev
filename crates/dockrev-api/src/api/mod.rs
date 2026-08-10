@@ -718,6 +718,7 @@ async fn get_deploy_check_report(
             } else {
                 None
             },
+            last_error: if refreshing { None } else { last_error },
             report: Some(attach_authz_checks(
                 state.as_ref(),
                 &headers,
@@ -750,6 +751,7 @@ async fn get_deploy_check_report(
         refreshing,
         retry_after_ms: refreshing
             .then_some(deploy_check_refresh_worker::DEPLOY_CHECK_PENDING_RETRY_AFTER_MS),
+        last_error: None,
         report: None,
     }))
 }
@@ -764,6 +766,7 @@ async fn post_deploy_check_report_refresh(
         status: DeployCheckReportStatus::Pending,
         refreshing: true,
         retry_after_ms: Some(deploy_check_refresh_worker::DEPLOY_CHECK_PENDING_RETRY_AFTER_MS),
+        last_error: None,
         report: None,
     }))
 }

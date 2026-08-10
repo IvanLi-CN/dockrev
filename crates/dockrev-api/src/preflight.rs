@@ -9,6 +9,7 @@ use crate::{
         DeployCheckGroup, DeployCheckItem, DeployCheckNaReason, DeployCheckOverall,
         DeployCheckReportResponse, DeployCheckResult, DeployCheckStatus,
     },
+    compose_capability,
     db::ArchivedFilter,
     registry,
     runner::CommandSpec,
@@ -297,47 +298,29 @@ async fn check_update_executor_ready_with(
     config: &crate::config::Config,
     runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
 ) -> DeployCheckItem {
-    let args = compose_version_args(&config.compose_bin);
-    let spec = CommandSpec {
-        program: config.compose_bin.clone(),
-        args,
-        env: Vec::new(),
-    };
-
-    match runner
-        .run(spec, local_command_timeout_from_config(config))
-        .await
-    {
-        Ok(output) if output.status == 0 => {
-            let stdout = output.stdout.trim();
-            let evidence = if stdout.is_empty() {
-                format!("{} version ok", config.compose_bin)
-            } else {
-                first_line(stdout)
-            };
-            pass_core(
-                "core.update_executor_ready",
-                "更新执行器可用",
-                "compose executor is callable",
-                "发现到更新也无法执行 pull/up",
-                evidence,
-            )
-        }
-        Ok(output) => fail_core(
+    match compose_capability::probe(&*runner, config).await {
+        Ok(compose_capability::ComposeCapability::Supported { evidence, major }) => pass_core(
             "core.update_executor_ready",
             "更新执行器可用",
-            "compose executor is not ready",
+            "compose v2 executor is callable",
             "发现到更新也无法执行 pull/up",
-            summarize_command_failure(output.status, &output.stderr),
-            "设置 `DOCKREV_COMPOSE_BIN` 为可执行命令：插件模式用 `docker`（需 `docker compose version` 成功），v1 模式用 `docker-compose`（需 `docker-compose version` 成功）。",
+            format!("Compose V{major}: {}", first_line(&evidence)),
+        ),
+        Ok(capability) => fail_core(
+            "core.update_executor_ready",
+            "更新执行器可用",
+            "compose_v2_required",
+            "发现到更新也无法执行 pull/up",
+            format!("compose_v2_required: {}", first_line(capability.evidence())),
+            "设置 `DOCKREV_COMPOSE_BIN` 为 Compose V2+：插件模式用 `docker`（需 `docker compose version`），standalone 模式用 `docker-compose`（需 `docker-compose version`）；修复后重新检查。",
         ),
         Err(err) => fail_core(
             "core.update_executor_ready",
             "更新执行器可用",
-            "compose executor probe failed",
+            "compose_v2_required",
             "发现到更新也无法执行 pull/up",
-            err.to_string(),
-            "安装并暴露 compose 命令到 PATH；`DOCKREV_COMPOSE_BIN=docker` 时要求 Docker Compose 插件可用；修复后重启并复检。",
+            format!("compose_v2_required: {err}"),
+            "安装并暴露 Compose V2+ 命令到 PATH；`DOCKREV_COMPOSE_BIN=docker` 时要求 Docker Compose 插件可用；修复后重启并复检。",
         ),
     }
 }
@@ -849,19 +832,6 @@ fn na_feature(
 
 fn is_non_empty(input: Option<&str>) -> bool {
     input.map(|v| !v.trim().is_empty()).unwrap_or(false)
-}
-
-fn compose_version_args(compose_bin: &str) -> Vec<String> {
-    if is_docker_plugin(compose_bin) {
-        vec!["compose".to_string(), "version".to_string()]
-    } else {
-        vec!["version".to_string()]
-    }
-}
-
-fn is_docker_plugin(compose_bin: &str) -> bool {
-    let lower = compose_bin.to_ascii_lowercase();
-    lower == "docker" || lower.ends_with("/docker") || lower.ends_with("\\docker")
 }
 
 fn summarize_command_failure(status: i32, stderr: &str) -> String {

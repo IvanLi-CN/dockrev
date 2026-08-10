@@ -500,12 +500,40 @@ struct FakeRunner;
 
 #[async_trait::async_trait]
 impl CommandRunner for FakeRunner {
-    async fn run(&self, _spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+    async fn run(&self, spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+        let is_version = spec.args.as_slice() == ["version"]
+            || spec.args.as_slice() == ["compose", "version"];
+        let is_config_services = spec
+            .args
+            .ends_with(&["config".to_string(), "--services".to_string()]);
         Ok(CommandOutput {
             status: 0,
-            stdout: String::new(),
+            stdout: if is_version {
+                "Docker Compose version v2.40.0\n".to_string()
+            } else if is_config_services {
+                "active\napi\narchived\nweb\n".to_string()
+            } else {
+                String::new()
+            },
             stderr: String::new(),
         })
+    }
+}
+
+#[derive(Clone, Default)]
+struct ComposeV1Runner;
+
+#[async_trait::async_trait]
+impl CommandRunner for ComposeV1Runner {
+    async fn run(&self, spec: CommandSpec, timeout: Duration) -> anyhow::Result<CommandOutput> {
+        if spec.args.ends_with(&["version".to_string()]) {
+            return Ok(CommandOutput {
+                status: 0,
+                stdout: "docker-compose version 1.29.2, build 5becea4c\n".to_string(),
+                stderr: String::new(),
+            });
+        }
+        FakeRunner.run(spec, timeout).await
     }
 }
 
@@ -514,7 +542,14 @@ struct FailAllRunner;
 
 #[async_trait::async_trait]
 impl CommandRunner for FailAllRunner {
-    async fn run(&self, _spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+    async fn run(&self, spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+        if spec.args.ends_with(&["version".to_string()]) {
+            return Ok(CommandOutput {
+                status: 0,
+                stdout: "Docker Compose version v2.40.0\n".to_string(),
+                stderr: String::new(),
+            });
+        }
         Ok(CommandOutput {
             status: 1,
             stdout: String::new(),
@@ -589,6 +624,13 @@ struct SemverRetryFailRunner {
 #[async_trait::async_trait]
 impl CommandRunner for SemverRetryFailRunner {
     async fn run(&self, spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+        if spec.args.ends_with(&["version".to_string()]) {
+            return Ok(CommandOutput {
+                status: 0,
+                stdout: "Docker Compose version v2.40.0\n".to_string(),
+                stderr: String::new(),
+            });
+        }
         let mut step = self.step.lock().unwrap();
         let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
         let out = match *step {
@@ -870,4 +912,3 @@ impl Default for ScriptedRunner {
         }
     }
 }
-

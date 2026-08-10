@@ -1,8 +1,54 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { useEffect } from 'react'
 import App from '../../App'
+import type { DeployCheckReportEnvelope } from '../../api'
 import { RELEASE_DRAWER_QUERY_KEYS } from '../../releaseDrawer'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function waitForCondition(check: () => boolean, timeoutMs = 3_000): Promise<void> {
+  const started = Date.now()
+  while (!check()) {
+    if (Date.now() - started > timeoutMs) throw new globalThis.Error('condition timeout')
+    await sleep(60)
+  }
+}
+
+function expectStory(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new globalThis.Error(message)
+}
+
+function makeDeployCheckEnvelope(blocked: boolean): DeployCheckReportEnvelope {
+  const status = blocked ? 'fail' : 'pass'
+  return {
+    status: 'ready',
+    refreshing: false,
+    report: {
+      overall: {
+        result: status,
+        blockingCheckIds: blocked ? ['core.update_executor_ready'] : [],
+        summary: blocked ? 'Compose V2 is required' : 'All required capabilities are available',
+      },
+      generatedAt: '2026-06-26T14:23:00.000Z',
+      checks: [
+        {
+          id: 'core.update_executor_ready',
+          title: '更新执行器可用',
+          group: 'core',
+          required: true,
+          status,
+          summary: blocked ? 'compose_v2_required' : 'Compose V2 available',
+          impact: 'writes blocked',
+          evidence: blocked ? 'Compose V1' : 'Compose V2 5.4.0',
+          recommendation: 'install Compose V2+',
+        },
+      ],
+    },
+  }
+}
 
 function LocationReset(props: { pathname: string; search?: string }) {
   useEffect(() => {
@@ -167,6 +213,101 @@ export const DeployCheck: Story = {
         <App />
       </>
     )
+  },
+}
+
+export const DeployCheckGateBlocked: Story = {
+  parameters: {
+    dockrevApiScenario: 'settings-configured',
+    dockrevDeployCheckReportOverride: makeDeployCheckEnvelope(true),
+    dockrevDeployWelcomeOverride: { neverAutoOpen: true },
+  },
+  render: () => {
+    return (
+      <>
+        <LocationReset pathname="/" />
+        <App />
+      </>
+    )
+  },
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => window.location.hash === '#/deploy-check')
+    await waitForCondition(() => canvasElement.textContent?.includes('BLOCKING') ?? false)
+    const dashboardButton = Array.from(canvasElement.querySelectorAll('button')).find((button) => button.textContent?.includes('进入 Dashboard'))
+    expectStory(Boolean(dashboardButton?.disabled), 'failed deploy-check must disable Dashboard entry')
+  },
+}
+
+export const DeployCheckGateRefreshFailed: Story = {
+  parameters: {
+    dockrevApiScenario: 'settings-configured',
+    dockrevDeployCheckReportOverride: {
+      ...makeDeployCheckEnvelope(false),
+      lastError: 'deploy-check refresh failed',
+    },
+    dockrevDeployWelcomeOverride: { neverAutoOpen: true },
+  },
+  render: () => {
+    return (
+      <>
+        <LocationReset pathname="/" />
+        <App />
+      </>
+    )
+  },
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => window.location.hash === '#/deploy-check')
+    const dashboardButton = Array.from(canvasElement.querySelectorAll('button')).find((button) => button.textContent?.includes('进入 Dashboard'))
+    expectStory(Boolean(dashboardButton?.disabled), 'refresh failure must keep Dashboard entry disabled')
+  },
+}
+
+export const DeployCheckGatePassed: Story = {
+  parameters: {
+    dockrevApiScenario: 'settings-configured',
+    dockrevDeployCheckReportOverride: makeDeployCheckEnvelope(false),
+  },
+  render: () => {
+    return (
+      <>
+        <LocationReset pathname="/" />
+        <App />
+      </>
+    )
+  },
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(canvasElement.querySelector('.appShell')))
+    expectStory(window.location.hash === '#/', 'passing deploy-check must leave Dashboard accessible')
+  },
+}
+
+export const DeployCheckGateRefreshBlocked: Story = {
+  parameters: {
+    dockrevApiScenario: 'settings-configured',
+    dockrevDeployCheckReportSequence: [
+      makeDeployCheckEnvelope(false),
+      makeDeployCheckEnvelope(false),
+      makeDeployCheckEnvelope(false),
+      makeDeployCheckEnvelope(false),
+      makeDeployCheckEnvelope(true),
+    ],
+    dockrevDeployWelcomeOverride: { neverAutoOpen: true },
+  },
+  render: () => {
+    return (
+      <>
+        <LocationReset pathname="/" />
+        <App />
+      </>
+    )
+  },
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(canvasElement.querySelector('.appShell')))
+    await sleep(350)
+    window.dispatchEvent(new Event('focus'))
+    await waitForCondition(() => window.location.hash === '#/deploy-check')
+    const dashboardButton = Array.from(canvasElement.querySelectorAll('button')).find((button) => button.textContent?.includes('进入 Dashboard'))
+    expectStory(Boolean(dashboardButton?.disabled), 'foreground deploy-check failure must disable Dashboard entry')
   },
 }
 

@@ -27,6 +27,7 @@ export const withDockrevMockApi: Decorator = (Story, context) => {
     serviceLogsByServiceId: context.parameters?.dockrevServiceLogsByServiceId,
     serviceTagSuggestionsById: context.parameters?.dockrevServiceTagSuggestionsById,
     deployCheckReportOverride: context.parameters?.dockrevDeployCheckReportOverride,
+    deployCheckReportSequence: context.parameters?.dockrevDeployCheckReportSequence,
     deployWelcomeOverride: context.parameters?.dockrevDeployWelcomeOverride,
     supervisorSelfUpgradeResponse: context.parameters?.dockrevSupervisorSelfUpgradeResponse,
   } satisfies DockrevMockApiOptions

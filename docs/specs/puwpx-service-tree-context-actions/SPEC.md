@@ -59,7 +59,8 @@
 - 状态为 `partial/unknown` 时不推断修复动作；“重启、停止”保留可发现但不可执行。
 - Service 更新仅在存在可执行候选时启用；Stack 更新使用现有聚合候选过滤，并提交 `mode=apply`、`backupMode=inherit`、`allowArchMismatch=false`。
 - Dockrev 自身 Service 的“更新”打开 Supervisor；包含 Dockrev 的 Stack 仍可更新其他合格目标，但生命周期项禁用。
-- Compose V2 Stack 启动使用 `up -d --pull never --no-recreate`；Compose V1 使用只启动已有容器的 `start`。停止与重启使用项目级 `stop` / `restart`。
+- Compose V2 plugin 与 standalone Stack 启动使用 `up -d --pull never --no-recreate`；Compose V1、版本失败或无法解析时写操作返回 `compose_v2_required`。停止与重启使用项目级 `stop` / `restart`。
+- Stack/Service 状态只有在 Compose 配置有效、目标服务存在且 `ps -a` 与运行态查询均成功时才判定；合法配置下无容器为 `stopped`，查询或服务定义失败为 `unknown`。
 - 任务提交后菜单关闭、页面不跳转；Toast 提供任务详情入口，任务开始与结算均定向刷新对应 Stack。
 
 ## 接口契约（Interfaces & Contracts）
@@ -81,10 +82,12 @@
 - Given Stack 内任一服务已有 apply update、rollback 或 lifecycle 任务，When 提交 Stack lifecycle，Then 返回 `409` 与 `existingJobId`；反向提交亦然。
 - Given Stack 包含 Dockrev 自身服务，When 打开菜单，Then 生命周期项禁用并说明需通过宿主机或 Supervisor 操作。
 - Given 在移动抽屉滚动服务树，When 指针移动超过长按阈值，Then 不打开菜单且不创建任务。
+- Given Compose V1 或 Compose 版本探测失败，When 从服务树或 Stack 顶部提交生命周期操作，Then 返回 `compose_v2_required` 且不创建容器变更任务。
+- Given 合法 Stack 配置下所有服务均没有容器，When 查看服务树状态，Then Stack 与服务显示 `stopped`，启动动作使用 no-pull/no-recreate 命令。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
 
-- 后端覆盖状态聚合、V1/V2 命令、归档、自托管保护、冲突锁和任务结算测试。
+- 后端覆盖状态聚合、Compose capability gating、归档、自托管保护、冲突锁和任务结算测试。
 - `DetailRouteServiceTree` Storybook autodocs 覆盖运行、停止、未知、自托管和移动状态，并以 `play` 覆盖右键、键盘和直接提交反馈。
 - 最终 `ui_demo` 证据覆盖桌面菜单与 `393x852` 移动长按菜单。
 - 通过 Rust format/tests、Web lint/build/tests、Storybook build/test、文件预算与 Impeccable detector。
