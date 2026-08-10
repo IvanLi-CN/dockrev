@@ -238,6 +238,30 @@ export const DeployCheckGateBlocked: Story = {
   },
 }
 
+export const DeployCheckGateRefreshFailed: Story = {
+  parameters: {
+    dockrevApiScenario: 'settings-configured',
+    dockrevDeployCheckReportOverride: {
+      ...makeDeployCheckEnvelope(false),
+      lastError: 'deploy-check refresh failed',
+    },
+    dockrevDeployWelcomeOverride: { neverAutoOpen: true },
+  },
+  render: () => {
+    return (
+      <>
+        <LocationReset pathname="/" />
+        <App />
+      </>
+    )
+  },
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => window.location.hash === '#/deploy-check')
+    const dashboardButton = Array.from(canvasElement.querySelectorAll('button')).find((button) => button.textContent?.includes('进入 Dashboard'))
+    expectStory(Boolean(dashboardButton?.disabled), 'refresh failure must keep Dashboard entry disabled')
+  },
+}
+
 export const DeployCheckGatePassed: Story = {
   parameters: {
     dockrevApiScenario: 'settings-configured',

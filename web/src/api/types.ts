@@ -795,6 +795,7 @@ export type DeployCheckReportEnvelope = {
   status: 'pending' | 'ready'
   refreshing?: boolean
   retryAfterMs?: number | null
+  lastError?: string | null
   report?: DeployCheckReportResponse | null
 }
 

@@ -109,7 +109,7 @@ pub(crate) async fn run_update_job(
         .unwrap_or(TransitionJobKind::Update);
     let outcome: anyhow::Result<UpdateJobOutcome> = async {
         if matches!(job_kind, TransitionJobKind::Rollback)
-            || matches!(req.mode, UpdateMode::Apply)
+            || matches!(&req.mode, UpdateMode::Apply)
         {
             crate::compose_capability::require_v2(&*state.runner, &state.config).await?;
         }

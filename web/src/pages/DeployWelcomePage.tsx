@@ -123,15 +123,20 @@ export function DeployWelcomePage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [reportRefreshing, setReportRefreshing] = useState(false)
+  const [reportRefreshError, setReportRefreshError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     setLoading(true)
     setError(null)
+    setReportRefreshError(null)
     const [reportResult, welcomeResult] = await Promise.allSettled([getDeployCheckReport(), getDeployWelcome()])
     let keepLoadingAfterBootstrap = false
+    let reportError: string | null = null
 
     if (reportResult.status === 'fulfilled') {
       const envelope = reportResult.value
+      reportError = envelope.lastError ?? null
+      setReportRefreshError(reportError)
       if (envelope.report) {
         setReport(envelope.report)
       }
@@ -146,6 +151,7 @@ export function DeployWelcomePage() {
         void seed
           .then((nextEnvelope) => settleDeployCheckReport(nextEnvelope))
           .then((settled) => {
+            setReportRefreshError(null)
             if (settled.report) {
               setReport(settled.report)
             }
@@ -153,12 +159,15 @@ export function DeployWelcomePage() {
             setLoading(false)
           })
           .catch((e) => {
+            setReportRefreshError(errorMessage(e))
             setError(errorMessage(e))
             setReportRefreshing(false)
             setLoading(false)
           })
       }
     } else {
+      reportError = errorMessage(reportResult.reason)
+      setReportRefreshError(reportError)
       setError(errorMessage(reportResult.reason))
       setLoading(false)
       return
@@ -167,7 +176,7 @@ export function DeployWelcomePage() {
     if (welcomeResult.status === 'fulfilled') {
       setNeverAutoOpen(welcomeResult.value.neverAutoOpen)
       setWelcomeLoaded(true)
-      setError(null)
+      setError(reportError)
     } else {
       // Keep the checklist visible even if the preference endpoint is temporarily unavailable.
       setWelcomeLoaded(false)
@@ -181,13 +190,16 @@ export function DeployWelcomePage() {
     setLoading(true)
     setReportRefreshing(true)
     setError(null)
+    setReportRefreshError(null)
     try {
       const settled = await settleDeployCheckReport(await refreshDeployCheckReport())
+      setReportRefreshError(null)
       if (settled.report) {
         setReport(settled.report)
       }
       setReportRefreshing(Boolean(settled.refreshing))
     } catch (e) {
+      setReportRefreshError(errorMessage(e))
       setError(errorMessage(e))
       setReportRefreshing(false)
     } finally {
@@ -222,7 +234,9 @@ export function DeployWelcomePage() {
     }
   }, [report])
 
-  const hasBlockingFailures = report ? hasBlockingDeployCheckFailure(report) : false
+  const hasBlockingFailures = report
+    ? hasBlockingDeployCheckFailure(report) || Boolean(reportRefreshError)
+    : Boolean(reportRefreshError)
 
   async function enterDashboard() {
     if (hasBlockingFailures) return

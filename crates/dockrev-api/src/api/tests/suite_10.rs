@@ -1335,6 +1335,7 @@ async fn deploy_check_report_serves_stale_cached_report_and_allows_explicit_refr
     let body = response_json(resp).await;
     assert_eq!(body["status"], "ready");
     assert_eq!(body["refreshing"], false);
+    assert_eq!(body["lastError"], "boom");
     assert!(body["report"].is_object());
     assert!(body["report"]["generatedAt"].as_str().is_some());
     assert!(!state.deploy_check_refresh_worker.is_running());

@@ -224,7 +224,6 @@ pub(crate) async fn trigger_stack_lifecycle(
     Json(req): Json<TriggerStackLifecycleRequest>,
 ) -> Result<Json<TriggerStackLifecycleResponse>, ApiError> {
     let user = require_user(&state, &headers).await?;
-    crate::compose_capability::require_v2_api(&*state.runner, &state.config).await?;
     let stack = state
         .db
         .get_stack(&stack_id)
@@ -251,6 +250,7 @@ pub(crate) async fn trigger_stack_lifecycle(
     if let Some(conflict) = find_stack_lifecycle_conflict(&state, &stack).await? {
         return Err(service_operation_conflict_error(&conflict.job));
     }
+    crate::compose_capability::require_v2_api(&*state.runner, &state.config).await?;
     let (lifecycle_state, unavailable_reason) = read_stack_lifecycle_state(&state, &stack).await;
     if matches!(
         lifecycle_state,
@@ -546,7 +546,6 @@ pub(crate) async fn trigger_service_lifecycle(
     Json(req): Json<TriggerServiceLifecycleRequest>,
 ) -> Result<Json<TriggerServiceLifecycleResponse>, ApiError> {
     let user = require_user(&state, &headers).await?;
-    crate::compose_capability::require_v2_api(&*state.runner, &state.config).await?;
     let (stack, service) = resolve_lifecycle_subject(&state, &service_id).await?;
     if stack.archived || service.archived == Some(true) {
         return Err(
@@ -568,6 +567,7 @@ pub(crate) async fn trigger_service_lifecycle(
     {
         return Err(service_operation_conflict_error(&conflict.job));
     }
+    crate::compose_capability::require_v2_api(&*state.runner, &state.config).await?;
     let (lifecycle_state, unavailable_reason) =
         read_lifecycle_state(&state, &stack, &service).await;
     if matches!(

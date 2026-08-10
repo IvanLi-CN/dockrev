@@ -53,6 +53,46 @@ describe('deploy-check report polling', () => {
     ).toBe(true)
   })
 
+  test('fails closed when required core evidence is missing or non-canonical', () => {
+    expect(
+      hasBlockingDeployCheckFailure({
+        overall: { result: 'pass', blockingCheckIds: [], summary: 'missing checks' },
+        generatedAt: '2026-06-26T14:23:00.000Z',
+        checks: [],
+      }),
+    ).toBe(true)
+    expect(
+      hasBlockingDeployCheckFailure({
+        overall: { result: 'pass', blockingCheckIds: [], summary: 'legacy group' },
+        generatedAt: '2026-06-26T14:23:00.000Z',
+        checks: [
+          {
+            id: 'core.update_executor_ready',
+            title: '更新执行器可用',
+            group: 'legacy',
+            required: true,
+            status: 'pass',
+            summary: 'executor available',
+            impact: 'writes blocked',
+            evidence: 'Compose V2',
+            recommendation: '',
+          },
+        ],
+      }),
+    ).toBe(false)
+  })
+
+  test('does not treat a stale cached PASS with refresh error as settled', () => {
+    expect(
+      shouldTriggerDeployCheckReportRefresh({
+        status: 'ready',
+        refreshing: false,
+        lastError: 'deploy-check refresh failed',
+        report: null,
+      }),
+    ).toBe(false)
+  })
+
   test('keeps polling while cached report is still marked refreshing', () => {
     const envelope: DeployCheckReportEnvelope = {
       status: 'ready',

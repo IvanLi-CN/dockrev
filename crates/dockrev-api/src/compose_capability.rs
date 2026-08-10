@@ -43,19 +43,24 @@ pub fn version_command(compose_bin: &str) -> Vec<String> {
 }
 
 pub fn parse_major_version(output: &str) -> Option<u64> {
-    for token in output.split_whitespace() {
-        let candidate =
-            token.trim_matches(|character: char| !character.is_ascii_digit() && character != '.');
-        if candidate.is_empty()
-            || !candidate
+    for line in output.lines() {
+        let lower = line.trim().to_ascii_lowercase();
+        for prefix in ["docker compose version ", "docker-compose version "] {
+            let Some(version) = lower.strip_prefix(prefix) else {
+                continue;
+            };
+            let version = version.strip_prefix('v').unwrap_or(version);
+            let version = version
                 .chars()
-                .any(|character| character.is_ascii_digit())
-        {
-            continue;
-        }
-        let major = candidate.split('.').next()?.parse::<u64>().ok()?;
-        if candidate.contains('.') || token.starts_with('v') || token.starts_with('V') {
-            return Some(major);
+                .take_while(|character| character.is_ascii_digit() || *character == '.')
+                .collect::<String>();
+            let segments = version.split('.').collect::<Vec<_>>();
+            if segments.len() < 2 || segments.iter().any(|segment| segment.is_empty()) {
+                continue;
+            }
+            if let Ok(major) = segments[0].parse::<u64>() {
+                return Some(major);
+            }
         }
     }
     None
@@ -146,6 +151,16 @@ mod tests {
     fn rejects_unparseable_version_output() {
         assert_eq!(parse_major_version("Docker Compose version unknown"), None);
         assert_eq!(parse_major_version("command completed"), None);
+        assert_eq!(
+            parse_major_version(
+                "Docker Compose version unknown\nwarning: see https://docs.example/v2.0"
+            ),
+            None
+        );
+        assert_eq!(
+            parse_major_version("Docker Compose version unknown\n/opt/compose-v2.0"),
+            None
+        );
     }
 
     #[test]
