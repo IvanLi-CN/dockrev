@@ -358,9 +358,6 @@
   story_id_or_title: `demo:app / /demo/services/stack-prod/svc-prod-api/versions?demoScenario=dashboard-demo-hydrated-update`
   state: `desktop active update progress synchronization`
   evidence_note: `mock-only ui_demo` 桌面截图验证活动更新优先接管共享状态信息带，信息带使用主题蓝色与加载图标并保留当前版本、目标版本和跨度；左侧候选目录同步显示 `更新中`，候选卡按钮保留加载反馈与任务详情入口，同时页面中不再出现独立活动任务横幅。
-  PR: include
-  PR caption: 活动更新统一显示在共享蓝色状态信息带，并同步候选目录与候选卡任务入口。
-
 ![服务详情版本子页更新中桌面联动](./assets/service-detail-versions-update-progress-desktop.png)
 
 - source_type: `ui_demo`
@@ -373,10 +370,41 @@
   story_id_or_title: `demo:app / /demo/services/stack-prod/svc-prod-api/versions?demoScenario=dashboard-demo-hydrated-update`
   state: `mobile active update status rail`
   evidence_note: `mock-only ui_demo` 移动端截图验证共享蓝色状态信息带在 `390x900` 下完整展示 `更新中`、当前版本、目标版本与跨度，加载图标和单列页面均无横向溢出；桌面候选目录在该断点按合同隐藏，页面中没有独立活动任务横幅。
-  PR: include
-  PR caption: 移动端更新中状态收敛到共享信息带，并保持无横向溢出。
-
 ![服务详情版本子页更新中移动状态带](./assets/service-detail-versions-update-progress-mobile.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `1440x1000`
+  viewport_strategy: `controlled-viewport`
+  margin_policy: `trim_only`
+  evidence_surface: `page`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/LogsSectionLightContrast`
+  state: `light Human terminal contrast`
+  evidence_note: 亮色服务日志使用完整浅色终端，表头、时间、Human 正文、结构化元数据与等级标签相对各自表面均通过运行时 WCAG AA 对比检查。
+  PR: include
+  PR caption: 服务日志在亮色主题中使用可读的浅色终端与结构化 Human 视图。
+
+![服务详情日志亮色 Human 终端](./assets/service-detail-logs-light-human.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `393x852`
+  viewport_strategy: `controlled-viewport`
+  margin_policy: `trim_only`
+  evidence_surface: `page`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/MobileLogsSectionLightContrast`
+  state: `light Raw ANSI terminal`
+  evidence_note: 移动端 Raw 视图保留 ANSI 绿色、红色、青色与警告色，并在浅色终端中保持可读；日志列继续按原始单行横向查看。
+  PR: include
+  PR caption: 服务日志移动 Raw ANSI 输出在亮色主题中保持可读。
+
+![服务详情日志亮色 Raw ANSI（移动端）](./assets/service-detail-logs-light-raw-mobile.png)
 
 ## Visual Evidence (PR)
 
@@ -536,40 +564,6 @@
   PR caption: 日志页 Raw 视图继续保留 tracing 原文，便于和结构化 Human 摘要互相对照。
 
 ![服务详情日志 Raw tracing 原文视图](./assets/service-detail-logs-tracing-raw.png)
-
-- source_type: `storybook_canvas`
-  target_program: `mock-only`
-  capture_scope: `browser-viewport`
-  requested_viewport: `1440x1000`
-  viewport_strategy: `controlled-viewport`
-  margin_policy: `trim_only`
-  evidence_surface: `page`
-  sensitive_exclusion: `N/A`
-  submission_gate: `pending-owner-approval`
-  story_id_or_title: `Pages/ServiceDetailPage/LogsSectionLightContrast`
-  state: `light Human terminal contrast`
-  evidence_note: 亮色服务日志使用完整浅色终端，表头、时间、Human 正文、结构化元数据与等级标签相对各自表面均通过运行时 WCAG AA 对比检查。
-  PR: include
-  PR caption: 服务日志在亮色主题中使用可读的浅色终端与结构化 Human 视图。
-
-![服务详情日志亮色 Human 终端](./assets/service-detail-logs-light-human.png)
-
-- source_type: `storybook_canvas`
-  target_program: `mock-only`
-  capture_scope: `browser-viewport`
-  requested_viewport: `393x852`
-  viewport_strategy: `controlled-viewport`
-  margin_policy: `trim_only`
-  evidence_surface: `page`
-  sensitive_exclusion: `N/A`
-  submission_gate: `pending-owner-approval`
-  story_id_or_title: `Pages/ServiceDetailPage/MobileLogsSectionLightContrast`
-  state: `light Raw ANSI terminal`
-  evidence_note: 移动端 Raw 视图保留 ANSI 绿色、红色、青色与警告色，并在浅色终端中保持可读；日志列继续按原始单行横向查看。
-  PR: include
-  PR caption: 服务日志移动 Raw ANSI 输出在亮色主题中保持可读。
-
-![服务详情日志亮色 Raw ANSI（移动端）](./assets/service-detail-logs-light-raw-mobile.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`
