@@ -365,8 +365,8 @@ YAML
 generate_caps_override fixture/.codex.caps.yaml
 
 log "checking real Compose plugin and standalone versions"
-plugin_version="$(docker compose version)"
-standalone_version="$(docker-compose version)"
+plugin_version="$(docker compose -p "$FIXTURE_PROJECT" version)"
+standalone_version="$(docker-compose -p "$FIXTURE_PROJECT" version)"
 plugin_major="$(python3 - "$plugin_version" <<'PY'
 import re, sys
 match = re.search(r'(?m)^Docker Compose version v?(\d+)', sys.argv[1])
