@@ -14,6 +14,14 @@ const preview: Preview = {
         light: { name: 'light', value: '#f5f7fb' },
       },
     },
+    viewport: {
+      options: {
+        dockrevMobile: {
+          name: 'Dockrev mobile (393x852)',
+          styles: { width: '393px', height: '852px' },
+        },
+      },
+    },
     docs: {
       theme: themes.dark,
     },
