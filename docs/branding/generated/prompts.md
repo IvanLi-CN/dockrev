@@ -66,13 +66,13 @@ Constraints: spell all text exactly, no watermark, no official Docker whale, no 
 - Final local post-processing: Pillow standardization and exact text overlay.
 - `dockrev-github-social-preview.png` was locally typeset after generation to ensure exact readable copy: `Dockrev` and `Self-hosted Docker/Compose update manager`.
 - Direct CVM generation for `dockrev-product-poster.png` failed twice with `503 no healthy pool account is available`; the final poster is a deterministic local composition using the generated icon/social visual, with exact local text rendering.
-- Project entry assets were replaced after owner approval, including the Web favicon family, brand mark, docs logo assets, and social preview images.
+- Project entry assets are generated from the approved canonical vector source, including the Web favicon family, brand mark, docs logo assets, social preview images, and product poster.
 
 ## Final assets
 
 - `dockrev-icon-candidate.png` — 2048x2048 PNG
 - `dockrev-logo-candidate.png` — 2048x1024 PNG
-- `dockrev-product-poster.png` — 1440x2160 PNG
+- `dockrev-product-poster.png` — 1440x2070 PNG; Web/Docs delivery copy is 1024x1472 PNG
 - `dockrev-github-social-preview.png` — 1280x640 PNG
 
 ## Flat icon revision
@@ -104,14 +104,13 @@ Constraints: spell all text exactly, no watermark, no official Docker whale, no 
   - `dockrev-github-social-preview-imagegen-candidate.png`
 - Prompt summary: flat/semi-flat Dockrev product marketing visuals matching the accepted logo/icon direction; exact `Dockrev` and `Self-hosted Docker/Compose update manager` copy; dark ops dashboard; no official Docker/GitHub marks.
 
-## SVG asset revision
+## Canonical vector assets
 
-- Owner selected icon candidate A and requested SVG redraws rather than shipping raster traces.
-- Final icon and logo SVGs use clean vector paths with flat theme colors, ignoring raster pixel defects from the generated reference.
-- Web and docs assets include dark and light variants:
-  - dark: `#36bffa`, `#22c55e`, `#e8f1ff`
-  - light: `#0c79cf`, `#138347`, `#102842`
-- Web topbar uses `dockrev-logo-dark.svg` and `dockrev-logo-light.svg`, switching by `html[data-theme]`.
-- Final Web evidence screenshots:
-  - `rendered-evidence/web-logo-dark-theme-balanced-136.png`
-  - `rendered-evidence/web-logo-light-theme-balanced-136.png`
+- `docs/branding/dockrev-icon-source.svg` is the canonical square icon geometry.
+- `docs/branding/dockrev-logo-source.svg` is the canonical horizontal dark-theme lockup generated from the icon geometry and outlined wordmark glyphs.
+- `docs/branding/generate_brand_assets.py` derives transparent marks, dark/light horizontal lockups, PNG sizes, PWA icons, Apple Touch icons, multi-size ICO files, marketing images, and the final asset contact sheet without raster tracing.
+- Files ending in `-imagegen-candidate.png` are retained only as historical generation references. Project-facing and generic `*-candidate.png` outputs are regenerated from the canonical vector geometry.
+- Web and docs horizontal assets include dark and light variants:
+  - dark mark: `#20b8ff` through `#1cb4fb`; check: `#16d563` through `#10cd5c`; wordmark: `#e8f1ff`
+  - light mark: `#0d86dd` through `#086cba`; check: `#16934e` through `#138347`; wordmark: `#102842`
+- App icons and favicons retain the canonical deep-ops background in every theme so the product identity remains stable outside the application shell.

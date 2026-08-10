@@ -1,35 +1,45 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Dockrev icon</title>
+  <desc id="desc">Three Compose service layers surrounded by an update arrow and a verified deployment check.</desc>
   <defs>
-    <linearGradient id="dockrevCyan" x1="190" y1="170" x2="765" y2="835" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#24C8FF"/>
-      <stop offset="1" stop-color="#18A9F2"/>
+    <linearGradient id="cyan" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
+      <stop offset="0" stop-color="#20b8ff" />
+      <stop offset="0.52" stop-color="#1eb6fe" />
+      <stop offset="1" stop-color="#1cb4fb" />
     </linearGradient>
-    <mask id="serverCutouts" maskUnits="userSpaceOnUse">
-      <rect width="1024" height="1024" fill="black"/>
-      <g fill="white">
-        <path d="M356 356 515 286 676 356v112l-161-36-159 36z"/>
-        <path d="M356 500h320v121H356z"/>
-        <path d="M356 656h320v110l-161 56-159-56z"/>
-      </g>
-      <g stroke="black" stroke-width="18" stroke-linecap="square">
-        <path d="M405 382v66M447 366v74M489 348v83M532 333v91"/>
-        <path d="M584 338v74h38M642 366v62"/>
-        <path d="M405 529v68M447 529v68M489 529v68M532 529v68"/>
-        <path d="M584 529v68h45M642 529v68"/>
-        <path d="M405 688v64M447 701v66M489 715v68M532 728v68"/>
-        <path d="M584 688v68h45M642 688v68"/>
-      </g>
+    <linearGradient id="green" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
+      <stop offset="0" stop-color="#16d563" />
+      <stop offset="1" stop-color="#10cd5c" />
+    </linearGradient>
+    <mask id="topLayerCutouts" maskUnits="userSpaceOnUse" x="337" y="372" width="350" height="105">
+      <rect x="337" y="372" width="350" height="105" fill="white" />
+      <rect x="431" y="396" width="24" height="58" rx="10" fill="black" />
+      <rect x="501" y="395" width="23" height="59" rx="10" fill="black" />
+      <rect x="570" y="395" width="23" height="59" rx="10" fill="black" />
+    </mask>
+    <mask id="middleLayerCutouts" maskUnits="userSpaceOnUse" x="337" y="490" width="350" height="104">
+      <rect x="337" y="490" width="350" height="104" fill="white" />
+      <rect x="431" y="513" width="24" height="59" rx="10" fill="black" />
+      <rect x="501" y="513" width="23" height="59" rx="10" fill="black" />
+      <rect x="570" y="513" width="23" height="59" rx="10" fill="black" />
+    </mask>
+    <mask id="bottomLayerCutouts" maskUnits="userSpaceOnUse" x="337" y="607" width="350" height="105">
+      <rect x="337" y="607" width="350" height="105" fill="white" />
+      <rect x="431" y="631" width="24" height="58" rx="10" fill="black" />
+      <rect x="501" y="630" width="23" height="59" rx="10" fill="black" />
+      <rect x="570" y="631" width="23" height="58" rx="10" fill="black" />
     </mask>
   </defs>
-  <g fill="none" stroke="url(#dockrevCyan)" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M330 252A340 340 0 0 1 800 408" stroke-width="68"/>
-    <path d="M788 635A340 340 0 0 1 218 720A340 340 0 0 1 215 355" stroke-width="68"/>
+  <g id="update-arrow" fill="url(#cyan)">
+    <path d="M 830.1 649.5 A 346.32 346.32 0 1 1 683.2 206.4" fill="none" stroke="url(#cyan)" stroke-width="46.74" stroke-linecap="round" />
+    <path d="M 684 181 L 707 195 L 727 157 Q 732 150 741 151 Q 748 152 751 160 L 789 268 Q 792 276 787 282 Q 784 286 778 285 L 667 277 Q 660 277 657 269 Q 655 264 659 259 L 678 237 Q 681 234 680 232 Z" />
   </g>
-  <path d="M106 372 286 255 315 462z" fill="#24C8FF"/>
-  <path d="M742 488 812 559 905 454" fill="none" stroke="#2DDC74" stroke-width="62" stroke-linecap="round" stroke-linejoin="round"/>
-  <g fill="#22BDF7" mask="url(#serverCutouts)">
-    <path d="M356 356 515 286 676 356v112l-161-36-159 36z"/>
-    <path d="M356 500h320v121H356z"/>
-    <path d="M356 656h320v110l-161 56-159-56z"/>
+  <g id="service-stack" fill="url(#cyan)">
+    <path id="top-lid" d="M 340.5 362.5 L 407.5 308.5 H 616.5 L 684.5 362.5 Z" />
+    <path id="top-layer" d="M 348.5 371.5 H 675.5 Q 687 371.5 687 381.5 V 462.5 Q 687 469.5 679.5 473.5 Q 674.5 476.5 668.5 476.5 H 354.5 Q 347.5 476.5 341.5 471.5 Q 336.5 467.5 336.5 459.5 V 381.5 Q 336.5 375.5 340.5 373.5 Q 343.5 371.5 348.5 371.5 Z" mask="url(#topLayerCutouts)" />
+    <path id="middle-layer" d="M 345.5 489.5 H 677.5 Q 687 489.5 687 497.5 V 579.5 Q 687 585.5 678.5 590.5 Q 675.5 593.5 671.5 593.5 H 350.5 Q 343.5 593.5 339.5 586.5 Q 336.5 582.5 336.5 577.5 V 498.5 Q 336.5 493.5 341.5 491.5 Q 342.5 489.5 345.5 489.5 Z" mask="url(#middleLayerCutouts)" />
+    <path id="bottom-layer" d="M 347.5 606.5 H 675.5 Q 687 606.5 687 615.5 V 700.5 Q 687 705.5 681.5 708.5 Q 676.5 711.5 669.5 711.5 H 349.5 Q 343.5 711.5 339.5 706.5 Q 336.5 702.5 336.5 697.5 V 616.5 Q 336.5 610.5 341.5 608.5 Q 343.5 606.5 347.5 606.5 Z" mask="url(#bottomLayerCutouts)" />
   </g>
+  <path id="verified-check" d="M 767 498 L 808 540.5 L 902 445" fill="none" stroke="url(#green)" stroke-width="36.5" stroke-linecap="round" stroke-linejoin="round" />
 </svg>
