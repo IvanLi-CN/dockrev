@@ -20,6 +20,7 @@
 - Removed Web dependency on `/github-releases/locate`; the drawer now uses unified `release-notes/locate` anchor windows and `direction=older|newer` cursors instead of client-side progressive scans.
 - Replaced `15s` SSE keepalive intervals with `5s` heartbeat + immediate keepalive comment on connect.
 - Added Storybook coverage for cleanup pending state and deploy-check cached-refreshing / initial-pending states.
+- Added the application-level deploy-check gate: startup and foreground resume await a fresh report, required core failures force `/deploy-check`, and the failure page disables Dashboard entry regardless of `neverAutoOpen`.
 
 ## Verification
 

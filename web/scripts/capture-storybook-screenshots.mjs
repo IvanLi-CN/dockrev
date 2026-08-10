@@ -751,6 +751,39 @@ async function main() {
         await page.screenshot({ path: filePath })
       },
     },
+    {
+      id: 'pages-deploywelcomepage--default',
+      file: 'deploy-check-pass-desktop.png',
+      setup: async (page) => {
+        await page.locator('.deployWelcomeOverall.is-pass').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.locator('.deployWelcomeActionPanel').waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        await page.locator('.deployWelcomeRoot').screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'pages-deploywelcomepage--blocked-core-failure',
+      file: 'deploy-check-blocked-desktop.png',
+      setup: async (page) => {
+        await page.locator('.deployBlockingNotice').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.locator('.deployWelcomeActionPanel').waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        await page.locator('.deployWelcomeRoot').screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'pages-deploywelcomepage--blocked-core-failure-mobile',
+      file: 'deploy-check-blocked-mobile.png',
+      viewport: { width: 393, height: 852 },
+      setup: async (page) => {
+        await page.locator('.deployBlockingNotice').waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        await page.locator('.deployWelcomeRoot').screenshot({ path: filePath })
+      },
+    },
   ]
 
   try {

@@ -2,12 +2,35 @@ import { describe, expect, test } from 'bun:test'
 
 import type { DeployCheckReportEnvelope } from '../src/api'
 import {
+  hasBlockingDeployCheckFailure,
   shouldKeepDeployCheckLoading,
   shouldKeepPollingDeployCheckReport,
   shouldTriggerDeployCheckReportRefresh,
-} from '../src/pages/DeployWelcomePage'
+} from '../src/deployCheck'
 
 describe('deploy-check report polling', () => {
+  test('treats any required core failure as a hard gate', () => {
+    expect(
+      hasBlockingDeployCheckFailure({
+        overall: { result: 'pass', blockingCheckIds: [], summary: 'inconsistent fixture' },
+        generatedAt: '2026-06-26T14:23:00.000Z',
+        checks: [
+          {
+            id: 'core.update_executor_ready',
+            title: '更新执行器可用',
+            group: 'core',
+            required: true,
+            status: 'fail',
+            summary: 'compose_v2_required',
+            impact: 'writes blocked',
+            evidence: 'Compose V1',
+            recommendation: 'install Compose V2+',
+          },
+        ],
+      }),
+    ).toBe(true)
+  })
+
   test('keeps polling while cached report is still marked refreshing', () => {
     const envelope: DeployCheckReportEnvelope = {
       status: 'ready',

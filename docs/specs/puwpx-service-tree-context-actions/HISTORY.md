@@ -11,6 +11,7 @@
 - 菜单状态在打开时懒加载；加载中保持动作可见但禁用，禁用原因直接展示在菜单条目内。
 - Stack 详情顶部复用服务详情的生命周期 split action 语义；Stack 启动直接提交，停止和重启使用带 Stack 名称与服务数的确认框。
 - Stack 右键停止/重启与 Stack 详情统一确认，Service 右键继续保留直接执行，以保持既有 Service 快捷操作契约不变。
+- Compose 生命周期统一收敛到 V2+：plugin 与 standalone 共用 no-pull/no-recreate 启动命令，V1 通过 `compose_v2_required` 门禁拒绝；空容器但配置有效的 Stack 显示 `stopped`。
 
 ## Key Reasons / Replacements
 

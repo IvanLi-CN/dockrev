@@ -8,7 +8,8 @@
 
 ## Coverage
 
-- 服务级 lifecycle API 已提供实时 Compose 状态、`start | stop | restart` 任务提交和活动任务直达信息；Compose V2 启动使用 `up -d --pull never --no-recreate`，Compose V1 使用仅启动已有容器的 `start`，两条路径都不会拉取或替换已有容器。
+- 服务级 lifecycle API 已提供实时 Compose 状态、`start | stop | restart` 任务提交和活动任务直达信息；plugin 与 standalone Compose V2 统一使用 `up -d --pull never --no-recreate [--no-deps]`，V1/不可解析版本由 `compose_v2_required` 门禁拒绝。
+- 生命周期读取先执行 Compose `config --services`，再读取 `ps -a` 与运行态；合法配置下零容器明确为 `stopped`，配置、服务定义或任一查询失败保持 `unknown`。
 - 活动 lifecycle 任务结算后，服务详情会立即刷新最近记录、版本记录与操作历史，不依赖重新加载页面。
 - 服务详情以 `lifecycle-status.activeJob.type` 作为服务级操作 owner；更新、回滚和 lifecycle 只在所属动作组显示进度，非 owner 桌面 split button 整组禁用并给出占用 Tooltip，移动端菜单项禁用并保留 Toast。
 - `service_lifecycle` 与同一服务的 apply update、rollback 采用同一冲突保护；任务占锁、调用方提供的实际服务目标和首条日志在同一 SQLite 事务提交，避免日志失败留下永久活动锁；定向 Stack/全局更新按持久化的实际服务目标占锁，仅对缺少目标记录的旧活动任务回退到 scope 判断；任务摘要、队列显示与服务操作历史均保留并展示具体动作。

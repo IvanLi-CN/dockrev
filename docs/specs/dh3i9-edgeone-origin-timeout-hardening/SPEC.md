@@ -68,6 +68,7 @@
 - 访问 `/cleanup` 时，不再因为首屏同步 Docker scan 触发 524。
 - cleanup confirm 在 snapshot stale 或 refresh in-flight 时只返回 pending，不直接给旧 confirm payload。
 - `/deploy-check` 有 cached report 时可立即展示，refresh 不阻塞首屏。
+- 应用首次加载与恢复前台必须刷新并等待最新 deploy-check report；任一 required core check FAIL 或报告不可用时强制进入 `/deploy-check`，`neverAutoOpen` 不得绕过，失败页不得进入 Dashboard。只有全部 required core check PASS 才放行。
 - release drawer 在不调用 `/github-releases/locate` 的前提下仍可定位目标版本。
 - 任一 SSE 连接在 EdgeOne 前方空闲超过 20 秒时，不会因 15 秒 idle window 被断开。
 
@@ -98,6 +99,51 @@
   evidence_note: 验证 `/deploy-check` 在已有 cached report 时直接展示 checklist，并额外标出“正在后台刷新最新检查结果…”，不再把 refresh 放进首屏阻塞链路。
 
 ![Deploy check cached refreshing](./assets/deploy-check-cached-refreshing.png)
+
+- source_type: `storybook_canvas`
+- target_program: `mock-only`
+- capture_scope: `element`
+- requested_viewport: `1440x900`
+- viewport_strategy: `storybook-viewport`
+- margin_policy: `trim_only`
+- evidence_surface: `page`
+- sensitive_exclusion: `N/A`
+- submission_gate: `pending-owner-approval`
+- story_id_or_title: `Pages/DeployWelcomePage/Default`
+- state: `all required checks pass`
+- evidence_note: 验证全部 required 核心检查通过时显示 PASS，且“进入 Dashboard”按钮可用。
+
+![Deploy check pass](./assets/deploy-check-pass-desktop.png)
+
+- source_type: `storybook_canvas`
+- target_program: `mock-only`
+- capture_scope: `element`
+- requested_viewport: `1440x900`
+- viewport_strategy: `storybook-viewport`
+- margin_policy: `trim_only`
+- evidence_surface: `page`
+- sensitive_exclusion: `N/A`
+- submission_gate: `pending-owner-approval`
+- story_id_or_title: `Pages/DeployWelcomePage/BlockedCoreFailure`
+- state: `required core failure blocks Dashboard entry`
+- evidence_note: 验证 required core FAIL 时进入 BLOCKING 门禁页，`neverAutoOpen` 仍不能绕过，Dashboard 入口保持禁用。
+
+![Deploy check blocked](./assets/deploy-check-blocked-desktop.png)
+
+- source_type: `storybook_canvas`
+- target_program: `mock-only`
+- capture_scope: `element`
+- requested_viewport: `393x852 CSS px`
+- viewport_strategy: `storybook-viewport`
+- margin_policy: `trim_only`
+- evidence_surface: `page`
+- sensitive_exclusion: `N/A`
+- submission_gate: `pending-owner-approval`
+- story_id_or_title: `Pages/DeployWelcomePage/BlockedCoreFailureMobile`
+- state: `required core failure on mobile`
+- evidence_note: 验证 `393x852` 移动视口下故障门禁、核心失败项和禁用 Dashboard 入口均不溢出或重叠。
+
+![Deploy check blocked mobile](./assets/deploy-check-blocked-mobile.png)
 
 ## 变更记录
 

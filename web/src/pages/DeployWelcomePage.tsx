@@ -5,9 +5,15 @@ import {
   putDeployWelcome,
   refreshDeployCheckReport,
   type DeployCheckItem,
-  type DeployCheckReportEnvelope,
   type DeployCheckReportResponse,
 } from '../api'
+import {
+  settleDeployCheckReport,
+  hasBlockingDeployCheckFailure,
+  shouldKeepDeployCheckLoading,
+  shouldKeepPollingDeployCheckReport,
+  shouldTriggerDeployCheckReportRefresh,
+} from '../deployCheck'
 import { navigate } from '../routes'
 import { Button, Label, Switch } from '../ui'
 
@@ -26,18 +32,6 @@ function normalizeGroup(input: DeployCheckItem['group'], id: string): 'core' | '
   if (input === 'core' || input === 'feature') return input
   if (id.startsWith('core.')) return 'core'
   return 'feature'
-}
-
-export function shouldKeepPollingDeployCheckReport(envelope: DeployCheckReportEnvelope): boolean {
-  return envelope.status !== 'ready' || Boolean(envelope.refreshing)
-}
-
-export function shouldTriggerDeployCheckReportRefresh(envelope: DeployCheckReportEnvelope): boolean {
-  return envelope.status === 'ready' && !envelope.refreshing
-}
-
-export function shouldKeepDeployCheckLoading(envelope: DeployCheckReportEnvelope): boolean {
-  return !envelope.report && shouldKeepPollingDeployCheckReport(envelope)
 }
 
 function statusMeta(status: DeployCheckItem['status']): {
@@ -83,7 +77,7 @@ function resolveRecommendation(item: DeployCheckItem, allChecks: DeployCheckItem
     return '修复 compose 中服务的 `image` 字段（例如 `ghcr.io/org/app:1.2.3` 或 `ghcr.io/org/app@sha256:...`），然后重新发现/扫描。'
   }
   if (item.id === 'core.update_executor_ready' && item.status === 'fail') {
-    return '设置 `DOCKREV_COMPOSE_BIN` 为可执行命令：插件模式用 `docker`（要求 `docker compose version` 成功），v1 模式用 `docker-compose`。'
+    return '设置 `DOCKREV_COMPOSE_BIN` 为 Compose V2+ 命令：插件模式用 `docker`（要求 `docker compose version`），standalone 模式用 `docker-compose`（要求 `docker-compose version`）。'
   }
   if (item.id === 'feature.registry_auth') {
     if (item.status === 'fail') {
@@ -130,16 +124,6 @@ export function DeployWelcomePage() {
   const [error, setError] = useState<string | null>(null)
   const [reportRefreshing, setReportRefreshing] = useState(false)
 
-  async function settleReportEnvelope(envelope: DeployCheckReportEnvelope): Promise<DeployCheckReportEnvelope> {
-    let current = envelope
-    while (shouldKeepPollingDeployCheckReport(current)) {
-      const retryAfter = Math.max(200, current.retryAfterMs ?? 800)
-      await new Promise((resolve) => window.setTimeout(resolve, retryAfter))
-      current = await getDeployCheckReport()
-    }
-    return current
-  }
-
   const refresh = useCallback(async () => {
     setLoading(true)
     setError(null)
@@ -160,7 +144,7 @@ export function DeployWelcomePage() {
         setReportRefreshing(true)
         const seed = shouldRequestRefresh ? refreshDeployCheckReport() : Promise.resolve(envelope)
         void seed
-          .then((nextEnvelope) => settleReportEnvelope(nextEnvelope))
+          .then((nextEnvelope) => settleDeployCheckReport(nextEnvelope))
           .then((settled) => {
             if (settled.report) {
               setReport(settled.report)
@@ -198,7 +182,7 @@ export function DeployWelcomePage() {
     setReportRefreshing(true)
     setError(null)
     try {
-      const settled = await settleReportEnvelope(await refreshDeployCheckReport())
+      const settled = await settleDeployCheckReport(await refreshDeployCheckReport())
       if (settled.report) {
         setReport(settled.report)
       }
@@ -238,9 +222,10 @@ export function DeployWelcomePage() {
     }
   }, [report])
 
-  const hasBlockingFailures = report?.overall.result === 'fail'
+  const hasBlockingFailures = report ? hasBlockingDeployCheckFailure(report) : false
 
   async function enterDashboard() {
+    if (hasBlockingFailures) return
     setSaving(true)
     setError(null)
     try {
@@ -373,7 +358,7 @@ export function DeployWelcomePage() {
                 <Switch
                   id="deploy-never-auto-open"
                   checked={neverAutoOpen}
-                  disabled={saving || !welcomeLoaded}
+                  disabled={saving || !welcomeLoaded || hasBlockingFailures}
                   onChange={setNeverAutoOpen}
                 />
                 <Label htmlFor="deploy-never-auto-open">不再自动显示此页面</Label>
@@ -384,7 +369,11 @@ export function DeployWelcomePage() {
               <Button variant="ghost" disabled={loading || saving} onClick={() => void refresh()}>
                 重新检查
               </Button>
-              <Button variant="primary" disabled={saving} onClick={() => void enterDashboard()}>
+              <Button
+                variant="primary"
+                disabled={saving || hasBlockingFailures}
+                onClick={() => void enterDashboard()}
+              >
                 {saving ? '保存中…' : '进入 Dashboard'}
               </Button>
             </div>

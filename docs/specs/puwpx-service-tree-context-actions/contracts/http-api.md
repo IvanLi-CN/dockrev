@@ -15,7 +15,7 @@
 ```
 
 - `state`: `running | stopped | partial | unknown`。
-- `unavailableReason`: 自托管、归档、Compose V1 容器缺失或查询失败原因。
+- `unavailableReason`: 自托管、归档、Compose 配置/服务定义缺失或查询失败原因；Compose 能力不足通过写接口的 `compose_v2_required` 返回。
 - `activeJob`: 首个会阻塞 Stack 生命周期的 queued/running update、rollback、service lifecycle 或 stack lifecycle 任务。
 
 ## Stack lifecycle trigger

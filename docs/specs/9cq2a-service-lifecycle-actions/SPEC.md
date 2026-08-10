@@ -34,7 +34,8 @@
 - `running` 默认主动作是“停止”；`stopped` 默认主动作是“启动”。
 - `partial` 表示多副本服务仅部分运行；`unknown` 表示 Compose 查询失败或结果无法判定。两种状态都保持菜单可见但不可执行；原因只在悬浮时显示为浮动提示，点击不可执行项时以 toast 提示。
 - 启动直接提交；停止和重启必须经现有确认交互确认后才创建任务。
-- 启动不得拉取镜像、替换已有容器或影响依赖服务：Compose V2 执行 `up -d --pull never --no-recreate --no-deps <service>`，Compose V1 执行仅启动已有容器的 `start <service>`；若 V1 下容器尚不存在，状态接口返回不可用并禁止提交启动任务。停止执行对应 `stop <service>`；重启执行对应 `restart <service>`。
+- 启动不得拉取镜像、替换已有容器或影响依赖服务：Compose V2 plugin 与 standalone 均执行 `up -d --pull never --no-recreate --no-deps <service>`；Compose V1、版本失败或版本无法解析时拒绝所有写操作并返回稳定原因 `compose_v2_required`。停止执行对应 `stop <service>`；重启执行对应 `restart <service>`。
+- 生命周期读取必须先成功解析 Compose 配置并确认目标服务存在，再同时成功查询 `ps -a` 与运行态；有效配置下两者均为空时状态为 `stopped`，任一查询、配置校验或服务解析失败时状态为 `unknown`。
 - 同服务的 update、rollback、service_lifecycle 若有 queued 或 running 任务，新的同服务操作必须以 `409` 返回既有任务 ID。服务 status 响应也必须暴露该活动任务，前端可直接跳转详情。
 - Dockrev 自身服务不显示 lifecycle 菜单，继续只使用既有 Supervisor 自升级入口。
 - 已归档的服务或所属 Stack 不接受生命周期写操作；历史详情保持可读。
@@ -57,6 +58,9 @@
 - Given Dockrev 自身服务，When 打开详情页，Then 不显示 lifecycle menu。
 - Given 任务完成，When 服务详情刷新，Then 生命周期状态用一次服务级 Compose 查询收敛，不触发全量 runtime scan。
 - Given 更新任务处于 `queued/running` 且候选版本在结算前消失，When 服务详情刷新，Then 更新组保持“更新排队中…/更新中…”而不是切换到“回滚中…”。
+- Given `docker-compose version` 输出 Compose V2+，When 执行服务启动，Then standalone 命令使用 `version/config/ps/up` 合同且包含 `--pull never --no-recreate --no-deps`。
+- Given Compose V1、版本命令失败或版本输出无法解析，When 提交更新、回滚或生命周期写操作，Then 返回 `compose_v2_required` 且不生成容器变更命令。
+- Given Compose 配置合法、服务存在且 `ps -a` 为空，When 查看服务或 Stack 状态，Then 状态为 `stopped` 并允许执行 no-pull 启动。
 
 ## 验证
 

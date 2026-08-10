@@ -59,7 +59,7 @@ const lifecycleReasonLabels: Record<string, string> = {
   stack_lifecycle_in_progress: 'Stack 生命周期任务正在执行',
   stack_update_in_progress: 'Stack 更新任务正在执行',
   global_update_in_progress: '全局更新任务正在执行',
-  container_missing_for_compose_v1: 'Compose V1 未找到已有容器',
+  compose_v2_required: '需要 Compose V2+ 才能执行操作',
   stack_has_no_services: 'Stack 内没有服务',
   rollback_in_progress: '回滚任务正在执行',
   service_lifecycle_in_progress: '服务生命周期任务正在执行',

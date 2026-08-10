@@ -49,7 +49,7 @@ const reasonLabels: Record<string, string> = {
   lifecycle_status_unavailable: '暂时无法读取运行状态',
   partial_replicas_running: '仅部分副本正在运行',
   stack_services_have_mixed_states: 'Stack 内服务运行状态不一致',
-  container_missing_for_compose_v1: 'Compose V1 未找到已有容器',
+  compose_v2_required: '需要 Compose V2+ 才能执行操作',
   stack_has_no_services: 'Stack 内没有服务',
   stack_archived: '归档 Stack 不可操作',
   stack_contains_archived_service: 'Stack 包含归档服务不可操作',
