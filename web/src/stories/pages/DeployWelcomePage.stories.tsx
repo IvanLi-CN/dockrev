@@ -93,8 +93,39 @@ function makeBlockedEnvelope(): DeployCheckReportEnvelope {
   return { ...makeRefreshingEnvelope(), refreshing: false }
 }
 
+function makePassingEnvelope(): DeployCheckReportEnvelope {
+  const envelope = makeRefreshingEnvelope()
+  if (!envelope.report) throw new globalThis.Error('passing fixture requires a report')
+  const report = envelope.report
+  return {
+    ...envelope,
+    refreshing: false,
+    report: {
+      ...report,
+      overall: {
+        result: 'pass',
+        blockingCheckIds: [],
+        summary: 'All required capabilities are available',
+      },
+      checks: report.checks.map((check) =>
+        check.id === 'core.compose_access'
+          ? {
+              ...check,
+              status: 'pass',
+              summary: 'compose paths are readable',
+              evidence: '/srv/app/docker-compose.yml readable',
+            }
+          : check,
+      ),
+    },
+  }
+}
+
 export const Default: Story = {
-  parameters: { dockrevApiScenario: 'settings-configured' },
+  parameters: {
+    dockrevApiScenario: 'settings-configured',
+    dockrevDeployCheckReportOverride: makePassingEnvelope(),
+  },
   render: () => renderPage(),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => canvasElement.textContent?.includes('整体结论') ?? false)
