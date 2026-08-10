@@ -19,6 +19,7 @@
 - 服务详情通过页面状态把当前服务名与资源摘要渲染到 AppShell 顶栏：摘要位于名称和操作组之间，正文不再渲染重复的服务标题或资源摘要。摘要使用容器宽度控制三个不可拆分指标组的可见性，按网络、磁盘、CPU/内存顺序渐进隐藏。移动端资源摘要整体隐藏，页头保持单行，以图标 Logo、当前服务名和 44px 服务操作入口构成；入口使用 shadcn/Radix DropdownMenu，将更新、生命周期与 Stack 三组动作直接平铺并以库内分隔线区分。离线或缓存快照状态也复用同一移动入口，刷新项保持可见但禁用，避免只读分支重新挤入独立页头按钮。
 - 稳定 mock-only Storybook 证据已写入 `SPEC.md`；桌面证据覆盖资源摘要与 split action，393 × 852 移动证据覆盖单行页头及三组服务操作菜单。
 - Stack 详情树复用了本 spec 的服务级 lifecycle 结算路径：启动、停止、重启任务结算后发布 Stack 定向刷新事件，树节点即时收敛到 `running / stopped / partial / unknown`。
+- 本轮最终验证覆盖 Compose V2 plugin/standalone、V1 拒绝、空容器 `stopped` 判定、写入口门禁，以及 321 个 Storybook 故事全量 smoke。
 
 ## References
 

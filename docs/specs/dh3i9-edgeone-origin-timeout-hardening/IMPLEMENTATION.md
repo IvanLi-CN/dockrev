@@ -21,6 +21,7 @@
 - Replaced `15s` SSE keepalive intervals with `5s` heartbeat + immediate keepalive comment on connect.
 - Added Storybook coverage for cleanup pending state and deploy-check cached-refreshing / initial-pending states.
 - Added the application-level deploy-check gate: startup and foreground resume await a fresh report, required core failures force `/deploy-check`, and the failure page disables Dashboard entry regardless of `neverAutoOpen`.
+- Added deterministic mock-only Storybook pass/fail coverage for desktop and `393x852` mobile views; final smoke validation passes all 321 stories.
 
 ## Verification
 
@@ -32,6 +33,7 @@
 - `bun run --cwd web build`
 - `bun run --cwd web build-storybook`
 - `bun run --cwd web test-storybook -- --url http://127.0.0.1:30080/`
+- `cargo test --workspace`, `cargo fmt --all -- --check`, and `cargo clippy --workspace --all-targets --all-features -- -D warnings`
 
 ## Notes
 

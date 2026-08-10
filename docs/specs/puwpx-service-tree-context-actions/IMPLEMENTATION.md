@@ -15,12 +15,13 @@
 - Compose capability 统一探测 V2 plugin/standalone 版本；生命周期写操作和后台任务在执行前拒绝 V1/失败版本，返回 `compose_v2_required`。
 - Stack/服务运行态读取先校验配置服务定义，合法配置下空 `ps -a` 返回 `stopped`，查询失败保持 `unknown`。
 - mock API 已覆盖 Stack running/stopped/partial/unknown/active 场景；Stack 页面与服务树 Storybook 已覆盖动作发现、确认取消/提交和移动菜单。
-- Web 构建、demo 构建、Storybook 构建与 312 个交互故事测试通过；lint 仅保留既有 TanStack Virtual React Compiler 警告。
+- Web 构建、demo 构建、Storybook 构建与 321 个交互故事测试通过；lint 仅保留既有 TanStack Virtual React Compiler 警告。
+- 最终验证覆盖 Compose V2 plugin/standalone、V1 拒绝、空容器 `stopped` 判定和生命周期写入口门禁。
 
 ## Remaining Gaps
 
 - mock-only Storybook canvas 桌面与 `393x852` 移动视觉证据已落盘到 `assets/stack-lifecycle-desktop.png` 与 `assets/stack-lifecycle-mobile.png`，并生成不可变聊天快照；Impeccable detector 与 spec drift check 已通过。
-- 本地实现已达到功能验证门槛；未执行远端 push、PR 或合并。
+- 本地实现已达到功能验证门槛；生产 101 仅执行只读复现，未执行远端服务变更。
 
 ## References
 
