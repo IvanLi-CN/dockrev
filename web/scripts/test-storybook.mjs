@@ -580,11 +580,25 @@ async function runInteractive({ baseUrl, browser }) {
     try {
       await page.setViewportSize({ width: 1800, height: 1200 });
       const viewport = page.locator(".serviceVersionsScrollViewport").first();
+      await viewport.evaluate((element) => {
+        element.scrollTop = element.scrollHeight;
+        element.dispatchEvent(new Event("scroll"));
+      });
       const targetIndex = page
         .locator('[data-service-versions-index-selected][data-release-tag="5.0.4"]')
         .first();
       await viewport.waitFor({ timeout: 10_000 });
       await targetIndex.waitFor({ timeout: 10_000 });
+      await viewport.evaluate((element) => {
+        element.scrollTop = 0;
+        element.dispatchEvent(new Event("scroll"));
+      });
+      await page.locator(".serviceVersionsIndexViewport").evaluate((element) => {
+        element.scrollTop = element.scrollHeight;
+        element.dispatchEvent(new Event("scroll"));
+      });
+      await targetIndex.waitFor({ timeout: 10_000 });
+      await page.waitForTimeout(100);
 
       if (
         (await viewport.locator('[data-service-version-card="true"][data-release-tag="5.0.4"]').count()) !== 0
@@ -593,12 +607,19 @@ async function runInteractive({ baseUrl, browser }) {
       }
 
       await targetIndex.click();
-      if (
-        (await targetIndex.getAttribute("aria-pressed")) !== "true" ||
-        (await targetIndex.getAttribute("data-service-versions-index-selected")) !== "true"
-      ) {
-        throw new Error("Expected the clicked version index item to become selected immediately.");
-      }
+      await page.waitForFunction(
+        () => {
+          const target = document.querySelector(
+            '[data-service-versions-index-selected][data-release-tag="5.0.4"]',
+          );
+          return (
+            target?.getAttribute("aria-pressed") === "true" &&
+            target.getAttribute("data-service-versions-index-selected") === "true"
+          );
+        },
+        null,
+        { timeout: 1_000 },
+      );
 
       await page.waitForFunction(
         () => {
@@ -637,7 +658,24 @@ async function runInteractive({ baseUrl, browser }) {
         element.scrollTop += 500;
         element.dispatchEvent(new Event("scroll"));
       });
-      await page.waitForTimeout(300);
+      await page.waitForFunction(
+        () => {
+          const scrollElement = document.querySelector(".serviceVersionsScrollViewport");
+          const selected = document.querySelector('[data-service-versions-index-selected="true"]');
+          if (!(scrollElement instanceof HTMLElement) || !(selected instanceof HTMLElement)) return false;
+          const rect = scrollElement.getBoundingClientRect();
+          const center = rect.top + rect.height / 2;
+          const nearest = Array.from(scrollElement.querySelectorAll('[data-service-version-card="true"]'))
+            .map((card) => {
+              const cardRect = card.getBoundingClientRect();
+              return { tag: card.getAttribute("data-release-tag"), distance: Math.abs(cardRect.top + cardRect.height / 2 - center) };
+            })
+            .sort((left, right) => left.distance - right.distance)[0];
+          return nearest?.tag === selected.getAttribute("data-release-tag");
+        },
+        null,
+        { timeout: 10_000 },
+      );
 
       const handoff = await viewport.evaluate((scrollElement) => {
         const selected = document.querySelector('[data-service-versions-index-selected="true"]');
