@@ -914,7 +914,13 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
             ) : null}
 
             <div className="serviceVersionsScrollShell">
-              <div className="serviceVersionsScrollViewport" ref={listScrollRef}>
+              <div
+                className="serviceVersionsScrollViewport"
+                ref={listScrollRef}
+                onPointerDown={() => cancelCenterRequestRef.current?.()}
+                onTouchStart={() => cancelCenterRequestRef.current?.()}
+                onWheel={() => cancelCenterRequestRef.current?.()}
+              >
                 <div className="serviceVersionsList" style={{ height: `${listVirtualizer.getTotalSize()}px` }}>
                   <div className="serviceVersionsListInner" style={{ transform: `translateY(${listOffset}px)` }}>
                     {listVirtualItems.map((virtualRow) => {
