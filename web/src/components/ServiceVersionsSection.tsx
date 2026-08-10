@@ -140,7 +140,6 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
   const centerRequestIdRef = useRef(0)
   const centeringIndexRef = useRef<number | null>(null)
   const cancelCenterRequestRef = useRef<(() => void) | null>(null)
-  const centerScrollTopRef = useRef<number | null>(null)
   const sessionKey = useMemo(() => {
     const anchorVersion = (props.service.image.resolvedTag ?? '').trim() || props.service.image.tag.trim()
     return `${serviceId}::${anchorVersion}`
@@ -294,7 +293,6 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
         if (centerRequestIdRef.current !== requestId) return
         centeringIndexRef.current = null
         cancelCenterRequestRef.current = null
-        centerScrollTopRef.current = null
         if (mode === 'initial') initialCenterKeyRef.current = key
       }
 
@@ -306,7 +304,6 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
         if (centerRequestIdRef.current !== requestId) return
         centeringIndexRef.current = null
         cancelCenterRequestRef.current = null
-        centerScrollTopRef.current = null
       }
 
       cancelCenterRequestRef.current = cancelCentering
@@ -334,7 +331,6 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
         }
         targetOffset = Math.max(0, targetOffset)
         element.scrollTo({ top: targetOffset })
-        centerScrollTopRef.current = element.scrollTop
         if (showDesktopIndex) {
           indexVirtualizer.scrollToIndex(absoluteIndex + topLoaderOffset, {
             align: mode === 'initial' ? 'center' : 'auto',
@@ -924,13 +920,6 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
                 onPointerDown={() => cancelCenterRequestRef.current?.()}
                 onTouchStart={() => cancelCenterRequestRef.current?.()}
                 onWheel={() => cancelCenterRequestRef.current?.()}
-                onScroll={(event) => {
-                  if (centeringIndexRef.current == null) return
-                  const expectedTop = centerScrollTopRef.current
-                  if (expectedTop == null || Math.abs(event.currentTarget.scrollTop - expectedTop) > 2) {
-                    cancelCenterRequestRef.current?.()
-                  }
-                }}
               >
                 <div className="serviceVersionsList" style={{ height: `${listVirtualizer.getTotalSize()}px` }}>
                   <div className="serviceVersionsListInner" style={{ transform: `translateY(${listOffset}px)` }}>
