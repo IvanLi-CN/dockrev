@@ -23,6 +23,7 @@ ICON_SOURCE = BRAND_DIR / "dockrev-icon-source.svg"
 LOGO_SOURCE = BRAND_DIR / "dockrev-logo-source.svg"
 WORDMARK_SOURCE = VECTOR_DIR / "dockrev-text-pango.svg"
 SOCIAL_PREVIEW_SOURCE = GENERATED_DIR / "dockrev-github-social-preview-imagegen-candidate.png"
+PRODUCT_POSTER_SOURCE = GENERATED_DIR / "dockrev-product-poster-imagegen-candidate.png"
 SOCIAL_FONT = REPO_DIR / "crates" / "dockrev-api" / "assets" / "fonts" / "NotoSansCJKsc-Regular.otf"
 
 DARK_CYAN = ("#20b8ff", "#1eb6fe", "#1cb4fb")
@@ -212,6 +213,7 @@ def generate_raster_assets(icon_dark: Path, icon_square: Path, logo_dark: Path) 
         icon_1024_transparent = temp / "icon-transparent-1024.png"
         icon_2048 = temp / "icon-2048.png"
         logo_1280 = temp / "logo-1280.png"
+        logo_candidate = temp / "logo-candidate.png"
         favicon_ico = temp / "favicon.ico"
 
         render_svg(icon_square, icon_128, 128, 128)
@@ -233,9 +235,36 @@ def generate_raster_assets(icon_dark: Path, icon_square: Path, logo_dark: Path) 
             ],
             check=True,
         )
+        subprocess.run(
+            [
+                "magick",
+                "-size",
+                "2048x1024",
+                "xc:#010e2d",
+                "(",
+                str(logo_1280),
+                "-resize",
+                "1680x479",
+                ")",
+                "-gravity",
+                "center",
+                "-composite",
+                "-depth",
+                "8",
+                str(logo_candidate),
+            ],
+            check=True,
+        )
 
-        copy_to(icon_2048, [BRAND_DIR / "dockrev-icon-source.png"])
+        copy_to(
+            icon_2048,
+            [
+                BRAND_DIR / "dockrev-icon-source.png",
+                GENERATED_DIR / "dockrev-icon-candidate.png",
+            ],
+        )
         copy_to(logo_1280, [BRAND_DIR / "dockrev-logo-source.png"])
+        copy_to(logo_candidate, [GENERATED_DIR / "dockrev-logo-candidate.png"])
         copy_to(
             icon_1024_transparent,
             [
@@ -373,6 +402,194 @@ def generate_social_preview() -> None:
         )
 
 
+def generate_product_poster() -> None:
+    with tempfile.TemporaryDirectory(prefix="dockrev-poster-") as temp_dir:
+        temp = Path(temp_dir)
+        logo = temp / "logo.png"
+        small_icon = temp / "small-icon.png"
+        hero_icon = temp / "hero-icon.png"
+        poster = temp / "poster-1024.png"
+        poster_large = temp / "poster-1440.png"
+
+        subprocess.run(
+            ["magick", str(WEB_PUBLIC_DIR / "dockrev-logo.png"), "-resize", "700x200", str(logo)],
+            check=True,
+        )
+        subprocess.run(
+            ["magick", str(GENERATED_DIR / "dockrev-icon-transparent.png"), "-resize", "88x88", str(small_icon)],
+            check=True,
+        )
+        subprocess.run(
+            ["magick", str(GENERATED_DIR / "dockrev-icon-transparent.png"), "-resize", "270x270", str(hero_icon)],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "magick",
+                str(PRODUCT_POSTER_SOURCE),
+                "-fill",
+                "#010e2d",
+                "-stroke",
+                "none",
+                "-draw",
+                "rectangle 0,0 1024,318",
+                "-fill",
+                "#03162f",
+                "-draw",
+                "rectangle 59,347 154,438",
+                "-fill",
+                "#000a1b",
+                "-draw",
+                "rectangle 342,920 682,1218",
+                str(logo),
+                "-geometry",
+                "+162+36",
+                "-composite",
+                str(small_icon),
+                "-geometry",
+                "+63+350",
+                "-composite",
+                str(hero_icon),
+                "-geometry",
+                "+377+933",
+                "-composite",
+                "-font",
+                str(SOCIAL_FONT),
+                "-fill",
+                "#dcecff",
+                "-pointsize",
+                "31",
+                "-gravity",
+                "north",
+                "-annotate",
+                "+0+252",
+                "Self-hosted Docker/Compose update manager",
+                "-gravity",
+                "northwest",
+                "-crop",
+                "1024x1472+0+0",
+                "+repage",
+                "-depth",
+                "8",
+                str(poster),
+            ],
+            check=True,
+        )
+        subprocess.run(
+            ["magick", str(poster), "-resize", "1440x2070!", "-depth", "8", str(poster_large)],
+            check=True,
+        )
+        copy_to(
+            poster,
+            [
+                WEB_PUBLIC_DIR / "dockrev-product-poster.png",
+                DOCS_PUBLIC_DIR / "dockrev-product-poster.png",
+            ],
+        )
+        copy_to(poster_large, [GENERATED_DIR / "dockrev-product-poster.png"])
+
+
+def generate_contact_sheet() -> None:
+    with tempfile.TemporaryDirectory(prefix="dockrev-contact-sheet-") as temp_dir:
+        temp = Path(temp_dir)
+        favicon = temp / "favicon.png"
+        brand_mark = temp / "brand-mark.png"
+        logo = temp / "logo.png"
+        social = temp / "social.png"
+        poster = temp / "poster.png"
+        sheet = temp / "contact-sheet.png"
+
+        resize_specs = (
+            (WEB_PUBLIC_DIR / "favicon.png", favicon, "320x320"),
+            (WEB_PUBLIC_DIR / "brand-mark.png", brand_mark, "180x180"),
+            (WEB_PUBLIC_DIR / "dockrev-logo.png", logo, "560x160"),
+            (WEB_PUBLIC_DIR / "dockrev-social-preview.png", social, "720x360"),
+            (WEB_PUBLIC_DIR / "dockrev-product-poster.png", poster, "420x630"),
+        )
+        for source, destination, size in resize_specs:
+            subprocess.run(["magick", str(source), "-resize", size, str(destination)], check=True)
+
+        subprocess.run(
+            [
+                "magick",
+                "-size",
+                "1600x1500",
+                "xc:#010e2d",
+                "-font",
+                str(SOCIAL_FONT),
+                "-fill",
+                "#e8f1ff",
+                "-pointsize",
+                "46",
+                "-annotate",
+                "+48+72",
+                "Dockrev final brand assets",
+                "-fill",
+                "none",
+                "-stroke",
+                "#20b8ff",
+                "-strokewidth",
+                "2",
+                "-draw",
+                "roundrectangle 48,120 448,570 8,8 roundrectangle 472,120 848,570 8,8 roundrectangle 872,120 1548,570 8,8 roundrectangle 48,620 824,1050 8,8 roundrectangle 872,620 1548,1400 8,8",
+                str(favicon),
+                "-geometry",
+                "+88+160",
+                "-compose",
+                "over",
+                "-composite",
+                str(brand_mark),
+                "-geometry",
+                "+570+220",
+                "-composite",
+                str(logo),
+                "-geometry",
+                "+930+220",
+                "-composite",
+                str(social),
+                "-geometry",
+                "+76+650",
+                "-composite",
+                str(poster),
+                "-geometry",
+                "+1000+670",
+                "-composite",
+                "-stroke",
+                "none",
+                "-fill",
+                "#b9cee5",
+                "-pointsize",
+                "25",
+                "-annotate",
+                "+72+548",
+                "Favicon 256x256",
+                "-annotate",
+                "+496+548",
+                "Brand mark 128x128",
+                "-annotate",
+                "+896+548",
+                "Horizontal logo 1280x365",
+                "-annotate",
+                "+72+1028",
+                "Social preview 1280x640",
+                "-annotate",
+                "+896+1375",
+                "Product poster 1024x1472",
+                "-depth",
+                "8",
+                str(sheet),
+            ],
+            check=True,
+        )
+        copy_to(
+            sheet,
+            [
+                GENERATED_DIR / "final-site-assets-contact-sheet.png",
+                GENERATED_DIR / "visual-evidence-site-assets.png",
+            ],
+        )
+
+
 def main() -> None:
     required_commands = ("rsvg-convert", "magick")
     missing = [command for command in required_commands if shutil.which(command) is None]
@@ -383,6 +600,8 @@ def main() -> None:
     icon_dark, icon_square, logo_dark = generate_svg_assets()
     generate_raster_assets(icon_dark, icon_square, logo_dark)
     generate_social_preview()
+    generate_product_poster()
+    generate_contact_sheet()
     print("Generated Dockrev brand assets from canonical SVG sources.")
 
 
