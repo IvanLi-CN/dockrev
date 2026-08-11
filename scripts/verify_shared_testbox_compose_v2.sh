@@ -146,6 +146,7 @@ case "$REMOTE_RUN" in
 esac
 cd "$REMOTE_RUN"
 mkdir -p fixture bin artifacts
+exec > >(tee -a artifacts/remote-test.log) 2>&1
 
 log() {
   printf ':: %s\n' "$*" >&2
