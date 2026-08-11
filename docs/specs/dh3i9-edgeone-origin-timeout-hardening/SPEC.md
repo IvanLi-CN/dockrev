@@ -50,6 +50,8 @@
 - deploy-check:
   - GET `/api/deploy-check/report` 必须支持 cached report ready 返回与 pending 返回。
   - POST `/api/deploy-check/report/refresh` 只 enqueue，不同步构建 report。
+  - 启动期发现 `missing` 的 Compose project 时，必须同步归档其仍 active 的关联 Stack；即使 discovery 记录已由旧版本归档，遗留的 active Stack 也必须补齐 `auto_archive_on_restart` 状态。
+  - 该修复只能更新归档元数据，不得删除 Stack、服务、Compose 文件、容器或运行时资源。
 - GitHub release drawer:
   - 打开时只请求 page 1。
   - 若指定 targetVersion，则以前端分页渐进加载定位并高亮，不依赖 `/locate`。
@@ -68,6 +70,8 @@
 - 访问 `/cleanup` 时，不再因为首屏同步 Docker scan 触发 524。
 - cleanup confirm 在 snapshot stale 或 refresh in-flight 时只返回 pending，不直接给旧 confirm payload。
 - `/deploy-check` 有 cached report 时可立即展示，refresh 不阻塞首屏。
+- Given 一个已归档或未归档的 `missing` discovery 项仍关联 active Stack，When Dockrev 启动并完成数据库初始化，Then 该 Stack 必须被标记为 `auto_archive_on_restart`，其失效 Compose 路径不得继续阻断 deploy-check。
+- Given 一个 active discovery 项关联 active Stack，When Dockrev 启动，Then 该 Stack 不得被自动归档。
 - 应用首次加载与恢复前台必须刷新并等待最新 deploy-check report；任一 required core check FAIL 或报告不可用时强制进入 `/deploy-check`，`neverAutoOpen` 不得绕过，失败页不得进入 Dashboard。只有全部 required core check PASS 才放行。
 - release drawer 在不调用 `/github-releases/locate` 的前提下仍可定位目标版本。
 - 任一 SSE 连接在 EdgeOne 前方空闲超过 20 秒时，不会因 15 秒 idle window 被断开。
@@ -148,3 +152,4 @@
 ## 变更记录
 
 - 2026-06-26: 新建 spec，冻结 EdgeOne 15 秒约束、cleanup async snapshot、deploy-check cached-read、release drawer fallback 与 SSE heartbeat 口径。
+- 缺失 discovery 项与关联 Stack 的归档状态必须在启动期保持一致，避免历史失效 Compose 路径错误阻断 deploy-check。

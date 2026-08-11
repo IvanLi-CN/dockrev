@@ -5,6 +5,7 @@
 - Backend snapshot workers for cleanup inventory and deploy-check report refresh.
 - Cleanup API contract migration from synchronous scan to snapshot-backed `ready/pending` reads.
 - Deploy-check cached read + async refresh contract.
+- Startup reconciliation for missing discovery projects and their linked Stack records.
 - GitHub release drawer fallback to service-level locate-first anchor windows.
 - Digest-tags owner-facing path removal of live manifest scan.
 - Edge-proxy-safe SSE heartbeat unification.
@@ -23,11 +24,15 @@
 - Added the application-level deploy-check gate: startup and foreground resume await a fresh report, required core failures force `/deploy-check`, and the failure page disables Dashboard entry regardless of `neverAutoOpen`.
 - Added deterministic mock-only Storybook pass/fail coverage for desktop and `393x852` mobile views; final smoke validation passes all 321 stories.
 - Tightened the deploy-check predicate so every required core item must be `pass`; added App-level mock stories proving startup failure redirects remain blocking even when `neverAutoOpen` is true, with 323-story smoke coverage.
+- Reconciled historical `missing` discovery records with their linked active Stacks during database startup. The repair applies only the `auto_archive_on_restart` metadata, preserving Compose files, services, and Docker runtime resources so stale paths cannot block deploy-check.
+- Extended `scripts/verify_shared_testbox_compose_v2.sh` with a restart regression: it injects archived and unarchived historical `missing` discovery states after boot, proves the stale Compose paths block deploy-check before restart, then verifies startup reconciliation restores the check while preserving Stack and Service metadata, container identity, and running state. Kept runs retain a machine-readable `artifacts/summary.json` and stderr-only `artifacts/remote-test.log` for scoped diagnosis; host, user, run, and Compose project identifiers are bounded and validated, reused runs are rejected atomically, and normal runs remove only the verified isolated run directory from its anchored runs directory.
 
 ## Verification
 
 - `cargo test -p dockrev-api cleanup -- --nocapture`
 - `cargo test -p dockrev-api deploy_check -- --nocapture`
+- `cargo test -p dockrev-api startup_reconciles_missing_discovery_projects_with_active_stacks -- --nocapture`
+- `scripts/verify_shared_testbox_compose_v2.sh --json-out <evidence-path>` (shared testbox; requires a unique isolated run)
 - `cargo test -p dockrev-api github_releases -- --nocapture`
 - `cargo test -p dockrev-api snapshot -- --nocapture`
 - `bun run --cwd web test`

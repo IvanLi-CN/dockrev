@@ -58,7 +58,12 @@ require_cmd() {
   }
 }
 
-for command in git ssh rsync python3; do
+[[ "$TESTBOX" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,253}$ ]] || {
+  echo "testbox must be a single safe SSH host or alias" >&2
+  exit 2
+}
+
+for command in base64 git ssh rsync python3; do
   require_cmd "$command"
 done
 
@@ -73,6 +78,18 @@ print(os.path.realpath(sys.argv[1]))
 PY
 )"
 REPO_NAME="$(basename "$REPO_ROOT")"
+REMOTE_USER="${USER:-}"
+[[ "$REMOTE_USER" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$ ]] || {
+  echo "USER must be a single safe slug for shared testbox runs" >&2
+  exit 2
+}
+REPO_WORKSPACE_SLUG="$(python3 - "$REPO_NAME" <<'PY'
+import re, sys
+
+value = re.sub(r'[^a-z0-9_-]+', '_', sys.argv[1].lower()).strip('_')
+print(value or 'repo')
+PY
+)"
 PATH_HASH8="$(python3 - "$REPO_ROOT" <<'PY'
 import hashlib, os, sys
 print(hashlib.sha256(os.path.realpath(sys.argv[1]).encode()).hexdigest()[:8])
@@ -86,8 +103,8 @@ fi
   echo "run id must be a single safe slug (letters, digits, _ or -)" >&2
   exit 2
 }
-WORKSPACE_SLUG="${REPO_NAME}__${PATH_HASH8}"
-REMOTE_BASE="/srv/codex/workspaces/$USER"
+WORKSPACE_SLUG="${REPO_WORKSPACE_SLUG}__${PATH_HASH8}"
+REMOTE_BASE="/srv/codex/workspaces/$REMOTE_USER"
 REMOTE_WORKSPACE="${REMOTE_BASE}/${WORKSPACE_SLUG}"
 REMOTE_RUN="${REMOTE_WORKSPACE}/runs/${RUN_ID}"
 
@@ -105,6 +122,10 @@ prefix_slug = slug(prefix)
 repo_slug = slug(repo_name)
 run_slug = slug(run_id)
 entropy = hashlib.sha256(f"{prefix_slug}:{repo_name}:{run_id}".encode()).hexdigest()[:8]
+# Reserve one repository character and the entropy suffix so Compose's
+# project name stays within Docker's portable 63-character limit.
+max_run_len = max(1, 63 - len(prefix_slug) - 2 - 1 - 1 - len(entropy))
+run_slug = run_slug[:max_run_len]
 suffix = f"{run_slug}_{entropy}"
 max_repo_len = max(1, 63 - len(prefix_slug) - len(suffix) - 2)
 print(f"{prefix_slug}_{repo_slug[:max_repo_len]}_{suffix}")
@@ -112,7 +133,22 @@ PY
 }
 
 FIXTURE_PROJECT="$(compose_project_slug "composev2" "$REPO_NAME" "$RUN_ID")"
+[[ ${#FIXTURE_PROJECT} -le 63 ]] || {
+  echo "generated Compose project exceeds the portable 63-character limit" >&2
+  exit 2
+}
 SUMMARY_TMP="$(mktemp -t dockrev-testbox-compose-v2-summary.XXXXXX.json)"
+
+base64_encode() {
+  printf '%s' "$1" | base64 | tr -d '\n'
+}
+
+REMOTE_RUN_B64="$(base64_encode "$REMOTE_RUN")"
+REMOTE_BASE_B64="$(base64_encode "$REMOTE_BASE")"
+REMOTE_WORKSPACE_B64="$(base64_encode "$REMOTE_WORKSPACE")"
+RUN_ID_B64="$(base64_encode "$RUN_ID")"
+FIXTURE_PROJECT_B64="$(base64_encode "$FIXTURE_PROJECT")"
+REPO_ROOT_B64="$(base64_encode "$REPO_ROOT")"
 SYNC_EXCLUDES=(
   --exclude '.git/'
   --exclude 'node_modules/'
@@ -124,28 +160,108 @@ SYNC_EXCLUDES=(
 )
 
 printf '==> Preparing remote workspace %s on %s\n' "$REMOTE_RUN" "$TESTBOX"
-ssh -o BatchMode=yes "$TESTBOX" "mkdir -p '$REMOTE_RUN' '$REMOTE_WORKSPACE' && printf '%s\\n' 'local_repo_root=$REPO_ROOT' 'created_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)' 'last_run_id=$RUN_ID' > '$REMOTE_WORKSPACE/workspace.txt'"
-
-printf '==> Syncing repository to shared testbox\n'
-rsync -az --delete "${SYNC_EXCLUDES[@]}" "$REPO_ROOT/" "$TESTBOX:$REMOTE_RUN/"
-
-printf '==> Running real Compose V2 regression on shared testbox\n'
-ssh -o BatchMode=yes "$TESTBOX" \
-  env \
-    REMOTE_RUN="$REMOTE_RUN" \
-    REMOTE_WORKSPACE="$REMOTE_WORKSPACE" \
-    RUN_ID="$RUN_ID" \
-    FIXTURE_PROJECT="$FIXTURE_PROJECT" \
-    KEEP_RUN="$KEEP_RUN" \
-  'bash -s' > "$SUMMARY_TMP" <<'REMOTE_SCRIPT'
+ssh -o BatchMode=yes -- "$TESTBOX" \
+  "env REMOTE_RUN_B64=$REMOTE_RUN_B64 REMOTE_BASE_B64=$REMOTE_BASE_B64 REMOTE_WORKSPACE_B64=$REMOTE_WORKSPACE_B64 RUN_ID_B64=$RUN_ID_B64 REPO_ROOT_B64=$REPO_ROOT_B64 bash -s" <<'REMOTE_SETUP'
 set -euo pipefail
 
+command -v base64 >/dev/null 2>&1 || {
+  echo "missing required remote command: base64" >&2
+  exit 2
+}
+
+decode_base64() {
+  printf '%s' "$1" | base64 -d
+}
+
+REMOTE_RUN="$(decode_base64 "$REMOTE_RUN_B64")"
+REMOTE_BASE="$(decode_base64 "$REMOTE_BASE_B64")"
+REMOTE_WORKSPACE="$(decode_base64 "$REMOTE_WORKSPACE_B64")"
+RUN_ID="$(decode_base64 "$RUN_ID_B64")"
+REPO_ROOT="$(decode_base64 "$REPO_ROOT_B64")"
+ensure_directory() {
+  local path="$1"
+  if [[ -e "$path" ]]; then
+    [[ -d "$path" && ! -L "$path" ]] || {
+      echo "remote directory is unsafe: $path" >&2
+      exit 2
+    }
+  else
+    mkdir -- "$path"
+  fi
+}
+
+for path in /srv/codex /srv/codex/workspaces; do
+  [[ -d "$path" && ! -L "$path" ]] || {
+    echo "shared testbox root is unsafe: $path" >&2
+    exit 2
+  }
+done
+case "$REMOTE_BASE" in
+  /srv/codex/workspaces/*) ;;
+  *) echo "remote base escaped /srv/codex/workspaces" >&2; exit 2 ;;
+esac
+case "$REMOTE_WORKSPACE" in
+  "$REMOTE_BASE"/*) ;;
+  *) echo "remote workspace escaped the expected base" >&2; exit 2 ;;
+esac
 case "$REMOTE_RUN" in
   "$REMOTE_WORKSPACE/runs/$RUN_ID") ;;
   *) echo "remote run path escaped the expected workspace" >&2; exit 2 ;;
 esac
+ensure_directory "$REMOTE_BASE"
+ensure_directory "$REMOTE_WORKSPACE"
+ensure_directory "$REMOTE_WORKSPACE/runs"
+if ! mkdir "$REMOTE_RUN"; then
+  echo "remote run already exists: $REMOTE_RUN" >&2
+  exit 2
+fi
+printf '%s\n' "local_repo_root=$REPO_ROOT" "created_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)" "last_run_id=$RUN_ID" > "$REMOTE_WORKSPACE/workspace.txt"
+REMOTE_SETUP
+
+printf '==> Syncing repository to shared testbox\n'
+rsync -azs --delete "${SYNC_EXCLUDES[@]}" -- "$REPO_ROOT/" "$TESTBOX:$REMOTE_RUN/"
+
+printf '==> Running real Compose V2 regression on shared testbox\n'
+ssh -o BatchMode=yes -- "$TESTBOX" \
+  "env REMOTE_RUN_B64=$REMOTE_RUN_B64 REMOTE_BASE_B64=$REMOTE_BASE_B64 REMOTE_WORKSPACE_B64=$REMOTE_WORKSPACE_B64 RUN_ID_B64=$RUN_ID_B64 FIXTURE_PROJECT_B64=$FIXTURE_PROJECT_B64 KEEP_RUN=$KEEP_RUN bash -s" \
+  > "$SUMMARY_TMP" <<'REMOTE_SCRIPT'
+set -euo pipefail
+
+decode_base64() {
+  printf '%s' "$1" | base64 -d
+}
+
+REMOTE_RUN="$(decode_base64 "$REMOTE_RUN_B64")"
+REMOTE_BASE="$(decode_base64 "$REMOTE_BASE_B64")"
+REMOTE_WORKSPACE="$(decode_base64 "$REMOTE_WORKSPACE_B64")"
+RUN_ID="$(decode_base64 "$RUN_ID_B64")"
+FIXTURE_PROJECT="$(decode_base64 "$FIXTURE_PROJECT_B64")"
+
+verify_remote_scope() {
+  case "$REMOTE_BASE" in
+    /srv/codex/workspaces/*) ;;
+    *) return 1 ;;
+  esac
+  case "$REMOTE_WORKSPACE" in
+    "$REMOTE_BASE"/*) ;;
+    *) return 1 ;;
+  esac
+  case "$REMOTE_RUN" in
+    "$REMOTE_WORKSPACE/runs/$RUN_ID") ;;
+    *) return 1 ;;
+  esac
+  for path in /srv/codex /srv/codex/workspaces "$REMOTE_BASE" "$REMOTE_WORKSPACE" "$REMOTE_WORKSPACE/runs" "$REMOTE_RUN"; do
+    [[ -d "$path" && ! -L "$path" ]] || return 1
+  done
+}
+
+verify_remote_scope || {
+  echo "remote run scope is unsafe" >&2
+  exit 2
+}
 cd "$REMOTE_RUN"
 mkdir -p fixture bin artifacts
+exec 2> >(tee -a artifacts/remote-test.log >&2)
 
 log() {
   printf ':: %s\n' "$*" >&2
@@ -275,6 +391,41 @@ PY
   return 1
 }
 
+request_deploy_check_refresh() {
+  curl_body POST /api/deploy-check/report/refresh >/dev/null
+}
+
+wait_for_compose_access_status() {
+  local expected_status="$1"
+  local payload
+  for _ in $(seq 1 90); do
+    payload="$(curl_body GET /api/deploy-check/report)"
+    if python3 - "$expected_status" "$payload" <<'PY'
+import json, sys
+
+expected, raw = sys.argv[1:3]
+payload = json.loads(raw)
+if payload.get("status") != "ready" or payload.get("refreshing") is not False:
+    raise SystemExit(1)
+if payload.get("lastError"):
+    raise SystemExit("deploy-check refresh failed: " + str(payload["lastError"]))
+for item in payload.get("report", {}).get("checks", []):
+    if item.get("id") == "core.compose_access":
+        if item.get("status") == expected:
+            raise SystemExit(0)
+        raise SystemExit(1)
+raise SystemExit("core.compose_access missing from deploy-check report")
+PY
+    then
+      printf '%s' "$payload"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "timed out waiting for core.compose_access=${expected_status}" >&2
+  return 1
+}
+
 generate_caps_override() {
   local output="$1"
   local services
@@ -366,13 +517,30 @@ stop_server() {
 cleanup_remote() {
   set +e
   stop_server
+  if ! verify_remote_scope; then
+    echo "refusing cleanup outside the verified shared-testbox run scope" >&2
+    return
+  fi
+  cd "$REMOTE_WORKSPACE/runs" || return
+  [[ "$(pwd -P)" == "$REMOTE_WORKSPACE/runs" ]] || {
+    echo "refusing cleanup from an unexpected remote runs directory" >&2
+    return
+  }
+  [[ -d "$RUN_ID" && ! -L "$RUN_ID" ]] || {
+    echo "refusing cleanup for a missing or symlinked remote run" >&2
+    return
+  }
+  cd "$RUN_ID" || return
+  [[ "$(pwd -P)" == "$REMOTE_RUN" ]] || {
+    echo "refusing cleanup from an unexpected remote run directory" >&2
+    return
+  }
   compose_fixture down -v --remove-orphans >/dev/null 2>&1 || true
   if [[ "$KEEP_RUN" != "1" ]]; then
-    if [[ "$REMOTE_RUN" == "$REMOTE_WORKSPACE/runs/$RUN_ID" ]]; then
-      rm -rf -- "$REMOTE_RUN"
-    else
-      echo "refusing to clean an escaped remote run path" >&2
-    fi
+    # Stay relative to the verified run directory so a renamed parent cannot
+    # redirect cleanup through a newly introduced absolute-path symlink.
+    cd .. || return
+    rm -rf -- "$RUN_ID"
   fi
 }
 trap cleanup_remote EXIT
@@ -591,9 +759,217 @@ PY
   compose_fixture down -v --remove-orphans >&2
 }
 
+run_missing_discovery_stack_reconciliation() {
+  MODE="missing-discovery-stack-reconciliation"
+  COMMAND_LOG="$REMOTE_RUN/artifacts/${MODE}-compose.log"
+  : > "$COMMAND_LOG"
+  log "running missing discovery Stack startup reconciliation test"
+  compose_fixture up -d >&2
+  start_server docker
+
+  healthy_stack_id="$(discover_fixture)"
+  request_deploy_check_refresh
+  healthy_report="$(wait_for_compose_access_status pass)"
+  before_containers="$(compose_fixture ps -a -q)"
+  before_running_containers="$(compose_fixture ps -q)"
+  missing_compose_path="$REMOTE_RUN/fixture/legacy-missing-compose.yaml"
+  unarchived_missing_compose_path="$REMOTE_RUN/fixture/unarchived-missing-compose.yaml"
+
+  python3 - "$DB_PATH" "$missing_compose_path" "$unarchived_missing_compose_path" <<'PY'
+import json, sqlite3, sys
+
+db_path, missing_compose_path, unarchived_missing_compose_path = sys.argv[1:4]
+now = "2026-08-11T00:00:00Z"
+conn = sqlite3.connect(db_path)
+try:
+    conn.execute(
+        """
+        INSERT INTO stacks (
+          id, name, compose_type, compose_files_json, env_file, backup_targets_json,
+          backup_retention_keep_last, backup_retention_delete_after_stable_seconds,
+          archived, created_at, updated_at, last_check_at
+        ) VALUES (?, ?, 'path', ?, '/srv/legacy/.env', ?, 7, 3600, 0, ?, ?, ?)
+        """,
+        (
+            "legacy-missing-stack",
+            "legacy-missing-stack",
+            json.dumps([missing_compose_path]),
+            json.dumps([{"kind": "bind-mount", "path": "/srv/legacy/data"}]),
+            now,
+            now,
+            now,
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO services (
+          id, stack_id, name, image_ref, image_tag, auto_rollback,
+          backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at
+        ) VALUES (
+          'legacy-missing-service', 'legacy-missing-stack', 'app', 'alpine:3.20', '3.20', 0,
+          '["/srv/legacy/data"]', '["legacy_data"]', ?, ?
+        )
+        """,
+        (now, now),
+    )
+    conn.execute(
+        """
+        INSERT INTO discovered_compose_projects (
+          project, stack_id, status, archived, archived_at, archived_reason
+        ) VALUES (?, ?, 'missing', 1, ?, 'user_archive')
+        """,
+        ("legacy-missing-project", "legacy-missing-stack", now),
+    )
+    conn.execute(
+        """
+        INSERT INTO stacks (
+          id, name, compose_type, compose_files_json, backup_targets_json,
+          backup_retention_keep_last, backup_retention_delete_after_stable_seconds,
+          archived, created_at, updated_at, last_check_at
+        ) VALUES (?, ?, 'path', ?, '[]', 0, 0, 0, ?, ?, ?)
+        """,
+        (
+            "unarchived-missing-stack",
+            "unarchived-missing-stack",
+            json.dumps([unarchived_missing_compose_path]),
+            now,
+            now,
+            now,
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO discovered_compose_projects (project, stack_id, status)
+        VALUES ('unarchived-missing-project', 'unarchived-missing-stack', 'missing')
+        """
+    )
+    conn.commit()
+finally:
+    conn.close()
+PY
+
+  request_deploy_check_refresh
+  blocked_report="$(wait_for_compose_access_status fail)"
+  stop_server
+
+  start_server docker
+  request_deploy_check_refresh
+  recovered_report="$(wait_for_compose_access_status pass)"
+  reconciliation_state="$(python3 - "$DB_PATH" "$healthy_stack_id" "$missing_compose_path" "$unarchived_missing_compose_path" <<'PY'
+import json, sqlite3, sys
+
+db_path, healthy_stack_id, missing_compose_path, unarchived_missing_compose_path = sys.argv[1:5]
+conn = sqlite3.connect(db_path)
+try:
+    stale = conn.execute(
+        """
+        SELECT archived, archived_reason, archived_at, compose_files_json, env_file,
+               backup_targets_json, backup_retention_keep_last,
+               backup_retention_delete_after_stable_seconds
+        FROM stacks
+        WHERE id = 'legacy-missing-stack'
+        """
+    ).fetchone()
+    legacy_service = conn.execute(
+        """
+        SELECT stack_id, name, image_ref, image_tag, auto_rollback,
+               backup_targets_bind_paths_json, backup_targets_volume_names_json
+        FROM services
+        WHERE id = 'legacy-missing-service'
+        """
+    ).fetchone()
+    legacy_discovery = conn.execute(
+        "SELECT archived, archived_reason FROM discovered_compose_projects WHERE project = 'legacy-missing-project'"
+    ).fetchone()
+    unarchived = conn.execute(
+        "SELECT archived, archived_reason, archived_at, compose_files_json FROM stacks WHERE id = 'unarchived-missing-stack'"
+    ).fetchone()
+    unarchived_discovery = conn.execute(
+        "SELECT archived, archived_reason FROM discovered_compose_projects WHERE project = 'unarchived-missing-project'"
+    ).fetchone()
+    healthy = conn.execute(
+        "SELECT archived FROM stacks WHERE id = ?", (healthy_stack_id,)
+    ).fetchone()
+finally:
+    conn.close()
+
+expected_stale_metadata = (
+    1, "auto_archive_on_restart", stale[2], json.dumps([missing_compose_path]),
+    "/srv/legacy/.env", json.dumps([{"kind": "bind-mount", "path": "/srv/legacy/data"}]), 7, 3600,
+)
+if stale != expected_stale_metadata or stale[2] is None:
+    raise SystemExit(f"legacy missing Stack was not auto-archived: {stale}")
+if legacy_service != (
+    "legacy-missing-stack", "app", "alpine:3.20", "3.20", 0,
+    json.dumps(["/srv/legacy/data"]), json.dumps(["legacy_data"]),
+):
+    raise SystemExit(f"legacy missing service metadata changed: {legacy_service}")
+if legacy_discovery != (1, "user_archive"):
+    raise SystemExit(f"legacy missing discovery metadata changed: {legacy_discovery}")
+if unarchived != (1, "auto_archive_on_restart", unarchived[2], json.dumps([unarchived_missing_compose_path])) or unarchived[2] is None:
+    raise SystemExit(f"unarchived missing Stack was not auto-archived: {unarchived}")
+if unarchived_discovery != (1, "auto_archive_on_restart"):
+    raise SystemExit(f"unarchived missing discovery was not auto-archived: {unarchived_discovery}")
+if healthy != (0,):
+    raise SystemExit(f"active discovery Stack was unexpectedly archived: {healthy}")
+print(json.dumps({
+    "legacyStackArchived": True,
+    "legacyStackArchivedReason": "auto_archive_on_restart",
+    "legacyStackMetadataPreserved": True,
+    "legacyServiceMetadataPreserved": True,
+    "unarchivedLegacyStackArchived": True,
+    "healthyStackArchived": False,
+}, sort_keys=True))
+PY
+)"
+  after_containers="$(compose_fixture ps -a -q)"
+  after_running_containers="$(compose_fixture ps -q)"
+  [[ "$before_containers" == "$after_containers" ]] || {
+    echo "startup reconciliation changed fixture containers: before=$before_containers after=$after_containers" >&2
+    return 1
+  }
+  [[ "$before_running_containers" == "$after_running_containers" ]] || {
+    echo "startup reconciliation changed fixture running state: before=$before_running_containers after=$after_running_containers" >&2
+    return 1
+  }
+
+  RESULTS+=("$(python3 - "$healthy_stack_id" "$missing_compose_path" "$unarchived_missing_compose_path" "$healthy_report" "$blocked_report" "$recovered_report" "$reconciliation_state" "$before_containers" "$after_containers" "$before_running_containers" "$after_running_containers" <<'PY'
+import json, sys
+
+healthy_stack_id, missing_path, unarchived_missing_path, healthy, blocked, recovered, state, before, after, before_running, after_running = sys.argv[1:]
+
+def compose_access_status(raw: str) -> str:
+    for item in json.loads(raw)["report"]["checks"]:
+        if item["id"] == "core.compose_access":
+            return item["status"]
+    raise SystemExit("core.compose_access missing from report")
+
+print(json.dumps({
+    "mode": "missing-discovery-stack-reconciliation",
+    "healthyStackId": healthy_stack_id,
+    "legacyMissingComposePath": missing_path,
+    "unarchivedLegacyMissingComposePath": unarchived_missing_path,
+    "preRestartComposeAccess": compose_access_status(blocked),
+    "postRestartComposeAccess": compose_access_status(recovered),
+    "healthyComposeAccess": compose_access_status(healthy),
+    "reconciliation": json.loads(state),
+    "containersBeforeRestart": before,
+    "containersAfterRestart": after,
+    "containerMutationObserved": before != after,
+    "runningContainersBeforeRestart": before_running,
+    "runningContainersAfterRestart": after_running,
+    "containerStateMutationObserved": before_running != after_running,
+}, sort_keys=True))
+PY
+)")
+  stop_server
+  compose_fixture down -v --remove-orphans >&2
+}
+
 run_v2_mode plugin docker
 run_v2_mode standalone "$REMOTE_RUN/bin/docker-compose-v2"
 run_v1_mode
+run_missing_discovery_stack_reconciliation
 
 summary="$(python3 - "$RUN_ID" "$REMOTE_RUN" "$FIXTURE_PROJECT" "${RESULTS[@]}" <<'PY'
 import json, sys
@@ -619,6 +995,7 @@ print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
 PY
 )"
 fi
+printf '%s' "$summary" > artifacts/summary.json
 printf '%s' "$summary"
 REMOTE_SCRIPT
 
