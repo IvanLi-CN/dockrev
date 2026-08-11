@@ -537,7 +537,9 @@ cleanup_remote() {
   }
   compose_fixture down -v --remove-orphans >/dev/null 2>&1 || true
   if [[ "$KEEP_RUN" != "1" ]]; then
-    cd "$REMOTE_WORKSPACE/runs" || return
+    # Stay relative to the verified run directory so a renamed parent cannot
+    # redirect cleanup through a newly introduced absolute-path symlink.
+    cd .. || return
     rm -rf -- "$RUN_ID"
   fi
 }
