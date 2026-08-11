@@ -774,6 +774,7 @@ print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
 PY
 )"
 fi
+printf '%s' "$summary" > artifacts/summary.json
 printf '%s' "$summary"
 REMOTE_SCRIPT
 
