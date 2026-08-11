@@ -58,7 +58,12 @@ require_cmd() {
   }
 }
 
-for command in git ssh rsync python3; do
+[[ "$TESTBOX" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,253}$ ]] || {
+  echo "testbox must be a single safe SSH host or alias" >&2
+  exit 2
+}
+
+for command in base64 git ssh rsync python3; do
   require_cmd "$command"
 done
 
@@ -117,6 +122,10 @@ prefix_slug = slug(prefix)
 repo_slug = slug(repo_name)
 run_slug = slug(run_id)
 entropy = hashlib.sha256(f"{prefix_slug}:{repo_name}:{run_id}".encode()).hexdigest()[:8]
+# Reserve one repository character and the entropy suffix so Compose's
+# project name stays within Docker's portable 63-character limit.
+max_run_len = max(1, 63 - len(prefix_slug) - 2 - 1 - 1 - len(entropy))
+run_slug = run_slug[:max_run_len]
 suffix = f"{run_slug}_{entropy}"
 max_repo_len = max(1, 63 - len(prefix_slug) - len(suffix) - 2)
 print(f"{prefix_slug}_{repo_slug[:max_repo_len]}_{suffix}")
@@ -124,6 +133,10 @@ PY
 }
 
 FIXTURE_PROJECT="$(compose_project_slug "composev2" "$REPO_NAME" "$RUN_ID")"
+[[ ${#FIXTURE_PROJECT} -le 63 ]] || {
+  echo "generated Compose project exceeds the portable 63-character limit" >&2
+  exit 2
+}
 SUMMARY_TMP="$(mktemp -t dockrev-testbox-compose-v2-summary.XXXXXX.json)"
 
 base64_encode() {
@@ -147,9 +160,14 @@ SYNC_EXCLUDES=(
 )
 
 printf '==> Preparing remote workspace %s on %s\n' "$REMOTE_RUN" "$TESTBOX"
-ssh -o BatchMode=yes "$TESTBOX" \
+ssh -o BatchMode=yes -- "$TESTBOX" \
   "env REMOTE_RUN_B64=$REMOTE_RUN_B64 REMOTE_BASE_B64=$REMOTE_BASE_B64 REMOTE_WORKSPACE_B64=$REMOTE_WORKSPACE_B64 RUN_ID_B64=$RUN_ID_B64 REPO_ROOT_B64=$REPO_ROOT_B64 bash -s" <<'REMOTE_SETUP'
 set -euo pipefail
+
+command -v base64 >/dev/null 2>&1 || {
+  echo "missing required remote command: base64" >&2
+  exit 2
+}
 
 decode_base64() {
   printf '%s' "$1" | base64 -d
@@ -201,10 +219,10 @@ printf '%s\n' "local_repo_root=$REPO_ROOT" "created_utc=$(date -u +%Y-%m-%dT%H:%
 REMOTE_SETUP
 
 printf '==> Syncing repository to shared testbox\n'
-rsync -azs --delete "${SYNC_EXCLUDES[@]}" "$REPO_ROOT/" "$TESTBOX:$REMOTE_RUN/"
+rsync -azs --delete "${SYNC_EXCLUDES[@]}" -- "$REPO_ROOT/" "$TESTBOX:$REMOTE_RUN/"
 
 printf '==> Running real Compose V2 regression on shared testbox\n'
-ssh -o BatchMode=yes "$TESTBOX" \
+ssh -o BatchMode=yes -- "$TESTBOX" \
   "env REMOTE_RUN_B64=$REMOTE_RUN_B64 REMOTE_BASE_B64=$REMOTE_BASE_B64 REMOTE_WORKSPACE_B64=$REMOTE_WORKSPACE_B64 RUN_ID_B64=$RUN_ID_B64 FIXTURE_PROJECT_B64=$FIXTURE_PROJECT_B64 KEEP_RUN=$KEEP_RUN bash -s" \
   > "$SUMMARY_TMP" <<'REMOTE_SCRIPT'
 set -euo pipefail
@@ -503,10 +521,24 @@ cleanup_remote() {
     echo "refusing cleanup outside the verified shared-testbox run scope" >&2
     return
   fi
-  cd "$REMOTE_RUN" || return
+  cd "$REMOTE_WORKSPACE/runs" || return
+  [[ "$(pwd -P)" == "$REMOTE_WORKSPACE/runs" ]] || {
+    echo "refusing cleanup from an unexpected remote runs directory" >&2
+    return
+  }
+  [[ -d "$RUN_ID" && ! -L "$RUN_ID" ]] || {
+    echo "refusing cleanup for a missing or symlinked remote run" >&2
+    return
+  }
+  cd "$RUN_ID" || return
+  [[ "$(pwd -P)" == "$REMOTE_RUN" ]] || {
+    echo "refusing cleanup from an unexpected remote run directory" >&2
+    return
+  }
   compose_fixture down -v --remove-orphans >/dev/null 2>&1 || true
   if [[ "$KEEP_RUN" != "1" ]]; then
-    rm -rf -- "$REMOTE_RUN"
+    cd "$REMOTE_WORKSPACE/runs" || return
+    rm -rf -- "$RUN_ID"
   fi
 }
 trap cleanup_remote EXIT
