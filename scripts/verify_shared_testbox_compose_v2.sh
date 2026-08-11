@@ -754,12 +754,13 @@ try:
           id, name, compose_type, compose_files_json, env_file, backup_targets_json,
           backup_retention_keep_last, backup_retention_delete_after_stable_seconds,
           archived, created_at, updated_at, last_check_at
-        ) VALUES (?, ?, 'path', ?, '/srv/legacy/.env', '["/srv/legacy/data"]', 7, 3600, 0, ?, ?, ?)
+        ) VALUES (?, ?, 'path', ?, '/srv/legacy/.env', ?, 7, 3600, 0, ?, ?, ?)
         """,
         (
             "legacy-missing-stack",
             "legacy-missing-stack",
             json.dumps([missing_compose_path]),
+            json.dumps([{"kind": "bind-mount", "path": "/srv/legacy/data"}]),
             now,
             now,
             now,
@@ -860,7 +861,7 @@ finally:
 
 expected_stale_metadata = (
     1, "auto_archive_on_restart", stale[2], json.dumps([missing_compose_path]),
-    "/srv/legacy/.env", json.dumps(["/srv/legacy/data"]), 7, 3600,
+    "/srv/legacy/.env", json.dumps([{"kind": "bind-mount", "path": "/srv/legacy/data"}]), 7, 3600,
 )
 if stale != expected_stale_metadata or stale[2] is None:
     raise SystemExit(f"legacy missing Stack was not auto-archived: {stale}")

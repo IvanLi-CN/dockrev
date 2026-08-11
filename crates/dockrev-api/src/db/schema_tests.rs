@@ -40,7 +40,7 @@ INSERT INTO stacks (
 UPDATE stacks
 SET compose_files_json = '["/srv/legacy/docker-compose.yml"]',
     env_file = '/srv/legacy/.env',
-    backup_targets_json = '["/srv/legacy/data"]',
+    backup_targets_json = '[{"kind":"bind-mount","path":"/srv/legacy/data"}]',
     backup_retention_keep_last = 7,
     backup_retention_delete_after_stable_seconds = 3600
 WHERE id = 'legacy_missing'
@@ -179,7 +179,7 @@ WHERE id = 'legacy_missing'
         (
             "[\"/srv/legacy/docker-compose.yml\"]".to_string(),
             Some("/srv/legacy/.env".to_string()),
-            "[\"/srv/legacy/data\"]".to_string(),
+            "[{\"kind\":\"bind-mount\",\"path\":\"/srv/legacy/data\"}]".to_string(),
             7,
             3600,
         )
