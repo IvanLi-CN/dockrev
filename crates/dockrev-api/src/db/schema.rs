@@ -692,7 +692,7 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     apply_migration_0011_track_candidate_display_tags_in_new_version_discoveries(conn)?;
     apply_migration_0012_track_image_ref_in_new_version_discoveries(conn)?;
     schema_job_history_retention::apply(conn)?;
-    auto_archive_missing_discovery_projects_on_startup(conn)?;
+    reconcile_missing_discovery_projects_on_startup(conn)?;
     Ok(())
 }
 
@@ -1044,11 +1044,25 @@ DELETE FROM service_new_version_discoveries;
     Ok(())
 }
 
-fn auto_archive_missing_discovery_projects_on_startup(
-    conn: &rusqlite::Connection,
+fn reconcile_missing_discovery_projects_on_startup(
+    conn: &mut rusqlite::Connection,
 ) -> anyhow::Result<()> {
     let now = now_rfc3339()?;
-    conn.execute(
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute(
+        r#"
+UPDATE stacks
+SET archived = 1, archived_at = ?1, archived_reason = 'auto_archive_on_restart'
+WHERE archived = 0
+  AND id IN (
+    SELECT stack_id
+    FROM discovered_compose_projects
+    WHERE status = 'missing' AND stack_id IS NOT NULL
+  )
+"#,
+        params![now],
+    )?;
+    tx.execute(
         r#"
 UPDATE discovered_compose_projects
 SET archived = 1, archived_at = ?1, archived_reason = 'auto_archive_on_restart'
@@ -1056,6 +1070,7 @@ WHERE status = 'missing' AND archived = 0
 "#,
         params![now],
     )?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -1475,3 +1490,7 @@ CREATE TABLE IF NOT EXISTS service_resource_latest_samples (
 CREATE INDEX IF NOT EXISTS idx_service_resource_latest_samples_sampled_at
   ON service_resource_latest_samples(sampled_at);
 "#;
+
+#[cfg(test)]
+#[path = "schema_tests.rs"]
+mod schema_tests;
