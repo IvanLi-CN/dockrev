@@ -275,6 +275,41 @@ PY
   return 1
 }
 
+request_deploy_check_refresh() {
+  curl_body POST /api/deploy-check/report/refresh >/dev/null
+}
+
+wait_for_compose_access_status() {
+  local expected_status="$1"
+  local payload
+  for _ in $(seq 1 90); do
+    payload="$(curl_body GET /api/deploy-check/report)"
+    if python3 - "$expected_status" "$payload" <<'PY'
+import json, sys
+
+expected, raw = sys.argv[1:3]
+payload = json.loads(raw)
+if payload.get("status") != "ready" or payload.get("refreshing") is not False:
+    raise SystemExit(1)
+if payload.get("lastError"):
+    raise SystemExit("deploy-check refresh failed: " + str(payload["lastError"]))
+for item in payload.get("report", {}).get("checks", []):
+    if item.get("id") == "core.compose_access":
+        if item.get("status") == expected:
+            raise SystemExit(0)
+        raise SystemExit(1)
+raise SystemExit("core.compose_access missing from deploy-check report")
+PY
+    then
+      printf '%s' "$payload"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "timed out waiting for core.compose_access=${expected_status}" >&2
+  return 1
+}
+
 generate_caps_override() {
   local output="$1"
   local services
@@ -591,9 +626,129 @@ PY
   compose_fixture down -v --remove-orphans >&2
 }
 
+run_missing_discovery_stack_reconciliation() {
+  MODE="missing-discovery-stack-reconciliation"
+  COMMAND_LOG="$REMOTE_RUN/artifacts/${MODE}-compose.log"
+  : > "$COMMAND_LOG"
+  log "running missing discovery Stack startup reconciliation test"
+  compose_fixture up -d >&2
+  start_server docker
+
+  healthy_stack_id="$(discover_fixture)"
+  request_deploy_check_refresh
+  healthy_report="$(wait_for_compose_access_status pass)"
+  before_containers="$(compose_fixture ps -a -q)"
+  missing_compose_path="$REMOTE_RUN/fixture/legacy-missing-compose.yaml"
+
+  python3 - "$DB_PATH" "$missing_compose_path" <<'PY'
+import json, sqlite3, sys
+
+db_path, missing_compose_path = sys.argv[1:3]
+now = "2026-08-11T00:00:00Z"
+conn = sqlite3.connect(db_path)
+try:
+    conn.execute(
+        """
+        INSERT INTO stacks (
+          id, name, compose_type, compose_files_json, backup_targets_json,
+          backup_retention_keep_last, backup_retention_delete_after_stable_seconds,
+          archived, created_at, updated_at, last_check_at
+        ) VALUES (?, ?, 'path', ?, '[]', 0, 0, 0, ?, ?, ?)
+        """,
+        (
+            "legacy-missing-stack",
+            "legacy-missing-stack",
+            json.dumps([missing_compose_path]),
+            now,
+            now,
+            now,
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO discovered_compose_projects (
+          project, stack_id, status, archived, archived_at, archived_reason
+        ) VALUES (?, ?, 'missing', 1, ?, 'auto_archive_on_restart')
+        """,
+        ("legacy-missing-project", "legacy-missing-stack", now),
+    )
+    conn.commit()
+finally:
+    conn.close()
+PY
+
+  request_deploy_check_refresh
+  blocked_report="$(wait_for_compose_access_status fail)"
+  stop_server
+
+  start_server docker
+  request_deploy_check_refresh
+  recovered_report="$(wait_for_compose_access_status pass)"
+  reconciliation_state="$(python3 - "$DB_PATH" "$healthy_stack_id" <<'PY'
+import json, sqlite3, sys
+
+db_path, healthy_stack_id = sys.argv[1:3]
+conn = sqlite3.connect(db_path)
+try:
+    stale = conn.execute(
+        "SELECT archived, archived_reason FROM stacks WHERE id = 'legacy-missing-stack'"
+    ).fetchone()
+    healthy = conn.execute(
+        "SELECT archived FROM stacks WHERE id = ?", (healthy_stack_id,)
+    ).fetchone()
+finally:
+    conn.close()
+
+if stale != (1, "auto_archive_on_restart"):
+    raise SystemExit(f"legacy missing Stack was not auto-archived: {stale}")
+if healthy != (0,):
+    raise SystemExit(f"active discovery Stack was unexpectedly archived: {healthy}")
+print(json.dumps({
+    "legacyStackArchived": True,
+    "legacyStackArchivedReason": "auto_archive_on_restart",
+    "healthyStackArchived": False,
+}, sort_keys=True))
+PY
+)"
+  after_containers="$(compose_fixture ps -a -q)"
+  [[ "$before_containers" == "$after_containers" ]] || {
+    echo "startup reconciliation changed fixture containers: before=$before_containers after=$after_containers" >&2
+    return 1
+  }
+
+  RESULTS+=("$(python3 - "$healthy_stack_id" "$missing_compose_path" "$healthy_report" "$blocked_report" "$recovered_report" "$reconciliation_state" "$before_containers" "$after_containers" <<'PY'
+import json, sys
+
+healthy_stack_id, missing_path, healthy, blocked, recovered, state, before, after = sys.argv[1:]
+
+def compose_access_status(raw: str) -> str:
+    for item in json.loads(raw)["report"]["checks"]:
+        if item["id"] == "core.compose_access":
+            return item["status"]
+    raise SystemExit("core.compose_access missing from report")
+
+print(json.dumps({
+    "mode": "missing-discovery-stack-reconciliation",
+    "healthyStackId": healthy_stack_id,
+    "legacyMissingComposePath": missing_path,
+    "preRestartComposeAccess": compose_access_status(blocked),
+    "postRestartComposeAccess": compose_access_status(recovered),
+    "healthyComposeAccess": compose_access_status(healthy),
+    "reconciliation": json.loads(state),
+    "containersBeforeRestart": before,
+    "containersAfterRestart": after,
+    "containerMutationObserved": before != after,
+}, sort_keys=True))
+PY
+)")
+  stop_server
+  compose_fixture down -v --remove-orphans >&2
+}
+
 run_v2_mode plugin docker
 run_v2_mode standalone "$REMOTE_RUN/bin/docker-compose-v2"
 run_v1_mode
+run_missing_discovery_stack_reconciliation
 
 summary="$(python3 - "$RUN_ID" "$REMOTE_RUN" "$FIXTURE_PROJECT" "${RESULTS[@]}" <<'PY'
 import json, sys
