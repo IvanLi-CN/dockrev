@@ -838,7 +838,7 @@ PY
 
   start_server docker
   request_deploy_check_refresh
-  blocked_report="$(wait_for_compose_access_status fail)"
+  visible_invalid_report="$(wait_for_compose_access_status pass)"
   reconciliation_state="$(python3 - "$DB_PATH" "$healthy_stack_id" <<'PY'
 import json, sqlite3, sys
 
@@ -893,7 +893,7 @@ finally:
     conn.close()
 PY
   request_deploy_check_refresh
-  recovered_report="$(wait_for_compose_access_status pass)"
+  manual_archive_report="$(wait_for_compose_access_status pass)"
   after_containers="$(compose_fixture ps -a -q)"
   after_running_containers="$(compose_fixture ps -q)"
   [[ "$before_containers" == "$after_containers" ]] || {
@@ -905,10 +905,10 @@ PY
     return 1
   }
 
-  RESULTS+=("$(python3 - "$healthy_stack_id" "$stopped_compose_path" "$missing_compose_path" "$invalid_compose_path" "$manual_compose_path" "$healthy_report" "$blocked_report" "$recovered_report" "$reconciliation_state" "$before_containers" "$after_containers" "$before_running_containers" "$after_running_containers" <<'PY'
+  RESULTS+=("$(python3 - "$healthy_stack_id" "$stopped_compose_path" "$missing_compose_path" "$invalid_compose_path" "$manual_compose_path" "$healthy_report" "$visible_invalid_report" "$manual_archive_report" "$reconciliation_state" "$before_containers" "$after_containers" "$before_running_containers" "$after_running_containers" <<'PY'
 import json, sys
 
-healthy_stack_id, stopped_path, missing_path, invalid_path, manual_path, healthy, blocked, recovered, state, before, after, before_running, after_running = sys.argv[1:]
+healthy_stack_id, stopped_path, missing_path, invalid_path, manual_path, healthy, visible_invalid, manual_archive, state, before, after, before_running, after_running = sys.argv[1:]
 
 def compose_access_status(raw: str) -> str:
     for item in json.loads(raw)["report"]["checks"]:
@@ -923,8 +923,8 @@ print(json.dumps({
     "missingComposePath": missing_path,
     "invalidComposePath": invalid_path,
     "manualComposePath": manual_path,
-    "composeAccessWithVisibleInvalid": compose_access_status(blocked),
-    "composeAccessAfterInvalidManualArchive": compose_access_status(recovered),
+    "composeAccessWithVisibleInvalid": compose_access_status(visible_invalid),
+    "composeAccessAfterInvalidManualArchive": compose_access_status(manual_archive),
     "healthyComposeAccess": compose_access_status(healthy),
     "reconciliation": json.loads(state),
     "containersBeforeRestart": before,
