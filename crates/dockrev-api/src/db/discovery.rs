@@ -59,7 +59,10 @@ ON CONFLICT(project) DO UPDATE SET
   last_seen_at = COALESCE(excluded.last_seen_at, discovered_compose_projects.last_seen_at),
   last_scan_at = excluded.last_scan_at,
   last_error = excluded.last_error,
-  last_config_files_json = excluded.last_config_files_json
+  last_config_files_json = COALESCE(
+    excluded.last_config_files_json,
+    discovered_compose_projects.last_config_files_json
+  )
 "#,
                 params![
                     input.project,
@@ -75,14 +78,43 @@ ON CONFLICT(project) DO UPDATE SET
                 ],
             )?;
 
-            if input.unarchive_if_active && input.status == "active" {
+            if input.unarchive_if_active && input.status != "missing" {
+                let project = input.project.clone();
+                let scanned_at = input.last_scan_at.clone();
                 tx.execute(
                     r#"
 UPDATE discovered_compose_projects
 SET archived = 0, archived_at = NULL, archived_reason = NULL
 WHERE project = ?1
+  AND archived_reason IN (
+    'auto_archive_on_restart',
+    'auto_archive_compose_files_missing'
+  )
 "#,
-                    params![input.project],
+                    params![project],
+                )?;
+                tx.execute(
+                    r#"
+UPDATE stacks
+SET archived = 0, archived_at = NULL, archived_reason = NULL, updated_at = ?2
+WHERE id = (
+  SELECT stack_id
+  FROM discovered_compose_projects
+  WHERE project = ?1
+)
+  AND EXISTS (
+    SELECT 1
+    FROM discovered_compose_projects
+    WHERE project = ?1
+      AND archived = 0
+      AND archived_reason IS NULL
+  )
+  AND archived_reason IN (
+    'auto_archive_on_restart',
+    'auto_archive_compose_files_missing'
+  )
+"#,
+                    params![project, scanned_at],
                 )?;
             }
 
@@ -93,67 +125,125 @@ WHERE project = ?1
         .context("upsert discovered compose project")
     }
 
-    pub async fn mark_discovered_compose_projects_missing_except(
+    pub async fn list_persisted_discovered_compose_projects_except(
         &self,
         seen_projects: &[String],
-        now: &str,
-    ) -> anyhow::Result<Vec<String>> {
+    ) -> anyhow::Result<Vec<PersistedDiscoveredComposeProject>> {
         let seen_projects = seen_projects.to_vec();
+        self.call(move |conn| {
+            let mut sql = String::from(
+                r#"
+SELECT
+  d.project,
+  d.stack_id,
+  d.status,
+  d.last_config_files_json,
+  s.compose_files_json
+FROM discovered_compose_projects d
+LEFT JOIN stacks s ON s.id = d.stack_id
+"#,
+            );
+            if !seen_projects.is_empty() {
+                let placeholders = seen_projects
+                    .iter()
+                    .map(|_| "?")
+                    .collect::<Vec<_>>()
+                    .join(",");
+                sql.push_str(&format!("WHERE d.project NOT IN ({placeholders})"));
+            }
+            sql.push_str(" ORDER BY d.project ASC");
+
+            let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(seen_projects.len());
+            for project in &seen_projects {
+                params.push(project);
+            }
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(params.as_slice(), |row| {
+                let last_config_files_json: Option<String> = row.get(3)?;
+                let stack_compose_files_json: Option<String> = row.get(4)?;
+                let last_config_files = last_config_files_json
+                    .as_deref()
+                    .and_then(|json| serde_json::from_str::<Vec<String>>(json).ok())
+                    .filter(|files| !files.is_empty());
+                let stack_compose_files = stack_compose_files_json
+                    .as_deref()
+                    .and_then(|json| serde_json::from_str::<Vec<String>>(json).ok())
+                    .filter(|files| !files.is_empty());
+
+                Ok(PersistedDiscoveredComposeProject {
+                    project: row.get(0)?,
+                    stack_id: row.get(1)?,
+                    status: row.get(2)?,
+                    compose_files: last_config_files.or(stack_compose_files),
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list persisted discovered compose projects")
+    }
+
+    pub async fn archive_discovered_compose_project_for_missing_compose_files(
+        &self,
+        project: &str,
+        now: &str,
+    ) -> anyhow::Result<()> {
+        let project = project.to_string();
         let now = now.to_string();
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-
-            let newly_missing = if seen_projects.is_empty() {
-                let mut stmt = tx.prepare(
-                    r#"
-	SELECT project
-	FROM discovered_compose_projects
-	WHERE status != 'missing'
-	"#,
-                )?;
-                let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
-                let newly_missing = rows.collect::<Result<Vec<_>, _>>()?;
-                tx.execute(
-                    r#"
-	UPDATE discovered_compose_projects
-	SET status = 'missing', last_scan_at = ?1
-	WHERE status != 'missing'
-	"#,
-                    params![now],
-                )?;
-                newly_missing
-            } else {
-                let placeholders = seen_projects.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                let sql_select = format!(
-                    "SELECT project FROM discovered_compose_projects WHERE status != 'missing' AND project NOT IN ({placeholders})"
-                );
-                let mut params: Vec<&dyn rusqlite::ToSql> =
-                    Vec::with_capacity(seen_projects.len());
-                for p in &seen_projects {
-                    params.push(p);
-                }
-                let mut stmt = tx.prepare(&sql_select)?;
-                let rows = stmt.query_map(params.as_slice(), |row| row.get::<_, String>(0))?;
-                let newly_missing = rows.collect::<Result<Vec<_>, _>>()?;
-
-                let sql_update = format!(
-                    "UPDATE discovered_compose_projects SET status = 'missing', last_scan_at = ? WHERE status != 'missing' AND project NOT IN ({placeholders})"
-                );
-                let mut params2: Vec<&dyn rusqlite::ToSql> =
-                    Vec::with_capacity(1 + seen_projects.len());
-                params2.push(&now);
-                for p in &seen_projects {
-                    params2.push(p);
-                }
-                tx.execute(&sql_update, params2.as_slice())?;
-                newly_missing
-            };
-
+            tx.execute(
+                r#"
+UPDATE discovered_compose_projects
+SET archived = 1,
+    archived_at = ?2,
+    archived_reason = 'auto_archive_compose_files_missing'
+WHERE project = ?1
+  AND (
+    archived = 0
+    OR archived_reason IN (
+      'auto_archive_on_restart',
+      'auto_archive_compose_files_missing'
+    )
+  )
+"#,
+                params![project, now],
+            )?;
+            tx.execute(
+                r#"
+UPDATE stacks
+SET archived = 1,
+    archived_at = ?2,
+    archived_reason = 'auto_archive_compose_files_missing',
+    updated_at = ?2
+WHERE id = (
+  SELECT stack_id
+  FROM discovered_compose_projects
+  WHERE project = ?1
+)
+  AND (
+    SELECT archived_reason IN (
+      'auto_archive_on_restart',
+      'auto_archive_compose_files_missing'
+    )
+    FROM discovered_compose_projects
+    WHERE project = ?1
+  )
+  AND (
+    archived = 0
+    OR archived_reason IN (
+      'auto_archive_on_restart',
+      'auto_archive_compose_files_missing'
+    )
+  )
+"#,
+                params![project, now],
+            )?;
             tx.commit()?;
-            Ok(newly_missing)
+            Ok(())
         })
         .await
-        .context("mark discovered compose projects missing")
+        .context("archive discovered compose project with missing compose files")
     }
 
     pub async fn list_discovered_compose_projects(
@@ -239,5 +329,204 @@ WHERE project = ?1
         })
         .await
         .context("set discovered compose project archived")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{api::types::ComposeConfig, ids};
+
+    fn temp_db_path() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "dockrev-discovery-db-{}.sqlite3",
+            ulid::Ulid::new()
+        ))
+    }
+
+    fn now() -> String {
+        time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap()
+    }
+
+    async fn seed_project(db: &Db, project: &str, archived_reason: Option<&str>) -> String {
+        let stack_id = ids::new_stack_id();
+        let now = now();
+        let stack = crate::api::types::StackRecord {
+            id: stack_id.clone(),
+            name: project.to_string(),
+            archived: false,
+            compose: ComposeConfig {
+                kind: "path".to_string(),
+                compose_files: vec!["/srv/example/compose.yml".to_string()],
+                env_file: None,
+            },
+            backup: crate::api::types::StackBackupConfig::default(),
+            services: Vec::new(),
+        };
+        db.insert_stack(&stack, &[], &now).await.unwrap();
+        db.upsert_discovered_compose_project(DiscoveredComposeProjectUpsert {
+            project: project.to_string(),
+            stack_id: Some(stack_id.clone()),
+            status: "missing".to_string(),
+            last_seen_at: None,
+            last_scan_at: now.clone(),
+            last_error: Some("compose_files_missing".to_string()),
+            last_config_files: Some(vec!["/srv/example/compose.yml".to_string()]),
+            unarchive_if_active: false,
+        })
+        .await
+        .unwrap();
+        if let Some(reason) = archived_reason {
+            db.set_stack_archived(&stack_id, true, Some(reason), &now)
+                .await
+                .unwrap();
+            db.set_discovered_compose_project_archived(project, true, Some(reason), &now)
+                .await
+                .unwrap();
+        }
+        stack_id
+    }
+
+    #[tokio::test]
+    async fn healthy_reconciliation_restores_only_system_archives() {
+        let path = temp_db_path();
+        let db = Db::open(&path).await.unwrap();
+        let automatic_stack = seed_project(&db, "automatic", Some("auto_archive_on_restart")).await;
+        let missing_auto_stack = seed_project(
+            &db,
+            "missing-auto",
+            Some("auto_archive_compose_files_missing"),
+        )
+        .await;
+        let user_stack = seed_project(&db, "manual", Some("user_archive")).await;
+        let discovery_manual_stack =
+            seed_project(&db, "discovery-manual", Some("auto_archive_on_restart")).await;
+        db.set_discovered_compose_project_archived(
+            "discovery-manual",
+            true,
+            Some("user_archive"),
+            &now(),
+        )
+        .await
+        .unwrap();
+        let now = now();
+
+        for project in ["automatic", "missing-auto", "manual", "discovery-manual"] {
+            db.upsert_discovered_compose_project(DiscoveredComposeProjectUpsert {
+                project: project.to_string(),
+                stack_id: None,
+                status: "stopped".to_string(),
+                last_seen_at: None,
+                last_scan_at: now.clone(),
+                last_error: None,
+                last_config_files: None,
+                unarchive_if_active: true,
+            })
+            .await
+            .unwrap();
+        }
+
+        assert!(
+            !db.get_stack(&automatic_stack)
+                .await
+                .unwrap()
+                .unwrap()
+                .archived
+        );
+        assert!(
+            !db.get_stack(&missing_auto_stack)
+                .await
+                .unwrap()
+                .unwrap()
+                .archived
+        );
+        assert!(db.get_stack(&user_stack).await.unwrap().unwrap().archived);
+        assert!(
+            db.get_stack(&discovery_manual_stack)
+                .await
+                .unwrap()
+                .unwrap()
+                .archived
+        );
+        let visible = db
+            .list_discovered_compose_projects(ArchivedFilter::Exclude)
+            .await
+            .unwrap();
+        assert!(visible.iter().any(|project| project.project == "automatic"));
+        assert!(
+            visible
+                .iter()
+                .any(|project| project.project == "missing-auto")
+        );
+        assert!(!visible.iter().any(|project| project.project == "manual"));
+        assert!(
+            !visible
+                .iter()
+                .any(|project| project.project == "discovery-manual")
+        );
+
+        drop(db);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("sqlite3-wal"));
+        let _ = std::fs::remove_file(path.with_extension("sqlite3-shm"));
+    }
+
+    #[tokio::test]
+    async fn missing_compose_files_archive_only_system_discovery_records() {
+        let path = temp_db_path();
+        let db = Db::open(&path).await.unwrap();
+        let automatic_stack = seed_project(&db, "automatic", None).await;
+        let user_stack = seed_project(&db, "manual", Some("user_archive")).await;
+        let now = now();
+
+        db.archive_discovered_compose_project_for_missing_compose_files("automatic", &now)
+            .await
+            .unwrap();
+        db.archive_discovered_compose_project_for_missing_compose_files("manual", &now)
+            .await
+            .unwrap();
+
+        assert!(
+            db.get_stack(&automatic_stack)
+                .await
+                .unwrap()
+                .unwrap()
+                .archived
+        );
+        assert!(db.get_stack(&user_stack).await.unwrap().unwrap().archived);
+        let archive_reasons = db
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, archived_reason FROM stacks WHERE id IN (?1, ?2) ORDER BY id",
+                )?;
+                let rows = stmt.query_map(params![automatic_stack, user_stack], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+                })?;
+                Ok(rows.collect::<Result<Vec<_>, _>>()?)
+            })
+            .await
+            .unwrap();
+        assert!(
+            archive_reasons
+                .iter()
+                .any(|(_, reason)| reason.as_deref() == Some("auto_archive_compose_files_missing"))
+        );
+        assert!(
+            archive_reasons
+                .iter()
+                .any(|(_, reason)| reason.as_deref() == Some("user_archive"))
+        );
+        let archived = db
+            .list_discovered_compose_projects(ArchivedFilter::Only)
+            .await
+            .unwrap();
+        assert_eq!(archived.len(), 2);
+
+        drop(db);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("sqlite3-wal"));
+        let _ = std::fs::remove_file(path.with_extension("sqlite3-shm"));
     }
 }

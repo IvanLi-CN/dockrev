@@ -6,6 +6,61 @@ fn make_temp_dir() -> std::path::PathBuf {
     dir
 }
 
+#[tokio::test]
+async fn persisted_compose_files_distinguish_stopped_missing_and_invalid() {
+    let dir = make_temp_dir();
+    let healthy = dir.join("compose.yml");
+    let missing = dir.join("missing.yml");
+    let invalid = dir.join("invalid.yml");
+    let unreadable = dir.join("directory.yml");
+
+    std::fs::write(&healthy, "services:\n  app:\n    image: alpine:3.20\n").unwrap();
+    std::fs::write(&invalid, "services: [not-valid").unwrap();
+    std::fs::create_dir(&unreadable).unwrap();
+
+    let stopped = classify_persisted_compose_files(Some(vec![healthy.display().to_string()])).await;
+    assert!(matches!(
+        stopped,
+        PersistedComposeFilesState::Stopped { .. }
+    ));
+
+    let all_missing =
+        classify_persisted_compose_files(Some(vec![missing.display().to_string()])).await;
+    assert!(matches!(
+        all_missing,
+        PersistedComposeFilesState::Missing { .. }
+    ));
+
+    let mixed = classify_persisted_compose_files(Some(vec![
+        healthy.display().to_string(),
+        missing.display().to_string(),
+    ]))
+    .await;
+    assert!(matches!(
+        mixed,
+        PersistedComposeFilesState::Invalid { ref reason, .. }
+            if reason == "compose_files_partially_missing"
+    ));
+
+    let malformed =
+        classify_persisted_compose_files(Some(vec![invalid.display().to_string()])).await;
+    assert!(matches!(
+        malformed,
+        PersistedComposeFilesState::Invalid { ref reason, .. }
+            if reason.starts_with("compose_file_invalid:")
+    ));
+
+    let io_error =
+        classify_persisted_compose_files(Some(vec![unreadable.display().to_string()])).await;
+    assert!(matches!(
+        io_error,
+        PersistedComposeFilesState::Invalid { ref reason, .. }
+            if reason.starts_with("compose_file_unreadable:")
+    ));
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn parse_labels_json_line_null_is_empty() {
     let out = parse_labels_json_line("null").unwrap();

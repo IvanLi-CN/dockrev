@@ -68,6 +68,7 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
         stacksUpdated: 0,
         stacksSkipped: 0,
         stacksFailed: 0,
+        stacksStopped: 0,
         stacksMarkedMissing: 0,
       },
       actions: [],

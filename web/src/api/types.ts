@@ -292,7 +292,7 @@ export type PutServiceComposeTagResponse = {
   updatedAt: string
 }
 
-export type DiscoveredProjectStatus = 'active' | 'missing' | 'invalid'
+export type DiscoveredProjectStatus = 'active' | 'stopped' | 'missing' | 'invalid'
 
 export type DiscoveredProject = {
   project: string
@@ -314,11 +314,12 @@ export type DiscoveryScanResponse = {
     stacksUpdated: number
     stacksSkipped: number
     stacksFailed: number
+    stacksStopped: number
     stacksMarkedMissing: number
   }
   actions: Array<{
     project: string
-    action: 'created' | 'updated' | 'skipped' | 'failed' | 'marked_missing'
+    action: 'created' | 'updated' | 'skipped' | 'failed' | 'marked_stopped' | 'marked_missing'
     stackId?: string | null
     reason?: string | null
     details?: unknown

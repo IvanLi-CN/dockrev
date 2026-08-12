@@ -50,8 +50,9 @@
 - deploy-check:
   - GET `/api/deploy-check/report` 必须支持 cached report ready 返回与 pending 返回。
   - POST `/api/deploy-check/report/refresh` 只 enqueue，不同步构建 report。
-  - 启动期发现 `missing` 的 Compose project 时，必须同步归档其仍 active 的关联 Stack；即使 discovery 记录已由旧版本归档，遗留的 active Stack 也必须补齐 `auto_archive_on_restart` 状态。
-  - 该修复只能更新归档元数据，不得删除 Stack、服务、Compose 文件、容器或运行时资源。
+  - 启动后必须执行一次安全 discovery 扫描；Docker 枚举失败时不得写入 discovery、Stack 或归档状态。
+  - 对未出现在运行容器列表中的已登记项目，保存的 Compose 文件全部可读且可解析时写入 `stopped`；全部为 `ENOENT` 时写入 `missing` 并以 `auto_archive_compose_files_missing` 自动归档；混合缺失、权限/I-O 或解析错误写入 `invalid` 且不归档。
+  - 只有 `auto_archive_compose_files_missing` 与历史 `auto_archive_on_restart` 可由后续有效扫描解除。人工归档不得被 discovery 修改。该修复不得删除 Stack、服务、Compose 文件、容器或运行时资源。
 - GitHub release drawer:
   - 打开时只请求 page 1。
   - 若指定 targetVersion，则以前端分页渐进加载定位并高亮，不依赖 `/locate`。
@@ -70,8 +71,9 @@
 - 访问 `/cleanup` 时，不再因为首屏同步 Docker scan 触发 524。
 - cleanup confirm 在 snapshot stale 或 refresh in-flight 时只返回 pending，不直接给旧 confirm payload。
 - `/deploy-check` 有 cached report 时可立即展示，refresh 不阻塞首屏。
-- Given 一个已归档或未归档的 `missing` discovery 项仍关联 active Stack，When Dockrev 启动并完成数据库初始化，Then 该 Stack 必须被标记为 `auto_archive_on_restart`，其失效 Compose 路径不得继续阻断 deploy-check。
-- Given 一个 active discovery 项关联 active Stack，When Dockrev 启动，Then 该 Stack 不得被自动归档。
+- Given 一个未运行但保存 Compose 文件均健康的 discovery 项，When Dockrev 完成有效扫描，Then 项目与关联 Stack 必须保持未归档并显示 `stopped`，现有生命周期启动任务可执行。
+- Given 一个保存 Compose 文件全部为 `ENOENT` 的 discovery 项，When Dockrev 完成有效扫描，Then 项目与关联 Stack 必须以 `auto_archive_compose_files_missing` 自动归档，失效路径不得阻断 deploy-check。
+- Given 部分缺失、权限/I-O 或解析错误，When Dockrev 完成有效扫描，Then 项目必须显示 `invalid` 且保持未归档；人工归档在任何扫描结果下都不得解除。
 - 应用首次加载与恢复前台必须刷新并等待最新 deploy-check report；任一 required core check FAIL 或报告不可用时强制进入 `/deploy-check`，`neverAutoOpen` 不得绕过，失败页不得进入 Dashboard。只有全部 required core check PASS 才放行。
 - release drawer 在不调用 `/github-releases/locate` 的前提下仍可定位目标版本。
 - 任一 SSE 连接在 EdgeOne 前方空闲超过 20 秒时，不会因 15 秒 idle window 被断开。
@@ -134,6 +136,36 @@
 
 ![Deploy check blocked](./assets/deploy-check-blocked-desktop.png)
 
+- source_type: `ui_demo`
+- target_program: `mock-only`
+- capture_scope: `page`
+- requested_viewport: `1440x1200 CSS px`
+- viewport_strategy: `devtools-emulate`
+- margin_policy: `trim_only`
+- evidence_surface: `page`
+- sensitive_exclusion: `N/A`
+- submission_gate: `pending-owner-approval`
+- story_id_or_title: `Pages/ServicesPage/DiscoveryStopped`
+- state: `overview-stopped`
+- evidence_note: 验证停止项目独立显示在“已停止，可启动”区，最多展示 6 项并链接到既有 Stack 详情；停止项目不计入异常项目数。证据对应 mock-only `ui_demo`，不访问生产服务。
+
+![Overview stopped desktop](./assets/overview-stopped-desktop.png)
+
+- source_type: `ui_demo`
+- target_program: `mock-only`
+- capture_scope: `page`
+- requested_viewport: `393x852 CSS px`
+- viewport_strategy: `devtools-emulate`
+- margin_policy: `trim_only`
+- evidence_surface: `page`
+- sensitive_exclusion: `N/A`
+- submission_gate: `pending-owner-approval`
+- story_id_or_title: `Pages/ServicesPage/DiscoveryStopped`
+- state: `overview-stopped-mobile`
+- evidence_note: 验证移动端停止项目状态与桌面使用相同 mock fixture，393x852 下无横向溢出；语义与按钮路径保持可访问。
+
+![Overview stopped mobile](./assets/overview-stopped-mobile.png)
+
 - source_type: `storybook_canvas`
 - target_program: `mock-only`
 - capture_scope: `element`
@@ -152,4 +184,4 @@
 ## 变更记录
 
 - 2026-06-26: 新建 spec，冻结 EdgeOne 15 秒约束、cleanup async snapshot、deploy-check cached-read、release drawer fallback 与 SSE heartbeat 口径。
-- 缺失 discovery 项与关联 Stack 的归档状态必须在启动期保持一致，避免历史失效 Compose 路径错误阻断 deploy-check。
+- discovery 的停止、缺失与异常状态必须由保存 Compose 文件的有效扫描决定；系统归档可恢复，人工归档不可变更。

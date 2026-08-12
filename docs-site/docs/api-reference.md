@@ -62,6 +62,8 @@ description: Dockrev API 与 Supervisor API 的全量接口清单。
 | POST | `/api/runtime-scans` | Forward Auth | 创建 runtime 扫描任务 | `200` `400` `401` `409` |
 | POST | `/api/updates` | Forward Auth | 创建 update 任务 | `200` `400` `401` `409` |
 
+`GET /api/discovery/projects` 的 `status` 可为 `active`、`stopped`、`missing` 或 `invalid`。`stopped` 表示保存的 Compose 文件仍可读且可解析，但当前没有运行容器；关联 Stack 保持未归档，可使用既有生命周期接口启动。扫描 job 的 `summary` 包含 `stacksStopped`，动作可为 `marked_stopped`。仅所有保存文件均为 `ENOENT` 时才会以 `auto_archive_compose_files_missing` 自动归档；混合缺失、权限/I-O 或解析异常保持 `invalid`。人工归档不会被扫描解除。
+
 - `POST /api/updates` 契约：
   - `scope=service`：必须显式携带 `serviceId + targetTag + targetDigest + pullTags`。
   - `scope=stack|all`：必须显式携带 `targets[]`，元素为 `{ serviceId, targetTag, targetDigest, pullTags }`。

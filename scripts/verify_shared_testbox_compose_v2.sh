@@ -759,11 +759,11 @@ PY
   compose_fixture down -v --remove-orphans >&2
 }
 
-run_missing_discovery_stack_reconciliation() {
-  MODE="missing-discovery-stack-reconciliation"
+run_persisted_discovery_reconciliation() {
+  MODE="persisted-discovery-reconciliation"
   COMMAND_LOG="$REMOTE_RUN/artifacts/${MODE}-compose.log"
   : > "$COMMAND_LOG"
-  log "running missing discovery Stack startup reconciliation test"
+  log "running persisted Compose discovery reconciliation test"
   compose_fixture up -d >&2
   start_server docker
 
@@ -772,171 +772,143 @@ run_missing_discovery_stack_reconciliation() {
   healthy_report="$(wait_for_compose_access_status pass)"
   before_containers="$(compose_fixture ps -a -q)"
   before_running_containers="$(compose_fixture ps -q)"
-  missing_compose_path="$REMOTE_RUN/fixture/legacy-missing-compose.yaml"
-  unarchived_missing_compose_path="$REMOTE_RUN/fixture/unarchived-missing-compose.yaml"
+  stopped_compose_path="$REMOTE_RUN/fixture/stopped-compose.yaml"
+  missing_compose_path="$REMOTE_RUN/fixture/missing-compose.yaml"
+  invalid_compose_path="$REMOTE_RUN/fixture/invalid-compose.yaml"
+  manual_compose_path="$REMOTE_RUN/fixture/manual-stopped-compose.yaml"
 
-  python3 - "$DB_PATH" "$missing_compose_path" "$unarchived_missing_compose_path" <<'PY'
+  python3 - "$DB_PATH" "$stopped_compose_path" "$missing_compose_path" "$invalid_compose_path" "$manual_compose_path" <<'PY'
 import json, sqlite3, sys
 
-db_path, missing_compose_path, unarchived_missing_compose_path = sys.argv[1:4]
-now = "2026-08-11T00:00:00Z"
+db_path, stopped_path, missing_path, invalid_path, manual_path = sys.argv[1:6]
+now = "2026-08-12T00:00:00Z"
+with open(stopped_path, "w", encoding="utf-8") as stream:
+    stream.write("services:\n  app:\n    image: alpine:3.20\n")
+with open(invalid_path, "w", encoding="utf-8") as stream:
+    stream.write("services: [invalid\n")
+with open(manual_path, "w", encoding="utf-8") as stream:
+    stream.write("services:\n  app:\n    image: alpine:3.20\n")
+
 conn = sqlite3.connect(db_path)
 try:
-    conn.execute(
-        """
-        INSERT INTO stacks (
-          id, name, compose_type, compose_files_json, env_file, backup_targets_json,
-          backup_retention_keep_last, backup_retention_delete_after_stable_seconds,
-          archived, created_at, updated_at, last_check_at
-        ) VALUES (?, ?, 'path', ?, '/srv/legacy/.env', ?, 7, 3600, 0, ?, ?, ?)
-        """,
-        (
-            "legacy-missing-stack",
-            "legacy-missing-stack",
-            json.dumps([missing_compose_path]),
-            json.dumps([{"kind": "bind-mount", "path": "/srv/legacy/data"}]),
-            now,
-            now,
-            now,
-        ),
-    )
+    projects = [
+        ("legacy-auto-stopped", stopped_path, 1, "auto_archive_on_restart"),
+        ("missing-compose", missing_path, 0, None),
+        ("invalid-auto", invalid_path, 1, "auto_archive_on_restart"),
+        ("manual-stopped", manual_path, 1, "user_archive"),
+    ]
+    for project, path, archived, reason in projects:
+        stack_id = f"{project}-stack"
+        conn.execute(
+            """
+            INSERT INTO stacks (
+              id, name, compose_type, compose_files_json, backup_targets_json,
+              backup_retention_keep_last, backup_retention_delete_after_stable_seconds,
+              archived, archived_at, archived_reason, created_at, updated_at, last_check_at
+            ) VALUES (?, ?, 'path', ?, '[]', 0, 0, ?, ?, ?, ?, ?, ?)
+            """,
+            (stack_id, stack_id, json.dumps([path]), archived, now if archived else None, reason, now, now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO discovered_compose_projects (
+              project, stack_id, status, last_config_files_json, archived, archived_at, archived_reason
+            ) VALUES (?, ?, 'active', ?, ?, ?, ?)
+            """,
+            (project, stack_id, json.dumps([path]), archived, now if archived else None, reason),
+        )
     conn.execute(
         """
         INSERT INTO services (
           id, stack_id, name, image_ref, image_tag, auto_rollback,
           backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at
         ) VALUES (
-          'legacy-missing-service', 'legacy-missing-stack', 'app', 'alpine:3.20', '3.20', 0,
+          'legacy-auto-stopped-service', 'legacy-auto-stopped-stack', 'app', 'alpine:3.20', '3.20', 0,
           '["/srv/legacy/data"]', '["legacy_data"]', ?, ?
         )
         """,
         (now, now),
-    )
-    conn.execute(
-        """
-        INSERT INTO discovered_compose_projects (
-          project, stack_id, status, archived, archived_at, archived_reason
-        ) VALUES (?, ?, 'missing', 1, ?, 'user_archive')
-        """,
-        ("legacy-missing-project", "legacy-missing-stack", now),
-    )
-    conn.execute(
-        """
-        INSERT INTO stacks (
-          id, name, compose_type, compose_files_json, backup_targets_json,
-          backup_retention_keep_last, backup_retention_delete_after_stable_seconds,
-          archived, created_at, updated_at, last_check_at
-        ) VALUES (?, ?, 'path', ?, '[]', 0, 0, 0, ?, ?, ?)
-        """,
-        (
-            "unarchived-missing-stack",
-            "unarchived-missing-stack",
-            json.dumps([unarchived_missing_compose_path]),
-            now,
-            now,
-            now,
-        ),
-    )
-    conn.execute(
-        """
-        INSERT INTO discovered_compose_projects (project, stack_id, status)
-        VALUES ('unarchived-missing-project', 'unarchived-missing-stack', 'missing')
-        """
     )
     conn.commit()
 finally:
     conn.close()
 PY
 
-  request_deploy_check_refresh
-  blocked_report="$(wait_for_compose_access_status fail)"
   stop_server
 
   start_server docker
   request_deploy_check_refresh
-  recovered_report="$(wait_for_compose_access_status pass)"
-  reconciliation_state="$(python3 - "$DB_PATH" "$healthy_stack_id" "$missing_compose_path" "$unarchived_missing_compose_path" <<'PY'
+  blocked_report="$(wait_for_compose_access_status fail)"
+  reconciliation_state="$(python3 - "$DB_PATH" "$healthy_stack_id" <<'PY'
 import json, sqlite3, sys
 
-db_path, healthy_stack_id, missing_compose_path, unarchived_missing_compose_path = sys.argv[1:5]
+db_path, healthy_stack_id = sys.argv[1:3]
 conn = sqlite3.connect(db_path)
 try:
-    stale = conn.execute(
+    rows = conn.execute(
         """
-        SELECT archived, archived_reason, archived_at, compose_files_json, env_file,
-               backup_targets_json, backup_retention_keep_last,
-               backup_retention_delete_after_stable_seconds
-        FROM stacks
-        WHERE id = 'legacy-missing-stack'
+        SELECT d.project, d.status, d.archived, d.archived_reason,
+               s.archived, s.archived_reason
+        FROM discovered_compose_projects d
+        JOIN stacks s ON s.id = d.stack_id
+        WHERE d.project IN ('legacy-auto-stopped', 'missing-compose', 'invalid-auto', 'manual-stopped')
+        ORDER BY d.project
         """
-    ).fetchone()
-    legacy_service = conn.execute(
-        """
-        SELECT stack_id, name, image_ref, image_tag, auto_rollback,
-               backup_targets_bind_paths_json, backup_targets_volume_names_json
-        FROM services
-        WHERE id = 'legacy-missing-service'
-        """
-    ).fetchone()
-    legacy_discovery = conn.execute(
-        "SELECT archived, archived_reason FROM discovered_compose_projects WHERE project = 'legacy-missing-project'"
-    ).fetchone()
-    unarchived = conn.execute(
-        "SELECT archived, archived_reason, archived_at, compose_files_json FROM stacks WHERE id = 'unarchived-missing-stack'"
-    ).fetchone()
-    unarchived_discovery = conn.execute(
-        "SELECT archived, archived_reason FROM discovered_compose_projects WHERE project = 'unarchived-missing-project'"
-    ).fetchone()
+    ).fetchall()
     healthy = conn.execute(
         "SELECT archived FROM stacks WHERE id = ?", (healthy_stack_id,)
     ).fetchone()
 finally:
     conn.close()
 
-expected_stale_metadata = (
-    1, "auto_archive_on_restart", stale[2], json.dumps([missing_compose_path]),
-    "/srv/legacy/.env", json.dumps([{"kind": "bind-mount", "path": "/srv/legacy/data"}]), 7, 3600,
-)
-if stale != expected_stale_metadata or stale[2] is None:
-    raise SystemExit(f"legacy missing Stack was not auto-archived: {stale}")
-if legacy_service != (
-    "legacy-missing-stack", "app", "alpine:3.20", "3.20", 0,
-    json.dumps(["/srv/legacy/data"]), json.dumps(["legacy_data"]),
-):
-    raise SystemExit(f"legacy missing service metadata changed: {legacy_service}")
-if legacy_discovery != (1, "user_archive"):
-    raise SystemExit(f"legacy missing discovery metadata changed: {legacy_discovery}")
-if unarchived != (1, "auto_archive_on_restart", unarchived[2], json.dumps([unarchived_missing_compose_path])) or unarchived[2] is None:
-    raise SystemExit(f"unarchived missing Stack was not auto-archived: {unarchived}")
-if unarchived_discovery != (1, "auto_archive_on_restart"):
-    raise SystemExit(f"unarchived missing discovery was not auto-archived: {unarchived_discovery}")
+actual = {project: state for project, *state in rows}
+expected = {
+    "invalid-auto": ("invalid", 0, None, 0, None),
+    "legacy-auto-stopped": ("stopped", 0, None, 0, None),
+    "manual-stopped": ("stopped", 1, "user_archive", 1, "user_archive"),
+    "missing-compose": ("missing", 1, "auto_archive_compose_files_missing", 1, "auto_archive_compose_files_missing"),
+}
+if actual != expected:
+    raise SystemExit(f"unexpected discovery reconciliation state: {actual}")
 if healthy != (0,):
     raise SystemExit(f"active discovery Stack was unexpectedly archived: {healthy}")
 print(json.dumps({
-    "legacyStackArchived": True,
-    "legacyStackArchivedReason": "auto_archive_on_restart",
-    "legacyStackMetadataPreserved": True,
-    "legacyServiceMetadataPreserved": True,
-    "unarchivedLegacyStackArchived": True,
+    "historicalAutoArchiveRestored": True,
+    "missingComposeAutoArchived": True,
+    "invalidComposeVisible": True,
+    "manualArchiveProtected": True,
     "healthyStackArchived": False,
 }, sort_keys=True))
 PY
 )"
+  python3 - "$DB_PATH" <<'PY'
+import sqlite3, sys
+
+conn = sqlite3.connect(sys.argv[1])
+try:
+    conn.execute("UPDATE stacks SET archived = 1, archived_reason = 'user_archive' WHERE id = 'invalid-auto-stack'")
+    conn.execute("UPDATE discovered_compose_projects SET archived = 1, archived_reason = 'user_archive' WHERE project = 'invalid-auto'")
+    conn.commit()
+finally:
+    conn.close()
+PY
+  request_deploy_check_refresh
+  recovered_report="$(wait_for_compose_access_status pass)"
   after_containers="$(compose_fixture ps -a -q)"
   after_running_containers="$(compose_fixture ps -q)"
   [[ "$before_containers" == "$after_containers" ]] || {
-    echo "startup reconciliation changed fixture containers: before=$before_containers after=$after_containers" >&2
+    echo "persisted discovery reconciliation changed fixture containers: before=$before_containers after=$after_containers" >&2
     return 1
   }
   [[ "$before_running_containers" == "$after_running_containers" ]] || {
-    echo "startup reconciliation changed fixture running state: before=$before_running_containers after=$after_running_containers" >&2
+    echo "persisted discovery reconciliation changed fixture running state: before=$before_running_containers after=$after_running_containers" >&2
     return 1
   }
 
-  RESULTS+=("$(python3 - "$healthy_stack_id" "$missing_compose_path" "$unarchived_missing_compose_path" "$healthy_report" "$blocked_report" "$recovered_report" "$reconciliation_state" "$before_containers" "$after_containers" "$before_running_containers" "$after_running_containers" <<'PY'
+  RESULTS+=("$(python3 - "$healthy_stack_id" "$stopped_compose_path" "$missing_compose_path" "$invalid_compose_path" "$manual_compose_path" "$healthy_report" "$blocked_report" "$recovered_report" "$reconciliation_state" "$before_containers" "$after_containers" "$before_running_containers" "$after_running_containers" <<'PY'
 import json, sys
 
-healthy_stack_id, missing_path, unarchived_missing_path, healthy, blocked, recovered, state, before, after, before_running, after_running = sys.argv[1:]
+healthy_stack_id, stopped_path, missing_path, invalid_path, manual_path, healthy, blocked, recovered, state, before, after, before_running, after_running = sys.argv[1:]
 
 def compose_access_status(raw: str) -> str:
     for item in json.loads(raw)["report"]["checks"]:
@@ -945,12 +917,14 @@ def compose_access_status(raw: str) -> str:
     raise SystemExit("core.compose_access missing from report")
 
 print(json.dumps({
-    "mode": "missing-discovery-stack-reconciliation",
+    "mode": "persisted-discovery-reconciliation",
     "healthyStackId": healthy_stack_id,
-    "legacyMissingComposePath": missing_path,
-    "unarchivedLegacyMissingComposePath": unarchived_missing_path,
-    "preRestartComposeAccess": compose_access_status(blocked),
-    "postRestartComposeAccess": compose_access_status(recovered),
+    "stoppedComposePath": stopped_path,
+    "missingComposePath": missing_path,
+    "invalidComposePath": invalid_path,
+    "manualComposePath": manual_path,
+    "composeAccessWithVisibleInvalid": compose_access_status(blocked),
+    "composeAccessAfterInvalidManualArchive": compose_access_status(recovered),
     "healthyComposeAccess": compose_access_status(healthy),
     "reconciliation": json.loads(state),
     "containersBeforeRestart": before,
@@ -969,7 +943,7 @@ PY
 run_v2_mode plugin docker
 run_v2_mode standalone "$REMOTE_RUN/bin/docker-compose-v2"
 run_v1_mode
-run_missing_discovery_stack_reconciliation
+run_persisted_discovery_reconciliation
 
 summary="$(python3 - "$RUN_ID" "$REMOTE_RUN" "$FIXTURE_PROJECT" "${RESULTS[@]}" <<'PY'
 import json, sys

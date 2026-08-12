@@ -251,6 +251,12 @@ export function OperationsDashboardSectionView(props: {
                 {discoverySummary.active.length}
               </span>
             </div>
+            <div className="discoveryStatChip discoveryStatChipStopped">
+              <span className="discoveryStatLabel">已停止</span>
+              <span className="discoveryStatValue">
+                {discoverySummary.stoppedCount}
+              </span>
+            </div>
             {effectiveDiscoveryScanAt ? (
               <div className="discoveryStatChip discoveryStatChipScan">
                 <span className="discoveryStatLabel">最近扫描</span>
@@ -335,6 +341,36 @@ export function OperationsDashboardSectionView(props: {
               </div>
             </div>
           )}
+          {discoverySummary.stopped.length > 0 ? (
+            <div className="discoveryStoppedSection">
+              <div className="discoveryStoppedHeader">
+                <div className="discoveryStoppedTitle">已停止，可启动</div>
+                {discoverySummary.stoppedCount > discoverySummary.stopped.length ? (
+                  <div className="muted">
+                    显示前 {discoverySummary.stopped.length} 项，共 {discoverySummary.stoppedCount} 项
+                  </div>
+                ) : null}
+              </div>
+              <div className="discoveryStoppedList">
+                {discoverySummary.stopped.map((project) => (
+                  <button
+                    key={project.project}
+                    type="button"
+                    className="discoveryStoppedRow"
+                    disabled={!project.stackId}
+                    onClick={() => {
+                      if (project.stackId) navigate({ name: "stack", stackId: project.stackId });
+                    }}
+                  >
+                    <span className="mono monoPrimary discoveryStoppedProject" title={project.project}>
+                      {project.project}
+                    </span>
+                    <span className="discoveryStoppedAction">查看 Stack</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
 

@@ -8,7 +8,43 @@ async fn stack_lifecycle_status_and_start_task_are_stack_scoped() {
     )
     .await;
     let app = api::router(state.clone());
-    let (stack_id, service_id, _compose_path) = seed_manual_rollback_service(&state).await;
+    let (stack_id, service_id, compose_path) = seed_manual_rollback_service(&state).await;
+    let now = test_now_rfc3339();
+    state
+        .db
+        .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
+            project: "lifecycle-stack".to_string(),
+            stack_id: Some(stack_id.clone()),
+            status: "active".to_string(),
+            last_seen_at: Some(now.clone()),
+            last_scan_at: now,
+            last_error: None,
+            last_config_files: Some(vec![compose_path]),
+            unarchive_if_active: true,
+        })
+        .await
+        .unwrap();
+
+    let scan = crate::discovery::run_scan(state.as_ref()).await.unwrap();
+    assert_eq!(scan.summary.stacks_stopped, 1);
+    assert!(scan.actions.iter().any(|action| {
+        action.project == "lifecycle-stack"
+            && matches!(action.action, crate::api::types::DiscoveryActionKind::MarkedStopped)
+    }));
+
+    let discovery = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/discovery/projects?archived=exclude")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(discovery.status(), 200);
+    let projects = response_json(discovery).await;
+    assert_eq!(projects["projects"][0]["status"], "stopped");
 
     let status = app
         .clone()
@@ -50,6 +86,49 @@ async fn stack_lifecycle_status_and_start_task_are_stack_scoped() {
         &[serde_json::Value::String(service_id)]
     );
     assert_eq!(job.status, "success");
+}
+
+#[tokio::test]
+async fn discovery_docker_enumeration_failure_preserves_existing_state() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(FakeRegistry),
+        Arc::new(FailAllRunner),
+    )
+    .await;
+    let (stack_id, _service_id, compose_path) = seed_manual_rollback_service(&state).await;
+    let last_scan_at = "2026-08-12T00:00:00Z".to_string();
+    state
+        .db
+        .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
+            project: "docker-unavailable".to_string(),
+            stack_id: Some(stack_id.clone()),
+            status: "active".to_string(),
+            last_seen_at: Some(last_scan_at.clone()),
+            last_scan_at: last_scan_at.clone(),
+            last_error: None,
+            last_config_files: Some(vec![compose_path]),
+            unarchive_if_active: false,
+        })
+        .await
+        .unwrap();
+
+    assert!(crate::discovery::run_scan(state.as_ref()).await.is_err());
+
+    let project = state
+        .db
+        .list_discovered_compose_projects(crate::db::ArchivedFilter::Exclude)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|project| project.project == "docker-unavailable")
+        .unwrap();
+    assert!(matches!(
+        project.status,
+        crate::api::types::DiscoveredProjectStatus::Active
+    ));
+    assert_eq!(project.last_scan_at.as_deref(), Some(last_scan_at.as_str()));
+    assert!(!state.db.get_stack(&stack_id).await.unwrap().unwrap().archived);
 }
 
 #[tokio::test]

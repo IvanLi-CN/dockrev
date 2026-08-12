@@ -16,6 +16,7 @@ export const PUBLIC_DEMO_SCENARIOS = [
   'queue-long-logs',
   'service-action-progress',
   'dashboard-demo-hydrated-update',
+  'overview-discovery-readable',
 ] as const
 export type PublicDemoScenario = (typeof PUBLIC_DEMO_SCENARIOS)[number]
 export const PUBLIC_DEMO_SCENARIO: PublicDemoScenario = 'settings-configured'
