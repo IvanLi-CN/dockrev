@@ -60,6 +60,27 @@ function parseArgs(argv) {
   return out;
 }
 
+function selectSmokeShard(storyIds) {
+  const raw = process.env.DOCKREV_TEST_STORYBOOK_SHARD;
+  if (!raw) return storyIds;
+
+  const match = /^(\d+)\/(\d+)$/.exec(raw);
+  if (!match) {
+    throw new Error(
+      "DOCKREV_TEST_STORYBOOK_SHARD must use the one-based index/total form, for example 1/4.",
+    );
+  }
+  const index = Number(match[1]);
+  const total = Number(match[2]);
+  if (!Number.isInteger(index) || !Number.isInteger(total) || index < 1 || index > total) {
+    throw new Error(
+      "DOCKREV_TEST_STORYBOOK_SHARD must use a one-based index within its total, for example 1/4.",
+    );
+  }
+
+  return storyIds.filter((_, storyIndex) => storyIndex % total === index - 1);
+}
+
 function contentType(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === ".html") return "text/html; charset=utf-8";
@@ -2397,6 +2418,13 @@ async function main() {
   const { url: cliUrl, passthrough } = parseArgs(process.argv.slice(2));
   const targetUrl = cliUrl ?? process.env.TARGET_URL ?? null;
   const lightLogsOnly = process.env.DOCKREV_TEST_STORYBOOK_LIGHT_LOGS_ONLY === "1";
+  const smokeOnly = process.env.DOCKREV_TEST_STORYBOOK_SMOKE_ONLY === "1";
+  const interactiveOnly = process.env.DOCKREV_TEST_STORYBOOK_INTERACTIVE_ONLY === "1";
+  if (smokeOnly && interactiveOnly) {
+    throw new Error(
+      "DOCKREV_TEST_STORYBOOK_SMOKE_ONLY and DOCKREV_TEST_STORYBOOK_INTERACTIVE_ONLY cannot both be set.",
+    );
+  }
 
   if (targetUrl) {
     if (passthrough.length > 0) {
@@ -2412,8 +2440,14 @@ async function main() {
       if (lightLogsOnly) {
         await assertServiceLogsLightContrast({ baseUrl: targetUrl, browser });
       } else {
-        await runSmoke({ baseUrl: targetUrl, storyIds, browser });
-        await runInteractive({ baseUrl: targetUrl, browser });
+        if (!interactiveOnly) {
+          await runSmoke({
+            baseUrl: targetUrl,
+            storyIds: selectSmokeShard(storyIds),
+            browser,
+          });
+        }
+        if (!smokeOnly) await runInteractive({ baseUrl: targetUrl, browser });
       }
     } finally {
       await browser.close().catch(() => {});
@@ -2456,8 +2490,14 @@ async function main() {
       if (lightLogsOnly) {
         await assertServiceLogsLightContrast({ baseUrl: localUrl, browser });
       } else {
-        await runSmoke({ baseUrl: localUrl, storyIds, browser });
-        await runInteractive({ baseUrl: localUrl, browser });
+        if (!interactiveOnly) {
+          await runSmoke({
+            baseUrl: localUrl,
+            storyIds: selectSmokeShard(storyIds),
+            browser,
+          });
+        }
+        if (!smokeOnly) await runInteractive({ baseUrl: localUrl, browser });
       }
     } finally {
       await browser.close().catch(() => {});

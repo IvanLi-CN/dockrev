@@ -762,6 +762,7 @@ export function useOverviewPageState(props: {
 
   const discoverySummary = useMemo(() => {
     const active = discoveredProjects.filter((p) => p.status === 'active' && !p.archived)
+    const stopped = discoveredProjects.filter((p) => p.status === 'stopped' && !p.archived)
     const warning = discoveredProjects.filter((p) => p.status === 'active' && !p.archived && !!p.lastError)
     const missing = discoveredProjects.filter((p) => p.status === 'missing' && !p.archived)
     const invalid = discoveredProjects.filter((p) => p.status === 'invalid' && !p.archived)
@@ -780,6 +781,8 @@ export function useOverviewPageState(props: {
       .slice(0, 4)
     return {
       active,
+      stopped: stopped.slice(0, 6),
+      stoppedCount: stopped.length,
       warning,
       missing,
       invalid,
@@ -794,14 +797,14 @@ export function useOverviewPageState(props: {
       title: '确认执行发现扫描？',
       body: (
         <>
-          <div className="modalLead">发现扫描会拉取 discovery projects，并标记 missing/invalid。</div>
+          <div className="modalLead">发现扫描会拉取 discovery projects，并标记 stopped、missing 或 invalid。</div>
           <div className="modalKvGrid">
             <div className="modalKvLabel">操作</div>
             <div className="modalKvValue">
               <Mono>discovery scan</Mono>
             </div>
             <div className="modalKvLabel">可能影响</div>
-            <div className="modalKvValue">创建/更新 stacks，或将 stacks 标记为 missing/invalid。</div>
+            <div className="modalKvValue">创建/更新 stacks，或更新其运行、停止、缺失或配置异常状态。</div>
           </div>
           <div className="modalDivider" />
           <div className="muted">这是“发现异常”用的扫描，不会直接重启容器。</div>

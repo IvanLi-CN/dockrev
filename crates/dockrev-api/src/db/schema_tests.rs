@@ -6,7 +6,7 @@ fn temporary_db_path() -> PathBuf {
 }
 
 #[tokio::test]
-async fn startup_reconciles_missing_discovery_projects_with_active_stacks() {
+async fn startup_preserves_discovery_projects_until_a_successful_scan() {
     let db_path = temporary_db_path();
     let initial_db = Db::open(&db_path).await.unwrap();
     drop(initial_db);
@@ -120,16 +120,8 @@ VALUES ('missing-user-archive', 'user_archived', 'missing')
         states,
         vec![
             ("active_project".to_string(), 0, None),
-            (
-                "legacy_missing".to_string(),
-                1,
-                Some("auto_archive_on_restart".to_string()),
-            ),
-            (
-                "unarchived_missing".to_string(),
-                1,
-                Some("auto_archive_on_restart".to_string()),
-            ),
+            ("legacy_missing".to_string(), 0, None,),
+            ("unarchived_missing".to_string(), 0, None,),
             (
                 "user_archived".to_string(),
                 1,
@@ -184,7 +176,7 @@ WHERE id = 'legacy_missing'
             3600,
         )
     );
-    assert!(archived_at.is_some());
+    assert!(archived_at.is_none());
 
     let legacy_service_metadata = conn
         .query_row(
@@ -228,10 +220,7 @@ WHERE id = 'legacy-missing-service'
             |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?)),
         )
         .unwrap();
-    assert_eq!(
-        unarchived_discovery_state,
-        (1, Some("auto_archive_on_restart".to_string()))
-    );
+    assert_eq!(unarchived_discovery_state, (0, None));
 
     let discovery_state = conn
         .query_row(

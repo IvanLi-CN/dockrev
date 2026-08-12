@@ -430,6 +430,14 @@ pub struct DiscoveredComposeProjectRecord {
 }
 
 #[derive(Clone, Debug)]
+pub struct PersistedDiscoveredComposeProject {
+    pub project: String,
+    pub stack_id: Option<String>,
+    pub status: String,
+    pub compose_files: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug)]
 pub struct DiscoveredComposeProjectUpsert {
     pub project: String,
     pub stack_id: Option<String>,

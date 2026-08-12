@@ -83,6 +83,43 @@ export const DashboardDemo: Story = {
   render: renderServices("兼容旧 smoke：运维大盘默认场景"),
 };
 
+export const DiscoveryStopped: Story = {
+  parameters: { dockrevApiScenario: "overview-discovery-readable" },
+  render: renderServices("停止项目保持可启动，不进入发现异常"),
+  play: async ({ canvasElement }) => {
+    await sleep(260);
+
+    const stoppedSection = canvasElement.querySelector(".discoveryStoppedSection");
+    expectStory(stoppedSection, "expected a separate stopped projects section");
+    expectStory(
+      stoppedSection?.textContent?.includes("已停止，可启动"),
+      "expected stopped projects to be explicitly startable",
+    );
+    expectStory(
+      stoppedSection?.querySelectorAll(".discoveryStoppedRow").length === 6,
+      "expected stopped projects to be capped at six rows",
+    );
+    expectStory(
+      stoppedSection?.textContent?.includes("共 7 项"),
+      "expected the stopped project total to remain visible",
+    );
+    expectStory(
+      canvasElement.querySelector(".discoveryStatChipTotal .discoveryStatValue")?.textContent === "4",
+      "expected stopped projects to stay out of the issue total",
+    );
+    const firstStoppedProject = stoppedSection?.querySelector<HTMLButtonElement>(
+      ".discoveryStoppedRow",
+    );
+    expectStory(firstStoppedProject && !firstStoppedProject.disabled, "expected stopped stack to link to its details");
+    firstStoppedProject?.click();
+    await sleep(80);
+    expectStory(
+      window.location.pathname.endsWith("/services/stack-prod"),
+      "expected stopped stack row to navigate to the existing stack detail route",
+    );
+  },
+};
+
 export const AllActionableServicesVisible: Story = {
   parameters: { dockrevApiScenario: "dashboard-demo" },
   render: renderServices("回归：默认列表必须完整显示全部 actionable 服务"),

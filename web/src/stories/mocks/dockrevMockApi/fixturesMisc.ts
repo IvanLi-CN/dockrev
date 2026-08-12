@@ -344,6 +344,16 @@ export function buildOverviewDiscoveryReadable(): Fixture {
       lastError: null,
       archived: false,
     },
+    ...Array.from({ length: 7 }, (_, index) => ({
+      project: `stopped-service-${String(index + 1).padStart(2, '0')}`,
+      status: 'stopped' as const,
+      stackId: index === 0 ? 'stack-prod' : 'stack-infra',
+      configFiles: [`/srv/stopped-${index + 1}/compose.yml`],
+      lastSeenAt: nowIso(-(index + 2) * 60_000),
+      lastScanAt: nowIso(-(index + 1) * 60_000),
+      lastError: null,
+      archived: false,
+    })),
   ]
 
   return f

@@ -22,6 +22,8 @@ Check:
 - Any Dockrev-generated override path is mounted consistently, such as `self-upgrade.override.yml` next to the configured absolute `DOCKREV_SUPERVISOR_STATE_PATH`, or `/tmp/dockrev-override-<project>-<ulid>.yml`
 - Any user-managed extra compose / override file still exists and is mounted
 
+If a service is stopped but every saved Compose file is readable and valid, discovery reports `stopped` instead of archiving it. Open the linked Stack and use the existing start action. Dockrev auto-archives only when every saved Compose file is absent. A partial absence, permission/I-O failure, or parse error stays visible as `invalid`; repair the file or mount and rerun discovery. A user archive is never removed by discovery.
+
 ## 3) Check jobs fail or run slowly
 
 Check:

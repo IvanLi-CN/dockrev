@@ -4312,6 +4312,11 @@ html[data-theme="light"] .modalOverlay {
   background: color-mix(in srgb, var(--color-primary) 8%, transparent);
 }
 
+.discoveryStatChipStopped {
+  border-color: color-mix(in srgb, var(--color-warning) 24%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+}
+
 .discoveryStatChipScan {
   border-color: color-mix(in srgb, var(--borderColor) 86%, transparent);
   background: color-mix(
@@ -4446,6 +4451,72 @@ html[data-theme="light"] .modalOverlay {
   font-weight: 650;
   color: var(--text);
   margin-bottom: 6px;
+}
+
+.discoveryStoppedSection {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
+}
+
+.discoveryStoppedHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.discoveryStoppedTitle {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.discoveryStoppedList {
+  margin-top: 8px;
+  display: grid;
+  gap: 2px;
+}
+
+.discoveryStoppedRow {
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.discoveryStoppedRow:hover,
+.discoveryStoppedRow:focus-visible {
+  background: color-mix(in srgb, var(--color-warning) 9%, transparent);
+  outline: none;
+}
+
+.discoveryStoppedRow:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.discoveryStoppedProject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.discoveryStoppedAction {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .discoveryIssueDialogCard {

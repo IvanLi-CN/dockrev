@@ -160,6 +160,12 @@ async fn main() -> anyhow::Result<()> {
     state.snapshot_worker.spawn_gc_task();
 
     backup::spawn_cleanup_task(state.clone());
+    if let Err(err) = discovery::run_scan(state.as_ref()).await {
+        // A failed Docker enumeration must leave discovery state untouched. The
+        // periodic task below will retry without turning a transient failure into
+        // an archive operation.
+        tracing::warn!(error = %err, "startup discovery scan failed");
+    }
     discovery::spawn_task(state.clone());
     runtime_scan::spawn_task(state.clone());
     ghcr_webhook_jobs::spawn_tasks(state.clone());

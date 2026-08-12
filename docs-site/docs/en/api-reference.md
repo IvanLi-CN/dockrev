@@ -60,6 +60,8 @@ This page documents every HTTP route exposed in:
 | POST | `/api/runtime-scans` | Forward Auth | Create runtime scan job | `200` `400` `401` `409` |
 | POST | `/api/updates` | Forward Auth | Create update job | `200` `400` `401` `409` |
 
+`GET /api/discovery/projects` returns `active`, `stopped`, `missing`, or `invalid` in `status`. `stopped` means the saved Compose files are readable and valid but no container is currently running; the linked Stack stays unarchived and can use its existing lifecycle start action. Scan jobs expose `stacksStopped` and the `marked_stopped` action. Dockrev auto-archives only when every saved file is `ENOENT`, with reason `auto_archive_compose_files_missing`; partial absence, permission/I-O failures, and parse failures remain visible as `invalid`. Discovery never removes a user archive.
+
 - `POST /api/updates` contract:
   - `scope=service`: requires explicit `serviceId + targetTag + targetDigest + pullTags`.
   - `scope=stack|all`: requires explicit `targets[]`, each entry shaped as `{ serviceId, targetTag, targetDigest, pullTags }`.

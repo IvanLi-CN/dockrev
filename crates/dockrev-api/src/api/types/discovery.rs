@@ -4,6 +4,7 @@ use super::*;
 #[serde(rename_all = "snake_case")]
 pub enum DiscoveredProjectStatus {
     Active,
+    Stopped,
     Missing,
     Invalid,
 }
@@ -12,6 +13,7 @@ impl DiscoveredProjectStatus {
     pub fn from_str(input: &str) -> Self {
         match input {
             "active" => Self::Active,
+            "stopped" => Self::Stopped,
             "missing" => Self::Missing,
             _ => Self::Invalid,
         }
@@ -50,6 +52,7 @@ pub struct DiscoveryScanSummary {
     pub stacks_updated: u32,
     pub stacks_skipped: u32,
     pub stacks_failed: u32,
+    pub stacks_stopped: u32,
     pub stacks_marked_missing: u32,
 }
 
@@ -60,6 +63,7 @@ pub enum DiscoveryActionKind {
     Updated,
     Skipped,
     Failed,
+    MarkedStopped,
     MarkedMissing,
 }
 

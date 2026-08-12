@@ -193,6 +193,9 @@ Notes:
 - If the same Compose project reports multiple distinct `config_files` variants (common after self-upgrade or when a one-off compose override file was used):
   - Dockrev will try to pick a deterministic canonical list (prefer a safe superset that only adds an image-only override file).
   - If an extra override file path is not readable in the Dockrev container, Dockrev falls back to the common compose files and surfaces a warning with a mounting hint.
+- A discovered project that is absent from the running Docker container list is reconciled from its saved Compose files. Readable, valid files produce `stopped`, which keeps the Stack visible and startable through its existing lifecycle action.
+- Dockrev automatically archives only when every saved Compose file is absent (`ENOENT`), using `auto_archive_compose_files_missing`. Partial absence, permission or I/O failures, and parse failures remain visible as `invalid` and are never auto-archived.
+- A later healthy scan can restore only system archives created by `auto_archive_compose_files_missing` or the legacy `auto_archive_on_restart` reason. A user archive is never changed by discovery.
 
 ## Deploy (minimal)
 

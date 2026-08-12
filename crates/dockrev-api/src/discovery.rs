@@ -851,6 +851,9 @@ pub fn spawn_task(state: std::sync::Arc<AppState>) {
     let interval = state.config.discovery_interval_seconds;
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(interval));
+        // The application performs one scan before this task is spawned. Skip the
+        // interval's immediate first tick so a restart does not scan twice.
+        ticker.tick().await;
         loop {
             ticker.tick().await;
             if let Err(e) = run_scan(state.as_ref()).await {
@@ -858,6 +861,79 @@ pub fn spawn_task(state: std::sync::Arc<AppState>) {
             }
         }
     });
+}
+
+enum PersistedComposeFilesState {
+    Stopped {
+        compose_files: Vec<String>,
+    },
+    Missing {
+        compose_files: Vec<String>,
+    },
+    Invalid {
+        compose_files: Option<Vec<String>>,
+        reason: String,
+    },
+}
+
+async fn classify_persisted_compose_files(
+    compose_files: Option<Vec<String>>,
+) -> PersistedComposeFilesState {
+    let Some(compose_files) = compose_files else {
+        return PersistedComposeFilesState::Invalid {
+            compose_files: None,
+            reason: "compose_files_not_recorded".to_string(),
+        };
+    };
+    if compose_files.is_empty() {
+        return PersistedComposeFilesState::Invalid {
+            compose_files: Some(compose_files),
+            reason: "compose_files_not_recorded".to_string(),
+        };
+    }
+
+    let mut missing_files = 0usize;
+
+    for path in &compose_files {
+        if path.trim().is_empty() || !Path::new(path).is_absolute() {
+            return PersistedComposeFilesState::Invalid {
+                compose_files: Some(compose_files.clone()),
+                reason: format!("compose_file_path_invalid: {path}"),
+            };
+        }
+
+        let contents = match tokio::fs::read_to_string(path).await {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                missing_files = missing_files.saturating_add(1);
+                continue;
+            }
+            Err(error) => {
+                return PersistedComposeFilesState::Invalid {
+                    compose_files: Some(compose_files.clone()),
+                    reason: format!("compose_file_unreadable: {path} ({error})"),
+                };
+            }
+        };
+
+        if let Err(error) = compose::parse_services(&contents) {
+            return PersistedComposeFilesState::Invalid {
+                compose_files: Some(compose_files.clone()),
+                reason: format!("compose_file_invalid: {path} ({error})"),
+            };
+        }
+    }
+
+    if missing_files == compose_files.len() {
+        return PersistedComposeFilesState::Missing { compose_files };
+    }
+    if missing_files > 0 {
+        return PersistedComposeFilesState::Invalid {
+            compose_files: Some(compose_files),
+            reason: "compose_files_partially_missing".to_string(),
+        };
+    }
+    PersistedComposeFilesState::Stopped { compose_files }
 }
 
 pub async fn run_scan(state: &AppState) -> anyhow::Result<TriggerDiscoveryScanResponse> {
@@ -917,6 +993,7 @@ async fn run_scan_inner(
         stacks_updated: 0,
         stacks_skipped: 0,
         stacks_failed: 0,
+        stacks_stopped: 0,
         stacks_marked_missing: 0,
     };
 
@@ -948,7 +1025,7 @@ async fn run_scan_inner(
                         last_scan_at: now.clone(),
                         last_error: Some(e.reason.clone()),
                         last_config_files: None,
-                        unarchive_if_active: false,
+                        unarchive_if_active: true,
                     })
                     .await?;
                 actions.push(DiscoveryAction {
@@ -1018,7 +1095,7 @@ async fn run_scan_inner(
                     last_scan_at: now.clone(),
                     last_error: Some(msg.clone()),
                     last_config_files: Some(config_files.clone()),
-                    unarchive_if_active: false,
+                    unarchive_if_active: true,
                 })
                 .await?;
             actions.push(DiscoveryAction {
@@ -1217,20 +1294,100 @@ async fn run_scan_inner(
         .await;
     }
 
-    let newly_missing = state
+    let persisted_projects = state
         .db
-        .mark_discovered_compose_projects_missing_except(&seen_projects, &now)
+        .list_persisted_discovered_compose_projects_except(&seen_projects)
         .await?;
-    summary.stacks_marked_missing = newly_missing.len() as u32;
 
-    for project in newly_missing {
-        actions.push(DiscoveryAction {
-            project,
-            action: DiscoveryActionKind::MarkedMissing,
-            stack_id: None,
-            reason: None,
-            details: None,
-        });
+    for persisted in persisted_projects {
+        let previous_status = persisted.status.clone();
+        match classify_persisted_compose_files(persisted.compose_files).await {
+            PersistedComposeFilesState::Stopped { compose_files } => {
+                state
+                    .db
+                    .upsert_discovered_compose_project(DiscoveredComposeProjectUpsert {
+                        project: persisted.project.clone(),
+                        stack_id: persisted.stack_id.clone(),
+                        status: "stopped".to_string(),
+                        last_seen_at: None,
+                        last_scan_at: now.clone(),
+                        last_error: None,
+                        last_config_files: Some(compose_files),
+                        unarchive_if_active: true,
+                    })
+                    .await?;
+                if previous_status != "stopped" {
+                    summary.stacks_stopped = summary.stacks_stopped.saturating_add(1);
+                    actions.push(DiscoveryAction {
+                        project: persisted.project,
+                        action: DiscoveryActionKind::MarkedStopped,
+                        stack_id: persisted.stack_id,
+                        reason: None,
+                        details: None,
+                    });
+                }
+            }
+            PersistedComposeFilesState::Missing { compose_files } => {
+                state
+                    .db
+                    .upsert_discovered_compose_project(DiscoveredComposeProjectUpsert {
+                        project: persisted.project.clone(),
+                        stack_id: persisted.stack_id.clone(),
+                        status: "missing".to_string(),
+                        last_seen_at: None,
+                        last_scan_at: now.clone(),
+                        last_error: Some("compose_files_missing".to_string()),
+                        last_config_files: Some(compose_files),
+                        unarchive_if_active: false,
+                    })
+                    .await?;
+                state
+                    .db
+                    .archive_discovered_compose_project_for_missing_compose_files(
+                        &persisted.project,
+                        &now,
+                    )
+                    .await?;
+                if previous_status != "missing" {
+                    summary.stacks_marked_missing = summary.stacks_marked_missing.saturating_add(1);
+                    actions.push(DiscoveryAction {
+                        project: persisted.project,
+                        action: DiscoveryActionKind::MarkedMissing,
+                        stack_id: persisted.stack_id,
+                        reason: Some("compose_files_missing".to_string()),
+                        details: None,
+                    });
+                }
+            }
+            PersistedComposeFilesState::Invalid {
+                compose_files,
+                reason,
+            } => {
+                state
+                    .db
+                    .upsert_discovered_compose_project(DiscoveredComposeProjectUpsert {
+                        project: persisted.project.clone(),
+                        stack_id: persisted.stack_id.clone(),
+                        status: "invalid".to_string(),
+                        last_seen_at: None,
+                        last_scan_at: now.clone(),
+                        last_error: Some(reason.clone()),
+                        last_config_files: compose_files,
+                        unarchive_if_active: true,
+                    })
+                    .await?;
+                if previous_status != "invalid" {
+                    summary.stacks_failed = summary.stacks_failed.saturating_add(1);
+                    actions.push(DiscoveryAction {
+                        project: persisted.project,
+                        action: DiscoveryActionKind::Failed,
+                        stack_id: persisted.stack_id,
+                        reason: Some(reason),
+                        details: None,
+                    });
+                }
+            }
+        }
     }
 
     if actions.len() > state.config.discovery_max_actions as usize {

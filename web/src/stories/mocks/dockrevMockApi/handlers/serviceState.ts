@@ -68,6 +68,7 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
         stacksUpdated: 0,
         stacksSkipped: 0,
         stacksFailed: 0,
+        stacksStopped: 0,
         stacksMarkedMissing: 0,
       },
       actions: [],
@@ -1166,7 +1167,6 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     if (found && settings) found.svc.settings = settings
     return json({ ok: true })
   }
-
   if (method === 'POST' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/repo-link/infer')) {
     const parts = urlPath.split('/').filter(Boolean)
     const serviceId = decodeURIComponent(parts[2])
