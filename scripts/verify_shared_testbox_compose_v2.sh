@@ -219,7 +219,7 @@ printf '%s\n' "local_repo_root=$REPO_ROOT" "created_utc=$(date -u +%Y-%m-%dT%H:%
 REMOTE_SETUP
 
 printf '==> Syncing repository to shared testbox\n'
-rsync -azs --delete "${SYNC_EXCLUDES[@]}" -- "$REPO_ROOT/" "$TESTBOX:$REMOTE_RUN/"
+rsync -az --delete "${SYNC_EXCLUDES[@]}" -- "$REPO_ROOT/" "$TESTBOX:$REMOTE_RUN/"
 
 printf '==> Running real Compose V2 regression on shared testbox\n'
 ssh -o BatchMode=yes -- "$TESTBOX" \
