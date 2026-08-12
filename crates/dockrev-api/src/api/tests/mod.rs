@@ -50,3 +50,4 @@ include!("suite_20.rs");
 include!("suite_21.rs");
 include!("suite_22.rs");
 include!("suite_23.rs");
+include!("suite_24.rs");

@@ -1167,7 +1167,6 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     if (found && settings) found.svc.settings = settings
     return json({ ok: true })
   }
-
   if (method === 'POST' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/repo-link/infer')) {
     const parts = urlPath.split('/').filter(Boolean)
     const serviceId = decodeURIComponent(parts[2])
