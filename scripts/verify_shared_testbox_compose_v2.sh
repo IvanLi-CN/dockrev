@@ -861,7 +861,7 @@ try:
 finally:
     conn.close()
 
-actual = {project: state for project, *state in rows}
+actual = {project: tuple(state) for project, *state in rows}
 expected = {
     "invalid-auto": ("invalid", 0, None, 0, None),
     "legacy-auto-stopped": ("stopped", 0, None, 0, None),
