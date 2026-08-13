@@ -125,5 +125,8 @@ describe('deploy-check cached gate', () => {
     expect(source).toMatch(
       /const refreshOnForeground = \(\) => \{\s*if \(document\.visibilityState !== "visible"\) return;\s*void refreshDeployCheckGate\(true\)/,
     )
+    expect(source).toContain('deployCheckBackgroundRefreshInFlightRef.current = true')
+    expect(source).toContain('deployCheckBackgroundRefreshInFlightRef.current = false')
+    expect(source).not.toContain('deployCheckBackgroundRefreshRequestedRef')
   })
 })

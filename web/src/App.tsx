@@ -157,7 +157,7 @@ export default function App() {
   const authFailureVersionRef = useRef(0);
   const authIdentityRefreshInFlightRef = useRef(false);
   const suppressNextAuthRecoveredRef = useRef(false);
-  const deployCheckBackgroundRefreshRequestedRef = useRef(false);
+  const deployCheckBackgroundRefreshInFlightRef = useRef(false);
   const previousRoutePathRef = useRef<string | null>(null);
   const previousUpdateNavigationPathRef = useRef<string | null>(null);
 
@@ -228,10 +228,14 @@ export default function App() {
       requestBackgroundRefresh &&
       !blocked &&
       !envelope.refreshing &&
-      !deployCheckBackgroundRefreshRequestedRef.current
+      !deployCheckBackgroundRefreshInFlightRef.current
     ) {
-      deployCheckBackgroundRefreshRequestedRef.current = true;
-      void refreshDeployCheckReport().catch(() => {});
+      deployCheckBackgroundRefreshInFlightRef.current = true;
+      void refreshDeployCheckReport()
+        .catch(() => {})
+        .finally(() => {
+          deployCheckBackgroundRefreshInFlightRef.current = false;
+        });
     }
   }, []);
 
