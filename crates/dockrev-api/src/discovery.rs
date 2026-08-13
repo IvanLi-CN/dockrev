@@ -1406,6 +1406,23 @@ async fn run_scan_inner(
     .await;
 
     let duration_ms = start.elapsed().as_millis() as u64;
+    state
+        .management_events
+        .publish_change(
+            "discovery",
+            "scan",
+            "current",
+            serde_json::json!({
+                "operation": "scan_finished",
+                "projectsSeen": summary.projects_seen,
+                "stacksCreated": summary.stacks_created,
+                "stacksUpdated": summary.stacks_updated,
+                "stacksStopped": summary.stacks_stopped,
+                "stacksMarkedMissing": summary.stacks_marked_missing,
+                "stacksFailed": summary.stacks_failed,
+            }),
+        )
+        .await;
     Ok(TriggerDiscoveryScanResponse {
         started_at,
         duration_ms,

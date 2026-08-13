@@ -25,12 +25,40 @@ async fn stack_lifecycle_status_and_start_task_are_stack_scoped() {
         .await
         .unwrap();
 
+    let cursor = match state.management_events.replay_after(None).await {
+        crate::management_events::ManagementEventReplay::Events { cursor, .. } => {
+            format!("{}:{cursor}", state.management_events.generation())
+        }
+        crate::management_events::ManagementEventReplay::ResyncRequired { .. } => {
+            panic!("initial discovery event cursor must be available")
+        }
+    };
     let scan = crate::discovery::run_scan(state.as_ref()).await.unwrap();
     assert_eq!(scan.summary.stacks_stopped, 1);
     assert!(scan.actions.iter().any(|action| {
         action.project == "lifecycle-stack"
             && matches!(action.action, crate::api::types::DiscoveryActionKind::MarkedStopped)
     }));
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(1);
+    loop {
+        if let crate::management_events::ManagementEventReplay::Events { events, .. } = state
+            .management_events
+            .replay_after(Some(&cursor))
+            .await
+            && events.iter().any(|event| {
+                event.event.domain == "discovery"
+                    && event.event.summary["operation"] == "scan_finished"
+                    && event.event.summary["stacksStopped"] == 1
+            })
+        {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for discovery management event"
+        );
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+    }
 
     let discovery = app
         .clone()
