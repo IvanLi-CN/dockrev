@@ -95,6 +95,15 @@ pub(super) async fn archive_discovery_project(
     if !changed {
         return Err(ApiError::not_found("project not found"));
     }
+    state
+        .management_events
+        .publish_change(
+            "discovery",
+            "project",
+            project,
+            json!({ "operation": "archived" }),
+        )
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -113,5 +122,14 @@ pub(super) async fn restore_discovery_project(
     if !changed {
         return Err(ApiError::not_found("project not found"));
     }
+    state
+        .management_events
+        .publish_change(
+            "discovery",
+            "project",
+            project,
+            json!({ "operation": "restored" }),
+        )
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }

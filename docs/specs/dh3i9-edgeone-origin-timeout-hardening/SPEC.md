@@ -66,7 +66,7 @@
   - `GET /api/events` 是管理页面唯一的通用 SSE 连接，沿用 Forward Auth 与同源凭据；未授权返回 `401`。
   - 每浏览器标签页最多一条通用连接。事件只包含 `domain`、实体类型/ID、版本和必要摘要；REST 仍是详情真相源。
   - 服务端在 `100ms` 窗口内按 `domain + entity type + entity id` 合并普通变化；任务终态、deploy-check 确定失败、cleanup 确定终态和 `resync_required` 立即发送。
-  - 有效 discovery 扫描完成时必须发布 `discovery` 扫描摘要失效通知；页面据此读取 discovery REST 快照，不在 SSE 内复制项目详情。
+  - 作业进度写入、有效 discovery 扫描完成、Discovery 人工归档/恢复、GHCR 配置/目标/仓库选择及 webhook 状态写入都必须发布领域失效摘要；页面据此读取 REST 快照，不在 SSE 内复制详情。
   - 历史仅保留进程内 `60s` 或 `1024` 条，以先到者为准；不写 SQLite。`Last-Event-ID` 仅能补发当前实例缓冲，实例世代变化、游标淘汰或无效游标必须发送 `resync_required`。
   - EventSource 自动重连后，页面先读取 REST 快照；后台标签页只累计失效实体，恢复前台再批量同步一次。不得使用定时轮询或轮询降级。
   - `GET /api/events/status` 提供连接数、重连、重同步、缓冲淘汰、事件合并与发布失败计数，供资源边界观测。

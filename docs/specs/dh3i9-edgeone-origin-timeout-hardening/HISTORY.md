@@ -9,3 +9,4 @@
 - System archives created by the current or legacy automatic reason recover when a valid scan proves the project is stopped or invalid. User archives, Stack metadata, Service metadata, and running resources remain unchanged.
 - Shared-testbox cleanup remains relative to the verified run directory after containment checks, so a later parent-path replacement cannot redirect deletion outside that run scope.
 - 管理页面改用应用级 SSE：缓存 deploy-check PASS 立即放行并后台复核；事件仅保存在 60 秒或 1024 条的进程内环形缓冲，断线通过游标补发或 REST 重同步恢复，且不保留轮询降级。
+- 管理事件发布覆盖任务进度与摘要更新、Discovery 人工归档/恢复、GHCR 配置/目标/仓库选择以及 webhook 状态变更，确保管理页面无需轮询仍能同步跨标签写入。

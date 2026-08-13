@@ -597,9 +597,21 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
   }, [refreshTrackedRepos])
 
   useManagementEventBatch(({ events, resyncRequired }) => {
-    const settingsChanged = resyncRequired || events.some((event) => event.domain === 'settings')
-    const trackedReposChanged = resyncRequired || events.some((event) =>
-      event.domain === 'github_packages' || event.summary.jobType === 'github_packages_webhook',
+    const githubPackagesChanged = resyncRequired || events.some((event) => event.domain === 'github_packages')
+    const githubPackagesSettingsChanged = events.some((event) =>
+      event.domain === 'github_packages' && [
+        'settings_updated',
+        'repo_selection_updated',
+        'repo_selection_bulk_updated',
+        'repo_unregistration_queued',
+        'repo_removed',
+        'target_added',
+        'target_removed',
+      ].includes(String(event.summary.operation ?? '')),
+    )
+    const settingsChanged = resyncRequired || githubPackagesSettingsChanged || events.some((event) => event.domain === 'settings')
+    const trackedReposChanged = resyncRequired || githubPackagesChanged || events.some((event) =>
+      typeof event.summary.jobType === 'string' && event.summary.jobType.startsWith('github_packages_'),
     )
     if (settingsChanged) void refresh().catch((error: unknown) => setError(errorMessage(error)))
     if (trackedReposChanged) void refreshTrackedRepos().catch((error: unknown) => setError(errorMessage(error)))

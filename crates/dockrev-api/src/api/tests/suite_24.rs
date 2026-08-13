@@ -160,6 +160,188 @@ async fn management_events_generation_mismatch_requires_resync() {
     assert_eq!(payload["generation"], state.management_events.generation());
 }
 
+async fn wait_for_management_event(
+    state: &Arc<AppState>,
+    cursor: &str,
+    matches: impl Fn(&crate::management_events::ManagementEventRecord) -> bool,
+) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+    loop {
+        if let crate::management_events::ManagementEventReplay::Events { events, .. } = state
+            .management_events
+            .replay_after(Some(cursor))
+            .await
+            && events.iter().any(&matches)
+        {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for management event"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+#[tokio::test]
+async fn job_progress_publishes_management_event() {
+    let state = test_state(":memory:").await;
+    let job_id = ids::new_check_id();
+    let now = test_now_rfc3339();
+    state
+        .db
+        .insert_job(
+            crate::api::types::JobRecord::new_running(
+                job_id.clone(),
+                crate::api::types::JobType::Check,
+                crate::api::types::JobScope::All,
+                None,
+                None,
+                &now,
+            )
+            .to_db(),
+        )
+        .await
+        .unwrap();
+    let cursor = format!("{}:0", state.management_events.generation());
+
+    state
+        .db
+        .set_job_progress(&job_id, &json!({ "phase": "scan", "percent": 50 }))
+        .await
+        .unwrap();
+
+    wait_for_management_event(&state, &cursor, |event| {
+        event.event.domain == "jobs"
+            && event.event.summary["jobId"] == job_id
+            && event.event.summary["operation"] == "progress_updated"
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn discovery_archive_and_restore_publish_management_events() {
+    let state = test_state(":memory:").await;
+    let project = "management-events-project";
+    state
+        .db
+        .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
+            project: project.to_string(),
+            stack_id: None,
+            status: "active".to_string(),
+            last_seen_at: None,
+            last_scan_at: test_now_rfc3339(),
+            last_error: None,
+            last_config_files: None,
+            unarchive_if_active: true,
+        })
+        .await
+        .unwrap();
+    let app = api::router(state.clone());
+    let cursor = format!("{}:0", state.management_events.generation());
+
+    let archive = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/discovery/projects/{project}/archive"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(archive.status(), 204);
+    wait_for_management_event(&state, &cursor, |event| {
+        event.event.domain == "discovery"
+            && event.event.entities.iter().any(|entity| {
+                entity.entity_type == "project" && entity.id == project
+            })
+            && event.event.summary["operation"] == "archived"
+    })
+    .await;
+
+    let restore = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/discovery/projects/{project}/restore"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(restore.status(), 204);
+    wait_for_management_event(&state, &cursor, |event| {
+        event.event.domain == "discovery"
+            && event.event.entities.iter().any(|entity| {
+                entity.entity_type == "project" && entity.id == project
+            })
+            && event.event.summary["operation"] == "restored"
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn github_packages_writes_publish_management_events() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let cursor = format!("{}:0", state.management_events.generation());
+
+    let settings = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/github-packages/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "enabled": false,
+                        "callbackUrl": "https://dockrev.example.com/api/webhooks/github-packages",
+                        "targets": [],
+                        "repos": []
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(settings.status(), 200);
+    wait_for_management_event(&state, &cursor, |event| {
+        event.event.domain == "github_packages"
+            && event.event.entities.iter().any(|entity| {
+                entity.entity_type == "settings" && entity.id == "default"
+            })
+            && event.event.summary["operation"] == "settings_updated"
+    })
+    .await;
+
+    let selection = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/github-packages/repos/selected")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "fullName": "acme/widgets", "selected": false }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(selection.status(), 200);
+    wait_for_management_event(&state, &cursor, |event| {
+        event.event.domain == "github_packages"
+            && event.event.entities.iter().any(|entity| {
+                entity.entity_type == "repo" && entity.id == "acme/widgets"
+            })
+            && event.event.summary["operation"] == "repo_selection_updated"
+    })
+    .await;
+}
+
 #[tokio::test]
 async fn stack_settings_publish_management_event() {
     let state = test_state(":memory:").await;

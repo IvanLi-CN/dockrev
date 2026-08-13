@@ -152,6 +152,16 @@ pub(super) async fn put_github_packages_settings(
             .map_err(map_internal)?;
     }
 
+    state
+        .management_events
+        .publish_change(
+            "github_packages",
+            "settings",
+            "default",
+            json!({ "operation": "settings_updated" }),
+        )
+        .await;
+
     Ok(Json(PutGitHubPackagesSettingsResponse { ok: true }))
 }
 
@@ -354,6 +364,20 @@ pub(super) async fn set_github_packages_repo_selected(
         .upsert_github_packages_repo_selected(owner, repo, req.selected, &now)
         .await
         .map_err(map_internal)?;
+    let full_name = format!("{owner}/{repo}");
+    state
+        .management_events
+        .publish_change(
+            "github_packages",
+            "repo",
+            full_name.clone(),
+            json!({
+                "operation": "repo_selection_updated",
+                "fullName": full_name,
+                "selected": req.selected,
+            }),
+        )
+        .await;
 
     let mut job_id: Option<String> = None;
     if req.selected {
@@ -365,7 +389,6 @@ pub(super) async fn set_github_packages_repo_selected(
         let callback_ready =
             !settings.callback_url.trim().is_empty() && Url::parse(&settings.callback_url).is_ok();
         if settings.enabled && callback_ready {
-            let full_name = format!("{owner}/{repo}");
             let queued = ghcr_webhook_jobs::enqueue_repo_job(
                 &state,
                 &full_name,
@@ -417,6 +440,15 @@ pub(super) async fn delete_github_packages_repo(
     )
     .await
     .map_err(map_internal)?;
+    state
+        .management_events
+        .publish_change(
+            "github_packages",
+            "repo",
+            format!("{owner}/{repo}"),
+            json!({ "operation": "repo_unregistration_queued", "jobId": job_id }),
+        )
+        .await;
 
     Ok(Json(DeleteGitHubPackagesRepoResponse { ok: true, job_id }))
 }
@@ -440,6 +472,21 @@ pub(super) async fn bulk_set_github_packages_repos_selected(
         )
         .await
         .map_err(map_internal)?;
+    if affected > 0 {
+        state
+            .management_events
+            .publish_change(
+                "github_packages",
+                "repos",
+                "selection",
+                json!({
+                    "operation": "repo_selection_bulk_updated",
+                    "selected": req.selected,
+                    "affected": affected,
+                }),
+            )
+            .await;
+    }
 
     Ok(Json(BulkSetGitHubPackagesReposSelectedResponse {
         ok: true,
@@ -505,6 +552,18 @@ pub(super) async fn add_github_packages_target(
         .upsert_github_packages_repos_default_selected(&repos, &now)
         .await
         .map_err(map_internal)?;
+    state
+        .management_events
+        .publish_change(
+            "github_packages",
+            "target",
+            req.input.clone(),
+            json!({
+                "operation": "target_added",
+                "reposAdded": repos_added,
+            }),
+        )
+        .await;
 
     Ok(Json(AddGitHubPackagesTargetResponse {
         ok: true,
@@ -521,11 +580,22 @@ pub(super) async fn remove_github_packages_target(
 ) -> Result<Json<RemoveGitHubPackagesTargetResponse>, ApiError> {
     let _user = require_user(&state, &headers).await?;
 
-    let _ = state
+    let removed = state
         .db
         .delete_github_packages_target_by_input(&req.input)
         .await
         .map_err(map_internal)?;
+    if removed > 0 {
+        state
+            .management_events
+            .publish_change(
+                "github_packages",
+                "target",
+                req.input.clone(),
+                json!({ "operation": "target_removed" }),
+            )
+            .await;
+    }
 
     Ok(Json(RemoveGitHubPackagesTargetResponse { ok: true }))
 }
