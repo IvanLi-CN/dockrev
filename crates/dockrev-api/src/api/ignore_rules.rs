@@ -63,7 +63,7 @@ pub(super) async fn delete_ignore(
         .await
         .map_err(map_internal)?;
     if let Some(service_id) = deleted_service_id.as_ref() {
-        publish_ignore_management_event(&state, &service_id, &req.rule_id, "ignore_deleted").await;
+        publish_ignore_management_event(&state, service_id, &req.rule_id, "ignore_deleted").await;
     }
 
     Ok(Json(DeleteIgnoreResponse {
