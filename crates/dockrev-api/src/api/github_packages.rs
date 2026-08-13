@@ -176,6 +176,8 @@ pub(super) struct ListGitHubPackagesReposQuery {
     q: Option<String>,
     #[serde(default)]
     selected_filter: Option<String>, // all|selected|unselected
+    #[serde(default)]
+    webhook_state: Option<String>, // all|ok|missing|error|conflict|queued|running|unknown
 }
 
 pub(super) fn parse_selected_filter(v: Option<&str>) -> Result<Option<bool>, ApiError> {
@@ -185,6 +187,17 @@ pub(super) fn parse_selected_filter(v: Option<&str>) -> Result<Option<bool>, Api
         "selected" => Ok(Some(true)),
         "unselected" => Ok(Some(false)),
         _ => Err(ApiError::invalid_argument("invalid selectedFilter")),
+    }
+}
+
+pub(super) fn parse_webhook_state_filter(v: Option<&str>) -> Result<Option<String>, ApiError> {
+    let Some(v) = v else { return Ok(None) };
+    match v.trim() {
+        "" | "all" => Ok(None),
+        "ok" | "missing" | "error" | "conflict" | "queued" | "running" | "unknown" => {
+            Ok(Some(v.trim().to_string()))
+        }
+        _ => Err(ApiError::invalid_argument("invalid webhookState")),
     }
 }
 
@@ -198,6 +211,7 @@ pub(super) async fn list_github_packages_repos(
     let page = q.page.unwrap_or(1).max(1);
     let per_page = q.per_page.unwrap_or(50).clamp(1, 200);
     let selected_filter = parse_selected_filter(q.selected_filter.as_deref())?;
+    let webhook_state = parse_webhook_state_filter(q.webhook_state.as_deref())?;
 
     let total = state
         .db
@@ -211,14 +225,24 @@ pub(super) async fn list_github_packages_repos(
         .map_err(map_internal)?;
     let filtered_total = state
         .db
-        .count_github_packages_repos_filtered(q.q.as_deref(), selected_filter)
+        .count_github_packages_repos_filtered(
+            q.q.as_deref(),
+            selected_filter,
+            webhook_state.as_deref(),
+        )
         .await
         .map_err(map_internal)?;
 
     let offset = (page - 1).saturating_mul(per_page);
     let repos = state
         .db
-        .list_github_packages_repos_page(q.q.as_deref(), selected_filter, per_page, offset)
+        .list_github_packages_repos_page(
+            q.q.as_deref(),
+            selected_filter,
+            webhook_state.as_deref(),
+            per_page,
+            offset,
+        )
         .await
         .map_err(map_internal)?;
 

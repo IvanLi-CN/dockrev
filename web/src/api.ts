@@ -857,12 +857,14 @@ export async function listGitHubPackagesRepos(input: {
   perPage: number
   q?: string | null
   selectedFilter?: 'all' | 'selected' | 'unselected' | string | null
+  webhookState?: 'all' | 'ok' | 'missing' | 'error' | 'conflict' | 'queued' | 'running' | 'unknown' | string | null
 }): Promise<ListGitHubPackagesReposResponse> {
   const sp = new URLSearchParams()
   sp.set('page', String(input.page))
   sp.set('perPage', String(input.perPage))
   if (input.q) sp.set('q', input.q)
   if (input.selectedFilter && input.selectedFilter !== 'all') sp.set('selectedFilter', input.selectedFilter)
+  if (input.webhookState && input.webhookState !== 'all') sp.set('webhookState', input.webhookState)
   const resp = await apiFetch(`/api/github-packages/repos?${sp.toString()}`)
   return (await resp.json()) as ListGitHubPackagesReposResponse
 }

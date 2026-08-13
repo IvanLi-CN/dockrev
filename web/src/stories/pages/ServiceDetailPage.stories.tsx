@@ -554,7 +554,9 @@ export const LogsSectionVirtualized: Story = {
     const visibleCount = Number(terminal?.getAttribute("data-service-logs-visible-count") ?? "0");
     expectStory(totalCount >= 1600, "virtualized story should expose a large in-memory buffer");
     expectStory(visibleCount > 0 && visibleCount < totalCount, "virtualized story should only render the visible window");
-    expectStory(canvasElement.querySelectorAll(".serviceLogRow").length === visibleCount, "rendered row count should match the virtualized visible window");
+    const rows = Array.from(canvasElement.querySelectorAll<HTMLElement>(".serviceLogRow"));
+    expectStory(rows.length === visibleCount, "rendered row count should match the virtualized visible window");
+    expectStory(rows.every((row) => /^\d+$/.test(row.dataset.index ?? "")), "each measured log row should expose its numeric virtual index");
 
     const wrapButton = findButton(canvasElement, "自动换行 关");
     expectStory(wrapButton, "wrap toggle missing in virtualized story");
