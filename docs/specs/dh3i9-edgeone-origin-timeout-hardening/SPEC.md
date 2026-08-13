@@ -94,8 +94,6 @@
 
 ## Visual Evidence
 
-PR: none
-
 - source_type: `ui_demo`
   target_program: `mock-only`
   capture_scope: `page`
@@ -104,9 +102,12 @@ PR: none
   margin_policy: `trim_only`
   evidence_surface: `page`
   sensitive_exclusion: `N/A`
-  submission_gate: `pending-owner-approval`
+  submission_gate: `owner-approved`
+  evidence_binding_sha: `8909741219a80dd302c53ed095aec8fcd0e921f4`
   state: `cached passing report`
   evidence_note: 验证 cached PASS 立即显示部署检查页且“进入 Dashboard”可用；点击后进入 Dashboard。演示只使用本地 mock fixture，不访问线上服务。
+
+PR: include
 
 ![Deploy check cached pass keeps Dashboard available](./assets/deploy-check-cached-pass-dashboard.png)
 
