@@ -11795,6 +11795,13 @@ html[data-theme="light"] .btnPrimary {
   );
 }
 
+.ghcrRegistryActions .responsiveActionBtn {
+  --responsive-action-bubble-anchor-left: auto;
+  --responsive-action-bubble-anchor-right: 0%;
+  --responsive-action-bubble-shift-x: 0%;
+  --responsive-action-bubble-arrow-left: calc(100% - 16px);
+}
+
 .chipStatic,
 .chip {
   border: 1px solid color-mix(in srgb, var(--borderColor) 78%, transparent);

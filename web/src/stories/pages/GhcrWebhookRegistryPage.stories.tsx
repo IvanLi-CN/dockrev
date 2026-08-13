@@ -91,6 +91,20 @@ export const LargeDatasetPagination: Story = {
     await waitForRows(100)
     if (!pager.textContent?.includes('第 1 / 3 页')) throw new globalThis.Error('per-page changes should reset to the first page')
 
+    next.click()
+    await waitForRows(100)
+    if (!pager.textContent?.includes('第 2 / 3 页')) throw new globalThis.Error('second page should retain the selected page size')
+    next.click()
+    await waitForRows(4)
+    if (!pager.textContent?.includes('第 3 / 3 页')) throw new globalThis.Error('last page should expose only its remaining repositories')
+    if (!next.disabled) throw new globalThis.Error('next page should be disabled on the last page')
+
+    const previous = Array.from(canvasElement.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.trim() === '上一页')
+    if (!previous) throw new globalThis.Error('previous page button missing')
+    previous.click()
+    await waitForRows(100)
+    if (!pager.textContent?.includes('第 2 / 3 页')) throw new globalThis.Error('previous page should return from the last page')
+
     const errorFilter = Array.from(canvasElement.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('失败') && !button.closest('[aria-hidden="true"]'))
     if (errorFilter) {
       await userEvent.click(errorFilter)
