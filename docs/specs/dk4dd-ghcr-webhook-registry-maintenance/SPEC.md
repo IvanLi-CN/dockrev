@@ -95,10 +95,10 @@ PR: include
 
 204 条仓库时，桌面首屏展示 50 行、页码为 1 / 5，筛选、搜索、页大小与行级操作保持在内容容器内。
 
-![Desktop pagination](assets/ghcr-registry-pagination-desktop.png)
+![Desktop pagination](./assets/ghcr-registry-pagination-desktop.png)
 
 PR: include
 
 393 x 852 视口下，筛选、搜索与分页按窄屏布局换行，没有横向溢出。
 
-![Mobile pagination](assets/ghcr-registry-pagination-mobile.png)
+![Mobile pagination](./assets/ghcr-registry-pagination-mobile.png)
