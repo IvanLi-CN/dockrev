@@ -5,7 +5,10 @@ use std::sync::{
 
 use tokio::sync::Mutex;
 
-use crate::{config::Config, db::Db, now_rfc3339, preflight, runner::CommandRunner};
+use crate::{
+    config::Config, db::Db, management_events::ManagementEventEntity, now_rfc3339, preflight,
+    runner::CommandRunner,
+};
 
 pub const DEPLOY_CHECK_SNAPSHOT_KEY: &str = "global";
 pub const DEPLOY_CHECK_PENDING_RETRY_AFTER_MS: u64 = 800;
@@ -101,6 +104,26 @@ impl DeployCheckRefreshWorker {
                 &now,
             )
             .await?;
+        let summary = serde_json::json!({
+            "result": report.overall.result,
+            "generatedAt": report.generated_at,
+            "blockingCheckIds": report.overall.blocking_check_ids,
+        });
+        let entities = vec![ManagementEventEntity {
+            entity_type: "report".to_string(),
+            id: DEPLOY_CHECK_SNAPSHOT_KEY.to_string(),
+        }];
+        if report.overall.result == crate::api::types::DeployCheckResult::Fail {
+            self.db
+                .management_events()
+                .publish_immediate("deploy_check", entities, summary)
+                .await;
+        } else {
+            self.db
+                .management_events()
+                .publish_change("deploy_check", "report", DEPLOY_CHECK_SNAPSHOT_KEY, summary)
+                .await;
+        }
         Ok(())
     }
 }

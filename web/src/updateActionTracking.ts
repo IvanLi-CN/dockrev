@@ -10,11 +10,9 @@ import {
   type ReactNode,
 } from 'react'
 import { getJob, listJobs, type JobDetail, type JobListItem } from './api'
+import { useManagementEventBatch } from './managementEvents'
 
-const UPDATE_JOB_POLL_INTERVAL_MS = 1200
-const UPDATE_JOB_MAX_ERRORS = 3
 export const UPDATE_JOB_SETTLED_EVENT = 'dockrev:update-job-settled'
-export const UPDATE_JOB_SETTLE_RETRY_MS = 450
 
 export type UpdateActionTargetKey = 'all' | `stack:${string}` | `service:${string}`
 export type UpdateActionJobStatus = 'queued' | 'running' | string
@@ -151,9 +149,6 @@ function useProvideUpdateActionTracker(): UpdateActionTracker {
   const [submittingCounts, setSubmittingCounts] = useState<Record<string, number>>({})
   const [activeByTarget, setActiveByTarget] = useState<Record<string, ActiveUpdateJob>>({})
   const activeByTargetRef = useRef(new Map<UpdateActionTargetKey, ActiveUpdateJob>())
-  const pollJobRef = useRef<(target: UpdateActionTargetKey, jobId: string) => Promise<void> | void>(() => {})
-  const timersRef = useRef(new Map<string, number>())
-  const errorCountsRef = useRef(new Map<string, number>())
   const unmountedRef = useRef(false)
 
   const publishActive = useCallback(() => {
@@ -163,78 +158,19 @@ function useProvideUpdateActionTracker(): UpdateActionTracker {
     setActiveByTarget(next)
   }, [])
 
-  const clearJobTimer = useCallback((jobId: string) => {
-    const existing = timersRef.current.get(jobId)
-    if (existing == null) return
-    window.clearTimeout(existing)
-    timersRef.current.delete(jobId)
-  }, [])
-
   const clearRunningJob = useCallback(
     (target: UpdateActionTargetKey, jobId: string) => {
       const current = activeByTargetRef.current.get(target)
       if (!current || current.jobId !== jobId) return
       activeByTargetRef.current.delete(target)
-      errorCountsRef.current.delete(jobId)
-      clearJobTimer(jobId)
       publishActive()
     },
-    [clearJobTimer, publishActive],
-  )
-
-  const pollJob = useCallback(
-    async (target: UpdateActionTargetKey, jobId: string) => {
-      if (unmountedRef.current) return
-      const tracked = activeByTargetRef.current.get(target)
-      if (!tracked || tracked.jobId !== jobId) {
-        clearJobTimer(jobId)
-        return
-      }
-
-      try {
-        const job = await getJob(jobId)
-        const latest = activeByTargetRef.current.get(target)
-        if (!latest || latest.jobId !== jobId) {
-          clearJobTimer(jobId)
-          return
-        }
-        errorCountsRef.current.delete(jobId)
-        if (!isUpdateJobActiveStatus(job.status)) {
-          publishUpdateJobSettled(toUpdateJobSettledDetail(target, job))
-          clearRunningJob(target, jobId)
-          return
-        }
-        if (latest.status !== job.status) {
-          activeByTargetRef.current.set(target, { jobId, status: job.status })
-          publishActive()
-        }
-      } catch {
-        const errors = (errorCountsRef.current.get(jobId) ?? 0) + 1
-        errorCountsRef.current.set(jobId, errors)
-        if (errors >= UPDATE_JOB_MAX_ERRORS) {
-          clearRunningJob(target, jobId)
-          return
-        }
-      }
-
-      const timer = window.setTimeout(() => {
-        void pollJobRef.current(target, jobId)
-      }, UPDATE_JOB_POLL_INTERVAL_MS)
-      timersRef.current.set(jobId, timer)
-    },
-    [clearJobTimer, clearRunningJob, publishActive],
+    [publishActive],
   )
 
   useEffect(() => {
-    pollJobRef.current = pollJob
-  }, [pollJob])
-
-  useEffect(() => {
-    const timers = timersRef.current
     return () => {
       unmountedRef.current = true
-      for (const timer of timers.values()) window.clearTimeout(timer)
-      timers.clear()
     }
   }, [])
 
@@ -259,25 +195,47 @@ function useProvideUpdateActionTracker(): UpdateActionTracker {
   const trackJob = useCallback(
     (target: UpdateActionTargetKey, jobId: string, status: UpdateActionJobStatus = 'queued', targetVersion?: string | null) => {
       const previous = activeByTargetRef.current.get(target)
-      if (previous && previous.jobId !== jobId) {
-        clearJobTimer(previous.jobId)
-        errorCountsRef.current.delete(previous.jobId)
-      }
       const resolvedTargetVersion = targetVersion ?? previous?.targetVersion ?? null
       activeByTargetRef.current.set(
         target,
         resolvedTargetVersion ? { jobId, status, targetVersion: resolvedTargetVersion } : { jobId, status },
       )
-      errorCountsRef.current.delete(jobId)
-      clearJobTimer(jobId)
       publishActive()
-      const timer = window.setTimeout(() => {
-        void pollJobRef.current(target, jobId)
-      }, 0)
-      timersRef.current.set(jobId, timer)
     },
-    [clearJobTimer, publishActive],
+    [publishActive],
   )
+
+  useManagementEventBatch(({ events, resyncRequired }) => {
+    const active = Array.from(activeByTargetRef.current.entries())
+    for (const event of events) {
+      if (event.domain !== 'jobs') continue
+      const jobId = typeof event.summary.jobId === 'string' ? event.summary.jobId : null
+      const terminal = event.summary.terminal === true
+      if (!jobId || !terminal) continue
+      const tracked = active.find(([, job]) => job.jobId === jobId)
+      if (!tracked) continue
+      const [target] = tracked
+      void getJob(jobId)
+        .then((job) => {
+          if (unmountedRef.current) return
+          publishUpdateJobSettled(toUpdateJobSettledDetail(target, job))
+          clearRunningJob(target, jobId)
+        })
+        .catch(() => {})
+    }
+    if (!resyncRequired) return
+    void listJobs()
+      .then((jobs) => {
+        if (unmountedRef.current) return
+        const hydratedJobs = pickLatestActiveUpdateJobs(jobs)
+        for (const job of hydratedJobs) {
+          if (!activeByTargetRef.current.has(job.target)) {
+            trackJob(job.target, job.jobId, job.status)
+          }
+        }
+      })
+      .catch(() => {})
+  })
 
   useEffect(() => {
     let cancelled = false

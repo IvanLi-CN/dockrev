@@ -78,6 +78,19 @@ pub(super) async fn emit_github_packages_delivery_event(state: &Arc<AppState>, d
     {
         tracing::warn!(delivery_id = %delivery_id, error = %err, "persist github packages delivery sse event failed");
     }
+    state
+        .management_events
+        .publish_change(
+            "github_packages",
+            "delivery",
+            delivery_id,
+            json!({
+                "deliveryId": delivery.delivery_id,
+                "decision": delivery.decision,
+                "attemptCount": delivery.attempt_count,
+            }),
+        )
+        .await;
 }
 
 #[derive(Debug, Default, Deserialize)]

@@ -10,7 +10,6 @@ getNotifications,
 getSettings,
 listGitHubPackagesRepos,
 listJobs,
-newJobsEventsSource,
 putGitHubPackagesSettings,
 putNotifications,
 putSettings,
@@ -38,6 +37,7 @@ peekRequestedSettingsFocus,
 import { Button,Mono } from '../ui'
 import { isPwaRuntimeEnabled } from '../pwaStatus'
 import { useSupervisorHealth } from '../useSupervisorHealth'
+import { useManagementEventBatch } from '../managementEvents'
 import {
 GHCR_PREVIEW_LIMIT,
 PAT_MASK,
@@ -596,94 +596,14 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     void refreshTrackedRepos().catch((e: unknown) => setError(errorMessage(e)))
   }, [refreshTrackedRepos])
 
-  useEffect(() => {
-    let closed = false
-    let es: EventSource | null = null
-    let refreshTimer: number | null = null
-    let reconnectTimer: number | null = null
-    let pollTimer: number | null = null
-    let errorStreak = 0
-    let lastEventId = 0
-
-    const clearRefreshTimer = () => {
-      if (refreshTimer != null) window.clearTimeout(refreshTimer)
-      refreshTimer = null
-    }
-    const clearReconnectTimer = () => {
-      if (reconnectTimer != null) window.clearTimeout(reconnectTimer)
-      reconnectTimer = null
-    }
-    const stopPolling = () => {
-      if (pollTimer != null) window.clearInterval(pollTimer)
-      pollTimer = null
-    }
-
-    const scheduleRefresh = (delayMs: number) => {
-      if (refreshTimer != null) return
-      refreshTimer = window.setTimeout(() => {
-        refreshTimer = null
-        void refreshTrackedRepos().catch((e: unknown) => setError(errorMessage(e)))
-      }, delayMs)
-    }
-
-    const startPolling = () => {
-      if (pollTimer != null) return
-      pollTimer = window.setInterval(() => {
-        void refreshTrackedRepos().catch((e: unknown) => setError(errorMessage(e)))
-      }, 10_000)
-    }
-
-    const trackEventId = (evt: Event) => {
-      const idRaw = (evt as MessageEvent).lastEventId
-      if (typeof idRaw !== 'string') return
-      const parsed = Number.parseInt(idRaw, 10)
-      if (Number.isFinite(parsed) && parsed > 0) lastEventId = parsed
-    }
-
-    const connect = () => {
-      if (closed) return
-      es = newJobsEventsSource(lastEventId > 0 ? { afterId: lastEventId } : undefined)
-
-      es.addEventListener('open', () => {
-        errorStreak = 0
-        stopPolling()
-        scheduleRefresh(0)
-      })
-
-      es.addEventListener('job_event', (evt: Event) => {
-        trackEventId(evt)
-        scheduleRefresh(250)
-      })
-
-      es.addEventListener('job_events_error', () => {
-        scheduleRefresh(0)
-      })
-
-      es.onerror = () => {
-        errorStreak += 1
-        scheduleRefresh(0)
-        if (errorStreak < 3) return
-        es?.close()
-        es = null
-        startPolling()
-        if (reconnectTimer != null) return
-        reconnectTimer = window.setTimeout(() => {
-          reconnectTimer = null
-          connect()
-        }, 3000)
-      }
-    }
-
-    connect()
-
-    return () => {
-      closed = true
-      clearRefreshTimer()
-      clearReconnectTimer()
-      stopPolling()
-      es?.close()
-    }
-  }, [refreshTrackedRepos])
+  useManagementEventBatch(({ events, resyncRequired }) => {
+    const settingsChanged = resyncRequired || events.some((event) => event.domain === 'settings')
+    const trackedReposChanged = resyncRequired || events.some((event) =>
+      event.domain === 'github_packages' || event.summary.jobType === 'github_packages_webhook',
+    )
+    if (settingsChanged) void refresh().catch((error: unknown) => setError(errorMessage(error)))
+    if (trackedReposChanged) void refreshTrackedRepos().catch((error: unknown) => setError(errorMessage(error)))
+  })
 
   useEffect(() => {
     onTopActions(

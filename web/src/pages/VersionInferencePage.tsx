@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   getVersionInferenceOverview,
-  newVersionInferenceEventsSource,
   type VersionInferenceCacheRow,
   type VersionInferenceOverviewResponse,
   type VersionInferenceTaskProgress,
 } from '../api'
 import { ReadonlySnapshotNotice } from '../components/ReadonlySnapshotNotice'
+import { useManagementEventBatch, useManagementEvents } from '../managementEvents'
 import { usePwaStatus } from '../pwaStatus'
 import { buildReadonlySnapshotKey, readReadonlySnapshot, writeReadonlySnapshot } from '../readonlySnapshotCache'
 import { Button, Input, Mono, Pill, SelectField, ToggleGroup, ToggleGroupItem } from '../ui'
@@ -16,8 +16,6 @@ type StatusFilter = 'all' | 'queued' | 'running' | 'ready' | 'stale' | 'all_fail
 const STATUS_FILTERS: readonly StatusFilter[] = ['all', 'queued', 'running', 'ready', 'stale', 'all_failed']
 const PER_PAGE_OPTIONS = [20, 50, 100, 200] as const
 const QUERY_DEBOUNCE_MS = 250
-const SSE_RECONNECT_MS = 3_000
-const SSE_REFRESH_DEBOUNCE_MS = 250
 const VERSION_INFERENCE_SNAPSHOT_KEY = buildReadonlySnapshotKey('queue', 'version-inference-overview')
 const VERSION_INFERENCE_SNAPSHOT_STALE_MS = 60_000
 
@@ -52,14 +50,14 @@ function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' | 'info' {
   return 'muted'
 }
 
-function sseStatusLabel(status: 'connecting' | 'open' | 'reconnecting'): string {
-  if (status === 'open') return 'SSE 已连接'
-  if (status === 'reconnecting') return 'SSE 重连中'
+function sseStatusLabel(status: 'connecting' | 'live' | 'stale'): string {
+  if (status === 'live') return 'SSE 已连接'
+  if (status === 'stale') return 'SSE 重连中'
   return 'SSE 连接中'
 }
 
-function sseStatusTone(status: 'connecting' | 'open' | 'reconnecting'): 'ok' | 'warn' {
-  if (status === 'open') return 'ok'
+function sseStatusTone(status: 'connecting' | 'live' | 'stale'): 'ok' | 'warn' {
+  if (status === 'live') return 'ok'
   return 'warn'
 }
 
@@ -151,6 +149,7 @@ export function VersionInferencePage(props: {
 }) {
   const { onLastScanHint, onTopActions } = props
   const { isOnline } = usePwaStatus()
+  const { connection: sseStatus } = useManagementEvents()
   const [overview, setOverview] = useState<VersionInferenceOverviewResponse | null>(null)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [queryInput, setQueryInput] = useState('')
@@ -161,7 +160,6 @@ export function VersionInferencePage(props: {
   const [manualBusy, setManualBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null)
-  const [sseStatus, setSseStatus] = useState<'connecting' | 'open' | 'reconnecting'>('connecting')
   const [, setSnapshotStatus] = useState<'missing' | 'fresh' | 'stale' | 'expired' | 'unsupported'>(
     'missing',
   )
@@ -239,103 +237,15 @@ export function VersionInferencePage(props: {
     [page, perPage, query, statusFilter],
   )
 
-  const refreshRef = useRef(refresh)
-  useEffect(() => {
-    refreshRef.current = refresh
-  }, [refresh])
-
   useEffect(() => {
     setLoading(true)
     void refresh({ silent: true })
   }, [refresh])
 
-  useEffect(() => {
-    let closed = false
-    let es: EventSource | null = null
-    let reconnectTimer: number | null = null
-    let refreshTimer: number | null = null
-    let lastEventId = 0
-    let hasOpenedOnce = false
-
-    const clearReconnectTimer = () => {
-      if (reconnectTimer != null) window.clearTimeout(reconnectTimer)
-      reconnectTimer = null
-    }
-
-    const clearRefreshTimer = () => {
-      if (refreshTimer != null) window.clearTimeout(refreshTimer)
-      refreshTimer = null
-    }
-
-    const scheduleRefresh = (delayMs: number) => {
-      if (closed || refreshTimer != null) return
-      refreshTimer = window.setTimeout(() => {
-        refreshTimer = null
-        void refreshRef.current({ silent: true })
-      }, delayMs)
-    }
-
-    const scheduleReconnect = () => {
-      if (closed || reconnectTimer != null) return
-      reconnectTimer = window.setTimeout(() => {
-        reconnectTimer = null
-        connect()
-      }, SSE_RECONNECT_MS)
-    }
-
-    const trackEventId = (evt: Event) => {
-      const idRaw = (evt as MessageEvent).lastEventId
-      if (typeof idRaw !== 'string') return
-      const parsed = Number.parseInt(idRaw, 10)
-      if (Number.isFinite(parsed) && parsed > 0) lastEventId = parsed
-    }
-
-    const connect = () => {
-      if (closed) return
-      const opts = lastEventId > 0 ? { afterId: lastEventId } : undefined
-      try {
-        es = newVersionInferenceEventsSource(opts)
-      } catch {
-        setSseStatus('reconnecting')
-        scheduleReconnect()
-        return
-      }
-      setSseStatus(lastEventId > 0 ? 'reconnecting' : 'connecting')
-
-      es.addEventListener('open', () => {
-        hasOpenedOnce = true
-        setSseStatus('open')
-        // Catch up once on subscribe so in-between updates are reflected immediately.
-        scheduleRefresh(0)
-      })
-
-      es.addEventListener('version_inference_event', (evt: Event) => {
-        trackEventId(evt)
-        scheduleRefresh(SSE_REFRESH_DEBOUNCE_MS)
-      })
-
-      es.onerror = () => {
-        if (closed) return
-        setSseStatus('reconnecting')
-        es?.close()
-        es = null
-        if (hasOpenedOnce) {
-          // Only force-sync after at least one successful stream connect to avoid error-loop hammering.
-          scheduleRefresh(0)
-        }
-        scheduleReconnect()
-      }
-    }
-
-    connect()
-
-    return () => {
-      closed = true
-      clearReconnectTimer()
-      clearRefreshTimer()
-      es?.close()
-    }
-  }, [])
+  useManagementEventBatch(({ events, resyncRequired }) => {
+    if (!resyncRequired && !events.some((event) => event.domain === 'version_inference')) return
+    void refresh({ silent: true })
+  })
 
   useEffect(() => {
     onTopActions(

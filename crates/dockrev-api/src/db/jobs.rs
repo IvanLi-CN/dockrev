@@ -81,6 +81,12 @@ impl Db {
     }
 
     pub async fn insert_job(&self, job: JobListItem) -> anyhow::Result<()> {
+        let event_job_id = job.id.clone();
+        let event_scope = job.scope.as_str().to_string();
+        let event_stack_id = job.stack_id.clone();
+        let event_service_id = job.service_id.clone();
+        let event_type = job.r#type.as_str().to_string();
+        let event_status = job.status.clone();
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             insert_job_tx(&tx, &job)?;
@@ -88,7 +94,23 @@ impl Db {
             Ok(())
         })
         .await
-        .context("insert job")
+        .context("insert job")?;
+        self.management_events
+            .publish_change(
+                "jobs",
+                "job",
+                event_job_id.clone(),
+                serde_json::json!({
+                    "jobId": event_job_id,
+                    "status": event_status,
+                    "jobType": event_type,
+                    "scope": event_scope,
+                    "stackId": event_stack_id,
+                    "serviceId": event_service_id,
+                }),
+            )
+            .await;
+        Ok(())
     }
 
     pub async fn insert_or_reuse_webhook_check_job_for_service(
@@ -97,16 +119,21 @@ impl Db {
         now: &str,
         stale_threshold: time::Duration,
     ) -> anyhow::Result<PendingJobUpsert> {
+        let event_job_id = job.id.clone();
+        let event_stack_id = job.stack_id.clone();
+        let event_service_id = job.service_id.clone();
         let service_id = job
             .service_id
             .clone()
             .ok_or_else(|| anyhow::anyhow!("service_id is required for webhook service check"))?;
         let now = now.to_string();
-        self.call(move |conn| {
-            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let existing = tx
-                .query_row(
-                    r#"
+        let (result, terminated_stale_job) = self
+            .call(move |conn| {
+                let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                let mut terminated_stale_job = None;
+                let existing = tx
+                    .query_row(
+                        r#"
 SELECT
   id,
   type,
@@ -133,35 +160,59 @@ ORDER BY
   id DESC
 LIMIT 1
 "#,
-                    params![&service_id],
-                    map_job_list_item_row,
-                )
-                .optional()?;
+                        params![&service_id],
+                        map_job_list_item_row,
+                    )
+                    .optional()?;
 
-            if let Some(mut existing) = existing {
-                if existing.status == "running" && job_is_stale(&existing, &now, stale_threshold) {
-                    terminate_job_as_failed_tx(&tx, &existing, &now, "stale_check")?;
-                } else {
-                    merge_job_summary_value(&mut existing.summary_json, &job.summary_json);
-                    tx.execute(
-                        r#"
+                if let Some(mut existing) = existing {
+                    if existing.status == "running"
+                        && job_is_stale(&existing, &now, stale_threshold)
+                    {
+                        terminate_job_as_failed_tx(&tx, &existing, &now, "stale_check")?;
+                        terminated_stale_job = Some(existing);
+                    } else {
+                        merge_job_summary_value(&mut existing.summary_json, &job.summary_json);
+                        tx.execute(
+                            r#"
 UPDATE jobs
 SET summary_json = ?2
 WHERE id = ?1
 "#,
-                        params![&existing.id, serde_json::to_string(&existing.summary_json)?],
-                    )?;
-                    tx.commit()?;
-                    return Ok(PendingJobUpsert::Reused(Box::new(existing)));
+                            params![&existing.id, serde_json::to_string(&existing.summary_json)?],
+                        )?;
+                        tx.commit()?;
+                        return Ok((PendingJobUpsert::Reused(Box::new(existing)), None));
+                    }
                 }
-            }
 
-            insert_job_tx(&tx, &job)?;
-            tx.commit()?;
-            Ok(PendingJobUpsert::Inserted)
-        })
-        .await
-        .context("insert or reuse webhook check job for service")
+                insert_job_tx(&tx, &job)?;
+                tx.commit()?;
+                Ok((PendingJobUpsert::Inserted, terminated_stale_job))
+            })
+            .await
+            .context("insert or reuse webhook check job for service")?;
+        if let Some(job) = terminated_stale_job.as_ref() {
+            self.publish_stale_job_termination(job).await;
+        }
+        if matches!(&result, PendingJobUpsert::Inserted) {
+            self.management_events
+                .publish_change(
+                    "jobs",
+                    "job",
+                    event_job_id.clone(),
+                    serde_json::json!({
+                        "jobId": event_job_id,
+                        "status": "queued",
+                        "jobType": "check",
+                        "scope": "service",
+                        "stackId": event_stack_id,
+                        "serviceId": event_service_id,
+                    }),
+                )
+                .await;
+        }
+        Ok(result)
     }
 
     pub async fn insert_or_reuse_webhook_discovery_job(
@@ -170,12 +221,15 @@ WHERE id = ?1
         now: &str,
         stale_threshold: time::Duration,
     ) -> anyhow::Result<PendingJobUpsert> {
+        let event_job_id = job.id.clone();
         let now = now.to_string();
-        self.call(move |conn| {
-            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let existing = tx
-                .query_row(
-                    r#"
+        let (result, terminated_stale_job) = self
+            .call(move |conn| {
+                let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                let mut terminated_stale_job = None;
+                let existing = tx
+                    .query_row(
+                        r#"
 SELECT
   id,
   type,
@@ -201,26 +255,83 @@ ORDER BY
   id DESC
 LIMIT 1
 "#,
-                    [],
-                    map_job_list_item_row,
-                )
-                .optional()?;
+                        [],
+                        map_job_list_item_row,
+                    )
+                    .optional()?;
 
-            if let Some(existing) = existing {
-                if existing.status == "running" && job_is_stale(&existing, &now, stale_threshold) {
-                    terminate_job_as_failed_tx(&tx, &existing, &now, "stale_check")?;
-                } else {
-                    tx.commit()?;
-                    return Ok(PendingJobUpsert::Reused(Box::new(existing)));
+                if let Some(existing) = existing {
+                    if existing.status == "running"
+                        && job_is_stale(&existing, &now, stale_threshold)
+                    {
+                        terminate_job_as_failed_tx(&tx, &existing, &now, "stale_check")?;
+                        terminated_stale_job = Some(existing);
+                    } else {
+                        tx.commit()?;
+                        return Ok((PendingJobUpsert::Reused(Box::new(existing)), None));
+                    }
                 }
-            }
 
-            insert_job_tx(&tx, &job)?;
-            tx.commit()?;
-            Ok(PendingJobUpsert::Inserted)
-        })
-        .await
-        .context("insert or reuse webhook discovery job")
+                insert_job_tx(&tx, &job)?;
+                tx.commit()?;
+                Ok((PendingJobUpsert::Inserted, terminated_stale_job))
+            })
+            .await
+            .context("insert or reuse webhook discovery job")?;
+        if let Some(job) = terminated_stale_job.as_ref() {
+            self.publish_stale_job_termination(job).await;
+        }
+        if matches!(&result, PendingJobUpsert::Inserted) {
+            self.management_events
+                .publish_change(
+                    "jobs",
+                    "job",
+                    event_job_id.clone(),
+                    serde_json::json!({
+                        "jobId": event_job_id,
+                        "status": "queued",
+                        "jobType": "discovery",
+                        "scope": "all",
+                    }),
+                )
+                .await;
+        }
+        Ok(result)
+    }
+
+    async fn publish_stale_job_termination(&self, job: &JobListItem) {
+        let mut entities = vec![crate::management_events::ManagementEventEntity {
+            entity_type: "job".to_string(),
+            id: job.id.clone(),
+        }];
+        if let Some(stack_id) = job.stack_id.as_ref() {
+            entities.push(crate::management_events::ManagementEventEntity {
+                entity_type: "stack".to_string(),
+                id: stack_id.clone(),
+            });
+        }
+        if let Some(service_id) = job.service_id.as_ref() {
+            entities.push(crate::management_events::ManagementEventEntity {
+                entity_type: "service".to_string(),
+                id: service_id.clone(),
+            });
+        }
+        self.management_events
+            .publish_immediate(
+                "jobs",
+                entities,
+                serde_json::json!({
+                    "jobId": job.id,
+                    "status": "failed",
+                    "jobType": job.r#type.as_str(),
+                    "scope": job.scope.as_str(),
+                    "stackId": job.stack_id,
+                    "serviceId": job.service_id,
+                    "terminal": true,
+                    "reason": "stale_check",
+                }),
+            )
+            .await;
     }
 
     pub async fn claim_next_queued_job_by_type(
@@ -287,6 +398,23 @@ WHERE id = ?1 AND status = 'queued'
             );
         }
 
+        if let Ok(Some(item)) = result.as_ref() {
+            self.management_events
+                .publish_change(
+                    "jobs",
+                    "job",
+                    item.id.clone(),
+                    serde_json::json!({
+                        "jobId": item.id,
+                        "status": "running",
+                        "jobType": item.r#type.as_str(),
+                        "scope": item.scope.as_str(),
+                        "stackId": item.stack_id,
+                        "serviceId": item.service_id,
+                    }),
+                )
+                .await;
+        }
         result
     }
 
@@ -301,77 +429,159 @@ WHERE id = ?1 AND status = 'queued'
         let status = status.to_string();
         let finished_at = finished_at.to_string();
         let mut summary_json = summary_json.clone();
-        self.call(move |conn| {
-            let previous = conn
-                .query_row(
-                    r#"
+        let completed = self
+            .call(move |conn| {
+                let previous = conn
+                    .query_row(
+                        r#"
 SELECT type, summary_json
 FROM jobs
 WHERE id = ?1
 "#,
-                    params![&job_id],
-                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-                )
-                .optional()?;
+                        params![&job_id],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                    )
+                    .optional()?;
 
-            if !summary_json.is_object() {
-                summary_json = serde_json::json!({ "result": summary_json });
-            }
+                if !summary_json.is_object() {
+                    summary_json = serde_json::json!({ "result": summary_json });
+                }
 
-            if let Some((_, previous_summary_raw)) = previous.as_ref() {
-                let previous_summary: serde_json::Value =
-                    serde_json::from_str(previous_summary_raw)
-                        .unwrap_or_else(|_| serde_json::json!({}));
-                if let Some(previous) = previous_summary.as_object()
-                    && let Some(obj) = summary_json.as_object_mut()
-                {
-                    for (key, value) in previous {
-                        obj.entry(key.clone()).or_insert_with(|| value.clone());
+                if let Some((_, previous_summary_raw)) = previous.as_ref() {
+                    let previous_summary: serde_json::Value =
+                        serde_json::from_str(previous_summary_raw)
+                            .unwrap_or_else(|_| serde_json::json!({}));
+                    if let Some(previous) = previous_summary.as_object()
+                        && let Some(obj) = summary_json.as_object_mut()
+                    {
+                        for (key, value) in previous {
+                            obj.entry(key.clone()).or_insert_with(|| value.clone());
+                        }
                     }
                 }
-            }
 
-            let summary_json_str = serde_json::to_string(&summary_json)?;
-            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            tx.execute(
-                r#"
+                let summary_json_str = serde_json::to_string(&summary_json)?;
+                let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                let updated = tx.execute(
+                    r#"
 UPDATE jobs
 SET status = ?2, finished_at = ?3, summary_json = ?4
 WHERE id = ?1
 "#,
-                params![job_id, status, finished_at, summary_json_str],
-            )?;
-            let direct_service_id = tx
-                .query_row(
-                    "SELECT service_id FROM jobs WHERE id = ?1",
+                    params![job_id, status, finished_at, summary_json_str],
+                )?;
+                if updated == 0 {
+                    return Ok(None);
+                }
+                let (job_type, scope, stack_id, service_id) = tx.query_row(
+                    "SELECT type, scope, stack_id, service_id FROM jobs WHERE id = ?1",
                     params![&job_id],
-                    |row| row.get::<_, Option<String>>(0),
-                )
-                .optional()?
-                .flatten();
-            replace_job_service_targets_tx(
-                &tx,
-                &job_id,
-                direct_service_id.as_deref(),
-                &summary_json,
-            )?;
-            if status == "success"
-                && previous
-                    .as_ref()
-                    .is_some_and(|(job_type, _)| job_type == "check")
-            {
-                new_version_discoveries::record_new_version_discoveries_from_summary_conn(
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                            row.get::<_, Option<String>>(3)?,
+                        ))
+                    },
+                )?;
+                let direct_service_id = tx
+                    .query_row(
+                        "SELECT service_id FROM jobs WHERE id = ?1",
+                        params![&job_id],
+                        |row| row.get::<_, Option<String>>(0),
+                    )
+                    .optional()?
+                    .flatten();
+                replace_job_service_targets_tx(
                     &tx,
                     &job_id,
-                    &finished_at,
+                    direct_service_id.as_deref(),
                     &summary_json,
                 )?;
+                let target_service_ids = {
+                    let mut statement = tx.prepare(
+                        "SELECT service_id FROM job_service_targets WHERE job_id = ?1 ORDER BY service_id",
+                    )?;
+                    statement
+                        .query_map(params![&job_id], |row| row.get::<_, String>(0))?
+                        .collect::<Result<Vec<_>, _>>()?
+                };
+                if status == "success"
+                    && previous
+                        .as_ref()
+                        .is_some_and(|(job_type, _)| job_type == "check")
+                {
+                    new_version_discoveries::record_new_version_discoveries_from_summary_conn(
+                        &tx,
+                        &job_id,
+                        &finished_at,
+                        &summary_json,
+                    )?;
+                }
+                tx.commit()?;
+                Ok(Some((
+                    job_id,
+                    status,
+                    job_type,
+                    scope,
+                    stack_id,
+                    service_id,
+                    target_service_ids,
+                )))
+            })
+            .await
+            .context("finish job")?;
+
+        if let Some((job_id, status, job_type, scope, stack_id, service_id, target_service_ids)) =
+            completed
+        {
+            let mut entities = vec![crate::management_events::ManagementEventEntity {
+                entity_type: "job".to_string(),
+                id: job_id.clone(),
+            }];
+            if let Some(stack_id) = stack_id.as_ref() {
+                entities.push(crate::management_events::ManagementEventEntity {
+                    entity_type: "stack".to_string(),
+                    id: stack_id.clone(),
+                });
             }
-            tx.commit()?;
-            Ok(())
-        })
-        .await
-        .context("finish job")
+            if let Some(service_id) = service_id.as_ref() {
+                entities.push(crate::management_events::ManagementEventEntity {
+                    entity_type: "service".to_string(),
+                    id: service_id.clone(),
+                });
+            }
+            for service_id in &target_service_ids {
+                if entities
+                    .iter()
+                    .any(|entity| entity.entity_type == "service" && entity.id == *service_id)
+                {
+                    continue;
+                }
+                entities.push(crate::management_events::ManagementEventEntity {
+                    entity_type: "service".to_string(),
+                    id: service_id.clone(),
+                });
+            }
+            self.management_events
+                .publish_immediate(
+                    "jobs",
+                    entities,
+                    serde_json::json!({
+                        "jobId": job_id,
+                        "status": status,
+                        "jobType": job_type,
+                        "scope": scope,
+                        "stackId": stack_id,
+                        "serviceId": service_id,
+                        "serviceIds": target_service_ids,
+                        "terminal": true,
+                    }),
+                )
+                .await;
+        }
+        Ok(())
     }
 
     pub async fn merge_job_summary_fields(

@@ -3,9 +3,9 @@ import {
   getGitHubPackagesWebhookOverview,
   getVersionInferenceOverview,
   listJobsPage,
-  newJobsEventsSource,
   type JobListItem,
 } from '../api'
+import { useManagementEventBatch } from '../managementEvents'
 import { formatJobMachineName, formatJobReadableDisplay } from '../jobDisplay'
 import { formatJobProgressDownload } from '../jobProgressDownload'
 import { TaskResultReason } from '../components/TaskResultReason'
@@ -161,12 +161,6 @@ function shouldShowFinishedAt(job: JobListItem): boolean {
   return job.status !== 'running' && Boolean(job.finishedAt)
 }
 
-const QUEUE_SSE_ERROR_THRESHOLD = 3
-const QUEUE_SSE_RECONNECT_MS = 3000
-const QUEUE_SSE_REFRESH_DEBOUNCE_MS = 250
-const QUEUE_SSE_FALLBACK_POLL_MS = 10_000
-const VERSION_INFERENCE_SUMMARY_POLL_MS = 15_000
-const GHCR_SUMMARY_POLL_MS = 15_000
 const QUEUE_SNAPSHOT_KEY = buildReadonlySnapshotKey('queue', 'jobs-overview')
 const QUEUE_SNAPSHOT_STALE_MS = 60_000
 
@@ -395,120 +389,18 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
     void refreshGhcrSummary()
   }, [refreshGhcrSummary])
 
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      void refreshVersionInferenceSummary()
-    }, VERSION_INFERENCE_SUMMARY_POLL_MS)
-    return () => window.clearInterval(timer)
-  }, [refreshVersionInferenceSummary])
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      void refreshGhcrSummary()
-    }, GHCR_SUMMARY_POLL_MS)
-    return () => window.clearInterval(timer)
-  }, [refreshGhcrSummary])
-
-  useEffect(() => {
-    let closed = false
-    let es: EventSource | null = null
-    let errorStreak = 0
-    let lastEventId = 0
-    let refreshTimer: number | null = null
-    let pollTimer: number | null = null
-    let reconnectTimer: number | null = null
-
-    const refreshSafely = async () => {
-      try {
-        await refresh()
-      } catch (e: unknown) {
-        setError(e instanceof Error ? e.message : String(e))
-      }
-    }
-
-    const clearRefreshTimer = () => {
-      if (refreshTimer != null) window.clearTimeout(refreshTimer)
-      refreshTimer = null
-    }
-
-    const scheduleRefresh = (delayMs: number) => {
-      if (refreshTimer != null) return
-      refreshTimer = window.setTimeout(() => {
-        refreshTimer = null
-        void refreshSafely()
-      }, delayMs)
-    }
-
-    const stopPolling = () => {
-      if (pollTimer != null) window.clearInterval(pollTimer)
-      pollTimer = null
-    }
-
-    const startPolling = () => {
-      if (pollTimer != null) return
-      pollTimer = window.setInterval(() => {
-        void refreshSafely()
-      }, QUEUE_SSE_FALLBACK_POLL_MS)
-    }
-
-    const clearReconnectTimer = () => {
-      if (reconnectTimer != null) window.clearTimeout(reconnectTimer)
-      reconnectTimer = null
-    }
-
-    const trackEventId = (evt: Event) => {
-      const idRaw = (evt as MessageEvent).lastEventId
-      if (typeof idRaw !== 'string') return
-      const parsed = Number.parseInt(idRaw, 10)
-      if (Number.isFinite(parsed) && parsed > 0) lastEventId = parsed
-    }
-
-    const connect = () => {
-      if (closed) return
-      const opts = lastEventId > 0 ? { afterId: lastEventId } : undefined
-      es = newJobsEventsSource(opts)
-
-      es.addEventListener('open', () => {
-        errorStreak = 0
-        stopPolling()
-        // Catch up once on successful subscribe so updates between initial list and SSE connect are not missed.
-        scheduleRefresh(0)
-      })
-
-      es.addEventListener('job_event', (evt: Event) => {
-        trackEventId(evt)
-        scheduleRefresh(QUEUE_SSE_REFRESH_DEBOUNCE_MS)
-      })
-
-      es.addEventListener('job_events_error', () => {
-        scheduleRefresh(0)
-      })
-
-      es.onerror = () => {
-        errorStreak += 1
-        scheduleRefresh(0)
-        if (errorStreak < QUEUE_SSE_ERROR_THRESHOLD) return
-        es?.close()
-        es = null
-        startPolling()
-        if (reconnectTimer != null) return
-        reconnectTimer = window.setTimeout(() => {
-          reconnectTimer = null
-          connect()
-        }, QUEUE_SSE_RECONNECT_MS)
-      }
-    }
-
-    connect()
-
-    return () => {
-      closed = true
-      clearRefreshTimer()
-      clearReconnectTimer()
-      stopPolling()
-      es?.close()
-    }
-  }, [refresh])
+  useManagementEventBatch(({ events, resyncRequired }) => {
+    const jobChanged = resyncRequired || events.some((event) => event.domain === 'jobs')
+    const inferenceChanged = resyncRequired || events.some((event) =>
+      event.domain === 'version_inference' || event.summary.jobType === 'version_inference',
+    )
+    const ghcrChanged = resyncRequired || events.some((event) =>
+      event.domain === 'github_packages' || event.summary.jobType === 'github_packages_webhook',
+    )
+    if (jobChanged) void refresh().catch((error: unknown) => setError(error instanceof Error ? error.message : String(error)))
+    if (inferenceChanged) void refreshVersionInferenceSummary()
+    if (ghcrChanged) void refreshGhcrSummary()
+  })
 
   useEffect(() => {
     onTopActions(

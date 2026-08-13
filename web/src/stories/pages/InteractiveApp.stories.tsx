@@ -256,9 +256,8 @@ export const DeployCheckGateRefreshFailed: Story = {
     )
   },
   play: async ({ canvasElement }) => {
-    await waitForCondition(() => window.location.hash === '#/deploy-check')
-    const dashboardButton = Array.from(canvasElement.querySelectorAll('button')).find((button) => button.textContent?.includes('进入 Dashboard'))
-    expectStory(Boolean(dashboardButton?.disabled), 'refresh failure must keep Dashboard entry disabled')
+    await waitForCondition(() => Boolean(canvasElement.querySelector('.appShell')))
+    expectStory(window.location.hash === '#/', 'cached passing report must leave Dashboard accessible after refresh failure')
   },
 }
 

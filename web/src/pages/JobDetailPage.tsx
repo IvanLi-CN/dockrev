@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getJob, newJobEventsSource, type JobDetail, type JobLogLine, type JobProgress } from '../api'
+import { useManagementEventBatch } from '../managementEvents'
 import { formatJobMachineName, formatJobReadableDisplay } from '../jobDisplay'
 import { formatJobProgressDownload, parseJobProgressDownload } from '../jobProgressDownload'
 import { TaskResultReason } from '../components/TaskResultReason'
@@ -241,16 +242,10 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
   useEffect(() => {
     let closed = false
     let es: EventSource | null = null
-    let pollTimer: number | null = null
     let refreshTimer: number | null = null
     let errorStreak = 0
     let hasOpenedOnce = false
     let restarting = false
-
-    const stopPolling = () => {
-      if (pollTimer != null) window.clearInterval(pollTimer)
-      pollTimer = null
-    }
 
     const scheduleRefresh = (delayMs: number) => {
       if (refreshTimer != null) return
@@ -262,20 +257,12 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
             if (closed) return
             if (j.status !== 'running' && j.status !== 'queued') {
               es?.close()
-              stopPolling()
             }
           } catch {
             // ignore refresh failures; user can still use the manual refresh button
           }
         })()
       }, delayMs)
-    }
-
-    const startPolling = () => {
-      if (pollTimer != null) return
-      pollTimer = window.setInterval(() => {
-        void refresh().catch(() => {})
-      }, 1000)
     }
 
     const start = async () => {
@@ -289,13 +276,12 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
         try {
           es = newJobEventsSource(jobId, { afterId: j.logsLastId })
         } catch {
-          startPolling()
+          setError('无法建立实时日志连接')
           return
         }
 
         es.addEventListener('open', () => {
           errorStreak = 0
-          stopPolling()
           if (!hasOpenedOnce) {
             hasOpenedOnce = true
             return
@@ -309,7 +295,6 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
           hasOpenedOnce = false
           void start().finally(() => {
             restarting = false
-            if (!es) startPolling()
           })
         })
 
@@ -470,12 +455,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
           // Refresh once on close/error so status/finishedAt become up-to-date.
           scheduleRefresh(0)
 
-          if (errorStreak >= 3) {
-            // If SSE repeatedly fails (proxy buffering, auth, etc.), fall back to polling.
-            es?.close()
-            es = null
-            startPolling()
-          }
+          if (errorStreak >= 3) setError('实时日志连接不稳定，正在由浏览器重连。')
         }
       } catch (e: unknown) {
         setError(errorMessage(e))
@@ -487,10 +467,17 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
     return () => {
       closed = true
       if (refreshTimer != null) window.clearTimeout(refreshTimer)
-      stopPolling()
       es?.close()
     }
   }, [jobId, manualRefreshVersion, refresh])
+
+  useManagementEventBatch(({ events, resyncRequired }) => {
+    const relevant = resyncRequired || events.some((event) =>
+      event.summary.jobId === jobId || event.entities.some((entity) => entity.entityType === 'job' && entity.id === jobId),
+    )
+    if (!relevant) return
+    void refresh().catch(() => {})
+  })
 
   useEffect(() => {
     setLogFollow(true)

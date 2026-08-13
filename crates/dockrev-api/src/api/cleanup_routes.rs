@@ -402,6 +402,23 @@ async fn run_cleanup_scan_stream(state: Arc<AppState>, req: CleanupScanRequest, 
                 .cleanup_scan_runs
                 .append_to_active(&scan_id, CleanupScanRunPhase::Ready, Some(response), None)
                 .await;
+            state
+                .management_events
+                .publish_immediate(
+                    "cleanup",
+                    vec![
+                        crate::management_events::ManagementEventEntity {
+                            entity_type: "scan".to_string(),
+                            id: scan_id.clone(),
+                        },
+                        crate::management_events::ManagementEventEntity {
+                            entity_type: "scan".to_string(),
+                            id: "active".to_string(),
+                        },
+                    ],
+                    json!({ "scanId": scan_id, "phase": "ready" }),
+                )
+                .await;
         }
         Err(err) => {
             finish_cleanup_scan_failed(&state, &scan_id, err.to_string()).await;
@@ -412,7 +429,23 @@ async fn run_cleanup_scan_stream(state: Arc<AppState>, req: CleanupScanRequest, 
 async fn finish_cleanup_scan_failed(state: &Arc<AppState>, scan_id: &str, message: String) {
     state
         .cleanup_scan_runs
-        .append_to_active(scan_id, CleanupScanRunPhase::Failed, None, Some(message))
+        .append_to_active(
+            scan_id,
+            CleanupScanRunPhase::Failed,
+            None,
+            Some(message.clone()),
+        )
+        .await;
+    state
+        .management_events
+        .publish_immediate(
+            "cleanup",
+            vec![crate::management_events::ManagementEventEntity {
+                entity_type: "scan".to_string(),
+                id: "active".to_string(),
+            }],
+            json!({ "scanId": scan_id, "phase": "failed", "message": message }),
+        )
         .await;
 }
 

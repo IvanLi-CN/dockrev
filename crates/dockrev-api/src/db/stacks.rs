@@ -536,6 +536,7 @@ ORDER BY st.name ASC, sv.name ASC
         now: &str,
     ) -> anyhow::Result<()> {
         let stack = stack.clone();
+        let event_stack_id = stack.id.clone();
         let services = services.to_vec();
         let now = now.to_string();
         self.call(move |conn| {
@@ -633,7 +634,16 @@ INSERT INTO service_backup_target_policies (
             Ok(())
         })
         .await
-        .context("insert stack")
+        .context("insert stack")?;
+        self.management_events
+            .publish_change(
+                "stacks",
+                "stack",
+                event_stack_id,
+                serde_json::json!({ "operation": "created" }),
+            )
+            .await;
+        Ok(())
     }
 
     pub async fn update_stack_last_check_at(
@@ -642,6 +652,7 @@ INSERT INTO service_backup_target_policies (
         now: &str,
     ) -> anyhow::Result<()> {
         let stack_id = stack_id.to_string();
+        let event_stack_id = stack_id.clone();
         let now = now.to_string();
         self.call(move |conn| {
             conn.execute(
@@ -651,6 +662,14 @@ INSERT INTO service_backup_target_policies (
             Ok(())
         })
         .await?;
+        self.management_events
+            .publish_change(
+                "stacks",
+                "stack",
+                event_stack_id,
+                serde_json::json!({ "operation": "checked" }),
+            )
+            .await;
         Ok(())
     }
 
@@ -662,32 +681,45 @@ INSERT INTO service_backup_target_policies (
         now: &str,
     ) -> anyhow::Result<bool> {
         let stack_id = stack_id.to_string();
+        let event_stack_id = stack_id.clone();
         let now = now.to_string();
         let reason = reason.map(|s| s.to_string());
-        self.call(move |conn| {
-            let changed = if archived {
-                conn.execute(
-                    r#"
+        let changed = self
+            .call(move |conn| {
+                let changed = if archived {
+                    conn.execute(
+                        r#"
 UPDATE stacks
 SET archived = 1, archived_at = ?2, archived_reason = ?3, updated_at = ?2
 WHERE id = ?1
 "#,
-                    params![stack_id, now, reason],
-                )?
-            } else {
-                conn.execute(
-                    r#"
+                        params![stack_id, now, reason],
+                    )?
+                } else {
+                    conn.execute(
+                        r#"
 UPDATE stacks
 SET archived = 0, archived_at = NULL, archived_reason = NULL, updated_at = ?2
 WHERE id = ?1
 "#,
-                    params![stack_id, now],
-                )?
-            };
-            Ok(changed > 0)
-        })
-        .await
-        .context("set stack archived")
+                        params![stack_id, now],
+                    )?
+                };
+                Ok(changed > 0)
+            })
+            .await
+            .context("set stack archived")?;
+        if changed {
+            self.management_events
+                .publish_change(
+                    "stacks",
+                    "stack",
+                    event_stack_id,
+                    serde_json::json!({ "operation": if archived { "archived" } else { "restored" } }),
+                )
+                .await;
+        }
+        Ok(changed)
     }
 
     pub async fn set_service_archived(
@@ -698,32 +730,45 @@ WHERE id = ?1
         now: &str,
     ) -> anyhow::Result<bool> {
         let service_id = service_id.to_string();
+        let event_service_id = service_id.clone();
         let now = now.to_string();
         let reason = reason.map(|s| s.to_string());
-        self.call(move |conn| {
-            let changed = if archived {
-                conn.execute(
-                    r#"
+        let changed = self
+            .call(move |conn| {
+                let changed = if archived {
+                    conn.execute(
+                        r#"
 UPDATE services
 SET archived = 1, archived_at = ?2, archived_reason = ?3, updated_at = ?2
 WHERE id = ?1
 "#,
-                    params![service_id, now, reason],
-                )?
-            } else {
-                conn.execute(
-                    r#"
+                        params![service_id, now, reason],
+                    )?
+                } else {
+                    conn.execute(
+                        r#"
 UPDATE services
 SET archived = 0, archived_at = NULL, archived_reason = NULL, updated_at = ?2
 WHERE id = ?1
 "#,
-                    params![service_id, now],
-                )?
-            };
-            Ok(changed > 0)
-        })
-        .await
-        .context("set service archived")
+                        params![service_id, now],
+                    )?
+                };
+                Ok(changed > 0)
+            })
+            .await
+            .context("set service archived")?;
+        if changed {
+            self.management_events
+                .publish_change(
+                    "services",
+                    "service",
+                    event_service_id,
+                    serde_json::json!({ "operation": if archived { "archived" } else { "restored" } }),
+                )
+                .await;
+        }
+        Ok(changed)
     }
 
     pub async fn sync_stack_from_compose(
@@ -734,6 +779,7 @@ WHERE id = ?1
         now: &str,
     ) -> anyhow::Result<()> {
         let stack_id = stack_id.to_string();
+        let event_stack_id = stack_id.clone();
         let compose_files = compose_files.to_vec();
         let services = services.to_vec();
         let now = now.to_string();
@@ -962,7 +1008,16 @@ INSERT INTO services (
             Ok(())
         })
         .await
-        .context("sync stack from compose")
+        .context("sync stack from compose")?;
+        self.management_events
+            .publish_change(
+                "stacks",
+                "stack",
+                event_stack_id,
+                serde_json::json!({ "operation": "compose_synced" }),
+            )
+            .await;
+        Ok(())
     }
 
     pub async fn put_service_backup_targets(

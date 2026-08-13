@@ -1491,6 +1491,16 @@ pub(super) async fn put_service_settings(
         .await
         .map_err(map_internal)?;
 
+    state
+        .management_events
+        .publish_change(
+            "services",
+            "service",
+            service_id,
+            serde_json::json!({ "operation": "settings_updated" }),
+        )
+        .await;
+
     Ok(Json(PutServiceSettingsResponse { ok: true }))
 }
 

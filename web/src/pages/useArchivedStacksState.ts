@@ -5,6 +5,7 @@ import {
   type StackDetail,
   type StackListItem,
 } from "../api";
+import { useManagementEventBatch } from "../managementEvents";
 
 export function useArchivedStacksState() {
   const [archivedStacks, setArchivedStacks] = useState<StackListItem[]>([]);
@@ -28,13 +29,19 @@ export function useArchivedStacksState() {
   }, []);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void requestRefresh().catch(() => {});
-    }, 0);
-    return () => {
-      window.clearTimeout(timer);
-    };
+    void Promise.resolve().then(requestRefresh).catch(() => {});
   }, [requestRefresh]);
+
+  useManagementEventBatch(({ events, resyncRequired }) => {
+    const archiveStateChanged = events.some((event) => {
+      if (event.domain !== "stacks" && event.domain !== "services") return false;
+      const operation = event.summary.operation;
+      return operation === "archived" || operation === "restored";
+    });
+    if (resyncRequired || archiveStateChanged) {
+      void requestRefresh().catch(() => {});
+    }
+  });
 
   return {
     archivedDetails,

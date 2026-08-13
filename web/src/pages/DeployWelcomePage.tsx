@@ -8,12 +8,9 @@ import {
   type DeployCheckReportResponse,
 } from '../api'
 import {
-  settleDeployCheckReport,
   hasBlockingDeployCheckFailure,
-  shouldKeepDeployCheckLoading,
-  shouldKeepPollingDeployCheckReport,
-  shouldTriggerDeployCheckReportRefresh,
 } from '../deployCheck'
+import { useManagementEventBatch } from '../managementEvents'
 import { navigate } from '../routes'
 import { Button, Label, Switch } from '../ui'
 
@@ -130,7 +127,6 @@ export function DeployWelcomePage() {
     setError(null)
     setReportRefreshError(null)
     const [reportResult, welcomeResult] = await Promise.allSettled([getDeployCheckReport(), getDeployWelcome()])
-    let keepLoadingAfterBootstrap = false
     let reportError: string | null = null
 
     if (reportResult.status === 'fulfilled') {
@@ -141,30 +137,6 @@ export function DeployWelcomePage() {
         setReport(envelope.report)
       }
       setReportRefreshing(Boolean(envelope.refreshing))
-      const shouldWaitForFirstReport = shouldKeepDeployCheckLoading(envelope)
-      keepLoadingAfterBootstrap = shouldWaitForFirstReport
-      const shouldRequestRefresh = shouldTriggerDeployCheckReportRefresh(envelope)
-      const shouldPoll = shouldRequestRefresh || shouldKeepPollingDeployCheckReport(envelope)
-      if (shouldPoll) {
-        setReportRefreshing(true)
-        const seed = shouldRequestRefresh ? refreshDeployCheckReport() : Promise.resolve(envelope)
-        void seed
-          .then((nextEnvelope) => settleDeployCheckReport(nextEnvelope))
-          .then((settled) => {
-            setReportRefreshError(null)
-            if (settled.report) {
-              setReport(settled.report)
-            }
-            setReportRefreshing(Boolean(settled.refreshing))
-            setLoading(false)
-          })
-          .catch((e) => {
-            setReportRefreshError(errorMessage(e))
-            setError(errorMessage(e))
-            setReportRefreshing(false)
-            setLoading(false)
-          })
-      }
     } else {
       reportError = errorMessage(reportResult.reason)
       setReportRefreshError(reportError)
@@ -183,7 +155,7 @@ export function DeployWelcomePage() {
       setError(`检查报告已加载，但欢迎页偏好读取失败：${errorMessage(welcomeResult.reason)}`)
     }
 
-    setLoading(keepLoadingAfterBootstrap)
+    setLoading(false)
   }, [])
 
   const retryInitialReportRefresh = useCallback(async () => {
@@ -192,7 +164,7 @@ export function DeployWelcomePage() {
     setError(null)
     setReportRefreshError(null)
     try {
-      const settled = await settleDeployCheckReport(await refreshDeployCheckReport())
+      const settled = await refreshDeployCheckReport()
       setReportRefreshError(null)
       if (settled.report) {
         setReport(settled.report)
@@ -210,6 +182,12 @@ export function DeployWelcomePage() {
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  useManagementEventBatch(({ events, resyncRequired }) => {
+    if (resyncRequired || events.some((event) => event.domain === 'deploy_check')) {
+      void refresh()
+    }
+  })
 
   const groups = useMemo(() => {
     const core: DeployCheckItem[] = []
@@ -235,7 +213,7 @@ export function DeployWelcomePage() {
   }, [report])
 
   const hasBlockingFailures = report
-    ? hasBlockingDeployCheckFailure(report) || Boolean(reportRefreshError)
+    ? hasBlockingDeployCheckFailure(report)
     : Boolean(reportRefreshError)
 
   async function enterDashboard() {

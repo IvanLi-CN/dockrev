@@ -10,6 +10,7 @@ use tokio::sync::{Mutex, Notify, mpsc};
 use crate::{
     api::types::{ServiceDigestTagsScanSummary, ServiceDigestTagsSnapshotResponse},
     db::Db,
+    management_events::ManagementEventEntity,
     registry, service_check,
 };
 
@@ -448,9 +449,9 @@ impl SnapshotWorker {
 
         let task = SnapshotTask {
             key: key.clone(),
-            repo,
-            digest,
-            host_platform,
+            repo: repo.clone(),
+            digest: digest.clone(),
+            host_platform: host_platform.clone(),
             reason,
         };
         if self.queue_tx.send(task).is_err() {
@@ -461,6 +462,22 @@ impl SnapshotWorker {
             }
             return false;
         }
+
+        self.db
+            .management_events()
+            .publish_change(
+                "version_inference",
+                "task",
+                key.clone(),
+                json!({
+                    "key": key,
+                    "phase": "queued",
+                    "imageRepo": repo,
+                    "digest": digest,
+                    "hostPlatform": host_platform,
+                }),
+            )
+            .await;
 
         true
     }
@@ -974,6 +991,22 @@ impl SnapshotWorker {
             let _ = push_event_locked(&mut runtime, payload);
             self.event_notify.notify_waiters();
         }
+        drop(runtime);
+        self.db
+            .management_events()
+            .publish_change(
+                "version_inference",
+                "task",
+                task.key.clone(),
+                json!({
+                    "key": task.key,
+                    "phase": "running",
+                    "imageRepo": task.repo,
+                    "digest": task.digest,
+                    "hostPlatform": task.host_platform,
+                }),
+            )
+            .await;
     }
 
     async fn record_task_progress(&self, task_key: &str, progress: BuildProgress) {
@@ -1048,6 +1081,16 @@ impl SnapshotWorker {
             let _ = push_event_locked(&mut runtime, payload);
             self.event_notify.notify_waiters();
         }
+        drop(runtime);
+        self.db
+            .management_events()
+            .publish_change(
+                "version_inference",
+                "task",
+                task_key.to_string(),
+                json!({ "key": task_key, "phase": "progress" }),
+            )
+            .await;
     }
 
     async fn mark_task_finished(
@@ -1093,6 +1136,24 @@ impl SnapshotWorker {
         };
         let _ = push_event_locked(&mut runtime, payload);
         self.event_notify.notify_waiters();
+        drop(runtime);
+        self.db
+            .management_events()
+            .publish_immediate(
+                "version_inference",
+                vec![ManagementEventEntity {
+                    entity_type: "task".to_string(),
+                    id: task.key.clone(),
+                }],
+                json!({
+                    "key": task.key,
+                    "phase": "finished",
+                    "imageRepo": task.repo,
+                    "digest": task.digest,
+                    "hostPlatform": task.host_platform,
+                }),
+            )
+            .await;
     }
 }
 

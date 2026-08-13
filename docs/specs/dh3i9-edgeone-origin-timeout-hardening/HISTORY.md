@@ -8,3 +8,4 @@
 - Discovery reconciliation is performed by an effective scan rather than database startup. Healthy saved Compose files report `stopped`; all-file `ENOENT` uses `auto_archive_compose_files_missing`; partial absence and unreadable or invalid files remain visible as `invalid`.
 - System archives created by the current or legacy automatic reason recover when a valid scan proves the project is stopped or invalid. User archives, Stack metadata, Service metadata, and running resources remain unchanged.
 - Shared-testbox cleanup remains relative to the verified run directory after containment checks, so a later parent-path replacement cannot redirect deletion outside that run scope.
+- 管理页面改用应用级 SSE：缓存 deploy-check PASS 立即放行并后台复核；事件仅保存在 60 秒或 1024 条的进程内环形缓冲，断线通过游标补发或 REST 重同步恢复，且不保留轮询降级。

@@ -64,6 +64,17 @@ pub(super) async fn put_stack_settings(
         .put_auto_update_policy("stack", &stack_id, &req.auto_update_policy, &now)
         .await
         .map_err(map_internal)?;
+
+    state
+        .management_events
+        .publish_change(
+            "stacks",
+            "stack",
+            stack_id,
+            serde_json::json!({ "operation": "settings_updated" }),
+        )
+        .await;
+
     Ok(Json(PutStackSettingsResponse { ok: true }))
 }
 

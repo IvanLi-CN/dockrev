@@ -54,17 +54,6 @@ function moveToFront(tags: string[], tag: string): string[] {
   return [tags[idx], ...tags.slice(0, idx), ...tags.slice(idx + 1)]
 }
 
-function stableJitterMs(seed: string, maxMs: number): number {
-  if (maxMs <= 0) return 0
-  let hash = 0
-  for (let i = 0; i < seed.length; i += 1) {
-    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0
-  }
-  return hash % (maxMs + 1)
-}
-
-const FETCH_DEBOUNCE_MS = 220
-const PREFETCH_JITTER_MAX_MS = 180
 const TAGS_PREVIEW_MAX = 12
 
 type DigestTagsState = {
@@ -138,7 +127,6 @@ export function VersionTagsPopover(props: {
     onLocalResolvedTag,
     children,
   } = props
-  const fetchTimer = useRef<number | null>(null)
   const mountedRef = useRef(true)
   const {
     close,
@@ -228,10 +216,6 @@ export function VersionTagsPopover(props: {
     mountedRef.current = true
     return () => {
       mountedRef.current = false
-      if (fetchTimer.current != null) {
-        window.clearTimeout(fetchTimer.current)
-        fetchTimer.current = null
-      }
     }
   }, [])
 
@@ -241,11 +225,6 @@ export function VersionTagsPopover(props: {
       if (ignoreInvalidationTokenRef.current === token) {
         ignoreInvalidationTokenRef.current = 0
         return
-      }
-
-      if (fetchTimer.current != null) {
-        window.clearTimeout(fetchTimer.current)
-        fetchTimer.current = null
       }
 
       suppressLoadingLabelRef.current = true
@@ -265,11 +244,6 @@ export function VersionTagsPopover(props: {
     setRefreshing(true)
     setRefreshError(null)
     setRefreshNotice(null)
-
-    if (fetchTimer.current != null) {
-      window.clearTimeout(fetchTimer.current)
-      fetchTimer.current = null
-    }
 
     try {
       const resp = await forceRefreshServiceVersionInference(
@@ -306,54 +280,32 @@ export function VersionTagsPopover(props: {
   }, [candidateDigestNorm, snapshotKey, refreshing, serviceId, beginRefreshExpectation])
 
   useEffect(() => {
-    const shouldPollSnapshot =
+    const shouldLoadSnapshot =
       prefetchOnMount || open || snapshotPhaseRef.current === 'loading'
-    if (!shouldPollSnapshot) return
+    if (!shouldLoadSnapshot) return
     if (!candidateTagTrim) return
 
     // Digest tag listing is only meaningful when digest is known.
     if (!candidateDigestNorm) return
-    // Only fetch when there's no snapshot data loaded yet. Retries should be explicit
-    // (e.g. via re-pinning), not continuously driven by pinned+error state.
     if (digestTags != null) return
     if (prefetchOnMount && snapshotPhaseRef.current !== 'loading')
       setSnapshotPhase('loading')
 
+    let alive = true
     const requestSnapshotKey = snapshotKey
     const isStale = () =>
-      !mountedRef.current || latestSnapshotKeyRef.current !== requestSnapshotKey
-    const prefetchJitter =
-      prefetchOnMount && !open && !pinned
-        ? stableJitterMs(
-            `${serviceId}:${candidateDigestNorm}`,
-            PREFETCH_JITTER_MAX_MS,
-          )
-        : 0
-    const delay = (pinned ? 0 : FETCH_DEBOUNCE_MS) + prefetchJitter
-    if (fetchTimer.current != null) {
-      window.clearTimeout(fetchTimer.current)
-      fetchTimer.current = null
-    }
-
-    const timerId = window.setTimeout(() => {
-      // Avoid stale request finalizers / callbacks clobbering newer debounce timers.
-      if (fetchTimer.current === timerId) fetchTimer.current = null
-
-      const poll = () => {
-        if (isStale()) return
-        getServiceDigestTagsSnapshot(serviceId, candidateDigestNorm)
-          .then((data) => {
+      !alive || !mountedRef.current || latestSnapshotKeyRef.current !== requestSnapshotKey
+    if (isStale()) return
+    getServiceDigestTagsSnapshot(serviceId, candidateDigestNorm)
+      .then((data) => {
             if (isStale()) return
             if (isServiceDigestTagsSnapshotPending(data)) {
               setSnapshotPhase('loading')
-              const retryAfterMs = Math.max(
-                200,
-                Math.min(5000, Number(data.retryAfterMs) || FETCH_DEBOUNCE_MS),
-              )
-              fetchTimer.current = window.setTimeout(() => {
-                if (fetchTimer.current != null) fetchTimer.current = null
-                poll()
-              }, retryAfterMs)
+              trackDigestSnapshotRefresh({
+                serviceId,
+                digest: candidateDigestNorm,
+                side: 'candidate',
+              })
               return
             }
             const isLocalRefresh = localRefreshKey === snapshotKey
@@ -421,8 +373,8 @@ export function VersionTagsPopover(props: {
               clearRefreshExpectation()
             }
             setSnapshotPhase('ready')
-          })
-          .catch((e: unknown) => {
+      })
+      .catch((e: unknown) => {
             if (isStale()) return
             if (e instanceof ApiError && e.status === 404) {
               setDigestState({
@@ -469,20 +421,9 @@ export function VersionTagsPopover(props: {
             if (isExternalRefresh) setExternalRefreshKey(null)
             clearRefreshExpectation()
             setSnapshotPhase('error')
-          })
-      }
-
-      poll()
-    }, delay)
-    fetchTimer.current = timerId
-
+      })
     return () => {
-      // Preserve server-directed retry timers (set after 202 pending) across re-renders.
-      // Only cancel the debounce timer created by this effect instance.
-      if (fetchTimer.current === timerId) {
-        window.clearTimeout(timerId)
-        fetchTimer.current = null
-      }
+      alive = false
     }
   }, [
     candidateDigestNorm,
@@ -491,7 +432,6 @@ export function VersionTagsPopover(props: {
     digestTags,
     localRefreshKey,
     open,
-    pinned,
     snapshotFetchToken,
     prefetchOnMount,
     onLocalResolvedTag,

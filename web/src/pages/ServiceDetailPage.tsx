@@ -7,7 +7,6 @@ import {
   inferServiceRepoLink,
   listJobs,
   listJobsPage,
-  newJobsEventsSource,
   putServiceBackupTargets,
   putServiceSettings,
   type JobListItem,
@@ -22,6 +21,7 @@ import { BackupPolicySegmentedControl } from "../components/BackupPolicySegmente
 import { BackupRecordList } from "../components/ServiceBackupRecords";
 import { ReadonlySnapshotNotice } from "../components/ReadonlySnapshotNotice";
 import { navigate } from "../routes";
+import { useManagementEventBatch } from "../managementEvents";
 import { Button, IconButton, Input, Mono, OverlayScrollArea, RefreshIcon, SelectField, Switch, Tabs, TabsList, TabsTrigger } from "../ui";
 import { usePwaStatus } from "../pwaStatus";
 import { buildReadonlySnapshotKey, readReadonlySnapshot, writeReadonlySnapshot } from "../readonlySnapshotCache";
@@ -235,74 +235,20 @@ export function ServiceDetailPage(props: {
     void refreshVersionJobs().catch(() => undefined);
   }, [lifecycleSettledJobId, refreshRecentJobs, refreshVersionJobs]);
 
-  useEffect(() => {
-    if (section !== "history" || !isOnline) return undefined;
-    let closed = false;
-    let source: EventSource | null = null;
-    let errorStreak = 0;
-    let lastEventId = 0;
-    let refreshTimer: number | null = null;
-    let pollTimer: number | null = null;
-    let reconnectTimer: number | null = null;
-
-    const clearRefreshTimer = () => {
-      if (refreshTimer != null) window.clearTimeout(refreshTimer);
-      refreshTimer = null;
-    };
-    const stopPolling = () => {
-      if (pollTimer != null) window.clearInterval(pollTimer);
-      pollTimer = null;
-    };
-    const scheduleRefresh = (delayMs: number) => {
-      if (refreshTimer != null) return;
-      refreshTimer = window.setTimeout(() => {
-        refreshTimer = null;
-        void refreshRecentJobs(true).catch(() => undefined);
-      }, delayMs);
-    };
-    const startPolling = () => {
-      if (pollTimer != null) return;
-      pollTimer = window.setInterval(() => void refreshRecentJobs(true).catch(() => undefined), 10_000);
-    };
-    const connect = () => {
-      if (closed) return;
-      source = newJobsEventsSource(lastEventId > 0 ? { afterId: lastEventId } : undefined);
-      source.addEventListener("open", () => {
-        errorStreak = 0;
-        stopPolling();
-        scheduleRefresh(0);
-      });
-      source.addEventListener("job_event", (event: Event) => {
-        const rawId = (event as MessageEvent).lastEventId;
-        const parsedId = typeof rawId === "string" ? Number.parseInt(rawId, 10) : 0;
-        if (Number.isFinite(parsedId) && parsedId > 0) lastEventId = parsedId;
-        scheduleRefresh(250);
-      });
-      source.addEventListener("job_events_error", () => scheduleRefresh(0));
-      source.onerror = () => {
-        errorStreak += 1;
-        scheduleRefresh(0);
-        if (errorStreak < 3) return;
-        source?.close();
-        source = null;
-        startPolling();
-        if (reconnectTimer != null) return;
-        reconnectTimer = window.setTimeout(() => {
-          reconnectTimer = null;
-          connect();
-        }, 3_000);
-      };
-    };
-
-    connect();
-    return () => {
-      closed = true;
-      clearRefreshTimer();
-      stopPolling();
-      if (reconnectTimer != null) window.clearTimeout(reconnectTimer);
-      source?.close();
-    };
-  }, [isOnline, refreshRecentJobs, section]);
+  useManagementEventBatch(({ events, resyncRequired }) => {
+    if (!isOnline) return;
+    const relevant = resyncRequired || events.some((event) =>
+      event.domain === "jobs" && (
+        event.summary.scope === "all" ||
+        event.summary.stackId === props.stackId ||
+        event.summary.serviceId === props.serviceId ||
+        event.entities.some((entity) => entity.entityType === "service" && entity.id === props.serviceId)
+      ),
+    );
+    if (!relevant) return;
+    void refreshRecentJobs(true).catch(() => undefined);
+    void refreshVersionJobs().catch(() => undefined);
+  });
 
   useEffect(() => {
     let cancelled = false;

@@ -35,13 +35,10 @@ import { selfUpgradeBaseUrl } from "../runtimeConfig";
 import { Button, Mono } from "../ui";
 import {
   resolveUpdateActionTargetKey,
-  UPDATE_JOB_SETTLE_RETRY_MS,
-  UPDATE_JOB_SETTLED_EVENT,
   useUpdateActionTracker,
-  type UpdateJobSettledDetail,
 } from "../updateActionTracking";
 import { serviceRowStatus, type RowStatus } from "../updateStatus";
-import { usePageResumeRefresh } from "../usePageResumeRefresh";
+import { useManagementEventBatch } from "../managementEvents";
 import { useSupervisorHealth } from "../useSupervisorHealth";
 import {
   inferResolvedTagsFromSnapshot,
@@ -242,46 +239,7 @@ export function useServicesPageState(props: {
     [],
   );
 
-  const resolveSettledStackIds = useCallback(
-    (detail: UpdateJobSettledDetail): string[] => {
-      const explicitStackId = (detail.stackId ?? "").trim();
-      if (explicitStackId) return [explicitStackId];
-
-      const explicitServiceId = (detail.serviceId ?? "").trim();
-      if (explicitServiceId) {
-        const matched = [
-          ...Object.entries(details),
-          ...Object.entries(archivedDetails),
-        ]
-          .filter(([, stack]) =>
-            stack?.services.some((svc) => svc.id === explicitServiceId),
-          )
-          .map(([stackId]) => stackId);
-        if (matched.length > 0) return [...new Set(matched)];
-      }
-
-      if (detail.target.startsWith("stack:"))
-        return [detail.target.slice("stack:".length)];
-      if (detail.target.startsWith("service:")) {
-        const serviceId = detail.target.slice("service:".length);
-        return [...Object.entries(details), ...Object.entries(archivedDetails)]
-          .filter(([, stack]) =>
-            stack?.services.some((svc) => svc.id === serviceId),
-          )
-          .map(([stackId]) => stackId);
-      }
-
-      if (detail.scope === "all" || detail.target === "all")
-        return stacks.map((stack) => stack.id);
-      return [];
-    },
-    [archivedDetails, details, stacks],
-  );
-
-  const requestRefresh = usePageResumeRefresh(refresh, {
-    onError: (e: unknown) =>
-      setError(e instanceof Error ? e.message : String(e)),
-  });
+  const requestRefresh = refresh;
 
   useEffect(() => {
     void requestRefresh().catch((e: unknown) =>
@@ -289,59 +247,53 @@ export function useServicesPageState(props: {
     );
   }, [requestRefresh]);
 
-  useEffect(() => {
-    let closed = false;
-    const timers = new Set<number>();
-
-    const handleRefreshError = (error: unknown) => {
-      if (closed) return;
-      setError(error instanceof Error ? error.message : String(error));
-    };
-
-    const schedule = (task: () => Promise<void>) => {
-      const timer = window.setTimeout(() => {
-        timers.delete(timer);
-        void task().catch(handleRefreshError);
-      }, UPDATE_JOB_SETTLE_RETRY_MS);
-      timers.add(timer);
-    };
-
-    const onUpdateJobSettled = (evt: Event) => {
-      const detail =
-        evt instanceof CustomEvent
-          ? (evt.detail as UpdateJobSettledDetail | null)
+  useManagementEventBatch(({ events, resyncRequired }) => {
+    const stackIds = new Set<string>();
+    let refreshAll = resyncRequired;
+    for (const event of events) {
+      if (!["jobs", "stacks", "services", "discovery", "version_inference"].includes(event.domain)) continue;
+      if (event.summary.scope === "all") refreshAll = true;
+      for (const entity of event.entities) {
+        if (entity.entityType === "stack") stackIds.add(entity.id);
+        if (entity.entityType === "service") {
+          for (const [stackId, detail] of Object.entries(details)) {
+            if (detail?.services.some((service) => service.id === entity.id)) {
+              stackIds.add(stackId);
+            }
+          }
+        }
+      }
+      if (typeof event.summary.stackId === "string") stackIds.add(event.summary.stackId);
+      if (event.domain === "version_inference" && event.summary.phase === "finished") {
+        const imageRepo = typeof event.summary.imageRepo === "string"
+          ? event.summary.imageRepo.trim().toLowerCase()
+          : "";
+        const digest = typeof event.summary.digest === "string"
+          ? normalizeDigest(event.summary.digest)?.toLowerCase()
           : null;
-      if (!detail) return;
-
-      const isAll = detail.scope === "all" || detail.target === "all";
-      const stackIds = resolveSettledStackIds(detail);
-      if (isAll || stackIds.length === 0) {
-        void requestRefresh().catch(handleRefreshError);
-        schedule(async () => {
-          await requestRefresh();
-        });
+        if (!imageRepo || !digest) continue;
+        for (const [stackId, detail] of Object.entries(details)) {
+          if (detail?.services.some((service) => {
+            const serviceRepo = imageRepoFromImageRef(service.image.ref);
+            const currentDigest = normalizeDigest(service.image.digest)?.toLowerCase();
+            const candidateDigest = normalizeDigest(service.candidate?.digest)?.toLowerCase();
+            return serviceRepo === imageRepo && (currentDigest === digest || candidateDigest === digest);
+          })) stackIds.add(stackId);
+        }
+      }
+    }
+    const refresh = async () => {
+      if (refreshAll || stackIds.size === 0) {
+        await requestRefresh();
         return;
       }
-
-      void patchStackDetails(stackIds).catch(handleRefreshError);
-      schedule(async () => {
-        await patchStackDetails(stackIds);
-        await patchStackLists(stackIds);
-      });
+      const ids = [...stackIds];
+      await Promise.all([patchStackDetails(ids), patchStackLists(ids)]);
     };
-
-    window.addEventListener(UPDATE_JOB_SETTLED_EVENT, onUpdateJobSettled);
-    return () => {
-      closed = true;
-      for (const timer of timers) window.clearTimeout(timer);
-      window.removeEventListener(UPDATE_JOB_SETTLED_EVENT, onUpdateJobSettled);
-    };
-  }, [
-    patchStackDetails,
-    patchStackLists,
-    requestRefresh,
-    resolveSettledStackIds,
-  ]);
+    void refresh().catch((error: unknown) =>
+      setError(error instanceof Error ? error.message : String(error)),
+    );
+  });
 
   const applyDigestSnapshotUpdate = useCallback(
     (detail: DigestSnapshotUpdatedDetail) => {
@@ -468,51 +420,6 @@ export function useServicesPageState(props: {
     };
   }, [applyDigestSnapshotUpdate]);
 
-  const pendingInferenceStackIds = useMemo(() => {
-    const ids: string[] = [];
-    for (const [stackId, detail] of Object.entries(details)) {
-      if (!detail) continue;
-      const hasPending = detail.services.some(
-        (svc) => !svc.archived && svc.versionInference?.status === "pending",
-      );
-      if (hasPending) ids.push(stackId);
-    }
-    return ids;
-  }, [details]);
-
-  useEffect(() => {
-    if (pendingInferenceStackIds.length === 0) return;
-    let closed = false;
-    let timer: number | null = null;
-
-    const poll = async () => {
-      const ids = [...pendingInferenceStackIds];
-      const results = await Promise.all(
-        ids.map(async (id) => {
-          try {
-            return [id, await getStack(id)] as const;
-          } catch {
-            return [id, undefined] as const;
-          }
-        }),
-      );
-      if (closed) return;
-      const patch = Object.fromEntries(results);
-      setDetails((prev) => ({ ...prev, ...patch }));
-      timer = window.setTimeout(() => {
-        void poll();
-      }, 1200);
-    };
-
-    timer = window.setTimeout(() => {
-      void poll();
-    }, 1200);
-
-    return () => {
-      closed = true;
-      if (timer != null) window.clearTimeout(timer);
-    };
-  }, [pendingInferenceStackIds]);
 
   useEffect(() => {
     if (!manageTopActions) return;

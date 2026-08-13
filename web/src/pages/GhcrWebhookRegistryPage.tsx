@@ -8,7 +8,6 @@ import {
   getGitHubPackagesWebhookOverview,
   listGitHubPackagesRepos,
   listJobs,
-  newJobsEventsSource,
   triggerGitHubPackagesWebhookSyncAll,
   triggerGitHubPackagesWebhookSyncRepo,
   type GitHubPackagesRepo,
@@ -16,6 +15,7 @@ import {
   type JobListItem,
 } from '../api'
 import { useConfirm } from '../confirm'
+import { useManagementEventBatch } from '../managementEvents'
 import { navigate } from '../routes'
 import { Button, Chip, Input, Mono, Pill, ResponsiveActionButton, SelectField } from '../ui'
 import { webhookStateDotClass, webhookStateIcon } from '../webhookStatus'
@@ -24,7 +24,6 @@ type RepoStateFilter = 'all' | 'ok' | 'missing' | 'error' | 'conflict' | 'queued
 
 const REPO_FETCH_PER_PAGE = 200
 const MAX_REPO_FETCH_PAGES = 100
-const JOBS_REFRESH_INTERVAL_MS = 30_000
 const GHCR_JOB_TYPES = new Set([
   'github_packages_webhook',
   'github_packages_webhook_sync_all',
@@ -149,20 +148,17 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
   const [repoWarning, setRepoWarning] = useState<string | null>(null)
   const refreshRequestIdRef = useRef(0)
   const filterRowRef = useRef<HTMLDivElement | null>(null)
-  const lastJobsRefreshAtRef = useRef(0)
   const refreshRunningRef = useRef(false)
   const refreshQueuedRef = useRef(false)
-  const refreshForceJobsRef = useRef(false)
 
-  const runRefreshOnce = useCallback(async (forceJobs: boolean) => {
+  const runRefreshOnce = useCallback(async () => {
     const requestId = ++refreshRequestIdRef.current
-    const shouldRefreshJobs = forceJobs || Date.now() - lastJobsRefreshAtRef.current >= JOBS_REFRESH_INTERVAL_MS
     setError(null)
     try {
       const [nextOverview, repoResult, allJobs] = await Promise.all([
         getGitHubPackagesWebhookOverview(),
         listAllTrackedRepos(),
-        shouldRefreshJobs ? listJobs() : Promise.resolve<JobListItem[] | null>(null),
+        listJobs(),
       ])
       if (requestId !== refreshRequestIdRef.current) return
       setOverview(nextOverview)
@@ -172,10 +168,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
           ? `仓库数量较多，仅展示前 ${REPO_FETCH_PER_PAGE * MAX_REPO_FETCH_PAGES} 条，请缩小筛选范围后重试。`
           : null,
       )
-      if (allJobs) {
-        setJobs(allJobs.filter((job) => isGhcrJobType(job.type)))
-        lastJobsRefreshAtRef.current = Date.now()
-      }
+      setJobs(allJobs.filter((job) => isGhcrJobType(job.type)))
     } catch (e: unknown) {
       if (requestId !== refreshRequestIdRef.current) return
       setError(errorMessage(e))
@@ -183,8 +176,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
   }, [])
 
   const refresh = useCallback(
-    async (opts?: { forceJobs?: boolean }) => {
-      if (opts?.forceJobs) refreshForceJobsRef.current = true
+    async () => {
       if (refreshRunningRef.current) {
         refreshQueuedRef.current = true
         return
@@ -195,9 +187,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
       try {
         while (refreshQueuedRef.current) {
           refreshQueuedRef.current = false
-          const forceJobs = refreshForceJobsRef.current
-          refreshForceJobsRef.current = false
-          await runRefreshOnce(forceJobs)
+          await runRefreshOnce()
         }
       } finally {
         refreshRunningRef.current = false
@@ -207,65 +197,15 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
   )
 
   useEffect(() => {
-    void refresh({ forceJobs: true })
+    void refresh()
   }, [refresh])
 
-  useEffect(() => {
-    let closed = false
-    let es: EventSource | null = null
-    let refreshTimer: number | null = null
-    let pollTimer: number | null = null
-
-    const scheduleRefresh = (delayMs: number) => {
-      if (refreshTimer != null) return
-      refreshTimer = window.setTimeout(() => {
-        refreshTimer = null
-        void refresh()
-      }, delayMs)
-    }
-
-    const startPolling = () => {
-      if (pollTimer != null) return
-      pollTimer = window.setInterval(() => {
-        void refresh()
-      }, 10_000)
-    }
-
-    const stopPolling = () => {
-      if (pollTimer == null) return
-      window.clearInterval(pollTimer)
-      pollTimer = null
-    }
-
-    const connect = () => {
-      if (closed) return
-      es = newJobsEventsSource()
-      es.addEventListener('open', () => {
-        stopPolling()
-        scheduleRefresh(0)
-      })
-      es.addEventListener('job_event', () => scheduleRefresh(250))
-      es.addEventListener('job_events_error', () => {
-        scheduleRefresh(0)
-        startPolling()
-      })
-      es.onerror = () => {
-        scheduleRefresh(0)
-        startPolling()
-      }
-    }
-
-    // Keep polling as fallback until SSE is confirmed open.
-    startPolling()
-    connect()
-
-    return () => {
-      closed = true
-      if (refreshTimer != null) window.clearTimeout(refreshTimer)
-      stopPolling()
-      es?.close()
-    }
-  }, [refresh])
+  useManagementEventBatch(({ events, resyncRequired }) => {
+    if (!resyncRequired && !events.some((event) =>
+      event.domain === 'github_packages' || (typeof event.summary.jobType === 'string' && event.summary.jobType.startsWith('github_packages')),
+    )) return
+    void refresh().catch((error: unknown) => setError(errorMessage(error)))
+  })
 
   useEffect(() => {
     onTopActions(
@@ -277,7 +217,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
             setBusy(true)
             setError(null)
             try {
-              await refresh({ forceJobs: true })
+              await refresh()
             } catch (e: unknown) {
               setError(errorMessage(e))
             } finally {
@@ -555,7 +495,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
                 setError(null)
                 try {
                   await triggerGitHubPackagesWebhookSyncAll()
-                  await refresh({ forceJobs: true })
+                  await refresh()
                 } catch (e: unknown) {
                   setError(errorMessage(e))
                 } finally {
@@ -681,7 +621,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
                         setError(null)
                         try {
                           await triggerGitHubPackagesWebhookSyncRepo({ fullName: repo.fullName })
-                          await refresh({ forceJobs: true })
+                          await refresh()
                         } catch (e: unknown) {
                           setError(errorMessage(e))
                         } finally {
@@ -704,7 +644,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
                           setError(null)
                           try {
                             await deleteGitHubPackagesRepo({ fullName: repo.fullName })
-                            await refresh({ forceJobs: true })
+                            await refresh()
                           } catch (e: unknown) {
                             setError(errorMessage(e))
                           } finally {
@@ -771,7 +711,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
                         setError(null)
                         try {
                           await deleteGitHubPackagesRepo({ fullName: repo.fullName })
-                          await refresh({ forceJobs: true })
+                          await refresh()
                         } catch (e: unknown) {
                           setError(errorMessage(e))
                         } finally {

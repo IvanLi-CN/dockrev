@@ -6,12 +6,10 @@ resolveAggregateUpdateActionState,
 } from '../aggregateUpdateGuard'
 import {
 ApiError,
-getJob,
-getStack,
+  getStack,
 listDiscoveryProjects,
 listJobs,
 listStacks,
-newJobsEventsSource,
 triggerCheck,
 triggerDiscoveryScan,
 triggerUpdate,
@@ -24,13 +22,9 @@ type TriggerUpdateInput
 } from '../api'
 import { AggregateUpdatePreviewList } from '../components/AggregateUpdatePreviewList'
 import { normalizeDigest } from '../components/digest'
+import { imageRepoFromImageRef } from '../imageRepo'
 import { type UpdateCandidateFilter } from '../components/UpdateCandidateFilters'
 import { useConfirm } from '../confirm'
-import {
-DIGEST_SNAPSHOT_UPDATED_EVENT,
-type DigestSnapshotUpdatedDetail,
-} from '../digestInferenceTracker'
-import { imageRepoFromImageRef } from '../imageRepo'
 import { navigate } from '../routes'
 import { selfUpgradeBaseUrl } from '../runtimeConfig'
 import {
@@ -39,21 +33,16 @@ Mono
 } from '../ui'
 import {
 resolveUpdateActionTargetKey,
-UPDATE_JOB_SETTLE_RETRY_MS,
 UPDATE_JOB_SETTLED_EVENT,
 useUpdateActionTracker,
 type UpdateJobSettledDetail,
 } from '../updateActionTracking'
 import { isSemverDowngradeAnomaly,serviceRowStatus,type RowStatus } from '../updateStatus'
 import { buildUpdateServiceTargets } from '../updateTargets'
-import { usePageResumeRefresh } from '../usePageResumeRefresh'
+import { useManagementEventBatch } from '../managementEvents'
 import { usePwaStatus } from '../pwaStatus'
 import { buildReadonlySnapshotKey, readReadonlySnapshot, writeReadonlySnapshot } from '../readonlySnapshotCache'
 import { useSupervisorHealth } from '../useSupervisorHealth'
-import {
-inferResolvedTagsFromSnapshot,
-isStrictSemverTag
-} from '../versionDisplay'
 import { buildAllAggregateScope } from './aggregateUpdateScope'
 import { selectOverviewJobsForCard,toOverviewJobCardItem } from './overviewJobsCard'
 
@@ -65,17 +54,11 @@ getDiscoveryScanStartedAt,
 latestDiscoveryObservationAt,
 readCollapsedFromStorage,
 readUpdateCandidateFilterFromUrl,
-scanHasFailures,
-scanIsComplete,
 withCollapseDefaults,
 writeCollapsedToStorage,
 writeUpdateCandidateFilterToUrl,
 } from './overviewHelpers'
 
-const OVERVIEW_JOBS_SSE_REFRESH_DEBOUNCE_MS = 180
-const OVERVIEW_JOBS_SSE_FALLBACK_POLL_MS = 5000
-const OVERVIEW_JOBS_SSE_ERROR_THRESHOLD = 3
-const OVERVIEW_JOBS_SSE_RECONNECT_MS = 1500
 const SERVICES_OVERVIEW_SNAPSHOT_KEY = buildReadonlySnapshotKey('services', 'operations-dashboard')
 const SERVICES_OVERVIEW_SNAPSHOT_STALE_MS = 60_000
 
@@ -114,7 +97,6 @@ export function useOverviewPageState(props: {
   const [snapshotFetchedAt, setSnapshotFetchedAt] = useState<string | null>(null)
   const [snapshotAnchorFetchedAt, setSnapshotAnchorFetchedAt] = useState<string | null>(null)
   const [snapshotActive, setSnapshotActive] = useState(false)
-  const jobsRefreshErrorRef = useRef<string | null>(null)
   const refreshRequestIdRef = useRef(0)
   const latestAppliedStacksRequestIdRef = useRef(0)
   const latestAppliedJobsRequestIdRef = useRef(0)
@@ -305,9 +287,7 @@ export function useOverviewPageState(props: {
     [details, stacks],
   )
 
-  const requestRefresh = usePageResumeRefresh(refresh, {
-    onError: (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
-  })
+  const requestRefresh = refresh
 
   useEffect(() => {
     void requestRefresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
@@ -330,139 +310,58 @@ export function useOverviewPageState(props: {
     )
   }, [details, discoveredProjects, jobs, snapshotAnchorFetchedAt, stacks])
 
-  useEffect(() => {
-    let closed = false
-    let es: EventSource | null = null
-    let errorStreak = 0
-    let lastEventId = 0
-    let refreshRequestId = 0
-    let refreshTimer: number | null = null
-    let pollTimer: number | null = null
-    let reconnectTimer: number | null = null
-
-    const refreshJobs = async () => {
-      const requestId = ++refreshRequestId
-      try {
-        const next = await listJobs()
-        if (requestId !== refreshRequestId) return
-        if (!closed) {
-          setJobs(next)
-          const previousJobsError = jobsRefreshErrorRef.current
-          jobsRefreshErrorRef.current = null
-          if (previousJobsError) {
-            setError((prev) => (prev === previousJobsError ? null : prev))
+  useManagementEventBatch(({ events, resyncRequired }) => {
+    const stackIds = new Set<string>()
+    const jobsChanged = resyncRequired || events.some((event) => event.domain === 'jobs')
+    const discoveryChanged = resyncRequired || events.some((event) => event.domain === 'discovery')
+    let refreshAll = resyncRequired
+    for (const event of events) {
+      if (!['jobs', 'stacks', 'services', 'discovery', 'version_inference'].includes(event.domain)) continue
+      if (event.summary.scope === 'all') refreshAll = true
+      for (const entity of event.entities) {
+        if (entity.entityType === 'stack') stackIds.add(entity.id)
+        if (entity.entityType === 'service') {
+          for (const [stackId, detail] of Object.entries(details)) {
+            if (detail?.services.some((service) => service.id === entity.id)) {
+              stackIds.add(stackId)
+            }
           }
         }
-      } catch (e: unknown) {
-        if (requestId !== refreshRequestId) return
-        if (!closed) {
-          const message = e instanceof Error ? e.message : String(e)
-          jobsRefreshErrorRef.current = message
-          setError(message)
+      }
+      if (typeof event.summary.stackId === 'string') stackIds.add(event.summary.stackId)
+      if (event.domain === 'version_inference' && event.summary.phase === 'finished') {
+        const imageRepo = typeof event.summary.imageRepo === 'string'
+          ? event.summary.imageRepo.trim().toLowerCase()
+          : ''
+        const digest = typeof event.summary.digest === 'string'
+          ? normalizeDigest(event.summary.digest)?.toLowerCase()
+          : null
+        if (!imageRepo || !digest) continue
+        for (const [stackId, detail] of Object.entries(details)) {
+          if (detail?.services.some((service) => {
+            const serviceRepo = imageRepoFromImageRef(service.image.ref)
+            const currentDigest = normalizeDigest(service.image.digest)?.toLowerCase()
+            const candidateDigest = normalizeDigest(service.candidate?.digest)?.toLowerCase()
+            return serviceRepo === imageRepo && (currentDigest === digest || candidateDigest === digest)
+          })) stackIds.add(stackId)
         }
       }
     }
-
-    const clearRefreshTimer = () => {
-      if (refreshTimer != null) window.clearTimeout(refreshTimer)
-      refreshTimer = null
-    }
-
-    const scheduleRefresh = (delayMs: number) => {
-      if (refreshTimer != null) return
-      refreshTimer = window.setTimeout(() => {
-        refreshTimer = null
-        void refreshJobs()
-      }, delayMs)
-    }
-
-    const stopPolling = () => {
-      if (pollTimer != null) window.clearInterval(pollTimer)
-      pollTimer = null
-    }
-
-    const startPolling = () => {
-      if (pollTimer != null) return
-      pollTimer = window.setInterval(() => {
-        void refreshJobs()
-      }, OVERVIEW_JOBS_SSE_FALLBACK_POLL_MS)
-    }
-
-    const clearReconnectTimer = () => {
-      if (reconnectTimer != null) window.clearTimeout(reconnectTimer)
-      reconnectTimer = null
-    }
-
-    const trackEventId = (evt: Event) => {
-      const idRaw = (evt as MessageEvent).lastEventId
-      if (typeof idRaw !== 'string') return
-      const parsed = Number.parseInt(idRaw, 10)
-      if (Number.isFinite(parsed) && parsed > 0) lastEventId = parsed
-    }
-
-    const connect = () => {
-      if (closed) return
-      const opts = lastEventId > 0 ? { afterId: lastEventId } : undefined
-      es = newJobsEventsSource(opts)
-
-      es.addEventListener('open', () => {
-        errorStreak = 0
-        stopPolling()
-        scheduleRefresh(0)
-      })
-
-      es.addEventListener('job_event', (evt: Event) => {
-        trackEventId(evt)
-        scheduleRefresh(OVERVIEW_JOBS_SSE_REFRESH_DEBOUNCE_MS)
-      })
-
-      es.addEventListener('job_events_error', () => {
-        scheduleRefresh(0)
-      })
-
-      es.onerror = () => {
-        errorStreak += 1
-        scheduleRefresh(0)
-        if (errorStreak < OVERVIEW_JOBS_SSE_ERROR_THRESHOLD) return
-        es?.close()
-        es = null
-        startPolling()
-        if (reconnectTimer != null) return
-        reconnectTimer = window.setTimeout(() => {
-          reconnectTimer = null
-          connect()
-        }, OVERVIEW_JOBS_SSE_RECONNECT_MS)
+    const sync = async () => {
+      if (refreshAll) return requestRefresh()
+      const tasks: Promise<unknown>[] = []
+      if (jobsChanged) tasks.push(listJobs().then(setJobs))
+      if (discoveryChanged) tasks.push(listDiscoveryProjects('exclude').then(setDiscoveredProjects))
+      if (stackIds.size > 0) {
+        const ids = [...stackIds]
+        tasks.push(patchStackDetails(ids), patchStackList(ids))
       }
+      await Promise.all(tasks)
     }
-
-    connect()
-
-    return () => {
-      closed = true
-      clearRefreshTimer()
-      clearReconnectTimer()
-      stopPolling()
-      es?.close()
-    }
-  }, [])
+    void sync().catch((error: unknown) => setError(error instanceof Error ? error.message : String(error)))
+  })
 
   useEffect(() => {
-    let closed = false
-    const timers = new Set<number>()
-
-    const handleRefreshError = (error: unknown) => {
-      if (closed) return
-      setError(error instanceof Error ? error.message : String(error))
-    }
-
-    const schedule = (task: () => Promise<void>) => {
-      const timer = window.setTimeout(() => {
-        timers.delete(timer)
-        void task().catch(handleRefreshError)
-      }, UPDATE_JOB_SETTLE_RETRY_MS)
-      timers.add(timer)
-    }
-
     const onUpdateJobSettled = (evt: Event) => {
       const detail = evt instanceof CustomEvent ? (evt.detail as UpdateJobSettledDetail | null) : null
       if (!detail) return
@@ -470,165 +369,19 @@ export function useOverviewPageState(props: {
       const isAll = detail.scope === 'all' || detail.target === 'all'
       const stackIds = resolveSettledStackIds(detail)
       if (isAll || stackIds.length === 0) {
-        void requestRefresh().catch(handleRefreshError)
-        schedule(async () => {
-          await requestRefresh()
-        })
+        void requestRefresh().catch((error: unknown) => setError(error instanceof Error ? error.message : String(error)))
         return
       }
 
-      void patchStackDetails(stackIds).catch(handleRefreshError)
-      schedule(async () => {
-        await patchStackDetails(stackIds)
-        await patchStackList(stackIds)
-      })
+      void Promise.all([patchStackDetails(stackIds), patchStackList(stackIds)])
+        .catch((error: unknown) => setError(error instanceof Error ? error.message : String(error)))
     }
 
     window.addEventListener(UPDATE_JOB_SETTLED_EVENT, onUpdateJobSettled)
     return () => {
-      closed = true
-      for (const timer of timers) window.clearTimeout(timer)
       window.removeEventListener(UPDATE_JOB_SETTLED_EVENT, onUpdateJobSettled)
     }
   }, [patchStackDetails, patchStackList, requestRefresh, resolveSettledStackIds])
-
-  const applyDigestSnapshotUpdate = useCallback(
-    (detail: DigestSnapshotUpdatedDetail) => {
-      // Popover-triggered refresh stays local to the clicked service, but when that service's
-      // current/candidate happen to share one digest both sides should consume the new snapshot.
-      const imageRepo = (detail.imageRepo ?? '').trim().toLowerCase()
-      const digestNorm = normalizeDigest(detail.digest)?.toLowerCase() ?? null
-      const triggerServiceId = (detail.triggerServiceId ?? '').trim()
-      if (!imageRepo || !triggerServiceId || !digestNorm) return
-
-      const failures = scanHasFailures(detail.scan)
-      const complete = scanIsComplete(detail.scan)
-
-      const patchService = (svc: Service): Service => {
-        if (svc.id !== triggerServiceId) return svc
-        const svcRepo = imageRepoFromImageRef(svc.image.ref)
-        if (!svcRepo || svcRepo !== imageRepo) return svc
-
-        let changed = false
-        let next: Service = svc
-
-        const currentDigest = normalizeDigest(svc.image.digest)?.toLowerCase() ?? null
-        if (currentDigest && currentDigest === digestNorm && !isStrictSemverTag(svc.image.tag)) {
-          const inferred = inferResolvedTagsFromSnapshot(detail.tags, svc.image.tag)
-          const inferredFirst = inferred[0] ?? null
-          if (inferredFirst || (!failures && complete)) {
-            changed = true
-            next = {
-              ...next,
-              image: {
-                ...next.image,
-                resolvedTag: inferredFirst,
-                resolvedTags: inferred.length > 1 ? inferred : null,
-              },
-            }
-          }
-        }
-
-        const candidate = next.candidate
-        const candidateDigest = candidate ? normalizeDigest(candidate.digest)?.toLowerCase() ?? null : null
-        if (candidate && candidateDigest && candidateDigest === digestNorm && !isStrictSemverTag(candidate.tag)) {
-          const inferred = inferResolvedTagsFromSnapshot(detail.tags, candidate.tag)
-          const inferredFirst = inferred[0] ?? null
-          if (inferredFirst || (!failures && complete)) {
-            changed = true
-            next = {
-              ...next,
-              candidate: { ...candidate, resolvedTag: inferredFirst },
-            }
-          }
-        }
-
-        return changed ? next : svc
-      }
-
-      setDetails((prev) => {
-        let changed = false
-        const next: Record<string, StackDetail | undefined> = { ...prev }
-
-        for (const [stackId, stack] of Object.entries(prev)) {
-          if (!stack) continue
-          let stackChanged = false
-          const nextServices = stack.services.map((svc) => {
-            const patched = patchService(svc)
-            if (patched !== svc) stackChanged = true
-            return patched
-          })
-          if (!stackChanged) continue
-          changed = true
-          next[stackId] = { ...stack, services: nextServices }
-        }
-
-        return changed ? next : prev
-      })
-    },
-    [],
-  )
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    const onDigestSnapshotUpdated = (evt: Event) => {
-      const detail =
-        evt instanceof CustomEvent
-          ? (evt.detail as DigestSnapshotUpdatedDetail | null)
-          : null
-      if (!detail) return
-      applyDigestSnapshotUpdate(detail)
-    }
-    window.addEventListener(DIGEST_SNAPSHOT_UPDATED_EVENT, onDigestSnapshotUpdated)
-    return () => {
-      window.removeEventListener(DIGEST_SNAPSHOT_UPDATED_EVENT, onDigestSnapshotUpdated)
-    }
-  }, [applyDigestSnapshotUpdate])
-
-  const pendingInferenceStackIds = useMemo(() => {
-    const ids: string[] = []
-    for (const [stackId, detail] of Object.entries(details)) {
-      if (!detail) continue
-      const hasPending = detail.services.some(
-        (svc) => !svc.archived && svc.versionInference?.status === 'pending',
-      )
-      if (hasPending) ids.push(stackId)
-    }
-    return ids
-  }, [details])
-
-  useEffect(() => {
-    if (pendingInferenceStackIds.length === 0) return
-    let closed = false
-    let timer: number | null = null
-
-    const poll = async () => {
-      const ids = [...pendingInferenceStackIds]
-      const results = await Promise.all(
-        ids.map(async (id) => {
-          try {
-            return [id, await getStack(id)] as const
-          } catch {
-            return [id, undefined] as const
-          }
-        }),
-      )
-      if (closed) return
-      setDetails((prev) => ({ ...prev, ...Object.fromEntries(results) }))
-      timer = window.setTimeout(() => {
-        void poll()
-      }, 1200)
-    }
-
-    timer = window.setTimeout(() => {
-      void poll()
-    }, 1200)
-
-    return () => {
-      closed = true
-      if (timer != null) window.clearTimeout(timer)
-    }
-  }, [pendingInferenceStackIds])
 
   const applyFilter = useCallback(
     (next: UpdateCandidateFilter, mode: 'push' | 'replace') => {
@@ -822,15 +575,6 @@ export function useOverviewPageState(props: {
     try {
       const resp = await triggerDiscoveryScan()
       setNoticeDiscoveryJobId(resp.jobId)
-      setJobs(await listJobs())
-
-      const started = Date.now()
-      while (Date.now() - started < 60_000) {
-        const job = await getJob(resp.jobId)
-        if (job.status !== 'running') break
-        await new Promise((r) => setTimeout(r, 500))
-      }
-      setDiscoveredProjects(await listDiscoveryProjects('exclude'))
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {

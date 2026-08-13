@@ -9,6 +9,7 @@
 - GitHub release drawer fallback to service-level locate-first anchor windows.
 - Digest-tags owner-facing path removal of live manifest scan.
 - Edge-proxy-safe SSE heartbeat unification.
+- Application-level management SSE with bounded in-memory replay and REST-driven invalidation recovery.
 
 ## Delivered
 
@@ -16,6 +17,10 @@
 - Reworked `POST /api/cleanups/scan` to serve cached snapshot payloads or `pending` envelopes instead of blocking on live Docker scans.
 - Reworked cleanup confirm/apply so confirm waits for a fresh snapshot and apply validates the latest fingerprint without re-scanning Docker inline.
 - Added `POST /api/deploy-check/report/refresh` and converted `GET /api/deploy-check/report` to cached-read envelopes.
+- Changed the app-level deploy-check gate to immediately accept a cached PASS, request a background recheck, and only block after a newly confirmed failure. No cached report or an existing non-PASS remains blocking.
+- Added authenticated `GET /api/events` and `GET /api/events/status`. The event hub uses a per-process generation, `Last-Event-ID` replay, `resync_required`, 100ms entity coalescing, and a 60-second/1024-event in-memory ring without a database event table.
+- Published management invalidations from Stack/Service changes, job lifecycle transitions, deploy-check reports, cleanup scan terminal states, GHCR delivery updates, settings writes, and version-inference task state changes.
+- Replaced management-page jobs/version/GHCR/cleanup streams and refresh intervals with a single provider connection. Pages preserve stale data during reconnect, defer background-tab REST reads, and fetch only invalidated entities when foregrounded. Service logs and resource monitoring retain their dedicated streams.
 - Parallelized deploy-check local probes and reduced the default local probe timeout to `8s`.
 - Removed the Web UI dependency on live `/api/services/{id}/digest-tags`; owner-facing reads now use snapshot semantics.
 - Removed Web dependency on `/github-releases/locate`; the drawer now uses unified `release-notes/locate` anchor windows and `direction=older|newer` cursors instead of client-side progressive scans.
