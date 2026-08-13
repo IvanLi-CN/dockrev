@@ -227,10 +227,9 @@ export function useOverviewPageState(props: {
       if (ids.size === 0) return
 
       const next = await listStacks()
-      const byId = new Map(next.map((item) => [item.id, item] as const))
       const maxLastScan = next.map((item) => item.lastCheckAt).sort().at(-1)
 
-      setStacks((prev) => prev.map((item) => byId.get(item.id) ?? item))
+      setStacks(next)
       onLastScanHint(maxLastScan)
     },
     [onLastScanHint],

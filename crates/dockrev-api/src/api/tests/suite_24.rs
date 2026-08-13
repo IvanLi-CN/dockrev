@@ -541,6 +541,86 @@ services:
 }
 
 #[tokio::test]
+async fn ignore_writes_publish_service_management_events() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let compose_path = format!("/tmp/dockrev-ignore-events-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "ignore-events", &compose_path).await;
+    let service_id = state.db.get_stack(&stack_id).await.unwrap().unwrap().services[0]
+        .id
+        .clone();
+    let cursor = format!("{}:0", state.management_events.generation());
+
+    let create = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/ignores")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "enabled": true,
+                        "scope": { "type": "service", "serviceId": service_id },
+                        "match": { "kind": "prefix", "value": "2." }
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create.status(), 201);
+    let rule_id = response_json(create).await["ruleId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    wait_for_management_event(&state, &cursor, |event| {
+        event.event.domain == "services"
+            && event.event.entities.iter().any(|entity| {
+                entity.entity_type == "service" && entity.id == service_id
+            })
+            && event.event.summary["operation"] == "ignore_created"
+            && event.event.summary["ruleId"] == rule_id
+    })
+    .await;
+
+    let delete = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/api/ignores")
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "ruleId": rule_id }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(delete.status(), 200);
+    assert_eq!(response_json(delete).await["deleted"], true);
+    wait_for_management_event(&state, &cursor, |event| {
+        event.event.domain == "services"
+            && event.event.entities.iter().any(|entity| {
+                entity.entity_type == "service" && entity.id == service_id
+            })
+            && event.event.summary["operation"] == "ignore_deleted"
+            && event.event.summary["ruleId"] == rule_id
+    })
+    .await;
+
+    std::fs::remove_file(compose_path).unwrap();
+}
+
+#[tokio::test]
 async fn stale_webhook_job_replacement_publishes_terminal_management_event() {
     let state = test_state(":memory:").await;
     let compose_path = format!("/tmp/dockrev-stale-event-{}.yml", ulid::Ulid::new());

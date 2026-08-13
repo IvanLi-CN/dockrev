@@ -182,21 +182,13 @@ export function useServicesPageState(props: {
         listStacks(),
         listStacksArchived("only").catch(() => []),
       ]);
-      const nextById = new Map(
-        nextStacks.map((item) => [item.id, item] as const),
-      );
-      const archivedById = new Map(
-        nextArchived.map((item) => [item.id, item] as const),
-      );
       const maxLastScan = nextStacks
         .map((item) => item.lastCheckAt)
         .sort()
         .at(-1);
 
-      setStacks((prev) => prev.map((item) => nextById.get(item.id) ?? item));
-      setArchivedStacks((prev) =>
-        prev.map((item) => archivedById.get(item.id) ?? item),
-      );
+      setStacks(nextStacks);
+      setArchivedStacks(nextArchived);
       onLastScanHint(maxLastScan);
       setCollapsed((prev) => {
         const merged = { ...prev };
