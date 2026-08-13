@@ -466,6 +466,81 @@ services:
 }
 
 #[tokio::test]
+async fn stack_and_service_archive_writes_publish_management_events() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let compose_path = format!("/tmp/dockrev-archive-events-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "archive-events", &compose_path).await;
+    let service_id = state.db.get_stack(&stack_id).await.unwrap().unwrap().services[0]
+        .id
+        .clone();
+    let cursor = format!("{}:0", state.management_events.generation());
+
+    for (path, domain, entity_type, entity_id, operation) in [
+        (
+            format!("/api/stacks/{stack_id}/archive"),
+            "stacks",
+            "stack",
+            stack_id.as_str(),
+            "archived",
+        ),
+        (
+            format!("/api/stacks/{stack_id}/restore"),
+            "stacks",
+            "stack",
+            stack_id.as_str(),
+            "restored",
+        ),
+        (
+            format!("/api/services/{service_id}/archive"),
+            "services",
+            "service",
+            service_id.as_str(),
+            "archived",
+        ),
+        (
+            format!("/api/services/{service_id}/restore"),
+            "services",
+            "service",
+            service_id.as_str(),
+            "restored",
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 204);
+        wait_for_management_event(&state, &cursor, |event| {
+            event.event.domain == domain
+                && event.event.entities.iter().any(|entity| {
+                    entity.entity_type == entity_type && entity.id == entity_id
+                })
+                && event.event.summary["operation"] == operation
+        })
+        .await;
+    }
+
+    std::fs::remove_file(compose_path).unwrap();
+}
+
+#[tokio::test]
 async fn stale_webhook_job_replacement_publishes_terminal_management_event() {
     let state = test_state(":memory:").await;
     let compose_path = format!("/tmp/dockrev-stale-event-{}.yml", ulid::Ulid::new());
