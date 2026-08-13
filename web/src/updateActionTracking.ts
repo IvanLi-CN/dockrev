@@ -9,7 +9,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { getJob, listJobs, type JobDetail, type JobListItem } from './api'
+import { ApiError, getJob, listJobs, type JobListItem } from './api'
 import { useManagementEventBatch } from './managementEvents'
 
 export const UPDATE_JOB_SETTLED_EVENT = 'dockrev:update-job-settled'
@@ -128,7 +128,9 @@ export function pickLatestActiveUpdateJobs(
   return Array.from(latestByTarget.values(), (entry) => entry.job)
 }
 
-function toUpdateJobSettledDetail(target: UpdateActionTargetKey, job: JobDetail): UpdateJobSettledDetail {
+type SettledUpdateJob = Pick<JobListItem, 'id' | 'scope' | 'stackId' | 'serviceId' | 'status' | 'summary'>
+
+function toUpdateJobSettledDetail(target: UpdateActionTargetKey, job: SettledUpdateJob): UpdateJobSettledDetail {
   return {
     target,
     jobId: job.id,
@@ -143,6 +145,41 @@ function toUpdateJobSettledDetail(target: UpdateActionTargetKey, job: JobDetail)
 export function publishUpdateJobSettled(detail: UpdateJobSettledDetail) {
   if (typeof window === 'undefined') return
   window.dispatchEvent(new CustomEvent<UpdateJobSettledDetail>(UPDATE_JOB_SETTLED_EVENT, { detail }))
+}
+
+function toMissingUpdateJobSettledDetail(target: UpdateActionTargetKey, jobId: string): UpdateJobSettledDetail {
+  if (target === 'all') return { target, jobId, status: 'missing', scope: 'all', summary: null }
+  if (target.startsWith('stack:')) {
+    return { target, jobId, status: 'missing', scope: 'stack', stackId: target.slice(6), summary: null }
+  }
+  return { target, jobId, status: 'missing', scope: 'service', serviceId: target.slice(8), summary: null }
+}
+
+export type UpdateJobSnapshotReconciliation = {
+  active: HydratedActiveUpdateJob[]
+  settled: Array<{ target: UpdateActionTargetKey; job: SettledUpdateJob }>
+  unresolved: Array<{ target: UpdateActionTargetKey; jobId: string }>
+}
+
+export function reconcileTrackedUpdateJobs(
+  trackedJobs: Iterable<[UpdateActionTargetKey, ActiveUpdateJob]>,
+  jobs: JobListItem[],
+): UpdateJobSnapshotReconciliation {
+  const active = pickLatestActiveUpdateJobs(jobs)
+  const jobsById = new Map(jobs.map((job) => [job.id, job]))
+  const settled: UpdateJobSnapshotReconciliation['settled'] = []
+  const unresolved: UpdateJobSnapshotReconciliation['unresolved'] = []
+
+  for (const [target, tracked] of trackedJobs) {
+    const snapshot = jobsById.get(tracked.jobId)
+    if (!snapshot) {
+      unresolved.push({ target, jobId: tracked.jobId })
+      continue
+    }
+    if (!isUpdateJobActiveStatus(snapshot.status)) settled.push({ target, job: snapshot })
+  }
+
+  return { active, settled, unresolved }
 }
 
 function useProvideUpdateActionTracker(): UpdateActionTracker {
@@ -227,11 +264,26 @@ function useProvideUpdateActionTracker(): UpdateActionTracker {
     void listJobs()
       .then((jobs) => {
         if (unmountedRef.current) return
-        const hydratedJobs = pickLatestActiveUpdateJobs(jobs)
-        for (const job of hydratedJobs) {
-          if (!activeByTargetRef.current.has(job.target)) {
-            trackJob(job.target, job.jobId, job.status)
-          }
+        const reconciliation = reconcileTrackedUpdateJobs(activeByTargetRef.current.entries(), jobs)
+        for (const job of reconciliation.active) {
+          trackJob(job.target, job.jobId, job.status)
+        }
+        for (const { target, job } of reconciliation.settled) {
+          publishUpdateJobSettled(toUpdateJobSettledDetail(target, job))
+          clearRunningJob(target, job.id)
+        }
+        for (const { target, jobId } of reconciliation.unresolved) {
+          void getJob(jobId)
+            .then((job) => {
+              if (unmountedRef.current || isUpdateJobActiveStatus(job.status)) return
+              publishUpdateJobSettled(toUpdateJobSettledDetail(target, job))
+              clearRunningJob(target, jobId)
+            })
+            .catch((error: unknown) => {
+              if (!(error instanceof ApiError) || error.status !== 404) return
+              publishUpdateJobSettled(toMissingUpdateJobSettledDetail(target, jobId))
+              clearRunningJob(target, jobId)
+            })
         }
       })
       .catch(() => {})

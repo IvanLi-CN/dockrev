@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import type { JobListItem } from '../src/api'
-import { pickLatestActiveUpdateJobs } from '../src/updateActionTracking'
+import { pickLatestActiveUpdateJobs, reconcileTrackedUpdateJobs } from '../src/updateActionTracking'
 
 function makeJob(overrides: Partial<JobListItem> & Pick<JobListItem, 'id'>): JobListItem {
   return {
@@ -100,5 +100,34 @@ describe('pickLatestActiveUpdateJobs', () => {
     expect(pickLatestActiveUpdateJobs(jobs)).toEqual([
       { target: 'service:svc-1', jobId: 'job-fallback-newer', status: 'running' },
     ])
+  })
+})
+
+describe('reconcileTrackedUpdateJobs', () => {
+  test('settles tracked jobs that are terminal in the REST snapshot', () => {
+    const result = reconcileTrackedUpdateJobs(
+      [['service:svc-1', { jobId: 'job-finished', status: 'running' }]],
+      [makeJob({ id: 'job-finished', status: 'success', summary: { targetTag: 'v2' } })],
+    )
+
+    expect(result.active).toEqual([])
+    expect(result.settled).toEqual([
+      {
+        target: 'service:svc-1',
+        job: expect.objectContaining({ id: 'job-finished', status: 'success', summary: { targetTag: 'v2' } }),
+      },
+    ])
+    expect(result.unresolved).toEqual([])
+  })
+
+  test('keeps an omitted tracked job for detail confirmation while hydrating a newer active job', () => {
+    const result = reconcileTrackedUpdateJobs(
+      [['service:svc-1', { jobId: 'job-old', status: 'running' }]],
+      [makeJob({ id: 'job-new', createdAt: '2026-03-30T10:05:00.000Z' })],
+    )
+
+    expect(result.active).toEqual([{ target: 'service:svc-1', jobId: 'job-new', status: 'running' }])
+    expect(result.settled).toEqual([])
+    expect(result.unresolved).toEqual([{ target: 'service:svc-1', jobId: 'job-old' }])
   })
 })

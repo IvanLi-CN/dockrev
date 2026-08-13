@@ -14,6 +14,7 @@ mod backups;
 mod discovery;
 mod github_packages;
 mod job_logs;
+mod job_summaries;
 mod jobs;
 mod new_version_discoveries;
 mod new_version_notifications;
