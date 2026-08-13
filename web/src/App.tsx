@@ -254,6 +254,23 @@ export default function App() {
     }
   });
 
+  useManagementEventBatch(({ events, resyncRequired }) => {
+    const deployWelcomeChanged = events.some(
+      (event) =>
+        event.domain === "settings" &&
+        event.summary.operation === "deploy_welcome_updated",
+    );
+    if (!resyncRequired && !deployWelcomeChanged) return;
+    void getDeployWelcome()
+      .then((settings) => {
+        setDeployWelcomeState({
+          loaded: true,
+          neverAutoOpen: settings.neverAutoOpen,
+        });
+      })
+      .catch(() => {});
+  });
+
   useEffect(() => {
     let cancelled = false;
     void getDeployWelcome()

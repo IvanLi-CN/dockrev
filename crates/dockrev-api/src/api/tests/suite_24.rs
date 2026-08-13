@@ -343,6 +343,64 @@ async fn github_packages_writes_publish_management_events() {
 }
 
 #[tokio::test]
+async fn settings_writes_publish_management_events() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let cursor = format!("{}:0", state.management_events.generation());
+
+    let notifications = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/notifications")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "email": { "enabled": false },
+                        "webhook": { "enabled": false },
+                        "telegram": { "enabled": false },
+                        "webPush": { "enabled": false }
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(notifications.status(), 200);
+    wait_for_management_event(&state, &cursor, |event| {
+        event.event.domain == "settings"
+            && event.event.entities.iter().any(|entity| {
+                entity.entity_type == "notifications" && entity.id == "default"
+            })
+            && event.event.summary["operation"] == "notifications_updated"
+    })
+    .await;
+
+    let deploy_welcome = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/deploy-welcome")
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "neverAutoOpen": true }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(deploy_welcome.status(), 200);
+    wait_for_management_event(&state, &cursor, |event| {
+        event.event.domain == "settings"
+            && event.event.entities.iter().any(|entity| {
+                entity.entity_type == "deploy_welcome" && entity.id == "default"
+            })
+            && event.event.summary["operation"] == "deploy_welcome_updated"
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn stack_settings_publish_management_event() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());

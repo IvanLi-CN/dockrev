@@ -887,6 +887,15 @@ async fn put_deploy_welcome(
         .put_deploy_welcome_settings(req.never_auto_open, &now)
         .await
         .map_err(map_internal)?;
+    state
+        .management_events
+        .publish_change(
+            "settings",
+            "deploy_welcome",
+            "default",
+            json!({ "operation": "deploy_welcome_updated" }),
+        )
+        .await;
     Ok(Json(PutDeployWelcomeResponse {
         ok: true,
         never_auto_open: req.never_auto_open,
