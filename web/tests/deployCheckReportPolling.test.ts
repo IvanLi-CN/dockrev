@@ -116,4 +116,14 @@ describe('deploy-check cached gate', () => {
       /const hasBlockingFailures = report\s*\? hasBlockingDeployCheckFailure\(report\)\s*:\s*Boolean\(reportRefreshError\)/,
     )
   })
+
+  test('revalidates the cached gate when the tab returns to the foreground', () => {
+    const source = readFileSync(resolve(import.meta.dir, '..', 'src/App.tsx'), 'utf8')
+
+    expect(source).toContain('document.addEventListener("visibilitychange", refreshOnForeground)')
+    expect(source).toContain('document.removeEventListener("visibilitychange", refreshOnForeground)')
+    expect(source).toMatch(
+      /const refreshOnForeground = \(\) => \{\s*if \(document\.visibilityState !== "visible"\) return;\s*void refreshDeployCheckGate\(true\)/,
+    )
+  })
 })
