@@ -9,6 +9,7 @@ mod github_releases;
 mod logs;
 mod release_notes;
 mod repo_links;
+mod settings;
 
 use backup_records::get_service_backup_records as load_service_backup_records_response;
 use backup_targets::{
@@ -34,29 +35,7 @@ use github_releases::{
     list_service_github_releases_with_client, locate_service_github_release_with_client,
 };
 pub(super) use release_notes::{list_service_release_notes, locate_service_release_notes};
-
-pub(super) async fn get_service_settings(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Path(service_id): Path<String>,
-) -> Result<Json<ServiceSettingsResponse>, ApiError> {
-    let _user = require_user(&state, &headers).await?;
-    let settings = state
-        .db
-        .get_stored_service_settings(&service_id)
-        .await
-        .map_err(map_internal)?;
-    let Some(stored) = settings else {
-        return Err(ApiError::not_found("service not found"));
-    };
-
-    Ok(Json(ServiceSettingsResponse {
-        auto_rollback: stored.settings.auto_rollback,
-        backup_targets: stored.settings.backup_targets,
-        repo_url: stored.settings.repo_url,
-        auto_update_policy: stored.auto_update_policy,
-    }))
-}
+pub(super) use settings::{get_service_settings, put_service_settings};
 
 pub(super) async fn get_service_backup_targets(
     State(state): State<Arc<AppState>>,
@@ -1432,66 +1411,6 @@ async fn digest_tags_snapshot_response(
         })?;
 
     Ok(Json(parsed).into_response())
-}
-
-pub(super) async fn put_service_settings(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Path(service_id): Path<String>,
-    Json(req): Json<ServiceSettingsRequest>,
-) -> Result<Json<PutServiceSettingsResponse>, ApiError> {
-    let _user = require_user(&state, &headers).await?;
-    let now = now_rfc3339().map_err(map_internal)?;
-    let current_settings = state
-        .db
-        .get_stored_service_settings(&service_id)
-        .await
-        .map_err(map_internal)?
-        .ok_or_else(|| ApiError::not_found("service not found"))?;
-    let (repo_url, repo_url_auto_disabled) = match req.repo_url {
-        Some(repo_url) => {
-            let repo_url = normalize_repo_url_input(repo_url.as_deref())?;
-            let repo_url_auto_disabled = repo_url.is_none();
-            (repo_url, repo_url_auto_disabled)
-        }
-        None => (
-            current_settings.settings.repo_url.clone(),
-            current_settings.repo_url_auto_disabled,
-        ),
-    };
-
-    let settings = ServiceSettings {
-        auto_rollback: req.auto_rollback,
-        backup_targets: req.backup_targets,
-        repo_url,
-    };
-    let auto_update_policy = req
-        .auto_update_policy
-        .clone()
-        .unwrap_or(current_settings.auto_update_policy.clone());
-    crate::auto_update::validate_policy_for_scope(&auto_update_policy, "service")?;
-
-    let updated = state
-        .db
-        .put_service_settings_with_repo_auto_disabled(
-            &service_id,
-            &settings,
-            repo_url_auto_disabled,
-            &now,
-        )
-        .await
-        .map_err(map_internal)?;
-
-    if !updated {
-        return Err(ApiError::not_found("service not found"));
-    }
-    state
-        .db
-        .put_auto_update_policy("service", &service_id, &auto_update_policy, &now)
-        .await
-        .map_err(map_internal)?;
-
-    Ok(Json(PutServiceSettingsResponse { ok: true }))
 }
 
 #[cfg(test)]

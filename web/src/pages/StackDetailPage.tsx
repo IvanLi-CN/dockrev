@@ -22,6 +22,7 @@ import { ReadonlySnapshotNotice } from '../components/ReadonlySnapshotNotice'
 import { ServiceMobileActionMenu, ServiceSplitActionButton } from '../components/ServiceSplitActionButton'
 import { useConfirm } from '../confirm'
 import { usePwaStatus } from '../pwaStatus'
+import { useManagementEventBatch } from '../managementEvents'
 import { buildReadonlySnapshotKey, readReadonlySnapshot, writeReadonlySnapshot } from '../readonlySnapshotCache'
 import { navigate } from '../routes'
 import { publishServiceTreeRefresh } from '../serviceTreeRefresh'
@@ -244,37 +245,25 @@ export function StackDetailPage(props: {
   }, [stackId])
 
   useEffect(() => {
-    let cancelled = false
-    let timer: number | null = null
-    const refreshStatus = async () => {
-      try {
-        const previousActiveJobId = lifecycleActiveJobIdRef.current
-        const next = await refreshLifecycleStatus()
-        if (cancelled || !next) return
-        const nextActiveJobId = next.activeJob?.id ?? null
-        lifecycleActiveJobIdRef.current = nextActiveJobId
-        setLifecycleStatus(next)
-        if (previousActiveJobId && !nextActiveJobId) {
-          await refresh().catch(() => undefined)
-          publishServiceTreeRefresh({ stackId, reason: 'lifecycle-job-settled' })
-        }
-        if (nextActiveJobId) timer = window.setTimeout(() => void refreshStatus(), 1200)
-      } catch {
-        if (cancelled) return
-        setLifecycleStatus((previous) => ({
-          state: 'unknown',
-          unavailableReason: 'lifecycle_status_unavailable',
-          activeJob: previous?.activeJob ?? null,
-        }))
-        if (isOnline) timer = window.setTimeout(() => void refreshStatus(), 2400)
-      }
-    }
-    void refreshStatus()
-    return () => {
-      cancelled = true
-      if (timer != null) window.clearTimeout(timer)
-    }
-  }, [isOnline, lifecycleStatus?.activeJob?.id, refresh, refreshLifecycleStatus, stackId])
+    void refreshLifecycleStatus().catch(() => {
+      setLifecycleStatus((previous) => ({
+        state: 'unknown',
+        unavailableReason: 'lifecycle_status_unavailable',
+        activeJob: previous?.activeJob ?? null,
+      }))
+    })
+  }, [refreshLifecycleStatus])
+
+  useManagementEventBatch(({ events, resyncRequired }) => {
+    const relevant = resyncRequired || events.some((event) =>
+      event.entities.some((entity) => entity.entityType === 'stack' && entity.id === stackId) ||
+      event.summary.stackId === stackId,
+    )
+    if (!relevant) return
+    void refreshAll()
+      .then(() => publishServiceTreeRefresh({ stackId, reason: 'management-event' }))
+      .catch((error: unknown) => setError(errorMessage(error)))
+  })
 
   useEffect(() => {
     if (!stack) return

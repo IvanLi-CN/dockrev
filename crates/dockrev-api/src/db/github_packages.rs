@@ -594,18 +594,32 @@ ORDER BY repo ASC
     ) -> anyhow::Result<bool> {
         let owner = owner.to_string();
         let repo = repo.to_string();
-        self.call(move |conn| {
-            let n = conn.execute(
-                r#"
+        let query_owner = owner.clone();
+        let query_repo = repo.clone();
+        let deleted = self
+            .call(move |conn| {
+                let n = conn.execute(
+                    r#"
 DELETE FROM github_packages_repos
 WHERE lower(owner) = lower(?1) AND lower(repo) = lower(?2)
 "#,
-                params![owner, repo],
-            )?;
-            Ok(n > 0)
-        })
-        .await
-        .context("delete github packages repo")
+                    params![query_owner, query_repo],
+                )?;
+                Ok(n > 0)
+            })
+            .await
+            .context("delete github packages repo")?;
+        if deleted {
+            self.management_events
+                .publish_change(
+                    "github_packages",
+                    "repo",
+                    format!("{owner}/{repo}"),
+                    serde_json::json!({ "operation": "repo_removed" }),
+                )
+                .await;
+        }
+        Ok(deleted)
     }
 
     pub async fn bulk_set_github_packages_repos_selected(
@@ -801,6 +815,11 @@ WHERE lower(owner) = lower(?1) AND lower(repo) = lower(?2)
         let webhook_job_id = webhook_job_id.map(|s| s.to_string());
         let last_op = last_op.map(|s| s.to_string());
         let now = now.to_string();
+        let event_owner = owner.clone();
+        let event_repo = repo.clone();
+        let event_webhook_state = webhook_state.clone();
+        let event_job_id = webhook_job_id.clone();
+        let event_last_op = last_op.clone();
         self.call(move |conn| {
             conn.execute(
                 r#"
@@ -817,7 +836,21 @@ WHERE lower(owner) = lower(?1) AND lower(repo) = lower(?2)
             Ok(())
         })
         .await
-        .context("set github packages repo webhook job state")
+        .context("set github packages repo webhook job state")?;
+        self.management_events
+            .publish_change(
+                "github_packages",
+                "repo",
+                format!("{event_owner}/{event_repo}"),
+                serde_json::json!({
+                    "operation": "repo_webhook_job_state_updated",
+                    "webhookState": event_webhook_state,
+                    "jobId": event_job_id,
+                    "lastOp": event_last_op,
+                }),
+            )
+            .await;
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -843,6 +876,11 @@ WHERE lower(owner) = lower(?1) AND lower(repo) = lower(?2)
         let webhook_job_id = webhook_job_id.map(|s| s.to_string());
         let last_op = last_op.map(|s| s.to_string());
         let now = now.to_string();
+        let event_owner = owner.clone();
+        let event_repo = repo.clone();
+        let event_webhook_state = webhook_state.clone();
+        let event_job_id = webhook_job_id.clone();
+        let event_last_op = last_op.clone();
         self.call(move |conn| {
             conn.execute(
                 r#"
@@ -874,7 +912,21 @@ WHERE lower(owner) = lower(?1) AND lower(repo) = lower(?2)
             Ok(())
         })
         .await
-        .context("set github packages repo webhook result")
+        .context("set github packages repo webhook result")?;
+        self.management_events
+            .publish_change(
+                "github_packages",
+                "repo",
+                format!("{event_owner}/{event_repo}"),
+                serde_json::json!({
+                    "operation": "repo_webhook_state_updated",
+                    "webhookState": event_webhook_state,
+                    "jobId": event_job_id,
+                    "lastOp": event_last_op,
+                }),
+            )
+            .await;
+        Ok(())
     }
 
     pub async fn list_github_packages_repos_for_job_state_summary(

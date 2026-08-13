@@ -3,7 +3,6 @@ import { Box, HardDrive, Layers3, Package } from 'lucide-react'
 import {
   ApiError,
   applyCleanups,
-  cleanupScanRunEventsUrl,
   scanCleanups,
   startCleanupScanRun,
   type CleanupApplyRequest,
@@ -11,13 +10,13 @@ import {
   type CleanupPreset,
   type CleanupResourceItem,
   type CleanupResourceKind,
-  type CleanupScanRunEvent,
   type CleanupScanRequest,
   type CleanupScanResponse,
   type CleanupScope,
   type CleanupStackGroup,
 } from '../api'
 import { useConfirm } from '../confirm'
+import { useManagementEventBatch } from '../managementEvents'
 import { navigate } from '../routes'
 import { Button, Mono, Pill, RefreshIcon, SectionTitle, Tabs, TabsList, TabsTrigger, TrashIcon } from '../ui'
 import {
@@ -36,7 +35,6 @@ import {
   formatUnknownCount,
   itemHasUnknownSize,
   kindSummary,
-  mergeCleanupResponses,
   projectResponseForPreset,
   staleBucketsForResponse,
   toErrorMessage,
@@ -512,8 +510,6 @@ export function CleanupPage(props: {
   const { onLastScanHint, onTopActions } = props
   const confirm = useConfirm()
   const activeScanIdRef = useRef<string | null>(null)
-  const pageScanRef = useRef<CleanupScanResponse | null>(null)
-  const scanEventSourceRef = useRef<EventSource | null>(null)
   const [activePreset, setActivePreset] = useState<CleanupPreset>('balanced')
   const [pageScan, setPageScan] = useState<CleanupScanResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -522,10 +518,6 @@ export function CleanupPage(props: {
   const [pageError, setPageError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [busyActionKey, setBusyActionKey] = useState<string | null>(null)
-
-  useEffect(() => {
-    pageScanRef.current = pageScan
-  }, [pageScan])
 
   const projected = useMemo(
     () => (pageScan ? projectResponseForPreset(pageScan, activePreset) : null),
@@ -546,25 +538,26 @@ export function CleanupPage(props: {
   const staleUsageBuckets = useMemo(() => staleBucketsForResponse(pageScan, staleResourceKeys), [pageScan, staleResourceKeys])
   const hasStaleResources = staleResourceKeys.size > 0 && refreshing
 
-  const fetchCleanupScan = useCallback(
-    async (input: CleanupScanRequest, options?: { pollUntilReady?: boolean }) => {
-      let response = await scanCleanups(input)
-      const shouldPoll = options?.pollUntilReady ?? false
-      while (shouldPoll && (response.status !== 'ready' || response.refreshing)) {
-        const retryAfter = Math.max(200, response.retryAfterMs ?? 800)
-        await new Promise((resolve) => window.setTimeout(resolve, retryAfter))
-        response = await scanCleanups({ ...input, refresh: false })
-      }
-      return response
-    },
-    [],
-  )
+  const fetchCleanupScan = useCallback(async (input: CleanupScanRequest) => scanCleanups(input), [])
+
+  const loadCompletedPageScan = useCallback(async () => {
+    const response = await scanCleanups({
+      reason: 'page',
+      refresh: false,
+      preset: 'aggressive',
+      scope: 'all',
+    })
+    if (response.status !== 'ready' || response.refreshing) return
+    setPageScan(response)
+    setStaleResourceKeys(new Set())
+    setLoading(false)
+    setRefreshing(false)
+    onLastScanHint?.(response.scannedAt ?? undefined)
+  }, [onLastScanHint])
 
   const refreshPageScan = useCallback(async () => {
     setRefreshing(true)
     setPageError(null)
-    scanEventSourceRef.current?.close()
-    scanEventSourceRef.current = null
     try {
       const request: CleanupScanRequest = {
         reason: 'page',
@@ -574,76 +567,13 @@ export function CleanupPage(props: {
       }
       const started = await startCleanupScanRun(request)
       activeScanIdRef.current = started.scanId
-      const baseline = started.previousSnapshot ?? pageScanRef.current
       if (started.previousSnapshot) {
         setPageScan(started.previousSnapshot)
         setStaleResourceKeys(cleanupResourceKeys(started.previousSnapshot))
         onLastScanHint?.(started.previousSnapshot.scannedAt ?? undefined)
+        setLoading(false)
       } else {
         setStaleResourceKeys(new Set())
-      }
-
-      const eventSource = new EventSource(cleanupScanRunEventsUrl(started.scanId), { withCredentials: true })
-      scanEventSourceRef.current = eventSource
-      const finishStream = () => {
-        eventSource.close()
-        if (scanEventSourceRef.current === eventSource) scanEventSourceRef.current = null
-      }
-      const parseEvent = (event: Event): CleanupScanRunEvent | null => {
-        if (!(event instanceof MessageEvent)) return null
-        try {
-          return JSON.parse(event.data) as CleanupScanRunEvent
-        } catch {
-          return null
-        }
-      }
-      eventSource.addEventListener('scan_partial', (event) => {
-        const payload = parseEvent(event)
-        if (!payload?.response || payload.scanId !== activeScanIdRef.current) return
-        const response =
-          baseline && baseline.status === 'ready'
-            ? mergeCleanupResponses(baseline, payload.response)
-            : {
-                response: {
-                  ...payload.response,
-                  status: 'ready' as const,
-                  refreshing: true,
-                  confirmationFingerprint: null,
-                },
-                staleKeys: new Set<string>(),
-              }
-        setPageScan(response.response)
-        setStaleResourceKeys(response.staleKeys)
-        setLoading(false)
-        onLastScanHint?.(response.response.scannedAt ?? undefined)
-      })
-      eventSource.addEventListener('scan_ready', (event) => {
-        const payload = parseEvent(event)
-        if (!payload?.response || payload.scanId !== activeScanIdRef.current) return
-        setPageScan(payload.response)
-        setStaleResourceKeys(new Set())
-        setLoading(false)
-        setRefreshing(false)
-        onLastScanHint?.(payload.response.scannedAt ?? undefined)
-        finishStream()
-      })
-      eventSource.addEventListener('scan_failed', (event) => {
-        const payload = parseEvent(event)
-        if (payload?.scanId !== activeScanIdRef.current) return
-        setPageError(payload?.message || 'cleanup streaming scan failed')
-        setStaleResourceKeys(new Set())
-        setLoading(false)
-        setRefreshing(false)
-        if (!baseline) onLastScanHint?.(undefined)
-        finishStream()
-      })
-      eventSource.onerror = () => {
-        if (eventSource.readyState === EventSource.CLOSED) return
-        setPageError('cleanup streaming connection failed')
-        setRefreshing(false)
-        setLoading(false)
-        setStaleResourceKeys(new Set())
-        finishStream()
       }
     } catch (error) {
       const message = toErrorMessage(error)
@@ -660,11 +590,29 @@ export function CleanupPage(props: {
     void refreshPageScan()
   }, [onLastScanHint, refreshPageScan])
 
-  useEffect(() => {
-    return () => {
-      scanEventSourceRef.current?.close()
+  useManagementEventBatch(({ events, resyncRequired }) => {
+    if (resyncRequired) {
+      void loadCompletedPageScan().catch((error: unknown) => setPageError(toErrorMessage(error)))
     }
-  }, [])
+    const event = events.find((candidate) =>
+      candidate.domain === 'cleanup' && candidate.entities.some((entity) => entity.entityType === 'scan' && entity.id === 'active'),
+    )
+    if (!event) return
+    if (event.summary.phase === 'ready') {
+      void loadCompletedPageScan().catch((error: unknown) => {
+        setPageError(toErrorMessage(error))
+        setRefreshing(false)
+        setLoading(false)
+      })
+      return
+    }
+    if (event.summary.phase === 'failed') {
+      setPageError(typeof event.summary.message === 'string' ? event.summary.message : 'cleanup scan failed')
+      setStaleResourceKeys(new Set())
+      setRefreshing(false)
+      setLoading(false)
+    }
+  })
 
   const runCleanupFlow = useCallback(
     async (target: CleanupActionTarget) => {
@@ -680,17 +628,14 @@ export function CleanupPage(props: {
           confirmationFingerprint: '',
         }
 
-        let latest = await fetchCleanupScan(
-          {
-            reason: 'confirm',
-            refresh: true,
-            preset: activePreset,
-            scope: target.scope,
-            stackId: confirmRequest.stackId,
-            serviceId: confirmRequest.serviceId,
-          },
-          { pollUntilReady: true },
-        )
+        let latest = await fetchCleanupScan({
+          reason: 'confirm',
+          refresh: true,
+          preset: activePreset,
+          scope: target.scope,
+          stackId: confirmRequest.stackId,
+          serviceId: confirmRequest.serviceId,
+        })
 
         if (latest.status !== 'ready') {
           throw new Error('cleanup snapshot is not ready')
@@ -741,17 +686,14 @@ export function CleanupPage(props: {
               if (mismatch?.latest) {
                 latest = mismatch.latest
                 if (latest.status !== 'ready') {
-                  latest = await fetchCleanupScan(
-                    {
-                      reason: 'confirm',
-                      refresh: true,
-                      preset: activePreset,
-                      scope: target.scope,
-                      stackId: confirmRequest.stackId,
-                      serviceId: confirmRequest.serviceId,
-                    },
-                    { pollUntilReady: true },
-                  )
+                  latest = await fetchCleanupScan({
+                    reason: 'confirm',
+                    refresh: true,
+                    preset: activePreset,
+                    scope: target.scope,
+                    stackId: confirmRequest.stackId,
+                    serviceId: confirmRequest.serviceId,
+                  })
                 }
                 stale = true
                 if (latest.status !== 'ready' || countVisibleResources(latest) === 0) {

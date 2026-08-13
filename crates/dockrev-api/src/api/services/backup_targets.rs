@@ -30,6 +30,15 @@ pub(super) async fn put_service_backup_targets(
     if !changed {
         return Err(ApiError::not_found("service not found"));
     }
+    state
+        .management_events
+        .publish_change(
+            "services",
+            "service",
+            service_id.to_string(),
+            serde_json::json!({ "operation": "backup_targets_updated" }),
+        )
+        .await;
     Ok(PutServiceBackupTargetsResponse { ok: true })
 }
 

@@ -11,6 +11,7 @@ import {
   HOMEPAGE_SNAPSHOT_KEY,
 } from '../../pages/homepageSnapshot'
 import { OVERVIEW_TOOL_PANEL_STORAGE_KEY } from '../../pages/overviewToolPanelState'
+import { ManagementEventsProvider } from '../../managementEvents'
 import { UpdateActionTrackerProvider } from '../../updateActionTracking'
 
 export const withDockrevMockApi: Decorator = (Story, context) => {
@@ -48,5 +49,9 @@ export const withDockrevMockApi: Decorator = (Story, context) => {
     window.localStorage.setItem(HOMEPAGE_RESOURCE_SUMMARY_KEY, JSON.stringify(resourceSnapshot))
   }
   installDockrevMockApi(scenario, options)
-  return createElement(UpdateActionTrackerProvider, null, Story())
+  return createElement(
+    ManagementEventsProvider,
+    null,
+    createElement(UpdateActionTrackerProvider, null, Story()),
+  )
 }

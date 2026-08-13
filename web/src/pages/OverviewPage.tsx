@@ -16,7 +16,6 @@ import {
 import {
   ApiError,
   getHomepageNav,
-  getJob,
   triggerCheck,
   triggerUpdate,
   type HomepageNavItem,
@@ -53,7 +52,7 @@ import {
   Mono,
 } from "../ui";
 import { statusLabel } from "../updateStatus";
-import { usePageResumeRefresh } from "../usePageResumeRefresh";
+import { useManagementEventBatch } from "../managementEvents";
 import {
   CardMetric,
   HomepageClockBlock,
@@ -447,7 +446,7 @@ export function OverviewPage(props: {
   const [headerSearchOpen, setHeaderSearchOpen] = useState(false);
   const [updateDialogCard, setUpdateDialogCard] =
     useState<HomepageNavCard | null>(null);
-  const [now, setNow] = useState(() => new Date());
+  const [now] = useState(() => new Date());
   const homepageColumnCount = useHomepageColumnCount();
 
   const applySearch = useCallback(() => {
@@ -457,11 +456,6 @@ export function OverviewPage(props: {
     applySearch();
     setHeaderSearchOpen(false);
   }, [applySearch]);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(new Date()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -550,10 +544,7 @@ export function OverviewPage(props: {
     }
   }, [onLastScanHint]);
 
-  const requestRefresh = usePageResumeRefresh(refresh, {
-    onError: (value: unknown) =>
-      setError(value instanceof Error ? value.message : String(value)),
-  });
+  const requestRefresh = refresh;
 
   useEffect(() => {
     void requestRefresh().catch((value: unknown) =>
@@ -633,42 +624,16 @@ export function OverviewPage(props: {
     );
   }, [busy, onTopActions, requestRefresh]);
 
-  useEffect(() => {
-    if (!noticeCheckJobId) return;
-    let closed = false;
-    let timer: number | null = null;
-
-    const poll = async () => {
-      try {
-        const job = await getJob(noticeCheckJobId);
-        if (closed) return;
-        if (job.status === "queued" || job.status === "running") {
-          timer = window.setTimeout(() => {
-            void poll();
-          }, 1200);
-          return;
-        }
-      } catch {
-        if (closed) return;
-      }
-
-      try {
-        await requestRefresh();
-      } catch (value: unknown) {
-        if (!closed)
-          setError(value instanceof Error ? value.message : String(value));
-      }
-    };
-
-    timer = window.setTimeout(() => {
-      void poll();
-    }, 1200);
-
-    return () => {
-      closed = true;
-      if (timer != null) window.clearTimeout(timer);
-    };
-  }, [noticeCheckJobId, requestRefresh]);
+  useManagementEventBatch(({ events, resyncRequired }) => {
+    const refreshRequired = resyncRequired || events.some((event) =>
+      ["jobs", "stacks", "services", "discovery"].includes(event.domain) ||
+      event.summary.jobId === noticeCheckJobId,
+    );
+    if (!refreshRequired) return;
+    void requestRefresh().catch((value: unknown) =>
+      setError(value instanceof Error ? value.message : String(value)),
+    );
+  });
 
   const allCards = useMemo(() => {
     if (liveLoaded) return cards;

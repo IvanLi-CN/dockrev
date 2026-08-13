@@ -4,6 +4,7 @@ import './index.css'
 import App from './App.tsx'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { PwaStatusProvider } from './pwaStatus'
+import { ManagementEventsProvider } from './managementEvents'
 import { restorePendingPagesDemoPath } from './demo/pagesDemoRestore'
 import { isDockrevAppDemoBuild } from './demo/runtime'
 import { initTheme } from './theme'
@@ -19,9 +20,11 @@ async function bootstrap() {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <PwaStatusProvider>
-        <TooltipProvider>
-          <App />
-        </TooltipProvider>
+        <ManagementEventsProvider>
+          <TooltipProvider>
+            <App />
+          </TooltipProvider>
+        </ManagementEventsProvider>
       </PwaStatusProvider>
     </StrictMode>,
   )

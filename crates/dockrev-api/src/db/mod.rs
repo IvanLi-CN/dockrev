@@ -13,6 +13,8 @@ mod auto_update;
 mod backups;
 mod discovery;
 mod github_packages;
+mod job_logs;
+mod job_summaries;
 mod jobs;
 mod new_version_discoveries;
 mod new_version_notifications;
@@ -37,16 +39,19 @@ pub(crate) use new_version_discoveries::{
     stable_candidate_display_tag, stable_candidate_display_tag_from_tags,
 };
 
-use crate::api::types::{
-    BackupSettings, BackupTarget, BackupTargetOverrides, BackupTargetPolicy, Candidate,
-    ComposeConfig, ComposeRef, DeployWelcomeSettings, GitHubPackagesRepoDb,
-    GitHubPackagesSettingsDb, GitHubPackagesTargetDb, GitHubPackagesWebhookDeliveryDb,
-    GitHubPackagesWebhookDeliverySummary, IgnoreMatch, IgnoreRule, IgnoreRuleMatch,
-    IgnoreRuleScope, JobListItem, JobLogLine, JobScope, JobType, NotificationSettings,
-    OctoRillReleaseNotesSettings, ReleaseNotesSettings, ReleaseNotesView, ResourceMonitorSettings,
-    ScheduleItemSettings, SchedulesSettings, Service, ServiceHomepage, ServiceResourceSample,
-    ServiceSettings, ServiceUpdateGuard, StackListItem, StackRecord, StackStatus, TernaryChoice,
-    VersionInferenceState,
+use crate::{
+    api::types::{
+        BackupSettings, BackupTarget, BackupTargetOverrides, BackupTargetPolicy, Candidate,
+        ComposeConfig, ComposeRef, DeployWelcomeSettings, GitHubPackagesRepoDb,
+        GitHubPackagesSettingsDb, GitHubPackagesTargetDb, GitHubPackagesWebhookDeliveryDb,
+        GitHubPackagesWebhookDeliverySummary, IgnoreMatch, IgnoreRule, IgnoreRuleMatch,
+        IgnoreRuleScope, JobListItem, JobLogLine, JobScope, JobType, NotificationSettings,
+        OctoRillReleaseNotesSettings, ReleaseNotesSettings, ReleaseNotesView,
+        ResourceMonitorSettings, ScheduleItemSettings, SchedulesSettings, Service, ServiceHomepage,
+        ServiceResourceSample, ServiceSettings, ServiceUpdateGuard, StackListItem, StackRecord,
+        StackStatus, TernaryChoice, VersionInferenceState,
+    },
+    management_events::ManagementEventHub,
 };
 
 #[derive(Clone, Debug)]
@@ -453,6 +458,7 @@ pub struct DiscoveredComposeProjectUpsert {
 pub struct Db {
     conn: Connection,
     slow_job_claim_warnings: Arc<Mutex<BTreeMap<String, Instant>>>,
+    management_events: Arc<ManagementEventHub>,
 }
 
 #[derive(Clone, Debug)]
@@ -769,10 +775,15 @@ impl Db {
         let db = Self {
             conn,
             slow_job_claim_warnings: Arc::new(Mutex::new(BTreeMap::new())),
+            management_events: Arc::new(ManagementEventHub::new()),
         };
         db.init().await?;
         db.ensure_defaults().await?;
         Ok(db)
+    }
+
+    pub fn management_events(&self) -> Arc<ManagementEventHub> {
+        self.management_events.clone()
     }
 
     async fn call<R, F>(&self, f: F) -> anyhow::Result<R>

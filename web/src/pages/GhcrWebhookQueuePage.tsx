@@ -4,13 +4,13 @@ import {
   getGitHubPackagesWebhookOverview,
   listGitHubPackagesRepos,
   listJobs,
-  newJobsEventsSource,
   triggerGitHubPackagesWebhookSyncRepo,
   type GitHubPackagesRepo,
   type GitHubPackagesWebhookOverviewResponse,
   type JobListItem,
 } from '../api'
 import { useConfirm } from '../confirm'
+import { useManagementEventBatch } from '../managementEvents'
 import { navigate } from '../routes'
 import { Button, Mono, Pill } from '../ui'
 
@@ -92,38 +92,12 @@ export function GhcrWebhookQueuePage(props: { onTopActions: (node: React.ReactNo
     void refresh().catch((e: unknown) => setError(errorMessage(e)))
   }, [refresh])
 
-  useEffect(() => {
-    let closed = false
-    let es: EventSource | null = null
-    let refreshTimer: number | null = null
-
-    const scheduleRefresh = (delayMs: number) => {
-      if (refreshTimer != null) return
-      refreshTimer = window.setTimeout(() => {
-        refreshTimer = null
-        void refresh().catch((e: unknown) => setError(errorMessage(e)))
-      }, delayMs)
-    }
-
-    const connect = () => {
-      if (closed) return
-      es = newJobsEventsSource()
-      es.addEventListener('open', () => scheduleRefresh(0))
-      es.addEventListener('job_event', () => scheduleRefresh(250))
-      es.addEventListener('job_events_error', () => scheduleRefresh(0))
-      es.onerror = () => {
-        scheduleRefresh(0)
-      }
-    }
-
-    connect()
-
-    return () => {
-      closed = true
-      if (refreshTimer != null) window.clearTimeout(refreshTimer)
-      es?.close()
-    }
-  }, [refresh])
+  useManagementEventBatch(({ events, resyncRequired }) => {
+    if (!resyncRequired && !events.some((event) =>
+      event.domain === 'github_packages' || (typeof event.summary.jobType === 'string' && event.summary.jobType.startsWith('github_packages')),
+    )) return
+    void refresh().catch((error: unknown) => setError(errorMessage(error)))
+  })
 
   useEffect(() => {
     onTopActions(

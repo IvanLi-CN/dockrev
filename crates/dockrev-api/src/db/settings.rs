@@ -286,10 +286,22 @@ INSERT INTO ignore_rules (
         .context("insert ignore rule")
     }
 
-    pub async fn delete_ignore_rule(&self, rule_id: &str) -> anyhow::Result<bool> {
+    pub async fn delete_ignore_rule(&self, rule_id: &str) -> anyhow::Result<Option<String>> {
         let rule_id = rule_id.to_string();
         self.call(move |conn| {
-            Ok(conn.execute("DELETE FROM ignore_rules WHERE id = ?1", params![rule_id])? > 0)
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let service_id = tx
+                .query_row(
+                    "SELECT scope_service_id FROM ignore_rules WHERE id = ?1",
+                    params![&rule_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            if service_id.is_some() {
+                tx.execute("DELETE FROM ignore_rules WHERE id = ?1", params![&rule_id])?;
+            }
+            tx.commit()?;
+            Ok(service_id)
         })
         .await
         .context("delete ignore rule")

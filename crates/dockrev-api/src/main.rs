@@ -23,6 +23,7 @@ mod github;
 mod ids;
 mod ignore;
 mod job_live_logs;
+mod management_events;
 mod models;
 mod notify;
 mod preflight;

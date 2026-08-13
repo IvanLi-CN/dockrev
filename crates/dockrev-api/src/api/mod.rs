@@ -38,8 +38,9 @@ use crate::{
     db::GitHubPackagesWebhookDeliveryRecordInput,
     deploy_check_refresh_worker, discovery,
     error::ApiError,
-    ghcr_webhook_jobs, ids, ignore, notify, registry, resource_usage, runtime_scan,
-    snapshot_worker,
+    ghcr_webhook_jobs, ids, ignore,
+    management_events::ManagementEventReplay,
+    notify, registry, resource_usage, runtime_scan, snapshot_worker,
     state::AppState,
     ui, updater,
 };
@@ -81,10 +82,91 @@ pub(crate) fn edge_proxy_safe_keepalive() -> KeepAlive {
         .interval(Duration::from_secs(EDGE_PROXY_SAFE_SSE_HEARTBEAT_SECONDS))
         .text("keep-alive")
 }
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ManagementEventsQuery {
+    after_id: Option<String>,
+}
+
+async fn management_events(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<ManagementEventsQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let _user = require_user(&state, &headers).await?;
+    let last_event_id = headers
+        .get("last-event-id")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned)
+        .or(query.after_id)
+        .filter(|value| !value.is_empty());
+    let hub = state.management_events.clone();
+    let connection = hub.register_connection(last_event_id.is_some());
+    let stream = async_stream::stream! {
+        let _connection = connection;
+        yield Ok::<_, std::convert::Infallible>(Event::default().comment("keep-alive"));
+        let mut cursor = last_event_id;
+        loop {
+            let notified = hub.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            match hub.replay_after(cursor.as_deref()).await {
+                ManagementEventReplay::Events { cursor: next, events } => {
+                    cursor = Some(format!("{}:{next}", hub.generation()));
+                    for record in events {
+                        match serde_json::to_string(&record.event) {
+                            Ok(data) => yield Ok::<_, std::convert::Infallible>(Event::default().id(record.cursor).event("management").data(data)),
+                            Err(error) => {
+                                hub.record_publish_failure();
+                                tracing::warn!(error = %error, "failed to serialize management event");
+                            }
+                        }
+                    }
+                }
+                ManagementEventReplay::ResyncRequired { cursor: next, reason } => {
+                    let event_id = format!("{}:{next}", hub.generation());
+                    cursor = Some(event_id.clone());
+                    yield Ok::<_, std::convert::Infallible>(Event::default()
+                        .id(event_id)
+                        .event("resync_required")
+                        .data(serde_json::json!({
+                            "type": "resync_required",
+                            "domain": "management",
+                            "reason": reason,
+                            "generation": hub.generation(),
+                        }).to_string()));
+                }
+            }
+            notified.await;
+        }
+    };
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    response_headers.insert(
+        HeaderName::from_static("x-accel-buffering"),
+        HeaderValue::from_static("no"),
+    );
+    Ok((
+        response_headers,
+        Sse::new(stream).keep_alive(edge_proxy_safe_keepalive()),
+    ))
+}
+
+async fn management_events_status(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<crate::management_events::ManagementEventMetrics>, ApiError> {
+    let _user = require_user(&state, &headers).await?;
+    Ok(Json(state.management_events.metrics().await))
+}
+
 pub fn router(state: Arc<AppState>) -> Router {
     Router::<Arc<AppState>>::new()
         .route("/api/health", get(health))
         .route("/api/version", get(version))
+        .route("/api/events", get(management_events))
+        .route("/api/events/status", get(management_events_status))
         .route(
             "/api/homepage-icons/{provider}/{*path}",
             get(proxy_homepage_icon),
@@ -677,6 +759,15 @@ async fn put_settings(
         )
         .await
         .map_err(map_internal)?;
+    state
+        .management_events
+        .publish_change(
+            "settings",
+            "settings",
+            "global",
+            json!({ "operation": "updated" }),
+        )
+        .await;
     Ok(Json(PutSettingsResponse { ok: true }))
 }
 
@@ -796,6 +887,15 @@ async fn put_deploy_welcome(
         .put_deploy_welcome_settings(req.never_auto_open, &now)
         .await
         .map_err(map_internal)?;
+    state
+        .management_events
+        .publish_change(
+            "settings",
+            "deploy_welcome",
+            "default",
+            json!({ "operation": "deploy_welcome_updated" }),
+        )
+        .await;
     Ok(Json(PutDeployWelcomeResponse {
         ok: true,
         never_auto_open: req.never_auto_open,

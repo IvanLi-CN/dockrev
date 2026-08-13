@@ -51,6 +51,15 @@ pub(super) async fn put_notifications(
         .put_notification_settings(&merged, &now)
         .await
         .map_err(map_internal)?;
+    state
+        .management_events
+        .publish_change(
+            "settings",
+            "notifications",
+            "default",
+            serde_json::json!({ "operation": "notifications_updated" }),
+        )
+        .await;
     Ok(Json(PutNotificationsResponse { ok: true }))
 }
 

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getStack, listStacks, listStacksArchived, type Service, type ServiceLifecycleState, type StackDetail, type StackListItem, type StackStatus } from '../api'
 import { currentHref, navigate, type Route } from '../routes'
 import { SERVICE_TREE_REFRESH_EVENT, type ServiceTreeRefreshDetail } from '../serviceTreeRefresh'
+import { useManagementEventBatch } from '../managementEvents'
 import { Mono } from '../ui'
 import { UPDATE_JOB_SETTLED_EVENT, type UpdateJobSettledDetail } from '../updateActionTracking'
 import { serviceRowStatus, statusLabel } from '../updateStatus'
@@ -16,8 +17,6 @@ type TreeStack = StackListItem & {
   detailRevision: number
   detailLoadedRevision: number
 }
-
-const SERVICE_TREE_POLL_INTERVAL_MS = 30_000
 
 function isDetailRoute(route: Route): route is DetailRoute {
   return route.name === 'stack' || route.name === 'service'
@@ -251,21 +250,21 @@ export function DetailRouteServiceTree(props: {
     }
   }, [expandedStackIds, requestStackRefresh])
 
-  useEffect(() => {
-    const refreshExpandedStacks = () => {
-      if (document.visibilityState !== 'visible') return
+  useManagementEventBatch(({ events, resyncRequired }) => {
+    if (resyncRequired) {
       for (const stackId of expandedStackIds) requestStackRefresh(stackId)
+      return
     }
-    const timer = window.setInterval(refreshExpandedStacks, SERVICE_TREE_POLL_INTERVAL_MS)
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') refreshExpandedStacks()
+    for (const event of events) {
+      const stackIds = event.entities
+        .filter((entity) => entity.entityType === 'stack')
+        .map((entity) => entity.id)
+      if (typeof event.summary.stackId === 'string') stackIds.push(event.summary.stackId)
+      for (const stackId of stackIds) {
+        if (expandedStackIds.includes(stackId)) requestStackRefresh(stackId)
+      }
     }
-    document.addEventListener('visibilitychange', onVisibilityChange)
-    return () => {
-      window.clearInterval(timer)
-      document.removeEventListener('visibilitychange', onVisibilityChange)
-    }
-  }, [expandedStackIds, requestStackRefresh])
+  })
 
   const treeClassName = props.variant === 'mobile' ? 'detailRouteTree detailRouteTreeMobile' : 'detailRouteTree'
   const showState = useMemo(() => loading || Boolean(error) || stacks.length === 0, [error, loading, stacks.length])

@@ -29,19 +29,20 @@ import { BrandLogo } from "./BrandLogo";
 import { DeployWelcomePage } from "./pages/DeployWelcomePage";
 import { UnauthorizedPage } from "./pages/UnauthorizedPage";
 import { useRoute } from "./useRoute";
-import { usePageResumeRefresh } from "./usePageResumeRefresh";
 import { usePwaStatus } from "./pwaStatus";
+import { useManagementEventBatch, useManagementEvents } from "./managementEvents";
 import { shouldApplyUpdateOnPathnameNavigation } from "./pwaUpdateLifecycle";
 import {
   AUTH_RECOVERED_EVENT,
   AUTH_REQUIRED_EVENT,
   getDeployWelcome,
   getSettings,
+  refreshDeployCheckReport,
   type AuthRequiredDetails,
 } from "./api";
 import {
   hasBlockingDeployCheckFailure,
-  refreshDeployCheckReportUntilReady,
+  loadDeployCheckReport,
 } from "./deployCheck";
 import { TopbarUserIdentity } from "./components/TopbarUserIdentity";
 import { GitHubReleaseDrawer } from "./components/GitHubReleaseDrawer";
@@ -124,6 +125,7 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string } {
 export default function App() {
   const route = useRoute();
   const { applyUpdateOnNavigation } = usePwaStatus();
+  const managementEvents = useManagementEvents();
   const [releaseDrawerState, setReleaseDrawerState] = useState(() =>
     readGitHubReleaseDrawerState(),
   );
@@ -155,6 +157,7 @@ export default function App() {
   const authFailureVersionRef = useRef(0);
   const authIdentityRefreshInFlightRef = useRef(false);
   const suppressNextAuthRecoveredRef = useRef(false);
+  const deployCheckBackgroundRefreshInFlightRef = useRef(false);
   const previousRoutePathRef = useRef<string | null>(null);
   const previousUpdateNavigationPathRef = useRef<string | null>(null);
 
@@ -215,36 +218,68 @@ export default function App() {
       suppressNextAuthRecoveredRef.current = false;
     }
   }, []);
-  const requestAuthIdentityRefresh = usePageResumeRefresh(
-    async () => {
-      const nextAuthIdentity = await refreshAuthIdentity();
-      if (!nextAuthIdentity) return;
-      setAuthIdentity(nextAuthIdentity);
-    },
-    { onError: () => {} },
-  );
-
-  const refreshDeployCheckGate = useCallback(async () => {
-    const envelope = await refreshDeployCheckReportUntilReady();
+  const refreshDeployCheckGate = useCallback(async (requestBackgroundRefresh = false) => {
+    const envelope = await loadDeployCheckReport();
     const report = envelope.report;
-    if (!report) {
-      throw new Error("deploy-check report unavailable");
+    if (!report) return;
+    const blocked = hasBlockingDeployCheckFailure(report);
+    setDeployCheckGate(blocked ? "fail" : "pass");
+    if (
+      requestBackgroundRefresh &&
+      !blocked &&
+      !envelope.refreshing &&
+      !deployCheckBackgroundRefreshInFlightRef.current
+    ) {
+      deployCheckBackgroundRefreshInFlightRef.current = true;
+      void refreshDeployCheckReport()
+        .catch(() => {})
+        .finally(() => {
+          deployCheckBackgroundRefreshInFlightRef.current = false;
+        });
     }
-    setDeployCheckGate(hasBlockingDeployCheckFailure(report) ? "fail" : "pass");
   }, []);
-  usePageResumeRefresh(refreshDeployCheckGate, {
-    onError: () => setDeployCheckGate("fail"),
-  });
 
   useEffect(() => {
     let cancelled = false;
-    void refreshDeployCheckGate().catch(() => {
-      if (!cancelled) setDeployCheckGate("fail");
+    const refreshOnForeground = () => {
+      if (document.visibilityState !== "visible") return;
+      void refreshDeployCheckGate(true).catch(() => {});
+    };
+    void refreshDeployCheckGate(true).catch(() => {
+      if (!cancelled) setDeployCheckGate("loading");
     });
+    document.addEventListener("visibilitychange", refreshOnForeground);
     return () => {
       cancelled = true;
+      document.removeEventListener("visibilitychange", refreshOnForeground);
     };
   }, [refreshDeployCheckGate]);
+
+  useManagementEventBatch(({ events, resyncRequired }) => {
+    if (
+      resyncRequired ||
+      events.some((event) => event.domain === "deploy_check")
+    ) {
+      void refreshDeployCheckGate().catch(() => {});
+    }
+  });
+
+  useManagementEventBatch(({ events, resyncRequired }) => {
+    const deployWelcomeChanged = events.some(
+      (event) =>
+        event.domain === "settings" &&
+        event.summary.operation === "deploy_welcome_updated",
+    );
+    if (!resyncRequired && !deployWelcomeChanged) return;
+    void getDeployWelcome()
+      .then((settings) => {
+        setDeployWelcomeState({
+          loaded: true,
+          neverAutoOpen: settings.neverAutoOpen,
+        });
+      })
+      .catch(() => {});
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -309,7 +344,11 @@ export default function App() {
         return;
       }
       if (!hadAuthFailure) return;
-      void requestAuthIdentityRefresh().catch(() => {});
+      void refreshAuthIdentity()
+        .then((next) => {
+          if (next) setAuthIdentity(next);
+        })
+        .catch(() => {});
     };
 
     window.addEventListener(AUTH_REQUIRED_EVENT, onAuthRequired);
@@ -318,7 +357,7 @@ export default function App() {
       window.removeEventListener(AUTH_REQUIRED_EVENT, onAuthRequired);
       window.removeEventListener(AUTH_RECOVERED_EVENT, onAuthRecovered);
     };
-  }, [requestAuthIdentityRefresh]);
+  }, [refreshAuthIdentity]);
 
   useEffect(() => {
     let cancelled = false;
@@ -424,6 +463,14 @@ export default function App() {
         authIdentity={authIdentity}
         lastScanHint={lastScanHint}
       >
+        {managementEvents.connection !== "live" ? (
+          <div className="error" role="status" aria-live="polite">
+            实时连接已中断，正在重连；当前数据可能不是最新。
+            {managementEvents.lastSynchronizedAt
+              ? ` 上次同步：${new Date(managementEvents.lastSynchronizedAt).toLocaleString()}。`
+              : ""}
+          </div>
+        ) : null}
         <UnauthorizedPage authDetails={authFailure} />
       </AppShell>
     );
@@ -470,6 +517,14 @@ export default function App() {
         authIdentity={authIdentity}
         lastScanHint={lastScanHint}
       >
+        {managementEvents.connection !== "live" ? (
+          <div className="error" role="status" aria-live="polite">
+            实时连接已中断，正在重连；当前数据可能不是最新。
+            {managementEvents.lastSynchronizedAt
+              ? ` 上次同步：${new Date(managementEvents.lastSynchronizedAt).toLocaleString()}。`
+              : ""}
+          </div>
+        ) : null}
         {route.name === "overview" ? (
           <OverviewPage
             onLastScanHint={setLastScanHint}

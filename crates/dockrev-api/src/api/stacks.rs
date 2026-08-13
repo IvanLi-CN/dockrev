@@ -64,6 +64,17 @@ pub(super) async fn put_stack_settings(
         .put_auto_update_policy("stack", &stack_id, &req.auto_update_policy, &now)
         .await
         .map_err(map_internal)?;
+
+    state
+        .management_events
+        .publish_change(
+            "stacks",
+            "stack",
+            stack_id,
+            serde_json::json!({ "operation": "settings_updated" }),
+        )
+        .await;
+
     Ok(Json(PutStackSettingsResponse { ok: true }))
 }
 
@@ -904,6 +915,15 @@ pub(super) async fn archive_stack(
     if !changed {
         return Err(ApiError::not_found("stack not found"));
     }
+    state
+        .management_events
+        .publish_change(
+            "stacks",
+            "stack",
+            stack_id,
+            json!({ "operation": "archived" }),
+        )
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -922,6 +942,15 @@ pub(super) async fn restore_stack(
     if !changed {
         return Err(ApiError::not_found("stack not found"));
     }
+    state
+        .management_events
+        .publish_change(
+            "stacks",
+            "stack",
+            stack_id,
+            json!({ "operation": "restored" }),
+        )
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -931,6 +960,11 @@ pub(super) async fn archive_service(
     Path(service_id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let _user = require_user(&state, &headers).await?;
+    let stack_id = state
+        .db
+        .get_service_stack_id(&service_id)
+        .await
+        .map_err(map_internal)?;
     let now = now_rfc3339().map_err(map_internal)?;
     let changed = state
         .db
@@ -940,6 +974,18 @@ pub(super) async fn archive_service(
     if !changed {
         return Err(ApiError::not_found("service not found"));
     }
+    state
+        .management_events
+        .publish_immediate(
+            "services",
+            service_archive_entities(&service_id, stack_id.as_deref()),
+            json!({
+                "operation": "archived",
+                "serviceId": service_id,
+                "stackId": stack_id,
+            }),
+        )
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -949,6 +995,11 @@ pub(super) async fn restore_service(
     Path(service_id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let _user = require_user(&state, &headers).await?;
+    let stack_id = state
+        .db
+        .get_service_stack_id(&service_id)
+        .await
+        .map_err(map_internal)?;
     let now = now_rfc3339().map_err(map_internal)?;
     let changed = state
         .db
@@ -958,5 +1009,34 @@ pub(super) async fn restore_service(
     if !changed {
         return Err(ApiError::not_found("service not found"));
     }
+    state
+        .management_events
+        .publish_immediate(
+            "services",
+            service_archive_entities(&service_id, stack_id.as_deref()),
+            json!({
+                "operation": "restored",
+                "serviceId": service_id,
+                "stackId": stack_id,
+            }),
+        )
+        .await;
     Ok(StatusCode::NO_CONTENT)
+}
+
+fn service_archive_entities(
+    service_id: &str,
+    stack_id: Option<&str>,
+) -> Vec<crate::management_events::ManagementEventEntity> {
+    let mut entities = vec![crate::management_events::ManagementEventEntity {
+        entity_type: "service".to_string(),
+        id: service_id.to_string(),
+    }];
+    if let Some(stack_id) = stack_id {
+        entities.push(crate::management_events::ManagementEventEntity {
+            entity_type: "stack".to_string(),
+            id: stack_id.to_string(),
+        });
+    }
+    entities
 }

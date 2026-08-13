@@ -20,6 +20,7 @@
 - `/cleanup` 首屏改为 snapshot-backed 读路径，旧 snapshot 可先显示，后台异步刷新。
 - cleanup confirm/apply 不再在请求链路里重扫 Docker，改为 fresh snapshot + fingerprint 校验。
 - `/deploy-check` 改为 cached read + async refresh。
+- 管理页面通过应用级 SSE 接收失效摘要，并以按实体 REST 读取恢复展示状态。
 - Web release drawer 不再依赖 `/github-releases/locate`。
 - 所有 SSE 路由统一改为 5 秒 heartbeat，并在连接建立时立即 flush 一次 keepalive comment。
 
@@ -28,6 +29,7 @@
 - 不把修复绑定在 EdgeOne 控制台配置变更上。
 - 不在本轮引入通用后台任务框架。
 - 不重写 cleanup ownership 归属算法。
+- 不新增管理事件表、持久化消息队列，或管理页面 SSE 失败后的轮询降级。
 
 ## 兼容性 / 覆盖声明
 
@@ -43,13 +45,15 @@
   - 无 cached snapshot 时返回 pending，并给出 `retryAfterMs`。
 - cleanup confirm request:
   - 只有当 latest snapshot 年龄 `<=30s` 且无 refresh in-flight 时，才返回 ready confirm payload。
-  - 否则返回 pending，前端必须 poll 到 ready 后再允许确认。
+  - 否则返回 pending；前端等待应用级 SSE 的确定终态后只读取一次 REST 快照，再允许确认。
 - cleanup apply:
   - 禁止内联全量重扫。
   - 若 fingerprint 失效，继续返回 `409 cleanup_snapshot_stale + latest payload`。
 - deploy-check:
   - GET `/api/deploy-check/report` 必须支持 cached report ready 返回与 pending 返回。
   - POST `/api/deploy-check/report/refresh` 只 enqueue，不同步构建 report。
+  - 有缓存且 required core checks 全部 PASS 时，应用必须立即放行，并发起后台复核；复核失败前保留已通过的展示状态，只有新的确定 FAIL 才进入门禁。
+  - 无缓存、缓存 FAIL 或 required core check 非 PASS 时仍必须安全阻断。
   - 启动后必须执行一次安全 discovery 扫描；Docker 枚举失败时不得写入 discovery、Stack 或归档状态。
   - 对未出现在运行容器列表中的已登记项目，保存的 Compose 文件全部可读且可解析时写入 `stopped`；全部为 `ENOENT` 时写入 `missing` 并以 `auto_archive_compose_files_missing` 自动归档；混合缺失、权限/I-O 或解析错误写入 `invalid` 且不归档。
   - 只有 `auto_archive_compose_files_missing` 与历史 `auto_archive_on_restart` 可由后续有效扫描解除。人工归档不得被 discovery 修改。该修复不得删除 Stack、服务、Compose 文件、容器或运行时资源。
@@ -59,6 +63,13 @@
 - SSE:
   - heartbeat 常量统一为 5 秒。
   - 连接建立时立即发一条 keepalive/comment。
+  - `GET /api/events` 是管理页面唯一的通用 SSE 连接，沿用 Forward Auth 与同源凭据；未授权返回 `401`。
+  - 每浏览器标签页最多一条通用连接。事件只包含 `domain`、实体类型/ID、版本和必要摘要；REST 仍是详情真相源。
+  - 服务端在 `100ms` 窗口内按 `domain + entity type + entity id` 合并普通变化；任务终态、deploy-check 确定失败、cleanup 确定终态和 `resync_required` 立即发送。
+  - 作业进度写入、有效 discovery 扫描完成、Discovery 人工归档/恢复、GHCR 配置/目标/仓库选择及 webhook 状态写入都必须发布领域失效摘要；页面据此读取 REST 快照，不在 SSE 内复制详情。
+  - 历史仅保留进程内 `60s` 或 `1024` 条，以先到者为准；不写 SQLite。`Last-Event-ID` 仅能补发当前实例缓冲，实例世代变化、游标淘汰或无效游标必须发送 `resync_required`。
+  - EventSource 自动重连后，页面先读取 REST 快照；后台标签页只累计失效实体，恢复前台再批量同步一次。不得使用定时轮询或轮询降级。
+  - `GET /api/events/status` 提供连接数、重连、重同步、缓冲淘汰、事件合并与发布失败计数，供资源边界观测。
 
 ### SHOULD
 
@@ -74,13 +85,31 @@
 - Given 一个未运行但保存 Compose 文件均健康的 discovery 项，When Dockrev 完成有效扫描，Then 项目与关联 Stack 必须保持未归档并显示 `stopped`，现有生命周期启动任务可执行。
 - Given 一个保存 Compose 文件全部为 `ENOENT` 的 discovery 项，When Dockrev 完成有效扫描，Then 项目与关联 Stack 必须以 `auto_archive_compose_files_missing` 自动归档，失效路径不得阻断 deploy-check。
 - Given 部分缺失、权限/I-O 或解析错误，When Dockrev 完成有效扫描，Then 项目必须显示 `invalid` 且保持未归档；人工归档在任何扫描结果下都不得解除。
-- 应用首次加载与恢复前台必须刷新并等待最新 deploy-check report；任一 required core check FAIL 或报告不可用时强制进入 `/deploy-check`，`neverAutoOpen` 不得绕过，失败页不得进入 Dashboard。只有全部 required core check PASS 才放行。
+- Given 有上次通过的 deploy-check report 且后台复核中，When 应用首次加载或恢复前台，Then 必须立即显示管理页面；只有复核得到新的 required core FAIL 才强制进入 `/deploy-check`，`neverAutoOpen` 不得绕过该失败门禁。
+- Given `/api/events` 短暂断线，When EventSource 重连，Then 页面保留既有数据并提示陈旧，使用 `Last-Event-ID` 补发或 `resync_required` 后一次 REST 同步恢复；不得启动轮询。
+- Given 服务或 Stack 变更，When 服务页在前台，Then 只读取事件涉及的 Stack/Service；后台标签页不得读详情，恢复时只执行一次批量同步。
 - release drawer 在不调用 `/github-releases/locate` 的前提下仍可定位目标版本。
 - 任一 SSE 连接在 EdgeOne 前方空闲超过 20 秒时，不会因 15 秒 idle window 被断开。
+- 管理总线缓冲始终不超过 `60s`/`1024` 条，且不产生新的 SQLite 写入。
 
 ## Visual Evidence
 
-PR: none
+- source_type: `ui_demo`
+  target_program: `mock-only`
+  capture_scope: `page`
+  requested_viewport: `browser default`
+  viewport_strategy: `ui-demo-source`
+  margin_policy: `trim_only`
+  evidence_surface: `page`
+  sensitive_exclusion: `N/A`
+  submission_gate: `owner-approved`
+  evidence_binding_sha: `8909741219a80dd302c53ed095aec8fcd0e921f4`
+  state: `cached passing report`
+  evidence_note: 验证 cached PASS 立即显示部署检查页且“进入 Dashboard”可用；点击后进入 Dashboard。演示只使用本地 mock fixture，不访问线上服务。
+
+PR: include
+
+![Deploy check cached pass keeps Dashboard available](./assets/deploy-check-cached-pass-dashboard.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`

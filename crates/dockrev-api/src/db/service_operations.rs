@@ -75,7 +75,12 @@ impl Db {
         targets: Vec<ServiceOperationTarget>,
         initial_log: Option<JobLogLine>,
     ) -> anyhow::Result<Option<JobListItem>> {
-        self.call(move |conn| {
+        let event_job_id = job.id.clone();
+        let event_scope = job.scope.as_str().to_string();
+        let event_stack_id = job.stack_id.clone();
+        let event_service_id = job.service_id.clone();
+        let event_type = job.r#type.as_str().to_string();
+        let conflict = self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let candidates = {
                 let mut statement = tx.prepare(
@@ -118,7 +123,25 @@ ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END, created_at DESC, id DESC
             Ok(conflict)
         })
         .await
-        .context("atomically insert service operation job")
+        .context("atomically insert service operation job")?;
+        if conflict.is_none() {
+            self.management_events
+                .publish_change(
+                    "jobs",
+                    "job",
+                    event_job_id.clone(),
+                    serde_json::json!({
+                        "jobId": event_job_id,
+                        "status": "queued",
+                        "jobType": event_type,
+                        "scope": event_scope,
+                        "stackId": event_stack_id,
+                        "serviceId": event_service_id,
+                    }),
+                )
+                .await;
+        }
+        Ok(conflict)
     }
 
     pub async fn find_latest_pending_update_blocking_service(

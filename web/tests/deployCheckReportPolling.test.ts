@@ -1,14 +1,12 @@
 import { describe, expect, test } from 'bun:test'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
-import type { DeployCheckReportEnvelope } from '../src/api'
 import {
   hasBlockingDeployCheckFailure,
-  shouldKeepDeployCheckLoading,
-  shouldKeepPollingDeployCheckReport,
-  shouldTriggerDeployCheckReportRefresh,
 } from '../src/deployCheck'
 
-describe('deploy-check report polling', () => {
+describe('deploy-check cached gate', () => {
   test('treats any required core failure as a hard gate', () => {
     expect(
       hasBlockingDeployCheckFailure({
@@ -82,129 +80,53 @@ describe('deploy-check report polling', () => {
     ).toBe(false)
   })
 
-  test('does not treat a stale cached PASS with refresh error as settled', () => {
+  test('permits a cached passing report while it is refreshing', () => {
     expect(
-      shouldTriggerDeployCheckReportRefresh({
-        status: 'ready',
-        refreshing: false,
-        lastError: 'deploy-check refresh failed',
-        report: null,
+      hasBlockingDeployCheckFailure({
+        overall: {
+          result: 'pass',
+          blockingCheckIds: [],
+          summary: 'cached pass remains visible during background refresh',
+        },
+        generatedAt: '2026-06-26T14:22:00.000Z',
+        checks: [
+          {
+            id: 'core.update_executor_ready',
+            title: '更新执行器可用',
+            group: 'core',
+            required: true,
+            status: 'pass',
+            summary: 'executor available',
+            impact: 'writes allowed',
+            evidence: 'Compose V2',
+            recommendation: '',
+          },
+        ],
       }),
     ).toBe(false)
   })
 
-  test('keeps polling while cached report is still marked refreshing', () => {
-    const envelope: DeployCheckReportEnvelope = {
-      status: 'ready',
-      refreshing: true,
-      retryAfterMs: 450,
-      report: {
-        overall: {
-          result: 'fail',
-          blockingCheckIds: ['core.compose_access'],
-          summary: 'cached report is visible while refresh continues',
-        },
-        generatedAt: '2026-06-26T14:22:00.000Z',
-        checks: [],
-      },
-    }
+  test('does not turn a cached pass into a blocking failure when its refresh errors', () => {
+    const source = readFileSync(
+      resolve(import.meta.dir, '..', 'src/pages/DeployWelcomePage.tsx'),
+      'utf8',
+    )
 
-    expect(shouldKeepPollingDeployCheckReport(envelope)).toBe(true)
+    expect(source).toMatch(
+      /const hasBlockingFailures = report\s*\? hasBlockingDeployCheckFailure\(report\)\s*:\s*Boolean\(reportRefreshError\)/,
+    )
   })
 
-  test('stops polling once the report is ready and refreshing cleared', () => {
-    const envelope: DeployCheckReportEnvelope = {
-      status: 'ready',
-      refreshing: false,
-      report: {
-        overall: {
-          result: 'pass',
-          blockingCheckIds: [],
-          summary: 'deploy checks settled',
-        },
-        generatedAt: '2026-06-26T14:23:00.000Z',
-        checks: [],
-      },
-    }
+  test('revalidates the cached gate when the tab returns to the foreground', () => {
+    const source = readFileSync(resolve(import.meta.dir, '..', 'src/App.tsx'), 'utf8')
 
-    expect(shouldKeepPollingDeployCheckReport(envelope)).toBe(false)
-  })
-
-  test('triggers a background refresh when a cached report is ready but idle', () => {
-    const envelope: DeployCheckReportEnvelope = {
-      status: 'ready',
-      refreshing: false,
-      report: {
-        overall: {
-          result: 'pass',
-          blockingCheckIds: [],
-          summary: 'cached report should kick off a background refresh on page open',
-        },
-        generatedAt: '2026-06-26T14:23:00.000Z',
-        checks: [],
-      },
-    }
-
-    expect(shouldTriggerDeployCheckReportRefresh(envelope)).toBe(true)
-  })
-
-  test('does not request a second refresh while a cached report is already refreshing', () => {
-    const envelope: DeployCheckReportEnvelope = {
-      status: 'ready',
-      refreshing: true,
-      retryAfterMs: 450,
-      report: {
-        overall: {
-          result: 'fail',
-          blockingCheckIds: ['core.compose_access'],
-          summary: 'cached report is visible while refresh continues',
-        },
-        generatedAt: '2026-06-26T14:22:00.000Z',
-        checks: [],
-      },
-    }
-
-    expect(shouldTriggerDeployCheckReportRefresh(envelope)).toBe(false)
-  })
-
-  test('keeps polling while the first refresh has not produced a report yet', () => {
-    const envelope: DeployCheckReportEnvelope = {
-      status: 'pending',
-      refreshing: true,
-      retryAfterMs: 800,
-      report: null,
-    }
-
-    expect(shouldKeepPollingDeployCheckReport(envelope)).toBe(true)
-  })
-
-  test('keeps the loading shell while no deploy-check report is available yet', () => {
-    const envelope: DeployCheckReportEnvelope = {
-      status: 'pending',
-      refreshing: true,
-      retryAfterMs: 800,
-      report: null,
-    }
-
-    expect(shouldKeepDeployCheckLoading(envelope)).toBe(true)
-  })
-
-  test('does not keep the loading shell once a cached report is already visible', () => {
-    const envelope: DeployCheckReportEnvelope = {
-      status: 'ready',
-      refreshing: true,
-      retryAfterMs: 450,
-      report: {
-        overall: {
-          result: 'fail',
-          blockingCheckIds: ['core.compose_access'],
-          summary: 'cached report is visible while refresh continues',
-        },
-        generatedAt: '2026-06-26T14:22:00.000Z',
-        checks: [],
-      },
-    }
-
-    expect(shouldKeepDeployCheckLoading(envelope)).toBe(false)
+    expect(source).toContain('document.addEventListener("visibilitychange", refreshOnForeground)')
+    expect(source).toContain('document.removeEventListener("visibilitychange", refreshOnForeground)')
+    expect(source).toMatch(
+      /const refreshOnForeground = \(\) => \{\s*if \(document\.visibilityState !== "visible"\) return;\s*void refreshDeployCheckGate\(true\)/,
+    )
+    expect(source).toContain('deployCheckBackgroundRefreshInFlightRef.current = true')
+    expect(source).toContain('deployCheckBackgroundRefreshInFlightRef.current = false')
+    expect(source).not.toContain('deployCheckBackgroundRefreshRequestedRef')
   })
 })
