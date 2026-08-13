@@ -25,7 +25,6 @@ import {
   parseResourceWindow,
   toNotificationsResponse,
 } from '../shared'
-
 export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<Response | null> {
   const {
     digestSnapshotPendingAttempts,
