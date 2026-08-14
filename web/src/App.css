@@ -11315,28 +11315,48 @@ html[data-theme="light"] .brandLogoThemeSwitch {
 }
 
 .themePreferenceIconButton {
+  position: relative;
   display: inline-flex;
-  width: 42px;
-  height: 42px;
-  min-width: 42px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
   align-items: center;
   justify-content: center;
-  border: 1px solid color-mix(in srgb, var(--borderColor) 76%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--dockrev-surface) 88%, transparent);
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
   color: var(--text);
   cursor: pointer;
   transition:
-    background-color 160ms ease,
-    border-color 160ms ease,
     color 160ms ease,
     transform 160ms ease;
 }
 
+.themePreferenceIconButton::before {
+  position: absolute;
+  inset: 5px;
+  z-index: 0;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 76%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dockrev-surface) 88%, transparent);
+  content: "";
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease;
+}
+
+.themePreferenceIconButton > svg {
+  position: relative;
+  z-index: 1;
+}
+
 .themePreferenceIconButton:hover {
+  color: var(--color-primary);
+}
+
+.themePreferenceIconButton:hover::before {
   border-color: color-mix(in srgb, var(--color-primary) 42%, var(--borderColor) 58%);
   background: color-mix(in srgb, var(--dockrev-surface-strong) 88%, transparent);
-  color: var(--color-primary);
 }
 
 .themePreferenceIconButton:active {
