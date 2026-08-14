@@ -17,7 +17,7 @@
 
 ## Validation
 
-- `bun test`：166 项通过。
+- `bun test`：167 项通过。
 - `bun run build`：通过。
 - `bun run lint`：通过，保留仓库已有 2 条 TanStack Virtual 编译跳过 warning。
 - `bun run build-storybook`：通过。
