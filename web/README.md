@@ -30,9 +30,10 @@
 
 ### 主题（Theme）
 
-- 主题值：`light` / `dark`
+- 主题偏好：`system` / `light` / `dark`；缺失 `dockrev:theme` 表示 `system`
+- 解析主题：`light` / `dark`
 - DOM hook：`<html data-theme="<value>">` + `color-scheme`
-- 持久化：`localStorage["dockrev:theme"]`
+- 持久化：`localStorage["dockrev:theme"]`（选择 `system` 时删除 key）
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 

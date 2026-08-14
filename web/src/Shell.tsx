@@ -22,6 +22,7 @@ import { UpdateActionTrackerProvider } from './updateActionTracking'
 import type { Route } from './routes'
 import { currentHref, navigate } from './routes'
 import { TopbarUserIdentity } from './components/TopbarUserIdentity'
+import { ThemePreferenceControl } from './components/ThemePreferenceControl'
 import type { TopbarAuthIdentity } from './topbarAuthIdentity'
 
 const MOBILE_MENU_MEDIA_QUERY = "(max-width: 960px)";
@@ -354,6 +355,9 @@ export function AppShell(props: {
                 <div className="topbarGlobalContent">{props.topbarContent}</div>
               ) : null}
               <div className="topbarRight">
+                {mobileMenuMediaMatches && active === "settings" ? (
+                  <ThemePreferenceControl variant="icon" />
+                ) : null}
                 {props.topActions ? (
                   <div className="topActions">{props.topActions}</div>
                 ) : null}
@@ -491,6 +495,11 @@ export function AppShell(props: {
             <div className="sidebarMeta">
               {!mobileMenuMediaMatches ? (
                 <TopbarUserIdentity authIdentity={props.authIdentity} placement="sidebar" />
+              ) : null}
+              {!mobileMenuMediaMatches ? (
+                <div className="sidebarThemeControl">
+                  <ThemePreferenceControl variant={sidebarCollapsed ? "icon" : "segmented"} />
+                </div>
               ) : null}
               <div className="sidebarMetaDivider" aria-hidden="true" />
               <div className="sidebarMetaTop">
