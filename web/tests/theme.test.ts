@@ -94,8 +94,8 @@ function installFakeThemeEnvironment(systemTheme: DockrevTheme = 'light') {
     emitMediaChange() {
       eventTarget.dispatchEvent(new Event('media:change'))
     },
-    emitStorageChange() {
-      const event = Object.assign(new Event('storage'), { key: THEME_STORAGE_KEY })
+    emitStorageChange(key: string | null = THEME_STORAGE_KEY) {
+      const event = Object.assign(new Event('storage'), { key })
       eventTarget.dispatchEvent(event)
     },
   }
@@ -160,6 +160,17 @@ describe('theme preference contract', () => {
     env.emitStorageChange()
     expect(getThemePreference()).toBe('dark')
     expect(env.root.dataset.theme).toBe('dark')
+  })
+
+  test('syncs localStorage.clear events back to system preference', () => {
+    const env = installFakeThemeEnvironment('light')
+    initTheme()
+    setThemePreference('dark')
+    env.storage.clear()
+    env.emitStorageChange(null)
+
+    expect(getThemePreference()).toBe('system')
+    expect(env.root.dataset.theme).toBe('light')
   })
 
   test('notifies same-page subscribers without changing business state', () => {

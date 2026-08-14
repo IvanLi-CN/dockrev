@@ -80,7 +80,7 @@ function installThemeListeners() {
     mediaQuery.addListener(onSystemThemeChange)
   }
   window.addEventListener('storage', (event) => {
-    if (event.key !== THEME_STORAGE_KEY) return
+    if (event.key !== null && event.key !== THEME_STORAGE_KEY) return
     syncThemeFromEnvironment()
   })
 }
