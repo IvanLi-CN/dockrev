@@ -1,5 +1,37 @@
 use super::*;
 
+fn github_packages_repo_filter_parts(
+    q: Option<&str>,
+    selected_filter: Option<bool>,
+    webhook_state: Option<&str>,
+) -> (Vec<String>, Vec<rusqlite::types::Value>) {
+    let mut clauses: Vec<String> = Vec::new();
+    let mut values: Vec<rusqlite::types::Value> = Vec::new();
+
+    if let Some(sel) = selected_filter {
+        clauses.push("selected = ?".to_string());
+        values.push(rusqlite::types::Value::from(sel as i64));
+    }
+    if let Some(webhook_state) = webhook_state {
+        clauses.push("webhook_state = ?".to_string());
+        values.push(rusqlite::types::Value::from(webhook_state.to_string()));
+    }
+    if let Some(q) = q.filter(|value| !value.trim().is_empty()) {
+        clauses.push(
+            "(lower(owner || '/' || repo) LIKE '%' || lower(?) || '%' \
+             OR lower(webhook_state) LIKE '%' || lower(?) || '%' \
+             OR CAST(hook_id AS TEXT) LIKE '%' || ? || '%' \
+             OR lower(COALESCE(last_error, '')) LIKE '%' || lower(?) || '%')"
+                .to_string(),
+        );
+        for _ in 0..4 {
+            values.push(rusqlite::types::Value::from(q.trim().to_string()));
+        }
+    }
+
+    (clauses, values)
+}
+
 impl Db {
     pub async fn get_github_packages_settings(&self) -> anyhow::Result<GitHubPackagesSettingsDb> {
         self.call(|conn| {
@@ -307,23 +339,17 @@ ON CONFLICT(owner, repo) DO NOTHING
         &self,
         q: Option<&str>,
         selected_filter: Option<bool>,
+        webhook_state: Option<&str>,
     ) -> anyhow::Result<u32> {
         let q = q.map(|s| s.to_string());
+        let webhook_state = webhook_state.map(|s| s.to_string());
         self.call(move |conn| {
             let mut sql = "SELECT COUNT(*) FROM github_packages_repos".to_string();
-            let mut clauses: Vec<String> = Vec::new();
-            let mut values: Vec<rusqlite::types::Value> = Vec::new();
-
-            if let Some(sel) = selected_filter {
-                clauses.push("selected = ?".to_string());
-                values.push(rusqlite::types::Value::from(sel as i64));
-            }
-            if let Some(q) = &q
-                && !q.trim().is_empty()
-            {
-                clauses.push("lower(owner || '/' || repo) LIKE '%' || lower(?) || '%'".to_string());
-                values.push(rusqlite::types::Value::from(q.trim().to_string()));
-            }
+            let (clauses, values) = github_packages_repo_filter_parts(
+                q.as_deref(),
+                selected_filter,
+                webhook_state.as_deref(),
+            );
 
             if !clauses.is_empty() {
                 sql.push_str(" WHERE ");
@@ -344,10 +370,12 @@ ON CONFLICT(owner, repo) DO NOTHING
         &self,
         q: Option<&str>,
         selected_filter: Option<bool>,
+        webhook_state: Option<&str>,
         limit: u32,
         offset: u32,
     ) -> anyhow::Result<Vec<GitHubPackagesRepoDb>> {
         let q = q.map(|s| s.to_string());
+        let webhook_state = webhook_state.map(|s| s.to_string());
         self.call(move |conn| {
             let mut sql = r#"
 SELECT
@@ -366,19 +394,11 @@ FROM github_packages_repos
 "#
             .to_string();
 
-            let mut clauses: Vec<String> = Vec::new();
-            let mut values: Vec<rusqlite::types::Value> = Vec::new();
-
-            if let Some(sel) = selected_filter {
-                clauses.push("selected = ?".to_string());
-                values.push(rusqlite::types::Value::from(sel as i64));
-            }
-            if let Some(q) = &q
-                && !q.trim().is_empty()
-            {
-                clauses.push("lower(owner || '/' || repo) LIKE '%' || lower(?) || '%'".to_string());
-                values.push(rusqlite::types::Value::from(q.trim().to_string()));
-            }
+            let (clauses, mut values) = github_packages_repo_filter_parts(
+                q.as_deref(),
+                selected_filter,
+                webhook_state.as_deref(),
+            );
 
             if !clauses.is_empty() {
                 sql.push_str(" WHERE ");

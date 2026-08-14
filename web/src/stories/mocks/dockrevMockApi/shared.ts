@@ -285,6 +285,8 @@ export class MockEventSource extends EventTarget {
 export type MockDebug = {
   jobsEventsCalls: number
   jobsListCalls: number
+  jobsListUrls: string[]
+  ghcrReposUrls: string[]
   lastUpdateRequest: unknown | null
   lastUpdateUrl: string | null
   lastUpdateMethod: string | null
@@ -629,6 +631,8 @@ export function makeMockDebug(): MockDebug {
   return {
     jobsEventsCalls: 0,
     jobsListCalls: 0,
+    jobsListUrls: [],
+    ghcrReposUrls: [],
     lastUpdateRequest: null,
     lastUpdateUrl: null,
     lastUpdateMethod: null,

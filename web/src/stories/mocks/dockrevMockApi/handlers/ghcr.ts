@@ -14,7 +14,7 @@ import type {
 import type { MockRouteContext } from '../context'
 
 export async function handleGhcrRoutes(ctx: MockRouteContext): Promise<Response | null> {
-  const { getBoolean, getString, init, json, method, nowIso, parseJsonBody, state: f, url, urlPath } = ctx
+  const { getBoolean, getString, init, json, makeMockDebug, method, nowIso, parseJsonBody, state: f, url, urlPath, urlPathWithQuery } = ctx
 
   const recomputeGithubPackagesCounts = () => {
     f.githubPackagesSettings = {
@@ -242,20 +242,37 @@ export async function handleGhcrRoutes(ctx: MockRouteContext): Promise<Response 
   }
 
   if (method === 'GET' && urlPath === '/api/github-packages/repos') {
+    const debug = globalThis.__DOCKREV_MOCK_DEBUG__ ?? (globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug())
+    debug.ghcrReposUrls.push(urlPathWithQuery)
     const params = url?.searchParams ?? new URLSearchParams()
     const page = Math.max(1, Number(params.get('page') ?? '1') || 1)
     const perPage = Math.min(200, Math.max(1, Number(params.get('perPage') ?? '50') || 50))
     const q = (params.get('q') ?? '').trim().toLowerCase()
     const selectedFilter = (params.get('selectedFilter') ?? 'all').trim()
+    const webhookState = (params.get('webhookState') ?? 'all').trim().toLowerCase()
 
-    const matchesQ = (repo: GitHubPackagesRepo) => (q ? repo.fullName.toLowerCase().includes(q) : true)
+    const matchesQ = (repo: GitHubPackagesRepo) => {
+      if (!q) return true
+      const state = (repo.webhookState ?? 'unknown').toLowerCase()
+      return (
+        repo.fullName.toLowerCase().includes(q) ||
+        state.includes(q) ||
+        (repo.lastError ?? '').toLowerCase().includes(q) ||
+        String(repo.hookId ?? '').includes(q)
+      )
+    }
     const matchesSelected = (repo: GitHubPackagesRepo) => {
       if (selectedFilter === 'selected') return repo.selected
       if (selectedFilter === 'unselected') return !repo.selected
       return true
     }
+    const matchesWebhookState = (repo: GitHubPackagesRepo) => {
+      return webhookState === 'all' || (repo.webhookState ?? 'unknown').toLowerCase() === webhookState
+    }
 
-    const filtered = f.githubPackagesRepos.filter((repo) => matchesQ(repo) && matchesSelected(repo))
+    const filtered = f.githubPackagesRepos
+      .map(ensureGhcrRepoDefaults)
+      .filter((repo) => matchesQ(repo) && matchesSelected(repo) && matchesWebhookState(repo))
     const offset = (page - 1) * perPage
     const items = filtered.slice(offset, offset + perPage)
 

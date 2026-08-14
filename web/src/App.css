@@ -5300,6 +5300,23 @@ html[data-theme="light"] .modalOverlay {
   flex: 1 1 260px;
 }
 
+.ghcrRegistryPager {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ghcrRegistryPerPage {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ghcrRegistryPerPage .select {
+  min-width: 74px;
+}
+
 .ghcrSyncAllBtnIcon {
   width: 14px;
   height: 14px;
@@ -11778,6 +11795,13 @@ html[data-theme="light"] .btnPrimary {
   );
 }
 
+.ghcrRegistryActions .responsiveActionBtn {
+  --responsive-action-bubble-anchor-left: auto;
+  --responsive-action-bubble-anchor-right: 0%;
+  --responsive-action-bubble-shift-x: 0%;
+  --responsive-action-bubble-arrow-left: calc(100% - 16px);
+}
+
 .chipStatic,
 .chip {
   border: 1px solid color-mix(in srgb, var(--borderColor) 78%, transparent);
@@ -12972,6 +12996,10 @@ html[data-theme="light"] .btnPrimary {
   }
 
   .ghcrInboxPager {
+    width: 100%;
+  }
+
+  .ghcrRegistryPager {
     width: 100%;
   }
 

@@ -387,7 +387,10 @@ export function ResponsiveActionButton(props: {
     }
 
     const margin = 8
-    const viewportRight = window.innerWidth - margin
+    const scrollContainer = root.closest<HTMLElement>('[data-overlayscrollbars-viewport]')
+    const containerRect = scrollContainer?.getBoundingClientRect()
+    const viewportLeft = Math.max(margin, containerRect?.left ?? margin)
+    const viewportRight = Math.min(window.innerWidth - margin, containerRect?.right ?? window.innerWidth - margin)
     const bubbleGap = 10
     const viewportBottom = window.innerHeight - margin
     const aboveTop = rootRect.top - bubbleGap - bubbleHeight
@@ -402,7 +405,7 @@ export function ResponsiveActionButton(props: {
 
     const overflowScore = (left: number) => {
       const right = left + bubbleWidth
-      return Math.max(0, margin - left) + Math.max(0, right - viewportRight)
+      return Math.max(0, viewportLeft - left) + Math.max(0, right - viewportRight)
     }
 
     let best = candidates[0]
@@ -417,8 +420,8 @@ export function ResponsiveActionButton(props: {
 
     const bestRight = best.left + bubbleWidth
     let offsetX = 0
-    if (best.left < margin) {
-      offsetX = margin - best.left
+    if (best.left < viewportLeft) {
+      offsetX = viewportLeft - best.left
     } else if (bestRight > viewportRight) {
       offsetX = viewportRight - bestRight
     }

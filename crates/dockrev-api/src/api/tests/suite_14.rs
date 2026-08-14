@@ -1191,3 +1191,186 @@ async fn github_packages_webhook_overview_reports_repo_and_job_summary() {
     assert_eq!(body["lastAuditAt"].as_str(), Some(audit_newer.as_str()));
 }
 
+#[tokio::test]
+async fn github_packages_repos_support_state_filter_search_and_pagination() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let now = test_now_rfc3339();
+
+    state
+        .db
+        .put_github_packages_repos(
+            &[
+                (String::from("acme"), String::from("alpha"), true),
+                (String::from("acme"), String::from("beta"), true),
+                (String::from("acme"), String::from("gamma"), true),
+                (String::from("acme"), String::from("unselected"), false),
+            ],
+            &now,
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .set_github_packages_repo_webhook_result(
+            "acme",
+            "alpha",
+            "ok",
+            Some(4242),
+            Some(&now),
+            None,
+            None,
+            None,
+            Some("register"),
+            &now,
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .set_github_packages_repo_webhook_result(
+            "acme",
+            "beta",
+            "missing",
+            None,
+            None,
+            Some(&now),
+            Some("webhook absent"),
+            None,
+            Some("audit_all"),
+            &now,
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .set_github_packages_repo_webhook_result(
+            "acme",
+            "gamma",
+            "error",
+            None,
+            None,
+            None,
+            Some("timeout-key"),
+            None,
+            Some("register"),
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let filtered = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/repos?selectedFilter=selected&webhookState=missing&page=1&perPage=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(filtered.status(), 200);
+    let body = response_json(filtered).await;
+    assert_eq!(body["total"], 4);
+    assert_eq!(body["selectedTotal"], 3);
+    assert_eq!(body["filteredTotal"], 1);
+    assert_eq!(body["repos"].as_array().map(|rows| rows.len()), Some(1));
+    assert_eq!(body["repos"][0]["fullName"], "acme/beta");
+
+    for (query, full_name) in [
+        ("alpha", "acme/alpha"),
+        ("missing", "acme/beta"),
+        ("4242", "acme/alpha"),
+        ("timeout-key", "acme/gamma"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/api/github-packages/repos?selectedFilter=selected&q={query}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = response_json(response).await;
+        assert_eq!(body["filteredTotal"], 1, "unexpected query result for {query}");
+        assert_eq!(body["repos"][0]["fullName"], full_name, "unexpected query match for {query}");
+    }
+
+    let paged = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/repos?selectedFilter=selected&page=2&perPage=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(paged.status(), 200);
+    let body = response_json(paged).await;
+    assert_eq!(body["page"], 2);
+    assert_eq!(body["perPage"], 1);
+    assert_eq!(body["filteredTotal"], 3);
+    assert_eq!(body["repos"][0]["fullName"], "acme/beta");
+
+    let unfiltered = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/repos?selectedFilter=selected&webhookState=all")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unfiltered.status(), 200);
+    assert_eq!(response_json(unfiltered).await["filteredTotal"], 3);
+
+    let omitted = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/repos?selectedFilter=selected")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(omitted.status(), 200);
+    assert_eq!(response_json(omitted).await["filteredTotal"], 3);
+
+    let capped = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/repos?selectedFilter=selected&perPage=999")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(capped.status(), 200);
+    assert_eq!(response_json(capped).await["perPage"], 200);
+
+    let invalid = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/repos?webhookState=invalid")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid.status(), 400);
+    assert_eq!(response_json(invalid).await["error"]["code"], "invalid_argument");
+}

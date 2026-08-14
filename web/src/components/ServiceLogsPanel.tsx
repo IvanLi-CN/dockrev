@@ -314,6 +314,7 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
                         className="serviceLogRow"
                         data-following={follow ? 'true' : 'false'}
                         data-format={record.meta?.format ?? 'unknown'}
+                        data-index={item.index}
                         data-inline-level={record.inlineLevel ? 'true' : 'false'}
                         data-level={record.level}
                         data-multiline={record.multiline ? 'true' : 'false'}

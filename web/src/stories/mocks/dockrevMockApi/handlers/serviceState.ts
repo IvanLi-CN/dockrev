@@ -25,7 +25,6 @@ import {
   parseResourceWindow,
   toNotificationsResponse,
 } from '../shared'
-
 export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<Response | null> {
   const {
     digestSnapshotPendingAttempts,
@@ -125,6 +124,7 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
   if (method === 'GET' && urlPath === '/api/jobs') {
     const debug = globalThis.__DOCKREV_MOCK_DEBUG__ ?? (globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug())
     debug.jobsListCalls += 1
+    debug.jobsListUrls.push(urlPathWithQuery)
     const limit = Math.min(200, Math.max(1, Number(url?.searchParams.get('limit') ?? '100') || 100))
     const types = new Set((url?.searchParams.get('type') ?? '').split(',').filter(Boolean))
     const [status, serviceId, stackId] = ['status', 'serviceId', 'stackId'].map((name) => url?.searchParams.get(name) ?? null)
