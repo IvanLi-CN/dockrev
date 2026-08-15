@@ -403,10 +403,13 @@ export function useServiceDetailPageState(props: {
   )
 
   useEffect(() => {
-    for (const target of submittingTokensRef.current.values()) {
-      endSubmitting(target)
+    const clearSubmittingTokens = () => {
+      for (const target of submittingTokensRef.current.values()) {
+        endSubmitting(target)
+      }
+      submittingTokensRef.current.clear()
     }
-    submittingTokensRef.current.clear()
+    clearSubmittingTokens()
     pageGenerationRef.current += 1; lifecycleActiveJobIdRef.current = null
     lifecycleStatusRequestIdRef.current += 1
     setLifecycleSettledJobId(null)
@@ -415,6 +418,8 @@ export function useServiceDetailPageState(props: {
     setStack(null); setService(null); setSettings(null); setBackupTargets(null); setBackupRecords([]); setStackSettings(null); setRules([]); setLifecycleStatus(null); setLastSuccessfulRefreshAt(null)
     setRollbackTarget(null); setRollbackActiveTarget(null); setRollbackTargetRefreshing(false)
     setError(null); setNotice(null); setBusy(false); setRepoInferBusy(false)
+
+    return clearSubmittingTokens
   }, [endSubmitting, serviceId, stackId])
 
   useEffect(() => {
