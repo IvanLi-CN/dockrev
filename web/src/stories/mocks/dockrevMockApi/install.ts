@@ -950,17 +950,18 @@ export function installDockrevMockApi(
 
       jobSeqRef.value += 1
       const jobId = `job-ui-${jobSeqRef.value}`
+      const startsQueued = scenario === 'dashboard-demo-slow-update'
       const job: JobListItem = {
         id: jobId,
         type: 'update',
         scope,
         stackId: stackId ?? undefined,
         serviceId: serviceId ?? undefined,
-        status: 'running',
+        status: startsQueued ? 'queued' : 'running',
         createdBy: 'ivan',
         reason: 'ui',
         createdAt: nowIso(-2_000),
-        startedAt: nowIso(-1_000),
+        startedAt: startsQueued ? null : nowIso(-1_000),
         finishedAt: null,
         allowArchMismatch: Boolean(parsed.allowArchMismatch),
         backupMode: typeof parsed.backupMode === 'string' ? parsed.backupMode : 'inherit',
@@ -974,6 +975,20 @@ export function installDockrevMockApi(
           { ts: nowIso(-300), level: 'info', msg: mode === 'apply' ? 'Apply started...' : 'Dry run started...' },
         ],
         logsLastId: 2,
+      }
+      if (startsQueued) {
+        window.setTimeout(() => {
+          const current = f.jobById[jobId]
+          if (!current || current.status !== 'queued') return
+          const startedAt = nowIso()
+          f.jobById[jobId] = { ...current, status: 'running', startedAt }
+          f.jobs = f.jobs.map((row) => (row.id === jobId ? { ...row, status: 'running', startedAt } : row))
+          publishMockManagementEvent(
+            [{ entityType: 'job', id: jobId }],
+            { jobId, status: 'running', jobType: 'update', scope, stackId, serviceId },
+          )
+          persistState()
+        }, 350)
       }
       const updateFinishDelayMs = scenario === 'dashboard-demo-slow-update' ? 4_500 : 1_400; const settleDelayMs = scenario === 'dashboard-demo-slow-update' ? 280 : 220
       const settleServices = () => {
