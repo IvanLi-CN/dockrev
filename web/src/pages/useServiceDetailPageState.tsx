@@ -20,9 +20,11 @@ import { UPDATE_JOB_SETTLED_EVENT, resolveUpdateActionTargetKey, useUpdateAction
 import { blockedReasonFor, isSemverDowngradeAnomaly, serviceRowStatus } from '../updateStatus'
 import { buildUpdateServiceTarget } from '../updateTargets'
 import { useManagementEventBatch } from '../managementEvents'
+import { usePageResumeRefresh } from '../usePageResumeRefresh'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay, inferResolvedTagsFromSnapshot, isStrictSemverTag } from '../versionDisplay'
 import type { ManagementEvent } from '../managementEvents'
+import { retryRollbackTargetDigestMismatch } from './rollbackTargetRefresh'
 
 function conflictingJobId(error: ApiError): string | null {
   const details = error.details
@@ -160,6 +162,7 @@ export function useServiceDetailPageState(props: {
   const latestAppliedFullRefreshRequestIdRef = useRef(0)
   const stackRefreshRequestIdRef = useRef(0)
   const latestAppliedStackRefreshRequestIdRef = useRef(0)
+  const stackRefreshInFlightRef = useRef<Promise<void> | null>(null)
 
   const [newRuleKind, setNewRuleKind] = useState<'exact' | 'prefix' | 'regex' | 'semver'>('regex')
   const [newRuleValue, setNewRuleValue] = useState('.*')
@@ -181,7 +184,7 @@ export function useServiceDetailPageState(props: {
   )
 
   const applyRollbackTargetSnapshot = useCallback((requestId: number, svc: Service | null, target: ServiceRollbackTargetResponse | null, source: string): 'applied' | 'outdated' | 'digest_mismatch' => {
-    if (requestId < latestAppliedStackRefreshRequestIdRef.current) {
+    if (requestId !== stackRefreshRequestIdRef.current || requestId < latestAppliedStackRefreshRequestIdRef.current) {
       warnRollbackTargetDiscard('outdated_request', requestId, svc, target, source)
       return 'outdated'
     }
@@ -196,13 +199,32 @@ export function useServiceDetailPageState(props: {
   }, [warnRollbackTargetDiscard])
 
   const settleRollbackTargetSnapshot = useCallback(async (requestId: number, svc: Service, target: ServiceRollbackTargetResponse | null) => {
-    const result = applyRollbackTargetSnapshot(requestId, svc, target, 'snapshot')
-    if (result === 'digest_mismatch') {
+    const result = await retryRollbackTargetDigestMismatch({
+      initialTarget: target,
+      requestId,
+      currentRequestId: () => stackRefreshRequestIdRef.current,
+      validate: (nextTarget) => {
+        const snapshotResult = applyRollbackTargetSnapshot(requestId, svc, nextTarget, 'snapshot')
+        return snapshotResult === 'digest_mismatch' ? 'digest_mismatch' : snapshotResult === 'outdated' ? 'outdated' : 'matched'
+      },
+      fetchTarget: () => getServiceRollbackTarget(serviceId),
+      sleep: (delayMs) => new Promise<void>((resolve) => window.setTimeout(resolve, delayMs)),
+    })
+    if (result.kind === 'outdated' || result.kind === 'matched') return result.kind === 'outdated' ? 'outdated' : 'applied'
+    if (result.kind === 'exhausted') {
+      setRollbackTarget(null)
+      setRollbackActiveTarget(null)
       setRollbackTargetRefreshing(false)
       setError('回滚信息刷新失败，请稍后重试')
+      return 'digest_mismatch'
     }
-    return result
-  }, [applyRollbackTargetSnapshot])
+    if (requestId === stackRefreshRequestIdRef.current && requestId >= latestAppliedStackRefreshRequestIdRef.current) {
+      setRollbackTarget(null)
+      setRollbackActiveTarget(null)
+      setRollbackTargetRefreshing(false)
+    }
+    throw result.error
+  }, [applyRollbackTargetSnapshot, serviceId])
 
   const primeRollbackTargetRefresh = useCallback((svc: Service | null) => {
     if (!svc || isDockrevService(svc)) {
@@ -288,25 +310,36 @@ export function useServiceDetailPageState(props: {
   }, [onLastScanHint, primeRollbackTargetRefresh, serviceId, settleRollbackTargetSnapshot, stackId])
 
   const refreshStackOnly = useCallback(async () => {
-    const requestId = ++stackRefreshRequestIdRef.current; let rollbackSnapshotMayBeStale = false
-    try {
-      const st = await getStack(stackId)
-      if (requestId < latestAppliedStackRefreshRequestIdRef.current) return
-      latestAppliedStackRefreshRequestIdRef.current = requestId
-      const svc = st.services.find((s) => s.id === serviceId) ?? null
-      setStack(st)
-      setService(svc)
-      primeRollbackTargetRefresh(svc)
-      if (!svc || isDockrevService(svc)) return
-      rollbackSnapshotMayBeStale = true
-      const target = await getServiceRollbackTarget(serviceId)
-      await settleRollbackTargetSnapshot(requestId, svc, target)
-    } catch (error: unknown) {
-      if (requestId < latestAppliedStackRefreshRequestIdRef.current) return
-      if (rollbackSnapshotMayBeStale) { setRollbackTarget(null); setRollbackActiveTarget(null) }
-      setRollbackTargetRefreshing(false)
-      throw error
+    const existing = stackRefreshInFlightRef.current
+    if (existing) return existing
+
+    const request = (async () => {
+      const requestId = ++stackRefreshRequestIdRef.current; let rollbackSnapshotMayBeStale = false
+      try {
+        const st = await getStack(stackId)
+        if (requestId < latestAppliedStackRefreshRequestIdRef.current) return
+        latestAppliedStackRefreshRequestIdRef.current = requestId
+        const svc = st.services.find((s) => s.id === serviceId) ?? null
+        setStack(st)
+        setService(svc)
+        primeRollbackTargetRefresh(svc)
+        if (!svc || isDockrevService(svc)) return
+        rollbackSnapshotMayBeStale = true
+        const target = await getServiceRollbackTarget(serviceId)
+        await settleRollbackTargetSnapshot(requestId, svc, target)
+      } catch (error: unknown) {
+        if (requestId < latestAppliedStackRefreshRequestIdRef.current) return
+        if (rollbackSnapshotMayBeStale) { setRollbackTarget(null); setRollbackActiveTarget(null) }
+        setRollbackTargetRefreshing(false)
+        throw error
+      }
+    })()
+    stackRefreshInFlightRef.current = request
+    const clearInFlight = () => {
+      if (stackRefreshInFlightRef.current === request) stackRefreshInFlightRef.current = null
     }
+    void request.then(clearInFlight, clearInFlight)
+    return request
   }, [primeRollbackTargetRefresh, serviceId, settleRollbackTargetSnapshot, stackId])
 
   const patchServiceInStack = useCallback(
@@ -331,7 +364,9 @@ export function useServiceDetailPageState(props: {
     [serviceId],
   )
 
-  const requestRefresh = refresh
+  const requestRefresh = usePageResumeRefresh(refresh, {
+    onError: (error: unknown) => setError(errorMessage(error)),
+  })
 
   const refreshLifecycleStatus = useCallback(async () => {
     if (!service || isDockrevService(service)) {
