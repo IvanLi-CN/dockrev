@@ -11304,6 +11304,174 @@ html[data-theme="light"] .brandLogoThemeSwitch {
   );
 }
 
+.sidebarThemeControl {
+  display: flex;
+  justify-content: center;
+  margin-top: 12px;
+}
+
+.appShell:not(.appShellSidebarCollapsed) .sidebarThemeControl {
+  justify-content: stretch;
+}
+
+.themePreferenceIconButton {
+  position: relative;
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    color 160ms ease,
+    transform 160ms ease;
+}
+
+.themePreferenceIconButton::before {
+  position: absolute;
+  inset: 5px;
+  z-index: 0;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 76%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dockrev-surface) 88%, transparent);
+  content: "";
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease;
+}
+
+.themePreferenceIconButton > span,
+.themePreferenceIconButton .themePreferenceGlyph {
+  position: relative;
+  z-index: 1;
+}
+
+.themePreferenceGlyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.themePreferenceGlyphFeedback {
+  display: inline-flex;
+  animation: theme-preference-glyph-in 420ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes theme-preference-glyph-in {
+  from {
+    opacity: 0.28;
+    transform: rotate(-24deg) scale(0.72);
+  }
+
+  to {
+    opacity: 1;
+    transform: rotate(0) scale(1);
+  }
+}
+
+::view-transition-group(root) {
+  animation: none;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+::view-transition-old(root) {
+  z-index: 1;
+}
+
+::view-transition-new(root) {
+  z-index: 2;
+}
+
+.themePreferenceIconButton:hover {
+  color: var(--color-primary);
+}
+
+.themePreferenceIconButton:hover::before {
+  border-color: color-mix(in srgb, var(--color-primary) 42%, var(--borderColor) 58%);
+  background: color-mix(in srgb, var(--dockrev-surface-strong) 88%, transparent);
+}
+
+.themePreferenceIconButton:active {
+  transform: translateY(1px);
+}
+
+.themePreferenceSegmented {
+  --theme-preference-index: 0;
+  position: relative;
+  display: grid;
+  width: 100%;
+  min-width: 132px;
+  height: 42px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 76%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--dockrev-surface) 88%, transparent);
+  overflow: hidden;
+}
+
+.themePreferenceSliderThumb {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  z-index: 0;
+  width: calc((100% - 6px) / 3);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 46%, var(--borderColor) 54%);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--color-primary) 16%, var(--panel2) 84%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, white 8%, transparent);
+  transform: translateX(calc(var(--theme-preference-index) * 100%));
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.themePreferenceSegment {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  min-width: 44px;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.themePreferenceSegment:hover,
+.themePreferenceSegment[aria-checked='true'] {
+  color: var(--color-primary);
+}
+
+.themePreferenceMenu {
+  min-width: 146px;
+  padding: 6px;
+  border-color: color-mix(in srgb, var(--color-primary) 22%, var(--borderColor) 78%);
+  background: color-mix(in srgb, var(--panel2) 96%, var(--color-primary) 4%);
+}
+
+.themePreferenceMenuItem {
+  min-height: 40px;
+  border-radius: 8px;
+  color: var(--text);
+}
+
+.themePreferenceMenuItem[data-state='checked'] {
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  color: var(--color-primary);
+}
+
 .sidebarMetaIcon {
   border: 1px solid transparent;
   transition:
@@ -11396,6 +11564,10 @@ html[data-theme="light"] .brandLogoThemeSwitch {
   height: 36px;
   border-color: color-mix(in srgb, var(--borderColor) 56%, transparent);
   background: color-mix(in srgb, var(--dockrev-surface) 80%, transparent);
+}
+
+.appShellSidebarCollapsed .sidebarThemeControl {
+  margin-top: 10px;
 }
 
 .content {
@@ -11633,6 +11805,8 @@ html[data-theme="light"] .btnPrimary {
 .chip:focus-visible,
 .navItem:focus-visible,
 .sidebarCollapseButton:focus-visible,
+.themePreferenceIconButton:focus-visible,
+.themePreferenceSegment:focus-visible,
 .mobileMenuButton:focus-visible,
 .mobileMenuDrawerClose:focus-visible,
 .mobileNavItem:focus-visible,
@@ -12057,6 +12231,15 @@ html[data-theme="light"] .btnPrimary {
   border-radius: 13px;
   border: 1px solid var(--borderColor);
   background: color-mix(in srgb, var(--dockrev-surface) 80%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .themePreferenceIconButton,
+  .themePreferenceSliderThumb,
+  .themePreferenceGlyphFeedback {
+    animation: none;
+    transition: none;
+  }
 }
 
 .deployChecklistList > li:hover,

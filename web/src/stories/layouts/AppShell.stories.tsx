@@ -236,6 +236,10 @@ export const CollapsedSidebar: Story = {
       !canvasElement.querySelector('.topbarUserSlotTopbar'),
       'Desktop AppShell should not mount the mobile identity trigger',
     )
+    expectStory(
+      Boolean(canvasElement.querySelector('.sidebarMeta .themePreferenceIconButton')),
+      'Collapsed sidebar should expose the compact theme icon control',
+    )
   },
 }
 export const SidebarToggleInteraction: Story = {
@@ -287,6 +291,10 @@ export const MobileBottomNavAndDrawer: Story = {
       'Mobile header should move the user identity entry into settings',
     )
     expectStory(
+      !canvasElement.querySelector('.topbarRight .themePreferenceIconButton'),
+      'Mobile business pages should not mount the theme control outside settings',
+    )
+    expectStory(
       !canvasElement.querySelector('.topbarUserSlotSidebar'),
       'Mobile AppShell should not mount the desktop sidebar identity trigger',
     )
@@ -313,4 +321,26 @@ export const OverviewWithSidebarIdentityPopover: Story = {
 }
 export const Queue: Story = { render: render({ name: 'queue' }) }
 export const Services: Story = { render: render({ name: 'services' }) }
-export const Settings: Story = { render: render({ name: 'settings' }) }
+export const Settings: Story = {
+  render: render({ name: 'settings' }),
+  play: async ({ canvasElement }) => {
+    expectStory(
+      Boolean(canvasElement.querySelector('.sidebarThemeControl .themePreferenceSegmented')),
+      'Expanded desktop sidebar should expose the three-state theme slider',
+    )
+  },
+}
+export const SettingsMobileThemeControl: Story = {
+  render: render({ name: 'settings' }),
+  parameters: { viewport: { defaultViewport: 'mobile1' } },
+  play: async ({ canvasElement }) => {
+    expectStory(
+      Boolean(canvasElement.querySelector('.topbarRight .themePreferenceIconButton')),
+      'Mobile settings should expose the theme icon in the topbar',
+    )
+    expectStory(
+      !canvasElement.querySelector('.sidebarThemeControl'),
+      'Mobile settings should not mount the desktop sidebar theme control',
+    )
+  },
+}

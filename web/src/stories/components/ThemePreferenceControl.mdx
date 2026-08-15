@@ -1,0 +1,12 @@
+import { Canvas, Meta } from '@storybook/addon-docs/blocks'
+import * as ThemePreferenceControlStories from './ThemePreferenceControl.stories'
+
+<Meta of={ThemePreferenceControlStories} />
+
+# Theme Preference Control
+
+Dockrev keeps one shared three-state preference model across the responsive shell. The compact control cycles through the system-derived opposite theme first; its context menu provides direct radio selection. The expanded desktop sidebar uses the same three choices as an icon-only slider.
+
+<Canvas of={ThemePreferenceControlStories.IconButton} />
+
+<Canvas of={ThemePreferenceControlStories.ExpandedSlider} />
