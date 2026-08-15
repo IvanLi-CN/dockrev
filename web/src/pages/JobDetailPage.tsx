@@ -111,10 +111,6 @@ function writeShowEventsPreference(value: boolean): void {
   }
 }
 
-function isCommandSummary(msg: string): boolean {
-  return /^status=\S+\s+stdout=/.test(msg.trim())
-}
-
 type TerminalSegment = {
   text: string
   fg?: string
@@ -215,9 +211,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
   const [logIsAtBottom, setLogIsAtBottom] = useState(true)
   const [showEvents, setShowEvents] = useState(readShowEventsPreference)
   const [manualRefreshVersion, setManualRefreshVersion] = useState(0)
-  const liveCommandOutputRef = useRef(false)
   const liveCommandOutputSeqsRef = useRef(new Set<number>())
-  const pendingSummarySuppressionsRef = useRef(0)
   const visibleLogs = useMemo(
     () => logs.filter((log) => showEvents || log.level.trim().toLowerCase() !== 'event'),
     [logs, showEvents],
@@ -229,9 +223,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
     setJob(j)
     setLogs(j.logs)
     setProgress(normalizeProgress(j.progress))
-    liveCommandOutputRef.current = false
     liveCommandOutputSeqsRef.current.clear()
-    pendingSummarySuppressionsRef.current = 0
     return j
   }, [jobId])
 
@@ -310,10 +302,6 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
             const level = typeof p.level === 'string' ? p.level : ''
             const msg = typeof p.msg === 'string' ? p.msg : ''
             const durableId = typeof p.id === 'number' || typeof p.id === 'string' ? String(p.id) : ''
-            if (isCommandSummary(msg) && pendingSummarySuppressionsRef.current > 0) {
-              pendingSummarySuppressionsRef.current -= 1
-              return
-            }
             setLogs((prev) => {
               if (
                 (durableId && prev.some((log) => log.durableId === durableId)) ||
@@ -346,7 +334,6 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
             if (p.type !== 'job_live_log') return
             const ts = typeof p.ts === 'string' ? p.ts : new Date().toISOString()
             const msg = typeof p.msg === 'string' ? p.msg : ''
-            liveCommandOutputRef.current = true
             setLogs((prev) => {
               const next = [...prev, { ts, level: '', msg, transient: true }]
               return next.length > 500 ? next.slice(-500) : next
@@ -368,7 +355,6 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
             if (commandSeq === null) return
             const ts = typeof p.ts === 'string' ? p.ts : new Date().toISOString()
             const terminalLines = parseTerminalLines(p.lines)
-            liveCommandOutputRef.current = true
             liveCommandOutputSeqsRef.current.add(commandSeq)
             setLogs((prev) => {
               const retained = prev.filter((log) => log.terminalCommandSeq !== commandSeq || log.terminalFrozen)
@@ -397,15 +383,6 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
             const p = parsed as Record<string, unknown>
             if (p.type !== 'job_live_command_complete') return
             const commandSeq = typeof p.commandSeq === 'number' && Number.isSafeInteger(p.commandSeq) ? p.commandSeq : null
-            const hadOutput = p.hadOutput === true
-            const summaryPersisted = p.summaryPersisted !== false
-            if (
-              summaryPersisted &&
-              hadOutput &&
-              (liveCommandOutputRef.current || (commandSeq !== null && liveCommandOutputSeqsRef.current.has(commandSeq)))
-            ) {
-              pendingSummarySuppressionsRef.current += 1
-            }
             if (commandSeq !== null) {
               setLogs((prev) =>
                 prev.map((log) =>
@@ -413,7 +390,6 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
                 ),
               )
             }
-            liveCommandOutputRef.current = false
             if (commandSeq !== null) liveCommandOutputSeqsRef.current.delete(commandSeq)
           } catch {
             // ignore invalid events

@@ -241,7 +241,6 @@ pub struct UpdateProgressEvent {
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 pub async fn pre_pull_update_images(
     runner: &dyn CommandRunner,
     compose_bin: &str,

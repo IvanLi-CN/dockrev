@@ -18,6 +18,7 @@ pub struct BackupRunResult {
     pub size_bytes: Option<u64>,
     pub summary_json: serde_json::Value,
     pub log_lines: Vec<String>,
+    pub services_kept_stopped: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -118,6 +119,7 @@ pub async fn run_pre_update_backup(
             size_bytes: None,
             summary_json: json!({ "status": "skipped", "reason": "no_targets" }),
             log_lines: vec!["backup: skipped (no targets)".to_string()],
+            services_kept_stopped: Vec::new(),
         });
     }
 
@@ -191,6 +193,7 @@ pub async fn run_pre_update_backup(
             size_bytes: None,
             summary_json: json!({ "status": "skipped", "reason": "no_included_targets", "targets": decisions }),
             log_lines: vec!["backup: skipped (no included targets)".to_string()],
+            services_kept_stopped: Vec::new(),
         });
     }
 
@@ -225,19 +228,7 @@ pub async fn run_pre_update_backup(
             )
             .await
         {
-            let restore_result = restart_related_services_after_backup(
-                runner,
-                &compose_stack,
-                &compose_cfg,
-                &services_to_restart,
-            )
-            .await;
-            return match restore_result {
-                Ok(()) => Err(error.context("persist backup recovery checkpoint")),
-                Err(restore_error) => Err(anyhow::anyhow!(
-                    "persist backup recovery checkpoint failed ({error}); restoring services failed ({restore_error})"
-                )),
-            };
+            return Err(error.context("persist backup recovery checkpoint"));
         }
     }
     if let Err(error) =
@@ -270,6 +261,11 @@ pub async fn run_pre_update_backup(
         progress_tx,
     )
     .await;
+    let services_kept_stopped = services_to_restart
+        .iter()
+        .filter(|service| keep_stopped_services.contains(service))
+        .cloned()
+        .collect::<Vec<_>>();
     match backup_result {
         Ok(()) => {
             let services_to_resume = services_to_restart
@@ -302,8 +298,31 @@ pub async fn run_pre_update_backup(
         }
     }
 
-    let size_bytes =
-        artifact_size_bytes(runner, &storage, helper_image_fallback, &artifact_key).await?;
+    let size_bytes = match artifact_size_bytes(
+        runner,
+        &storage,
+        helper_image_fallback,
+        &artifact_key,
+    )
+    .await
+    {
+        Ok(size) => size,
+        Err(error) => {
+            if let Err(restore_error) = restart_related_services_after_backup(
+                runner,
+                &compose_stack,
+                &compose_cfg,
+                &services_kept_stopped,
+            )
+            .await
+            {
+                return Err(anyhow::anyhow!(
+                    "reading backup artifact size failed ({error}); restoring services failed ({restore_error})"
+                ));
+            }
+            return Err(error.context("read backup artifact size"));
+        }
+    };
 
     let mut log_lines = Vec::new();
     log_lines.push(format!(
@@ -327,6 +346,7 @@ pub async fn run_pre_update_backup(
             "targets": decisions,
         }),
         log_lines,
+        services_kept_stopped,
     })
 }
 

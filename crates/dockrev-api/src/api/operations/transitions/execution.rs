@@ -210,6 +210,8 @@ pub(crate) async fn run_update_job(
                 );
             let pull_branch_percent = Arc::new(AtomicU32::new(0));
             let backup_branch_percent = Arc::new(AtomicU32::new(0));
+            let mut services_kept_stopped_for_apply = Vec::<String>::new();
+            let mut prepare_error: Option<anyhow::Error> = None;
 
             if backup_requested && backup_requires_stop {
                 let (pull_progress_tx, mut pull_progress_rx) =
@@ -496,7 +498,10 @@ pub(crate) async fn run_update_job(
                     let _ = pull_progress_task.await;
                     match pull_result {
                         Ok(()) => backup_result,
-                        Err(error) => Err(anyhow::anyhow!("image prepare failed: {error}")),
+                        Err(error) => {
+                            prepare_error = Some(anyhow::anyhow!("image prepare failed: {error}"));
+                            backup_result
+                        }
                     }
                 };
                 let _ = backup_progress_task.await;
@@ -529,6 +534,7 @@ pub(crate) async fn run_update_job(
                             .await;
 
                         stack_summary.insert("backup".to_string(), res.summary_json);
+                        services_kept_stopped_for_apply = res.services_kept_stopped;
 
                         if res.status == "success" {
                             backup_id_for_cleanup = Some((
@@ -585,6 +591,16 @@ pub(crate) async fn run_update_job(
                         }
                     }
                 }
+                if let Some(error) = prepare_error.take() {
+                    final_status = "failed".to_string();
+                    stack_summary.insert(
+                        job_kind.summary_key().to_string(),
+                        json!({"error": error.to_string(), "failureStep": "pull_services"}),
+                    );
+                    stack_summaries.push(serde_json::Value::Object(stack_summary));
+                    processed_stacks = processed_stacks.saturating_add(1);
+                    break;
+                }
             } else {
                 stack_summary.insert(
                     "backup".to_string(),
@@ -604,6 +620,11 @@ pub(crate) async fn run_update_job(
                 0.75
             } else {
                 UPDATE_STACK_BASE_PROGRESS
+            };
+            let apply_span = if backup_requested {
+                0.20
+            } else {
+                UPDATE_STACK_APPLY_SPAN
             };
             latest_progress = make_job_progress_with_percent(
                 "apply",
@@ -626,6 +647,7 @@ pub(crate) async fn run_update_job(
             let processed_stacks_for_progress = processed_stacks;
             let total_stacks_for_progress = total_stacks;
             let apply_base_progress_for_task = apply_base_progress;
+            let apply_span_for_task = apply_span;
             let progress_semantics = if job_kind == TransitionJobKind::Update {
                 UpdateProgressSemantics::VerifiedOnlyBatch
             } else {
@@ -649,6 +671,8 @@ pub(crate) async fn run_update_job(
                         processed_stacks_for_progress,
                         total_stacks_for_progress,
                         last_percent,
+                        apply_base_progress_for_task,
+                        apply_span_for_task,
                     );
                     let next_percent = snapshot.percent;
                     let next_planned_percent = snapshot.planned_percent;
@@ -753,6 +777,24 @@ pub(crate) async fn run_update_job(
             let _ = progress_task.await;
             match update_outcome {
                 Ok(outcome) => {
+                    if outcome.status != "success"
+                        && !services_kept_stopped_for_apply.is_empty()
+                        && let Err(restore_error) = backup::restore_services_after_failed_apply(
+                            &*state.runner,
+                            &state.config.compose_bin,
+                            state.config.docker_config_path.as_deref(),
+                            &stack,
+                            &services_kept_stopped_for_apply,
+                        )
+                        .await
+                    {
+                        tracing::error!(
+                            job_id = %job_id,
+                            stack_id = %stack_id,
+                            error = %restore_error,
+                            "failed to restore services after unsuccessful update"
+                        );
+                    }
                     if outcome.status == "success"
                         && !planned_service_ids.is_empty()
                         && let Some(project) = state.db.get_stack_compose_project(stack_id).await?
@@ -893,18 +935,13 @@ pub(crate) async fn run_update_job(
                     }
                 }
                 Err(e) => {
-                    if backup_requires_stop {
-                        let services = planned_selection
-                            .services
-                            .iter()
-                            .map(|service| service.name.clone())
-                            .collect::<Vec<_>>();
+                    if !services_kept_stopped_for_apply.is_empty() {
                         if let Err(restore_error) = backup::restore_services_after_failed_apply(
                             &*state.runner,
                             &state.config.compose_bin,
                             state.config.docker_config_path.as_deref(),
                             &stack,
-                            &services,
+                            &services_kept_stopped_for_apply,
                         )
                         .await
                         {

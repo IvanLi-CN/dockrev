@@ -98,6 +98,24 @@ async fn run_inner(
         .stdout
         .take()
         .ok_or_else(|| anyhow::anyhow!("zstd stdout unavailable"))?;
+    let mut tar_stderr = tar
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("tar stderr unavailable"))?;
+    let mut zstd_stderr = zstd
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("zstd stderr unavailable"))?;
+    let tar_stderr_task = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        tar_stderr.read_to_end(&mut bytes).await?;
+        anyhow::Ok(bytes)
+    });
+    let zstd_stderr_task = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        zstd_stderr.read_to_end(&mut bytes).await?;
+        anyhow::Ok(bytes)
+    });
     let compressed_bytes = Arc::new(AtomicU64::new(0));
     let output_counter = compressed_bytes.clone();
     let output_path = output_part.clone();
@@ -121,42 +139,59 @@ async fn run_inner(
     let mut processed = 0_u64;
     let mut buffer = [0_u8; 128 * 1024];
     emit_progress("archive", 0, total_bytes, 0, started);
-    loop {
-        let read = tar_stdout.read(&mut buffer).await?;
-        if read == 0 {
-            break;
+    let pump_result = async {
+        loop {
+            let read = tar_stdout.read(&mut buffer).await?;
+            if read == 0 {
+                break;
+            }
+            zstd_stdin.write_all(&buffer[..read]).await?;
+            processed = processed.saturating_add(read as u64);
+            if last_emit.elapsed() >= Duration::from_millis(500) {
+                emit_progress(
+                    "archive",
+                    processed,
+                    total_bytes,
+                    compressed_bytes.load(Ordering::Relaxed),
+                    started,
+                );
+                last_emit = Instant::now();
+            }
         }
-        zstd_stdin.write_all(&buffer[..read]).await?;
-        processed = processed.saturating_add(read as u64);
-        if last_emit.elapsed() >= Duration::from_millis(500) {
-            emit_progress(
-                "archive",
-                processed,
-                total_bytes,
-                compressed_bytes.load(Ordering::Relaxed),
-                started,
-            );
-            last_emit = Instant::now();
-        }
+        zstd_stdin.shutdown().await?;
+        anyhow::Ok(())
     }
-    zstd_stdin.shutdown().await?;
+    .await;
     drop(zstd_stdin);
+    if let Err(error) = pump_result {
+        let _ = tar.kill().await;
+        let _ = zstd.kill().await;
+        output_task.abort();
+        tar_stderr_task.abort();
+        zstd_stderr_task.abort();
+        let _ = output_task.await;
+        let _ = tar_stderr_task.await;
+        let _ = zstd_stderr_task.await;
+        return Err(error.context("stream tar output into zstd"));
+    }
 
-    let tar_output = tar.wait_with_output().await?;
-    if !tar_output.status.success() {
+    let tar_status = tar.wait().await?;
+    let tar_stderr = tar_stderr_task.await??;
+    let zstd_status = zstd.wait().await?;
+    let zstd_stderr = zstd_stderr_task.await??;
+    output_task.await??;
+    if !tar_status.success() {
         return Err(anyhow::anyhow!(
             "tar failed: {}",
-            String::from_utf8_lossy(&tar_output.stderr)
+            String::from_utf8_lossy(&tar_stderr)
         ));
     }
-    let zstd_output = zstd.wait_with_output().await?;
-    if !zstd_output.status.success() {
+    if !zstd_status.success() {
         return Err(anyhow::anyhow!(
             "zstd failed: {}",
-            String::from_utf8_lossy(&zstd_output.stderr)
+            String::from_utf8_lossy(&zstd_stderr)
         ));
     }
-    output_task.await??;
     tokio::fs::rename(&output_part, &output_final).await?;
     emit_progress(
         "complete",

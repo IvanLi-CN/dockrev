@@ -23,9 +23,9 @@
 
 - 不把 `PUT /api/services/{id}/settings` 改造成隐式跨层级写 `stack.backup.targets` 或服务级 backup-target policy 的副作用接口。
 - 不新增 stack 级或全局级的完整备份目标管理器。
-- 不修改备份执行格式、压缩方式、cleanup 调度逻辑或默认保留策略。
+- 不提供任意备份路径、压缩级别、并发度、任务进度权重或默认保留策略配置。
 - 不新增备份记录删除、下载、重试等 mutation 能力。
-- 不从 Docker 运行时挂载扫描候选，本次只以 compose 声明为准。
+- 不把 Docker 运行时 mounts 当作服务备份目标候选；运行时 inspect 仅用于解析 Dockrev 自身备份产物存储。
 
 ## 范围（Scope）
 
@@ -37,18 +37,23 @@
 - `crates/dockrev-api/src/compose.rs`
 - `crates/dockrev-api/src/db/**`
 - `crates/dockrev-api/src/discovery.rs`
+- `crates/dockrev-api/src/backup.rs`
+- `crates/dockrev-api/src/backup_helper.rs`
+- `crates/dockrev-api/src/backup_storage.rs`
+- `crates/dockrev-api/src/updater.rs`
 - `web/src/api.ts`
 - `web/src/api/types.ts`
 - `web/src/pages/ServiceDetailPage.tsx`
 - `web/src/pages/useServiceDetailPageState.tsx`
+- `web/src/pages/JobDetailPage.tsx`
 - `web/src/App.css`
 - `web/src/stories/**`
 
 ### Out of scope
 
-- 备份执行器、压缩实现、清理 worker 或系统设置编辑界面
+- 备份下载、手动恢复、删除入口或线上遗留归档自动清理
 - 非 compose 来源的 backup target 发现
-- 自动部署策略抽屉、更新状态语义或 repoUrl 行为改造
+- 自动部署策略抽屉或 repoUrl 行为改造
 
 ## 需求（Requirements）
 

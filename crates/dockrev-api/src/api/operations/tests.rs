@@ -34,6 +34,8 @@ fn batch_update_progress_stays_verified_only_until_pull_has_evidence() {
         0,
         2,
         last_percent,
+        UPDATE_STACK_BASE_PROGRESS,
+        UPDATE_STACK_APPLY_SPAN,
     );
     assert_eq!(service_start.percent, last_percent);
     assert_eq!(service_start.planned_percent, Some(None));
@@ -44,6 +46,8 @@ fn batch_update_progress_stays_verified_only_until_pull_has_evidence() {
         0,
         2,
         last_percent,
+        UPDATE_STACK_BASE_PROGRESS,
+        UPDATE_STACK_APPLY_SPAN,
     );
     assert_eq!(pull_start.percent, last_percent);
     assert_eq!(pull_start.planned_percent, Some(None));
@@ -54,6 +58,8 @@ fn batch_update_progress_stays_verified_only_until_pull_has_evidence() {
         0,
         2,
         last_percent,
+        UPDATE_STACK_BASE_PROGRESS,
+        UPDATE_STACK_APPLY_SPAN,
     );
     assert!(pull_progress.percent > last_percent);
     assert_eq!(
@@ -72,6 +78,8 @@ fn batch_pull_progress_does_not_jump_with_later_service_indexes() {
         0,
         1,
         last_percent,
+        UPDATE_STACK_BASE_PROGRESS,
+        UPDATE_STACK_APPLY_SPAN,
     );
     let later_service_progress = update_progress_snapshot(
         &evt_with_index(updater::UpdateProgressStep::PullProgress, Some(0.5), 2, 3),
@@ -79,6 +87,8 @@ fn batch_pull_progress_does_not_jump_with_later_service_indexes() {
         0,
         1,
         last_percent,
+        UPDATE_STACK_BASE_PROGRESS,
+        UPDATE_STACK_APPLY_SPAN,
     );
 
     assert_eq!(
@@ -89,6 +99,21 @@ fn batch_pull_progress_does_not_jump_with_later_service_indexes() {
         first_service_progress.planned_percent,
         later_service_progress.planned_percent
     );
+}
+
+#[test]
+fn backup_apply_progress_stays_within_weighted_apply_span() {
+    let base = update_progress_percent(0, 1, 0.75);
+    let done = update_progress_snapshot(
+        &evt_with_index(updater::UpdateProgressStep::ServiceDone, None, 1, 2),
+        UpdateProgressSemantics::VerifiedOnlyBatch,
+        0,
+        1,
+        base,
+        0.75,
+        0.20,
+    );
+    assert_eq!(done.percent, 95);
 }
 
 #[test]

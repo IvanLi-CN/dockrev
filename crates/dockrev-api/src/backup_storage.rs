@@ -125,7 +125,12 @@ pub fn logical_backup_root(db_path: &Path) -> anyhow::Result<PathBuf> {
     let parent = db_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("DOCKREV_DB_PATH has no parent directory"))?;
-    Ok(normalize_path(&parent.join("backups")))
+    let root = normalize_path(&parent.join("backups"));
+    if root.is_absolute() {
+        Ok(root)
+    } else {
+        Ok(normalize_path(&std::env::current_dir()?.join(root)))
+    }
 }
 
 pub async fn resolve_backup_storage(
@@ -325,7 +330,17 @@ fn normalize_path(path: &Path) -> PathBuf {
         match component {
             Component::CurDir => {}
             Component::ParentDir => {
-                result.pop();
+                let ends_with_parent = result
+                    .components()
+                    .next_back()
+                    .is_some_and(|last| last == Component::ParentDir);
+                if path.is_absolute() {
+                    result.pop();
+                } else if result.as_os_str().is_empty() || ends_with_parent {
+                    result.push(Component::ParentDir.as_os_str());
+                } else {
+                    result.pop();
+                }
             }
             other => result.push(other.as_os_str()),
         }
@@ -390,5 +405,21 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("ambiguous writable mounts"));
+    }
+
+    #[test]
+    fn preserves_relative_parent_components() {
+        assert_eq!(
+            normalize_path(Path::new("../state/backups")),
+            PathBuf::from("../state/backups")
+        );
+        assert_eq!(
+            normalize_path(Path::new("../../state")),
+            PathBuf::from("../../state")
+        );
+        assert_eq!(
+            normalize_path(Path::new("state/../backups")),
+            PathBuf::from("backups")
+        );
     }
 }

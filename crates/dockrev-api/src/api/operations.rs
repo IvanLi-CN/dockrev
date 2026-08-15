@@ -197,13 +197,15 @@ pub(super) fn update_progress_snapshot(
     processed_stacks: u32,
     total_stacks: u32,
     last_percent: u32,
+    stack_base_progress: f64,
+    stack_apply_span: f64,
 ) -> UpdateProgressSnapshot {
     use updater::UpdateProgressStep as S;
 
     let legacy_percent = update_progress_percent(
         processed_stacks,
         total_stacks,
-        UPDATE_STACK_BASE_PROGRESS + UPDATE_STACK_APPLY_SPAN * update_apply_fraction(evt),
+        stack_base_progress + stack_apply_span * update_apply_fraction(evt),
     )
     .max(last_percent);
 
@@ -226,15 +228,14 @@ pub(super) fn update_progress_snapshot(
             update_progress_percent(
                 processed_stacks,
                 total_stacks,
-                UPDATE_STACK_BASE_PROGRESS
-                    + UPDATE_STACK_APPLY_SPAN * (0.08 + 0.42 * pull_fraction),
+                stack_base_progress + stack_apply_span * (0.08 + 0.42 * pull_fraction),
             )
             .max(last_percent)
         }
         _ => update_progress_percent(
             processed_stacks,
             total_stacks,
-            UPDATE_STACK_BASE_PROGRESS + UPDATE_STACK_APPLY_SPAN * update_apply_fraction(evt),
+            stack_base_progress + stack_apply_span * update_apply_fraction(evt),
         )
         .max(last_percent),
     };
