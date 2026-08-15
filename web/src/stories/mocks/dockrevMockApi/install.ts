@@ -567,7 +567,6 @@ export function installDockrevMockApi(
         total: rows.length,
       } satisfies VersionInferenceOverviewMock)
     }
-
     if (urlPath === '/api/version-inference/events' && method === 'GET') {
       const params = url?.searchParams ?? new URLSearchParams()
       const afterId = Number(params.get('afterId') ?? '0') || 0
@@ -1016,6 +1015,7 @@ export function installDockrevMockApi(
           const target = targetsByService.get(affectedId)
           if (target) applyMockUpdateSettlement(affectedId, target.targetTag, target.targetDigest, target.pullTags)
         }
+        persistState()
       }
       const finishUpdateJob = () => {
         const current = f.jobById[jobId]
