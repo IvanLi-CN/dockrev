@@ -568,10 +568,9 @@ export const VersionsSectionActionGuard: ServiceDetailStory = {
     expectStory(submittingCandidateAction?.disabled, "candidate update action should stay disabled while the job is being submitted");
     expectStory(submittingCandidateAction?.getAttribute("aria-busy") === "true", "submitting candidate action should expose its loading state");
 
-    await waitForCondition(() => {
-      const text = normalizeText(canvasElement.querySelector('[data-service-detail-context="status-summary"]')?.textContent);
-      return text.includes("更新排队中") || text.includes("更新中");
-    });
+    await waitForCondition(() => normalizeText(
+      canvasElement.querySelector('[data-service-detail-context="status-summary"]')?.textContent,
+    ).includes("更新中"), 6000);
     await waitForCondition(() => Boolean(globalThis.__DOCKREV_MOCK_DEBUG__?.lastUpdateRequest));
 
     const lastRequest = globalThis.__DOCKREV_MOCK_DEBUG__?.lastUpdateRequest as
@@ -588,8 +587,6 @@ export const VersionsSectionActionGuard: ServiceDetailStory = {
     const activeCandidateAction = findVersionAction(canvasElement, "update", "5.2.3");
     const topUpdateAction = findButtons(doc, "更新中…").find(
       (button) => !button.closest('[data-service-version-action="update"]'),
-    ) ?? findButtons(doc, "更新排队中…").find(
-      (button) => !button.closest('[data-service-version-action="update"]'),
     );
 
     expectStory(statusRail?.classList.contains("svcBannerInfo"), "active update should switch the shared status rail to the info theme");
@@ -597,14 +594,14 @@ export const VersionsSectionActionGuard: ServiceDetailStory = {
     expectStory(statusRail?.getAttribute("role") === "status", "active status rail should expose a polite status region");
     expectStory(!statusRail?.querySelector("button, a, [tabindex]"), "shared status rail must remain non-interactive");
     expectStory(
-      ["排队中", "更新中"].includes(normalizeText(candidateIndex?.querySelector(".serviceVersionsIndexFlag")?.textContent)),
-      "candidate index chip should mirror the active update phase",
+      normalizeText(candidateIndex?.querySelector(".serviceVersionsIndexFlag")?.textContent) === "更新中",
+      "candidate index chip should advance to the running update phase",
     );
     expectStory(activeCandidateAction?.getAttribute("aria-busy") === "true", "candidate update action should render its loading state");
     expectStory(!activeCandidateAction?.disabled, "candidate update action should stay clickable once the job exists");
     expectStory(
-      ["排队中…", "更新中…"].includes(normalizeText(activeCandidateAction?.textContent)),
-      "candidate update action should mirror the active update phase",
+      normalizeText(activeCandidateAction?.textContent) === "更新中…",
+      "candidate update action should advance to the running update phase",
     );
     expectStory(Boolean(findVersionAction(canvasElement, "rollback", "5.2.0")?.disabled), "rollback actions should also lock while the service has an update task in flight");
     expectStory(Boolean(topUpdateAction && !topUpdateAction.disabled), "top update action should remain a clickable task entrypoint");

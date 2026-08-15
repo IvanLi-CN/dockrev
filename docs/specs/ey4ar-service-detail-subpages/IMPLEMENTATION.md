@@ -34,6 +34,7 @@
 - 已更新 `PageHarness`、服务树 section 标签与服务详情 Storybook stories，补齐旧链接默认概览、tabs route 切换、更新记录深链/混合列表/空态/click-Enter-Space 跳转/受控回滚入口、备份页状态、日志深链与搜索交互、Human/Raw 日志切换、设置抽屉入口与监控页稳定渲染。
 - 已补齐版本页 Storybook `play` 覆盖：目录/正文双虚拟化、当前版本初始居中、目录点击联动、尾部分页、仓库级图标入口、固定动作栏与移动端无目录/无横向溢出。
 - 服务更新与回滚的提交、排队、执行阶段已统一映射到共享状态信息带、桌面候选目录 chip 与候选卡动作；活动任务使用主题蓝色和 reduced-motion 兼容的加载图标，版本页不再渲染独立活动任务横幅，Job 建立后候选卡可直接进入任务详情。
+- 更新任务跟踪会消费 jobs 管理事件中的 `queued / running` 状态变化，并在首次登记 Job 后立即读取一次任务快照，既恢复执行阶段实时同步，也关闭 POST 响应晚于 `running` 事件时的订阅时序窗口；REST 快照与 SSE 状态按 `queued -> running` 单调合并，延迟返回的旧快照不能把执行中任务降回排队态。
 - 版本页的当前 rollback target 现会复用统一的备份摘要聚合：若其来源更新任务存在 included backup assets，则在版本卡右栏与服务级回滚确认中同时显示 `来源备份 = <目标数> · <总体积>`；缺失体积时回退为 `· --`，无实际纳入记录时不渲染该状态块。
 - 已产出 owner-facing mock-only 视觉证据并写回 `SPEC.md`，其中版本页最终验收图来自 `ui_demo` 的桌面与 `390x900` 移动端截图。
 - 已补齐 Dockrev 版本页自我升级回归 stories 与 mock：覆盖 candidate 卡跳 supervisor、非 candidate 卡禁用解释、supervisor offline 三态，并把新增 owner-facing 视觉证据写回 `SPEC.md`。
@@ -54,6 +55,8 @@
 - `web/src/components/ServiceVersionsSection.tsx`
 - `web/src/components/serviceVersionsSectionUtils.ts`
 - `web/src/pages/useServiceDetailPageState.tsx`
+- `web/src/updateActionTracking.ts`
+- `web/tests/updateActionTracking.test.ts`
 - `web/src/pages/useServiceLogsState.ts`
 - `web/src/components/ServiceLogsPanel.tsx`
 - `web/src/stories/mocks/PageHarness.tsx`

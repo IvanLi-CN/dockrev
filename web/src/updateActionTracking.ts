@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from 'react'
 import { ApiError, getJob, listJobs, type JobListItem } from './api'
-import { useManagementEventBatch } from './managementEvents'
+import { useManagementEventBatch, type ManagementEvent } from './managementEvents'
 
 export const UPDATE_JOB_SETTLED_EVENT = 'dockrev:update-job-settled'
 
@@ -67,6 +67,26 @@ export function resolveUpdateActionTargetKey(
 
 export function isUpdateJobActiveStatus(status: string): boolean {
   return status === 'queued' || status === 'running'
+}
+
+export function resolveActiveUpdateJobStatus(
+  current: UpdateActionJobStatus,
+  incoming: UpdateActionJobStatus,
+): UpdateActionJobStatus {
+  if (current === 'running' && incoming === 'queued') return current
+  return incoming
+}
+
+export function isUpdateJobSnapshotCurrent(requestRevision: number, currentRevision: number): boolean {
+  return requestRevision === currentRevision
+}
+
+export function doesManagementEventInvalidateUpdateSnapshot(event: ManagementEvent): boolean {
+  if (event.domain !== 'jobs') return false
+  if (event.summary.jobType !== 'update') return false
+  if (event.summary.operation === 'progress_updated') return false
+  const status = typeof event.summary.status === 'string' ? event.summary.status : null
+  return Boolean(status && (isUpdateJobActiveStatus(status) || event.summary.terminal === true))
 }
 
 function resolveUpdateJobRecency(job: Pick<JobListItem, 'createdAt' | 'startedAt' | 'progress'>): number {
@@ -161,6 +181,21 @@ export type UpdateJobSnapshotReconciliation = {
   unresolved: Array<{ target: UpdateActionTargetKey; jobId: string }>
 }
 
+export function resolveTrackedUpdateJobTransition(
+  event: ManagementEvent,
+  trackedJobs: Iterable<[UpdateActionTargetKey, ActiveUpdateJob]>,
+): { target: UpdateActionTargetKey; jobId: string; status: UpdateActionJobStatus } | null {
+  if (event.domain !== 'jobs') return null
+  if (event.summary.operation === 'progress_updated') return null
+  const jobId = typeof event.summary.jobId === 'string' ? event.summary.jobId : null
+  const status = typeof event.summary.status === 'string' ? event.summary.status : null
+  const terminal = event.summary.terminal === true
+  if (!jobId || !status || (!isUpdateJobActiveStatus(status) && !terminal)) return null
+  const tracked = Array.from(trackedJobs).find(([, job]) => job.jobId === jobId)
+  if (!tracked) return null
+  return { target: tracked[0], jobId, status }
+}
+
 export function reconcileTrackedUpdateJobs(
   trackedJobs: Iterable<[UpdateActionTargetKey, ActiveUpdateJob]>,
   jobs: JobListItem[],
@@ -186,6 +221,7 @@ function useProvideUpdateActionTracker(): UpdateActionTracker {
   const [submittingCounts, setSubmittingCounts] = useState<Record<string, number>>({})
   const [activeByTarget, setActiveByTarget] = useState<Record<string, ActiveUpdateJob>>({})
   const activeByTargetRef = useRef(new Map<UpdateActionTargetKey, ActiveUpdateJob>())
+  const activeRevisionRef = useRef(0)
   const unmountedRef = useRef(false)
 
   const publishActive = useCallback(() => {
@@ -200,6 +236,7 @@ function useProvideUpdateActionTracker(): UpdateActionTracker {
       const current = activeByTargetRef.current.get(target)
       if (!current || current.jobId !== jobId) return
       activeByTargetRef.current.delete(target)
+      activeRevisionRef.current += 1
       publishActive()
     },
     [publishActive],
@@ -229,44 +266,80 @@ function useProvideUpdateActionTracker(): UpdateActionTracker {
     })
   }, [])
 
-  const trackJob = useCallback(
+  const storeTrackedJob = useCallback(
     (target: UpdateActionTargetKey, jobId: string, status: UpdateActionJobStatus = 'queued', targetVersion?: string | null) => {
       const previous = activeByTargetRef.current.get(target)
       const resolvedTargetVersion = targetVersion ?? previous?.targetVersion ?? null
+      const resolvedStatus = previous?.jobId === jobId
+        ? resolveActiveUpdateJobStatus(previous.status, status)
+        : status
       activeByTargetRef.current.set(
         target,
-        resolvedTargetVersion ? { jobId, status, targetVersion: resolvedTargetVersion } : { jobId, status },
+        resolvedTargetVersion
+          ? { jobId, status: resolvedStatus, targetVersion: resolvedTargetVersion }
+          : { jobId, status: resolvedStatus },
       )
+      activeRevisionRef.current += 1
       publishActive()
     },
     [publishActive],
   )
 
+  const refreshTrackedJob = useCallback(
+    async (target: UpdateActionTargetKey, jobId: string) => {
+      try {
+        const job = await getJob(jobId)
+        if (unmountedRef.current) return
+        const latest = activeByTargetRef.current.get(target)
+        if (!latest || latest.jobId !== jobId) return
+        if (isUpdateJobActiveStatus(job.status)) {
+          const resolvedStatus = resolveActiveUpdateJobStatus(latest.status, job.status)
+          if (latest.status !== resolvedStatus) storeTrackedJob(target, jobId, resolvedStatus)
+          return
+        }
+        publishUpdateJobSettled(toUpdateJobSettledDetail(target, job))
+        clearRunningJob(target, jobId)
+      } catch {
+        // Management events and reconnect snapshots remain the recovery path.
+      }
+    },
+    [clearRunningJob, storeTrackedJob],
+  )
+
+  const trackJob = useCallback(
+    (target: UpdateActionTargetKey, jobId: string, status: UpdateActionJobStatus = 'queued', targetVersion?: string | null) => {
+      storeTrackedJob(target, jobId, status, targetVersion)
+      void refreshTrackedJob(target, jobId)
+    },
+    [refreshTrackedJob, storeTrackedJob],
+  )
+
   useManagementEventBatch(({ events, resyncRequired }) => {
     const active = Array.from(activeByTargetRef.current.entries())
     for (const event of events) {
-      if (event.domain !== 'jobs') continue
-      const jobId = typeof event.summary.jobId === 'string' ? event.summary.jobId : null
-      const terminal = event.summary.terminal === true
-      if (!jobId || !terminal) continue
-      const tracked = active.find(([, job]) => job.jobId === jobId)
-      if (!tracked) continue
-      const [target] = tracked
-      void getJob(jobId)
-        .then((job) => {
-          if (unmountedRef.current) return
-          publishUpdateJobSettled(toUpdateJobSettledDetail(target, job))
-          clearRunningJob(target, jobId)
-        })
-        .catch(() => {})
+      if (doesManagementEventInvalidateUpdateSnapshot(event)) activeRevisionRef.current += 1
+      const transition = resolveTrackedUpdateJobTransition(event, active)
+      if (!transition) continue
+      const { target, jobId, status } = transition
+      if (isUpdateJobActiveStatus(status)) {
+        storeTrackedJob(target, jobId, status)
+      } else {
+        void refreshTrackedJob(target, jobId)
+      }
     }
     if (!resyncRequired) return
-    void listJobs()
-      .then((jobs) => {
+    const resyncTrackedJobs = async (): Promise<void> => {
+      const requestRevision = activeRevisionRef.current
+      try {
+        const jobs = await listJobs()
         if (unmountedRef.current) return
+        if (!isUpdateJobSnapshotCurrent(requestRevision, activeRevisionRef.current)) {
+          void resyncTrackedJobs()
+          return
+        }
         const reconciliation = reconcileTrackedUpdateJobs(activeByTargetRef.current.entries(), jobs)
         for (const job of reconciliation.active) {
-          trackJob(job.target, job.jobId, job.status)
+          storeTrackedJob(job.target, job.jobId, job.status)
         }
         for (const { target, job } of reconciliation.settled) {
           publishUpdateJobSettled(toUpdateJobSettledDetail(target, job))
@@ -285,31 +358,40 @@ function useProvideUpdateActionTracker(): UpdateActionTracker {
               clearRunningJob(target, jobId)
             })
         }
-      })
-      .catch(() => {})
+      } catch {
+        // A later management event or reconnect remains the recovery path.
+      }
+    }
+    void resyncTrackedJobs()
   })
 
   useEffect(() => {
     let cancelled = false
 
-    void (async () => {
+    const hydrateActiveJobs = async (): Promise<void> => {
       try {
+        const requestRevision = activeRevisionRef.current
         const jobs = await listJobs()
         if (cancelled || unmountedRef.current) return
+        if (!isUpdateJobSnapshotCurrent(requestRevision, activeRevisionRef.current)) {
+          void hydrateActiveJobs()
+          return
+        }
         const hydratedJobs = pickLatestActiveUpdateJobs(jobs)
         for (const job of hydratedJobs) {
           if (activeByTargetRef.current.has(job.target)) continue
-          trackJob(job.target, job.jobId, job.status)
+          storeTrackedJob(job.target, job.jobId, job.status)
         }
       } catch {
         // Hydration is best-effort; normal click tracking still works without it.
       }
-    })()
+    }
+    void hydrateActiveJobs()
 
     return () => {
       cancelled = true
     }
-  }, [trackJob])
+  }, [storeTrackedJob])
 
   const isTargetBusy = useCallback(
     (target: UpdateActionTargetKey): boolean => {
