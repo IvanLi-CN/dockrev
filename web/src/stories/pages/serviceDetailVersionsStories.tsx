@@ -72,6 +72,7 @@ class MutationObserverResizeFallback {
   }
 
   observe(target: Element) {
+    if (!target.matches(".serviceVersionsSection")) return;
     const shell = target.closest(".appShell");
     if (!shell || typeof MutationObserver === "undefined") return;
     this.observer = new MutationObserver(() => {
