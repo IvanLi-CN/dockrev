@@ -936,8 +936,8 @@ pub(crate) async fn run_update_job(
                     }
                 }
                 Err(e) => {
-                    if !services_kept_stopped_for_apply.is_empty() {
-                        if let Err(restore_error) = backup::restore_services_after_failed_apply(
+                    if !services_kept_stopped_for_apply.is_empty()
+                        && let Err(restore_error) = backup::restore_services_after_failed_apply(
                             &*state.runner,
                             &state.config.compose_bin,
                             state.config.docker_config_path.as_deref(),
@@ -945,14 +945,13 @@ pub(crate) async fn run_update_job(
                             &services_kept_stopped_for_apply,
                         )
                         .await
-                        {
-                            tracing::error!(
-                                job_id = %job_id,
-                                stack_id = %stack_id,
-                                error = %restore_error,
-                                "failed to restore services after update failure"
-                            );
-                        }
+                    {
+                        tracing::error!(
+                            job_id = %job_id,
+                            stack_id = %stack_id,
+                            error = %restore_error,
+                            "failed to restore services after update failure"
+                        );
                     }
                     final_status = "failed".to_string();
                     let mut update_summary = json!({"error": e.to_string()});

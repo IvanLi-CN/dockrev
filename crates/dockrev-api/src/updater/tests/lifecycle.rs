@@ -676,18 +676,19 @@ async fn pre_pulled_update_only_looks_up_services_stopped_for_backup_with_all_st
     )
     .await
     .unwrap();
-    let calls = runner.calls.lock().unwrap();
-    assert!(
-        calls
-            .iter()
-            .any(|(_, args)| args_end_with(args, &["ps", "-q", "web"]))
-    );
-    assert!(
-        !calls
-            .iter()
-            .any(|(_, args)| args_end_with(args, &["ps", "-a", "-q", "web"]))
-    );
-    drop(calls);
+    {
+        let calls = runner.calls.lock().unwrap();
+        assert!(
+            calls
+                .iter()
+                .any(|(_, args)| args_end_with(args, &["ps", "-q", "web"]))
+        );
+        assert!(
+            !calls
+                .iter()
+                .any(|(_, args)| args_end_with(args, &["ps", "-a", "-q", "web"]))
+        );
+    }
 
     let runner = FakeRunner::default();
     run_update_job_pre_pulled(

@@ -76,7 +76,7 @@ pub(crate) struct JobLiveCommandComplete {
 pub(crate) enum JobLiveEvent {
     Terminal(JobLiveTerminal),
     CommandComplete(JobLiveCommandComplete),
-    Progress(JobProgress),
+    Progress(Box<JobProgress>),
 }
 
 pub(crate) struct JobLiveLogSubscription {
@@ -200,7 +200,9 @@ impl JobLiveLogHub {
         if let Ok(entries) = self.entries.lock()
             && let Some(entry) = entries.get(job_id)
         {
-            let _ = entry.sender.send(JobLiveEvent::Progress(progress));
+            let _ = entry
+                .sender
+                .send(JobLiveEvent::Progress(Box::new(progress)));
         }
     }
 

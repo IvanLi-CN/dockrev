@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
+    path::Path,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -271,6 +271,7 @@ pub async fn pre_pull_update_images(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_update_job(
     runner: &dyn CommandRunner,
     compose_bin: &str,

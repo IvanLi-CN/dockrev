@@ -903,6 +903,7 @@ async fn probe_size_bytes(
     Ok(bytes)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_backup_container(
     runner: &dyn CommandRunner,
     storage: &crate::backup_storage::BackupStorage,
