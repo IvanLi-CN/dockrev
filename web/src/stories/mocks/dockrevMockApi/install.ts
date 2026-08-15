@@ -995,8 +995,7 @@ export function installDockrevMockApi(
         persistState()
       }
       window.setTimeout(() => {
-        if (scenario === 'service-detail-rollback-stale-after-update') window.setTimeout(() => { settleServices(); finishUpdateJob() }, settleDelayMs)
-        else { finishUpdateJob(); window.setTimeout(settleServices, settleDelayMs) }
+        window.setTimeout(() => { settleServices(); finishUpdateJob() }, settleDelayMs)
       }, updateFinishDelayMs)
       return json({ jobId })
     }

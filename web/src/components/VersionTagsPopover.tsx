@@ -316,9 +316,10 @@ export function VersionTagsPopover(props: {
     if (prefetchOnMount && snapshotPhaseRef.current !== 'loading')
       setSnapshotPhase('loading')
 
+    let alive = true
     const requestSnapshotKey = snapshotKey
     const isStale = () =>
-      !mountedRef.current || latestSnapshotKeyRef.current !== requestSnapshotKey
+      !alive || !mountedRef.current || latestSnapshotKeyRef.current !== requestSnapshotKey
     const prefetchJitter =
       prefetchOnMount && !open && !pinned
         ? stableJitterMs(
@@ -479,6 +480,7 @@ export function VersionTagsPopover(props: {
     fetchTimer.current = timerId
 
     return () => {
+      alive = false
       if (fetchTimer.current === timerId) {
         window.clearTimeout(timerId)
         fetchTimer.current = null

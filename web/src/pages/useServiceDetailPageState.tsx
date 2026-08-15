@@ -404,7 +404,10 @@ export function useServiceDetailPageState(props: {
   }, [serviceId, stackId])
 
   useEffect(() => {
-    void requestRefresh().catch((e: unknown) => setError(errorMessage(e)))
+    const generation = pageGenerationRef.current
+    void requestRefresh().catch((e: unknown) => {
+      if (generation === pageGenerationRef.current) setError(errorMessage(e))
+    })
   }, [requestRefresh, serviceId, stackId])
 
   useEffect(() => {
