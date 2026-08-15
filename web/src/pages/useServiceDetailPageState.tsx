@@ -317,7 +317,12 @@ export function useServiceDetailPageState(props: {
       setStack(st)
       setService(svc)
       primeRollbackTargetRefresh(svc)
-      if (!svc || isDockrevService(svc)) return
+      if (!svc || isDockrevService(svc)) {
+        setRollbackTarget(null)
+        setRollbackActiveTarget(null)
+        setRollbackTargetRefreshing(false)
+        return
+      }
       const target = await getServiceRollbackTarget(serviceId)
       const rollbackResult = await settleRollbackTargetSnapshot(requestId, svc, target)
       if (rollbackResult === 'digest_mismatch') throw new Error('回滚信息刷新失败，请稍后重试')

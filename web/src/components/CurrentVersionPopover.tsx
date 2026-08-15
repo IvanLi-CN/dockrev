@@ -395,6 +395,7 @@ export function CurrentVersionPopover(props: {
       if (fetchTimer.current === timerId) fetchTimer.current = null
 
       const poll = () => {
+        if (!alive) return
         getServiceDigestTagsSnapshot(serviceId, digestNorm)
           .then((data) => {
             if (!alive) return
