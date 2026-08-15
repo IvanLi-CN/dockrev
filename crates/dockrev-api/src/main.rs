@@ -48,7 +48,7 @@ fn now_rfc3339() -> anyhow::Result<String> {
     Ok(time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)?)
 }
 
-async fn shutdown_signal(state: std::sync::Arc<state::AppState>) {
+async fn shutdown_signal() {
     #[cfg(unix)]
     async fn wait_signal() {
         use tokio::signal::unix::{SignalKind, signal};
@@ -71,17 +71,8 @@ async fn shutdown_signal(state: std::sync::Arc<state::AppState>) {
     }
 
     wait_signal().await;
-
-    // Best-effort: on container shutdown we may not have much time, but we still want to try
-    // to avoid leaving orphaned running jobs behind. Startup recovery is the hard guarantee.
-    let now = now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        let _ = state
-            .db
-            .recover_incomplete_jobs(&now, "server_shutdown")
-            .await;
-    })
-    .await;
+    // Keep running jobs intact. The next process must see their checkpoints so startup recovery
+    // can cancel stop-mode helpers, remove partial artifacts, and restore prior service state.
 }
 
 #[tokio::main]
@@ -189,7 +180,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(bind = %bind, "dockrev api listening");
 
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(state.clone()))
+        .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
 }
