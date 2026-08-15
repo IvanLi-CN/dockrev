@@ -119,7 +119,8 @@ export function installDockrevMockApi(
   const forcedDigestSnapshotPendingAttempts = new Map<string, number>()
   const jobsEventsSeqRef = { value: 4_000 + initialJobSeq }
   const managementEventsSeqRef = { value: 8_000 + initialJobSeq }
-  const managementEvents: Array<{ id: number; data: Record<string, unknown> }> = []
+  const managementEventsGeneration = 'storybook'
+  const managementEvents: Array<{ id: number; cursor: string; data: Record<string, unknown> }> = []
   const liveTerminalCommandSeqRef = { value: 0 }, liveTerminalStateRef = { commandSeq: 0, frame: 0, polls: 0, completed: false }
   const terminalLines = (message: string, frame: number) => [{ segments: [{ text: '253f286a856e Pulling fs layer 0B', fg: 'rgb(92, 92, 255)', bold: true }] }, { segments: [{ text: `${message} · frame ${frame}`, dim: true }] }]
   const queueProgressDemoSteps = [40, 44, 48, 52, 56, 60, 65, 70, 75, 80, 85, 90, 94, 97]
@@ -131,8 +132,10 @@ export function installDockrevMockApi(
     nextScanRunSeq: 0,
     scanRuns: new Map(),
   }
-  const rollbackTargetRaceByServiceId = new Map<string, RollbackTargetRaceState>(); const publishMockManagementEvent = (entities: Array<{ entityType: string; id: string }>, summary: Record<string, unknown>) =>
-    managementEvents.push({ id: ++managementEventsSeqRef.value, data: { type: 'entities_changed', domain: 'jobs', entities, version: 0, summary } })
+  const rollbackTargetRaceByServiceId = new Map<string, RollbackTargetRaceState>(); const publishMockManagementEvent = (entities: Array<{ entityType: string; id: string }>, summary: Record<string, unknown>) => {
+    const id = ++managementEventsSeqRef.value
+    managementEvents.push({ id, cursor: `${managementEventsGeneration}:${id}`, data: { type: 'entities_changed', domain: 'jobs', entities, version: id, summary } })
+  }
   let deployCheckReportSequenceIndex = 0
   const advanceQueueProgressDemo = (): number | null => {
     if (!state || scenario !== 'queue-progress-smoothing') return null
@@ -585,9 +588,26 @@ export function installDockrevMockApi(
     }
 
     if (urlPath === '/api/events' && method === 'GET') {
-      const afterId = Number(url?.searchParams.get('afterId') ?? '0') || 0
+      const afterCursor = url?.searchParams.get('afterId') ?? ''
+      let afterId = 0
+      let resyncReason: string | null = null
+      if (afterCursor) {
+        const [generation, sequence, ...rest] = afterCursor.split(':')
+        const parsedSequence = Number(sequence)
+        if (rest.length > 0 || generation !== managementEventsGeneration || !Number.isInteger(parsedSequence) || parsedSequence < 0) {
+          resyncReason = generation !== managementEventsGeneration ? 'generation_changed' : 'invalid_cursor'
+        } else {
+          afterId = parsedSequence
+        }
+      }
+      const latestId = managementEventsSeqRef.value
+      if (resyncReason) {
+        const cursor = `${managementEventsGeneration}:${latestId}`
+        const data = { type: 'resync_required', domain: 'management', reason: resyncReason, generation: managementEventsGeneration }
+        return new Response(`id: ${cursor}\nevent: resync_required\ndata: ${JSON.stringify(data)}\n\n`, { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'x-accel-buffering': 'no' } })
+      }
       const events = managementEvents.filter((event) => event.id > afterId).slice(0, 200)
-      const body = events.map((event) => `id: ${event.id}\nevent: management\ndata: ${JSON.stringify(event.data)}\n\n`).join('')
+      const body = events.map((event) => `id: ${event.cursor}\nevent: management\ndata: ${JSON.stringify(event.data)}\n\n`).join('')
       return new Response(body || ': keep-alive\n\n', { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'x-accel-buffering': 'no' } })
     }
 

@@ -593,6 +593,68 @@ async function runInteractive({ baseUrl, browser }) {
     return page;
   };
 
+  // Keep the rollback refresh race in the CI interaction suite, not only in the story play callback.
+  {
+    const page = await openStory("pages-servicedetailpage--rollback-refresh-race-after-update");
+    try {
+      await page.waitForFunction(
+        () => {
+          const button = Array.from(document.querySelectorAll("button")).find((item) =>
+            item.textContent?.trim() === "更新",
+          );
+          if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
+          button.click();
+          return true;
+        },
+        null,
+        { timeout: 8_000 },
+      );
+      await page.getByText("确认更新服务 api？", { exact: false }).waitFor({ timeout: 8_000 });
+      await page.waitForFunction(
+        () => {
+          const buttons = Array.from(document.querySelectorAll("button")).filter((item) =>
+            item.textContent?.trim() === "更新",
+          );
+          const button = buttons.at(-1);
+          if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
+          button.click();
+          return true;
+        },
+        null,
+        { timeout: 8_000 },
+      );
+
+      const rollbackRefresh = page.getByRole("button", { name: /回滚信息刷新中…/ }).first();
+      await rollbackRefresh.waitFor({ timeout: 8_000 });
+      await page.waitForFunction(
+        () => {
+          const button = Array.from(document.querySelectorAll("button")).find((item) =>
+            item.textContent?.trim() === "回滚信息刷新中…",
+          );
+          return Boolean(button && button.disabled);
+        },
+        null,
+        { timeout: 8_000 },
+      );
+      if ((await page.locator("body").textContent())?.includes("未找到可回滚到升级前版本的成功升级记录")) {
+        throw new Error("Rollback refresh race exposed the stale unavailable hint.");
+      }
+
+      await page.waitForFunction(
+        () => {
+          const button = Array.from(document.querySelectorAll("button")).find((item) =>
+            item.textContent?.trim() === "回滚",
+          );
+          return Boolean(button && !button.disabled && button.getAttribute("aria-busy") !== "true");
+        },
+        null,
+        { timeout: 8_000 },
+      );
+    } finally {
+      await page.close().catch(() => {});
+    }
+  }
+
   await assertServiceLogsLightContrast({ baseUrl, browser });
 
   // Version directory navigation must converge even when the target card is not rendered yet.
