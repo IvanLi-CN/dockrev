@@ -24,6 +24,7 @@ import { usePageResumeRefresh } from '../usePageResumeRefresh'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay, inferResolvedTagsFromSnapshot, isStrictSemverTag } from '../versionDisplay'
 import { isRollbackTargetRefreshCurrent, retryRollbackTargetDigestMismatch } from './rollbackTargetRefresh'
+import { managementEventAffectsServiceDetail } from './serviceDetailManagement'
 export { managementEventAffectsServiceDetail } from './serviceDetailManagement'
 
 export function useServiceDetailPageState(props: {
