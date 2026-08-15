@@ -1,5 +1,9 @@
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::api::types::{BackupSettings, BackupTarget, BackupTargetPolicy, JobScope, StackRecord};
@@ -16,11 +20,35 @@ pub struct BackupRunResult {
     pub log_lines: Vec<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupProgressEvent {
+    pub phase: String,
+    pub processed_bytes: u64,
+    pub total_bytes: u64,
+    pub compressed_bytes: u64,
+    pub percent: u32,
+    pub throughput_bps: u64,
+    pub eta_seconds: Option<u64>,
+}
+
+const RECOVERY_CHECKPOINT_PREFIX: &str = "backup-recovery-checkpoint: ";
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BackupRecoveryCheckpoint {
+    backup_id: String,
+    stack_id: String,
+    artifact_key: String,
+    services: Vec<String>,
+}
+
 #[derive(Clone, Debug)]
 struct IncludedBackupTarget {
     target: BackupTarget,
     policy: BackupTargetPolicy,
     related_services: Vec<String>,
+    size_bytes: u64,
 }
 
 pub fn should_run_backup(settings: &BackupSettings, backup_mode: &str) -> bool {
@@ -29,6 +57,27 @@ pub fn should_run_backup(settings: &BackupSettings, backup_mode: &str) -> bool {
         "force" => true,
         _ => settings.enabled,
     }
+}
+
+pub fn requires_service_stop(
+    stack: &StackRecord,
+    scope: &JobScope,
+    service_id: Option<&str>,
+) -> bool {
+    let services = match scope {
+        JobScope::All | JobScope::Stack => stack.services.iter().collect::<Vec<_>>(),
+        JobScope::Service => stack
+            .services
+            .iter()
+            .filter(|service| Some(service.id.as_str()) == service_id)
+            .collect::<Vec<_>>(),
+    };
+    stack.backup.targets.iter().any(|target| {
+        matches!(
+            effective_policy_for_target(target, &services),
+            BackupTargetPolicy::StopRelatedServices
+        )
+    })
 }
 
 pub fn spawn_cleanup_task(state: std::sync::Arc<crate::state::AppState>) {
@@ -46,13 +95,21 @@ pub fn spawn_cleanup_task(state: std::sync::Arc<crate::state::AppState>) {
 #[allow(clippy::too_many_arguments)]
 pub async fn run_pre_update_backup(
     runner: &dyn CommandRunner,
+    helper_runner: &dyn CommandRunner,
     settings: &BackupSettings,
+    db_path: &Path,
+    helper_image_fallback: &str,
+    backup_id: &str,
+    job_id: &str,
     compose_bin: &str,
     docker_config_path: Option<&std::path::Path>,
     stack: &StackRecord,
     scope: &JobScope,
     service_id: Option<&str>,
+    keep_stopped_services: &[String],
     now_rfc3339: &str,
+    recovery_db: Option<&crate::db::Db>,
+    progress_tx: Option<tokio::sync::mpsc::UnboundedSender<BackupProgressEvent>>,
 ) -> anyhow::Result<BackupRunResult> {
     if stack.backup.targets.is_empty() {
         return Ok(BackupRunResult {
@@ -74,12 +131,13 @@ pub async fn run_pre_update_backup(
             .collect::<Vec<_>>(),
     };
 
-    let stack_dir = PathBuf::from(&settings.base_dir).join(&stack.id);
-    tokio::fs::create_dir_all(&stack_dir).await?;
+    let storage = crate::backup_storage::resolve_backup_storage(runner, db_path).await?;
 
     let ts_slug = timestamp_slug(now_rfc3339);
-    let artifact_path = stack_dir
-        .join(format!("{ts_slug}.tar.gz"))
+    let file_name = format!("{ts_slug}.tar.zst");
+    let artifact_key = storage.artifact_key(&stack.id, &file_name);
+    let artifact_path = storage
+        .logical_artifact_path(&artifact_key)
         .to_string_lossy()
         .to_string();
 
@@ -94,7 +152,8 @@ pub async fn run_pre_update_backup(
             continue;
         }
 
-        let probe = probe_size_bytes(runner, target).await;
+        let probe =
+            probe_size_bytes(runner, target, storage.helper_image(helper_image_fallback)).await;
         let size_bytes = match probe {
             Ok(bytes) => bytes,
             Err(e) => {
@@ -114,6 +173,7 @@ pub async fn run_pre_update_backup(
             target: target.clone(),
             policy: effective,
             related_services: related_services.clone(),
+            size_bytes,
         });
         decisions.push(json!({
             "target": target,
@@ -140,19 +200,110 @@ pub async fn run_pre_update_backup(
         compose: stack.compose.clone(),
     };
     let services_to_restart =
-        stop_related_services_for_backup(runner, &compose_stack, &compose_cfg, &included).await?;
-    let backup_result = run_backup_container(runner, &stack_dir, &included, &ts_slug).await;
-    let restart_result = restart_related_services_after_backup(
-        runner,
-        &compose_stack,
-        &compose_cfg,
-        &services_to_restart,
+        running_related_services_for_backup(runner, &compose_stack, &compose_cfg, &included)
+            .await?;
+    if !services_to_restart.is_empty()
+        && let Some(db) = recovery_db
+    {
+        let checkpoint = BackupRecoveryCheckpoint {
+            backup_id: backup_id.to_string(),
+            stack_id: stack.id.clone(),
+            artifact_key: artifact_key.to_string_lossy().to_string(),
+            services: services_to_restart.clone(),
+        };
+        if let Err(error) = db
+            .insert_job_log(
+                job_id,
+                &crate::api::types::JobLogLine {
+                    ts: now_rfc3339.to_string(),
+                    level: "info".to_string(),
+                    msg: format!(
+                        "{RECOVERY_CHECKPOINT_PREFIX}{}",
+                        serde_json::to_string(&checkpoint)?
+                    ),
+                },
+            )
+            .await
+        {
+            let restore_result = restart_related_services_after_backup(
+                runner,
+                &compose_stack,
+                &compose_cfg,
+                &services_to_restart,
+            )
+            .await;
+            return match restore_result {
+                Ok(()) => Err(error.context("persist backup recovery checkpoint")),
+                Err(restore_error) => Err(anyhow::anyhow!(
+                    "persist backup recovery checkpoint failed ({error}); restoring services failed ({restore_error})"
+                )),
+            };
+        }
+    }
+    if let Err(error) =
+        stop_services_for_backup(runner, &compose_stack, &compose_cfg, &services_to_restart).await
+    {
+        if let Err(restore_error) = restart_related_services_after_backup(
+            runner,
+            &compose_stack,
+            &compose_cfg,
+            &services_to_restart,
+        )
+        .await
+        {
+            return Err(anyhow::anyhow!(
+                "stopping services failed ({error}); restoring services failed ({restore_error})"
+            ));
+        }
+        return Err(error);
+    }
+    let total_bytes = included.iter().map(|item| item.size_bytes).sum::<u64>();
+    let backup_result = run_backup_container(
+        helper_runner,
+        &storage,
+        helper_image_fallback,
+        &artifact_key,
+        &included,
+        total_bytes,
+        backup_id,
+        job_id,
+        progress_tx,
     )
     .await;
-    backup_result?;
-    restart_result?;
+    match backup_result {
+        Ok(()) => {
+            let services_to_resume = services_to_restart
+                .iter()
+                .filter(|service| !keep_stopped_services.contains(service))
+                .cloned()
+                .collect::<Vec<_>>();
+            restart_related_services_after_backup(
+                runner,
+                &compose_stack,
+                &compose_cfg,
+                &services_to_resume,
+            )
+            .await?;
+        }
+        Err(error) => {
+            if let Err(restore_error) = restart_related_services_after_backup(
+                runner,
+                &compose_stack,
+                &compose_cfg,
+                &services_to_restart,
+            )
+            .await
+            {
+                return Err(anyhow::anyhow!(
+                    "backup failed ({error}); restoring previous services failed ({restore_error})"
+                ));
+            }
+            return Err(error);
+        }
+    }
 
-    let size_bytes = tokio::fs::metadata(&artifact_path).await?.len();
+    let size_bytes =
+        artifact_size_bytes(runner, &storage, helper_image_fallback, &artifact_key).await?;
 
     let mut log_lines = Vec::new();
     log_lines.push(format!(
@@ -169,11 +320,123 @@ pub async fn run_pre_update_backup(
         summary_json: json!({
             "status": "success",
             "artifactPath": artifact_path,
+            "artifactKey": artifact_key.to_string_lossy(),
+            "archiveFormat": "tar",
+            "compression": "zstd",
             "sizeBytes": size_bytes,
             "targets": decisions,
         }),
         log_lines,
     })
+}
+
+pub async fn recover_interrupted_backups(
+    state: &crate::state::AppState,
+    recovered_job_ids: &[String],
+) -> anyhow::Result<()> {
+    for job_id in recovered_job_ids {
+        let logs = state.db.list_job_logs(job_id).await?;
+        let checkpoint = logs.iter().rev().find_map(|line| {
+            line.msg
+                .strip_prefix(RECOVERY_CHECKPOINT_PREFIX)
+                .and_then(|raw| serde_json::from_str::<BackupRecoveryCheckpoint>(raw).ok())
+        });
+        let Some(checkpoint) = checkpoint else {
+            continue;
+        };
+
+        stop_interrupted_helper(&*state.runner, job_id).await?;
+        let storage =
+            crate::backup_storage::resolve_backup_storage(&*state.runner, &state.config.db_path)
+                .await?;
+        let part_key = PathBuf::from(format!("{}.part", checkpoint.artifact_key));
+        delete_artifact_if_present(
+            &*state.runner,
+            &storage,
+            &state.config.dockrev_image_repo,
+            &part_key,
+        )
+        .await?;
+
+        let stack = state
+            .db
+            .get_stack(&checkpoint.stack_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("recovery stack not found: {}", checkpoint.stack_id))?;
+        restore_services_after_failed_apply(
+            &*state.runner,
+            &state.config.compose_bin,
+            state.config.docker_config_path.as_deref(),
+            &stack,
+            &checkpoint.services,
+        )
+        .await?;
+        state
+            .db
+            .insert_job_log(
+                job_id,
+                &crate::api::types::JobLogLine {
+                    ts: time::OffsetDateTime::now_utc()
+                        .format(&time::format_description::well_known::Rfc3339)?,
+                    level: "warn".to_string(),
+                    msg: format!(
+                        "backup recovery restored services: {}",
+                        checkpoint.services.join(",")
+                    ),
+                },
+            )
+            .await?;
+    }
+    Ok(())
+}
+
+async fn stop_interrupted_helper(runner: &dyn CommandRunner, job_id: &str) -> anyhow::Result<()> {
+    let out = runner
+        .run(
+            CommandSpec {
+                program: "docker".to_string(),
+                args: vec![
+                    "ps".to_string(),
+                    "-q".to_string(),
+                    "--filter".to_string(),
+                    format!("label=cc.ivanli.dockrev.job-id={job_id}"),
+                    "--filter".to_string(),
+                    "label=cc.ivanli.dockrev.stop-mode=stop".to_string(),
+                ],
+                env: Vec::new(),
+            },
+            Duration::from_secs(20),
+        )
+        .await?;
+    if out.status != 0 {
+        return Err(anyhow::anyhow!(
+            "list interrupted backup helper failed: {}",
+            out.stderr
+        ));
+    }
+    let ids = out.stdout.split_whitespace().collect::<Vec<_>>();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let mut args = vec!["stop".to_string(), "--time".to_string(), "2".to_string()];
+    args.extend(ids.into_iter().map(str::to_string));
+    let stopped = runner
+        .run(
+            CommandSpec {
+                program: "docker".to_string(),
+                args,
+                env: Vec::new(),
+            },
+            Duration::from_secs(20),
+        )
+        .await?;
+    if stopped.status != 0 {
+        return Err(anyhow::anyhow!(
+            "stop interrupted backup helper failed: {}",
+            stopped.stderr
+        ));
+    }
+    Ok(())
 }
 
 async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Result<()> {
@@ -208,7 +471,33 @@ async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Result<()> {
             continue;
         }
 
-        let _ = tokio::fs::remove_file(&item.artifact_path).await;
+        let storage = match crate::backup_storage::resolve_backup_storage(
+            &*state.runner,
+            &state.config.db_path,
+        )
+        .await
+        {
+            Ok(storage) => storage,
+            Err(error) => {
+                tracing::warn!(backup_id = %item.id, error = %error, "backup cleanup storage unresolved");
+                continue;
+            }
+        };
+        let Some(key) = legacy_artifact_key(&storage, &item.artifact_path) else {
+            tracing::warn!(backup_id = %item.id, path = %item.artifact_path, "backup cleanup path is outside managed storage");
+            continue;
+        };
+        if let Err(error) = delete_artifact(
+            &*state.runner,
+            &storage,
+            &state.config.dockrev_image_repo,
+            &key,
+        )
+        .await
+        {
+            tracing::warn!(backup_id = %item.id, error = %error, "backup cleanup delete failed");
+            continue;
+        }
         state.db.mark_backup_deleted(&item.id, &now).await?;
         if let Some(job_id) = item.job_id.as_deref() {
             let _ = state
@@ -420,7 +709,7 @@ fn declared_related_service_names(target: &BackupTarget, stack: &StackRecord) ->
         .collect()
 }
 
-async fn stop_related_services_for_backup(
+async fn running_related_services_for_backup(
     runner: &dyn CommandRunner,
     compose_stack: &ComposeStack,
     compose_cfg: &ComposeRunnerConfig,
@@ -437,9 +726,33 @@ async fn stop_related_services_for_backup(
         return Ok(Vec::new());
     }
     let services = services_to_stop.into_iter().collect::<Vec<_>>();
+    let mut running_services = Vec::new();
+    for service in services {
+        let container_id = run_to_string(
+            runner,
+            compose_stack.ps_q_service(compose_cfg, &service),
+            Duration::from_secs(20),
+        )
+        .await?;
+        if !container_id.trim().is_empty() {
+            running_services.push(service);
+        }
+    }
+    Ok(running_services)
+}
+
+async fn stop_services_for_backup(
+    runner: &dyn CommandRunner,
+    compose_stack: &ComposeStack,
+    compose_cfg: &ComposeRunnerConfig,
+    running_services: &[String],
+) -> anyhow::Result<()> {
+    if running_services.is_empty() {
+        return Ok(());
+    }
     let out = runner
         .run(
-            compose_stack.stop_services(compose_cfg, &services),
+            compose_stack.stop_services(compose_cfg, running_services),
             Duration::from_secs(120),
         )
         .await?;
@@ -450,7 +763,7 @@ async fn stop_related_services_for_backup(
             out.stderr
         ));
     }
-    Ok(services)
+    Ok(())
 }
 
 async fn restart_related_services_after_backup(
@@ -478,9 +791,25 @@ async fn restart_related_services_after_backup(
     Ok(())
 }
 
+pub async fn restore_services_after_failed_apply(
+    runner: &dyn CommandRunner,
+    compose_bin: &str,
+    docker_config_path: Option<&Path>,
+    stack: &StackRecord,
+    services: &[String],
+) -> anyhow::Result<()> {
+    let compose_cfg = compose_runner_config(docker_config_path, compose_bin)?;
+    let compose_stack = ComposeStack {
+        project_name: sanitize_project_name(&stack.name),
+        compose: stack.compose.clone(),
+    };
+    restart_related_services_after_backup(runner, &compose_stack, &compose_cfg, services).await
+}
+
 async fn probe_size_bytes(
     runner: &dyn CommandRunner,
     target: &BackupTarget,
+    helper_image: &str,
 ) -> anyhow::Result<u64> {
     let mount = match target {
         BackupTarget::DockerVolume { name } => format!("{name}:/data:ro"),
@@ -494,7 +823,7 @@ async fn probe_size_bytes(
             "--rm".to_string(),
             "-v".to_string(),
             mount,
-            "alpine".to_string(),
+            helper_image.to_string(),
             "sh".to_string(),
             "-lc".to_string(),
             "du -sb /data | cut -f1".to_string(),
@@ -522,15 +851,39 @@ async fn probe_size_bytes(
 
 async fn run_backup_container(
     runner: &dyn CommandRunner,
-    stack_dir: &std::path::Path,
+    storage: &crate::backup_storage::BackupStorage,
+    helper_image_fallback: &str,
+    artifact_key: &Path,
     included: &[IncludedBackupTarget],
-    ts_slug: &str,
+    total_bytes: u64,
+    backup_id: &str,
+    job_id: &str,
+    progress_tx: Option<tokio::sync::mpsc::UnboundedSender<BackupProgressEvent>>,
 ) -> anyhow::Result<()> {
+    let (output_source, output_relative) = storage.helper_output_mount();
     let mut args = Vec::new();
     args.push("run".to_string());
     args.push("--rm".to_string());
+    args.push("--name".to_string());
+    args.push(format!("dockrev-backup-{backup_id}"));
+    args.push("--label".to_string());
+    args.push(format!("cc.ivanli.dockrev.backup-id={backup_id}"));
+    args.push("--label".to_string());
+    args.push(format!("cc.ivanli.dockrev.job-id={job_id}"));
+    args.push("--label".to_string());
+    args.push(format!(
+        "cc.ivanli.dockrev.stop-mode={}",
+        if included
+            .iter()
+            .any(|item| matches!(item.policy, BackupTargetPolicy::StopRelatedServices))
+        {
+            "stop"
+        } else {
+            "live"
+        }
+    ));
     args.push("-v".to_string());
-    args.push(format!("{}:/out", stack_dir.to_string_lossy()));
+    args.push(format!("{output_source}:/out-root"));
 
     let mut binds = 0usize;
     for item in included {
@@ -548,12 +901,19 @@ async fn run_backup_container(
         }
     }
 
-    let tar_name = format!("{ts_slug}.tar");
-    let sh = format!("tar -cf /out/{tar_name} -C /backup . && gzip -f /out/{tar_name}");
-    args.push("alpine".to_string());
-    args.push("sh".to_string());
-    args.push("-lc".to_string());
-    args.push(sh);
+    let final_relative = output_relative.join(artifact_key);
+    let part_relative = PathBuf::from(format!("{}.part", final_relative.to_string_lossy()));
+    args.push(storage.helper_image(helper_image_fallback).to_string());
+    args.push("/usr/local/bin/dockrev".to_string());
+    args.push("backup-helper".to_string());
+    args.push("--source".to_string());
+    args.push("/backup".to_string());
+    args.push("--output-part".to_string());
+    args.push(format!("/out-root/{}", part_relative.to_string_lossy()));
+    args.push("--output-final".to_string());
+    args.push(format!("/out-root/{}", final_relative.to_string_lossy()));
+    args.push("--total-bytes".to_string());
+    args.push(total_bytes.to_string());
 
     let spec = CommandSpec {
         program: "docker".to_string(),
@@ -561,7 +921,29 @@ async fn run_backup_container(
         env: Vec::new(),
     };
 
-    let out = runner.run(spec, Duration::from_secs(600)).await?;
+    let mut pending = String::new();
+    let mut on_stdout = |chunk: Vec<u8>| {
+        pending.push_str(&String::from_utf8_lossy(&chunk));
+        while let Some(newline) = pending.find('\n') {
+            let line = pending[..newline].trim().to_string();
+            pending.drain(..=newline);
+            if let Ok(progress) = serde_json::from_str::<BackupProgressEvent>(&line)
+                && let Some(tx) = progress_tx.as_ref()
+            {
+                let _ = tx.send(progress);
+            }
+        }
+    };
+    let mut stderr_bytes = Vec::new();
+    let mut on_stderr = |chunk: Vec<u8>| stderr_bytes.extend_from_slice(&chunk);
+    let out = runner
+        .run_stream(
+            spec,
+            Duration::from_secs(600),
+            &mut on_stdout,
+            &mut on_stderr,
+        )
+        .await?;
     if out.status != 0 {
         return Err(anyhow::anyhow!(
             "backup failed: status={} stderr={}",
@@ -570,6 +952,124 @@ async fn run_backup_container(
         ));
     }
     Ok(())
+}
+
+async fn artifact_size_bytes(
+    runner: &dyn CommandRunner,
+    storage: &crate::backup_storage::BackupStorage,
+    helper_image_fallback: &str,
+    artifact_key: &Path,
+) -> anyhow::Result<u64> {
+    match storage {
+        crate::backup_storage::BackupStorage::Local { logical_root } => {
+            Ok(tokio::fs::metadata(logical_root.join(artifact_key))
+                .await?
+                .len())
+        }
+        _ => {
+            let (source, relative) = storage.helper_output_mount();
+            let path = relative.join(artifact_key);
+            let out = runner
+                .run(
+                    CommandSpec {
+                        program: "docker".to_string(),
+                        args: vec![
+                            "run".to_string(),
+                            "--rm".to_string(),
+                            "-v".to_string(),
+                            format!("{source}:/out-root:ro"),
+                            storage.helper_image(helper_image_fallback).to_string(),
+                            "sh".to_string(),
+                            "-lc".to_string(),
+                            format!("stat -c %s '/out-root/{}'", path.to_string_lossy()),
+                        ],
+                        env: Vec::new(),
+                    },
+                    Duration::from_secs(20),
+                )
+                .await?;
+            if out.status != 0 {
+                return Err(anyhow::anyhow!(
+                    "backup artifact stat failed: {}",
+                    out.stderr
+                ));
+            }
+            Ok(out.stdout.trim().parse::<u64>()?)
+        }
+    }
+}
+
+fn legacy_artifact_key(
+    storage: &crate::backup_storage::BackupStorage,
+    artifact_path: &str,
+) -> Option<PathBuf> {
+    Path::new(artifact_path)
+        .strip_prefix(storage.logical_root())
+        .ok()
+        .filter(|key| !key.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+}
+
+async fn delete_artifact(
+    runner: &dyn CommandRunner,
+    storage: &crate::backup_storage::BackupStorage,
+    helper_image_fallback: &str,
+    artifact_key: &Path,
+) -> anyhow::Result<()> {
+    match storage {
+        crate::backup_storage::BackupStorage::Local { logical_root } => {
+            tokio::fs::remove_file(logical_root.join(artifact_key)).await?;
+        }
+        _ => {
+            let (source, relative) = storage.helper_output_mount();
+            let path = relative.join(artifact_key);
+            let out = runner
+                .run(
+                    CommandSpec {
+                        program: "docker".to_string(),
+                        args: vec![
+                            "run".to_string(),
+                            "--rm".to_string(),
+                            "-v".to_string(),
+                            format!("{source}:/out-root"),
+                            storage.helper_image(helper_image_fallback).to_string(),
+                            "rm".to_string(),
+                            "-f".to_string(),
+                            format!("/out-root/{}", path.to_string_lossy()),
+                        ],
+                        env: Vec::new(),
+                    },
+                    Duration::from_secs(20),
+                )
+                .await?;
+            if out.status != 0 {
+                return Err(anyhow::anyhow!(
+                    "backup artifact delete failed: {}",
+                    out.stderr
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn delete_artifact_if_present(
+    runner: &dyn CommandRunner,
+    storage: &crate::backup_storage::BackupStorage,
+    helper_image_fallback: &str,
+    artifact_key: &Path,
+) -> anyhow::Result<()> {
+    match delete_artifact(runner, storage, helper_image_fallback, artifact_key).await {
+        Ok(()) => Ok(()),
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(test)]
@@ -715,13 +1215,21 @@ mod tests {
 
         let out = run_pre_update_backup(
             &runner,
+            &runner,
             &settings,
+            Path::new(&tmp).join("dockrev.sqlite").as_path(),
+            "ghcr.io/ivanli-cn/dockrev:latest",
+            "backup-test",
+            "job-test",
             "docker-compose",
             None,
             &stack,
             &JobScope::Stack,
             None,
+            &[],
             "2026-01-19T00:00:00Z",
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -754,20 +1262,32 @@ mod tests {
             .volume_names
             .insert("big".to_string(), crate::api::types::TernaryChoice::Force);
 
+        let artifact_dir = Path::new(&tmp).join("backups/stk_test");
+        std::fs::create_dir_all(&artifact_dir).unwrap();
+        std::fs::write(artifact_dir.join("20260119-000000Z.tar.zst"), [0_u8; 10]).unwrap();
+
         let out = run_pre_update_backup(
             &runner,
+            &runner,
             &settings,
+            Path::new(&tmp).join("dockrev.sqlite").as_path(),
+            "ghcr.io/ivanli-cn/dockrev:latest",
+            "backup-test",
+            "job-test",
             "docker-compose",
             None,
             &stack,
             &JobScope::Stack,
             None,
+            &[],
             "2026-01-19T00:00:00Z",
+            None,
+            None,
         )
         .await
         .unwrap();
         assert_eq!(out.status, "success");
-        assert!(out.artifact_path.as_deref().unwrap().ends_with(".tar.gz"));
+        assert!(out.artifact_path.as_deref().unwrap().ends_with(".tar.zst"));
         assert_eq!(out.size_bytes, Some(10));
     }
 }

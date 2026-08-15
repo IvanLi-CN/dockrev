@@ -179,6 +179,12 @@ pub struct ServiceBackupRecordItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artifact_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archive_format: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compression: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub size_bytes: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cleanup_after: Option<String>,

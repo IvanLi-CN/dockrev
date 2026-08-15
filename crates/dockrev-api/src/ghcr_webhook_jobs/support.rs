@@ -243,6 +243,7 @@ pub(super) fn make_progress(
         planned_percent: Some(Some(percent)),
         current_target,
         download: None,
+        backup: None,
         updated_at,
     }
 }

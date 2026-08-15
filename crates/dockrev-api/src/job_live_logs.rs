@@ -6,6 +6,8 @@ use std::sync::Mutex;
 
 use tokio::sync::broadcast;
 
+use crate::api::types::JobProgress;
+
 const JOB_LIVE_LOG_BROADCAST_CAPACITY: usize = 512;
 
 #[derive(Default)]
@@ -74,6 +76,7 @@ pub(crate) struct JobLiveCommandComplete {
 pub(crate) enum JobLiveEvent {
     Terminal(JobLiveTerminal),
     CommandComplete(JobLiveCommandComplete),
+    Progress(JobProgress),
 }
 
 pub(crate) struct JobLiveLogSubscription {
@@ -190,6 +193,14 @@ impl JobLiveLogHub {
                     had_output,
                     summary_persisted,
                 }));
+        }
+    }
+
+    pub(crate) fn publish_progress(&self, job_id: &str, progress: JobProgress) {
+        if let Ok(entries) = self.entries.lock()
+            && let Some(entry) = entries.get(job_id)
+        {
+            let _ = entry.sender.send(JobLiveEvent::Progress(progress));
         }
     }
 

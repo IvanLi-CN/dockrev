@@ -32,7 +32,11 @@ export function buildSettingsSavePayload(settings: SettingsResponse): PutSetting
   const releaseNotesApiKey =
     isMaskedSecretLiteral(octoRillApiKey) ? undefined : octoRillApiKey.length > 0 ? octoRillApiKey : null
   return {
-    backup: settings.backup,
+    backup: {
+      enabled: settings.backup.enabled,
+      requireSuccess: settings.backup.requireSuccess,
+      skipTargetsOverBytes: settings.backup.skipTargetsOverBytes,
+    },
     resourceMonitor: {
       enabled: settings.resourceMonitor.enabled,
       sampleIntervalSeconds: settings.resourceMonitor.sampleIntervalSeconds,

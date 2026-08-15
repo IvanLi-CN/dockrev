@@ -655,7 +655,19 @@ export function makeMockDebug(): MockDebug {
 
 export function makeDefaultSettings(): SettingsResponse {
   return {
-    backup: { enabled: true, requireSuccess: true, baseDir: '/var/lib/dockrev/backup', skipTargetsOverBytes: 104857600 },
+    backup: {
+      enabled: true,
+      requireSuccess: true,
+      baseDir: '/var/lib/dockrev/backups',
+      skipTargetsOverBytes: 104857600,
+      storage: {
+        mode: 'docker_bind',
+        logicalPath: '/var/lib/dockrev/backups',
+        resolvedLocation: '/srv/dockrev/data/backups',
+        writable: true,
+        diagnostic: null,
+      },
+    },
     resourceMonitor: { enabled: true, sampleIntervalSeconds: 5, retentionDays: 1 },
     schedules: {
       updateCheck: { enabled: false, cron: '*/30 * * * *' },

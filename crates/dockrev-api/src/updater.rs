@@ -241,6 +241,129 @@ pub struct UpdateProgressEvent {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
+pub async fn pre_pull_update_images(
+    runner: &dyn CommandRunner,
+    compose_bin: &str,
+    docker_config_path: Option<&Path>,
+    idempotent_retry_policy: IdempotentRetryPolicy,
+    stack: &StackRecord,
+    scope: &JobScope,
+    service_id: Option<&str>,
+    explicit_targets: Option<&[UpdateServiceTarget]>,
+    allow_arch_mismatch: bool,
+    update_reason: &str,
+    dockrev_image_repo: Option<&str>,
+    progress_events: Option<UnboundedSender<UpdateProgressEvent>>,
+) -> anyhow::Result<()> {
+    let services = select_update_services(
+        stack,
+        scope,
+        service_id,
+        allow_arch_mismatch,
+        update_reason,
+        dockrev_image_repo,
+    )
+    .services;
+    if services.is_empty() {
+        return Ok(());
+    }
+
+    let explicit_targets_by_service = explicit_targets
+        .unwrap_or(&[])
+        .iter()
+        .map(|target| (target.service_id.clone(), target.clone()))
+        .collect::<HashMap<_, _>>();
+    let auth_bridge = docker_config_path
+        .map(DockerCliAuthBridge::stage)
+        .transpose()?;
+    let command_env = auth_bridge
+        .as_ref()
+        .map(DockerCliAuthBridge::env)
+        .unwrap_or_default();
+    let compose_cfg = ComposeRunnerConfig {
+        compose_bin: compose_bin.to_string(),
+        env: command_env,
+    };
+    let compose_stack = ComposeStack {
+        project_name: sanitize_project_name(&stack.name),
+        compose: stack.compose.clone(),
+    };
+    let override_path = build_override_file(stack, &services, &explicit_targets_by_service)?;
+    let _override_cleanup = override_path
+        .as_ref()
+        .map(|path| TempFileCleanup(path.clone()));
+    let override_stack = override_path.as_ref().map(|path| ComposeStack {
+        project_name: compose_stack.project_name.clone(),
+        compose: {
+            let mut compose = stack.compose.clone();
+            compose
+                .compose_files
+                .push(path.to_string_lossy().to_string());
+            compose
+        },
+    });
+    let compose_for_update = override_stack.as_ref().unwrap_or(&compose_stack);
+    let service_names = services
+        .iter()
+        .map(|service| service.name.clone())
+        .collect::<Vec<_>>();
+    let service_total = services.len() as u32;
+    for (index, service) in services.iter().enumerate() {
+        emit_update_progress(
+            progress_events.as_ref(),
+            UpdateProgressEvent {
+                step: UpdateProgressStep::PullStart,
+                service_name: service.name.clone(),
+                service_index: index as u32,
+                service_total,
+                pull_fraction: None,
+                download: None,
+                message: format!("pulling image for {}", service.name),
+            },
+        );
+    }
+    run_checked_with_pull_progress(
+        runner,
+        compose_for_update.pull_services_with_progress(&compose_cfg, &service_names),
+        Duration::from_secs(300),
+        "pull_services",
+        idempotent_retry_policy,
+        |snapshot| {
+            for (index, service) in services.iter().enumerate() {
+                emit_update_progress(
+                    progress_events.as_ref(),
+                    UpdateProgressEvent {
+                        step: UpdateProgressStep::PullProgress,
+                        service_name: service.name.clone(),
+                        service_index: index as u32,
+                        service_total,
+                        pull_fraction: snapshot.fraction,
+                        download: snapshot.download.clone(),
+                        message: pull_progress_message(&service.name, &snapshot),
+                    },
+                );
+            }
+        },
+    )
+    .await?;
+    for (index, service) in services.iter().enumerate() {
+        emit_update_progress(
+            progress_events.as_ref(),
+            UpdateProgressEvent {
+                step: UpdateProgressStep::PullDone,
+                service_name: service.name.clone(),
+                service_index: index as u32,
+                service_total,
+                pull_fraction: Some(1.0),
+                download: None,
+                message: format!("pull completed for {}", service.name),
+            },
+        );
+    }
+    Ok(())
+}
+
 pub async fn run_update_job(
     runner: &dyn CommandRunner,
     compose_bin: &str,
@@ -255,6 +378,77 @@ pub async fn run_update_job(
     update_reason: &str,
     dockrev_image_repo: Option<&str>,
     progress_events: Option<UnboundedSender<UpdateProgressEvent>>,
+) -> anyhow::Result<UpdateOutcome> {
+    run_update_job_with_pull_state(
+        runner,
+        compose_bin,
+        docker_config_path,
+        idempotent_retry_policy,
+        stack,
+        scope,
+        service_id,
+        mode,
+        explicit_targets,
+        allow_arch_mismatch,
+        update_reason,
+        dockrev_image_repo,
+        progress_events,
+        false,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn run_update_job_pre_pulled(
+    runner: &dyn CommandRunner,
+    compose_bin: &str,
+    docker_config_path: Option<&Path>,
+    idempotent_retry_policy: IdempotentRetryPolicy,
+    stack: &StackRecord,
+    scope: &JobScope,
+    service_id: Option<&str>,
+    mode: &str,
+    explicit_targets: Option<&[UpdateServiceTarget]>,
+    allow_arch_mismatch: bool,
+    update_reason: &str,
+    dockrev_image_repo: Option<&str>,
+    progress_events: Option<UnboundedSender<UpdateProgressEvent>>,
+) -> anyhow::Result<UpdateOutcome> {
+    run_update_job_with_pull_state(
+        runner,
+        compose_bin,
+        docker_config_path,
+        idempotent_retry_policy,
+        stack,
+        scope,
+        service_id,
+        mode,
+        explicit_targets,
+        allow_arch_mismatch,
+        update_reason,
+        dockrev_image_repo,
+        progress_events,
+        true,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_update_job_with_pull_state(
+    runner: &dyn CommandRunner,
+    compose_bin: &str,
+    docker_config_path: Option<&Path>,
+    idempotent_retry_policy: IdempotentRetryPolicy,
+    stack: &StackRecord,
+    scope: &JobScope,
+    service_id: Option<&str>,
+    mode: &str,
+    explicit_targets: Option<&[UpdateServiceTarget]>,
+    allow_arch_mismatch: bool,
+    update_reason: &str,
+    dockrev_image_repo: Option<&str>,
+    progress_events: Option<UnboundedSender<UpdateProgressEvent>>,
+    images_pre_pulled: bool,
 ) -> anyhow::Result<UpdateOutcome> {
     let selection = select_update_services(
         stack,
@@ -382,12 +576,13 @@ pub async fn run_update_job(
             },
         );
 
-        let pre_update_container_id = run_to_string(
-            runner,
-            compose_for_update.ps_q_service(&compose_cfg, &svc.name),
-            Duration::from_secs(30),
-        )
-        .await?;
+        let container_lookup = if images_pre_pulled {
+            compose_for_update.ps_all_q_service(&compose_cfg, &svc.name)
+        } else {
+            compose_for_update.ps_q_service(&compose_cfg, &svc.name)
+        };
+        let pre_update_container_id =
+            run_to_string(runner, container_lookup, Duration::from_secs(30)).await?;
         let pre_update_container_id = pre_update_container_id.trim().to_string();
         if pre_update_container_id.is_empty() {
             emit_update_progress(
@@ -461,7 +656,10 @@ pub async fn run_update_job(
         );
     }
 
-    if let Some(progress_events) = progress_events.as_ref() {
+    if images_pre_pulled {
+        // The prepare phase already pulled the exact compose service set. Keep emitting the
+        // completion edge so downstream progress remains monotonic.
+    } else if let Some(progress_events) = progress_events.as_ref() {
         run_checked_with_pull_progress(
             runner,
             compose_for_update.pull_services_with_progress(&compose_cfg, &prepared_service_names),

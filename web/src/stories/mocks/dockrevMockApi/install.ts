@@ -629,8 +629,8 @@ export function installDockrevMockApi(
         live.logs = nextLogs.length > 500 ? nextLogs.slice(-500) : nextLogs; live.logsLastId = nextId
         transientBody = terminalActive
           ? [
-              `event: job_live_terminal\ndata: ${JSON.stringify({ type: 'job_live_terminal', ts: liveLine.ts, commandSeq, lines: terminalLines(`${liveLine.msg} · 63.3MB`, liveTerminalStateRef.frame) })}\n\n`,
-              `event: job_live_terminal\ndata: ${JSON.stringify({ type: 'job_live_terminal', ts: liveLine.ts, commandSeq, lines: terminalLines(`${liveLine.msg} · 64.1MB`, liveTerminalStateRef.frame) })}\n\n`,
+              `event: job_live_terminal\ndata: ${JSON.stringify({ type: 'job_live_terminal', ts: liveLine.ts, commandSeq, lines: terminalLines('[####------] 40% 63.3MB 91.2MB/s ETA 4s zstd-size 18.7MB', liveTerminalStateRef.frame) })}\n\n`,
+              `event: job_live_terminal\ndata: ${JSON.stringify({ type: 'job_live_terminal', ts: liveLine.ts, commandSeq, lines: terminalLines('[#####-----] 51% 64.1MB 92.4MB/s ETA 3s zstd-size 19.1MB', liveTerminalStateRef.frame) })}\n\n`,
               commandComplete
                 ? `event: job_live_command_complete\ndata: ${JSON.stringify({ type: 'job_live_command_complete', commandSeq, hadOutput: true })}\n\n`
                 : '',

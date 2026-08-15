@@ -109,6 +109,7 @@ pub(super) fn make_job_progress_with_optional_plan(
         planned_percent: planned_percent.map(|value| value.map(|value| value.min(100))),
         current_target,
         download: None,
+        backup: None,
         updated_at,
     }
 }
@@ -278,6 +279,15 @@ pub(super) async fn persist_job_progress(
     {
         obj.insert("download".to_string(), serde_json::to_value(download)?);
     }
+    if let Some(backup) = progress.backup.as_ref()
+        && let Some(obj) = evt.as_object_mut()
+    {
+        obj.insert("backup".to_string(), serde_json::to_value(backup)?);
+    }
+
+    state
+        .job_live_log_hub
+        .publish_progress(job_id, progress.clone());
 
     state
         .db

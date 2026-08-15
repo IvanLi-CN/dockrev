@@ -553,7 +553,33 @@ async fn get_settings(
 ) -> Result<Json<SettingsResponse>, ApiError> {
     let auth = require_user(&state, &headers).await?;
 
-    let backup = state.db.get_backup_settings().await.map_err(map_internal)?;
+    let backup_settings = state.db.get_backup_settings().await.map_err(map_internal)?;
+    let logical_backup_root =
+        crate::backup_storage::logical_backup_root(&state.config.db_path).map_err(map_internal)?;
+    let storage =
+        match crate::backup_storage::resolve_backup_storage(&*state.runner, &state.config.db_path)
+            .await
+        {
+            Ok(storage) => storage.info(),
+            Err(error) => crate::backup_storage::BackupStorageInfo {
+                mode: if std::path::Path::new("/.dockerenv").exists() {
+                    "docker_unresolved".to_string()
+                } else {
+                    "local_unresolved".to_string()
+                },
+                logical_path: logical_backup_root.to_string_lossy().to_string(),
+                resolved_location: String::new(),
+                writable: false,
+                diagnostic: Some(error.to_string()),
+            },
+        };
+    let backup = BackupSettingsResponse {
+        enabled: backup_settings.enabled,
+        require_success: backup_settings.require_success,
+        base_dir: logical_backup_root.to_string_lossy().to_string(),
+        skip_targets_over_bytes: backup_settings.skip_targets_over_bytes,
+        storage,
+    };
     let resource_monitor = state
         .db
         .get_resource_monitor_settings()
@@ -602,6 +628,16 @@ async fn put_settings(
     Json(req): Json<PutSettingsRequest>,
 ) -> Result<Json<PutSettingsResponse>, ApiError> {
     let _user = require_user(&state, &headers).await?;
+    if req.backup.base_dir.is_some() {
+        return Err(
+            ApiError::invalid_argument("backup.baseDir is managed by deployment").with_details(
+                json!({
+                    "reason": "managed_by_deployment",
+                    "field": "backup.baseDir",
+                }),
+            ),
+        );
+    }
     let now = now_rfc3339().map_err(map_internal)?;
 
     let existing_resource_monitor = state
@@ -747,10 +783,18 @@ async fn put_settings(
         merged_public_base_url = Some(normalized);
     }
 
+    let existing_backup = state.db.get_backup_settings().await.map_err(map_internal)?;
+    let merged_backup = BackupSettings {
+        enabled: req.backup.enabled,
+        require_success: req.backup.require_success,
+        base_dir: existing_backup.base_dir,
+        skip_targets_over_bytes: req.backup.skip_targets_over_bytes,
+    };
+
     state
         .db
         .put_settings(
-            &req.backup,
+            &merged_backup,
             &merged_resource_monitor,
             &merged_schedules,
             &merged_release_notes,

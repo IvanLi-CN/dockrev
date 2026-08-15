@@ -420,6 +420,20 @@ pub struct JobProgressDownload {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct JobProgressBackup {
+    pub phase: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimated_total_bytes: Option<u64>,
+    pub processed_bytes: u64,
+    pub compressed_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub throughput_bps: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eta_seconds: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JobProgress {
     /// Progress phase label (e.g. prepare/scan/apply/done).
     pub phase: String,
@@ -448,6 +462,8 @@ pub struct JobProgress {
     pub current_target: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub download: Option<JobProgressDownload>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup: Option<JobProgressBackup>,
     pub updated_at: String,
 }
 

@@ -53,6 +53,7 @@ fn map_backup_record_row(
     row: crate::db::ServiceBackupRecordRow,
     stack_id: &str,
 ) -> ServiceBackupRecordItem {
+    let backup_summary = current_stack_backup_summary(&row.job_summary_json, stack_id);
     ServiceBackupRecordItem {
         backup_id: row.backup_id,
         job_id: row.job_id,
@@ -61,6 +62,18 @@ fn map_backup_record_row(
         created_at: row.created_at,
         finished_at: row.finished_at,
         artifact_path: row.artifact_path,
+        artifact_key: backup_summary
+            .and_then(|backup| backup.get("artifactKey"))
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
+        archive_format: backup_summary
+            .and_then(|backup| backup.get("archiveFormat"))
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
+        compression: backup_summary
+            .and_then(|backup| backup.get("compression"))
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
         size_bytes: row.size_bytes,
         cleanup_after: row.cleanup_after,
         deleted_at: row.deleted_at,

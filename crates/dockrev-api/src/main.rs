@@ -4,6 +4,8 @@ mod api;
 mod authz;
 mod auto_update;
 mod backup;
+mod backup_helper;
+mod backup_storage;
 mod cleanup;
 mod cleanup_scan_runs;
 mod cleanup_snapshot_worker;
@@ -84,6 +86,9 @@ async fn shutdown_signal(state: std::sync::Arc<state::AppState>) {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    if backup_helper::maybe_run_from_args().await? {
+        return Ok(());
+    }
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -154,6 +159,7 @@ async fn main() -> anyhow::Result<()> {
             count = recovered.len(),
             "recovered incomplete jobs on startup"
         );
+        backup::recover_interrupted_backups(state.as_ref(), &recovered).await?;
     }
     let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
         .unwrap_or_else(|| "linux/amd64".to_string());

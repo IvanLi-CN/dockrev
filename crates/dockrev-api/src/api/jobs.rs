@@ -448,6 +448,17 @@ pub(super) async fn job_events(
                         );
                         continue;
                     }
+                    Ok(crate::job_live_logs::JobLiveEvent::Progress(progress)) => {
+                        let evt = json!({
+                            "type": "job_progress",
+                            "jobId": sse_job_id,
+                            "progress": progress,
+                        });
+                        yield Ok::<Event, Infallible>(
+                            Event::default().event("job_progress").data(evt.to_string()),
+                        );
+                        continue;
+                    }
                     Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => {
                         live_commands.clear();
                     }
@@ -540,6 +551,16 @@ pub(super) async fn job_events(
                                         Event::default()
                                             .event("job_live_command_complete")
                                             .data(evt.to_string()),
+                                    );
+                                }
+                                Ok(crate::job_live_logs::JobLiveEvent::Progress(progress)) => {
+                                    let evt = json!({
+                                        "type": "job_progress",
+                                        "jobId": sse_job_id,
+                                        "progress": progress,
+                                    });
+                                    yield Ok::<Event, Infallible>(
+                                        Event::default().event("job_progress").data(evt.to_string()),
                                     );
                                 }
                                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
@@ -650,6 +671,16 @@ pub(super) async fn job_events(
                                         Event::default()
                                             .event("job_live_command_complete")
                                             .data(evt.to_string()),
+                                    );
+                                }
+                                crate::job_live_logs::JobLiveEvent::Progress(progress) => {
+                                    let evt = json!({
+                                        "type": "job_progress",
+                                        "jobId": sse_job_id,
+                                        "progress": progress,
+                                    });
+                                    yield Ok::<Event, Infallible>(
+                                        Event::default().event("job_progress").data(evt.to_string()),
                                     );
                                 }
                             }

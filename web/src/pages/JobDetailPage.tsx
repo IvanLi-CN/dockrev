@@ -216,7 +216,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
   const [showEvents, setShowEvents] = useState(readShowEventsPreference)
   const [manualRefreshVersion, setManualRefreshVersion] = useState(0)
   const liveCommandOutputRef = useRef(false)
-  const activeLiveCommandSeqRef = useRef<number | null>(null)
+  const liveCommandOutputSeqsRef = useRef(new Set<number>())
   const pendingSummarySuppressionsRef = useRef(0)
   const visibleLogs = useMemo(
     () => logs.filter((log) => showEvents || log.level.trim().toLowerCase() !== 'event'),
@@ -230,7 +230,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
     setLogs(j.logs)
     setProgress(normalizeProgress(j.progress))
     liveCommandOutputRef.current = false
-    activeLiveCommandSeqRef.current = null
+    liveCommandOutputSeqsRef.current.clear()
     pendingSummarySuppressionsRef.current = 0
     return j
   }, [jobId])
@@ -369,7 +369,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
             const ts = typeof p.ts === 'string' ? p.ts : new Date().toISOString()
             const terminalLines = parseTerminalLines(p.lines)
             liveCommandOutputRef.current = true
-            activeLiveCommandSeqRef.current = commandSeq
+            liveCommandOutputSeqsRef.current.add(commandSeq)
             setLogs((prev) => {
               const retained = prev.filter((log) => log.terminalCommandSeq !== commandSeq || log.terminalFrozen)
               const next = terminalLines.map((segments) => ({
@@ -399,7 +399,11 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
             const commandSeq = typeof p.commandSeq === 'number' && Number.isSafeInteger(p.commandSeq) ? p.commandSeq : null
             const hadOutput = p.hadOutput === true
             const summaryPersisted = p.summaryPersisted !== false
-            if (summaryPersisted && hadOutput && liveCommandOutputRef.current) {
+            if (
+              summaryPersisted &&
+              hadOutput &&
+              (liveCommandOutputRef.current || (commandSeq !== null && liveCommandOutputSeqsRef.current.has(commandSeq)))
+            ) {
               pendingSummarySuppressionsRef.current += 1
             }
             if (commandSeq !== null) {
@@ -410,7 +414,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
               )
             }
             liveCommandOutputRef.current = false
-            activeLiveCommandSeqRef.current = null
+            if (commandSeq !== null) liveCommandOutputSeqsRef.current.delete(commandSeq)
           } catch {
             // ignore invalid events
           }
@@ -422,8 +426,11 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
           try {
             const parsed = JSON.parse(data) as unknown
             if (!parsed || typeof parsed !== 'object') return
-            const p = parsed as Record<string, unknown>
-            if (p.type !== 'job_progress') return
+            const envelope = parsed as Record<string, unknown>
+            if (envelope.type !== 'job_progress') return
+            const p = envelope.progress && typeof envelope.progress === 'object'
+              ? envelope.progress as Record<string, unknown>
+              : envelope
             const plannedPercent = Object.prototype.hasOwnProperty.call(p, 'plannedPercent')
               ? typeof p.plannedPercent === 'number'
                 ? p.plannedPercent
@@ -440,6 +447,9 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
               ...(plannedPercent === undefined ? {} : { plannedPercent }),
               currentTarget: typeof p.currentTarget === 'string' ? p.currentTarget : null,
               download: parseJobProgressDownload(p.download),
+              backup: p.backup && typeof p.backup === 'object'
+                ? p.backup as JobProgress['backup']
+                : null,
               updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : new Date().toISOString(),
             })
             if (next) setProgress(next)

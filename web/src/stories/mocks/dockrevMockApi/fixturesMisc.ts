@@ -139,8 +139,8 @@ export function buildAggregateDockrevGuard(): Fixture {
         volumeNames: [],
         storage: {
           baseDir: '/srv/dockrev/backups',
-          artifactPattern: '/srv/dockrev/backups/<stackId>/<timestamp>.tar.gz',
-          compression: 'gzip',
+          artifactPattern: '/srv/dockrev/backups/<stackId>/<timestamp>.tar.zst',
+          compression: 'zstd',
           keepLast: 1,
           deleteAfterStableSeconds: 3600,
         },
