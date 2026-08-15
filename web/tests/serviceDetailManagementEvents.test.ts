@@ -47,6 +47,7 @@ describe('service detail management events', () => {
     expect(parseMockManagementCursor('other:42', 'storybook')).toEqual({ kind: 'resync', reason: 'generation_changed' })
     expect(parseMockManagementCursor('storybook:0x10', 'storybook')).toEqual({ kind: 'resync', reason: 'invalid_cursor' })
     expect(parseMockManagementCursor('storybook:', 'storybook')).toEqual({ kind: 'resync', reason: 'invalid_cursor' })
+    expect(parseMockManagementCursor(`storybook:${'9'.repeat(400)}`, 'storybook')).toEqual({ kind: 'resync', reason: 'invalid_cursor' })
   })
 
   test('refreshes when a finished version inference matches the service image', () => {

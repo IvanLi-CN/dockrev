@@ -15,5 +15,6 @@ export function parseMockManagementCursor(value: string, generation: string): Mo
     return { kind: 'resync', reason: 'invalid_cursor' }
   }
   const parsedSequence = Number(sequence)
+  if (!Number.isSafeInteger(parsedSequence)) return { kind: 'resync', reason: 'invalid_cursor' }
   return { kind: 'valid', id: parsedSequence }
 }
