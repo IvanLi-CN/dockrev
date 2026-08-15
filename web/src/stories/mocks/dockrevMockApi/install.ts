@@ -536,7 +536,7 @@ export function installDockrevMockApi(
           : headers && typeof headers === 'object'
             ? Object.entries(headers).find(([key]) => key.toLowerCase() === 'last-event-id')?.[1] ?? null
             : null
-      const afterCursor = url?.searchParams.get('afterId') || headerCursor || ''
+      const afterCursor = headerCursor || url?.searchParams.get('afterId') || ''
       const cursor = parseMockManagementCursor(afterCursor, managementEventsGeneration)
       const latestId = managementEventsSeqRef.value
       if (cursor.kind === 'resync') {
@@ -544,16 +544,18 @@ export function installDockrevMockApi(
         const data = { type: 'resync_required', domain: 'management', reason: cursor.reason, generation: managementEventsGeneration }
         return new Response(`id: ${resyncCursor}\nevent: resync_required\ndata: ${JSON.stringify(data)}\n\n`, { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'x-accel-buffering': 'no-cache' } })
       }
-      const afterId = cursor.kind === 'valid' ? cursor.id : 0
+      const afterId = cursor.kind === 'valid' ? cursor.id : latestId
       const oldestId = managementEvents[0]?.id ?? latestId
-      if (cursor.kind === 'valid' && cursor.id > 0 && cursor.id < oldestId - 1) {
+      const cursorId = cursor.kind === 'valid' ? cursor.id : latestId
+      const replayGap = managementEvents.length > 0 ? cursorId < oldestId - 1 : cursorId < latestId
+      if (cursor.kind === 'valid' && (replayGap || cursor.id > latestId)) {
         const resyncCursor = formatMockManagementCursor(managementEventsGeneration, latestId)
         const data = { type: 'resync_required', domain: 'management', reason: 'cursor_expired', generation: managementEventsGeneration }
         return new Response(`id: ${resyncCursor}\nevent: resync_required\ndata: ${JSON.stringify(data)}\n\n`, { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'x-accel-buffering': 'no-cache' } })
       }
       const events = managementEvents.filter((event) => event.id > afterId).slice(0, 200)
       const body = events.map((event) => `id: ${event.cursor}\nevent: management\ndata: ${JSON.stringify(event.data)}\n\n`).join('')
-      return new Response(body || ': keep-alive\n\n', { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'x-accel-buffering': 'no' } })
+      return new Response(body || ': keep-alive\n\n', { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'x-accel-buffering': 'no', 'x-dockrev-management-cursor': formatMockManagementCursor(managementEventsGeneration, latestId) } })
     }
 
     if (urlPath === '/api/jobs/events' && method === 'GET' && options.jobsEventsPayload != null) {

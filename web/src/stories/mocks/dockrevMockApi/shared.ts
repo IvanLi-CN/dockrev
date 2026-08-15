@@ -268,11 +268,13 @@ export class MockEventSource extends EventTarget {
       })
       if (!resp.ok) throw new Error(`SSE request failed: ${resp.status}`)
       const payload = await resp.text()
+      const managementCursor = u.pathname === '/api/events' ? resp.headers.get('x-dockrev-management-cursor') : null
       this.emitOpen()
       for (const evt of parseSsePayload(payload)) {
         this.emitMessage(evt.event || 'message', evt.data, evt.id)
         if (evt.id) this.lastEventId = evt.id
       }
+      if (managementCursor && !this.lastEventId) this.lastEventId = managementCursor
     } catch {
       this.emitError()
     } finally {
