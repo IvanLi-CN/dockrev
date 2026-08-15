@@ -117,22 +117,18 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                 <div className="label">用户头</div>
                 <div className="mono">{settings.auth.forwardHeaderName}</div>
               </div>
-
               <div className="kvRow">
                 <div className="label">组头</div>
                 <div className="mono">{settings.auth.groupHeaderName}</div>
               </div>
-
               <div className="kvRow">
                 <div className="label">鉴权模式</div>
                 <div className="mono">{settings.auth.authorizationMode}</div>
               </div>
-
               <div className="kvRow">
                 <div className="label">允许用户</div>
                 <div className="mono">{settings.auth.allowedUserMasked || '-'}</div>
               </div>
-
               <div className="kvRow">
                 <div className="label">允许组</div>
                 <div className="mono">{settings.auth.allowedGroupMasked || '-'}</div>
@@ -266,13 +262,16 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
               </div>
               <div className="kvRow">
                 <div className="label">备份输出目录</div>
-                <Input
-                  className="input"
-                  value={settings.backup.baseDir}
-                  onChange={(e) =>
-                    updateBackup('backup.baseDir', (backup) => ({ ...backup, baseDir: e.target.value }))
-                  }
-                />
+                <div>
+                  <div className="mono">{settings.backup.storage.logicalPath}</div>
+                  <div className="muted" style={{ marginTop: 6 }}>
+                    {settings.backup.storage.resolvedLocation} · {settings.backup.storage.mode} ·{' '}
+                    {settings.backup.storage.writable ? '可写' : '不可写'}
+                  </div>
+                  {settings.backup.storage.diagnostic ? (
+                    <div className="muted" style={{ marginTop: 6 }}>{settings.backup.storage.diagnostic}</div>
+                  ) : null}
+                </div>
               </div>
               <div className="kvRow">
                 <div className="label">体积阈值（超过则跳过）</div>

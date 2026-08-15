@@ -207,13 +207,13 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     if (backup) {
       const enabled = getBoolean(backup.enabled)
       const requireSuccess = getBoolean(backup.requireSuccess)
-      const baseDir = getString(backup.baseDir)
       const skipTargetsOverBytes = typeof backup.skipTargetsOverBytes === 'number' ? backup.skipTargetsOverBytes : null
       f.settings.backup = {
         enabled: enabled ?? f.settings.backup.enabled,
         requireSuccess: requireSuccess ?? f.settings.backup.requireSuccess,
-        baseDir: baseDir ?? f.settings.backup.baseDir,
+        baseDir: f.settings.backup.baseDir,
         skipTargetsOverBytes: skipTargetsOverBytes ?? f.settings.backup.skipTargetsOverBytes,
+        storage: f.settings.backup.storage,
       }
     }
 

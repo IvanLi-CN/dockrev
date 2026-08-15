@@ -111,10 +111,6 @@ function writeShowEventsPreference(value: boolean): void {
   }
 }
 
-function isCommandSummary(msg: string): boolean {
-  return /^status=\S+\s+stdout=/.test(msg.trim())
-}
-
 type TerminalSegment = {
   text: string
   fg?: string
@@ -215,9 +211,8 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
   const [logIsAtBottom, setLogIsAtBottom] = useState(true)
   const [showEvents, setShowEvents] = useState(readShowEventsPreference)
   const [manualRefreshVersion, setManualRefreshVersion] = useState(0)
-  const liveCommandOutputRef = useRef(false)
-  const activeLiveCommandSeqRef = useRef<number | null>(null)
-  const pendingSummarySuppressionsRef = useRef(0)
+  const liveCommandOutputSeqsRef = useRef(new Set<number>())
+  const pendingCommandSummarySeqsRef = useRef(new Set<number>())
   const visibleLogs = useMemo(
     () => logs.filter((log) => showEvents || log.level.trim().toLowerCase() !== 'event'),
     [logs, showEvents],
@@ -229,9 +224,8 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
     setJob(j)
     setLogs(j.logs)
     setProgress(normalizeProgress(j.progress))
-    liveCommandOutputRef.current = false
-    activeLiveCommandSeqRef.current = null
-    pendingSummarySuppressionsRef.current = 0
+    liveCommandOutputSeqsRef.current.clear()
+    pendingCommandSummarySeqsRef.current.clear()
     return j
   }, [jobId])
 
@@ -309,11 +303,9 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
             const ts = typeof p.ts === 'string' ? p.ts : ''
             const level = typeof p.level === 'string' ? p.level : ''
             const msg = typeof p.msg === 'string' ? p.msg : ''
+            const commandSeq = typeof p.commandSeq === 'number' && Number.isSafeInteger(p.commandSeq) ? p.commandSeq : null
             const durableId = typeof p.id === 'number' || typeof p.id === 'string' ? String(p.id) : ''
-            if (isCommandSummary(msg) && pendingSummarySuppressionsRef.current > 0) {
-              pendingSummarySuppressionsRef.current -= 1
-              return
-            }
+            if (commandSeq !== null && pendingCommandSummarySeqsRef.current.delete(commandSeq)) return
             setLogs((prev) => {
               if (
                 (durableId && prev.some((log) => log.durableId === durableId)) ||
@@ -346,7 +338,6 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
             if (p.type !== 'job_live_log') return
             const ts = typeof p.ts === 'string' ? p.ts : new Date().toISOString()
             const msg = typeof p.msg === 'string' ? p.msg : ''
-            liveCommandOutputRef.current = true
             setLogs((prev) => {
               const next = [...prev, { ts, level: '', msg, transient: true }]
               return next.length > 500 ? next.slice(-500) : next
@@ -368,8 +359,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
             if (commandSeq === null) return
             const ts = typeof p.ts === 'string' ? p.ts : new Date().toISOString()
             const terminalLines = parseTerminalLines(p.lines)
-            liveCommandOutputRef.current = true
-            activeLiveCommandSeqRef.current = commandSeq
+            liveCommandOutputSeqsRef.current.add(commandSeq)
             setLogs((prev) => {
               const retained = prev.filter((log) => log.terminalCommandSeq !== commandSeq || log.terminalFrozen)
               const next = terminalLines.map((segments) => ({
@@ -397,20 +387,21 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
             const p = parsed as Record<string, unknown>
             if (p.type !== 'job_live_command_complete') return
             const commandSeq = typeof p.commandSeq === 'number' && Number.isSafeInteger(p.commandSeq) ? p.commandSeq : null
-            const hadOutput = p.hadOutput === true
             const summaryPersisted = p.summaryPersisted !== false
-            if (summaryPersisted && hadOutput && liveCommandOutputRef.current) {
-              pendingSummarySuppressionsRef.current += 1
-            }
             if (commandSeq !== null) {
-              setLogs((prev) =>
-                prev.map((log) =>
+              if (summaryPersisted && liveCommandOutputSeqsRef.current.has(commandSeq)) {
+                pendingCommandSummarySeqsRef.current.add(commandSeq)
+              }
+              setLogs((prev) => {
+                if (summaryPersisted) {
+                  return prev.filter((log) => log.terminalCommandSeq !== commandSeq)
+                }
+                return prev.map((log) =>
                   log.terminalCommandSeq === commandSeq ? { ...log, terminalFrozen: true } : log,
-                ),
-              )
+                )
+              })
             }
-            liveCommandOutputRef.current = false
-            activeLiveCommandSeqRef.current = null
+            if (commandSeq !== null) liveCommandOutputSeqsRef.current.delete(commandSeq)
           } catch {
             // ignore invalid events
           }
@@ -422,8 +413,11 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
           try {
             const parsed = JSON.parse(data) as unknown
             if (!parsed || typeof parsed !== 'object') return
-            const p = parsed as Record<string, unknown>
-            if (p.type !== 'job_progress') return
+            const envelope = parsed as Record<string, unknown>
+            if (envelope.type !== 'job_progress') return
+            const p = envelope.progress && typeof envelope.progress === 'object'
+              ? envelope.progress as Record<string, unknown>
+              : envelope
             const plannedPercent = Object.prototype.hasOwnProperty.call(p, 'plannedPercent')
               ? typeof p.plannedPercent === 'number'
                 ? p.plannedPercent
@@ -440,6 +434,9 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
               ...(plannedPercent === undefined ? {} : { plannedPercent }),
               currentTarget: typeof p.currentTarget === 'string' ? p.currentTarget : null,
               download: parseJobProgressDownload(p.download),
+              backup: p.backup && typeof p.backup === 'object'
+                ? p.backup as JobProgress['backup']
+                : null,
               updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : new Date().toISOString(),
             })
             if (next) setProgress(next)

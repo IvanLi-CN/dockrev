@@ -242,8 +242,8 @@ export function buildDashboardDemo(): Fixture {
       ],
       storage: {
         baseDir: '/srv/dockrev/backups',
-        artifactPattern: '/srv/dockrev/backups/<stackId>/<timestamp>.tar.gz',
-        compression: 'gzip',
+        artifactPattern: '/srv/dockrev/backups/<stackId>/<timestamp>.tar.zst',
+        compression: 'zstd',
         keepLast: 1,
         deleteAfterStableSeconds: 3600,
       },
@@ -273,8 +273,8 @@ export function buildDashboardDemo(): Fixture {
       ],
       storage: {
         baseDir: '/srv/dockrev/backups',
-        artifactPattern: '/srv/dockrev/backups/<stackId>/<timestamp>.tar.gz',
-        compression: 'gzip',
+        artifactPattern: '/srv/dockrev/backups/<stackId>/<timestamp>.tar.zst',
+        compression: 'zstd',
         keepLast: 1,
         deleteAfterStableSeconds: 3600,
       },
@@ -284,8 +284,8 @@ export function buildDashboardDemo(): Fixture {
       volumeNames: [],
       storage: {
         baseDir: '/srv/dockrev/backups',
-        artifactPattern: '/srv/dockrev/backups/<stackId>/<timestamp>.tar.gz',
-        compression: 'gzip',
+        artifactPattern: '/srv/dockrev/backups/<stackId>/<timestamp>.tar.zst',
+        compression: 'zstd',
         keepLast: 1,
         deleteAfterStableSeconds: 3600,
       },

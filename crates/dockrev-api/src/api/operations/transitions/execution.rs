@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 pub(crate) type UpdateStackSummaries = Vec<serde_json::Value>;
 pub(crate) type UpdateBackupsToCleanup = Vec<(String, u32)>;
@@ -198,12 +199,93 @@ pub(crate) async fn run_update_job(
             let no_actionable_services_after_anomaly_skip = no_actionable_services
                 && !req.reason.as_str().eq_ignore_ascii_case("ui")
                 && !skipped_version_anomaly.is_empty();
+            let backup_requested = req.mode.as_str() == "apply"
+                && !no_actionable_services
+                && backup::should_run_backup(&backup_settings, req.backup_mode.as_str());
+            let backup_requires_stop = backup_requested
+                && backup::requires_service_stop(
+                    &stack,
+                    &req.scope,
+                    req.service_id.as_deref(),
+                );
+            let pull_branch_percent = Arc::new(AtomicU32::new(0));
+            let backup_branch_percent = Arc::new(AtomicU32::new(0));
+            let mut services_kept_stopped_for_apply = Vec::<String>::new();
+            let mut prepare_error: Option<anyhow::Error> = None;
+
+            if backup_requested && backup_requires_stop {
+                let (pull_progress_tx, mut pull_progress_rx) =
+                    tokio::sync::mpsc::unbounded_channel::<updater::UpdateProgressEvent>();
+                let pull_progress_state = state.clone();
+                let pull_progress_job_id = job_id.clone();
+                let pull_progress_stack_id = stack_id.clone();
+                let pull_branch_percent_for_task = pull_branch_percent.clone();
+                let backup_branch_percent_for_task = backup_branch_percent.clone();
+                let pull_progress_task = tokio::spawn(async move {
+                    let mut last_fraction = 0.0_f64;
+                    while let Some(event) = pull_progress_rx.recv().await {
+                        let fraction = match event.step {
+                            updater::UpdateProgressStep::PullDone => 1.0,
+                            updater::UpdateProgressStep::PullProgress => {
+                                event.pull_fraction.unwrap_or(last_fraction)
+                            }
+                            _ => last_fraction,
+                        }
+                        .clamp(last_fraction, 1.0);
+                        last_fraction = fraction;
+                        pull_branch_percent_for_task
+                            .store((fraction * 10_000.0).round() as u32, Ordering::Relaxed);
+                        let percent = combined_backup_pull_percent(
+                            processed_stacks,
+                            total_stacks,
+                            &pull_branch_percent_for_task,
+                            &backup_branch_percent_for_task,
+                        );
+                        let mut progress = make_job_progress_with_percent(
+                            "pull",
+                            event.message,
+                            processed_stacks,
+                            total_stacks,
+                            Some(pull_progress_stack_id.clone()),
+                            now_rfc3339().unwrap_or_else(|_| {
+                                time::OffsetDateTime::now_utc().to_string()
+                            }),
+                            percent,
+                        );
+                        progress.download = event.download;
+                        let _ = persist_job_progress(
+                            &pull_progress_state,
+                            &pull_progress_job_id,
+                            &progress,
+                        )
+                        .await;
+                    }
+                });
+                let pre_pull_result = updater::pre_pull_update_images(
+                    &logging_runner,
+                    &state.config.compose_bin,
+                    state.config.docker_config_path.as_deref(),
+                    updater::IdempotentRetryPolicy {
+                        max_attempts: state.config.update_idempotent_retry_max_attempts,
+                        base_ms: state.config.update_idempotent_retry_base_ms,
+                        max_ms: state.config.update_idempotent_retry_max_ms,
+                    },
+                    &stack,
+                    &req.scope,
+                    req.service_id.as_deref(),
+                    req.targets.as_deref(),
+                    req.allow_arch_mismatch,
+                    req.reason.as_str(),
+                    Some(state.config.dockrev_image_repo.as_str()),
+                    Some(pull_progress_tx),
+                )
+                .await;
+                let _ = pull_progress_task.await;
+                pre_pull_result?;
+            }
 
             let mut backup_id_for_cleanup: Option<(String, u32)> = None;
-            if req.mode.as_str() == "apply"
-                && !no_actionable_services
-                && backup::should_run_backup(&backup_settings, req.backup_mode.as_str())
-            {
+            if backup_requested {
                 let backup_id = ids::new_backup_id();
                 let now = now_rfc3339()?;
                 state
@@ -222,18 +304,208 @@ pub(crate) async fn run_update_job(
                     )
                     .await?;
 
-                match backup::run_pre_update_backup(
+                let (backup_progress_tx, mut backup_progress_rx) =
+                    tokio::sync::mpsc::unbounded_channel::<backup::BackupProgressEvent>();
+                let progress_state = state.clone();
+                let progress_job_id = job_id.clone();
+                let progress_stack_id = stack_id.clone();
+                let pull_branch_percent_for_backup = pull_branch_percent.clone();
+                let backup_branch_percent_for_task = backup_branch_percent.clone();
+                let backup_command_seq = state.job_live_log_hub.begin_command(&job_id);
+                let backup_progress_task = tokio::spawn(async move {
+                    let mut last_checkpoint = std::time::Instant::now();
+                    let mut last_checkpoint_percent = 0_u32;
+                    while let Some(event) = backup_progress_rx.recv().await {
+                        backup_branch_percent_for_task
+                            .store(event.percent.min(100) * 100, Ordering::Relaxed);
+                        let overall_percent = combined_backup_pull_percent(
+                            processed_stacks,
+                            total_stacks,
+                            &pull_branch_percent_for_backup,
+                            &backup_branch_percent_for_task,
+                        );
+                        let updated_at = now_rfc3339()
+                            .unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
+                        let mut progress = make_job_progress_with_percent(
+                            "backup",
+                            format!("backing up {}", progress_stack_id),
+                            processed_stacks,
+                            total_stacks,
+                            Some(progress_stack_id.clone()),
+                            updated_at.clone(),
+                            overall_percent,
+                        );
+                        progress.backup = Some(crate::api::types::JobProgressBackup {
+                            phase: event.phase.clone(),
+                            estimated_total_bytes: Some(event.total_bytes),
+                            processed_bytes: event.processed_bytes,
+                            compressed_bytes: event.compressed_bytes,
+                            throughput_bps: Some(event.throughput_bps),
+                            eta_seconds: event.eta_seconds,
+                        });
+                        progress_state
+                            .job_live_log_hub
+                            .publish_progress(&progress_job_id, progress.clone());
+
+                        let width = 10_usize;
+                        let filled = ((event.percent.min(100) as usize) * width) / 100;
+                        let eta = event
+                            .eta_seconds
+                            .map(|seconds| format!("{seconds}s"))
+                            .unwrap_or_else(|| "--".to_string());
+                        let line = format!(
+                            "[{}{}] {:>3}% {} bytes {}/s ETA {} zstd-size {}",
+                            "#".repeat(filled),
+                            "-".repeat(width - filled),
+                            event.percent.min(100),
+                            event.processed_bytes,
+                            event.throughput_bps,
+                            eta,
+                            event.compressed_bytes,
+                        );
+                        progress_state.job_live_log_hub.publish_terminal(
+                            &progress_job_id,
+                            crate::job_live_logs::JobLiveTerminal {
+                                ts: updated_at,
+                                command_seq: backup_command_seq,
+                                lines: vec![crate::job_live_logs::JobLiveTerminalLine {
+                                    segments: vec![crate::job_live_logs::JobLiveTerminalSegment {
+                                        text: line,
+                                        fg: None,
+                                        bg: None,
+                                        bold: false,
+                                        dim: false,
+                                        underline: false,
+                                    }],
+                                }],
+                            },
+                        );
+
+                        let checkpoint_due = last_checkpoint.elapsed() >= Duration::from_secs(2)
+                            || event.percent >= last_checkpoint_percent.saturating_add(1)
+                            || event.percent == 100;
+                        if checkpoint_due {
+                            let _ = persist_job_progress(
+                                &progress_state,
+                                &progress_job_id,
+                                &progress,
+                            )
+                            .await;
+                            last_checkpoint = std::time::Instant::now();
+                            last_checkpoint_percent = event.percent;
+                        }
+                    }
+                    progress_state.job_live_log_hub.publish_command_complete(
+                        &progress_job_id,
+                        backup_command_seq,
+                        true,
+                        false,
+                    );
+                });
+
+                let services_to_keep_stopped = planned_selection
+                    .services
+                    .iter()
+                    .map(|service| service.name.clone())
+                    .collect::<Vec<_>>();
+                let backup_future = backup::run_pre_update_backup(
                     &logging_runner,
+                    &*state.runner,
                     &backup_settings,
+                    &state.config.db_path,
+                    &state.config.dockrev_image_repo,
+                    &backup_id,
+                    &job_id,
                     &state.config.compose_bin,
                     state.config.docker_config_path.as_deref(),
                     &stack,
                     &req.scope,
                     req.service_id.as_deref(),
+                    &services_to_keep_stopped,
                     &now,
-                )
-                .await
-                {
+                    Some(&state.db),
+                    Some(backup_progress_tx),
+                );
+                let backup_result = if backup_requires_stop {
+                    backup_future.await
+                } else {
+                    let (pull_progress_tx, mut pull_progress_rx) =
+                        tokio::sync::mpsc::unbounded_channel::<updater::UpdateProgressEvent>();
+                    let pull_progress_state = state.clone();
+                    let pull_progress_job_id = job_id.clone();
+                    let pull_progress_stack_id = stack_id.clone();
+                    let pull_branch_percent_for_task = pull_branch_percent.clone();
+                    let backup_branch_percent_for_pull = backup_branch_percent.clone();
+                    let pull_progress_task = tokio::spawn(async move {
+                        let mut last_fraction = 0.0_f64;
+                        while let Some(event) = pull_progress_rx.recv().await {
+                            let fraction = match event.step {
+                                updater::UpdateProgressStep::PullDone => 1.0,
+                                updater::UpdateProgressStep::PullProgress => {
+                                    event.pull_fraction.unwrap_or(last_fraction)
+                                }
+                                _ => last_fraction,
+                            }
+                            .clamp(last_fraction, 1.0);
+                            last_fraction = fraction;
+                            pull_branch_percent_for_task
+                                .store((fraction * 10_000.0).round() as u32, Ordering::Relaxed);
+                            let percent = combined_backup_pull_percent(
+                                processed_stacks,
+                                total_stacks,
+                                &pull_branch_percent_for_task,
+                                &backup_branch_percent_for_pull,
+                            );
+                            let mut progress = make_job_progress_with_percent(
+                                "pull",
+                                event.message,
+                                processed_stacks,
+                                total_stacks,
+                                Some(pull_progress_stack_id.clone()),
+                                now_rfc3339().unwrap_or_else(|_| {
+                                    time::OffsetDateTime::now_utc().to_string()
+                                }),
+                                percent,
+                            );
+                            progress.download = event.download;
+                            let _ = persist_job_progress(
+                                &pull_progress_state,
+                                &pull_progress_job_id,
+                                &progress,
+                            )
+                            .await;
+                        }
+                    });
+                    let pull_future = updater::pre_pull_update_images(
+                        &logging_runner,
+                        &state.config.compose_bin,
+                        state.config.docker_config_path.as_deref(),
+                        updater::IdempotentRetryPolicy {
+                            max_attempts: state.config.update_idempotent_retry_max_attempts,
+                            base_ms: state.config.update_idempotent_retry_base_ms,
+                            max_ms: state.config.update_idempotent_retry_max_ms,
+                        },
+                        &stack,
+                        &req.scope,
+                        req.service_id.as_deref(),
+                        req.targets.as_deref(),
+                        req.allow_arch_mismatch,
+                        req.reason.as_str(),
+                        Some(state.config.dockrev_image_repo.as_str()),
+                        Some(pull_progress_tx),
+                    );
+                    let (backup_result, pull_result) = tokio::join!(backup_future, pull_future);
+                    let _ = pull_progress_task.await;
+                    match pull_result {
+                        Ok(()) => backup_result,
+                        Err(error) => {
+                            prepare_error = Some(anyhow::anyhow!("image prepare failed: {error}"));
+                            backup_result
+                        }
+                    }
+                };
+                let _ = backup_progress_task.await;
+                match backup_result {
                     Ok(res) => {
                         for msg in &res.log_lines {
                             let _ = state
@@ -262,6 +534,7 @@ pub(crate) async fn run_update_job(
                             .await;
 
                         stack_summary.insert("backup".to_string(), res.summary_json);
+                        services_kept_stopped_for_apply = res.services_kept_stopped;
 
                         if res.status == "success" {
                             backup_id_for_cleanup = Some((
@@ -291,7 +564,7 @@ pub(crate) async fn run_update_job(
                         stack_summary
                             .insert("backup".to_string(), json!({"status":"failed","error":err}));
 
-                        if backup_settings.require_success {
+                        if backup_settings.require_success || backup::is_safety_failure(&e) {
                             final_status = "failed".to_string();
                             stack_summaries.push(serde_json::Value::Object(stack_summary));
                             processed_stacks = processed_stacks.saturating_add(1);
@@ -318,6 +591,16 @@ pub(crate) async fn run_update_job(
                         }
                     }
                 }
+                if let Some(error) = prepare_error.take() {
+                    final_status = "failed".to_string();
+                    stack_summary.insert(
+                        job_kind.summary_key().to_string(),
+                        json!({"error": error.to_string(), "failureStep": "pull_services"}),
+                    );
+                    stack_summaries.push(serde_json::Value::Object(stack_summary));
+                    processed_stacks = processed_stacks.saturating_add(1);
+                    break;
+                }
             } else {
                 stack_summary.insert(
                     "backup".to_string(),
@@ -333,6 +616,16 @@ pub(crate) async fn run_update_job(
                 );
             }
 
+            let apply_base_progress = if backup_requested {
+                0.75
+            } else {
+                UPDATE_STACK_BASE_PROGRESS
+            };
+            let apply_span = if backup_requested {
+                0.20
+            } else {
+                UPDATE_STACK_APPLY_SPAN
+            };
             latest_progress = make_job_progress_with_percent(
                 "apply",
                 job_kind.applying_stack_message(stack_id),
@@ -340,7 +633,7 @@ pub(crate) async fn run_update_job(
                 total_stacks,
                 Some(stack_id.clone()),
                 now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string()),
-                update_progress_percent(processed_stacks, total_stacks, UPDATE_STACK_BASE_PROGRESS),
+                update_progress_percent(processed_stacks, total_stacks, apply_base_progress),
             );
             if let Err(e) = persist_job_progress(&state, &job_id, &latest_progress).await {
                 tracing::warn!(job_id = %job_id, error = %e, "failed to persist update progress");
@@ -353,6 +646,8 @@ pub(crate) async fn run_update_job(
             let progress_stack_id = stack_id.clone();
             let processed_stacks_for_progress = processed_stacks;
             let total_stacks_for_progress = total_stacks;
+            let apply_base_progress_for_task = apply_base_progress;
+            let apply_span_for_task = apply_span;
             let progress_semantics = if job_kind == TransitionJobKind::Update {
                 UpdateProgressSemantics::VerifiedOnlyBatch
             } else {
@@ -362,7 +657,7 @@ pub(crate) async fn run_update_job(
                 let mut last_percent = update_progress_percent(
                     processed_stacks_for_progress,
                     total_stacks_for_progress,
-                    UPDATE_STACK_BASE_PROGRESS,
+                    apply_base_progress_for_task,
                 );
                 let mut last_planned_percent = Some(Some(last_percent));
                 let mut last_emit = std::time::Instant::now()
@@ -376,6 +671,8 @@ pub(crate) async fn run_update_job(
                         processed_stacks_for_progress,
                         total_stacks_for_progress,
                         last_percent,
+                        apply_base_progress_for_task,
+                        apply_span_for_task,
                     );
                     let next_percent = snapshot.percent;
                     let next_planned_percent = snapshot.planned_percent;
@@ -437,29 +734,68 @@ pub(crate) async fn run_update_job(
                 }
             });
 
-            let update_outcome = updater::run_update_job(
-                &logging_runner,
-                &state.config.compose_bin,
-                state.config.docker_config_path.as_deref(),
-                updater::IdempotentRetryPolicy {
-                    max_attempts: state.config.update_idempotent_retry_max_attempts,
-                    base_ms: state.config.update_idempotent_retry_base_ms,
-                    max_ms: state.config.update_idempotent_retry_max_ms,
-                },
-                &stack,
-                &req.scope,
-                req.service_id.as_deref(),
-                req.mode.as_str(),
-                req.targets.as_deref(),
-                req.allow_arch_mismatch,
-                req.reason.as_str(),
-                Some(state.config.dockrev_image_repo.as_str()),
-                Some(progress_tx),
-            )
-            .await;
+            let retry_policy = updater::IdempotentRetryPolicy {
+                max_attempts: state.config.update_idempotent_retry_max_attempts,
+                base_ms: state.config.update_idempotent_retry_base_ms,
+                max_ms: state.config.update_idempotent_retry_max_ms,
+            };
+            let update_outcome = if backup_requested {
+                updater::run_update_job_pre_pulled(
+                    &logging_runner,
+                    &state.config.compose_bin,
+                    state.config.docker_config_path.as_deref(),
+                    retry_policy,
+                    &stack,
+                    &req.scope,
+                    req.service_id.as_deref(),
+                    req.mode.as_str(),
+                    req.targets.as_deref(),
+                    req.allow_arch_mismatch,
+                    req.reason.as_str(),
+                    Some(state.config.dockrev_image_repo.as_str()),
+                    Some(progress_tx),
+                    &services_kept_stopped_for_apply,
+                )
+                .await
+            } else {
+                updater::run_update_job(
+                    &logging_runner,
+                    &state.config.compose_bin,
+                    state.config.docker_config_path.as_deref(),
+                    retry_policy,
+                    &stack,
+                    &req.scope,
+                    req.service_id.as_deref(),
+                    req.mode.as_str(),
+                    req.targets.as_deref(),
+                    req.allow_arch_mismatch,
+                    req.reason.as_str(),
+                    Some(state.config.dockrev_image_repo.as_str()),
+                    Some(progress_tx),
+                )
+                .await
+            };
             let _ = progress_task.await;
             match update_outcome {
                 Ok(outcome) => {
+                    if outcome.status != "success"
+                        && !services_kept_stopped_for_apply.is_empty()
+                        && let Err(restore_error) = backup::restore_services_after_failed_apply(
+                            &*state.runner,
+                            &state.config.compose_bin,
+                            state.config.docker_config_path.as_deref(),
+                            &stack,
+                            &services_kept_stopped_for_apply,
+                        )
+                        .await
+                    {
+                        tracing::error!(
+                            job_id = %job_id,
+                            stack_id = %stack_id,
+                            error = %restore_error,
+                            "failed to restore services after unsuccessful update"
+                        );
+                    }
                     if outcome.status == "success"
                         && !planned_service_ids.is_empty()
                         && let Some(project) = state.db.get_stack_compose_project(stack_id).await?
@@ -600,6 +936,23 @@ pub(crate) async fn run_update_job(
                     }
                 }
                 Err(e) => {
+                    if !services_kept_stopped_for_apply.is_empty()
+                        && let Err(restore_error) = backup::restore_services_after_failed_apply(
+                            &*state.runner,
+                            &state.config.compose_bin,
+                            state.config.docker_config_path.as_deref(),
+                            &stack,
+                            &services_kept_stopped_for_apply,
+                        )
+                        .await
+                    {
+                        tracing::error!(
+                            job_id = %job_id,
+                            stack_id = %stack_id,
+                            error = %restore_error,
+                            "failed to restore services after update failure"
+                        );
+                    }
                     final_status = "failed".to_string();
                     let mut update_summary = json!({"error": e.to_string()});
                     if let Some(step_failure) = e.downcast_ref::<updater::UpdateStepFailure>()
@@ -861,6 +1214,21 @@ pub(crate) async fn run_update_job(
     Ok(())
 }
 
+fn combined_backup_pull_percent(
+    processed_stacks: u32,
+    total_stacks: u32,
+    pull_branch_percent: &AtomicU32,
+    backup_branch_percent: &AtomicU32,
+) -> u32 {
+    if total_stacks == 0 {
+        return 0;
+    }
+    let pull = pull_branch_percent.load(Ordering::Relaxed).min(10_000) as f64 / 10_000.0;
+    let backup = backup_branch_percent.load(Ordering::Relaxed).min(10_000) as f64 / 10_000.0;
+    (((processed_stacks as f64 + pull * 0.35 + backup * 0.40) / total_stacks as f64) * 100.0)
+        .floor() as u32
+}
+
 async fn record_update_tag_history(state: &AppState, req: &TriggerUpdateRequest, now: &str) {
     let Ok(targets) = requested_update_targets(req) else {
         return;
@@ -958,5 +1326,17 @@ mod tests {
             &update_req(UpdateMode::Apply),
             "failed"
         ));
+    }
+
+    #[test]
+    fn backup_and_pull_progress_are_weighted_without_terminal_jump() {
+        let pull = AtomicU32::new(5_000);
+        let backup = AtomicU32::new(2_500);
+        assert_eq!(combined_backup_pull_percent(0, 1, &pull, &backup), 27);
+
+        pull.store(10_000, Ordering::Relaxed);
+        backup.store(10_000, Ordering::Relaxed);
+        assert_eq!(combined_backup_pull_percent(0, 1, &pull, &backup), 75);
+        assert_eq!(combined_backup_pull_percent(1, 2, &pull, &backup), 87);
     }
 }

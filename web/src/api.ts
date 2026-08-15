@@ -736,9 +736,21 @@ export async function deleteIgnore(ruleId: string) {
 
 export async function getSettings(): Promise<SettingsResponse> {
   const resp = await apiFetch('/api/settings')
-  const data = (await resp.json()) as SettingsResponse
+  const data = (await resp.json()) as SettingsResponse & {
+    backup: SettingsResponse['backup'] & { storage?: SettingsResponse['backup']['storage'] }
+  }
   return {
     ...data,
+    backup: {
+      ...data.backup,
+      storage: data.backup.storage ?? {
+        mode: 'legacy',
+        logicalPath: data.backup.baseDir,
+        resolvedLocation: data.backup.baseDir,
+        writable: true,
+        diagnostic: '旧版 API 未提供部署存储解析状态',
+      },
+    },
     releaseNotes: data.releaseNotes ?? {
       provider: 'gitHub',
       octoRill: {
@@ -757,12 +769,25 @@ export async function getSettings(): Promise<SettingsResponse> {
   }
 }
 
-export async function putSettings(input: PutSettingsInput) {
-  const resp = await apiFetch('/api/settings', {
+export async function putSettings(input: PutSettingsInput, legacyBackupBaseDir?: string) {
+  const request = (body: unknown) => apiFetch('/api/settings', {
     method: 'PUT',
-    body: JSON.stringify(input),
+    body: JSON.stringify(body),
   })
-  return (await resp.json()) as { ok: boolean }
+  try {
+    const resp = await request(input)
+    return (await resp.json()) as { ok: boolean }
+  } catch (error) {
+    const missingLegacyBaseDir = error instanceof ApiError
+      && error.status === 400
+      && /base.?dir|missing field/i.test(`${error.message} ${error.bodyText ?? ''}`)
+    if (!missingLegacyBaseDir || !legacyBackupBaseDir) throw error
+    const resp = await request({
+      ...input,
+      backup: { ...input.backup, baseDir: legacyBackupBaseDir },
+    })
+    return (await resp.json()) as { ok: boolean }
+  }
 }
 
 export async function getDeployCheckReport(): Promise<DeployCheckReportEnvelope> {

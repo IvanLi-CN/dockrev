@@ -4,8 +4,10 @@ use std::collections::HashSet;
 
 use crate::service_check;
 mod lifecycle;
+mod progress_persistence;
 mod transitions;
 pub(crate) use lifecycle::*;
+pub(crate) use progress_persistence::*;
 pub(crate) use transitions::*;
 
 pub(super) const CHECK_PROGRESS_LOG_INTERVAL: Duration = Duration::from_millis(500);
@@ -109,6 +111,7 @@ pub(super) fn make_job_progress_with_optional_plan(
         planned_percent: planned_percent.map(|value| value.map(|value| value.min(100))),
         current_target,
         download: None,
+        backup: None,
         updated_at,
     }
 }
@@ -196,13 +199,15 @@ pub(super) fn update_progress_snapshot(
     processed_stacks: u32,
     total_stacks: u32,
     last_percent: u32,
+    stack_base_progress: f64,
+    stack_apply_span: f64,
 ) -> UpdateProgressSnapshot {
     use updater::UpdateProgressStep as S;
 
     let legacy_percent = update_progress_percent(
         processed_stacks,
         total_stacks,
-        UPDATE_STACK_BASE_PROGRESS + UPDATE_STACK_APPLY_SPAN * update_apply_fraction(evt),
+        stack_base_progress + stack_apply_span * update_apply_fraction(evt),
     )
     .max(last_percent);
 
@@ -225,15 +230,14 @@ pub(super) fn update_progress_snapshot(
             update_progress_percent(
                 processed_stacks,
                 total_stacks,
-                UPDATE_STACK_BASE_PROGRESS
-                    + UPDATE_STACK_APPLY_SPAN * (0.08 + 0.42 * pull_fraction),
+                stack_base_progress + stack_apply_span * (0.08 + 0.42 * pull_fraction),
             )
             .max(last_percent)
         }
         _ => update_progress_percent(
             processed_stacks,
             total_stacks,
-            UPDATE_STACK_BASE_PROGRESS + UPDATE_STACK_APPLY_SPAN * update_apply_fraction(evt),
+            stack_base_progress + stack_apply_span * update_apply_fraction(evt),
         )
         .max(last_percent),
     };
@@ -248,50 +252,6 @@ pub(super) fn update_progress_snapshot(
         percent: next_percent,
         planned_percent,
     }
-}
-
-pub(super) async fn persist_job_progress(
-    state: &Arc<AppState>,
-    job_id: &str,
-    progress: &JobProgress,
-) -> anyhow::Result<()> {
-    let progress_json = serde_json::to_value(progress)?;
-    state.db.set_job_progress(job_id, &progress_json).await?;
-
-    let mut evt = json!({
-        "type": "job_progress",
-        "jobId": job_id,
-        "ts": progress.updated_at,
-        "phase": progress.phase,
-        "message": progress.message,
-        "current": progress.current,
-        "total": progress.total,
-        "percent": progress.percent,
-        "plannedCurrent": progress.planned_current,
-        "plannedTotal": progress.planned_total,
-        "plannedPercent": progress.planned_percent,
-        "currentTarget": progress.current_target,
-        "updatedAt": progress.updated_at,
-    });
-    if let Some(download) = progress.download.as_ref()
-        && let Some(obj) = evt.as_object_mut()
-    {
-        obj.insert("download".to_string(), serde_json::to_value(download)?);
-    }
-
-    state
-        .db
-        .insert_job_log(
-            job_id,
-            &JobLogLine {
-                ts: progress.updated_at.clone(),
-                level: "event".to_string(),
-                msg: evt.to_string(),
-            },
-        )
-        .await?;
-
-    Ok(())
 }
 
 #[cfg(test)]

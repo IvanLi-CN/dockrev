@@ -64,6 +64,7 @@ services:
       # If your compose files live on the host at /srv/compose/**, mount them read-only at the same path:
       # - /srv/compose:/srv/compose:ro
     labels:
+      cc.ivanli.dockrev.role: api
       traefik.enable: "true"
       traefik.docker.network: proxy
       traefik.http.services.dockrev.loadbalancer.server.port: "50883"

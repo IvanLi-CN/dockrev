@@ -110,7 +110,11 @@ async fn load_service_backup_context(
     let compose_services = read_compose_service_specs(&stack.compose.compose_files)
         .await
         .map_err(map_internal)?;
-    let backup_settings = state.db.get_backup_settings().await.map_err(map_internal)?;
+    let mut backup_settings = state.db.get_backup_settings().await.map_err(map_internal)?;
+    backup_settings.base_dir = crate::backup_storage::logical_backup_root(&state.config.db_path)
+        .map_err(map_internal)?
+        .to_string_lossy()
+        .to_string();
     Ok(ServiceBackupContext {
         service_id: service_id.to_string(),
         stack,
@@ -127,8 +131,8 @@ fn build_service_backup_targets_response(
 ) -> ServiceBackupTargetsResponse {
     let storage = ServiceBackupStorageInfo {
         base_dir: backup_settings.base_dir.clone(),
-        artifact_pattern: format!("{}/<stackId>/<timestamp>.tar.gz", backup_settings.base_dir),
-        compression: "gzip".to_string(),
+        artifact_pattern: format!("{}/<stackId>/<timestamp>.tar.zst", backup_settings.base_dir),
+        compression: "zstd".to_string(),
         keep_last: stack.backup.retention.keep_last,
         delete_after_stable_seconds: stack.backup.retention.delete_after_stable_seconds,
     };

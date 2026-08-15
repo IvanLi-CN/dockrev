@@ -1,7 +1,7 @@
 import type { GitHubPackagesRepo, StackDetail, StackListItem } from '../../../api'
 import { nowIso, type Fixture, type DockrevApiScenario } from './shared'
 import { buildDashboardDemo, baseEmpty, buildDigestPinnedImageDisplay, buildGuideLineLongNames, buildLinkIconCatalog, buildNoCandidates, buildResolvedTagDemo, buildServiceDetailComposeFallbacks, buildServiceDetailVersionAnomaly, buildServicesInferencePendingCandidateLoading, buildVersionTagsPopoverDemo } from './fixturesBase'
-import { buildOverviewJobsCardExactFiveNonTerminal, buildOverviewJobsCardHeavyInFlight, buildOverviewJobsCardRunningProgressModes, buildOverviewJobsCardTerminalOnly, buildQueueHealthRollback, buildQueueLegacyProgress, buildQueueLongLogs, buildQueueMixed, buildQueueProgressSmoothing, buildQueueUpdateDownloadDeterminate, buildQueueUpdateIndeterminate, buildQueueUpdateLayerProgress, buildVersionInferenceIdleFixture, buildVersionInferenceOverviewFixture, buildVersionInferenceQueueBacklogFixture, buildVersionInferenceResyncRequiredFixture, buildVersionInferenceRunningFixture, buildVersionInferenceStaleAllFailedFixture } from './fixturesQueues'
+import { buildOverviewJobsCardExactFiveNonTerminal, buildOverviewJobsCardHeavyInFlight, buildOverviewJobsCardRunningProgressModes, buildOverviewJobsCardTerminalOnly, buildQueueBackupProgress, buildQueueHealthRollback, buildQueueLegacyProgress, buildQueueLongLogs, buildQueueMixed, buildQueueProgressSmoothing, buildQueueUpdateDownloadDeterminate, buildQueueUpdateIndeterminate, buildQueueUpdateLayerProgress, buildVersionInferenceIdleFixture, buildVersionInferenceOverviewFixture, buildVersionInferenceQueueBacklogFixture, buildVersionInferenceResyncRequiredFixture, buildVersionInferenceRunningFixture, buildVersionInferenceStaleAllFailedFixture } from './fixturesQueues'
 import { isCleanupMockScenario } from '../cleanupMockData'
 
 export function buildSettingsConfigured(): Fixture {
@@ -139,8 +139,8 @@ export function buildAggregateDockrevGuard(): Fixture {
         volumeNames: [],
         storage: {
           baseDir: '/srv/dockrev/backups',
-          artifactPattern: '/srv/dockrev/backups/<stackId>/<timestamp>.tar.gz',
-          compression: 'gzip',
+          artifactPattern: '/srv/dockrev/backups/<stackId>/<timestamp>.tar.zst',
+          compression: 'zstd',
           keepLast: 1,
           deleteAfterStableSeconds: 3600,
         },
@@ -585,6 +585,7 @@ export function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fi
   if (scenario === 'queue-update-indeterminate') return buildQueueUpdateIndeterminate()
   if (scenario === 'queue-update-download-determinate') return buildQueueUpdateDownloadDeterminate()
   if (scenario === 'queue-long-logs') return buildQueueLongLogs()
+  if (scenario === 'queue-backup-progress') return buildQueueBackupProgress()
   if (
     scenario === 'settings-configured' ||
     scenario === 'settings-configured-load-slow' ||

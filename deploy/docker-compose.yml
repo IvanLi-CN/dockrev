@@ -18,6 +18,8 @@ services:
         APP_EFFECTIVE_VERSION: "0.0.0-local"
     expose:
       - "50883"
+    labels:
+      cc.ivanli.dockrev.role: api
     environment:
       TZ: "Asia/Shanghai"
       DOCKREV_HTTP_ADDR: "0.0.0.0:50883"

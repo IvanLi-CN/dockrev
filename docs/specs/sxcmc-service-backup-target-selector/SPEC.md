@@ -23,9 +23,9 @@
 
 - 不把 `PUT /api/services/{id}/settings` 改造成隐式跨层级写 `stack.backup.targets` 或服务级 backup-target policy 的副作用接口。
 - 不新增 stack 级或全局级的完整备份目标管理器。
-- 不修改备份执行格式、压缩方式、cleanup 调度逻辑或默认保留策略。
+- 不提供任意备份路径、压缩级别、并发度、任务进度权重或默认保留策略配置。
 - 不新增备份记录删除、下载、重试等 mutation 能力。
-- 不从 Docker 运行时挂载扫描候选，本次只以 compose 声明为准。
+- 不把 Docker 运行时 mounts 当作服务备份目标候选；运行时 inspect 仅用于解析 Dockrev 自身备份产物存储。
 
 ## 范围（Scope）
 
@@ -37,18 +37,23 @@
 - `crates/dockrev-api/src/compose.rs`
 - `crates/dockrev-api/src/db/**`
 - `crates/dockrev-api/src/discovery.rs`
+- `crates/dockrev-api/src/backup.rs`
+- `crates/dockrev-api/src/backup_helper.rs`
+- `crates/dockrev-api/src/backup_storage.rs`
+- `crates/dockrev-api/src/updater.rs`
 - `web/src/api.ts`
 - `web/src/api/types.ts`
 - `web/src/pages/ServiceDetailPage.tsx`
 - `web/src/pages/useServiceDetailPageState.tsx`
+- `web/src/pages/JobDetailPage.tsx`
 - `web/src/App.css`
 - `web/src/stories/**`
 
 ### Out of scope
 
-- 备份执行器、压缩实现、清理 worker 或系统设置编辑界面
+- 备份下载、手动恢复、删除入口或线上遗留归档自动清理
 - 非 compose 来源的 backup target 发现
-- 自动部署策略抽屉、更新状态语义或 repoUrl 行为改造
+- 自动部署策略抽屉或 repoUrl 行为改造
 
 ## 需求（Requirements）
 
@@ -63,7 +68,9 @@
 - 共享 target 的信息必须以关联服务计数和 service id 列表形式可见，供更新前停机协调使用。
 - compose 相对 bind path 必须按 compose 文件目录解析为绝对路径，即使路径当前不存在。
 - 匿名 volume、`tmpfs`、`image` mounts 等非可恢复目标必须忽略，不得出现在候选列表里。
-- 抽屉内必须展示只读备份说明，明确 `<baseDir>/<stackId>/<timestamp>.tar.gz`、`gzip`、`keepLast=1` 与 `deleteAfterStableSeconds=3600`。
+- 抽屉内必须展示只读备份说明，明确 `<baseDir>/<stackId>/<timestamp>.tar.zst`、`zstd`、`keepLast=1` 与 `deleteAfterStableSeconds=3600`。
+- `baseDir` 是由 `dirname(DOCKREV_DB_PATH)/backups` 派生的兼容字段，不得由 Web 或 `PUT /api/settings` 修改；提交该字段必须返回 `managed_by_deployment`。
+- Docker 部署必须 inspect Dockrev API 容器的有效 mounts，选择覆盖逻辑目录的最长可写 mount，并映射为 bind source 或 named volume加相对路径。身份、覆盖范围、只读状态或同优先级 mount 存在歧义时必须 fail closed。
 - 备份记录每项至少必须返回：`backupId`、`jobId`、`scope`、`status`、`createdAt`、`sizeBytes?`、`cleanupAfter?`、`deletedAt?`、`artifactPath?`、`error?`、`assets[]`。
 - 备份记录的 `assets[]` 至少必须返回：`target`、`status`、`policy?`、`sizeBytes?`、`reason?`。
 - “当前服务相关”必须按该次 job 的实际 `summary.targets[].serviceId` 是否包含当前服务来判定，不得仅依赖 `jobs.service_id`。
@@ -96,6 +103,7 @@
   - `policy=disabled` 表示当前服务不为该 target 触发自动备份。
   - `policy=stop_related_services` 表示升级前备份此 target 时，需要协调停掉相关服务后备份，再恢复。
   - `policy=live_backup` 表示保持相关服务运行，直接备份。
+  - 停机备份必须在执行 stop 前持久化实际运行服务集合与临时产物 key；进程重启恢复时终止同 job 的 stop-mode helper、删除 `.part`，并仅恢复该集合。
   - 响应仅返回 `ok`；普通服务设置保存链路不再依赖该接口回传旧 `backupTargets`。
 
 ### Service backup-records API
@@ -174,8 +182,8 @@
   ],
   "storage": {
     "baseDir": "/srv/dockrev/backups",
-    "artifactPattern": "/srv/dockrev/backups/<stackId>/<timestamp>.tar.gz",
-    "compression": "gzip",
+    "artifactPattern": "/srv/dockrev/backups/<stackId>/<timestamp>.tar.zst",
+    "compression": "zstd",
     "keepLast": 1,
     "deleteAfterStableSeconds": 3600
   }
@@ -193,7 +201,10 @@
       "scope": "stack",
       "status": "success",
       "createdAt": "2026-06-29T01:02:03Z",
-      "artifactPath": "/srv/dockrev/backups/stack-prod/20260629-010203.tar.gz",
+      "artifactPath": "/srv/dockrev/backups/stack-prod/20260629-010203.tar.zst",
+      "artifactKey": "stack-prod/20260629-010203.tar.zst",
+      "archiveFormat": "tar",
+      "compression": "zstd",
       "sizeBytes": 1048576,
       "cleanupAfter": "2026-06-29T02:02:03Z",
       "deletedAt": null,
@@ -240,7 +251,7 @@
 
 - Given 用户查看备份说明
   When 抽屉渲染只读说明区块
-  Then 能直接看到备份目录、`.tar.gz` 产物模式、`gzip` 压缩与默认保留摘要，无需跳转系统设置页。
+  Then 能直接看到备份目录、`.tar.zst` 产物模式、`zstd` 压缩与默认保留摘要，无需跳转系统设置页。
 
 - Given 某次 stack/all update 实际 targets 包含当前服务
   When 调用 `GET /api/services/{service_id}/backup-records`
@@ -337,9 +348,43 @@
   submission_gate: `approved`
   story_id_or_title: `Pages/ServiceDetailPage/Service Protection Storage Summary Only`
   state: `read-only backup storage summary`
-  evidence_note: 验证备份设置抽屉内的只读备份说明明确展示目录、`.tar.gz` 产物模式、`gzip` 压缩与“最近 1 份保留 / 稳定 1h 后清理”摘要。
+  evidence_note: 验证备份设置抽屉内的只读备份说明明确展示目录、`.tar.zst` 产物模式、`zstd` 压缩与“最近 1 份保留 / 稳定 1h 后清理”摘要。
 
 ![备份设置抽屉：只读备份说明](./assets/service-protection-storage-summary-only.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `element`
+  requested_viewport: `1440x900`
+  viewport_strategy: `browser-resize-fallback`
+  margin_policy: `trim_only`
+  evidence_surface: `page`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/JobDetailPage/Backup Progress`
+  state: `live zstd backup progress`
+  evidence_note: 验证任务总进度和终端式备份进度同时可见，终端快照包含 percent、bytes、rate、ETA 与 zstd-size，并在同一 commandSeq 原位刷新。
+
+PR: include
+
+![任务详情：桌面端实时 zstd 备份进度](./assets/backup-progress-desktop.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `element`
+  requested_viewport: `393x852`
+  viewport_strategy: `browser-resize-fallback`
+  margin_policy: `trim_only`
+  evidence_surface: `page`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/JobDetailPage/Backup Progress`
+  state: `mobile live zstd backup progress with reduced motion`
+  evidence_note: 验证 393x852 下标题、控制项、进度条和终端进度均不重叠，长终端行保留在独立滚动区域内。
+
+PR: include
+
+![任务详情：移动端实时 zstd 备份进度](./assets/backup-progress-mobile.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`

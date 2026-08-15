@@ -154,6 +154,35 @@ export const LiveOutputAndEventToggle: Story = {
   },
 }
 
+export const BackupProgress: Story = {
+  parameters: { dockrevApiScenario: 'queue-backup-progress' },
+  render: () => renderLongLogsPage('运行中备份'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => canvasElement.textContent?.includes('zstd-size') === true)
+    await waitForCondition(() => {
+      const value = Number(canvasElement.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow'))
+      return Number.isFinite(value) && value > 24
+    })
+    const terminalRows = canvasElement.querySelectorAll('.logLine-terminal')
+    expectStory(terminalRows.length > 0, 'backup progress terminal row missing')
+    const initialCount = terminalRows.length
+    await sleep(1_200)
+    expectStory(
+      canvasElement.querySelectorAll('.logLine-terminal').length === initialCount,
+      'backup progress should replace the current command snapshot',
+    )
+  },
+}
+
+export const BackupProgressMobileReducedMotion: Story = {
+  ...BackupProgress,
+  parameters: {
+    ...BackupProgress.parameters,
+    viewport: { defaultViewport: 'mobile1' },
+    reducedMotion: 'reduce',
+  },
+}
+
 export const CompactSuccessfulPullHistory: Story = {
   parameters: { dockrevApiScenario: 'queue-long-logs' },
   render: () => renderJobDetailSurface(

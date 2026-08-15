@@ -84,6 +84,9 @@ export type ServiceBackupRecordItem = {
   createdAt: string
   finishedAt?: string | null
   artifactPath?: string | null
+  artifactKey?: string | null
+  archiveFormat?: string | null
+  compression?: string | null
   sizeBytes?: number | null
   cleanupAfter?: string | null
   deletedAt?: string | null
@@ -600,7 +603,17 @@ export type JobProgress = {
   plannedPercent?: number | null
   currentTarget?: string | null
   download?: JobProgressDownload | null
+  backup?: JobProgressBackup | null
   updatedAt: string
+}
+
+export type JobProgressBackup = {
+  phase: string
+  estimatedTotalBytes?: number | null
+  processedBytes: number
+  compressedBytes: number
+  throughputBps?: number | null
+  etaSeconds?: number | null
 }
 
 export type JobProgressDownload = {
@@ -628,6 +641,13 @@ export type SettingsResponse = {
     requireSuccess: boolean
     baseDir: string
     skipTargetsOverBytes: number
+    storage: {
+      mode: string
+      logicalPath: string
+      resolvedLocation: string
+      writable: boolean
+      diagnostic?: string | null
+    }
   }
   resourceMonitor: {
     enabled: boolean
@@ -668,7 +688,7 @@ export type SettingsResponse = {
 }
 
 export type PutSettingsInput = {
-  backup: SettingsResponse['backup']
+  backup: Pick<SettingsResponse['backup'], 'enabled' | 'requireSuccess' | 'skipTargetsOverBytes'>
   resourceMonitor?: {
     enabled: boolean
     sampleIntervalSeconds: 5 | 10 | 30 | 60 | 300

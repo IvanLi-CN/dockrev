@@ -148,3 +148,43 @@ export function buildQueueLongLogs(): Fixture {
 
   return f
 }
+
+export function buildQueueBackupProgress(): Fixture {
+  const fixture = buildQueueLongLogs()
+  const job = fixture.jobById['job-live-long']
+  if (!job) return fixture
+
+  const logs = [
+    { ts: nowIso(-8_000), level: 'info', msg: 'backup started: bkp_demo' },
+    { ts: nowIso(-7_500), level: 'info', msg: 'backup storage: docker_volume dockrev-data:/backups' },
+    { ts: nowIso(-7_000), level: 'info', msg: 'backup estimate: 128.0 MiB across 2 targets' },
+    { ts: nowIso(-6_500), level: 'info', msg: 'backup helper started: tar -> zstd' },
+  ]
+  job.logs = logs
+  job.logsLastId = logs.length
+  job.type = 'update'
+  job.scope = 'stack'
+  job.reason = 'ui'
+  job.progress = {
+    phase: 'backup',
+    message: 'backing up production',
+    current: 0,
+    total: 1,
+    percent: 24,
+    plannedCurrent: 0,
+    plannedTotal: 1,
+    plannedPercent: 24,
+    currentTarget: 'production',
+    backup: {
+      phase: 'compressing',
+      estimatedTotalBytes: 134_217_728,
+      processedBytes: 67_108_864,
+      compressedBytes: 20_028_211,
+      throughputBps: 96_887_194,
+      etaSeconds: 3,
+    },
+    updatedAt: nowIso(-500),
+  }
+  fixture.jobs = [job]
+  return fixture
+}

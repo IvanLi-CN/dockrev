@@ -865,6 +865,20 @@ html[data-theme="light"] .brandLogoForLight {
   flex-direction: column;
 }
 
+.jobDetailLogsCard > .sectionRow {
+  align-items: flex-start;
+}
+
+.jobDetailLogsCard > .sectionRow > .title {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.jobDetailLogsCard > .sectionRow > .chipRow {
+  min-width: 0;
+  justify-content: flex-end;
+}
+
 .jobDetailLogsCard .logs {
   min-height: clamp(220px, 32vh, 420px);
 }

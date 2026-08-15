@@ -82,7 +82,7 @@ export function backupTargetRequestFromDraft(draft: BackupTargetsDraft) {
 
 export function formatBackupRetentionSummary(storage: ServiceBackupTargetsResponse["storage"]): string {
   const hours = Math.round(storage.deleteAfterStableSeconds / 3600);
-  return `目录 ${storage.baseDir} / 产物 .tar.gz / 最近 ${storage.keepLast} 份保留 / 其余稳定 ${hours}h 后清理`;
+  return `目录 ${storage.baseDir} / 产物 .tar.zst / 最近 ${storage.keepLast} 份保留 / 其余稳定 ${hours}h 后清理`;
 }
 
 export function backupPolicyHint(item: BackupTargetDraftItem): string {

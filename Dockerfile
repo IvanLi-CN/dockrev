@@ -3,7 +3,7 @@
 FROM docker:29-cli AS docker-cli
 
 FROM alpine:3.20 AS runtime-base
-RUN apk add --no-cache ca-certificates tzdata util-linux \
+RUN apk add --no-cache ca-certificates tar tzdata util-linux zstd \
   && update-ca-certificates \
   && mkdir -p /usr/local/libexec/docker/cli-plugins
 
@@ -75,3 +75,4 @@ CMD ["/usr/local/bin/dockrev-supervisor"]
 FROM runtime-base AS runtime
 COPY --from=builder /src/dockrev /usr/local/bin/dockrev
 COPY --from=builder /src/dockrev-supervisor /usr/local/bin/dockrev-supervisor
+CMD ["/usr/local/bin/dockrev"]

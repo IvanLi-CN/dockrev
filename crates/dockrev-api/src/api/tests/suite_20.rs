@@ -1094,13 +1094,17 @@ volumes:
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body = response_json(resp).await;
-    assert_eq!(body["storage"]["baseDir"].as_str(), Some(base_dir.as_str()));
-    assert_eq!(body["storage"]["compression"].as_str(), Some("gzip"));
+    let logical_base_dir = crate::backup_storage::logical_backup_root(&state.config.db_path)
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    assert_eq!(body["storage"]["baseDir"].as_str(), Some(logical_base_dir.as_str()));
+    assert_eq!(body["storage"]["compression"].as_str(), Some("zstd"));
     assert_eq!(body["storage"]["keepLast"].as_u64(), Some(1));
     assert_eq!(body["storage"]["deleteAfterStableSeconds"].as_u64(), Some(3600));
     assert_eq!(
         body["storage"]["artifactPattern"].as_str(),
-        Some(format!("{base_dir}/<stackId>/<timestamp>.tar.gz").as_str())
+        Some(format!("{logical_base_dir}/<stackId>/<timestamp>.tar.zst").as_str())
     );
     assert_eq!(body["volumeNames"][0]["key"].as_str(), Some("api-data"));
     assert_eq!(

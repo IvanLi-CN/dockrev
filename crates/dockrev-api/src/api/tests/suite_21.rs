@@ -524,7 +524,11 @@ async fn resource_usage_overview_degrades_when_monitor_disabled() {
         .unwrap();
     let settings = response_json(resp).await;
     let put = serde_json::json!({
-        "backup": settings["backup"],
+        "backup": {
+            "enabled": settings["backup"]["enabled"],
+            "requireSuccess": settings["backup"]["requireSuccess"],
+            "skipTargetsOverBytes": settings["backup"]["skipTargetsOverBytes"],
+        },
         "resourceMonitor": {
             "enabled": false,
             "sampleIntervalSeconds": 60

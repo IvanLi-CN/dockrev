@@ -4,6 +4,7 @@
 
 ## Decision Trace
 
+- 2026-08-15: 备份存储改为部署派生并加入 Docker mount 解析；归档改为原子流式 zstd，更新编排以最小停机为优先，并加入实时备份进度。
 - 2026-06-28: 创建 topic-level spec，锁定备份设置抽屉内直接选择 `Volumes` / `Bind paths` 与只读备份说明的范围。
 - 2026-06-28: 新增专用 `GET/PUT /api/services/{service_id}/backup-targets`，把 compose 候选发现与服务级选择语义从通用 settings API 中拆开。
 - 2026-06-28: 服务端收敛为“共享 target 取消只记当前服务 `skip`，独占 target 取消才真正移除 stack target”的保守引用语义。

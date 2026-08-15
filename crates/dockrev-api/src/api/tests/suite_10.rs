@@ -1,3 +1,42 @@
+fn backup_settings_request(settings: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "enabled": settings["backup"]["enabled"],
+        "requireSuccess": settings["backup"]["requireSuccess"],
+        "skipTargetsOverBytes": settings["backup"]["skipTargetsOverBytes"],
+    })
+}
+
+#[tokio::test]
+async fn settings_rejects_managed_backup_base_dir() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state);
+    let body = serde_json::json!({
+        "backup": {
+            "enabled": true,
+            "requireSuccess": true,
+            "skipTargetsOverBytes": 1024,
+            "baseDir": "/tmp/not-managed-by-deployment"
+        }
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400);
+    let payload = response_json(response).await;
+    assert_eq!(
+        payload["error"]["details"]["reason"].as_str(),
+        Some("managed_by_deployment")
+    );
+}
+
 #[tokio::test]
 async fn settings_and_notifications_roundtrip() {
     let state = test_state(":memory:").await;
@@ -70,7 +109,6 @@ async fn settings_and_notifications_roundtrip() {
         "backup": {
             "enabled": true,
             "requireSuccess": true,
-            "baseDir": "/tmp/dockrev-backups",
             "skipTargetsOverBytes": 123
         },
         "resourceMonitor": {
@@ -140,7 +178,7 @@ async fn settings_and_notifications_roundtrip() {
     );
 
     let invalid = serde_json::json!({
-        "backup": settings["backup"],
+        "backup": backup_settings_request(&settings),
         "resourceMonitor": {
             "enabled": true,
             "sampleIntervalSeconds": 7
@@ -161,7 +199,7 @@ async fn settings_and_notifications_roundtrip() {
     assert_eq!(resp.status(), 400);
 
     let set_base_url = serde_json::json!({
-        "backup": settings["backup"],
+        "backup": backup_settings_request(&settings),
         "instance": {
             "publicBaseUrl": "https://dockrev.example.com"
         }
@@ -198,7 +236,7 @@ async fn settings_and_notifications_roundtrip() {
     );
 
     let set_octo_rill = serde_json::json!({
-        "backup": settings["backup"],
+        "backup": backup_settings_request(&settings),
         "releaseNotes": {
             "provider": "octoRill",
             "octoRill": {
@@ -262,7 +300,7 @@ async fn settings_and_notifications_roundtrip() {
     );
 
     let preserve_octo_rill_key = serde_json::json!({
-        "backup": settings["backup"],
+        "backup": backup_settings_request(&settings),
         "releaseNotes": {
             "octoRill": {
                 "enabled": true,
@@ -310,7 +348,7 @@ async fn settings_and_notifications_roundtrip() {
     );
 
     let preserve_octo_rill_mask = serde_json::json!({
-        "backup": settings["backup"],
+        "backup": backup_settings_request(&settings),
         "releaseNotes": {
             "octoRill": {
                 "apiKey": "••••••••••••••••••••"
@@ -353,7 +391,7 @@ async fn settings_and_notifications_roundtrip() {
     );
 
     let clear_octo_rill_key = serde_json::json!({
-        "backup": settings["backup"],
+        "backup": backup_settings_request(&settings),
         "releaseNotes": {
             "octoRill": {
                 "apiKey": null
@@ -393,7 +431,7 @@ async fn settings_and_notifications_roundtrip() {
     assert!(settings["releaseNotes"]["octoRill"]["apiKeyMasked"].is_null());
 
     let invalid_base_url = serde_json::json!({
-        "backup": settings["backup"],
+        "backup": backup_settings_request(&settings),
         "instance": {
             "publicBaseUrl": "ftp://dockrev.example.com/"
         }
@@ -418,7 +456,7 @@ async fn settings_and_notifications_roundtrip() {
     );
 
     let invalid_octo_rill_base_url = serde_json::json!({
-        "backup": settings["backup"],
+        "backup": backup_settings_request(&settings),
         "releaseNotes": {
             "octoRill": {
                 "apiBaseUrl": "https://user:pass@octo.example.com/"
@@ -661,7 +699,11 @@ async fn settings_schedule_cron_validation() {
         .unwrap();
     assert_eq!(resp.status(), 200);
     let settings = response_json(resp).await;
-    let backup = settings["backup"].clone();
+    let backup = serde_json::json!({
+        "enabled": settings["backup"]["enabled"],
+        "requireSuccess": settings["backup"]["requireSuccess"],
+        "skipTargetsOverBytes": settings["backup"]["skipTargetsOverBytes"],
+    });
 
     let invalid = serde_json::json!({
         "backup": backup,
@@ -693,7 +735,7 @@ async fn settings_schedule_cron_validation() {
     );
 
     let put_5 = serde_json::json!({
-        "backup": settings["backup"],
+        "backup": backup_settings_request(&settings),
         "schedules": {
             "updateCheck": { "enabled": true, "cron": "* * * * *" }
         }
@@ -734,7 +776,7 @@ async fn settings_schedule_cron_validation() {
     );
 
     let put_6 = serde_json::json!({
-        "backup": settings["backup"],
+        "backup": backup_settings_request(&settings),
         "schedules": {
             "updateCheck": { "enabled": true, "cron": "0 * * * * *" }
         }

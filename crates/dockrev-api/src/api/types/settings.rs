@@ -12,7 +12,7 @@ where
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsResponse {
-    pub backup: BackupSettings,
+    pub backup: BackupSettingsResponse,
     pub resource_monitor: ResourceMonitorSettings,
     pub schedules: SchedulesSettings,
     pub release_notes: ReleaseNotesSettingsResponse,
@@ -73,7 +73,7 @@ pub struct PutSchedulesSettings {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PutSettingsRequest {
-    pub backup: BackupSettings,
+    pub backup: PutBackupSettings,
     #[serde(default)]
     pub resource_monitor: Option<PutResourceMonitorSettings>,
     #[serde(default)]
@@ -98,6 +98,26 @@ pub struct BackupSettings {
     pub require_success: bool,
     pub base_dir: String,
     pub skip_targets_over_bytes: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupSettingsResponse {
+    pub enabled: bool,
+    pub require_success: bool,
+    pub base_dir: String,
+    pub skip_targets_over_bytes: u64,
+    pub storage: crate::backup_storage::BackupStorageInfo,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PutBackupSettings {
+    pub enabled: bool,
+    pub require_success: bool,
+    pub skip_targets_over_bytes: u64,
+    #[serde(default)]
+    pub base_dir: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
