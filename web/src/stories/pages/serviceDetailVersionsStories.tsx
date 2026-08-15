@@ -570,7 +570,7 @@ export const VersionsSectionActionGuard: ServiceDetailStory = {
 
     await waitForCondition(() => normalizeText(
       canvasElement.querySelector('[data-service-detail-context="status-summary"]')?.textContent,
-    ).includes("更新中"));
+    ).includes("更新中"), 6000);
     await waitForCondition(() => Boolean(globalThis.__DOCKREV_MOCK_DEBUG__?.lastUpdateRequest));
 
     const lastRequest = globalThis.__DOCKREV_MOCK_DEBUG__?.lastUpdateRequest as
