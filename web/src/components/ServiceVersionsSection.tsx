@@ -249,14 +249,26 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     const element = sectionRef.current
     if (!element || typeof window === 'undefined') return
     let observedWidth: number | null = null
+    let measureFrameId: number | null = null
     const updateLayout = (width: number) => {
       const next = width >= VERSION_INDEX_MIN_WIDTH
       setShowDesktopIndex((current) => (current === next ? current : next))
       if (observedWidth === width) return
       observedWidth = width
       listVirtualizer.measure()
+      if (measureFrameId !== null) window.cancelAnimationFrame(measureFrameId)
+      measureFrameId = window.requestAnimationFrame(() => {
+        measureFrameId = null
+        listScrollRef.current
+          ?.querySelectorAll<HTMLElement>('.serviceVersionsVirtualRow[data-index]')
+          .forEach((row) => listVirtualizer.measureElement(row))
+      })
     }
-    return observeVersionSectionInlineWidth(element, updateLayout)
+    const stopObserving = observeVersionSectionInlineWidth(element, updateLayout)
+    return () => {
+      stopObserving()
+      if (measureFrameId !== null) window.cancelAnimationFrame(measureFrameId)
+    }
   }, [listVirtualizer])
 
   useEffect(() => {

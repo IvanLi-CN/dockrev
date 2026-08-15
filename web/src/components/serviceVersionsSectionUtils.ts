@@ -32,13 +32,15 @@ export function observeVersionSectionInlineWidth(
     })
   }
   const shell = element.closest<HTMLElement>('.appShell')
-  const observer =
-    shell && typeof window.MutationObserver !== 'undefined'
-      ? new window.MutationObserver(scheduleMeasure)
-      : null
-
-  if (observer && shell) {
-    observer.observe(shell, { attributes: true, attributeFilter: ['class', 'style'] })
+  let observer: MutationObserver | null = null
+  if (shell && typeof window.MutationObserver !== 'undefined') {
+    try {
+      observer = new window.MutationObserver(scheduleMeasure)
+      observer.observe(shell, { attributes: true, attributeFilter: ['class', 'style'] })
+    } catch {
+      observer?.disconnect()
+      observer = null
+    }
   }
   window.addEventListener('resize', scheduleMeasure)
   return () => {

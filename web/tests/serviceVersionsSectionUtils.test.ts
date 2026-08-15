@@ -56,6 +56,57 @@ describe('mergeReleaseNoteItems', () => {
 
 describe('observeVersionSectionInlineWidth', () => {
   test.each(['constructor', 'observe'] as const)(
+    'keeps the window resize fallback when MutationObserver %s fails',
+    (failurePoint) => {
+      const originalWindow = globalThis.window
+      const callbacks = new Map<string, () => void>()
+      let mutationObserverDisconnected = false
+      const fakeWindow = {
+        ResizeObserver: undefined,
+        MutationObserver: class {
+          constructor() {
+            if (failurePoint === 'constructor') throw new Error('unsupported target')
+          }
+
+          observe() {
+            if (failurePoint === 'observe') throw new Error('unsupported target')
+          }
+
+          disconnect() {
+            mutationObserverDisconnected = true
+          }
+        },
+        addEventListener(type: string, callback: () => void) {
+          callbacks.set(type, callback)
+        },
+        removeEventListener(type: string) {
+          callbacks.delete(type)
+        },
+        requestAnimationFrame() {
+          return 1
+        },
+        cancelAnimationFrame() {},
+      }
+      const element = {
+        getBoundingClientRect: () => ({ width: 1_079 }),
+        closest: () => ({}),
+      } as unknown as HTMLElement
+
+      try {
+        Reflect.set(globalThis, 'window', fakeWindow)
+        const stop = observeVersionSectionInlineWidth(element, () => {})
+
+        expect(callbacks.has('resize')).toBe(true)
+        expect(mutationObserverDisconnected).toBe(failurePoint === 'observe')
+        stop()
+        expect(callbacks.has('resize')).toBe(false)
+      } finally {
+        Reflect.set(globalThis, 'window', originalWindow)
+      }
+    },
+  )
+
+  test.each(['constructor', 'observe'] as const)(
     'falls back when ResizeObserver %s fails',
     (failurePoint) => {
       const originalWindow = globalThis.window
