@@ -4,6 +4,7 @@ import type { JobListItem } from '../src/api'
 import type { ManagementEvent } from '../src/managementEvents'
 import {
   pickLatestActiveUpdateJobs,
+  isUpdateJobSnapshotCurrent,
   reconcileTrackedUpdateJobs,
   resolveActiveUpdateJobStatus,
   resolveTrackedUpdateJobTransition,
@@ -188,5 +189,18 @@ describe('resolveActiveUpdateJobStatus', () => {
 
   test('allows queued jobs to advance to running', () => {
     expect(resolveActiveUpdateJobStatus('queued', 'running')).toBe('running')
+  })
+})
+
+describe('isUpdateJobSnapshotCurrent', () => {
+  test('rejects a snapshot when a terminal event mutates tracking while the request is in flight', () => {
+    const requestRevision = 4
+    const revisionAfterTerminalEvent = 5
+
+    expect(isUpdateJobSnapshotCurrent(requestRevision, revisionAfterTerminalEvent)).toBeFalse()
+  })
+
+  test('accepts a snapshot when tracking has not changed', () => {
+    expect(isUpdateJobSnapshotCurrent(4, 4)).toBeTrue()
   })
 })

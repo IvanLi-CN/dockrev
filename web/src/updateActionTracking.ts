@@ -77,6 +77,10 @@ export function resolveActiveUpdateJobStatus(
   return incoming
 }
 
+export function isUpdateJobSnapshotCurrent(requestRevision: number, currentRevision: number): boolean {
+  return requestRevision === currentRevision
+}
+
 function resolveUpdateJobRecency(job: Pick<JobListItem, 'createdAt' | 'startedAt' | 'progress'>): number {
   const recencyCandidates = [job.startedAt, job.createdAt, job.progress?.updatedAt]
   for (const value of recencyCandidates) {
@@ -208,6 +212,7 @@ function useProvideUpdateActionTracker(): UpdateActionTracker {
   const [submittingCounts, setSubmittingCounts] = useState<Record<string, number>>({})
   const [activeByTarget, setActiveByTarget] = useState<Record<string, ActiveUpdateJob>>({})
   const activeByTargetRef = useRef(new Map<UpdateActionTargetKey, ActiveUpdateJob>())
+  const activeRevisionRef = useRef(0)
   const unmountedRef = useRef(false)
 
   const publishActive = useCallback(() => {
@@ -222,6 +227,7 @@ function useProvideUpdateActionTracker(): UpdateActionTracker {
       const current = activeByTargetRef.current.get(target)
       if (!current || current.jobId !== jobId) return
       activeByTargetRef.current.delete(target)
+      activeRevisionRef.current += 1
       publishActive()
     },
     [publishActive],
@@ -264,6 +270,7 @@ function useProvideUpdateActionTracker(): UpdateActionTracker {
           ? { jobId, status: resolvedStatus, targetVersion: resolvedTargetVersion }
           : { jobId, status: resolvedStatus },
       )
+      activeRevisionRef.current += 1
       publishActive()
     },
     [publishActive],
@@ -311,9 +318,10 @@ function useProvideUpdateActionTracker(): UpdateActionTracker {
       }
     }
     if (!resyncRequired) return
+    const requestRevision = activeRevisionRef.current
     void listJobs()
       .then((jobs) => {
-        if (unmountedRef.current) return
+        if (unmountedRef.current || !isUpdateJobSnapshotCurrent(requestRevision, activeRevisionRef.current)) return
         const reconciliation = reconcileTrackedUpdateJobs(activeByTargetRef.current.entries(), jobs)
         for (const job of reconciliation.active) {
           storeTrackedJob(job.target, job.jobId, job.status)
@@ -344,8 +352,13 @@ function useProvideUpdateActionTracker(): UpdateActionTracker {
 
     void (async () => {
       try {
+        const requestRevision = activeRevisionRef.current
         const jobs = await listJobs()
-        if (cancelled || unmountedRef.current) return
+        if (
+          cancelled
+          || unmountedRef.current
+          || !isUpdateJobSnapshotCurrent(requestRevision, activeRevisionRef.current)
+        ) return
         const hydratedJobs = pickLatestActiveUpdateJobs(jobs)
         for (const job of hydratedJobs) {
           if (activeByTargetRef.current.has(job.target)) continue
