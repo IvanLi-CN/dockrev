@@ -990,10 +990,8 @@ export function installDockrevMockApi(
         const finishedAt = nowIso(), nextLogs = [...current.logs, { ts: finishedAt, level: 'info', msg: 'Mock job finished.' }]
         f.jobById[jobId] = { ...current, status: 'success', finishedAt, logs: nextLogs, logsLastId: nextLogs.length }
         f.jobs = f.jobs.map((row) => (row.id === jobId ? { ...row, status: 'success', finishedAt } : row))
-        if (scenario === 'service-detail-rollback-stale-after-update') {
-          const entities = affectedServiceIds.map((affectedId) => ({ entityType: 'service', id: affectedId })).concat(stackId ? [{ entityType: 'stack', id: stackId }] : [], [{ entityType: 'job', id: jobId }])
-          publishMockManagementEvent(entities, { jobId, status: 'success', jobType: 'update', scope, stackId, serviceId, serviceIds: affectedServiceIds, terminal: true })
-        }
+        const entities = affectedServiceIds.map((affectedId) => ({ entityType: 'service', id: affectedId })).concat(stackId ? [{ entityType: 'stack', id: stackId }] : [], [{ entityType: 'job', id: jobId }])
+        publishMockManagementEvent(entities, { jobId, status: 'success', jobType: 'update', scope, stackId, serviceId, serviceIds: affectedServiceIds, terminal: true })
         persistState()
       }
       window.setTimeout(() => {

@@ -1382,7 +1382,7 @@ async function runInteractive({ baseUrl, browser }) {
         () => {
           const rows = Array.from(document.querySelectorAll(".rowLine"));
           const matchesAction = (text) =>
-            ["执行更新", "更新中…", "排队中…", "提交中…"].some((label) =>
+            ["执行更新", "更新中…", "更新排队中…", "排队中…", "提交中…"].some((label) =>
               text?.includes(label),
             );
           const findButton = (keyword) => {
@@ -1418,7 +1418,7 @@ async function runInteractive({ baseUrl, browser }) {
           if (!apiRow) return false;
           const btn = Array.from(apiRow.querySelectorAll("button")).find(
             (item) =>
-              ["更新中…", "排队中…"].some((label) =>
+              ["更新中…", "更新排队中…", "排队中…"].some((label) =>
                 item.textContent?.includes(label),
               ),
           );
@@ -1439,7 +1439,7 @@ async function runInteractive({ baseUrl, browser }) {
           if (!apiRow) return false;
           const btn = Array.from(apiRow.querySelectorAll("button")).find(
             (item) =>
-              ["更新中…", "排队中…"].some((label) =>
+              ["更新中…", "更新排队中…", "排队中…"].some((label) =>
                 item.textContent?.includes(label),
               ),
           );
@@ -1459,7 +1459,7 @@ async function runInteractive({ baseUrl, browser }) {
         const apiRow = rows.find((item) => item.textContent?.includes("api"));
         if (!apiRow) return false;
         const btn = Array.from(apiRow.querySelectorAll("button")).find((item) =>
-          ["更新中…", "排队中…"].some((label) =>
+          ["更新中…", "更新排队中…", "排队中…"].some((label) =>
             item.textContent?.includes(label),
           ),
         );
@@ -1484,7 +1484,7 @@ async function runInteractive({ baseUrl, browser }) {
           if (!apiRow) return false;
           const btn = Array.from(apiRow.querySelectorAll("button")).find(
             (item) =>
-              ["执行更新", "更新中…", "排队中…", "提交中…"].some((label) =>
+              ["执行更新", "更新中…", "更新排队中…", "排队中…", "提交中…"].some((label) =>
                 item.textContent?.includes(label),
               ),
           );
@@ -1519,7 +1519,7 @@ async function runInteractive({ baseUrl, browser }) {
           if (!apiRow) return false;
           const btn = Array.from(apiRow.querySelectorAll("button")).find(
             (item) =>
-              ["执行更新", "更新中…", "排队中…", "提交中…"].some((label) =>
+              ["执行更新", "更新中…", "更新排队中…", "排队中…", "提交中…"].some((label) =>
                 item.textContent?.includes(label),
               ),
           );
@@ -1570,7 +1570,7 @@ async function runInteractive({ baseUrl, browser }) {
         () => {
           const btn = Array.from(document.querySelectorAll("button")).find(
             (item) =>
-              ["更新", "更新中…", "排队中…", "提交中…"].includes(
+              ["更新", "更新中…", "更新排队中…", "排队中…", "提交中…"].includes(
                 item.textContent?.trim() ?? "",
               ),
           );
@@ -1585,7 +1585,7 @@ async function runInteractive({ baseUrl, browser }) {
         () => {
           const btn = Array.from(document.querySelectorAll("button")).find(
             (item) =>
-              ["更新中…", "排队中…"].includes(item.textContent?.trim() ?? ""),
+              ["更新中…", "更新排队中…", "排队中…"].includes(item.textContent?.trim() ?? ""),
           );
           if (!btn) return false;
           return (
@@ -1601,7 +1601,7 @@ async function runInteractive({ baseUrl, browser }) {
         () => {
           const btn = Array.from(document.querySelectorAll("button")).find(
             (item) =>
-              ["更新中…", "排队中…"].includes(item.textContent?.trim() ?? ""),
+              ["更新中…", "更新排队中…", "排队中…"].includes(item.textContent?.trim() ?? ""),
           );
           if (!btn) return false;
           return (
@@ -1615,7 +1615,7 @@ async function runInteractive({ baseUrl, browser }) {
       const jumped = await page.evaluate(() => {
         const btn = Array.from(document.querySelectorAll("button")).find(
           (item) =>
-            ["更新中…", "排队中…"].includes(item.textContent?.trim() ?? ""),
+            ["更新中…", "更新排队中…", "排队中…"].includes(item.textContent?.trim() ?? ""),
         );
         if (!btn) return false;
         btn.click();
@@ -1646,7 +1646,7 @@ async function runInteractive({ baseUrl, browser }) {
           if (!apiRow) return false;
           const btn = Array.from(apiRow.querySelectorAll("button")).find(
             (item) =>
-              ["更新中…", "排队中…"].some((label) =>
+              ["更新中…", "更新排队中…", "排队中…"].some((label) =>
                 item.textContent?.includes(label),
               ),
           );
@@ -1666,7 +1666,7 @@ async function runInteractive({ baseUrl, browser }) {
         const apiRow = rows.find((item) => item.textContent?.includes("api"));
         if (!apiRow) return false;
         const btn = Array.from(apiRow.querySelectorAll("button")).find((item) =>
-          ["更新中…", "排队中…"].some((label) =>
+          ["更新中…", "更新排队中…", "排队中…"].some((label) =>
             item.textContent?.includes(label),
           ),
         );
@@ -1698,7 +1698,7 @@ async function runInteractive({ baseUrl, browser }) {
         () => {
           const btn = Array.from(document.querySelectorAll("button")).find(
             (item) =>
-              ["更新中…", "排队中…"].includes(item.textContent?.trim() ?? ""),
+              ["更新中…", "更新排队中…", "排队中…"].includes(item.textContent?.trim() ?? ""),
           );
           if (!btn) return false;
           return (
@@ -1714,7 +1714,7 @@ async function runInteractive({ baseUrl, browser }) {
       const jumped = await page.evaluate(() => {
         const btn = Array.from(document.querySelectorAll("button")).find(
           (item) =>
-            ["更新中…", "排队中…"].includes(item.textContent?.trim() ?? ""),
+            ["更新中…", "更新排队中…", "排队中…"].includes(item.textContent?.trim() ?? ""),
         );
         if (!btn) return false;
         btn.click();
@@ -1750,7 +1750,7 @@ async function runInteractive({ baseUrl, browser }) {
         () => {
           const btn = Array.from(document.querySelectorAll("button")).find(
             (item) =>
-              ["更新", "更新中…", "排队中…", "提交中…"].includes(
+              ["更新", "更新中…", "更新排队中…", "排队中…", "提交中…"].includes(
                 item.textContent?.trim() ?? "",
               ),
           );
