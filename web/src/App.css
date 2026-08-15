@@ -10892,6 +10892,7 @@ html[data-theme="light"] .serviceLogsTerminal {
 .topbarServiceMetrics {
   display: flex;
   flex: 0 0 auto;
+  margin-left: auto;
   min-width: 0;
 }
 

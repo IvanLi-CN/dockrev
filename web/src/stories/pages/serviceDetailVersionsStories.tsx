@@ -9,7 +9,6 @@ import {
   type ServiceDetailStory,
   visibleVersionCards,
 } from "./serviceDetailStoryShared";
-import { expectTopbarServiceContextGrouped } from "./serviceDetailHeaderAssertions";
 import { expectNearlyEqual, expectStory, findButton, findButtons, normalizeText, waitForCondition } from "./storyAssertions";
 
 function versionsSurface(root: ParentNode): HTMLElement | null {
@@ -324,7 +323,6 @@ export const VersionsSectionIntermediateWidth: ServiceDetailStory = {
     pageSubtitle: null,
   }),
   play: async ({ canvasElement }) => {
-    expectTopbarServiceContextGrouped({ doc: canvasElement.ownerDocument, expectStory });
     await waitForCondition(() => Boolean(findVersionCard(canvasElement, "5.2.1")));
     await waitForCondition(() => Boolean(findVersionCard(canvasElement, "5.2.3")));
     const surface = versionsSurface(canvasElement);

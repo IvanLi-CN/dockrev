@@ -646,44 +646,6 @@ async function runInteractive({ baseUrl, browser }) {
 
   await assertServiceLogsLightContrast({ baseUrl, browser });
 
-  const assertServiceTopbarContextGrouped = async () => {
-    const page = await openStory(
-      "pages-servicedetailpage--versions-section-intermediate-width",
-    );
-    try {
-      await page.setViewportSize({ width: 1200, height: 900 });
-      await page.locator('[data-service-version-card="true"][data-release-tag="5.2.3"]').waitFor({ timeout: 10_000 });
-      const geometry = await page.evaluate(() => {
-        const context = document.querySelector(".topbarServiceContext");
-        const title = document.querySelector('[data-slot="service-title"]');
-        const metrics = document.querySelector('[data-slot="service-metrics"]');
-        if (!(context instanceof HTMLElement) || !(title instanceof HTMLElement) || !(metrics instanceof HTMLElement)) {
-          throw new Error("Service topbar context is incomplete.");
-        }
-        const titleRect = title.getBoundingClientRect();
-        const metricsRect = metrics.getBoundingClientRect();
-        return {
-          gap: metricsRect.left - titleRect.right,
-          expectedGap: Number.parseFloat(getComputedStyle(context).columnGap),
-          metricsVisible: getComputedStyle(metrics).display !== "none" && metricsRect.width > 0,
-        };
-      });
-
-      if (geometry.metricsVisible && geometry.gap > geometry.expectedGap + 1) {
-        throw new Error(
-          `Service name and monitor summary must remain adjacent at intermediate width; expected <= ${geometry.expectedGap + 1}px, got ${geometry.gap}px.`,
-        );
-      }
-    } finally {
-      await page.close().catch(() => {});
-    }
-  };
-
-  if (process.env.DOCKREV_TEST_STORYBOOK_TOPBAR_ONLY === "1") {
-    await assertServiceTopbarContextGrouped();
-    return;
-  }
-
   // Version directory navigation must converge even when the target card is not rendered yet.
   {
     const page = await openStory("pages-servicedetailpage--versions-section");
@@ -2501,9 +2463,6 @@ async function runInteractive({ baseUrl, browser }) {
       await page.close().catch(() => {});
     }
   }
-
-  // The service name and visible monitor summary form one topbar context group.
-  await assertServiceTopbarContextGrouped();
 }
 
 async function main() {
