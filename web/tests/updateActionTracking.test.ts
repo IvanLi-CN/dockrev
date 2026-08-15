@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import type { JobListItem } from '../src/api'
 import type { ManagementEvent } from '../src/managementEvents'
 import {
+  doesManagementEventInvalidateUpdateSnapshot,
   pickLatestActiveUpdateJobs,
   isUpdateJobSnapshotCurrent,
   reconcileTrackedUpdateJobs,
@@ -202,5 +203,32 @@ describe('isUpdateJobSnapshotCurrent', () => {
 
   test('accepts a snapshot when tracking has not changed', () => {
     expect(isUpdateJobSnapshotCurrent(4, 4)).toBeTrue()
+  })
+})
+
+describe('doesManagementEventInvalidateUpdateSnapshot', () => {
+  test('invalidates initial hydration for a terminal event before the job is tracked', () => {
+    const terminalEvent: ManagementEvent = {
+      type: 'entities_changed',
+      domain: 'jobs',
+      entities: [{ entityType: 'job', id: 'job-update' }],
+      version: 3,
+      summary: { jobId: 'job-update', status: 'success', terminal: true },
+    }
+
+    expect(doesManagementEventInvalidateUpdateSnapshot(terminalEvent)).toBeTrue()
+  })
+
+  test('does not invalidate hydration for progress-only or unrelated events', () => {
+    const progressEvent: ManagementEvent = {
+      type: 'entities_changed',
+      domain: 'jobs',
+      entities: [{ entityType: 'job', id: 'job-update' }],
+      version: 2,
+      summary: { jobId: 'job-update', operation: 'progress_updated' },
+    }
+
+    expect(doesManagementEventInvalidateUpdateSnapshot(progressEvent)).toBeFalse()
+    expect(doesManagementEventInvalidateUpdateSnapshot({ ...progressEvent, domain: 'services' })).toBeFalse()
   })
 })
