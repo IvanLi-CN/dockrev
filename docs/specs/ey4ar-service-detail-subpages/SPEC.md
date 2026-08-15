@@ -420,9 +420,9 @@
   submission_gate: `approved`
   story_id_or_title: `demo:app / /demo/services/stack-prod/svc-prod-api/versions`
   state: `intermediate desktop width with both navigations expanded`
-  evidence_note: `mock-only ui_demo` 截图验证版本区实际宽度约 `572px` 时目录不挂载、既有窄卡保持单列；候选卡正文宽度为 `523px`，操作区仍在正文后并保留可见的 `更新` / `回滚` 按钮，版本区 `scrollWidth` 与 `clientWidth` 相等。
+  evidence_note: `mock-only ui_demo` 截图验证版本区实际宽度约 `572px` 时目录不挂载、既有窄卡保持单列；服务名与可见监控指标保持 `16px` 的同组间距，候选卡正文宽度为 `523px`，操作区仍在正文后并保留可见的 `更新` / `回滚` 按钮，版本区 `scrollWidth` 与 `clientWidth` 相等。
   PR: include
-  PR caption: `ui_demo` 中间桌面宽度隐藏版本目录，保持既有窄卡及完整操作区。
+  PR caption: `ui_demo` 中间桌面宽度保持连续服务上下文、隐藏版本目录，并保留既有窄卡及完整操作区。
 
 ![服务详情版本子页 ui_demo 中间宽度操作区](./assets/service-detail-versions-intermediate-responsive.png)
 
