@@ -195,13 +195,14 @@ PR: include
 - evidence_surface: `page`
 - sensitive_exclusion: `N/A`
 - submission_gate: `approved`
+- source_sha: `3a5aa9b8f7e461a2d0cd7cd9e29141580862cd1c`
 - story_id_or_title: `demo:app / /demo/services/stack-prod/svc-prod-api/versions`
 - state: `intermediate desktop candidate action rail`
-- evidence_note: `在服务详情真实应用壳内，版本区释放目录后保持既有宽卡三栏与固定操作轨道；候选版本的更新与回滚入口均完整可见。截图只陈述该页面状态，不将顶栏留白或指标分组的既有主干行为误判为版本卡回归。边缘空白检查无需裁剪。`
+- evidence_note: `在服务详情 mock 应用壳内，版本区释放目录后保持既有宽卡三栏与固定操作轨道；候选版本的更新与回滚入口均完整可见，且没有版本目录或横向溢出。边缘空白检查无需裁剪。`
 
 PR: include
 
-![Service detail versions intermediate action rail](./assets/service-detail-versions-intermediate-actions.png)
+![Service detail versions intermediate action rail](./assets/service-detail-versions-intermediate-wide-actions.jpg)
 
 ## 变更记录
 
