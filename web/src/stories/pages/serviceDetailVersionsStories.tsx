@@ -60,6 +60,63 @@ function visibleCount(root: ParentNode, attr: string): number {
   return Number(versionsSurface(root)?.getAttribute(attr) ?? "0");
 }
 
+let resizeObserverDescriptor: PropertyDescriptor | undefined;
+let resizeObserverFallbackActive = false;
+
+class MutationObserverResizeFallback {
+  private observer: MutationObserver | null = null;
+  private readonly callback: ResizeObserverCallback;
+
+  constructor(callback: ResizeObserverCallback) {
+    this.callback = callback;
+  }
+
+  observe(target: Element) {
+    const shell = target.closest(".appShell");
+    if (!shell || typeof MutationObserver === "undefined") return;
+    this.observer = new MutationObserver(() => {
+      this.callback(
+        [{ contentRect: target.getBoundingClientRect(), target } as ResizeObserverEntry],
+        this as unknown as ResizeObserver,
+      );
+    });
+    this.observer.observe(shell, { attributes: true, attributeFilter: ["class"] });
+  }
+
+  unobserve() {
+    this.disconnect();
+  }
+
+  disconnect() {
+    this.observer?.disconnect();
+    this.observer = null;
+  }
+}
+
+function renderWithResizeObserverFallback(
+  renderStory: NonNullable<ServiceDetailStory["render"]>,
+): NonNullable<ServiceDetailStory["render"]> {
+  return (args, context) => {
+    if (typeof window !== "undefined" && !resizeObserverFallbackActive) {
+      resizeObserverDescriptor = Object.getOwnPropertyDescriptor(window, "ResizeObserver");
+      Object.defineProperty(window, "ResizeObserver", {
+        configurable: true,
+        value: MutationObserverResizeFallback,
+      });
+      resizeObserverFallbackActive = true;
+    }
+    return renderStory(args, context);
+  };
+}
+
+function restoreResizeObserver() {
+  if (typeof window === "undefined" || !resizeObserverFallbackActive) return;
+  if (resizeObserverDescriptor) Object.defineProperty(window, "ResizeObserver", resizeObserverDescriptor);
+  else Reflect.deleteProperty(window, "ResizeObserver");
+  resizeObserverDescriptor = undefined;
+  resizeObserverFallbackActive = false;
+}
+
 const dockrevDigest = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`;
 
 const dockrevServiceOverride = {
@@ -377,48 +434,76 @@ export const VersionsSectionIntermediateWideActions: ServiceDetailStory = {
       },
     },
   },
-  render: render("stack-prod", "svc-prod-api", "versions", undefined, {
-    pageTitle: null,
-    pageSubtitle: null,
-    sidebarCollapsed: true,
-  }),
+  render: renderWithResizeObserverFallback(
+    render("stack-prod", "svc-prod-api", "versions", {
+      pageTitle: null,
+      pageSubtitle: null,
+      sidebarCollapsed: false,
+    })!,
+  ),
   play: async ({ canvasElement }) => {
-    await waitForCondition(() => Boolean(findVersionCard(canvasElement, "5.2.3")));
-    await waitForCondition(() => Boolean(findVersionCard(canvasElement, "5.2.0")));
-    const surface = versionsSurface(canvasElement);
-    const candidateCard = findVersionCard(canvasElement, "5.2.3");
-    const rollbackCard = findVersionCard(canvasElement, "5.2.0");
-    const candidateBody = candidateCard?.querySelector<HTMLElement>(".serviceVersionCardBody");
-    const candidateAside = candidateCard?.querySelector<HTMLElement>(".serviceVersionCardAside");
-    const rollbackAside = rollbackCard?.querySelector<HTMLElement>(".serviceVersionCardAside");
-    const updateAction = findVersionAction(canvasElement, "update", "5.2.3");
-    const rollbackAction = findVersionAction(canvasElement, "rollback", "5.2.0");
-    const scrollViewport = versionsViewport(canvasElement);
+    try {
+      await waitForCondition(() => Boolean(findVersionCard(canvasElement, "5.2.3")));
+      const initialCandidate = findVersionCard(canvasElement, "5.2.3");
+      const initialViewport = versionsViewport(canvasElement);
+      const initialScrollHeight = initialViewport?.scrollHeight ?? 0;
+      expectStory(versionsSurface(canvasElement)?.getAttribute("data-service-versions-layout") === "stream", "fallback story should start in the stream layout");
+      expectStory(!versionsIndexViewport(canvasElement), "fallback story should not reserve a version index rail");
+      expectStory(
+        getComputedStyle(initialCandidate ?? canvasElement).gridTemplateColumns.split(" ").filter(Boolean).length === 1,
+        "fallback story should start with the existing narrow card layout",
+      );
 
-    expectStory(surface?.getAttribute("data-service-versions-layout") === "stream", "unindexed wide cards should use the stream layout");
-    expectStory(!versionsIndexViewport(canvasElement), "unindexed wide cards should not reserve a version index rail");
-    expectStory(
-      getComputedStyle(candidateCard ?? canvasElement).gridTemplateColumns.split(" ").filter(Boolean).length === 3,
-      "unindexed wide cards should retain the existing three-column layout",
-    );
-    expectStory(
-      (candidateAside?.getBoundingClientRect().width ?? 0) > 0 &&
-        (candidateAside?.getBoundingClientRect().left ?? 0) >= (candidateBody?.getBoundingClientRect().right ?? Number.POSITIVE_INFINITY) - 1,
-      "unindexed wide cards should keep the fixed action rail beside the release body",
-    );
-    expectStory(
-      candidateAside?.contains(updateAction ?? null) && rollbackAside?.contains(rollbackAction ?? null),
-      "unindexed wide cards should keep business-eligible update and rollback actions in their fixed rails",
-    );
-    expectStory(
-      (updateAction?.getBoundingClientRect().width ?? 0) > 0 &&
-        (rollbackAction?.getBoundingClientRect().width ?? 0) > 0,
-      "unindexed wide cards should keep their action buttons visible",
-    );
-    expectStory(
-      (scrollViewport?.scrollWidth ?? 0) <= (scrollViewport?.clientWidth ?? 0) + 1,
-      "unindexed wide cards should not introduce horizontal overflow",
-    );
+      const collapseButton = canvasElement.querySelector<HTMLButtonElement>('[aria-label="折叠左侧导航"]');
+      expectStory(Boolean(collapseButton), "fallback story should expose the primary sidebar toggle");
+      collapseButton?.click();
+      await waitForCondition(() => canvasElement.querySelector(".appShell")?.classList.contains("appShellSidebarCollapsed") ?? false);
+      await waitForCondition(
+        () =>
+          getComputedStyle(findVersionCard(canvasElement, "5.2.3") ?? canvasElement)
+            .gridTemplateColumns.split(" ")
+            .filter(Boolean).length === 3,
+      );
+      await waitForCondition(() => Math.abs((versionsViewport(canvasElement)?.scrollHeight ?? 0) - initialScrollHeight) > 1);
+      await waitForCondition(() => Boolean(findVersionCard(canvasElement, "5.2.0")));
+
+      const surface = versionsSurface(canvasElement);
+      const candidateCard = findVersionCard(canvasElement, "5.2.3");
+      const rollbackCard = findVersionCard(canvasElement, "5.2.0");
+      const candidateBody = candidateCard?.querySelector<HTMLElement>(".serviceVersionCardBody");
+      const candidateAside = candidateCard?.querySelector<HTMLElement>(".serviceVersionCardAside");
+      const rollbackAside = rollbackCard?.querySelector<HTMLElement>(".serviceVersionCardAside");
+      const updateAction = findVersionAction(canvasElement, "update", "5.2.3");
+      const rollbackAction = findVersionAction(canvasElement, "rollback", "5.2.0");
+      const scrollViewport = versionsViewport(canvasElement);
+
+      expectStory(surface?.getAttribute("data-service-versions-layout") === "stream", "unindexed wide cards should keep the stream layout");
+      expectStory(!versionsIndexViewport(canvasElement), "unindexed wide cards should not reserve a version index rail");
+      expectStory(
+        getComputedStyle(candidateCard ?? canvasElement).gridTemplateColumns.split(" ").filter(Boolean).length === 3,
+        "unindexed wide cards should retain the existing three-column layout",
+      );
+      expectStory(
+        (candidateAside?.getBoundingClientRect().width ?? 0) > 0 &&
+          (candidateAside?.getBoundingClientRect().left ?? 0) >= (candidateBody?.getBoundingClientRect().right ?? Number.POSITIVE_INFINITY) - 1,
+        "unindexed wide cards should keep the fixed action rail beside the release body",
+      );
+      expectStory(
+        candidateAside?.contains(updateAction ?? null) && rollbackAside?.contains(rollbackAction ?? null),
+        "unindexed wide cards should keep business-eligible update and rollback actions in their fixed rails",
+      );
+      expectStory(
+        (updateAction?.getBoundingClientRect().width ?? 0) > 0 &&
+          (rollbackAction?.getBoundingClientRect().width ?? 0) > 0,
+        "unindexed wide cards should keep their action buttons visible",
+      );
+      expectStory(
+        (scrollViewport?.scrollWidth ?? 0) <= (scrollViewport?.clientWidth ?? 0) + 1,
+        "unindexed wide cards should not introduce horizontal overflow",
+      );
+    } finally {
+      restoreResizeObserver();
+    }
   },
 };
 
