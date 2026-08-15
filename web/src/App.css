@@ -221,11 +221,11 @@
   opacity: 0;
 }
 
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .brandLogoForDark {
+html[data-theme="light"] .brandLogoForDark {
   opacity: 0;
 }
 
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .brandLogoForLight {
+html[data-theme="light"] .brandLogoForLight {
   opacity: 1;
 }
 
@@ -1434,7 +1434,7 @@
   }
 }
 
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .versionTagsPopover {
+html[data-theme="light"] .versionTagsPopover {
   box-shadow: 0 18px 64px rgba(2, 6, 23, 0.18);
 }
 
@@ -2383,11 +2383,11 @@
   }
 }
 
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .discoveryHistoryPopover {
+html[data-theme="light"] .discoveryHistoryPopover {
   box-shadow: 0 18px 64px rgba(2, 6, 23, 0.18);
 }
 
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .releaseDrawerContent {
+html[data-theme="light"] .releaseDrawerContent {
   box-shadow: -18px 0 56px rgba(15, 23, 42, 0.18);
 }
 
@@ -3219,7 +3219,7 @@
     border-color 160ms ease;
 }
 
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .switchSlider {
+html[data-theme="light"] .switchSlider {
   background: rgba(15, 23, 42, 0.03);
 }
 
@@ -3260,7 +3260,7 @@
   color: var(--text);
 }
 
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .input {
+html[data-theme="light"] .input {
   background: rgba(15, 23, 42, 0.03);
 }
 
@@ -3372,7 +3372,7 @@
   padding: 24px;
 }
 
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .modalOverlay {
+html[data-theme="light"] .modalOverlay {
   background: rgba(15, 23, 42, 0.42);
 }
 
@@ -5814,7 +5814,7 @@
   box-shadow: var(--service-log-terminal-shadow);
 }
 
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .serviceLogsTerminal {
+html[data-theme="light"] .serviceLogsTerminal {
   --service-log-terminal-background: #f7faff;
   --service-log-terminal-border: #c7d8e8;
   --service-log-terminal-shadow: 0 16px 32px rgba(49, 95, 142, 0.12);
@@ -11106,7 +11106,7 @@
   filter: none;
 }
 
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .brandLogoThemeSwitch {
+html[data-theme="light"] .brandLogoThemeSwitch {
   filter: none;
 }
 
@@ -11374,18 +11374,22 @@
   }
 }
 
-.themeTransitionLayer {
-  position: fixed;
-  inset: 0;
-  z-index: 2147483647;
-  overflow: hidden;
-  pointer-events: none;
-  contain: strict;
+::view-transition-group(root) {
+  animation: none;
 }
 
-.themeTransitionSurface {
-  width: 100%;
-  height: 100%;
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+::view-transition-old(root) {
+  z-index: 1;
+}
+
+::view-transition-new(root) {
+  z-index: 2;
 }
 
 .themePreferenceIconButton:hover {
@@ -11570,7 +11574,7 @@
   padding: 32px 30px 40px;
 }
 
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .appShell {
+html[data-theme="light"] .appShell {
   background:
     radial-gradient(
       980px 360px at -20% -8%,
@@ -11585,35 +11589,35 @@
     linear-gradient(180deg, #fafcff 0%, #f7fbff 100%);
 }
 
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .topbar {
+html[data-theme="light"] .topbar {
   background: color-mix(in srgb, #ffffff 88%, var(--color-base-200) 12%);
   border-bottom-color: color-mix(in srgb, var(--borderColor) 78%, transparent);
 }
 
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .sidebar {
+html[data-theme="light"] .sidebar {
   background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
   box-shadow: inset -1px 0 0 rgba(12, 121, 207, 0.12);
 }
 
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .chipStatic,
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .chip {
+html[data-theme="light"] .chipStatic,
+html[data-theme="light"] .chip {
   background: color-mix(in srgb, #ffffff 93%, var(--color-primary) 7%);
 }
 
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .topbarUserPopover {
+html[data-theme="light"] .topbarUserPopover {
   box-shadow: 0 18px 64px rgba(2, 6, 23, 0.18);
 }
 
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .tableHeader,
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .groupHead,
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .rowLine {
+html[data-theme="light"] .tableHeader,
+html[data-theme="light"] .groupHead,
+html[data-theme="light"] .rowLine {
   background: #ffffff;
   box-shadow: inset 0 0 0 1px
     color-mix(in srgb, var(--borderColor) 74%, transparent);
 }
 
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .groupHead:hover,
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .rowLine:hover {
+html[data-theme="light"] .groupHead:hover,
+html[data-theme="light"] .rowLine:hover {
   background: color-mix(in srgb, #ffffff 92%, var(--color-primary) 8%);
   box-shadow: inset 0 0 0 1px
     color-mix(in srgb, var(--color-primary) 28%, var(--borderColor) 72%);
@@ -11696,7 +11700,7 @@
   box-shadow: var(--shadow-soft);
 }
 
-:is(html[data-theme="dark"], :where(.themeTransitionSurface[data-theme="dark"])) .card {
+html[data-theme="dark"] .card {
   background: linear-gradient(
     165deg,
     color-mix(in srgb, var(--panel) 78%, var(--panel2) 22%) 0%,
@@ -11704,7 +11708,7 @@
   );
 }
 
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .card {
+html[data-theme="light"] .card {
   background: linear-gradient(
     170deg,
     color-mix(in srgb, #ffffff 98%, var(--color-primary) 2%) 0%,
@@ -11745,7 +11749,7 @@
     inset 0 0 0 1px color-mix(in srgb, #ffffff 34%, transparent);
 }
 
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .btnPrimary {
+html[data-theme="light"] .btnPrimary {
   background: linear-gradient(
     150deg,
     oklch(0.48 0.14 250) 0%,
@@ -15044,8 +15048,8 @@
   }
 }
 
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .homepageDashboardPage,
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .homepageHeaderContent {
+html[data-theme="light"] .homepageDashboardPage,
+html[data-theme="light"] .homepageHeaderContent {
   --homepage-line: oklch(0.54 0.036 252 / 0.26);
   --homepage-panel: oklch(0.97 0.012 252 / 0.96);
   --homepage-panel-strong: oklch(0.95 0.018 252 / 0.98);
@@ -15055,18 +15059,18 @@
   --homepage-text-dim: oklch(0.36 0.032 252 / 0.96);
 }
 
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .homepageOverviewSearchShell {
+html[data-theme="light"] .homepageOverviewSearchShell {
   background: oklch(0.98 0.01 252 / 0.98);
 }
 
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .homepageDashboardGroupHeader span {
+html[data-theme="light"] .homepageDashboardGroupHeader span {
   border-color: oklch(0.52 0.052 248 / 0.28);
   background: oklch(0.88 0.026 252 / 0.94);
   color: oklch(0.3 0.056 248);
   box-shadow: inset 0 1px 0 oklch(0.98 0.006 252 / 0.72);
 }
 
-:is(html[data-theme="light"], :where(.themeTransitionSurface[data-theme="light"])) .homepageHeaderSearchPopover {
+html[data-theme="light"] .homepageHeaderSearchPopover {
   background: linear-gradient(
     180deg,
     color-mix(in srgb, var(--panel2) 94%, var(--color-primary) 3%),

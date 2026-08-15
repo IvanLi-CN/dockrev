@@ -49,7 +49,7 @@
 - 移动端仅在 `/settings/**`（包括设置子页及 `/settings/ghcr-webhooks`）顶部显示图标按钮。
 - 普通点击按系统解析色使用 `system -> opposite -> matching -> system` 循环；右键、长按、ContextMenu 键或 `Shift+F10` 打开纵向 radio 菜单。
 - 入口和菜单必须提供可见焦点、ARIA 名称/选中态、中文 tooltip，并满足移动端触控命中尺寸。
-- 解析主题发生变化时，从触发控件中心以圆形揭示过渡到新主题，半径必须覆盖视口最远角；动画完成前保持旧主题且忽略重复触发，完整覆盖后再提交新主题。
+- 解析主题发生变化时，从触发控件中心以圆形揭示目标主题快照，半径必须覆盖视口最远角；动画期间忽略重复触发，完整覆盖后才结束过渡快照。
 
 ### SHOULD
 
@@ -138,7 +138,7 @@
   ![ui_demo mobile settings dark](./assets/ui_demo-mobile-settings-dark.png)
 - source_type: ui_demo; target_program: mock-only; requested_viewport: 393x852; scenario: mobile settings, light; evidence_note: light 解析主题下移动设置页入口仍保持清晰对比。
   ![ui_demo mobile settings light](./assets/ui_demo-mobile-settings-light.png)
-- source_type: ui_demo; target_program: mock-only; scenario: desktop expanded, theme transition mid-frame; evidence_note: 真实根节点仍为暗色时，亮色只读覆盖层从主题控件中心扩张；最远角尚未覆盖，证明动画不会提前提交主题。
+- source_type: ui_demo; target_program: mock-only; scenario: desktop expanded, theme transition mid-frame; evidence_note: 完整亮色目标快照从主题控件中心扩张，圆外仍显示完整暗色旧快照；两侧均无主题样式混用。
   ![ui_demo theme transition mid-frame](./assets/ui_demo-theme-transition-mid.png)
 - source_type: storybook_docs; target_program: mock-only; docs_entry_or_title: Components/ThemePreferenceControl; requested_viewport: none; scenario: icon button and expanded slider gallery; evidence_note: Storybook docs 展示可复用主题控件的两种形态。
   ![Theme preference control Storybook docs](./assets/storybook-theme-control-docs.png)

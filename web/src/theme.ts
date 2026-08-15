@@ -14,7 +14,7 @@ type ThemeListener = () => void
 let mediaQuery: MediaQueryList | null = null
 let initialized = false
 let boundWindow: Window | null = null
-let activeThemeTransition = false
+let activeThemeTransition: ViewTransition | null = null
 const listeners = new Set<ThemeListener>()
 
 export type ThemeTransitionOrigin = {
@@ -104,38 +104,6 @@ export function getThemeTransitionGeometry(origin: ThemeTransitionOrigin) {
   }
 }
 
-function copyScrollPositions(source: Element, clone: Element) {
-  const sourceElements = [source, ...source.querySelectorAll('*')]
-  const cloneElements = [clone, ...clone.querySelectorAll('*')]
-  sourceElements.forEach((element, index) => {
-    const cloneElement = cloneElements[index]
-    if (!cloneElement) return
-    cloneElement.scrollTop = element.scrollTop
-    cloneElement.scrollLeft = element.scrollLeft
-  })
-}
-
-function buildThemeTransitionLayer(nextTheme: DockrevTheme) {
-  if (typeof document.getElementById !== 'function') return null
-  const source = document.getElementById('root')
-  if (!source) return null
-  const layer = document.createElement('div')
-  layer.className = 'themeTransitionLayer'
-  layer.dataset.theme = nextTheme
-  layer.style.colorScheme = nextTheme
-  const clone = source.cloneNode(true) as HTMLElement
-  clone.removeAttribute('id')
-  clone.classList.add('themeTransitionSurface')
-  clone.dataset.theme = nextTheme
-  clone.querySelectorAll('[id]').forEach((element) => element.removeAttribute('id'))
-  clone.setAttribute('aria-hidden', 'true')
-  clone.setAttribute('inert', '')
-  layer.append(clone)
-  document.body.append(layer)
-  copyScrollPositions(source, clone)
-  return layer
-}
-
 function syncThemeFromEnvironment() {
   applyTheme(resolveTheme())
   notify()
@@ -180,6 +148,7 @@ export function setThemePreference(
   const currentTheme = getTheme()
   if (
     typeof document === 'undefined'
+    || typeof document.startViewTransition !== 'function'
     || prefersReducedMotion()
     || nextTheme === currentTheme
   ) {
@@ -191,28 +160,20 @@ export function setThemePreference(
     x: window.innerWidth / 2,
     y: window.innerHeight / 2,
   }
-  const layer = buildThemeTransitionLayer(nextTheme)
-  if (!layer || typeof layer.animate !== 'function') {
-    layer?.remove()
-    applyThemePreference(preference)
-    return
-  }
   const { x, y, radius } = getThemeTransitionGeometry(transitionOrigin)
-  activeThemeTransition = true
-  const animation = layer.animate([
+  const transition = document.startViewTransition(() => applyThemePreference(preference))
+  activeThemeTransition = transition
+  transition.ready.then(() => document.documentElement.animate([
     { clipPath: `circle(0px at ${x}px ${y}px)` },
     { clipPath: `circle(${radius}px at ${x}px ${y}px)` },
   ], {
     duration: 1200,
     easing: 'cubic-bezier(0.4, 0, 0.2, 1)',
-    fill: 'forwards',
-  })
-  animation.finished.then(
-    () => applyThemePreference(preference),
-    () => undefined,
-  ).finally(() => {
-    layer.remove()
-    activeThemeTransition = false
+    fill: 'both',
+    pseudoElement: '::view-transition-new(root)',
+  }).finished).catch(() => undefined)
+  transition.finished.finally(() => {
+    if (activeThemeTransition === transition) activeThemeTransition = null
   })
 }
 
