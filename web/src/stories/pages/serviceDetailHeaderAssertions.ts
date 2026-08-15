@@ -38,6 +38,30 @@ export function expectTopbarMonitorSummary({
   expectStory(!monitorSummaryText.includes("服务监控摘要"), "topbar monitor summary should remove the redundant subtitle");
 }
 
+export function expectTopbarServiceContextGrouped({
+  doc,
+  expectStory,
+}: {
+  doc: Document;
+  expectStory: ExpectStory;
+}) {
+  const context = doc.querySelector<HTMLElement>(".topbarServiceContext");
+  const title = doc.querySelector<HTMLElement>('[data-slot="service-title"]');
+  const metrics = doc.querySelector<HTMLElement>('[data-slot="service-metrics"]');
+
+  expectStory(Boolean(context && title && metrics), "service topbar context should include the service name and monitor summary");
+  if (!context || !title || !metrics || getComputedStyle(metrics).display === "none") return;
+
+  const contextGap = Number.parseFloat(getComputedStyle(context).columnGap);
+  const titleRect = title.getBoundingClientRect();
+  const metricsRect = metrics.getBoundingClientRect();
+
+  expectStory(
+    metricsRect.left - titleRect.right <= contextGap + 1,
+    "service name and visible monitor summary should remain one adjacent topbar context group",
+  );
+}
+
 export function expectNoLegacyServiceDetailHero({
   canvasElement,
   expectStory,
