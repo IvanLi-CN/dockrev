@@ -52,4 +52,19 @@ describe('service detail management events', () => {
       service,
     )).toBe(false)
   })
+
+  test('refreshes when a terminal jobs event names the service', () => {
+    expect(managementEventAffectsServiceDetail(
+      {
+        type: 'entities_changed',
+        domain: 'jobs',
+        entities: [{ entityType: 'service', id: 'svc-1' }],
+        version: 0,
+        summary: { jobId: 'job-update-1', terminal: true, status: 'success' },
+      },
+      'stack-1',
+      'svc-1',
+      service,
+    )).toBe(true)
+  })
 })

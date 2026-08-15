@@ -68,5 +68,5 @@ export function partialCleanupResponse(response: CleanupScanResponse): CleanupSc
 }
 
 export function resolveMockEventSourcePollInterval(scenario: DockrevApiScenario): number {
-  return scenario === 'queue-progress-smoothing' || scenario === 'queue-long-logs' ? 700 : 4_000
+  return scenario === 'queue-progress-smoothing' || scenario === 'queue-long-logs' || scenario === 'service-detail-rollback-stale-after-update' ? 700 : 4_000
 }

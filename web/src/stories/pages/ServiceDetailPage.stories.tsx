@@ -1166,7 +1166,7 @@ export const RollbackRefreshRaceAfterUpdate: Story = {
   render: render("stack-prod", "svc-prod-api", "overview"),
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument;
-    await waitForCondition(() => findButton(doc, "更新") != null);
+    await waitForCondition(() => findButton(doc, "更新") != null, 8_000);
 
     const updateTrigger = findButton(doc, "更新");
     expectStory(updateTrigger, "service update action missing");
@@ -1179,17 +1179,18 @@ export const RollbackRefreshRaceAfterUpdate: Story = {
     confirmTrigger.click();
 
     const toggle = doc.querySelector<HTMLButtonElement>('[aria-label="更新操作菜单"]');
+    await waitForCondition(() => Boolean(findButton(doc, "回滚信息刷新中…")?.disabled), 8_000);
     toggle?.click();
-    await waitForCondition(() => normalizeText(doc.querySelector('[data-service-split-item="rollback"]')?.textContent).includes("回滚信息刷新中…"), 8_000);
+    await waitForCondition(() => {
+      const item = doc.querySelector('[data-service-split-item="rollback"]');
+      if (!item && toggle?.getAttribute("aria-expanded") !== "true") toggle?.click();
+      return Boolean(item && normalizeText(item.textContent).includes("回滚信息刷新中…"));
+    }, 8_000);
     const refreshingRollback = doc.querySelector<HTMLButtonElement>('[data-service-split-item="rollback"]');
-    expectStory(refreshingRollback, "rollback refresh state missing during update settlement");
-    expectStory(refreshingRollback.disabled, "rollback refresh state should stay disabled");
+    expectStory(refreshingRollback, "rollback refresh state missing during update settlement"); expectStory(refreshingRollback.disabled, "rollback refresh state should stay disabled");
     expectStory(normalizeText(refreshingRollback.textContent).includes("回滚信息刷新中…"), "rollback refresh hint should hide stale unavailable reason");
 
-    await waitForCondition(() => {
-      const rollback = findButton(doc, "回滚");
-      return Boolean(rollback && !rollback.disabled && rollback.getAttribute("aria-busy") !== "true");
-    }, 8_000);
+    await waitForCondition(() => { const rollback = findButton(doc, "回滚"); return Boolean(rollback && !rollback.disabled && rollback.getAttribute("aria-busy") !== "true"); }, 8_000);
 
     const rollback = findButton(doc, "回滚");
     expectStory(rollback, "rollback action missing after update settlement");

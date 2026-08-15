@@ -118,6 +118,8 @@ export function installDockrevMockApi(
   const digestSnapshotPendingAttempts = new Map<string, number>()
   const forcedDigestSnapshotPendingAttempts = new Map<string, number>()
   const jobsEventsSeqRef = { value: 4_000 + initialJobSeq }
+  const managementEventsSeqRef = { value: 8_000 + initialJobSeq }
+  const managementEvents: Array<{ id: number; data: Record<string, unknown> }> = []
   const liveTerminalCommandSeqRef = { value: 0 }, liveTerminalStateRef = { commandSeq: 0, frame: 0, polls: 0, completed: false }
   const terminalLines = (message: string, frame: number) => [{ segments: [{ text: '253f286a856e Pulling fs layer 0B', fg: 'rgb(92, 92, 255)', bold: true }] }, { segments: [{ text: `${message} · frame ${frame}`, dim: true }] }]
   const queueProgressDemoSteps = [40, 44, 48, 52, 56, 60, 65, 70, 75, 80, 85, 90, 94, 97]
@@ -129,8 +131,8 @@ export function installDockrevMockApi(
     nextScanRunSeq: 0,
     scanRuns: new Map(),
   }
-
-  const rollbackTargetRaceByServiceId = new Map<string, RollbackTargetRaceState>()
+  const rollbackTargetRaceByServiceId = new Map<string, RollbackTargetRaceState>(); const publishMockManagementEvent = (entities: Array<{ entityType: string; id: string }>, summary: Record<string, unknown>) =>
+    managementEvents.push({ id: ++managementEventsSeqRef.value, data: { type: 'entities_changed', domain: 'jobs', entities, version: 0, summary } })
   let deployCheckReportSequenceIndex = 0
   const advanceQueueProgressDemo = (): number | null => {
     if (!state || scenario !== 'queue-progress-smoothing') return null
@@ -583,6 +585,13 @@ export function installDockrevMockApi(
       })
     }
 
+    if (urlPath === '/api/events' && method === 'GET') {
+      const afterId = Number(url?.searchParams.get('afterId') ?? '0') || 0
+      const events = managementEvents.filter((event) => event.id > afterId).slice(0, 200)
+      const body = events.map((event) => `id: ${event.id}\nevent: management\ndata: ${JSON.stringify(event.data)}\n\n`).join('')
+      return new Response(body || ': keep-alive\n\n', { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'x-accel-buffering': 'no' } })
+    }
+
     if (urlPath === '/api/jobs/events' && method === 'GET' && options.jobsEventsPayload != null) {
       const debug = globalThis.__DOCKREV_MOCK_DEBUG__ ?? (globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug())
       debug.jobsEventsCalls += 1
@@ -1000,38 +1009,29 @@ export function installDockrevMockApi(
         ],
         logsLastId: 2,
       }
-      const updateFinishDelayMs = scenario === 'dashboard-demo-slow-update' ? 4_500 : 1_400
-      const settleDelayMs = scenario === 'dashboard-demo-slow-update' ? 280 : 220
-      window.setTimeout(() => {
-        const live = f.jobById[jobId]
-        if (!live || (live.status !== 'queued' && live.status !== 'running')) return
-        const finishedAt = nowIso()
-        const nextLogs = [...live.logs, { ts: finishedAt, level: 'info', msg: 'Mock job finished.' }]
-        const finalJob: JobDetail = {
-          ...live,
-          status: 'success',
-          finishedAt,
-          logs: nextLogs,
-          logsLastId: nextLogs.length,
+      const updateFinishDelayMs = scenario === 'dashboard-demo-slow-update' ? 4_500 : 1_400; const settleDelayMs = scenario === 'dashboard-demo-slow-update' ? 280 : 220
+      const settleServices = () => {
+        if (!state) return
+        for (const affectedId of affectedServiceIds) {
+          const target = targetsByService.get(affectedId)
+          if (target) applyMockUpdateSettlement(affectedId, target.targetTag, target.targetDigest, target.pullTags)
         }
-        f.jobById[jobId] = finalJob
+      }
+      const finishUpdateJob = () => {
+        const current = f.jobById[jobId]
+        if (!current || (current.status !== 'queued' && current.status !== 'running')) return
+        const finishedAt = nowIso(), nextLogs = [...current.logs, { ts: finishedAt, level: 'info', msg: 'Mock job finished.' }]
+        f.jobById[jobId] = { ...current, status: 'success', finishedAt, logs: nextLogs, logsLastId: nextLogs.length }
         f.jobs = f.jobs.map((row) => (row.id === jobId ? { ...row, status: 'success', finishedAt } : row))
-
+        if (scenario === 'service-detail-rollback-stale-after-update') {
+          const entities = affectedServiceIds.map((affectedId) => ({ entityType: 'service', id: affectedId })).concat(stackId ? [{ entityType: 'stack', id: stackId }] : [], [{ entityType: 'job', id: jobId }])
+          publishMockManagementEvent(entities, { jobId, status: 'success', jobType: 'update', scope, stackId, serviceId, serviceIds: affectedServiceIds, terminal: true })
+        }
         persistState()
-        window.setTimeout(() => {
-          if (!state) return
-          for (const affectedId of affectedServiceIds) {
-            const target = targetsByService.get(affectedId)
-            if (!target) continue
-            applyMockUpdateSettlement(
-              affectedId,
-              target.targetTag,
-              target.targetDigest,
-              target.pullTags,
-            )
-          }
-          persistState()
-        }, settleDelayMs)
+      }
+      window.setTimeout(() => {
+        if (scenario === 'service-detail-rollback-stale-after-update') window.setTimeout(() => { settleServices(); finishUpdateJob() }, settleDelayMs)
+        else { finishUpdateJob(); window.setTimeout(settleServices, settleDelayMs) }
       }, updateFinishDelayMs)
       return json({ jobId })
     }
