@@ -94,6 +94,7 @@ const dockrevSelfUpgradeStoryParameters = {
 
 export const VersionsSection: ServiceDetailStory = {
   parameters: {
+    viewport: { defaultViewport: "dockrevWide" },
     dockrevApiScenario: "service-detail-history-rollback-action",
     dockrevGitHubReleasesByServiceId: {
       "svc-prod-api": {
@@ -106,6 +107,7 @@ export const VersionsSection: ServiceDetailStory = {
   render: render("stack-prod", "svc-prod-api", "versions", undefined, {
     pageTitle: null,
     pageSubtitle: null,
+    sidebarCollapsed: true,
   }),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => Boolean(findSectionCard(canvasElement, "versions")));
@@ -146,7 +148,7 @@ export const VersionsSection: ServiceDetailStory = {
 
     expectStory(currentRoutePathname() === "/services/stack-prod/svc-prod-api/versions", "versions deep link missing");
     expectStory(findTab(canvasElement, "versions")?.getAttribute("data-state") === "active", "versions tab should be active");
-    expectStory(surface?.getAttribute("data-service-versions-layout") === "desktop", "desktop story should expose the desktop split layout");
+    expectStory(surface?.getAttribute("data-service-versions-layout") === "indexed", "wide story should expose the indexed split layout");
     expectStory(Boolean(indexViewport), "desktop versions index viewport missing");
     expectStory(Boolean(currentCard), "current version card missing");
     expectStory(Boolean(candidateCard), "candidate version card missing");
@@ -300,6 +302,65 @@ export const VersionsSection: ServiceDetailStory = {
     await waitForCondition(
       () => visibleCount(canvasElement, "data-service-versions-total-count") === 45,
       5000,
+    );
+  },
+};
+
+export const VersionsSectionIntermediateWidth: ServiceDetailStory = {
+  parameters: {
+    viewport: { defaultViewport: "dockrevIntermediate" },
+    dockrevApiScenario: "service-detail-history-rollback-action",
+    dockrevGitHubReleasesByServiceId: {
+      "svc-prod-api": {
+        authMode: "anonymous",
+        repo: { fullName: "acme/api", htmlUrl: "https://github.com/acme/api" },
+        items: versionReleaseNotes,
+      },
+    },
+  },
+  render: render("stack-prod", "svc-prod-api", "versions", undefined, {
+    pageTitle: null,
+    pageSubtitle: null,
+  }),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(findVersionCard(canvasElement, "5.2.1")));
+    await waitForCondition(() => Boolean(findVersionCard(canvasElement, "5.2.3")));
+    const surface = versionsSurface(canvasElement);
+    const currentCard = findVersionCard(canvasElement, "5.2.1");
+    const candidateCard = findVersionCard(canvasElement, "5.2.3");
+    const currentBody = currentCard?.querySelector<HTMLElement>(".serviceVersionCardBody");
+    const currentAside = currentCard?.querySelector<HTMLElement>(".serviceVersionCardAside");
+    const candidateBody = candidateCard?.querySelector<HTMLElement>(".serviceVersionCardBody");
+    const candidateAside = candidateCard?.querySelector<HTMLElement>(".serviceVersionCardAside");
+    const updateAction = findVersionAction(canvasElement, "update", "5.2.3");
+    const scrollViewport = versionsViewport(canvasElement);
+    expectStory(surface?.getAttribute("data-service-versions-layout") === "stream", "intermediate content width should use the unindexed card stream");
+    expectStory(!versionsIndexViewport(canvasElement), "intermediate content width should not reserve the version index rail");
+    expectStory(
+      getComputedStyle(currentCard ?? canvasElement).gridTemplateColumns.split(" ").filter(Boolean).length === 1 &&
+        getComputedStyle(candidateCard ?? canvasElement).gridTemplateColumns.split(" ").filter(Boolean).length === 1,
+      "intermediate version cards should use the existing narrow card layout",
+    );
+    expectStory(
+      (currentBody?.getBoundingClientRect().width ?? 0) >= 240,
+      "intermediate release body should retain a readable width",
+    );
+    expectStory(
+      getComputedStyle(currentAside ?? canvasElement).display === "none",
+      "intermediate read-only cards should keep the existing empty aside behavior",
+    );
+    expectStory(
+      (candidateAside?.getBoundingClientRect().top ?? 0) >= (candidateBody?.getBoundingClientRect().bottom ?? Number.POSITIVE_INFINITY) - 1 &&
+        getComputedStyle(candidateAside ?? canvasElement).display !== "none",
+      "intermediate actionable cards should keep the existing bottom action area",
+    );
+    expectStory(
+      (updateAction?.getBoundingClientRect().width ?? 0) > 0 && (updateAction?.getBoundingClientRect().height ?? 0) > 0,
+      "intermediate candidate cards should keep their existing update action visible in the bottom action area",
+    );
+    expectStory(
+      (scrollViewport?.scrollWidth ?? 0) <= (scrollViewport?.clientWidth ?? 0) + 1,
+      "intermediate versions viewport should not introduce horizontal overflow",
     );
   },
 };
@@ -533,7 +594,7 @@ export const MobileVersionsSection: ServiceDetailStory = {
     const factsColumns = getComputedStyle(factsGrid ?? canvasElement).gridTemplateColumns.split(" ").filter(Boolean);
 
     expectStory(findTab(canvasElement, "versions")?.getAttribute("data-state") === "active", "mobile versions tab should stay active");
-    expectStory(surface?.getAttribute("data-service-versions-layout") === "mobile", "mobile story should switch to the single-column layout");
+    expectStory(surface?.getAttribute("data-service-versions-layout") === "stream", "mobile story should use the unindexed card stream");
     expectStory(!canvasElement.querySelector('[data-service-versions-index="true"]'), "mobile versions should hide the desktop version index");
     expectStory(
       visibleCount(canvasElement, "data-service-versions-index-visible-count") === 0,

@@ -7921,6 +7921,8 @@ html[data-theme="light"] .serviceLogsTerminal {
 }
 
 .serviceVersionsSection {
+  container-name: service-versions;
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
 }
@@ -8057,7 +8059,7 @@ html[data-theme="light"] .serviceLogsTerminal {
   align-items: start;
 }
 
-.serviceVersionsBodyLayout[data-service-versions-layout='desktop'] {
+.serviceVersionsBodyLayout[data-service-versions-layout='indexed'] {
   grid-template-columns: 220px minmax(0, 1fr);
 }
 
@@ -8579,7 +8581,7 @@ html[data-theme="light"] .serviceLogsTerminal {
   background: color-mix(in srgb, var(--color-warning) 8%, var(--panel2) 92%);
 }
 
-@media (max-width: 1100px) {
+@container service-versions (max-width: 729px) {
   .serviceVersionsBodyLayout {
     grid-template-columns: minmax(0, 1fr);
     gap: 0;
