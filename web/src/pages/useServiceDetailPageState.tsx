@@ -98,6 +98,7 @@ export function useServiceDetailPageState(props: {
   const lifecycleActiveJobIdRef = useRef<string | null>(null)
   const lifecycleStatusRequestIdRef = useRef(0)
   const rollbackActiveJobIdRef = useRef<string | null>(null)
+  const submittingTargetRef = useRef<string | null>(null)
   const [lastSuccessfulRefreshAt, setLastSuccessfulRefreshAt] = useState<string | null>(null)
   const lifecycleJob = lifecycleStatus?.activeJob ?? null
   const lifecycleOwner = lifecycleJob && activeServiceOperation(lifecycleJob.status)
@@ -398,6 +399,10 @@ export function useServiceDetailPageState(props: {
   )
 
   useEffect(() => {
+    if (submittingTargetRef.current) {
+      endSubmitting(submittingTargetRef.current)
+      submittingTargetRef.current = null
+    }
     pageGenerationRef.current += 1; lifecycleActiveJobIdRef.current = null
     lifecycleStatusRequestIdRef.current += 1
     setLifecycleSettledJobId(null)
@@ -406,7 +411,7 @@ export function useServiceDetailPageState(props: {
     setStack(null); setService(null); setSettings(null); setBackupTargets(null); setBackupRecords([]); setStackSettings(null); setRules([]); setLifecycleStatus(null); setLastSuccessfulRefreshAt(null)
     setRollbackTarget(null); setRollbackActiveTarget(null); setRollbackTargetRefreshing(false)
     setError(null); setNotice(null); setBusy(false); setRepoInferBusy(false)
-  }, [serviceId, stackId])
+  }, [endSubmitting, serviceId, stackId])
 
   useEffect(() => {
     const generation = pageGenerationRef.current
@@ -819,7 +824,10 @@ export function useServiceDetailPageState(props: {
       if (!ok || generation !== pageGenerationRef.current) return
       setError(null)
       setNotice(null)
-      if (applyActionKey) beginSubmitting(applyActionKey)
+      if (applyActionKey) {
+        submittingTargetRef.current = applyActionKey
+        beginSubmitting(applyActionKey)
+      }
       try {
         const updateTarget = await buildUpdateServiceTarget(service)
         if (generation !== pageGenerationRef.current) return
@@ -857,7 +865,14 @@ export function useServiceDetailPageState(props: {
           setError(errorMessage(e))
         }
       } finally {
-        if (applyActionKey) endSubmitting(applyActionKey)
+        if (
+          applyActionKey &&
+          generation === pageGenerationRef.current &&
+          submittingTargetRef.current === applyActionKey
+        ) {
+          submittingTargetRef.current = null
+          endSubmitting(applyActionKey)
+        }
       }
     })()
   }, [
