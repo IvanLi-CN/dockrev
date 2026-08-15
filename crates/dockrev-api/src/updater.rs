@@ -393,6 +393,7 @@ pub async fn run_update_job(
         dockrev_image_repo,
         progress_events,
         false,
+        &[],
     )
     .await
 }
@@ -412,6 +413,7 @@ pub async fn run_update_job_pre_pulled(
     update_reason: &str,
     dockrev_image_repo: Option<&str>,
     progress_events: Option<UnboundedSender<UpdateProgressEvent>>,
+    services_stopped_for_backup: &[String],
 ) -> anyhow::Result<UpdateOutcome> {
     run_update_job_with_pull_state(
         runner,
@@ -428,6 +430,7 @@ pub async fn run_update_job_pre_pulled(
         dockrev_image_repo,
         progress_events,
         true,
+        services_stopped_for_backup,
     )
     .await
 }
@@ -448,6 +451,7 @@ async fn run_update_job_with_pull_state(
     dockrev_image_repo: Option<&str>,
     progress_events: Option<UnboundedSender<UpdateProgressEvent>>,
     images_pre_pulled: bool,
+    services_stopped_for_backup: &[String],
 ) -> anyhow::Result<UpdateOutcome> {
     let selection = select_update_services(
         stack,
@@ -575,11 +579,12 @@ async fn run_update_job_with_pull_state(
             },
         );
 
-        let container_lookup = if images_pre_pulled {
-            compose_for_update.ps_all_q_service(&compose_cfg, &svc.name)
-        } else {
-            compose_for_update.ps_q_service(&compose_cfg, &svc.name)
-        };
+        let container_lookup =
+            if images_pre_pulled && services_stopped_for_backup.contains(&svc.name) {
+                compose_for_update.ps_all_q_service(&compose_cfg, &svc.name)
+            } else {
+                compose_for_update.ps_q_service(&compose_cfg, &svc.name)
+            };
         let pre_update_container_id =
             run_to_string(runner, container_lookup, Duration::from_secs(30)).await?;
         let pre_update_container_id = pre_update_container_id.trim().to_string();

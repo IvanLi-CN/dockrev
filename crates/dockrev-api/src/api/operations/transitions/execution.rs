@@ -754,6 +754,7 @@ pub(crate) async fn run_update_job(
                     req.reason.as_str(),
                     Some(state.config.dockrev_image_repo.as_str()),
                     Some(progress_tx),
+                    &services_kept_stopped_for_apply,
                 )
                 .await
             } else {

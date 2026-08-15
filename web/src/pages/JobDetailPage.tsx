@@ -383,12 +383,16 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
             const p = parsed as Record<string, unknown>
             if (p.type !== 'job_live_command_complete') return
             const commandSeq = typeof p.commandSeq === 'number' && Number.isSafeInteger(p.commandSeq) ? p.commandSeq : null
+            const summaryPersisted = p.summaryPersisted !== false
             if (commandSeq !== null) {
-              setLogs((prev) =>
-                prev.map((log) =>
+              setLogs((prev) => {
+                if (summaryPersisted) {
+                  return prev.filter((log) => log.terminalCommandSeq !== commandSeq)
+                }
+                return prev.map((log) =>
                   log.terminalCommandSeq === commandSeq ? { ...log, terminalFrozen: true } : log,
-                ),
-              )
+                )
+              })
             }
             if (commandSeq !== null) liveCommandOutputSeqsRef.current.delete(commandSeq)
           } catch {

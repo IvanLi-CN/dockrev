@@ -643,3 +643,75 @@ async fn stack_update_batches_pull_and_up_once_for_selected_services() {
     assert_eq!(outcome.summary_json["changedServices"].as_u64().unwrap(), 2);
     assert_eq!(*runner.step.lock().unwrap(), 14);
 }
+
+#[tokio::test]
+async fn pre_pulled_update_only_looks_up_services_stopped_for_backup_with_all_state() {
+    let stack = single_service_stack(
+        "ghcr.io/org/web:1.0",
+        Some(Candidate {
+            tag: "1.1".to_string(),
+            resolved_tag: Some("1.1".to_string()),
+            digest: "sha256:candidate".to_string(),
+            arch_match: ArchMatch::Match,
+            arch: vec!["linux/amd64".to_string()],
+        }),
+    );
+
+    let runner = FakeRunner::default();
+    run_update_job_pre_pulled(
+        &runner,
+        "docker-compose",
+        None,
+        IdempotentRetryPolicy::default(),
+        &stack,
+        &JobScope::Stack,
+        None,
+        "apply",
+        None,
+        false,
+        "ui",
+        None,
+        None,
+        &[],
+    )
+    .await
+    .unwrap();
+    let calls = runner.calls.lock().unwrap();
+    assert!(
+        calls
+            .iter()
+            .any(|(_, args)| args_end_with(args, &["ps", "-q", "web"]))
+    );
+    assert!(
+        !calls
+            .iter()
+            .any(|(_, args)| args_end_with(args, &["ps", "-a", "-q", "web"]))
+    );
+    drop(calls);
+
+    let runner = FakeRunner::default();
+    run_update_job_pre_pulled(
+        &runner,
+        "docker-compose",
+        None,
+        IdempotentRetryPolicy::default(),
+        &stack,
+        &JobScope::Stack,
+        None,
+        "apply",
+        None,
+        false,
+        "ui",
+        None,
+        None,
+        &["web".to_string()],
+    )
+    .await
+    .unwrap();
+    let calls = runner.calls.lock().unwrap();
+    assert!(
+        calls
+            .iter()
+            .any(|(_, args)| args_end_with(args, &["ps", "-a", "-q", "web"]))
+    );
+}
