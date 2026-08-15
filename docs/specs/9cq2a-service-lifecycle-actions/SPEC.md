@@ -186,6 +186,23 @@ PR: include
 
 ![Service action progress mobile](./assets/service-action-progress-mobile-393x852.png)
 
+- source_type: `ui_demo`
+- target_program: `mock-only`
+- capture_scope: `browser-viewport`
+- requested_viewport: `1200x900 CSS px`
+- viewport_strategy: `chrome-cdp-viewport`
+- margin_policy: `trim_only`
+- evidence_surface: `page`
+- sensitive_exclusion: `N/A`
+- submission_gate: `approved`
+- story_id_or_title: `demo:app / /demo/services/stack-prod/svc-prod-api/versions`
+- state: `intermediate desktop candidate action rail`
+- evidence_note: `在服务详情真实应用壳内，版本区释放目录后保持既有宽卡三栏与固定操作轨道；候选版本的更新与回滚入口均完整可见。截图只陈述该页面状态，不将顶栏留白或指标分组的既有主干行为误判为版本卡回归。边缘空白检查无需裁剪。`
+
+PR: include
+
+![Service detail versions intermediate action rail](./assets/service-detail-versions-intermediate-actions.png)
+
 ## 变更记录
 
 - 2026-07-30: 创建规格，冻结服务生命周期任务、操作菜单、串行边界、文档和 Storybook 验收契约。
