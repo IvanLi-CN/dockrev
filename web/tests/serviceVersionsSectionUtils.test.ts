@@ -4,6 +4,7 @@ import type { ServiceReleaseNoteItem } from '../src/api'
 import {
   formatVersionDirectoryTimeLabel,
   mergeReleaseNoteItems,
+  observeVersionSectionInlineWidth,
 } from '../src/components/serviceVersionsSectionUtils'
 
 const NOW = Date.UTC(2026, 6, 16, 12, 0, 0)
@@ -50,5 +51,189 @@ describe('mergeReleaseNoteItems', () => {
     )
 
     expect(merged.map((item) => item.id)).toEqual(['github:1', 'github:2', 'github:3'])
+  })
+})
+
+describe('observeVersionSectionInlineWidth', () => {
+  test.each(['constructor', 'observe'] as const)(
+    'keeps the window resize fallback when MutationObserver %s fails',
+    (failurePoint) => {
+      const originalWindow = globalThis.window
+      const callbacks = new Map<string, () => void>()
+      let mutationObserverDisconnected = false
+      const fakeWindow = {
+        ResizeObserver: undefined,
+        MutationObserver: class {
+          constructor() {
+            if (failurePoint === 'constructor') throw new Error('unsupported target')
+          }
+
+          observe() {
+            if (failurePoint === 'observe') throw new Error('unsupported target')
+          }
+
+          disconnect() {
+            mutationObserverDisconnected = true
+          }
+        },
+        addEventListener(type: string, callback: () => void) {
+          callbacks.set(type, callback)
+        },
+        removeEventListener(type: string) {
+          callbacks.delete(type)
+        },
+        requestAnimationFrame() {
+          return 1
+        },
+        cancelAnimationFrame() {},
+      }
+      const element = {
+        getBoundingClientRect: () => ({ width: 1_079 }),
+        closest: () => ({}),
+      } as unknown as HTMLElement
+
+      try {
+        Reflect.set(globalThis, 'window', fakeWindow)
+        const stop = observeVersionSectionInlineWidth(element, () => {})
+
+        expect(callbacks.has('resize')).toBe(true)
+        expect(mutationObserverDisconnected).toBe(failurePoint === 'observe')
+        stop()
+        expect(callbacks.has('resize')).toBe(false)
+      } finally {
+        Reflect.set(globalThis, 'window', originalWindow)
+      }
+    },
+  )
+
+  test.each(['constructor', 'observe'] as const)(
+    'falls back when ResizeObserver %s fails',
+    (failurePoint) => {
+      const originalWindow = globalThis.window
+      const callbacks = new Map<string, () => void>()
+      let mutationObserved = false
+      let resizeObserverDisconnected = false
+      const shell = {}
+      const fakeWindow = {
+        ResizeObserver: class {
+          constructor() {
+            if (failurePoint === 'constructor') throw new Error('unsupported target')
+          }
+
+          observe() {
+            if (failurePoint === 'observe') throw new Error('unsupported target')
+          }
+
+          disconnect() {
+            resizeObserverDisconnected = true
+          }
+        },
+        MutationObserver: class {
+          observe() {
+            mutationObserved = true
+          }
+
+          disconnect() {}
+        },
+        addEventListener(type: string, callback: () => void) {
+          callbacks.set(type, callback)
+        },
+        removeEventListener(type: string) {
+          callbacks.delete(type)
+        },
+        requestAnimationFrame() {
+          return 1
+        },
+        cancelAnimationFrame() {},
+      }
+      const element = {
+        getBoundingClientRect: () => ({ width: 1_079 }),
+        closest: (selector: string) => (selector === '.appShell' ? shell : null),
+      } as unknown as HTMLElement
+
+      try {
+        Reflect.set(globalThis, 'window', fakeWindow)
+        const stop = observeVersionSectionInlineWidth(element, () => {})
+
+        expect(mutationObserved).toBe(true)
+        expect(callbacks.has('resize')).toBe(true)
+        expect(resizeObserverDisconnected).toBe(failurePoint === 'observe')
+        stop()
+      } finally {
+        Reflect.set(globalThis, 'window', originalWindow)
+      }
+    },
+  )
+
+  test('uses the app shell mutation fallback when ResizeObserver is unavailable', () => {
+    const originalWindow = globalThis.window
+    let width = 1_079
+    const callbacks = new Map<string, () => void>()
+    const queuedFrames = new Map<number, FrameRequestCallback>()
+    let nextFrameId = 1
+    let observedTarget: object | null = null
+    let observedOptions: MutationObserverInit | null = null
+    let mutationCallback: MutationCallback | null = null
+    let disconnected = false
+    const shell = {}
+    const fakeWindow = {
+      ResizeObserver: undefined,
+      MutationObserver: class {
+        constructor(callback: MutationCallback) {
+          mutationCallback = callback
+        }
+
+        observe(target: Node, options?: MutationObserverInit) {
+          observedTarget = target
+          observedOptions = options ?? null
+        }
+
+        disconnect() {
+          disconnected = true
+        }
+      },
+      addEventListener(type: string, callback: () => void) {
+        callbacks.set(type, callback)
+      },
+      removeEventListener(type: string) {
+        callbacks.delete(type)
+      },
+      requestAnimationFrame(callback: FrameRequestCallback) {
+        const frameId = nextFrameId++
+        queuedFrames.set(frameId, callback)
+        return frameId
+      },
+      cancelAnimationFrame(frameId: number) {
+        queuedFrames.delete(frameId)
+      },
+    }
+    const element = {
+      getBoundingClientRect: () => ({ width }),
+      closest: (selector: string) => (selector === '.appShell' ? shell : null),
+    } as unknown as HTMLElement
+    const widths: number[] = []
+
+    try {
+      Reflect.set(globalThis, 'window', fakeWindow)
+      const stop = observeVersionSectionInlineWidth(element, (nextWidth) => widths.push(nextWidth))
+
+      expect(widths).toEqual([1_079])
+      expect(observedTarget).toBe(shell)
+      expect(observedOptions).toEqual({ attributes: true, attributeFilter: ['class', 'style'] })
+      expect(callbacks.has('resize')).toBe(true)
+
+      width = 1_080
+      mutationCallback?.([], {} as MutationObserver)
+      expect(widths).toEqual([1_079])
+      expect(queuedFrames.size).toBe(1)
+      queuedFrames.values().next().value?.(0)
+      expect(widths).toEqual([1_079, 1_080])
+
+      stop()
+      expect(disconnected).toBe(true)
+      expect(callbacks.has('resize')).toBe(false)
+    } finally {
+      Reflect.set(globalThis, 'window', originalWindow)
+    }
   })
 })

@@ -8057,7 +8057,7 @@ html[data-theme="light"] .serviceLogsTerminal {
   align-items: start;
 }
 
-.serviceVersionsBodyLayout[data-service-versions-layout='desktop'] {
+.serviceVersionsBodyLayout[data-service-versions-layout='indexed'] {
   grid-template-columns: 220px minmax(0, 1fr);
 }
 

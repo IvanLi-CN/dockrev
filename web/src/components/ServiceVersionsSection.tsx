@@ -44,6 +44,7 @@ import { ServiceVersionCard } from './ServiceVersionCard'
 import {
   formatVersionDirectoryTimeLabel,
   normalizeVersion,
+  observeVersionSectionInlineWidth,
   preferredReleaseTimestamp,
   safeHttpUrl,
 } from './serviceVersionsSectionUtils'
@@ -54,7 +55,7 @@ const VERSION_INDEX_ROW_HEIGHT = 54
 const VERSION_CARD_CENTER_TOLERANCE = 48
 const VERSION_CARD_CENTER_MAX_ATTEMPTS = 24
 const VERSION_CARD_CENTER_STABLE_MEASUREMENTS = 3
-const DESKTOP_VERSION_INDEX_QUERY = '(min-width: 1101px)'
+const VERSION_INDEX_MIN_WIDTH = 1080
 const EMPTY_VIRTUAL_ITEMS: VirtualItem[] = []
 
 type ServiceVersionsSectionProps = {
@@ -114,27 +115,10 @@ function resolveVirtualOffset(
   return 0
 }
 
-function useMediaQuery(query: string): boolean {
-  const [matches, setMatches] = useState(() => {
-    if (typeof window === 'undefined') return false
-    return window.matchMedia(query).matches
-  })
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    const mediaQuery = window.matchMedia(query)
-    const handleChange = () => setMatches(mediaQuery.matches)
-    handleChange()
-    mediaQuery.addEventListener('change', handleChange)
-    return () => mediaQuery.removeEventListener('change', handleChange)
-  }, [query])
-
-  return matches
-}
-
 export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
   const confirm = useConfirm()
   const serviceId = props.service.id.trim()
+  const sectionRef = useRef<HTMLElement | null>(null)
   const listScrollRef = useRef<HTMLDivElement | null>(null)
   const indexScrollRef = useRef<HTMLDivElement | null>(null)
   const centerRequestIdRef = useRef(0)
@@ -144,7 +128,8 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     const anchorVersion = (props.service.image.resolvedTag ?? '').trim() || props.service.image.tag.trim()
     return `${serviceId}::${anchorVersion}`
   }, [props.service.image.resolvedTag, props.service.image.tag, serviceId])
-  const showDesktopIndex = useMediaQuery(DESKTOP_VERSION_INDEX_QUERY)
+  const [showDesktopIndex, setShowDesktopIndex] = useState(false)
+
   const dockrevService = isDockrevService(props.service)
   const operationProgress = useMemo(
     () => describeServiceOperationProgress({
@@ -261,8 +246,34 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
   })
 
   useEffect(() => {
+    const element = sectionRef.current
+    if (!element || typeof window === 'undefined') return
+    let observedWidth: number | null = null
+    let measureFrameId: number | null = null
+    const updateLayout = (width: number) => {
+      const next = width >= VERSION_INDEX_MIN_WIDTH
+      setShowDesktopIndex((current) => (current === next ? current : next))
+      if (observedWidth === width) return
+      observedWidth = width
+      listVirtualizer.measure()
+      if (measureFrameId !== null) window.cancelAnimationFrame(measureFrameId)
+      measureFrameId = window.requestAnimationFrame(() => {
+        measureFrameId = null
+        listScrollRef.current
+          ?.querySelectorAll<HTMLElement>('.serviceVersionsVirtualRow[data-index]')
+          .forEach((row) => listVirtualizer.measureElement(row))
+      })
+    }
+    const stopObserving = observeVersionSectionInlineWidth(element, updateLayout)
+    return () => {
+      stopObserving()
+      if (measureFrameId !== null) window.cancelAnimationFrame(measureFrameId)
+    }
+  }, [listVirtualizer])
+
+  useEffect(() => {
     listVirtualizer.measure()
-  }, [expandedIds, items.length, viewMode, listVirtualizer])
+  }, [expandedIds, items.length, showDesktopIndex, viewMode, listVirtualizer])
 
   useEffect(() => {
     const element = listScrollRef.current
@@ -707,7 +718,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
   const openSettings = () => navigate({ name: 'settings' })
 
   return (
-    <section className="serviceVersionsSection" data-service-detail-section-card="versions">
+    <section ref={sectionRef} className="serviceVersionsSection" data-service-detail-section-card="versions">
       <div className="serviceVersionsCard">
         <div className="serviceVersionsHeader">
           <div className="serviceVersionsHeaderText">
@@ -815,7 +826,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
           <div
             className="serviceVersionsBodyLayout"
             data-service-versions="true"
-            data-service-versions-layout={showDesktopIndex ? 'desktop' : 'mobile'}
+            data-service-versions-layout={showDesktopIndex ? 'indexed' : 'stream'}
             data-service-versions-total-count={items.length}
             data-service-versions-list-visible-count={renderedCardCount}
             data-service-versions-index-visible-count={renderedIndexCount}

@@ -60,6 +60,55 @@ function visibleCount(root: ParentNode, attr: string): number {
   return Number(versionsSurface(root)?.getAttribute(attr) ?? "0");
 }
 
+function installSectionResizeObserverFallbackFixture(root: HTMLElement): {
+  rejectedSectionObservations: () => number;
+  restore: () => void;
+} {
+  const descriptor = Object.getOwnPropertyDescriptor(window, "ResizeObserver");
+  const NativeResizeObserver = window.ResizeObserver;
+  let rejectedSectionObservations = 0;
+  root.dataset.serviceVersionsFallbackFixture = "true";
+
+  class SelectiveResizeObserver implements ResizeObserver {
+    private readonly delegate: ResizeObserver;
+
+    constructor(callback: ResizeObserverCallback) {
+      this.delegate = new NativeResizeObserver(callback);
+    }
+
+    disconnect() {
+      this.delegate.disconnect();
+    }
+
+    observe(target: Element) {
+      const belongsToFixture = target.closest('[data-service-versions-fallback-fixture="true"]') === root;
+      if (belongsToFixture && target.classList.contains("serviceVersionsSection")) {
+        rejectedSectionObservations += 1;
+        throw new Error("section ResizeObserver unavailable in fallback fixture");
+      }
+      if (belongsToFixture && target.classList.contains("serviceVersionsScrollViewport")) return;
+      this.delegate.observe(target);
+    }
+
+    unobserve(target: Element) {
+      this.delegate.unobserve(target);
+    }
+  }
+
+  Object.defineProperty(window, "ResizeObserver", {
+    configurable: true,
+    value: SelectiveResizeObserver,
+  });
+  return {
+    rejectedSectionObservations: () => rejectedSectionObservations,
+    restore: () => {
+      delete root.dataset.serviceVersionsFallbackFixture;
+      if (descriptor) Object.defineProperty(window, "ResizeObserver", descriptor);
+      else Reflect.deleteProperty(window, "ResizeObserver");
+    },
+  };
+}
+
 const dockrevDigest = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`;
 
 const dockrevServiceOverride = {
@@ -94,6 +143,7 @@ const dockrevSelfUpgradeStoryParameters = {
 
 export const VersionsSection: ServiceDetailStory = {
   parameters: {
+    viewport: { defaultViewport: "dockrevWide" },
     dockrevApiScenario: "service-detail-history-rollback-action",
     dockrevGitHubReleasesByServiceId: {
       "svc-prod-api": {
@@ -106,6 +156,7 @@ export const VersionsSection: ServiceDetailStory = {
   render: render("stack-prod", "svc-prod-api", "versions", undefined, {
     pageTitle: null,
     pageSubtitle: null,
+    sidebarCollapsed: true,
   }),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => Boolean(findSectionCard(canvasElement, "versions")));
@@ -146,7 +197,7 @@ export const VersionsSection: ServiceDetailStory = {
 
     expectStory(currentRoutePathname() === "/services/stack-prod/svc-prod-api/versions", "versions deep link missing");
     expectStory(findTab(canvasElement, "versions")?.getAttribute("data-state") === "active", "versions tab should be active");
-    expectStory(surface?.getAttribute("data-service-versions-layout") === "desktop", "desktop story should expose the desktop split layout");
+    expectStory(surface?.getAttribute("data-service-versions-layout") === "indexed", "wide story should expose the indexed split layout");
     expectStory(Boolean(indexViewport), "desktop versions index viewport missing");
     expectStory(Boolean(currentCard), "current version card missing");
     expectStory(Boolean(candidateCard), "candidate version card missing");
@@ -301,6 +352,186 @@ export const VersionsSection: ServiceDetailStory = {
       () => visibleCount(canvasElement, "data-service-versions-total-count") === 45,
       5000,
     );
+  },
+};
+
+export const VersionsSectionIntermediateWidth: ServiceDetailStory = {
+  parameters: {
+    viewport: { defaultViewport: "dockrevIntermediate" },
+    dockrevApiScenario: "service-detail-history-rollback-action",
+    dockrevGitHubReleasesByServiceId: {
+      "svc-prod-api": {
+        authMode: "anonymous",
+        repo: { fullName: "acme/api", htmlUrl: "https://github.com/acme/api" },
+        items: versionReleaseNotes,
+      },
+    },
+  },
+  render: render("stack-prod", "svc-prod-api", "versions", undefined, {
+    pageTitle: null,
+    pageSubtitle: null,
+  }),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(findVersionCard(canvasElement, "5.2.1")));
+    await waitForCondition(() => Boolean(findVersionCard(canvasElement, "5.2.3")));
+    const surface = versionsSurface(canvasElement);
+    const currentCard = findVersionCard(canvasElement, "5.2.1");
+    const candidateCard = findVersionCard(canvasElement, "5.2.3");
+    const currentBody = currentCard?.querySelector<HTMLElement>(".serviceVersionCardBody");
+    const currentAside = currentCard?.querySelector<HTMLElement>(".serviceVersionCardAside");
+    const candidateBody = candidateCard?.querySelector<HTMLElement>(".serviceVersionCardBody");
+    const candidateAside = candidateCard?.querySelector<HTMLElement>(".serviceVersionCardAside");
+    const updateAction = findVersionAction(canvasElement, "update", "5.2.3");
+    const scrollViewport = versionsViewport(canvasElement);
+    expectStory(surface?.getAttribute("data-service-versions-layout") === "stream", "intermediate content width should use the unindexed card stream");
+    expectStory(!versionsIndexViewport(canvasElement), "intermediate content width should not reserve the version index rail");
+    expectStory(
+      getComputedStyle(currentCard ?? canvasElement).gridTemplateColumns.split(" ").filter(Boolean).length === 3 &&
+        getComputedStyle(candidateCard ?? canvasElement).gridTemplateColumns.split(" ").filter(Boolean).length === 3,
+      "intermediate version cards should keep the existing desktop card layout",
+    );
+    expectStory(
+      (currentBody?.getBoundingClientRect().width ?? 0) >= 240,
+      "intermediate release body should retain a readable width",
+    );
+    expectStory(
+      (currentAside?.getBoundingClientRect().width ?? 0) > 0,
+      "intermediate read-only cards should keep the existing fixed aside",
+    );
+    expectStory(
+      (candidateAside?.getBoundingClientRect().left ?? 0) >=
+        (candidateBody?.getBoundingClientRect().right ?? Number.POSITIVE_INFINITY) - 1,
+      "intermediate actionable cards should keep the existing fixed action rail",
+    );
+    expectStory(
+      (updateAction?.getBoundingClientRect().width ?? 0) > 0 && (updateAction?.getBoundingClientRect().height ?? 0) > 0,
+      "intermediate candidate cards should keep their existing update action visible in the fixed action rail",
+    );
+    expectStory(
+      (scrollViewport?.scrollWidth ?? 0) <= (scrollViewport?.clientWidth ?? 0) + 1,
+      "intermediate versions viewport should not introduce horizontal overflow",
+    );
+  },
+};
+
+const renderVersionsSectionIntermediateWideActions = render("stack-prod", "svc-prod-api", "versions", {
+  pageTitle: null,
+  pageSubtitle: null,
+  sidebarCollapsed: false,
+})!;
+
+export const VersionsSectionIntermediateWideActions: ServiceDetailStory = {
+  parameters: {
+    viewport: {
+      defaultViewport: "dockrevFallbackTransition",
+      options: {
+        dockrevFallbackTransition: {
+          name: "Dockrev fallback transition (1600x960)",
+          styles: { width: "1600px", height: "960px" },
+        },
+      },
+    },
+    dockrevApiScenario: "service-detail-history-rollback-action",
+    dockrevGitHubReleasesByServiceId: {
+      "svc-prod-api": {
+        authMode: "anonymous",
+        repo: { fullName: "acme/api", htmlUrl: "https://github.com/acme/api" },
+        items: versionReleaseNotes,
+      },
+    },
+  },
+  render: renderVersionsSectionIntermediateWideActions,
+  play: async ({ canvasElement, mount }) => {
+    const fallbackFixture = installSectionResizeObserverFallbackFixture(canvasElement);
+    try {
+      await mount();
+      await waitForCondition(() => Boolean(findVersionCard(canvasElement, "5.2.3")));
+      const initialCandidate = findVersionCard(canvasElement, "5.2.3");
+      const initialViewport = versionsViewport(canvasElement);
+      const initialScrollHeight = initialViewport?.scrollHeight ?? 0;
+      const section = canvasElement.querySelector<HTMLElement>(".serviceVersionsSection");
+      expectStory(Boolean(section), "fallback story should expose the mounted versions section");
+      expectStory(
+        fallbackFixture.rejectedSectionObservations() > 0,
+        "mounted versions section should select the production fallback",
+      );
+      expectStory(versionsSurface(canvasElement)?.getAttribute("data-service-versions-layout") === "stream", "fallback story should start in the stream layout");
+      expectStory(!versionsIndexViewport(canvasElement), "fallback story should not reserve a version index rail");
+      expectStory(
+        getComputedStyle(initialCandidate ?? canvasElement).gridTemplateColumns.split(" ").filter(Boolean).length === 3,
+        "fallback story should start with the existing desktop card layout",
+      );
+
+      const collapseButton = canvasElement.querySelector<HTMLButtonElement>('[aria-label="折叠左侧导航"]');
+      expectStory(Boolean(collapseButton), "fallback story should expose the primary sidebar toggle");
+      collapseButton?.click();
+      await waitForCondition(() => canvasElement.querySelector(".appShell")?.classList.contains("appShellSidebarCollapsed") ?? false);
+      await waitForCondition(
+        () => versionsSurface(canvasElement)?.getAttribute("data-service-versions-layout") === "indexed",
+      );
+      expectStory(Boolean(versionsIndexViewport(canvasElement)), "mounted fallback should reveal the index after crossing its outer width threshold");
+      const expandButton = canvasElement.querySelector<HTMLButtonElement>('[aria-label="展开左侧导航"]');
+      expectStory(Boolean(expandButton), "fallback story should expose the expanded primary sidebar toggle");
+      expandButton?.click();
+      await waitForCondition(() => !(canvasElement.querySelector(".appShell")?.classList.contains("appShellSidebarCollapsed") ?? true));
+      await waitForCondition(
+        () => versionsSurface(canvasElement)?.getAttribute("data-service-versions-layout") === "stream",
+      );
+      await waitForCondition(
+        () =>
+          getComputedStyle(findVersionCard(canvasElement, "5.2.3") ?? canvasElement)
+            .gridTemplateColumns.split(" ")
+            .filter(Boolean).length === 3,
+      );
+      await waitForCondition(() => Math.abs((versionsViewport(canvasElement)?.scrollHeight ?? 0) - initialScrollHeight) > 1);
+      await waitForCondition(() => Boolean(findVersionCard(canvasElement, "5.2.0")));
+
+      const surface = versionsSurface(canvasElement);
+      const candidateCard = findVersionCard(canvasElement, "5.2.3");
+      const rollbackCard = findVersionCard(canvasElement, "5.2.0");
+      const candidateBody = candidateCard?.querySelector<HTMLElement>(".serviceVersionCardBody");
+      const candidateAside = candidateCard?.querySelector<HTMLElement>(".serviceVersionCardAside");
+      const rollbackAside = rollbackCard?.querySelector<HTMLElement>(".serviceVersionCardAside");
+      const updateAction = findVersionAction(canvasElement, "update", "5.2.3");
+      const rollbackAction = findVersionAction(canvasElement, "rollback", "5.2.0");
+      const scrollViewport = versionsViewport(canvasElement);
+
+      expectStory(surface?.getAttribute("data-service-versions-layout") === "stream", "unindexed wide cards should keep the stream layout");
+      expectStory(!versionsIndexViewport(canvasElement), "unindexed wide cards should not reserve a version index rail");
+      expectStory(
+        getComputedStyle(candidateCard ?? canvasElement).gridTemplateColumns.split(" ").filter(Boolean).length === 3,
+        "unindexed wide cards should retain the existing three-column layout",
+      );
+      expectStory(
+        (candidateAside?.getBoundingClientRect().width ?? 0) > 0 &&
+          (candidateAside?.getBoundingClientRect().left ?? 0) >= (candidateBody?.getBoundingClientRect().right ?? Number.POSITIVE_INFINITY) - 1,
+        "unindexed wide cards should keep the fixed action rail beside the release body",
+      );
+      expectStory(
+        candidateAside?.contains(updateAction ?? null) && rollbackAside?.contains(rollbackAction ?? null),
+        "unindexed wide cards should keep business-eligible update and rollback actions in their fixed rails",
+      );
+      expectStory(
+        (updateAction?.getBoundingClientRect().width ?? 0) > 0 &&
+          (rollbackAction?.getBoundingClientRect().width ?? 0) > 0,
+        "unindexed wide cards should keep their action buttons visible",
+      );
+      expectStory(
+        Boolean(updateAction && !updateAction.disabled && rollbackAction && !rollbackAction.disabled),
+        "unindexed wide cards should keep business-eligible actions enabled",
+      );
+      updateAction?.click();
+      const doc = canvasElement.ownerDocument;
+      await waitForCondition(() => doc.body.textContent?.includes("确认更新服务 api？") ?? false);
+      findButton(doc, "取消")?.click();
+      await waitForCondition(() => !(doc.body.textContent?.includes("确认更新服务 api？") ?? false));
+      expectStory(
+        (scrollViewport?.scrollWidth ?? 0) <= (scrollViewport?.clientWidth ?? 0) + 1,
+        "unindexed wide cards should not introduce horizontal overflow",
+      );
+    } finally {
+      fallbackFixture.restore();
+    }
   },
 };
 
@@ -533,7 +764,7 @@ export const MobileVersionsSection: ServiceDetailStory = {
     const factsColumns = getComputedStyle(factsGrid ?? canvasElement).gridTemplateColumns.split(" ").filter(Boolean);
 
     expectStory(findTab(canvasElement, "versions")?.getAttribute("data-state") === "active", "mobile versions tab should stay active");
-    expectStory(surface?.getAttribute("data-service-versions-layout") === "mobile", "mobile story should switch to the single-column layout");
+    expectStory(surface?.getAttribute("data-service-versions-layout") === "stream", "mobile story should use the unindexed card stream");
     expectStory(!canvasElement.querySelector('[data-service-versions-index="true"]'), "mobile versions should hide the desktop version index");
     expectStory(
       visibleCount(canvasElement, "data-service-versions-index-visible-count") === 0,

@@ -1,5 +1,55 @@
 import type { ServiceReleaseNoteItem } from '../api'
 
+export function observeVersionSectionInlineWidth(
+  element: HTMLElement,
+  onWidth: (width: number) => void,
+): () => void {
+  if (typeof window === 'undefined') return () => {}
+
+  const measure = () => onWidth(element.getBoundingClientRect().width)
+  measure()
+
+  if (typeof window.ResizeObserver !== 'undefined') {
+    let observer: ResizeObserver | null = null
+    try {
+      observer = new window.ResizeObserver((entries) => {
+        const entry = entries[0]
+        if (entry) onWidth(entry.contentRect.width)
+      })
+      observer.observe(element)
+      return () => observer?.disconnect()
+    } catch {
+      observer?.disconnect()
+    }
+  }
+
+  let frameId: number | null = null
+  const scheduleMeasure = () => {
+    if (frameId !== null) return
+    frameId = window.requestAnimationFrame(() => {
+      frameId = null
+      measure()
+    })
+  }
+  const shell = element.closest<HTMLElement>('.appShell')
+  let observer: MutationObserver | null = null
+  if (shell && typeof window.MutationObserver !== 'undefined') {
+    try {
+      observer = new window.MutationObserver(scheduleMeasure)
+      observer.observe(shell, { attributes: true, attributeFilter: ['class', 'style'] })
+    } catch {
+      observer?.disconnect()
+      observer = null
+    }
+  }
+  window.addEventListener('resize', scheduleMeasure)
+  return () => {
+    observer?.disconnect()
+    window.removeEventListener('resize', scheduleMeasure)
+    if (frameId !== null) window.cancelAnimationFrame(frameId)
+  }
+}
+
 export function formatReleaseDate(value: string | null | undefined): {
   dateLine: string
   timeLine: string | null

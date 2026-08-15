@@ -20,6 +20,14 @@ const preview: Preview = {
           name: 'Dockrev mobile (393x852)',
           styles: { width: '393px', height: '852px' },
         },
+        dockrevIntermediate: {
+          name: 'Dockrev intermediate (1200x900)',
+          styles: { width: '1200px', height: '900px' },
+        },
+        dockrevWide: {
+          name: 'Dockrev wide (1800x960)',
+          styles: { width: '1800px', height: '960px' },
+        },
       },
     },
     docs: {
