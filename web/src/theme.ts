@@ -181,7 +181,7 @@ export function setThemePreference(
     { clipPath: clipPaths.end },
   ], {
     duration: 1800,
-    easing: 'linear',
+    easing: 'cubic-bezier(0.45, 0, 0.55, 1)',
     fill: 'both',
     pseudoElement: '::view-transition-new(root)',
   }).finished).catch(() => undefined)
