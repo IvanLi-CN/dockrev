@@ -121,7 +121,7 @@ export function installDockrevMockApi(
   const digestSnapshotPendingAttempts = new Map<string, number>()
   const forcedDigestSnapshotPendingAttempts = new Map<string, number>()
   const jobsEventsSeqRef = { value: 4_000 + initialJobSeq }
-  const managementEventsSeqRef = { value: 8_000 + initialJobSeq }
+  const managementEventsSeqRef = { value: 0 }
   const managementEventsGeneration = 'storybook'
   const managementEvents: Array<{ id: number; cursor: string; data: Record<string, unknown> }> = []
   const liveTerminalCommandSeqRef = { value: 0 }, liveTerminalStateRef = { commandSeq: 0, frame: 0, polls: 0, completed: false }
