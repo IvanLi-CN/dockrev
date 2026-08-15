@@ -365,6 +365,63 @@ export const VersionsSectionIntermediateWidth: ServiceDetailStory = {
   },
 };
 
+export const VersionsSectionIntermediateWideActions: ServiceDetailStory = {
+  parameters: {
+    viewport: { defaultViewport: "dockrevIntermediate" },
+    dockrevApiScenario: "service-detail-history-rollback-action",
+    dockrevGitHubReleasesByServiceId: {
+      "svc-prod-api": {
+        authMode: "anonymous",
+        repo: { fullName: "acme/api", htmlUrl: "https://github.com/acme/api" },
+        items: versionReleaseNotes,
+      },
+    },
+  },
+  render: render("stack-prod", "svc-prod-api", "versions", undefined, {
+    pageTitle: null,
+    pageSubtitle: null,
+    sidebarCollapsed: true,
+  }),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(findVersionCard(canvasElement, "5.2.3")));
+    await waitForCondition(() => Boolean(findVersionCard(canvasElement, "5.2.0")));
+    const surface = versionsSurface(canvasElement);
+    const candidateCard = findVersionCard(canvasElement, "5.2.3");
+    const rollbackCard = findVersionCard(canvasElement, "5.2.0");
+    const candidateBody = candidateCard?.querySelector<HTMLElement>(".serviceVersionCardBody");
+    const candidateAside = candidateCard?.querySelector<HTMLElement>(".serviceVersionCardAside");
+    const rollbackAside = rollbackCard?.querySelector<HTMLElement>(".serviceVersionCardAside");
+    const updateAction = findVersionAction(canvasElement, "update", "5.2.3");
+    const rollbackAction = findVersionAction(canvasElement, "rollback", "5.2.0");
+    const scrollViewport = versionsViewport(canvasElement);
+
+    expectStory(surface?.getAttribute("data-service-versions-layout") === "stream", "unindexed wide cards should use the stream layout");
+    expectStory(!versionsIndexViewport(canvasElement), "unindexed wide cards should not reserve a version index rail");
+    expectStory(
+      getComputedStyle(candidateCard ?? canvasElement).gridTemplateColumns.split(" ").filter(Boolean).length === 3,
+      "unindexed wide cards should retain the existing three-column layout",
+    );
+    expectStory(
+      (candidateAside?.getBoundingClientRect().width ?? 0) > 0 &&
+        (candidateAside?.getBoundingClientRect().left ?? 0) >= (candidateBody?.getBoundingClientRect().right ?? Number.POSITIVE_INFINITY) - 1,
+      "unindexed wide cards should keep the fixed action rail beside the release body",
+    );
+    expectStory(
+      candidateAside?.contains(updateAction ?? null) && rollbackAside?.contains(rollbackAction ?? null),
+      "unindexed wide cards should keep business-eligible update and rollback actions in their fixed rails",
+    );
+    expectStory(
+      (updateAction?.getBoundingClientRect().width ?? 0) > 0 &&
+        (rollbackAction?.getBoundingClientRect().width ?? 0) > 0,
+      "unindexed wide cards should keep their action buttons visible",
+    );
+    expectStory(
+      (scrollViewport?.scrollWidth ?? 0) <= (scrollViewport?.clientWidth ?? 0) + 1,
+      "unindexed wide cards should not introduce horizontal overflow",
+    );
+  },
+};
+
 export const VersionsSectionActionGuard: ServiceDetailStory = {
   parameters: {
     dockrevApiScenario: "dashboard-demo-slow-update",

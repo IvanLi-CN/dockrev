@@ -130,15 +130,6 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
   }, [props.service.image.resolvedTag, props.service.image.tag, serviceId])
   const [showDesktopIndex, setShowDesktopIndex] = useState(false)
 
-  useEffect(() => {
-    const element = sectionRef.current
-    if (!element || typeof window === 'undefined') return
-    const updateLayout = (width: number) => {
-      const next = width >= VERSION_INDEX_MIN_WIDTH
-      setShowDesktopIndex((current) => (current === next ? current : next))
-    }
-    return observeVersionSectionInlineWidth(element, updateLayout)
-  }, [])
   const dockrevService = isDockrevService(props.service)
   const operationProgress = useMemo(
     () => describeServiceOperationProgress({
@@ -253,6 +244,20 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
       return `index-loader:older:${index}`
     },
   })
+
+  useEffect(() => {
+    const element = sectionRef.current
+    if (!element || typeof window === 'undefined') return
+    let observedWidth: number | null = null
+    const updateLayout = (width: number) => {
+      const next = width >= VERSION_INDEX_MIN_WIDTH
+      setShowDesktopIndex((current) => (current === next ? current : next))
+      if (observedWidth === width) return
+      observedWidth = width
+      listVirtualizer.measure()
+    }
+    return observeVersionSectionInlineWidth(element, updateLayout)
+  }, [listVirtualizer])
 
   useEffect(() => {
     listVirtualizer.measure()
