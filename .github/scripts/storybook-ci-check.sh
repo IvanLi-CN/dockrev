@@ -51,6 +51,11 @@ run_with_retry \
   bun ./node_modules/.bin/playwright install chromium
 
 run_with_retry \
+  "rollback refresh race interaction test" \
+  "${STORYBOOK_TEST_TIMEOUT_SEC}" \
+  env DOCKREV_TEST_STORYBOOK_ROLLBACK_RACE_ONLY=1 bun run test-storybook
+
+run_with_retry \
   "storybook interaction tests" \
   "${STORYBOOK_TEST_TIMEOUT_SEC}" \
   bun run test-storybook
