@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 
 import {
   cycleThemePreference,
+  getThemeTransitionGeometry,
   getThemePreference,
   initTheme,
   setThemePreference,
@@ -56,9 +57,25 @@ function installFakeThemeEnvironment(systemTheme: DockrevTheme = 'light') {
       eventTarget.removeEventListener('media:change', listener)
     },
   }
+  const styleValues = new Map<string, string>()
   const root = {
+    clientWidth: 1200,
+    clientHeight: 800,
     dataset: {} as DOMStringMap,
-    style: { colorScheme: '' },
+    style: {
+      colorScheme: '',
+      getPropertyValue(name: string) {
+        return styleValues.get(name) ?? ''
+      },
+      removeProperty(name: string) {
+        const previous = styleValues.get(name) ?? ''
+        styleValues.delete(name)
+        return previous
+      },
+      setProperty(name: string, value: string) {
+        styleValues.set(name, value)
+      },
+    },
     classList: {
       toggle() {
         return false
@@ -67,7 +84,11 @@ function installFakeThemeEnvironment(systemTheme: DockrevTheme = 'light') {
   }
   const fakeWindow = {
     localStorage: storage,
-    matchMedia: () => mediaQuery,
+    innerWidth: 1200,
+    innerHeight: 800,
+    matchMedia: (query: string) => query === '(prefers-reduced-motion: reduce)'
+      ? { ...mediaQuery, matches: false }
+      : mediaQuery,
     addEventListener(type: string, listener: EventListener) {
       eventTarget.addEventListener(type, listener)
     },
@@ -184,5 +205,21 @@ describe('theme preference contract', () => {
     unsubscribe()
 
     expect(updates).toBe(1)
+  })
+
+  test('computes an exact reveal radius from the control to the farthest viewport corner', () => {
+    installFakeThemeEnvironment('light')
+    initTheme()
+
+    expect(getThemeTransitionGeometry({ x: 40, y: 60 })).toEqual({
+      x: 40,
+      y: 60,
+      radius: Math.hypot(1160, 740),
+    })
+    expect(getThemeTransitionGeometry({ x: -20, y: 900 })).toEqual({
+      x: 0,
+      y: 800,
+      radius: Math.hypot(1200, 800),
+    })
   })
 })

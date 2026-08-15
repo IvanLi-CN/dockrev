@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { Monitor, Moon, Sun } from 'lucide-react'
 import {
   ContextMenu,
@@ -17,6 +17,7 @@ import {
   setThemePreference,
   subscribeTheme,
   type ThemePreference,
+  type ThemeTransitionOrigin,
 } from '../theme'
 import { cn } from '@/lib/utils'
 
@@ -77,7 +78,19 @@ function ThemeMenu(props: {
 function ThemeIcon(props: { preference: ThemePreference; size?: number }) {
   const option = THEME_OPTIONS.find(({ value }) => value === props.preference) ?? THEME_OPTIONS[0]
   const Icon = option.Icon
-  return <Icon size={props.size ?? 18} strokeWidth={2} aria-hidden="true" />
+  return (
+    <span className="themePreferenceGlyph" aria-hidden="true">
+      <Icon size={props.size ?? 18} strokeWidth={2} />
+    </span>
+  )
+}
+
+function elementCenter(element: HTMLElement): ThemeTransitionOrigin {
+  const rect = element.getBoundingClientRect()
+  return {
+    x: rect.left + rect.width / 2,
+    y: rect.top + rect.height / 2,
+  }
 }
 
 export function ThemePreferenceControl(props: {
@@ -90,9 +103,13 @@ export function ThemePreferenceControl(props: {
   const preference = useThemePreference()
   const systemTheme = getSystemTheme()
   const label = themeLabel(preference)
-  const selectPreference = useCallback((next: ThemePreference) => setThemePreference(next), [])
-  const cycle = useCallback(() => {
-    selectPreference(cycleThemePreference(preference, systemTheme))
+  const [feedbackKey, setFeedbackKey] = useState(0)
+  const selectPreference = useCallback((next: ThemePreference, origin?: ThemeTransitionOrigin) => {
+    setFeedbackKey((value) => value + 1)
+    setThemePreference(next, origin)
+  }, [])
+  const cycle = useCallback((element: HTMLElement) => {
+    selectPreference(cycleThemePreference(preference, systemTheme), elementCenter(element))
   }, [preference, selectPreference, systemTheme])
 
   if (props.variant === 'segmented') {
@@ -118,7 +135,7 @@ export function ThemePreferenceControl(props: {
                 aria-checked={preference === value}
                 aria-label={optionLabel}
                 title={optionLabel}
-                onClick={() => selectPreference(value)}
+                onClick={(event) => selectPreference(value, elementCenter(event.currentTarget))}
               >
                 <ThemeIcon preference={value} size={17} />
               </button>
@@ -137,7 +154,7 @@ export function ThemePreferenceControl(props: {
         className="themePreferenceIconButton"
         aria-label={`主题：${label}`}
         title={label}
-        onClick={cycle}
+        onClick={(event) => cycle(event.currentTarget)}
         onKeyDown={(event) => {
           if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
             event.preventDefault()
@@ -152,7 +169,9 @@ export function ThemePreferenceControl(props: {
           }
         }}
       >
-        <ThemeIcon preference={preference} />
+        <span key={feedbackKey} className={feedbackKey > 0 ? 'themePreferenceGlyphFeedback' : undefined}>
+          <ThemeIcon preference={preference} />
+        </span>
       </button>
     </ThemeMenu>
   )
