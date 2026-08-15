@@ -162,7 +162,6 @@ export function useServiceDetailPageState(props: {
   const latestAppliedFullRefreshRequestIdRef = useRef(0)
   const stackRefreshRequestIdRef = useRef(0)
   const latestAppliedStackRefreshRequestIdRef = useRef(0)
-  const stackRefreshInFlightRef = useRef<Promise<void> | null>(null)
 
   const [newRuleKind, setNewRuleKind] = useState<'exact' | 'prefix' | 'regex' | 'semver'>('regex')
   const [newRuleValue, setNewRuleValue] = useState('.*')
@@ -253,7 +252,7 @@ export function useServiceDetailPageState(props: {
     try {
       const st = await getStack(stackId)
       const svc = st.services.find((s) => s.id === serviceId) ?? null
-      if (stackRequestId >= latestAppliedStackRefreshRequestIdRef.current) {
+      if (stackRequestId === stackRefreshRequestIdRef.current && stackRequestId >= latestAppliedStackRefreshRequestIdRef.current) {
         latestAppliedStackRefreshRequestIdRef.current = stackRequestId
         latestAppliedFullRefreshRequestIdRef.current = fullRefreshRequestId
         appliedFullRefreshRoot = true
@@ -282,7 +281,11 @@ export function useServiceDetailPageState(props: {
       if (rulesRes.status === 'rejected') errors.push(errorMessage(rulesRes.reason))
       if (rollbackRes.status === 'rejected') errors.push(errorMessage(rollbackRes.reason))
 
-      if (fullRefreshRequestId < latestAppliedFullRefreshRequestIdRef.current) return
+      if (
+        stackRequestId !== stackRefreshRequestIdRef.current ||
+        stackRequestId < latestAppliedStackRefreshRequestIdRef.current ||
+        fullRefreshRequestId < latestAppliedFullRefreshRequestIdRef.current
+      ) return
 
       if (settingsRes.status === 'fulfilled') setSettings(settingsRes.value)
       if (backupTargetsRes.status === 'fulfilled') setBackupTargets(backupTargetsRes.value)
@@ -295,51 +298,45 @@ export function useServiceDetailPageState(props: {
         setRollbackTarget(null); setRollbackActiveTarget(null)
         setRollbackTargetRefreshing(false)
       } else if (rollbackRes.status === 'fulfilled') {
-        await settleRollbackTargetSnapshot(stackRequestId, svc, rollbackRes.value)
+        const rollbackResult = await settleRollbackTargetSnapshot(stackRequestId, svc, rollbackRes.value)
+        if (rollbackResult === 'outdated') return
       } else {
         setRollbackTarget(null); setRollbackActiveTarget(null); setRollbackTargetRefreshing(false)
       }
       if (errors.length > 0) throw new Error(errors.join(' · '))
       setLastSuccessfulRefreshAt(new Date().toISOString())
     } catch (error: unknown) {
-      if (!appliedFullRefreshRoot && stackRequestId < latestAppliedStackRefreshRequestIdRef.current) return
-      if (appliedFullRefreshRoot && fullRefreshRequestId < latestAppliedFullRefreshRequestIdRef.current) return
+      if (
+        stackRequestId !== stackRefreshRequestIdRef.current ||
+        stackRequestId < latestAppliedStackRefreshRequestIdRef.current ||
+        (appliedFullRefreshRoot && fullRefreshRequestId < latestAppliedFullRefreshRequestIdRef.current)
+      ) return
       setRollbackTargetRefreshing(false)
       throw error
     }
   }, [onLastScanHint, primeRollbackTargetRefresh, serviceId, settleRollbackTargetSnapshot, stackId])
 
   const refreshStackOnly = useCallback(async () => {
-    const existing = stackRefreshInFlightRef.current
-    if (existing) return existing
-
-    const request = (async () => {
-      const requestId = ++stackRefreshRequestIdRef.current; let rollbackSnapshotMayBeStale = false
-      try {
-        const st = await getStack(stackId)
-        if (requestId < latestAppliedStackRefreshRequestIdRef.current) return
-        latestAppliedStackRefreshRequestIdRef.current = requestId
-        const svc = st.services.find((s) => s.id === serviceId) ?? null
-        setStack(st)
-        setService(svc)
-        primeRollbackTargetRefresh(svc)
-        if (!svc || isDockrevService(svc)) return
-        rollbackSnapshotMayBeStale = true
-        const target = await getServiceRollbackTarget(serviceId)
-        await settleRollbackTargetSnapshot(requestId, svc, target)
-      } catch (error: unknown) {
-        if (requestId !== stackRefreshRequestIdRef.current || requestId < latestAppliedStackRefreshRequestIdRef.current) return
-        if (rollbackSnapshotMayBeStale) { setRollbackTarget(null); setRollbackActiveTarget(null) }
-        setRollbackTargetRefreshing(false)
-        throw error
-      }
-    })()
-    stackRefreshInFlightRef.current = request
-    const clearInFlight = () => {
-      if (stackRefreshInFlightRef.current === request) stackRefreshInFlightRef.current = null
+    const requestId = ++stackRefreshRequestIdRef.current
+    let rollbackSnapshotMayBeStale = false
+    try {
+      const st = await getStack(stackId)
+      if (requestId !== stackRefreshRequestIdRef.current || requestId < latestAppliedStackRefreshRequestIdRef.current) return
+      latestAppliedStackRefreshRequestIdRef.current = requestId
+      const svc = st.services.find((s) => s.id === serviceId) ?? null
+      setStack(st)
+      setService(svc)
+      primeRollbackTargetRefresh(svc)
+      if (!svc || isDockrevService(svc)) return
+      rollbackSnapshotMayBeStale = true
+      const target = await getServiceRollbackTarget(serviceId)
+      await settleRollbackTargetSnapshot(requestId, svc, target)
+    } catch (error: unknown) {
+      if (requestId !== stackRefreshRequestIdRef.current || requestId < latestAppliedStackRefreshRequestIdRef.current) return
+      if (rollbackSnapshotMayBeStale) { setRollbackTarget(null); setRollbackActiveTarget(null) }
+      setRollbackTargetRefreshing(false)
+      throw error
     }
-    void request.then(clearInFlight, clearInFlight)
-    return request
   }, [primeRollbackTargetRefresh, serviceId, settleRollbackTargetSnapshot, stackId])
 
   const patchServiceInStack = useCallback(
