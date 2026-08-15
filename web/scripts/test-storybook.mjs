@@ -572,6 +572,54 @@ async function runSmoke({ baseUrl, storyIds, browser }) {
   console.log("All stories passed.");
 }
 
+async function runRollbackRefreshRace({ baseUrl, browser }) {
+  const base = normalizeBaseUrl(baseUrl);
+  const page = await browser.newPage();
+  page.on("dialog", (d) => d.accept().catch(() => {}));
+  const url = new URL("iframe.html", base);
+  url.searchParams.set("id", "pages-servicedetailpage--rollback-refresh-race-after-update");
+  url.searchParams.set("viewMode", "story");
+  await page.goto(url.toString(), { waitUntil: "domcontentloaded" });
+  await page.waitForFunction(
+    () => {
+      const root = document.querySelector("#storybook-root, #root");
+      return Boolean(root && root.childElementCount > 0);
+    },
+    null,
+    { timeout: 60_000 },
+  );
+  try {
+    const rollbackRefresh = page.getByRole("button", { name: /回滚信息刷新中…/ }).first();
+    await rollbackRefresh.waitFor({ timeout: 8_000 });
+    await page.waitForFunction(
+      () => {
+        const button = Array.from(document.querySelectorAll("button")).find((item) =>
+          item.textContent?.trim() === "回滚信息刷新中…",
+        );
+        return Boolean(button && button.disabled);
+      },
+      null,
+      { timeout: 8_000 },
+    );
+    if ((await page.locator("body").textContent())?.includes("未找到可回滚到升级前版本的成功升级记录")) {
+      throw new Error("Rollback refresh race exposed the stale unavailable hint.");
+    }
+
+    await page.waitForFunction(
+      () => {
+        const button = Array.from(document.querySelectorAll("button")).find((item) =>
+          item.textContent?.trim() === "回滚",
+        );
+        return Boolean(button && !button.disabled && button.getAttribute("aria-busy") !== "true");
+      },
+      null,
+      { timeout: 8_000 },
+    );
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
 async function runInteractive({ baseUrl, browser }) {
   const base = normalizeBaseUrl(baseUrl);
 
@@ -592,6 +640,9 @@ async function runInteractive({ baseUrl, browser }) {
     );
     return page;
   };
+
+  // Keep the rollback refresh race in the CI interaction suite, not only in the story play callback.
+  await runRollbackRefreshRace({ baseUrl, browser });
 
   await assertServiceLogsLightContrast({ baseUrl, browser });
 
@@ -1331,7 +1382,7 @@ async function runInteractive({ baseUrl, browser }) {
         () => {
           const rows = Array.from(document.querySelectorAll(".rowLine"));
           const matchesAction = (text) =>
-            ["执行更新", "更新中…", "排队中…", "提交中…"].some((label) =>
+            ["执行更新", "更新中…", "更新排队中…", "排队中…", "提交中…"].some((label) =>
               text?.includes(label),
             );
           const findButton = (keyword) => {
@@ -1367,7 +1418,7 @@ async function runInteractive({ baseUrl, browser }) {
           if (!apiRow) return false;
           const btn = Array.from(apiRow.querySelectorAll("button")).find(
             (item) =>
-              ["更新中…", "排队中…"].some((label) =>
+              ["更新中…", "更新排队中…", "排队中…"].some((label) =>
                 item.textContent?.includes(label),
               ),
           );
@@ -1388,7 +1439,7 @@ async function runInteractive({ baseUrl, browser }) {
           if (!apiRow) return false;
           const btn = Array.from(apiRow.querySelectorAll("button")).find(
             (item) =>
-              ["更新中…", "排队中…"].some((label) =>
+              ["更新中…", "更新排队中…", "排队中…"].some((label) =>
                 item.textContent?.includes(label),
               ),
           );
@@ -1408,7 +1459,7 @@ async function runInteractive({ baseUrl, browser }) {
         const apiRow = rows.find((item) => item.textContent?.includes("api"));
         if (!apiRow) return false;
         const btn = Array.from(apiRow.querySelectorAll("button")).find((item) =>
-          ["更新中…", "排队中…"].some((label) =>
+          ["更新中…", "更新排队中…", "排队中…"].some((label) =>
             item.textContent?.includes(label),
           ),
         );
@@ -1433,7 +1484,7 @@ async function runInteractive({ baseUrl, browser }) {
           if (!apiRow) return false;
           const btn = Array.from(apiRow.querySelectorAll("button")).find(
             (item) =>
-              ["执行更新", "更新中…", "排队中…", "提交中…"].some((label) =>
+              ["执行更新", "更新中…", "更新排队中…", "排队中…", "提交中…"].some((label) =>
                 item.textContent?.includes(label),
               ),
           );
@@ -1468,7 +1519,7 @@ async function runInteractive({ baseUrl, browser }) {
           if (!apiRow) return false;
           const btn = Array.from(apiRow.querySelectorAll("button")).find(
             (item) =>
-              ["执行更新", "更新中…", "排队中…", "提交中…"].some((label) =>
+              ["执行更新", "更新中…", "更新排队中…", "排队中…", "提交中…"].some((label) =>
                 item.textContent?.includes(label),
               ),
           );
@@ -1519,7 +1570,7 @@ async function runInteractive({ baseUrl, browser }) {
         () => {
           const btn = Array.from(document.querySelectorAll("button")).find(
             (item) =>
-              ["更新", "更新中…", "排队中…", "提交中…"].includes(
+              ["更新", "更新中…", "更新排队中…", "排队中…", "提交中…"].includes(
                 item.textContent?.trim() ?? "",
               ),
           );
@@ -1534,7 +1585,7 @@ async function runInteractive({ baseUrl, browser }) {
         () => {
           const btn = Array.from(document.querySelectorAll("button")).find(
             (item) =>
-              ["更新中…", "排队中…"].includes(item.textContent?.trim() ?? ""),
+              ["更新中…", "更新排队中…", "排队中…"].includes(item.textContent?.trim() ?? ""),
           );
           if (!btn) return false;
           return (
@@ -1550,7 +1601,7 @@ async function runInteractive({ baseUrl, browser }) {
         () => {
           const btn = Array.from(document.querySelectorAll("button")).find(
             (item) =>
-              ["更新中…", "排队中…"].includes(item.textContent?.trim() ?? ""),
+              ["更新中…", "更新排队中…", "排队中…"].includes(item.textContent?.trim() ?? ""),
           );
           if (!btn) return false;
           return (
@@ -1564,7 +1615,7 @@ async function runInteractive({ baseUrl, browser }) {
       const jumped = await page.evaluate(() => {
         const btn = Array.from(document.querySelectorAll("button")).find(
           (item) =>
-            ["更新中…", "排队中…"].includes(item.textContent?.trim() ?? ""),
+            ["更新中…", "更新排队中…", "排队中…"].includes(item.textContent?.trim() ?? ""),
         );
         if (!btn) return false;
         btn.click();
@@ -1595,7 +1646,7 @@ async function runInteractive({ baseUrl, browser }) {
           if (!apiRow) return false;
           const btn = Array.from(apiRow.querySelectorAll("button")).find(
             (item) =>
-              ["更新中…", "排队中…"].some((label) =>
+              ["更新中…", "更新排队中…", "排队中…"].some((label) =>
                 item.textContent?.includes(label),
               ),
           );
@@ -1615,7 +1666,7 @@ async function runInteractive({ baseUrl, browser }) {
         const apiRow = rows.find((item) => item.textContent?.includes("api"));
         if (!apiRow) return false;
         const btn = Array.from(apiRow.querySelectorAll("button")).find((item) =>
-          ["更新中…", "排队中…"].some((label) =>
+          ["更新中…", "更新排队中…", "排队中…"].some((label) =>
             item.textContent?.includes(label),
           ),
         );
@@ -1647,7 +1698,7 @@ async function runInteractive({ baseUrl, browser }) {
         () => {
           const btn = Array.from(document.querySelectorAll("button")).find(
             (item) =>
-              ["更新中…", "排队中…"].includes(item.textContent?.trim() ?? ""),
+              ["更新中…", "更新排队中…", "排队中…"].includes(item.textContent?.trim() ?? ""),
           );
           if (!btn) return false;
           return (
@@ -1663,7 +1714,7 @@ async function runInteractive({ baseUrl, browser }) {
       const jumped = await page.evaluate(() => {
         const btn = Array.from(document.querySelectorAll("button")).find(
           (item) =>
-            ["更新中…", "排队中…"].includes(item.textContent?.trim() ?? ""),
+            ["更新中…", "更新排队中…", "排队中…"].includes(item.textContent?.trim() ?? ""),
         );
         if (!btn) return false;
         btn.click();
@@ -1699,7 +1750,7 @@ async function runInteractive({ baseUrl, browser }) {
         () => {
           const btn = Array.from(document.querySelectorAll("button")).find(
             (item) =>
-              ["更新", "更新中…", "排队中…", "提交中…"].includes(
+              ["更新", "更新中…", "更新排队中…", "排队中…", "提交中…"].includes(
                 item.textContent?.trim() ?? "",
               ),
           );
@@ -2420,7 +2471,8 @@ async function main() {
   const lightLogsOnly = process.env.DOCKREV_TEST_STORYBOOK_LIGHT_LOGS_ONLY === "1";
   const smokeOnly = process.env.DOCKREV_TEST_STORYBOOK_SMOKE_ONLY === "1";
   const interactiveOnly = process.env.DOCKREV_TEST_STORYBOOK_INTERACTIVE_ONLY === "1";
-  if (smokeOnly && interactiveOnly) {
+  const rollbackRaceOnly = process.env.DOCKREV_TEST_STORYBOOK_ROLLBACK_RACE_ONLY === "1";
+  if (smokeOnly && (interactiveOnly || rollbackRaceOnly)) {
     throw new Error(
       "DOCKREV_TEST_STORYBOOK_SMOKE_ONLY and DOCKREV_TEST_STORYBOOK_INTERACTIVE_ONLY cannot both be set.",
     );
@@ -2440,14 +2492,15 @@ async function main() {
       if (lightLogsOnly) {
         await assertServiceLogsLightContrast({ baseUrl: targetUrl, browser });
       } else {
-        if (!interactiveOnly) {
+        if (!interactiveOnly && !rollbackRaceOnly) {
           await runSmoke({
             baseUrl: targetUrl,
             storyIds: selectSmokeShard(storyIds),
             browser,
           });
         }
-        if (!smokeOnly) await runInteractive({ baseUrl: targetUrl, browser });
+        if (rollbackRaceOnly) await runRollbackRefreshRace({ baseUrl: targetUrl, browser });
+        else if (!smokeOnly) await runInteractive({ baseUrl: targetUrl, browser });
       }
     } finally {
       await browser.close().catch(() => {});
@@ -2490,14 +2543,15 @@ async function main() {
       if (lightLogsOnly) {
         await assertServiceLogsLightContrast({ baseUrl: localUrl, browser });
       } else {
-        if (!interactiveOnly) {
+        if (!interactiveOnly && !rollbackRaceOnly) {
           await runSmoke({
             baseUrl: localUrl,
             storyIds: selectSmokeShard(storyIds),
             browser,
           });
         }
-        if (!smokeOnly) await runInteractive({ baseUrl: localUrl, browser });
+        if (rollbackRaceOnly) await runRollbackRefreshRace({ baseUrl: localUrl, browser });
+        else if (!smokeOnly) await runInteractive({ baseUrl: localUrl, browser });
       }
     } finally {
       await browser.close().catch(() => {});

@@ -54,6 +54,17 @@ function moveToFront(tags: string[], tag: string): string[] {
   return [tags[idx], ...tags.slice(0, idx), ...tags.slice(idx + 1)]
 }
 
+function stableJitterMs(seed: string, maxMs: number): number {
+  if (maxMs <= 0) return 0
+  let hash = 0
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0
+  }
+  return hash % (maxMs + 1)
+}
+
+const FETCH_DEBOUNCE_MS = 220
+const PREFETCH_JITTER_MAX_MS = 180
 const TAGS_PREVIEW_MAX = 12
 
 type DigestTagsState = {
@@ -127,6 +138,7 @@ export function VersionTagsPopover(props: {
     onLocalResolvedTag,
     children,
   } = props
+  const fetchTimer = useRef<number | null>(null)
   const mountedRef = useRef(true)
   const {
     close,
@@ -216,6 +228,10 @@ export function VersionTagsPopover(props: {
     mountedRef.current = true
     return () => {
       mountedRef.current = false
+      if (fetchTimer.current != null) {
+        window.clearTimeout(fetchTimer.current)
+        fetchTimer.current = null
+      }
     }
   }, [])
 
@@ -227,6 +243,10 @@ export function VersionTagsPopover(props: {
         return
       }
 
+      if (fetchTimer.current != null) {
+        window.clearTimeout(fetchTimer.current)
+        fetchTimer.current = null
+      }
       suppressLoadingLabelRef.current = true
       beginRefreshExpectation()
       setDigestState((prev) => {
@@ -244,6 +264,11 @@ export function VersionTagsPopover(props: {
     setRefreshing(true)
     setRefreshError(null)
     setRefreshNotice(null)
+
+    if (fetchTimer.current != null) {
+      window.clearTimeout(fetchTimer.current)
+      fetchTimer.current = null
+    }
 
     try {
       const resp = await forceRefreshServiceVersionInference(
@@ -280,9 +305,9 @@ export function VersionTagsPopover(props: {
   }, [candidateDigestNorm, snapshotKey, refreshing, serviceId, beginRefreshExpectation])
 
   useEffect(() => {
-    const shouldLoadSnapshot =
+    const shouldPollSnapshot =
       prefetchOnMount || open || snapshotPhaseRef.current === 'loading'
-    if (!shouldLoadSnapshot) return
+    if (!shouldPollSnapshot) return
     if (!candidateTagTrim) return
 
     // Digest tag listing is only meaningful when digest is known.
@@ -295,12 +320,38 @@ export function VersionTagsPopover(props: {
     const requestSnapshotKey = snapshotKey
     const isStale = () =>
       !alive || !mountedRef.current || latestSnapshotKeyRef.current !== requestSnapshotKey
-    if (isStale()) return
-    getServiceDigestTagsSnapshot(serviceId, candidateDigestNorm)
-      .then((data) => {
+    const prefetchJitter =
+      prefetchOnMount && !open && !pinned
+        ? stableJitterMs(
+            `${serviceId}:${candidateDigestNorm}`,
+            PREFETCH_JITTER_MAX_MS,
+          )
+        : 0
+    const delay = (pinned ? 0 : FETCH_DEBOUNCE_MS) + prefetchJitter
+    if (fetchTimer.current != null) {
+      window.clearTimeout(fetchTimer.current)
+      fetchTimer.current = null
+    }
+
+    const timerId = window.setTimeout(() => {
+      if (isStale()) return
+      if (fetchTimer.current === timerId) fetchTimer.current = null
+
+      const poll = () => {
+        if (isStale()) return
+        getServiceDigestTagsSnapshot(serviceId, candidateDigestNorm)
+          .then((data) => {
             if (isStale()) return
             if (isServiceDigestTagsSnapshotPending(data)) {
               setSnapshotPhase('loading')
+              const retryAfterMs = Math.max(
+                200,
+                Math.min(5000, Number(data.retryAfterMs) || FETCH_DEBOUNCE_MS),
+              )
+              fetchTimer.current = window.setTimeout(() => {
+                if (fetchTimer.current != null) fetchTimer.current = null
+                poll()
+              }, retryAfterMs)
               trackDigestSnapshotRefresh({
                 serviceId,
                 digest: candidateDigestNorm,
@@ -373,8 +424,8 @@ export function VersionTagsPopover(props: {
               clearRefreshExpectation()
             }
             setSnapshotPhase('ready')
-      })
-      .catch((e: unknown) => {
+          })
+          .catch((e: unknown) => {
             if (isStale()) return
             if (e instanceof ApiError && e.status === 404) {
               setDigestState({
@@ -421,9 +472,19 @@ export function VersionTagsPopover(props: {
             if (isExternalRefresh) setExternalRefreshKey(null)
             clearRefreshExpectation()
             setSnapshotPhase('error')
-      })
+          })
+      }
+
+      poll()
+    }, delay)
+    fetchTimer.current = timerId
+
     return () => {
       alive = false
+      if (fetchTimer.current === timerId) {
+        window.clearTimeout(timerId)
+        fetchTimer.current = null
+      }
     }
   }, [
     candidateDigestNorm,
@@ -432,6 +493,7 @@ export function VersionTagsPopover(props: {
     digestTags,
     localRefreshKey,
     open,
+    pinned,
     snapshotFetchToken,
     prefetchOnMount,
     onLocalResolvedTag,

@@ -133,6 +133,7 @@ export function ServiceDetailPage(props: {
     supervisorState,
     dangerousActions,
   } = useServiceDetailPageState(props);
+  const visibleRollbackTarget = rollbackTargetRefreshing ? null : rollbackTarget
   const [jobs, setJobs] = useState<JobListItem[]>([]);
   const [versionJobs, setVersionJobs] = useState<JobListItem[]>([]);
   const [versionJobsLoaded, setVersionJobsLoaded] = useState(false);
@@ -448,7 +449,7 @@ export function ServiceDetailPage(props: {
         serviceId={serviceId}
         onRollback={readonlyUi ? undefined : requestRollback}
         rollbackBusy={busy || rollbackTargetRefreshing}
-        rollbackSourceJobId={readonlyUi || !rollbackTarget?.available ? null : rollbackTarget.sourceUpdateJobId}
+        rollbackSourceJobId={readonlyUi || !visibleRollbackTarget?.available ? null : visibleRollbackTarget.sourceUpdateJobId}
         page={historyCursorStack.length + 1}
         hasPrevious={historyCursorStack.length > 0}
         hasNext={Boolean(historyNextCursor)}
@@ -481,7 +482,7 @@ export function ServiceDetailPage(props: {
           onRollback={requestRollback}
           rollbackActiveJobId={rollbackActiveJobId}
           rollbackActiveJobStatus={rollbackActiveJobStatus}
-          rollbackTarget={rollbackTarget}
+          rollbackTarget={visibleRollbackTarget}
           rollbackTargetRefreshing={rollbackTargetRefreshing}
           service={effectiveService}
           updateActiveJob={applyActiveJob}

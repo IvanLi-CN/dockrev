@@ -22,10 +22,13 @@ import {
   cloneFixture,
   parseCleanupScanRequest,
   partialCleanupResponse,
+  buildMockDigestTagData,
+  normalizeDigestValue,
   resolveMockEventSourcePollInterval,
   seedIgnoreSequence,
   seedJobSequence,
 } from './installHelpers'
+import { formatMockManagementCursor, parseMockManagementCursor } from './managementEventCursor'
 import { applyRollbackTargetRaceAfterUpdate, maybeServeRollbackTargetRaceResponse, type RollbackTargetRaceState } from './rollbackRace'
 import type { DockrevApiScenario, DockrevMockApiOptions } from './shared'
 import {
@@ -118,6 +121,9 @@ export function installDockrevMockApi(
   const digestSnapshotPendingAttempts = new Map<string, number>()
   const forcedDigestSnapshotPendingAttempts = new Map<string, number>()
   const jobsEventsSeqRef = { value: 4_000 + initialJobSeq }
+  const managementEventsSeqRef = { value: 0 }
+  const managementEventsGeneration = 'storybook'
+  const managementEvents: Array<{ id: number; cursor: string; data: Record<string, unknown> }> = []
   const liveTerminalCommandSeqRef = { value: 0 }, liveTerminalStateRef = { commandSeq: 0, frame: 0, polls: 0, completed: false }
   const terminalLines = (message: string, frame: number) => [{ segments: [{ text: '253f286a856e Pulling fs layer 0B', fg: 'rgb(92, 92, 255)', bold: true }] }, { segments: [{ text: `${message} · frame ${frame}`, dim: true }] }]
   const queueProgressDemoSteps = [40, 44, 48, 52, 56, 60, 65, 70, 75, 80, 85, 90, 94, 97]
@@ -129,8 +135,11 @@ export function installDockrevMockApi(
     nextScanRunSeq: 0,
     scanRuns: new Map(),
   }
-
-  const rollbackTargetRaceByServiceId = new Map<string, RollbackTargetRaceState>()
+  const rollbackTargetRaceByServiceId = new Map<string, RollbackTargetRaceState>(); const publishMockManagementEvent = (entities: Array<{ entityType: string; id: string }>, summary: Record<string, unknown>) => {
+    const id = ++managementEventsSeqRef.value
+    managementEvents.push({ id, cursor: formatMockManagementCursor(managementEventsGeneration, id), data: { type: 'entities_changed', domain: 'jobs', entities, version: id, summary } })
+    if (managementEvents.length > 1_024) managementEvents.shift()
+  }
   let deployCheckReportSequenceIndex = 0
   const advanceQueueProgressDemo = (): number | null => {
     if (!state || scenario !== 'queue-progress-smoothing') return null
@@ -176,70 +185,6 @@ export function installDockrevMockApi(
       if (svc) return { stack: st, svc }
     }
     return null
-  }
-
-  function normalizeDigestValue(value: string | null | undefined): string {
-    const trimmed = (value ?? '').trim()
-    if (!trimmed) return ''
-    return trimmed.includes(':') ? trimmed : `sha256:${trimmed}`
-  }
-
-  function buildMockDigestTagData(
-    serviceId: string,
-    imageTag: string,
-    digestNorm: string,
-    refreshed: boolean,
-  ): { repoTags: string[]; tags: string[] } {
-    const isVersionTagsDemoScenario =
-      scenario === 'version-tags-popover-demo' ||
-      scenario === 'version-tags-popover-same-digest' ||
-      scenario === 'version-tags-popover-snapshot-pending'
-    const d = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`
-
-    const repoTags =
-      serviceId === 'svc-prod-api'
-        ? ['5.2.1', '5.2.3', '5.2.4', '5.3.0', 'v5.2.1', 'v5.2.3', 'stable', 'latest']
-        : serviceId === 'svc-prod-web'
-          ? (() => {
-              const out: string[] = ['5.1', '5.1.10', '5.1.11', '5.1.12', '5.2', 'v5.2.1', 'stable', 'latest']
-              for (let i = 0; i < 40; i++) out.push(`5.2.${i}`)
-              return out
-            })()
-          : serviceId === 'svc-resolved-web'
-            ? (() => {
-                const out: string[] = ['5.1', '5.1.10', '5.1.11', '5.1.12', '5.2', 'v5.2.1', 'v5.2.3', 'stable', 'latest']
-                for (let i = 0; i < 40; i++) out.push(`5.2.${i}`)
-                return out
-              })()
-            : isVersionTagsDemoScenario && serviceId === 'svc-version-tags'
-              ? ['v0.8.9-arm64', 'v0.8.8-arm64', 'v0.8.8', 'v0.8.7', '0.8.8', '0.8.7', 'stable', 'latest']
-              : digestNorm === `sha256:${'a'.repeat(64)}`
-                ? ['v0.1.8', '0.1.8']
-                : [imageTag]
-
-    const tags = !digestNorm
-      ? []
-      : serviceId === 'svc-version-tags' && isVersionTagsDemoScenario && digestNorm === d('a', 'b1')
-        ? ['v0.8.7', '0.8.7', 'stable', 'latest']
-        : serviceId === 'svc-version-tags' && isVersionTagsDemoScenario && digestNorm === d('b', '9f')
-          ? refreshed
-            ? ['v0.8.8', 'v0.8.8-arm64', '0.8.8', 'stable', 'latest']
-            : ['v0.8.8-arm64', 'v0.8.8', '0.8.8', 'stable', 'latest']
-          : digestNorm === d('c', 'c2')
-            ? ['v5.2.1', '5.2.1', '5.2', 'stable', 'latest']
-            : digestNorm === d('a', 'b1') && serviceId === 'svc-resolved-web'
-              ? ['5.2.1', 'v5.2.1', 'stable', 'latest']
-              : digestNorm === d('b', '9f') && serviceId === 'svc-resolved-web'
-                ? ['5.2.3', 'v5.2.3']
-                : digestNorm === d('a', 'b1')
-                  ? ['5.2.1', 'v5.2.1']
-                  : digestNorm === d('b', '9f') && serviceId === 'svc-prod-api'
-                    ? ['5.2.3', 'v5.2.3', 'stable', 'latest']
-                    : digestNorm === `sha256:${'a'.repeat(64)}`
-                      ? ['v0.1.8', '0.1.8']
-                      : [imageTag]
-
-    return { repoTags, tags }
   }
 
   function parseMockGitHubRepoRef(input: string | null | undefined): ServiceGitHubRepoRef | null {
@@ -496,7 +441,7 @@ export function installDockrevMockApi(
         makeMockDebug,
         findService,
         normalizeDigestValue,
-        buildMockDigestTagData,
+        buildMockDigestTagData: (serviceId, imageTag, digestNorm, refreshed) => buildMockDigestTagData(scenario, serviceId, imageTag, digestNorm, refreshed),
         buildMockDiscoveryTimeline: (serviceId) =>
           buildMockDiscoveryTimelineResponse(serviceId, options, findService),
         buildMockGitHubReleasesResponse: (serviceId, page, perPage) =>
@@ -565,7 +510,6 @@ export function installDockrevMockApi(
         total: rows.length,
       } satisfies VersionInferenceOverviewMock)
     }
-
     if (urlPath === '/api/version-inference/events' && method === 'GET') {
       const params = url?.searchParams ?? new URLSearchParams()
       const afterId = Number(params.get('afterId') ?? '0') || 0
@@ -581,6 +525,37 @@ export function installDockrevMockApi(
           'x-accel-buffering': 'no',
         },
       })
+    }
+
+    if (urlPath === '/api/events' && method === 'GET') {
+      const headers = init?.headers
+      const headerCursor = headers instanceof Headers
+        ? headers.get('Last-Event-ID')
+        : Array.isArray(headers)
+          ? headers.find(([key]) => key.toLowerCase() === 'last-event-id')?.[1] ?? null
+          : headers && typeof headers === 'object'
+            ? Object.entries(headers).find(([key]) => key.toLowerCase() === 'last-event-id')?.[1] ?? null
+            : null
+      const afterCursor = headerCursor || url?.searchParams.get('afterId') || ''
+      const cursor = parseMockManagementCursor(afterCursor, managementEventsGeneration)
+      const latestId = managementEventsSeqRef.value
+      if (cursor.kind === 'resync') {
+        const resyncCursor = formatMockManagementCursor(managementEventsGeneration, latestId)
+        const data = { type: 'resync_required', domain: 'management', reason: cursor.reason, generation: managementEventsGeneration }
+        return new Response(`id: ${resyncCursor}\nevent: resync_required\ndata: ${JSON.stringify(data)}\n\n`, { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'x-accel-buffering': 'no-cache' } })
+      }
+      const afterId = cursor.kind === 'valid' ? cursor.id : latestId
+      const oldestId = managementEvents[0]?.id ?? latestId
+      const cursorId = cursor.kind === 'valid' ? cursor.id : latestId
+      const replayGap = managementEvents.length > 0 ? cursorId < oldestId - 1 : cursorId < latestId
+      if (cursor.kind === 'valid' && (replayGap || cursor.id > latestId)) {
+        const resyncCursor = formatMockManagementCursor(managementEventsGeneration, latestId)
+        const data = { type: 'resync_required', domain: 'management', reason: 'cursor_expired', generation: managementEventsGeneration }
+        return new Response(`id: ${resyncCursor}\nevent: resync_required\ndata: ${JSON.stringify(data)}\n\n`, { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'x-accel-buffering': 'no-cache' } })
+      }
+      const events = managementEvents.filter((event) => event.id > afterId).slice(0, 200)
+      const body = events.map((event) => `id: ${event.cursor}\nevent: management\ndata: ${JSON.stringify(event.data)}\n\n`).join('')
+      return new Response(body || ': keep-alive\n\n', { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'x-accel-buffering': 'no', 'x-dockrev-management-cursor': formatMockManagementCursor(managementEventsGeneration, latestId) } })
     }
 
     if (urlPath === '/api/jobs/events' && method === 'GET' && options.jobsEventsPayload != null) {
@@ -1000,38 +975,27 @@ export function installDockrevMockApi(
         ],
         logsLastId: 2,
       }
-      const updateFinishDelayMs = scenario === 'dashboard-demo-slow-update' ? 4_500 : 1_400
-      const settleDelayMs = scenario === 'dashboard-demo-slow-update' ? 280 : 220
-      window.setTimeout(() => {
-        const live = f.jobById[jobId]
-        if (!live || (live.status !== 'queued' && live.status !== 'running')) return
-        const finishedAt = nowIso()
-        const nextLogs = [...live.logs, { ts: finishedAt, level: 'info', msg: 'Mock job finished.' }]
-        const finalJob: JobDetail = {
-          ...live,
-          status: 'success',
-          finishedAt,
-          logs: nextLogs,
-          logsLastId: nextLogs.length,
+      const updateFinishDelayMs = scenario === 'dashboard-demo-slow-update' ? 4_500 : 1_400; const settleDelayMs = scenario === 'dashboard-demo-slow-update' ? 280 : 220
+      const settleServices = () => {
+        if (!state) return
+        for (const affectedId of affectedServiceIds) {
+          const target = targetsByService.get(affectedId)
+          if (target) applyMockUpdateSettlement(affectedId, target.targetTag, target.targetDigest, target.pullTags)
         }
-        f.jobById[jobId] = finalJob
-        f.jobs = f.jobs.map((row) => (row.id === jobId ? { ...row, status: 'success', finishedAt } : row))
-
         persistState()
-        window.setTimeout(() => {
-          if (!state) return
-          for (const affectedId of affectedServiceIds) {
-            const target = targetsByService.get(affectedId)
-            if (!target) continue
-            applyMockUpdateSettlement(
-              affectedId,
-              target.targetTag,
-              target.targetDigest,
-              target.pullTags,
-            )
-          }
-          persistState()
-        }, settleDelayMs)
+      }
+      const finishUpdateJob = () => {
+        const current = f.jobById[jobId]
+        if (!current || (current.status !== 'queued' && current.status !== 'running')) return
+        const finishedAt = nowIso(), nextLogs = [...current.logs, { ts: finishedAt, level: 'info', msg: 'Mock job finished.' }]
+        f.jobById[jobId] = { ...current, status: 'success', finishedAt, logs: nextLogs, logsLastId: nextLogs.length }
+        f.jobs = f.jobs.map((row) => (row.id === jobId ? { ...row, status: 'success', finishedAt } : row))
+        const entities = affectedServiceIds.map((affectedId) => ({ entityType: 'service', id: affectedId })).concat(stackId ? [{ entityType: 'stack', id: stackId }] : [], [{ entityType: 'job', id: jobId }])
+        publishMockManagementEvent(entities, { jobId, status: 'success', jobType: 'update', scope, stackId, serviceId, serviceIds: affectedServiceIds, terminal: true })
+        persistState()
+      }
+      window.setTimeout(() => {
+        window.setTimeout(() => { settleServices(); finishUpdateJob() }, settleDelayMs)
       }, updateFinishDelayMs)
       return json({ jobId })
     }

@@ -479,6 +479,8 @@ export function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fi
   }
   if (scenario === 'service-detail-rollback-stale-after-update') {
     const fixture = buildDashboardDemo()
+    fixture.jobs = fixture.jobs.filter((job) => job.id !== 'job-all-api-5-2-4')
+    delete fixture.jobById['job-all-api-5-2-4']
     const service = fixture.stackById['stack-prod']?.services.find((item) => item.id === 'svc-prod-api')
     const currentDigest = service?.image.digest ?? ''
     const currentDisplayTag = service?.image.resolvedTag ?? service?.image.tag ?? null

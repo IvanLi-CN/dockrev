@@ -206,7 +206,7 @@ export class MockEventSource extends EventTarget {
 
   private closed = false
   private polling = false
-  private lastEventId = 0
+  private lastEventId = ''
   private pollTimer: number | null = null
 
   constructor(url: string | URL, eventSourceInitDict?: EventSourceInit) {
@@ -260,20 +260,21 @@ export class MockEventSource extends EventTarget {
     this.polling = true
     try {
       const u = new URL(this.url, typeof window !== 'undefined' ? window.location.href : 'http://localhost')
-      if (this.lastEventId > 0) u.searchParams.set('afterId', String(this.lastEventId))
+      if (this.lastEventId) u.searchParams.set('afterId', this.lastEventId)
       const resp = await globalThis.fetch(u.toString(), {
         method: 'GET',
         credentials: this.withCredentials ? 'include' : 'same-origin',
-        headers: { Accept: 'text/event-stream' },
+        headers: { Accept: 'text/event-stream', ...(this.lastEventId ? { 'Last-Event-ID': this.lastEventId } : {}) },
       })
       if (!resp.ok) throw new Error(`SSE request failed: ${resp.status}`)
       const payload = await resp.text()
+      const managementCursor = u.pathname === '/api/events' ? resp.headers.get('x-dockrev-management-cursor') : null
       this.emitOpen()
       for (const evt of parseSsePayload(payload)) {
         this.emitMessage(evt.event || 'message', evt.data, evt.id)
-        const parsedId = Number.parseInt(evt.id, 10)
-        if (Number.isFinite(parsedId) && parsedId > this.lastEventId) this.lastEventId = parsedId
+        if (evt.id) this.lastEventId = evt.id
       }
+      if (managementCursor && !this.lastEventId) this.lastEventId = managementCursor
     } catch {
       this.emitError()
     } finally {

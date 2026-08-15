@@ -89,6 +89,7 @@ function uniquePreserveOrder(values: string[] | null | undefined): string[] {
   return out
 }
 
+const FETCH_DEBOUNCE_MS = 220
 const TAGS_PREVIEW_MAX = 12
 
 type DigestTagsState = {
@@ -182,6 +183,7 @@ export function CurrentVersionPopover(props: {
     serviceId,
   } = props
   const preferSource = props.preferSource ?? 'resolvedTag'
+  const fetchTimer = useRef<number | null>(null)
   const {
     close,
     contentProps,
@@ -298,6 +300,15 @@ export function CurrentVersionPopover(props: {
   )
 
   useEffect(() => {
+    return () => {
+      if (fetchTimer.current != null) {
+        window.clearTimeout(fetchTimer.current)
+        fetchTimer.current = null
+      }
+    }
+  }, [])
+
+  useEffect(() => {
     if (!digestNorm) return
     return subscribeDigestSnapshotInvalidation(snapshotKey, (token) => {
       if (ignoreInvalidationTokenRef.current === token) {
@@ -305,6 +316,10 @@ export function CurrentVersionPopover(props: {
         return
       }
 
+      if (fetchTimer.current != null) {
+        window.clearTimeout(fetchTimer.current)
+        fetchTimer.current = null
+      }
       suppressLoadingLabelRef.current = true
       beginRefreshExpectation()
       setDigestState((prev) => {
@@ -322,6 +337,11 @@ export function CurrentVersionPopover(props: {
     setRefreshing(true)
     setRefreshError(null)
     setRefreshNotice(null)
+
+    if (fetchTimer.current != null) {
+      window.clearTimeout(fetchTimer.current)
+      fetchTimer.current = null
+    }
 
     try {
       const resp = await forceRefreshServiceVersionInference(
@@ -358,17 +378,37 @@ export function CurrentVersionPopover(props: {
   }, [snapshotKey, digestNorm, refreshing, serviceId, beginRefreshExpectation])
 
   useEffect(() => {
-    const shouldLoadSnapshot = open || snapshotPhaseRef.current === 'loading'
-    if (!shouldLoadSnapshot) return
+    const shouldPollSnapshot = open || snapshotPhaseRef.current === 'loading'
+    if (!shouldPollSnapshot) return
     if (!digestNorm) return
     if (digestTags != null) return
 
     let alive = true
-    getServiceDigestTagsSnapshot(serviceId, digestNorm)
-      .then((data) => {
+    const delay = pinned ? 0 : FETCH_DEBOUNCE_MS
+    if (fetchTimer.current != null) {
+      window.clearTimeout(fetchTimer.current)
+      fetchTimer.current = null
+    }
+
+    const timerId = window.setTimeout(() => {
+      if (!alive) return
+      if (fetchTimer.current === timerId) fetchTimer.current = null
+
+      const poll = () => {
+        if (!alive) return
+        getServiceDigestTagsSnapshot(serviceId, digestNorm)
+          .then((data) => {
             if (!alive) return
             if (isServiceDigestTagsSnapshotPending(data)) {
               setSnapshotPhase('loading')
+              const retryAfterMs = Math.max(
+                200,
+                Math.min(5000, Number(data.retryAfterMs) || FETCH_DEBOUNCE_MS),
+              )
+              fetchTimer.current = window.setTimeout(() => {
+                if (fetchTimer.current != null) fetchTimer.current = null
+                poll()
+              }, retryAfterMs)
               trackDigestSnapshotRefresh({
                 serviceId,
                 digest: digestNorm,
@@ -447,8 +487,8 @@ export function CurrentVersionPopover(props: {
               clearRefreshExpectation()
             }
             setSnapshotPhase('ready')
-      })
-      .catch((e: unknown) => {
+          })
+          .catch((e: unknown) => {
             if (!alive) return
             if (e instanceof ApiError && e.status === 404) {
               setDigestState({
@@ -495,9 +535,19 @@ export function CurrentVersionPopover(props: {
             if (isExternalRefresh) setExternalRefreshKey(null)
             clearRefreshExpectation()
             setSnapshotPhase('error')
-      })
+          })
+      }
+
+      poll()
+    }, delay)
+    fetchTimer.current = timerId
+
     return () => {
       alive = false
+      if (fetchTimer.current === timerId) {
+        window.clearTimeout(timerId)
+        fetchTimer.current = null
+      }
     }
   }, [
     snapshotKey,
@@ -507,6 +557,7 @@ export function CurrentVersionPopover(props: {
     localRefreshKey,
     open,
     snapshotFetchToken,
+    pinned,
     preferSource,
     onLocalResolvedTags,
     serviceId,

@@ -21,9 +21,9 @@ run_with_retry() {
     if timeout --signal=TERM --kill-after=30s "${timeout_sec}s" "$@"; then
       echo "[storybook-ci-check] $(timestamp) OK ${label} (attempt ${attempt}/${MAX_ATTEMPTS})"
       return 0
+    else
+      local code=$?
     fi
-
-    local code=$?
     if [[ "${code}" -eq 124 ]]; then
       echo "[storybook-ci-check] $(timestamp) TIMEOUT ${label} after ${timeout_sec}s (attempt ${attempt}/${MAX_ATTEMPTS})" >&2
     else
@@ -49,6 +49,11 @@ run_with_retry \
   "playwright install chromium" \
   "${PLAYWRIGHT_INSTALL_TIMEOUT_SEC}" \
   bun ./node_modules/.bin/playwright install chromium
+
+run_with_retry \
+  "rollback refresh race interaction test" \
+  "${STORYBOOK_TEST_TIMEOUT_SEC}" \
+  env DOCKREV_TEST_STORYBOOK_ROLLBACK_RACE_ONLY=1 bun run test-storybook
 
 run_with_retry \
   "storybook interaction tests" \
