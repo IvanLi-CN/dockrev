@@ -12,7 +12,7 @@ import { normalizeExternalHttpUrl } from '../imageLinks'
 import { imageRepoFromImageRef } from '../imageRepo'
 import { publishServiceTreeRefresh } from '../serviceTreeRefresh'
 import { describeServiceOperationProgress } from '../serviceOperationProgress'
-import { dockrevSelfUpgradeBusyReason, errorMessage, isDockrevService, normalizeMaybeDigest, openSelfUpgradeUrl, rollbackTargetMatchesServiceDigest, rollbackUnavailableReasonLabel, rollbackVersionLabel, ROLLBACK_TARGET_REFRESH_HINT, scanHasFailures, scanIsComplete, shortDigest, svcTone, useRollbackTargetInvariantWarning } from './serviceDetailUtils'
+import { activeServiceOperation, conflictingJobId, dockrevSelfUpgradeBusyReason, errorMessage, isDockrevService, normalizeMaybeDigest, openSelfUpgradeUrl, rollbackTargetMatchesServiceDigest, rollbackUnavailableReasonLabel, rollbackVersionLabel, ROLLBACK_TARGET_REFRESH_HINT, scanHasFailures, scanIsComplete, serviceOperationOwner, shortDigest, svcTone, useRollbackTargetInvariantWarning } from './serviceDetailUtils'
 import { navigate } from '../routes'
 import { selfUpgradeBaseUrl } from '../runtimeConfig'
 import { Button, Mono } from '../ui'
@@ -25,28 +25,6 @@ import { useSupervisorHealth } from '../useSupervisorHealth'
 import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay, inferResolvedTagsFromSnapshot, isStrictSemverTag } from '../versionDisplay'
 import type { ManagementEvent } from '../managementEvents'
 import { retryRollbackTargetDigestMismatch } from './rollbackTargetRefresh'
-
-function conflictingJobId(error: ApiError): string | null {
-  const details = error.details
-  const existingJobId =
-    details && typeof details === 'object' && 'existingJobId' in details
-      ? (details as Record<string, unknown>).existingJobId
-      : null
-  return typeof existingJobId === 'string' && existingJobId.trim() ? existingJobId : null
-}
-
-type ServiceOperationOwner = 'update' | 'rollback' | 'lifecycle'
-
-function serviceOperationOwner(type: string | null | undefined): ServiceOperationOwner | null {
-  if (type === 'update') return 'update'
-  if (type === 'rollback') return 'rollback'
-  if (type === 'service_lifecycle') return 'lifecycle'
-  return null
-}
-
-function activeServiceOperation(status: string | null | undefined): boolean {
-  return status === 'queued' || status === 'running'
-}
 
 export function managementEventAffectsServiceDetail(
   event: ManagementEvent,
@@ -163,6 +141,7 @@ export function useServiceDetailPageState(props: {
   const latestAppliedFullRefreshRequestIdRef = useRef(0)
   const stackRefreshRequestIdRef = useRef(0)
   const latestAppliedStackRefreshRequestIdRef = useRef(0)
+  const pageGenerationRef = useRef(0); const pageGeneration = pageGenerationRef.current
   const rollbackTargetRef = useRef(rollbackTarget)
   const rollbackTargetRefreshingRef = useRef(rollbackTargetRefreshing)
   const serviceRef = useRef(service)
@@ -326,12 +305,13 @@ export function useServiceDetailPageState(props: {
     }
   }, [onLastScanHint, primeRollbackTargetRefresh, serviceId, settleRollbackTargetSnapshot, stackId])
 
-  const refreshStackOnly = useCallback(async () => {
+  const refreshStackOnly = useCallback(async (expectedPageGeneration = pageGenerationRef.current) => {
+    if (expectedPageGeneration !== pageGenerationRef.current) return
     const requestId = ++stackRefreshRequestIdRef.current
     setRollbackTargetRefreshing(true)
     try {
       const st = await getStack(stackId)
-      if (requestId !== stackRefreshRequestIdRef.current || requestId < latestAppliedStackRefreshRequestIdRef.current) return
+      if (expectedPageGeneration !== pageGenerationRef.current || requestId !== stackRefreshRequestIdRef.current || requestId < latestAppliedStackRefreshRequestIdRef.current) return
       latestAppliedStackRefreshRequestIdRef.current = requestId
       const svc = st.services.find((s) => s.id === serviceId) ?? null
       setStack(st)
@@ -342,7 +322,7 @@ export function useServiceDetailPageState(props: {
       const rollbackResult = await settleRollbackTargetSnapshot(requestId, svc, target)
       if (rollbackResult === 'digest_mismatch') throw new Error('回滚信息刷新失败，请稍后重试')
     } catch (error: unknown) {
-      if (requestId !== stackRefreshRequestIdRef.current || requestId < latestAppliedStackRefreshRequestIdRef.current) return
+      if (expectedPageGeneration !== pageGenerationRef.current || requestId !== stackRefreshRequestIdRef.current || requestId < latestAppliedStackRefreshRequestIdRef.current) return
       setRollbackTarget(null)
       setRollbackActiveTarget(null)
       setRollbackTargetRefreshing(false)
@@ -372,11 +352,10 @@ export function useServiceDetailPageState(props: {
     [serviceId],
   )
 
-  const requestRefresh = usePageResumeRefresh(refresh, {
-    onError: (error: unknown) => setError(errorMessage(error)),
-  })
+  const requestRefresh = usePageResumeRefresh(refresh, { onError: (error: unknown) => { if (pageGeneration === pageGenerationRef.current) setError(errorMessage(error)) } })
 
-  const refreshLifecycleStatus = useCallback(async () => {
+  const refreshLifecycleStatus = useCallback(async (expectedPageGeneration = pageGenerationRef.current) => {
+    if (expectedPageGeneration !== pageGenerationRef.current) return
     const requestId = ++lifecycleStatusRequestIdRef.current
     if (!service || isDockrevService(service)) {
       if (requestId === lifecycleStatusRequestIdRef.current) {
@@ -387,9 +366,9 @@ export function useServiceDetailPageState(props: {
     }
     try {
       const next = await getServiceLifecycleStatus(service.id)
-      if (requestId === lifecycleStatusRequestIdRef.current) setLifecycleStatus(next)
+      if (expectedPageGeneration === pageGenerationRef.current && requestId === lifecycleStatusRequestIdRef.current) setLifecycleStatus(next)
     } catch (error: unknown) {
-      if (requestId === lifecycleStatusRequestIdRef.current) {
+      if (expectedPageGeneration === pageGenerationRef.current && requestId === lifecycleStatusRequestIdRef.current) {
         setLifecycleStatus((previous) => ({
           state: 'unknown',
           unavailableReason: 'lifecycle_status_unavailable',
@@ -402,6 +381,7 @@ export function useServiceDetailPageState(props: {
 
   const seedLifecycleActiveJob = useCallback(
     (jobId: string, type: 'rollback' | 'service_lifecycle', action: ServiceLifecycleAction | null = null) => {
+      lifecycleStatusRequestIdRef.current += 1
       lifecycleActiveJobIdRef.current = jobId
       setLifecycleStatus((previous) => ({
         state: previous?.state ?? 'unknown',
@@ -413,16 +393,14 @@ export function useServiceDetailPageState(props: {
   )
 
   useEffect(() => {
-    lifecycleActiveJobIdRef.current = null
+    pageGenerationRef.current += 1; lifecycleActiveJobIdRef.current = null
     lifecycleStatusRequestIdRef.current += 1
     setLifecycleSettledJobId(null)
     fullRefreshRequestIdRef.current += 1
     stackRefreshRequestIdRef.current += 1
-    setStack(null); setService(null); setSettings(null); setBackupTargets(null); setBackupRecords([])
-    setStackSettings(null); setRules([]); setLifecycleStatus(null); setLastSuccessfulRefreshAt(null)
-    setRollbackTarget(null)
-    setRollbackActiveTarget(null)
-    setRollbackTargetRefreshing(false)
+    setStack(null); setService(null); setSettings(null); setBackupTargets(null); setBackupRecords([]); setStackSettings(null); setRules([]); setLifecycleStatus(null); setLastSuccessfulRefreshAt(null)
+    setRollbackTarget(null); setRollbackActiveTarget(null); setRollbackTargetRefreshing(false)
+    setError(null); setNotice(null); setBusy(false); setRepoInferBusy(false)
   }, [serviceId, stackId])
 
   useEffect(() => {
@@ -430,7 +408,7 @@ export function useServiceDetailPageState(props: {
   }, [requestRefresh, serviceId, stackId])
 
   useEffect(() => {
-    void refreshLifecycleStatus().catch(() => {})
+    void refreshLifecycleStatus(pageGenerationRef.current).catch(() => {})
   }, [refreshLifecycleStatus])
 
   useEffect(() => {
@@ -447,7 +425,8 @@ export function useServiceDetailPageState(props: {
         detail.target === `service:${serviceId}`
       if (!matchesCurrent) return
 
-      void refreshStackOnly().catch((error: unknown) => setError(errorMessage(error)))
+      const generation = pageGenerationRef.current
+      void refreshStackOnly(generation).catch((error: unknown) => { if (generation === pageGenerationRef.current) setError(errorMessage(error)) })
     }
 
     window.addEventListener(UPDATE_JOB_SETTLED_EVENT, onUpdateJobSettled)
@@ -542,13 +521,15 @@ export function useServiceDetailPageState(props: {
       managementEventAffectsServiceDetail(event, stackId, serviceId, service),
     )
     if (!relevant) return
-    void Promise.all([refreshStackOnly(), refreshLifecycleStatus()])
-      .then(() => publishServiceTreeRefresh({ stackId, serviceId, reason: 'management-event' }))
-      .catch((error: unknown) => setError(errorMessage(error)))
+    const generation = pageGenerationRef.current
+    void Promise.all([refreshStackOnly(generation), refreshLifecycleStatus(generation)])
+      .then(() => { if (generation === pageGenerationRef.current) publishServiceTreeRefresh({ stackId, serviceId, reason: 'management-event' }) })
+      .catch((error: unknown) => { if (generation === pageGenerationRef.current) setError(errorMessage(error)) })
   })
 
   const archiveOrRestoreService = useCallback(async () => {
     if (!service) return
+    const generation = pageGeneration
     setBusy(true)
     setError(null)
     try {
@@ -559,13 +540,14 @@ export function useServiceDetailPageState(props: {
       }
       await requestRefresh()
     } catch (e: unknown) {
-      setError(errorMessage(e))
+      if (generation === pageGenerationRef.current) setError(errorMessage(e))
     } finally {
-      setBusy(false)
+      if (generation === pageGenerationRef.current) setBusy(false)
     }
-  }, [requestRefresh, service])
+  }, [pageGeneration, requestRefresh, service])
 
   const blockServiceUpdates = useCallback(async () => {
+    const generation = pageGeneration
     setBusy(true)
     setError(null)
     try {
@@ -578,14 +560,16 @@ export function useServiceDetailPageState(props: {
       })
       await requestRefresh()
     } catch (e: unknown) {
-      setError(errorMessage(e))
+      if (generation === pageGenerationRef.current) setError(errorMessage(e))
     } finally {
-      setBusy(false)
+      if (generation === pageGenerationRef.current) setBusy(false)
     }
-  }, [requestRefresh, serviceId])
+  }, [pageGeneration, requestRefresh, serviceId])
 
   const requestRollback = useCallback(() => {
     void (async () => {
+      const generation = pageGeneration
+      if (generation !== pageGenerationRef.current) return
       if (rollbackActiveJobId) {
         navigate({ name: 'job', jobId: rollbackActiveJobId })
         return
@@ -647,6 +631,7 @@ export function useServiceDetailPageState(props: {
       const latestTarget = rollbackTargetRef.current
       const latestService = serviceRef.current
       if (
+        generation !== pageGenerationRef.current ||
         rollbackRequestId !== stackRefreshRequestIdRef.current ||
         rollbackTargetRefreshingRef.current ||
         latestTarget !== rollbackTargetAtConfirm ||
@@ -664,12 +649,14 @@ export function useServiceDetailPageState(props: {
       setNotice(null)
       try {
         const resp = await triggerServiceRollback(service.id)
+        if (generation !== pageGenerationRef.current) return
         seedLifecycleActiveJob(resp.jobId, 'rollback')
         setNotice({ jobId: resp.jobId, kind: 'rollback' })
         publishServiceTreeRefresh({ stackId, serviceId, reason: 'rollback-job-started' })
-        await refreshStackOnly()
-        await refreshLifecycleStatus()
+        await refreshStackOnly(generation)
+        await refreshLifecycleStatus(generation)
       } catch (e: unknown) {
+        if (generation !== pageGenerationRef.current) return
         if (e instanceof ApiError) {
           if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
           else if (e.status === 409) {
@@ -686,19 +673,21 @@ export function useServiceDetailPageState(props: {
             } else {
               setError(e.message)
             }
-            await refreshStackOnly()
+            await refreshStackOnly(generation)
           } else setError(e.message)
         } else {
           setError(errorMessage(e))
         }
       } finally {
-        setBusy(false)
+        if (generation === pageGenerationRef.current) setBusy(false)
       }
     })()
-  }, [confirm, refreshLifecycleStatus, refreshStackOnly, rollbackActiveJobId, rollbackBackupValue, rollbackTarget, seedLifecycleActiveJob, service, serviceId, stack?.name, stackId])
+  }, [confirm, pageGeneration, refreshLifecycleStatus, refreshStackOnly, rollbackActiveJobId, rollbackBackupValue, rollbackTarget, seedLifecycleActiveJob, service, serviceId, stack?.name, stackId])
 
   const requestLifecycleAction = useCallback((action: ServiceLifecycleAction) => {
     void (async () => {
+      const generation = pageGeneration
+      if (generation !== pageGenerationRef.current) return
       if (!service) return
       const activeJobId = activeLifecycleJob?.id
       if (activeJobId) {
@@ -722,11 +711,13 @@ export function useServiceDetailPageState(props: {
       setNotice(null)
       try {
         const resp = await triggerServiceLifecycle(service.id, action)
+        if (generation !== pageGenerationRef.current) return
         seedLifecycleActiveJob(resp.jobId, 'service_lifecycle', action)
         setNotice({ jobId: resp.jobId, kind: 'lifecycle' })
         publishServiceTreeRefresh({ stackId, serviceId, reason: 'lifecycle-job-started' })
-        await refreshLifecycleStatus()
+        await refreshLifecycleStatus(generation)
       } catch (e: unknown) {
+        if (generation !== pageGenerationRef.current) return
         if (e instanceof ApiError && e.status === 409) {
           const existingJobId = conflictingJobId(e)
           if (existingJobId) {
@@ -734,18 +725,19 @@ export function useServiceDetailPageState(props: {
           } else {
             setError(e.message)
           }
-          await refreshLifecycleStatus().catch(() => undefined)
+          await refreshLifecycleStatus(generation).catch(() => undefined)
         } else {
           setError(errorMessage(e))
         }
       } finally {
-        setBusy(false)
+        if (generation === pageGenerationRef.current) setBusy(false)
       }
     })()
-  }, [activeLifecycleJob?.id, confirm, refreshLifecycleStatus, seedLifecycleActiveJob, service, serviceId, stackId])
+  }, [activeLifecycleJob?.id, confirm, pageGeneration, refreshLifecycleStatus, seedLifecycleActiveJob, service, serviceId, stackId])
 
   const requestPreviewUpdate = useCallback(() => {
     void (async () => {
+      const generation = pageGeneration
       if (!service || !service.candidate) return
       setBusy(true)
       setError(null)
@@ -759,21 +751,24 @@ export function useServiceDetailPageState(props: {
           allowArchMismatch: false,
           backupMode: 'inherit',
         })
+        if (generation !== pageGenerationRef.current) return
         setNotice({ jobId: resp.jobId, kind: 'update' })
       } catch (e: unknown) {
+        if (generation !== pageGenerationRef.current) return
         if (e instanceof ApiError && e.status === 401) setError('需要登录/鉴权（Forward Auth）')
         else if (e instanceof ApiError && e.status === 409) {
           setError('扫描结果已变化，请刷新并重新扫描后再更新')
           await requestRefresh()
         } else setError(errorMessage(e))
       } finally {
-        setBusy(false)
+        if (generation === pageGenerationRef.current) setBusy(false)
       }
     })()
-  }, [requestRefresh, service, stackId])
+  }, [pageGeneration, requestRefresh, service, stackId])
 
   const requestApplyUpdate = useCallback(() => {
     void (async () => {
+      const generation = pageGeneration
       if (!service || !service.candidate) return
       const ok = await confirm({
         title: `确认更新服务 ${service.name}？`,
@@ -809,7 +804,7 @@ export function useServiceDetailPageState(props: {
         confirmVariant: 'primary',
         badgeText: null,
       })
-      if (!ok) return
+      if (!ok || generation !== pageGenerationRef.current) return
       setError(null)
       setNotice(null)
       if (applyActionKey) beginSubmitting(applyActionKey)
@@ -822,10 +817,12 @@ export function useServiceDetailPageState(props: {
           allowArchMismatch: false,
           backupMode: 'inherit',
         })
+        if (generation !== pageGenerationRef.current) return
         setNotice({ jobId: resp.jobId, kind: 'update' })
         if (applyActionKey) trackJob(applyActionKey, resp.jobId, 'queued', service.candidate?.resolvedTag ?? service.candidate?.tag ?? null)
-        void refreshLifecycleStatus().catch(() => undefined)
+        void refreshLifecycleStatus(generation).catch(() => undefined)
       } catch (e: unknown) {
+        if (generation !== pageGenerationRef.current) return
         if (e instanceof ApiError) {
           if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
           else if (e.status === 409) {
@@ -855,6 +852,7 @@ export function useServiceDetailPageState(props: {
     confirm,
     endSubmitting,
     patchServiceInStack,
+    pageGeneration,
     refreshLifecycleStatus,
     requestRefresh,
     service,

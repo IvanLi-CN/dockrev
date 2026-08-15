@@ -21,9 +21,9 @@ run_with_retry() {
     if timeout --signal=TERM --kill-after=30s "${timeout_sec}s" "$@"; then
       echo "[storybook-ci-check] $(timestamp) OK ${label} (attempt ${attempt}/${MAX_ATTEMPTS})"
       return 0
+    else
+      local code=$?
     fi
-
-    local code=$?
     if [[ "${code}" -eq 124 ]]; then
       echo "[storybook-ci-check] $(timestamp) TIMEOUT ${label} after ${timeout_sec}s (attempt ${attempt}/${MAX_ATTEMPTS})" >&2
     else

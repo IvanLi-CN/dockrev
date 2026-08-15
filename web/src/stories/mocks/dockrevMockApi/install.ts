@@ -22,6 +22,8 @@ import {
   cloneFixture,
   parseCleanupScanRequest,
   partialCleanupResponse,
+  buildMockDigestTagData,
+  normalizeDigestValue,
   resolveMockEventSourcePollInterval,
   seedIgnoreSequence,
   seedJobSequence,
@@ -136,6 +138,7 @@ export function installDockrevMockApi(
   const rollbackTargetRaceByServiceId = new Map<string, RollbackTargetRaceState>(); const publishMockManagementEvent = (entities: Array<{ entityType: string; id: string }>, summary: Record<string, unknown>) => {
     const id = ++managementEventsSeqRef.value
     managementEvents.push({ id, cursor: formatMockManagementCursor(managementEventsGeneration, id), data: { type: 'entities_changed', domain: 'jobs', entities, version: id, summary } })
+    if (managementEvents.length > 1_024) managementEvents.shift()
   }
   let deployCheckReportSequenceIndex = 0
   const advanceQueueProgressDemo = (): number | null => {
@@ -182,70 +185,6 @@ export function installDockrevMockApi(
       if (svc) return { stack: st, svc }
     }
     return null
-  }
-
-  function normalizeDigestValue(value: string | null | undefined): string {
-    const trimmed = (value ?? '').trim()
-    if (!trimmed) return ''
-    return trimmed.includes(':') ? trimmed : `sha256:${trimmed}`
-  }
-
-  function buildMockDigestTagData(
-    serviceId: string,
-    imageTag: string,
-    digestNorm: string,
-    refreshed: boolean,
-  ): { repoTags: string[]; tags: string[] } {
-    const isVersionTagsDemoScenario =
-      scenario === 'version-tags-popover-demo' ||
-      scenario === 'version-tags-popover-same-digest' ||
-      scenario === 'version-tags-popover-snapshot-pending'
-    const d = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`
-
-    const repoTags =
-      serviceId === 'svc-prod-api'
-        ? ['5.2.1', '5.2.3', '5.2.4', '5.3.0', 'v5.2.1', 'v5.2.3', 'stable', 'latest']
-        : serviceId === 'svc-prod-web'
-          ? (() => {
-              const out: string[] = ['5.1', '5.1.10', '5.1.11', '5.1.12', '5.2', 'v5.2.1', 'stable', 'latest']
-              for (let i = 0; i < 40; i++) out.push(`5.2.${i}`)
-              return out
-            })()
-          : serviceId === 'svc-resolved-web'
-            ? (() => {
-                const out: string[] = ['5.1', '5.1.10', '5.1.11', '5.1.12', '5.2', 'v5.2.1', 'v5.2.3', 'stable', 'latest']
-                for (let i = 0; i < 40; i++) out.push(`5.2.${i}`)
-                return out
-              })()
-            : isVersionTagsDemoScenario && serviceId === 'svc-version-tags'
-              ? ['v0.8.9-arm64', 'v0.8.8-arm64', 'v0.8.8', 'v0.8.7', '0.8.8', '0.8.7', 'stable', 'latest']
-              : digestNorm === `sha256:${'a'.repeat(64)}`
-                ? ['v0.1.8', '0.1.8']
-                : [imageTag]
-
-    const tags = !digestNorm
-      ? []
-      : serviceId === 'svc-version-tags' && isVersionTagsDemoScenario && digestNorm === d('a', 'b1')
-        ? ['v0.8.7', '0.8.7', 'stable', 'latest']
-        : serviceId === 'svc-version-tags' && isVersionTagsDemoScenario && digestNorm === d('b', '9f')
-          ? refreshed
-            ? ['v0.8.8', 'v0.8.8-arm64', '0.8.8', 'stable', 'latest']
-            : ['v0.8.8-arm64', 'v0.8.8', '0.8.8', 'stable', 'latest']
-          : digestNorm === d('c', 'c2')
-            ? ['v5.2.1', '5.2.1', '5.2', 'stable', 'latest']
-            : digestNorm === d('a', 'b1') && serviceId === 'svc-resolved-web'
-              ? ['5.2.1', 'v5.2.1', 'stable', 'latest']
-              : digestNorm === d('b', '9f') && serviceId === 'svc-resolved-web'
-                ? ['5.2.3', 'v5.2.3']
-                : digestNorm === d('a', 'b1')
-                  ? ['5.2.1', 'v5.2.1']
-                  : digestNorm === d('b', '9f') && serviceId === 'svc-prod-api'
-                    ? ['5.2.3', 'v5.2.3', 'stable', 'latest']
-                    : digestNorm === `sha256:${'a'.repeat(64)}`
-                      ? ['v0.1.8', '0.1.8']
-                      : [imageTag]
-
-    return { repoTags, tags }
   }
 
   function parseMockGitHubRepoRef(input: string | null | undefined): ServiceGitHubRepoRef | null {
@@ -502,7 +441,7 @@ export function installDockrevMockApi(
         makeMockDebug,
         findService,
         normalizeDigestValue,
-        buildMockDigestTagData,
+        buildMockDigestTagData: (serviceId, imageTag, digestNorm, refreshed) => buildMockDigestTagData(scenario, serviceId, imageTag, digestNorm, refreshed),
         buildMockDiscoveryTimeline: (serviceId) =>
           buildMockDiscoveryTimelineResponse(serviceId, options, findService),
         buildMockGitHubReleasesResponse: (serviceId, page, perPage) =>
@@ -589,7 +528,15 @@ export function installDockrevMockApi(
     }
 
     if (urlPath === '/api/events' && method === 'GET') {
-      const afterCursor = url?.searchParams.get('afterId') ?? ''
+      const headers = init?.headers
+      const headerCursor = headers instanceof Headers
+        ? headers.get('Last-Event-ID')
+        : Array.isArray(headers)
+          ? headers.find(([key]) => key.toLowerCase() === 'last-event-id')?.[1] ?? null
+          : headers && typeof headers === 'object'
+            ? Object.entries(headers).find(([key]) => key.toLowerCase() === 'last-event-id')?.[1] ?? null
+            : null
+      const afterCursor = url?.searchParams.get('afterId') || headerCursor || ''
       const cursor = parseMockManagementCursor(afterCursor, managementEventsGeneration)
       const latestId = managementEventsSeqRef.value
       if (cursor.kind === 'resync') {
@@ -598,6 +545,12 @@ export function installDockrevMockApi(
         return new Response(`id: ${resyncCursor}\nevent: resync_required\ndata: ${JSON.stringify(data)}\n\n`, { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'x-accel-buffering': 'no-cache' } })
       }
       const afterId = cursor.kind === 'valid' ? cursor.id : 0
+      const oldestId = managementEvents[0]?.id ?? latestId
+      if (cursor.kind === 'valid' && cursor.id > 0 && cursor.id < oldestId - 1) {
+        const resyncCursor = formatMockManagementCursor(managementEventsGeneration, latestId)
+        const data = { type: 'resync_required', domain: 'management', reason: 'cursor_expired', generation: managementEventsGeneration }
+        return new Response(`id: ${resyncCursor}\nevent: resync_required\ndata: ${JSON.stringify(data)}\n\n`, { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'x-accel-buffering': 'no-cache' } })
+      }
       const events = managementEvents.filter((event) => event.id > afterId).slice(0, 200)
       const body = events.map((event) => `id: ${event.cursor}\nevent: management\ndata: ${JSON.stringify(event.data)}\n\n`).join('')
       return new Response(body || ': keep-alive\n\n', { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'x-accel-buffering': 'no' } })

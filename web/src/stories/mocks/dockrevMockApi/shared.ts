@@ -264,7 +264,7 @@ export class MockEventSource extends EventTarget {
       const resp = await globalThis.fetch(u.toString(), {
         method: 'GET',
         credentials: this.withCredentials ? 'include' : 'same-origin',
-        headers: { Accept: 'text/event-stream' },
+        headers: { Accept: 'text/event-stream', ...(this.lastEventId ? { 'Last-Event-ID': this.lastEventId } : {}) },
       })
       if (!resp.ok) throw new Error(`SSE request failed: ${resp.status}`)
       const payload = await resp.text()

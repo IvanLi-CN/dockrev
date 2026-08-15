@@ -1,9 +1,32 @@
 import { useEffect, useRef } from 'react'
 import type {
+  ApiError,
   Service,
   ServiceDigestTagsScanSummary,
   ServiceRollbackTargetResponse,
 } from '../api'
+
+export function conflictingJobId(error: ApiError): string | null {
+  const details = error.details
+  const existingJobId =
+    details && typeof details === 'object' && 'existingJobId' in details
+      ? (details as Record<string, unknown>).existingJobId
+      : null
+  return typeof existingJobId === 'string' && existingJobId.trim() ? existingJobId : null
+}
+
+export type ServiceOperationOwner = 'update' | 'rollback' | 'lifecycle'
+
+export function serviceOperationOwner(type: string | null | undefined): ServiceOperationOwner | null {
+  if (type === 'update') return 'update'
+  if (type === 'rollback') return 'rollback'
+  if (type === 'service_lifecycle') return 'lifecycle'
+  return null
+}
+
+export function activeServiceOperation(status: string | null | undefined): boolean {
+  return status === 'queued' || status === 'running'
+}
 import { normalizeDigest } from '../components/digest'
 import { isDockrevImageRef } from '../runtimeConfig'
 import { serviceRowStatus } from '../updateStatus'
