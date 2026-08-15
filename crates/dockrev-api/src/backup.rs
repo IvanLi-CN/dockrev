@@ -1096,10 +1096,12 @@ async fn delete_artifact_if_present(
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
 
     #[derive(Clone, Default)]
     struct FakeRunner {
         sizes: BTreeMap<String, u64>,
+        calls: Arc<Mutex<Vec<CommandSpec>>>,
     }
 
     #[async_trait::async_trait]
@@ -1109,6 +1111,7 @@ mod tests {
             spec: CommandSpec,
             _timeout: Duration,
         ) -> anyhow::Result<crate::runner::CommandOutput> {
+            self.calls.lock().unwrap().push(spec.clone());
             if (spec.program == "docker-compose" || spec.program == "docker")
                 && spec
                     .args
@@ -1138,20 +1141,22 @@ mod tests {
                     });
                 }
 
-                if let Some(out_mount) = spec
-                    .args
-                    .windows(2)
-                    .find(|w| w[0] == "-v" && w[1].ends_with(":/out"))
-                    .map(|w| w[1].clone())
+                if spec.args.iter().any(|arg| arg == "backup-helper")
+                    && let Some(out_mount) = spec
+                        .args
+                        .windows(2)
+                        .find(|w| w[0] == "-v" && w[1].ends_with(":/out-root"))
+                        .map(|w| w[1].clone())
                 {
                     let host_dir = out_mount.split(':').next().unwrap_or_default();
-                    let cmd = spec.args.last().cloned().unwrap_or_default();
-                    let name = cmd
-                        .split("/out/")
-                        .nth(1)
-                        .and_then(|s| s.split(".tar").next())
-                        .unwrap_or("backup");
-                    let path = PathBuf::from(host_dir).join(format!("{name}.tar.gz"));
+                    let output_final = spec
+                        .args
+                        .windows(2)
+                        .find(|w| w[0] == "--output-final")
+                        .map(|w| w[1].trim_start_matches("/out-root/"))
+                        .unwrap();
+                    let path = PathBuf::from(host_dir).join(output_final);
+                    tokio::fs::create_dir_all(path.parent().unwrap()).await?;
                     tokio::fs::write(&path, vec![0u8; 10]).await?;
                     return Ok(crate::runner::CommandOutput {
                         status: 0,
@@ -1227,6 +1232,7 @@ mod tests {
 
         let runner = FakeRunner {
             sizes: BTreeMap::from([("big".to_string(), 1000)]),
+            ..Default::default()
         };
 
         let stack = test_stack(vec![BackupTarget::DockerVolume {
@@ -1271,6 +1277,7 @@ mod tests {
 
         let runner = FakeRunner {
             sizes: BTreeMap::from([("big".to_string(), 1000)]),
+            ..Default::default()
         };
 
         let mut stack = test_stack(vec![BackupTarget::DockerVolume {
@@ -1281,10 +1288,6 @@ mod tests {
             .backup_targets
             .volume_names
             .insert("big".to_string(), crate::api::types::TernaryChoice::Force);
-
-        let artifact_dir = Path::new(&tmp).join("backups/stk_test");
-        std::fs::create_dir_all(&artifact_dir).unwrap();
-        std::fs::write(artifact_dir.join("20260119-000000Z.tar.zst"), [0_u8; 10]).unwrap();
 
         let out = run_pre_update_backup(
             &runner,
@@ -1299,7 +1302,7 @@ mod tests {
             &stack,
             &JobScope::Stack,
             None,
-            &[],
+            &["web".to_string()],
             "2026-01-19T00:00:00Z",
             None,
             None,
@@ -1308,6 +1311,18 @@ mod tests {
         .unwrap();
         assert_eq!(out.status, "success");
         assert!(out.artifact_path.as_deref().unwrap().ends_with(".tar.zst"));
+        assert_eq!(out.services_kept_stopped, ["web"]);
+        let calls = runner.calls.lock().unwrap();
+        assert!(
+            calls
+                .iter()
+                .any(|spec| spec.args.iter().any(|arg| arg == "stop"))
+        );
+        assert!(
+            !calls
+                .iter()
+                .any(|spec| spec.args.iter().any(|arg| arg == "up"))
+        );
         assert_eq!(out.size_bytes, Some(10));
     }
 }
