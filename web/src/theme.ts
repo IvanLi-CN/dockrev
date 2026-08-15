@@ -180,7 +180,7 @@ export function setThemePreference(
     { clipPath: clipPaths.start },
     { clipPath: clipPaths.end },
   ], {
-    duration: 1800,
+    duration: 900,
     easing: 'cubic-bezier(0.45, 0, 0.55, 1)',
     fill: 'both',
     pseudoElement: '::view-transition-new(root)',

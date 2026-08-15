@@ -12,7 +12,7 @@
 
 - 主题控制器已提供 `system | light | dark` 偏好、系统解析、storage/media 同步、同页订阅、根节点元数据和显式值迁移。
 - `ThemePreferenceControl` 已接入 AppShell：桌面折叠图标、桌面展开滑块、移动设置路由图标；Radix ContextMenu 提供直接 radio 选择。
-- 解析主题切换使用浏览器原生根视图快照执行全视口圆形揭示；圆心取触发控件中心，终点半径精确计算到视口最远角。目标主题快照以对称非线性缓入缓出曲线在 `1800ms` 内覆盖旧主题快照，完整覆盖后浏览器才结束过渡生命周期；reduced-motion 或不支持 View Transition 的环境直接应用最终状态。
+- 解析主题切换使用浏览器原生根视图快照执行全视口圆形揭示；圆心取触发控件中心，终点半径精确计算到视口最远角。目标主题快照以对称非线性缓入缓出曲线在 `900ms` 内覆盖旧主题快照，完整覆盖后浏览器才结束过渡生命周期；reduced-motion 或不支持 View Transition 的环境直接应用最终状态。
 - 主题存储与现有 Supervisor 同源合同兼容：缺失 key 表示 system，显式 light/dark 保持原值。
 - 视觉证据目标源为 ui_demo（页面/AppShell）与 Storybook docs（可复用主题控件）。
 
