@@ -69,6 +69,25 @@ describe('rollback target digest retry policy', () => {
     expect(result).toEqual({ kind: 'failed', error: failure, retryCount: 1 })
   })
 
+  test('discards a fetch failure when the request generation changes in flight', async () => {
+    let currentRequestId = 7
+    let rejectFetch: ((error: unknown) => void) | undefined
+    const resultPromise = retryRollbackTargetDigestMismatch({
+      initialTarget: 'stale',
+      requestId: 7,
+      currentRequestId: () => currentRequestId,
+      validate: () => 'digest_mismatch',
+      fetchTarget: () => new Promise<string>((_, reject) => { rejectFetch = reject }),
+      sleep: async () => undefined,
+    })
+
+    await new Promise<void>((resolve) => queueMicrotask(resolve))
+    currentRequestId = 8
+    rejectFetch?.(new Error('request failed'))
+
+    expect(await resultPromise).toEqual({ kind: 'outdated', retryCount: 1 })
+  })
+
   test('stops before fetching when the request generation changes during the delay', async () => {
     let currentRequestId = 7
     let fetchCount = 0

@@ -328,7 +328,7 @@ export function useServiceDetailPageState(props: {
         const target = await getServiceRollbackTarget(serviceId)
         await settleRollbackTargetSnapshot(requestId, svc, target)
       } catch (error: unknown) {
-        if (requestId < latestAppliedStackRefreshRequestIdRef.current) return
+        if (requestId !== stackRefreshRequestIdRef.current || requestId < latestAppliedStackRefreshRequestIdRef.current) return
         if (rollbackSnapshotMayBeStale) { setRollbackTarget(null); setRollbackActiveTarget(null) }
         setRollbackTargetRefreshing(false)
         throw error

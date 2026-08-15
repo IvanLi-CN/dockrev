@@ -55,6 +55,7 @@ export async function retryRollbackTargetDigestMismatch<T>(options: {
     try {
       target = await options.fetchTarget()
     } catch (error: unknown) {
+      if (options.requestId !== options.currentRequestId()) return { kind: 'outdated', retryCount }
       return { kind: 'failed', error, retryCount }
     }
   }
