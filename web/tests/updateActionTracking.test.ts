@@ -213,7 +213,7 @@ describe('doesManagementEventInvalidateUpdateSnapshot', () => {
       domain: 'jobs',
       entities: [{ entityType: 'job', id: 'job-update' }],
       version: 3,
-      summary: { jobId: 'job-update', status: 'success', terminal: true },
+      summary: { jobId: 'job-update', jobType: 'update', status: 'success', terminal: true },
     }
 
     expect(doesManagementEventInvalidateUpdateSnapshot(terminalEvent)).toBeTrue()
@@ -230,5 +230,9 @@ describe('doesManagementEventInvalidateUpdateSnapshot', () => {
 
     expect(doesManagementEventInvalidateUpdateSnapshot(progressEvent)).toBeFalse()
     expect(doesManagementEventInvalidateUpdateSnapshot({ ...progressEvent, domain: 'services' })).toBeFalse()
+    expect(doesManagementEventInvalidateUpdateSnapshot({
+      ...progressEvent,
+      summary: { jobId: 'job-check', jobType: 'check', status: 'running' },
+    })).toBeFalse()
   })
 })

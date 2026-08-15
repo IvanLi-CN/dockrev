@@ -83,6 +83,7 @@ export function isUpdateJobSnapshotCurrent(requestRevision: number, currentRevis
 
 export function doesManagementEventInvalidateUpdateSnapshot(event: ManagementEvent): boolean {
   if (event.domain !== 'jobs') return false
+  if (event.summary.jobType !== 'update') return false
   const status = typeof event.summary.status === 'string' ? event.summary.status : null
   return Boolean(status && (isUpdateJobActiveStatus(status) || event.summary.terminal === true))
 }
