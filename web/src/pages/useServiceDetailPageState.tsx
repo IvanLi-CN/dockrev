@@ -241,14 +241,8 @@ export function useServiceDetailPageState(props: {
     }
     const stableRollbackTarget = rollbackTarget ? rollbackTargetMatchesServiceDigest(svc, rollbackTarget) : false
     const stableRollbackActiveTarget = rollbackActiveTarget ? rollbackTargetMatchesServiceDigest(svc, rollbackActiveTarget) : false
-    if (stableRollbackTarget) {
-      setRollbackTargetRefreshing(false)
-      return
-    }
-    if (stableRollbackActiveTarget) {
+    if (stableRollbackActiveTarget && !stableRollbackTarget) {
       setRollbackTarget(null)
-      setRollbackTargetRefreshing(false)
-      return
     }
     if (!rollbackActiveTarget?.activeJobId) setRollbackActiveTarget(null)
     setRollbackTargetRefreshing(true)
