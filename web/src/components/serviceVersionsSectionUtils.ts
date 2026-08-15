@@ -10,12 +10,17 @@ export function observeVersionSectionInlineWidth(
   measure()
 
   if (typeof window.ResizeObserver !== 'undefined') {
-    const observer = new window.ResizeObserver((entries) => {
-      const entry = entries[0]
-      if (entry) onWidth(entry.contentRect.width)
-    })
-    observer.observe(element)
-    return () => observer.disconnect()
+    let observer: ResizeObserver | null = null
+    try {
+      observer = new window.ResizeObserver((entries) => {
+        const entry = entries[0]
+        if (entry) onWidth(entry.contentRect.width)
+      })
+      observer.observe(element)
+      return () => observer?.disconnect()
+    } catch {
+      observer?.disconnect()
+    }
   }
 
   let frameId: number | null = null

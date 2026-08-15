@@ -1,5 +1,4 @@
 import { currentRoutePathname } from "../../routes";
-import { observeVersionSectionInlineWidth } from "../../components/serviceVersionsSectionUtils";
 import { dockrevVersionReleaseNotes, versionReleaseNotes } from "./serviceDetailPageStoryFixtures";
 import {
   findSectionCard,
@@ -61,18 +60,36 @@ function visibleCount(root: ParentNode, attr: string): number {
   return Number(versionsSurface(root)?.getAttribute(attr) ?? "0");
 }
 
-function observeWithResizeObserverUnavailable(
-  element: HTMLElement,
-  onWidth: (width: number) => void,
-): () => void {
+function installSectionResizeObserverFallbackFixture(): {
+  rejectedSectionObservations: () => number;
+  restore: () => void;
+} {
   const descriptor = Object.getOwnPropertyDescriptor(window, "ResizeObserver");
-  Object.defineProperty(window, "ResizeObserver", { configurable: true, value: undefined });
-  try {
-    return observeVersionSectionInlineWidth(element, onWidth);
-  } finally {
-    if (descriptor) Object.defineProperty(window, "ResizeObserver", descriptor);
-    else Reflect.deleteProperty(window, "ResizeObserver");
+  let rejectedSectionObservations = 0;
+
+  class SelectiveResizeObserver implements ResizeObserver {
+    disconnect() {}
+
+    observe(target: Element) {
+      if (!target.classList.contains("serviceVersionsSection")) return;
+      rejectedSectionObservations += 1;
+      throw new Error("section ResizeObserver unavailable in fallback fixture");
+    }
+
+    unobserve() {}
   }
+
+  Object.defineProperty(window, "ResizeObserver", {
+    configurable: true,
+    value: SelectiveResizeObserver,
+  });
+  return {
+    rejectedSectionObservations: () => rejectedSectionObservations,
+    restore: () => {
+      if (descriptor) Object.defineProperty(window, "ResizeObserver", descriptor);
+      else Reflect.deleteProperty(window, "ResizeObserver");
+    },
+  };
 }
 
 const dockrevDigest = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`;
@@ -380,6 +397,15 @@ export const VersionsSectionIntermediateWidth: ServiceDetailStory = {
   },
 };
 
+const renderVersionsSectionIntermediateWideActions = render("stack-prod", "svc-prod-api", "versions", {
+  pageTitle: null,
+  pageSubtitle: null,
+  sidebarCollapsed: false,
+})!;
+let sectionResizeObserverFallbackFixture:
+  | ReturnType<typeof installSectionResizeObserverFallbackFixture>
+  | undefined;
+
 export const VersionsSectionIntermediateWideActions: ServiceDetailStory = {
   parameters: {
     viewport: { defaultViewport: "dockrevIntermediate" },
@@ -392,13 +418,12 @@ export const VersionsSectionIntermediateWideActions: ServiceDetailStory = {
       },
     },
   },
-  render: render("stack-prod", "svc-prod-api", "versions", {
-    pageTitle: null,
-    pageSubtitle: null,
-    sidebarCollapsed: false,
-  }),
+  render: (args, context) => {
+    sectionResizeObserverFallbackFixture?.restore();
+    sectionResizeObserverFallbackFixture = installSectionResizeObserverFallbackFixture();
+    return renderVersionsSectionIntermediateWideActions(args, context);
+  },
   play: async ({ canvasElement }) => {
-    let stopFallbackObservation = () => {};
     try {
       await waitForCondition(() => Boolean(findVersionCard(canvasElement, "5.2.3")));
       const initialCandidate = findVersionCard(canvasElement, "5.2.3");
@@ -406,15 +431,10 @@ export const VersionsSectionIntermediateWideActions: ServiceDetailStory = {
       const initialScrollHeight = initialViewport?.scrollHeight ?? 0;
       const section = canvasElement.querySelector<HTMLElement>(".serviceVersionsSection");
       expectStory(Boolean(section), "fallback story should expose the mounted versions section");
-      const initialSectionWidth = section?.getBoundingClientRect().width ?? 0;
-      let fallbackWidth = initialSectionWidth;
-      let fallbackMeasurementCount = 0;
-      if (section) {
-        stopFallbackObservation = observeWithResizeObserverUnavailable(section, (width) => {
-          fallbackWidth = width;
-          fallbackMeasurementCount += 1;
-        });
-      }
+      expectStory(
+        (sectionResizeObserverFallbackFixture?.rejectedSectionObservations() ?? 0) > 0,
+        "mounted versions section should select the production fallback",
+      );
       expectStory(versionsSurface(canvasElement)?.getAttribute("data-service-versions-layout") === "stream", "fallback story should start in the stream layout");
       expectStory(!versionsIndexViewport(canvasElement), "fallback story should not reserve a version index rail");
       expectStory(
@@ -426,9 +446,6 @@ export const VersionsSectionIntermediateWideActions: ServiceDetailStory = {
       expectStory(Boolean(collapseButton), "fallback story should expose the primary sidebar toggle");
       collapseButton?.click();
       await waitForCondition(() => canvasElement.querySelector(".appShell")?.classList.contains("appShellSidebarCollapsed") ?? false);
-      await waitForCondition(
-        () => fallbackMeasurementCount > 1 && Math.abs(fallbackWidth - initialSectionWidth) > 1,
-      );
       await waitForCondition(
         () =>
           getComputedStyle(findVersionCard(canvasElement, "5.2.3") ?? canvasElement)
@@ -473,7 +490,8 @@ export const VersionsSectionIntermediateWideActions: ServiceDetailStory = {
         "unindexed wide cards should not introduce horizontal overflow",
       );
     } finally {
-      stopFallbackObservation();
+      sectionResizeObserverFallbackFixture?.restore();
+      sectionResizeObserverFallbackFixture = undefined;
     }
   },
 };

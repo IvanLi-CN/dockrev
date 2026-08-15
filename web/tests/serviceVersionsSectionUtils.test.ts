@@ -55,6 +55,65 @@ describe('mergeReleaseNoteItems', () => {
 })
 
 describe('observeVersionSectionInlineWidth', () => {
+  test.each(['constructor', 'observe'] as const)(
+    'falls back when ResizeObserver %s fails',
+    (failurePoint) => {
+      const originalWindow = globalThis.window
+      const callbacks = new Map<string, () => void>()
+      let mutationObserved = false
+      let resizeObserverDisconnected = false
+      const shell = {}
+      const fakeWindow = {
+        ResizeObserver: class {
+          constructor() {
+            if (failurePoint === 'constructor') throw new Error('unsupported target')
+          }
+
+          observe() {
+            if (failurePoint === 'observe') throw new Error('unsupported target')
+          }
+
+          disconnect() {
+            resizeObserverDisconnected = true
+          }
+        },
+        MutationObserver: class {
+          observe() {
+            mutationObserved = true
+          }
+
+          disconnect() {}
+        },
+        addEventListener(type: string, callback: () => void) {
+          callbacks.set(type, callback)
+        },
+        removeEventListener(type: string) {
+          callbacks.delete(type)
+        },
+        requestAnimationFrame() {
+          return 1
+        },
+        cancelAnimationFrame() {},
+      }
+      const element = {
+        getBoundingClientRect: () => ({ width: 1_079 }),
+        closest: (selector: string) => (selector === '.appShell' ? shell : null),
+      } as unknown as HTMLElement
+
+      try {
+        Reflect.set(globalThis, 'window', fakeWindow)
+        const stop = observeVersionSectionInlineWidth(element, () => {})
+
+        expect(mutationObserved).toBe(true)
+        expect(callbacks.has('resize')).toBe(true)
+        expect(resizeObserverDisconnected).toBe(failurePoint === 'observe')
+        stop()
+      } finally {
+        Reflect.set(globalThis, 'window', originalWindow)
+      }
+    },
+  )
+
   test('uses the app shell mutation fallback when ResizeObserver is unavailable', () => {
     const originalWindow = globalThis.window
     let width = 1_079
