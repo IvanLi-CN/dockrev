@@ -77,13 +77,14 @@
 - `版本` 子页必须复用 `GET /api/services/{service_id}/release-notes` 的统一数据源与 Settings 固定 provider 语义；`provider=gitHub` 时只暴露 `original`，`provider=octoRill` 时复用 `original | translated | smart`，并改为页内卡片阅读而不是强依赖右侧抽屉。
 - `版本` 子页页头必须把仓库、来源、当前版本与候选版本 chips 收敛为仓库级 Releases 图标入口：GitHub 图标固定打开 `https://github.com/<owner>/<repo>/releases`，OctoRill 图标仅在 release-notes 响应提供可信 `externalLinks.octoRillReleasesUrl` 时显示，并在新窗口打开对应地址。
 - `版本` 子页首屏必须以当前部署版本为锚点；前端需先调用统一 `release-notes/locate`，只渲染后端返回的锚点窗口，并在命中后把该卡片滚动到视口中心。请求失败时，只允许继续展示当前浏览器会话内最近一次 `serviceId + provider` 同源成功窗口并标记 stale；若没有同源快照，则直接错误态。较新/更旧版本都改为通过 `cursor + direction` 双向续拉。
-- `版本` 子页必须按自身实际可用 inline size 响应，而不是按浏览器视口宽度推断。当版本区可用宽度至少为 `1080px` 时，拆为左 `220px` 版本目录与右侧版本卡列表；低于该宽度时不挂载目录，把完整宽度交还版本卡流。该阈值必须覆盖 `220px` 目录、`18px` 间距和至少 `730px` 的宽卡片最低宽度预算。目录与正文都必须保持虚拟化、共享同一分页数据源、独立滚动，并以右侧视口中心版本驱动目录高亮与跟随。目录项固定高度，展示版本号和发布时间：7 天内显示中文相对时间，更早显示 `YYYY-MM-DD`；点击目录项时，对应卡片必须滚动到正文视口中心。任一列表接近末尾时，都必须复用现有去重分页逻辑继续加载旧版本。
+- `版本` 子页在 `>1100px` 时必须拆为左 `220px` 版本目录与右侧版本卡列表；目录与正文都必须保持虚拟化、共享同一分页数据源、独立滚动，并以右侧视口中心版本驱动目录高亮与跟随。目录项固定高度，展示版本号和发布时间：7 天内显示中文相对时间，更早显示 `YYYY-MM-DD`；点击目录项时，对应卡片必须滚动到正文视口中心。任一列表接近末尾时，都必须复用现有去重分页逻辑继续加载旧版本。
 - `版本` 子页的 release card 正文超过 10 行时必须默认折叠，支持原地展开/收起，并继续保持虚拟列表稳定测量，不得因展开造成定位丢失或明显空白。
 - `版本` 子页必须对比当前部署版本、candidate 与既有 rollback target，展示状态徽标与动作区。较新版本统一渲染动作位：普通服务继续使用 `更新`，且只有与当前 service candidate 对应且不突破现有 explicit target tag 契约的版本可真正发起更新；命中 Dockrev 自身识别时，candidate 对应卡片必须改为 `升级 Dockrev` 并复用顶部 supervisor 自我升级入口，其它更高版本只保留禁用动作位并明确解释“当前只能通过 supervisor 进入现有 candidate 对应的自我升级流程”。若 supervisor 自我升级入口本身处于 offline / checking / busy 等不可用状态，则所有 Dockrev 版本卡优先直接暴露该阻断原因，不再继续引导用户访问不可用入口。
 - `版本` 子页对所有已部署过的历史版本统一渲染 `回滚` 动作位；只有当前 rollback target 对应版本执行真实回滚，其余版本点击后进入解释性提示，不得创建任务。
 - 当当前 rollback target 的来源更新任务存在实际纳入的备份记录时，`版本` 子页的目标版本卡与服务级回滚确认都必须补充同一份“来源备份”摘要：显示 included targets 数量与源目标总体积；若 included targets 存在缺失体积，则总体积位置回退为 `--`；若没有实际纳入的备份记录，则不显示该状态块。
 - `版本` 子页在同一服务已有 update/rollback 任务提交中、执行中，或 rollback target 刷新中时，必须锁定不属于当前活动任务的版本动作。普通服务的 candidate 目录 chip 与 candidate 卡更新按钮必须同步 update 阶段：提交时显示 `提交中` 且按钮不可点击，Job 建立后按状态显示 `排队中 / 更新中`，按钮保持加载态并可直接进入对应任务详情；顶部更新动作继续提供同一任务入口。版本页不得额外渲染独立的活动任务横幅或横幅式“查看任务”入口。
-- `版本` 子页的卡片只允许保留既有两种形态：卡片流实际可用宽度至少为 `730px` 时使用元信息 / 正文 / 固定 `11.5rem` 状态动作轨道三栏宽卡；低于 `730px` 时复用既有单列窄卡，状态动作区按既有顺序落在正文后方。分栏宽卡中的无状态动作内容卡继续保留等宽占位轨道；窄卡继续沿用既有空 aside 行为。不得新增两栏中间态或改变两种既有形态的列定义、操作区位置或按钮样式，所有档位不得产生横向滚动。
+- `版本` 子页桌面端可执行卡片的右侧状态/动作栏必须固定为 `19rem` 轨道，避免因说明或按钮数量不同导致宽度漂移；无右栏卡片继续使用两栏布局。
+- `版本` 子页宽屏必须使用多栏宽卡片；`≤1100px` 必须完全隐藏版本目录并切换为单列窄卡片，正文宽度保持正文阅读尺度且不产生横向滚动。
 - 仅当 release tag 与当前部署版本都能 strict-semver 比较且 release 更旧时，版本卡片整体才允许置灰；状态徽标与动作提示不得因置灰失去辨识度。
 - `更新记录` 必须通过 `GET /api/jobs?serviceId=<id>&type=update,rollback&limit=20` 的游标页读取当前服务关联的 `update` 与 `rollback` 任务；后端的任务-服务关联索引必须覆盖服务、Stack 和 all scope 的 summary targets，稳定排序为 `createdAt DESC, id DESC`。
 - `更新记录` 必须使用记录、状态、备份、来源、时间、操作六列；记录列严格限制为两行：首行操作名与异常或回滚结果摘要，次行 Job ID，摘要必须单行截断，不得出现第三行。`备份` 列也必须固定为两行：首行显示本次实际纳入备份的目标数量，次行显示这些 included targets 的源目标总体积；当任务没有匹配的实际备份记录、匹配记录没有 included targets，或 included targets 存在缺失体积时，必须回退到中性空占位，不得误报“未备份”“失败”或“已跳过”。游标分页每页固定 20 条，提供页码状态与上一页/下一页箭头；服务变更时重置游标栈，SSE 只刷新当前服务的第一页。
@@ -234,12 +235,8 @@
   Then 最近更新记录之后必须出现一张 `服务标识` 卡，完整承接 `Image Ref / Service ID / Stack ID`，且这些字段不再出现在其他子页的共享页头。
 
 - Given 服务详情页处于 `版本`
-  When 版本区实际可用宽度至少为 `1080px`，且卡片流实际可用宽度至少为 `730px`
-  Then 页面显示 `220px` 固定宽度的版本目录、GitHub/OctoRill 仓库级图标入口、固定 `11.5rem` 右侧动作栏，以及由正文中心版本驱动的目录高亮。
-
-- Given 浏览器仍处于桌面视口，但展开的导航使版本区实际可用宽度低于 `1080px`
-  When 页面渲染版本记录
-  Then 版本目录不挂载；卡片流低于 `730px` 时切换为既有单列窄卡，动作区按既有位置完整呈现，正文不得被挤成逐字换行的窄列，且页面不产生横向溢出。
+  When 视口宽度大于 `1100px`
+  Then 页面显示 `220px` 固定宽度的版本目录、GitHub/OctoRill 仓库级图标入口、固定 `19rem` 右侧动作栏，以及由正文中心版本驱动的目录高亮。
 
 - Given 服务详情页处于 `版本`
   When 视口宽度为 `390x900`
@@ -409,26 +406,7 @@
 
 ![服务详情日志亮色 Raw ANSI（移动端）](./assets/service-detail-logs-light-raw-mobile.png)
 
-- source_type: `ui_demo`
-  target_program: `mock-only`
-  capture_scope: `browser-viewport`
-  requested_viewport: `1200x900`
-  viewport_strategy: `chrome-viewport`
-  margin_policy: `trim_only`
-  evidence_surface: `page`
-  sensitive_exclusion: `N/A`
-  submission_gate: `approved`
-  story_id_or_title: `demo:app / /demo/services/stack-prod/svc-prod-api/versions`
-  state: `intermediate desktop width with both navigations expanded`
-  evidence_note: `mock-only ui_demo` 截图验证版本区实际宽度约 `572px` 时目录不挂载、既有窄卡保持单列；候选卡正文宽度为 `523px`，操作区仍在正文后并保留可见的 `更新` / `回滚` 按钮，版本区 `scrollWidth` 与 `clientWidth` 相等。
-  PR: include
-  PR caption: `ui_demo` 中间桌面宽度隐藏版本目录，保持既有窄卡及完整操作区。
-
-![服务详情版本子页 ui_demo 中间宽度操作区](./assets/service-detail-versions-intermediate-responsive.png)
-
-## Historical Visual Evidence
-
-The following captures are retained as historical references and are not the PR evidence set for the current layout contract.
+## Visual Evidence (PR)
 
 - final_set: `release-notes-locate`
   story_id_or_title: `Pages/ServiceDetailPage/VersionsSection`
@@ -447,7 +425,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/UpdateHistorySection`
   state: `desktop tabs reordered for service detail`
   evidence_note: 聚焦顶部 route-backed tabs，只证明本次要求的顺序已经固定为 `概览 / 更新记录 / 监控 / 日志 / 备份 / 设置`，且 `更新记录` 保持激活态。
-  PR: none
+  PR: include
   PR caption: 服务详情顶部 tabs 已按 `概览 / 更新记录 / 监控 / 日志 / 备份 / 设置` 重排。
 
 ![服务详情更新记录子页桌面 tabs 顺序](./assets/service-detail-update-history-desktop-tabs.png)
@@ -462,7 +440,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/UpdateHistorySection`
   state: `desktop backup summary column with ready and empty rows`
   evidence_note: 聚焦更新记录表本体，直接证明表头为 `记录 / 状态 / 备份 / 来源 / 时间 / 操作`，并同时包含一条实际备份摘要行 `2 个目标 / 17.6 MiB` 与多条空占位行 `-- / --`。
-  PR: none
+  PR: include
   PR caption: 更新记录表新增备份列，并同时覆盖有值摘要与空占位。
 
 ![服务详情更新记录子页桌面备份列摘要](./assets/service-detail-update-history-desktop-backup-column.png)
@@ -477,7 +455,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/UpdateHistorySectionEvidence`
   state: `desktop update history columns stay aligned with rollback action`
   evidence_note: 页面级截图直接验证桌面端 `记录 / 状态 / 备份 / 来源 / 时间 / 操作` 六列在带回滚按钮的行上仍与其它行共享同一套列轨道；`回滚` 按钮出现时不会把其它列压窄，也不会让表头和下方记录错位。
-  PR: none
+  PR: include
   PR caption: 更新记录桌面六列表格在出现回滚按钮时仍保持列对齐。
 
 ![服务详情更新记录子页桌面列对齐](./assets/service-detail-update-history-desktop-columns-aligned.png)
@@ -492,7 +470,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/OverviewDefault`
   state: `legacy route -> overview with compact monitor row + deduplicated status rail`
   evidence_note: 验证旧 `/services/:stackId/:serviceId` 路径仍稳定落到概览子页；tabs 上方的共享页头现为两行：第一行展示服务名与 `CPU / 内存 / 磁盘读 / 磁盘写 / 下载 / 上传` 六项监控指标，并已将文字 label 收敛为图标前缀，不再出现“服务监控摘要”副标题或独立时间 chip；第二行只保留镜像简述与 `状态 / 当前版本 / 目标版本 / 版本跨度`，不再重复服务名或 Stack pill。`Image Ref / Service ID / Stack ID` 继续只在概览底部的 `服务标识` 卡出现。
-  PR: none
+  PR: include
   PR caption: 服务详情页头收敛为服务名监控行 + 去重后的状态信息带，技术标识字段继续由概览页单独承接。
 
 ![服务详情概览子页（桌面，单行信息带）](./assets/service-detail-overview-desktop-rail.png)
@@ -507,7 +485,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/MonitoringSection`
   state: `monitoring deep link`
   evidence_note: 验证 `监控` 子页通过独立 section 深链承载资源监控面板，保留共享 hero/banner/top actions，同时不混入配置卡片。
-  PR: none
+  PR: include
   PR caption: 监控子页独占资源监控面板，复用同一服务上下文与顶部动作。
 
 ![服务详情监控子页（桌面）](./assets/service-detail-monitoring-desktop.png)
@@ -522,7 +500,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/LogsSection`
   state: `logs deep link`
   evidence_note: 验证 `日志` 子页通过独立 section 深链承载单服务 live tail、当前缓冲搜索、ANSI 颜色渲染、虚拟列表状态与自动换行开关，且不再把实时日志塞回 `monitoring` 卡片区。
-  PR: none
+  PR: include
   PR caption: 日志子页新增服务级实时日志视图，支持缓冲搜索与跳到最新。
 
 ![服务详情日志子页（桌面）](./assets/service-detail-logs-desktop.png)
@@ -537,7 +515,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/LogsSectionEvidence`
   state: `human structured metadata`
   evidence_note: 验证日志页默认 Human 视图优先使用应用级 JSON metadata 渲染主消息、`INFO` 等级与 `component/event/route/phase/elapsed_ms` chips，metadata 在默认 nowrap 下仍保持视口内可读。
-  PR: none
+  PR: include
   PR caption: 日志页默认 Human 视图展示结构化消息与元数据，避免把 JSON 原文直接铺满界面。
 
 ![服务详情日志 Human 元数据视图](./assets/service-detail-logs-human-metadata.png)
@@ -552,7 +530,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/LogsSectionEvidence`
   state: `human tracing text metadata`
   evidence_note: 验证 ANSI tracing 文本日志在 Human 视图中提取应用级 `INFO`、应用时间戳与 `method/uri/proxy_request_id` metadata chips，消息列不再重复显示行首应用时间与等级。
-  PR: none
+  PR: include
   PR caption: 日志页 Human 视图可解析真实 tracing 文本日志，等级与元数据不再退回到整行文本展示。
 
 ![服务详情日志 Human tracing 文本元数据视图](./assets/service-detail-logs-tracing-human.png)
@@ -567,7 +545,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/LogsSectionEvidence`
   state: `raw log toggle`
   evidence_note: 验证 Raw 视图可显式切回容器原始输出，JSON 行按原文显示并继续保留 ANSI 颜色与横向查看语义。
-  PR: none
+  PR: include
   PR caption: 日志页 Raw 视图保留原始日志文本，便于排障时对照结构化摘要。
 
 ![服务详情日志 Raw 原文视图](./assets/service-detail-logs-raw-toggle.png)
@@ -582,7 +560,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/LogsSectionEvidence`
   state: `raw tracing text metadata`
   evidence_note: 验证 Raw 视图仍保留真实 tracing 原文，包括应用级时间戳、等级与 ANSI 颜色，同时等级列继续使用解析后的结构化等级。
-  PR: none
+  PR: include
   PR caption: 日志页 Raw 视图继续保留 tracing 原文，便于和结构化 Human 摘要互相对照。
 
 ![服务详情日志 Raw tracing 原文视图](./assets/service-detail-logs-tracing-raw.png)
@@ -597,7 +575,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/LogsSectionMultilineGrouping`
   state: `multiline log grouping`
   evidence_note: 验证 `WARN ... database is locked` 多行应用错误按一条日志组展示，`Caused by:` continuation 保留在同一输出单元内，且正文自带 tracing 级别时等级列不再重复显示 `WARN` 文本。
-  PR: none
+  PR: include
   PR caption: 日志页按一条日志组展示多行应用错误，并避免重复渲染正文已包含的 tracing 级别。
 
 ![服务详情日志多行分组](./assets/service-detail-logs-multiline-grouping.png)
@@ -612,7 +590,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/BackupSection`
   state: `backup deep link`
   evidence_note: 验证 `备份` 子页集中备份摘要、编辑入口与当前服务相关备份记录卡片，并从 `设置` 页移除了重复备份入口。
-  PR: none
+  PR: include
   PR caption: 备份子页集中服务级备份摘要、编辑入口与记录卡片，形成独立深链分区。
 
 ![服务详情备份子页（桌面）](./assets/service-detail-backup-desktop.png)
@@ -627,7 +605,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/SettingsSection`
   state: `settings deep link`
   evidence_note: 验证 `设置` 子页集中自动更新摘要、Compose 信息、部署 tag、服务保护、忽略规则、Webhook 与维护动作，且低频危险动作已从共享页头下沉。
-  PR: none
+  PR: include
   PR caption: 设置子页集中低频配置与维护动作，不再把这些卡片堆在服务详情首屏。
 
 ![服务详情设置子页（桌面）](./assets/service-detail-settings-desktop.png)
@@ -655,7 +633,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/MobileHistorySection`
   state: `mobile history with wrapped monitor row + status rail`
   evidence_note: 使用真实 `390x844` 移动端 viewport，并以 Storybook fullscreen canvas 消除外层展示 gutter；截图保持顶部命令条、仅含服务名与监控指标的首行、去重后的共享状态信息带、扁平 tabs 轨道与首条 `更新记录` 面板同时可见。移动端监控指标区收敛为 `2 x 3` 网格，按 `CPU / 内存`、`磁盘读 / 磁盘写`、`下载 / 上传` 成列配对。两条共享页头都允许自然换行，但不得回退独立状态卡、独立时间 chip，或产生横向滚动。
-  PR: none
+  PR: include
   PR caption: 移动端服务详情保留服务名监控行与去重状态带，窄屏下仍无横向滚动。
 
 ![服务详情更新记录子页（移动端，状态信息带）](./assets/service-detail-history-mobile-rail.png)
@@ -670,7 +648,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/MobileHistorySection`
   state: `mobile webpage viewport with tabs left segment`
   evidence_note: 同一移动端网页视口截图，垂直位置固定在 `更新记录` 子页顶部。此状态下 tabs 横向停留在左段，清晰显示 `概览 / 更新记录 / 监控 / 日志`，并保留页面上下文与记录列表开头。
-  PR: none
+  PR: include
   PR caption: 移动端网页视口左段证明 tabs 顺序前半为 `概览 / 更新记录 / 监控 / 日志`。
 
 ![服务详情更新记录子页移动端网页左段](./assets/service-detail-update-history-mobile-webpage-tabs-left.png)
@@ -685,7 +663,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/MobileHistorySection`
   state: `mobile webpage viewport with tabs right segment`
   evidence_note: 与上一张相同的移动端网页视口、相同的垂直位置，仅将 tabs 横向滚到右段。截图显示 `监控 / 日志 / 备份 / 设置`，与左段通过重叠的 `监控 / 日志` 共同证明完整顺序为 `概览 / 更新记录 / 监控 / 日志 / 备份 / 设置`。
-  PR: none
+  PR: include
   PR caption: 移动端网页视口右段证明 `日志` 后紧接 `备份 / 设置`。
 
 ![服务详情更新记录子页移动端网页右段](./assets/service-detail-update-history-mobile-webpage-tabs-right.png)
@@ -700,7 +678,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/MobileHistorySection`
   state: `mobile webpage viewport with backup summary states`
   evidence_note: 同一移动端网页向下滚动后的完整视口截图。页面中同时出现一条命中备份记录的行，`备份` 字段显示 `2 个目标 / 17.6 MiB`，以及至少一条未命中备份记录的行，`备份` 字段保持 `-- / --` 中性空占位。
-  PR: none
+  PR: include
   PR caption: 移动端网页视口同时覆盖备份命中摘要与空占位。
 
 ![服务详情更新记录子页移动端网页备份摘要](./assets/service-detail-update-history-mobile-webpage-backup-summary.png)
@@ -715,7 +693,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/MobileHistorySection`
   state: `mobile summary status flattened into the hero card`
   evidence_note: 聚焦服务摘要下半区，单独证明移动端状态摘要已经并入同一张服务摘要卡。图中只有服务摘要外层卡和内部内容分隔线，不再存在第二层绿色状态卡。
-  PR: none
+  PR: include
   PR caption: 移动端服务摘要已去除内嵌状态卡。
 
 ![服务详情更新记录子页移动端摘要区（无内嵌状态卡）](./assets/service-detail-update-history-mobile-summary-flat.png)
@@ -730,7 +708,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/MobileHistorySection`
   state: `mobile history status badge beside card title`
   evidence_note: 同一移动端网页视口直接证明更新记录卡片的状态 pill 已从独立列并入标题行，紧贴 `更新 / 回滚` 标题右侧；右上角只保留 release notes 操作按钮。
-  PR: none
+  PR: include
   PR caption: 移动端更新记录状态标记已放到卡片标题右边。
 
 ![服务详情更新记录子页移动端状态标记贴标题](./assets/service-detail-update-history-mobile-status-next-to-title.png)
@@ -745,7 +723,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/MobileHistorySection`
   state: `mobile history rows rendered without an outer shell`
   evidence_note: 聚焦更新记录中段，单独证明 history 区只保留每条记录自己的行面板。多条记录之间直接落在页面背景上，不再额外包一层父级卡壳。
-  PR: none
+  PR: include
   PR caption: 移动端更新记录区已取消外层包卡，仅保留记录行面板。
 
 ![服务详情更新记录子页移动端记录区（无外层包卡）](./assets/service-detail-update-history-mobile-history-flat.png)
@@ -760,7 +738,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/MobileHistorySection`
   state: `mobile topbar first row stays single-line`
   evidence_note: 同一移动端网页视口证明详情页 topbar 首行保持单行：菜单按钮、Dockrev 品牌和右侧用户触发器处于同一横向行，顶部动作条单独下沉到第二行，不再把头像挤到下一行。
-  PR: none
+  PR: include
   PR caption: 移动端详情页 topbar 首行固定为菜单、品牌、头像同一行。
 
 ![服务详情更新记录子页移动端首行单行页头](./assets/service-detail-update-history-mobile-header-single-row.png)
@@ -775,7 +753,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/VersionsSection`
   state: `desktop versions subpage with current release card in view`
   evidence_note: 桌面宽视口下，服务详情 tabs 已扩成 `概览 / 版本 / 更新记录 / 监控 / 日志 / 备份 / 设置`，且 `版本` 保持激活。版本页不再套一层大 section card 或内层 scroll shell card，而是直接进入 release cards 列表；当前版本卡与相邻历史卡同时可见，证明宽卡使用多栏布局承载版本元信息、正文、状态与动作区。
-  PR: none
+  PR: include
   PR caption: 服务详情新增 `版本` 子页，并在桌面宽屏下使用多栏宽卡展示 release notes。
 
 ![服务详情版本子页桌面页面级视图](./assets/service-detail-versions-desktop-page.png)
@@ -790,7 +768,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/VersionsSection`
   state: `desktop current release wide card`
   evidence_note: 聚焦当前部署版本卡本体，证明桌面卡片不是表格行，也不再在卡内嵌套一组小卡片；信息改为四区并置的平面分区：左侧版本与事实信息、中间正文预览、右侧状态说明和动作语义用细分隔线组织，同时保持正文阅读宽度。
-  PR: none
+  PR: include
   PR caption: 桌面版本卡采用多栏宽卡而不是更新记录表格复刻。
 
 ![服务详情版本子页桌面宽卡](./assets/service-detail-versions-desktop-card.png)
@@ -805,7 +783,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/DockrevVersionsSelfUpgradeVisual`
   state: `dockrev versions page candidate card shares supervisor action with topbar before navigation`
   evidence_note: Dockrev 服务详情 `版本` 子页中，顶部与 candidate 卡同时暴露 `升级 Dockrev`，且更高的 `0.63.0` 非 candidate 卡只保留禁用解释。该视图停留在版本页本身，用来证明 candidate 卡已收敛到 supervisor 自我升级语义，而不是普通 `更新` 入口。
-  PR: none
+  PR: include
   PR caption: Dockrev 版本页候选卡与顶部入口共享 supervisor 自我升级语义，非 candidate 版本仅保留禁用解释。
 
 ![Dockrev 服务详情版本子页候选卡自我升级态](./assets/service-detail-versions-dockrev-self-upgrade.png)
@@ -820,7 +798,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/DockrevVersionsSelfUpgradeOffline`
   state: `dockrev supervisor offline disables topbar and candidate card`
   evidence_note: offline Storybook 视图中，顶部 `升级 Dockrev` 与 candidate 卡同时禁用，顶部保留 `重试`；更高的 `0.63.0` 非 candidate 卡也直接表达 `supervisor offline` 阻断原因，而不是继续把用户引导到一个已经离线的入口。
-  PR: none
+  PR: include
   PR caption: supervisor offline 时，Dockrev 所有版本卡优先直接表达离线阻断原因，重试仅保留在顶部。
 
 ![Dockrev 服务详情版本子页自我升级离线态](./assets/service-detail-versions-dockrev-self-upgrade-offline.png)
@@ -835,7 +813,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/MobileVersionsSection`
   state: `mobile versions subpage anchored around current release block`
   evidence_note: 移动端页面级截图证明 `版本` 子页在窄屏下切换为单列阅读流。顶部 chips、正文区域与下一张旧版本卡按纵向顺序堆叠，不出现横向滚动，也不再出现虚拟列表卡片互相压住的问题；页面级 section 壳已退掉，只保留版本卡本身作为主要容器。
-  PR: none
+  PR: include
   PR caption: 移动端 `版本` 子页切换为单列卡片流，并保持无横向滚动。
 
 ![服务详情版本子页移动端页面级视图](./assets/service-detail-versions-mobile-page.png)
@@ -850,7 +828,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `Pages/ServiceDetailPage/MobileVersionsSection`
   state: `mobile narrow card stack`
   evidence_note: 聚焦移动端窄卡本体，证明单张 release card 内的发布时间、来源、视图、状态与正文全部按单列顺序展开，阅读宽度稳定，没有桌面多栏布局在小屏上的压缩和重叠，也没有“卡片里再套事实卡/状态卡/动作卡”的结构噪音。
-  PR: none
+  PR: include
   PR caption: 移动端版本卡改为单列窄卡，信息按阅读顺序自然下沉。
 
 ![服务详情版本子页移动端窄卡](./assets/service-detail-versions-mobile-card.png)
@@ -865,7 +843,7 @@ The following captures are retained as historical references and are not the PR 
   story_id_or_title: `demo:app / /demo/services/stack-prod/svc-prod-api/versions`
   state: `desktop split versions layout with repository-level release links`
   evidence_note: `mock-only ui_demo` 页面级截图，直接验证版本子页在真实应用壳内启用折叠后的主导航图标 rail、服务目录、仓库级 GitHub / OctoRill 图标入口、紧凑状态摘要，以及固定右侧动作栏。目录高亮与正文版本卡同时可见，且当前 rollback target 卡片右栏展示 `来源备份 2 个目标 · 17.6 MiB`，证明双虚拟列表布局与回滚备份摘要都已经落到最终交付面。
-  PR: none
+  PR: include
   PR caption: `ui_demo` 桌面端版本页折叠主导航，同时保留左目录、仓库级图标入口与固定动作栏。
 
 ![服务详情版本子页 ui_demo 桌面目录](./assets/service-detail-versions-ui-demo-desktop.png)
@@ -879,8 +857,8 @@ The following captures are retained as historical references and are not the PR 
   submission_gate: `approved`
   story_id_or_title: `demo:app / /demo/services/stack-prod/svc-prod-api/versions`
   state: `mobile versions layout without directory`
-  evidence_note: `mock-only ui_demo` 移动端整页截图，直接验证版本区实际可用宽度低于目录阈值、卡片流实际可用宽度低于单列阈值时，版本目录完全隐藏，版本卡保持单列纵向阅读流，页面滚动宽度与视口宽度一致，不产生横向溢出；同一视图内的 rollback target 卡片继续显示 `来源备份` 摘要。
-  PR: none
+  evidence_note: `mock-only ui_demo` 移动端整页截图，直接验证 `≤1100px` 时版本目录完全隐藏，版本卡保持单列纵向阅读流，页面滚动宽度与视口宽度一致，不产生横向溢出；同一视图内的 rollback target 卡片继续显示 `来源备份` 摘要。
+  PR: include
   PR caption: `ui_demo` 移动端版本页隐藏目录并保持无横向溢出。
 
 ![服务详情版本子页 ui_demo 移动端无目录](./assets/service-detail-versions-ui-demo-mobile.png)
