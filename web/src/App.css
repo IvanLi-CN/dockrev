@@ -7921,8 +7921,6 @@ html[data-theme="light"] .serviceLogsTerminal {
 }
 
 .serviceVersionsSection {
-  container-name: service-versions;
-  container-type: inline-size;
   display: flex;
   flex-direction: column;
 }
@@ -8581,7 +8579,7 @@ html[data-theme="light"] .serviceLogsTerminal {
   background: color-mix(in srgb, var(--color-warning) 8%, var(--panel2) 92%);
 }
 
-@container service-versions (max-width: 729px) {
+@media (max-width: 1100px) {
   .serviceVersionsBodyLayout {
     grid-template-columns: minmax(0, 1fr);
     gap: 0;

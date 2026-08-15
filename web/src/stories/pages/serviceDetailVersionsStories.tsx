@@ -1,4 +1,5 @@
 import { currentRoutePathname } from "../../routes";
+import { observeVersionSectionInlineWidth } from "../../components/serviceVersionsSectionUtils";
 import { dockrevVersionReleaseNotes, versionReleaseNotes } from "./serviceDetailPageStoryFixtures";
 import {
   findSectionCard,
@@ -60,62 +61,18 @@ function visibleCount(root: ParentNode, attr: string): number {
   return Number(versionsSurface(root)?.getAttribute(attr) ?? "0");
 }
 
-let resizeObserverDescriptor: PropertyDescriptor | undefined;
-let resizeObserverFallbackActive = false;
-
-class MutationObserverResizeFallback {
-  private observer: MutationObserver | null = null;
-  private readonly callback: ResizeObserverCallback;
-
-  constructor(callback: ResizeObserverCallback) {
-    this.callback = callback;
+function observeWithResizeObserverUnavailable(
+  element: HTMLElement,
+  onWidth: (width: number) => void,
+): () => void {
+  const descriptor = Object.getOwnPropertyDescriptor(window, "ResizeObserver");
+  Object.defineProperty(window, "ResizeObserver", { configurable: true, value: undefined });
+  try {
+    return observeVersionSectionInlineWidth(element, onWidth);
+  } finally {
+    if (descriptor) Object.defineProperty(window, "ResizeObserver", descriptor);
+    else Reflect.deleteProperty(window, "ResizeObserver");
   }
-
-  observe(target: Element) {
-    if (!target.matches(".serviceVersionsSection")) return;
-    const shell = target.closest(".appShell");
-    if (!shell || typeof MutationObserver === "undefined") return;
-    this.observer = new MutationObserver(() => {
-      this.callback(
-        [{ contentRect: target.getBoundingClientRect(), target } as ResizeObserverEntry],
-        this as unknown as ResizeObserver,
-      );
-    });
-    this.observer.observe(shell, { attributes: true, attributeFilter: ["class"] });
-  }
-
-  unobserve() {
-    this.disconnect();
-  }
-
-  disconnect() {
-    this.observer?.disconnect();
-    this.observer = null;
-  }
-}
-
-function renderWithResizeObserverFallback(
-  renderStory: NonNullable<ServiceDetailStory["render"]>,
-): NonNullable<ServiceDetailStory["render"]> {
-  return (args, context) => {
-    if (typeof window !== "undefined" && !resizeObserverFallbackActive) {
-      resizeObserverDescriptor = Object.getOwnPropertyDescriptor(window, "ResizeObserver");
-      Object.defineProperty(window, "ResizeObserver", {
-        configurable: true,
-        value: MutationObserverResizeFallback,
-      });
-      resizeObserverFallbackActive = true;
-    }
-    return renderStory(args, context);
-  };
-}
-
-function restoreResizeObserver() {
-  if (typeof window === "undefined" || !resizeObserverFallbackActive) return;
-  if (resizeObserverDescriptor) Object.defineProperty(window, "ResizeObserver", resizeObserverDescriptor);
-  else Reflect.deleteProperty(window, "ResizeObserver");
-  resizeObserverDescriptor = undefined;
-  resizeObserverFallbackActive = false;
 }
 
 const dockrevDigest = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`;
@@ -395,26 +352,26 @@ export const VersionsSectionIntermediateWidth: ServiceDetailStory = {
     expectStory(surface?.getAttribute("data-service-versions-layout") === "stream", "intermediate content width should use the unindexed card stream");
     expectStory(!versionsIndexViewport(canvasElement), "intermediate content width should not reserve the version index rail");
     expectStory(
-      getComputedStyle(currentCard ?? canvasElement).gridTemplateColumns.split(" ").filter(Boolean).length === 1 &&
-        getComputedStyle(candidateCard ?? canvasElement).gridTemplateColumns.split(" ").filter(Boolean).length === 1,
-      "intermediate version cards should use the existing narrow card layout",
+      getComputedStyle(currentCard ?? canvasElement).gridTemplateColumns.split(" ").filter(Boolean).length === 3 &&
+        getComputedStyle(candidateCard ?? canvasElement).gridTemplateColumns.split(" ").filter(Boolean).length === 3,
+      "intermediate version cards should keep the existing desktop card layout",
     );
     expectStory(
       (currentBody?.getBoundingClientRect().width ?? 0) >= 240,
       "intermediate release body should retain a readable width",
     );
     expectStory(
-      getComputedStyle(currentAside ?? canvasElement).display === "none",
-      "intermediate read-only cards should keep the existing empty aside behavior",
+      (currentAside?.getBoundingClientRect().width ?? 0) > 0,
+      "intermediate read-only cards should keep the existing fixed aside",
     );
     expectStory(
-      (candidateAside?.getBoundingClientRect().top ?? 0) >= (candidateBody?.getBoundingClientRect().bottom ?? Number.POSITIVE_INFINITY) - 1 &&
-        getComputedStyle(candidateAside ?? canvasElement).display !== "none",
-      "intermediate actionable cards should keep the existing bottom action area",
+      (candidateAside?.getBoundingClientRect().left ?? 0) >=
+        (candidateBody?.getBoundingClientRect().right ?? Number.POSITIVE_INFINITY) - 1,
+      "intermediate actionable cards should keep the existing fixed action rail",
     );
     expectStory(
       (updateAction?.getBoundingClientRect().width ?? 0) > 0 && (updateAction?.getBoundingClientRect().height ?? 0) > 0,
-      "intermediate candidate cards should keep their existing update action visible in the bottom action area",
+      "intermediate candidate cards should keep their existing update action visible in the fixed action rail",
     );
     expectStory(
       (scrollViewport?.scrollWidth ?? 0) <= (scrollViewport?.clientWidth ?? 0) + 1,
@@ -435,30 +392,43 @@ export const VersionsSectionIntermediateWideActions: ServiceDetailStory = {
       },
     },
   },
-  render: renderWithResizeObserverFallback(
-    render("stack-prod", "svc-prod-api", "versions", {
-      pageTitle: null,
-      pageSubtitle: null,
-      sidebarCollapsed: false,
-    })!,
-  ),
+  render: render("stack-prod", "svc-prod-api", "versions", {
+    pageTitle: null,
+    pageSubtitle: null,
+    sidebarCollapsed: false,
+  }),
   play: async ({ canvasElement }) => {
+    let stopFallbackObservation = () => {};
     try {
       await waitForCondition(() => Boolean(findVersionCard(canvasElement, "5.2.3")));
       const initialCandidate = findVersionCard(canvasElement, "5.2.3");
       const initialViewport = versionsViewport(canvasElement);
       const initialScrollHeight = initialViewport?.scrollHeight ?? 0;
+      const section = canvasElement.querySelector<HTMLElement>(".serviceVersionsSection");
+      expectStory(Boolean(section), "fallback story should expose the mounted versions section");
+      const initialSectionWidth = section?.getBoundingClientRect().width ?? 0;
+      let fallbackWidth = initialSectionWidth;
+      let fallbackMeasurementCount = 0;
+      if (section) {
+        stopFallbackObservation = observeWithResizeObserverUnavailable(section, (width) => {
+          fallbackWidth = width;
+          fallbackMeasurementCount += 1;
+        });
+      }
       expectStory(versionsSurface(canvasElement)?.getAttribute("data-service-versions-layout") === "stream", "fallback story should start in the stream layout");
       expectStory(!versionsIndexViewport(canvasElement), "fallback story should not reserve a version index rail");
       expectStory(
-        getComputedStyle(initialCandidate ?? canvasElement).gridTemplateColumns.split(" ").filter(Boolean).length === 1,
-        "fallback story should start with the existing narrow card layout",
+        getComputedStyle(initialCandidate ?? canvasElement).gridTemplateColumns.split(" ").filter(Boolean).length === 3,
+        "fallback story should start with the existing desktop card layout",
       );
 
       const collapseButton = canvasElement.querySelector<HTMLButtonElement>('[aria-label="折叠左侧导航"]');
       expectStory(Boolean(collapseButton), "fallback story should expose the primary sidebar toggle");
       collapseButton?.click();
       await waitForCondition(() => canvasElement.querySelector(".appShell")?.classList.contains("appShellSidebarCollapsed") ?? false);
+      await waitForCondition(
+        () => fallbackMeasurementCount > 1 && Math.abs(fallbackWidth - initialSectionWidth) > 1,
+      );
       await waitForCondition(
         () =>
           getComputedStyle(findVersionCard(canvasElement, "5.2.3") ?? canvasElement)
@@ -503,7 +473,7 @@ export const VersionsSectionIntermediateWideActions: ServiceDetailStory = {
         "unindexed wide cards should not introduce horizontal overflow",
       );
     } finally {
-      restoreResizeObserver();
+      stopFallbackObservation();
     }
   },
 };
