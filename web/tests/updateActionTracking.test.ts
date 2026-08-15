@@ -1,7 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 
 import type { JobListItem } from '../src/api'
-import { pickLatestActiveUpdateJobs, reconcileTrackedUpdateJobs } from '../src/updateActionTracking'
+import type { ManagementEvent } from '../src/managementEvents'
+import {
+  pickLatestActiveUpdateJobs,
+  reconcileTrackedUpdateJobs,
+  resolveTrackedUpdateJobTransition,
+} from '../src/updateActionTracking'
 
 function makeJob(overrides: Partial<JobListItem> & Pick<JobListItem, 'id'>): JobListItem {
   return {
@@ -129,5 +134,48 @@ describe('reconcileTrackedUpdateJobs', () => {
     expect(result.active).toEqual([{ target: 'service:svc-1', jobId: 'job-new', status: 'running' }])
     expect(result.settled).toEqual([])
     expect(result.unresolved).toEqual([{ target: 'service:svc-1', jobId: 'job-old' }])
+  })
+})
+
+describe('resolveTrackedUpdateJobTransition', () => {
+  test('advances a tracked update from queued to running', () => {
+    const event: ManagementEvent = {
+      type: 'entities_changed',
+      domain: 'jobs',
+      entities: [{ entityType: 'job', id: 'job-update' }],
+      version: 2,
+      summary: {
+        jobId: 'job-update',
+        status: 'running',
+        jobType: 'update',
+        scope: 'service',
+        stackId: 'stack-1',
+        serviceId: 'svc-1',
+      },
+    }
+
+    expect(resolveTrackedUpdateJobTransition(
+      event,
+      [['service:svc-1', { jobId: 'job-update', status: 'queued', targetVersion: 'v2' }]],
+    )).toEqual({ target: 'service:svc-1', jobId: 'job-update', status: 'running' })
+  })
+
+  test('ignores progress-only events and unrelated jobs', () => {
+    const progressEvent: ManagementEvent = {
+      type: 'entities_changed',
+      domain: 'jobs',
+      entities: [{ entityType: 'job', id: 'job-update' }],
+      version: 3,
+      summary: { jobId: 'job-update', operation: 'progress_updated' },
+    }
+
+    expect(resolveTrackedUpdateJobTransition(
+      progressEvent,
+      [['service:svc-1', { jobId: 'job-update', status: 'queued' }]],
+    )).toBeNull()
+    expect(resolveTrackedUpdateJobTransition(
+      { ...progressEvent, summary: { jobId: 'job-other', status: 'running' } },
+      [['service:svc-1', { jobId: 'job-update', status: 'queued' }]],
+    )).toBeNull()
   })
 })

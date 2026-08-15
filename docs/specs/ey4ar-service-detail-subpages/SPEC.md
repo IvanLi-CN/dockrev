@@ -358,6 +358,8 @@
   story_id_or_title: `demo:app / /demo/services/stack-prod/svc-prod-api/versions?demoScenario=dashboard-demo-hydrated-update`
   state: `desktop active update progress synchronization`
   evidence_note: `mock-only ui_demo` 桌面截图验证活动更新优先接管共享状态信息带，信息带使用主题蓝色与加载图标并保留当前版本、目标版本和跨度；左侧候选目录同步显示 `更新中`，候选卡按钮保留加载反馈与任务详情入口，同时页面中不再出现独立活动任务横幅。
+PR: include
+Caption: 更新任务进入执行阶段后，顶部动作、共享状态信息带与候选目录同步显示“更新中”。
 ![服务详情版本子页更新中桌面联动](./assets/service-detail-versions-update-progress-desktop.png)
 
 - source_type: `ui_demo`
