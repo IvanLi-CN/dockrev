@@ -16,7 +16,7 @@ import { activeServiceOperation, conflictingJobId, dockrevSelfUpgradeBusyReason,
 import { navigate } from '../routes'
 import { selfUpgradeBaseUrl } from '../runtimeConfig'
 import { Button, Mono } from '../ui'
-import { UPDATE_JOB_SETTLED_EVENT, resolveUpdateActionTargetKey, useUpdateActionTracker, type UpdateJobSettledDetail } from '../updateActionTracking'
+import { UPDATE_JOB_SETTLED_EVENT, resolveUpdateActionTargetKey, useUpdateActionTracker, type UpdateActionTargetKey, type UpdateJobSettledDetail } from '../updateActionTracking'
 import { blockedReasonFor, isSemverDowngradeAnomaly, serviceRowStatus } from '../updateStatus'
 import { buildUpdateServiceTarget } from '../updateTargets'
 import { useManagementEventBatch } from '../managementEvents'
@@ -24,7 +24,7 @@ import { usePageResumeRefresh } from '../usePageResumeRefresh'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay, inferResolvedTagsFromSnapshot, isStrictSemverTag } from '../versionDisplay'
 import type { ManagementEvent } from '../managementEvents'
-import { retryRollbackTargetDigestMismatch } from './rollbackTargetRefresh'
+import { isRollbackTargetRefreshCurrent, retryRollbackTargetDigestMismatch } from './rollbackTargetRefresh'
 
 export function managementEventAffectsServiceDetail(
   event: ManagementEvent,
@@ -98,7 +98,7 @@ export function useServiceDetailPageState(props: {
   const lifecycleActiveJobIdRef = useRef<string | null>(null)
   const lifecycleStatusRequestIdRef = useRef(0)
   const rollbackActiveJobIdRef = useRef<string | null>(null)
-  const submittingTargetRef = useRef<string | null>(null)
+  const submittingTokensRef = useRef(new Map<symbol, UpdateActionTargetKey>())
   const [lastSuccessfulRefreshAt, setLastSuccessfulRefreshAt] = useState<string | null>(null)
   const lifecycleJob = lifecycleStatus?.activeJob ?? null
   const lifecycleOwner = lifecycleJob && activeServiceOperation(lifecycleJob.status)
@@ -170,7 +170,7 @@ export function useServiceDetailPageState(props: {
   )
 
   const applyRollbackTargetSnapshot = useCallback((requestId: number, svc: Service | null, target: ServiceRollbackTargetResponse | null, source: string): 'applied' | 'outdated' | 'digest_mismatch' => {
-    if (requestId !== stackRefreshRequestIdRef.current || requestId < latestAppliedStackRefreshRequestIdRef.current) {
+    if (!isRollbackTargetRefreshCurrent(requestId, stackRefreshRequestIdRef.current, latestAppliedStackRefreshRequestIdRef.current)) {
       warnRollbackTargetDiscard('outdated_request', requestId, svc, target, source)
       return 'outdated'
     }
@@ -199,6 +199,10 @@ export function useServiceDetailPageState(props: {
     })
     if (result.kind === 'outdated' || result.kind === 'matched') return result.kind === 'outdated' ? 'outdated' : 'applied'
     if (result.kind === 'exhausted') {
+      if (!isRollbackTargetRefreshCurrent(requestId, stackRefreshRequestIdRef.current, latestAppliedStackRefreshRequestIdRef.current)) {
+        warnRollbackTargetDiscard('outdated_exhausted_result', requestId, svc, target, 'snapshot')
+        return 'outdated'
+      }
       setRollbackTarget(null)
       setRollbackActiveTarget(null)
       setRollbackTargetRefreshing(false)
@@ -211,7 +215,7 @@ export function useServiceDetailPageState(props: {
       setRollbackTargetRefreshing(false)
     }
     throw result.error
-  }, [applyRollbackTargetSnapshot, serviceId])
+  }, [applyRollbackTargetSnapshot, serviceId, warnRollbackTargetDiscard])
 
   const primeRollbackTargetRefresh = useCallback((svc: Service | null) => {
     if (!svc || isDockrevService(svc)) {
@@ -399,10 +403,10 @@ export function useServiceDetailPageState(props: {
   )
 
   useEffect(() => {
-    if (submittingTargetRef.current) {
-      endSubmitting(submittingTargetRef.current)
-      submittingTargetRef.current = null
+    for (const target of submittingTokensRef.current.values()) {
+      endSubmitting(target)
     }
+    submittingTokensRef.current.clear()
     pageGenerationRef.current += 1; lifecycleActiveJobIdRef.current = null
     lifecycleStatusRequestIdRef.current += 1
     setLifecycleSettledJobId(null)
@@ -824,8 +828,10 @@ export function useServiceDetailPageState(props: {
       if (!ok || generation !== pageGenerationRef.current) return
       setError(null)
       setNotice(null)
+      let submissionToken: symbol | null = null
       if (applyActionKey) {
-        submittingTargetRef.current = applyActionKey
+        submissionToken = Symbol(applyActionKey)
+        submittingTokensRef.current.set(submissionToken, applyActionKey)
         beginSubmitting(applyActionKey)
       }
       try {
@@ -865,13 +871,12 @@ export function useServiceDetailPageState(props: {
           setError(errorMessage(e))
         }
       } finally {
-        if (
-          applyActionKey &&
-          generation === pageGenerationRef.current &&
-          submittingTargetRef.current === applyActionKey
-        ) {
-          submittingTargetRef.current = null
-          endSubmitting(applyActionKey)
+        if (submissionToken) {
+          const target = submittingTokensRef.current.get(submissionToken)
+          if (target) {
+            submittingTokensRef.current.delete(submissionToken)
+            endSubmitting(target)
+          }
         }
       }
     })()

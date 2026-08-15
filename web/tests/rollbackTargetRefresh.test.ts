@@ -2,12 +2,19 @@ import { describe, expect, test } from 'bun:test'
 
 import {
   decideRollbackTargetDigestRetry,
+  isRollbackTargetRefreshCurrent,
   ROLLBACK_TARGET_DIGEST_RETRY_LIMIT,
   ROLLBACK_TARGET_DIGEST_RETRY_MS,
   retryRollbackTargetDigestMismatch,
 } from '../src/pages/rollbackTargetRefresh'
 
 describe('rollback target digest retry policy', () => {
+  test('rejects an exhausted result after a newer request has been applied', () => {
+    expect(isRollbackTargetRefreshCurrent(7, 8, 8)).toBe(false)
+    expect(isRollbackTargetRefreshCurrent(7, 7, 8)).toBe(false)
+    expect(isRollbackTargetRefreshCurrent(8, 8, 8)).toBe(true)
+  })
+
   test('allows five same-generation retries at 250ms', () => {
     let retryCount = 0
     for (let attempt = 0; attempt < ROLLBACK_TARGET_DIGEST_RETRY_LIMIT; attempt += 1) {

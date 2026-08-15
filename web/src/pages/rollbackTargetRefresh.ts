@@ -14,6 +14,14 @@ export type RollbackTargetDigestRetryOutcome<T> =
   | { kind: 'outdated'; retryCount: number }
   | { kind: 'failed'; error: unknown; retryCount: number }
 
+export function isRollbackTargetRefreshCurrent(
+  requestId: number,
+  currentRequestId: number,
+  latestAppliedRequestId = 0,
+): boolean {
+  return requestId === currentRequestId && requestId >= latestAppliedRequestId
+}
+
 export function decideRollbackTargetDigestRetry(
   retryCount: number,
   requestId: number,
