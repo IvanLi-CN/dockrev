@@ -641,6 +641,7 @@ export function useServiceDetailPageState(props: {
         !latestTarget?.available ||
         !latestTarget.targetDigest
       ) {
+        if (generation !== pageGenerationRef.current) return
         setError('回滚信息已更新，请重新确认')
         return
       }
@@ -706,6 +707,7 @@ export function useServiceDetailPageState(props: {
         })
         if (!ok) return
       }
+      if (generation !== pageGenerationRef.current) return
       setBusy(true)
       setError(null)
       setNotice(null)
@@ -738,15 +740,17 @@ export function useServiceDetailPageState(props: {
   const requestPreviewUpdate = useCallback(() => {
     void (async () => {
       const generation = pageGeneration
-      if (!service || !service.candidate) return
+      if (generation !== pageGenerationRef.current || !service || !service.candidate) return
       setBusy(true)
       setError(null)
       setNotice(null)
       try {
+        const updateTarget = await buildUpdateServiceTarget(service)
+        if (generation !== pageGenerationRef.current) return
         const resp = await triggerUpdate({
           scope: 'service',
           stackId,
-          ...(await buildUpdateServiceTarget(service)),
+          ...updateTarget,
           mode: 'dry-run',
           allowArchMismatch: false,
           backupMode: 'inherit',
@@ -769,7 +773,7 @@ export function useServiceDetailPageState(props: {
   const requestApplyUpdate = useCallback(() => {
     void (async () => {
       const generation = pageGeneration
-      if (!service || !service.candidate) return
+      if (generation !== pageGenerationRef.current || !service || !service.candidate) return
       const ok = await confirm({
         title: `确认更新服务 ${service.name}？`,
         body: (
@@ -809,10 +813,12 @@ export function useServiceDetailPageState(props: {
       setNotice(null)
       if (applyActionKey) beginSubmitting(applyActionKey)
       try {
+        const updateTarget = await buildUpdateServiceTarget(service)
+        if (generation !== pageGenerationRef.current) return
         const resp = await triggerUpdate({
           scope: 'service',
           stackId,
-          ...(await buildUpdateServiceTarget(service)),
+          ...updateTarget,
           mode: 'apply',
           allowArchMismatch: false,
           backupMode: 'inherit',
