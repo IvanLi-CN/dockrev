@@ -190,7 +190,7 @@ export function useServiceDetailPageState(props: {
     if (svc && !isDockrevService(svc) && target && !rollbackTargetMatchesServiceDigest(svc, target)) {
       warnRollbackTargetDiscard('current_digest_mismatch', requestId, svc, target, source)
       if (target?.activeJobId) setRollbackActiveTarget(target)
-      setRollbackTarget(null); setRollbackTargetRefreshing(true)
+      setRollbackTargetRefreshing(true)
       return 'digest_mismatch'
     }
     setRollbackTarget(target); setRollbackActiveTarget(target?.activeJobId ? target : null); setError((prev) => prev === '回滚信息刷新失败，请稍后重试' ? null : prev)
@@ -239,7 +239,6 @@ export function useServiceDetailPageState(props: {
       setRollbackTargetRefreshing(false)
       return
     }
-    setRollbackTarget(null)
     if (!rollbackActiveTarget?.activeJobId) setRollbackActiveTarget(null)
     setRollbackTargetRefreshing(true)
   }, [rollbackActiveTarget, rollbackTarget])
@@ -395,6 +394,9 @@ export function useServiceDetailPageState(props: {
   useEffect(() => {
     lifecycleActiveJobIdRef.current = null
     setLifecycleSettledJobId(null)
+    setRollbackTarget(null)
+    setRollbackActiveTarget(null)
+    setRollbackTargetRefreshing(false)
   }, [serviceId])
 
   useEffect(() => {
