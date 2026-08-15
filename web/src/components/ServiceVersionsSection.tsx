@@ -44,6 +44,7 @@ import { ServiceVersionCard } from './ServiceVersionCard'
 import {
   formatVersionDirectoryTimeLabel,
   normalizeVersion,
+  observeVersionSectionInlineWidth,
   preferredReleaseTimestamp,
   safeHttpUrl,
 } from './serviceVersionsSectionUtils'
@@ -136,18 +137,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
       const next = width >= VERSION_INDEX_MIN_WIDTH
       setShowDesktopIndex((current) => (current === next ? current : next))
     }
-    const measure = () => updateLayout(element.getBoundingClientRect().width)
-    measure()
-    if (typeof ResizeObserver === 'undefined') {
-      window.addEventListener('resize', measure)
-      return () => window.removeEventListener('resize', measure)
-    }
-    const observer = new ResizeObserver((entries) => {
-      const entry = entries[0]
-      if (entry) updateLayout(entry.contentRect.width)
-    })
-    observer.observe(element)
-    return () => observer.disconnect()
+    return observeVersionSectionInlineWidth(element, updateLayout)
   }, [])
   const dockrevService = isDockrevService(props.service)
   const operationProgress = useMemo(
@@ -266,7 +256,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
 
   useEffect(() => {
     listVirtualizer.measure()
-  }, [expandedIds, items.length, viewMode, listVirtualizer])
+  }, [expandedIds, items.length, showDesktopIndex, viewMode, listVirtualizer])
 
   useEffect(() => {
     const element = listScrollRef.current

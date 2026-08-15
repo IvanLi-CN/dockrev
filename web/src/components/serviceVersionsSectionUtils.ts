@@ -1,5 +1,48 @@
 import type { ServiceReleaseNoteItem } from '../api'
 
+export function observeVersionSectionInlineWidth(
+  element: HTMLElement,
+  onWidth: (width: number) => void,
+): () => void {
+  if (typeof window === 'undefined') return () => {}
+
+  const measure = () => onWidth(element.getBoundingClientRect().width)
+  measure()
+
+  if (typeof window.ResizeObserver !== 'undefined') {
+    const observer = new window.ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (entry) onWidth(entry.contentRect.width)
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }
+
+  let frameId: number | null = null
+  const scheduleMeasure = () => {
+    if (frameId !== null) return
+    frameId = window.requestAnimationFrame(() => {
+      frameId = null
+      measure()
+    })
+  }
+  const shell = element.closest<HTMLElement>('.appShell')
+  const observer =
+    shell && typeof window.MutationObserver !== 'undefined'
+      ? new window.MutationObserver(scheduleMeasure)
+      : null
+
+  if (observer && shell) {
+    observer.observe(shell, { attributes: true, attributeFilter: ['class', 'style'] })
+  }
+  window.addEventListener('resize', scheduleMeasure)
+  return () => {
+    observer?.disconnect()
+    window.removeEventListener('resize', scheduleMeasure)
+    if (frameId !== null) window.cancelAnimationFrame(frameId)
+  }
+}
+
 export function formatReleaseDate(value: string | null | undefined): {
   dateLine: string
   timeLine: string | null
