@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 
 import {
   cycleThemePreference,
+  getThemeTransitionClipPaths,
   getThemeTransitionGeometry,
   getThemePreference,
   initTheme,
@@ -221,5 +222,14 @@ describe('theme preference contract', () => {
       y: 800,
       radius: Math.hypot(1200, 800),
     })
+  })
+
+  test('expresses the reveal center in snapshot-relative coordinates', () => {
+    installFakeThemeEnvironment('light')
+
+    const clipPaths = getThemeTransitionClipPaths({ x: 300, y: 600 })
+
+    expect(clipPaths.start).toBe('circle(0% at 25% 75%)')
+    expect(clipPaths.end).toContain('at 25% 75%')
   })
 })

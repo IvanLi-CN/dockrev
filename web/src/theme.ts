@@ -104,6 +104,19 @@ export function getThemeTransitionGeometry(origin: ThemeTransitionOrigin) {
   }
 }
 
+export function getThemeTransitionClipPaths(origin: ThemeTransitionOrigin) {
+  const { x, y, radius } = getThemeTransitionGeometry(origin)
+  const width = document.documentElement.clientWidth
+  const height = document.documentElement.clientHeight
+  const radiusBasis = Math.hypot(width, height) / Math.SQRT2
+  const xPercent = `${(x / width) * 100}%`
+  const yPercent = `${(y / height) * 100}%`
+  return {
+    start: `circle(0% at ${xPercent} ${yPercent})`,
+    end: `circle(${(radius / radiusBasis) * 100}% at ${xPercent} ${yPercent})`,
+  }
+}
+
 function syncThemeFromEnvironment() {
   applyTheme(resolveTheme())
   notify()
@@ -160,12 +173,12 @@ export function setThemePreference(
     x: window.innerWidth / 2,
     y: window.innerHeight / 2,
   }
-  const { x, y, radius } = getThemeTransitionGeometry(transitionOrigin)
+  const clipPaths = getThemeTransitionClipPaths(transitionOrigin)
   const transition = document.startViewTransition(() => applyThemePreference(preference))
   activeThemeTransition = transition
   transition.ready.then(() => document.documentElement.animate([
-    { clipPath: `circle(0px at ${x}px ${y}px)` },
-    { clipPath: `circle(${radius}px at ${x}px ${y}px)` },
+    { clipPath: clipPaths.start },
+    { clipPath: clipPaths.end },
   ], {
     duration: 1800,
     easing: 'linear',
