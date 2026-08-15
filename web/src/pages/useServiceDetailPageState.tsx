@@ -162,6 +162,12 @@ export function useServiceDetailPageState(props: {
   const latestAppliedFullRefreshRequestIdRef = useRef(0)
   const stackRefreshRequestIdRef = useRef(0)
   const latestAppliedStackRefreshRequestIdRef = useRef(0)
+  const rollbackTargetRef = useRef(rollbackTarget)
+  const rollbackTargetRefreshingRef = useRef(rollbackTargetRefreshing)
+  const serviceRef = useRef(service)
+  rollbackTargetRef.current = rollbackTarget
+  rollbackTargetRefreshingRef.current = rollbackTargetRefreshing
+  serviceRef.current = service
 
   const [newRuleKind, setNewRuleKind] = useState<'exact' | 'prefix' | 'regex' | 'semver'>('regex')
   const [newRuleValue, setNewRuleValue] = useState('.*')
@@ -235,7 +241,12 @@ export function useServiceDetailPageState(props: {
     }
     const stableRollbackTarget = rollbackTarget ? rollbackTargetMatchesServiceDigest(svc, rollbackTarget) : false
     const stableRollbackActiveTarget = rollbackActiveTarget ? rollbackTargetMatchesServiceDigest(svc, rollbackActiveTarget) : false
-    if (stableRollbackTarget || stableRollbackActiveTarget) {
+    if (stableRollbackTarget) {
+      setRollbackTargetRefreshing(false)
+      return
+    }
+    if (stableRollbackActiveTarget) {
+      setRollbackTarget(null)
       setRollbackTargetRefreshing(false)
       return
     }
@@ -393,10 +404,6 @@ export function useServiceDetailPageState(props: {
   )
 
   useEffect(() => {
-    void requestRefresh().catch((e: unknown) => setError(errorMessage(e)))
-  }, [requestRefresh, serviceId, stackId])
-
-  useEffect(() => {
     lifecycleActiveJobIdRef.current = null
     setLifecycleSettledJobId(null)
     fullRefreshRequestIdRef.current += 1
@@ -405,6 +412,10 @@ export function useServiceDetailPageState(props: {
     setRollbackActiveTarget(null)
     setRollbackTargetRefreshing(false)
   }, [serviceId, stackId])
+
+  useEffect(() => {
+    void requestRefresh().catch((e: unknown) => setError(errorMessage(e)))
+  }, [requestRefresh, serviceId, stackId])
 
   useEffect(() => {
     void refreshLifecycleStatus().catch(() => {
@@ -574,6 +585,9 @@ export function useServiceDetailPageState(props: {
         return
       }
       if (!service || !rollbackTarget?.available || !rollbackTarget.targetDigest) return
+      const rollbackRequestId = stackRefreshRequestIdRef.current
+      const rollbackTargetAtConfirm = rollbackTarget
+      const serviceAtConfirm = service
       const ok = await confirm({
         title: `确认回滚服务 ${service.name}？`,
         body: (
@@ -624,6 +638,21 @@ export function useServiceDetailPageState(props: {
         badgeText: null,
       })
       if (!ok) return
+      const latestTarget = rollbackTargetRef.current
+      const latestService = serviceRef.current
+      if (
+        rollbackRequestId !== stackRefreshRequestIdRef.current ||
+        rollbackTargetRefreshingRef.current ||
+        latestTarget !== rollbackTargetAtConfirm ||
+        !latestService ||
+        latestService.id !== serviceAtConfirm.id ||
+        !rollbackTargetMatchesServiceDigest(latestService, latestTarget) ||
+        !latestTarget?.available ||
+        !latestTarget.targetDigest
+      ) {
+        setError('回滚信息已更新，请重新确认')
+        return
+      }
       setBusy(true)
       setError(null)
       setNotice(null)
