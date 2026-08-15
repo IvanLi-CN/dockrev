@@ -248,6 +248,7 @@ export function useServiceDetailPageState(props: {
     const stackRequestId = ++stackRefreshRequestIdRef.current
     let appliedFullRefreshRoot = false
     setError(null)
+    setRollbackTargetRefreshing(true)
     onLastScanHint?.(undefined)
     try {
       const st = await getStack(stackId)
@@ -300,6 +301,7 @@ export function useServiceDetailPageState(props: {
       } else if (rollbackRes.status === 'fulfilled') {
         const rollbackResult = await settleRollbackTargetSnapshot(stackRequestId, svc, rollbackRes.value)
         if (rollbackResult === 'outdated') return
+        if (rollbackResult === 'digest_mismatch') throw new Error('回滚信息刷新失败，请稍后重试')
       } else {
         setRollbackTarget(null); setRollbackActiveTarget(null); setRollbackTargetRefreshing(false)
       }
@@ -311,6 +313,8 @@ export function useServiceDetailPageState(props: {
         stackRequestId < latestAppliedStackRefreshRequestIdRef.current ||
         (appliedFullRefreshRoot && fullRefreshRequestId < latestAppliedFullRefreshRequestIdRef.current)
       ) return
+      setRollbackTarget(null)
+      setRollbackActiveTarget(null)
       setRollbackTargetRefreshing(false)
       throw error
     }
@@ -318,7 +322,7 @@ export function useServiceDetailPageState(props: {
 
   const refreshStackOnly = useCallback(async () => {
     const requestId = ++stackRefreshRequestIdRef.current
-    let rollbackSnapshotMayBeStale = false
+    setRollbackTargetRefreshing(true)
     try {
       const st = await getStack(stackId)
       if (requestId !== stackRefreshRequestIdRef.current || requestId < latestAppliedStackRefreshRequestIdRef.current) return
@@ -328,12 +332,13 @@ export function useServiceDetailPageState(props: {
       setService(svc)
       primeRollbackTargetRefresh(svc)
       if (!svc || isDockrevService(svc)) return
-      rollbackSnapshotMayBeStale = true
       const target = await getServiceRollbackTarget(serviceId)
-      await settleRollbackTargetSnapshot(requestId, svc, target)
+      const rollbackResult = await settleRollbackTargetSnapshot(requestId, svc, target)
+      if (rollbackResult === 'digest_mismatch') throw new Error('回滚信息刷新失败，请稍后重试')
     } catch (error: unknown) {
       if (requestId !== stackRefreshRequestIdRef.current || requestId < latestAppliedStackRefreshRequestIdRef.current) return
-      if (rollbackSnapshotMayBeStale) { setRollbackTarget(null); setRollbackActiveTarget(null) }
+      setRollbackTarget(null)
+      setRollbackActiveTarget(null)
       setRollbackTargetRefreshing(false)
       throw error
     }
@@ -394,10 +399,12 @@ export function useServiceDetailPageState(props: {
   useEffect(() => {
     lifecycleActiveJobIdRef.current = null
     setLifecycleSettledJobId(null)
+    fullRefreshRequestIdRef.current += 1
+    stackRefreshRequestIdRef.current += 1
     setRollbackTarget(null)
     setRollbackActiveTarget(null)
     setRollbackTargetRefreshing(false)
-  }, [serviceId])
+  }, [serviceId, stackId])
 
   useEffect(() => {
     void refreshLifecycleStatus().catch(() => {
