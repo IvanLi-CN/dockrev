@@ -564,7 +564,7 @@ pub(crate) async fn run_update_job(
                         stack_summary
                             .insert("backup".to_string(), json!({"status":"failed","error":err}));
 
-                        if backup_settings.require_success {
+                        if backup_settings.require_success || backup::is_safety_failure(&e) {
                             final_status = "failed".to_string();
                             stack_summaries.push(serde_json::Value::Object(stack_summary));
                             processed_stacks = processed_stacks.saturating_add(1);

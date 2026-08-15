@@ -634,6 +634,9 @@ export function installDockrevMockApi(
         }
         transientBody = terminalActive
           ? [
+              scenario === 'queue-backup-progress'
+                ? `event: job_progress\ndata: ${JSON.stringify({ type: 'job_progress', progress: { phase: 'backup', message: 'backing up production', current: 0, total: 1, percent: 31 + Math.min(liveTerminalStateRef.frame, 3), plannedCurrent: 0, plannedTotal: 1, plannedPercent: 31 + Math.min(liveTerminalStateRef.frame, 3), currentTarget: 'production', backup: { phase: 'compressing', estimatedTotalBytes: 134_217_728, processedBytes: 67_108_864 + liveTerminalStateRef.frame * 1_048_576, compressedBytes: 20_028_211 + liveTerminalStateRef.frame * 262_144, throughputBps: 96_887_194, etaSeconds: Math.max(0, 4 - liveTerminalStateRef.frame) }, updatedAt: liveLine.ts } })}\n\n`
+                : '',
               `event: job_live_terminal\ndata: ${JSON.stringify({ type: 'job_live_terminal', ts: liveLine.ts, commandSeq, lines: scenario === 'queue-backup-progress' ? [{ segments: [{ text: `[####------] 40% 63.3MB 91.2MB/s ETA 4s zstd-size 18.7MB · frame ${liveTerminalStateRef.frame}`, dim: true }] }] : terminalLines('[####------] 40% 63.3MB 91.2MB/s ETA 4s zstd-size 18.7MB', liveTerminalStateRef.frame) })}\n\n`,
               `event: job_live_terminal\ndata: ${JSON.stringify({ type: 'job_live_terminal', ts: liveLine.ts, commandSeq, lines: scenario === 'queue-backup-progress' ? [{ segments: [{ text: `[#####-----] 51% 64.1MB 92.4MB/s ETA 3s zstd-size 19.1MB · frame ${liveTerminalStateRef.frame}`, dim: true }] }] : terminalLines('[#####-----] 51% 64.1MB 92.4MB/s ETA 3s zstd-size 19.1MB', liveTerminalStateRef.frame) })}\n\n`,
               commandComplete

@@ -205,7 +205,7 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
 
   const persistScopePayload = useCallback(async (scope: SaveScope, payload: unknown) => {
     if (scope === 'backup') {
-      await putSettings(payload as PutSettingsInput)
+      await putSettings(payload as PutSettingsInput, settingsRef.current?.backup.baseDir)
       return
     }
     if (scope === 'notifications') {

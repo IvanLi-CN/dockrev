@@ -117,22 +117,18 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                 <div className="label">用户头</div>
                 <div className="mono">{settings.auth.forwardHeaderName}</div>
               </div>
-
               <div className="kvRow">
                 <div className="label">组头</div>
                 <div className="mono">{settings.auth.groupHeaderName}</div>
               </div>
-
               <div className="kvRow">
                 <div className="label">鉴权模式</div>
                 <div className="mono">{settings.auth.authorizationMode}</div>
               </div>
-
               <div className="kvRow">
                 <div className="label">允许用户</div>
                 <div className="mono">{settings.auth.allowedUserMasked || '-'}</div>
               </div>
-
               <div className="kvRow">
                 <div className="label">允许组</div>
                 <div className="mono">{settings.auth.allowedGroupMasked || '-'}</div>

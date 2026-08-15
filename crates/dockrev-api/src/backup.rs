@@ -35,6 +35,25 @@ pub struct BackupProgressEvent {
 
 const RECOVERY_CHECKPOINT_PREFIX: &str = "backup-recovery-checkpoint: ";
 
+#[derive(Debug)]
+struct BackupSafetyError(String);
+
+impl std::fmt::Display for BackupSafetyError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for BackupSafetyError {}
+
+pub fn is_safety_failure(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<BackupSafetyError>().is_some()
+}
+
+fn safety_failure(message: String) -> anyhow::Error {
+    BackupSafetyError(message).into()
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct BackupRecoveryCheckpoint {
@@ -242,9 +261,9 @@ pub async fn run_pre_update_backup(
         )
         .await
         {
-            return Err(anyhow::anyhow!(
+            return Err(safety_failure(format!(
                 "stopping services failed ({error}); restoring services failed ({restore_error})"
-            ));
+            )));
         }
         return Err(error);
     }
@@ -273,13 +292,28 @@ pub async fn run_pre_update_backup(
                 .filter(|service| !keep_stopped_services.contains(service))
                 .cloned()
                 .collect::<Vec<_>>();
-            restart_related_services_after_backup(
+            if let Err(resume_error) = restart_related_services_after_backup(
                 runner,
                 &compose_stack,
                 &compose_cfg,
                 &services_to_resume,
             )
-            .await?;
+            .await
+            {
+                if let Err(restore_error) = restart_related_services_after_backup(
+                    runner,
+                    &compose_stack,
+                    &compose_cfg,
+                    &services_to_restart,
+                )
+                .await
+                {
+                    return Err(safety_failure(format!(
+                        "resuming non-update services failed ({resume_error}); restoring all stopped services failed ({restore_error})"
+                    )));
+                }
+                return Err(resume_error.context("resume non-update services after backup"));
+            }
         }
         Err(error) => {
             if let Err(restore_error) = restart_related_services_after_backup(
@@ -290,9 +324,9 @@ pub async fn run_pre_update_backup(
             )
             .await
             {
-                return Err(anyhow::anyhow!(
+                return Err(safety_failure(format!(
                     "backup failed ({error}); restoring previous services failed ({restore_error})"
-                ));
+                )));
             }
             return Err(error);
         }
@@ -316,9 +350,9 @@ pub async fn run_pre_update_backup(
             )
             .await
             {
-                return Err(anyhow::anyhow!(
+                return Err(safety_failure(format!(
                     "reading backup artifact size failed ({error}); restoring services failed ({restore_error})"
-                ));
+                )));
             }
             return Err(error.context("read backup artifact size"));
         }
@@ -1023,11 +1057,13 @@ fn legacy_artifact_key(
     storage: &crate::backup_storage::BackupStorage,
     artifact_path: &str,
 ) -> Option<PathBuf> {
-    Path::new(artifact_path)
+    let key = Path::new(artifact_path)
         .strip_prefix(storage.logical_root())
         .ok()
-        .filter(|key| !key.as_os_str().is_empty())
-        .map(Path::to_path_buf)
+        .filter(|key| !key.as_os_str().is_empty())?;
+    key.components()
+        .all(|component| matches!(component, std::path::Component::Normal(_)))
+        .then(|| key.to_path_buf())
 }
 
 async fn delete_artifact(
@@ -1038,7 +1074,16 @@ async fn delete_artifact(
 ) -> anyhow::Result<()> {
     match storage {
         crate::backup_storage::BackupStorage::Local { logical_root } => {
-            tokio::fs::remove_file(logical_root.join(artifact_key)).await?;
+            let root = tokio::fs::canonicalize(logical_root).await?;
+            let artifact_path = logical_root.join(artifact_key);
+            let resolved_artifact = tokio::fs::canonicalize(&artifact_path).await?;
+            if !resolved_artifact.starts_with(&root) {
+                return Err(anyhow::anyhow!(
+                    "backup artifact resolves outside managed storage: {}",
+                    artifact_path.display()
+                ));
+            }
+            tokio::fs::remove_file(artifact_path).await?;
         }
         _ => {
             let (source, relative) = storage.helper_output_mount();
@@ -1324,5 +1369,49 @@ mod tests {
                 .any(|spec| spec.args.iter().any(|arg| arg == "up"))
         );
         assert_eq!(out.size_bytes, Some(10));
+    }
+
+    #[test]
+    fn legacy_artifact_key_rejects_parent_traversal() {
+        let storage = crate::backup_storage::BackupStorage::Local {
+            logical_root: PathBuf::from("/data/backups"),
+        };
+        assert_eq!(
+            legacy_artifact_key(&storage, "/data/backups/stack/archive.tar.gz"),
+            Some(PathBuf::from("stack/archive.tar.gz"))
+        );
+        assert_eq!(
+            legacy_artifact_key(&storage, "/data/backups/../important/file"),
+            None
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn local_delete_rejects_symlink_escape() {
+        let root = std::env::temp_dir().join(format!("dockrev-cleanup-test-{}", ulid::Ulid::new()));
+        let managed = root.join("backups");
+        let outside = root.join("outside");
+        tokio::fs::create_dir_all(&managed).await.unwrap();
+        tokio::fs::create_dir_all(&outside).await.unwrap();
+        tokio::fs::write(outside.join("keep.tar.gz"), b"keep")
+            .await
+            .unwrap();
+        std::os::unix::fs::symlink(&outside, managed.join("escaped")).unwrap();
+
+        let storage = crate::backup_storage::BackupStorage::Local {
+            logical_root: managed,
+        };
+        let error = delete_artifact(
+            &FakeRunner::default(),
+            &storage,
+            "unused",
+            Path::new("escaped/keep.tar.gz"),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("outside managed storage"));
+        assert!(outside.join("keep.tar.gz").exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

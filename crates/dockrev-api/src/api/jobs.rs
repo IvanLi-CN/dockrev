@@ -255,12 +255,6 @@ pub(super) fn resolve_sse_after_id(headers: &HeaderMap, query_after_id: i64) -> 
     std::cmp::max(header_after_id, query_after_id).max(0)
 }
 
-#[derive(Default)]
-struct LiveCommandState {
-    command_seq: u64,
-    complete: bool,
-}
-
 pub(super) async fn jobs_events(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -392,7 +386,7 @@ pub(super) async fn job_events(
         yield Ok::<Event, Infallible>(Event::default().comment("keep-alive"));
         // If the job is already finished and no new logs arrive for a while, close the stream.
         let mut finished_idle_ticks: u32 = 0;
-        let mut live_commands = std::collections::VecDeque::<LiveCommandState>::new();
+        let mut completed_summaries = std::collections::VecDeque::<u64>::new();
 
         loop {
             // Prefer transient output over durable backlog. This keeps the live stream flowing
@@ -400,15 +394,6 @@ pub(super) async fn job_events(
             if let Some(live_subscription) = live_subscription.as_mut() {
                 match live_subscription.try_recv() {
                     Ok(crate::job_live_logs::JobLiveEvent::Terminal(terminal)) => {
-                        if live_commands
-                            .back()
-                            .is_none_or(|command| command.command_seq != terminal.command_seq)
-                        {
-                            live_commands.push_back(LiveCommandState {
-                                command_seq: terminal.command_seq,
-                                complete: false,
-                            });
-                        }
                         let evt = json!({
                             "type": "job_live_terminal",
                             "jobId": sse_job_id,
@@ -424,15 +409,8 @@ pub(super) async fn job_events(
                         continue;
                     }
                     Ok(crate::job_live_logs::JobLiveEvent::CommandComplete(done)) => {
-                        if let Some(command) = live_commands.back_mut()
-                            && command.command_seq == done.command_seq
-                            && !command.complete
-                        {
-                            if done.summary_persisted {
-                                command.complete = true;
-                            } else {
-                                live_commands.pop_back();
-                            }
+                        if done.summary_persisted {
+                            completed_summaries.push_back(done.command_seq);
                         }
                         let evt = json!({
                             "type": "job_live_command_complete",
@@ -460,7 +438,7 @@ pub(super) async fn job_events(
                         continue;
                     }
                     Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => {
-                        live_commands.clear();
+                        completed_summaries.clear();
                     }
                     Err(tokio::sync::broadcast::error::TryRecvError::Empty)
                     | Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {}
@@ -507,15 +485,6 @@ pub(super) async fn job_events(
                         live = live_subscription.recv() => {
                             match live {
                                 Ok(crate::job_live_logs::JobLiveEvent::Terminal(terminal)) => {
-                                    if live_commands
-                                        .back()
-                                        .is_none_or(|command| command.command_seq != terminal.command_seq)
-                                    {
-                                        live_commands.push_back(LiveCommandState {
-                                            command_seq: terminal.command_seq,
-                                            complete: false,
-                                        });
-                                    }
                                     let evt = json!({
                                         "type": "job_live_terminal",
                                         "jobId": sse_job_id,
@@ -530,15 +499,8 @@ pub(super) async fn job_events(
                                     );
                                 }
                                 Ok(crate::job_live_logs::JobLiveEvent::CommandComplete(done)) => {
-                                    if let Some(command) = live_commands.back_mut()
-                                        && command.command_seq == done.command_seq
-                                        && !command.complete
-                                    {
-                                        if done.summary_persisted {
-                                            command.complete = true;
-                                        } else {
-                                            live_commands.pop_back();
-                                        }
+                                    if done.summary_persisted {
+                                        completed_summaries.push_back(done.command_seq);
                                     }
                                     let evt = json!({
                                         "type": "job_live_command_complete",
@@ -567,7 +529,7 @@ pub(super) async fn job_events(
                                     // Raw lines are intentionally not replayable. Drop any
                                     // partially paired command so the next durable summary is
                                     // never suppressed using stale live output.
-                                    live_commands.clear();
+                                    completed_summaries.clear();
                                 }
                                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                                     tokio::time::sleep(Duration::from_millis(250)).await;
@@ -587,33 +549,28 @@ pub(super) async fn job_events(
             for row in rows {
                 after_id = row.id;
                 if row.level != "event" {
-                    // A command publishes its completion marker after the persisted summary
-                    // succeeds. Pair the next database summary with the next in-memory command
-                    // marker before sending it, preserving event order for back-to-back commands.
+                    // Completion markers are published in the same order their summaries are
+                    // persisted. Pair by completion order so concurrent commands may finish in
+                    // either order without blocking on command start order.
                     // Reconnected streams have an empty queue and therefore restore history
                     // immediately without waiting for a marker that cannot be replayed.
                     if row.msg.starts_with("status=")
                         && row.id > live_start_after_id
-                        && live_commands
-                            .front()
-                            .is_none_or(|command| !command.complete)
+                        && completed_summaries.is_empty()
                         && let Some(live_subscription) = live_subscription.as_mut()
                     {
                         loop {
                             let live = match live_subscription.try_recv() {
                                 Ok(live) => live,
                                 Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => {
-                                    live_commands.clear();
+                                    completed_summaries.clear();
                                     break;
                                 }
                                 Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {
-                                    if live_commands.is_empty() {
-                                        break;
-                                    }
                                     match live_subscription.recv().await {
                                         Ok(live) => live,
                                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                                            live_commands.clear();
+                                            completed_summaries.clear();
                                             break;
                                         }
                                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -621,21 +578,13 @@ pub(super) async fn job_events(
                                 }
                                 Err(tokio::sync::broadcast::error::TryRecvError::Closed) => break,
                             };
-                            let command_complete = matches!(
+                            let summary_complete = matches!(
                                 &live,
-                                crate::job_live_logs::JobLiveEvent::CommandComplete(_)
+                                crate::job_live_logs::JobLiveEvent::CommandComplete(done)
+                                    if done.summary_persisted
                             );
                             match live {
                                 crate::job_live_logs::JobLiveEvent::Terminal(terminal) => {
-                                    if live_commands
-                                        .back()
-                                        .is_none_or(|command| command.command_seq != terminal.command_seq)
-                                    {
-                                        live_commands.push_back(LiveCommandState {
-                                            command_seq: terminal.command_seq,
-                                            complete: false,
-                                        });
-                                    }
                                     let evt = json!({
                                         "type": "job_live_terminal",
                                         "jobId": sse_job_id,
@@ -650,15 +599,8 @@ pub(super) async fn job_events(
                                     );
                                 }
                                 crate::job_live_logs::JobLiveEvent::CommandComplete(done) => {
-                                    if let Some(command) = live_commands.back_mut()
-                                        && command.command_seq == done.command_seq
-                                        && !command.complete
-                                    {
-                                        if done.summary_persisted {
-                                            command.complete = true;
-                                        } else {
-                                            live_commands.pop_back();
-                                        }
+                                    if done.summary_persisted {
+                                        completed_summaries.push_back(done.command_seq);
                                     }
                                     let evt = json!({
                                         "type": "job_live_command_complete",
@@ -684,15 +626,16 @@ pub(super) async fn job_events(
                                     );
                                 }
                             }
-                            if command_complete {
+                            if summary_complete {
                                 break;
                             }
                         }
                     }
-                    let summary_command_seq = live_commands
-                        .front()
-                        .filter(|command| row.msg.starts_with("status=") && command.complete)
-                        .map(|command| command.command_seq);
+                    let summary_command_seq = row
+                        .msg
+                        .starts_with("status=")
+                        .then(|| completed_summaries.pop_front())
+                        .flatten();
                     let evt = json!({
                         "type": "job_log",
                         "jobId": sse_job_id,
@@ -707,11 +650,6 @@ pub(super) async fn job_events(
                             .event("job_log")
                             .data(evt.to_string()),
                     );
-                    if row.msg.starts_with("status=")
-                        && live_commands.front().is_some_and(|command| command.complete)
-                    {
-                        live_commands.pop_front();
-                    }
                     continue;
                 }
 
