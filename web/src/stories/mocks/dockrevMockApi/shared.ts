@@ -106,6 +106,7 @@ export type DockrevApiScenario =
   | 'queue-update-indeterminate'
   | 'queue-update-download-determinate'
   | 'queue-long-logs'
+  | 'queue-backup-progress'
   | 'settings-configured'
   | 'settings-configured-load-slow'
   | 'settings-configured-resolve-slow'

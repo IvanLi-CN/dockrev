@@ -1,7 +1,7 @@
 import type { JobDetail, JobListItem } from '../../../api'
 import { makeVersionInferenceOverview, nowIso, type Fixture } from './shared'
 import { baseEmpty, buildDashboardDemo } from './fixturesBase'
-export { buildQueueLongLogs } from './fixturesQueueLongLogs'
+export { buildQueueBackupProgress, buildQueueLongLogs } from './fixturesQueueLongLogs'
 
 export function buildQueueMixed(): Fixture {
   const f = buildDashboardDemo()

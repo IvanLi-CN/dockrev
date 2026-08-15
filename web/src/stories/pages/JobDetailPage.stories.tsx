@@ -155,7 +155,7 @@ export const LiveOutputAndEventToggle: Story = {
 }
 
 export const BackupProgress: Story = {
-  parameters: { dockrevApiScenario: 'queue-long-logs' },
+  parameters: { dockrevApiScenario: 'queue-backup-progress' },
   render: () => renderLongLogsPage('运行中备份'),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => canvasElement.textContent?.includes('zstd-size') === true)
