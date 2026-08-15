@@ -212,6 +212,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
   const [showEvents, setShowEvents] = useState(readShowEventsPreference)
   const [manualRefreshVersion, setManualRefreshVersion] = useState(0)
   const liveCommandOutputSeqsRef = useRef(new Set<number>())
+  const pendingCommandSummarySeqsRef = useRef(new Set<number>())
   const visibleLogs = useMemo(
     () => logs.filter((log) => showEvents || log.level.trim().toLowerCase() !== 'event'),
     [logs, showEvents],
@@ -224,6 +225,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
     setLogs(j.logs)
     setProgress(normalizeProgress(j.progress))
     liveCommandOutputSeqsRef.current.clear()
+    pendingCommandSummarySeqsRef.current.clear()
     return j
   }, [jobId])
 
@@ -301,7 +303,9 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
             const ts = typeof p.ts === 'string' ? p.ts : ''
             const level = typeof p.level === 'string' ? p.level : ''
             const msg = typeof p.msg === 'string' ? p.msg : ''
+            const commandSeq = typeof p.commandSeq === 'number' && Number.isSafeInteger(p.commandSeq) ? p.commandSeq : null
             const durableId = typeof p.id === 'number' || typeof p.id === 'string' ? String(p.id) : ''
+            if (commandSeq !== null && pendingCommandSummarySeqsRef.current.delete(commandSeq)) return
             setLogs((prev) => {
               if (
                 (durableId && prev.some((log) => log.durableId === durableId)) ||
@@ -385,6 +389,9 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
             const commandSeq = typeof p.commandSeq === 'number' && Number.isSafeInteger(p.commandSeq) ? p.commandSeq : null
             const summaryPersisted = p.summaryPersisted !== false
             if (commandSeq !== null) {
+              if (summaryPersisted && liveCommandOutputSeqsRef.current.has(commandSeq)) {
+                pendingCommandSummarySeqsRef.current.add(commandSeq)
+              }
               setLogs((prev) => {
                 if (summaryPersisted) {
                   return prev.filter((log) => log.terminalCommandSeq !== commandSeq)

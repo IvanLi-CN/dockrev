@@ -689,12 +689,17 @@ pub(super) async fn job_events(
                             }
                         }
                     }
+                    let summary_command_seq = live_commands
+                        .front()
+                        .filter(|command| row.msg.starts_with("status=") && command.complete)
+                        .map(|command| command.command_seq);
                     let evt = json!({
                         "type": "job_log",
                         "jobId": sse_job_id,
                         "ts": row.ts,
                         "level": row.level,
                         "msg": row.msg,
+                        "commandSeq": summary_command_seq,
                     });
                     yield Ok::<Event, Infallible>(
                         Event::default()
