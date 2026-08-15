@@ -169,7 +169,7 @@ describe('resolveTrackedUpdateJobTransition', () => {
       domain: 'jobs',
       entities: [{ entityType: 'job', id: 'job-update' }],
       version: 3,
-      summary: { jobId: 'job-update', operation: 'progress_updated' },
+      summary: { jobId: 'job-update', jobType: 'update', status: 'running', operation: 'progress_updated' },
     }
 
     expect(resolveTrackedUpdateJobTransition(

@@ -84,6 +84,7 @@ export function isUpdateJobSnapshotCurrent(requestRevision: number, currentRevis
 export function doesManagementEventInvalidateUpdateSnapshot(event: ManagementEvent): boolean {
   if (event.domain !== 'jobs') return false
   if (event.summary.jobType !== 'update') return false
+  if (event.summary.operation === 'progress_updated') return false
   const status = typeof event.summary.status === 'string' ? event.summary.status : null
   return Boolean(status && (isUpdateJobActiveStatus(status) || event.summary.terminal === true))
 }
@@ -185,6 +186,7 @@ export function resolveTrackedUpdateJobTransition(
   trackedJobs: Iterable<[UpdateActionTargetKey, ActiveUpdateJob]>,
 ): { target: UpdateActionTargetKey; jobId: string; status: UpdateActionJobStatus } | null {
   if (event.domain !== 'jobs') return null
+  if (event.summary.operation === 'progress_updated') return null
   const jobId = typeof event.summary.jobId === 'string' ? event.summary.jobId : null
   const status = typeof event.summary.status === 'string' ? event.summary.status : null
   const terminal = event.summary.terminal === true
