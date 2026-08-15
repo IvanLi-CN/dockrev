@@ -5,6 +5,7 @@ import type { ManagementEvent } from '../src/managementEvents'
 import {
   pickLatestActiveUpdateJobs,
   reconcileTrackedUpdateJobs,
+  resolveActiveUpdateJobStatus,
   resolveTrackedUpdateJobTransition,
 } from '../src/updateActionTracking'
 
@@ -177,5 +178,15 @@ describe('resolveTrackedUpdateJobTransition', () => {
       { ...progressEvent, summary: { jobId: 'job-other', status: 'running' } },
       [['service:svc-1', { jobId: 'job-update', status: 'queued' }]],
     )).toBeNull()
+  })
+})
+
+describe('resolveActiveUpdateJobStatus', () => {
+  test('does not let a delayed queued snapshot regress an observed running event', () => {
+    expect(resolveActiveUpdateJobStatus('running', 'queued')).toBe('running')
+  })
+
+  test('allows queued jobs to advance to running', () => {
+    expect(resolveActiveUpdateJobStatus('queued', 'running')).toBe('running')
   })
 })

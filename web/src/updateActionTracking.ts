@@ -69,6 +69,14 @@ export function isUpdateJobActiveStatus(status: string): boolean {
   return status === 'queued' || status === 'running'
 }
 
+export function resolveActiveUpdateJobStatus(
+  current: UpdateActionJobStatus,
+  incoming: UpdateActionJobStatus,
+): UpdateActionJobStatus {
+  if (current === 'running' && incoming === 'queued') return current
+  return incoming
+}
+
 function resolveUpdateJobRecency(job: Pick<JobListItem, 'createdAt' | 'startedAt' | 'progress'>): number {
   const recencyCandidates = [job.startedAt, job.createdAt, job.progress?.updatedAt]
   for (const value of recencyCandidates) {
@@ -247,9 +255,14 @@ function useProvideUpdateActionTracker(): UpdateActionTracker {
     (target: UpdateActionTargetKey, jobId: string, status: UpdateActionJobStatus = 'queued', targetVersion?: string | null) => {
       const previous = activeByTargetRef.current.get(target)
       const resolvedTargetVersion = targetVersion ?? previous?.targetVersion ?? null
+      const resolvedStatus = previous?.jobId === jobId
+        ? resolveActiveUpdateJobStatus(previous.status, status)
+        : status
       activeByTargetRef.current.set(
         target,
-        resolvedTargetVersion ? { jobId, status, targetVersion: resolvedTargetVersion } : { jobId, status },
+        resolvedTargetVersion
+          ? { jobId, status: resolvedStatus, targetVersion: resolvedTargetVersion }
+          : { jobId, status: resolvedStatus },
       )
       publishActive()
     },
@@ -264,7 +277,8 @@ function useProvideUpdateActionTracker(): UpdateActionTracker {
         const latest = activeByTargetRef.current.get(target)
         if (!latest || latest.jobId !== jobId) return
         if (isUpdateJobActiveStatus(job.status)) {
-          if (latest.status !== job.status) storeTrackedJob(target, jobId, job.status)
+          const resolvedStatus = resolveActiveUpdateJobStatus(latest.status, job.status)
+          if (latest.status !== resolvedStatus) storeTrackedJob(target, jobId, resolvedStatus)
           return
         }
         publishUpdateJobSettled(toUpdateJobSettledDetail(target, job))
