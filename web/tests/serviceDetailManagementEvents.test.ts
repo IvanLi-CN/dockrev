@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import type { Service } from '../src/api'
 import type { ManagementEvent } from '../src/managementEvents'
 import { managementEventAffectsServiceDetail } from '../src/pages/useServiceDetailPageState'
+import { formatMockManagementCursor, parseMockManagementCursor } from '../src/stories/mocks/dockrevMockApi/managementEventCursor'
 
 const service = {
   id: 'svc-1',
@@ -35,6 +36,17 @@ function versionInferenceEvent(digest: string): ManagementEvent {
 }
 
 describe('service detail management events', () => {
+  test('keeps management cursors generation-qualified and versionable', () => {
+    const cursor = formatMockManagementCursor('storybook', 42)
+    expect(cursor).toBe('storybook:42')
+    expect(parseMockManagementCursor(cursor, 'storybook')).toEqual({ kind: 'valid', id: 42 })
+  })
+
+  test('requests resync for invalid or cross-generation management cursors', () => {
+    expect(parseMockManagementCursor('storybook:not-a-number', 'storybook')).toEqual({ kind: 'resync', reason: 'invalid_cursor' })
+    expect(parseMockManagementCursor('other:42', 'storybook')).toEqual({ kind: 'resync', reason: 'generation_changed' })
+  })
+
   test('refreshes when a finished version inference matches the service image', () => {
     expect(managementEventAffectsServiceDetail(
       versionInferenceEvent('sha256:current'),

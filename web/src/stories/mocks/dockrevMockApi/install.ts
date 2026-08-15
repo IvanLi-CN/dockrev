@@ -26,6 +26,7 @@ import {
   seedIgnoreSequence,
   seedJobSequence,
 } from './installHelpers'
+import { formatMockManagementCursor, parseMockManagementCursor } from './managementEventCursor'
 import { applyRollbackTargetRaceAfterUpdate, maybeServeRollbackTargetRaceResponse, type RollbackTargetRaceState } from './rollbackRace'
 import type { DockrevApiScenario, DockrevMockApiOptions } from './shared'
 import {
@@ -134,7 +135,7 @@ export function installDockrevMockApi(
   }
   const rollbackTargetRaceByServiceId = new Map<string, RollbackTargetRaceState>(); const publishMockManagementEvent = (entities: Array<{ entityType: string; id: string }>, summary: Record<string, unknown>) => {
     const id = ++managementEventsSeqRef.value
-    managementEvents.push({ id, cursor: `${managementEventsGeneration}:${id}`, data: { type: 'entities_changed', domain: 'jobs', entities, version: id, summary } })
+    managementEvents.push({ id, cursor: formatMockManagementCursor(managementEventsGeneration, id), data: { type: 'entities_changed', domain: 'jobs', entities, version: id, summary } })
   }
   let deployCheckReportSequenceIndex = 0
   const advanceQueueProgressDemo = (): number | null => {
@@ -589,23 +590,14 @@ export function installDockrevMockApi(
 
     if (urlPath === '/api/events' && method === 'GET') {
       const afterCursor = url?.searchParams.get('afterId') ?? ''
-      let afterId = 0
-      let resyncReason: string | null = null
-      if (afterCursor) {
-        const [generation, sequence, ...rest] = afterCursor.split(':')
-        const parsedSequence = Number(sequence)
-        if (rest.length > 0 || generation !== managementEventsGeneration || !Number.isInteger(parsedSequence) || parsedSequence < 0) {
-          resyncReason = generation !== managementEventsGeneration ? 'generation_changed' : 'invalid_cursor'
-        } else {
-          afterId = parsedSequence
-        }
-      }
+      const cursor = parseMockManagementCursor(afterCursor, managementEventsGeneration)
       const latestId = managementEventsSeqRef.value
-      if (resyncReason) {
-        const cursor = `${managementEventsGeneration}:${latestId}`
-        const data = { type: 'resync_required', domain: 'management', reason: resyncReason, generation: managementEventsGeneration }
-        return new Response(`id: ${cursor}\nevent: resync_required\ndata: ${JSON.stringify(data)}\n\n`, { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'x-accel-buffering': 'no' } })
+      if (cursor.kind === 'resync') {
+        const resyncCursor = formatMockManagementCursor(managementEventsGeneration, latestId)
+        const data = { type: 'resync_required', domain: 'management', reason: cursor.reason, generation: managementEventsGeneration }
+        return new Response(`id: ${resyncCursor}\nevent: resync_required\ndata: ${JSON.stringify(data)}\n\n`, { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'x-accel-buffering': 'no-cache' } })
       }
+      const afterId = cursor.kind === 'valid' ? cursor.id : 0
       const events = managementEvents.filter((event) => event.id > afterId).slice(0, 200)
       const body = events.map((event) => `id: ${event.cursor}\nevent: management\ndata: ${JSON.stringify(event.data)}\n\n`).join('')
       return new Response(body || ': keep-alive\n\n', { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'x-accel-buffering': 'no' } })

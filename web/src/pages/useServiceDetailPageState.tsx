@@ -118,6 +118,7 @@ export function useServiceDetailPageState(props: {
   const [lifecycleStatus, setLifecycleStatus] = useState<ServiceLifecycleStatusResponse | null>(null)
   const [lifecycleSettledJobId, setLifecycleSettledJobId] = useState<string | null>(null)
   const lifecycleActiveJobIdRef = useRef<string | null>(null)
+  const lifecycleStatusRequestIdRef = useRef(0)
   const rollbackActiveJobIdRef = useRef<string | null>(null)
   const [lastSuccessfulRefreshAt, setLastSuccessfulRefreshAt] = useState<string | null>(null)
   const lifecycleJob = lifecycleStatus?.activeJob ?? null
@@ -376,13 +377,27 @@ export function useServiceDetailPageState(props: {
   })
 
   const refreshLifecycleStatus = useCallback(async () => {
+    const requestId = ++lifecycleStatusRequestIdRef.current
     if (!service || isDockrevService(service)) {
-      setLifecycleStatus(null)
-      lifecycleActiveJobIdRef.current = null
+      if (requestId === lifecycleStatusRequestIdRef.current) {
+        setLifecycleStatus(null)
+        lifecycleActiveJobIdRef.current = null
+      }
       return
     }
-    const next = await getServiceLifecycleStatus(service.id)
-    setLifecycleStatus(next)
+    try {
+      const next = await getServiceLifecycleStatus(service.id)
+      if (requestId === lifecycleStatusRequestIdRef.current) setLifecycleStatus(next)
+    } catch (error: unknown) {
+      if (requestId === lifecycleStatusRequestIdRef.current) {
+        setLifecycleStatus((previous) => ({
+          state: 'unknown',
+          unavailableReason: 'lifecycle_status_unavailable',
+          activeJob: previous?.activeJob ?? null,
+        }))
+      }
+      throw error
+    }
   }, [service])
 
   const seedLifecycleActiveJob = useCallback(
@@ -399,9 +414,12 @@ export function useServiceDetailPageState(props: {
 
   useEffect(() => {
     lifecycleActiveJobIdRef.current = null
+    lifecycleStatusRequestIdRef.current += 1
     setLifecycleSettledJobId(null)
     fullRefreshRequestIdRef.current += 1
     stackRefreshRequestIdRef.current += 1
+    setStack(null); setService(null); setSettings(null); setBackupTargets(null); setBackupRecords([])
+    setStackSettings(null); setRules([]); setLifecycleStatus(null); setLastSuccessfulRefreshAt(null)
     setRollbackTarget(null)
     setRollbackActiveTarget(null)
     setRollbackTargetRefreshing(false)
@@ -412,13 +430,7 @@ export function useServiceDetailPageState(props: {
   }, [requestRefresh, serviceId, stackId])
 
   useEffect(() => {
-    void refreshLifecycleStatus().catch(() => {
-      setLifecycleStatus((previous) => ({
-        state: 'unknown',
-        unavailableReason: 'lifecycle_status_unavailable',
-        activeJob: previous?.activeJob ?? null,
-      }))
-    })
+    void refreshLifecycleStatus().catch(() => {})
   }, [refreshLifecycleStatus])
 
   useEffect(() => {
