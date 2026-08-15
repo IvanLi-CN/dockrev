@@ -679,9 +679,10 @@ async function runInteractive({ baseUrl, browser }) {
     }
   };
 
-  // The service name and visible monitor summary form one topbar context group.
-  await assertServiceTopbarContextGrouped();
-  if (process.env.DOCKREV_TEST_STORYBOOK_TOPBAR_ONLY === "1") return;
+  if (process.env.DOCKREV_TEST_STORYBOOK_TOPBAR_ONLY === "1") {
+    await assertServiceTopbarContextGrouped();
+    return;
+  }
 
   // Version directory navigation must converge even when the target card is not rendered yet.
   {
@@ -2500,6 +2501,9 @@ async function runInteractive({ baseUrl, browser }) {
       await page.close().catch(() => {});
     }
   }
+
+  // The service name and visible monitor summary form one topbar context group.
+  await assertServiceTopbarContextGrouped();
 }
 
 async function main() {
