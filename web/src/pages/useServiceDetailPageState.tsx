@@ -23,42 +23,8 @@ import { useManagementEventBatch } from '../managementEvents'
 import { usePageResumeRefresh } from '../usePageResumeRefresh'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay, inferResolvedTagsFromSnapshot, isStrictSemverTag } from '../versionDisplay'
-import type { ManagementEvent } from '../managementEvents'
 import { isRollbackTargetRefreshCurrent, retryRollbackTargetDigestMismatch } from './rollbackTargetRefresh'
-
-export function managementEventAffectsServiceDetail(
-  event: ManagementEvent,
-  stackId: string,
-  serviceId: string,
-  service: Service | null,
-): boolean {
-  if (
-    event.summary.stackId === stackId ||
-    event.summary.serviceId === serviceId ||
-    event.entities.some((entity) =>
-      (entity.entityType === 'stack' && entity.id === stackId) ||
-      (entity.entityType === 'service' && entity.id === serviceId),
-    )
-  ) {
-    return true
-  }
-  if (event.domain !== 'version_inference' || event.summary.phase !== 'finished' || !service) {
-    return false
-  }
-
-  const imageRepo = typeof event.summary.imageRepo === 'string'
-    ? event.summary.imageRepo.trim().toLowerCase()
-    : ''
-  const digest = typeof event.summary.digest === 'string'
-    ? normalizeDigest(event.summary.digest)?.toLowerCase()
-    : null
-  const serviceRepo = imageRepoFromImageRef(service.image.ref)
-  const currentDigest = normalizeDigest(service.image.digest)?.toLowerCase()
-  const candidateDigest = normalizeDigest(service.candidate?.digest)?.toLowerCase()
-  return Boolean(imageRepo && digest && serviceRepo === imageRepo && (
-    currentDigest === digest || candidateDigest === digest
-  ))
-}
+export { managementEventAffectsServiceDetail } from './serviceDetailManagement'
 
 export function useServiceDetailPageState(props: {
   stackId: string
