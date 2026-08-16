@@ -343,7 +343,7 @@ async function main() {
         await page.locator('.svcResourceWindowSwitch').waitFor({ timeout: STORY_TIMEOUT_MS })
         await page.getByRole('radio', { name: '30d' }).click()
         await page.getByText('长时间窗口按时间桶展示历史均值').waitFor({ timeout: STORY_TIMEOUT_MS })
-        await page.locator('.svcResourceCard').evaluate((el) => el.scrollIntoView({ block: 'start', behavior: 'auto' }))
+        await page.locator('.svcResourceWindowSwitch').evaluate((el) => el.scrollIntoView({ block: 'center', behavior: 'auto' }))
         await page.waitForTimeout(160)
       },
       screenshot: async (page, filePath) => {

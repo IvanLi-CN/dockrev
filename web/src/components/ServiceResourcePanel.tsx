@@ -93,6 +93,7 @@ const METRIC_PANEL_COPY: Record<
 }
 
 const SSE_BACKOFF_MS = [1000, 2000, 5000]
+const MAX_AGGREGATED_CHART_POINTS = 480
 
 export type ServiceResourceSnapshot = {
   fetchedAt?: string | null
@@ -142,6 +143,13 @@ function trimSamplesToWindow(samples: ServiceResourceSample[], windowSeconds: nu
   if (!samples.length) return []
   const sorted = [...samples].sort(compareSamplesByTime)
   return trimSortedSamples(sorted, windowSeconds)
+}
+
+function chartSamplesForWindow(samples: ServiceResourceSample[], isAggregatedWindow: boolean): ServiceResourceSample[] {
+  if (!isAggregatedWindow || samples.length <= MAX_AGGREGATED_CHART_POINTS) return samples
+
+  const stride = Math.ceil((samples.length - 1) / (MAX_AGGREGATED_CHART_POINTS - 1))
+  return samples.filter((_, index) => index === samples.length - 1 || index % stride === 0)
 }
 
 function appendSampleToSorted(samples: ServiceResourceSample[], sample: ServiceResourceSample): ServiceResourceSample[] {
@@ -285,6 +293,7 @@ function ResourceLineChart(props: {
   latestPeakLabel?: string | null
 }) {
   const { series, yFormatter, emptyText, latestPeakLabel } = props
+  const renderedPointCount = Math.max(0, ...series.map((item) => item.points.length))
 
   const allPoints = series
     .flatMap((item) => item.points)
@@ -321,7 +330,7 @@ function ResourceLineChart(props: {
   const singleSeries = series.length === 1
 
   return (
-    <div className="svcResourceChart">
+    <div className="svcResourceChart" data-point-count={renderedPointCount}>
       <svg viewBox={`0 0 ${width} ${height}`} className="svcResourceChartSvg" role="img" aria-label="服务资源趋势图">
         <rect
           className="svcResourcePlotBackdrop"
@@ -607,19 +616,24 @@ export function ServiceResourcePanel(props: {
     }
   }, [isAggregatedWindow, isPageVisible, monitorDisabled, readonly, serviceId])
 
+  const chartSamples = useMemo(
+    () => chartSamplesForWindow(samples, isAggregatedWindow),
+    [isAggregatedWindow, samples],
+  )
+
   const networkRates = useMemo(
     () =>
-      samples.some((sample) => sample.netRxRateBps != null || sample.netTxRateBps != null)
-        ? samples.map((sample) => ({ rx: sample.netRxRateBps ?? null, tx: sample.netTxRateBps ?? null }))
-        : computeRatePairs(samples, (sample) => sample.netRxBytes, (sample) => sample.netTxBytes),
-    [samples],
+      chartSamples.some((sample) => sample.netRxRateBps != null || sample.netTxRateBps != null)
+        ? chartSamples.map((sample) => ({ rx: sample.netRxRateBps ?? null, tx: sample.netTxRateBps ?? null }))
+        : computeRatePairs(chartSamples, (sample) => sample.netRxBytes, (sample) => sample.netTxBytes),
+    [chartSamples],
   )
   const diskRates = useMemo(
     () =>
-      samples.some((sample) => sample.blockReadRateBps != null || sample.blockWriteRateBps != null)
-        ? samples.map((sample) => ({ rx: sample.blockReadRateBps ?? null, tx: sample.blockWriteRateBps ?? null }))
-        : computeRatePairs(samples, (sample) => sample.blockReadBytes, (sample) => sample.blockWriteBytes),
-    [samples],
+      chartSamples.some((sample) => sample.blockReadRateBps != null || sample.blockWriteRateBps != null)
+        ? chartSamples.map((sample) => ({ rx: sample.blockReadRateBps ?? null, tx: sample.blockWriteRateBps ?? null }))
+        : computeRatePairs(chartSamples, (sample) => sample.blockReadBytes, (sample) => sample.blockWriteBytes),
+    [chartSamples],
   )
 
   const latestSample = samples.length ? samples[samples.length - 1] : null
@@ -628,7 +642,7 @@ export function ServiceResourcePanel(props: {
   const latestDiskRate = diskRates.length ? diskRates[diskRates.length - 1] : { rx: null, tx: null }
 
   const chartSeries = useMemo<ChartSeries[]>(() => {
-    const basePoints = samples.map((sample) => ({
+    const basePoints = chartSamples.map((sample) => ({
       x: parseSampleTs(sample) ?? Date.now(),
       sample,
     }))
@@ -704,7 +718,7 @@ export function ServiceResourcePanel(props: {
         points: basePoints.map((point) => ({ x: point.x, y: point.sample.pids ?? null })),
       },
     ]
-  }, [diskRates, metricTab, networkRates, samples])
+  }, [chartSamples, diskRates, metricTab, networkRates])
 
   const yFormatter = useMemo(() => {
     if (metricTab === 'cpu') return (value: number) => `${value.toFixed(0)}%`

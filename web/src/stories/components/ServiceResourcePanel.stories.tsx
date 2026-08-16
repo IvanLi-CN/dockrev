@@ -213,6 +213,10 @@ export const WindowSwitchContract: Story = {
     expectStory(canvasElement.textContent?.includes('长时间窗口按时间桶展示历史均值'), 'long windows should remain aggregated')
     expectStory(canvasElement.textContent?.includes('聚合历史'), 'long windows should not attach a realtime stream')
     expectStory(
+      Number(canvasElement.querySelector('.svcResourceChart')?.getAttribute('data-point-count')) <= 480,
+      'long windows should downsample chart points to the rendering budget',
+    )
+    expectStory(
       canvasElement.querySelector('.svcResourcePoint title')?.textContent?.includes('此桶峰值 CPU'),
       'the latest aggregated point should expose its CPU peak tooltip',
     )
