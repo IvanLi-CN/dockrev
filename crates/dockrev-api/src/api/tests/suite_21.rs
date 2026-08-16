@@ -113,8 +113,15 @@ services:
     let payload = response_json(resp).await;
     assert_eq!(payload["window"].as_str(), Some("30d"));
     assert_eq!(payload["resolutionSeconds"].as_u64(), Some(300));
-    assert_eq!(payload["samples"].as_array().unwrap().len(), 2);
-    assert_eq!(payload["peaks"].as_array().unwrap().len(), 2);
+    let samples = payload["samples"].as_array().unwrap();
+    let peaks = payload["peaks"].as_array().unwrap();
+    assert_eq!(samples.len(), 2);
+    assert_eq!(peaks.len(), 2);
+    assert_eq!(samples[0]["cpuPercent"].as_f64(), Some(12.5));
+    assert_eq!(samples[1]["cpuPercent"].as_f64(), Some(18.0));
+    assert_eq!(samples[1]["netRxBytes"].as_u64(), Some(8_000_000));
+    assert_eq!(peaks[0]["cpuPercent"].as_f64(), Some(12.5));
+    assert_eq!(peaks[1]["cpuPercent"].as_f64(), Some(18.0));
 }
 
 #[tokio::test]
@@ -794,7 +801,8 @@ services:
 #[tokio::test]
 #[ignore = "performance baseline; run explicitly in a quiet development or CI environment"]
 async fn homepage_metrics_isolation() {
-    let state = test_state(":memory:").await;
+    let db_path = format!("/tmp/dockrev-homepage-perf-{}.sqlite3", ulid::Ulid::new());
+    let state = test_state_with_authz(&db_path, Some("performance-user"), None, false).await;
     let app = api::router(state.clone());
     let compose_path = format!("/tmp/dockrev-homepage-perf-{}.yml", ulid::Ulid::new());
     let mut compose = "services:\n".to_string();
@@ -832,6 +840,55 @@ async fn homepage_metrics_isolation() {
     }
     state.metrics.insert_samples(&samples).await.unwrap();
 
+    let sampling = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let sampling_batches = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let sampler_metrics = state.metrics.clone();
+    let sampler_services = services
+        .iter()
+        .enumerate()
+        .map(|(index, service)| (index, service.id.clone()))
+        .collect::<Vec<_>>();
+    let sampler_active = sampling.clone();
+    let sampler_batches = sampling_batches.clone();
+    let (sampling_started_tx, sampling_started_rx) = tokio::sync::oneshot::channel();
+    let sampler = tokio::spawn(async move {
+        let mut tick = 0_i64;
+        let mut sampling_started_tx = Some(sampling_started_tx);
+        while sampler_active.load(std::sync::atomic::Ordering::Relaxed) {
+            let sampled_at = (time::OffsetDateTime::now_utc()
+                + time::Duration::milliseconds(tick))
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+            let batch = sampler_services
+                .iter()
+                .map(|(index, service_id)| crate::db::ServiceResourceSampleInput {
+                    service_id: service_id.clone(),
+                    sampled_at: sampled_at.clone(),
+                    cpu_percent: 10.0 + *index as f64,
+                    mem_used_bytes: Some(128 * 1024 * 1024),
+                    mem_limit_bytes: Some(1024 * 1024 * 1024),
+                    net_rx_bytes: Some((tick as u64 + 1) * (*index as u64 + 1) * 1_000),
+                    net_tx_bytes: Some((tick as u64 + 1) * (*index as u64 + 1) * 2_000),
+                    block_read_bytes: Some((tick as u64 + 1) * (*index as u64 + 1) * 500),
+                    block_write_bytes: Some((tick as u64 + 1) * (*index as u64 + 1) * 250),
+                    pids: Some(3),
+                    container_count: 1,
+                })
+                .collect::<Vec<_>>();
+            sampler_metrics.insert_samples(&batch).await.unwrap();
+            sampler_batches.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if let Some(sender) = sampling_started_tx.take() {
+                let _ = sender.send(());
+            }
+            tick += 1;
+            tokio::task::yield_now().await;
+        }
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), sampling_started_rx)
+        .await
+        .expect("continuous metrics writer did not start")
+        .expect("continuous metrics writer stopped before its first write");
+
     let mut latencies = Vec::with_capacity(100);
     for _ in 0..100 {
         let started_at = std::time::Instant::now();
@@ -840,6 +897,7 @@ async fn homepage_metrics_isolation() {
             .oneshot(
                 Request::builder()
                     .uri("/api/homepage/nav")
+                    .header("X-Forwarded-User", "performance-user")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -848,6 +906,8 @@ async fn homepage_metrics_isolation() {
         assert_eq!(response.status(), 200);
         latencies.push(started_at.elapsed());
     }
+    sampling.store(false, std::sync::atomic::Ordering::Relaxed);
+    sampler.await.unwrap();
     latencies.sort_unstable();
     let p95 = latencies[(latencies.len() * 95).div_ceil(100) - 1];
     assert!(

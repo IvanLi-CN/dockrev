@@ -136,6 +136,104 @@ impl Db {
         .context("verify legacy metrics")
     }
 
+    pub async fn legacy_metric_fingerprint(&self) -> anyhow::Result<LegacyMetricFingerprint> {
+        self.call(|conn| {
+            conn.query_row(
+                "SELECT COUNT(*), COALESCE(MAX(id), 0) FROM service_resource_samples",
+                [],
+                |row| {
+                    Ok(LegacyMetricFingerprint {
+                        sample_count: row.get::<_, i64>(0)? as u64,
+                        max_id: row.get(1)?,
+                    })
+                },
+            )
+            .map_err(Into::into)
+        })
+        .await
+        .context("fingerprint legacy metrics")
+    }
+
+    pub async fn legacy_metric_coverage(
+        &self,
+        raw_cutoff: &str,
+    ) -> anyhow::Result<Vec<LegacyMetricCoverageRow>> {
+        let raw_cutoff = raw_cutoff.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"SELECT service_id,
+                           COUNT(CASE WHEN sampled_at >= ?1 THEN 1 END),
+                           MAX(sampled_at)
+                    FROM service_resource_samples
+                    GROUP BY service_id
+                    ORDER BY service_id"#,
+            )?;
+            let rows = stmt.query_map(params![raw_cutoff], |row| {
+                Ok(LegacyMetricCoverageRow {
+                    service_id: row.get(0)?,
+                    raw_sample_count: row.get::<_, i64>(1)? as u64,
+                    latest_sampled_at: row.get(2)?,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("summarize legacy metrics coverage")
+    }
+
+    pub async fn legacy_metric_rollup_coverage(
+        &self,
+        minute_cutoff: &str,
+        five_minute_cutoff: &str,
+    ) -> anyhow::Result<Vec<LegacyMetricRollupCoverageRow>> {
+        let minute_cutoff = minute_cutoff.to_string();
+        let five_minute_cutoff = five_minute_cutoff.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"SELECT service_id, resolution_seconds, bucket_start, sample_count
+                    FROM (
+                      SELECT service_id,
+                             60 AS resolution_seconds,
+                             strftime(
+                               '%Y-%m-%dT%H:%M:%SZ',
+                               CAST(strftime('%s', sampled_at) AS INTEGER)
+                                 - (CAST(strftime('%s', sampled_at) AS INTEGER) % 60),
+                               'unixepoch'
+                             ) AS bucket_start,
+                             COUNT(*) AS sample_count
+                      FROM service_resource_samples
+                      WHERE sampled_at >= ?1
+                      GROUP BY service_id, bucket_start
+                      UNION ALL
+                      SELECT service_id,
+                             300 AS resolution_seconds,
+                             strftime(
+                               '%Y-%m-%dT%H:%M:%SZ',
+                               CAST(strftime('%s', sampled_at) AS INTEGER)
+                                 - (CAST(strftime('%s', sampled_at) AS INTEGER) % 300),
+                               'unixepoch'
+                             ) AS bucket_start,
+                             COUNT(*) AS sample_count
+                      FROM service_resource_samples
+                      WHERE sampled_at >= ?2
+                      GROUP BY service_id, bucket_start
+                    )
+                    ORDER BY service_id, resolution_seconds, bucket_start"#,
+            )?;
+            let rows = stmt.query_map(params![minute_cutoff, five_minute_cutoff], |row| {
+                Ok(LegacyMetricRollupCoverageRow {
+                    service_id: row.get(0)?,
+                    resolution_seconds: row.get::<_, i64>(1)? as u32,
+                    bucket_start: row.get(2)?,
+                    sample_count: row.get::<_, i64>(3)? as u64,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("summarize legacy metric rollup coverage")
+    }
+
     pub async fn legacy_metrics_latest_sampled_at(&self) -> anyhow::Result<Option<String>> {
         self.call(|conn| {
             conn.query_row(

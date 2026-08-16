@@ -35,3 +35,19 @@ pub(super) fn ensure_rollup_schema_columns(conn: &mut rusqlite::Connection) -> a
     }
     Ok(())
 }
+
+pub(super) fn ensure_migration_manifest_schema(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(metrics_migration_manifest)")?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    if !columns.contains("source_max_id") {
+        conn.execute(
+            "ALTER TABLE metrics_migration_manifest ADD COLUMN source_max_id INTEGER",
+            [],
+        )?;
+    }
+    Ok(())
+}

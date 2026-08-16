@@ -239,6 +239,67 @@ async fn metrics_store_migration_rebuilds_latest_and_rollups_after_target_damage
 }
 
 #[tokio::test]
+async fn metrics_store_migration_recovers_partial_service_and_rollup_loss() {
+    let main_path = temp_path("metrics-migration-partial-damage-main");
+    let metrics_path = temp_path("metrics-migration-partial-damage-target");
+    let db = Db::open(&main_path).await.unwrap();
+    let now = time::OffsetDateTime::now_utc();
+    let sampled_at = format_time(now - time::Duration::seconds(30)).unwrap();
+    db.insert_legacy_metric_fixture(&[
+        sample("svc-a", &sampled_at, 10.0, 1_000),
+        sample("svc-b", &sampled_at, 20.0, 2_000),
+    ])
+    .await
+    .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+
+    metrics
+        .writer_call(|conn| {
+            conn.execute(
+                "DELETE FROM service_resource_samples WHERE service_id = 'svc-a'",
+                [],
+            )?;
+            conn.execute(
+                "DELETE FROM service_resource_latest_samples WHERE service_id = 'svc-a'",
+                [],
+            )?;
+            conn.execute(
+                "DELETE FROM service_resource_rollups WHERE service_id = 'svc-b' AND resolution_seconds = ?1",
+                params![MINUTE_RESOLUTION_SECONDS as i64],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    assert_eq!(metrics.list_latest_samples().await.unwrap().len(), 2);
+    assert_eq!(
+        metrics
+            .history_since("svc-a", "1970-01-01T00:00:00Z", None)
+            .await
+            .unwrap()
+            .samples
+            .len(),
+        1
+    );
+    assert_eq!(
+        metrics
+            .history_since(
+                "svc-b",
+                "1970-01-01T00:00:00Z",
+                Some(MINUTE_RESOLUTION_SECONDS)
+            )
+            .await
+            .unwrap()
+            .samples
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn metrics_store_memory_reader_uses_the_writer_connection() {
     let metrics = MetricsStore::open(Path::new(":memory:")).await.unwrap();
     metrics
@@ -299,6 +360,89 @@ async fn metrics_store_rollup_preserves_average_peak_and_terminal_counters() {
     assert_eq!(history.samples[0].net_rx_rate_bps, Some(100.0));
     assert_eq!(history.peaks[0].cpu_percent, 30.0);
     assert_eq!(history.peaks[0].net_rx_rate_bps, Some(100.0));
+}
+
+#[tokio::test]
+async fn metrics_store_five_minute_rollup_preserves_average_peak_and_terminal_counters() {
+    let metrics = MetricsStore::open(&temp_path("metrics-five-minute-rollup"))
+        .await
+        .unwrap();
+    metrics
+        .insert_samples(&[
+            sample("svc-a", "2026-08-16T13:10:00Z", 10.0, 1_000),
+            sample("svc-a", "2026-08-16T13:10:05Z", 30.0, 1_500),
+        ])
+        .await
+        .unwrap();
+    let history = metrics
+        .history_since(
+            "svc-a",
+            "2026-08-16T13:00:00Z",
+            Some(FIVE_MINUTE_RESOLUTION_SECONDS),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        history.resolution_seconds,
+        Some(FIVE_MINUTE_RESOLUTION_SECONDS)
+    );
+    assert_eq!(history.samples.len(), 1);
+    assert!((history.samples[0].cpu_percent - 20.0).abs() < f64::EPSILON);
+    assert_eq!(history.samples[0].net_rx_bytes, Some(1_500));
+    assert_eq!(history.samples[0].net_rx_rate_bps, Some(100.0));
+    assert_eq!(history.peaks[0].cpu_percent, 30.0);
+    assert_eq!(history.peaks[0].net_rx_rate_bps, Some(100.0));
+}
+
+#[tokio::test]
+async fn metrics_store_gc_keeps_five_minute_rollups_after_raw_and_minute_expiry() {
+    let metrics = MetricsStore::open(&temp_path("metrics-five-minute-retention"))
+        .await
+        .unwrap();
+    let sampled_at =
+        format_time(time::OffsetDateTime::now_utc() - time::Duration::days(8)).unwrap();
+    metrics
+        .insert_samples(&[sample("svc-a", &sampled_at, 10.0, 1_000)])
+        .await
+        .unwrap();
+
+    metrics
+        .gc(&BTreeSet::from(["svc-a".to_string()]))
+        .await
+        .unwrap();
+    assert!(
+        metrics
+            .history_since("svc-a", "1970-01-01T00:00:00Z", None)
+            .await
+            .unwrap()
+            .samples
+            .is_empty()
+    );
+    assert!(
+        metrics
+            .history_since(
+                "svc-a",
+                "1970-01-01T00:00:00Z",
+                Some(MINUTE_RESOLUTION_SECONDS),
+            )
+            .await
+            .unwrap()
+            .samples
+            .is_empty()
+    );
+    assert_eq!(
+        metrics
+            .history_since(
+                "svc-a",
+                "1970-01-01T00:00:00Z",
+                Some(FIVE_MINUTE_RESOLUTION_SECONDS),
+            )
+            .await
+            .unwrap()
+            .samples
+            .len(),
+        1
+    );
 }
 
 #[tokio::test]

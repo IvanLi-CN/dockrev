@@ -364,6 +364,27 @@ pub struct LegacyMetricSampleRow {
     pub sample: ServiceResourceSampleInput,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LegacyMetricFingerprint {
+    pub sample_count: u64,
+    pub max_id: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LegacyMetricCoverageRow {
+    pub service_id: String,
+    pub raw_sample_count: u64,
+    pub latest_sampled_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LegacyMetricRollupCoverageRow {
+    pub service_id: String,
+    pub resolution_seconds: u32,
+    pub bucket_start: String,
+    pub sample_count: u64,
+}
+
 #[derive(Clone, Debug)]
 pub struct MetricsMigrationState {
     pub state: String,

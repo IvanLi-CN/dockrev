@@ -23,7 +23,9 @@ use integrity::metrics_integrity_from_connection;
 pub(crate) use integrity::stable_table_hash;
 #[path = "metrics_store_schema.rs"]
 mod schema;
-use schema::{ensure_rollup_schema_columns, ensure_sample_schema};
+use schema::{
+    ensure_migration_manifest_schema, ensure_rollup_schema_columns, ensure_sample_schema,
+};
 
 pub const RAW_RETENTION_SECONDS: i64 = 24 * 60 * 60;
 pub const MINUTE_ROLLUP_RETENTION_SECONDS: i64 = 7 * 24 * 60 * 60;
@@ -77,7 +79,8 @@ CREATE INDEX IF NOT EXISTS idx_metrics_latest_samples_sampled_at
 CREATE TABLE IF NOT EXISTS metrics_migration_manifest (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   source_sample_count INTEGER NOT NULL,
-  source_sample_hash TEXT NOT NULL
+  source_sample_hash TEXT NOT NULL,
+  source_max_id INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS service_resource_rollups (
@@ -189,6 +192,7 @@ pub struct MetricsIntegrity {
 struct MigrationManifest {
     source_sample_count: u64,
     source_sample_hash: String,
+    source_max_id: Option<i64>,
 }
 
 fn metrics_target_identity(path: &Path) -> String {
@@ -249,6 +253,7 @@ impl MetricsStore {
             ))?;
             ensure_sample_schema(conn)?;
             ensure_rollup_schema_columns(conn)?;
+            ensure_migration_manifest_schema(conn)?;
             Ok(())
         })
         .await?;
@@ -295,26 +300,43 @@ impl MetricsStore {
     }
 
     pub async fn migrate_from_legacy(&self, db: &Db) -> anyhow::Result<()> {
-        let source = db.legacy_metrics_integrity().await?;
-        let source_latest_sampled_at = db.legacy_metrics_latest_sampled_at().await?;
         let state = db.metrics_migration_state().await?;
+        let migration_complete = state.as_ref().is_some_and(|state| {
+            state.state == "complete"
+                && state.target_identity.as_deref() == Some(self.target_identity.as_str())
+        });
+        let now = time::OffsetDateTime::now_utc();
+        let raw_cutoff = format_time(now - time::Duration::seconds(RAW_RETENTION_SECONDS))?;
+        let minute_cutoff =
+            format_time(now - time::Duration::seconds(MINUTE_ROLLUP_RETENTION_SECONDS))?;
+        let five_minute_cutoff =
+            format_time(now - time::Duration::seconds(FIVE_MINUTE_ROLLUP_RETENTION_SECONDS))?;
+
+        if migration_complete && let Some(manifest) = self.migration_manifest().await? {
+            let fingerprint = db.legacy_metric_fingerprint().await?;
+            if manifest.source_sample_count == fingerprint.sample_count
+                && manifest.source_max_id == Some(fingerprint.max_id)
+            {
+                let source_coverage = db.legacy_metric_coverage(&raw_cutoff).await?;
+                let source_rollups = db
+                    .legacy_metric_rollup_coverage(&minute_cutoff, &five_minute_cutoff)
+                    .await?;
+                if self
+                    .legacy_read_models_cover(&source_coverage, &source_rollups, &raw_cutoff)
+                    .await?
+                {
+                    return Ok(());
+                }
+            }
+        }
+
+        let source = db.legacy_metrics_integrity().await?;
+        let fingerprint = db.legacy_metric_fingerprint().await?;
         let manifest = MigrationManifest {
             source_sample_count: source.sample_count,
             source_sample_hash: source.sample_hash.clone(),
+            source_max_id: Some(fingerprint.max_id),
         };
-        if state.as_ref().is_some_and(|state| {
-            state.state == "complete"
-                && state.target_identity.as_deref() == Some(self.target_identity.as_str())
-        }) && self.migration_manifest().await? == Some(manifest.clone())
-        {
-            self.rebuild_latest_samples().await?;
-            if self
-                .rollups_cover_raw_samples(source_latest_sampled_at.as_deref())
-                .await?
-            {
-                return Ok(());
-            }
-        }
         db.set_metrics_migration_state("copying", Some(&self.target_identity), None)
             .await?;
 
@@ -421,12 +443,13 @@ impl MetricsStore {
     async fn migration_manifest(&self) -> anyhow::Result<Option<MigrationManifest>> {
         self.reader_call(|conn| {
             conn.query_row(
-                "SELECT source_sample_count, source_sample_hash FROM metrics_migration_manifest WHERE id = 1",
+                "SELECT source_sample_count, source_sample_hash, source_max_id FROM metrics_migration_manifest WHERE id = 1",
                 [],
                 |row| {
                     Ok(MigrationManifest {
                         source_sample_count: row.get::<_, i64>(0)? as u64,
                         source_sample_hash: row.get(1)?,
+                        source_max_id: row.get(2)?,
                     })
                 },
             )
@@ -440,41 +463,96 @@ impl MetricsStore {
         let manifest = manifest.clone();
         self.writer_call(move |conn| {
             conn.execute(
-                r#"INSERT INTO metrics_migration_manifest (id, source_sample_count, source_sample_hash)
-                   VALUES (1, ?1, ?2)
+                r#"INSERT INTO metrics_migration_manifest (id, source_sample_count, source_sample_hash, source_max_id)
+                   VALUES (1, ?1, ?2, ?3)
                    ON CONFLICT(id) DO UPDATE SET source_sample_count=excluded.source_sample_count,
-                     source_sample_hash=excluded.source_sample_hash"#,
-                params![manifest.source_sample_count as i64, manifest.source_sample_hash],
+                     source_sample_hash=excluded.source_sample_hash,
+                     source_max_id=excluded.source_max_id"#,
+                params![
+                    manifest.source_sample_count as i64,
+                    manifest.source_sample_hash,
+                    manifest.source_max_id,
+                ],
             )?;
             Ok(())
         })
         .await
     }
 
-    async fn rollups_cover_raw_samples(&self, source_latest: Option<&str>) -> anyhow::Result<bool> {
-        let now = time::OffsetDateTime::now_utc();
-        let raw_cutoff = format_time(now - time::Duration::seconds(RAW_RETENTION_SECONDS))?;
-        let rollup_cutoff =
-            format_time(now - time::Duration::seconds(FIVE_MINUTE_ROLLUP_RETENTION_SECONDS))?;
-        let source_latest = source_latest.map(ToString::to_string);
+    async fn legacy_read_models_cover(
+        &self,
+        source_coverage: &[crate::db::LegacyMetricCoverageRow],
+        source_rollups: &[crate::db::LegacyMetricRollupCoverageRow],
+        raw_cutoff: &str,
+    ) -> anyhow::Result<bool> {
+        let source_coverage = source_coverage.to_vec();
+        let source_rollups = source_rollups.to_vec();
+        let raw_cutoff = raw_cutoff.to_string();
         self.reader_call(move |conn| {
-            let target_latest = conn.query_row(
-                "SELECT MAX(sampled_at) FROM service_resource_samples",
-                [],
-                |row| row.get::<_, Option<String>>(0),
-            )?;
-            let has_rollups = conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM service_resource_rollups)",
-                [],
-                |row| row.get::<_, bool>(0),
-            )?;
-            let Some(source_latest) = source_latest.as_deref() else {
-                return Ok(true);
+            let target_raw = {
+                let mut stmt = conn.prepare(
+                    r#"SELECT service_id, COUNT(*)
+                       FROM service_resource_samples
+                       WHERE legacy_id IS NOT NULL AND sampled_at >= ?1
+                       GROUP BY service_id"#,
+                )?;
+                stmt.query_map(params![raw_cutoff], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64))
+                })?
+                .collect::<Result<BTreeMap<_, _>, _>>()?
             };
-            if source_latest >= raw_cutoff.as_str() {
-                return Ok(has_rollups && target_latest.as_deref() >= Some(source_latest));
+            let target_latest = {
+                let mut stmt = conn.prepare(
+                    "SELECT service_id, sampled_at FROM service_resource_latest_samples",
+                )?;
+                stmt.query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<Result<BTreeMap<_, _>, _>>()?
+            };
+            let target_rollups = {
+                let mut stmt = conn.prepare(
+                    r#"SELECT service_id, resolution_seconds, bucket_start, sample_count
+                       FROM service_resource_rollups"#,
+                )?;
+                stmt.query_map([], |row| {
+                    Ok((
+                        (
+                            row.get::<_, String>(0)?,
+                            row.get::<_, i64>(1)? as u32,
+                            row.get::<_, String>(2)?,
+                        ),
+                        row.get::<_, i64>(3)? as u64,
+                    ))
+                })?
+                .collect::<Result<BTreeMap<_, _>, _>>()?
+            };
+
+            for source in source_coverage {
+                if target_raw
+                    .get(&source.service_id)
+                    .copied()
+                    .unwrap_or_default()
+                    != source.raw_sample_count
+                {
+                    return Ok(false);
+                }
+                if target_latest
+                    .get(&source.service_id)
+                    .is_none_or(|sampled_at| sampled_at < &source.latest_sampled_at)
+                {
+                    return Ok(false);
+                }
             }
-            Ok(source_latest < rollup_cutoff.as_str() || has_rollups)
+            Ok(source_rollups.iter().all(|source| {
+                target_rollups
+                    .get(&(
+                        source.service_id.clone(),
+                        source.resolution_seconds,
+                        source.bucket_start.clone(),
+                    ))
+                    .is_some_and(|sample_count| *sample_count >= source.sample_count)
+            }))
         })
         .await
     }
