@@ -1,6 +1,212 @@
 use super::*;
 
+#[allow(dead_code)]
 impl Db {
+    pub async fn metrics_migration_state(&self) -> anyhow::Result<Option<String>> {
+        self.call(|conn| {
+            conn.execute_batch(
+                r#"CREATE TABLE IF NOT EXISTS metrics_store_migration (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    state TEXT NOT NULL,
+                    last_error TEXT,
+                    updated_at TEXT NOT NULL
+                );"#,
+            )?;
+            Ok(conn
+                .query_row(
+                    "SELECT state FROM metrics_store_migration WHERE id = 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()?)
+        })
+        .await
+        .context("get metrics migration state")
+    }
+
+    pub async fn set_metrics_migration_state(
+        &self,
+        state: &str,
+        last_error: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let state = state.to_string();
+        let last_error = last_error.map(ToString::to_string);
+        let updated_at = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)?;
+        self.call(move |conn| {
+            conn.execute_batch(
+                r#"CREATE TABLE IF NOT EXISTS metrics_store_migration (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    state TEXT NOT NULL,
+                    last_error TEXT,
+                    updated_at TEXT NOT NULL
+                );"#,
+            )?;
+            conn.execute(
+                r#"INSERT INTO metrics_store_migration (id, state, last_error, updated_at)
+                   VALUES (1, ?1, ?2, ?3)
+                   ON CONFLICT(id) DO UPDATE SET
+                     state = excluded.state,
+                     last_error = excluded.last_error,
+                     updated_at = excluded.updated_at"#,
+                params![state, last_error, updated_at],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("set metrics migration state")
+    }
+
+    pub async fn list_legacy_metric_samples_after(
+        &self,
+        after_id: i64,
+        limit: u32,
+    ) -> anyhow::Result<Vec<LegacyMetricSampleRow>> {
+        let limit = limit.clamp(1, 10_000) as i64;
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"SELECT id, service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes,
+                    net_rx_bytes, net_tx_bytes, block_read_bytes, block_write_bytes, pids, container_count
+                   FROM service_resource_samples WHERE id > ?1 ORDER BY id ASC LIMIT ?2"#,
+            )?;
+            let rows = stmt.query_map(params![after_id, limit], |row| {
+                Ok(LegacyMetricSampleRow {
+                    id: row.get(0)?,
+                    sample: ServiceResourceSampleInput {
+                        service_id: row.get(1)?,
+                        sampled_at: row.get(2)?,
+                        cpu_percent: row.get(3)?,
+                        mem_used_bytes: row.get::<_, Option<i64>>(4)?.map(|value| value as u64),
+                        mem_limit_bytes: row.get::<_, Option<i64>>(5)?.map(|value| value as u64),
+                        net_rx_bytes: row.get::<_, Option<i64>>(6)?.map(|value| value as u64),
+                        net_tx_bytes: row.get::<_, Option<i64>>(7)?.map(|value| value as u64),
+                        block_read_bytes: row.get::<_, Option<i64>>(8)?.map(|value| value as u64),
+                        block_write_bytes: row.get::<_, Option<i64>>(9)?.map(|value| value as u64),
+                        pids: row.get::<_, Option<i64>>(10)?.map(|value| value as u64),
+                        container_count: row.get::<_, i64>(11)? as u32,
+                    },
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list legacy metric sample batch")
+    }
+
+    pub async fn list_legacy_metric_latest_samples(
+        &self,
+    ) -> anyhow::Result<Vec<LegacyMetricLatestSampleRow>> {
+        self.call(|conn| {
+            let mut stmt = conn.prepare(
+                r#"SELECT service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes,
+                    net_rx_bytes, net_tx_bytes, block_read_bytes, block_write_bytes, pids,
+                    container_count, prev_sampled_at, prev_net_rx_bytes, prev_net_tx_bytes
+                   FROM service_resource_latest_samples ORDER BY service_id ASC"#,
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(LegacyMetricLatestSampleRow {
+                    service_id: row.get(0)?,
+                    sampled_at: row.get(1)?,
+                    cpu_percent: row.get(2)?,
+                    mem_used_bytes: row.get::<_, Option<i64>>(3)?.map(|value| value as u64),
+                    mem_limit_bytes: row.get::<_, Option<i64>>(4)?.map(|value| value as u64),
+                    net_rx_bytes: row.get::<_, Option<i64>>(5)?.map(|value| value as u64),
+                    net_tx_bytes: row.get::<_, Option<i64>>(6)?.map(|value| value as u64),
+                    block_read_bytes: row.get::<_, Option<i64>>(7)?.map(|value| value as u64),
+                    block_write_bytes: row.get::<_, Option<i64>>(8)?.map(|value| value as u64),
+                    pids: row.get::<_, Option<i64>>(9)?.map(|value| value as u64),
+                    container_count: row.get::<_, i64>(10)? as u32,
+                    prev_sampled_at: row.get(11)?,
+                    prev_net_rx_bytes: row.get::<_, Option<i64>>(12)?.map(|value| value as u64),
+                    prev_net_tx_bytes: row.get::<_, Option<i64>>(13)?.map(|value| value as u64),
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list legacy latest metrics")
+    }
+
+    pub async fn legacy_metrics_integrity(
+        &self,
+    ) -> anyhow::Result<crate::metrics_store::MetricsIntegrity> {
+        self.call(|conn| {
+            let (sample_count, sample_hash) = crate::metrics_store::stable_table_hash(
+                conn,
+                r#"SELECT service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes,
+                    net_rx_bytes, net_tx_bytes, block_read_bytes, block_write_bytes, pids, container_count
+                   FROM service_resource_samples ORDER BY service_id, sampled_at"#,
+            )?;
+            let (latest_count, latest_hash) = crate::metrics_store::stable_table_hash(
+                conn,
+                r#"SELECT service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes,
+                    net_rx_bytes, net_tx_bytes, block_read_bytes, block_write_bytes, pids, container_count,
+                    prev_sampled_at, prev_net_rx_bytes, prev_net_tx_bytes
+                   FROM service_resource_latest_samples ORDER BY service_id"#,
+            )?;
+            Ok(crate::metrics_store::MetricsIntegrity {
+                sample_count,
+                sample_hash,
+                latest_count,
+                latest_hash,
+            })
+        })
+        .await
+        .context("verify legacy metrics")
+    }
+
+    #[cfg(test)]
+    pub async fn insert_legacy_metric_fixture(
+        &self,
+        rows: &[ServiceResourceSampleInput],
+    ) -> anyhow::Result<()> {
+        let rows = rows.to_vec();
+        self.call(move |conn| {
+            conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            for row in rows {
+                tx.execute(
+                    r#"INSERT INTO service_resource_samples (
+                        service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes,
+                        net_rx_bytes, net_tx_bytes, block_read_bytes, block_write_bytes, pids, container_count
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"#,
+                    params![
+                        row.service_id, row.sampled_at, row.cpu_percent,
+                        row.mem_used_bytes.map(|value| value as i64), row.mem_limit_bytes.map(|value| value as i64),
+                        row.net_rx_bytes.map(|value| value as i64), row.net_tx_bytes.map(|value| value as i64),
+                        row.block_read_bytes.map(|value| value as i64), row.block_write_bytes.map(|value| value as i64),
+                        row.pids.map(|value| value as i64), row.container_count as i64,
+                    ],
+                )?;
+                tx.execute(
+                    r#"INSERT INTO service_resource_latest_samples (
+                        service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes,
+                        net_rx_bytes, net_tx_bytes, block_read_bytes, block_write_bytes, pids, container_count,
+                        prev_sampled_at, prev_net_rx_bytes, prev_net_tx_bytes
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL, NULL, NULL)
+                    ON CONFLICT(service_id) DO UPDATE SET
+                        sampled_at=excluded.sampled_at, cpu_percent=excluded.cpu_percent,
+                        mem_used_bytes=excluded.mem_used_bytes, mem_limit_bytes=excluded.mem_limit_bytes,
+                        net_rx_bytes=excluded.net_rx_bytes, net_tx_bytes=excluded.net_tx_bytes,
+                        block_read_bytes=excluded.block_read_bytes, block_write_bytes=excluded.block_write_bytes,
+                        pids=excluded.pids, container_count=excluded.container_count
+                    WHERE excluded.sampled_at >= service_resource_latest_samples.sampled_at"#,
+                    params![
+                        row.service_id, row.sampled_at, row.cpu_percent,
+                        row.mem_used_bytes.map(|value| value as i64), row.mem_limit_bytes.map(|value| value as i64),
+                        row.net_rx_bytes.map(|value| value as i64), row.net_tx_bytes.map(|value| value as i64),
+                        row.block_read_bytes.map(|value| value as i64), row.block_write_bytes.map(|value| value as i64),
+                        row.pids.map(|value| value as i64), row.container_count as i64,
+                    ],
+                )?;
+            }
+            tx.commit()?;
+            conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+            Ok(())
+        })
+        .await
+    }
+
     pub async fn list_service_resource_targets(
         &self,
     ) -> anyhow::Result<Vec<ServiceResourceTarget>> {
@@ -256,8 +462,12 @@ ORDER BY sampled_at ASC
                     mem_limit_bytes: row.get::<_, Option<i64>>(3)?.map(|v| v as u64),
                     net_rx_bytes: row.get::<_, Option<i64>>(4)?.map(|v| v as u64),
                     net_tx_bytes: row.get::<_, Option<i64>>(5)?.map(|v| v as u64),
+                    net_rx_rate_bps: None,
+                    net_tx_rate_bps: None,
                     block_read_bytes: row.get::<_, Option<i64>>(6)?.map(|v| v as u64),
                     block_write_bytes: row.get::<_, Option<i64>>(7)?.map(|v| v as u64),
+                    block_read_rate_bps: None,
+                    block_write_rate_bps: None,
                     pids: row.get::<_, Option<i64>>(8)?.map(|v| v as u64),
                     container_count: row.get::<_, i64>(9)? as u32,
                 })

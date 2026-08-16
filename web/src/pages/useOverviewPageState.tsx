@@ -8,13 +8,13 @@ import {
 ApiError,
   getStack,
 listDiscoveryProjects,
-listJobs,
+listCompactJobs,
 listStacks,
 triggerCheck,
 triggerDiscoveryScan,
 triggerUpdate,
 type DiscoveredProject,
-type JobListItem,
+type CompactJobListItem,
 type Service,
 type StackDetail,
 type StackListItem,
@@ -50,7 +50,6 @@ import {
 buildDiscoveryIssue,
 DISCOVERY_ISSUE_ORDER,
 type DiscoveryIssueItem,
-getDiscoveryScanStartedAt,
 latestDiscoveryObservationAt,
 readCollapsedFromStorage,
 readUpdateCandidateFilterFromUrl,
@@ -65,7 +64,7 @@ const SERVICES_OVERVIEW_SNAPSHOT_STALE_MS = 60_000
 type ServicesOverviewSnapshotPayload = {
   stacks: StackListItem[]
   details: Record<string, StackDetail | undefined>
-  jobs: JobListItem[]
+  jobs: CompactJobListItem[]
   discoveredProjects: DiscoveredProject[]
 }
 
@@ -85,7 +84,7 @@ export function useOverviewPageState(props: {
     const initialFilter = readUpdateCandidateFilterFromUrl() ?? 'all'
     return readCollapsedFromStorage(initialFilter)
   })
-  const [jobs, setJobs] = useState<JobListItem[]>([])
+  const [jobs, setJobs] = useState<CompactJobListItem[]>([])
   const [discoveredProjects, setDiscoveredProjects] = useState<DiscoveredProject[]>([])
   const [activeDiscoveryIssue, setActiveDiscoveryIssue] = useState<DiscoveryIssueItem | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -138,7 +137,7 @@ export function useOverviewPageState(props: {
       .sort((a, b) => String(b.finishedAt ?? b.createdAt ?? '').localeCompare(String(a.finishedAt ?? a.createdAt ?? '')))
     const j = candidates[0]
     if (!j) return null
-    return getDiscoveryScanStartedAt(j.summary) ?? j.finishedAt ?? j.createdAt ?? null
+    return j.progress?.updatedAt ?? j.finishedAt ?? j.createdAt ?? null
   }, [jobs])
 
   const lastDiscoveryProjectsScanAt = useMemo(() => {
@@ -156,7 +155,7 @@ export function useOverviewPageState(props: {
     setError(null)
     try {
       const stacksPromise = listStacks()
-      const jobsPromise = listJobs()
+      const jobsPromise = listCompactJobs()
       const projectsPromise = listDiscoveryProjects('exclude')
 
       const [stacksRes, jobsRes, projectsRes] = await Promise.allSettled([stacksPromise, jobsPromise, projectsPromise])
@@ -349,7 +348,7 @@ export function useOverviewPageState(props: {
     const sync = async () => {
       if (refreshAll) return requestRefresh()
       const tasks: Promise<unknown>[] = []
-      if (jobsChanged) tasks.push(listJobs().then(setJobs))
+      if (jobsChanged) tasks.push(listCompactJobs().then(setJobs))
       if (discoveryChanged) tasks.push(listDiscoveryProjects('exclude').then(setDiscoveredProjects))
       if (stackIds.size > 0) {
         const ids = [...stackIds]

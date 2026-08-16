@@ -88,10 +88,12 @@ async fn test_state_with_compose_bin(
     runner: Arc<dyn CommandRunner>,
     compose_bin: &str,
 ) -> Arc<AppState> {
+    let (db_path, metrics_db_path) = test_database_paths(db_path);
     let config = Config {
         app_effective_version: "0.1.0".to_string(),
         http_addr: "127.0.0.1:0".to_string(),
-        db_path: PathBuf::from(db_path),
+        db_path,
+        metrics_db_path,
         docker_config_path: None,
         compose_bin: compose_bin.to_string(),
         auth_forward_header_name: "X-Forwarded-User".parse().unwrap(),
@@ -118,6 +120,9 @@ async fn test_state_with_compose_bin(
     };
 
     let db = Db::open(&config.db_path).await.unwrap();
+    let metrics = crate::metrics_store::MetricsStore::open(&config.metrics_db_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    let operational_reads = crate::operational_read_model::OperationalReadModel::open(&config.db_path).await.unwrap();
     let snapshot_worker = Arc::new(crate::snapshot_worker::SnapshotWorker::new(
         db.clone(),
         registry.clone(),
@@ -145,6 +150,8 @@ async fn test_state_with_compose_bin(
     AppState::new(
         config,
         db,
+        metrics,
+        operational_reads,
         registry,
         runner,
         snapshot_worker,
@@ -157,10 +164,12 @@ async fn test_state_with_compose_bin(
 }
 
 async fn test_state(db_path: &str) -> Arc<AppState> {
+    let (db_path, metrics_db_path) = test_database_paths(db_path);
     let config = Config {
         app_effective_version: "0.1.0".to_string(),
         http_addr: "127.0.0.1:0".to_string(),
-        db_path: PathBuf::from(db_path),
+        db_path,
+        metrics_db_path,
         docker_config_path: None,
         compose_bin: "docker-compose".to_string(),
         auth_forward_header_name: "X-Forwarded-User".parse().unwrap(),
@@ -187,6 +196,9 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
     };
 
     let db = Db::open(&config.db_path).await.unwrap();
+    let metrics = crate::metrics_store::MetricsStore::open(&config.metrics_db_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    let operational_reads = crate::operational_read_model::OperationalReadModel::open(&config.db_path).await.unwrap();
 
     let registry = Arc::new(FakeRegistry);
     let runner = Arc::new(FakeRunner);
@@ -217,6 +229,8 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
     AppState::new(
         config,
         db,
+        metrics,
+        operational_reads,
         registry,
         runner,
         snapshot_worker,
@@ -229,10 +243,12 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
 }
 
 async fn test_state_auth_required(db_path: &str) -> Arc<AppState> {
+    let (db_path, metrics_db_path) = test_database_paths(db_path);
     let config = Config {
         app_effective_version: "0.1.0".to_string(),
         http_addr: "127.0.0.1:0".to_string(),
-        db_path: PathBuf::from(db_path),
+        db_path,
+        metrics_db_path,
         docker_config_path: None,
         compose_bin: "docker-compose".to_string(),
         auth_forward_header_name: "X-Forwarded-User".parse().unwrap(),
@@ -259,6 +275,9 @@ async fn test_state_auth_required(db_path: &str) -> Arc<AppState> {
     };
 
     let db = Db::open(&config.db_path).await.unwrap();
+    let metrics = crate::metrics_store::MetricsStore::open(&config.metrics_db_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    let operational_reads = crate::operational_read_model::OperationalReadModel::open(&config.db_path).await.unwrap();
     let registry = Arc::new(FakeRegistry);
     let runner = Arc::new(FakeRunner);
     let snapshot_worker = Arc::new(crate::snapshot_worker::SnapshotWorker::new(
@@ -288,6 +307,8 @@ async fn test_state_auth_required(db_path: &str) -> Arc<AppState> {
     AppState::new(
         config,
         db,
+        metrics,
+        operational_reads,
         registry,
         runner,
         snapshot_worker,
@@ -305,10 +326,12 @@ async fn test_state_with_authz(
     allowed_group: Option<&str>,
     allow_anonymous_in_dev: bool,
 ) -> Arc<AppState> {
+    let (db_path, metrics_db_path) = test_database_paths(db_path);
     let config = Config {
         app_effective_version: "0.1.0".to_string(),
         http_addr: "127.0.0.1:0".to_string(),
-        db_path: PathBuf::from(db_path),
+        db_path,
+        metrics_db_path,
         docker_config_path: None,
         compose_bin: "docker-compose".to_string(),
         auth_forward_header_name: "X-Forwarded-User".parse().unwrap(),
@@ -335,6 +358,9 @@ async fn test_state_with_authz(
     };
 
     let db = Db::open(&config.db_path).await.unwrap();
+    let metrics = crate::metrics_store::MetricsStore::open(&config.metrics_db_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    let operational_reads = crate::operational_read_model::OperationalReadModel::open(&config.db_path).await.unwrap();
     let registry = Arc::new(FakeRegistry);
     let runner = Arc::new(FakeRunner);
     let snapshot_worker = Arc::new(crate::snapshot_worker::SnapshotWorker::new(
@@ -364,6 +390,8 @@ async fn test_state_with_authz(
     AppState::new(
         config,
         db,
+        metrics,
+        operational_reads,
         registry,
         runner,
         snapshot_worker,
@@ -373,6 +401,18 @@ async fn test_state_with_authz(
         resource_hub,
         service_log_hub,
     )
+}
+
+fn test_database_paths(input: &str) -> (PathBuf, PathBuf) {
+    if input != ":memory:" {
+        let main = PathBuf::from(input);
+        let metrics = main.with_extension("metrics.sqlite3");
+        return (main, metrics);
+    }
+    let stem = format!("dockrev-api-test-{}", ulid::Ulid::new());
+    let main = std::env::temp_dir().join(format!("{stem}.sqlite3"));
+    let metrics = std::env::temp_dir().join(format!("{stem}.metrics.sqlite3"));
+    (main, metrics)
 }
 
 async fn seed_stack_from_compose(state: &Arc<AppState>, name: &str, compose_file: &str) -> String {

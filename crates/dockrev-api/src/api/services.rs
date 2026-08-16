@@ -745,23 +745,30 @@ pub(super) async fn get_service_resource_usage_history(
     let window = q.window.unwrap_or_else(|| "1h".to_string());
     let Some(window_seconds) = resource_usage::parse_window_to_seconds(&window) else {
         return Err(ApiError::invalid_argument(
-            "window must be one of 3m/1h/24h",
+            "window must be one of 3m/1h/24h/7d/30d",
         ));
     };
 
     let since = (time::OffsetDateTime::now_utc() - time::Duration::seconds(window_seconds as i64))
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(|err| map_internal(err.into()))?;
-    let samples = state
-        .db
-        .list_service_resource_samples_since(&service_id, &since)
+    let resolution_seconds = match window.as_str() {
+        "7d" => Some(crate::metrics_store::MINUTE_RESOLUTION_SECONDS),
+        "30d" => Some(crate::metrics_store::FIVE_MINUTE_RESOLUTION_SECONDS),
+        _ => None,
+    };
+    let history = state
+        .metrics
+        .history_since(&service_id, &since, resolution_seconds)
         .await
         .map_err(map_internal)?;
 
     Ok(Json(ServiceResourceHistoryResponse {
         service_id,
         window,
-        samples,
+        samples: history.samples,
+        resolution_seconds: history.resolution_seconds,
+        peaks: resolution_seconds.map(|_| history.peaks),
     }))
 }
 
@@ -780,7 +787,7 @@ pub(super) async fn get_service_resource_usage_overview(
     let window = q.window.unwrap_or_else(|| "1h".to_string());
     let Some(window_seconds) = resource_usage::parse_window_to_seconds(&window) else {
         return Err(ApiError::invalid_argument(
-            "window must be one of 3m/1h/24h",
+            "window must be one of 3m/1h/24h/7d/30d",
         ));
     };
     let generated_at = time::OffsetDateTime::now_utc();
@@ -805,29 +812,42 @@ pub(super) async fn get_service_resource_usage_overview(
     let since = (generated_at - time::Duration::seconds(window_seconds as i64))
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(|err| map_internal(err.into()))?;
-    let rows = state
-        .db
-        .list_service_resource_latest_samples()
-        .await
-        .map_err(map_internal)?;
-    let recent_counts = state
-        .db
-        .list_service_resource_recent_counts_since(&since)
-        .await
-        .map_err(map_internal)?;
+    let (rows, recent_counts, active_service_ids) = tokio::try_join!(
+        state.metrics.list_latest_samples(),
+        state.metrics.list_recent_counts_since(&since),
+        state.operational_reads.list_active_service_ids(),
+    )
+    .map_err(map_internal)?;
     let recent_count_by_service = recent_counts
         .into_iter()
         .map(|row| (row.service_id, row.sample_count))
         .collect::<std::collections::HashMap<_, _>>();
-    let services = rows
+    let mut latest_by_service = rows
         .into_iter()
-        .map(|row| {
+        .map(|row| (row.service_id.clone(), row))
+        .collect::<std::collections::HashMap<_, _>>();
+    let services = active_service_ids
+        .into_iter()
+        .map(|service_id| {
             let recent_sample_count = recent_count_by_service
-                .get(&row.service_id)
+                .get(&service_id)
                 .copied()
                 .unwrap_or(0);
             to_resource_overview_item_from_latest(
-                row,
+                latest_by_service.remove(&service_id).unwrap_or({
+                    crate::metrics_store::MetricsLatestSampleRow {
+                        service_id,
+                        sampled_at: None,
+                        cpu_percent: None,
+                        mem_used_bytes: None,
+                        mem_limit_bytes: None,
+                        net_rx_bytes: None,
+                        net_tx_bytes: None,
+                        prev_sampled_at: None,
+                        prev_net_rx_bytes: None,
+                        prev_net_tx_bytes: None,
+                    }
+                }),
                 generated_at,
                 stale_after_seconds,
                 Some(recent_sample_count),
@@ -869,16 +889,12 @@ pub(super) async fn get_homepage_nav(
     let since = (generated_at - time::Duration::seconds(homepage_window_seconds as i64))
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(|err| map_internal(err.into()))?;
-    let latest_samples = state
-        .db
-        .list_service_resource_latest_samples()
-        .await
-        .map_err(map_internal)?;
-    let recent_counts = state
-        .db
-        .list_service_resource_recent_counts_since(&since)
-        .await
-        .map_err(map_internal)?;
+    let (latest_samples, recent_counts, mut rows) = tokio::try_join!(
+        state.metrics.list_latest_samples(),
+        state.metrics.list_recent_counts_since(&since),
+        state.operational_reads.list_homepage_nav_services(),
+    )
+    .map_err(map_internal)?;
     let recent_count_by_service = recent_counts
         .into_iter()
         .map(|row| (row.service_id, row.sample_count))
@@ -902,11 +918,6 @@ pub(super) async fn get_homepage_nav(
         .collect::<Vec<_>>();
     overview_services.sort_by(|left, right| left.service_id.cmp(&right.service_id));
 
-    let mut rows = state
-        .db
-        .list_homepage_nav_services()
-        .await
-        .map_err(map_internal)?;
     let last_check_at = rows
         .iter()
         .map(|row| row.stack_last_check_at.as_str())
@@ -1005,7 +1016,7 @@ pub(super) async fn get_homepage_nav(
 }
 
 fn to_resource_overview_item_from_latest(
-    mut row: crate::db::ServiceResourceLatestSampleRow,
+    mut row: crate::metrics_store::MetricsLatestSampleRow,
     generated_at: time::OffsetDateTime,
     stale_after_seconds: u64,
     sample_count_override: Option<u32>,

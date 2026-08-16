@@ -1,4 +1,4 @@
-import type { JobListItem } from '../api'
+import type { CompactJobListItem } from '../api'
 import { formatJobReadableDisplay, type JobTypeTone } from '../jobDisplay'
 
 export type OverviewJobsCardOptions = {
@@ -29,7 +29,7 @@ type OverviewJobProgressVisual = {
   progressPercent: number | null
 }
 
-function compareJobsByCreatedAtDesc(lhs: JobListItem, rhs: JobListItem): number {
+function compareJobsByCreatedAtDesc(lhs: CompactJobListItem, rhs: CompactJobListItem): number {
   const tsCmp = String(rhs.createdAt ?? '').localeCompare(String(lhs.createdAt ?? ''))
   if (tsCmp !== 0) return tsCmp
   return rhs.id.localeCompare(lhs.id)
@@ -39,7 +39,7 @@ function clampPercent(input: number): number {
   return Math.max(0, Math.min(100, Math.round(input)))
 }
 
-export function getOverviewJobProgressVisual(job: JobListItem): OverviewJobProgressVisual {
+export function getOverviewJobProgressVisual(job: CompactJobListItem): OverviewJobProgressVisual {
   if (job.status !== 'running') return { progressMode: 'none', progressPercent: null }
   const p = job.progress
   if (!p) return { progressMode: 'indeterminate', progressPercent: null }
@@ -53,7 +53,7 @@ export function getOverviewJobProgressVisual(job: JobListItem): OverviewJobProgr
   return { progressMode: 'determinate', progressPercent: percent }
 }
 
-export function selectOverviewJobsForCard(jobs: JobListItem[], options?: OverviewJobsCardOptions): JobListItem[] {
+export function selectOverviewJobsForCard(jobs: CompactJobListItem[], options?: OverviewJobsCardOptions): CompactJobListItem[] {
   const maxItemsRaw = options?.maxItems ?? MAX_NON_TERMINAL_ITEMS
   const maxItems = Math.max(0, Math.floor(maxItemsRaw))
   if (maxItems === 0 || jobs.length === 0) return []
@@ -73,8 +73,8 @@ export function selectOverviewJobsForCard(jobs: JobListItem[], options?: Overvie
   return [...nonTerminalSelected, ...terminalJobs.slice(0, terminalFillCount)]
 }
 
-export function toOverviewJobCardItem(job: JobListItem): OverviewJobCardItem {
-  const readable = formatJobReadableDisplay(job.type, job.scope, job.summary)
+export function toOverviewJobCardItem(job: CompactJobListItem): OverviewJobCardItem {
+  const readable = formatJobReadableDisplay(job.type, job.scope, null)
   const visual = getOverviewJobProgressVisual(job)
   return {
     jobId: job.id,
@@ -82,7 +82,7 @@ export function toOverviewJobCardItem(job: JobListItem): OverviewJobCardItem {
     createdAt: job.createdAt,
     createdBy: job.createdBy,
     reason: job.reason,
-    primaryLabel: readable.primaryLabel,
+    primaryLabel: job.displayLabel || readable.primaryLabel,
     scopeTag: readable.scopeTag,
     typeTone: readable.typeTone,
     progressMode: visual.progressMode,

@@ -93,7 +93,7 @@ Rules:
 - `candidate`, `ignore`, `versionInference`, `newVersionDiscoveryCount`, `settings`, and `archived` preserve the same semantics used by existing service detail and update status logic.
 - This endpoint is additive. Existing `/api/stacks*` consumers remain compatible.
 
-## `GET /api/services/resource-usage/overview?window=3m|1h|24h`
+## `GET /api/services/resource-usage/overview?window=3m|1h|24h|7d|30d`
 
 Returns the latest resource summary for active services.
 
@@ -127,6 +127,14 @@ Rules:
   - network rates still come from the latest/latest-previous counters persisted in the read model
 - `stale` is true when the latest sample is older than `max(sample_interval_seconds * 2, 60)`.
 - When resource monitoring is disabled, the endpoint returns `200` with `enabled=false` and an empty `services` array.
+
+## `GET /api/services/{service_id}/resource-usage/history?window=3m|1h|24h|7d|30d`
+
+Short windows preserve the existing `samples` response. `7d` returns one-minute buckets and `30d` returns five-minute buckets. Long-window responses add `resolutionSeconds` and a time-aligned `peaks` array; `samples` contain CPU、内存、PIDs、容器数与速率的桶均值，累计计数为桶末值，`peaks` 保留对应的桶峰值。
+
+## `GET /api/jobs?view=compact`
+
+This additive view is paginated with the existing cursor and limit parameters. It returns only job identity, status, timestamps, derived progress/result reason, display label and target version. It never serializes raw `summary`. Requests without `view=compact` preserve the existing response shape.
 
 ## `GET /api/stacks` / `GET /api/stacks/{id}` / related `Service` payloads
 

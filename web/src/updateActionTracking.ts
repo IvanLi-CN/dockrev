@@ -9,7 +9,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { ApiError, getJob, listJobs, type JobListItem } from './api'
+import { ApiError, getJob, listCompactJobs, type CompactJobListItem } from './api'
 import { useManagementEventBatch, type ManagementEvent } from './managementEvents'
 
 export const UPDATE_JOB_SETTLED_EVENT = 'dockrev:update-job-settled'
@@ -89,7 +89,7 @@ export function doesManagementEventInvalidateUpdateSnapshot(event: ManagementEve
   return Boolean(status && (isUpdateJobActiveStatus(status) || event.summary.terminal === true))
 }
 
-function resolveUpdateJobRecency(job: Pick<JobListItem, 'createdAt' | 'startedAt' | 'progress'>): number {
+function resolveUpdateJobRecency(job: Pick<CompactJobListItem, 'createdAt' | 'startedAt' | 'progress'>): number {
   const recencyCandidates = [job.startedAt, job.createdAt, job.progress?.updatedAt]
   for (const value of recencyCandidates) {
     if (typeof value !== 'string') continue
@@ -99,18 +99,9 @@ function resolveUpdateJobRecency(job: Pick<JobListItem, 'createdAt' | 'startedAt
   return Number.NEGATIVE_INFINITY
 }
 
-function resolveUpdateJobTargetVersion(summary: unknown): string | null {
-  if (!summary || typeof summary !== 'object' || Array.isArray(summary)) return null
-  const value = summary as Record<string, unknown>
-  for (const key of ['targetDisplayTag', 'targetTag', 'to']) {
-    if (typeof value[key] === 'string' && value[key].trim()) return value[key].trim()
-  }
-  return null
-}
-
 export function pickLatestActiveUpdateJobs(
   jobs: Array<
-    Pick<JobListItem, 'id' | 'type' | 'scope' | 'stackId' | 'serviceId' | 'status' | 'createdAt' | 'startedAt' | 'progress' | 'summary'>
+    Pick<CompactJobListItem, 'id' | 'type' | 'scope' | 'stackId' | 'serviceId' | 'status' | 'createdAt' | 'startedAt' | 'progress' | 'targetVersion'>
   >,
 ): HydratedActiveUpdateJob[] {
   const latestByTarget = new Map<
@@ -126,7 +117,7 @@ export function pickLatestActiveUpdateJobs(
     const target = resolveUpdateActionTargetKey(job.scope, job.stackId, job.serviceId)
     if (!target) continue
 
-    const targetVersion = resolveUpdateJobTargetVersion(job.summary)
+    const targetVersion = job.targetVersion ?? null
     const candidate = {
       target,
       jobId: job.id,
@@ -148,7 +139,7 @@ export function pickLatestActiveUpdateJobs(
   return Array.from(latestByTarget.values(), (entry) => entry.job)
 }
 
-type SettledUpdateJob = Pick<JobListItem, 'id' | 'scope' | 'stackId' | 'serviceId' | 'status' | 'summary'>
+type SettledUpdateJob = Pick<CompactJobListItem, 'id' | 'scope' | 'stackId' | 'serviceId' | 'status'>
 
 function toUpdateJobSettledDetail(target: UpdateActionTargetKey, job: SettledUpdateJob): UpdateJobSettledDetail {
   return {
@@ -158,7 +149,7 @@ function toUpdateJobSettledDetail(target: UpdateActionTargetKey, job: SettledUpd
     scope: job.scope,
     stackId: job.stackId ?? null,
     serviceId: job.serviceId ?? null,
-    summary: job.summary,
+    summary: null,
   }
 }
 
@@ -198,7 +189,7 @@ export function resolveTrackedUpdateJobTransition(
 
 export function reconcileTrackedUpdateJobs(
   trackedJobs: Iterable<[UpdateActionTargetKey, ActiveUpdateJob]>,
-  jobs: JobListItem[],
+  jobs: CompactJobListItem[],
 ): UpdateJobSnapshotReconciliation {
   const active = pickLatestActiveUpdateJobs(jobs)
   const jobsById = new Map(jobs.map((job) => [job.id, job]))
@@ -331,7 +322,7 @@ function useProvideUpdateActionTracker(): UpdateActionTracker {
     const resyncTrackedJobs = async (): Promise<void> => {
       const requestRevision = activeRevisionRef.current
       try {
-        const jobs = await listJobs()
+        const jobs = await listCompactJobs()
         if (unmountedRef.current) return
         if (!isUpdateJobSnapshotCurrent(requestRevision, activeRevisionRef.current)) {
           void resyncTrackedJobs()
@@ -371,7 +362,7 @@ function useProvideUpdateActionTracker(): UpdateActionTracker {
     const hydrateActiveJobs = async (): Promise<void> => {
       try {
         const requestRevision = activeRevisionRef.current
-        const jobs = await listJobs()
+        const jobs = await listCompactJobs()
         if (cancelled || unmountedRef.current) return
         if (!isUpdateJobSnapshotCurrent(requestRevision, activeRevisionRef.current)) {
           void hydrateActiveJobs()

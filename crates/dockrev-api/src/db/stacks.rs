@@ -387,6 +387,7 @@ ORDER BY service_id ASC, target_kind ASC, target_key ASC
         .context("get stack")
     }
 
+    #[allow(dead_code)] // Replaced on the API hot path by OperationalReadModel's query-only pool.
     pub async fn list_homepage_nav_services(&self) -> anyhow::Result<Vec<HomepageNavServiceRow>> {
         self.call(move |conn| {
             let mut stmt = conn.prepare(

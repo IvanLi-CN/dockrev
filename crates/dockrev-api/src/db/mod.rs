@@ -336,6 +336,7 @@ pub struct ServiceResourceTarget {
     pub compose_project: String,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct ServiceResourceLatestSampleRow {
     pub service_id: String,
@@ -350,10 +351,35 @@ pub struct ServiceResourceLatestSampleRow {
     pub prev_net_tx_bytes: Option<u64>,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct ServiceResourceRecentCountRow {
     pub service_id: String,
     pub sample_count: u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct LegacyMetricSampleRow {
+    pub id: i64,
+    pub sample: ServiceResourceSampleInput,
+}
+
+#[derive(Clone, Debug)]
+pub struct LegacyMetricLatestSampleRow {
+    pub service_id: String,
+    pub sampled_at: String,
+    pub cpu_percent: f64,
+    pub mem_used_bytes: Option<u64>,
+    pub mem_limit_bytes: Option<u64>,
+    pub net_rx_bytes: Option<u64>,
+    pub net_tx_bytes: Option<u64>,
+    pub block_read_bytes: Option<u64>,
+    pub block_write_bytes: Option<u64>,
+    pub pids: Option<u64>,
+    pub container_count: u32,
+    pub prev_sampled_at: Option<String>,
+    pub prev_net_rx_bytes: Option<u64>,
+    pub prev_net_tx_bytes: Option<u64>,
 }
 
 #[derive(Clone, Debug)]

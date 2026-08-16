@@ -26,8 +26,8 @@ services:
         .unwrap();
 
     state
-        .db
-        .insert_service_resource_samples(&[
+        .metrics
+        .insert_samples(&[
             crate::db::ServiceResourceSampleInput {
                 service_id: service_id.clone(),
                 sampled_at: sampled_at_1,
@@ -78,6 +78,43 @@ services:
     assert_eq!(samples.len(), 2);
     assert_eq!(samples[0]["containerCount"].as_u64(), Some(1));
     assert_eq!(samples[1]["cpuPercent"].as_f64(), Some(18.0));
+    assert!(payload.get("resolutionSeconds").is_none());
+    assert!(payload.get("peaks").is_none());
+
+    let resp = app.clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{service_id}/resource-usage/history?window=7d"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let payload = response_json(resp).await;
+    assert_eq!(payload["window"].as_str(), Some("7d"));
+    assert_eq!(payload["resolutionSeconds"].as_u64(), Some(60));
+    assert_eq!(payload["samples"].as_array().unwrap().len(), 2);
+    assert_eq!(payload["peaks"].as_array().unwrap().len(), 2);
+
+    let resp = app.clone().oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{service_id}/resource-usage/history?window=30d"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let payload = response_json(resp).await;
+    assert_eq!(payload["window"].as_str(), Some("30d"));
+    assert_eq!(payload["resolutionSeconds"].as_u64(), Some(300));
+    assert_eq!(payload["samples"].as_array().unwrap().len(), 2);
+    assert_eq!(payload["peaks"].as_array().unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -124,8 +161,8 @@ services:
         .unwrap();
 
     state
-        .db
-        .insert_service_resource_samples(&[
+        .metrics
+        .insert_samples(&[
             crate::db::ServiceResourceSampleInput {
                 service_id: web_id.clone(),
                 sampled_at: sampled_at_1,
@@ -262,8 +299,8 @@ services:
         let web_id = services[0].id.clone();
 
         state
-            .db
-            .insert_service_resource_samples(&[
+            .metrics
+            .insert_samples(&[
                 crate::db::ServiceResourceSampleInput {
                     service_id: web_id.clone(),
                     sampled_at: test_offset_from_now_rfc3339(time::Duration::seconds(-30)),
@@ -368,8 +405,8 @@ services:
     let web_id = services[0].id.clone();
 
     state
-        .db
-        .insert_service_resource_samples(&[
+        .metrics
+        .insert_samples(&[
             crate::db::ServiceResourceSampleInput {
                 service_id: web_id.clone(),
                 sampled_at: test_offset_from_now_rfc3339(time::Duration::seconds(-20)),
@@ -456,8 +493,8 @@ services:
     let web_id = services[0].id.clone();
 
     state
-        .db
-        .insert_service_resource_samples(&[
+        .metrics
+        .insert_samples(&[
             crate::db::ServiceResourceSampleInput {
                 service_id: web_id.clone(),
                 sampled_at: test_offset_from_now_rfc3339(time::Duration::minutes(-25)),
@@ -567,6 +604,78 @@ async fn resource_usage_overview_degrades_when_monitor_disabled() {
 }
 
 #[tokio::test]
+async fn api_jobs_compact_omits_raw_summary_and_keeps_derived_fields() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let now = test_now_rfc3339();
+    let job_id = ids::new_job_id();
+    let job = crate::api::types::JobRecord::new_running(
+        job_id.clone(),
+        crate::api::types::JobType::Update,
+        crate::api::types::JobScope::All,
+        None,
+        None,
+        &now,
+    )
+    .to_db();
+    state.db.insert_job(job).await.unwrap();
+    state
+        .db
+        .finish_job(
+            &job_id,
+            "success",
+            &now,
+            &serde_json::json!({
+                "targetDisplayTag": "1.2.3",
+                "secretDiagnostic": "must not leave this endpoint",
+                "progress": {
+                    "phase": "done",
+                    "message": "update finished",
+                    "current": 1,
+                    "total": 1,
+                    "percent": 100,
+                    "updatedAt": now,
+                }
+            }),
+        )
+        .await
+        .unwrap();
+
+    let compact = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/jobs?view=compact&limit=20")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(compact.status(), 200);
+    let compact = response_json(compact).await;
+    let item = &compact["jobs"][0];
+    assert!(item.get("summary").is_none());
+    assert!(item.get("secretDiagnostic").is_none());
+    assert_eq!(item["targetVersion"].as_str(), Some("1.2.3"));
+    assert_eq!(item["progress"]["percent"].as_u64(), Some(100));
+
+    let default_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/jobs?limit=20")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let default_response = response_json(default_response).await;
+    assert_eq!(
+        default_response["jobs"][0]["summary"]["secretDiagnostic"].as_str(),
+        Some("must not leave this endpoint"),
+    );
+}
+
+#[tokio::test]
 async fn homepage_nav_returns_single_read_model_with_resources_and_status() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());
@@ -617,8 +726,8 @@ services:
         .await
         .unwrap();
     state
-        .db
-        .insert_service_resource_samples(&[
+        .metrics
+        .insert_samples(&[
             crate::db::ServiceResourceSampleInput {
                 service_id: api_service.id.clone(),
                 sampled_at: test_offset_from_now_rfc3339(time::Duration::seconds(-20)),
@@ -680,4 +789,69 @@ services:
     assert_eq!(item["resource"]["cpuPercent"].as_f64(), Some(12.5));
     let net_rx = item["resource"]["netRxRateBps"].as_f64().unwrap();
     assert!((net_rx - 100.0).abs() < 0.01, "unexpected net rx rate: {net_rx}");
+}
+
+#[tokio::test]
+#[ignore = "performance baseline; run explicitly in a quiet development or CI environment"]
+async fn homepage_metrics_isolation() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let compose_path = format!("/tmp/dockrev-homepage-perf-{}.yml", ulid::Ulid::new());
+    let mut compose = "services:\n".to_string();
+    for index in 0..51 {
+        compose.push_str(&format!(
+            "  service-{index}:\n    image: nginx:1.27\n    labels:\n      - homepage.group=Performance\n      - homepage.name=Service {index}\n      - homepage.href=https://service-{index}.example.test\n"
+        ));
+    }
+    std::fs::write(&compose_path, compose).unwrap();
+    let stack_id = seed_stack_from_compose(&state, "performance", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    assert_eq!(services.len(), 51);
+
+    let now = time::OffsetDateTime::now_utc();
+    let mut samples = Vec::with_capacity(services.len() * 2);
+    for offset_seconds in [-10, -5] {
+        let sampled_at = (now + time::Duration::seconds(offset_seconds))
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+        for (index, service) in services.iter().enumerate() {
+            samples.push(crate::db::ServiceResourceSampleInput {
+                service_id: service.id.clone(),
+                sampled_at: sampled_at.clone(),
+                cpu_percent: 10.0 + index as f64,
+                mem_used_bytes: Some(128 * 1024 * 1024),
+                mem_limit_bytes: Some(1024 * 1024 * 1024),
+                net_rx_bytes: Some((index as u64 + 1) * 1_000),
+                net_tx_bytes: Some((index as u64 + 1) * 2_000),
+                block_read_bytes: Some((index as u64 + 1) * 500),
+                block_write_bytes: Some((index as u64 + 1) * 250),
+                pids: Some(3),
+                container_count: 1,
+            });
+        }
+    }
+    state.metrics.insert_samples(&samples).await.unwrap();
+
+    let mut latencies = Vec::with_capacity(100);
+    for _ in 0..100 {
+        let started_at = std::time::Instant::now();
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/homepage/nav")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        latencies.push(started_at.elapsed());
+    }
+    latencies.sort_unstable();
+    let p95 = latencies[(latencies.len() * 95).div_ceil(100) - 1];
+    assert!(
+        p95 <= std::time::Duration::from_millis(300),
+        "homepage navigation p95 was {p95:?} under 51-service metrics load"
+    );
 }

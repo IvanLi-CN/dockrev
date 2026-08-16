@@ -10,6 +10,7 @@ pub struct Config {
     pub app_effective_version: String,
     pub http_addr: String,
     pub db_path: PathBuf,
+    pub metrics_db_path: PathBuf,
     pub docker_config_path: Option<PathBuf>,
     pub compose_bin: String,
     pub auth_forward_header_name: HeaderName,
@@ -48,6 +49,19 @@ impl Config {
         let db_path = std::env::var("DOCKREV_DB_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("./data/dockrev.sqlite3"));
+        let metrics_db_path = std::env::var("DOCKREV_METRICS_DB_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                db_path
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new("."))
+                    .join("metrics.sqlite3")
+            });
+        if database_paths_match(&db_path, &metrics_db_path) {
+            return Err(anyhow::anyhow!(
+                "DOCKREV_METRICS_DB_PATH must not point to the same file as DOCKREV_DB_PATH"
+            ));
+        }
 
         let docker_config_path = std::env::var("DOCKREV_DOCKER_CONFIG")
             .ok()
@@ -219,6 +233,7 @@ impl Config {
             app_effective_version,
             http_addr,
             db_path,
+            metrics_db_path,
             docker_config_path,
             compose_bin,
             auth_forward_header_name,
@@ -243,6 +258,53 @@ impl Config {
             update_idempotent_retry_base_ms,
             update_idempotent_retry_max_ms,
         })
+    }
+}
+
+fn database_paths_match(left: &std::path::Path, right: &std::path::Path) -> bool {
+    fn normalized(path: &std::path::Path) -> PathBuf {
+        std::fs::canonicalize(path).unwrap_or_else(|_| {
+            let candidate = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                std::env::current_dir()
+                    .unwrap_or_else(|_| PathBuf::from("."))
+                    .join(path)
+            };
+            candidate
+                .components()
+                .fold(PathBuf::new(), |mut normalized, component| {
+                    use std::path::Component;
+
+                    match component {
+                        Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+                        Component::RootDir => {
+                            normalized.push(std::path::MAIN_SEPARATOR.to_string())
+                        }
+                        Component::CurDir => {}
+                        Component::ParentDir => {
+                            normalized.pop();
+                        }
+                        Component::Normal(part) => normalized.push(part),
+                    }
+                    normalized
+                })
+        })
+    }
+
+    normalized(left) == normalized(right)
+}
+
+#[cfg(test)]
+mod database_path_tests {
+    use super::*;
+
+    #[test]
+    fn database_path_comparison_handles_relative_paths() {
+        assert!(database_paths_match(
+            std::path::Path::new("./data/dockrev.sqlite3"),
+            std::path::Path::new("data/dockrev.sqlite3"),
+        ));
     }
 }
 

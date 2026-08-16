@@ -1,0 +1,294 @@
+use std::{
+    collections::BTreeMap,
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
+
+use tokio_rusqlite::Connection;
+
+use crate::{
+    api::types::{
+        ArchMatch, BackupTargetOverrides, Candidate, ComposeRef, IgnoreMatch, JobCompactListItem,
+        JobProgress, JobResultReason, Service, ServiceSettings, VersionInferenceState,
+    },
+    db::{HomepageNavServiceRow, JobListFilters},
+};
+
+/// Read-only connections reserved for API hot paths. Command-side `Db` remains the only
+/// business write owner; callers here must not fall back to a generic repository call.
+#[derive(Clone)]
+pub struct OperationalReadModel {
+    readers: Vec<Connection>,
+    next_reader: Arc<AtomicUsize>,
+}
+
+impl OperationalReadModel {
+    pub async fn open(path: &Path) -> anyhow::Result<Self> {
+        let mut readers = Vec::with_capacity(2);
+        for _ in 0..2 {
+            let reader = Connection::open(path).await?;
+            reader
+                .call(|conn| {
+                    conn.execute_batch("PRAGMA query_only = ON; PRAGMA busy_timeout = 5000;")?;
+                    Ok::<(), anyhow::Error>(())
+                })
+                .await
+                .map_err(|err| anyhow::anyhow!(err.to_string()))?;
+            readers.push(reader);
+        }
+        Ok(Self {
+            readers,
+            next_reader: Arc::new(AtomicUsize::new(0)),
+        })
+    }
+
+    pub async fn list_active_service_ids(&self) -> anyhow::Result<Vec<String>> {
+        self.call(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT sv.id FROM services sv JOIN stacks st ON st.id = sv.stack_id WHERE sv.archived = 0 AND st.archived = 0 ORDER BY sv.id",
+            )?;
+            Ok::<Vec<String>, anyhow::Error>(stmt.query_map([], |row| row.get(0))?.collect::<Result<Vec<String>, _>>()?)
+        }).await
+    }
+
+    pub async fn list_homepage_nav_services(&self) -> anyhow::Result<Vec<HomepageNavServiceRow>> {
+        self.call(|conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT
+  st.id, st.name, st.last_check_at,
+  sv.id, sv.name, sv.image_ref, sv.image_tag, sv.current_digest,
+  sv.current_resolved_tag, sv.current_resolved_tags_json,
+  sv.candidate_tag, sv.candidate_resolved_tag, sv.candidate_digest,
+  sv.candidate_arch_match, sv.candidate_arch_json,
+  sv.ignore_rule_id, sv.ignore_reason, sv.auto_rollback,
+  sv.backup_targets_bind_paths_json, sv.backup_targets_volume_names_json,
+  sv.repo_url, sv.homepage_json, sv.update_guard_json, sv.archived
+FROM services sv
+JOIN stacks st ON st.id = sv.stack_id
+WHERE st.archived = 0 AND sv.archived = 0
+ORDER BY st.name ASC, sv.name ASC
+"#,
+            )?;
+            let rows = stmt.query_map([], homepage_nav_service_from_row)?;
+            Ok::<_, anyhow::Error>(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+    }
+
+    pub async fn list_compact_jobs(
+        &self,
+        filters: JobListFilters,
+    ) -> anyhow::Result<(Vec<JobCompactListItem>, Option<(String, String)>)> {
+        let limit = filters.limit.clamp(1, 200);
+        self.call(move |conn| {
+            let mut where_clauses = vec!["1 = 1".to_string()];
+            let mut values: Vec<rusqlite::types::Value> = Vec::new();
+            if !filters.types.is_empty() {
+                let placeholders = std::iter::repeat_n("?", filters.types.len()).collect::<Vec<_>>().join(",");
+                where_clauses.push(format!("j.type IN ({placeholders})"));
+                values.extend(filters.types.into_iter().map(rusqlite::types::Value::from));
+            }
+            if let Some(status) = filters.status { where_clauses.push("j.status = ?".to_string()); values.push(status.into()); }
+            if let Some(stack_id) = filters.stack_id {
+                where_clauses.push("(j.stack_id = ? OR EXISTS (SELECT 1 FROM job_service_targets jst JOIN services target_service ON target_service.id = jst.service_id WHERE jst.job_id = j.id AND target_service.stack_id = ?))".to_string());
+                values.push(stack_id.clone().into()); values.push(stack_id.into());
+            }
+            if let Some(service_id) = filters.service_id {
+                where_clauses.push("EXISTS (SELECT 1 FROM job_service_targets jst WHERE jst.job_id = j.id AND jst.service_id = ?)".to_string());
+                values.push(service_id.into());
+            }
+            if let Some((created_at, id)) = filters.cursor {
+                where_clauses.push("(j.created_at < ? OR (j.created_at = ? AND j.id < ?))".to_string());
+                values.push(created_at.clone().into()); values.push(created_at.into()); values.push(id.into());
+            }
+            values.push(((limit + 1) as i64).into());
+            let sql = format!(r#"SELECT j.id, j.type, j.scope, j.stack_id, j.service_id, j.status, j.created_by, j.reason,
+                j.created_at, j.started_at, j.finished_at, j.summary_json,
+                COALESCE(service.name, stack.name, j.type)
+              FROM jobs j
+              LEFT JOIN services service ON service.id = j.service_id
+              LEFT JOIN stacks stack ON stack.id = j.stack_id
+              WHERE {} ORDER BY j.created_at DESC, j.id DESC LIMIT ?"#, where_clauses.join(" AND "));
+            let params: Vec<&dyn rusqlite::ToSql> = values.iter().map(|value| value as &dyn rusqlite::ToSql).collect();
+            let mut stmt = conn.prepare(&sql)?;
+            let mut jobs = stmt
+                .query_map(params.as_slice(), compact_job_from_row)?
+                .collect::<Result<Vec<_>, _>>()?;
+            let next_cursor = if jobs.len() > limit as usize {
+                jobs.truncate(limit as usize);
+                jobs.last().map(|job| (job.created_at.clone(), job.id.clone()))
+            } else { None };
+            Ok::<_, anyhow::Error>((jobs, next_cursor))
+        }).await
+    }
+
+    async fn call<R, F>(&self, f: F) -> anyhow::Result<R>
+    where
+        F: FnOnce(&mut rusqlite::Connection) -> anyhow::Result<R> + Send + 'static,
+        R: Send + 'static,
+    {
+        let index = self.next_reader.fetch_add(1, Ordering::Relaxed) % self.readers.len();
+        self.readers[index]
+            .call(f)
+            .await
+            .map_err(|err| anyhow::anyhow!(err.to_string()))
+    }
+}
+
+fn homepage_nav_service_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<HomepageNavServiceRow> {
+    let bind_paths_json: String = row.get(18)?;
+    let volume_names_json: String = row.get(19)?;
+    let homepage = serde_json::from_str(
+        row.get::<_, Option<String>>(21)?
+            .as_deref()
+            .unwrap_or("null"),
+    )
+    .map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(21, rusqlite::types::Type::Text, Box::new(error))
+    })?;
+    let update_guard = serde_json::from_str(
+        row.get::<_, Option<String>>(22)?
+            .as_deref()
+            .unwrap_or("null"),
+    )
+    .map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(22, rusqlite::types::Type::Text, Box::new(error))
+    })?;
+    let bind_paths: BTreeMap<String, crate::api::types::TernaryChoice> =
+        serde_json::from_str(&bind_paths_json).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                18,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?;
+    let volume_names: BTreeMap<String, crate::api::types::TernaryChoice> =
+        serde_json::from_str(&volume_names_json).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                19,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?;
+    let current_resolved_tags = row
+        .get::<_, Option<String>>(9)?
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<Vec<String>>(value).ok())
+        .filter(|values| !values.is_empty());
+    let candidate_arch = row
+        .get::<_, Option<String>>(14)?
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<Vec<String>>(value).ok())
+        .unwrap_or_default();
+    let candidate = match (
+        row.get::<_, Option<String>>(10)?,
+        row.get::<_, Option<String>>(12)?,
+    ) {
+        (Some(tag), Some(digest)) => Some(Candidate {
+            tag,
+            resolved_tag: row.get(11)?,
+            digest,
+            arch_match: ArchMatch::from_str(
+                row.get::<_, Option<String>>(13)?
+                    .as_deref()
+                    .unwrap_or("unknown"),
+            ),
+            arch: candidate_arch,
+        }),
+        _ => None,
+    };
+    let ignore = match (
+        row.get::<_, Option<String>>(15)?,
+        row.get::<_, Option<String>>(16)?,
+    ) {
+        (Some(rule_id), Some(reason)) => Some(IgnoreMatch {
+            matched: true,
+            rule_id,
+            reason,
+        }),
+        _ => None,
+    };
+    Ok(HomepageNavServiceRow {
+        stack_id: row.get(0)?,
+        stack_name: row.get(1)?,
+        stack_last_check_at: row.get(2)?,
+        service: Service {
+            id: row.get(3)?,
+            name: row.get(4)?,
+            image: ComposeRef {
+                reference: row.get(5)?,
+                tag: row.get(6)?,
+                digest: row.get(7)?,
+                resolved_tag: row.get(8)?,
+                resolved_tags: current_resolved_tags,
+            },
+            homepage,
+            update_guard,
+            candidate,
+            ignore,
+            version_inference: Some(VersionInferenceState {
+                status: "ready".to_string(),
+                reason: None,
+                checked_at: None,
+            }),
+            new_version_discovery_count: None,
+            settings: ServiceSettings {
+                auto_rollback: row.get::<_, i64>(17)? != 0,
+                backup_targets: BackupTargetOverrides {
+                    bind_paths,
+                    volume_names,
+                },
+                repo_url: row.get(20)?,
+            },
+            archived: Some(row.get::<_, i64>(23)? != 0),
+        },
+    })
+}
+
+fn compact_job_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobCompactListItem> {
+    let job_type: String = row.get(1)?;
+    let status: String = row.get(5)?;
+    let summary_json: String = row.get(11)?;
+    let summary: serde_json::Value = serde_json::from_str(&summary_json).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(11, rusqlite::types::Type::Text, Box::new(error))
+    })?;
+    let progress = summary
+        .get("progress")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<JobProgress>(value).ok());
+    let result_reason: Option<JobResultReason> = crate::api::types::result_reason_from_summary(
+        &job_type,
+        &status,
+        &summary,
+        progress.as_ref(),
+    );
+    let target_version = ["targetDisplayTag", "targetTag", "to"]
+        .iter()
+        .find_map(|key| summary.get(*key).and_then(serde_json::Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    Ok(JobCompactListItem {
+        id: row.get(0)?,
+        r#type: job_type,
+        scope: row.get(2)?,
+        stack_id: row.get(3)?,
+        service_id: row.get(4)?,
+        status,
+        created_by: row.get(6)?,
+        reason: row.get(7)?,
+        created_at: row.get(8)?,
+        started_at: row.get(9)?,
+        finished_at: row.get(10)?,
+        progress,
+        result_reason,
+        display_label: row.get(12)?,
+        target_version,
+    })
+}

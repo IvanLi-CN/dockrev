@@ -5,6 +5,7 @@ import {
   ApiError,
   getServiceResourceUsageHistory,
   newServiceResourceUsageEventsSource,
+  type ServiceResourcePeak,
   type ServiceResourceSample,
   type ServiceResourceUsageWindow,
 } from '../api'
@@ -32,6 +33,8 @@ const WINDOW_OPTIONS: Array<{ key: ServiceResourceUsageWindow; label: string; se
   { key: '3m', label: '3m', seconds: 3 * 60 },
   { key: '1h', label: '1h', seconds: 60 * 60 },
   { key: '24h', label: '24h', seconds: 24 * 60 * 60 },
+  { key: '7d', label: '7d', seconds: 7 * 24 * 60 * 60 },
+  { key: '30d', label: '30d', seconds: 30 * 24 * 60 * 60 },
 ]
 
 const WINDOW_SECONDS = WINDOW_OPTIONS.reduce<Record<ServiceResourceUsageWindow, number>>(
@@ -39,7 +42,7 @@ const WINDOW_SECONDS = WINDOW_OPTIONS.reduce<Record<ServiceResourceUsageWindow, 
     acc[item.key] = item.seconds
     return acc
   },
-  { '3m': 3 * 60, '1h': 60 * 60, '24h': 24 * 60 * 60 },
+  { '3m': 3 * 60, '1h': 60 * 60, '24h': 24 * 60 * 60, '7d': 7 * 24 * 60 * 60, '30d': 30 * 24 * 60 * 60 },
 )
 
 const TAB_OPTIONS: Array<{ key: MetricTabKey; label: string }> = [
@@ -54,6 +57,8 @@ const WINDOW_META_LABELS: Record<ServiceResourceUsageWindow, string> = {
   '3m': '最近 3 分钟',
   '1h': '最近 1 小时',
   '24h': '最近 24 小时',
+  '7d': '最近 7 天',
+  '30d': '最近 30 天',
 }
 
 const METRIC_PANEL_COPY: Record<
@@ -277,8 +282,9 @@ function ResourceLineChart(props: {
   series: ChartSeries[]
   yFormatter: (value: number) => string
   emptyText: string
+  latestPeakLabel?: string | null
 }) {
-  const { series, yFormatter, emptyText } = props
+  const { series, yFormatter, emptyText, latestPeakLabel } = props
 
   const allPoints = series
     .flatMap((item) => item.points)
@@ -365,7 +371,11 @@ function ResourceLineChart(props: {
                 <path key={`${item.id}-area-${index}`} d={areaPath} className={`svcResourceArea ${item.colorClass}`} />
               ))}
               <path d={linePath} className={`svcResourceLine ${item.colorClass}`} />
-              {point ? <circle className={`svcResourcePoint ${item.colorClass}`} cx={point.x} cy={point.y} r={4} /> : null}
+              {point ? (
+                <circle className={`svcResourcePoint ${item.colorClass}`} cx={point.x} cy={point.y} r={4}>
+                  {latestPeakLabel ? <title>{latestPeakLabel}</title> : null}
+                </circle>
+              ) : null}
             </g>
           )
         })}
@@ -406,6 +416,7 @@ export function ServiceResourcePanel(props: {
   )
   const [metricTab, setMetricTab] = useState<MetricTabKey>('cpu')
   const [samples, setSamples] = useState<ServiceResourceSample[]>(initialSnapshot?.samples ?? [])
+  const [peaks, setPeaks] = useState<ServiceResourcePeak[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyError, setHistoryError] = useState<string | null>(null)
   const [monitorDisabled, setMonitorDisabled] = useState(
@@ -416,6 +427,7 @@ export function ServiceResourcePanel(props: {
   const [isPageVisible, setIsPageVisible] = useState(() =>
     typeof document === 'undefined' ? true : document.visibilityState === 'visible',
   )
+  const isAggregatedWindow = windowKey === '7d' || windowKey === '30d'
 
   const windowSecondsRef = useRef(WINDOW_SECONDS[windowKey])
 
@@ -427,6 +439,7 @@ export function ServiceResourcePanel(props: {
     if (!readonly || !initialSnapshot) return
     setWindowKey(initialSnapshot.windowKey)
     setSamples(initialSnapshot.samples)
+    setPeaks([])
     setMonitorDisabled(initialSnapshot.monitorDisabled === true)
     setHistoryError(null)
     setHistoryLoading(false)
@@ -459,11 +472,13 @@ export function ServiceResourcePanel(props: {
         if (cancelled) return
         setMonitorDisabled(false)
         setSamples(trimSamplesToWindow(response.samples, WINDOW_SECONDS[windowKey]))
+        setPeaks(response.peaks ?? [])
       } catch (error: unknown) {
         if (cancelled) return
         if (isMonitorDisabledError(error)) {
           setMonitorDisabled(true)
           setSamples([])
+          setPeaks([])
           setHistoryError(null)
           setStreamError(null)
           return
@@ -482,7 +497,7 @@ export function ServiceResourcePanel(props: {
   }, [readonly, serviceId, windowKey])
 
   useEffect(() => {
-    if (readonly || !isPageVisible || monitorDisabled) {
+    if (readonly || isAggregatedWindow || !isPageVisible || monitorDisabled) {
       setStreamState('idle')
       return undefined
     }
@@ -590,18 +605,25 @@ export function ServiceResourcePanel(props: {
       closeSource()
       setStreamState('idle')
     }
-  }, [isPageVisible, monitorDisabled, readonly, serviceId])
+  }, [isAggregatedWindow, isPageVisible, monitorDisabled, readonly, serviceId])
 
   const networkRates = useMemo(
-    () => computeRatePairs(samples, (sample) => sample.netRxBytes, (sample) => sample.netTxBytes),
+    () =>
+      samples.some((sample) => sample.netRxRateBps != null || sample.netTxRateBps != null)
+        ? samples.map((sample) => ({ rx: sample.netRxRateBps ?? null, tx: sample.netTxRateBps ?? null }))
+        : computeRatePairs(samples, (sample) => sample.netRxBytes, (sample) => sample.netTxBytes),
     [samples],
   )
   const diskRates = useMemo(
-    () => computeRatePairs(samples, (sample) => sample.blockReadBytes, (sample) => sample.blockWriteBytes),
+    () =>
+      samples.some((sample) => sample.blockReadRateBps != null || sample.blockWriteRateBps != null)
+        ? samples.map((sample) => ({ rx: sample.blockReadRateBps ?? null, tx: sample.blockWriteRateBps ?? null }))
+        : computeRatePairs(samples, (sample) => sample.blockReadBytes, (sample) => sample.blockWriteBytes),
     [samples],
   )
 
   const latestSample = samples.length ? samples[samples.length - 1] : null
+  const latestPeak = peaks.length ? peaks[peaks.length - 1] : null
   const latestNetworkRate = networkRates.length ? networkRates[networkRates.length - 1] : { rx: null, tx: null }
   const latestDiskRate = diskRates.length ? diskRates[diskRates.length - 1] : { rx: null, tx: null }
 
@@ -693,6 +715,8 @@ export function ServiceResourcePanel(props: {
 
   const streamStatusLabel = readonly
     ? '离线缓存（只读）'
+    : isAggregatedWindow
+      ? '聚合历史（只读）'
     : streamState === 'live'
       ? '实时连接中（1s）'
       : streamState === 'connecting'
@@ -705,6 +729,7 @@ export function ServiceResourcePanel(props: {
 
   const streamBadge = useMemo(() => {
     if (readonly) return { label: '本地缓存', className: 'svcResourceStatusIdle' }
+    if (isAggregatedWindow) return { label: '聚合历史', className: 'svcResourceStatusIdle' }
     if (monitorDisabled) return { label: '监控关闭', className: 'svcResourceStatusWarn' }
     if (streamError) return { label: '实时异常', className: 'svcResourceStatusBad' }
     if (streamState === 'live') return { label: '实时在线', className: 'svcResourceStatusLive' }
@@ -713,7 +738,7 @@ export function ServiceResourcePanel(props: {
     }
     if (!isPageVisible) return { label: '已暂停', className: 'svcResourceStatusIdle' }
     return { label: '未连接', className: 'svcResourceStatusIdle' }
-  }, [isPageVisible, monitorDisabled, readonly, streamError, streamState])
+  }, [isAggregatedWindow, isPageVisible, monitorDisabled, readonly, streamError, streamState])
 
   const activeMetric = TAB_OPTIONS.find((item) => item.key === metricTab) ?? TAB_OPTIONS[0]
   const activeMetricCopy = METRIC_PANEL_COPY[metricTab]
@@ -728,10 +753,23 @@ export function ServiceResourcePanel(props: {
             ? `R ${formatRate(latestDiskRate.rx)} · W ${formatRate(latestDiskRate.tx)}`
             : formatCount(latestSample?.pids)
 
+  const latestPeakLabel = latestPeak
+    ? metricTab === 'cpu'
+      ? `此桶峰值 CPU ${formatPercent(latestPeak.cpuPercent)}`
+      : metricTab === 'memory'
+        ? `此桶峰值内存 ${formatBytes(latestPeak.memUsedBytes ?? null)}`
+        : metricTab === 'network'
+          ? `此桶峰值 RX ${formatRate(latestPeak.netRxRateBps ?? null)}，TX ${formatRate(latestPeak.netTxRateBps ?? null)}`
+          : metricTab === 'disk'
+            ? `此桶峰值读 ${formatRate(latestPeak.blockReadRateBps ?? null)}，写 ${formatRate(latestPeak.blockWriteRateBps ?? null)}`
+            : `此桶峰值 PIDs ${formatCount(latestPeak.pids)}`
+    : null
+
+  const sampleUnit = readonly ? '已缓存' : isAggregatedWindow ? '聚合桶' : '样本（含实时点）'
   const chartContext = historyLoading
     ? `${WINDOW_META_LABELS[windowKey]} · 正在加载历史样本`
     : samples.length > 0
-      ? `${WINDOW_META_LABELS[windowKey]} · ${samples.length} 个${readonly ? '已缓存' : '样本（含实时点）'}`
+      ? `${WINDOW_META_LABELS[windowKey]} · ${samples.length} 个${sampleUnit}`
       : `${WINDOW_META_LABELS[windowKey]} · 暂无${readonly ? '缓存' : '历史或实时'}样本`
 
   const statCards = [
@@ -782,7 +820,9 @@ export function ServiceResourcePanel(props: {
             <div className="muted svcResourceSubtitle">
               {readonly
                 ? '当前展示最近一次缓存到本地的监控样本；恢复联网后才会继续拉取历史并恢复实时推送。'
-                : '历史样本按设置频率对每个 compose project 采集；页面打开后会叠加 1 秒 SSE 实时点，优先帮助你抓住尖峰、漂移和容器压力。'}
+                : isAggregatedWindow
+                  ? '长时间窗口按时间桶展示历史均值；最近桶保留峰值提示。'
+                  : '历史样本按设置频率对每个 compose project 采集；页面打开后会叠加 1 秒 SSE 实时点，优先帮助你抓住尖峰、漂移和容器压力。'}
             </div>
           </div>
 
@@ -795,7 +835,7 @@ export function ServiceResourcePanel(props: {
         <div className="svcResourceFacts" aria-label="监控面板概览">
           <div className="svcResourceFact">{WINDOW_META_LABELS[windowKey]}</div>
           <div className="svcResourceFact">
-            {historyLoading ? '加载样本中' : `${samples.length} 个${readonly ? '已缓存' : '样本（含实时点）'}`}
+            {historyLoading ? '加载样本中' : `${samples.length} 个${sampleUnit}`}
           </div>
           <div className="svcResourceFact">最近更新 {formatSampleTime(latestSample)}</div>
         </div>
@@ -894,6 +934,7 @@ export function ServiceResourcePanel(props: {
                   series={chartSeries}
                   yFormatter={yFormatter}
                   emptyText="当前窗口暂无可展示的监控数据"
+                  latestPeakLabel={latestPeakLabel}
                 />
               )}
             </div>

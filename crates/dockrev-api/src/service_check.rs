@@ -21,6 +21,7 @@ pub(crate) struct ServiceCheckOutcome {
     pub ignore_reason: Option<String>,
     pub candidate_present: bool,
     pub candidate_digest_changed: bool,
+    pub current_manifest_is_multi_arch: bool,
 }
 
 pub(crate) type ManifestDigestCache =
@@ -115,6 +116,7 @@ pub(crate) async fn check_service_and_persist(
                 ignore_reason: None,
                 candidate_present: false,
                 candidate_digest_changed: false,
+                current_manifest_is_multi_arch: false,
             });
         }
     };
@@ -166,6 +168,12 @@ pub(crate) async fn check_service_and_persist(
     let current_manifest_digest = current_manifest
         .as_ref()
         .and_then(|m| m.digest.clone().or(m.platform_digest.clone()));
+    let current_manifest_is_multi_arch = current_manifest.as_ref().is_some_and(|manifest| {
+        matches!(
+            (&manifest.digest, &manifest.platform_digest),
+            (Some(index_digest), Some(platform_digest)) if index_digest != platform_digest
+        )
+    });
     let current_digest_registry = current_manifest_digest.clone();
     let effective_current_digest = runtime_digest.clone().or(current_digest_registry.clone());
     // Persist the best-known digest so that pinned tags and offline/missing compose projects
@@ -336,6 +344,7 @@ pub(crate) async fn check_service_and_persist(
         ignore_reason: ignore_match.as_ref().map(|(_, r)| r.clone()),
         candidate_present,
         candidate_digest_changed,
+        current_manifest_is_multi_arch,
     })
 }
 

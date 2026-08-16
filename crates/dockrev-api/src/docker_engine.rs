@@ -739,8 +739,12 @@ impl ServiceAggregate {
             mem_limit_bytes: self.mem_seen.then_some(self.mem_limit_sum),
             net_rx_bytes: self.net_seen.then_some(self.net_rx_sum),
             net_tx_bytes: self.net_seen.then_some(self.net_tx_sum),
+            net_rx_rate_bps: None,
+            net_tx_rate_bps: None,
             block_read_bytes: self.block_seen.then_some(self.block_read_sum),
             block_write_bytes: self.block_seen.then_some(self.block_write_sum),
+            block_read_rate_bps: None,
+            block_write_rate_bps: None,
             pids: self.pids_seen.then_some(self.pids_sum),
             container_count: self.container_count,
         }

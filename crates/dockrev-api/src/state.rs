@@ -3,15 +3,18 @@ use std::sync::Arc;
 use crate::{
     cleanup_scan_runs::CleanupScanRunHub, cleanup_snapshot_worker::CleanupSnapshotWorker,
     config::Config, db::Db, deploy_check_refresh_worker::DeployCheckRefreshWorker,
-    job_live_logs::JobLiveLogHub, management_events::ManagementEventHub, registry::RegistryClient,
-    resource_usage::RealtimeSamplerHub, runner::CommandRunner, service_logs::ServiceLogHub,
-    snapshot_worker::SnapshotWorker,
+    job_live_logs::JobLiveLogHub, management_events::ManagementEventHub,
+    metrics_store::MetricsStore, operational_read_model::OperationalReadModel,
+    registry::RegistryClient, resource_usage::RealtimeSamplerHub, runner::CommandRunner,
+    service_logs::ServiceLogHub, snapshot_worker::SnapshotWorker,
 };
 
 #[derive(Clone)]
 pub struct AppState {
     pub config: Config,
     pub db: Db,
+    pub metrics: MetricsStore,
+    pub operational_reads: OperationalReadModel,
     pub registry: Arc<dyn RegistryClient>,
     pub runner: Arc<dyn CommandRunner>,
     pub snapshot_worker: Arc<SnapshotWorker>,
@@ -30,6 +33,8 @@ impl AppState {
     pub fn new(
         config: Config,
         db: Db,
+        metrics: MetricsStore,
+        operational_reads: OperationalReadModel,
         registry: Arc<dyn RegistryClient>,
         runner: Arc<dyn CommandRunner>,
         snapshot_worker: Arc<SnapshotWorker>,
@@ -43,6 +48,8 @@ impl AppState {
         Arc::new(Self {
             config,
             db,
+            metrics,
+            operational_reads,
             registry,
             runner,
             snapshot_worker,

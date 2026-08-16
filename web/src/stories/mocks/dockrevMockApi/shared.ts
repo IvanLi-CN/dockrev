@@ -18,6 +18,7 @@ import type {
   ServiceBackupTargetsResponse,
   ServiceBackupRecordsResponse,
   ServiceRepoLinkInferenceResponse,
+  ServiceResourcePeak,
   ServiceResourceSample,
   ServiceLogEventEnvelope,
   ServiceLogSnapshotResponse,
@@ -522,9 +523,11 @@ export function hashString(input: string): number {
   return Math.abs(h)
 }
 
-export function parseResourceWindow(windowRaw: string | null): { window: '3m' | '1h' | '24h'; seconds: number } {
+export function parseResourceWindow(windowRaw: string | null): { window: '3m' | '1h' | '24h' | '7d' | '30d'; seconds: number } {
   if (windowRaw === '3m') return { window: '3m', seconds: 3 * 60 }
   if (windowRaw === '24h') return { window: '24h', seconds: 24 * 60 * 60 }
+  if (windowRaw === '7d') return { window: '7d', seconds: 7 * 24 * 60 * 60 }
+  if (windowRaw === '30d') return { window: '30d', seconds: 30 * 24 * 60 * 60 }
   return { window: '1h', seconds: 60 * 60 }
 }
 
@@ -546,8 +549,8 @@ export function offsetMockVersion(input: string | null | undefined, delta: numbe
   return `${major}.${minor}.${Math.max(0, patch + delta)}`
 }
 
-export function buildResourceHistorySamples(serviceId: string, seconds: number): ServiceResourceSample[] {
-  const stepSeconds = 30
+export function buildResourceHistorySamples(serviceId: string, seconds: number, window?: string): ServiceResourceSample[] {
+  const stepSeconds = window === '7d' ? 60 : window === '30d' ? 300 : 30
   const points = Math.max(8, Math.floor(seconds / stepSeconds))
   const seed = hashString(serviceId)
   const baseCpu = 8 + (seed % 28)
@@ -591,6 +594,32 @@ export function buildResourceHistorySamples(serviceId: string, seconds: number):
   }
 
   return out
+}
+
+export function buildResourceHistoryPeaks(samples: ServiceResourceSample[]): ServiceResourcePeak[] {
+  return samples.map((sample) => ({
+    sampledAt: sample.sampledAt,
+    cpuPercent: sample.cpuPercent + 4,
+    memUsedBytes: sample.memUsedBytes,
+    memLimitBytes: sample.memLimitBytes,
+    pids: sample.pids,
+    containerCount: sample.containerCount,
+  }))
+}
+
+export function buildCompactMockJob(job: JobListItem) {
+  const summary = isRecord(job.summary) ? job.summary : {}
+  const targetVersion = ['targetDisplayTag', 'targetTag', 'to']
+    .map((key) => summary[key])
+    .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+  return {
+    id: job.id, type: job.type, scope: job.scope, stackId: job.stackId, serviceId: job.serviceId,
+    status: job.status, createdBy: job.createdBy, reason: job.reason, createdAt: job.createdAt,
+    startedAt: job.startedAt, finishedAt: job.finishedAt,
+    ...(isRecord(summary.progress) ? { progress: summary.progress } : {}),
+    displayLabel: job.serviceId ?? job.stackId ?? job.type,
+    ...(targetVersion ? { targetVersion } : {}),
+  }
 }
 
 export function buildResourceSsePayload(

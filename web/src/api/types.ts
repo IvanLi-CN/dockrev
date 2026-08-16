@@ -580,6 +580,29 @@ export type ListJobsResponse = {
   nextCursor?: string | null
 }
 
+export type CompactJobListItem = {
+  id: string
+  type: string
+  scope: string
+  stackId?: string | null
+  serviceId?: string | null
+  status: string
+  createdBy: string
+  reason: string
+  createdAt: string
+  startedAt?: string | null
+  finishedAt?: string | null
+  progress?: JobProgress | null
+  resultReason?: JobResultReason | null
+  displayLabel: string
+  targetVersion?: string | null
+}
+
+export type ListCompactJobsResponse = {
+  jobs: CompactJobListItem[]
+  nextCursor?: string | null
+}
+
 export type JobResultReason = {
   summary: string
   detail: string
@@ -727,7 +750,7 @@ export type PutSettingsInput = {
 export type ReleaseNotesView = 'original' | 'translated' | 'smart'
 export type ReleaseNotesProvider = 'gitHub' | 'octoRill'
 
-export type ServiceResourceUsageWindow = '3m' | '1h' | '24h'
+export type ServiceResourceUsageWindow = '3m' | '1h' | '24h' | '7d' | '30d'
 
 export type ServiceResourceSample = {
   sampledAt: string
@@ -736,8 +759,12 @@ export type ServiceResourceSample = {
   memLimitBytes?: number
   netRxBytes?: number
   netTxBytes?: number
+  netRxRateBps?: number
+  netTxRateBps?: number
   blockReadBytes?: number
   blockWriteBytes?: number
+  blockReadRateBps?: number
+  blockWriteRateBps?: number
   pids?: number
   containerCount: number
 }
@@ -746,6 +773,21 @@ export type ServiceResourceHistoryResponse = {
   serviceId: string
   window: ServiceResourceUsageWindow | string
   samples: ServiceResourceSample[]
+  resolutionSeconds?: number
+  peaks?: ServiceResourcePeak[]
+}
+
+export type ServiceResourcePeak = {
+  sampledAt: string
+  cpuPercent: number
+  memUsedBytes?: number
+  memLimitBytes?: number
+  pids?: number
+  containerCount: number
+  netRxRateBps?: number
+  netTxRateBps?: number
+  blockReadRateBps?: number
+  blockWriteRateBps?: number
 }
 
 export type ServiceResourceOverviewItem = {

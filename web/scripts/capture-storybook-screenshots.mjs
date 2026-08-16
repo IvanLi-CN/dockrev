@@ -321,9 +321,11 @@ async function main() {
       viewport: { width: 1280, height: 720 },
       setup: async (page) => {
         await page.locator('.svcResourceWindowSwitch').waitFor({ timeout: STORY_TIMEOUT_MS })
-        await page.getByRole('radio', { name: '3m' }).waitFor({ timeout: STORY_TIMEOUT_MS })
-        await page.getByRole('radio', { name: '1h' }).waitFor({ timeout: STORY_TIMEOUT_MS })
-        await page.getByRole('radio', { name: '24h' }).waitFor({ timeout: STORY_TIMEOUT_MS })
+        for (const label of ['3m', '1h', '24h', '7d', '30d']) {
+          await page.getByRole('radio', { name: label }).waitFor({ timeout: STORY_TIMEOUT_MS })
+        }
+        await page.getByRole('radio', { name: '30d' }).click()
+        await page.getByText('长时间窗口按时间桶展示历史均值').waitFor({ timeout: STORY_TIMEOUT_MS })
         await page.locator('.svcResourceWindowSwitch').evaluate((el) => el.scrollIntoView({ block: 'center', behavior: 'auto' }))
         await page.waitForTimeout(160)
       },
@@ -331,6 +333,21 @@ async function main() {
         const el = page.locator('.svcResourceCard')
         await el.waitFor({ timeout: STORY_TIMEOUT_MS })
         await el.screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'components-serviceresourcepanel--window-switch-contract',
+      file: 'service-resource-window-contract-mobile.png',
+      viewport: { width: 375, height: 900 },
+      setup: async (page) => {
+        await page.locator('.svcResourceWindowSwitch').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.getByRole('radio', { name: '30d' }).click()
+        await page.getByText('长时间窗口按时间桶展示历史均值').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.locator('.svcResourceCard').evaluate((el) => el.scrollIntoView({ block: 'start', behavior: 'auto' }))
+        await page.waitForTimeout(160)
+      },
+      screenshot: async (page, filePath) => {
+        await page.screenshot({ path: filePath, fullPage: false })
       },
     },
     {

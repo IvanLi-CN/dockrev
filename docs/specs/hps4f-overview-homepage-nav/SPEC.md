@@ -19,6 +19,7 @@
 
 - 为首页引入单次 read model：新增 `GET /api/homepage/nav`，一次返回首页卡片、顶部资源摘要、更新时间与更新状态输入字段，去掉首页 `1 + N` 客户端扇出。
 - 为资源摘要引入轻量持久化 latest 表 `service_resource_latest_samples`，由采样写入时同步 upsert 最新样本与前一条网络计数；首页与 `/api/services/resource-usage/overview` 都读取该小表，不再在请求时扫描历史表。
+- 首页热读将主库导航元数据与独立指标库的 latest/计数并行读取，并按 `serviceId` 合并；请求路径不得调度快照刷新工作。
 - 将 SQLite 运行时固定切到 `WAL` 并配置非零 `busy_timeout`，把“读请求因为锁竞争超时/失败”从运维经验变成应用默认配置。
 - 保留“极速优先”的 cached-first 首屏，但升级为单一 `HomepageSnapshotV2`，把卡片和资源摘要收敛到同一时间戳快照。
 - live 响应到达后，首页必须按 `serviceId` in-place merge，禁止整页先清空、先缩到 partial live 子集、或随着单个服务返回连续整列重排。
@@ -96,6 +97,7 @@
 
 - 首页 live payload 应用应复用已有卡片对象，尽量减少不必要的 React 重建与 DOM 抖动。
 - 首页 read model 的排序应稳定按 `stackName/serviceName` 输出，便于前端缓存 merge 与测试断言。
+- 首页版本推断快照必须通过批量读取获得；缓存未命中或过期只呈现 pending 状态，由后台快照 worker 的启动预热、30 分钟协调刷新与显式操作刷新。
 - 后端对显然不可解析或无效的 homepage icon 值应尽量直接返回 `null`/可回退值，减少浏览器侧重复失败。
 
 ## 功能与行为规格（Functional/Behavior Spec）
