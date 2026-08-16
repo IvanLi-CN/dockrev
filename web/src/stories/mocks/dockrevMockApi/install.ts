@@ -14,6 +14,7 @@ import { buildCleanupMockScanResponse, isCleanupMockScenario, resolveCleanupMock
 import type { MockRouteContext } from './context'
 import { buildMockDiscoveryTimeline as buildMockDiscoveryTimelineResponse } from './discoveryTimeline'
 import { buildFixture } from './fixturesMisc'
+import { RUNNING_JOB_ID } from './fixturesQueues'
 import { buildMockGitHubReleasesDataset, buildMockGitHubReleasesResponse } from './githubReleases'
 import { handleGhcrRoutes } from './handlers/ghcr'
 import { handleServiceLifecycleRoute } from './handlers/serviceLifecycle'
@@ -151,7 +152,7 @@ export function installDockrevMockApi(
     const updatedAt = nowIso()
 
     const patchProgress = (job: JobListItem | JobDetail | undefined) => {
-      if (!job || job.id !== 'job-running' || !job.progress) return
+      if (!job || job.id !== RUNNING_JOB_ID || !job.progress) return
       job.progress = {
         ...job.progress,
         phase: 'pulling',
@@ -167,7 +168,7 @@ export function installDockrevMockApi(
     }
 
     for (const job of state.jobs) patchProgress(job)
-    patchProgress(state.jobById['job-running'])
+    patchProgress(state.jobById[RUNNING_JOB_ID])
 
     return completedPercent
   }
@@ -582,7 +583,7 @@ export function installDockrevMockApi(
           id: jobsEventsSeqRef.value,
           data: {
             type: 'job_progress',
-            jobId: 'job-running',
+            jobId: RUNNING_JOB_ID,
             percent: nextCompletedPercent,
             ts: nowIso(),
           },

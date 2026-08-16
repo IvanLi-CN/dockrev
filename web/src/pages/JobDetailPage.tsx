@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { getJob, newJobEventsSource, type JobDetail, type JobLogLine, type JobProgress } from '../api'
+import { LoaderCircle, Square } from 'lucide-react'
+import { getJob, newJobEventsSource, stopJob, type JobDetail, type JobLogLine, type JobProgress } from '../api'
 import { useManagementEventBatch } from '../managementEvents'
 import { formatJobMachineName, formatJobReadableDisplay } from '../jobDisplay'
 import { formatJobProgressDownload, parseJobProgressDownload } from '../jobProgressDownload'
 import { TaskResultReason } from '../components/TaskResultReason'
 import { navigate } from '../routes'
-import { Button, Chip, Mono, OverlayScrollArea, Pill, Switch } from '../ui'
+import { Button, Chip, IconButton, Mono, OverlayScrollArea, Pill, Switch } from '../ui'
 
 function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' | 'info' {
   if (status === 'success') return 'ok'
   if (status === 'rolled_back') return 'warn'
+  if (status === 'cancelled') return 'muted'
   if (status === 'failed') return 'bad'
   if (status === 'running') return 'info'
   return 'muted'
@@ -205,6 +207,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
   const [progress, setProgress] = useState<JobProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [stopRequesting, setStopRequesting] = useState(false)
   const [logTz, setLogTz] = useState<LogTimeZone>('local')
   const [logViewport, setLogViewport] = useState<HTMLElement | null>(null)
   const [logFollow, setLogFollow] = useState(true)
@@ -228,6 +231,22 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
     pendingCommandSummarySeqsRef.current.clear()
     return j
   }, [jobId])
+
+  const requestStop = useCallback(async () => {
+    setBusy(true)
+    setStopRequesting(true)
+    setError(null)
+    try {
+      await stopJob(jobId)
+      await refresh()
+    } catch (error: unknown) {
+      setError(errorMessage(error))
+      await refresh().catch(() => undefined)
+    } finally {
+      setStopRequesting(false)
+      setBusy(false)
+    }
+  }, [jobId, refresh])
 
   useEffect(() => {
     writeShowEventsPreference(showEvents)
@@ -569,41 +588,60 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
   return (
     <div className="page jobDetailPage">
       <div className="card">
-        <div className="sectionRow">
-          <div className="title">任务详情</div>
-          <div className="muted" style={{ marginLeft: 'auto' }}>
-            job: <Mono>{jobId}</Mono>
+        <div className="jobDetailHeader">
+          <div>
+            <div className="title">任务详情</div>
+            {job ? (
+              <div className="muted" style={{ marginTop: 8 }}>
+                <div>
+                  task{' '}
+                  <span className="jobReadableTagGroup">
+                    <span className={`jobTypeTag jobTypeTag-${readable.typeTone}`}>{readable.primaryLabel}</span>
+                    {readable.scopeTag ? <span className="jobScopeTag">{readable.scopeTag}</span> : null}
+                  </span>{' '}
+                  · machine{' '}
+                  <Mono>{formatJobMachineName(job.type, job.scope)}</Mono> · by <Mono>{job.createdBy}</Mono> · reason{' '}
+                  <Mono>{job.reason}</Mono>
+                </div>
+                <div style={{ marginTop: 6 }}>
+                  created <Mono>{formatShort(job.createdAt)}</Mono> · started <Mono>{formatShort(job.startedAt)}</Mono>
+                  {job.status !== 'running' ? (
+                    <>
+                      {' '}
+                      · finished <Mono>{formatShort(job.finishedAt)}</Mono>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
           </div>
-          {job ? (
-            <Pill tone={statusTone(job.status)} breathing={job.status === 'running'}>
-              {job.status}
-            </Pill>
-          ) : null}
-        </div>
 
-        {job ? (
-          <div className="muted" style={{ marginTop: 8 }}>
-            <div>
-              task{' '}
-              <span className="jobReadableTagGroup">
-                <span className={`jobTypeTag jobTypeTag-${readable.typeTone}`}>{readable.primaryLabel}</span>
-                {readable.scopeTag ? <span className="jobScopeTag">{readable.scopeTag}</span> : null}
-              </span>{' '}
-              · machine{' '}
-              <Mono>{formatJobMachineName(job.type, job.scope)}</Mono> · by <Mono>{job.createdBy}</Mono> · reason{' '}
-              <Mono>{job.reason}</Mono>
-            </div>
-            <div style={{ marginTop: 6 }}>
-              created <Mono>{formatShort(job.createdAt)}</Mono> · started <Mono>{formatShort(job.startedAt)}</Mono>
-              {job.status !== 'running' ? (
-                <>
-                  {' '}
-                  · finished <Mono>{formatShort(job.finishedAt)}</Mono>
-                </>
+          <div className="jobDetailHeaderAside">
+            <div className="jobDetailIdentity">
+              <div className="jobDetailJobId muted" title={jobId}>
+                job: <Mono>{jobId}</Mono>
+              </div>
+              {job ? (
+                <Pill tone={statusTone(job.status)} breathing={job.status === 'running'}>
+                  {job.status}
+                </Pill>
+              ) : null}
+              {job?.status === 'cancelled' ? (
+                <IconButton className="jobDetailStopControl" disabled title="已停止" variant="danger">
+                  <Square size={16} strokeWidth={2.5} aria-hidden="true" />
+                </IconButton>
+              ) : stopRequesting || job?.stop?.state === 'requested' ? (
+                <IconButton className="jobDetailStopControl" disabled title="正在停止" variant="danger">
+                  <LoaderCircle className="jobDetailStopSpinner" size={17} strokeWidth={2.4} aria-hidden="true" />
+                </IconButton>
+              ) : job?.stop?.canStop ? (
+                <IconButton className="jobDetailStopControl" disabled={busy} onClick={() => void requestStop()} title="停止更新" variant="danger">
+                  <Square size={16} strokeWidth={2.5} aria-hidden="true" />
+                </IconButton>
               ) : null}
             </div>
           </div>
-        ) : null}
+        </div>
         {progress ? (
           <div className="jobProgress">
             <div className="jobProgressHeader">

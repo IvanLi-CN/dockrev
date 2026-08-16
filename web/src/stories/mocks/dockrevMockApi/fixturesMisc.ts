@@ -1,7 +1,7 @@
 import type { GitHubPackagesRepo, StackDetail, StackListItem } from '../../../api'
 import { nowIso, type Fixture, type DockrevApiScenario } from './shared'
 import { buildDashboardDemo, baseEmpty, buildDigestPinnedImageDisplay, buildGuideLineLongNames, buildLinkIconCatalog, buildNoCandidates, buildResolvedTagDemo, buildServiceDetailComposeFallbacks, buildServiceDetailVersionAnomaly, buildServicesInferencePendingCandidateLoading, buildVersionTagsPopoverDemo } from './fixturesBase'
-import { buildOverviewJobsCardExactFiveNonTerminal, buildOverviewJobsCardHeavyInFlight, buildOverviewJobsCardRunningProgressModes, buildOverviewJobsCardTerminalOnly, buildQueueBackupProgress, buildQueueHealthRollback, buildQueueLegacyProgress, buildQueueLongLogs, buildQueueMixed, buildQueueProgressSmoothing, buildQueueUpdateDownloadDeterminate, buildQueueUpdateIndeterminate, buildQueueUpdateLayerProgress, buildVersionInferenceIdleFixture, buildVersionInferenceOverviewFixture, buildVersionInferenceQueueBacklogFixture, buildVersionInferenceResyncRequiredFixture, buildVersionInferenceRunningFixture, buildVersionInferenceStaleAllFailedFixture } from './fixturesQueues'
+import { RUNNING_JOB_ID, buildOverviewJobsCardExactFiveNonTerminal, buildOverviewJobsCardHeavyInFlight, buildOverviewJobsCardRunningProgressModes, buildOverviewJobsCardTerminalOnly, buildQueueBackupProgress, buildQueueHealthRollback, buildQueueLegacyProgress, buildQueueLongLogs, buildQueueMixed, buildQueueProgressSmoothing, buildQueueUpdateDownloadDeterminate, buildQueueUpdateIndeterminate, buildQueueUpdateLayerProgress, buildVersionInferenceIdleFixture, buildVersionInferenceOverviewFixture, buildVersionInferenceQueueBacklogFixture, buildVersionInferenceResyncRequiredFixture, buildVersionInferenceRunningFixture, buildVersionInferenceStaleAllFailedFixture } from './fixturesQueues'
 import { isCleanupMockScenario } from '../cleanupMockData'
 
 export function buildSettingsConfigured(): Fixture {
@@ -582,6 +582,24 @@ export function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fi
   if (scenario === 'queue-health-rollback') return buildQueueHealthRollback()
   if (scenario === 'queue-legacy-progress') return buildQueueLegacyProgress()
   if (scenario === 'queue-update-layer-progress') return buildQueueUpdateLayerProgress()
+  if (scenario === 'queue-update-cancelled') {
+    const fixture = buildQueueUpdateLayerProgress()
+    const job = fixture.jobById[RUNNING_JOB_ID]
+    if (job) {
+      const finishedAt = nowIso()
+      const cancelled = {
+        ...job,
+        status: 'cancelled',
+        finishedAt,
+        stop: { canStop: false, state: 'requested', requestedAt: finishedAt, requestedBy: 'ivan' },
+      }
+      fixture.jobById[RUNNING_JOB_ID] = cancelled
+      fixture.jobs = fixture.jobs.map((item) =>
+        item.id === RUNNING_JOB_ID ? { ...item, status: 'cancelled', finishedAt } : item,
+      )
+    }
+    return fixture
+  }
   if (scenario === 'queue-update-indeterminate') return buildQueueUpdateIndeterminate()
   if (scenario === 'queue-update-download-determinate') return buildQueueUpdateDownloadDeterminate()
   if (scenario === 'queue-long-logs') return buildQueueLongLogs()

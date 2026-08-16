@@ -35,6 +35,11 @@ use pull_progress::pull_progress_message;
 use pull_progress::{PullProgressTracker, parse_pull_fraction_from_line};
 use pull_progress_stream::run_checked_with_pull_progress;
 
+#[async_trait::async_trait]
+pub trait UpdateApplyGate: Send + Sync {
+    async fn commit(&self) -> anyhow::Result<bool>;
+}
+
 #[derive(Clone, Debug)]
 struct TempFileCleanup(std::path::PathBuf);
 
@@ -272,6 +277,7 @@ pub async fn pre_pull_update_images(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 pub async fn run_update_job(
     runner: &dyn CommandRunner,
     compose_bin: &str,
@@ -287,7 +293,7 @@ pub async fn run_update_job(
     dockrev_image_repo: Option<&str>,
     progress_events: Option<UnboundedSender<UpdateProgressEvent>>,
 ) -> anyhow::Result<UpdateOutcome> {
-    run_update_job_with_pull_state(
+    run_update_job_with_gate(
         runner,
         compose_bin,
         docker_config_path,
@@ -303,11 +309,13 @@ pub async fn run_update_job(
         progress_events,
         false,
         &[],
+        None,
     )
     .await
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 pub async fn run_update_job_pre_pulled(
     runner: &dyn CommandRunner,
     compose_bin: &str,
@@ -324,7 +332,7 @@ pub async fn run_update_job_pre_pulled(
     progress_events: Option<UnboundedSender<UpdateProgressEvent>>,
     services_stopped_for_backup: &[String],
 ) -> anyhow::Result<UpdateOutcome> {
-    run_update_job_with_pull_state(
+    run_update_job_with_gate(
         runner,
         compose_bin,
         docker_config_path,
@@ -340,12 +348,13 @@ pub async fn run_update_job_pre_pulled(
         progress_events,
         true,
         services_stopped_for_backup,
+        None,
     )
     .await
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn run_update_job_with_pull_state(
+pub async fn run_update_job_with_gate(
     runner: &dyn CommandRunner,
     compose_bin: &str,
     docker_config_path: Option<&Path>,
@@ -361,6 +370,7 @@ async fn run_update_job_with_pull_state(
     progress_events: Option<UnboundedSender<UpdateProgressEvent>>,
     images_pre_pulled: bool,
     services_stopped_for_backup: &[String],
+    apply_gate: Option<&dyn UpdateApplyGate>,
 ) -> anyhow::Result<UpdateOutcome> {
     let selection = select_update_services(
         stack,
@@ -621,6 +631,12 @@ async fn run_update_job_with_pull_state(
                 message: format!("pull completed for {}", svc.name),
             },
         );
+    }
+
+    if let Some(apply_gate) = apply_gate
+        && !apply_gate.commit().await?
+    {
+        return Err(crate::update_stop::requested_error());
     }
 
     for (svc, service_index, _, _) in &prepared_services {

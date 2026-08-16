@@ -120,6 +120,7 @@ export function selectRecentStackUpdateJobs(jobs: JobListItem[], stack: StackDet
 function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' | 'info' {
   if (status === 'success') return 'ok'
   if (status === 'rolled_back') return 'warn'
+  if (status === 'cancelled') return 'muted'
   if (status === 'running' || status === 'queued' || status === 'pending') return 'info'
   if (status === 'failed') return 'bad'
   return 'muted'
@@ -149,6 +150,7 @@ function operationLabel(job: JobListItem): string {
 function statusLabel(status: string): string {
   if (status === 'success') return '成功'
   if (status === 'rolled_back') return '已回滚'
+  if (status === 'cancelled') return '已停止'
   if (status === 'running') return '执行中'
   if (status === 'queued') return '排队中'
   if (status === 'pending') return '等待中'

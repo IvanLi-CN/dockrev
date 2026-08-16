@@ -1,5 +1,14 @@
 use super::*;
 
+struct RejectApplyGate;
+
+#[async_trait::async_trait]
+impl UpdateApplyGate for RejectApplyGate {
+    async fn commit(&self) -> anyhow::Result<bool> {
+        Ok(false)
+    }
+}
+
 #[derive(Default)]
 struct RefreshContainerIdRunner {
     step: Mutex<usize>,
@@ -715,4 +724,33 @@ async fn pre_pulled_update_only_looks_up_services_stopped_for_backup_with_all_st
             .iter()
             .any(|(_, args)| args_end_with(args, &["ps", "-a", "-q", "web"]))
     );
+}
+
+#[tokio::test]
+async fn rejected_apply_gate_never_starts_new_image() {
+    let stack = single_service_stack("ghcr.io/org/web:1.0", None);
+    let runner = RefreshContainerIdRunner::default();
+    let error = run_update_job_with_gate(
+        &runner,
+        "docker-compose",
+        None,
+        IdempotentRetryPolicy::default(),
+        &stack,
+        &JobScope::Service,
+        Some("svc_1"),
+        "apply",
+        None,
+        false,
+        "ui",
+        None,
+        None,
+        false,
+        &[],
+        Some(&RejectApplyGate),
+    )
+    .await
+    .expect_err("rejected apply gate must stop the update");
+
+    assert!(crate::update_stop::is_requested(&error));
+    assert_eq!(*runner.step.lock().unwrap(), 3);
 }

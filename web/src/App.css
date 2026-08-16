@@ -2460,6 +2460,84 @@ html[data-theme="light"] .releaseDrawerContent {
   color: var(--color-error-content);
 }
 
+.jobDetailStopControl.btnDanger {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border-radius: 50%;
+  background: var(--color-error);
+  border-color: var(--color-error);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--color-error) 28%, transparent);
+  color: var(--color-error-content);
+}
+
+.jobDetailStopControl.btnDanger:not(:disabled):hover {
+  background: color-mix(in srgb, var(--color-error) 86%, black);
+  border-color: color-mix(in srgb, var(--color-error) 86%, black);
+  color: var(--color-error-content);
+  transform: none;
+}
+
+.jobDetailHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 16px 24px;
+}
+
+.jobDetailHeaderAside {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.jobDetailIdentity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.jobDetailJobId {
+  min-width: 0;
+  max-width: min(36vw, 420px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jobDetailStopControl.btnDanger:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-error) 64%, transparent);
+  outline-offset: 2px;
+}
+
+.jobDetailStopSpinner {
+  animation: jobDetailStopSpin 0.8s linear infinite;
+}
+
+@keyframes jobDetailStopSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 760px) {
+  .jobDetailHeader {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .jobDetailHeaderAside,
+  .jobDetailIdentity {
+    justify-content: flex-start;
+  }
+
+  .jobDetailJobId {
+    max-width: calc(100vw - 96px);
+  }
+}
+
 .btnGhost {
   background: var(--dockrev-surface);
   color: var(--text);

@@ -27,9 +27,11 @@ mod snapshots;
 mod stacks;
 mod stacks_backup_targets;
 mod tag_history;
+mod update_stops;
 
 pub(crate) use jobs::JobListFilters;
 pub(crate) use service_operations::ServiceOperationTarget;
+pub(crate) use update_stops::UpdateStopRequestOutcome;
 
 pub(crate) use new_version_discoveries::{
     candidate_tag_allows_settled_fallback, canonical_candidate_identity_tag,
@@ -601,7 +603,10 @@ VALUES (?1, ?2, 'warn', ?3)
     }
 
     let summary_json = serde_json::to_string(&summary)?;
-    let is_terminal = matches!(job.status.as_str(), "success" | "failed" | "rolled_back");
+    let is_terminal = matches!(
+        job.status.as_str(),
+        "success" | "failed" | "rolled_back" | "cancelled"
+    );
     if is_terminal {
         tx.execute(
             r#"

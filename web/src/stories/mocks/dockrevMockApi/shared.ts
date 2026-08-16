@@ -103,6 +103,7 @@ export type DockrevApiScenario =
   | 'queue-health-rollback'
   | 'queue-legacy-progress'
   | 'queue-update-layer-progress'
+  | 'queue-update-cancelled'
   | 'queue-update-indeterminate'
   | 'queue-update-download-determinate'
   | 'queue-long-logs'

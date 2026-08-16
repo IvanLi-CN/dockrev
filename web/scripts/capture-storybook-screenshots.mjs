@@ -584,6 +584,42 @@ async function main() {
       },
     },
     {
+      id: 'pages-jobdetailpage--update-stop-available',
+      file: 'update-stop-requested-job-detail.png',
+      setup: async (page) => {
+        await page.locator('.jobDetailPage').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.getByRole('button', { name: '正在停止' }).waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        const pageSurface = page.locator('.jobDetailPage').first()
+        await pageSurface.screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'pages-jobdetailpage--update-stop-available-evidence',
+      file: 'update-stop-available-job-detail.png',
+      setup: async (page) => {
+        await page.locator('.jobDetailPage').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.getByRole('button', { name: '停止更新' }).waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        const pageSurface = page.locator('.jobDetailPage').first()
+        await pageSurface.screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'pages-jobdetailpage--update-stop-cancelled',
+      file: 'update-stop-cancelled-job-detail.png',
+      setup: async (page) => {
+        await page.locator('.jobDetailPage').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.getByRole('button', { name: '已停止' }).waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        const pageSurface = page.locator('.jobDetailPage').first()
+        await pageSurface.screenshot({ path: filePath })
+      },
+    },
+    {
       id: 'pages-jobdetailpage--long-logs-paused-follow-evidence',
       file: 'job-detail-log-follow-paused.png',
       setup: async (page) => {

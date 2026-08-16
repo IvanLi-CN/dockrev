@@ -701,6 +701,11 @@ export async function getJob(jobId: string): Promise<JobDetail> {
   return data.job as JobDetail
 }
 
+export async function stopJob(jobId: string): Promise<{ jobId: string; state: 'requested' }> {
+  const resp = await apiFetch(`/api/jobs/${encodeURIComponent(jobId)}/stop`, { method: 'POST' })
+  return (await resp.json()) as { jobId: string; state: 'requested' }
+}
+
 export async function listIgnores(): Promise<IgnoreRule[]> {
   const resp = await apiFetch('/api/ignores')
   const data = await resp.json()

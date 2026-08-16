@@ -1,10 +1,137 @@
 use super::*;
 
+pub(crate) struct DbUpdateApplyGate {
+    pub(crate) db: crate::db::Db,
+    pub(crate) job_id: String,
+}
+
+pub(crate) struct DbBackupRecoveryStore {
+    pub(crate) db: crate::db::Db,
+    pub(crate) job_id: String,
+}
+
+#[async_trait::async_trait]
+impl backup::BackupRecoveryStore for DbBackupRecoveryStore {
+    async fn save(&self, snapshot: &backup::BackupRecoverySnapshot) -> anyhow::Result<()> {
+        self.db
+            .save_update_stop_recovery_snapshot(&self.job_id, snapshot, &now_rfc3339()?)
+            .await
+    }
+
+    async fn clear(&self) -> anyhow::Result<()> {
+        self.db
+            .clear_update_stop_recovery_snapshot(&self.job_id, &now_rfc3339()?)
+            .await
+    }
+}
+
+/// Restores services interrupted during a pre-apply backup after the API has bound.
+pub(crate) async fn recover_interrupted_update_backups(state: Arc<AppState>) {
+    let now = match now_rfc3339() {
+        Ok(now) => now,
+        Err(error) => {
+            tracing::error!(error = %error, "cannot start interrupted backup recovery");
+            return;
+        }
+    };
+    let pending = match state.db.claim_pending_update_stop_recoveries(&now).await {
+        Ok(pending) => pending,
+        Err(error) => {
+            tracing::error!(error = %error, "cannot claim interrupted backup recoveries");
+            return;
+        }
+    };
+
+    for pending in pending {
+        let finished_at = now_rfc3339().unwrap_or_else(|_| now.clone());
+        let result = async {
+            let snapshot: backup::BackupRecoverySnapshot =
+                serde_json::from_str(&pending.snapshot_json)?;
+            let stack = state
+                .db
+                .get_stack(&snapshot.stack_id)
+                .await?
+                .ok_or_else(|| {
+                    anyhow::anyhow!("backup recovery stack missing: {}", snapshot.stack_id)
+                })?;
+            backup::restore_backup_recovery_snapshot(
+                &*state.runner,
+                &state.config.compose_bin,
+                state.config.docker_config_path.as_deref(),
+                &stack,
+                &snapshot,
+            )
+            .await
+        }
+        .await;
+
+        match result {
+            Ok(()) => {
+                let _ = state
+                    .db
+                    .clear_update_stop_recovery_snapshot(&pending.job_id, &finished_at)
+                    .await;
+                let was_stopped = state
+                    .db
+                    .get_update_stop_control(&pending.job_id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|control| control.stop_requested_at)
+                    .is_some();
+                let status = if was_stopped { "cancelled" } else { "failed" };
+                let summary = json!({"mode": "apply", "stopRequested": was_stopped, "recoveredOnStartup": true});
+                let _ = state
+                    .db
+                    .finish_job(&pending.job_id, status, &finished_at, &summary)
+                    .await;
+            }
+            Err(error) => {
+                let error_message = error.to_string();
+                let _ = state
+                    .db
+                    .record_update_stop_recovery_error(
+                        &pending.job_id,
+                        &error_message,
+                        &finished_at,
+                    )
+                    .await;
+                let summary =
+                    json!({"mode": "apply", "stopRequested": true, "recoveryError": error_message});
+                let _ = state
+                    .db
+                    .finish_job(&pending.job_id, "failed", &finished_at, &summary)
+                    .await;
+                tracing::error!(job_id = %pending.job_id, error = %error, "interrupted backup recovery failed");
+            }
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl updater::UpdateApplyGate for DbUpdateApplyGate {
+    async fn commit(&self) -> anyhow::Result<bool> {
+        if self
+            .db
+            .commit_update_job_apply(&self.job_id, &now_rfc3339()?)
+            .await?
+        {
+            return Ok(true);
+        }
+        Ok(self
+            .db
+            .get_update_stop_control(&self.job_id)
+            .await?
+            .is_some_and(|control| control.apply_committed_at.is_some()))
+    }
+}
+
 pub(crate) struct DbLoggingRunner {
     pub(crate) db: crate::db::Db,
     pub(crate) inner: Arc<dyn crate::runner::CommandRunner>,
     pub(crate) job_id: String,
     pub(crate) live_log_hub: Arc<crate::job_live_logs::JobLiveLogHub>,
+    pub(crate) stop_signal: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
 #[async_trait::async_trait]
@@ -60,10 +187,20 @@ impl crate::runner::CommandRunner for DbLoggingRunner {
             on_stderr(chunk);
         };
 
-        let result = self
-            .inner
-            .run_stream(spec, timeout, &mut tap_stdout, &mut tap_stderr)
-            .await;
+        let result = if let Some(mut stop_signal) = self.stop_signal.clone() {
+            if *stop_signal.borrow() {
+                Err(crate::update_stop::requested_error())
+            } else {
+                tokio::select! {
+                    result = self.inner.run_stream(spec, timeout, &mut tap_stdout, &mut tap_stderr) => result,
+                    _ = wait_for_update_stop(&mut stop_signal) => Err(crate::update_stop::requested_error()),
+                }
+            }
+        } else {
+            self.inner
+                .run_stream(spec, timeout, &mut tap_stdout, &mut tap_stderr)
+                .await
+        };
         let out = match result {
             Ok(out) => out,
             Err(error) => {
@@ -131,6 +268,14 @@ impl crate::runner::CommandRunner for DbLoggingRunner {
             stdout: captured_stdout,
             stderr: captured_stderr,
         })
+    }
+}
+
+async fn wait_for_update_stop(signal: &mut tokio::sync::watch::Receiver<bool>) {
+    while !*signal.borrow() {
+        if signal.changed().await.is_err() {
+            std::future::pending::<()>().await;
+        }
     }
 }
 
@@ -358,6 +503,7 @@ mod tests {
             inner: Arc::new(StaticRunner),
             job_id: "job-1".to_string(),
             live_log_hub: hub,
+            stop_signal: None,
         };
 
         runner
@@ -424,6 +570,7 @@ mod tests {
             inner: Arc::new(ComposePullProgressRunner),
             job_id: "job-pull".to_string(),
             live_log_hub: Arc::new(crate::job_live_logs::JobLiveLogHub::new()),
+            stop_signal: None,
         };
 
         runner

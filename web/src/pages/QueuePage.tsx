@@ -19,7 +19,7 @@ import {
 import { navigate } from '../routes'
 import { Button, Mono, Pill } from '../ui'
 
-type Filter = 'all' | 'queued' | 'running' | 'success' | 'failed' | 'rolled_back'
+type Filter = 'all' | 'queued' | 'running' | 'success' | 'failed' | 'rolled_back' | 'cancelled'
 type VersionInferenceSummary = {
   snapshotsTotal: number
   queued: number
@@ -61,6 +61,7 @@ const DEFAULT_GHCR_SUMMARY: GhcrWebhookSummary = {
 function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' | 'info' {
   if (status === 'success') return 'ok'
   if (status === 'rolled_back') return 'warn'
+  if (status === 'cancelled') return 'muted'
   if (status === 'failed') return 'bad'
   if (status === 'running') return 'info'
   if (status === 'queued') return 'warn'
@@ -498,7 +499,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
         <div className="sectionRow">
           <div className="title">任务队列</div>
           <div className="chipRow" style={{ marginLeft: 'auto' }}>
-            {(['all', 'queued', 'running', 'success', 'failed', 'rolled_back'] as const).map((k) => (
+            {(['all', 'queued', 'running', 'success', 'failed', 'rolled_back', 'cancelled'] as const).map((k) => (
               <button
                 key={k}
                 className={filter === k ? 'chip chipActive' : 'chip'}

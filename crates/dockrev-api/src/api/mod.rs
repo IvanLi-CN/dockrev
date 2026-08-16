@@ -68,7 +68,8 @@ use notifications::*;
 use operations::*;
 pub(crate) use operations::{
     complete_check_job, enqueue_update_job, normalize_digest_for_compare,
-    summary_emits_new_version_notification, summary_matched_service_ids,
+    recover_interrupted_update_backups, summary_emits_new_version_notification,
+    summary_matched_service_ids,
 };
 use services::*;
 pub(crate) use stacks::needs_version_inference_for_tags;
@@ -300,6 +301,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/jobs", get(list_jobs))
         .route("/api/jobs/events", get(jobs_events))
         .route("/api/jobs/{job_id}", get(get_job))
+        .route("/api/jobs/{job_id}/stop", post(stop_job))
         .route("/api/jobs/{job_id}/events", get(job_events))
         .route(
             "/api/ignores",

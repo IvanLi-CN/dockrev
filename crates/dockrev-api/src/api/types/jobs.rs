@@ -743,6 +743,11 @@ fn generic_result_reason(
         .filter(|value| !value.is_empty());
 
     match status {
+        "cancelled" => Some(JobResultReason {
+            summary: "更新已停止".to_string(),
+            detail: "新镜像应用前已停止本次更新，原运行服务已恢复。".to_string(),
+            raw: None,
+        }),
         "success" => {
             let detail = progress_message?;
             let lowered = detail.to_ascii_lowercase();
@@ -791,7 +796,7 @@ pub(crate) fn result_reason_from_summary(
     summary: &Value,
     progress: Option<&JobProgress>,
 ) -> Option<JobResultReason> {
-    if !matches!(status, "success" | "failed" | "rolled_back") {
+    if !matches!(status, "success" | "failed" | "rolled_back" | "cancelled") {
         return None;
     }
     let summary_object = summary.as_object()?;
@@ -945,8 +950,21 @@ pub struct JobDetail {
     pub progress: Option<JobProgress>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result_reason: Option<JobResultReason>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop: Option<JobStopState>,
     pub logs: Vec<JobLogLine>,
     pub logs_last_id: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobStopState {
+    pub can_stop: bool,
+    pub state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_by: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

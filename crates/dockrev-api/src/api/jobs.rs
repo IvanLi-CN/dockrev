@@ -212,6 +212,25 @@ pub(super) async fn get_job(
         &job.summary_json,
         progress.as_ref(),
     );
+    let stop = state
+        .db
+        .get_update_stop_control(&job_id)
+        .await
+        .map_err(map_internal)?
+        .map(|control| crate::api::types::JobStopState {
+            can_stop: job.status == "running"
+                && control.apply_committed_at.is_none()
+                && control.stop_requested_at.is_none(),
+            state: if control.stop_requested_at.is_some() {
+                "requested".to_string()
+            } else if control.apply_committed_at.is_some() {
+                "locked".to_string()
+            } else {
+                "available".to_string()
+            },
+            requested_at: control.stop_requested_at,
+            requested_by: control.stop_requested_by,
+        });
 
     Ok(Json(GetJobResponse {
         job: JobDetail {
@@ -231,10 +250,60 @@ pub(super) async fn get_job(
             summary: job.summary_json,
             progress,
             result_reason,
+            stop,
             logs,
             logs_last_id,
         },
     }))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct StopJobResponse {
+    job_id: String,
+    state: &'static str,
+}
+
+pub(super) async fn stop_job(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(job_id): Path<String>,
+) -> Result<(StatusCode, Json<StopJobResponse>), ApiError> {
+    let user = require_user(&state, &headers).await?;
+    let now = now_rfc3339().map_err(map_internal)?;
+    match state
+        .db
+        .request_update_job_stop(&job_id, &user.principal, &now)
+        .await
+        .map_err(map_internal)?
+    {
+        crate::db::UpdateStopRequestOutcome::Requested => {
+            state.update_stop_hub.request(&job_id);
+            let _ = state
+                .db
+                .insert_job_log(
+                    &job_id,
+                    &JobLogLine {
+                        ts: now,
+                        level: "info".to_string(),
+                        msg: "update stop requested".to_string(),
+                    },
+                )
+                .await;
+            Ok((
+                StatusCode::ACCEPTED,
+                Json(StopJobResponse {
+                    job_id,
+                    state: "requested",
+                }),
+            ))
+        }
+        crate::db::UpdateStopRequestOutcome::Ineligible
+        | crate::db::UpdateStopRequestOutcome::AlreadyRequested
+        | crate::db::UpdateStopRequestOutcome::ApplyCommitted => {
+            Err(ApiError::conflict("update job can no longer be stopped"))
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
