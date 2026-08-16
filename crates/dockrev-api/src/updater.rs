@@ -277,6 +277,7 @@ pub async fn pre_pull_update_images(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 pub async fn run_update_job(
     runner: &dyn CommandRunner,
     compose_bin: &str,
@@ -314,6 +315,7 @@ pub async fn run_update_job(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 pub async fn run_update_job_pre_pulled(
     runner: &dyn CommandRunner,
     compose_bin: &str,

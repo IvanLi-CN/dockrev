@@ -28,12 +28,10 @@ impl Drop for ProcessGroupGuard {
             return;
         };
         // Every streamed external command owns a process group. Cancellation first gives the
-        // group a chance to exit, then performs one bounded forceful escalation.
+        // group a chance to exit, then forcefully escalates before reporting cancellation.
         send_process_group_signal("TERM", pgid);
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(500));
-            send_process_group_signal("KILL", pgid);
-        });
+        std::thread::sleep(Duration::from_millis(100));
+        send_process_group_signal("KILL", pgid);
     }
 }
 
