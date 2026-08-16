@@ -590,7 +590,7 @@ async function main() {
       viewport: { width: 1800, height: 960 },
       setup: async (page) => {
         await page.locator('.overviewJobsList').waitFor({ timeout: STORY_TIMEOUT_MS })
-        await page.getByText('发现扫描', { exact: true }).waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.locator('.overviewJobTitle-discovery').waitFor({ timeout: STORY_TIMEOUT_MS })
       },
       screenshot: async (page, filePath) => {
         const dashboard = page.locator('.twoCol').first()
