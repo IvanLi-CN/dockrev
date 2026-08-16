@@ -748,7 +748,6 @@ pub(super) async fn get_service_resource_usage_history(
             "window must be one of 3m/1h/24h/7d/30d",
         ));
     };
-
     let since = (time::OffsetDateTime::now_utc() - time::Duration::seconds(window_seconds as i64))
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(|err| map_internal(err.into()))?;
@@ -790,6 +789,11 @@ pub(super) async fn get_service_resource_usage_overview(
             "window must be one of 3m/1h/24h/7d/30d",
         ));
     };
+    let overview_resolution_seconds = match window.as_str() {
+        "7d" => Some(crate::metrics_store::MINUTE_RESOLUTION_SECONDS),
+        "30d" => Some(crate::metrics_store::FIVE_MINUTE_RESOLUTION_SECONDS),
+        _ => None,
+    };
     let generated_at = time::OffsetDateTime::now_utc();
     let generated_at_label = generated_at
         .format(&time::format_description::well_known::Rfc3339)
@@ -814,7 +818,9 @@ pub(super) async fn get_service_resource_usage_overview(
         .map_err(|err| map_internal(err.into()))?;
     let (rows, recent_counts, active_service_ids) = tokio::try_join!(
         state.metrics.list_latest_samples(),
-        state.metrics.list_recent_counts_since(&since),
+        state
+            .metrics
+            .list_recent_counts_since(&since, overview_resolution_seconds),
         state.operational_reads.list_active_service_ids(),
     )
     .map_err(map_internal)?;
@@ -891,7 +897,7 @@ pub(super) async fn get_homepage_nav(
         .map_err(|err| map_internal(err.into()))?;
     let (latest_samples, recent_counts, mut rows) = tokio::try_join!(
         state.metrics.list_latest_samples(),
-        state.metrics.list_recent_counts_since(&since),
+        state.metrics.list_recent_counts_since(&since, None),
         state.operational_reads.list_homepage_nav_services(),
     )
     .map_err(map_internal)?;
@@ -933,7 +939,8 @@ pub(super) async fn get_homepage_nav(
         .iter_mut()
         .map(|row| row.service.clone())
         .collect::<Vec<_>>();
-    crate::api::stacks::enrich_services_with_version_inference(&state, &mut services).await?;
+    crate::api::stacks::enrich_services_with_version_inference(&state, &mut services, false)
+        .await?;
     crate::api::stacks::enrich_services_with_new_version_discovery_counts(&state, &mut services)
         .await?;
     for (index, service) in services.into_iter().enumerate() {

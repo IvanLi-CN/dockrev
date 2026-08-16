@@ -302,10 +302,10 @@ fn database_paths_match(left: &std::path::Path, right: &std::path::Path) -> bool
     {
         use std::os::unix::fs::MetadataExt;
 
-        return matches!(
+        matches!(
             (std::fs::metadata(&left), std::fs::metadata(&right)),
             (Ok(left), Ok(right)) if left.dev() == right.dev() && left.ino() == right.ino()
-        );
+        )
     }
 
     #[cfg(not(unix))]

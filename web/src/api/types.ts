@@ -1,3 +1,8 @@
+import type {
+  ServiceResourceOverviewItem,
+  ServiceResourceOverviewResponse
+} from './serviceResourceTypes'
+
 export type StackStatus = 'healthy' | 'degraded' | 'unknown'
 
 export type StackListItem = {

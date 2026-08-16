@@ -553,6 +553,7 @@ async fn apply_candidate_notification_fallbacks_to_services(
 pub(super) async fn enrich_services_with_version_inference(
     state: &Arc<AppState>,
     services: &mut [Service],
+    schedule_refresh: bool,
 ) -> Result<(), ApiError> {
     use std::collections::{BTreeSet, HashMap};
 
@@ -687,9 +688,18 @@ pub(super) async fn enrich_services_with_version_inference(
 
             if let Some(reason) = enqueue_reason {
                 pending = true;
-                // Read paths report cache state only. Snapshot refreshes are owned by the
-                // background worker so a homepage request never enqueues work.
                 pending_reason.get_or_insert_with(|| reason.to_string());
+                if schedule_refresh {
+                    state
+                        .snapshot_worker
+                        .ensure_low_priority_snapshot_scheduled(
+                            &image_repo,
+                            &digest,
+                            &host_platform,
+                            reason,
+                        )
+                        .await;
+                }
             }
 
             let in_flight_reason = if let Some(reason) = inflight_cache.get(&digest_key) {
@@ -871,7 +881,7 @@ pub(super) async fn get_stack(
     let Some(mut stack) = stack else {
         return Err(ApiError::not_found("stack not found"));
     };
-    enrich_services_with_version_inference(&state, &mut stack.services).await?;
+    enrich_services_with_version_inference(&state, &mut stack.services, true).await?;
     enrich_services_with_new_version_discovery_counts(&state, &mut stack.services).await?;
     let lifecycle_states = lifecycle_states_for_stack(&state, &stack, &stack.services).await;
     let services = stack

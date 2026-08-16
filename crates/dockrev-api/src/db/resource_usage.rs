@@ -136,6 +136,21 @@ impl Db {
         .context("verify legacy metrics")
     }
 
+    pub async fn legacy_metrics_latest_sampled_at(&self) -> anyhow::Result<Option<String>> {
+        self.call(|conn| {
+            conn.query_row(
+                "SELECT MAX(sampled_at) FROM service_resource_samples",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map(|value| value.flatten())
+            .map_err(Into::into)
+        })
+        .await
+        .context("get latest legacy metric sample")
+    }
+
     #[cfg(test)]
     pub async fn insert_legacy_metric_fixture(
         &self,
@@ -183,6 +198,26 @@ impl Db {
             }
             tx.commit()?;
             conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+            Ok(())
+        })
+        .await
+    }
+
+    #[cfg(test)]
+    pub async fn delete_legacy_metric_fixture_service(
+        &self,
+        service_id: &str,
+    ) -> anyhow::Result<()> {
+        let service_id = service_id.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                "DELETE FROM service_resource_samples WHERE service_id = ?1",
+                params![service_id],
+            )?;
+            conn.execute(
+                "DELETE FROM service_resource_latest_samples WHERE service_id = ?1",
+                params![service_id],
+            )?;
             Ok(())
         })
         .await

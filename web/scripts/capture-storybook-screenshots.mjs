@@ -242,6 +242,14 @@ async function main() {
     })
   }
 
+  const fitServiceResourceEvidenceFrame = async (page) => {
+    await page.locator('.serviceResourceEvidenceFrame').evaluate((frame) => {
+      const card = frame.querySelector('.svcResourceCard')
+      if (!(card instanceof HTMLElement)) throw new Error('Service resource card is missing.')
+      frame.style.height = `${card.scrollHeight + 48}px`
+    })
+  }
+
   const shots = [
     {
       id: 'layouts-appshell--overview',
@@ -328,11 +336,10 @@ async function main() {
         await page.getByText('长时间窗口按时间桶展示历史均值').waitFor({ timeout: STORY_TIMEOUT_MS })
         await page.locator('.svcResourceWindowSwitch').evaluate((el) => el.scrollIntoView({ block: 'center', behavior: 'auto' }))
         await page.waitForTimeout(160)
+        await fitServiceResourceEvidenceFrame(page)
       },
       screenshot: async (page, filePath) => {
-        const el = page.locator('.svcResourceCard')
-        await el.waitFor({ timeout: STORY_TIMEOUT_MS })
-        await el.screenshot({ path: filePath })
+        await page.locator('.serviceResourceEvidenceFrame').screenshot({ path: filePath })
       },
     },
     {
@@ -343,11 +350,12 @@ async function main() {
         await page.locator('.svcResourceWindowSwitch').waitFor({ timeout: STORY_TIMEOUT_MS })
         await page.getByRole('radio', { name: '30d' }).click()
         await page.getByText('长时间窗口按时间桶展示历史均值').waitFor({ timeout: STORY_TIMEOUT_MS })
-        await page.locator('.svcResourceWindowSwitch').evaluate((el) => el.scrollIntoView({ block: 'center', behavior: 'auto' }))
+        await page.locator('.svcResourceWindowSwitch').evaluate((el) => el.scrollIntoView({ block: 'start', behavior: 'auto' }))
         await page.waitForTimeout(160)
+        await fitServiceResourceEvidenceFrame(page)
       },
       screenshot: async (page, filePath) => {
-        await page.screenshot({ path: filePath, fullPage: false })
+        await page.locator('.serviceResourceEvidenceFrame').screenshot({ path: filePath })
       },
     },
     {

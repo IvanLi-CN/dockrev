@@ -16,6 +16,17 @@ export default meta
 
 type Story = StoryObj<typeof ServiceResourcePanel>
 
+function withEvidenceFrame(StoryComponent: React.ComponentType) {
+  return (
+    <div
+      className="serviceResourceEvidenceFrame"
+      style={{ background: '#000', boxSizing: 'border-box', padding: 24 }}
+    >
+      <StoryComponent />
+    </div>
+  )
+}
+
 function expectStory(condition: unknown, message: string): asserts condition {
   if (!condition) throw new globalThis.Error(message)
 }
@@ -184,6 +195,7 @@ export const HighVariationCurves: Story = {
 
 export const WindowSwitchContract: Story = {
   parameters: { dockrevApiScenario: 'default' },
+  decorators: [withEvidenceFrame],
   play: async ({ canvasElement }) => {
     expectStory(canvasElement.textContent?.includes('页面打开后会叠加 1 秒 SSE 实时点'), 'short windows should keep live samples')
 

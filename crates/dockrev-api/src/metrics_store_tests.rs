@@ -1,0 +1,345 @@
+use super::*;
+
+fn temp_path(label: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("dockrev-{label}-{}.sqlite3", ulid::Ulid::new()))
+}
+
+fn sample(
+    service_id: &str,
+    sampled_at: &str,
+    cpu_percent: f64,
+    net_rx_bytes: u64,
+) -> ServiceResourceSampleInput {
+    ServiceResourceSampleInput {
+        service_id: service_id.to_string(),
+        sampled_at: sampled_at.to_string(),
+        cpu_percent,
+        mem_used_bytes: Some(100),
+        mem_limit_bytes: Some(200),
+        net_rx_bytes: Some(net_rx_bytes),
+        net_tx_bytes: Some(net_rx_bytes / 2),
+        block_read_bytes: Some(net_rx_bytes / 4),
+        block_write_bytes: Some(net_rx_bytes / 8),
+        pids: Some(3),
+        container_count: 1,
+    }
+}
+
+#[test]
+fn rollup_bucket_is_stable() {
+    let epoch = parse_epoch("2026-08-16T13:12:08Z").unwrap();
+    assert_eq!(
+        epoch - epoch.rem_euclid(60),
+        parse_epoch("2026-08-16T13:12:00Z").unwrap()
+    );
+}
+
+#[tokio::test]
+async fn metrics_store_migration_is_idempotent_and_keeps_legacy_rows() {
+    let main_path = temp_path("metrics-migration-main");
+    let metrics_path = temp_path("metrics-migration-target");
+    let db = Db::open(&main_path).await.unwrap();
+    let rows = vec![sample("svc-a", "2026-08-16T13:10:00Z", 10.0, 1_000)];
+    db.insert_legacy_metric_fixture(&rows).await.unwrap();
+    let source_before = db.legacy_metrics_integrity().await.unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    assert_eq!(
+        db.metrics_migration_state()
+            .await
+            .unwrap()
+            .as_ref()
+            .map(|state| state.state.as_str()),
+        Some("complete")
+    );
+    assert_eq!(metrics.integrity().await.unwrap(), source_before);
+    assert_eq!(db.legacy_metrics_integrity().await.unwrap(), source_before);
+
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    assert_eq!(metrics.integrity().await.unwrap(), source_before);
+}
+
+#[tokio::test]
+async fn metrics_store_migration_preserves_duplicate_legacy_timestamps() {
+    let main_path = temp_path("metrics-migration-duplicates-main");
+    let metrics_path = temp_path("metrics-migration-duplicates-target");
+    let db = Db::open(&main_path).await.unwrap();
+    db.insert_legacy_metric_fixture(&[
+        sample("svc-a", "2026-08-16T13:10:00Z", 10.0, 1_000),
+        sample("svc-a", "2026-08-16T13:10:00Z", 20.0, 2_000),
+    ])
+    .await
+    .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    let history = metrics
+        .history_since("svc-a", "2026-08-16T13:00:00Z", None)
+        .await
+        .unwrap();
+
+    assert_eq!(history.samples.len(), 2);
+    assert_eq!(history.samples[0].cpu_percent, 10.0);
+    assert_eq!(history.samples[1].cpu_percent, 20.0);
+}
+
+#[tokio::test]
+async fn metrics_store_migration_recovers_after_the_target_file_is_replaced() {
+    let main_path = temp_path("metrics-migration-recovery-main");
+    let metrics_path = temp_path("metrics-migration-recovery-target");
+    let db = Db::open(&main_path).await.unwrap();
+    db.insert_legacy_metric_fixture(&[sample("svc-a", "2026-08-16T13:10:00Z", 10.0, 1_000)])
+        .await
+        .unwrap();
+
+    {
+        let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+        metrics.migrate_from_legacy(&db).await.unwrap();
+    }
+    std::fs::remove_file(&metrics_path).unwrap();
+    let _ = std::fs::remove_file(metrics_path.with_extension("sqlite3-wal"));
+    let _ = std::fs::remove_file(metrics_path.with_extension("sqlite3-shm"));
+
+    let recovered = MetricsStore::open(&metrics_path).await.unwrap();
+    recovered.migrate_from_legacy(&db).await.unwrap();
+    let history = recovered
+        .history_since("svc-a", "2026-08-16T13:00:00Z", None)
+        .await
+        .unwrap();
+    assert_eq!(history.samples.len(), 1);
+}
+
+#[tokio::test]
+async fn metrics_store_migration_keeps_retention_gc_pruned_on_restart() {
+    let main_path = temp_path("metrics-migration-gc-main");
+    let metrics_path = temp_path("metrics-migration-gc-target");
+    let db = Db::open(&main_path).await.unwrap();
+    db.insert_legacy_metric_fixture(&[sample("svc-a", "2000-01-01T00:00:00Z", 10.0, 1_000)])
+        .await
+        .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+
+    metrics
+        .gc(&BTreeSet::from(["svc-a".to_string()]))
+        .await
+        .unwrap();
+    assert!(
+        metrics
+            .history_since("svc-a", "1970-01-01T00:00:00Z", None)
+            .await
+            .unwrap()
+            .samples
+            .is_empty()
+    );
+
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    assert!(
+        metrics
+            .history_since("svc-a", "1970-01-01T00:00:00Z", None)
+            .await
+            .unwrap()
+            .samples
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn metrics_store_migration_reconciles_deleted_legacy_service() {
+    let main_path = temp_path("metrics-migration-delete-main");
+    let metrics_path = temp_path("metrics-migration-delete-target");
+    let db = Db::open(&main_path).await.unwrap();
+    db.insert_legacy_metric_fixture(&[sample("svc-a", "2026-08-16T13:10:00Z", 10.0, 1_000)])
+        .await
+        .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+
+    db.delete_legacy_metric_fixture_service("svc-a")
+        .await
+        .unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    assert!(
+        metrics
+            .history_since("svc-a", "1970-01-01T00:00:00Z", None)
+            .await
+            .unwrap()
+            .samples
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn metrics_store_migration_restarts_after_a_partial_copy() {
+    let main_path = temp_path("metrics-migration-partial-main");
+    let metrics_path = temp_path("metrics-migration-partial-target");
+    let db = Db::open(&main_path).await.unwrap();
+    db.insert_legacy_metric_fixture(&[
+        sample("svc-a", "2026-08-16T13:10:00Z", 10.0, 1_000),
+        sample("svc-a", "2026-08-16T13:10:05Z", 20.0, 2_000),
+    ])
+    .await
+    .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics
+        .insert_legacy_samples(db.list_legacy_metric_samples_after(0, 1).await.unwrap())
+        .await
+        .unwrap();
+    db.set_metrics_migration_state("copying", Some(&metrics.target_identity), None)
+        .await
+        .unwrap();
+
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    assert_eq!(
+        metrics
+            .history_since("svc-a", "2026-08-16T13:00:00Z", None)
+            .await
+            .unwrap()
+            .samples
+            .len(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn metrics_store_migration_rebuilds_latest_and_rollups_after_target_damage() {
+    let main_path = temp_path("metrics-migration-damage-main");
+    let metrics_path = temp_path("metrics-migration-damage-target");
+    let db = Db::open(&main_path).await.unwrap();
+    db.insert_legacy_metric_fixture(&[sample("svc-a", "2026-08-16T13:10:00Z", 10.0, 1_000)])
+        .await
+        .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    metrics
+        .writer_call(|conn| {
+            conn.execute("DELETE FROM service_resource_latest_samples", [])?;
+            conn.execute("DELETE FROM service_resource_rollups", [])?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    assert_eq!(metrics.list_latest_samples().await.unwrap().len(), 1);
+    assert_eq!(
+        metrics
+            .history_since(
+                "svc-a",
+                "2026-08-16T13:00:00Z",
+                Some(MINUTE_RESOLUTION_SECONDS),
+            )
+            .await
+            .unwrap()
+            .samples
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn metrics_store_memory_reader_uses_the_writer_connection() {
+    let metrics = MetricsStore::open(Path::new(":memory:")).await.unwrap();
+    metrics
+        .insert_samples(&[sample("svc-a", "2026-08-16T13:10:00Z", 10.0, 1_000)])
+        .await
+        .unwrap();
+
+    let history = metrics
+        .history_since("svc-a", "2026-08-16T13:00:00Z", None)
+        .await
+        .unwrap();
+    assert_eq!(history.samples.len(), 1);
+}
+
+#[tokio::test]
+async fn metrics_store_gc_removes_orphans_when_no_active_services_remain() {
+    let metrics = MetricsStore::open(&temp_path("metrics-gc-empty-active"))
+        .await
+        .unwrap();
+    let sampled_at = format_time(time::OffsetDateTime::now_utc()).unwrap();
+    metrics
+        .insert_samples(&[sample("svc-a", &sampled_at, 10.0, 1_000)])
+        .await
+        .unwrap();
+
+    metrics.gc(&BTreeSet::new()).await.unwrap();
+    let history = metrics
+        .history_since("svc-a", "1970-01-01T00:00:00Z", None)
+        .await
+        .unwrap();
+    assert!(history.samples.is_empty());
+}
+
+#[tokio::test]
+async fn metrics_store_rollup_preserves_average_peak_and_terminal_counters() {
+    let metrics = MetricsStore::open(&temp_path("metrics-rollup"))
+        .await
+        .unwrap();
+    metrics
+        .insert_samples(&[
+            sample("svc-a", "2026-08-16T13:10:00Z", 10.0, 1_000),
+            sample("svc-a", "2026-08-16T13:10:05Z", 30.0, 1_500),
+        ])
+        .await
+        .unwrap();
+    let history = metrics
+        .history_since(
+            "svc-a",
+            "2026-08-16T13:00:00Z",
+            Some(MINUTE_RESOLUTION_SECONDS),
+        )
+        .await
+        .unwrap();
+    assert_eq!(history.resolution_seconds, Some(MINUTE_RESOLUTION_SECONDS));
+    assert_eq!(history.samples.len(), 1);
+    assert!((history.samples[0].cpu_percent - 20.0).abs() < f64::EPSILON);
+    assert_eq!(history.samples[0].net_rx_bytes, Some(1_500));
+    assert_eq!(history.samples[0].net_rx_rate_bps, Some(100.0));
+    assert_eq!(history.peaks[0].cpu_percent, 30.0);
+    assert_eq!(history.peaks[0].net_rx_rate_bps, Some(100.0));
+}
+
+#[tokio::test]
+async fn metrics_store_rollup_orders_duplicate_timestamps_by_id() {
+    let metrics = MetricsStore::open(&temp_path("metrics-rollup-duplicates"))
+        .await
+        .unwrap();
+    metrics
+        .insert_samples(&[
+            sample("svc-a", "2026-08-16T13:10:00Z", 10.0, 1_000),
+            sample("svc-a", "2026-08-16T13:10:00Z", 20.0, 2_000),
+        ])
+        .await
+        .unwrap();
+    let history = metrics
+        .history_since(
+            "svc-a",
+            "2026-08-16T13:00:00Z",
+            Some(MINUTE_RESOLUTION_SECONDS),
+        )
+        .await
+        .unwrap();
+    assert_eq!(history.samples[0].net_rx_bytes, Some(2_000));
+    assert!((history.samples[0].cpu_percent - 15.0).abs() < f64::EPSILON);
+}
+
+#[tokio::test]
+async fn metrics_store_long_window_counts_use_rollup_sample_counts() {
+    let metrics = MetricsStore::open(&temp_path("metrics-rollup-counts"))
+        .await
+        .unwrap();
+    metrics
+        .insert_samples(&[
+            sample("svc-a", "2026-08-16T13:10:00Z", 10.0, 1_000),
+            sample("svc-a", "2026-08-16T13:10:05Z", 20.0, 2_000),
+        ])
+        .await
+        .unwrap();
+    let counts = metrics
+        .list_recent_counts_since("1970-01-01T00:00:00Z", Some(MINUTE_RESOLUTION_SECONDS))
+        .await
+        .unwrap();
+    assert_eq!(counts[0].sample_count, 2);
+}

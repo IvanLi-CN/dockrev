@@ -16,6 +16,15 @@ use crate::{
     db::{Db, ServiceResourceSampleInput},
 };
 
+#[path = "metrics_store_integrity.rs"]
+mod integrity;
+#[cfg(test)]
+use integrity::metrics_integrity_from_connection;
+pub(crate) use integrity::stable_table_hash;
+#[path = "metrics_store_schema.rs"]
+mod schema;
+use schema::{ensure_rollup_schema_columns, ensure_sample_schema};
+
 pub const RAW_RETENTION_SECONDS: i64 = 24 * 60 * 60;
 pub const MINUTE_ROLLUP_RETENTION_SECONDS: i64 = 7 * 24 * 60 * 60;
 pub const FIVE_MINUTE_ROLLUP_RETENTION_SECONDS: i64 = 30 * 24 * 60 * 60;
@@ -61,6 +70,14 @@ CREATE TABLE IF NOT EXISTS service_resource_latest_samples (
   prev_sampled_at TEXT,
   prev_net_rx_bytes INTEGER,
   prev_net_tx_bytes INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_metrics_latest_samples_sampled_at
+  ON service_resource_latest_samples(sampled_at);
+
+CREATE TABLE IF NOT EXISTS metrics_migration_manifest (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  source_sample_count INTEGER NOT NULL,
+  source_sample_hash TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS service_resource_rollups (
@@ -168,6 +185,12 @@ pub struct MetricsIntegrity {
     pub latest_hash: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MigrationManifest {
+    source_sample_count: u64,
+    source_sample_hash: String,
+}
+
 fn metrics_target_identity(path: &Path) -> String {
     if path == Path::new(":memory:") {
         return "sqlite-memory".to_string();
@@ -187,23 +210,6 @@ fn metrics_target_identity(path: &Path) -> String {
         }
     }
     canonical.display().to_string()
-}
-
-fn ensure_sample_schema(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
-    let mut stmt = conn.prepare("PRAGMA table_info(service_resource_samples)")?;
-    let columns = stmt
-        .query_map([], |row| row.get::<_, String>(1))?
-        .collect::<Result<BTreeSet<_>, _>>()?;
-    if columns.contains("legacy_id") {
-        return Ok(());
-    }
-
-    // The older preview schema used a service/timestamp primary key and cannot
-    // represent valid duplicate legacy samples. Main-database rows remain the
-    // migration source, so the target is rebuilt before migration resumes.
-    conn.execute_batch("DROP TABLE service_resource_samples;")?;
-    conn.execute_batch(SCHEMA)?;
-    Ok(())
 }
 
 impl MetricsStore {
@@ -290,17 +296,29 @@ impl MetricsStore {
 
     pub async fn migrate_from_legacy(&self, db: &Db) -> anyhow::Result<()> {
         let source = db.legacy_metrics_integrity().await?;
+        let source_latest_sampled_at = db.legacy_metrics_latest_sampled_at().await?;
         let state = db.metrics_migration_state().await?;
-        let target = self.migrated_legacy_integrity().await?;
+        let manifest = MigrationManifest {
+            source_sample_count: source.sample_count,
+            source_sample_hash: source.sample_hash.clone(),
+        };
         if state.as_ref().is_some_and(|state| {
             state.state == "complete"
                 && state.target_identity.as_deref() == Some(self.target_identity.as_str())
-        }) && (source.sample_count, source.sample_hash.clone()) == target
+        }) && self.migration_manifest().await? == Some(manifest.clone())
         {
-            return Ok(());
+            self.rebuild_latest_samples().await?;
+            if self
+                .rollups_cover_raw_samples(source_latest_sampled_at.as_deref())
+                .await?
+            {
+                return Ok(());
+            }
         }
         db.set_metrics_migration_state("copying", Some(&self.target_identity), None)
             .await?;
+
+        self.clear_legacy_samples().await?;
 
         let mut after_id = 0_i64;
         loop {
@@ -322,6 +340,7 @@ impl MetricsStore {
             anyhow::bail!(message);
         }
         self.rebuild_rollups().await?;
+        self.set_migration_manifest(&manifest).await?;
         db.set_metrics_migration_state("complete", Some(&self.target_identity), None)
             .await?;
         Ok(())
@@ -375,7 +394,7 @@ impl MetricsStore {
     }
 
     async fn migrated_legacy_integrity(&self) -> anyhow::Result<(u64, String)> {
-        self.reader_call(|conn| {
+        self.reader_call(move |conn| {
             stable_table_hash(
                 conn,
                 r#"SELECT service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes,
@@ -384,6 +403,78 @@ impl MetricsStore {
                    WHERE legacy_id IS NOT NULL
                    ORDER BY service_id, sampled_at, legacy_id"#,
             )
+        })
+        .await
+    }
+
+    async fn clear_legacy_samples(&self) -> anyhow::Result<()> {
+        self.writer_call(|conn| {
+            conn.execute(
+                "DELETE FROM service_resource_samples WHERE legacy_id IS NOT NULL",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn migration_manifest(&self) -> anyhow::Result<Option<MigrationManifest>> {
+        self.reader_call(|conn| {
+            conn.query_row(
+                "SELECT source_sample_count, source_sample_hash FROM metrics_migration_manifest WHERE id = 1",
+                [],
+                |row| {
+                    Ok(MigrationManifest {
+                        source_sample_count: row.get::<_, i64>(0)? as u64,
+                        source_sample_hash: row.get(1)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+        })
+        .await
+    }
+
+    async fn set_migration_manifest(&self, manifest: &MigrationManifest) -> anyhow::Result<()> {
+        let manifest = manifest.clone();
+        self.writer_call(move |conn| {
+            conn.execute(
+                r#"INSERT INTO metrics_migration_manifest (id, source_sample_count, source_sample_hash)
+                   VALUES (1, ?1, ?2)
+                   ON CONFLICT(id) DO UPDATE SET source_sample_count=excluded.source_sample_count,
+                     source_sample_hash=excluded.source_sample_hash"#,
+                params![manifest.source_sample_count as i64, manifest.source_sample_hash],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn rollups_cover_raw_samples(&self, source_latest: Option<&str>) -> anyhow::Result<bool> {
+        let now = time::OffsetDateTime::now_utc();
+        let raw_cutoff = format_time(now - time::Duration::seconds(RAW_RETENTION_SECONDS))?;
+        let rollup_cutoff =
+            format_time(now - time::Duration::seconds(FIVE_MINUTE_ROLLUP_RETENTION_SECONDS))?;
+        let source_latest = source_latest.map(ToString::to_string);
+        self.reader_call(move |conn| {
+            let target_latest = conn.query_row(
+                "SELECT MAX(sampled_at) FROM service_resource_samples",
+                [],
+                |row| row.get::<_, Option<String>>(0),
+            )?;
+            let has_rollups = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM service_resource_rollups)",
+                [],
+                |row| row.get::<_, bool>(0),
+            )?;
+            let Some(source_latest) = source_latest.as_deref() else {
+                return Ok(true);
+            };
+            if source_latest >= raw_cutoff.as_str() {
+                return Ok(has_rollups && target_latest.as_deref() >= Some(source_latest));
+            }
+            Ok(source_latest < rollup_cutoff.as_str() || has_rollups)
         })
         .await
     }
@@ -466,19 +557,35 @@ impl MetricsStore {
     pub async fn list_recent_counts_since(
         &self,
         since: &str,
+        resolution_seconds: Option<u32>,
     ) -> anyhow::Result<Vec<MetricsRecentCountRow>> {
         let since = since.to_string();
         self.reader_call(move |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT service_id, COUNT(*) FROM service_resource_samples WHERE sampled_at >= ?1 GROUP BY service_id ORDER BY service_id",
-            )?;
-            let rows = stmt.query_map(params![since], |row| {
-                Ok(MetricsRecentCountRow {
-                    service_id: row.get(0)?,
-                    sample_count: row.get::<_, i64>(1)? as u32,
-                })
-            })?;
-            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+            let mut rows = if let Some(resolution_seconds) = resolution_seconds {
+                let mut stmt = conn.prepare(
+                    "SELECT service_id, SUM(sample_count) FROM service_resource_rollups WHERE resolution_seconds = ?1 AND bucket_end >= ?2 GROUP BY service_id ORDER BY service_id",
+                )?;
+                stmt.query_map(params![resolution_seconds as i64, since], |row| {
+                    Ok(MetricsRecentCountRow {
+                        service_id: row.get(0)?,
+                        sample_count: row.get::<_, i64>(1)? as u32,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+            } else {
+                let mut stmt = conn.prepare(
+                    "SELECT service_id, COUNT(*) FROM service_resource_samples WHERE sampled_at >= ?1 GROUP BY service_id ORDER BY service_id",
+                )?;
+                stmt.query_map(params![since], |row| {
+                    Ok(MetricsRecentCountRow {
+                        service_id: row.get(0)?,
+                        sample_count: row.get::<_, i64>(1)? as u32,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+            };
+            rows.sort_by(|left, right| left.service_id.cmp(&right.service_id));
+            Ok(rows)
         })
         .await
     }
@@ -593,94 +700,55 @@ impl MetricsStore {
         Ok(())
     }
 
+    #[cfg(test)]
     pub async fn integrity(&self) -> anyhow::Result<MetricsIntegrity> {
         self.reader_call(metrics_integrity_from_connection).await
     }
 
     async fn rebuild_rollups(&self) -> anyhow::Result<()> {
-        let samples = self
-            .reader_call(|conn| {
-                let mut stmt = conn.prepare(
-                    r#"SELECT service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes,
-                        net_rx_bytes, net_tx_bytes, block_read_bytes, block_write_bytes, pids, container_count
-                    FROM service_resource_samples ORDER BY service_id ASC, sampled_at ASC, id ASC"#,
-                )?;
-                let rows = stmt.query_map([], |row| {
-                    Ok(SampleRecord {
-                        service_id: row.get(0)?,
-                        sample: ServiceResourceSample {
-                            sampled_at: row.get(1)?,
-                            cpu_percent: row.get(2)?,
-                            mem_used_bytes: row.get::<_, Option<i64>>(3)?.map(|value| value as u64),
-                            mem_limit_bytes: row.get::<_, Option<i64>>(4)?.map(|value| value as u64),
-                            net_rx_bytes: row.get::<_, Option<i64>>(5)?.map(|value| value as u64),
-                            net_tx_bytes: row.get::<_, Option<i64>>(6)?.map(|value| value as u64),
-                            net_rx_rate_bps: None,
-                            net_tx_rate_bps: None,
-                            block_read_bytes: row.get::<_, Option<i64>>(7)?.map(|value| value as u64),
-                            block_write_bytes: row.get::<_, Option<i64>>(8)?.map(|value| value as u64),
-                            block_read_rate_bps: None,
-                            block_write_rate_bps: None,
-                            pids: row.get::<_, Option<i64>>(9)?.map(|value| value as u64),
-                            container_count: row.get::<_, i64>(10)? as u32,
-                        },
-                    })
-                })?;
-                Ok(rows.collect::<Result<Vec<_>, _>>()?)
-            })
-            .await?;
-        self.writer_call(move |conn| {
+        self.writer_call(|conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             tx.execute("DELETE FROM service_resource_rollups", [])?;
-            let mut buckets = BTreeMap::<(String, u32, i64), RollupAccumulator>::new();
-            let mut previous = BTreeMap::<String, ServiceResourceSample>::new();
-            for record in samples {
-                for resolution in [MINUTE_RESOLUTION_SECONDS, FIVE_MINUTE_RESOLUTION_SECONDS] {
-                    let epoch = parse_epoch(&record.sample.sampled_at)?;
-                    let start = epoch - epoch.rem_euclid(resolution as i64);
-                    let key = (record.service_id.clone(), resolution, start);
-                    buckets
-                        .entry(key)
-                        .or_insert_with(|| RollupAccumulator::new(start, resolution))
-                        .push(&record.sample, previous.get(&record.service_id));
+            let service_ids = {
+                let mut stmt = tx.prepare(
+                    "SELECT DISTINCT service_id FROM service_resource_samples ORDER BY service_id ASC",
+                )?;
+                stmt.query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+            for service_id in service_ids {
+                let mut buckets = BTreeMap::<(u32, i64), RollupAccumulator>::new();
+                let mut previous = None;
+                {
+                    let mut stmt = tx.prepare(
+                        r#"SELECT sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes, net_rx_bytes,
+                            net_tx_bytes, block_read_bytes, block_write_bytes, pids, container_count
+                           FROM service_resource_samples WHERE service_id = ?1
+                           ORDER BY sampled_at ASC, id ASC"#,
+                    )?;
+                    let mut rows = stmt.query(params![service_id])?;
+                    while let Some(row) = rows.next()? {
+                        let sample = map_sample_row(row)?;
+                        let epoch = parse_epoch(&sample.sampled_at)?;
+                        for resolution in [MINUTE_RESOLUTION_SECONDS, FIVE_MINUTE_RESOLUTION_SECONDS] {
+                            let start = epoch - epoch.rem_euclid(resolution as i64);
+                            buckets
+                                .entry((resolution, start))
+                                .or_insert_with(|| RollupAccumulator::new(start, resolution))
+                                .push(&sample, previous.as_ref());
+                        }
+                        previous = Some(sample);
+                    }
                 }
-                previous.insert(record.service_id, record.sample);
-            }
-            for ((service_id, resolution, _), bucket) in buckets {
-                insert_rollup_tx(&tx, &service_id, resolution, &bucket)?;
+                for ((resolution, _), bucket) in buckets {
+                    insert_rollup_tx(&tx, &service_id, resolution, &bucket)?;
+                }
             }
             tx.commit()?;
             Ok(())
         })
         .await
     }
-}
-
-fn ensure_rollup_schema_columns(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
-    let mut stmt = conn.prepare("PRAGMA table_info(service_resource_rollups)")?;
-    let columns = stmt
-        .query_map([], |row| row.get::<_, String>(1))?
-        .collect::<Result<BTreeSet<_>, _>>()?;
-    for (name, kind) in [
-        ("net_rx_rate_avg", "REAL"),
-        ("net_tx_rate_avg", "REAL"),
-        ("block_read_rate_avg", "REAL"),
-        ("block_write_rate_avg", "REAL"),
-    ] {
-        if !columns.contains(name) {
-            conn.execute(
-                &format!("ALTER TABLE service_resource_rollups ADD COLUMN {name} {kind}"),
-                [],
-            )?;
-        }
-    }
-    Ok(())
-}
-
-#[derive(Clone)]
-struct SampleRecord {
-    service_id: String,
-    sample: ServiceResourceSample,
 }
 
 #[derive(Clone)]
@@ -878,7 +946,20 @@ fn gc_batch_tx(
         return Ok(true);
     }
 
-    if !active_service_ids.is_empty() {
+    if active_service_ids.is_empty() {
+        for table in [
+            "service_resource_samples",
+            "service_resource_latest_samples",
+            "service_resource_rollups",
+        ] {
+            let sql =
+                format!("DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} LIMIT ?1)");
+            if tx.execute(&sql, params![GC_BATCH_SIZE as i64])? > 0 {
+                tx.commit()?;
+                return Ok(true);
+            }
+        }
+    } else {
         let placeholders = std::iter::repeat_n("?", active_service_ids.len())
             .collect::<Vec<_>>()
             .join(",");
@@ -1000,7 +1081,7 @@ fn rebuild_rollup_tx(
                 net_tx_bytes, block_read_bytes, block_write_bytes, pids, container_count
                FROM service_resource_samples
                WHERE service_id = ?1 AND sampled_at < ?2
-               ORDER BY sampled_at DESC LIMIT 1"#,
+               ORDER BY sampled_at DESC, id DESC LIMIT 1"#,
             params![service_id, start],
             map_sample_row,
         )
@@ -1010,7 +1091,7 @@ fn rebuild_rollup_tx(
             net_tx_bytes, block_read_bytes, block_write_bytes, pids, container_count
            FROM service_resource_samples
            WHERE service_id = ?1 AND sampled_at >= ?2 AND sampled_at < ?3
-           ORDER BY sampled_at ASC"#,
+           ORDER BY sampled_at ASC, id ASC"#,
     )?;
     let samples = stmt
         .query_map(params![service_id, start, end], map_sample_row)?
@@ -1394,227 +1475,6 @@ fn format_time(value: time::OffsetDateTime) -> anyhow::Result<String> {
     Ok(value.format(&time::format_description::well_known::Rfc3339)?)
 }
 
-fn metrics_integrity_from_connection(
-    conn: &mut rusqlite::Connection,
-) -> anyhow::Result<MetricsIntegrity> {
-    let (sample_count, sample_hash) = stable_table_hash(
-        conn,
-        r#"SELECT service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes, net_rx_bytes, net_tx_bytes, block_read_bytes, block_write_bytes, pids, container_count FROM service_resource_samples ORDER BY service_id, sampled_at, id"#,
-    )?;
-    let (latest_count, latest_hash) = stable_table_hash(
-        conn,
-        r#"SELECT service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes, net_rx_bytes, net_tx_bytes, block_read_bytes, block_write_bytes, pids, container_count, prev_sampled_at, prev_net_rx_bytes, prev_net_tx_bytes FROM service_resource_latest_samples ORDER BY service_id"#,
-    )?;
-    Ok(MetricsIntegrity {
-        sample_count,
-        sample_hash,
-        latest_count,
-        latest_hash,
-    })
-}
-
-pub(crate) fn stable_table_hash(
-    conn: &mut rusqlite::Connection,
-    query: &str,
-) -> anyhow::Result<(u64, String)> {
-    let mut stmt = conn.prepare(query)?;
-    let column_count = stmt.column_count();
-    let mut rows = stmt.query([])?;
-    let mut count = 0_u64;
-    let mut hash = 0xcbf29ce484222325_u64;
-    while let Some(row) = rows.next()? {
-        count += 1;
-        for index in 0..column_count {
-            let value = row.get_ref(index)?;
-            stable_hash_bytes(&mut hash, format!("{value:?}").as_bytes());
-            stable_hash_bytes(&mut hash, &[0xff]);
-        }
-        stable_hash_bytes(&mut hash, &[0xfe]);
-    }
-    Ok((count, format!("{hash:016x}")))
-}
-
-fn stable_hash_bytes(hash: &mut u64, bytes: &[u8]) {
-    for byte in bytes {
-        *hash ^= *byte as u64;
-        *hash = hash.wrapping_mul(0x100000001b3);
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn temp_path(label: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("dockrev-{label}-{}.sqlite3", ulid::Ulid::new()))
-    }
-
-    fn sample(
-        service_id: &str,
-        sampled_at: &str,
-        cpu_percent: f64,
-        net_rx_bytes: u64,
-    ) -> ServiceResourceSampleInput {
-        ServiceResourceSampleInput {
-            service_id: service_id.to_string(),
-            sampled_at: sampled_at.to_string(),
-            cpu_percent,
-            mem_used_bytes: Some(100),
-            mem_limit_bytes: Some(200),
-            net_rx_bytes: Some(net_rx_bytes),
-            net_tx_bytes: Some(net_rx_bytes / 2),
-            block_read_bytes: Some(net_rx_bytes / 4),
-            block_write_bytes: Some(net_rx_bytes / 8),
-            pids: Some(3),
-            container_count: 1,
-        }
-    }
-
-    #[test]
-    fn rollup_bucket_is_stable() {
-        let epoch = parse_epoch("2026-08-16T13:12:08Z").unwrap();
-        assert_eq!(
-            epoch - epoch.rem_euclid(60),
-            parse_epoch("2026-08-16T13:12:00Z").unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn metrics_store_migration_is_idempotent_and_keeps_legacy_rows() {
-        let main_path = temp_path("metrics-migration-main");
-        let metrics_path = temp_path("metrics-migration-target");
-        let db = Db::open(&main_path).await.unwrap();
-        let rows = vec![sample("svc-a", "2026-08-16T13:10:00Z", 10.0, 1_000)];
-        db.insert_legacy_metric_fixture(&rows).await.unwrap();
-        let source_before = db.legacy_metrics_integrity().await.unwrap();
-        let metrics = MetricsStore::open(&metrics_path).await.unwrap();
-
-        metrics.migrate_from_legacy(&db).await.unwrap();
-        assert_eq!(
-            db.metrics_migration_state()
-                .await
-                .unwrap()
-                .as_ref()
-                .map(|state| state.state.as_str()),
-            Some("complete")
-        );
-        assert_eq!(metrics.integrity().await.unwrap(), source_before);
-        assert_eq!(db.legacy_metrics_integrity().await.unwrap(), source_before);
-
-        metrics.migrate_from_legacy(&db).await.unwrap();
-        assert_eq!(metrics.integrity().await.unwrap(), source_before);
-    }
-
-    #[tokio::test]
-    async fn metrics_store_migration_preserves_duplicate_legacy_timestamps() {
-        let main_path = temp_path("metrics-migration-duplicates-main");
-        let metrics_path = temp_path("metrics-migration-duplicates-target");
-        let db = Db::open(&main_path).await.unwrap();
-        db.insert_legacy_metric_fixture(&[
-            sample("svc-a", "2026-08-16T13:10:00Z", 10.0, 1_000),
-            sample("svc-a", "2026-08-16T13:10:00Z", 20.0, 2_000),
-        ])
-        .await
-        .unwrap();
-        let metrics = MetricsStore::open(&metrics_path).await.unwrap();
-
-        metrics.migrate_from_legacy(&db).await.unwrap();
-        let history = metrics
-            .history_since("svc-a", "2026-08-16T13:00:00Z", None)
-            .await
-            .unwrap();
-
-        assert_eq!(history.samples.len(), 2);
-        assert_eq!(history.samples[0].cpu_percent, 10.0);
-        assert_eq!(history.samples[1].cpu_percent, 20.0);
-    }
-
-    #[tokio::test]
-    async fn metrics_store_migration_recovers_after_the_target_file_is_replaced() {
-        let main_path = temp_path("metrics-migration-recovery-main");
-        let metrics_path = temp_path("metrics-migration-recovery-target");
-        let db = Db::open(&main_path).await.unwrap();
-        db.insert_legacy_metric_fixture(&[sample("svc-a", "2026-08-16T13:10:00Z", 10.0, 1_000)])
-            .await
-            .unwrap();
-
-        {
-            let metrics = MetricsStore::open(&metrics_path).await.unwrap();
-            metrics.migrate_from_legacy(&db).await.unwrap();
-        }
-        std::fs::remove_file(&metrics_path).unwrap();
-        let _ = std::fs::remove_file(metrics_path.with_extension("sqlite3-wal"));
-        let _ = std::fs::remove_file(metrics_path.with_extension("sqlite3-shm"));
-
-        let recovered = MetricsStore::open(&metrics_path).await.unwrap();
-        recovered.migrate_from_legacy(&db).await.unwrap();
-        let history = recovered
-            .history_since("svc-a", "2026-08-16T13:00:00Z", None)
-            .await
-            .unwrap();
-        assert_eq!(history.samples.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn metrics_store_memory_reader_uses_the_writer_connection() {
-        let metrics = MetricsStore::open(Path::new(":memory:")).await.unwrap();
-        metrics
-            .insert_samples(&[sample("svc-a", "2026-08-16T13:10:00Z", 10.0, 1_000)])
-            .await
-            .unwrap();
-
-        let history = metrics
-            .history_since("svc-a", "2026-08-16T13:00:00Z", None)
-            .await
-            .unwrap();
-        assert_eq!(history.samples.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn metrics_store_gc_does_not_remove_everything_when_service_discovery_is_empty() {
-        let metrics = MetricsStore::open(&temp_path("metrics-gc-empty-discovery"))
-            .await
-            .unwrap();
-        let sampled_at = format_time(time::OffsetDateTime::now_utc()).unwrap();
-        metrics
-            .insert_samples(&[sample("svc-a", &sampled_at, 10.0, 1_000)])
-            .await
-            .unwrap();
-
-        metrics.gc(&BTreeSet::new()).await.unwrap();
-        let history = metrics
-            .history_since("svc-a", "1970-01-01T00:00:00Z", None)
-            .await
-            .unwrap();
-        assert_eq!(history.samples.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn metrics_store_rollup_preserves_average_peak_and_terminal_counters() {
-        let metrics = MetricsStore::open(&temp_path("metrics-rollup"))
-            .await
-            .unwrap();
-        metrics
-            .insert_samples(&[
-                sample("svc-a", "2026-08-16T13:10:00Z", 10.0, 1_000),
-                sample("svc-a", "2026-08-16T13:10:05Z", 30.0, 1_500),
-            ])
-            .await
-            .unwrap();
-        let history = metrics
-            .history_since(
-                "svc-a",
-                "2026-08-16T13:00:00Z",
-                Some(MINUTE_RESOLUTION_SECONDS),
-            )
-            .await
-            .unwrap();
-        assert_eq!(history.resolution_seconds, Some(MINUTE_RESOLUTION_SECONDS));
-        assert_eq!(history.samples.len(), 1);
-        assert!((history.samples[0].cpu_percent - 20.0).abs() < f64::EPSILON);
-        assert_eq!(history.samples[0].net_rx_bytes, Some(1_500));
-        assert_eq!(history.samples[0].net_rx_rate_bps, Some(100.0));
-        assert_eq!(history.peaks[0].cpu_percent, 30.0);
-        assert_eq!(history.peaks[0].net_rx_rate_bps, Some(100.0));
-    }
-}
+#[path = "metrics_store_tests.rs"]
+mod tests;

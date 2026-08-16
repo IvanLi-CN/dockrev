@@ -1259,10 +1259,12 @@ WHERE id = ?1
         self.call(move |conn| {
             let mut stmt = conn.prepare(
                 r#"
-SELECT image_ref, current_digest
+SELECT services.image_ref, services.current_digest
 FROM services
-WHERE current_digest IS NOT NULL AND TRIM(current_digest) != ''
-ORDER BY id ASC
+JOIN stacks ON stacks.id = services.stack_id
+WHERE services.archived = 0 AND stacks.archived = 0
+  AND services.current_digest IS NOT NULL AND TRIM(services.current_digest) != ''
+ORDER BY services.id ASC
 "#,
             )?;
             let rows = stmt.query_map([], |row| {
