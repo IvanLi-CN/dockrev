@@ -747,12 +747,9 @@ fn spawn_history_gc_task(db: Db, metrics: MetricsStore) {
 
 async fn gc_history(db: &Db, metrics: &MetricsStore) -> anyhow::Result<()> {
     let active_service_ids = db
-        .list_service_resource_targets()
+        .list_active_service_ids_for_metrics()
         .await
-        .context("list active services for metrics gc")?
-        .into_iter()
-        .map(|target| target.service_id)
-        .collect::<BTreeSet<_>>();
+        .context("list active services for metrics gc")?;
     metrics
         .gc(&active_service_ids)
         .await

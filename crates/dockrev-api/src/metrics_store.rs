@@ -23,9 +23,13 @@ pub const MINUTE_RESOLUTION_SECONDS: u32 = 60;
 pub const FIVE_MINUTE_RESOLUTION_SECONDS: u32 = 5 * 60;
 
 const READ_CONNECTION_COUNT: usize = 2;
+const GC_BATCH_SIZE: usize = 10_000;
+const GC_MAX_BATCHES: usize = 10;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS service_resource_samples (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  legacy_id INTEGER UNIQUE,
   service_id TEXT NOT NULL,
   sampled_at TEXT NOT NULL,
   cpu_percent REAL NOT NULL,
@@ -36,9 +40,10 @@ CREATE TABLE IF NOT EXISTS service_resource_samples (
   block_read_bytes INTEGER,
   block_write_bytes INTEGER,
   pids INTEGER,
-  container_count INTEGER NOT NULL DEFAULT 1,
-  PRIMARY KEY(service_id, sampled_at)
+  container_count INTEGER NOT NULL DEFAULT 1
 );
+CREATE INDEX IF NOT EXISTS idx_metrics_samples_service_time
+  ON service_resource_samples(service_id, sampled_at);
 CREATE INDEX IF NOT EXISTS idx_metrics_samples_time ON service_resource_samples(sampled_at);
 
 CREATE TABLE IF NOT EXISTS service_resource_latest_samples (
@@ -103,6 +108,7 @@ pub struct MetricsStore {
     writer: Connection,
     readers: Vec<Connection>,
     next_reader: Arc<AtomicUsize>,
+    target_identity: String,
 }
 
 #[derive(Clone, Debug)]
@@ -162,6 +168,44 @@ pub struct MetricsIntegrity {
     pub latest_hash: String,
 }
 
+fn metrics_target_identity(path: &Path) -> String {
+    if path == Path::new(":memory:") {
+        return "sqlite-memory".to_string();
+    }
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+
+        if let Ok(metadata) = std::fs::metadata(&canonical) {
+            return format!(
+                "{}:{}:{}",
+                canonical.display(),
+                metadata.dev(),
+                metadata.ino()
+            );
+        }
+    }
+    canonical.display().to_string()
+}
+
+fn ensure_sample_schema(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(service_resource_samples)")?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    if columns.contains("legacy_id") {
+        return Ok(());
+    }
+
+    // The older preview schema used a service/timestamp primary key and cannot
+    // represent valid duplicate legacy samples. Main-database rows remain the
+    // migration source, so the target is rebuilt before migration resumes.
+    conn.execute_batch("DROP TABLE service_resource_samples;")?;
+    conn.execute_batch(SCHEMA)?;
+    Ok(())
+}
+
 impl MetricsStore {
     pub async fn open(path: &Path) -> anyhow::Result<Self> {
         if let Some(parent) = path
@@ -177,13 +221,16 @@ impl MetricsStore {
         }
         let writer = Connection::open(path).await?;
         let mut readers = Vec::with_capacity(READ_CONNECTION_COUNT);
-        for _ in 0..READ_CONNECTION_COUNT {
-            readers.push(Connection::open(path).await?);
+        if path != Path::new(":memory:") {
+            for _ in 0..READ_CONNECTION_COUNT {
+                readers.push(Connection::open(path).await?);
+            }
         }
         let store = Self {
             writer,
             readers,
             next_reader: Arc::new(AtomicUsize::new(0)),
+            target_identity: metrics_target_identity(path),
         };
         store.init().await?;
         Ok(store)
@@ -194,6 +241,7 @@ impl MetricsStore {
             conn.execute_batch(&format!(
                 "PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; {SCHEMA}"
             ))?;
+            ensure_sample_schema(conn)?;
             ensure_rollup_schema_columns(conn)?;
             Ok(())
         })
@@ -226,6 +274,13 @@ impl MetricsStore {
         F: FnOnce(&mut rusqlite::Connection) -> anyhow::Result<R> + Send + 'static,
         R: Send + 'static,
     {
+        if self.readers.is_empty() {
+            return self
+                .writer
+                .call(f)
+                .await
+                .map_err(|err| anyhow::anyhow!(err.to_string()));
+        }
         let index = self.next_reader.fetch_add(1, Ordering::Relaxed) % self.readers.len();
         self.readers[index]
             .call(f)
@@ -234,11 +289,18 @@ impl MetricsStore {
     }
 
     pub async fn migrate_from_legacy(&self, db: &Db) -> anyhow::Result<()> {
+        let source = db.legacy_metrics_integrity().await?;
         let state = db.metrics_migration_state().await?;
-        if state.as_deref() == Some("complete") {
+        let target = self.migrated_legacy_integrity().await?;
+        if state.as_ref().is_some_and(|state| {
+            state.state == "complete"
+                && state.target_identity.as_deref() == Some(self.target_identity.as_str())
+        }) && (source.sample_count, source.sample_hash.clone()) == target
+        {
             return Ok(());
         }
-        db.set_metrics_migration_state("copying", None).await?;
+        db.set_metrics_migration_state("copying", Some(&self.target_identity), None)
+            .await?;
 
         let mut after_id = 0_i64;
         loop {
@@ -247,25 +309,21 @@ impl MetricsStore {
                 break;
             }
             after_id = batch.last().map(|row| row.id).unwrap_or(after_id);
-            self.insert_samples_without_rollups(
-                &batch.into_iter().map(|row| row.sample).collect::<Vec<_>>(),
-            )
-            .await?;
+            self.insert_legacy_samples(batch).await?;
         }
-        self.upsert_latest_samples(&db.list_legacy_metric_latest_samples().await?)
-            .await?;
+        self.rebuild_latest_samples().await?;
 
-        let source = db.legacy_metrics_integrity().await?;
-        let target = self.integrity().await?;
-        if source != target {
+        let target = self.migrated_legacy_integrity().await?;
+        if (source.sample_count, source.sample_hash.clone()) != target {
             let message =
                 format!("legacy metrics verification failed: source={source:?} target={target:?}");
-            db.set_metrics_migration_state("copying", Some(&message))
+            db.set_metrics_migration_state("copying", Some(&self.target_identity), Some(&message))
                 .await?;
             anyhow::bail!(message);
         }
         self.rebuild_rollups().await?;
-        db.set_metrics_migration_state("complete", None).await?;
+        db.set_metrics_migration_state("complete", Some(&self.target_identity), None)
+            .await?;
         Ok(())
     }
 
@@ -279,63 +337,100 @@ impl MetricsStore {
             .context("insert metric samples")
     }
 
-    async fn insert_samples_without_rollups(
+    async fn insert_legacy_samples(
         &self,
-        rows: &[ServiceResourceSampleInput],
+        rows: Vec<crate::db::LegacyMetricSampleRow>,
     ) -> anyhow::Result<usize> {
-        let rows = rows.to_vec();
-        self.writer_call(move |conn| write_samples_tx(conn, &rows, false))
+        self.writer_call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let mut inserted = 0;
+            for row in rows {
+                inserted += tx.execute(
+                    r#"INSERT INTO service_resource_samples (
+                        legacy_id, service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes,
+                        net_rx_bytes, net_tx_bytes, block_read_bytes, block_write_bytes, pids, container_count
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                    ON CONFLICT(legacy_id) DO NOTHING"#,
+                    params![
+                        row.id,
+                        row.sample.service_id,
+                        row.sample.sampled_at,
+                        row.sample.cpu_percent,
+                        row.sample.mem_used_bytes.map(|value| value as i64),
+                        row.sample.mem_limit_bytes.map(|value| value as i64),
+                        row.sample.net_rx_bytes.map(|value| value as i64),
+                        row.sample.net_tx_bytes.map(|value| value as i64),
+                        row.sample.block_read_bytes.map(|value| value as i64),
+                        row.sample.block_write_bytes.map(|value| value as i64),
+                        row.sample.pids.map(|value| value as i64),
+                        row.sample.container_count as i64,
+                    ],
+                )?;
+            }
+            tx.commit()?;
+            Ok(inserted)
+        })
             .await
             .context("copy legacy metric samples")
     }
 
-    async fn upsert_latest_samples(
-        &self,
-        rows: &[crate::db::LegacyMetricLatestSampleRow],
-    ) -> anyhow::Result<()> {
-        let rows = rows.to_vec();
-        self.writer_call(move |conn| {
+    async fn migrated_legacy_integrity(&self) -> anyhow::Result<(u64, String)> {
+        self.reader_call(|conn| {
+            stable_table_hash(
+                conn,
+                r#"SELECT service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes,
+                    net_rx_bytes, net_tx_bytes, block_read_bytes, block_write_bytes, pids, container_count
+                   FROM service_resource_samples
+                   WHERE legacy_id IS NOT NULL
+                   ORDER BY service_id, sampled_at, legacy_id"#,
+            )
+        })
+        .await
+    }
+
+    async fn rebuild_latest_samples(&self) -> anyhow::Result<()> {
+        self.writer_call(|conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            for row in rows {
-                tx.execute(
-                    r#"INSERT INTO service_resource_latest_samples (
-                        service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes,
-                        net_rx_bytes, net_tx_bytes, block_read_bytes, block_write_bytes, pids,
-                        container_count, prev_sampled_at, prev_net_rx_bytes, prev_net_tx_bytes
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
-                    ON CONFLICT(service_id) DO UPDATE SET
-                        sampled_at = excluded.sampled_at,
-                        cpu_percent = excluded.cpu_percent,
-                        mem_used_bytes = excluded.mem_used_bytes,
-                        mem_limit_bytes = excluded.mem_limit_bytes,
-                        net_rx_bytes = excluded.net_rx_bytes,
-                        net_tx_bytes = excluded.net_tx_bytes,
-                        block_read_bytes = excluded.block_read_bytes,
-                        block_write_bytes = excluded.block_write_bytes,
-                        pids = excluded.pids,
-                        container_count = excluded.container_count,
-                        prev_sampled_at = excluded.prev_sampled_at,
-                        prev_net_rx_bytes = excluded.prev_net_rx_bytes,
-                        prev_net_tx_bytes = excluded.prev_net_tx_bytes
-                    WHERE excluded.sampled_at >= service_resource_latest_samples.sampled_at"#,
-                    params![
-                        row.service_id,
-                        row.sampled_at,
-                        row.cpu_percent,
-                        row.mem_used_bytes.map(|value| value as i64),
-                        row.mem_limit_bytes.map(|value| value as i64),
-                        row.net_rx_bytes.map(|value| value as i64),
-                        row.net_tx_bytes.map(|value| value as i64),
-                        row.block_read_bytes.map(|value| value as i64),
-                        row.block_write_bytes.map(|value| value as i64),
-                        row.pids.map(|value| value as i64),
-                        row.container_count as i64,
-                        row.prev_sampled_at,
-                        row.prev_net_rx_bytes.map(|value| value as i64),
-                        row.prev_net_tx_bytes.map(|value| value as i64),
-                    ],
-                )?;
-            }
+            tx.execute("DELETE FROM service_resource_latest_samples", [])?;
+            tx.execute_batch(
+                r#"INSERT INTO service_resource_latest_samples (
+                    service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes,
+                    net_rx_bytes, net_tx_bytes, block_read_bytes, block_write_bytes, pids,
+                    container_count, prev_sampled_at, prev_net_rx_bytes, prev_net_tx_bytes
+                )
+                SELECT
+                    latest.service_id,
+                    latest.sampled_at,
+                    latest.cpu_percent,
+                    latest.mem_used_bytes,
+                    latest.mem_limit_bytes,
+                    latest.net_rx_bytes,
+                    latest.net_tx_bytes,
+                    latest.block_read_bytes,
+                    latest.block_write_bytes,
+                    latest.pids,
+                    latest.container_count,
+                    previous.sampled_at,
+                    previous.net_rx_bytes,
+                    previous.net_tx_bytes
+                FROM service_resource_samples latest
+                LEFT JOIN service_resource_samples previous ON previous.id = (
+                    SELECT candidate.id
+                    FROM service_resource_samples candidate
+                    WHERE candidate.service_id = latest.service_id
+                      AND (candidate.sampled_at < latest.sampled_at
+                        OR (candidate.sampled_at = latest.sampled_at AND candidate.id < latest.id))
+                    ORDER BY candidate.sampled_at DESC, candidate.id DESC
+                    LIMIT 1
+                )
+                WHERE latest.id = (
+                    SELECT candidate.id
+                    FROM service_resource_samples candidate
+                    WHERE candidate.service_id = latest.service_id
+                    ORDER BY candidate.sampled_at DESC, candidate.id DESC
+                    LIMIT 1
+                );"#,
+            )?;
             tx.commit()?;
             Ok(())
         })
@@ -452,7 +547,7 @@ impl MetricsStore {
                     r#"SELECT sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes, net_rx_bytes,
                         net_tx_bytes, block_read_bytes, block_write_bytes, pids, container_count
                     FROM service_resource_samples WHERE service_id = ?1 AND sampled_at >= ?2
-                    ORDER BY sampled_at ASC"#,
+                    ORDER BY sampled_at ASC, id ASC"#,
                 )?;
                 let samples = stmt
                     .query_map(params![service_id, since], map_sample_row)?
@@ -474,43 +569,28 @@ impl MetricsStore {
             format_time(now - time::Duration::seconds(MINUTE_ROLLUP_RETENTION_SECONDS))?;
         let five_minute_cutoff =
             format_time(now - time::Duration::seconds(FIVE_MINUTE_ROLLUP_RETENTION_SECONDS))?;
-        let active_service_ids = active_service_ids.clone();
-        self.writer_call(move |conn| {
-            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            tx.execute("DELETE FROM service_resource_samples WHERE sampled_at < ?1", params![raw_cutoff])?;
-            tx.execute(
-                "DELETE FROM service_resource_rollups WHERE resolution_seconds = ?1 AND bucket_end < ?2",
-                params![MINUTE_RESOLUTION_SECONDS, minute_cutoff],
-            )?;
-            tx.execute(
-                "DELETE FROM service_resource_rollups WHERE resolution_seconds = ?1 AND bucket_end < ?2",
-                params![FIVE_MINUTE_RESOLUTION_SECONDS, five_minute_cutoff],
-            )?;
-            if active_service_ids.is_empty() {
-                tx.execute("DELETE FROM service_resource_samples", [])?;
-                tx.execute("DELETE FROM service_resource_latest_samples", [])?;
-                tx.execute("DELETE FROM service_resource_rollups", [])?;
-            } else {
-                let placeholders = std::iter::repeat_n("?", active_service_ids.len())
-                    .collect::<Vec<_>>()
-                    .join(",");
-                let sqls = [
-                    format!("DELETE FROM service_resource_samples WHERE service_id NOT IN ({placeholders})"),
-                    format!("DELETE FROM service_resource_latest_samples WHERE service_id NOT IN ({placeholders})"),
-                    format!("DELETE FROM service_resource_rollups WHERE service_id NOT IN ({placeholders})"),
-                ];
-                let values = active_service_ids
-                    .iter()
-                    .map(|value| value as &dyn rusqlite::ToSql)
-                    .collect::<Vec<_>>();
-                for sql in sqls {
-                    tx.execute(&sql, values.as_slice())?;
-                }
+        for _ in 0..GC_MAX_BATCHES {
+            let raw_cutoff = raw_cutoff.clone();
+            let minute_cutoff = minute_cutoff.clone();
+            let five_minute_cutoff = five_minute_cutoff.clone();
+            let active_service_ids = active_service_ids.clone();
+            let deleted = self
+                .writer_call(move |conn| {
+                    gc_batch_tx(
+                        conn,
+                        &raw_cutoff,
+                        &minute_cutoff,
+                        &five_minute_cutoff,
+                        &active_service_ids,
+                    )
+                })
+                .await?;
+            if !deleted {
+                break;
             }
-            tx.commit()?;
-            Ok(())
-        })
-        .await
+            tokio::task::yield_now().await;
+        }
+        Ok(())
     }
 
     pub async fn integrity(&self) -> anyhow::Result<MetricsIntegrity> {
@@ -523,7 +603,7 @@ impl MetricsStore {
                 let mut stmt = conn.prepare(
                     r#"SELECT service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes,
                         net_rx_bytes, net_tx_bytes, block_read_bytes, block_write_bytes, pids, container_count
-                    FROM service_resource_samples ORDER BY service_id ASC, sampled_at ASC"#,
+                    FROM service_resource_samples ORDER BY service_id ASC, sampled_at ASC, id ASC"#,
                 )?;
                 let rows = stmt.query_map([], |row| {
                     Ok(SampleRecord {
@@ -765,6 +845,68 @@ impl RollupAccumulator {
     }
 }
 
+fn gc_batch_tx(
+    conn: &mut rusqlite::Connection,
+    raw_cutoff: &str,
+    minute_cutoff: &str,
+    five_minute_cutoff: &str,
+    active_service_ids: &BTreeSet<String>,
+) -> anyhow::Result<bool> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let raw_deleted = tx.execute(
+        "DELETE FROM service_resource_samples WHERE rowid IN (SELECT rowid FROM service_resource_samples WHERE sampled_at < ?1 LIMIT ?2)",
+        params![raw_cutoff, GC_BATCH_SIZE as i64],
+    )?;
+    if raw_deleted > 0 {
+        tx.commit()?;
+        return Ok(true);
+    }
+    let minute_deleted = tx.execute(
+        "DELETE FROM service_resource_rollups WHERE rowid IN (SELECT rowid FROM service_resource_rollups WHERE resolution_seconds = ?1 AND bucket_end < ?2 LIMIT ?3)",
+        params![MINUTE_RESOLUTION_SECONDS, minute_cutoff, GC_BATCH_SIZE as i64],
+    )?;
+    if minute_deleted > 0 {
+        tx.commit()?;
+        return Ok(true);
+    }
+    let five_minute_deleted = tx.execute(
+        "DELETE FROM service_resource_rollups WHERE rowid IN (SELECT rowid FROM service_resource_rollups WHERE resolution_seconds = ?1 AND bucket_end < ?2 LIMIT ?3)",
+        params![FIVE_MINUTE_RESOLUTION_SECONDS, five_minute_cutoff, GC_BATCH_SIZE as i64],
+    )?;
+    if five_minute_deleted > 0 {
+        tx.commit()?;
+        return Ok(true);
+    }
+
+    if !active_service_ids.is_empty() {
+        let placeholders = std::iter::repeat_n("?", active_service_ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        for table in [
+            "service_resource_samples",
+            "service_resource_latest_samples",
+            "service_resource_rollups",
+        ] {
+            let limit = GC_BATCH_SIZE as i64;
+            let sql = format!(
+                "DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} WHERE service_id NOT IN ({placeholders}) LIMIT ?{})",
+                active_service_ids.len() + 1
+            );
+            let mut values = active_service_ids
+                .iter()
+                .map(|value| value as &dyn rusqlite::ToSql)
+                .collect::<Vec<_>>();
+            values.push(&limit);
+            if tx.execute(&sql, values.as_slice())? > 0 {
+                tx.commit()?;
+                return Ok(true);
+            }
+        }
+    }
+    tx.commit()?;
+    Ok(false)
+}
+
 fn write_samples_tx(
     conn: &mut rusqlite::Connection,
     rows: &[ServiceResourceSampleInput],
@@ -774,8 +916,8 @@ fn write_samples_tx(
     let mut inserted = 0;
     let mut touched_rollups = BTreeSet::new();
     for row in rows {
-        let changed = tx.execute(
-            r#"INSERT OR IGNORE INTO service_resource_samples (
+        tx.execute(
+            r#"INSERT INTO service_resource_samples (
               service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes, net_rx_bytes,
               net_tx_bytes, block_read_bytes, block_write_bytes, pids, container_count
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"#,
@@ -793,9 +935,6 @@ fn write_samples_tx(
                 row.container_count as i64,
             ],
         )?;
-        if changed == 0 {
-            continue;
-        }
         inserted += 1;
         let previous = tx.query_row(
             "SELECT sampled_at, net_rx_bytes, net_tx_bytes FROM service_resource_latest_samples WHERE service_id = ?1",
@@ -1260,7 +1399,7 @@ fn metrics_integrity_from_connection(
 ) -> anyhow::Result<MetricsIntegrity> {
     let (sample_count, sample_hash) = stable_table_hash(
         conn,
-        r#"SELECT service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes, net_rx_bytes, net_tx_bytes, block_read_bytes, block_write_bytes, pids, container_count FROM service_resource_samples ORDER BY service_id, sampled_at"#,
+        r#"SELECT service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes, net_rx_bytes, net_tx_bytes, block_read_bytes, block_write_bytes, pids, container_count FROM service_resource_samples ORDER BY service_id, sampled_at, id"#,
     )?;
     let (latest_count, latest_hash) = stable_table_hash(
         conn,
@@ -1352,7 +1491,11 @@ mod tests {
 
         metrics.migrate_from_legacy(&db).await.unwrap();
         assert_eq!(
-            db.metrics_migration_state().await.unwrap().as_deref(),
+            db.metrics_migration_state()
+                .await
+                .unwrap()
+                .as_ref()
+                .map(|state| state.state.as_str()),
             Some("complete")
         );
         assert_eq!(metrics.integrity().await.unwrap(), source_before);
@@ -1360,6 +1503,90 @@ mod tests {
 
         metrics.migrate_from_legacy(&db).await.unwrap();
         assert_eq!(metrics.integrity().await.unwrap(), source_before);
+    }
+
+    #[tokio::test]
+    async fn metrics_store_migration_preserves_duplicate_legacy_timestamps() {
+        let main_path = temp_path("metrics-migration-duplicates-main");
+        let metrics_path = temp_path("metrics-migration-duplicates-target");
+        let db = Db::open(&main_path).await.unwrap();
+        db.insert_legacy_metric_fixture(&[
+            sample("svc-a", "2026-08-16T13:10:00Z", 10.0, 1_000),
+            sample("svc-a", "2026-08-16T13:10:00Z", 20.0, 2_000),
+        ])
+        .await
+        .unwrap();
+        let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+
+        metrics.migrate_from_legacy(&db).await.unwrap();
+        let history = metrics
+            .history_since("svc-a", "2026-08-16T13:00:00Z", None)
+            .await
+            .unwrap();
+
+        assert_eq!(history.samples.len(), 2);
+        assert_eq!(history.samples[0].cpu_percent, 10.0);
+        assert_eq!(history.samples[1].cpu_percent, 20.0);
+    }
+
+    #[tokio::test]
+    async fn metrics_store_migration_recovers_after_the_target_file_is_replaced() {
+        let main_path = temp_path("metrics-migration-recovery-main");
+        let metrics_path = temp_path("metrics-migration-recovery-target");
+        let db = Db::open(&main_path).await.unwrap();
+        db.insert_legacy_metric_fixture(&[sample("svc-a", "2026-08-16T13:10:00Z", 10.0, 1_000)])
+            .await
+            .unwrap();
+
+        {
+            let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+            metrics.migrate_from_legacy(&db).await.unwrap();
+        }
+        std::fs::remove_file(&metrics_path).unwrap();
+        let _ = std::fs::remove_file(metrics_path.with_extension("sqlite3-wal"));
+        let _ = std::fs::remove_file(metrics_path.with_extension("sqlite3-shm"));
+
+        let recovered = MetricsStore::open(&metrics_path).await.unwrap();
+        recovered.migrate_from_legacy(&db).await.unwrap();
+        let history = recovered
+            .history_since("svc-a", "2026-08-16T13:00:00Z", None)
+            .await
+            .unwrap();
+        assert_eq!(history.samples.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn metrics_store_memory_reader_uses_the_writer_connection() {
+        let metrics = MetricsStore::open(Path::new(":memory:")).await.unwrap();
+        metrics
+            .insert_samples(&[sample("svc-a", "2026-08-16T13:10:00Z", 10.0, 1_000)])
+            .await
+            .unwrap();
+
+        let history = metrics
+            .history_since("svc-a", "2026-08-16T13:00:00Z", None)
+            .await
+            .unwrap();
+        assert_eq!(history.samples.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn metrics_store_gc_does_not_remove_everything_when_service_discovery_is_empty() {
+        let metrics = MetricsStore::open(&temp_path("metrics-gc-empty-discovery"))
+            .await
+            .unwrap();
+        let sampled_at = format_time(time::OffsetDateTime::now_utc()).unwrap();
+        metrics
+            .insert_samples(&[sample("svc-a", &sampled_at, 10.0, 1_000)])
+            .await
+            .unwrap();
+
+        metrics.gc(&BTreeSet::new()).await.unwrap();
+        let history = metrics
+            .history_since("svc-a", "1970-01-01T00:00:00Z", None)
+            .await
+            .unwrap();
+        assert_eq!(history.samples.len(), 1);
     }
 
     #[tokio::test]

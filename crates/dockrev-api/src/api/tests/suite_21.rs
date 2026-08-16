@@ -299,8 +299,8 @@ services:
         let web_id = services[0].id.clone();
 
         state
-            .metrics
-            .insert_samples(&[
+            .db
+            .insert_legacy_metric_fixture(&[
                 crate::db::ServiceResourceSampleInput {
                     service_id: web_id.clone(),
                     sampled_at: test_offset_from_now_rfc3339(time::Duration::seconds(-30)),

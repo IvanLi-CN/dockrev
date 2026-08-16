@@ -292,7 +292,26 @@ fn database_paths_match(left: &std::path::Path, right: &std::path::Path) -> bool
         })
     }
 
-    normalized(left) == normalized(right)
+    let left = normalized(left);
+    let right = normalized(right);
+    if left == right {
+        return true;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+
+        return matches!(
+            (std::fs::metadata(&left), std::fs::metadata(&right)),
+            (Ok(left), Ok(right)) if left.dev() == right.dev() && left.ino() == right.ino()
+        );
+    }
+
+    #[cfg(not(unix))]
+    {
+        false
+    }
 }
 
 #[cfg(test)]
@@ -305,6 +324,23 @@ mod database_path_tests {
             std::path::Path::new("./data/dockrev.sqlite3"),
             std::path::Path::new("data/dockrev.sqlite3"),
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn database_path_comparison_rejects_hard_link_aliases() {
+        let root = std::env::temp_dir().join(format!("dockrev-db-path-{}", ulid::Ulid::new()));
+        std::fs::create_dir_all(&root).unwrap();
+        let primary = root.join("dockrev.sqlite3");
+        let metrics = root.join("metrics.sqlite3");
+        std::fs::write(&primary, b"sqlite placeholder").unwrap();
+        std::fs::hard_link(&primary, &metrics).unwrap();
+
+        assert!(database_paths_match(&primary, &metrics));
+
+        std::fs::remove_file(metrics).unwrap();
+        std::fs::remove_file(primary).unwrap();
+        std::fs::remove_dir(root).unwrap();
     }
 }
 

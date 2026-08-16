@@ -2,21 +2,31 @@ use super::*;
 
 #[allow(dead_code)]
 impl Db {
-    pub async fn metrics_migration_state(&self) -> anyhow::Result<Option<String>> {
+    pub async fn metrics_migration_state(&self) -> anyhow::Result<Option<MetricsMigrationState>> {
         self.call(|conn| {
             conn.execute_batch(
                 r#"CREATE TABLE IF NOT EXISTS metrics_store_migration (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
                     state TEXT NOT NULL,
+                    target_identity TEXT,
                     last_error TEXT,
                     updated_at TEXT NOT NULL
                 );"#,
             )?;
+            let _ = conn.execute(
+                "ALTER TABLE metrics_store_migration ADD COLUMN target_identity TEXT",
+                [],
+            );
             Ok(conn
                 .query_row(
-                    "SELECT state FROM metrics_store_migration WHERE id = 1",
+                    "SELECT state, target_identity FROM metrics_store_migration WHERE id = 1",
                     [],
-                    |row| row.get(0),
+                    |row| {
+                        Ok(MetricsMigrationState {
+                            state: row.get(0)?,
+                            target_identity: row.get(1)?,
+                        })
+                    },
                 )
                 .optional()?)
         })
@@ -27,9 +37,11 @@ impl Db {
     pub async fn set_metrics_migration_state(
         &self,
         state: &str,
+        target_identity: Option<&str>,
         last_error: Option<&str>,
     ) -> anyhow::Result<()> {
         let state = state.to_string();
+        let target_identity = target_identity.map(ToString::to_string);
         let last_error = last_error.map(ToString::to_string);
         let updated_at = time::OffsetDateTime::now_utc()
             .format(&time::format_description::well_known::Rfc3339)?;
@@ -38,18 +50,21 @@ impl Db {
                 r#"CREATE TABLE IF NOT EXISTS metrics_store_migration (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
                     state TEXT NOT NULL,
+                    target_identity TEXT,
                     last_error TEXT,
                     updated_at TEXT NOT NULL
                 );"#,
             )?;
+            let _ = conn.execute("ALTER TABLE metrics_store_migration ADD COLUMN target_identity TEXT", []);
             conn.execute(
-                r#"INSERT INTO metrics_store_migration (id, state, last_error, updated_at)
-                   VALUES (1, ?1, ?2, ?3)
+                r#"INSERT INTO metrics_store_migration (id, state, target_identity, last_error, updated_at)
+                   VALUES (1, ?1, ?2, ?3, ?4)
                    ON CONFLICT(id) DO UPDATE SET
                      state = excluded.state,
+                     target_identity = excluded.target_identity,
                      last_error = excluded.last_error,
                      updated_at = excluded.updated_at"#,
-                params![state, last_error, updated_at],
+                params![state, target_identity, last_error, updated_at],
             )?;
             Ok(())
         })
@@ -93,40 +108,6 @@ impl Db {
         .context("list legacy metric sample batch")
     }
 
-    pub async fn list_legacy_metric_latest_samples(
-        &self,
-    ) -> anyhow::Result<Vec<LegacyMetricLatestSampleRow>> {
-        self.call(|conn| {
-            let mut stmt = conn.prepare(
-                r#"SELECT service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes,
-                    net_rx_bytes, net_tx_bytes, block_read_bytes, block_write_bytes, pids,
-                    container_count, prev_sampled_at, prev_net_rx_bytes, prev_net_tx_bytes
-                   FROM service_resource_latest_samples ORDER BY service_id ASC"#,
-            )?;
-            let rows = stmt.query_map([], |row| {
-                Ok(LegacyMetricLatestSampleRow {
-                    service_id: row.get(0)?,
-                    sampled_at: row.get(1)?,
-                    cpu_percent: row.get(2)?,
-                    mem_used_bytes: row.get::<_, Option<i64>>(3)?.map(|value| value as u64),
-                    mem_limit_bytes: row.get::<_, Option<i64>>(4)?.map(|value| value as u64),
-                    net_rx_bytes: row.get::<_, Option<i64>>(5)?.map(|value| value as u64),
-                    net_tx_bytes: row.get::<_, Option<i64>>(6)?.map(|value| value as u64),
-                    block_read_bytes: row.get::<_, Option<i64>>(7)?.map(|value| value as u64),
-                    block_write_bytes: row.get::<_, Option<i64>>(8)?.map(|value| value as u64),
-                    pids: row.get::<_, Option<i64>>(9)?.map(|value| value as u64),
-                    container_count: row.get::<_, i64>(10)? as u32,
-                    prev_sampled_at: row.get(11)?,
-                    prev_net_rx_bytes: row.get::<_, Option<i64>>(12)?.map(|value| value as u64),
-                    prev_net_tx_bytes: row.get::<_, Option<i64>>(13)?.map(|value| value as u64),
-                })
-            })?;
-            Ok(rows.collect::<Result<Vec<_>, _>>()?)
-        })
-        .await
-        .context("list legacy latest metrics")
-    }
-
     pub async fn legacy_metrics_integrity(
         &self,
     ) -> anyhow::Result<crate::metrics_store::MetricsIntegrity> {
@@ -135,7 +116,7 @@ impl Db {
                 conn,
                 r#"SELECT service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes,
                     net_rx_bytes, net_tx_bytes, block_read_bytes, block_write_bytes, pids, container_count
-                   FROM service_resource_samples ORDER BY service_id, sampled_at"#,
+                   FROM service_resource_samples ORDER BY service_id, sampled_at, id"#,
             )?;
             let (latest_count, latest_hash) = crate::metrics_store::stable_table_hash(
                 conn,
@@ -252,6 +233,24 @@ ORDER BY sv.stack_id ASC, sv.name ASC
         })
         .await
         .context("list service resource targets")
+    }
+
+    pub async fn list_active_service_ids_for_metrics(&self) -> anyhow::Result<BTreeSet<String>> {
+        self.call(|conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT sv.id
+FROM services sv
+JOIN stacks st ON st.id = sv.stack_id
+WHERE st.archived = 0 AND sv.archived = 0
+ORDER BY sv.id ASC
+"#,
+            )?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            Ok(rows.collect::<Result<BTreeSet<_>, _>>()?)
+        })
+        .await
+        .context("list active services for metrics")
     }
 
     pub async fn get_service_resource_target(

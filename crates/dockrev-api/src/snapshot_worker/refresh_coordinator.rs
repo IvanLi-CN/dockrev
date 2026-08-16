@@ -1,9 +1,11 @@
 use std::{sync::Arc, time::Duration};
 
-use super::{SNAPSHOT_REASON_STARTUP_WARMUP, SnapshotWorker, image_repo_from_image_ref};
+use super::{
+    SNAPSHOT_REASON_BACKGROUND_REFRESH, SNAPSHOT_REASON_STARTUP_WARMUP, SnapshotWorker,
+    image_repo_from_image_ref,
+};
 
-const SNAPSHOT_REASON_PERIODIC_REFRESH: &str = "periodic_refresh";
-const SNAPSHOT_REFRESH_INTERVAL_SECONDS: u64 = 30 * 60;
+const SNAPSHOT_REFRESH_INTERVAL_SECONDS: u64 = 60;
 
 impl SnapshotWorker {
     pub fn spawn_startup_warmup(&self, host_platform: &str) {
@@ -32,7 +34,7 @@ impl SnapshotWorker {
             loop {
                 ticker.tick().await;
                 worker
-                    .enqueue_snapshot_seeds(&host_platform, SNAPSHOT_REASON_PERIODIC_REFRESH)
+                    .enqueue_snapshot_seeds(&host_platform, SNAPSHOT_REASON_BACKGROUND_REFRESH)
                     .await;
             }
         });
@@ -48,7 +50,9 @@ impl SnapshotWorker {
         };
         for (image_ref, digest) in seeds {
             if let Some(repo) = image_repo_from_image_ref(&image_ref) {
-                let _ = self.enqueue(&repo, &digest, host_platform, reason).await;
+                let _ = self
+                    .ensure_low_priority_snapshot_scheduled(&repo, &digest, host_platform, reason)
+                    .await;
             }
         }
     }

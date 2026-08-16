@@ -365,21 +365,9 @@ pub struct LegacyMetricSampleRow {
 }
 
 #[derive(Clone, Debug)]
-pub struct LegacyMetricLatestSampleRow {
-    pub service_id: String,
-    pub sampled_at: String,
-    pub cpu_percent: f64,
-    pub mem_used_bytes: Option<u64>,
-    pub mem_limit_bytes: Option<u64>,
-    pub net_rx_bytes: Option<u64>,
-    pub net_tx_bytes: Option<u64>,
-    pub block_read_bytes: Option<u64>,
-    pub block_write_bytes: Option<u64>,
-    pub pids: Option<u64>,
-    pub container_count: u32,
-    pub prev_sampled_at: Option<String>,
-    pub prev_net_rx_bytes: Option<u64>,
-    pub prev_net_tx_bytes: Option<u64>,
+pub struct MetricsMigrationState {
+    pub state: String,
+    pub target_identity: Option<String>,
 }
 
 #[derive(Clone, Debug)]

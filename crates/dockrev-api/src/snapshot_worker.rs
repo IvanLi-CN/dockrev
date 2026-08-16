@@ -30,6 +30,7 @@ const SNAPSHOT_REASON_CACHE_STALE: &str = "cache_stale";
 const SNAPSHOT_REASON_ALL_FAILED: &str = "all_failed";
 const SNAPSHOT_REASON_API_SNAPSHOT_READ_MISS: &str = "api_snapshot_read_miss";
 const SNAPSHOT_REASON_STARTUP_WARMUP: &str = "startup_warmup";
+pub(super) const SNAPSHOT_REASON_BACKGROUND_REFRESH: &str = "background_refresh";
 
 #[derive(Clone, Debug)]
 pub struct SnapshotTaskProgress {
@@ -1165,6 +1166,7 @@ fn low_priority_reason_cooldown(reason: &str) -> Option<Duration> {
         SNAPSHOT_REASON_CACHE_STALE => Some(Duration::from_secs(30 * 60)),
         SNAPSHOT_REASON_ALL_FAILED => Some(Duration::from_secs(6 * 60 * 60)),
         SNAPSHOT_REASON_STARTUP_WARMUP => Some(Duration::from_secs(24 * 60 * 60)),
+        SNAPSHOT_REASON_BACKGROUND_REFRESH => Some(Duration::from_secs(15 * 60)),
         _ => None,
     }
 }
