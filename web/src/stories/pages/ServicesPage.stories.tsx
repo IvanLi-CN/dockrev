@@ -368,7 +368,10 @@ export const SameTagDigestUpdateVisible: Story = {
 };
 
 export const GlobalTaskReadableLabel: Story = {
-  parameters: { dockrevApiScenario: "overview-jobs-card-global-labels" },
+  parameters: {
+    dockrevApiScenario: "overview-jobs-card-global-labels",
+    viewport: { defaultViewport: "dockrevWide" },
+  },
   render: renderServices("回归：全局任务使用可读标签，不显示内部类型名"),
   play: async ({ canvasElement }) => {
     await sleep(260);

@@ -585,6 +585,19 @@ async function main() {
       setup: async () => {},
     },
     {
+      id: 'pages-servicespage--global-task-readable-label',
+      file: 'overview-global-task-readable-label.png',
+      viewport: { width: 1800, height: 960 },
+      setup: async (page) => {
+        await page.locator('.overviewJobsList').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.getByText('发现扫描', { exact: true }).waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        const dashboard = page.locator('.twoCol').first()
+        await dashboard.screenshot({ path: filePath })
+      },
+    },
+    {
       id: 'pages-queuepage--update-layer-progress',
       file: 'update-layer-progress-queue.png',
       setup: async (page) => {
