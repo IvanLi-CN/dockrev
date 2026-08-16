@@ -585,50 +585,59 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
   return (
     <div className="page jobDetailPage">
       <div className="card">
-        <div className="sectionRow">
-          <div className="title">任务详情</div>
-          <div className="muted" style={{ marginLeft: 'auto' }}>
-            job: <Mono>{jobId}</Mono>
+        <div className="jobDetailHeader">
+          <div className="jobDetailHeaderInfo">
+            <div className="title">任务详情</div>
+            {job ? (
+              <div className="muted" style={{ marginTop: 8 }}>
+                <div>
+                  task{' '}
+                  <span className="jobReadableTagGroup">
+                    <span className={`jobTypeTag jobTypeTag-${readable.typeTone}`}>{readable.primaryLabel}</span>
+                    {readable.scopeTag ? <span className="jobScopeTag">{readable.scopeTag}</span> : null}
+                  </span>{' '}
+                  · machine{' '}
+                  <Mono>{formatJobMachineName(job.type, job.scope)}</Mono> · by <Mono>{job.createdBy}</Mono> · reason{' '}
+                  <Mono>{job.reason}</Mono>
+                </div>
+                <div style={{ marginTop: 6 }}>
+                  created <Mono>{formatShort(job.createdAt)}</Mono> · started <Mono>{formatShort(job.startedAt)}</Mono>
+                  {job.status !== 'running' ? (
+                    <>
+                      {' '}
+                      · finished <Mono>{formatShort(job.finishedAt)}</Mono>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
           </div>
-          {job ? (
-            <Pill tone={statusTone(job.status)} breathing={job.status === 'running'}>
-              {job.status}
-            </Pill>
-          ) : null}
-          {job?.stop?.canStop ? (
-            <IconButton className="jobDetailStopControl" variant="danger" disabled={busy} onClick={() => void requestStop()} title="停止更新">
-              <Square size={14} aria-hidden="true" />
-            </IconButton>
-          ) : job?.status === 'cancelled' ? (
-            <span className="jobDetailStopState">已停止</span>
-          ) : job?.stop?.state === 'requested' ? (
-            <span className="jobDetailStopState">正在停止</span>
-          ) : null}
-        </div>
 
-        {job ? (
-          <div className="muted" style={{ marginTop: 8 }}>
-            <div>
-              task{' '}
-              <span className="jobReadableTagGroup">
-                <span className={`jobTypeTag jobTypeTag-${readable.typeTone}`}>{readable.primaryLabel}</span>
-                {readable.scopeTag ? <span className="jobScopeTag">{readable.scopeTag}</span> : null}
-              </span>{' '}
-              · machine{' '}
-              <Mono>{formatJobMachineName(job.type, job.scope)}</Mono> · by <Mono>{job.createdBy}</Mono> · reason{' '}
-              <Mono>{job.reason}</Mono>
+          <div className="jobDetailHeaderAside">
+            <div className="jobDetailIdentity">
+              <div className="muted">
+                job: <Mono>{jobId}</Mono>
+              </div>
+              {job ? (
+                <Pill tone={statusTone(job.status)} breathing={job.status === 'running'}>
+                  {job.status}
+                </Pill>
+              ) : null}
             </div>
-            <div style={{ marginTop: 6 }}>
-              created <Mono>{formatShort(job.createdAt)}</Mono> · started <Mono>{formatShort(job.startedAt)}</Mono>
-              {job.status !== 'running' ? (
-                <>
-                  {' '}
-                  · finished <Mono>{formatShort(job.finishedAt)}</Mono>
-                </>
+            <div className="jobDetailStopSlot">
+              {job?.stop?.canStop ? (
+                <IconButton className="jobDetailStopControl" variant="danger" disabled={busy} onClick={() => void requestStop()} title="停止更新">
+                  <Square size={14} aria-hidden="true" />
+                </IconButton>
+              ) : job?.status === 'cancelled' ? (
+                <span className="jobDetailStopState">已停止</span>
+              ) : job?.stop?.state === 'requested' ? (
+                <span className="jobDetailStopState">正在停止</span>
               ) : null}
             </div>
           </div>
-        ) : null}
+        </div>
+
         {progress ? (
           <div className="jobProgress">
             <div className="jobProgressHeader">
