@@ -332,6 +332,117 @@ async fn metrics_store_migration_recovers_same_cardinality_target_corruption() {
 }
 
 #[tokio::test]
+async fn metrics_store_migration_recovers_retained_raw_corruption_after_gc() {
+    let main_path = temp_path("metrics-migration-pruned-content-damage-main");
+    let metrics_path = temp_path("metrics-migration-pruned-content-damage-target");
+    let db = Db::open(&main_path).await.unwrap();
+    let retained_at = format_time(time::OffsetDateTime::now_utc()).unwrap();
+    db.insert_legacy_metric_fixture(&[
+        sample("svc-a", "2000-01-01T00:00:00Z", 1.0, 100),
+        sample("svc-a", &retained_at, 10.0, 1_000),
+    ])
+    .await
+    .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    metrics
+        .gc(&BTreeSet::from(["svc-a".to_string()]))
+        .await
+        .unwrap();
+    assert_eq!(metrics.pruned_legacy_ids().await.unwrap().len(), 1);
+
+    let corrupted_at = retained_at.clone();
+    metrics
+        .writer_call(move |conn| {
+            conn.execute(
+                "UPDATE service_resource_samples SET cpu_percent = 99.0 WHERE sampled_at = ?1",
+                params![corrupted_at],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    let history = metrics
+        .history_since("svc-a", "1970-01-01T00:00:00Z", None)
+        .await
+        .unwrap();
+    assert_eq!(history.samples.len(), 1);
+    assert_eq!(history.samples[0].sampled_at, retained_at);
+    assert!((history.samples[0].cpu_percent - 10.0).abs() < f64::EPSILON);
+}
+
+#[tokio::test]
+async fn metrics_store_migration_rebuilds_corrupted_derived_models() {
+    let main_path = temp_path("metrics-migration-derived-damage-main");
+    let metrics_path = temp_path("metrics-migration-derived-damage-target");
+    let db = Db::open(&main_path).await.unwrap();
+    let sampled_at = format_time(time::OffsetDateTime::now_utc()).unwrap();
+    db.insert_legacy_metric_fixture(&[sample("svc-a", &sampled_at, 10.0, 1_000)])
+        .await
+        .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+
+    metrics
+        .writer_call(|conn| {
+            conn.execute(
+                "UPDATE service_resource_latest_samples SET cpu_percent = 99.0 WHERE service_id = 'svc-a'",
+                [],
+            )?;
+            conn.execute(
+                "UPDATE service_resource_rollups SET cpu_avg = 99.0, cpu_peak = 99.0 WHERE service_id = 'svc-a'",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    let latest = metrics.list_latest_samples().await.unwrap();
+    assert_eq!(latest[0].cpu_percent, Some(10.0));
+    let history = metrics
+        .history_since(
+            "svc-a",
+            "1970-01-01T00:00:00Z",
+            Some(MINUTE_RESOLUTION_SECONDS),
+        )
+        .await
+        .unwrap();
+    assert_eq!(history.samples.len(), 1);
+    assert!((history.samples[0].cpu_percent - 10.0).abs() < f64::EPSILON);
+    assert!((history.peaks[0].cpu_percent - 10.0).abs() < f64::EPSILON);
+}
+
+#[tokio::test]
+async fn metrics_store_migration_does_not_rehydrate_gc_pruned_orphans() {
+    let main_path = temp_path("metrics-migration-orphan-gc-main");
+    let metrics_path = temp_path("metrics-migration-orphan-gc-target");
+    let db = Db::open(&main_path).await.unwrap();
+    let sampled_at = format_time(time::OffsetDateTime::now_utc()).unwrap();
+    db.insert_legacy_metric_fixture(&[sample("svc-a", &sampled_at, 10.0, 1_000)])
+        .await
+        .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    metrics.gc(&BTreeSet::new()).await.unwrap();
+    assert_eq!(metrics.pruned_legacy_ids().await.unwrap().len(), 1);
+
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    assert!(
+        metrics
+            .history_since("svc-a", "1970-01-01T00:00:00Z", None)
+            .await
+            .unwrap()
+            .samples
+            .is_empty()
+    );
+    assert!(metrics.list_latest_samples().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn metrics_store_memory_reader_uses_the_writer_connection() {
     let metrics = MetricsStore::open(Path::new(":memory:")).await.unwrap();
     metrics

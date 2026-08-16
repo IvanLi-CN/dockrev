@@ -7,11 +7,17 @@ pub(super) fn ensure_sample_schema(conn: &mut rusqlite::Connection) -> anyhow::R
     let columns = stmt
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<Result<BTreeSet<_>, _>>()?;
-    if columns.contains("legacy_id") {
+    if !columns.contains("legacy_id") {
+        conn.execute_batch("DROP TABLE service_resource_samples;")?;
+        conn.execute_batch(SCHEMA)?;
         return Ok(());
     }
-    conn.execute_batch("DROP TABLE service_resource_samples;")?;
-    conn.execute_batch(SCHEMA)?;
+    if !columns.contains("legacy_signature") {
+        conn.execute(
+            "ALTER TABLE service_resource_samples ADD COLUMN legacy_signature TEXT",
+            [],
+        )?;
+    }
     Ok(())
 }
 

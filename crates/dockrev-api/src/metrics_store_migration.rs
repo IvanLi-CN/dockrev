@@ -1,11 +1,8 @@
-use std::path::Path;
+use std::{collections::BTreeSet, path::Path};
 
 use crate::db::Db;
 
-use super::{
-    FIVE_MINUTE_ROLLUP_RETENTION_SECONDS, MINUTE_ROLLUP_RETENTION_SECONDS, MetricsStore,
-    MigrationManifest, RAW_RETENTION_SECONDS, format_time,
-};
+use super::{MetricsStore, MigrationManifest};
 
 pub(super) fn metrics_target_identity(path: &Path) -> String {
     if path == Path::new(":memory:") {
@@ -35,36 +32,32 @@ impl MetricsStore {
             state.state == "complete"
                 && state.target_identity.as_deref() == Some(self.target_identity.as_str())
         });
-        let now = time::OffsetDateTime::now_utc();
-        let raw_cutoff = format_time(now - time::Duration::seconds(RAW_RETENTION_SECONDS))?;
-        let minute_cutoff =
-            format_time(now - time::Duration::seconds(MINUTE_ROLLUP_RETENTION_SECONDS))?;
-        let five_minute_cutoff =
-            format_time(now - time::Duration::seconds(FIVE_MINUTE_ROLLUP_RETENTION_SECONDS))?;
-
+        let mut retained_pruned_legacy_ids = BTreeSet::new();
+        let mut source_matches_manifest = false;
         if migration_complete && let Some(manifest) = self.migration_manifest().await? {
             let fingerprint = db.legacy_metric_fingerprint().await?;
-            let target_matches_source_count =
-                self.migrated_legacy_sample_count().await? == fingerprint.sample_count;
-            let target_integrity_matches = !target_matches_source_count
-                || (
-                    manifest.source_sample_count,
-                    manifest.source_sample_hash.clone(),
-                ) == self.migrated_legacy_integrity().await?;
-            if manifest.source_sample_count == fingerprint.sample_count
-                && manifest.source_max_id == Some(fingerprint.max_id)
-                && target_integrity_matches
-            {
-                let source_coverage = db.legacy_metric_coverage(&raw_cutoff).await?;
-                let source_rollups = db
-                    .legacy_metric_rollup_coverage(&minute_cutoff, &five_minute_cutoff)
-                    .await?;
-                if self
-                    .legacy_read_models_cover(&source_coverage, &source_rollups, &raw_cutoff)
-                    .await?
+            source_matches_manifest = manifest.source_sample_count == fingerprint.sample_count
+                && manifest.source_max_id == Some(fingerprint.max_id);
+            if source_matches_manifest {
+                let target_matches_source_count =
+                    self.migrated_legacy_sample_count().await? == fingerprint.sample_count;
+                let target_integrity_matches = !target_matches_source_count
+                    || (
+                        manifest.source_sample_count,
+                        manifest.source_sample_hash.clone(),
+                    ) == self.migrated_legacy_integrity().await?;
+                let raw_is_intact = self.retained_legacy_samples_match_signatures().await?;
+                if target_integrity_matches
+                    && raw_is_intact
+                    && self
+                        .legacy_sample_coverage_is_complete(fingerprint.sample_count)
+                        .await?
                 {
+                    self.rebuild_latest_samples().await?;
+                    self.rebuild_rollups().await?;
                     return Ok(());
                 }
+                retained_pruned_legacy_ids = self.pruned_legacy_ids().await?;
             }
         }
 
@@ -79,6 +72,10 @@ impl MetricsStore {
             .await?;
 
         self.clear_legacy_samples().await?;
+        if !source_matches_manifest {
+            self.clear_pruned_legacy_ids().await?;
+            retained_pruned_legacy_ids.clear();
+        }
 
         let mut after_id = 0_i64;
         loop {
@@ -87,12 +84,23 @@ impl MetricsStore {
                 break;
             }
             after_id = batch.last().map(|row| row.id).unwrap_or(after_id);
+            let batch = batch
+                .into_iter()
+                .filter(|row| !retained_pruned_legacy_ids.contains(&row.id))
+                .collect();
             self.insert_legacy_samples(batch).await?;
         }
         self.rebuild_latest_samples().await?;
 
         let target = self.migrated_legacy_integrity().await?;
-        if (source.sample_count, source.sample_hash.clone()) != target {
+        let target_is_verified = if retained_pruned_legacy_ids.is_empty() {
+            (source.sample_count, source.sample_hash.clone()) == target
+        } else {
+            self.legacy_sample_coverage_is_complete(source.sample_count)
+                .await?
+                && self.retained_legacy_samples_match_signatures().await?
+        };
+        if !target_is_verified {
             let message =
                 format!("legacy metrics verification failed: source={source:?} target={target:?}");
             db.set_metrics_migration_state("copying", Some(&self.target_identity), Some(&message))

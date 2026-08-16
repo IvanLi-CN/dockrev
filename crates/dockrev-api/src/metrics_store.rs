@@ -20,6 +20,9 @@ mod integrity;
 #[cfg(test)]
 use integrity::metrics_integrity_from_connection;
 pub(crate) use integrity::stable_table_hash;
+#[path = "metrics_store_legacy.rs"]
+mod legacy;
+use legacy::legacy_sample_signature;
 #[path = "metrics_store_migration.rs"]
 mod migration;
 use migration::metrics_target_identity;
@@ -43,6 +46,7 @@ const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS service_resource_samples (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   legacy_id INTEGER UNIQUE,
+  legacy_signature TEXT,
   service_id TEXT NOT NULL,
   sampled_at TEXT NOT NULL,
   cpu_percent REAL NOT NULL,
@@ -83,6 +87,10 @@ CREATE TABLE IF NOT EXISTS metrics_migration_manifest (
   source_sample_count INTEGER NOT NULL,
   source_sample_hash TEXT NOT NULL,
   source_max_id INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS metrics_migration_pruned_legacy_ids (
+  legacy_id INTEGER PRIMARY KEY
 );
 
 CREATE TABLE IF NOT EXISTS service_resource_rollups (
@@ -300,12 +308,13 @@ impl MetricsStore {
             for row in rows {
                 inserted += tx.execute(
                     r#"INSERT INTO service_resource_samples (
-                        legacy_id, service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes,
+                        legacy_id, legacy_signature, service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes,
                         net_rx_bytes, net_tx_bytes, block_read_bytes, block_write_bytes, pids, container_count
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                     ON CONFLICT(legacy_id) DO NOTHING"#,
                     params![
                         row.id,
+                        legacy_sample_signature(&row.sample),
                         row.sample.service_id,
                         row.sample.sampled_at,
                         row.sample.cpu_percent,
@@ -387,84 +396,6 @@ impl MetricsStore {
                 ],
             )?;
             Ok(())
-        })
-        .await
-    }
-
-    async fn legacy_read_models_cover(
-        &self,
-        source_coverage: &[crate::db::LegacyMetricCoverageRow],
-        source_rollups: &[crate::db::LegacyMetricRollupCoverageRow],
-        raw_cutoff: &str,
-    ) -> anyhow::Result<bool> {
-        let source_coverage = source_coverage.to_vec();
-        let source_rollups = source_rollups.to_vec();
-        let raw_cutoff = raw_cutoff.to_string();
-        self.reader_call(move |conn| {
-            let target_raw = {
-                let mut stmt = conn.prepare(
-                    r#"SELECT service_id, COUNT(*)
-                       FROM service_resource_samples
-                       WHERE legacy_id IS NOT NULL AND sampled_at >= ?1
-                       GROUP BY service_id"#,
-                )?;
-                stmt.query_map(params![raw_cutoff], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64))
-                })?
-                .collect::<Result<BTreeMap<_, _>, _>>()?
-            };
-            let target_latest = {
-                let mut stmt = conn.prepare(
-                    "SELECT service_id, sampled_at FROM service_resource_latest_samples",
-                )?;
-                stmt.query_map([], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })?
-                .collect::<Result<BTreeMap<_, _>, _>>()?
-            };
-            let target_rollups = {
-                let mut stmt = conn.prepare(
-                    r#"SELECT service_id, resolution_seconds, bucket_start, sample_count
-                       FROM service_resource_rollups"#,
-                )?;
-                stmt.query_map([], |row| {
-                    Ok((
-                        (
-                            row.get::<_, String>(0)?,
-                            row.get::<_, i64>(1)? as u32,
-                            row.get::<_, String>(2)?,
-                        ),
-                        row.get::<_, i64>(3)? as u64,
-                    ))
-                })?
-                .collect::<Result<BTreeMap<_, _>, _>>()?
-            };
-
-            for source in source_coverage {
-                if target_raw
-                    .get(&source.service_id)
-                    .copied()
-                    .unwrap_or_default()
-                    != source.raw_sample_count
-                {
-                    return Ok(false);
-                }
-                if target_latest
-                    .get(&source.service_id)
-                    .is_none_or(|sampled_at| sampled_at < &source.latest_sampled_at)
-                {
-                    return Ok(false);
-                }
-            }
-            Ok(source_rollups.iter().all(|source| {
-                target_rollups
-                    .get(&(
-                        source.service_id.clone(),
-                        source.resolution_seconds,
-                        source.bucket_start.clone(),
-                    ))
-                    .is_some_and(|sample_count| *sample_count >= source.sample_count)
-            }))
         })
         .await
     }
@@ -911,6 +842,10 @@ fn gc_batch_tx(
     active_service_ids: &BTreeSet<String>,
 ) -> anyhow::Result<bool> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute(
+        "INSERT OR IGNORE INTO metrics_migration_pruned_legacy_ids (legacy_id) SELECT legacy_id FROM service_resource_samples WHERE rowid IN (SELECT rowid FROM service_resource_samples WHERE sampled_at < ?1 LIMIT ?2) AND legacy_id IS NOT NULL",
+        params![raw_cutoff, GC_BATCH_SIZE as i64],
+    )?;
     let raw_deleted = tx.execute(
         "DELETE FROM service_resource_samples WHERE rowid IN (SELECT rowid FROM service_resource_samples WHERE sampled_at < ?1 LIMIT ?2)",
         params![raw_cutoff, GC_BATCH_SIZE as i64],
@@ -944,6 +879,12 @@ fn gc_batch_tx(
         ] {
             let sql =
                 format!("DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} LIMIT ?1)");
+            if table == "service_resource_samples" {
+                tx.execute(
+                    "INSERT OR IGNORE INTO metrics_migration_pruned_legacy_ids (legacy_id) SELECT legacy_id FROM service_resource_samples WHERE rowid IN (SELECT rowid FROM service_resource_samples LIMIT ?1) AND legacy_id IS NOT NULL",
+                    params![GC_BATCH_SIZE as i64],
+                )?;
+            }
             if tx.execute(&sql, params![GC_BATCH_SIZE as i64])? > 0 {
                 tx.commit()?;
                 return Ok(true);
@@ -968,6 +909,13 @@ fn gc_batch_tx(
                 .map(|value| value as &dyn rusqlite::ToSql)
                 .collect::<Vec<_>>();
             values.push(&limit);
+            if table == "service_resource_samples" {
+                let legacy_sql = format!(
+                    "INSERT OR IGNORE INTO metrics_migration_pruned_legacy_ids (legacy_id) SELECT legacy_id FROM service_resource_samples WHERE rowid IN (SELECT rowid FROM service_resource_samples WHERE service_id NOT IN ({placeholders}) LIMIT ?{}) AND legacy_id IS NOT NULL",
+                    active_service_ids.len() + 1
+                );
+                tx.execute(&legacy_sql, values.as_slice())?;
+            }
             if tx.execute(&sql, values.as_slice())? > 0 {
                 tx.commit()?;
                 return Ok(true);

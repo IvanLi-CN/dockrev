@@ -26,13 +26,14 @@ Rules:
 
 指标库与 `DOCKREV_DB_PATH` 的主库文件分离，默认路径为主库同目录的 `metrics.sqlite3`。`DOCKREV_METRICS_DB_PATH` 不能和主库解析为同一文件。
 
-主库只保存 `metrics_store_migration` 状态。启动从旧主库指标表复制时，目标写入必须幂等；只有稳定排序的行哈希和行数都一致才标记 complete。校验失败时进程不得启动新采样路径，旧表不可删除或修改。
+主库只保存 `metrics_store_migration` 状态。启动从旧主库指标表首次复制时，目标写入必须幂等；只有稳定排序的行哈希和行数都一致才标记 complete。导入的 legacy raw 必须保存稳定内容签名，GC 删除 legacy raw 或孤儿服务数据前必须保存其 legacy id 墓碑。重启验证保留 raw 的签名以及“保留 raw + 墓碑”对旧表总行数的覆盖关系，并由验证后的 raw 重建 latest/rollup；完整源改变时才清除墓碑重拷，目标修复不得复活被 GC 清理的旧行。校验失败时进程不得启动新采样路径，旧表不可删除或修改。
 
 指标库拥有以下表：
 
 - `service_resource_samples`：5 秒原始样本，保留 24 小时。
 - `service_resource_latest_samples`：每服务最新读模型。
 - `service_resource_rollups`：1 分钟桶保留 7 天，5 分钟桶保留 30 天；保存 CPU、内存、PIDs、容器数与速率的均值/峰值，以及累计计数首末值。
+- `metrics_migration_pruned_legacy_ids`：已从指标库 GC 的 legacy raw id 墓碑，用于可恢复迁移时保留留存裁剪结果。
 
 ## `service_resource_latest_samples`
 
