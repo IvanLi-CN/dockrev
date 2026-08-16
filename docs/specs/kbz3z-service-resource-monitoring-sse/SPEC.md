@@ -185,7 +185,7 @@ PR: include
   viewport_strategy: `storybook-viewport`
   sensitive_exclusion: `N/A`
   submission_gate: `owner-approved`
-  evidence_binding_sha: `1ba4e4bdf014f19b2421180f8004c44687b6b352`
+  evidence_binding_sha: `2d54f25873f37d46553094bb6a5f5387a8e0c2ee`
   story_id_or_title: `Components/ServiceResourcePanel/WindowSwitchContract`
   state: `30d aggregated CPU history`
   evidence_note: 固定 1280x720 浏览器视口。资源监控工具栏展示 `3m / 1h / 24h / 7d / 30d`，其中 `30d` 已选中。8,641 个五分钟聚合桶保留在响应中，图表渲染限为 480 个均值点，最近桶仍保留峰值提示。
@@ -201,7 +201,7 @@ PR: include
   viewport_strategy: `storybook-viewport`
   sensitive_exclusion: `N/A`
   submission_gate: `owner-approved`
-  evidence_binding_sha: `1ba4e4bdf014f19b2421180f8004c44687b6b352`
+  evidence_binding_sha: `2d54f25873f37d46553094bb6a5f5387a8e0c2ee`
   story_id_or_title: `Components/ServiceResourcePanel/WindowSwitchContract`
   state: `30d aggregate mobile toolbar`
   evidence_note: 固定 375x900 浏览器视口。时间范围控件在移动端换行，`3m / 1h / 24h / 7d / 30d` 均可见，`30d` 选中后标题和聚合历史图表不溢出视口。
