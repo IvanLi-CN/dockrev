@@ -47,22 +47,22 @@ pub(crate) fn list_stable_candidate_display_tags_for_notification_targets_conn(
         return Ok(std::collections::HashMap::new());
     }
 
+    let target_set = targets
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    let service_ids = targets
+        .iter()
+        .map(|(service_id, _, _, _)| service_id.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+
     let mut resolved = StableCandidateDisplayTagsByNotificationTarget::new();
-    for chunk in targets.chunks(TARGET_BATCH_SIZE) {
-        let clauses = chunk
-            .iter()
-            .enumerate()
-            .map(|(index, _)| {
-                let service_pos = index * 4 + 1;
-                let image_ref_pos = index * 4 + 2;
-                let image_tag_pos = index * 4 + 3;
-                let digest_pos = index * 4 + 4;
-                format!(
-                    "(service_id = ?{service_pos} AND image_ref = ?{image_ref_pos} AND image_tag = ?{image_tag_pos} AND candidate_digest = ?{digest_pos})"
-                )
-            })
+    for chunk in service_ids.chunks(TARGET_BATCH_SIZE) {
+        let placeholders = std::iter::repeat_n("?", chunk.len())
             .collect::<Vec<_>>()
-            .join(" OR ");
+            .join(",");
         let sql = format!(
             r#"
 SELECT
@@ -73,16 +73,13 @@ SELECT
   candidate_tag,
   candidate_display_tag
 FROM new_version_notifications
-WHERE {clauses}
+WHERE service_id IN ({placeholders})
 "#,
         );
         let mut stmt = conn.prepare(&sql)?;
-        let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(chunk.len() * 4);
-        for (service_id, image_ref, image_tag, candidate_digest) in chunk {
+        let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(chunk.len());
+        for service_id in chunk {
             params.push(service_id);
-            params.push(image_ref);
-            params.push(image_tag);
-            params.push(candidate_digest);
         }
         let rows = stmt.query_map(params.as_slice(), |row| {
             Ok((
@@ -103,13 +100,17 @@ WHERE {clauses}
                 candidate_tag,
                 candidate_display_tag,
             ) = row?;
+            let target = (service_id, image_ref, image_tag, candidate_digest);
+            if !target_set.contains(&target) {
+                continue;
+            }
             let Some(stable_display_tag) =
                 super::stable_candidate_display_tag(&candidate_tag, &candidate_display_tag)
             else {
                 continue;
             };
             resolved
-                .entry((service_id, image_ref, image_tag, candidate_digest))
+                .entry(target)
                 .or_default()
                 .insert(super::canonical_visible_version_tag(stable_display_tag));
         }
@@ -1013,6 +1014,14 @@ mod tests {
         worker.candidate_display_tag = "2.0.0".to_string();
         db.reserve_new_version_notification(&worker).await.unwrap();
 
+        let mut unrequested = pending("nvn_unrequested", "svc_1", "sha256:unrequested");
+        unrequested.image_ref = "ghcr.io/acme/unrequested".to_string();
+        unrequested.image_tag = "edge".to_string();
+        unrequested.candidate_display_tag = "3.0.0".to_string();
+        db.reserve_new_version_notification(&unrequested)
+            .await
+            .unwrap();
+
         let resolved = db
             .list_stable_candidate_display_tags_for_notification_targets(&[
                 (
@@ -1031,6 +1040,7 @@ mod tests {
             .await
             .unwrap();
 
+        assert_eq!(resolved.len(), 2);
         assert_eq!(
             resolved.get(&(
                 "svc_1".to_string(),

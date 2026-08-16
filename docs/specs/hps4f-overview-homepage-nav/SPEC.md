@@ -99,6 +99,7 @@
 - 首页 live payload 应用应复用已有卡片对象，尽量减少不必要的 React 重建与 DOM 抖动。
 - 首页 read model 的排序应稳定按 `stackName/serviceName` 输出，便于前端缓存 merge 与测试断言。
 - 首页版本推断快照必须通过批量读取获得；缓存未命中或过期只呈现 pending 状态，由后台快照 worker 的启动预热、30 分钟协调刷新与显式操作刷新。
+- 首页的新版本发现计数在解析通知展示标签时，必须按 `service_id` 做有界批量读取，再在 Rust 内以完整目标键精确过滤；不得为每个发现记录生成大规模 SQL `OR` 谓词。
 - 后端对显然不可解析或无效的 homepage icon 值应尽量直接返回 `null`/可回退值，减少浏览器侧重复失败。
 
 ## 功能与行为规格（Functional/Behavior Spec）
@@ -140,7 +141,7 @@
 ## 验收标准（Acceptance Criteria）
 
 - Given 真实 `https://dockrev.ivanli.cc/` reload，When 首页首屏加载，Then owner-facing 主数据链路收敛为单个 `GET /api/homepage/nav`，不再出现 `24 × /api/stacks/{id}` 扇出。
-- Given 101 现网或同量级本地种子数据，When `GET /api/homepage/nav` 处于 warm path，Then 目标响应时间 `< 500ms`；若未达标，必须继续提供 SQL/锁竞争证据，不能以“前端已平滑”收口。
+- Given 51 服务并持续 5 秒指标采样的代表性负载，When 100 次认证 `GET /api/homepage/nav` 请求在 warm path 执行，Then 后端 p95 必须不高于 `300ms`；若未达标，必须继续提供 SQL/锁竞争证据，不能以“前端已平滑”收口。
 - Given 首页存在缓存 snapshot，When 用户 reload，Then 卡片网格连续可见，不能先空白、不能先缩到 partial live 子集、不能在同一轮刷新里多次整列重排。
 - Given 首页图标失败，When 浏览器渲染卡片，Then 卡片高度、图标槽尺寸和列布局保持稳定；相同坏 URL 在同一会话里不重复慢失败。
 - Given live payload 最终为空，When 首页完成刷新，Then 页面显示真实空态，而不是错误保留缓存服务。
