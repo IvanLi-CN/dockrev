@@ -274,6 +274,9 @@ fn compact_job_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobCompactL
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string);
+    let fallback_display_label: String = row.get(12)?;
+    let display_label =
+        lifecycle_action_display_label(&job_type, &summary).unwrap_or(fallback_display_label);
     Ok(JobCompactListItem {
         id: row.get(0)?,
         r#type: job_type,
@@ -288,7 +291,19 @@ fn compact_job_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobCompactL
         finished_at: row.get(10)?,
         progress,
         result_reason,
-        display_label: row.get(12)?,
+        display_label,
         target_version,
     })
+}
+
+fn lifecycle_action_display_label(job_type: &str, summary: &serde_json::Value) -> Option<String> {
+    if !matches!(job_type, "service_lifecycle" | "stack_lifecycle") {
+        return None;
+    }
+    match summary.get("action").and_then(serde_json::Value::as_str) {
+        Some("start") => Some("启动任务".to_string()),
+        Some("stop") => Some("停止任务".to_string()),
+        Some("restart") => Some("重启任务".to_string()),
+        _ => None,
+    }
 }

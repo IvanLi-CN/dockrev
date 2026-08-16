@@ -597,27 +597,57 @@ export function buildResourceHistorySamples(serviceId: string, seconds: number, 
 }
 
 export function buildResourceHistoryPeaks(samples: ServiceResourceSample[]): ServiceResourcePeak[] {
-  return samples.map((sample) => ({
-    sampledAt: sample.sampledAt,
-    cpuPercent: sample.cpuPercent + 4,
-    memUsedBytes: sample.memUsedBytes,
-    memLimitBytes: sample.memLimitBytes,
-    pids: sample.pids,
-    containerCount: sample.containerCount,
-  }))
+  return samples.map((sample, index) => {
+    const previous = samples[index - 1]
+    const elapsedSeconds = previous
+      ? Math.max(1, (Date.parse(sample.sampledAt) - Date.parse(previous.sampledAt)) / 1000)
+      : null
+    const rate = (current?: number, prior?: number) =>
+      elapsedSeconds && current !== undefined && prior !== undefined
+        ? Math.max(0, (current - prior) / elapsedSeconds) * 1.15
+        : undefined
+    return {
+      sampledAt: sample.sampledAt,
+      cpuPercent: sample.cpuPercent + 4,
+      memUsedBytes: sample.memUsedBytes,
+      memLimitBytes: sample.memLimitBytes,
+      pids: sample.pids,
+      containerCount: sample.containerCount,
+      netRxRateBps: rate(sample.netRxBytes, previous?.netRxBytes),
+      netTxRateBps: rate(sample.netTxBytes, previous?.netTxBytes),
+      blockReadRateBps: rate(sample.blockReadBytes, previous?.blockReadBytes),
+      blockWriteRateBps: rate(sample.blockWriteBytes, previous?.blockWriteBytes),
+    }
+  })
 }
 
-export function buildCompactMockJob(job: JobListItem) {
+export function buildCompactMockJob(job: JobListItem, fixture: Fixture) {
   const summary = isRecord(job.summary) ? job.summary : {}
   const targetVersion = ['targetDisplayTag', 'targetTag', 'to']
     .map((key) => summary[key])
     .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+  const serviceName = job.serviceId
+    ? Object.values(fixture.stackById)
+        .flatMap((stack) => stack.services)
+        .find((service) => service.id === job.serviceId)?.name
+    : undefined
+  const stackName = job.stackId ? fixture.stackById[job.stackId]?.name : undefined
+  const lifecycleAction =
+    (job.type === 'service_lifecycle' || job.type === 'stack_lifecycle') && typeof summary.action === 'string'
+      ? summary.action
+      : ''
+  const lifecycleLabel =
+    lifecycleAction === 'start' ? '启动任务'
+      : lifecycleAction === 'stop' ? '停止任务'
+        : lifecycleAction === 'restart' ? '重启任务'
+          : undefined
   return {
     id: job.id, type: job.type, scope: job.scope, stackId: job.stackId, serviceId: job.serviceId,
     status: job.status, createdBy: job.createdBy, reason: job.reason, createdAt: job.createdAt,
     startedAt: job.startedAt, finishedAt: job.finishedAt,
     ...(isRecord(summary.progress) ? { progress: summary.progress } : {}),
-    displayLabel: job.serviceId ?? job.stackId ?? job.type,
+    ...(job.resultReason ? { resultReason: job.resultReason } : {}),
+    displayLabel: lifecycleLabel ?? serviceName ?? stackName ?? job.type,
     ...(targetVersion ? { targetVersion } : {}),
   }
 }

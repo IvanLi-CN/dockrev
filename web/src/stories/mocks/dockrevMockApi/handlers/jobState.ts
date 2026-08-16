@@ -77,7 +77,7 @@ export async function handleJobStateRoutes(ctx: MockRouteContext): Promise<Respo
     }).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
     const jobs = filtered
       .slice(start, start + limit)
-      .map((job) => (url?.searchParams.get('view') === 'compact' ? buildCompactMockJob(job) : job))
+      .map((job) => (url?.searchParams.get('view') === 'compact' ? buildCompactMockJob(job, f) : job))
     const nextCursor = start + limit < filtered.length ? `mock:${start + limit}` : null
     return json({ jobs, nextCursor })
   }

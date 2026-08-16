@@ -300,6 +300,38 @@ async fn metrics_store_migration_recovers_partial_service_and_rollup_loss() {
 }
 
 #[tokio::test]
+async fn metrics_store_migration_recovers_same_cardinality_target_corruption() {
+    let main_path = temp_path("metrics-migration-content-damage-main");
+    let metrics_path = temp_path("metrics-migration-content-damage-target");
+    let db = Db::open(&main_path).await.unwrap();
+    let sampled_at = format_time(time::OffsetDateTime::now_utc()).unwrap();
+    db.insert_legacy_metric_fixture(&[sample("svc-a", &sampled_at, 10.0, 1_000)])
+        .await
+        .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+
+    metrics
+        .writer_call(|conn| {
+            conn.execute(
+                "UPDATE service_resource_samples SET cpu_percent = 99.0 WHERE service_id = 'svc-a'",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    let history = metrics
+        .history_since("svc-a", "1970-01-01T00:00:00Z", None)
+        .await
+        .unwrap();
+    assert_eq!(history.samples.len(), 1);
+    assert!((history.samples[0].cpu_percent - 10.0).abs() < f64::EPSILON);
+}
+
+#[tokio::test]
 async fn metrics_store_memory_reader_uses_the_writer_connection() {
     let metrics = MetricsStore::open(Path::new(":memory:")).await.unwrap();
     metrics

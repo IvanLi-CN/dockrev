@@ -618,7 +618,7 @@ async fn api_jobs_compact_omits_raw_summary_and_keeps_derived_fields() {
     let job_id = ids::new_job_id();
     let job = crate::api::types::JobRecord::new_running(
         job_id.clone(),
-        crate::api::types::JobType::Update,
+        crate::api::types::JobType::ServiceLifecycle,
         crate::api::types::JobScope::All,
         None,
         None,
@@ -633,7 +633,8 @@ async fn api_jobs_compact_omits_raw_summary_and_keeps_derived_fields() {
             "success",
             &now,
             &serde_json::json!({
-                "targetDisplayTag": "1.2.3",
+            "targetDisplayTag": "1.2.3",
+            "action": "stop",
                 "secretDiagnostic": "must not leave this endpoint",
                 "progress": {
                     "phase": "done",
@@ -664,6 +665,7 @@ async fn api_jobs_compact_omits_raw_summary_and_keeps_derived_fields() {
     assert!(item.get("summary").is_none());
     assert!(item.get("secretDiagnostic").is_none());
     assert_eq!(item["targetVersion"].as_str(), Some("1.2.3"));
+    assert_eq!(item["displayLabel"].as_str(), Some("停止任务"));
     assert_eq!(item["progress"]["percent"].as_u64(), Some(100));
 
     let default_response = app

@@ -11,16 +11,18 @@ use anyhow::Context as _;
 use rusqlite::{OptionalExtension, TransactionBehavior, params};
 use tokio_rusqlite::Connection;
 
-use crate::{
-    api::types::ServiceResourceSample,
-    db::{Db, ServiceResourceSampleInput},
-};
+#[cfg(test)]
+use crate::db::Db;
+use crate::{api::types::ServiceResourceSample, db::ServiceResourceSampleInput};
 
 #[path = "metrics_store_integrity.rs"]
 mod integrity;
 #[cfg(test)]
 use integrity::metrics_integrity_from_connection;
 pub(crate) use integrity::stable_table_hash;
+#[path = "metrics_store_migration.rs"]
+mod migration;
+use migration::metrics_target_identity;
 #[path = "metrics_store_schema.rs"]
 mod schema;
 use schema::{
@@ -195,27 +197,6 @@ struct MigrationManifest {
     source_max_id: Option<i64>,
 }
 
-fn metrics_target_identity(path: &Path) -> String {
-    if path == Path::new(":memory:") {
-        return "sqlite-memory".to_string();
-    }
-    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-
-        if let Ok(metadata) = std::fs::metadata(&canonical) {
-            return format!(
-                "{}:{}:{}",
-                canonical.display(),
-                metadata.dev(),
-                metadata.ino()
-            );
-        }
-    }
-    canonical.display().to_string()
-}
-
 impl MetricsStore {
     pub async fn open(path: &Path) -> anyhow::Result<Self> {
         if let Some(parent) = path
@@ -297,75 +278,6 @@ impl MetricsStore {
             .call(f)
             .await
             .map_err(|err| anyhow::anyhow!(err.to_string()))
-    }
-
-    pub async fn migrate_from_legacy(&self, db: &Db) -> anyhow::Result<()> {
-        let state = db.metrics_migration_state().await?;
-        let migration_complete = state.as_ref().is_some_and(|state| {
-            state.state == "complete"
-                && state.target_identity.as_deref() == Some(self.target_identity.as_str())
-        });
-        let now = time::OffsetDateTime::now_utc();
-        let raw_cutoff = format_time(now - time::Duration::seconds(RAW_RETENTION_SECONDS))?;
-        let minute_cutoff =
-            format_time(now - time::Duration::seconds(MINUTE_ROLLUP_RETENTION_SECONDS))?;
-        let five_minute_cutoff =
-            format_time(now - time::Duration::seconds(FIVE_MINUTE_ROLLUP_RETENTION_SECONDS))?;
-
-        if migration_complete && let Some(manifest) = self.migration_manifest().await? {
-            let fingerprint = db.legacy_metric_fingerprint().await?;
-            if manifest.source_sample_count == fingerprint.sample_count
-                && manifest.source_max_id == Some(fingerprint.max_id)
-            {
-                let source_coverage = db.legacy_metric_coverage(&raw_cutoff).await?;
-                let source_rollups = db
-                    .legacy_metric_rollup_coverage(&minute_cutoff, &five_minute_cutoff)
-                    .await?;
-                if self
-                    .legacy_read_models_cover(&source_coverage, &source_rollups, &raw_cutoff)
-                    .await?
-                {
-                    return Ok(());
-                }
-            }
-        }
-
-        let source = db.legacy_metrics_integrity().await?;
-        let fingerprint = db.legacy_metric_fingerprint().await?;
-        let manifest = MigrationManifest {
-            source_sample_count: source.sample_count,
-            source_sample_hash: source.sample_hash.clone(),
-            source_max_id: Some(fingerprint.max_id),
-        };
-        db.set_metrics_migration_state("copying", Some(&self.target_identity), None)
-            .await?;
-
-        self.clear_legacy_samples().await?;
-
-        let mut after_id = 0_i64;
-        loop {
-            let batch = db.list_legacy_metric_samples_after(after_id, 2_000).await?;
-            if batch.is_empty() {
-                break;
-            }
-            after_id = batch.last().map(|row| row.id).unwrap_or(after_id);
-            self.insert_legacy_samples(batch).await?;
-        }
-        self.rebuild_latest_samples().await?;
-
-        let target = self.migrated_legacy_integrity().await?;
-        if (source.sample_count, source.sample_hash.clone()) != target {
-            let message =
-                format!("legacy metrics verification failed: source={source:?} target={target:?}");
-            db.set_metrics_migration_state("copying", Some(&self.target_identity), Some(&message))
-                .await?;
-            anyhow::bail!(message);
-        }
-        self.rebuild_rollups().await?;
-        self.set_migration_manifest(&manifest).await?;
-        db.set_metrics_migration_state("complete", Some(&self.target_identity), None)
-            .await?;
-        Ok(())
     }
 
     pub async fn insert_samples(
