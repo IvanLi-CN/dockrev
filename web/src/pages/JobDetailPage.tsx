@@ -596,13 +596,13 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
             </Pill>
           ) : null}
           {job?.stop?.canStop ? (
-            <IconButton variant="danger" disabled={busy} onClick={() => void requestStop()} title="停止更新">
-              <Square size={16} aria-hidden="true" />
+            <IconButton className="jobDetailStopControl" variant="danger" disabled={busy} onClick={() => void requestStop()} title="停止更新">
+              <Square size={14} aria-hidden="true" />
             </IconButton>
           ) : job?.status === 'cancelled' ? (
-            <span className="muted">已停止</span>
+            <span className="jobDetailStopState">已停止</span>
           ) : job?.stop?.state === 'requested' ? (
-            <span className="muted">正在停止</span>
+            <span className="jobDetailStopState">正在停止</span>
           ) : null}
         </div>
 

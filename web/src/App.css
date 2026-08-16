@@ -2460,6 +2460,32 @@ html[data-theme="light"] .releaseDrawerContent {
   color: var(--color-error-content);
 }
 
+.jobDetailStopControl.btnDanger {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--muted);
+}
+
+.jobDetailStopControl.btnDanger:not(:disabled):hover {
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-error) 62%, var(--borderColor) 38%);
+  color: var(--color-error);
+  transform: none;
+}
+
+.jobDetailStopControl.btnDanger:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-error) 64%, transparent);
+  outline-offset: 2px;
+}
+
+.jobDetailStopState {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 28px;
+  white-space: nowrap;
+}
+
 .btnGhost {
   background: var(--dockrev-surface);
   color: var(--text);

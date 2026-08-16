@@ -264,6 +264,7 @@ export function Button(props: ButtonProps) {
 
 export function IconButton(props: {
   variant?: AppButtonVariant
+  className?: string
   disabled?: boolean
   onClick?: () => void
   title: string
@@ -273,7 +274,7 @@ export function IconButton(props: {
   const variant = props.variant ?? 'ghost'
   const button = (
     <PrimitiveButton
-      className={cn('btn', 'btnIcon', buttonVariantClass(variant))}
+      className={cn('btn', 'btnIcon', buttonVariantClass(variant), props.className)}
       disabled={props.disabled}
       data-hint={props.title}
       onClick={props.onClick}
