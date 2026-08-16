@@ -625,7 +625,19 @@ export type JobProgressDownload = {
   status?: string | null
 }
 
-export type JobDetail = JobListItem & { logs: JobLogLine[]; logsLastId: number; progress?: JobProgress | null }
+export type JobStopState = {
+  canStop: boolean
+  state: 'available' | 'requested' | 'locked' | string
+  requestedAt?: string | null
+  requestedBy?: string | null
+}
+
+export type JobDetail = JobListItem & {
+  logs: JobLogLine[]
+  logsLastId: number
+  progress?: JobProgress | null
+  stop?: JobStopState | null
+}
 
 export type IgnoreRule = {
   id: string

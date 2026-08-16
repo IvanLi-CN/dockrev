@@ -22,6 +22,7 @@ pub struct AppState {
     pub service_log_hub: Arc<ServiceLogHub>,
     pub job_live_log_hub: Arc<JobLiveLogHub>,
     pub management_events: Arc<ManagementEventHub>,
+    pub update_stop_hub: Arc<crate::update_stop::UpdateStopHub>,
 }
 
 impl AppState {
@@ -52,6 +53,7 @@ impl AppState {
             service_log_hub,
             job_live_log_hub: Arc::new(JobLiveLogHub::new()),
             management_events,
+            update_stop_hub: Arc::new(crate::update_stop::UpdateStopHub::default()),
         })
     }
 }

@@ -250,6 +250,43 @@ export const UpdateLayerProgress: Story = {
   },
 }
 
+export const UpdateStopAvailable: Story = {
+  parameters: { dockrevApiScenario: 'queue-update-layer-progress' },
+  render: () => renderJobDetailSurface(
+    <PageHarness route={{ name: 'job', jobId: 'job-running' }} title="任务详情" pageSubtitle="更新实际应用前可立即停止">
+      {({ onTopActions }) => <JobDetailPage jobId="job-running" onTopActions={onTopActions} />}
+    </PageHarness>,
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(canvasElement.querySelector('[aria-label="停止更新"]')))
+    const stop = canvasElement.querySelector<HTMLElement>('[aria-label="停止更新"]')
+    stop?.click()
+    await waitForCondition(() => canvasElement.textContent?.includes('正在停止') === true)
+  },
+}
+
+export const UpdateStopAvailableEvidence: Story = {
+  parameters: { dockrevApiScenario: 'queue-update-layer-progress' },
+  render: () => renderJobDetailSurface(
+    <PageHarness route={{ name: 'job', jobId: 'job-running' }} title="任务详情" pageSubtitle="更新实际应用前可立即停止">
+      {({ onTopActions }) => <JobDetailPage jobId="job-running" onTopActions={onTopActions} />}
+    </PageHarness>,
+  ),
+}
+
+export const UpdateStopCancelled: Story = {
+  parameters: { dockrevApiScenario: 'queue-update-cancelled' },
+  render: () => renderJobDetailSurface(
+    <PageHarness route={{ name: 'job', jobId: 'job-running' }} title="任务详情" pageSubtitle="停止完成后保留终态，不再提供停止入口">
+      {({ onTopActions }) => <JobDetailPage jobId="job-running" onTopActions={onTopActions} />}
+    </PageHarness>,
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => canvasElement.textContent?.includes('已停止') === true)
+    expectStory(!canvasElement.querySelector('[aria-label="停止更新"]'), 'cancelled update must not offer stop again')
+  },
+}
+
 export const UpdateDownloadDeterminate: Story = {
   parameters: { dockrevApiScenario: 'queue-update-download-determinate' },
   render: () => {

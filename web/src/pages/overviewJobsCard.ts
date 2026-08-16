@@ -18,7 +18,7 @@ export type OverviewJobCardItem = {
   progressPercent: number | null
 }
 
-const TERMINAL_STATUSES = new Set(['success', 'failed', 'rolled_back'])
+const TERMINAL_STATUSES = new Set(['success', 'failed', 'rolled_back', 'cancelled'])
 const BASE_VISIBLE_ITEMS = 5
 const MAX_NON_TERMINAL_ITEMS = 10
 

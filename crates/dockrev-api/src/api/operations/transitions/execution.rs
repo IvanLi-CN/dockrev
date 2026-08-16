@@ -1,4 +1,5 @@
 use super::*;
+use crate::backup::BackupRecoveryStore;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 pub(crate) type UpdateStackSummaries = Vec<serde_json::Value>;
@@ -9,6 +10,132 @@ pub(crate) type UpdateJobOutcome = (
     UpdateBackupsToCleanup,
     JobProgress,
 );
+
+struct DbUpdateApplyGate {
+    db: crate::db::Db,
+    job_id: String,
+}
+
+struct DbBackupRecoveryStore {
+    db: crate::db::Db,
+    job_id: String,
+}
+
+#[async_trait::async_trait]
+impl backup::BackupRecoveryStore for DbBackupRecoveryStore {
+    async fn save(&self, snapshot: &backup::BackupRecoverySnapshot) -> anyhow::Result<()> {
+        self.db
+            .save_update_stop_recovery_snapshot(&self.job_id, snapshot, &now_rfc3339()?)
+            .await
+    }
+
+    async fn clear(&self) -> anyhow::Result<()> {
+        self.db
+            .clear_update_stop_recovery_snapshot(&self.job_id, &now_rfc3339()?)
+            .await
+    }
+}
+
+/// Restores services interrupted during a pre-apply backup after the API has bound.
+pub(crate) async fn recover_interrupted_update_backups(state: Arc<AppState>) {
+    let now = match now_rfc3339() {
+        Ok(now) => now,
+        Err(error) => {
+            tracing::error!(error = %error, "cannot start interrupted backup recovery");
+            return;
+        }
+    };
+    let pending = match state.db.claim_pending_update_stop_recoveries(&now).await {
+        Ok(pending) => pending,
+        Err(error) => {
+            tracing::error!(error = %error, "cannot claim interrupted backup recoveries");
+            return;
+        }
+    };
+
+    for pending in pending {
+        let finished_at = now_rfc3339().unwrap_or_else(|_| now.clone());
+        let result = async {
+            let snapshot: backup::BackupRecoverySnapshot =
+                serde_json::from_str(&pending.snapshot_json)?;
+            let stack = state
+                .db
+                .get_stack(&snapshot.stack_id)
+                .await?
+                .ok_or_else(|| {
+                    anyhow::anyhow!("backup recovery stack missing: {}", snapshot.stack_id)
+                })?;
+            backup::restore_backup_recovery_snapshot(
+                &*state.runner,
+                &state.config.compose_bin,
+                state.config.docker_config_path.as_deref(),
+                &stack,
+                &snapshot,
+            )
+            .await
+        }
+        .await;
+
+        match result {
+            Ok(()) => {
+                let _ = state
+                    .db
+                    .clear_update_stop_recovery_snapshot(&pending.job_id, &finished_at)
+                    .await;
+                let was_stopped = state
+                    .db
+                    .get_update_stop_control(&pending.job_id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|control| control.stop_requested_at)
+                    .is_some();
+                let status = if was_stopped { "cancelled" } else { "failed" };
+                let summary = json!({"mode": "apply", "stopRequested": was_stopped, "recoveredOnStartup": true});
+                let _ = state
+                    .db
+                    .finish_job(&pending.job_id, status, &finished_at, &summary)
+                    .await;
+            }
+            Err(error) => {
+                let error_message = error.to_string();
+                let _ = state
+                    .db
+                    .record_update_stop_recovery_error(
+                        &pending.job_id,
+                        &error_message,
+                        &finished_at,
+                    )
+                    .await;
+                let summary =
+                    json!({"mode": "apply", "stopRequested": true, "recoveryError": error_message});
+                let _ = state
+                    .db
+                    .finish_job(&pending.job_id, "failed", &finished_at, &summary)
+                    .await;
+                tracing::error!(job_id = %pending.job_id, error = %error, "interrupted backup recovery failed");
+            }
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl updater::UpdateApplyGate for DbUpdateApplyGate {
+    async fn commit(&self) -> anyhow::Result<bool> {
+        if self
+            .db
+            .commit_update_job_apply(&self.job_id, &now_rfc3339()?)
+            .await?
+        {
+            return Ok(true);
+        }
+        Ok(self
+            .db
+            .get_update_stop_control(&self.job_id)
+            .await?
+            .is_some_and(|control| control.apply_committed_at.is_some()))
+    }
+}
 
 pub(crate) fn extract_changed_service_ids(update: &serde_json::Value) -> Option<Vec<String>> {
     let ids = update
@@ -45,6 +172,9 @@ pub(crate) fn transition_terminal_message(
         TransitionJobKind::Update => {
             if final_status == "success" {
                 return "update finished".to_string();
+            }
+            if final_status == "cancelled" {
+                return "update cancelled".to_string();
             }
             if final_status == "rolled_back" {
                 return match transition_failure_step(kind, stack_summaries) {
@@ -108,6 +238,8 @@ pub(crate) async fn run_update_job(
         .await?
         .map(|job| TransitionJobKind::from_job_type(&job.r#type))
         .unwrap_or(TransitionJobKind::Update);
+    let stop_signal = (job_kind == TransitionJobKind::Update && req.mode.as_str() == "apply")
+        .then(|| state.update_stop_hub.subscribe(&job_id));
     let outcome: anyhow::Result<UpdateJobOutcome> = async {
         if matches!(job_kind, TransitionJobKind::Rollback)
             || matches!(&req.mode, UpdateMode::Apply)
@@ -176,6 +308,18 @@ pub(crate) async fn run_update_job(
                 inner: state.runner.clone(),
                 job_id: job_id.clone(),
                 live_log_hub: state.job_live_log_hub.clone(),
+                stop_signal: stop_signal.clone(),
+            };
+            let recovery_runner = DbLoggingRunner {
+                db: state.db.clone(),
+                inner: state.runner.clone(),
+                job_id: job_id.clone(),
+                live_log_hub: state.job_live_log_hub.clone(),
+                stop_signal: None,
+            };
+            let recovery_store = DbBackupRecoveryStore {
+                db: state.db.clone(),
+                job_id: job_id.clone(),
             };
 
             let mut stack_summary = serde_json::Map::new();
@@ -212,6 +356,7 @@ pub(crate) async fn run_update_job(
             let backup_branch_percent = Arc::new(AtomicU32::new(0));
             let mut services_kept_stopped_for_apply = Vec::<String>::new();
             let mut prepare_error: Option<anyhow::Error> = None;
+            let mut prepare_stop_requested = false;
 
             if backup_requested && backup_requires_stop {
                 let (pull_progress_tx, mut pull_progress_rx) =
@@ -411,6 +556,8 @@ pub(crate) async fn run_update_job(
                 let backup_future = backup::run_pre_update_backup(
                     &logging_runner,
                     &*state.runner,
+                    &recovery_runner,
+                    &recovery_store,
                     &backup_settings,
                     &state.config.db_path,
                     &state.config.dockrev_image_repo,
@@ -499,6 +646,7 @@ pub(crate) async fn run_update_job(
                     match pull_result {
                         Ok(()) => backup_result,
                         Err(error) => {
+                            prepare_stop_requested = crate::update_stop::is_requested(&error);
                             prepare_error = Some(anyhow::anyhow!("image prepare failed: {error}"));
                             backup_result
                         }
@@ -564,6 +712,21 @@ pub(crate) async fn run_update_job(
                         stack_summary
                             .insert("backup".to_string(), json!({"status":"failed","error":err}));
 
+                        if crate::update_stop::is_requested(&e) {
+                            final_status = if recovery_store.clear().await.is_ok() {
+                                "cancelled".to_string()
+                            } else {
+                                "failed".to_string()
+                            };
+                            stack_summary.insert(
+                                job_kind.summary_key().to_string(),
+                                json!({"stopRequested": true}),
+                            );
+                            stack_summaries.push(serde_json::Value::Object(stack_summary));
+                            processed_stacks = processed_stacks.saturating_add(1);
+                            break;
+                        }
+
                         if backup_settings.require_success || backup::is_safety_failure(&e) {
                             final_status = "failed".to_string();
                             stack_summaries.push(serde_json::Value::Object(stack_summary));
@@ -592,10 +755,32 @@ pub(crate) async fn run_update_job(
                     }
                 }
                 if let Some(error) = prepare_error.take() {
-                    final_status = "failed".to_string();
+                    let restored = if services_kept_stopped_for_apply.is_empty() {
+                        Ok(())
+                    } else {
+                        backup::restore_services_after_failed_apply(
+                            &*state.runner,
+                            &state.config.compose_bin,
+                            state.config.docker_config_path.as_deref(),
+                            &stack,
+                            &services_kept_stopped_for_apply,
+                        )
+                        .await
+                    };
+                    let cleanup = recovery_store.clear().await;
+                    final_status = if prepare_stop_requested && restored.is_ok() && cleanup.is_ok() {
+                        "cancelled".to_string()
+                    } else {
+                        "failed".to_string()
+                    };
                     stack_summary.insert(
                         job_kind.summary_key().to_string(),
-                        json!({"error": error.to_string(), "failureStep": "pull_services"}),
+                        json!({
+                            "error": error.to_string(),
+                            "failureStep": "pull_services",
+                            "stopRequested": prepare_stop_requested,
+                            "recoveryError": restored.err().or_else(|| cleanup.err()).map(|error| error.to_string()),
+                        }),
                     );
                     stack_summaries.push(serde_json::Value::Object(stack_summary));
                     processed_stacks = processed_stacks.saturating_add(1);
@@ -739,62 +924,59 @@ pub(crate) async fn run_update_job(
                 base_ms: state.config.update_idempotent_retry_base_ms,
                 max_ms: state.config.update_idempotent_retry_max_ms,
             };
-            let update_outcome = if backup_requested {
-                updater::run_update_job_pre_pulled(
-                    &logging_runner,
-                    &state.config.compose_bin,
-                    state.config.docker_config_path.as_deref(),
-                    retry_policy,
-                    &stack,
-                    &req.scope,
-                    req.service_id.as_deref(),
-                    req.mode.as_str(),
-                    req.targets.as_deref(),
-                    req.allow_arch_mismatch,
-                    req.reason.as_str(),
-                    Some(state.config.dockrev_image_repo.as_str()),
-                    Some(progress_tx),
-                    &services_kept_stopped_for_apply,
-                )
-                .await
-            } else {
-                updater::run_update_job(
-                    &logging_runner,
-                    &state.config.compose_bin,
-                    state.config.docker_config_path.as_deref(),
-                    retry_policy,
-                    &stack,
-                    &req.scope,
-                    req.service_id.as_deref(),
-                    req.mode.as_str(),
-                    req.targets.as_deref(),
-                    req.allow_arch_mismatch,
-                    req.reason.as_str(),
-                    Some(state.config.dockrev_image_repo.as_str()),
-                    Some(progress_tx),
-                )
-                .await
+            let apply_gate = DbUpdateApplyGate {
+                db: state.db.clone(),
+                job_id: job_id.clone(),
             };
+            let update_outcome = updater::run_update_job_with_gate(
+                &logging_runner,
+                &state.config.compose_bin,
+                state.config.docker_config_path.as_deref(),
+                retry_policy,
+                &stack,
+                &req.scope,
+                req.service_id.as_deref(),
+                req.mode.as_str(),
+                req.targets.as_deref(),
+                req.allow_arch_mismatch,
+                req.reason.as_str(),
+                Some(state.config.dockrev_image_repo.as_str()),
+                Some(progress_tx),
+                backup_requested,
+                &services_kept_stopped_for_apply,
+                (job_kind == TransitionJobKind::Update && req.mode.as_str() == "apply")
+                    .then_some(&apply_gate as &dyn updater::UpdateApplyGate),
+            )
+            .await;
             let _ = progress_task.await;
             match update_outcome {
-                Ok(outcome) => {
+                Ok(mut outcome) => {
                     if outcome.status != "success"
-                        && !services_kept_stopped_for_apply.is_empty()
-                        && let Err(restore_error) = backup::restore_services_after_failed_apply(
-                            &*state.runner,
-                            &state.config.compose_bin,
-                            state.config.docker_config_path.as_deref(),
-                            &stack,
-                            &services_kept_stopped_for_apply,
-                        )
-                        .await
                     {
-                        tracing::error!(
-                            job_id = %job_id,
-                            stack_id = %stack_id,
-                            error = %restore_error,
-                            "failed to restore services after unsuccessful update"
-                        );
+                        let restored = if services_kept_stopped_for_apply.is_empty() {
+                            Ok(())
+                        } else {
+                            backup::restore_services_after_failed_apply(
+                                &*state.runner,
+                                &state.config.compose_bin,
+                                state.config.docker_config_path.as_deref(),
+                                &stack,
+                                &services_kept_stopped_for_apply,
+                            )
+                            .await
+                        };
+                        let cleanup = recovery_store.clear().await;
+                        if let Some(error) = restored.err().or_else(|| cleanup.err()) {
+                            outcome.status = "failed".to_string();
+                            if let Some(summary) = outcome.summary_json.as_object_mut() {
+                                summary.insert("recoveryError".to_string(), json!(error.to_string()));
+                            }
+                        }
+                    } else if let Err(error) = recovery_store.clear().await {
+                        outcome.status = "failed".to_string();
+                        if let Some(summary) = outcome.summary_json.as_object_mut() {
+                            summary.insert("recoveryError".to_string(), json!(error.to_string()));
+                        }
                     }
                     if outcome.status == "success"
                         && !planned_service_ids.is_empty()
@@ -936,8 +1118,11 @@ pub(crate) async fn run_update_job(
                     }
                 }
                 Err(e) => {
-                    if !services_kept_stopped_for_apply.is_empty()
-                        && let Err(restore_error) = backup::restore_services_after_failed_apply(
+                    let stop_requested = crate::update_stop::is_requested(&e);
+                    let restored = if services_kept_stopped_for_apply.is_empty() {
+                        Ok(())
+                    } else {
+                        backup::restore_services_after_failed_apply(
                             &*state.runner,
                             &state.config.compose_bin,
                             state.config.docker_config_path.as_deref(),
@@ -945,16 +1130,20 @@ pub(crate) async fn run_update_job(
                             &services_kept_stopped_for_apply,
                         )
                         .await
+                    };
+                    let cleanup = recovery_store.clear().await;
+                    let recovery_error = restored.err().or_else(|| cleanup.err());
+                    final_status = if stop_requested && recovery_error.is_none() {
+                        "cancelled".to_string()
+                    } else {
+                        "failed".to_string()
+                    };
+                    let mut update_summary = json!({"error": e.to_string(), "stopRequested": stop_requested});
+                    if let Some(error) = recovery_error
+                        && let Some(obj) = update_summary.as_object_mut()
                     {
-                        tracing::error!(
-                            job_id = %job_id,
-                            stack_id = %stack_id,
-                            error = %restore_error,
-                            "failed to restore services after update failure"
-                        );
+                        obj.insert("recoveryError".to_string(), json!(error.to_string()));
                     }
-                    final_status = "failed".to_string();
-                    let mut update_summary = json!({"error": e.to_string()});
                     if let Some(step_failure) = e.downcast_ref::<updater::UpdateStepFailure>()
                         && let Some(obj) = update_summary.as_object_mut()
                     {
@@ -1051,9 +1240,14 @@ pub(crate) async fn run_update_job(
             }
             Err(err) => {
                 let finished_at = now_rfc3339()?;
+                let stop_requested = crate::update_stop::is_requested(&err);
                 let progress = make_job_progress(
                     "done",
-                    job_kind.failed_message().to_string(),
+                    if stop_requested {
+                        "update cancelled".to_string()
+                    } else {
+                        job_kind.failed_message().to_string()
+                    },
                     0,
                     0,
                     None,
@@ -1068,7 +1262,11 @@ pub(crate) async fn run_update_job(
                         &JobLogLine {
                             ts: finished_at.clone(),
                             level: "error".to_string(),
-                            msg: format!("{}: {err}", job_kind.failed_message()),
+                            msg: if stop_requested {
+                                format!("update cancelled: {err}")
+                            } else {
+                                format!("{}: {err}", job_kind.failed_message())
+                            },
                         },
                     )
                     .await;
@@ -1076,10 +1274,15 @@ pub(crate) async fn run_update_job(
                     "mode": job_kind.summary_mode(&req.mode),
                     "targets": &req.targets,
                     "error": err.to_string(),
+                    "stopRequested": stop_requested,
                     "progress": progress_json,
                 });
                 (
-                    "failed".to_string(),
+                    if stop_requested {
+                        "cancelled".to_string()
+                    } else {
+                        "failed".to_string()
+                    },
                     Vec::new(),
                     Vec::new(),
                     final_summary,
@@ -1211,6 +1414,7 @@ pub(crate) async fn run_update_job(
         });
     }
 
+    state.update_stop_hub.remove(&job_id);
     Ok(())
 }
 

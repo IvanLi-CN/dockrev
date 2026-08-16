@@ -245,6 +245,13 @@ pub(crate) async fn enqueue_update_job(
     {
         return Err(service_operation_conflict_error(&conflict));
     }
+    if matches!(&req.mode, UpdateMode::Apply) {
+        state
+            .db
+            .create_update_stop_control(&job_id, &now)
+            .await
+            .map_err(map_internal)?;
+    }
 
     if !has_operation_targets {
         state

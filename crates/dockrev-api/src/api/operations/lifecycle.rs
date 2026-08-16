@@ -361,6 +361,7 @@ async fn run_stack_lifecycle_job(
                     inner: state.runner.clone(),
                     job_id: job_id.clone(),
                     live_log_hub: state.job_live_log_hub.clone(),
+                    stop_signal: None,
                 };
                 runner
                     .run(
@@ -679,6 +680,7 @@ async fn run_service_lifecycle_job(
                     inner: state.runner.clone(),
                     job_id: job_id.clone(),
                     live_log_hub: state.job_live_log_hub.clone(),
+                    stop_signal: None,
                 };
                 runner
                     .run(

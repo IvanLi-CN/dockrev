@@ -40,6 +40,7 @@ mod service_logs;
 mod snapshot_worker;
 mod state;
 mod ui;
+mod update_stop;
 mod updater;
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -178,6 +179,10 @@ async fn main() -> anyhow::Result<()> {
 
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!(bind = %bind, "dockrev api listening");
+
+    // Recovery owns only the services recorded before a pre-apply backup stopped them. It is
+    // deliberately detached from startup so a failed restore cannot prevent Dockrev serving.
+    tokio::spawn(api::recover_interrupted_update_backups(state.clone()));
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())

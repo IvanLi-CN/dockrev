@@ -7,6 +7,57 @@ use tokio::process::Command;
 
 pub const STREAM_PTY_ENV: &str = "DOCKREV_STREAM_PTY";
 
+#[cfg(unix)]
+struct ProcessGroupGuard(Option<i32>);
+
+#[cfg(unix)]
+impl ProcessGroupGuard {
+    fn new(pid: Option<u32>) -> Self {
+        Self(pid.and_then(|pid| i32::try_from(pid).ok()))
+    }
+
+    fn disarm(&mut self) {
+        self.0 = None;
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ProcessGroupGuard {
+    fn drop(&mut self) {
+        let Some(pgid) = self.0.take() else {
+            return;
+        };
+        // Every streamed external command owns a process group. Cancellation first gives the
+        // group a chance to exit, then performs one bounded forceful escalation.
+        send_process_group_signal("TERM", pgid);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(500));
+            send_process_group_signal("KILL", pgid);
+        });
+    }
+}
+
+#[cfg(unix)]
+fn send_process_group_signal(signal: &str, pgid: i32) {
+    let _ = std::process::Command::new("kill")
+        .args([format!("-{signal}"), format!("-{pgid}")])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+#[cfg(not(unix))]
+struct ProcessGroupGuard;
+
+#[cfg(not(unix))]
+impl ProcessGroupGuard {
+    fn new(_pid: Option<u32>) -> Self {
+        Self
+    }
+
+    fn disarm(&mut self) {}
+}
+
 #[derive(Clone, Debug)]
 pub struct CommandSpec {
     pub program: String,
@@ -83,9 +134,11 @@ impl CommandRunner for TokioCommandRunner {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
         cmd.kill_on_drop(true);
+        configure_process_group(&mut cmd);
 
         let fut = async {
             let mut child = cmd.spawn()?;
+            let mut process_group = ProcessGroupGuard::new(child.id());
             let stdout = child
                 .stdout
                 .take()
@@ -155,6 +208,7 @@ impl CommandRunner for TokioCommandRunner {
             }
 
             let wait_status = child.wait().await?;
+            process_group.disarm();
 
             out_task.await??;
             err_task.await??;
@@ -170,6 +224,16 @@ impl CommandRunner for TokioCommandRunner {
             .await
             .map_err(|_| anyhow::anyhow!("command timed out after {:?}", timeout))?
     }
+}
+
+fn configure_process_group(cmd: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.as_std_mut().process_group(0);
+    }
+    #[cfg(not(unix))]
+    let _ = cmd;
 }
 
 fn apply_command_env(cmd: &mut Command, env: &[(String, String)]) {
@@ -427,6 +491,42 @@ mod tests {
         assert!(
             !marker.exists(),
             "timed-out PTY command still ran its delayed side effect"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn run_stream_timeout_terminates_background_process_group_members() {
+        let marker = std::env::temp_dir().join(format!(
+            "dockrev-stream-process-group-timeout-{}-{}.marker",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let command = format!("(sleep 0.2; touch {}) & wait", marker.display());
+        let mut discard_stdout = |_chunk: Vec<u8>| {};
+        let mut discard_stderr = |_chunk: Vec<u8>| {};
+
+        let result = TokioCommandRunner
+            .run_stream(
+                CommandSpec {
+                    program: "sh".to_string(),
+                    args: vec!["-c".to_string(), command],
+                    env: Vec::new(),
+                },
+                Duration::from_millis(20),
+                &mut discard_stdout,
+                &mut discard_stderr,
+            )
+            .await;
+
+        assert!(result.is_err());
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        assert!(
+            !marker.exists(),
+            "timed-out command left a background process alive"
         );
     }
 }

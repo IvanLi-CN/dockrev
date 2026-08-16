@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { getJob, newJobEventsSource, type JobDetail, type JobLogLine, type JobProgress } from '../api'
+import { Square } from 'lucide-react'
+import { getJob, newJobEventsSource, stopJob, type JobDetail, type JobLogLine, type JobProgress } from '../api'
 import { useManagementEventBatch } from '../managementEvents'
 import { formatJobMachineName, formatJobReadableDisplay } from '../jobDisplay'
 import { formatJobProgressDownload, parseJobProgressDownload } from '../jobProgressDownload'
 import { TaskResultReason } from '../components/TaskResultReason'
 import { navigate } from '../routes'
-import { Button, Chip, Mono, OverlayScrollArea, Pill, Switch } from '../ui'
+import { Button, Chip, IconButton, Mono, OverlayScrollArea, Pill, Switch } from '../ui'
 
 function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' | 'info' {
   if (status === 'success') return 'ok'
   if (status === 'rolled_back') return 'warn'
+  if (status === 'cancelled') return 'muted'
   if (status === 'failed') return 'bad'
   if (status === 'running') return 'info'
   return 'muted'
@@ -228,6 +230,20 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
     pendingCommandSummarySeqsRef.current.clear()
     return j
   }, [jobId])
+
+  const requestStop = useCallback(async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      await stopJob(jobId)
+      await refresh()
+    } catch (error: unknown) {
+      setError(errorMessage(error))
+      await refresh().catch(() => undefined)
+    } finally {
+      setBusy(false)
+    }
+  }, [jobId, refresh])
 
   useEffect(() => {
     writeShowEventsPreference(showEvents)
@@ -578,6 +594,15 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
             <Pill tone={statusTone(job.status)} breathing={job.status === 'running'}>
               {job.status}
             </Pill>
+          ) : null}
+          {job?.stop?.canStop ? (
+            <IconButton variant="danger" disabled={busy} onClick={() => void requestStop()} title="停止更新">
+              <Square size={16} aria-hidden="true" />
+            </IconButton>
+          ) : job?.status === 'cancelled' ? (
+            <span className="muted">已停止</span>
+          ) : job?.stop?.state === 'requested' ? (
+            <span className="muted">正在停止</span>
           ) : null}
         </div>
 

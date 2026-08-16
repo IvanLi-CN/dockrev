@@ -691,7 +691,38 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     apply_migration_0010_add_new_version_discoveries(conn)?;
     apply_migration_0011_track_candidate_display_tags_in_new_version_discoveries(conn)?;
     apply_migration_0012_track_image_ref_in_new_version_discoveries(conn)?;
+    apply_migration_0013_add_update_job_stop_controls(conn)?;
     schema_job_history_retention::apply(conn)?;
+    Ok(())
+}
+
+fn apply_migration_0013_add_update_job_stop_controls(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0013_add_update_job_stop_controls";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute_batch(
+        r#"
+CREATE TABLE IF NOT EXISTS update_job_stop_controls (
+  job_id TEXT PRIMARY KEY NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  apply_committed_at TEXT,
+  stop_requested_at TEXT,
+  stop_requested_by TEXT,
+  recovery_snapshot_json TEXT,
+  recovery_attempted_at TEXT,
+  recovery_error TEXT,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_update_job_stop_controls_recovery
+  ON update_job_stop_controls(stop_requested_at, apply_committed_at);
+"#,
+    )?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
     Ok(())
 }
 

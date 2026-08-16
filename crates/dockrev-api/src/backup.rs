@@ -63,6 +63,18 @@ struct BackupRecoveryCheckpoint {
     services: Vec<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct BackupRecoverySnapshot {
+    pub stack_id: String,
+    pub services: Vec<String>,
+}
+
+#[async_trait::async_trait]
+pub trait BackupRecoveryStore: Send + Sync {
+    async fn save(&self, snapshot: &BackupRecoverySnapshot) -> anyhow::Result<()>;
+    async fn clear(&self) -> anyhow::Result<()>;
+}
+
 #[derive(Clone, Debug)]
 struct IncludedBackupTarget {
     target: BackupTarget,
@@ -116,6 +128,8 @@ pub fn spawn_cleanup_task(state: std::sync::Arc<crate::state::AppState>) {
 pub async fn run_pre_update_backup(
     runner: &dyn CommandRunner,
     helper_runner: &dyn CommandRunner,
+    recovery_runner: &dyn CommandRunner,
+    recovery_store: &dyn BackupRecoveryStore,
     settings: &BackupSettings,
     db_path: &Path,
     helper_image_fallback: &str,
@@ -224,6 +238,12 @@ pub async fn run_pre_update_backup(
     let services_to_restart =
         running_related_services_for_backup(runner, &compose_stack, &compose_cfg, &included)
             .await?;
+    recovery_store
+        .save(&BackupRecoverySnapshot {
+            stack_id: stack.id.clone(),
+            services: services_to_restart.clone(),
+        })
+        .await?;
     if !services_to_restart.is_empty()
         && let Some(db) = recovery_db
     {
@@ -254,7 +274,7 @@ pub async fn run_pre_update_backup(
         stop_services_for_backup(runner, &compose_stack, &compose_cfg, &services_to_restart).await
     {
         if let Err(restore_error) = restart_related_services_after_backup(
-            runner,
+            recovery_runner,
             &compose_stack,
             &compose_cfg,
             &services_to_restart,
@@ -265,6 +285,7 @@ pub async fn run_pre_update_backup(
                 "stopping services failed ({error}); restoring services failed ({restore_error})"
             )));
         }
+        recovery_store.clear().await?;
         return Err(error);
     }
     let total_bytes = included.iter().map(|item| item.size_bytes).sum::<u64>();
@@ -293,7 +314,7 @@ pub async fn run_pre_update_backup(
                 .cloned()
                 .collect::<Vec<_>>();
             if let Err(resume_error) = restart_related_services_after_backup(
-                runner,
+                recovery_runner,
                 &compose_stack,
                 &compose_cfg,
                 &services_to_resume,
@@ -301,7 +322,7 @@ pub async fn run_pre_update_backup(
             .await
             {
                 if let Err(restore_error) = restart_related_services_after_backup(
-                    runner,
+                    recovery_runner,
                     &compose_stack,
                     &compose_cfg,
                     &services_to_restart,
@@ -312,12 +333,13 @@ pub async fn run_pre_update_backup(
                         "resuming non-update services failed ({resume_error}); restoring all stopped services failed ({restore_error})"
                     )));
                 }
+                recovery_store.clear().await?;
                 return Err(resume_error.context("resume non-update services after backup"));
             }
         }
         Err(error) => {
             if let Err(restore_error) = restart_related_services_after_backup(
-                runner,
+                recovery_runner,
                 &compose_stack,
                 &compose_cfg,
                 &services_to_restart,
@@ -328,6 +350,7 @@ pub async fn run_pre_update_backup(
                     "backup failed ({error}); restoring previous services failed ({restore_error})"
                 )));
             }
+            recovery_store.clear().await?;
             return Err(error);
         }
     }
@@ -343,7 +366,7 @@ pub async fn run_pre_update_backup(
         Ok(size) => size,
         Err(error) => {
             if let Err(restore_error) = restart_related_services_after_backup(
-                runner,
+                recovery_runner,
                 &compose_stack,
                 &compose_cfg,
                 &services_kept_stopped,
@@ -354,6 +377,7 @@ pub async fn run_pre_update_backup(
                     "reading backup artifact size failed ({error}); restoring services failed ({restore_error})"
                 )));
             }
+            recovery_store.clear().await?;
             return Err(error.context("read backup artifact size"));
         }
     };
@@ -364,6 +388,10 @@ pub async fn run_pre_update_backup(
     ));
     for d in &decisions {
         log_lines.push(format!("backup: target={}", d));
+    }
+
+    if services_kept_stopped.is_empty() {
+        recovery_store.clear().await?;
     }
 
     Ok(BackupRunResult {
@@ -389,6 +417,10 @@ pub async fn recover_interrupted_backups(
     recovered_job_ids: &[String],
 ) -> anyhow::Result<()> {
     for job_id in recovered_job_ids {
+        if state.db.get_update_stop_control(job_id).await?.is_some() {
+            // Controlled update recovery runs only after the API has bound.
+            continue;
+        }
         let logs = state.db.list_job_logs(job_id).await?;
         let checkpoint = logs.iter().rev().find_map(|line| {
             line.msg
@@ -860,6 +892,28 @@ pub async fn restore_services_after_failed_apply(
     restart_related_services_after_backup(runner, &compose_stack, &compose_cfg, services).await
 }
 
+pub async fn restore_backup_recovery_snapshot(
+    runner: &dyn CommandRunner,
+    compose_bin: &str,
+    docker_config_path: Option<&Path>,
+    stack: &StackRecord,
+    snapshot: &BackupRecoverySnapshot,
+) -> anyhow::Result<()> {
+    if snapshot.stack_id != stack.id {
+        return Err(anyhow::anyhow!(
+            "backup recovery snapshot belongs to another stack"
+        ));
+    }
+    restore_services_after_failed_apply(
+        runner,
+        compose_bin,
+        docker_config_path,
+        stack,
+        &snapshot.services,
+    )
+    .await
+}
+
 async fn probe_size_bytes(
     runner: &dyn CommandRunner,
     target: &BackupTarget,
@@ -1144,6 +1198,20 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
 
+    #[derive(Default)]
+    struct FakeRecoveryStore;
+
+    #[async_trait::async_trait]
+    impl BackupRecoveryStore for FakeRecoveryStore {
+        async fn save(&self, _snapshot: &BackupRecoverySnapshot) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn clear(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
     #[derive(Clone, Default)]
     struct FakeRunner {
         sizes: BTreeMap<String, u64>,
@@ -1288,6 +1356,8 @@ mod tests {
         let out = run_pre_update_backup(
             &runner,
             &runner,
+            &runner,
+            &FakeRecoveryStore,
             &settings,
             Path::new(&tmp).join("dockrev.sqlite").as_path(),
             "ghcr.io/ivanli-cn/dockrev:latest",
@@ -1338,6 +1408,8 @@ mod tests {
         let out = run_pre_update_backup(
             &runner,
             &runner,
+            &runner,
+            &FakeRecoveryStore,
             &settings,
             Path::new(&tmp).join("dockrev.sqlite").as_path(),
             "ghcr.io/ivanli-cn/dockrev:latest",

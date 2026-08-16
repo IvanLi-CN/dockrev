@@ -5,6 +5,7 @@ pub(crate) struct DbLoggingRunner {
     pub(crate) inner: Arc<dyn crate::runner::CommandRunner>,
     pub(crate) job_id: String,
     pub(crate) live_log_hub: Arc<crate::job_live_logs::JobLiveLogHub>,
+    pub(crate) stop_signal: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
 #[async_trait::async_trait]
@@ -60,10 +61,20 @@ impl crate::runner::CommandRunner for DbLoggingRunner {
             on_stderr(chunk);
         };
 
-        let result = self
-            .inner
-            .run_stream(spec, timeout, &mut tap_stdout, &mut tap_stderr)
-            .await;
+        let result = if let Some(mut stop_signal) = self.stop_signal.clone() {
+            if *stop_signal.borrow() {
+                Err(crate::update_stop::requested_error())
+            } else {
+                tokio::select! {
+                    result = self.inner.run_stream(spec, timeout, &mut tap_stdout, &mut tap_stderr) => result,
+                    _ = wait_for_update_stop(&mut stop_signal) => Err(crate::update_stop::requested_error()),
+                }
+            }
+        } else {
+            self.inner
+                .run_stream(spec, timeout, &mut tap_stdout, &mut tap_stderr)
+                .await
+        };
         let out = match result {
             Ok(out) => out,
             Err(error) => {
@@ -131,6 +142,14 @@ impl crate::runner::CommandRunner for DbLoggingRunner {
             stdout: captured_stdout,
             stderr: captured_stderr,
         })
+    }
+}
+
+async fn wait_for_update_stop(signal: &mut tokio::sync::watch::Receiver<bool>) {
+    while !*signal.borrow() {
+        if signal.changed().await.is_err() {
+            std::future::pending::<()>().await;
+        }
     }
 }
 
@@ -358,6 +377,7 @@ mod tests {
             inner: Arc::new(StaticRunner),
             job_id: "job-1".to_string(),
             live_log_hub: hub,
+            stop_signal: None,
         };
 
         runner
@@ -424,6 +444,7 @@ mod tests {
             inner: Arc::new(ComposePullProgressRunner),
             job_id: "job-pull".to_string(),
             live_log_hub: Arc::new(crate::job_live_logs::JobLiveLogHub::new()),
+            stop_signal: None,
         };
 
         runner

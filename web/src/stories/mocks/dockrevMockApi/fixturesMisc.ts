@@ -582,6 +582,16 @@ export function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fi
   if (scenario === 'queue-health-rollback') return buildQueueHealthRollback()
   if (scenario === 'queue-legacy-progress') return buildQueueLegacyProgress()
   if (scenario === 'queue-update-layer-progress') return buildQueueUpdateLayerProgress()
+  if (scenario === 'queue-update-cancelled') {
+    const fixture = buildQueueUpdateLayerProgress()
+    const job = fixture.jobById['job-running']
+    if (job) {
+      job.status = 'cancelled'
+      job.finishedAt = nowIso()
+      job.stop = { canStop: false, state: 'requested', requestedAt: nowIso(), requestedBy: 'ivan' }
+    }
+    return fixture
+  }
   if (scenario === 'queue-update-indeterminate') return buildQueueUpdateIndeterminate()
   if (scenario === 'queue-update-download-determinate') return buildQueueUpdateDownloadDeterminate()
   if (scenario === 'queue-long-logs') return buildQueueLongLogs()

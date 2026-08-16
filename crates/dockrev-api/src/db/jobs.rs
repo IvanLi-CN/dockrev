@@ -677,7 +677,7 @@ DELETE FROM jobs
 WHERE id IN (
   SELECT id
   FROM jobs
-  WHERE status IN ('success', 'failed', 'rolled_back')
+  WHERE status IN ('success', 'failed', 'rolled_back', 'cancelled')
     AND COALESCE(finished_at, created_at) < ?1
   ORDER BY COALESCE(finished_at, created_at) ASC, id ASC
   LIMIT ?2
@@ -1129,6 +1129,13 @@ LIMIT 1
 SELECT id, status, summary_json
 FROM jobs
 WHERE finished_at IS NULL
+  AND NOT EXISTS (
+    SELECT 1
+    FROM update_job_stop_controls controls
+    WHERE controls.job_id = jobs.id
+      AND controls.recovery_snapshot_json IS NOT NULL
+      AND controls.recovery_attempted_at IS NULL
+  )
 ORDER BY created_at DESC
 LIMIT 2000
 "#,
@@ -1168,7 +1175,10 @@ VALUES (?1, ?2, 'warn', ?3)
                     ],
                 )?;
 
-                let is_terminal = matches!(status.as_str(), "success" | "failed" | "rolled_back");
+                let is_terminal = matches!(
+                    status.as_str(),
+                    "success" | "failed" | "rolled_back" | "cancelled"
+                );
                 if is_terminal {
                     tx.execute(
                         r#"
@@ -1272,7 +1282,10 @@ VALUES (?1, ?2, 'warn', ?3)
                 );
             }
 
-            let is_terminal = matches!(status.as_str(), "success" | "failed" | "rolled_back");
+            let is_terminal = matches!(
+                status.as_str(),
+                "success" | "failed" | "rolled_back" | "cancelled"
+            );
             if is_terminal {
                 conn.execute(
                     r#"

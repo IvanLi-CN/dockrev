@@ -142,10 +142,21 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     return json({ jobs, nextCursor })
   }
 
+  if (method === 'POST' && urlPath.startsWith('/api/jobs/') && urlPath.endsWith('/stop')) {
+    const id = decodeURIComponent(urlPath.split('/').slice(3, -1).join('/'))
+    const job = f.jobById[id]
+    if (!job || !job.stop?.canStop) return json({ error: 'conflict' }, { status: 409 })
+    job.stop = { canStop: false, state: 'requested', requestedAt: nowIso(), requestedBy: 'ivan' }
+    return json({ jobId: id, state: 'requested' }, { status: 202 })
+  }
+
   if (method === 'GET' && urlPath.startsWith('/api/jobs/')) {
     const id = decodeURIComponent(urlPath.split('/').slice(3).join('/'))
     const job = f.jobById[id]
     if (!job) return json({ error: 'not found' }, { status: 404 })
+    if (job.type === 'update' && job.status === 'running' && !job.stop) {
+      job.stop = { canStop: true, state: 'available' }
+    }
     return json({ job })
   }
 
