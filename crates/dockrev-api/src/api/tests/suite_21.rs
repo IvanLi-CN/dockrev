@@ -57,7 +57,6 @@ services:
         ])
         .await
         .unwrap();
-
     let resp = app
         .clone()
         .oneshot(
@@ -212,7 +211,6 @@ services:
         ])
         .await
         .unwrap();
-
     let resp = app
         .clone()
         .oneshot(
@@ -766,6 +764,23 @@ services:
         ])
         .await
         .unwrap();
+    state
+        .metrics
+        .insert_samples(&[crate::db::ServiceResourceSampleInput {
+            service_id: "orphaned-service".to_string(),
+            sampled_at: test_offset_from_now_rfc3339(time::Duration::seconds(-10)),
+            cpu_percent: 99.0,
+            mem_used_bytes: Some(100),
+            mem_limit_bytes: Some(200),
+            net_rx_bytes: Some(1_000),
+            net_tx_bytes: Some(2_000),
+            block_read_bytes: None,
+            block_write_bytes: None,
+            pids: Some(2),
+            container_count: 1,
+        }])
+        .await
+        .unwrap();
 
     let resp = app
         .clone()
@@ -789,6 +804,9 @@ services:
         .iter()
         .find(|row| row["serviceId"].as_str() == Some(api_service.id.as_str()))
         .unwrap();
+    assert!(summary_services
+        .iter()
+        .all(|row| row["serviceId"].as_str() != Some("orphaned-service")));
     assert_eq!(summary_api["sampleCount"].as_u64(), Some(2));
     assert_eq!(payload["items"].as_array().unwrap().len(), 1);
     let item = &payload["items"].as_array().unwrap()[0];

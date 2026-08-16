@@ -1,16 +1,15 @@
 use std::collections::BTreeSet;
 
-use super::SCHEMA;
-
 pub(super) fn ensure_sample_schema(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     let mut stmt = conn.prepare("PRAGMA table_info(service_resource_samples)")?;
     let columns = stmt
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<Result<BTreeSet<_>, _>>()?;
     if !columns.contains("legacy_id") {
-        conn.execute_batch("DROP TABLE service_resource_samples;")?;
-        conn.execute_batch(SCHEMA)?;
-        return Ok(());
+        conn.execute(
+            "ALTER TABLE service_resource_samples ADD COLUMN legacy_id INTEGER",
+            [],
+        )?;
     }
     if !columns.contains("legacy_signature") {
         conn.execute(
@@ -18,6 +17,10 @@ pub(super) fn ensure_sample_schema(conn: &mut rusqlite::Connection) -> anyhow::R
             [],
         )?;
     }
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_metrics_samples_legacy_id ON service_resource_samples(legacy_id)",
+        [],
+    )?;
     Ok(())
 }
 

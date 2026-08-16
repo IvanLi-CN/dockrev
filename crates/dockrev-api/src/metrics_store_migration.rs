@@ -34,9 +34,11 @@ impl MetricsStore {
         });
         let mut retained_pruned_legacy_ids = BTreeSet::new();
         let mut source_matches_manifest = false;
+        let source = db.legacy_metrics_integrity().await?;
+        let fingerprint = db.legacy_metric_fingerprint().await?;
         if migration_complete && let Some(manifest) = self.migration_manifest().await? {
-            let fingerprint = db.legacy_metric_fingerprint().await?;
-            source_matches_manifest = manifest.source_sample_count == fingerprint.sample_count
+            source_matches_manifest = manifest.source_sample_count == source.sample_count
+                && manifest.source_sample_hash == source.sample_hash
                 && manifest.source_max_id == Some(fingerprint.max_id);
             if source_matches_manifest {
                 let target_matches_source_count =
@@ -53,16 +55,14 @@ impl MetricsStore {
                         .legacy_sample_coverage_is_complete(fingerprint.sample_count)
                         .await?
                 {
-                    self.rebuild_latest_samples().await?;
-                    self.rebuild_rollups().await?;
+                    self.reconcile_latest_samples_from_raw().await?;
+                    self.reconcile_rollups_from_raw().await?;
                     return Ok(());
                 }
                 retained_pruned_legacy_ids = self.pruned_legacy_ids().await?;
             }
         }
 
-        let source = db.legacy_metrics_integrity().await?;
-        let fingerprint = db.legacy_metric_fingerprint().await?;
         let manifest = MigrationManifest {
             source_sample_count: source.sample_count,
             source_sample_hash: source.sample_hash.clone(),
@@ -90,7 +90,7 @@ impl MetricsStore {
                 .collect();
             self.insert_legacy_samples(batch).await?;
         }
-        self.rebuild_latest_samples().await?;
+        self.reconcile_latest_samples_from_raw().await?;
 
         let target = self.migrated_legacy_integrity().await?;
         let target_is_verified = if retained_pruned_legacy_ids.is_empty() {
@@ -107,7 +107,7 @@ impl MetricsStore {
                 .await?;
             anyhow::bail!(message);
         }
-        self.rebuild_rollups().await?;
+        self.reconcile_rollups_from_raw().await?;
         self.set_migration_manifest(&manifest).await?;
         db.set_metrics_migration_state("complete", Some(&self.target_identity), None)
             .await?;

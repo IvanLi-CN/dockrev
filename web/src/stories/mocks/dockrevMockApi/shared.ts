@@ -98,6 +98,7 @@ export type DockrevApiScenario =
   | 'overview-jobs-card-heavy-inflight'
   | 'overview-jobs-card-running-progress-modes'
   | 'overview-jobs-card-terminal-only'
+  | 'overview-jobs-card-global-labels'
   | 'overview-jobs-card-exact-five-non-terminal'
   | 'queue-mixed'
   | 'queue-progress-smoothing'

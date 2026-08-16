@@ -7,12 +7,12 @@ const STATUS_SUPERSEDED: &str = "superseded";
 const ACTIVE_INDEX_NAME: &str = "idx_new_version_notifications_active_service_digest";
 const TARGET_BATCH_SIZE: usize = 200;
 
-pub(super) type NotificationTargetKey = (String, String, String, String);
+pub(crate) type NotificationTargetKey = (String, String, String, String);
 pub(super) type StableCandidateDisplayTags = std::collections::BTreeSet<String>;
-pub(super) type StableCandidateDisplayTagsByNotificationTarget =
+pub(crate) type StableCandidateDisplayTagsByNotificationTarget =
     std::collections::HashMap<NotificationTargetKey, StableCandidateDisplayTags>;
 
-pub(super) fn list_stable_candidate_display_tags_for_notification_targets_conn(
+pub(crate) fn list_stable_candidate_display_tags_for_notification_targets_conn(
     conn: &rusqlite::Connection,
     targets: &[NotificationTargetKey],
 ) -> rusqlite::Result<StableCandidateDisplayTagsByNotificationTarget> {
@@ -225,6 +225,7 @@ WHERE service_id = ?1
 }
 
 impl Db {
+    #[allow(dead_code)] // API hot paths use the query-only OperationalReadModel.
     pub async fn list_stable_candidate_display_tags_for_notification_targets(
         &self,
         targets: &[NotificationTargetKey],

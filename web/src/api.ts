@@ -712,21 +712,11 @@ export async function listCompactJobsPage(input: ListJobsInput = {}): Promise<Li
 }
 
 export async function listCompactJobs(input: ListJobsInput = {}): Promise<CompactJobListItem[]> {
-  const jobs: CompactJobListItem[] = []
-  let cursor = input.cursor ?? null
-
-  while (jobs.length < 2000) {
-    const page = await listCompactJobsPage({
-      ...input,
-      cursor,
-      limit: Math.min(input.limit ?? 200, 200),
-    })
-    jobs.push(...page.jobs)
-    if (!page.nextCursor) break
-    cursor = page.nextCursor
-  }
-
-  return jobs.slice(0, 2000)
+  const page = await listCompactJobsPage({
+    ...input,
+    limit: Math.min(input.limit ?? 200, 200),
+  })
+  return page.jobs
 }
 
 export async function getJob(jobId: string): Promise<JobDetail> {

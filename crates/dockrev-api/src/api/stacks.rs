@@ -368,7 +368,7 @@ pub(super) async fn resolve_candidate_resolved_tag(
         return Ok(resolved);
     };
     let notification_tags = state
-        .db
+        .operational_reads
         .list_stable_candidate_display_tags_for_notification_targets(&[(
             service_id.to_string(),
             notification_image_ref,
@@ -394,7 +394,7 @@ pub(super) async fn resolve_discovery_stable_tags_by_provenance(
 
     let notification_targets = crate::db::new_version_discovery_notification_targets(rows);
     let notification_tags = state
-        .db
+        .operational_reads
         .list_stable_candidate_display_tags_for_notification_targets(&notification_targets)
         .await
         .map_err(map_internal)?;
@@ -420,7 +420,7 @@ pub(super) async fn resolve_discovery_stable_tags_by_provenance(
         .collect::<Vec<_>>();
 
     let snapshot_rows = state
-        .db
+        .operational_reads
         .list_image_digest_tags_snapshots_for_targets(&host_platform, &snapshot_targets)
         .await
         .map_err(map_internal)?;
@@ -506,7 +506,7 @@ async fn apply_candidate_notification_fallbacks_to_services(
     }
 
     let notification_tags = state
-        .db
+        .operational_reads
         .list_stable_candidate_display_tags_for_notification_targets(&targets)
         .await
         .map_err(map_internal)?;
@@ -590,7 +590,7 @@ pub(super) async fn enrich_services_with_version_inference(
         .into_iter()
         .collect::<Vec<_>>();
     let snapshot_rows = state
-        .db
+        .operational_reads
         .list_image_digest_tags_snapshots_for_targets(&host_platform, &snapshot_targets)
         .await
         .map_err(map_internal)?;
@@ -835,7 +835,7 @@ pub(super) async fn enrich_services_with_new_version_discovery_counts(
     }
 
     let discovery_rows = state
-        .db
+        .operational_reads
         .list_new_version_discoveries_for_services(&contexts.keys().cloned().collect::<Vec<_>>())
         .await
         .map_err(map_internal)?;

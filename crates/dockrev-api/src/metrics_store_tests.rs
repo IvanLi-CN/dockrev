@@ -332,6 +332,31 @@ async fn metrics_store_migration_recovers_same_cardinality_target_corruption() {
 }
 
 #[tokio::test]
+async fn metrics_store_migration_reimports_same_cardinality_source_correction() {
+    let main_path = temp_path("metrics-migration-source-content-correction-main");
+    let metrics_path = temp_path("metrics-migration-source-content-correction-target");
+    let db = Db::open(&main_path).await.unwrap();
+    let sampled_at = format_time(time::OffsetDateTime::now_utc()).unwrap();
+    db.insert_legacy_metric_fixture(&[sample("svc-a", &sampled_at, 10.0, 1_000)])
+        .await
+        .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+
+    db.update_legacy_metric_fixture_cpu("svc-a", 25.0)
+        .await
+        .unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+
+    let history = metrics
+        .history_since("svc-a", "1970-01-01T00:00:00Z", None)
+        .await
+        .unwrap();
+    assert_eq!(history.samples.len(), 1);
+    assert!((history.samples[0].cpu_percent - 25.0).abs() < f64::EPSILON);
+}
+
+#[tokio::test]
 async fn metrics_store_migration_recovers_retained_raw_corruption_after_gc() {
     let main_path = temp_path("metrics-migration-pruned-content-damage-main");
     let metrics_path = temp_path("metrics-migration-pruned-content-damage-target");
@@ -440,6 +465,114 @@ async fn metrics_store_migration_does_not_rehydrate_gc_pruned_orphans() {
             .is_empty()
     );
     assert!(metrics.list_latest_samples().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn metrics_store_migration_preserves_long_rollups_and_stale_latest_after_gc() {
+    let main_path = temp_path("metrics-migration-retained-read-models-main");
+    let metrics_path = temp_path("metrics-migration-retained-read-models-target");
+    let db = Db::open(&main_path).await.unwrap();
+    let current_at = format_time(time::OffsetDateTime::now_utc()).unwrap();
+    db.insert_legacy_metric_fixture(&[sample("svc-main", &current_at, 10.0, 1_000)])
+        .await
+        .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+
+    let old_at = format_time(time::OffsetDateTime::now_utc() - time::Duration::days(8)).unwrap();
+    metrics
+        .insert_samples(&[sample("svc-stale", &old_at, 20.0, 2_000)])
+        .await
+        .unwrap();
+    metrics
+        .gc(&BTreeSet::from([
+            "svc-main".to_string(),
+            "svc-stale".to_string(),
+        ]))
+        .await
+        .unwrap();
+    assert!(
+        metrics
+            .history_since("svc-stale", "1970-01-01T00:00:00Z", None)
+            .await
+            .unwrap()
+            .samples
+            .is_empty()
+    );
+    assert_eq!(
+        metrics
+            .history_since(
+                "svc-stale",
+                "1970-01-01T00:00:00Z",
+                Some(FIVE_MINUTE_RESOLUTION_SECONDS),
+            )
+            .await
+            .unwrap()
+            .samples
+            .len(),
+        1
+    );
+
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    assert!(
+        metrics
+            .list_latest_samples()
+            .await
+            .unwrap()
+            .iter()
+            .any(|row| row.service_id == "svc-stale")
+    );
+    assert_eq!(
+        metrics
+            .history_since(
+                "svc-stale",
+                "1970-01-01T00:00:00Z",
+                Some(FIVE_MINUTE_RESOLUTION_SECONDS),
+            )
+            .await
+            .unwrap()
+            .samples
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn metrics_store_open_preserves_pre_legacy_target_samples() {
+    let metrics_path = temp_path("metrics-pre-legacy-schema");
+    let conn = rusqlite::Connection::open(&metrics_path).unwrap();
+    conn.execute_batch(
+        r#"
+CREATE TABLE service_resource_samples (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  service_id TEXT NOT NULL,
+  sampled_at TEXT NOT NULL,
+  cpu_percent REAL NOT NULL,
+  mem_used_bytes INTEGER,
+  mem_limit_bytes INTEGER,
+  net_rx_bytes INTEGER,
+  net_tx_bytes INTEGER,
+  block_read_bytes INTEGER,
+  block_write_bytes INTEGER,
+  pids INTEGER,
+  container_count INTEGER NOT NULL DEFAULT 1
+);
+INSERT INTO service_resource_samples (
+  service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes,
+  net_rx_bytes, net_tx_bytes, block_read_bytes, block_write_bytes, pids, container_count
+) VALUES ('svc-a', '2026-08-16T13:10:00Z', 10.0, 100, 200, 1000, 500, 250, 125, 3, 1);
+"#,
+    )
+    .unwrap();
+    drop(conn);
+
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    let history = metrics
+        .history_since("svc-a", "1970-01-01T00:00:00Z", None)
+        .await
+        .unwrap();
+    assert_eq!(history.samples.len(), 1);
+    assert!((history.samples[0].cpu_percent - 10.0).abs() < f64::EPSILON);
 }
 
 #[tokio::test]

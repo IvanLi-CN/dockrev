@@ -321,6 +321,23 @@ impl Db {
         .await
     }
 
+    #[cfg(test)]
+    pub async fn update_legacy_metric_fixture_cpu(
+        &self,
+        service_id: &str,
+        cpu_percent: f64,
+    ) -> anyhow::Result<()> {
+        let service_id = service_id.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                "UPDATE service_resource_samples SET cpu_percent = ?2 WHERE service_id = ?1",
+                params![service_id, cpu_percent],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
     pub async fn list_service_resource_targets(
         &self,
     ) -> anyhow::Result<Vec<ServiceResourceTarget>> {

@@ -8,7 +8,7 @@ import {
 ApiError,
   getStack,
 listDiscoveryProjects,
-listCompactJobs,
+listCompactJobsPage,
 listStacks,
 triggerCheck,
 triggerDiscoveryScan,
@@ -155,7 +155,7 @@ export function useOverviewPageState(props: {
     setError(null)
     try {
       const stacksPromise = listStacks()
-      const jobsPromise = listCompactJobs()
+      const jobsPromise = listCompactJobsPage({ limit: 200 })
       const projectsPromise = listDiscoveryProjects('exclude')
 
       const [stacksRes, jobsRes, projectsRes] = await Promise.allSettled([stacksPromise, jobsPromise, projectsPromise])
@@ -169,7 +169,7 @@ export function useOverviewPageState(props: {
 
       if (jobsRes.status === 'fulfilled' && requestId >= latestAppliedJobsRequestIdRef.current) {
         latestAppliedJobsRequestIdRef.current = requestId
-        setJobs(jobsRes.value)
+        setJobs(jobsRes.value.jobs)
       }
       if (projectsRes.status === 'fulfilled' && requestId >= latestAppliedProjectsRequestIdRef.current) {
         latestAppliedProjectsRequestIdRef.current = requestId
@@ -348,7 +348,7 @@ export function useOverviewPageState(props: {
     const sync = async () => {
       if (refreshAll) return requestRefresh()
       const tasks: Promise<unknown>[] = []
-      if (jobsChanged) tasks.push(listCompactJobs().then(setJobs))
+      if (jobsChanged) tasks.push(listCompactJobsPage({ limit: 200 }).then((page) => setJobs(page.jobs)))
       if (discoveryChanged) tasks.push(listDiscoveryProjects('exclude').then(setDiscoveredProjects))
       if (stackIds.size > 0) {
         const ids = [...stackIds]

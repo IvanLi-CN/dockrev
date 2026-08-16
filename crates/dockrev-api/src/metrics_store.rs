@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     path::Path,
     sync::{
         Arc,
@@ -400,10 +400,11 @@ impl MetricsStore {
         .await
     }
 
-    async fn rebuild_latest_samples(&self) -> anyhow::Result<()> {
+    /// Reconcile only services that still have raw samples. `latest` intentionally outlives raw
+    /// retention, so clearing the table here would make a restart erase a valid stale summary.
+    async fn reconcile_latest_samples_from_raw(&self) -> anyhow::Result<()> {
         self.writer_call(|conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            tx.execute("DELETE FROM service_resource_latest_samples", [])?;
             tx.execute_batch(
                 r#"INSERT INTO service_resource_latest_samples (
                     service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes,
@@ -441,7 +442,22 @@ impl MetricsStore {
                     WHERE candidate.service_id = latest.service_id
                     ORDER BY candidate.sampled_at DESC, candidate.id DESC
                     LIMIT 1
-                );"#,
+                )
+                ON CONFLICT(service_id) DO UPDATE SET
+                    sampled_at=excluded.sampled_at,
+                    cpu_percent=excluded.cpu_percent,
+                    mem_used_bytes=excluded.mem_used_bytes,
+                    mem_limit_bytes=excluded.mem_limit_bytes,
+                    net_rx_bytes=excluded.net_rx_bytes,
+                    net_tx_bytes=excluded.net_tx_bytes,
+                    block_read_bytes=excluded.block_read_bytes,
+                    block_write_bytes=excluded.block_write_bytes,
+                    pids=excluded.pids,
+                    container_count=excluded.container_count,
+                    prev_sampled_at=excluded.prev_sampled_at,
+                    prev_net_rx_bytes=excluded.prev_net_rx_bytes,
+                    prev_net_tx_bytes=excluded.prev_net_tx_bytes
+                WHERE excluded.sampled_at >= service_resource_latest_samples.sampled_at;"#,
             )?;
             tx.commit()?;
             Ok(())
@@ -626,44 +642,31 @@ impl MetricsStore {
         self.reader_call(metrics_integrity_from_connection).await
     }
 
-    async fn rebuild_rollups(&self) -> anyhow::Result<()> {
+    /// Reconcile buckets that can still be reconstructed from raw samples. Older rollups have a
+    /// longer retention window than raw data and must survive migration verification on restart.
+    async fn reconcile_rollups_from_raw(&self) -> anyhow::Result<()> {
         self.writer_call(|conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            tx.execute("DELETE FROM service_resource_rollups", [])?;
-            let service_ids = {
+            let buckets = {
                 let mut stmt = tx.prepare(
-                    "SELECT DISTINCT service_id FROM service_resource_samples ORDER BY service_id ASC",
+                    "SELECT service_id, sampled_at FROM service_resource_samples ORDER BY service_id ASC, sampled_at ASC, id ASC",
                 )?;
-                stmt.query_map([], |row| row.get::<_, String>(0))?
-                    .collect::<Result<Vec<_>, _>>()?
-            };
-            for service_id in service_ids {
-                let mut buckets = BTreeMap::<(u32, i64), RollupAccumulator>::new();
-                let mut previous = None;
-                {
-                    let mut stmt = tx.prepare(
-                        r#"SELECT sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes, net_rx_bytes,
-                            net_tx_bytes, block_read_bytes, block_write_bytes, pids, container_count
-                           FROM service_resource_samples WHERE service_id = ?1
-                           ORDER BY sampled_at ASC, id ASC"#,
-                    )?;
-                    let mut rows = stmt.query(params![service_id])?;
-                    while let Some(row) = rows.next()? {
-                        let sample = map_sample_row(row)?;
-                        let epoch = parse_epoch(&sample.sampled_at)?;
-                        for resolution in [MINUTE_RESOLUTION_SECONDS, FIVE_MINUTE_RESOLUTION_SECONDS] {
-                            let start = epoch - epoch.rem_euclid(resolution as i64);
-                            buckets
-                                .entry((resolution, start))
-                                .or_insert_with(|| RollupAccumulator::new(start, resolution))
-                                .push(&sample, previous.as_ref());
-                        }
-                        previous = Some(sample);
+                let rows = stmt.query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?;
+                let mut buckets = BTreeSet::new();
+                for row in rows {
+                    let (service_id, sampled_at) = row?;
+                    let epoch = parse_epoch(&sampled_at)?;
+                    for resolution in [MINUTE_RESOLUTION_SECONDS, FIVE_MINUTE_RESOLUTION_SECONDS] {
+                        let start = epoch - epoch.rem_euclid(resolution as i64);
+                        buckets.insert((service_id.clone(), resolution, start));
                     }
                 }
-                for ((resolution, _), bucket) in buckets {
-                    insert_rollup_tx(&tx, &service_id, resolution, &bucket)?;
-                }
+                buckets
+            };
+            for (service_id, resolution, bucket_start) in buckets {
+                rebuild_rollup_tx(&tx, &service_id, resolution, bucket_start)?;
             }
             tx.commit()?;
             Ok(())

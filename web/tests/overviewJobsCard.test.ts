@@ -153,6 +153,16 @@ describe('selectOverviewJobsForCard', () => {
 })
 
 describe('toOverviewJobCardItem progress visual mapping', () => {
+  test('keeps the localized label when compact fallback is the raw job type', () => {
+    const job = {
+      ...makeJob({ id: 'global-discovery', type: 'discovery', scope: 'all', status: 'success', createdAt: '2026-03-03T10:00:00.000Z' }),
+      displayLabel: 'discovery',
+      targetVersion: null,
+    }
+
+    expect(toOverviewJobCardItem(job).primaryLabel).toBe('发现扫描')
+  })
+
   test('maps running jobs with determinate progress', () => {
     const job = makeJob({
       id: 'running-determinate',

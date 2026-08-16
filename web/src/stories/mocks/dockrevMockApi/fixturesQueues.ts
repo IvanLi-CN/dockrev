@@ -378,6 +378,24 @@ export function buildOverviewJobsCardTerminalOnly(): Fixture {
   return f
 }
 
+export function buildOverviewJobsCardGlobalLabels(): Fixture {
+  const f = buildOverviewJobsCardTerminalOnly()
+  const original = f.jobs[0]
+  if (!original) return f
+
+  const discoveryJob = {
+    ...original,
+    type: 'discovery',
+    scope: 'all',
+    stackId: null,
+    serviceId: null,
+  }
+  f.jobs = [discoveryJob, ...f.jobs.slice(1)]
+  const detail = f.jobById[discoveryJob.id]
+  if (detail) f.jobById[discoveryJob.id] = { ...detail, ...discoveryJob }
+  return f
+}
+
 export function buildOverviewJobsCardExactFiveNonTerminal(): Fixture {
   const f = buildDashboardDemo()
 

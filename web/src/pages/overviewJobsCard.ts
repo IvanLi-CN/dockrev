@@ -76,13 +76,14 @@ export function selectOverviewJobsForCard(jobs: CompactJobListItem[], options?: 
 export function toOverviewJobCardItem(job: CompactJobListItem): OverviewJobCardItem {
   const readable = formatJobReadableDisplay(job.type, job.scope, null)
   const visual = getOverviewJobProgressVisual(job)
+  const displayLabel = job.displayLabel?.trim()
   return {
     jobId: job.id,
     status: job.status,
     createdAt: job.createdAt,
     createdBy: job.createdBy,
     reason: job.reason,
-    primaryLabel: job.displayLabel || readable.primaryLabel,
+    primaryLabel: displayLabel && displayLabel !== job.type ? displayLabel : readable.primaryLabel,
     scopeTag: readable.scopeTag,
     typeTone: readable.typeTone,
     progressMode: visual.progressMode,

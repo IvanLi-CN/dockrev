@@ -9,7 +9,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { ApiError, getJob, listCompactJobs, type CompactJobListItem } from './api'
+import { ApiError, getJob, listCompactJobsPage, type CompactJobListItem } from './api'
 import { useManagementEventBatch, type ManagementEvent } from './managementEvents'
 
 export const UPDATE_JOB_SETTLED_EVENT = 'dockrev:update-job-settled'
@@ -321,33 +321,36 @@ function useProvideUpdateActionTracker(): UpdateActionTracker {
     if (!resyncRequired) return
     const resyncTrackedJobs = async (): Promise<void> => {
       const requestRevision = activeRevisionRef.current
+      const tracked = Array.from(activeByTargetRef.current.entries())
       try {
-        const jobs = await listCompactJobs()
+        const snapshots = await Promise.all(
+          tracked.map(async ([target, trackedJob]) => {
+            try {
+              return { target, jobId: trackedJob.jobId, job: await getJob(trackedJob.jobId) }
+            } catch (error) {
+              return { target, jobId: trackedJob.jobId, error }
+            }
+          }),
+        )
         if (unmountedRef.current) return
         if (!isUpdateJobSnapshotCurrent(requestRevision, activeRevisionRef.current)) {
           void resyncTrackedJobs()
           return
         }
-        const reconciliation = reconcileTrackedUpdateJobs(activeByTargetRef.current.entries(), jobs)
-        for (const job of reconciliation.active) {
-          storeTrackedJob(job.target, job.jobId, job.status)
-        }
-        for (const { target, job } of reconciliation.settled) {
-          publishUpdateJobSettled(toUpdateJobSettledDetail(target, job))
-          clearRunningJob(target, job.id)
-        }
-        for (const { target, jobId } of reconciliation.unresolved) {
-          void getJob(jobId)
-            .then((job) => {
-              if (unmountedRef.current || isUpdateJobActiveStatus(job.status)) return
-              publishUpdateJobSettled(toUpdateJobSettledDetail(target, job))
-              clearRunningJob(target, jobId)
-            })
-            .catch((error: unknown) => {
-              if (!(error instanceof ApiError) || error.status !== 404) return
-              publishUpdateJobSettled(toMissingUpdateJobSettledDetail(target, jobId))
-              clearRunningJob(target, jobId)
-            })
+        for (const snapshot of snapshots) {
+          if ('error' in snapshot) {
+            if (snapshot.error instanceof ApiError && snapshot.error.status === 404) {
+              publishUpdateJobSettled(toMissingUpdateJobSettledDetail(snapshot.target, snapshot.jobId))
+              clearRunningJob(snapshot.target, snapshot.jobId)
+            }
+            continue
+          }
+          if (isUpdateJobActiveStatus(snapshot.job.status)) {
+            storeTrackedJob(snapshot.target, snapshot.job.id, snapshot.job.status)
+            continue
+          }
+          publishUpdateJobSettled(toUpdateJobSettledDetail(snapshot.target, snapshot.job))
+          clearRunningJob(snapshot.target, snapshot.job.id)
         }
       } catch {
         // A later management event or reconnect remains the recovery path.
@@ -362,7 +365,7 @@ function useProvideUpdateActionTracker(): UpdateActionTracker {
     const hydrateActiveJobs = async (): Promise<void> => {
       try {
         const requestRevision = activeRevisionRef.current
-        const jobs = await listCompactJobs()
+        const { jobs } = await listCompactJobsPage({ limit: 200 })
         if (cancelled || unmountedRef.current) return
         if (!isUpdateJobSnapshotCurrent(requestRevision, activeRevisionRef.current)) {
           void hydrateActiveJobs()
