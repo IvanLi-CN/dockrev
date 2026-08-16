@@ -185,13 +185,30 @@ PR: include
   viewport_strategy: `storybook-viewport`
   sensitive_exclusion: `N/A`
   submission_gate: `owner-approved`
+  evidence_binding_sha: `1ba4e4bdf014f19b2421180f8004c44687b6b352`
   story_id_or_title: `Components/ServiceResourcePanel/WindowSwitchContract`
-  state: `interactive shared window contract`
-  evidence_note: 固定 1280x720 浏览器视口。资源监控工具栏直接展示 `3m / 1h / 24h` 三个共享时间窗口按钮，并通过 Storybook play 覆盖切换到 `24h` 与 `3m`，用于锁定窗口 contract 不回退。
+  state: `30d aggregated CPU history`
+  evidence_note: 固定 1280x720 浏览器视口。资源监控工具栏展示 `3m / 1h / 24h / 7d / 30d`，其中 `30d` 已选中。8,641 个五分钟聚合桶保留在响应中，图表渲染限为 480 个均值点，最近桶仍保留峰值提示。
 
 PR: include
 
 ![服务资源监控时间窗口 Contract](./assets/service-resource-window-contract.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `375x900`
+  viewport_strategy: `storybook-viewport`
+  sensitive_exclusion: `N/A`
+  submission_gate: `owner-approved`
+  evidence_binding_sha: `1ba4e4bdf014f19b2421180f8004c44687b6b352`
+  story_id_or_title: `Components/ServiceResourcePanel/WindowSwitchContract`
+  state: `30d aggregate mobile toolbar`
+  evidence_note: 固定 375x900 浏览器视口。时间范围控件在移动端换行，`3m / 1h / 24h / 7d / 30d` 均可见，`30d` 选中后标题和聚合历史图表不溢出视口。
+
+PR: include
+
+![服务资源监控时间窗口 Contract 移动端](./assets/service-resource-window-contract-mobile.png)
 
 ## 变更记录（Change log）
 
