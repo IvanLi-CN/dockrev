@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react'
 import type { ReactNode } from 'react'
 import { JobDetailPage } from '../../pages/JobDetailPage'
 import { PageHarness } from '../mocks/PageHarness'
+import { RUNNING_JOB_ID } from '../mocks/dockrevMockApi/fixturesQueues'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
 import { expectNearlyEqual, expectStory, findButton, waitForCondition } from './storyAssertions'
 
@@ -219,11 +220,11 @@ export const UpdateLayerProgress: Story = {
   render: () => {
     return renderJobDetailSurface(
       <PageHarness
-        route={{ name: 'job', jobId: 'job-running' }}
+        route={{ name: 'job', jobId: RUNNING_JOB_ID }}
         title="任务详情"
         pageSubtitle="运行中 update 缺少总字节但有 layers 证据时应显示保守进度"
       >
-        {({ onTopActions }) => <JobDetailPage jobId="job-running" onTopActions={onTopActions} />}
+        {({ onTopActions }) => <JobDetailPage jobId={RUNNING_JOB_ID} onTopActions={onTopActions} />}
       </PageHarness>
     )
   },
@@ -253,23 +254,27 @@ export const UpdateLayerProgress: Story = {
 export const UpdateStopAvailable: Story = {
   parameters: { dockrevApiScenario: 'queue-update-layer-progress' },
   render: () => renderJobDetailSurface(
-    <PageHarness route={{ name: 'job', jobId: 'job-running' }} title="任务详情" pageSubtitle="更新实际应用前可立即停止">
-      {({ onTopActions }) => <JobDetailPage jobId="job-running" onTopActions={onTopActions} />}
+    <PageHarness route={{ name: 'job', jobId: RUNNING_JOB_ID }} title="任务详情" pageSubtitle="更新实际应用前可立即停止">
+      {({ onTopActions }) => <JobDetailPage jobId={RUNNING_JOB_ID} onTopActions={onTopActions} />}
     </PageHarness>,
   ),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => Boolean(canvasElement.querySelector('[aria-label="停止更新"]')))
     const stop = canvasElement.querySelector<HTMLElement>('[aria-label="停止更新"]')
-    stop?.click()
-    await waitForCondition(() => canvasElement.textContent?.includes('正在停止') === true)
+    expectStory(stop, 'stop update button should be visible before apply')
+    stop.click()
+    await waitForCondition(() => {
+      const requested = canvasElement.querySelector<HTMLButtonElement>('[aria-label="正在停止"]')
+      return requested?.disabled === true
+    })
   },
 }
 
 export const UpdateStopAvailableEvidence: Story = {
   parameters: { dockrevApiScenario: 'queue-update-layer-progress' },
   render: () => renderJobDetailSurface(
-    <PageHarness route={{ name: 'job', jobId: 'job-running' }} title="任务详情" pageSubtitle="更新实际应用前可立即停止">
-      {({ onTopActions }) => <JobDetailPage jobId="job-running" onTopActions={onTopActions} />}
+    <PageHarness route={{ name: 'job', jobId: RUNNING_JOB_ID }} title="任务详情" pageSubtitle="更新实际应用前可立即停止">
+      {({ onTopActions }) => <JobDetailPage jobId={RUNNING_JOB_ID} onTopActions={onTopActions} />}
     </PageHarness>,
   ),
 }
@@ -277,12 +282,15 @@ export const UpdateStopAvailableEvidence: Story = {
 export const UpdateStopCancelled: Story = {
   parameters: { dockrevApiScenario: 'queue-update-cancelled' },
   render: () => renderJobDetailSurface(
-    <PageHarness route={{ name: 'job', jobId: 'job-running' }} title="任务详情" pageSubtitle="停止完成后保留终态，不再提供停止入口">
-      {({ onTopActions }) => <JobDetailPage jobId="job-running" onTopActions={onTopActions} />}
+    <PageHarness route={{ name: 'job', jobId: RUNNING_JOB_ID }} title="任务详情" pageSubtitle="停止完成后保留终态，停止按钮保持禁用">
+      {({ onTopActions }) => <JobDetailPage jobId={RUNNING_JOB_ID} onTopActions={onTopActions} />}
     </PageHarness>,
   ),
   play: async ({ canvasElement }) => {
-    await waitForCondition(() => canvasElement.textContent?.includes('已停止') === true)
+    await waitForCondition(() => {
+      const stopped = canvasElement.querySelector<HTMLButtonElement>('[aria-label="已停止"]')
+      return stopped?.disabled === true
+    })
     expectStory(!canvasElement.querySelector('[aria-label="停止更新"]'), 'cancelled update must not offer stop again')
   },
 }
@@ -292,11 +300,11 @@ export const UpdateDownloadDeterminate: Story = {
   render: () => {
     return renderJobDetailSurface(
       <PageHarness
-        route={{ name: 'job', jobId: 'job-running' }}
+        route={{ name: 'job', jobId: RUNNING_JOB_ID }}
         title="任务详情"
         pageSubtitle="运行中 stack update 在 pull 提供 current/total 时应显示真实下载百分比"
       >
-        {({ onTopActions }) => <JobDetailPage jobId="job-running" onTopActions={onTopActions} />}
+        {({ onTopActions }) => <JobDetailPage jobId={RUNNING_JOB_ID} onTopActions={onTopActions} />}
       </PageHarness>
     )
   },

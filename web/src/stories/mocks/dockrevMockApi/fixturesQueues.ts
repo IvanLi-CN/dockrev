@@ -3,6 +3,8 @@ import { makeVersionInferenceOverview, nowIso, type Fixture } from './shared'
 import { baseEmpty, buildDashboardDemo } from './fixturesBase'
 export { buildQueueBackupProgress, buildQueueLongLogs } from './fixturesQueueLongLogs'
 
+export const RUNNING_JOB_ID = 'job_01J0Y4X8W6Q5N2R3S7T9V1K4M7'
+
 export function buildQueueMixed(): Fixture {
   const f = buildDashboardDemo()
 
@@ -29,7 +31,7 @@ export function buildQueueMixed(): Fixture {
 
   const jobs: JobListItem[] = [
     makeJob({
-      id: 'job-running',
+      id: RUNNING_JOB_ID,
       status: 'running',
       finishedAt: null,
       startedAt: nowIso(-20_000),
@@ -523,7 +525,7 @@ export function buildOverviewJobsCardRunningProgressModes(): Fixture {
 
 export function buildQueueProgressSmoothing(): Fixture {
   const f = buildQueueMixed()
-  const runningJob = f.jobs.find((job) => job.id === 'job-running')
+  const runningJob = f.jobs.find((job) => job.id === RUNNING_JOB_ID)
   if (!runningJob) return f
   const nextProgress = {
     phase: 'pulling',
@@ -538,14 +540,14 @@ export function buildQueueProgressSmoothing(): Fixture {
     updatedAt: nowIso(-600),
   }
   runningJob.progress = nextProgress
-  const runningDetail = f.jobById['job-running']
+  const runningDetail = f.jobById[RUNNING_JOB_ID]
   if (runningDetail) runningDetail.progress = { ...nextProgress }
   return f
 }
 
 export function buildQueueUpdateLayerProgress(): Fixture {
   const f = buildQueueMixed()
-  const runningJob = f.jobs.find((job) => job.id === 'job-running')
+  const runningJob = f.jobs.find((job) => job.id === RUNNING_JOB_ID)
   if (!runningJob) return f
 
   const nextProgress = {
@@ -573,9 +575,9 @@ export function buildQueueUpdateLayerProgress(): Fixture {
   runningJob.scope = 'stack'
   runningJob.progress = nextProgress
 
-  const runningDetail = f.jobById['job-running']
+  const runningDetail = f.jobById[RUNNING_JOB_ID]
   if (runningDetail) {
-    f.jobById['job-running'] = {
+    f.jobById[RUNNING_JOB_ID] = {
       ...runningDetail,
       type: 'update',
       scope: 'stack',
@@ -588,7 +590,7 @@ export function buildQueueUpdateLayerProgress(): Fixture {
 
 export function buildQueueUpdateIndeterminate(): Fixture {
   const f = buildQueueMixed()
-  const runningJob = f.jobs.find((job) => job.id === 'job-running')
+  const runningJob = f.jobs.find((job) => job.id === RUNNING_JOB_ID)
   if (!runningJob) return f
 
   const nextProgress = {
@@ -616,9 +618,9 @@ export function buildQueueUpdateIndeterminate(): Fixture {
   runningJob.scope = 'stack'
   runningJob.progress = nextProgress
 
-  const runningDetail = f.jobById['job-running']
+  const runningDetail = f.jobById[RUNNING_JOB_ID]
   if (runningDetail) {
-    f.jobById['job-running'] = {
+    f.jobById[RUNNING_JOB_ID] = {
       ...runningDetail,
       type: 'update',
       scope: 'stack',
@@ -631,7 +633,7 @@ export function buildQueueUpdateIndeterminate(): Fixture {
 
 export function buildQueueUpdateDownloadDeterminate(): Fixture {
   const f = buildQueueMixed()
-  const runningJob = f.jobs.find((job) => job.id === 'job-running')
+  const runningJob = f.jobs.find((job) => job.id === RUNNING_JOB_ID)
   if (!runningJob) return f
 
   const nextProgress = {
@@ -659,9 +661,9 @@ export function buildQueueUpdateDownloadDeterminate(): Fixture {
   runningJob.scope = 'stack'
   runningJob.progress = nextProgress
 
-  const runningDetail = f.jobById['job-running']
+  const runningDetail = f.jobById[RUNNING_JOB_ID]
   if (runningDetail) {
-    f.jobById['job-running'] = {
+    f.jobById[RUNNING_JOB_ID] = {
       ...runningDetail,
       type: 'update',
       scope: 'stack',

@@ -588,7 +588,7 @@ async function main() {
       file: 'update-stop-requested-job-detail.png',
       setup: async (page) => {
         await page.locator('.jobDetailPage').waitFor({ timeout: STORY_TIMEOUT_MS })
-        await page.getByText('正在停止').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.getByRole('button', { name: '正在停止' }).waitFor({ timeout: STORY_TIMEOUT_MS })
       },
       screenshot: async (page, filePath) => {
         const pageSurface = page.locator('.jobDetailPage').first()
@@ -612,7 +612,7 @@ async function main() {
       file: 'update-stop-cancelled-job-detail.png',
       setup: async (page) => {
         await page.locator('.jobDetailPage').waitFor({ timeout: STORY_TIMEOUT_MS })
-        await page.getByText('已停止').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.getByRole('button', { name: '已停止' }).waitFor({ timeout: STORY_TIMEOUT_MS })
       },
       screenshot: async (page, filePath) => {
         const pageSurface = page.locator('.jobDetailPage').first()
