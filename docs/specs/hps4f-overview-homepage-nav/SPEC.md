@@ -215,3 +215,20 @@
   PR caption: 无缓存冷启动时首页先显示稳定 skeleton，避免误导性空列表与整页抖动。
   image:
   ![Cold-start skeleton proof](./assets/overview-homepage-cold-start-skeleton-proof.png)
+
+- source_type: storybook_canvas
+  target_program: mock-only
+  capture_scope: element
+  requested_viewport: 1800x960
+  viewport_strategy: storybook-viewport
+  margin_policy: trim_only
+  evidence_surface: page
+  sensitive_exclusion: N/A (mock-only data)
+  submission_gate: pending-owner-approval
+  story_id_or_title: Pages/ServicesPage/GlobalTaskReadableLabel
+  state: global discovery task label
+  evidence_note: 运维面板的全局 discovery 任务使用可读的“发现扫描”标签和“全部”范围，不将内部 `discovery` 类型名作为可见主标签。
+  PR: include
+  PR caption: 全局任务卡片显示可读标签与范围，紧凑任务读模型不依赖原始 summary。
+  image:
+  ![Global task readable label](./assets/overview-global-task-readable-label.png)
