@@ -38,7 +38,7 @@ impl Drop for ProcessGroupGuard {
 #[cfg(unix)]
 fn send_process_group_signal(signal: &str, pgid: i32) {
     let _ = std::process::Command::new("kill")
-        .args([format!("-{signal}"), format!("-{pgid}")])
+        .args([format!("-{signal}"), "--".to_string(), format!("-{pgid}")])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
