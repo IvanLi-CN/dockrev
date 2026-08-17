@@ -58,7 +58,9 @@ impl MetricsStore {
         if migration_complete && let Some(manifest) = self.migration_manifest().await? {
             source_matches_manifest = manifest.source_sample_count == source.sample_count
                 && manifest.source_sample_hash == source.sample_hash
-                && manifest.source_max_id == Some(fingerprint.max_id);
+                && manifest.source_max_id == Some(fingerprint.max_id)
+                && manifest.source_latest_count == Some(source.latest_count)
+                && manifest.source_latest_hash.as_deref() == Some(source.latest_hash.as_str());
             if source_matches_manifest {
                 let target_matches_source_count =
                     self.migrated_legacy_sample_count().await? == fingerprint.sample_count;
@@ -95,6 +97,8 @@ impl MetricsStore {
             source_sample_count: source.sample_count,
             source_sample_hash: source.sample_hash.clone(),
             source_max_id: Some(fingerprint.max_id),
+            source_latest_count: Some(source.latest_count),
+            source_latest_hash: Some(source.latest_hash.clone()),
         };
         db.set_metrics_migration_state("copying", Some(&self.target_identity), None)
             .await?;

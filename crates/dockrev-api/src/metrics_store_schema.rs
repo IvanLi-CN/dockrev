@@ -58,5 +58,17 @@ pub(super) fn ensure_migration_manifest_schema(
             [],
         )?;
     }
+    if !columns.contains("source_latest_count") {
+        conn.execute(
+            "ALTER TABLE metrics_migration_manifest ADD COLUMN source_latest_count INTEGER",
+            [],
+        )?;
+    }
+    if !columns.contains("source_latest_hash") {
+        conn.execute(
+            "ALTER TABLE metrics_migration_manifest ADD COLUMN source_latest_hash TEXT",
+            [],
+        )?;
+    }
     Ok(())
 }

@@ -220,13 +220,123 @@ ORDER BY st.name ASC, sv.name ASC
                 values.push(created_at.clone().into()); values.push(created_at.into()); values.push(id.into());
             }
             values.push(((limit + 1) as i64).into());
-            let sql = format!(r#"SELECT j.id, j.type, j.scope, j.stack_id, j.service_id, j.status, j.created_by, j.reason,
+            let sql = format!(r#"WITH filtered_jobs AS (
+              SELECT j.id, j.type, j.scope, j.stack_id, j.service_id, j.status, j.created_by, j.reason,
                 j.created_at, j.started_at, j.finished_at, j.summary_json,
-                COALESCE(service.name, stack.name, j.type)
+                COALESCE(service.name, stack.name, j.type) AS fallback_display_label
               FROM jobs j
               LEFT JOIN services service ON service.id = j.service_id
               LEFT JOIN stacks stack ON stack.id = j.stack_id
-              WHERE {} ORDER BY j.created_at DESC, j.id DESC LIMIT ?"#, where_clauses.join(" AND "));
+              WHERE {} ORDER BY j.created_at DESC, j.id DESC LIMIT ?
+            ),
+            transition_candidates AS (
+              SELECT job.id,
+                json_object(
+                  'failureStep', json_extract(stack_entry.value, CASE job.type
+                    WHEN 'update' THEN '$.update.failureStep'
+                    WHEN 'rollback' THEN '$.rollback.failureStep'
+                    ELSE '$.missing'
+                  END),
+                  'lastError', json_extract(stack_entry.value, CASE job.type
+                    WHEN 'update' THEN '$.update.lastError'
+                    WHEN 'rollback' THEN '$.rollback.lastError'
+                    ELSE '$.missing'
+                  END),
+                  'pullTagWarnings', CASE
+                    WHEN json_extract(stack_entry.value, CASE job.type
+                      WHEN 'update' THEN '$.update.pullTagWarnings[0].lastError'
+                      WHEN 'rollback' THEN '$.rollback.pullTagWarnings[0].lastError'
+                      ELSE '$.missing'
+                    END) IS NULL
+                     AND json_extract(stack_entry.value, CASE job.type
+                      WHEN 'update' THEN '$.update.pullTagWarnings[0].error'
+                      WHEN 'rollback' THEN '$.rollback.pullTagWarnings[0].error'
+                      ELSE '$.missing'
+                    END) IS NULL
+                    THEN NULL
+                    ELSE json_array(json_object(
+                      'lastError', json_extract(stack_entry.value, CASE job.type
+                        WHEN 'update' THEN '$.update.pullTagWarnings[0].lastError'
+                        WHEN 'rollback' THEN '$.rollback.pullTagWarnings[0].lastError'
+                        ELSE '$.missing'
+                      END),
+                      'error', json_extract(stack_entry.value, CASE job.type
+                        WHEN 'update' THEN '$.update.pullTagWarnings[0].error'
+                        WHEN 'rollback' THEN '$.rollback.pullTagWarnings[0].error'
+                        ELSE '$.missing'
+                      END)
+                    ))
+                  END
+                ) AS transition_json,
+                CASE
+                  WHEN job.status IN ('failed', 'rolled_back')
+                   AND (
+                     json_extract(stack_entry.value, CASE job.type
+                       WHEN 'update' THEN '$.update.failureStep'
+                       WHEN 'rollback' THEN '$.rollback.failureStep'
+                       ELSE '$.missing'
+                     END) IS NOT NULL
+                     OR json_extract(stack_entry.value, CASE job.type
+                       WHEN 'update' THEN '$.update.lastError'
+                       WHEN 'rollback' THEN '$.rollback.lastError'
+                       ELSE '$.missing'
+                     END) IS NOT NULL
+                     OR json_extract(stack_entry.value, CASE job.type
+                       WHEN 'update' THEN '$.update.pullTagWarnings[0].lastError'
+                       WHEN 'rollback' THEN '$.rollback.pullTagWarnings[0].lastError'
+                       ELSE '$.missing'
+                     END) IS NOT NULL
+                     OR json_extract(stack_entry.value, CASE job.type
+                       WHEN 'update' THEN '$.update.pullTagWarnings[0].error'
+                       WHEN 'rollback' THEN '$.rollback.pullTagWarnings[0].error'
+                       ELSE '$.missing'
+                     END) IS NOT NULL
+                   ) THEN 0 ELSE 1
+                END AS transition_priority,
+                stack_entry.key AS stack_index
+              FROM filtered_jobs job
+              JOIN json_each(job.summary_json, '$.stacks') AS stack_entry
+              WHERE job.type IN ('update', 'rollback')
+                AND json_type(stack_entry.value, CASE job.type
+                  WHEN 'update' THEN '$.update'
+                  WHEN 'rollback' THEN '$.rollback'
+                  ELSE '$.missing'
+                END) = 'object'
+            ),
+            first_transitions AS (
+              SELECT id, transition_json FROM (
+                SELECT id, transition_json,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY id ORDER BY transition_priority, stack_index
+                  ) AS transition_rank
+                FROM transition_candidates
+              ) WHERE transition_rank = 1
+            )
+            SELECT job.id, job.type, job.scope, job.stack_id, job.service_id, job.status,
+                job.created_by, job.reason, job.created_at, job.started_at, job.finished_at,
+                json_object(
+                  'progress', json_extract(job.summary_json, '$.progress'),
+                  'error', json_extract(job.summary_json, '$.error'),
+                  'failureStep', json_extract(job.summary_json, '$.failureStep'),
+                  'lastError', json_extract(job.summary_json, '$.lastError'),
+                  'pullTagWarnings', CASE
+                    WHEN json_extract(job.summary_json, '$.pullTagWarnings[0].lastError') IS NULL
+                     AND json_extract(job.summary_json, '$.pullTagWarnings[0].error') IS NULL
+                    THEN NULL
+                    ELSE json_array(json_object(
+                      'lastError', json_extract(job.summary_json, '$.pullTagWarnings[0].lastError'),
+                      'error', json_extract(job.summary_json, '$.pullTagWarnings[0].error')
+                    ))
+                  END,
+                  'action', json_extract(job.summary_json, '$.action'),
+                  'targetDisplayTag', json_extract(job.summary_json, '$.targetDisplayTag'),
+                  'targetTag', json_extract(job.summary_json, '$.targetTag'),
+                  'to', json_extract(job.summary_json, '$.to')
+                ),
+                transition.transition_json, job.fallback_display_label
+              FROM filtered_jobs job
+              LEFT JOIN first_transitions transition ON transition.id = job.id
+              ORDER BY job.created_at DESC, job.id DESC"#, where_clauses.join(" AND "));
             let params: Vec<&dyn rusqlite::ToSql> = values.iter().map(|value| value as &dyn rusqlite::ToSql).collect();
             let mut stmt = conn.prepare(&sql)?;
             let mut jobs = stmt
@@ -368,10 +478,35 @@ fn homepage_nav_service_from_row(
 fn compact_job_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobCompactListItem> {
     let job_type: String = row.get(1)?;
     let status: String = row.get(5)?;
-    let summary_json: String = row.get(11)?;
-    let summary: serde_json::Value = serde_json::from_str(&summary_json).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(11, rusqlite::types::Type::Text, Box::new(error))
-    })?;
+    let compact_summary_json: String = row.get(11)?;
+    let mut summary: serde_json::Value =
+        serde_json::from_str(&compact_summary_json).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                11,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?;
+    if let Some(transition_json) = row.get::<_, Option<String>>(12)? {
+        let transition: serde_json::Value =
+            serde_json::from_str(&transition_json).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    12,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?;
+        if transition
+            .as_object()
+            .is_some_and(|object| object.values().any(|value| !value.is_null()))
+            && let Some(summary_object) = summary.as_object_mut()
+        {
+            summary_object.insert(
+                "stacks".to_string(),
+                serde_json::json!([{job_type.clone(): transition}]),
+            );
+        }
+    }
     let progress = summary
         .get("progress")
         .cloned()
@@ -388,7 +523,7 @@ fn compact_job_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobCompactL
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string);
-    let fallback_display_label: String = row.get(12)?;
+    let fallback_display_label: String = row.get(13)?;
     let display_label =
         lifecycle_action_display_label(&job_type, &summary).unwrap_or(fallback_display_label);
     Ok(JobCompactListItem {

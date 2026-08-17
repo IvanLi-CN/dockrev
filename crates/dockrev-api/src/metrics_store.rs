@@ -86,7 +86,9 @@ CREATE TABLE IF NOT EXISTS metrics_migration_manifest (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   source_sample_count INTEGER NOT NULL,
   source_sample_hash TEXT NOT NULL,
-  source_max_id INTEGER
+  source_max_id INTEGER,
+  source_latest_count INTEGER NOT NULL,
+  source_latest_hash TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS metrics_migration_pruned_legacy_ids (
@@ -203,6 +205,8 @@ struct MigrationManifest {
     source_sample_count: u64,
     source_sample_hash: String,
     source_max_id: Option<i64>,
+    source_latest_count: Option<u64>,
+    source_latest_hash: Option<String>,
 }
 
 impl MetricsStore {
@@ -417,13 +421,15 @@ impl MetricsStore {
     async fn migration_manifest(&self) -> anyhow::Result<Option<MigrationManifest>> {
         self.reader_call(|conn| {
             conn.query_row(
-                "SELECT source_sample_count, source_sample_hash, source_max_id FROM metrics_migration_manifest WHERE id = 1",
+                "SELECT source_sample_count, source_sample_hash, source_max_id, source_latest_count, source_latest_hash FROM metrics_migration_manifest WHERE id = 1",
                 [],
                 |row| {
                     Ok(MigrationManifest {
                         source_sample_count: row.get::<_, i64>(0)? as u64,
                         source_sample_hash: row.get(1)?,
                         source_max_id: row.get(2)?,
+                        source_latest_count: row.get::<_, Option<i64>>(3)?.map(|value| value as u64),
+                        source_latest_hash: row.get(4)?,
                     })
                 },
             )
@@ -437,15 +443,21 @@ impl MetricsStore {
         let manifest = manifest.clone();
         self.writer_call(move |conn| {
             conn.execute(
-                r#"INSERT INTO metrics_migration_manifest (id, source_sample_count, source_sample_hash, source_max_id)
-                   VALUES (1, ?1, ?2, ?3)
+                r#"INSERT INTO metrics_migration_manifest (
+                       id, source_sample_count, source_sample_hash, source_max_id,
+                       source_latest_count, source_latest_hash
+                   ) VALUES (1, ?1, ?2, ?3, ?4, ?5)
                    ON CONFLICT(id) DO UPDATE SET source_sample_count=excluded.source_sample_count,
                      source_sample_hash=excluded.source_sample_hash,
-                     source_max_id=excluded.source_max_id"#,
+                     source_max_id=excluded.source_max_id,
+                     source_latest_count=excluded.source_latest_count,
+                     source_latest_hash=excluded.source_latest_hash"#,
                 params![
                     manifest.source_sample_count as i64,
                     manifest.source_sample_hash,
                     manifest.source_max_id,
+                    manifest.source_latest_count.map(|value| value as i64),
+                    manifest.source_latest_hash,
                 ],
             )?;
             Ok(())

@@ -727,6 +727,69 @@ async fn api_jobs_compact_omits_raw_summary_and_keeps_derived_fields() {
 }
 
 #[tokio::test]
+async fn api_jobs_compact_projects_failed_stack_transition_reason() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let now = test_now_rfc3339();
+    let job_id = ids::new_job_id();
+    state
+        .db
+        .insert_job(
+            crate::api::types::JobRecord::new_running(
+                job_id.clone(),
+                crate::api::types::JobType::Update,
+                crate::api::types::JobScope::All,
+                None,
+                None,
+                &now,
+            )
+            .to_db(),
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .finish_job(
+            &job_id,
+            "rolled_back",
+            &now,
+            &serde_json::json!({
+                "stacks": [{
+                    "update": {
+                        "failureStep": "healthcheck",
+                        "lastError": "container never became healthy"
+                    }
+                }],
+                "secretDiagnostic": "must not leave this endpoint"
+            }),
+        )
+        .await
+        .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/jobs?view=compact&limit=20")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let response = response_json(response).await;
+    let item = &response["jobs"][0];
+    assert!(item.get("summary").is_none());
+    assert_eq!(
+        item["resultReason"]["summary"].as_str(),
+        Some("健康检查失败，已回滚")
+    );
+    assert_eq!(
+        item["resultReason"]["raw"].as_str(),
+        Some("container never became healthy")
+    );
+}
+
+#[tokio::test]
 async fn homepage_nav_returns_single_read_model_with_resources_and_status() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());
@@ -879,6 +942,10 @@ async fn homepage_metrics_isolation() {
     let stack_id = seed_stack_from_compose(&state, "performance", &compose_path).await;
     let services = state.db.list_services_for_check(&stack_id).await.unwrap();
     assert_eq!(services.len(), 51);
+    let primary_probe = rusqlite::Connection::open(&db_path).unwrap();
+    let primary_data_version_before: i64 = primary_probe
+        .query_row("PRAGMA data_version", [], |row| row.get(0))
+        .unwrap();
 
     let now = time::OffsetDateTime::now_utc();
     let mut samples = Vec::with_capacity(services.len() * 2);
@@ -915,10 +982,13 @@ async fn homepage_metrics_isolation() {
     let sampler_active = sampling.clone();
     let sampler_batches = sampling_batches.clone();
     let (sampling_started_tx, sampling_started_rx) = tokio::sync::oneshot::channel();
+    let sampling_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     let sampler = tokio::spawn(async move {
         let mut tick = 0_i64;
         let mut sampling_started_tx = Some(sampling_started_tx);
-        while sampler_active.load(std::sync::atomic::Ordering::Relaxed) {
+        while sampler_active.load(std::sync::atomic::Ordering::Relaxed)
+            && std::time::Instant::now() < sampling_deadline
+        {
             let sampled_at = (time::OffsetDateTime::now_utc()
                 + time::Duration::milliseconds(tick))
             .format(&time::format_description::well_known::Rfc3339)
@@ -953,25 +1023,41 @@ async fn homepage_metrics_isolation() {
         .expect("continuous metrics writer did not start")
         .expect("continuous metrics writer stopped before its first write");
 
-    let mut latencies = Vec::with_capacity(100);
+    let mut requests = Vec::with_capacity(100);
     for _ in 0..100 {
-        let started_at = std::time::Instant::now();
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/api/homepage/nav")
-                    .header("X-Forwarded-User", "performance-user")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), 200);
-        latencies.push(started_at.elapsed());
+        let app = app.clone();
+        requests.push(tokio::spawn(async move {
+            let started_at = std::time::Instant::now();
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/homepage/nav")
+                        .header("X-Forwarded-User", "performance-user")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 200);
+            started_at.elapsed()
+        }));
     }
-    sampling.store(false, std::sync::atomic::Ordering::Relaxed);
+    let mut latencies = Vec::with_capacity(requests.len());
+    for request in requests {
+        latencies.push(request.await.unwrap());
+    }
     sampler.await.unwrap();
+    assert!(
+        sampling_batches.load(std::sync::atomic::Ordering::Relaxed) >= 2,
+        "continuous metrics writer completed fewer than two batches"
+    );
+    let primary_data_version_after: i64 = primary_probe
+        .query_row("PRAGMA data_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        primary_data_version_before, primary_data_version_after,
+        "homepage navigation must not write the primary database"
+    );
     latencies.sort_unstable();
     let p95 = latencies[(latencies.len() * 95).div_ceil(100) - 1];
     assert!(

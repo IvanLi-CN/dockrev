@@ -26,7 +26,7 @@ Rules:
 
 指标库与 `DOCKREV_DB_PATH` 的主库文件分离，默认路径为主库同目录的 `metrics.sqlite3`。`DOCKREV_METRICS_DB_PATH` 不能和主库解析为同一文件，包括主库创建前的符号链接别名。
 
-主库只保存 `metrics_store_migration` 状态。启动从旧主库指标表首次复制时，目标写入必须幂等；只有稳定排序的行哈希和行数都一致才标记 complete。导入的 legacy raw 必须保存稳定内容签名，GC 删除 legacy raw 或孤儿服务数据前必须保存其 legacy id 墓碑。重启验证完整源哈希、保留 raw 的签名以及“保留 raw + 墓碑”对旧表总行数的覆盖关系；验证后的协调只能重算现有 raw 所覆盖的 latest/rollup 桶。旧 latest 表可恢复主库当前 active service 的 latest，即使相应 raw 已过期；非 active service 的 legacy latest 不得回灌。该流程不能删除超过 raw 留存的 active latest 或长窗口桶。完整源改变时才清除墓碑重拷，目标修复不得复活被 GC 清理的旧行。校验失败时进程不得启动新采样路径，旧表不可删除或修改。
+主库只保存 `metrics_store_migration` 状态。启动从旧主库指标表首次复制时，目标写入必须幂等；manifest 同时保存 legacy raw 与 legacy latest 的稳定排序行哈希、行数和 raw 最大 id，任何源指纹变化都必须重新校验，只有 raw 哈希/行数覆盖验证通过才标记 complete。导入的 legacy raw 必须保存稳定内容签名，GC 删除 legacy raw 或孤儿服务数据前必须保存其 legacy id 墓碑。重启验证完整源哈希、保留 raw 的签名以及“保留 raw + 墓碑”对旧表总行数的覆盖关系；验证后的协调只能重算现有 raw 所覆盖的 latest/rollup 桶。旧 latest 表可恢复主库当前 active service 的 latest，即使相应 raw 已过期；非 active service 的 legacy latest 不得回灌。该流程不能删除超过 raw 留存的 active latest 或长窗口桶。完整源改变时才清除墓碑重拷，目标修复不得复活被 GC 清理的旧行。校验失败时进程不得启动新采样路径，旧表不可删除或修改。
 
 指标库拥有以下表：
 
@@ -34,6 +34,8 @@ Rules:
 - `service_resource_latest_samples`：每服务最新读模型。
 - `service_resource_rollups`：1 分钟桶保留 7 天，5 分钟桶保留 30 天；保存 CPU、内存、PIDs、容器数与速率的均值/峰值，以及累计计数首末值。
 - `metrics_migration_pruned_legacy_ids`：已从指标库 GC 的 legacy raw id 墓碑，用于可恢复迁移时保留留存裁剪结果。
+
+`OperationalReadModel` 的 compact jobs 查询使用 SQLite JSON 函数投影进度、错误、目标版本和必要的转移字段；请求路径不得选取或在 Rust 中反序列化完整 `jobs.summary_json`。
 
 ## `service_resource_latest_samples`
 

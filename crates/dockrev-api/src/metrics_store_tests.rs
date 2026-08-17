@@ -61,6 +61,26 @@ async fn metrics_store_migration_is_idempotent_and_keeps_legacy_rows() {
 }
 
 #[tokio::test]
+async fn metrics_store_migration_reimports_when_legacy_latest_changes() {
+    let main_path = temp_path("metrics-migration-latest-source-correction-main");
+    let metrics_path = temp_path("metrics-migration-latest-source-correction-target");
+    let db = Db::open(&main_path).await.unwrap();
+    db.insert_legacy_metric_fixture(&[sample("svc-a", "2026-08-16T13:10:00Z", 10.0, 1_000)])
+        .await
+        .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+
+    db.update_legacy_metric_fixture_latest_cpu("svc-a", 99.0)
+        .await
+        .unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+
+    let latest = metrics.list_latest_samples().await.unwrap();
+    assert_eq!(latest[0].cpu_percent, Some(99.0));
+}
+
+#[tokio::test]
 async fn metrics_store_migration_preserves_legacy_latest_after_raw_expiry() {
     let main_path = temp_path("metrics-migration-stale-latest-main");
     let metrics_path = temp_path("metrics-migration-stale-latest-target");
