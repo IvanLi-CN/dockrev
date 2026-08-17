@@ -123,6 +123,16 @@ impl MetricsStore {
                 .await?;
             anyhow::bail!(message);
         }
+        let rollups_are_intact = self.rollups_are_intact().await?;
+        if !rollups_are_intact
+            && (!retained_pruned_legacy_ids.is_empty()
+                || !self.damaged_rollups_are_reconstructible().await?)
+        {
+            let message = "retained rollups cannot be recovered after raw retention".to_string();
+            db.set_metrics_migration_state("copying", Some(&self.target_identity), Some(&message))
+                .await?;
+            anyhow::bail!(message);
+        }
 
         let source = db.legacy_metrics_integrity().await?;
         let fingerprint = db.legacy_metric_fingerprint().await?;
@@ -186,13 +196,8 @@ impl MetricsStore {
                 .await?;
             anyhow::bail!(message);
         }
-        if retained_pruned_legacy_ids.is_empty() {
+        if !raw_source_matches_manifest || !rollups_are_intact {
             self.reconcile_rollups_from_raw().await?;
-        } else if !self.rollups_are_intact().await? {
-            let message = "retained rollups cannot be recovered after raw retention".to_string();
-            db.set_metrics_migration_state("copying", Some(&self.target_identity), Some(&message))
-                .await?;
-            anyhow::bail!(message);
         }
         self.trust_target().await?;
         self.set_migration_manifest(&manifest).await?;

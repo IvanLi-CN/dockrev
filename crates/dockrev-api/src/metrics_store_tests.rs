@@ -936,6 +936,47 @@ async fn metrics_store_migration_recovers_partial_service_and_rollup_loss() {
 }
 
 #[tokio::test]
+async fn metrics_store_migration_rejects_corrupted_native_rollups_after_raw_expiry() {
+    let main_path = temp_path("metrics-migration-corrupted-native-rollup-main");
+    let metrics_path = temp_path("metrics-migration-corrupted-native-rollup-target");
+    let db = Db::open(&main_path).await.unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    metrics
+        .insert_samples(&[sample("svc-native", "2026-08-16T12:02:00Z", 10.0, 1_000)])
+        .await
+        .unwrap();
+    let active_service_ids = BTreeSet::from(["svc-native".to_string()]);
+    metrics
+        .writer_call(move |conn| {
+            gc_batch_tx(
+                conn,
+                "2026-08-16T12:02:30Z",
+                "1970-01-01T00:00:00Z",
+                "1970-01-01T00:00:00Z",
+                &active_service_ids,
+            )?;
+            conn.execute(
+                "UPDATE service_resource_rollups SET cpu_avg = 99.0 WHERE service_id = 'svc-native'",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    assert!(metrics.migrate_from_legacy(&db).await.is_err());
+    assert_eq!(
+        db.metrics_migration_state()
+            .await
+            .unwrap()
+            .as_ref()
+            .map(|state| state.state.as_str()),
+        Some("copying")
+    );
+}
+
+#[tokio::test]
 async fn metrics_store_migration_recovers_same_cardinality_target_corruption() {
     let main_path = temp_path("metrics-migration-content-damage-main");
     let metrics_path = temp_path("metrics-migration-content-damage-target");
