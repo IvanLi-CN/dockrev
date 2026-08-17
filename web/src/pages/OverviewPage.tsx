@@ -425,6 +425,7 @@ export function OverviewPage(props: {
     return snapshotCardsToNavCards(snapshot.cards);
   });
   const [liveLoaded, setLiveLoaded] = useState(false);
+  const liveLoadedRef = useRef(false);
   const [, setPersistedSnapshotStatus] = useState<
     "missing" | "fresh" | "stale" | "expired" | "unsupported"
   >("missing");
@@ -448,13 +449,13 @@ export function OverviewPage(props: {
   }, [applySearch]);
 
   useEffect(() => {
-    if (liveLoaded) return;
     let cancelled = false;
     void (async () => {
       const persisted = await readReadonlySnapshot<PersistedHomepageSnapshotPayload>(
         HOMEPAGE_PERSISTED_SNAPSHOT_KEY,
       );
       if (cancelled) return;
+      if (liveLoadedRef.current) return;
       setPersistedSnapshotStatus(persisted.status);
       setPersistedSnapshotFetchedAt(persisted.record?.fetchedAt ?? null);
 
@@ -477,7 +478,7 @@ export function OverviewPage(props: {
       }
 
       if (
-        !canRestorePersistedHomepageSnapshot(persisted.status, liveLoaded) ||
+        !canRestorePersistedHomepageSnapshot(persisted.status) ||
         persisted.record === null
       ) {
         return;
@@ -504,13 +505,14 @@ export function OverviewPage(props: {
     return () => {
       cancelled = true;
     };
-  }, [liveLoaded]);
+  }, []);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
     try {
       const payload = await getHomepageNav();
       const liveCards = homepageResponseToCards(payload.items);
+      liveLoadedRef.current = true;
       onLastScanHint(payload.lastCheckAt ?? undefined);
       setResourceOverview(payload.resourceSummary);
       setResourceFromCache(false);

@@ -138,9 +138,8 @@ export function normalizeHomepageHref(
 
 export function canRestorePersistedHomepageSnapshot(
   status: "missing" | "fresh" | "stale" | "expired" | "unsupported",
-  liveLoaded = false,
 ): status is "fresh" | "stale" {
-  return !liveLoaded && (status === "fresh" || status === "stale");
+  return status === "fresh" || status === "stale";
 }
 
 function parseService(value: unknown): Service | null {

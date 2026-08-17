@@ -5,7 +5,7 @@ use super::{
     image_repo_from_image_ref,
 };
 
-const SNAPSHOT_REFRESH_INTERVAL_SECONDS: u64 = 60;
+pub(super) const SNAPSHOT_REFRESH_INTERVAL_SECONDS: u64 = 30 * 60;
 
 impl SnapshotWorker {
     pub fn spawn_startup_warmup(&self, host_platform: &str) {

@@ -1166,7 +1166,7 @@ fn low_priority_reason_cooldown(reason: &str) -> Option<Duration> {
         SNAPSHOT_REASON_CACHE_STALE => Some(Duration::from_secs(30 * 60)),
         SNAPSHOT_REASON_ALL_FAILED => Some(Duration::from_secs(6 * 60 * 60)),
         SNAPSHOT_REASON_STARTUP_WARMUP => Some(Duration::from_secs(24 * 60 * 60)),
-        SNAPSHOT_REASON_BACKGROUND_REFRESH => Some(Duration::from_secs(15 * 60)),
+        SNAPSHOT_REASON_BACKGROUND_REFRESH => Some(Duration::from_secs(30 * 60)),
         _ => None,
     }
 }
@@ -1288,10 +1288,11 @@ mod tests {
 
     use serde_json::json;
 
+    use super::refresh_coordinator::SNAPSHOT_REFRESH_INTERVAL_SECONDS;
     use super::{
-        SNAPSHOT_REASON_ALL_FAILED, SnapshotTaskWaitStatus, SnapshotWorker,
-        image_repo_from_image_ref, low_priority_cooldown_key, low_priority_reason_cooldown,
-        push_event_locked,
+        SNAPSHOT_REASON_ALL_FAILED, SNAPSHOT_REASON_BACKGROUND_REFRESH, SnapshotTaskWaitStatus,
+        SnapshotWorker, image_repo_from_image_ref, low_priority_cooldown_key,
+        low_priority_reason_cooldown, push_event_locked,
     };
     use crate::{
         db::Db,
@@ -1402,6 +1403,15 @@ mod tests {
 
         assert!(!enqueued);
         assert!(worker.snapshot_tasks().await.is_empty());
+    }
+
+    #[test]
+    fn background_snapshot_refresh_uses_the_thirty_minute_cadence() {
+        assert_eq!(SNAPSHOT_REFRESH_INTERVAL_SECONDS, 30 * 60);
+        assert_eq!(
+            low_priority_reason_cooldown(SNAPSHOT_REASON_BACKGROUND_REFRESH),
+            Some(Duration::from_secs(30 * 60))
+        );
     }
 
     #[tokio::test]
