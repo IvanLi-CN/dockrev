@@ -119,6 +119,7 @@ describe('homepage snapshot cache', () => {
     expect(canRestorePersistedHomepageSnapshot('expired')).toBe(false)
     expect(canRestorePersistedHomepageSnapshot('missing')).toBe(false)
     expect(canRestorePersistedHomepageSnapshot('unsupported')).toBe(false)
+    expect(canRestorePersistedHomepageSnapshot('stale', true)).toBe(false)
   })
 
   test('rejects unsafe href variants before a snapshot can be reused', () => {

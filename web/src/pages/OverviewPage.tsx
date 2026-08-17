@@ -448,6 +448,7 @@ export function OverviewPage(props: {
   }, [applySearch]);
 
   useEffect(() => {
+    if (liveLoaded) return;
     let cancelled = false;
     void (async () => {
       const persisted = await readReadonlySnapshot<PersistedHomepageSnapshotPayload>(
@@ -476,7 +477,7 @@ export function OverviewPage(props: {
       }
 
       if (
-        !canRestorePersistedHomepageSnapshot(persisted.status) ||
+        !canRestorePersistedHomepageSnapshot(persisted.status, liveLoaded) ||
         persisted.record === null
       ) {
         return;
@@ -503,7 +504,7 @@ export function OverviewPage(props: {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [liveLoaded]);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
