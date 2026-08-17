@@ -840,12 +840,13 @@ services:
         )
         .await
         .unwrap();
+    let sample_base = test_now_rfc3339();
     state
         .metrics
         .insert_samples(&[
             crate::db::ServiceResourceSampleInput {
                 service_id: api_service.id.clone(),
-                sampled_at: test_offset_from_now_rfc3339(time::Duration::seconds(-20)),
+                sampled_at: test_offset_rfc3339(&sample_base, time::Duration::seconds(-20)),
                 cpu_percent: 10.0,
                 mem_used_bytes: Some(100),
                 mem_limit_bytes: Some(200),
@@ -858,7 +859,7 @@ services:
             },
             crate::db::ServiceResourceSampleInput {
                 service_id: api_service.id.clone(),
-                sampled_at: test_offset_from_now_rfc3339(time::Duration::seconds(-10)),
+                sampled_at: test_offset_rfc3339(&sample_base, time::Duration::seconds(-10)),
                 cpu_percent: 12.5,
                 mem_used_bytes: Some(120),
                 mem_limit_bytes: Some(200),
@@ -876,7 +877,7 @@ services:
         .metrics
         .insert_samples(&[crate::db::ServiceResourceSampleInput {
             service_id: "orphaned-service".to_string(),
-            sampled_at: test_offset_from_now_rfc3339(time::Duration::seconds(-10)),
+            sampled_at: test_offset_rfc3339(&sample_base, time::Duration::seconds(-10)),
             cpu_percent: 99.0,
             mem_used_bytes: Some(100),
             mem_limit_bytes: Some(200),
@@ -929,7 +930,7 @@ services:
         .metrics
         .insert_samples(&[crate::db::ServiceResourceSampleInput {
             service_id: api_service.id.clone(),
-            sampled_at: test_offset_from_now_rfc3339(time::Duration::seconds(-15)),
+            sampled_at: test_offset_rfc3339(&sample_base, time::Duration::seconds(-15)),
             cpu_percent: 11.0,
             mem_used_bytes: Some(110),
             mem_limit_bytes: Some(200),
@@ -956,7 +957,7 @@ services:
     let payload = response_json(response).await;
     let item = &payload["items"].as_array().unwrap()[0];
     let net_rx = item["resource"]["netRxRateBps"].as_f64().unwrap();
-    assert!((net_rx - 60.0).abs() < 0.2, "unexpected late-sample rate: {net_rx}");
+    assert!((net_rx - 60.0).abs() < 0.01, "unexpected late-sample rate: {net_rx}");
 
     let backup = state.db.get_backup_settings().await.unwrap();
     let mut resource_monitor = state.db.get_resource_monitor_settings().await.unwrap();
