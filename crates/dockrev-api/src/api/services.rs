@@ -945,11 +945,15 @@ pub(super) async fn get_homepage_nav(
         .map(|row| row.stack_last_check_at.as_str())
         .max()
         .map(ToString::to_string);
-    let metrics_by_service = overview_services
-        .iter()
-        .cloned()
-        .map(|item| (item.service_id.clone(), item))
-        .collect::<std::collections::HashMap<_, _>>();
+    let metrics_by_service = if settings.enabled {
+        overview_services
+            .iter()
+            .cloned()
+            .map(|item| (item.service_id.clone(), item))
+            .collect::<std::collections::HashMap<_, _>>()
+    } else {
+        std::collections::HashMap::new()
+    };
 
     let mut services = rows
         .iter_mut()

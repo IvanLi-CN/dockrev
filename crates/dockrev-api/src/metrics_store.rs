@@ -34,12 +34,14 @@ use rollup_integrity::refresh_rollup_integrity_tx;
 #[path = "metrics_store_schema.rs"]
 mod schema;
 use schema::{
-    ensure_latest_schema, ensure_migration_manifest_schema, ensure_pruned_legacy_integrity_schema,
-    ensure_rollup_schema_columns, ensure_sample_schema,
+    ensure_latest_schema, ensure_migration_manifest_schema, ensure_native_integrity_schema,
+    ensure_pruned_legacy_integrity_schema, ensure_rollup_schema_columns, ensure_sample_schema,
 };
 #[path = "metrics_store_target_integrity.rs"]
 mod target_integrity;
-use target_integrity::{trust_metrics_target_tx, trust_pruned_legacy_integrity_tx};
+use target_integrity::{
+    mark_native_raw_pruned_tx, trust_metrics_target_tx, trust_pruned_legacy_integrity_tx,
+};
 
 pub const RAW_RETENTION_SECONDS: i64 = 24 * 60 * 60;
 pub const MINUTE_ROLLUP_RETENTION_SECONDS: i64 = 7 * 24 * 60 * 60;
@@ -121,6 +123,17 @@ CREATE TABLE IF NOT EXISTS metrics_rollup_integrity (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   row_count INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS metrics_native_integrity (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  initialized INTEGER NOT NULL DEFAULT 0,
+  raw_row_count INTEGER NOT NULL DEFAULT 0,
+  latest_row_count INTEGER NOT NULL DEFAULT 0,
+  trusted_raw_row_count INTEGER NOT NULL DEFAULT 0,
+  trusted_latest_row_count INTEGER NOT NULL DEFAULT 0,
+  has_pruned_raw INTEGER NOT NULL DEFAULT 0
+);
+INSERT OR IGNORE INTO metrics_native_integrity (id) VALUES (1);
 
 CREATE TABLE IF NOT EXISTS metrics_target_revision (
   id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -348,6 +361,7 @@ impl MetricsStore {
             ensure_rollup_schema_columns(conn)?;
             ensure_migration_manifest_schema(conn)?;
             ensure_pruned_legacy_integrity_schema(conn)?;
+            ensure_native_integrity_schema(conn)?;
             Ok(())
         })
         .await?;
@@ -971,6 +985,11 @@ fn gc_batch_tx(
     active_service_ids: &BTreeSet<String>,
 ) -> anyhow::Result<bool> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let prunes_native_raw = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM service_resource_samples WHERE sampled_at < ?1 AND legacy_id IS NULL)",
+        params![raw_cutoff],
+        |row| row.get::<_, i64>(0).map(|value| value != 0),
+    )?;
     tx.execute(
         "INSERT OR IGNORE INTO metrics_migration_pruned_legacy_ids (legacy_id) SELECT legacy_id FROM service_resource_samples WHERE rowid IN (SELECT rowid FROM service_resource_samples WHERE sampled_at < ?1 LIMIT ?2) AND legacy_id IS NOT NULL",
         params![raw_cutoff, GC_BATCH_SIZE as i64],
@@ -980,6 +999,9 @@ fn gc_batch_tx(
         params![raw_cutoff, GC_BATCH_SIZE as i64],
     )?;
     if raw_deleted > 0 {
+        if prunes_native_raw {
+            mark_native_raw_pruned_tx(&tx)?;
+        }
         trust_pruned_legacy_integrity_tx(&tx)?;
         trust_metrics_target_tx(&tx)?;
         tx.commit()?;
@@ -1012,6 +1034,15 @@ fn gc_batch_tx(
             "service_resource_latest_samples",
             "service_resource_rollups",
         ] {
+            let prunes_native_raw = if table == "service_resource_samples" {
+                tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM service_resource_samples WHERE legacy_id IS NULL LIMIT 1)",
+                    [],
+                    |row| row.get::<_, i64>(0).map(|value| value != 0),
+                )?
+            } else {
+                false
+            };
             let sql =
                 format!("DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} LIMIT ?1)");
             if table == "service_resource_samples" {
@@ -1025,6 +1056,9 @@ fn gc_batch_tx(
                     refresh_rollup_integrity_tx(&tx)?;
                 }
                 if table == "service_resource_samples" {
+                    if prunes_native_raw {
+                        mark_native_raw_pruned_tx(&tx)?;
+                    }
                     trust_pruned_legacy_integrity_tx(&tx)?;
                 }
                 trust_metrics_target_tx(&tx)?;
@@ -1058,11 +1092,25 @@ fn gc_batch_tx(
                 );
                 tx.execute(&legacy_sql, values.as_slice())?;
             }
+            let prunes_native_raw = if table == "service_resource_samples" {
+                let native_sql = format!(
+                    "SELECT EXISTS(SELECT 1 FROM service_resource_samples WHERE service_id NOT IN ({placeholders}) AND legacy_id IS NULL LIMIT ?{})",
+                    active_service_ids.len() + 1
+                );
+                tx.query_row(&native_sql, values.as_slice(), |row| {
+                    row.get::<_, i64>(0).map(|value| value != 0)
+                })?
+            } else {
+                false
+            };
             if tx.execute(&sql, values.as_slice())? > 0 {
                 if table == "service_resource_rollups" {
                     refresh_rollup_integrity_tx(&tx)?;
                 }
                 if table == "service_resource_samples" {
+                    if prunes_native_raw {
+                        mark_native_raw_pruned_tx(&tx)?;
+                    }
                     trust_pruned_legacy_integrity_tx(&tx)?;
                 }
                 trust_metrics_target_tx(&tx)?;
@@ -1104,6 +1152,7 @@ fn write_samples_tx(
             ],
         )?;
         inserted += 1;
+        let inserted_id = tx.last_insert_rowid();
         let previous = tx.query_row(
             "SELECT sampled_at, net_rx_bytes, net_tx_bytes, legacy_source FROM service_resource_latest_samples WHERE service_id = ?1",
             params![row.service_id],
@@ -1144,10 +1193,26 @@ fn write_samples_tx(
             )?;
         }
         if rollups {
-            for resolution in [MINUTE_RESOLUTION_SECONDS, FIVE_MINUTE_RESOLUTION_SECONDS] {
-                let epoch = parse_epoch(&row.sampled_at)?;
-                let start = epoch - epoch.rem_euclid(resolution as i64);
-                touched_rollups.insert((row.service_id.clone(), resolution, start));
+            let mut affected_sample_times = vec![row.sampled_at.clone()];
+            if let Some(successor) = tx
+                .query_row(
+                    r#"SELECT sampled_at FROM service_resource_samples
+                       WHERE service_id = ?1
+                         AND (sampled_at > ?2 OR (sampled_at = ?2 AND id > ?3))
+                       ORDER BY sampled_at ASC, id ASC LIMIT 1"#,
+                    params![row.service_id, row.sampled_at, inserted_id],
+                    |sample| sample.get::<_, String>(0),
+                )
+                .optional()?
+            {
+                affected_sample_times.push(successor);
+            }
+            for sampled_at in affected_sample_times {
+                let epoch = parse_epoch(&sampled_at)?;
+                for resolution in [MINUTE_RESOLUTION_SECONDS, FIVE_MINUTE_RESOLUTION_SECONDS] {
+                    let start = epoch - epoch.rem_euclid(resolution as i64);
+                    touched_rollups.insert((row.service_id.clone(), resolution, start));
+                }
             }
         }
     }

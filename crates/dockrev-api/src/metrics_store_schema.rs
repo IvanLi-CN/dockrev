@@ -173,3 +173,74 @@ pub(super) fn ensure_pruned_legacy_integrity_schema(
     }
     Ok(())
 }
+
+pub(super) fn ensure_native_integrity_schema(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"CREATE TRIGGER IF NOT EXISTS metrics_native_raw_insert
+              AFTER INSERT ON service_resource_samples WHEN NEW.legacy_id IS NULL
+              BEGIN UPDATE metrics_native_integrity SET raw_row_count = raw_row_count + 1 WHERE id = 1; END;
+           CREATE TRIGGER IF NOT EXISTS metrics_native_raw_delete
+              AFTER DELETE ON service_resource_samples WHEN OLD.legacy_id IS NULL
+              BEGIN UPDATE metrics_native_integrity SET raw_row_count = raw_row_count - 1 WHERE id = 1; END;
+           CREATE TRIGGER IF NOT EXISTS metrics_native_raw_update_to_legacy
+              AFTER UPDATE ON service_resource_samples
+              WHEN OLD.legacy_id IS NULL AND NEW.legacy_id IS NOT NULL
+              BEGIN UPDATE metrics_native_integrity SET raw_row_count = raw_row_count - 1 WHERE id = 1; END;
+           CREATE TRIGGER IF NOT EXISTS metrics_native_raw_update_to_native
+              AFTER UPDATE ON service_resource_samples
+              WHEN OLD.legacy_id IS NOT NULL AND NEW.legacy_id IS NULL
+              BEGIN UPDATE metrics_native_integrity SET raw_row_count = raw_row_count + 1 WHERE id = 1; END;
+           CREATE TRIGGER IF NOT EXISTS metrics_native_latest_insert
+              AFTER INSERT ON service_resource_latest_samples WHEN NEW.legacy_source != 1
+              BEGIN UPDATE metrics_native_integrity SET latest_row_count = latest_row_count + 1 WHERE id = 1; END;
+           CREATE TRIGGER IF NOT EXISTS metrics_native_latest_delete
+              AFTER DELETE ON service_resource_latest_samples WHEN OLD.legacy_source != 1
+              BEGIN UPDATE metrics_native_integrity SET latest_row_count = latest_row_count - 1 WHERE id = 1; END;
+           CREATE TRIGGER IF NOT EXISTS metrics_native_latest_update_to_legacy
+              AFTER UPDATE ON service_resource_latest_samples
+              WHEN OLD.legacy_source != 1 AND NEW.legacy_source = 1
+              BEGIN UPDATE metrics_native_integrity SET latest_row_count = latest_row_count - 1 WHERE id = 1; END;
+           CREATE TRIGGER IF NOT EXISTS metrics_native_latest_update_to_native
+              AFTER UPDATE ON service_resource_latest_samples
+              WHEN OLD.legacy_source = 1 AND NEW.legacy_source != 1
+              BEGIN UPDATE metrics_native_integrity SET latest_row_count = latest_row_count + 1 WHERE id = 1; END;"#,
+    )?;
+    let initialized = conn.query_row(
+        "SELECT initialized FROM metrics_native_integrity WHERE id = 1",
+        [],
+        |row| row.get::<_, i64>(0),
+    )?;
+    if initialized != 0 {
+        return Ok(());
+    }
+    conn.execute(
+        r#"UPDATE metrics_native_integrity
+           SET initialized = 1,
+               raw_row_count = (
+                 SELECT COUNT(*) FROM service_resource_samples WHERE legacy_id IS NULL
+               ),
+               latest_row_count = (
+                 SELECT COUNT(*) FROM service_resource_latest_samples WHERE legacy_source != 1
+               ),
+               trusted_raw_row_count = (
+                 SELECT COUNT(*) FROM service_resource_samples WHERE legacy_id IS NULL
+               ),
+               trusted_latest_row_count = (
+                 SELECT COUNT(*) FROM service_resource_latest_samples WHERE legacy_source != 1
+               ),
+               has_pruned_raw = EXISTS(
+                 SELECT 1 FROM service_resource_rollups AS rollup
+                 WHERE NOT EXISTS (
+                   SELECT 1 FROM service_resource_samples AS sample
+                   WHERE sample.service_id = rollup.service_id
+                     AND sample.sampled_at >= rollup.bucket_start
+                     AND sample.sampled_at < rollup.bucket_end
+                 )
+               )
+           WHERE id = 1"#,
+        [],
+    )?;
+    Ok(())
+}

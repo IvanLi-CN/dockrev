@@ -924,6 +924,44 @@ services:
     assert_eq!(item["resource"]["cpuPercent"].as_f64(), Some(12.5));
     let net_rx = item["resource"]["netRxRateBps"].as_f64().unwrap();
     assert!((net_rx - 100.0).abs() < 0.01, "unexpected net rx rate: {net_rx}");
+
+    let backup = state.db.get_backup_settings().await.unwrap();
+    let mut resource_monitor = state.db.get_resource_monitor_settings().await.unwrap();
+    resource_monitor.enabled = false;
+    let schedules = state.db.get_schedule_settings().await.unwrap();
+    let release_notes = state.db.get_release_notes_settings().await.unwrap();
+    state
+        .db
+        .put_settings(
+            &backup,
+            &resource_monitor,
+            &schedules,
+            &release_notes,
+            None,
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/homepage/nav")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let payload = response_json(response).await;
+    assert_eq!(payload["resourceSummary"]["enabled"].as_bool(), Some(false));
+    assert!(payload["resourceSummary"]["services"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    let item = &payload["items"].as_array().unwrap()[0];
+    assert!(item["resource"]["cpuPercent"].is_null());
+    assert_eq!(item["resource"]["stale"].as_bool(), Some(true));
 }
 
 #[tokio::test]

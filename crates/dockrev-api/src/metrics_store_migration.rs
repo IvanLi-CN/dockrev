@@ -98,6 +98,20 @@ impl MetricsStore {
             }
         }
 
+        let native_target = self.native_target_state().await?;
+        if native_target.raw_is_untrusted {
+            let message = "native raw metrics target changed and cannot recover".to_string();
+            db.set_metrics_migration_state("copying", Some(&self.target_identity), Some(&message))
+                .await?;
+            anyhow::bail!(message);
+        }
+        if native_target.latest_is_untrusted {
+            let message = "native latest metrics target changed and cannot recover".to_string();
+            db.set_metrics_migration_state("copying", Some(&self.target_identity), Some(&message))
+                .await?;
+            anyhow::bail!(message);
+        }
+
         if !self.pruned_legacy_ids_are_intact().await? {
             let message = "metrics migration tombstone integrity verification failed".to_string();
             db.set_metrics_migration_state("copying", Some(&self.target_identity), Some(&message))
@@ -125,8 +139,7 @@ impl MetricsStore {
         }
         let rollups_are_intact = self.rollups_are_intact().await?;
         if !rollups_are_intact
-            && (!retained_pruned_legacy_ids.is_empty()
-                || !self.damaged_rollups_are_reconstructible().await?)
+            && (!retained_pruned_legacy_ids.is_empty() || native_target.has_pruned_raw)
         {
             let message = "retained rollups cannot be recovered after raw retention".to_string();
             db.set_metrics_migration_state("copying", Some(&self.target_identity), Some(&message))

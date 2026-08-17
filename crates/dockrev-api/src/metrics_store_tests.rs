@@ -977,6 +977,165 @@ async fn metrics_store_migration_rejects_corrupted_native_rollups_after_raw_expi
 }
 
 #[tokio::test]
+async fn metrics_store_migration_rejects_native_raw_loss() {
+    let main_path = temp_path("metrics-migration-native-raw-loss-main");
+    let metrics_path = temp_path("metrics-migration-native-raw-loss-target");
+    let db = Db::open(&main_path).await.unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    metrics
+        .insert_samples(&[sample("svc-native", "2026-08-16T12:02:00Z", 10.0, 1_000)])
+        .await
+        .unwrap();
+    metrics
+        .writer_call(|conn| {
+            conn.execute(
+                "DELETE FROM service_resource_samples WHERE service_id = 'svc-native'",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    assert!(metrics.migrate_from_legacy(&db).await.is_err());
+    assert_eq!(
+        db.metrics_migration_state()
+            .await
+            .unwrap()
+            .as_ref()
+            .map(|state| state.state.as_str()),
+        Some("copying")
+    );
+}
+
+#[tokio::test]
+async fn metrics_store_migration_rejects_native_latest_loss_after_raw_expiry() {
+    let main_path = temp_path("metrics-migration-native-latest-loss-main");
+    let metrics_path = temp_path("metrics-migration-native-latest-loss-target");
+    let db = Db::open(&main_path).await.unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    metrics
+        .insert_samples(&[sample("svc-native", "2026-08-16T12:02:00Z", 10.0, 1_000)])
+        .await
+        .unwrap();
+    let active_service_ids = BTreeSet::from(["svc-native".to_string()]);
+    metrics
+        .writer_call(move |conn| {
+            gc_batch_tx(
+                conn,
+                "2026-08-16T12:02:30Z",
+                "1970-01-01T00:00:00Z",
+                "1970-01-01T00:00:00Z",
+                &active_service_ids,
+            )?;
+            conn.execute(
+                "DELETE FROM service_resource_latest_samples WHERE service_id = 'svc-native'",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    assert!(metrics.migrate_from_legacy(&db).await.is_err());
+    assert_eq!(
+        db.metrics_migration_state()
+            .await
+            .unwrap()
+            .as_ref()
+            .map(|state| state.state.as_str()),
+        Some("copying")
+    );
+}
+
+#[tokio::test]
+async fn metrics_store_migration_rejects_missing_native_rollups_after_raw_expiry() {
+    let main_path = temp_path("metrics-migration-native-rollup-loss-main");
+    let metrics_path = temp_path("metrics-migration-native-rollup-loss-target");
+    let db = Db::open(&main_path).await.unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    metrics
+        .insert_samples(&[sample("svc-native", "2026-08-16T12:02:00Z", 10.0, 1_000)])
+        .await
+        .unwrap();
+    let active_service_ids = BTreeSet::from(["svc-native".to_string()]);
+    metrics
+        .writer_call(move |conn| {
+            gc_batch_tx(
+                conn,
+                "2026-08-16T12:02:30Z",
+                "1970-01-01T00:00:00Z",
+                "1970-01-01T00:00:00Z",
+                &active_service_ids,
+            )?;
+            conn.execute(
+                "DELETE FROM service_resource_rollups WHERE service_id = 'svc-native'",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    assert!(metrics.migrate_from_legacy(&db).await.is_err());
+    assert_eq!(
+        db.metrics_migration_state()
+            .await
+            .unwrap()
+            .as_ref()
+            .map(|state| state.state.as_str()),
+        Some("copying")
+    );
+}
+
+#[tokio::test]
+async fn metrics_store_migration_rejects_partial_native_rollups_after_raw_expiry() {
+    let main_path = temp_path("metrics-migration-native-partial-rollup-main");
+    let metrics_path = temp_path("metrics-migration-native-partial-rollup-target");
+    let db = Db::open(&main_path).await.unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    metrics
+        .insert_samples(&[
+            sample("svc-native", "2026-08-16T12:02:00Z", 10.0, 1_000),
+            sample("svc-native", "2026-08-16T12:02:45Z", 20.0, 1_090),
+        ])
+        .await
+        .unwrap();
+    let active_service_ids = BTreeSet::from(["svc-native".to_string()]);
+    metrics
+        .writer_call(move |conn| {
+            gc_batch_tx(
+                conn,
+                "2026-08-16T12:02:30Z",
+                "1970-01-01T00:00:00Z",
+                "1970-01-01T00:00:00Z",
+                &active_service_ids,
+            )?;
+            conn.execute(
+                "UPDATE service_resource_rollups SET cpu_avg = 99.0 WHERE service_id = 'svc-native'",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    assert!(metrics.migrate_from_legacy(&db).await.is_err());
+    assert_eq!(
+        db.metrics_migration_state()
+            .await
+            .unwrap()
+            .as_ref()
+            .map(|state| state.state.as_str()),
+        Some("copying")
+    );
+}
+
+#[tokio::test]
 async fn metrics_store_migration_recovers_same_cardinality_target_corruption() {
     let main_path = temp_path("metrics-migration-content-damage-main");
     let metrics_path = temp_path("metrics-migration-content-damage-target");
@@ -1313,6 +1472,45 @@ async fn metrics_store_rollup_preserves_average_peak_and_terminal_counters() {
     assert_eq!(history.samples[0].net_rx_rate_bps, Some(100.0));
     assert_eq!(history.peaks[0].cpu_percent, 30.0);
     assert_eq!(history.peaks[0].net_rx_rate_bps, Some(100.0));
+}
+
+#[tokio::test]
+async fn metrics_store_rebuilds_successor_rollup_for_out_of_order_samples() {
+    let metrics = MetricsStore::open(&temp_path("metrics-rollup-out-of-order"))
+        .await
+        .unwrap();
+    metrics
+        .insert_samples(&[
+            sample("svc-a", "2026-08-16T13:00:50Z", 10.0, 900),
+            sample("svc-a", "2026-08-16T13:01:05Z", 20.0, 1_100),
+        ])
+        .await
+        .unwrap();
+    metrics
+        .insert_samples(&[sample("svc-a", "2026-08-16T13:00:55Z", 15.0, 1_000)])
+        .await
+        .unwrap();
+
+    let history = metrics
+        .history_since(
+            "svc-a",
+            "2026-08-16T13:00:00Z",
+            Some(MINUTE_RESOLUTION_SECONDS),
+        )
+        .await
+        .unwrap();
+    let successor = history
+        .samples
+        .iter()
+        .find(|sample| sample.sampled_at == "2026-08-16T13:02:00Z")
+        .unwrap();
+    assert_eq!(successor.net_rx_rate_bps, Some(10.0));
+    let successor_peak = history
+        .peaks
+        .iter()
+        .find(|sample| sample.sampled_at == "2026-08-16T13:02:00Z")
+        .unwrap();
+    assert_eq!(successor_peak.net_rx_rate_bps, Some(10.0));
 }
 
 #[tokio::test]

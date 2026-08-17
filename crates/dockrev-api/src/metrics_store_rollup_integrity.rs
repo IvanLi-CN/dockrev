@@ -42,30 +42,6 @@ impl MetricsStore {
         .await
         .context("verify metrics rollup integrity")
     }
-
-    pub(super) async fn damaged_rollups_are_reconstructible(&self) -> anyhow::Result<bool> {
-        self.reader_call(|conn| {
-            let query = format!(
-                r#"SELECT NOT EXISTS(
-                     SELECT 1
-                     FROM service_resource_rollups AS rollup
-                     WHERE rollup.integrity_json != {ROLLUP_INTEGRITY_JSON}
-                       AND NOT EXISTS (
-                         SELECT 1
-                         FROM service_resource_samples AS sample
-                         WHERE sample.service_id = rollup.service_id
-                           AND sample.sampled_at >= rollup.bucket_start
-                           AND sample.sampled_at < rollup.bucket_end
-                       )
-                   )"#
-            );
-            conn.query_row(&query, [], |row| row.get::<_, i64>(0))
-                .map(|value| value != 0)
-                .map_err(Into::into)
-        })
-        .await
-        .context("verify damaged metrics rollups are reconstructible")
-    }
 }
 
 pub(super) fn refresh_rollup_integrity_tx(tx: &Transaction<'_>) -> anyhow::Result<()> {
