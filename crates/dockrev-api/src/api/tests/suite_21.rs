@@ -676,6 +676,7 @@ async fn api_jobs_compact_omits_raw_summary_and_keeps_derived_fields() {
             &now,
             &serde_json::json!({
             "targetDisplayTag": "1.2.3",
+            "targets": [{"targetTag": "2.4.6"}],
             "action": "stop",
                 "secretDiagnostic": "must not leave this endpoint",
                 "progress": {
@@ -706,7 +707,7 @@ async fn api_jobs_compact_omits_raw_summary_and_keeps_derived_fields() {
     let item = &compact["jobs"][0];
     assert!(item.get("summary").is_none());
     assert!(item.get("secretDiagnostic").is_none());
-    assert_eq!(item["targetVersion"].as_str(), Some("1.2.3"));
+    assert_eq!(item["targetVersion"].as_str(), Some("2.4.6"));
     assert_eq!(item["displayLabel"].as_str(), Some("停止任务"));
     assert_eq!(item["progress"]["percent"].as_u64(), Some(100));
 

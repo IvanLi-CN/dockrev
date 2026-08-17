@@ -16,7 +16,7 @@
 - 单一 `ResourceSamplingCoordinator` 驱动历史周期，并以项目级 in-flight/cache 让活跃 SSE 复用同一次采集；每个历史周期只调用一次容器发现。
 - Docker stats 使用 `stream=false&one-shot=true`，CPU 以同容器 ID 的前次原始计数计算；首样本为 `0`。基线保留窗口覆盖最长 300 秒 cadence，缺少 `system_cpu_usage` 的响应不安装基线。单项目 SSE 过滤发现只清理该项目的失效基线，全局发现会同步回收已删除项目的旧基线。协调器同步驱逐过期且非进行中的项目状态，单项目 SSE 继续通过 Compose label 过滤发现容器；拥有采集的 future 被取消时由 guard 清理 `in-flight` 并唤醒等待者，监控禁用期间将已开始的采集标记为失效并向等待者传播错误，不回填缓存。
 - 原始样本固定保留 24 小时；独立 GC 任务在启动后与每分钟最多完成 10 个 10,000 行批次并在批间让出执行权，不执行自动 `VACUUM`，不阻塞历史采样主循环。
-- 指标持久化由独立的 `MetricsStore` 负责：`metrics.sqlite3` 持有 raw/latest/rollups，主库仅持有业务状态和迁移状态。首次启动复制旧表并用有序行哈希与行数校验后才切换；导入 raw 记录稳定签名，GC 在清理 legacy raw 前记录墓碑。后续启动还核对完整源哈希，latest/rollup 只从现存 raw 重算；旧 latest 表可恢复主库当前 active service 的过期 latest，非 active service 不回灌。因此派生读模型损坏可恢复、不复活已清理旧行，也不删除超出 raw 留存期的 active latest 或长窗口桶；采样周期对所有成功项目只提交一次指标事务。
+- 指标持久化由独立的 `MetricsStore` 负责：`metrics.sqlite3` 持有 raw/latest/rollups，主库仅持有业务状态和迁移状态。首次启动复制旧表并用有序行哈希与行数校验后才切换；导入 raw 记录稳定签名，GC 在清理 legacy raw 前记录墓碑。latest 以来源标记区分导入投影与运行时采样，恢复时重建并验证导入投影，但保留更新鲜的运行时值。因此派生读模型损坏、陈旧或回退的导入 latest 可恢复，不复活已清理旧行，也不删除超出 raw 留存期的 active latest 或长窗口桶；采样周期对所有成功项目只提交一次指标事务。
 - 迁移 manifest 同时记录 legacy raw 与 latest 的源计数/哈希及 raw 最大 id；源 latest 变化会触发重新校验，旧 manifest 缺少新指纹字段时按未完成迁移处理。
 - 全局更新跟踪和概览的 compact jobs 路径经 SQLite JSON 投影只读取派生字段，不把完整 `summary_json` 选入 Rust；兼容的默认 jobs 路径仍读取原始 summary。
 - 资源历史短窗口保持原始样本契约，`7d` 与 `30d` 从 1 分钟或 5 分钟读模型返回均值主线及对齐峰值。首页和资源概览并行读取指标库与主库的 query-only 读模型，在 Rust 内按 service id 合并并过滤孤儿指标；镜像快照由启动预热、30 分钟后台协调器与显式操作刷新，GET 不排队工作。

@@ -368,7 +368,7 @@ pub struct LegacyMetricSampleRow {
     pub sample: ServiceResourceSampleInput,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LegacyMetricLatestSampleRow {
     pub legacy_sample_id: Option<i64>,
     pub service_id: String,

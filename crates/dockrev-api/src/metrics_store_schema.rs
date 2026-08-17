@@ -24,6 +24,22 @@ pub(super) fn ensure_sample_schema(conn: &mut rusqlite::Connection) -> anyhow::R
     Ok(())
 }
 
+pub(super) fn ensure_latest_schema(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(service_resource_latest_samples)")?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    if !columns.contains("legacy_source") {
+        // Existing rows predate provenance tracking and are treated as imported values for one
+        // reconciliation pass. New sampler writes explicitly mark the row as native.
+        conn.execute(
+            "ALTER TABLE service_resource_latest_samples ADD COLUMN legacy_source INTEGER NOT NULL DEFAULT 1",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
 pub(super) fn ensure_rollup_schema_columns(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     let mut stmt = conn.prepare("PRAGMA table_info(service_resource_rollups)")?;
     let columns = stmt

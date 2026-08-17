@@ -81,6 +81,40 @@ async fn metrics_store_migration_reimports_when_legacy_latest_changes() {
 }
 
 #[tokio::test]
+async fn metrics_store_migration_repairs_regressed_legacy_latest_projection() {
+    let main_path = temp_path("metrics-migration-stale-latest-projection-main");
+    let metrics_path = temp_path("metrics-migration-stale-latest-projection-target");
+    let db = Db::open(&main_path).await.unwrap();
+    db.insert_legacy_metric_fixture(&[sample("svc-a", "2026-08-16T13:10:00Z", 10.0, 1_000)])
+        .await
+        .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    db.update_legacy_metric_fixture_latest_cpu("svc-a", 99.0)
+        .await
+        .unwrap();
+    metrics
+        .writer_call(|conn| {
+            conn.execute(
+                "UPDATE service_resource_latest_samples SET sampled_at = '2099-01-01T00:00:00Z', cpu_percent = 7.0, legacy_source = 1 WHERE service_id = 'svc-a'",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    metrics.migrate_from_legacy(&db).await.unwrap();
+
+    let latest = metrics.list_latest_samples().await.unwrap();
+    assert_eq!(
+        latest[0].sampled_at.as_deref(),
+        Some("2026-08-16T13:10:00Z")
+    );
+    assert_eq!(latest[0].cpu_percent, Some(99.0));
+}
+
+#[tokio::test]
 async fn metrics_store_migration_preserves_legacy_latest_after_raw_expiry() {
     let main_path = temp_path("metrics-migration-stale-latest-main");
     let metrics_path = temp_path("metrics-migration-stale-latest-target");

@@ -78,12 +78,26 @@ impl MetricsStore {
                 {
                     let pruned_legacy_ids = self.pruned_legacy_ids().await?;
                     self.reconcile_latest_samples_from_raw().await?;
-                    self.upsert_legacy_latest_samples(filter_pruned_legacy_latest(
+                    let expected_latest = filter_pruned_legacy_latest(
                         legacy_latest,
                         &pruned_legacy_ids,
                         active_service_ids,
-                    ))
-                    .await?;
+                    );
+                    self.sync_legacy_latest_samples(expected_latest.clone())
+                        .await?;
+                    if !self
+                        .legacy_latest_projection_matches(&expected_latest)
+                        .await?
+                    {
+                        let message = "legacy latest projection verification failed".to_string();
+                        db.set_metrics_migration_state(
+                            "copying",
+                            Some(&self.target_identity),
+                            Some(&message),
+                        )
+                        .await?;
+                        anyhow::bail!(message);
+                    }
                     if pruned_legacy_ids.is_empty() {
                         self.reconcile_rollups_from_raw().await?;
                     }
@@ -123,12 +137,22 @@ impl MetricsStore {
             self.insert_legacy_samples(batch).await?;
         }
         self.reconcile_latest_samples_from_raw().await?;
-        self.upsert_legacy_latest_samples(filter_pruned_legacy_latest(
+        let expected_latest = filter_pruned_legacy_latest(
             legacy_latest,
             &retained_pruned_legacy_ids,
             active_service_ids,
-        ))
-        .await?;
+        );
+        self.sync_legacy_latest_samples(expected_latest.clone())
+            .await?;
+        if !self
+            .legacy_latest_projection_matches(&expected_latest)
+            .await?
+        {
+            let message = "legacy latest projection verification failed".to_string();
+            db.set_metrics_migration_state("copying", Some(&self.target_identity), Some(&message))
+                .await?;
+            anyhow::bail!(message);
+        }
 
         let target = self.migrated_legacy_integrity().await?;
         let target_is_verified = if retained_pruned_legacy_ids.is_empty() {

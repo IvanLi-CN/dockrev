@@ -70,7 +70,7 @@
 - `DOCKREV_METRICS_DB_PATH` 默认为主库同目录下的 `metrics.sqlite3`，且启动必须拒绝它与 `DOCKREV_DB_PATH` 指向同一文件，包括主库创建前的符号链接别名。
 - 指标库包含 `service_resource_samples`、`service_resource_latest_samples` 与 `service_resource_rollups`。原始样本保留 24 小时，1 分钟桶保留 7 天，5 分钟桶保留 30 天。
 - 启动时先从主库旧指标表可恢复复制到指标库。首次完整复制必须由主库迁移状态、幂等写入、稳定排序行哈希和行数验证控制；验证完成前不得启动新的采样写路径，旧表保持为回滚源。
-- 从旧表导入的原始行必须保存稳定内容签名。指标 GC 在删除带 legacy id 的原始行或孤儿服务数据前，必须记录该 id 的墓碑；后续启动以完整源哈希、保留原始行签名及“保留行数加墓碑数覆盖旧表行数”验证已迁移数据。验证后 latest/rollup 只从现存 raw 重算；同时可从旧 latest 表恢复主库当前 active service 的 latest，即使对应 raw 已过期，非 active service 的 legacy latest 不得回灌。必须保留超出 raw 留存期的 active latest 和长窗口桶。完整复制源变化时才清除墓碑重拷；修复目标数据时不得复活已由 GC 裁剪的旧行。
+- 从旧表导入的原始行必须保存稳定内容签名。指标 GC 在删除带 legacy id 的原始行或孤儿服务数据前，必须记录该 id 的墓碑；后续启动以完整源哈希、保留原始行签名及“保留行数加墓碑数覆盖旧表行数”验证已迁移数据。验证后 latest/rollup 只从现存 raw 重算；latest 还必须以来源标记重建 active service 的 legacy 投影并完成逐行验证，保留更新鲜的运行时样本，同时修复陈旧、缺失或时间回退的导入值。非 active service 的 legacy latest 不得回灌。必须保留超出 raw 留存期的 active latest 和长窗口桶。完整复制源变化时才清除墓碑重拷；修复目标数据时不得复活已由 GC 裁剪的旧行。
 - 迁移 manifest 同时保存 legacy raw 与 latest 的稳定排序行哈希/行数及 raw 最大 id；任何源指纹变化或缺少新字段都不得直接复用 `complete` 状态。
 - `GET /api/jobs?view=compact` 的查询只经 SQLite JSON 投影读取进度、结果原因、展示标签和目标版本等派生字段，Rust 不得选取或反序列化完整 `summary_json`；默认 jobs 响应继续保持兼容。
 - 后台历史采样任务：

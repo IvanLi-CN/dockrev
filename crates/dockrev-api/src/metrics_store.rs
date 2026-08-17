@@ -29,7 +29,8 @@ use migration::metrics_target_identity;
 #[path = "metrics_store_schema.rs"]
 mod schema;
 use schema::{
-    ensure_migration_manifest_schema, ensure_rollup_schema_columns, ensure_sample_schema,
+    ensure_latest_schema, ensure_migration_manifest_schema, ensure_rollup_schema_columns,
+    ensure_sample_schema,
 };
 
 pub const RAW_RETENTION_SECONDS: i64 = 24 * 60 * 60;
@@ -77,7 +78,8 @@ CREATE TABLE IF NOT EXISTS service_resource_latest_samples (
   container_count INTEGER NOT NULL DEFAULT 1,
   prev_sampled_at TEXT,
   prev_net_rx_bytes INTEGER,
-  prev_net_tx_bytes INTEGER
+  prev_net_tx_bytes INTEGER,
+  legacy_source INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_metrics_latest_samples_sampled_at
   ON service_resource_latest_samples(sampled_at);
@@ -245,6 +247,7 @@ impl MetricsStore {
                 "PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; {SCHEMA}"
             ))?;
             ensure_sample_schema(conn)?;
+            ensure_latest_schema(conn)?;
             ensure_rollup_schema_columns(conn)?;
             ensure_migration_manifest_schema(conn)?;
             Ok(())
@@ -340,19 +343,24 @@ impl MetricsStore {
         .context("copy legacy metric samples")
     }
 
-    async fn upsert_legacy_latest_samples(
+    async fn sync_legacy_latest_samples(
         &self,
         rows: Vec<crate::db::LegacyMetricLatestSampleRow>,
     ) -> anyhow::Result<()> {
         self.writer_call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute(
+                "DELETE FROM service_resource_latest_samples WHERE legacy_source != 0",
+                [],
+            )?;
             for row in rows {
                 tx.execute(
                     r#"INSERT INTO service_resource_latest_samples (
                         service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes,
                         net_rx_bytes, net_tx_bytes, block_read_bytes, block_write_bytes, pids,
-                        container_count, prev_sampled_at, prev_net_rx_bytes, prev_net_tx_bytes
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                        container_count, prev_sampled_at, prev_net_rx_bytes, prev_net_tx_bytes,
+                        legacy_source
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 1)
                     ON CONFLICT(service_id) DO UPDATE SET
                         sampled_at=excluded.sampled_at,
                         cpu_percent=excluded.cpu_percent,
@@ -366,8 +374,10 @@ impl MetricsStore {
                         container_count=excluded.container_count,
                         prev_sampled_at=excluded.prev_sampled_at,
                         prev_net_rx_bytes=excluded.prev_net_rx_bytes,
-                        prev_net_tx_bytes=excluded.prev_net_tx_bytes
-                    WHERE excluded.sampled_at >= service_resource_latest_samples.sampled_at"#,
+                        prev_net_tx_bytes=excluded.prev_net_tx_bytes,
+                        legacy_source=1
+                    WHERE service_resource_latest_samples.legacy_source != 0
+                       OR excluded.sampled_at >= service_resource_latest_samples.sampled_at"#,
                     params![
                         row.service_id,
                         row.sampled_at,
@@ -391,6 +401,74 @@ impl MetricsStore {
         })
         .await
         .context("copy legacy latest metric samples")
+    }
+
+    async fn legacy_latest_projection_matches(
+        &self,
+        expected: &[crate::db::LegacyMetricLatestSampleRow],
+    ) -> anyhow::Result<bool> {
+        let expected = expected.to_vec();
+        self.reader_call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"SELECT service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes,
+                          net_rx_bytes, net_tx_bytes, block_read_bytes, block_write_bytes, pids,
+                          container_count, prev_sampled_at, prev_net_rx_bytes, prev_net_tx_bytes,
+                          legacy_source
+                   FROM service_resource_latest_samples ORDER BY service_id"#,
+            )?;
+            let mut actual = std::collections::BTreeMap::new();
+            for row in stmt.query_map([], |row| {
+                Ok((
+                    crate::db::LegacyMetricLatestSampleRow {
+                        legacy_sample_id: None,
+                        service_id: row.get(0)?,
+                        sampled_at: row.get(1)?,
+                        cpu_percent: row.get(2)?,
+                        mem_used_bytes: row.get::<_, Option<i64>>(3)?.map(|value| value as u64),
+                        mem_limit_bytes: row.get::<_, Option<i64>>(4)?.map(|value| value as u64),
+                        net_rx_bytes: row.get::<_, Option<i64>>(5)?.map(|value| value as u64),
+                        net_tx_bytes: row.get::<_, Option<i64>>(6)?.map(|value| value as u64),
+                        block_read_bytes: row.get::<_, Option<i64>>(7)?.map(|value| value as u64),
+                        block_write_bytes: row.get::<_, Option<i64>>(8)?.map(|value| value as u64),
+                        pids: row.get::<_, Option<i64>>(9)?.map(|value| value as u64),
+                        container_count: row.get::<_, i64>(10)? as u32,
+                        prev_sampled_at: row.get(11)?,
+                        prev_net_rx_bytes: row.get::<_, Option<i64>>(12)?.map(|value| value as u64),
+                        prev_net_tx_bytes: row.get::<_, Option<i64>>(13)?.map(|value| value as u64),
+                    },
+                    row.get::<_, i64>(14)? != 0,
+                ))
+            })? {
+                let (row, legacy_source) = row?;
+                actual.insert(row.service_id.clone(), (row, legacy_source));
+            }
+            let mut expected = expected
+                .into_iter()
+                .map(|row| (row.service_id.clone(), row))
+                .collect::<std::collections::BTreeMap<_, _>>();
+            for (service_id, (actual, legacy_source)) in actual {
+                if legacy_source {
+                    let Some(mut expected_row) = expected.remove(&service_id) else {
+                        return Ok(false);
+                    };
+                    expected_row.legacy_sample_id = None;
+                    if actual != expected_row {
+                        return Ok(false);
+                    }
+                } else if let Some(expected_row) = expected.get(&service_id) {
+                    let mut expected_row = expected_row.clone();
+                    expected_row.legacy_sample_id = None;
+                    if actual.sampled_at < expected_row.sampled_at
+                        || (actual.sampled_at == expected_row.sampled_at && actual != expected_row)
+                    {
+                        return Ok(false);
+                    }
+                    expected.remove(&service_id);
+                }
+            }
+            Ok(expected.is_empty())
+        })
+        .await
     }
 
     async fn migrated_legacy_integrity(&self) -> anyhow::Result<(u64, String)> {
@@ -474,7 +552,8 @@ impl MetricsStore {
                 r#"INSERT INTO service_resource_latest_samples (
                     service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes,
                     net_rx_bytes, net_tx_bytes, block_read_bytes, block_write_bytes, pids,
-                    container_count, prev_sampled_at, prev_net_rx_bytes, prev_net_tx_bytes
+                    container_count, prev_sampled_at, prev_net_rx_bytes, prev_net_tx_bytes,
+                    legacy_source
                 )
                 SELECT
                     latest.service_id,
@@ -490,7 +569,8 @@ impl MetricsStore {
                     latest.container_count,
                     previous.sampled_at,
                     previous.net_rx_bytes,
-                    previous.net_tx_bytes
+                    previous.net_tx_bytes,
+                    CASE WHEN latest.legacy_id IS NULL THEN 0 ELSE 1 END
                 FROM service_resource_samples latest
                 LEFT JOIN service_resource_samples previous ON previous.id = (
                     SELECT candidate.id
@@ -521,8 +601,10 @@ impl MetricsStore {
                     container_count=excluded.container_count,
                     prev_sampled_at=excluded.prev_sampled_at,
                     prev_net_rx_bytes=excluded.prev_net_rx_bytes,
-                    prev_net_tx_bytes=excluded.prev_net_tx_bytes
-                WHERE excluded.sampled_at >= service_resource_latest_samples.sampled_at;"#,
+                    prev_net_tx_bytes=excluded.prev_net_tx_bytes,
+                    legacy_source=excluded.legacy_source
+                WHERE service_resource_latest_samples.legacy_source != 0
+                   OR excluded.sampled_at >= service_resource_latest_samples.sampled_at;"#,
             )?;
             tx.commit()?;
             Ok(())
@@ -1024,37 +1106,41 @@ fn write_samples_tx(
         )?;
         inserted += 1;
         let previous = tx.query_row(
-            "SELECT sampled_at, net_rx_bytes, net_tx_bytes FROM service_resource_latest_samples WHERE service_id = ?1",
+            "SELECT sampled_at, net_rx_bytes, net_tx_bytes, legacy_source FROM service_resource_latest_samples WHERE service_id = ?1",
             params![row.service_id],
             |current| Ok((
                 current.get::<_, String>(0)?, current.get::<_, Option<i64>>(1)?.map(|value| value as u64),
                 current.get::<_, Option<i64>>(2)?.map(|value| value as u64),
+                current.get::<_, i64>(3)? != 0,
             )),
         ).optional()?;
         let current_is_newer = previous
             .as_ref()
-            .is_none_or(|(sampled_at, _, _)| row.sampled_at >= *sampled_at);
+            .is_none_or(|(sampled_at, _, _, legacy_source)| {
+                *legacy_source || row.sampled_at >= *sampled_at
+            });
         if current_is_newer {
             tx.execute(
                 r#"INSERT INTO service_resource_latest_samples (
                   service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes, net_rx_bytes, net_tx_bytes,
-                  block_read_bytes, block_write_bytes, pids, container_count, prev_sampled_at, prev_net_rx_bytes, prev_net_tx_bytes
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                  block_read_bytes, block_write_bytes, pids, container_count, prev_sampled_at, prev_net_rx_bytes, prev_net_tx_bytes, legacy_source
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 0)
                 ON CONFLICT(service_id) DO UPDATE SET
                   sampled_at=excluded.sampled_at, cpu_percent=excluded.cpu_percent, mem_used_bytes=excluded.mem_used_bytes,
                   mem_limit_bytes=excluded.mem_limit_bytes, net_rx_bytes=excluded.net_rx_bytes, net_tx_bytes=excluded.net_tx_bytes,
                   block_read_bytes=excluded.block_read_bytes, block_write_bytes=excluded.block_write_bytes, pids=excluded.pids,
                   container_count=excluded.container_count, prev_sampled_at=excluded.prev_sampled_at,
-                  prev_net_rx_bytes=excluded.prev_net_rx_bytes, prev_net_tx_bytes=excluded.prev_net_tx_bytes"#,
+                  prev_net_rx_bytes=excluded.prev_net_rx_bytes, prev_net_tx_bytes=excluded.prev_net_tx_bytes,
+                  legacy_source=0"#,
                 params![
                     row.service_id, row.sampled_at, row.cpu_percent,
                     row.mem_used_bytes.map(|value| value as i64), row.mem_limit_bytes.map(|value| value as i64),
                     row.net_rx_bytes.map(|value| value as i64), row.net_tx_bytes.map(|value| value as i64),
                     row.block_read_bytes.map(|value| value as i64), row.block_write_bytes.map(|value| value as i64),
                     row.pids.map(|value| value as i64), row.container_count as i64,
-                    previous.as_ref().map(|(sampled_at, _, _)| sampled_at),
-                    previous.as_ref().and_then(|(_, value, _)| *value).map(|value| value as i64),
-                    previous.as_ref().and_then(|(_, _, value)| *value).map(|value| value as i64),
+                    previous.as_ref().map(|(sampled_at, _, _, _)| sampled_at),
+                    previous.as_ref().and_then(|(_, value, _, _)| *value).map(|value| value as i64),
+                    previous.as_ref().and_then(|(_, _, value, _)| *value).map(|value| value as i64),
                 ],
             )?;
         }

@@ -311,6 +311,31 @@ ORDER BY st.name ASC, sv.name ASC
                   ) AS transition_rank
                 FROM transition_candidates
               ) WHERE transition_rank = 1
+            ),
+            target_candidates AS (
+              SELECT job.id,
+                COALESCE(
+                  json_extract(target_entry.value, '$.targetDisplayTag'),
+                  json_extract(target_entry.value, '$.targetTag'),
+                  json_extract(target_entry.value, '$.to')
+                ) AS target_version,
+                target_entry.key AS target_index
+              FROM filtered_jobs job
+              JOIN json_each(job.summary_json, '$.targets') AS target_entry
+              WHERE NULLIF(trim(COALESCE(
+                json_extract(target_entry.value, '$.targetDisplayTag'),
+                json_extract(target_entry.value, '$.targetTag'),
+                json_extract(target_entry.value, '$.to')
+              )), '') IS NOT NULL
+            ),
+            first_targets AS (
+              SELECT id, target_version FROM (
+                SELECT id, target_version,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY id ORDER BY target_index
+                  ) AS target_rank
+                FROM target_candidates
+              ) WHERE target_rank = 1
             )
             SELECT job.id, job.type, job.scope, job.stack_id, job.service_id, job.status,
                 job.created_by, job.reason, job.created_at, job.started_at, job.finished_at,
@@ -333,9 +358,10 @@ ORDER BY st.name ASC, sv.name ASC
                   'targetTag', json_extract(job.summary_json, '$.targetTag'),
                   'to', json_extract(job.summary_json, '$.to')
                 ),
-                transition.transition_json, job.fallback_display_label
+                transition.transition_json, target.target_version, job.fallback_display_label
               FROM filtered_jobs job
               LEFT JOIN first_transitions transition ON transition.id = job.id
+              LEFT JOIN first_targets target ON target.id = job.id
               ORDER BY job.created_at DESC, job.id DESC"#, where_clauses.join(" AND "));
             let params: Vec<&dyn rusqlite::ToSql> = values.iter().map(|value| value as &dyn rusqlite::ToSql).collect();
             let mut stmt = conn.prepare(&sql)?;
@@ -517,13 +543,19 @@ fn compact_job_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobCompactL
         &summary,
         progress.as_ref(),
     );
-    let target_version = ["targetDisplayTag", "targetTag", "to"]
-        .iter()
-        .find_map(|key| summary.get(*key).and_then(serde_json::Value::as_str))
-        .map(str::trim)
+    let projected_target_version: Option<String> = row.get(13)?;
+    let fallback_display_label: String = row.get(14)?;
+    let target_version = projected_target_version
+        .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .map(ToString::to_string);
-    let fallback_display_label: String = row.get(13)?;
+        .or_else(|| {
+            ["targetDisplayTag", "targetTag", "to"]
+                .iter()
+                .find_map(|key| summary.get(*key).and_then(serde_json::Value::as_str))
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+        });
     let display_label =
         lifecycle_action_display_label(&job_type, &summary).unwrap_or(fallback_display_label);
     Ok(JobCompactListItem {
