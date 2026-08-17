@@ -853,6 +853,107 @@ async fn metrics_store_migration_reconciles_deleted_legacy_service() {
             .samples
             .is_empty()
     );
+    assert!(
+        metrics
+            .history_since(
+                "svc-a",
+                "1970-01-01T00:00:00Z",
+                Some(FIVE_MINUTE_RESOLUTION_SECONDS),
+            )
+            .await
+            .unwrap()
+            .samples
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn metrics_store_migration_removes_legacy_rollup_without_raw_even_when_latest_remains() {
+    let main_path = temp_path("metrics-migration-remove-legacy-bucket-main");
+    let metrics_path = temp_path("metrics-migration-remove-legacy-bucket-target");
+    let db = Db::open(&main_path).await.unwrap();
+    db.insert_legacy_metric_fixture(&[sample("svc-a", "2026-08-16T13:10:00Z", 10.0, 1_000)])
+        .await
+        .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+
+    db.delete_legacy_metric_fixture_samples_only("svc-a")
+        .await
+        .unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+
+    assert_eq!(metrics.list_latest_samples().await.unwrap().len(), 1);
+    assert!(
+        metrics
+            .history_since(
+                "svc-a",
+                "1970-01-01T00:00:00Z",
+                Some(FIVE_MINUTE_RESOLUTION_SECONDS),
+            )
+            .await
+            .unwrap()
+            .samples
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn metrics_store_migration_keeps_expired_native_rollups_when_legacy_source_changes() {
+    let main_path = temp_path("metrics-migration-keep-native-rollup-main");
+    let metrics_path = temp_path("metrics-migration-keep-native-rollup-target");
+    let db = Db::open(&main_path).await.unwrap();
+    let current_at = format_time(time::OffsetDateTime::now_utc()).unwrap();
+    db.insert_legacy_metric_fixture(&[sample("svc-legacy", &current_at, 10.0, 1_000)])
+        .await
+        .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+
+    let expired_native_at =
+        format_time(time::OffsetDateTime::now_utc() - time::Duration::days(2)).unwrap();
+    metrics
+        .insert_samples(&[sample("svc-native", &expired_native_at, 20.0, 2_000)])
+        .await
+        .unwrap();
+    metrics
+        .gc(&BTreeSet::from([
+            "svc-legacy".to_string(),
+            "svc-native".to_string(),
+        ]))
+        .await
+        .unwrap();
+    assert_eq!(
+        metrics
+            .history_since(
+                "svc-native",
+                "1970-01-01T00:00:00Z",
+                Some(FIVE_MINUTE_RESOLUTION_SECONDS),
+            )
+            .await
+            .unwrap()
+            .samples
+            .len(),
+        1
+    );
+
+    db.update_legacy_metric_fixture_cpu("svc-legacy", 11.0)
+        .await
+        .unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    assert_eq!(
+        metrics
+            .history_since(
+                "svc-native",
+                "1970-01-01T00:00:00Z",
+                Some(FIVE_MINUTE_RESOLUTION_SECONDS),
+            )
+            .await
+            .unwrap()
+            .samples
+            .len(),
+        1
+    );
 }
 
 #[tokio::test]

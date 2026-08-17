@@ -161,6 +161,12 @@ impl MetricsStore {
         db.set_metrics_migration_state("copying", Some(&self.target_identity), None)
             .await?;
 
+        let previous_legacy_rollup_buckets = if !raw_source_matches_manifest || !rollups_are_intact
+        {
+            self.legacy_rollup_buckets().await?
+        } else {
+            BTreeSet::new()
+        };
         self.clear_legacy_samples().await?;
 
         let mut after_id = 0_i64;
@@ -210,7 +216,8 @@ impl MetricsStore {
             anyhow::bail!(message);
         }
         if !raw_source_matches_manifest || !rollups_are_intact {
-            self.reconcile_rollups_from_raw().await?;
+            self.reconcile_rollups_from_raw(&previous_legacy_rollup_buckets)
+                .await?;
         }
         self.trust_target().await?;
         self.set_migration_manifest(&manifest).await?;

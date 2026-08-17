@@ -811,11 +811,15 @@ impl MetricsStore {
         self.reader_call(metrics_integrity_from_connection).await
     }
 
-    /// Build rollups after a full legacy copy or an integrity failure. Older rollups can outlive
-    /// the raw samples needed to reconstruct them, so this only touches buckets represented by
-    /// retained raw samples.
-    async fn reconcile_rollups_from_raw(&self) -> anyhow::Result<()> {
-        self.writer_call(|conn| {
+    /// Build rollups after a full legacy copy or an integrity failure. Older native rollups can
+    /// outlive raw retention, so only buckets represented by retained raw samples or by the
+    /// pre-copy legacy projection are touched.
+    async fn reconcile_rollups_from_raw(
+        &self,
+        previous_legacy_buckets: &BTreeSet<(String, u32, i64)>,
+    ) -> anyhow::Result<()> {
+        let previous_legacy_buckets = previous_legacy_buckets.clone();
+        self.writer_call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             begin_managed_metrics_write_tx(&tx)?;
             let buckets = {
@@ -836,6 +840,8 @@ impl MetricsStore {
                 }
                 buckets
             };
+            let mut buckets = buckets;
+            buckets.extend(previous_legacy_buckets);
             for (service_id, resolution, bucket_start) in buckets {
                 rebuild_rollup_tx(&tx, &service_id, resolution, bucket_start)?;
             }
@@ -843,6 +849,31 @@ impl MetricsStore {
             trust_metrics_target_tx(&tx)?;
             tx.commit()?;
             Ok(())
+        })
+        .await
+    }
+
+    async fn legacy_rollup_buckets(&self) -> anyhow::Result<BTreeSet<(String, u32, i64)>> {
+        self.reader_call(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT service_id, sampled_at FROM service_resource_samples WHERE legacy_id IS NOT NULL ORDER BY service_id ASC, sampled_at ASC, id ASC",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            let mut buckets = BTreeSet::new();
+            for row in rows {
+                let (service_id, sampled_at) = row?;
+                let epoch = parse_epoch(&sampled_at)?;
+                for resolution in [MINUTE_RESOLUTION_SECONDS, FIVE_MINUTE_RESOLUTION_SECONDS] {
+                    buckets.insert((
+                        service_id.clone(),
+                        resolution,
+                        epoch - epoch.rem_euclid(resolution as i64),
+                    ));
+                }
+            }
+            Ok(buckets)
         })
         .await
     }
