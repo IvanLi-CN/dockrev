@@ -971,11 +971,7 @@ pub(super) async fn get_homepage_nav(
         .into_iter()
         .filter_map(|row| {
             let homepage = row.service.homepage.clone()?;
-            let href = homepage
-                .href
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())?;
+            let href = normalize_homepage_href(homepage.href.as_deref()?)?;
             Some(HomepageNavItem {
                 stack_id: row.stack_id,
                 stack_name: row.stack_name,
@@ -991,7 +987,7 @@ pub(super) async fn get_homepage_nav(
                     Some(state.config.dockrev_image_repo.as_str()),
                 ),
                 homepage: ServiceHomepage {
-                    href: Some(href.to_string()),
+                    href: Some(href),
                     ..homepage
                 },
                 candidate: row.service.candidate.clone(),
@@ -1040,6 +1036,21 @@ pub(super) async fn get_homepage_nav(
         },
         items,
     }))
+}
+
+fn normalize_homepage_href(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.starts_with('/') && !trimmed.starts_with("//") && !trimmed.starts_with("/\\") {
+        return Some(trimmed.to_string());
+    }
+    let url = url::Url::parse(trimmed).ok()?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return None;
+    }
+    Some(url.to_string())
 }
 
 fn to_resource_overview_item_from_latest(

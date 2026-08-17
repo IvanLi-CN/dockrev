@@ -139,6 +139,31 @@ export function pickLatestActiveUpdateJobs(
   return Array.from(latestByTarget.values(), (entry) => entry.job)
 }
 
+type CompactJobsPageLoader = (
+  input: Parameters<typeof listCompactJobsPage>[0],
+) => ReturnType<typeof listCompactJobsPage>
+
+export async function loadActiveUpdateJobs(
+  loadPage: CompactJobsPageLoader = listCompactJobsPage,
+): Promise<CompactJobListItem[]> {
+  const loadStatus = async (status: 'queued' | 'running'): Promise<CompactJobListItem[]> => {
+    const jobs: CompactJobListItem[] = []
+    let cursor: string | null = null
+    do {
+      const page = await loadPage({ cursor, limit: 200, status, type: 'update' })
+      jobs.push(...page.jobs)
+      cursor = page.nextCursor ?? null
+    } while (cursor)
+    return jobs
+  }
+
+  const [queuedJobs, runningJobs] = await Promise.all([
+    loadStatus('queued'),
+    loadStatus('running'),
+  ])
+  return [...queuedJobs, ...runningJobs]
+}
+
 type SettledUpdateJob = Pick<CompactJobListItem, 'id' | 'scope' | 'stackId' | 'serviceId' | 'status'>
 
 function toUpdateJobSettledDetail(target: UpdateActionTargetKey, job: SettledUpdateJob): UpdateJobSettledDetail {
@@ -365,7 +390,7 @@ function useProvideUpdateActionTracker(): UpdateActionTracker {
     const hydrateActiveJobs = async (): Promise<void> => {
       try {
         const requestRevision = activeRevisionRef.current
-        const { jobs } = await listCompactJobsPage({ limit: 200 })
+        const jobs = await loadActiveUpdateJobs()
         if (cancelled || unmountedRef.current) return
         if (!isUpdateJobSnapshotCurrent(requestRevision, activeRevisionRef.current)) {
           void hydrateActiveJobs()

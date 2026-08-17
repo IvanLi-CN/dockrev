@@ -58,6 +58,26 @@ fn github_release_tag_variants_supports_plain_and_v_prefixed_tags() {
 }
 
 #[test]
+fn normalize_homepage_href_accepts_only_http_https_or_root_relative_paths() {
+    assert_eq!(
+        normalize_homepage_href(" https://api.example.com/path "),
+        Some("https://api.example.com/path".to_string())
+    );
+    assert_eq!(
+        normalize_homepage_href("/dashboard"),
+        Some("/dashboard".to_string())
+    );
+    for value in [
+        "javascript:alert(1)",
+        "//other.example",
+        "/\\other.example",
+        "relative",
+    ] {
+        assert_eq!(normalize_homepage_href(value), None, "{value}");
+    }
+}
+
+#[test]
 fn classify_github_releases_failure_prefers_rate_limit() {
     let err = anyhow::anyhow!("github http 403 Forbidden: API rate limit exceeded");
     assert_eq!(

@@ -123,7 +123,7 @@ Rules:
 
 - Current metric values (`sampledAt`, `cpuPercent`, `memUsedBytes`, `memLimitBytes`, `netRxRateBps`, `netTxRateBps`) come from the latest-per-service read model instead of rebuilding from a historical request-time scan.
 - `window` remains semantically active for compatibility:
-  - `sampleCount` is the number of historical samples for that service inside the requested window
+- For short windows, `sampleCount` is the number of raw samples inside the requested window. For `7d`/`30d`, it is the number of samples represented by retained buckets overlapping the requested window; boundary buckets are intentionally counted in full because their raw members may already be outside the 24-hour raw retention.
   - network rates still come from the latest/latest-previous counters persisted in the read model
 - `stale` is true when the latest sample is older than `max(sample_interval_seconds * 2, 60)`.
 - When resource monitoring is disabled, the endpoint returns `200` with `enabled=false` and an empty `services` array.

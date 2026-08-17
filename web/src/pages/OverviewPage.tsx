@@ -152,7 +152,7 @@ function normalizeHomepageHref(
 ): string | null {
   const trimmed = (value ?? "").trim();
   if (!trimmed) return null;
-  if (trimmed.startsWith("/") && !trimmed.startsWith("//")) return trimmed;
+  if (trimmed.startsWith("/") && !trimmed.startsWith("//") && !trimmed.startsWith("/\\")) return trimmed;
   try {
     const url = new URL(trimmed);
     if (url.protocol === "http:" || url.protocol === "https:")
