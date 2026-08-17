@@ -26,6 +26,7 @@ pub(super) fn metrics_target_identity(path: &Path) -> String {
 }
 
 impl MetricsStore {
+    #[cfg(test)]
     pub async fn migrate_from_legacy(&self, db: &Db) -> anyhow::Result<()> {
         self.migrate_from_legacy_inner(db, None).await
     }
