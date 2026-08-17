@@ -183,12 +183,11 @@ impl Db {
     pub async fn legacy_metric_fingerprint(&self) -> anyhow::Result<LegacyMetricFingerprint> {
         self.call(|conn| {
             conn.query_row(
-                "SELECT COUNT(*), COALESCE(MAX(id), 0) FROM service_resource_samples",
+                "SELECT COALESCE(MAX(id), 0) FROM service_resource_samples",
                 [],
                 |row| {
                     Ok(LegacyMetricFingerprint {
-                        sample_count: row.get::<_, i64>(0)? as u64,
-                        max_id: row.get(1)?,
+                        max_id: row.get(0)?,
                     })
                 },
             )
@@ -196,6 +195,29 @@ impl Db {
         })
         .await
         .context("fingerprint legacy metrics")
+    }
+
+    pub async fn legacy_metric_ids_exist(&self, ids: &BTreeSet<i64>) -> anyhow::Result<bool> {
+        let ids = ids.iter().copied().collect::<Vec<_>>();
+        self.call(move |conn| {
+            for ids in ids.chunks(500) {
+                let placeholders = std::iter::repeat_n("?", ids.len())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let sql = format!(
+                    "SELECT COUNT(*) FROM service_resource_samples WHERE id IN ({placeholders})"
+                );
+                let count = conn.query_row(&sql, rusqlite::params_from_iter(ids), |row| {
+                    row.get::<_, i64>(0)
+                })?;
+                if count != ids.len() as i64 {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        })
+        .await
+        .context("verify legacy metric tombstones")
     }
 
     pub async fn legacy_metric_revision(&self) -> anyhow::Result<LegacyMetricRevision> {

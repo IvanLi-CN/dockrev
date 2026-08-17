@@ -190,6 +190,15 @@ CREATE TRIGGER IF NOT EXISTS metrics_target_rollup_update
 CREATE TRIGGER IF NOT EXISTS metrics_target_rollup_delete
   AFTER DELETE ON service_resource_rollups
   BEGIN UPDATE metrics_target_revision SET rollup_revision = rollup_revision + 1 WHERE id = 1; END;
+CREATE TRIGGER IF NOT EXISTS metrics_target_pruned_legacy_insert
+  AFTER INSERT ON metrics_migration_pruned_legacy_ids
+  BEGIN UPDATE metrics_target_revision SET raw_revision = raw_revision + 1 WHERE id = 1; END;
+CREATE TRIGGER IF NOT EXISTS metrics_target_pruned_legacy_delete
+  AFTER DELETE ON metrics_migration_pruned_legacy_ids
+  BEGIN UPDATE metrics_target_revision SET raw_revision = raw_revision + 1 WHERE id = 1; END;
+CREATE TRIGGER IF NOT EXISTS metrics_target_pruned_legacy_update
+  AFTER UPDATE ON metrics_migration_pruned_legacy_ids
+  BEGIN UPDATE metrics_target_revision SET raw_revision = raw_revision + 1 WHERE id = 1; END;
 "#;
 
 #[derive(Clone)]

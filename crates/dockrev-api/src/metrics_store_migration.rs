@@ -52,15 +52,13 @@ impl MetricsStore {
         });
         let mut retained_pruned_legacy_ids = BTreeSet::new();
         let mut source_matches_manifest = false;
-        let fingerprint = db.legacy_metric_fingerprint().await?;
         let revision = db.legacy_metric_revision().await?;
         let legacy_latest = db.list_legacy_metric_latest_samples().await?;
-        if migration_complete && let Some(manifest) = self.migration_manifest().await? {
-            source_matches_manifest = manifest.source_sample_count == fingerprint.sample_count
-                && manifest.source_max_id == Some(fingerprint.max_id)
-                && manifest.source_raw_revision == Some(revision.raw_revision)
+        let previous_manifest = self.migration_manifest().await?;
+        if let Some(manifest) = previous_manifest.as_ref() {
+            source_matches_manifest = manifest.source_raw_revision == Some(revision.raw_revision)
                 && manifest.source_latest_revision == Some(revision.latest_revision);
-            if source_matches_manifest {
+            if source_matches_manifest && migration_complete {
                 let pruned_legacy_ids = self.pruned_legacy_ids().await?;
                 if self.target_is_trusted().await? {
                     let expected_latest = filter_pruned_legacy_latest(
@@ -100,7 +98,22 @@ impl MetricsStore {
             }
         }
 
+        if source_matches_manifest && retained_pruned_legacy_ids.is_empty() {
+            retained_pruned_legacy_ids = self.pruned_legacy_ids().await?;
+        }
+        if source_matches_manifest
+            && !db
+                .legacy_metric_ids_exist(&retained_pruned_legacy_ids)
+                .await?
+        {
+            let message = "legacy metric tombstones no longer match the source".to_string();
+            db.set_metrics_migration_state("copying", Some(&self.target_identity), Some(&message))
+                .await?;
+            anyhow::bail!(message);
+        }
+
         let source = db.legacy_metrics_integrity().await?;
+        let fingerprint = db.legacy_metric_fingerprint().await?;
         let manifest = MigrationManifest {
             source_sample_count: source.sample_count,
             source_sample_hash: source.sample_hash.clone(),
@@ -167,6 +180,11 @@ impl MetricsStore {
         }
         if retained_pruned_legacy_ids.is_empty() {
             self.reconcile_rollups_from_raw().await?;
+        } else if !self.rollups_are_intact().await? {
+            let message = "retained rollups cannot be recovered after raw retention".to_string();
+            db.set_metrics_migration_state("copying", Some(&self.target_identity), Some(&message))
+                .await?;
+            anyhow::bail!(message);
         }
         self.trust_target().await?;
         self.set_migration_manifest(&manifest).await?;

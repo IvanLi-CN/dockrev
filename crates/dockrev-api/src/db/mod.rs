@@ -389,7 +389,6 @@ pub struct LegacyMetricLatestSampleRow {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LegacyMetricFingerprint {
-    pub sample_count: u64,
     pub max_id: i64,
 }
 

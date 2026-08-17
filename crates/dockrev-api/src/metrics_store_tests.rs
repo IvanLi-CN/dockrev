@@ -444,6 +444,116 @@ async fn metrics_store_migration_restart_preserves_rollup_across_raw_retention_c
 }
 
 #[tokio::test]
+async fn metrics_store_migration_keeps_tombstones_after_an_interrupted_repair() {
+    let main_path = temp_path("metrics-migration-interrupted-retention-main");
+    let metrics_path = temp_path("metrics-migration-interrupted-retention-target");
+    let db = Db::open(&main_path).await.unwrap();
+    let retained_at = format_time(time::OffsetDateTime::now_utc()).unwrap();
+    db.insert_legacy_metric_fixture(&[
+        sample("svc-a", "2000-01-01T00:00:00Z", 1.0, 100),
+        sample("svc-a", &retained_at, 10.0, 1_000),
+    ])
+    .await
+    .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    metrics
+        .gc(&BTreeSet::from(["svc-a".to_string()]))
+        .await
+        .unwrap();
+    assert_eq!(metrics.pruned_legacy_ids().await.unwrap().len(), 1);
+
+    db.set_metrics_migration_state("copying", Some(&metrics.target_identity), None)
+        .await
+        .unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+
+    let history = metrics
+        .history_since("svc-a", "1970-01-01T00:00:00Z", None)
+        .await
+        .unwrap();
+    assert_eq!(history.samples.len(), 1);
+    assert_eq!(history.samples[0].sampled_at, retained_at);
+    assert_eq!(metrics.pruned_legacy_ids().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn metrics_store_migration_rejects_tombstones_missing_from_legacy_source() {
+    let main_path = temp_path("metrics-migration-invalid-tombstone-main");
+    let metrics_path = temp_path("metrics-migration-invalid-tombstone-target");
+    let db = Db::open(&main_path).await.unwrap();
+    db.insert_legacy_metric_fixture(&[sample("svc-a", "2026-08-16T13:10:00Z", 10.0, 1_000)])
+        .await
+        .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    metrics
+        .writer_call(|conn| {
+            conn.execute(
+                "INSERT INTO metrics_migration_pruned_legacy_ids (legacy_id) VALUES (999)",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    assert!(metrics.migrate_from_legacy(&db).await.is_err());
+    assert_eq!(
+        db.metrics_migration_state()
+            .await
+            .unwrap()
+            .as_ref()
+            .map(|state| state.state.as_str()),
+        Some("copying")
+    );
+}
+
+#[tokio::test]
+async fn metrics_store_migration_rejects_corrupted_retained_rollups() {
+    let main_path = temp_path("metrics-migration-corrupted-retained-rollup-main");
+    let metrics_path = temp_path("metrics-migration-corrupted-retained-rollup-target");
+    let db = Db::open(&main_path).await.unwrap();
+    db.insert_legacy_metric_fixture(&[
+        sample("svc-a", "2026-08-16T12:02:00Z", 10.0, 1_000),
+        sample("svc-a", "2026-08-16T12:04:00Z", 30.0, 2_000),
+    ])
+    .await
+    .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+
+    let active_service_ids = BTreeSet::from(["svc-a".to_string()]);
+    metrics
+        .writer_call(move |conn| {
+            gc_batch_tx(
+                conn,
+                "2026-08-16T12:02:30Z",
+                "1970-01-01T00:00:00Z",
+                "1970-01-01T00:00:00Z",
+                &active_service_ids,
+            )?;
+            conn.execute(
+                "UPDATE service_resource_rollups SET cpu_avg = 99.0 WHERE service_id = 'svc-a'",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    assert!(metrics.migrate_from_legacy(&db).await.is_err());
+    assert_eq!(
+        db.metrics_migration_state()
+            .await
+            .unwrap()
+            .as_ref()
+            .map(|state| state.state.as_str()),
+        Some("copying")
+    );
+}
+
+#[tokio::test]
 async fn metrics_store_migration_upgrades_pre_integrity_rollups_without_rebuild() {
     let main_path = temp_path("metrics-migration-pre-integrity-rollup-main");
     let metrics_path = temp_path("metrics-migration-pre-integrity-rollup-target");
