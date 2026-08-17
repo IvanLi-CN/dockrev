@@ -1,5 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
+use tokio::time::MissedTickBehavior;
+
 use super::{
     SNAPSHOT_REASON_BACKGROUND_REFRESH, SNAPSHOT_REASON_STARTUP_WARMUP, SnapshotWorker,
     image_repo_from_image_ref,
@@ -30,6 +32,7 @@ impl SnapshotWorker {
         tokio::spawn(async move {
             let mut ticker =
                 tokio::time::interval(Duration::from_secs(SNAPSHOT_REFRESH_INTERVAL_SECONDS));
+            ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
             ticker.tick().await;
             loop {
                 ticker.tick().await;
