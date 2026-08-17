@@ -37,7 +37,7 @@ impl MetricsStore {
                         prev_net_rx_bytes=excluded.prev_net_rx_bytes,
                         prev_net_tx_bytes=excluded.prev_net_tx_bytes,
                         legacy_source=1
-                    WHERE service_resource_latest_samples.legacy_source != 0
+                    WHERE service_resource_latest_samples.legacy_source = 1
                        OR excluded.sampled_at >= service_resource_latest_samples.sampled_at"#,
                     params![
                         row.service_id,
