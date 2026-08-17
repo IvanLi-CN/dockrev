@@ -30,16 +30,17 @@ mod migration;
 use migration::metrics_target_identity;
 #[path = "metrics_store_rollup_integrity.rs"]
 mod rollup_integrity;
-use rollup_integrity::refresh_rollup_integrity_tx;
 #[path = "metrics_store_schema.rs"]
 mod schema;
 use schema::{
     ensure_latest_schema, ensure_migration_manifest_schema, ensure_native_integrity_schema,
     ensure_pruned_legacy_integrity_schema, ensure_rollup_schema_columns, ensure_sample_schema,
+    ensure_target_write_guard_schema,
 };
 #[path = "metrics_store_target_integrity.rs"]
 mod target_integrity;
 use target_integrity::{
+    adjust_native_raw_count_tx, begin_managed_metrics_write_tx, end_managed_metrics_write_tx,
     mark_native_raw_pruned_tx, trust_metrics_target_tx, trust_pruned_legacy_integrity_tx,
 };
 
@@ -121,7 +122,8 @@ CREATE TABLE IF NOT EXISTS metrics_pruned_legacy_integrity (
 
 CREATE TABLE IF NOT EXISTS metrics_rollup_integrity (
   id INTEGER PRIMARY KEY CHECK (id = 1),
-  row_count INTEGER NOT NULL
+  row_count INTEGER NOT NULL,
+  trusted_row_count INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS metrics_native_integrity (
@@ -145,6 +147,12 @@ CREATE TABLE IF NOT EXISTS metrics_target_revision (
   trusted_rollup_revision INTEGER NOT NULL
 );
 INSERT OR IGNORE INTO metrics_target_revision VALUES (1, 0, 0, 0, 0, 0, 0);
+
+CREATE TABLE IF NOT EXISTS metrics_target_write_guard (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  managed INTEGER NOT NULL DEFAULT 0
+);
+INSERT OR IGNORE INTO metrics_target_write_guard VALUES (1, 0);
 
 CREATE TABLE IF NOT EXISTS service_resource_rollups (
   service_id TEXT NOT NULL,
@@ -188,31 +196,46 @@ CREATE INDEX IF NOT EXISTS idx_metrics_rollups_expiry
 
 CREATE TRIGGER IF NOT EXISTS metrics_target_raw_insert
   AFTER INSERT ON service_resource_samples
+  WHEN (SELECT managed FROM metrics_target_write_guard WHERE id = 1) = 0
   BEGIN UPDATE metrics_target_revision SET raw_revision = raw_revision + 1 WHERE id = 1; END;
 CREATE TRIGGER IF NOT EXISTS metrics_target_raw_update
   AFTER UPDATE ON service_resource_samples
+  WHEN (SELECT managed FROM metrics_target_write_guard WHERE id = 1) = 0
   BEGIN UPDATE metrics_target_revision SET raw_revision = raw_revision + 1 WHERE id = 1; END;
 CREATE TRIGGER IF NOT EXISTS metrics_target_raw_delete
   AFTER DELETE ON service_resource_samples
+  WHEN (SELECT managed FROM metrics_target_write_guard WHERE id = 1) = 0
   BEGIN UPDATE metrics_target_revision SET raw_revision = raw_revision + 1 WHERE id = 1; END;
 CREATE TRIGGER IF NOT EXISTS metrics_target_latest_insert
   AFTER INSERT ON service_resource_latest_samples
+  WHEN (SELECT managed FROM metrics_target_write_guard WHERE id = 1) = 0
   BEGIN UPDATE metrics_target_revision SET latest_revision = latest_revision + 1 WHERE id = 1; END;
 CREATE TRIGGER IF NOT EXISTS metrics_target_latest_update
   AFTER UPDATE ON service_resource_latest_samples
+  WHEN (SELECT managed FROM metrics_target_write_guard WHERE id = 1) = 0
   BEGIN UPDATE metrics_target_revision SET latest_revision = latest_revision + 1 WHERE id = 1; END;
 CREATE TRIGGER IF NOT EXISTS metrics_target_latest_delete
   AFTER DELETE ON service_resource_latest_samples
+  WHEN (SELECT managed FROM metrics_target_write_guard WHERE id = 1) = 0
   BEGIN UPDATE metrics_target_revision SET latest_revision = latest_revision + 1 WHERE id = 1; END;
 CREATE TRIGGER IF NOT EXISTS metrics_target_rollup_insert
   AFTER INSERT ON service_resource_rollups
+  WHEN (SELECT managed FROM metrics_target_write_guard WHERE id = 1) = 0
   BEGIN UPDATE metrics_target_revision SET rollup_revision = rollup_revision + 1 WHERE id = 1; END;
 CREATE TRIGGER IF NOT EXISTS metrics_target_rollup_update
   AFTER UPDATE ON service_resource_rollups
+  WHEN (SELECT managed FROM metrics_target_write_guard WHERE id = 1) = 0
   BEGIN UPDATE metrics_target_revision SET rollup_revision = rollup_revision + 1 WHERE id = 1; END;
 CREATE TRIGGER IF NOT EXISTS metrics_target_rollup_delete
   AFTER DELETE ON service_resource_rollups
+  WHEN (SELECT managed FROM metrics_target_write_guard WHERE id = 1) = 0
   BEGIN UPDATE metrics_target_revision SET rollup_revision = rollup_revision + 1 WHERE id = 1; END;
+CREATE TRIGGER IF NOT EXISTS metrics_rollup_integrity_insert
+  AFTER INSERT ON service_resource_rollups
+  BEGIN UPDATE metrics_rollup_integrity SET row_count = row_count + 1 WHERE id = 1; END;
+CREATE TRIGGER IF NOT EXISTS metrics_rollup_integrity_delete
+  AFTER DELETE ON service_resource_rollups
+  BEGIN UPDATE metrics_rollup_integrity SET row_count = row_count - 1 WHERE id = 1; END;
 CREATE TRIGGER IF NOT EXISTS metrics_target_pruned_legacy_insert
   AFTER INSERT ON metrics_migration_pruned_legacy_ids
   BEGIN UPDATE metrics_target_revision SET raw_revision = raw_revision + 1 WHERE id = 1; END;
@@ -362,6 +385,7 @@ impl MetricsStore {
             ensure_migration_manifest_schema(conn)?;
             ensure_pruned_legacy_integrity_schema(conn)?;
             ensure_native_integrity_schema(conn)?;
+            ensure_target_write_guard_schema(conn)?;
             Ok(())
         })
         .await?;
@@ -423,6 +447,7 @@ impl MetricsStore {
     ) -> anyhow::Result<usize> {
         self.writer_call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            begin_managed_metrics_write_tx(&tx)?;
             let mut inserted = 0;
             for row in rows {
                 inserted += tx.execute(
@@ -448,6 +473,7 @@ impl MetricsStore {
                     ],
                 )?;
             }
+            end_managed_metrics_write_tx(&tx)?;
             tx.commit()?;
             Ok(inserted)
         })
@@ -471,10 +497,14 @@ impl MetricsStore {
 
     async fn clear_legacy_samples(&self) -> anyhow::Result<()> {
         self.writer_call(|conn| {
-            conn.execute(
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            begin_managed_metrics_write_tx(&tx)?;
+            tx.execute(
                 "DELETE FROM service_resource_samples WHERE legacy_id IS NOT NULL",
                 [],
             )?;
+            end_managed_metrics_write_tx(&tx)?;
+            tx.commit()?;
             Ok(())
         })
         .await
@@ -538,6 +568,7 @@ impl MetricsStore {
     async fn reconcile_latest_samples_from_raw(&self) -> anyhow::Result<()> {
         self.writer_call(|conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            begin_managed_metrics_write_tx(&tx)?;
             tx.execute_batch(
                 r#"INSERT INTO service_resource_latest_samples (
                     service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes,
@@ -596,6 +627,7 @@ impl MetricsStore {
                 WHERE service_resource_latest_samples.legacy_source = 1
                    OR excluded.sampled_at >= service_resource_latest_samples.sampled_at;"#,
             )?;
+            end_managed_metrics_write_tx(&tx)?;
             tx.commit()?;
             Ok(())
         })
@@ -785,6 +817,7 @@ impl MetricsStore {
     async fn reconcile_rollups_from_raw(&self) -> anyhow::Result<()> {
         self.writer_call(|conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            begin_managed_metrics_write_tx(&tx)?;
             let buckets = {
                 let mut stmt = tx.prepare(
                     "SELECT service_id, sampled_at FROM service_resource_samples ORDER BY service_id ASC, sampled_at ASC, id ASC",
@@ -806,7 +839,7 @@ impl MetricsStore {
             for (service_id, resolution, bucket_start) in buckets {
                 rebuild_rollup_tx(&tx, &service_id, resolution, bucket_start)?;
             }
-            refresh_rollup_integrity_tx(&tx)?;
+            end_managed_metrics_write_tx(&tx)?;
             trust_metrics_target_tx(&tx)?;
             tx.commit()?;
             Ok(())
@@ -985,24 +1018,34 @@ fn gc_batch_tx(
     active_service_ids: &BTreeSet<String>,
 ) -> anyhow::Result<bool> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let prunes_native_raw = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM service_resource_samples WHERE sampled_at < ?1 AND legacy_id IS NULL)",
-        params![raw_cutoff],
-        |row| row.get::<_, i64>(0).map(|value| value != 0),
+    begin_managed_metrics_write_tx(&tx)?;
+    let pruned_native_raw_count = tx.query_row(
+        r#"SELECT COUNT(*) FROM service_resource_samples
+           WHERE rowid IN (
+             SELECT rowid FROM service_resource_samples
+             WHERE sampled_at < ?1
+             ORDER BY sampled_at ASC, rowid ASC
+             LIMIT ?2
+           )
+           AND legacy_id IS NULL"#,
+        params![raw_cutoff, GC_BATCH_SIZE as i64],
+        |row| row.get::<_, i64>(0),
     )?;
     tx.execute(
-        "INSERT OR IGNORE INTO metrics_migration_pruned_legacy_ids (legacy_id) SELECT legacy_id FROM service_resource_samples WHERE rowid IN (SELECT rowid FROM service_resource_samples WHERE sampled_at < ?1 LIMIT ?2) AND legacy_id IS NOT NULL",
+        "INSERT OR IGNORE INTO metrics_migration_pruned_legacy_ids (legacy_id) SELECT legacy_id FROM service_resource_samples WHERE rowid IN (SELECT rowid FROM service_resource_samples WHERE sampled_at < ?1 ORDER BY sampled_at ASC, rowid ASC LIMIT ?2) AND legacy_id IS NOT NULL",
         params![raw_cutoff, GC_BATCH_SIZE as i64],
     )?;
     let raw_deleted = tx.execute(
-        "DELETE FROM service_resource_samples WHERE rowid IN (SELECT rowid FROM service_resource_samples WHERE sampled_at < ?1 LIMIT ?2)",
+        "DELETE FROM service_resource_samples WHERE rowid IN (SELECT rowid FROM service_resource_samples WHERE sampled_at < ?1 ORDER BY sampled_at ASC, rowid ASC LIMIT ?2)",
         params![raw_cutoff, GC_BATCH_SIZE as i64],
     )?;
     if raw_deleted > 0 {
-        if prunes_native_raw {
+        if pruned_native_raw_count > 0 {
             mark_native_raw_pruned_tx(&tx)?;
+            adjust_native_raw_count_tx(&tx, -pruned_native_raw_count)?;
         }
         trust_pruned_legacy_integrity_tx(&tx)?;
+        end_managed_metrics_write_tx(&tx)?;
         trust_metrics_target_tx(&tx)?;
         tx.commit()?;
         return Ok(true);
@@ -1012,7 +1055,7 @@ fn gc_batch_tx(
         params![MINUTE_RESOLUTION_SECONDS, minute_cutoff, GC_BATCH_SIZE as i64],
     )?;
     if minute_deleted > 0 {
-        refresh_rollup_integrity_tx(&tx)?;
+        end_managed_metrics_write_tx(&tx)?;
         trust_metrics_target_tx(&tx)?;
         tx.commit()?;
         return Ok(true);
@@ -1022,7 +1065,7 @@ fn gc_batch_tx(
         params![FIVE_MINUTE_RESOLUTION_SECONDS, five_minute_cutoff, GC_BATCH_SIZE as i64],
     )?;
     if five_minute_deleted > 0 {
-        refresh_rollup_integrity_tx(&tx)?;
+        end_managed_metrics_write_tx(&tx)?;
         trust_metrics_target_tx(&tx)?;
         tx.commit()?;
         return Ok(true);
@@ -1034,14 +1077,14 @@ fn gc_batch_tx(
             "service_resource_latest_samples",
             "service_resource_rollups",
         ] {
-            let prunes_native_raw = if table == "service_resource_samples" {
+            let pruned_native_raw_count = if table == "service_resource_samples" {
                 tx.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM service_resource_samples WHERE legacy_id IS NULL LIMIT 1)",
-                    [],
-                    |row| row.get::<_, i64>(0).map(|value| value != 0),
+                    "SELECT COUNT(*) FROM service_resource_samples WHERE rowid IN (SELECT rowid FROM service_resource_samples LIMIT ?1) AND legacy_id IS NULL",
+                    params![GC_BATCH_SIZE as i64],
+                    |row| row.get::<_, i64>(0),
                 )?
             } else {
-                false
+                0
             };
             let sql =
                 format!("DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} LIMIT ?1)");
@@ -1052,15 +1095,14 @@ fn gc_batch_tx(
                 )?;
             }
             if tx.execute(&sql, params![GC_BATCH_SIZE as i64])? > 0 {
-                if table == "service_resource_rollups" {
-                    refresh_rollup_integrity_tx(&tx)?;
-                }
                 if table == "service_resource_samples" {
-                    if prunes_native_raw {
+                    if pruned_native_raw_count > 0 {
                         mark_native_raw_pruned_tx(&tx)?;
+                        adjust_native_raw_count_tx(&tx, -pruned_native_raw_count)?;
                     }
                     trust_pruned_legacy_integrity_tx(&tx)?;
                 }
+                end_managed_metrics_write_tx(&tx)?;
                 trust_metrics_target_tx(&tx)?;
                 tx.commit()?;
                 return Ok(true);
@@ -1092,33 +1134,31 @@ fn gc_batch_tx(
                 );
                 tx.execute(&legacy_sql, values.as_slice())?;
             }
-            let prunes_native_raw = if table == "service_resource_samples" {
+            let pruned_native_raw_count = if table == "service_resource_samples" {
                 let native_sql = format!(
-                    "SELECT EXISTS(SELECT 1 FROM service_resource_samples WHERE service_id NOT IN ({placeholders}) AND legacy_id IS NULL LIMIT ?{})",
+                    "SELECT COUNT(*) FROM service_resource_samples WHERE rowid IN (SELECT rowid FROM service_resource_samples WHERE service_id NOT IN ({placeholders}) LIMIT ?{}) AND legacy_id IS NULL",
                     active_service_ids.len() + 1
                 );
-                tx.query_row(&native_sql, values.as_slice(), |row| {
-                    row.get::<_, i64>(0).map(|value| value != 0)
-                })?
+                tx.query_row(&native_sql, values.as_slice(), |row| row.get::<_, i64>(0))?
             } else {
-                false
+                0
             };
             if tx.execute(&sql, values.as_slice())? > 0 {
-                if table == "service_resource_rollups" {
-                    refresh_rollup_integrity_tx(&tx)?;
-                }
                 if table == "service_resource_samples" {
-                    if prunes_native_raw {
+                    if pruned_native_raw_count > 0 {
                         mark_native_raw_pruned_tx(&tx)?;
+                        adjust_native_raw_count_tx(&tx, -pruned_native_raw_count)?;
                     }
                     trust_pruned_legacy_integrity_tx(&tx)?;
                 }
+                end_managed_metrics_write_tx(&tx)?;
                 trust_metrics_target_tx(&tx)?;
                 tx.commit()?;
                 return Ok(true);
             }
         }
     }
+    end_managed_metrics_write_tx(&tx)?;
     tx.commit()?;
     Ok(false)
 }
@@ -1129,6 +1169,7 @@ fn write_samples_tx(
     rollups: bool,
 ) -> anyhow::Result<usize> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    begin_managed_metrics_write_tx(&tx)?;
     let mut inserted = 0;
     let mut touched_rollups = BTreeSet::new();
     for row in rows {
@@ -1191,6 +1232,49 @@ fn write_samples_tx(
                     previous.as_ref().and_then(|(_, _, value, _)| *value).map(|value| value as i64),
                 ],
             )?;
+        } else if previous
+            .as_ref()
+            .is_some_and(|(_, _, _, legacy_source)| *legacy_source != 1)
+        {
+            let predecessor = tx
+                .query_row(
+                    r#"SELECT sampled_at, net_rx_bytes, net_tx_bytes
+                       FROM service_resource_samples
+                       WHERE service_id = ?1 AND sampled_at < ?2
+                       ORDER BY sampled_at DESC, id DESC LIMIT 1"#,
+                    params![
+                        row.service_id,
+                        previous
+                            .as_ref()
+                            .map(|(sampled_at, _, _, _)| sampled_at.as_str())
+                            .unwrap()
+                    ],
+                    |sample| {
+                        Ok((
+                            sample.get::<_, String>(0)?,
+                            sample.get::<_, Option<i64>>(1)?,
+                            sample.get::<_, Option<i64>>(2)?,
+                        ))
+                    },
+                )
+                .optional()?;
+            tx.execute(
+                r#"UPDATE service_resource_latest_samples
+                   SET prev_sampled_at = ?2,
+                       prev_net_rx_bytes = ?3,
+                       prev_net_tx_bytes = ?4
+                   WHERE service_id = ?1
+                     AND legacy_source != 1
+                     AND (prev_sampled_at IS NOT ?2
+                       OR prev_net_rx_bytes IS NOT ?3
+                       OR prev_net_tx_bytes IS NOT ?4)"#,
+                params![
+                    row.service_id,
+                    predecessor.as_ref().map(|(sampled_at, _, _)| sampled_at),
+                    predecessor.as_ref().and_then(|(_, value, _)| *value),
+                    predecessor.as_ref().and_then(|(_, _, value)| *value),
+                ],
+            )?;
         }
         if rollups {
             let mut affected_sample_times = vec![row.sampled_at.clone()];
@@ -1219,9 +1303,10 @@ fn write_samples_tx(
     for (service_id, resolution, bucket_start) in touched_rollups {
         rebuild_rollup_tx(&tx, &service_id, resolution, bucket_start)?;
     }
-    if rollups {
-        refresh_rollup_integrity_tx(&tx)?;
+    if inserted > 0 {
+        adjust_native_raw_count_tx(&tx, inserted as i64)?;
     }
+    end_managed_metrics_write_tx(&tx)?;
     trust_metrics_target_tx(&tx)?;
     tx.commit()?;
     Ok(inserted)

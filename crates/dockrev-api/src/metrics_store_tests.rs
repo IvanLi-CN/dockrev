@@ -698,6 +698,54 @@ async fn metrics_store_migration_upgrades_pre_integrity_rollups_without_rebuild(
 }
 
 #[tokio::test]
+async fn metrics_store_migration_recovers_interrupted_rollup_integrity_backfill() {
+    let main_path = temp_path("metrics-migration-interrupted-rollup-backfill-main");
+    let metrics_path = temp_path("metrics-migration-interrupted-rollup-backfill-target");
+    let db = Db::open(&main_path).await.unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    metrics
+        .insert_samples(&[sample("svc-native", "2026-08-16T12:02:00Z", 10.0, 1_000)])
+        .await
+        .unwrap();
+    let active_service_ids = BTreeSet::from(["svc-native".to_string()]);
+    metrics
+        .writer_call(move |conn| {
+            gc_batch_tx(
+                conn,
+                "2026-08-16T12:02:30Z",
+                "1970-01-01T00:00:00Z",
+                "1970-01-01T00:00:00Z",
+                &active_service_ids,
+            )?;
+            conn.execute_batch(
+                "UPDATE service_resource_rollups SET integrity_json = '';\
+                 DELETE FROM metrics_rollup_integrity;",
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    drop(metrics);
+
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    assert_eq!(
+        metrics
+            .history_since(
+                "svc-native",
+                "2026-08-16T12:00:00Z",
+                Some(FIVE_MINUTE_RESOLUTION_SECONDS),
+            )
+            .await
+            .unwrap()
+            .samples
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn metrics_store_migration_preserves_duplicate_legacy_timestamps() {
     let main_path = temp_path("metrics-migration-duplicates-main");
     let metrics_path = temp_path("metrics-migration-duplicates-target");
@@ -1443,6 +1491,75 @@ async fn metrics_store_gc_removes_orphans_when_no_active_services_remain() {
         .await
         .unwrap();
     assert!(history.samples.is_empty());
+}
+
+#[tokio::test]
+async fn metrics_store_gc_counts_native_rows_from_the_deleted_batch() {
+    let metrics = MetricsStore::open(&temp_path("metrics-gc-mixed-native-batch"))
+        .await
+        .unwrap();
+    metrics
+        .writer_call(|conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            begin_managed_metrics_write_tx(&tx)?;
+            tx.execute(
+                r#"INSERT INTO service_resource_samples (
+                     legacy_id, service_id, sampled_at, cpu_percent, container_count
+                   ) VALUES (1, 'svc-legacy', '2000-01-01T00:00:00Z', 1.0, 1)"#,
+                [],
+            )?;
+            tx.execute_batch(
+                r#"WITH digit(value) AS (
+                     VALUES (0), (1), (2), (3), (4), (5), (6), (7), (8), (9)
+                   )
+                   INSERT INTO service_resource_samples (
+                     service_id, sampled_at, cpu_percent, container_count
+                   )
+                   SELECT 'svc-native', '2000-01-01T00:00:01Z', 1.0, 1
+                   FROM digit AS a CROSS JOIN digit AS b CROSS JOIN digit AS c CROSS JOIN digit AS d"#,
+            )?;
+            adjust_native_raw_count_tx(&tx, GC_BATCH_SIZE as i64)?;
+            end_managed_metrics_write_tx(&tx)?;
+            trust_metrics_target_tx(&tx)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    let active_service_ids = BTreeSet::from(["svc-legacy".to_string(), "svc-native".to_string()]);
+    metrics
+        .writer_call(move |conn| {
+            gc_batch_tx(
+                conn,
+                "2001-01-01T00:00:00Z",
+                "1970-01-01T00:00:00Z",
+                "1970-01-01T00:00:00Z",
+                &active_service_ids,
+            )
+        })
+        .await
+        .unwrap();
+
+    let (native_rows, tracked_native_rows) = metrics
+        .writer_call(|conn| {
+            Ok((
+                conn.query_row(
+                    "SELECT COUNT(*) FROM service_resource_samples WHERE legacy_id IS NULL",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?,
+                conn.query_row(
+                    "SELECT raw_row_count FROM metrics_native_integrity WHERE id = 1",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?,
+            ))
+        })
+        .await
+        .unwrap();
+    assert_eq!(native_rows, 1);
+    assert_eq!(tracked_native_rows, native_rows);
 }
 
 #[tokio::test]

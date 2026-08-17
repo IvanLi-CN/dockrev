@@ -29,6 +29,11 @@ impl MetricsStore {
                              AND raw_row_count = trusted_raw_row_count
                              AND latest_row_count = trusted_latest_row_count
                          )
+                         AND EXISTS (
+                           SELECT 1 FROM metrics_rollup_integrity
+                           WHERE id = 1
+                             AND row_count = trusted_row_count
+                         )
                     FROM metrics_target_revision WHERE id = 1"#,
                 [],
                 |row| row.get::<_, i64>(0).map(|value| value != 0),
@@ -90,6 +95,12 @@ pub(super) fn trust_metrics_target_tx(tx: &Transaction<'_>) -> anyhow::Result<()
         [],
     )?;
     tx.execute(
+        r#"UPDATE metrics_rollup_integrity
+           SET trusted_row_count = row_count
+           WHERE id = 1"#,
+        [],
+    )?;
+    tx.execute(
         r#"UPDATE metrics_native_integrity
            SET trusted_raw_row_count = raw_row_count,
                trusted_latest_row_count = latest_row_count
@@ -102,6 +113,30 @@ pub(super) fn trust_metrics_target_tx(tx: &Transaction<'_>) -> anyhow::Result<()
 pub(super) fn mark_native_raw_pruned_tx(tx: &Transaction<'_>) -> anyhow::Result<()> {
     tx.execute(
         "UPDATE metrics_native_integrity SET has_pruned_raw = 1 WHERE id = 1",
+        [],
+    )?;
+    Ok(())
+}
+
+pub(super) fn adjust_native_raw_count_tx(tx: &Transaction<'_>, delta: i64) -> anyhow::Result<()> {
+    tx.execute(
+        "UPDATE metrics_native_integrity SET raw_row_count = raw_row_count + ?1 WHERE id = 1",
+        [delta],
+    )?;
+    Ok(())
+}
+
+pub(super) fn begin_managed_metrics_write_tx(tx: &Transaction<'_>) -> anyhow::Result<()> {
+    tx.execute(
+        "UPDATE metrics_target_write_guard SET managed = 1 WHERE id = 1",
+        [],
+    )?;
+    Ok(())
+}
+
+pub(super) fn end_managed_metrics_write_tx(tx: &Transaction<'_>) -> anyhow::Result<()> {
+    tx.execute(
+        "UPDATE metrics_target_write_guard SET managed = 0 WHERE id = 1",
         [],
     )?;
     Ok(())

@@ -925,6 +925,39 @@ services:
     let net_rx = item["resource"]["netRxRateBps"].as_f64().unwrap();
     assert!((net_rx - 100.0).abs() < 0.01, "unexpected net rx rate: {net_rx}");
 
+    state
+        .metrics
+        .insert_samples(&[crate::db::ServiceResourceSampleInput {
+            service_id: api_service.id.clone(),
+            sampled_at: test_offset_from_now_rfc3339(time::Duration::seconds(-15)),
+            cpu_percent: 11.0,
+            mem_used_bytes: Some(110),
+            mem_limit_bytes: Some(200),
+            net_rx_bytes: Some(1_700),
+            net_tx_bytes: Some(3_400),
+            block_read_bytes: None,
+            block_write_bytes: None,
+            pids: Some(2),
+            container_count: 1,
+        }])
+        .await
+        .unwrap();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/homepage/nav")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let payload = response_json(response).await;
+    let item = &payload["items"].as_array().unwrap()[0];
+    let net_rx = item["resource"]["netRxRateBps"].as_f64().unwrap();
+    assert!((net_rx - 60.0).abs() < 0.2, "unexpected late-sample rate: {net_rx}");
+
     let backup = state.db.get_backup_settings().await.unwrap();
     let mut resource_monitor = state.db.get_resource_monitor_settings().await.unwrap();
     resource_monitor.enabled = false;

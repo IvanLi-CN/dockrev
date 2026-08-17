@@ -1,5 +1,5 @@
 use anyhow::Context as _;
-use rusqlite::{OptionalExtension, Transaction};
+use rusqlite::OptionalExtension;
 
 use super::MetricsStore;
 
@@ -15,16 +15,19 @@ const ROLLUP_INTEGRITY_JSON: &str = r#"json_array(
 impl MetricsStore {
     pub(super) async fn rollups_are_intact(&self) -> anyhow::Result<bool> {
         self.reader_call(|conn| {
-            let expected_count = conn
+            let Some((expected_count, trusted_count)) = conn
                 .query_row(
-                    "SELECT row_count FROM metrics_rollup_integrity WHERE id = 1",
+                    "SELECT row_count, trusted_row_count FROM metrics_rollup_integrity WHERE id = 1",
                     [],
-                    |row| row.get::<_, i64>(0),
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
                 )
-                .optional()?;
-            let Some(expected_count) = expected_count else {
+                .optional()?
+            else {
                 return Ok(false);
             };
+            if expected_count != trusted_count {
+                return Ok(false);
+            }
             let actual_count = conn.query_row(
                 "SELECT COUNT(*) FROM service_resource_rollups",
                 [],
@@ -42,13 +45,4 @@ impl MetricsStore {
         .await
         .context("verify metrics rollup integrity")
     }
-}
-
-pub(super) fn refresh_rollup_integrity_tx(tx: &Transaction<'_>) -> anyhow::Result<()> {
-    tx.execute(
-        r#"INSERT OR REPLACE INTO metrics_rollup_integrity (id, row_count)
-           SELECT 1, COUNT(*) FROM service_resource_rollups"#,
-        [],
-    )?;
-    Ok(())
 }
