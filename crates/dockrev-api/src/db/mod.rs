@@ -318,7 +318,7 @@ pub struct ServiceNewVersionTimelineContext {
     pub candidate_digest: Option<String>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ServiceResourceSampleInput {
     pub service_id: String,
     pub sampled_at: String,

@@ -520,6 +520,79 @@ async fn metrics_store_migration_rejects_legacy_raw_changes_after_retention() {
 }
 
 #[tokio::test]
+async fn metrics_store_migration_rejects_corrupted_retained_legacy_content() {
+    let main_path = temp_path("metrics-migration-corrupted-retained-legacy-main");
+    let metrics_path = temp_path("metrics-migration-corrupted-retained-legacy-target");
+    let db = Db::open(&main_path).await.unwrap();
+    let retained_at = format_time(time::OffsetDateTime::now_utc()).unwrap();
+    db.insert_legacy_metric_fixture(&[
+        sample("svc-a", "2000-01-01T00:00:00Z", 1.0, 100),
+        sample("svc-a", &retained_at, 10.0, 1_000),
+    ])
+    .await
+    .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    metrics
+        .gc(&BTreeSet::from(["svc-a".to_string()]))
+        .await
+        .unwrap();
+
+    let changed = sample("svc-a", &retained_at, 99.0, 1_000);
+    let changed_signature = legacy_sample_signature(&changed);
+    metrics
+        .writer_call(move |conn| {
+            conn.execute(
+                "UPDATE service_resource_samples SET cpu_percent = ?1, legacy_signature = ?2 WHERE legacy_id IS NOT NULL",
+                rusqlite::params![changed.cpu_percent, changed_signature],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    assert!(metrics.migrate_from_legacy(&db).await.is_err());
+    assert_eq!(
+        db.metrics_migration_state()
+            .await
+            .unwrap()
+            .as_ref()
+            .map(|state| state.state.as_str()),
+        Some("copying")
+    );
+}
+
+#[tokio::test]
+async fn metrics_store_migration_rejects_unmanaged_native_insert_into_empty_target() {
+    let main_path = temp_path("metrics-migration-unmanaged-native-main");
+    let metrics_path = temp_path("metrics-migration-unmanaged-native-target");
+    let db = Db::open(&main_path).await.unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics
+        .writer_call(|conn| {
+            conn.execute(
+                r#"INSERT INTO service_resource_samples (
+                     service_id, sampled_at, cpu_percent, container_count
+                   ) VALUES ('svc-native', '2026-08-16T13:10:00Z', 10.0, 1)"#,
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    assert!(metrics.migrate_from_legacy(&db).await.is_err());
+    assert_eq!(
+        db.metrics_migration_state()
+            .await
+            .unwrap()
+            .as_ref()
+            .map(|state| state.state.as_str()),
+        Some("copying")
+    );
+}
+
+#[tokio::test]
 async fn metrics_store_migration_rejects_deleted_retention_tombstones() {
     let main_path = temp_path("metrics-migration-missing-tombstone-main");
     let metrics_path = temp_path("metrics-migration-missing-tombstone-target");

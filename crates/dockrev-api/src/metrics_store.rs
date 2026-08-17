@@ -377,7 +377,7 @@ impl MetricsStore {
     async fn init(&self) -> anyhow::Result<()> {
         self.writer_call(|conn| {
             conn.execute_batch(&format!(
-                "PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; {SCHEMA}"
+                "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; {SCHEMA}"
             ))?;
             ensure_sample_schema(conn)?;
             ensure_latest_schema(conn)?;
@@ -392,7 +392,9 @@ impl MetricsStore {
         for reader in &self.readers {
             reader
                 .call(|conn| {
-                    conn.execute_batch("PRAGMA query_only = ON; PRAGMA busy_timeout = 5000;")?;
+                    conn.execute_batch(
+                        "PRAGMA foreign_keys = ON; PRAGMA query_only = ON; PRAGMA busy_timeout = 5000;",
+                    )?;
                     Ok::<(), anyhow::Error>(())
                 })
                 .await

@@ -38,7 +38,9 @@ impl OperationalReadModel {
             let reader = Connection::open(path).await?;
             reader
                 .call(|conn| {
-                    conn.execute_batch("PRAGMA query_only = ON; PRAGMA busy_timeout = 5000;")?;
+                    conn.execute_batch(
+                        "PRAGMA foreign_keys = ON; PRAGMA query_only = ON; PRAGMA busy_timeout = 5000;",
+                    )?;
                     Ok::<(), anyhow::Error>(())
                 })
                 .await

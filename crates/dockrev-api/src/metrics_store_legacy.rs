@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::db::ServiceResourceSampleInput;
 
@@ -6,7 +6,7 @@ use super::MetricsStore;
 
 impl MetricsStore {
     pub(super) async fn pruned_legacy_ids(&self) -> anyhow::Result<BTreeSet<i64>> {
-        self.reader_call(|conn| {
+        self.reader_call(move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT legacy_id FROM metrics_migration_pruned_legacy_ids ORDER BY legacy_id",
             )?;
@@ -57,10 +57,14 @@ impl MetricsStore {
         .await
     }
 
-    pub(super) async fn retained_legacy_samples_match_signatures(&self) -> anyhow::Result<bool> {
-        self.reader_call(|conn| {
+    pub(super) async fn retained_legacy_samples_match(
+        &self,
+        expected: &BTreeMap<i64, ServiceResourceSampleInput>,
+    ) -> anyhow::Result<bool> {
+        let expected = expected.clone();
+        self.reader_call(move |conn| {
             let mut stmt = conn.prepare(
-                r#"SELECT legacy_signature, service_id, sampled_at, cpu_percent, mem_used_bytes,
+                r#"SELECT legacy_id, legacy_signature, service_id, sampled_at, cpu_percent, mem_used_bytes,
                           mem_limit_bytes, net_rx_bytes, net_tx_bytes, block_read_bytes,
                           block_write_bytes, pids, container_count
                    FROM service_resource_samples
@@ -68,26 +72,34 @@ impl MetricsStore {
                    ORDER BY legacy_id"#,
             )?;
             let mut rows = stmt.query([])?;
+            let mut actual_ids = BTreeSet::new();
             while let Some(row) = rows.next()? {
-                let signature: Option<String> = row.get(0)?;
-                let sample = ServiceResourceSampleInput {
-                    service_id: row.get(1)?,
-                    sampled_at: row.get(2)?,
-                    cpu_percent: row.get(3)?,
-                    mem_used_bytes: row.get::<_, Option<i64>>(4)?.map(|value| value as u64),
-                    mem_limit_bytes: row.get::<_, Option<i64>>(5)?.map(|value| value as u64),
-                    net_rx_bytes: row.get::<_, Option<i64>>(6)?.map(|value| value as u64),
-                    net_tx_bytes: row.get::<_, Option<i64>>(7)?.map(|value| value as u64),
-                    block_read_bytes: row.get::<_, Option<i64>>(8)?.map(|value| value as u64),
-                    block_write_bytes: row.get::<_, Option<i64>>(9)?.map(|value| value as u64),
-                    pids: row.get::<_, Option<i64>>(10)?.map(|value| value as u64),
-                    container_count: row.get::<_, i64>(11)? as u32,
+                let id: i64 = row.get(0)?;
+                let Some(expected_sample) = expected.get(&id) else {
+                    return Ok(false);
                 };
-                if signature.as_deref() != Some(&legacy_sample_signature(&sample)) {
+                let signature: Option<String> = row.get(1)?;
+                let sample = ServiceResourceSampleInput {
+                    service_id: row.get(2)?,
+                    sampled_at: row.get(3)?,
+                    cpu_percent: row.get(4)?,
+                    mem_used_bytes: row.get::<_, Option<i64>>(5)?.map(|value| value as u64),
+                    mem_limit_bytes: row.get::<_, Option<i64>>(6)?.map(|value| value as u64),
+                    net_rx_bytes: row.get::<_, Option<i64>>(7)?.map(|value| value as u64),
+                    net_tx_bytes: row.get::<_, Option<i64>>(8)?.map(|value| value as u64),
+                    block_read_bytes: row.get::<_, Option<i64>>(9)?.map(|value| value as u64),
+                    block_write_bytes: row.get::<_, Option<i64>>(10)?.map(|value| value as u64),
+                    pids: row.get::<_, Option<i64>>(11)?.map(|value| value as u64),
+                    container_count: row.get::<_, i64>(12)? as u32,
+                };
+                if &sample != expected_sample
+                    || signature.as_deref() != Some(&legacy_sample_signature(expected_sample))
+                {
                     return Ok(false);
                 }
+                actual_ids.insert(id);
             }
-            Ok(true)
+            Ok(actual_ids == expected.keys().copied().collect())
         })
         .await
     }

@@ -1,4 +1,7 @@
-use std::{collections::BTreeSet, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
 use crate::db::Db;
 
@@ -169,6 +172,7 @@ impl MetricsStore {
         };
         self.clear_legacy_samples().await?;
 
+        let mut retained_legacy_samples = BTreeMap::new();
         let mut after_id = 0_i64;
         loop {
             let batch = db.list_legacy_metric_samples_after(after_id, 2_000).await?;
@@ -176,6 +180,11 @@ impl MetricsStore {
                 break;
             }
             after_id = batch.last().map(|row| row.id).unwrap_or(after_id);
+            for row in &batch {
+                if retained_pruned_legacy_ids.contains(&row.id) {
+                    retained_legacy_samples.insert(row.id, row.sample.clone());
+                }
+            }
             let batch = batch
                 .into_iter()
                 .filter(|row| !retained_pruned_legacy_ids.contains(&row.id))
@@ -206,7 +215,9 @@ impl MetricsStore {
         } else {
             self.legacy_sample_coverage_is_complete(source.sample_count)
                 .await?
-                && self.retained_legacy_samples_match_signatures().await?
+                && self
+                    .retained_legacy_samples_match(&retained_legacy_samples)
+                    .await?
         };
         if !target_is_verified {
             let message =
