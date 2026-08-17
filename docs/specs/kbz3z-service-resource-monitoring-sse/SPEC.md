@@ -54,7 +54,7 @@
   - `resource_usage_snapshot`
   - `resource_usage_tick`
   - `resource_usage_error`
-- `GET /api/services/resource-usage/overview?window=3m|1h|24h`：Overview 聚合最新摘要，只返回 CPU、内存、网络 RX/TX、样本时间、stale 与样本数量，不提供图表序列或 SSE。
+- `GET /api/services/resource-usage/overview?window=3m|1h|24h|7d|30d`：Overview 聚合最新摘要，只返回 CPU、内存、网络 RX/TX、样本时间、stale 与样本数量，不提供图表序列或 SSE。
 - 监控关闭统一错误：`409` + `details.reason=resource_monitor_disabled`。
   - 例外：Overview 聚合摘要接口返回 `200 enabled=false`，用于导航页非阻塞降级。
 - `resourceMonitor.sampleIntervalSeconds` 的 wire shape 与合法值保持不变，但其契约为“全局协调历史采样周期”；`resourceMonitor.retentionDays` 固定为 `1`。
@@ -67,10 +67,10 @@
   - `resource_monitor_enabled INTEGER NOT NULL DEFAULT 1`
   - `resource_sample_interval_seconds INTEGER NOT NULL DEFAULT 5`
 - 历史采样频率合法值为 `5/10/30/60/300`；已有合法 `10` 继续保留，不做隐式迁移。
-- `DOCKREV_METRICS_DB_PATH` 默认为主库同目录下的 `metrics.sqlite3`，且启动必须拒绝它与 `DOCKREV_DB_PATH` 指向同一文件。
+- `DOCKREV_METRICS_DB_PATH` 默认为主库同目录下的 `metrics.sqlite3`，且启动必须拒绝它与 `DOCKREV_DB_PATH` 指向同一文件，包括主库创建前的符号链接别名。
 - 指标库包含 `service_resource_samples`、`service_resource_latest_samples` 与 `service_resource_rollups`。原始样本保留 24 小时，1 分钟桶保留 7 天，5 分钟桶保留 30 天。
 - 启动时先从主库旧指标表可恢复复制到指标库。首次完整复制必须由主库迁移状态、幂等写入、稳定排序行哈希和行数验证控制；验证完成前不得启动新的采样写路径，旧表保持为回滚源。
-- 从旧表导入的原始行必须保存稳定内容签名。指标 GC 在删除带 legacy id 的原始行或孤儿服务数据前，必须记录该 id 的墓碑；后续启动以完整源哈希、保留原始行签名及“保留行数加墓碑数覆盖旧表行数”验证已迁移数据。验证后仅协调仍可由 raw 重算的 latest 与 rollup，必须保留超出 raw 留存期的 latest 和长窗口桶。完整复制源变化时才清除墓碑重拷；修复目标数据时不得复活已由 GC 裁剪的旧行。
+- 从旧表导入的原始行必须保存稳定内容签名。指标 GC 在删除带 legacy id 的原始行或孤儿服务数据前，必须记录该 id 的墓碑；后续启动以完整源哈希、保留原始行签名及“保留行数加墓碑数覆盖旧表行数”验证已迁移数据。验证后 latest/rollup 只从现存 raw 重算；同时可从旧 latest 表恢复主库当前 active service 的 latest，即使对应 raw 已过期，非 active service 的 legacy latest 不得回灌。必须保留超出 raw 留存期的 active latest 和长窗口桶。完整复制源变化时才清除墓碑重拷；修复目标数据时不得复活已由 GC 裁剪的旧行。
 - 后台历史采样任务：
   - 仅在开关开启时运行，由单一进程级 coordinator 以设置频率执行全局周期。
   - 每个周期只发现一次带 Compose 标签的运行容器，再将结果按 compose project/service fan-out；全部成功项目的样本在指标库内只提交一个事务。活跃 SSE 对同项目复用 in-flight 或不足一秒的缓存结果。

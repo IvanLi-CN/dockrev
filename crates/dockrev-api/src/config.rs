@@ -262,34 +262,67 @@ impl Config {
 }
 
 fn database_paths_match(left: &std::path::Path, right: &std::path::Path) -> bool {
-    fn normalized(path: &std::path::Path) -> PathBuf {
-        std::fs::canonicalize(path).unwrap_or_else(|_| {
-            let candidate = if path.is_absolute() {
-                path.to_path_buf()
-            } else {
-                std::env::current_dir()
-                    .unwrap_or_else(|_| PathBuf::from("."))
-                    .join(path)
-            };
-            candidate
-                .components()
-                .fold(PathBuf::new(), |mut normalized, component| {
-                    use std::path::Component;
+    fn lexical_absolute(path: &std::path::Path) -> PathBuf {
+        let candidate = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(path)
+        };
+        candidate
+            .components()
+            .fold(PathBuf::new(), |mut normalized, component| {
+                use std::path::Component;
 
-                    match component {
-                        Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
-                        Component::RootDir => {
-                            normalized.push(std::path::MAIN_SEPARATOR.to_string())
-                        }
-                        Component::CurDir => {}
-                        Component::ParentDir => {
-                            normalized.pop();
-                        }
-                        Component::Normal(part) => normalized.push(part),
+                match component {
+                    Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+                    Component::RootDir => normalized.push(std::path::MAIN_SEPARATOR.to_string()),
+                    Component::CurDir => {}
+                    Component::ParentDir => {
+                        normalized.pop();
                     }
-                    normalized
-                })
-        })
+                    Component::Normal(part) => normalized.push(part),
+                }
+                normalized
+            })
+    }
+
+    fn normalized(path: &std::path::Path) -> PathBuf {
+        let mut candidate = lexical_absolute(path);
+        for _ in 0..40 {
+            if let Ok(resolved) = std::fs::canonicalize(&candidate) {
+                return resolved;
+            }
+
+            let Some(parent) = candidate.parent() else {
+                return candidate;
+            };
+            let Some(file_name) = candidate.file_name() else {
+                return candidate;
+            };
+            let parent = std::fs::canonicalize(parent).unwrap_or_else(|_| lexical_absolute(parent));
+            let leaf = parent.join(file_name);
+            let is_symlink = std::fs::symlink_metadata(&leaf)
+                .map(|metadata| metadata.file_type().is_symlink())
+                .unwrap_or(false);
+            if !is_symlink {
+                return leaf;
+            }
+
+            let target = match std::fs::read_link(&leaf) {
+                Ok(target) => target,
+                Err(_) => return leaf,
+            };
+            candidate = if target.is_absolute() {
+                target
+            } else {
+                parent.join(target)
+            };
+            candidate = lexical_absolute(&candidate);
+        }
+
+        candidate
     }
 
     let left = normalized(left);
@@ -340,6 +373,23 @@ mod database_path_tests {
 
         std::fs::remove_file(metrics).unwrap();
         std::fs::remove_file(primary).unwrap();
+        std::fs::remove_dir(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn database_path_comparison_rejects_dangling_symlink_aliases() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!("dockrev-db-path-{}", ulid::Ulid::new()));
+        std::fs::create_dir_all(&root).unwrap();
+        let primary = root.join("dockrev.sqlite3");
+        let metrics = root.join("metrics.sqlite3");
+        symlink("dockrev.sqlite3", &metrics).unwrap();
+
+        assert!(database_paths_match(&primary, &metrics));
+
+        std::fs::remove_file(metrics).unwrap();
         std::fs::remove_dir(root).unwrap();
     }
 }

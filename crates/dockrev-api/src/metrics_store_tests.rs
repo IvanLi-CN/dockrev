@@ -87,6 +87,32 @@ async fn metrics_store_migration_preserves_legacy_latest_after_raw_expiry() {
 }
 
 #[tokio::test]
+async fn metrics_store_migration_skips_inactive_latest_without_raw() {
+    let main_path = temp_path("metrics-migration-inactive-latest-main");
+    let metrics_path = temp_path("metrics-migration-inactive-latest-target");
+    let db = Db::open(&main_path).await.unwrap();
+    db.insert_legacy_metric_fixture(&[sample(
+        "svc-inactive-stale",
+        "2026-08-01T12:00:00Z",
+        42.0,
+        4_000,
+    )])
+    .await
+    .unwrap();
+    db.delete_legacy_metric_fixture_samples_only("svc-inactive-stale")
+        .await
+        .unwrap();
+
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics
+        .migrate_from_legacy_with_active_services(&db, &BTreeSet::new())
+        .await
+        .unwrap();
+
+    assert!(metrics.list_latest_samples().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn metrics_store_migration_preserves_active_latest_after_raw_retention() {
     let main_path = temp_path("metrics-migration-active-latest-main");
     let metrics_path = temp_path("metrics-migration-active-latest-target");
@@ -359,8 +385,7 @@ async fn metrics_store_migration_recovers_partial_service_and_rollup_loss() {
     let main_path = temp_path("metrics-migration-partial-damage-main");
     let metrics_path = temp_path("metrics-migration-partial-damage-target");
     let db = Db::open(&main_path).await.unwrap();
-    let now = time::OffsetDateTime::now_utc();
-    let sampled_at = format_time(now - time::Duration::seconds(30)).unwrap();
+    let sampled_at = "2026-08-16T13:10:00Z".to_string();
     db.insert_legacy_metric_fixture(&[
         sample("svc-a", &sampled_at, 10.0, 1_000),
         sample("svc-b", &sampled_at, 20.0, 2_000),
@@ -420,7 +445,7 @@ async fn metrics_store_migration_recovers_same_cardinality_target_corruption() {
     let main_path = temp_path("metrics-migration-content-damage-main");
     let metrics_path = temp_path("metrics-migration-content-damage-target");
     let db = Db::open(&main_path).await.unwrap();
-    let sampled_at = format_time(time::OffsetDateTime::now_utc()).unwrap();
+    let sampled_at = "2026-08-16T13:10:00Z".to_string();
     db.insert_legacy_metric_fixture(&[sample("svc-a", &sampled_at, 10.0, 1_000)])
         .await
         .unwrap();

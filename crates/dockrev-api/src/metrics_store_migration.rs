@@ -168,11 +168,11 @@ fn filter_pruned_legacy_latest(
     active_service_ids: Option<&BTreeSet<String>>,
 ) -> Vec<crate::db::LegacyMetricLatestSampleRow> {
     rows.into_iter()
-        .filter(|row| {
-            active_service_ids.is_some_and(|ids| ids.contains(&row.service_id))
-                || !row
-                    .legacy_sample_id
-                    .is_some_and(|id| pruned_legacy_ids.contains(&id))
+        .filter(|row| match active_service_ids {
+            Some(ids) => ids.contains(&row.service_id),
+            None => !row
+                .legacy_sample_id
+                .is_some_and(|id| pruned_legacy_ids.contains(&id)),
         })
         .collect()
 }
