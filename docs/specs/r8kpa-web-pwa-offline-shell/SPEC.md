@@ -92,6 +92,8 @@
 
 ### Application Icon Contract
 
+PR: include
+
 ![Dockrev application icon comparison](./assets/pwa-application-icon-comparison.png)
 
 - source_type: deterministic generated contact sheet from the locked pre-change asset and the candidate build
