@@ -115,6 +115,77 @@ async fn metrics_store_migration_repairs_regressed_legacy_latest_projection() {
 }
 
 #[tokio::test]
+async fn metrics_store_migration_preserves_unknown_pre_provenance_stale_latest() {
+    let main_path = temp_path("metrics-migration-unknown-latest-main");
+    let metrics_path = temp_path("metrics-migration-unknown-latest-target");
+    let conn = rusqlite::Connection::open(&metrics_path).unwrap();
+    conn.execute_batch(
+        r#"CREATE TABLE service_resource_latest_samples (
+            service_id TEXT PRIMARY KEY NOT NULL,
+            sampled_at TEXT NOT NULL,
+            cpu_percent REAL NOT NULL,
+            mem_used_bytes INTEGER,
+            mem_limit_bytes INTEGER,
+            net_rx_bytes INTEGER,
+            net_tx_bytes INTEGER,
+            block_read_bytes INTEGER,
+            block_write_bytes INTEGER,
+            pids INTEGER,
+            container_count INTEGER NOT NULL DEFAULT 1,
+            prev_sampled_at TEXT,
+            prev_net_rx_bytes INTEGER,
+            prev_net_tx_bytes INTEGER
+        );"#,
+    )
+    .unwrap();
+    conn.execute(
+        r#"INSERT INTO service_resource_latest_samples (
+            service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes,
+            net_rx_bytes, net_tx_bytes, block_read_bytes, block_write_bytes, pids,
+            container_count, prev_sampled_at, prev_net_rx_bytes, prev_net_tx_bytes
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)"#,
+        params![
+            "svc-native-stale",
+            "2026-08-01T12:00:00Z",
+            42.0,
+            100_i64,
+            200_i64,
+            4_000_i64,
+            2_000_i64,
+            1_000_i64,
+            500_i64,
+            3_i64,
+            1_i64,
+            Option::<String>::None,
+            Option::<i64>::None,
+            Option::<i64>::None,
+        ],
+    )
+    .unwrap();
+    drop(conn);
+
+    let db = Db::open(&main_path).await.unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+
+    let latest = metrics.list_latest_samples().await.unwrap();
+    assert_eq!(latest.len(), 1);
+    assert_eq!(latest[0].service_id, "svc-native-stale");
+    assert_eq!(latest[0].cpu_percent, Some(42.0));
+    let provenance = metrics
+        .reader_call(|conn| {
+            Ok(conn.query_row(
+                "SELECT legacy_source FROM service_resource_latest_samples WHERE service_id = 'svc-native-stale'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(provenance, 2);
+}
+
+#[tokio::test]
 async fn metrics_store_migration_preserves_legacy_latest_after_raw_expiry() {
     let main_path = temp_path("metrics-migration-stale-latest-main");
     let metrics_path = temp_path("metrics-migration-stale-latest-target");

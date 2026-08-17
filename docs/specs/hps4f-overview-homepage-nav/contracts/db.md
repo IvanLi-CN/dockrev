@@ -57,7 +57,7 @@ Columns:
 - `prev_sampled_at TEXT NULL`
 - `prev_net_rx_bytes INTEGER NULL`
 - `prev_net_tx_bytes INTEGER NULL`
-- `legacy_source INTEGER NOT NULL`：`1` 表示当前行由旧主库迁移投影写入；运行时采样写入 `0`。
+- `legacy_source INTEGER NOT NULL`：`1` 表示当前行由旧主库迁移投影写入；运行时采样写入 `0`；从无来源列的旧 metrics 文件升级时为 `2`（未知来源）。
 
 Indexes:
 
@@ -68,7 +68,7 @@ Rules:
 - The resource sampler must update this table in the same metrics-store transaction that appends to `service_resource_samples`.
 - Schema migration must backfill this table from each service's latest historical samples so upgraded databases keep existing homepage/overview metrics before the next live sample arrives.
 - `prev_*` columns capture the previously latest network counters so requests can compute RX/TX rates without reading the historical table.
-- Migration reconciliation replaces only rows marked `legacy_source=1`; a newer `legacy_source=0` row is retained as the authoritative runtime sample.
+- Migration reconciliation replaces only rows marked `legacy_source=1`; a newer `legacy_source=0` row and an unknown pre-provenance `legacy_source=2` row are retained unless raw or source projection evidence identifies them.
 - Rows are one-per-service. 指标 GC 根据主库活动 service id 清理孤儿行。
 - Historical retention and pruning still apply only to `service_resource_samples`; this table is the small read model optimized for homepage/opening-path queries.
 
