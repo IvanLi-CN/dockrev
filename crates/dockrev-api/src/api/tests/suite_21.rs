@@ -208,6 +208,19 @@ services:
                 pids: Some(2),
                 container_count: 1,
             },
+            crate::db::ServiceResourceSampleInput {
+                service_id: "orphan-service".to_string(),
+                sampled_at: worker_sampled_at.clone(),
+                cpu_percent: 99.0,
+                mem_used_bytes: Some(64 * 1024 * 1024),
+                mem_limit_bytes: Some(512 * 1024 * 1024),
+                net_rx_bytes: Some(9_000),
+                net_tx_bytes: Some(10_000),
+                block_read_bytes: None,
+                block_write_bytes: None,
+                pids: Some(2),
+                container_count: 1,
+            },
         ])
         .await
         .unwrap();
@@ -275,6 +288,37 @@ services:
         .find(|row| row["serviceId"].as_str() == Some(worker_id.as_str()))
         .unwrap();
     assert_eq!(worker["sampleCount"].as_u64(), Some(0));
+
+    for window in ["7d", "30d"] {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/services/resource-usage/overview?window={window}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let payload = response_json(resp).await;
+        assert_eq!(payload["window"].as_str(), Some(window));
+        let rows = payload["services"].as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows
+            .iter()
+            .all(|row| row["serviceId"].as_str() != Some("orphan-service")));
+        let web = rows
+            .iter()
+            .find(|row| row["serviceId"].as_str() == Some(web_id.as_str()))
+            .unwrap();
+        assert_eq!(web["sampleCount"].as_u64(), Some(2));
+        let worker = rows
+            .iter()
+            .find(|row| row["serviceId"].as_str() == Some(worker_id.as_str()))
+            .unwrap();
+        assert_eq!(worker["sampleCount"].as_u64(), Some(1));
+    }
 }
 
 #[tokio::test]

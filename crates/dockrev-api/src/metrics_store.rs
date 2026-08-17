@@ -332,8 +332,61 @@ impl MetricsStore {
             tx.commit()?;
             Ok(inserted)
         })
-            .await
-            .context("copy legacy metric samples")
+        .await
+        .context("copy legacy metric samples")
+    }
+
+    async fn upsert_legacy_latest_samples(
+        &self,
+        rows: Vec<crate::db::LegacyMetricLatestSampleRow>,
+    ) -> anyhow::Result<()> {
+        self.writer_call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            for row in rows {
+                tx.execute(
+                    r#"INSERT INTO service_resource_latest_samples (
+                        service_id, sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes,
+                        net_rx_bytes, net_tx_bytes, block_read_bytes, block_write_bytes, pids,
+                        container_count, prev_sampled_at, prev_net_rx_bytes, prev_net_tx_bytes
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                    ON CONFLICT(service_id) DO UPDATE SET
+                        sampled_at=excluded.sampled_at,
+                        cpu_percent=excluded.cpu_percent,
+                        mem_used_bytes=excluded.mem_used_bytes,
+                        mem_limit_bytes=excluded.mem_limit_bytes,
+                        net_rx_bytes=excluded.net_rx_bytes,
+                        net_tx_bytes=excluded.net_tx_bytes,
+                        block_read_bytes=excluded.block_read_bytes,
+                        block_write_bytes=excluded.block_write_bytes,
+                        pids=excluded.pids,
+                        container_count=excluded.container_count,
+                        prev_sampled_at=excluded.prev_sampled_at,
+                        prev_net_rx_bytes=excluded.prev_net_rx_bytes,
+                        prev_net_tx_bytes=excluded.prev_net_tx_bytes
+                    WHERE excluded.sampled_at >= service_resource_latest_samples.sampled_at"#,
+                    params![
+                        row.service_id,
+                        row.sampled_at,
+                        row.cpu_percent,
+                        row.mem_used_bytes.map(|value| value as i64),
+                        row.mem_limit_bytes.map(|value| value as i64),
+                        row.net_rx_bytes.map(|value| value as i64),
+                        row.net_tx_bytes.map(|value| value as i64),
+                        row.block_read_bytes.map(|value| value as i64),
+                        row.block_write_bytes.map(|value| value as i64),
+                        row.pids.map(|value| value as i64),
+                        row.container_count as i64,
+                        row.prev_sampled_at,
+                        row.prev_net_rx_bytes.map(|value| value as i64),
+                        row.prev_net_tx_bytes.map(|value| value as i64),
+                    ],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+        .context("copy legacy latest metric samples")
     }
 
     async fn migrated_legacy_integrity(&self) -> anyhow::Result<(u64, String)> {
@@ -642,8 +695,8 @@ impl MetricsStore {
         self.reader_call(metrics_integrity_from_connection).await
     }
 
-    /// Reconcile buckets that can still be reconstructed from raw samples. Older rollups have a
-    /// longer retention window than raw data and must survive migration verification on restart.
+    /// Build rollups after a full legacy copy. Completed migrations deliberately skip this work:
+    /// older rollups can outlive the raw samples needed to reconstruct them.
     async fn reconcile_rollups_from_raw(&self) -> anyhow::Result<()> {
         self.writer_call(|conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;

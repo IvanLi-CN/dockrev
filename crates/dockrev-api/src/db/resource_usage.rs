@@ -108,6 +108,50 @@ impl Db {
         .context("list legacy metric sample batch")
     }
 
+    pub async fn list_legacy_metric_latest_samples(
+        &self,
+    ) -> anyhow::Result<Vec<LegacyMetricLatestSampleRow>> {
+        self.call(|conn| {
+            let mut stmt = conn.prepare(
+                r#"SELECT (
+                        SELECT sample.id
+                        FROM service_resource_samples sample
+                        WHERE sample.service_id = latest.service_id
+                          AND sample.sampled_at = latest.sampled_at
+                        ORDER BY sample.id DESC
+                        LIMIT 1
+                    ), latest.service_id, latest.sampled_at, latest.cpu_percent,
+                    latest.mem_used_bytes, latest.mem_limit_bytes,
+                    latest.net_rx_bytes, latest.net_tx_bytes, latest.block_read_bytes,
+                    latest.block_write_bytes, latest.pids, latest.container_count,
+                    latest.prev_sampled_at, latest.prev_net_rx_bytes, latest.prev_net_tx_bytes
+                   FROM service_resource_latest_samples latest ORDER BY latest.service_id"#,
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(LegacyMetricLatestSampleRow {
+                    legacy_sample_id: row.get(0)?,
+                    service_id: row.get(1)?,
+                    sampled_at: row.get(2)?,
+                    cpu_percent: row.get(3)?,
+                    mem_used_bytes: row.get::<_, Option<i64>>(4)?.map(|value| value as u64),
+                    mem_limit_bytes: row.get::<_, Option<i64>>(5)?.map(|value| value as u64),
+                    net_rx_bytes: row.get::<_, Option<i64>>(6)?.map(|value| value as u64),
+                    net_tx_bytes: row.get::<_, Option<i64>>(7)?.map(|value| value as u64),
+                    block_read_bytes: row.get::<_, Option<i64>>(8)?.map(|value| value as u64),
+                    block_write_bytes: row.get::<_, Option<i64>>(9)?.map(|value| value as u64),
+                    pids: row.get::<_, Option<i64>>(10)?.map(|value| value as u64),
+                    container_count: row.get::<_, i64>(11)? as u32,
+                    prev_sampled_at: row.get(12)?,
+                    prev_net_rx_bytes: row.get::<_, Option<i64>>(13)?.map(|value| value as u64),
+                    prev_net_tx_bytes: row.get::<_, Option<i64>>(14)?.map(|value| value as u64),
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list legacy latest metric samples")
+    }
+
     pub async fn legacy_metrics_integrity(
         &self,
     ) -> anyhow::Result<crate::metrics_store::MetricsIntegrity> {
@@ -314,6 +358,22 @@ impl Db {
             )?;
             conn.execute(
                 "DELETE FROM service_resource_latest_samples WHERE service_id = ?1",
+                params![service_id],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    #[cfg(test)]
+    pub async fn delete_legacy_metric_fixture_samples_only(
+        &self,
+        service_id: &str,
+    ) -> anyhow::Result<()> {
+        let service_id = service_id.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                "DELETE FROM service_resource_samples WHERE service_id = ?1",
                 params![service_id],
             )?;
             Ok(())

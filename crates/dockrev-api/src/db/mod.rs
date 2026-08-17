@@ -368,6 +368,25 @@ pub struct LegacyMetricSampleRow {
     pub sample: ServiceResourceSampleInput,
 }
 
+#[derive(Clone, Debug)]
+pub struct LegacyMetricLatestSampleRow {
+    pub legacy_sample_id: Option<i64>,
+    pub service_id: String,
+    pub sampled_at: String,
+    pub cpu_percent: f64,
+    pub mem_used_bytes: Option<u64>,
+    pub mem_limit_bytes: Option<u64>,
+    pub net_rx_bytes: Option<u64>,
+    pub net_tx_bytes: Option<u64>,
+    pub block_read_bytes: Option<u64>,
+    pub block_write_bytes: Option<u64>,
+    pub pids: Option<u64>,
+    pub container_count: u32,
+    pub prev_sampled_at: Option<String>,
+    pub prev_net_rx_bytes: Option<u64>,
+    pub prev_net_tx_bytes: Option<u64>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LegacyMetricFingerprint {
     pub sample_count: u64,

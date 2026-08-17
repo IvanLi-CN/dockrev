@@ -61,6 +61,86 @@ async fn metrics_store_migration_is_idempotent_and_keeps_legacy_rows() {
 }
 
 #[tokio::test]
+async fn metrics_store_migration_preserves_legacy_latest_after_raw_expiry() {
+    let main_path = temp_path("metrics-migration-stale-latest-main");
+    let metrics_path = temp_path("metrics-migration-stale-latest-target");
+    let db = Db::open(&main_path).await.unwrap();
+    db.insert_legacy_metric_fixture(&[sample("svc-stale", "2026-08-01T12:00:00Z", 42.0, 4_000)])
+        .await
+        .unwrap();
+    db.delete_legacy_metric_fixture_samples_only("svc-stale")
+        .await
+        .unwrap();
+    let source = db.legacy_metrics_integrity().await.unwrap();
+    assert_eq!(source.sample_count, 0);
+    assert_eq!(source.latest_count, 1);
+
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+
+    assert_eq!(metrics.integrity().await.unwrap(), source);
+    let latest = metrics.list_latest_samples().await.unwrap();
+    assert_eq!(latest.len(), 1);
+    assert_eq!(latest[0].service_id, "svc-stale");
+    assert_eq!(latest[0].cpu_percent, Some(42.0));
+    assert_eq!(latest[0].net_rx_bytes, Some(4_000));
+}
+
+#[tokio::test]
+async fn metrics_store_migration_restart_preserves_rollup_across_raw_retention_cutoff() {
+    let main_path = temp_path("metrics-migration-rollup-retention-main");
+    let metrics_path = temp_path("metrics-migration-rollup-retention-target");
+    let db = Db::open(&main_path).await.unwrap();
+    db.insert_legacy_metric_fixture(&[
+        sample("svc-a", "2026-08-16T12:02:00Z", 10.0, 1_000),
+        sample("svc-a", "2026-08-16T12:04:00Z", 30.0, 2_000),
+    ])
+    .await
+    .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+
+    let active_service_ids = BTreeSet::from(["svc-a".to_string()]);
+    metrics
+        .writer_call(move |conn| {
+            gc_batch_tx(
+                conn,
+                "2026-08-16T12:02:30Z",
+                "1970-01-01T00:00:00Z",
+                "1970-01-01T00:00:00Z",
+                &active_service_ids,
+            )
+        })
+        .await
+        .unwrap();
+
+    let before_restart = metrics
+        .history_since(
+            "svc-a",
+            "2026-08-16T12:00:00Z",
+            Some(FIVE_MINUTE_RESOLUTION_SECONDS),
+        )
+        .await
+        .unwrap();
+    assert_eq!(before_restart.samples.len(), 1);
+    assert!((before_restart.samples[0].cpu_percent - 20.0).abs() < f64::EPSILON);
+
+    metrics.migrate_from_legacy(&db).await.unwrap();
+
+    let after_restart = metrics
+        .history_since(
+            "svc-a",
+            "2026-08-16T12:00:00Z",
+            Some(FIVE_MINUTE_RESOLUTION_SECONDS),
+        )
+        .await
+        .unwrap();
+    assert_eq!(after_restart.samples.len(), 1);
+    assert!((after_restart.samples[0].cpu_percent - 20.0).abs() < f64::EPSILON);
+    assert_eq!(after_restart.peaks[0].cpu_percent, 30.0);
+}
+
+#[tokio::test]
 async fn metrics_store_migration_preserves_duplicate_legacy_timestamps() {
     let main_path = temp_path("metrics-migration-duplicates-main");
     let metrics_path = temp_path("metrics-migration-duplicates-target");

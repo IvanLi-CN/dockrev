@@ -36,6 +36,7 @@ impl MetricsStore {
         let mut source_matches_manifest = false;
         let source = db.legacy_metrics_integrity().await?;
         let fingerprint = db.legacy_metric_fingerprint().await?;
+        let legacy_latest = db.list_legacy_metric_latest_samples().await?;
         if migration_complete && let Some(manifest) = self.migration_manifest().await? {
             source_matches_manifest = manifest.source_sample_count == source.sample_count
                 && manifest.source_sample_hash == source.sample_hash
@@ -55,8 +56,16 @@ impl MetricsStore {
                         .legacy_sample_coverage_is_complete(fingerprint.sample_count)
                         .await?
                 {
+                    let pruned_legacy_ids = self.pruned_legacy_ids().await?;
                     self.reconcile_latest_samples_from_raw().await?;
-                    self.reconcile_rollups_from_raw().await?;
+                    self.upsert_legacy_latest_samples(filter_pruned_legacy_latest(
+                        legacy_latest,
+                        &pruned_legacy_ids,
+                    ))
+                    .await?;
+                    if pruned_legacy_ids.is_empty() {
+                        self.reconcile_rollups_from_raw().await?;
+                    }
                     return Ok(());
                 }
                 retained_pruned_legacy_ids = self.pruned_legacy_ids().await?;
@@ -91,6 +100,11 @@ impl MetricsStore {
             self.insert_legacy_samples(batch).await?;
         }
         self.reconcile_latest_samples_from_raw().await?;
+        self.upsert_legacy_latest_samples(filter_pruned_legacy_latest(
+            legacy_latest,
+            &retained_pruned_legacy_ids,
+        ))
+        .await?;
 
         let target = self.migrated_legacy_integrity().await?;
         let target_is_verified = if retained_pruned_legacy_ids.is_empty() {
@@ -107,7 +121,9 @@ impl MetricsStore {
                 .await?;
             anyhow::bail!(message);
         }
-        self.reconcile_rollups_from_raw().await?;
+        if retained_pruned_legacy_ids.is_empty() {
+            self.reconcile_rollups_from_raw().await?;
+        }
         self.set_migration_manifest(&manifest).await?;
         db.set_metrics_migration_state("complete", Some(&self.target_identity), None)
             .await?;
@@ -124,4 +140,16 @@ impl MetricsStore {
         })
         .await
     }
+}
+
+fn filter_pruned_legacy_latest(
+    rows: Vec<crate::db::LegacyMetricLatestSampleRow>,
+    pruned_legacy_ids: &BTreeSet<i64>,
+) -> Vec<crate::db::LegacyMetricLatestSampleRow> {
+    rows.into_iter()
+        .filter(|row| {
+            !row.legacy_sample_id
+                .is_some_and(|id| pruned_legacy_ids.contains(&id))
+        })
+        .collect()
 }
