@@ -225,7 +225,7 @@
   margin_policy: trim_only
   evidence_surface: page
   sensitive_exclusion: N/A (mock-only data)
-  submission_gate: pending-owner-approval
+  submission_gate: approved
   story_id_or_title: Pages/ServicesPage/GlobalTaskReadableLabel
   state: global discovery task label
   evidence_note: 运维面板的全局 discovery 任务使用可读的“发现扫描”标签和“全部”范围，不将内部 `discovery` 类型名作为可见主标签。
