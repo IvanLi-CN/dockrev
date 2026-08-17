@@ -198,6 +198,57 @@ impl Db {
         .context("fingerprint legacy metrics")
     }
 
+    pub async fn legacy_metric_revision(&self) -> anyhow::Result<LegacyMetricRevision> {
+        self.call(|conn| {
+            conn.execute_batch(
+                r#"CREATE TABLE IF NOT EXISTS metrics_store_legacy_source_revision (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    raw_revision INTEGER NOT NULL,
+                    latest_revision INTEGER NOT NULL
+                );
+                INSERT OR IGNORE INTO metrics_store_legacy_source_revision
+                  (id, raw_revision, latest_revision) VALUES (1, 0, 0);
+                CREATE TRIGGER IF NOT EXISTS metrics_store_legacy_raw_insert
+                  AFTER INSERT ON service_resource_samples
+                  BEGIN UPDATE metrics_store_legacy_source_revision
+                    SET raw_revision = raw_revision + 1 WHERE id = 1; END;
+                CREATE TRIGGER IF NOT EXISTS metrics_store_legacy_raw_update
+                  AFTER UPDATE ON service_resource_samples
+                  BEGIN UPDATE metrics_store_legacy_source_revision
+                    SET raw_revision = raw_revision + 1 WHERE id = 1; END;
+                CREATE TRIGGER IF NOT EXISTS metrics_store_legacy_raw_delete
+                  AFTER DELETE ON service_resource_samples
+                  BEGIN UPDATE metrics_store_legacy_source_revision
+                    SET raw_revision = raw_revision + 1 WHERE id = 1; END;
+                CREATE TRIGGER IF NOT EXISTS metrics_store_legacy_latest_insert
+                  AFTER INSERT ON service_resource_latest_samples
+                  BEGIN UPDATE metrics_store_legacy_source_revision
+                    SET latest_revision = latest_revision + 1 WHERE id = 1; END;
+                CREATE TRIGGER IF NOT EXISTS metrics_store_legacy_latest_update
+                  AFTER UPDATE ON service_resource_latest_samples
+                  BEGIN UPDATE metrics_store_legacy_source_revision
+                    SET latest_revision = latest_revision + 1 WHERE id = 1; END;
+                CREATE TRIGGER IF NOT EXISTS metrics_store_legacy_latest_delete
+                  AFTER DELETE ON service_resource_latest_samples
+                  BEGIN UPDATE metrics_store_legacy_source_revision
+                    SET latest_revision = latest_revision + 1 WHERE id = 1; END;"#,
+            )?;
+            conn.query_row(
+                "SELECT raw_revision, latest_revision FROM metrics_store_legacy_source_revision WHERE id = 1",
+                [],
+                |row| {
+                    Ok(LegacyMetricRevision {
+                        raw_revision: row.get::<_, i64>(0)? as u64,
+                        latest_revision: row.get::<_, i64>(1)? as u64,
+                    })
+                },
+            )
+            .map_err(Into::into)
+        })
+        .await
+        .context("get legacy metric revision")
+    }
+
     pub async fn legacy_metric_coverage(
         &self,
         raw_cutoff: &str,

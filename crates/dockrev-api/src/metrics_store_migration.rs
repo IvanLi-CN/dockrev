@@ -52,67 +52,63 @@ impl MetricsStore {
         });
         let mut retained_pruned_legacy_ids = BTreeSet::new();
         let mut source_matches_manifest = false;
-        let source = db.legacy_metrics_integrity().await?;
         let fingerprint = db.legacy_metric_fingerprint().await?;
+        let revision = db.legacy_metric_revision().await?;
         let legacy_latest = db.list_legacy_metric_latest_samples().await?;
         if migration_complete && let Some(manifest) = self.migration_manifest().await? {
-            source_matches_manifest = manifest.source_sample_count == source.sample_count
-                && manifest.source_sample_hash == source.sample_hash
+            source_matches_manifest = manifest.source_sample_count == fingerprint.sample_count
                 && manifest.source_max_id == Some(fingerprint.max_id)
-                && manifest.source_latest_count == Some(source.latest_count)
-                && manifest.source_latest_hash.as_deref() == Some(source.latest_hash.as_str());
+                && manifest.source_raw_revision == Some(revision.raw_revision)
+                && manifest.source_latest_revision == Some(revision.latest_revision);
             if source_matches_manifest {
-                let target_matches_source_count =
-                    self.migrated_legacy_sample_count().await? == fingerprint.sample_count;
-                let target_integrity_matches = !target_matches_source_count
-                    || (
-                        manifest.source_sample_count,
-                        manifest.source_sample_hash.clone(),
-                    ) == self.migrated_legacy_integrity().await?;
-                let raw_is_intact = self.retained_legacy_samples_match_signatures().await?;
-                if target_integrity_matches
-                    && raw_is_intact
-                    && self
-                        .legacy_sample_coverage_is_complete(fingerprint.sample_count)
-                        .await?
-                {
-                    let pruned_legacy_ids = self.pruned_legacy_ids().await?;
-                    self.reconcile_latest_samples_from_raw().await?;
+                let pruned_legacy_ids = self.pruned_legacy_ids().await?;
+                if self.target_is_trusted().await? {
                     let expected_latest = filter_pruned_legacy_latest(
                         legacy_latest,
                         &pruned_legacy_ids,
                         active_service_ids,
                     );
-                    self.sync_legacy_latest_samples(expected_latest.clone())
-                        .await?;
                     if !self
                         .legacy_latest_projection_matches(&expected_latest)
                         .await?
                     {
-                        let message = "legacy latest projection verification failed".to_string();
-                        db.set_metrics_migration_state(
-                            "copying",
-                            Some(&self.target_identity),
-                            Some(&message),
-                        )
-                        .await?;
-                        anyhow::bail!(message);
+                        self.sync_legacy_latest_samples(expected_latest.clone())
+                            .await?;
+                        if !self
+                            .legacy_latest_projection_matches(&expected_latest)
+                            .await?
+                        {
+                            let message =
+                                "legacy latest projection verification failed".to_string();
+                            db.set_metrics_migration_state(
+                                "copying",
+                                Some(&self.target_identity),
+                                Some(&message),
+                            )
+                            .await?;
+                            anyhow::bail!(message);
+                        }
                     }
                     if !self.rollups_are_intact().await? {
                         self.reconcile_rollups_from_raw().await?;
                     }
                     return Ok(());
                 }
-                retained_pruned_legacy_ids = self.pruned_legacy_ids().await?;
+                // Repairing a changed target must not re-import legacy samples that its own
+                // retention GC had intentionally pruned.
+                retained_pruned_legacy_ids = pruned_legacy_ids;
             }
         }
 
+        let source = db.legacy_metrics_integrity().await?;
         let manifest = MigrationManifest {
             source_sample_count: source.sample_count,
             source_sample_hash: source.sample_hash.clone(),
             source_max_id: Some(fingerprint.max_id),
             source_latest_count: Some(source.latest_count),
             source_latest_hash: Some(source.latest_hash.clone()),
+            source_raw_revision: Some(revision.raw_revision),
+            source_latest_revision: Some(revision.latest_revision),
         };
         db.set_metrics_migration_state("copying", Some(&self.target_identity), None)
             .await?;
@@ -172,21 +168,11 @@ impl MetricsStore {
         if retained_pruned_legacy_ids.is_empty() {
             self.reconcile_rollups_from_raw().await?;
         }
+        self.trust_target().await?;
         self.set_migration_manifest(&manifest).await?;
         db.set_metrics_migration_state("complete", Some(&self.target_identity), None)
             .await?;
         Ok(())
-    }
-
-    async fn migrated_legacy_sample_count(&self) -> anyhow::Result<u64> {
-        self.reader_call(|conn| {
-            Ok(conn.query_row(
-                "SELECT COUNT(*) FROM service_resource_samples WHERE legacy_id IS NOT NULL",
-                [],
-                |row| row.get::<_, i64>(0).map(|value| value as u64),
-            )?)
-        })
-        .await
     }
 }
 

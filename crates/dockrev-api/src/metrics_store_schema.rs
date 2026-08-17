@@ -45,6 +45,7 @@ pub(super) fn ensure_rollup_schema_columns(conn: &mut rusqlite::Connection) -> a
     let columns = stmt
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<Result<BTreeSet<_>, _>>()?;
+    let needs_integrity_backfill = !columns.contains("integrity_json");
     for (name, kind) in [
         ("net_rx_rate_avg", "REAL"),
         ("net_tx_rate_avg", "REAL"),
@@ -58,6 +59,21 @@ pub(super) fn ensure_rollup_schema_columns(conn: &mut rusqlite::Connection) -> a
                 [],
             )?;
         }
+    }
+    if needs_integrity_backfill {
+        conn.execute_batch(
+            r#"UPDATE service_resource_rollups
+               SET integrity_json = json_array(
+                 service_id, resolution_seconds, bucket_start, bucket_end, sample_count, cpu_avg, cpu_peak,
+                 mem_used_avg, mem_used_peak, mem_limit_avg, mem_limit_peak, net_rx_first, net_rx_last,
+                 net_tx_first, net_tx_last, block_read_first, block_read_last, block_write_first,
+                 block_write_last, pids_avg, pids_peak, container_count_avg, container_count_peak,
+                 net_rx_rate_avg, net_tx_rate_avg, block_read_rate_avg, block_write_rate_avg,
+                 net_rx_rate_peak, net_tx_rate_peak, block_read_rate_peak, block_write_rate_peak
+               );
+               INSERT OR REPLACE INTO metrics_rollup_integrity (id, row_count)
+               SELECT 1, COUNT(*) FROM service_resource_rollups;"#,
+        )?;
     }
     Ok(())
 }
@@ -84,6 +100,18 @@ pub(super) fn ensure_migration_manifest_schema(
     if !columns.contains("source_latest_hash") {
         conn.execute(
             "ALTER TABLE metrics_migration_manifest ADD COLUMN source_latest_hash TEXT",
+            [],
+        )?;
+    }
+    if !columns.contains("source_raw_revision") {
+        conn.execute(
+            "ALTER TABLE metrics_migration_manifest ADD COLUMN source_raw_revision INTEGER",
+            [],
+        )?;
+    }
+    if !columns.contains("source_latest_revision") {
+        conn.execute(
+            "ALTER TABLE metrics_migration_manifest ADD COLUMN source_latest_revision INTEGER",
             [],
         )?;
     }

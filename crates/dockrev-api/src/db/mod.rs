@@ -394,6 +394,12 @@ pub struct LegacyMetricFingerprint {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LegacyMetricRevision {
+    pub raw_revision: u64,
+    pub latest_revision: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LegacyMetricCoverageRow {
     pub service_id: String,
     pub raw_sample_count: u64,

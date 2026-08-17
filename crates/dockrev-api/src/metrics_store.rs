@@ -37,6 +37,9 @@ use schema::{
     ensure_latest_schema, ensure_migration_manifest_schema, ensure_rollup_schema_columns,
     ensure_sample_schema,
 };
+#[path = "metrics_store_target_integrity.rs"]
+mod target_integrity;
+use target_integrity::trust_metrics_target_tx;
 
 pub const RAW_RETENTION_SECONDS: i64 = 24 * 60 * 60;
 pub const MINUTE_ROLLUP_RETENTION_SECONDS: i64 = 7 * 24 * 60 * 60;
@@ -95,7 +98,9 @@ CREATE TABLE IF NOT EXISTS metrics_migration_manifest (
   source_sample_hash TEXT NOT NULL,
   source_max_id INTEGER,
   source_latest_count INTEGER NOT NULL,
-  source_latest_hash TEXT NOT NULL
+  source_latest_hash TEXT NOT NULL,
+  source_raw_revision INTEGER,
+  source_latest_revision INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS metrics_migration_pruned_legacy_ids (
@@ -106,6 +111,17 @@ CREATE TABLE IF NOT EXISTS metrics_rollup_integrity (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   row_count INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS metrics_target_revision (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  raw_revision INTEGER NOT NULL,
+  latest_revision INTEGER NOT NULL,
+  rollup_revision INTEGER NOT NULL,
+  trusted_raw_revision INTEGER NOT NULL,
+  trusted_latest_revision INTEGER NOT NULL,
+  trusted_rollup_revision INTEGER NOT NULL
+);
+INSERT OR IGNORE INTO metrics_target_revision VALUES (1, 0, 0, 0, 0, 0, 0);
 
 CREATE TABLE IF NOT EXISTS service_resource_rollups (
   service_id TEXT NOT NULL,
@@ -146,6 +162,34 @@ CREATE INDEX IF NOT EXISTS idx_metrics_rollups_lookup
   ON service_resource_rollups(service_id, resolution_seconds, bucket_start);
 CREATE INDEX IF NOT EXISTS idx_metrics_rollups_expiry
   ON service_resource_rollups(resolution_seconds, bucket_end);
+
+CREATE TRIGGER IF NOT EXISTS metrics_target_raw_insert
+  AFTER INSERT ON service_resource_samples
+  BEGIN UPDATE metrics_target_revision SET raw_revision = raw_revision + 1 WHERE id = 1; END;
+CREATE TRIGGER IF NOT EXISTS metrics_target_raw_update
+  AFTER UPDATE ON service_resource_samples
+  BEGIN UPDATE metrics_target_revision SET raw_revision = raw_revision + 1 WHERE id = 1; END;
+CREATE TRIGGER IF NOT EXISTS metrics_target_raw_delete
+  AFTER DELETE ON service_resource_samples
+  BEGIN UPDATE metrics_target_revision SET raw_revision = raw_revision + 1 WHERE id = 1; END;
+CREATE TRIGGER IF NOT EXISTS metrics_target_latest_insert
+  AFTER INSERT ON service_resource_latest_samples
+  BEGIN UPDATE metrics_target_revision SET latest_revision = latest_revision + 1 WHERE id = 1; END;
+CREATE TRIGGER IF NOT EXISTS metrics_target_latest_update
+  AFTER UPDATE ON service_resource_latest_samples
+  BEGIN UPDATE metrics_target_revision SET latest_revision = latest_revision + 1 WHERE id = 1; END;
+CREATE TRIGGER IF NOT EXISTS metrics_target_latest_delete
+  AFTER DELETE ON service_resource_latest_samples
+  BEGIN UPDATE metrics_target_revision SET latest_revision = latest_revision + 1 WHERE id = 1; END;
+CREATE TRIGGER IF NOT EXISTS metrics_target_rollup_insert
+  AFTER INSERT ON service_resource_rollups
+  BEGIN UPDATE metrics_target_revision SET rollup_revision = rollup_revision + 1 WHERE id = 1; END;
+CREATE TRIGGER IF NOT EXISTS metrics_target_rollup_update
+  AFTER UPDATE ON service_resource_rollups
+  BEGIN UPDATE metrics_target_revision SET rollup_revision = rollup_revision + 1 WHERE id = 1; END;
+CREATE TRIGGER IF NOT EXISTS metrics_target_rollup_delete
+  AFTER DELETE ON service_resource_rollups
+  BEGIN UPDATE metrics_target_revision SET rollup_revision = rollup_revision + 1 WHERE id = 1; END;
 "#;
 
 #[derive(Clone)]
@@ -220,6 +264,8 @@ struct MigrationManifest {
     source_max_id: Option<i64>,
     source_latest_count: Option<u64>,
     source_latest_hash: Option<String>,
+    source_raw_revision: Option<u64>,
+    source_latest_revision: Option<u64>,
 }
 
 impl MetricsStore {
@@ -382,7 +428,7 @@ impl MetricsStore {
     async fn migration_manifest(&self) -> anyhow::Result<Option<MigrationManifest>> {
         self.reader_call(|conn| {
             conn.query_row(
-                "SELECT source_sample_count, source_sample_hash, source_max_id, source_latest_count, source_latest_hash FROM metrics_migration_manifest WHERE id = 1",
+                "SELECT source_sample_count, source_sample_hash, source_max_id, source_latest_count, source_latest_hash, source_raw_revision, source_latest_revision FROM metrics_migration_manifest WHERE id = 1",
                 [],
                 |row| {
                     Ok(MigrationManifest {
@@ -391,6 +437,8 @@ impl MetricsStore {
                         source_max_id: row.get(2)?,
                         source_latest_count: row.get::<_, Option<i64>>(3)?.map(|value| value as u64),
                         source_latest_hash: row.get(4)?,
+                        source_raw_revision: row.get::<_, Option<i64>>(5)?.map(|value| value as u64),
+                        source_latest_revision: row.get::<_, Option<i64>>(6)?.map(|value| value as u64),
                     })
                 },
             )
@@ -406,19 +454,23 @@ impl MetricsStore {
             conn.execute(
                 r#"INSERT INTO metrics_migration_manifest (
                        id, source_sample_count, source_sample_hash, source_max_id,
-                       source_latest_count, source_latest_hash
-                   ) VALUES (1, ?1, ?2, ?3, ?4, ?5)
+                       source_latest_count, source_latest_hash, source_raw_revision, source_latest_revision
+                   ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)
                    ON CONFLICT(id) DO UPDATE SET source_sample_count=excluded.source_sample_count,
                      source_sample_hash=excluded.source_sample_hash,
                      source_max_id=excluded.source_max_id,
                      source_latest_count=excluded.source_latest_count,
-                     source_latest_hash=excluded.source_latest_hash"#,
+                     source_latest_hash=excluded.source_latest_hash,
+                     source_raw_revision=excluded.source_raw_revision,
+                     source_latest_revision=excluded.source_latest_revision"#,
                 params![
                     manifest.source_sample_count as i64,
                     manifest.source_sample_hash,
                     manifest.source_max_id,
                     manifest.source_latest_count.map(|value| value as i64),
                     manifest.source_latest_hash,
+                    manifest.source_raw_revision.map(|value| value as i64),
+                    manifest.source_latest_revision.map(|value| value as i64),
                 ],
             )?;
             Ok(())
@@ -700,6 +752,7 @@ impl MetricsStore {
                 rebuild_rollup_tx(&tx, &service_id, resolution, bucket_start)?;
             }
             refresh_rollup_integrity_tx(&tx)?;
+            trust_metrics_target_tx(&tx)?;
             tx.commit()?;
             Ok(())
         })
@@ -886,6 +939,7 @@ fn gc_batch_tx(
         params![raw_cutoff, GC_BATCH_SIZE as i64],
     )?;
     if raw_deleted > 0 {
+        trust_metrics_target_tx(&tx)?;
         tx.commit()?;
         return Ok(true);
     }
@@ -895,6 +949,7 @@ fn gc_batch_tx(
     )?;
     if minute_deleted > 0 {
         refresh_rollup_integrity_tx(&tx)?;
+        trust_metrics_target_tx(&tx)?;
         tx.commit()?;
         return Ok(true);
     }
@@ -904,6 +959,7 @@ fn gc_batch_tx(
     )?;
     if five_minute_deleted > 0 {
         refresh_rollup_integrity_tx(&tx)?;
+        trust_metrics_target_tx(&tx)?;
         tx.commit()?;
         return Ok(true);
     }
@@ -926,6 +982,7 @@ fn gc_batch_tx(
                 if table == "service_resource_rollups" {
                     refresh_rollup_integrity_tx(&tx)?;
                 }
+                trust_metrics_target_tx(&tx)?;
                 tx.commit()?;
                 return Ok(true);
             }
@@ -960,6 +1017,7 @@ fn gc_batch_tx(
                 if table == "service_resource_rollups" {
                     refresh_rollup_integrity_tx(&tx)?;
                 }
+                trust_metrics_target_tx(&tx)?;
                 tx.commit()?;
                 return Ok(true);
             }
@@ -1004,13 +1062,13 @@ fn write_samples_tx(
             |current| Ok((
                 current.get::<_, String>(0)?, current.get::<_, Option<i64>>(1)?.map(|value| value as u64),
                 current.get::<_, Option<i64>>(2)?.map(|value| value as u64),
-                current.get::<_, i64>(3)? != 0,
+                current.get::<_, i64>(3)?,
             )),
         ).optional()?;
         let current_is_newer = previous
             .as_ref()
             .is_none_or(|(sampled_at, _, _, legacy_source)| {
-                *legacy_source || row.sampled_at >= *sampled_at
+                *legacy_source == 1 || row.sampled_at >= *sampled_at
             });
         if current_is_newer {
             tx.execute(
@@ -1051,6 +1109,7 @@ fn write_samples_tx(
     if rollups {
         refresh_rollup_integrity_tx(&tx)?;
     }
+    trust_metrics_target_tx(&tx)?;
     tx.commit()?;
     Ok(inserted)
 }

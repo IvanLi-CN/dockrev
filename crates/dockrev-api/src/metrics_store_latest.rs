@@ -1,7 +1,7 @@
 use anyhow::Context as _;
 use rusqlite::{TransactionBehavior, params};
 
-use super::MetricsStore;
+use super::{MetricsStore, target_integrity::trust_metrics_target_tx};
 
 impl MetricsStore {
     pub(super) async fn sync_legacy_latest_samples(
@@ -57,6 +57,7 @@ impl MetricsStore {
                     ],
                 )?;
             }
+            trust_metrics_target_tx(&tx)?;
             tx.commit()?;
             Ok(())
         })

@@ -194,6 +194,28 @@ async fn metrics_store_migration_preserves_unknown_pre_provenance_stale_latest()
         .await
         .unwrap();
     assert_eq!(provenance, 2);
+
+    metrics
+        .insert_samples(&[sample("svc-native-stale", "2026-08-01T11:00:00Z", 7.0, 700)])
+        .await
+        .unwrap();
+    let latest = metrics.list_latest_samples().await.unwrap();
+    assert_eq!(
+        latest[0].sampled_at.as_deref(),
+        Some("2026-08-01T12:00:00Z")
+    );
+    assert_eq!(latest[0].cpu_percent, Some(42.0));
+    let provenance = metrics
+        .reader_call(|conn| {
+            Ok(conn.query_row(
+                "SELECT legacy_source FROM service_resource_latest_samples WHERE service_id = 'svc-native-stale'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(provenance, 2);
 }
 
 #[tokio::test]
@@ -419,6 +441,67 @@ async fn metrics_store_migration_restart_preserves_rollup_across_raw_retention_c
     assert_eq!(after_restart.samples.len(), 1);
     assert!((after_restart.samples[0].cpu_percent - 20.0).abs() < f64::EPSILON);
     assert_eq!(after_restart.peaks[0].cpu_percent, 30.0);
+}
+
+#[tokio::test]
+async fn metrics_store_migration_upgrades_pre_integrity_rollups_without_rebuild() {
+    let main_path = temp_path("metrics-migration-pre-integrity-rollup-main");
+    let metrics_path = temp_path("metrics-migration-pre-integrity-rollup-target");
+    let db = Db::open(&main_path).await.unwrap();
+    db.insert_legacy_metric_fixture(&[
+        sample("svc-a", "2026-08-16T12:02:00Z", 10.0, 1_000),
+        sample("svc-a", "2026-08-16T12:04:00Z", 30.0, 2_000),
+    ])
+    .await
+    .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+
+    let active_service_ids = BTreeSet::from(["svc-a".to_string()]);
+    metrics
+        .writer_call(move |conn| {
+            gc_batch_tx(
+                conn,
+                "2026-08-16T12:02:30Z",
+                "1970-01-01T00:00:00Z",
+                "1970-01-01T00:00:00Z",
+                &active_service_ids,
+            )?;
+            conn.execute_batch(
+                "ALTER TABLE service_resource_rollups DROP COLUMN integrity_json;\
+                 DELETE FROM metrics_rollup_integrity;",
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    drop(metrics);
+
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics
+        .writer_call(|conn| {
+            conn.execute_batch(
+                r#"CREATE TRIGGER reject_rollup_rebuild
+                   BEFORE INSERT ON service_resource_rollups
+                   BEGIN SELECT RAISE(ABORT, 'unexpected rollup rebuild'); END;"#,
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+
+    let history = metrics
+        .history_since(
+            "svc-a",
+            "2026-08-16T12:00:00Z",
+            Some(FIVE_MINUTE_RESOLUTION_SECONDS),
+        )
+        .await
+        .unwrap();
+    assert_eq!(history.samples.len(), 1);
+    assert!((history.samples[0].cpu_percent - 20.0).abs() < f64::EPSILON);
+    assert_eq!(history.peaks[0].cpu_percent, 30.0);
 }
 
 #[tokio::test]
