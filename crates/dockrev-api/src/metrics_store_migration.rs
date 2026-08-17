@@ -54,8 +54,11 @@ impl MetricsStore {
         let revision = db.legacy_metric_revision().await?;
         let legacy_latest = db.list_legacy_metric_latest_samples().await?;
         let previous_manifest = self.migration_manifest().await?;
+        let mut raw_source_matches_manifest = false;
         if let Some(manifest) = previous_manifest.as_ref() {
-            source_matches_manifest = manifest.source_raw_revision == Some(revision.raw_revision)
+            raw_source_matches_manifest =
+                manifest.source_raw_revision == Some(revision.raw_revision);
+            source_matches_manifest = raw_source_matches_manifest
                 && manifest.source_latest_revision == Some(revision.latest_revision);
             if source_matches_manifest && migration_complete {
                 if self.target_is_trusted().await? {
@@ -102,6 +105,14 @@ impl MetricsStore {
             anyhow::bail!(message);
         }
         let retained_pruned_legacy_ids = self.pruned_legacy_ids().await?;
+        if !raw_source_matches_manifest && !retained_pruned_legacy_ids.is_empty() {
+            let message =
+                "legacy raw source changed after retention and cannot rebuild long-window rollups"
+                    .to_string();
+            db.set_metrics_migration_state("copying", Some(&self.target_identity), Some(&message))
+                .await?;
+            anyhow::bail!(message);
+        }
         if source_matches_manifest
             && !db
                 .legacy_metric_ids_exist(&retained_pruned_legacy_ids)

@@ -478,7 +478,7 @@ async fn metrics_store_migration_keeps_tombstones_after_an_interrupted_repair() 
 }
 
 #[tokio::test]
-async fn metrics_store_migration_keeps_tombstones_when_legacy_source_changes() {
+async fn metrics_store_migration_rejects_legacy_raw_changes_after_retention() {
     let main_path = temp_path("metrics-migration-source-change-retention-main");
     let metrics_path = temp_path("metrics-migration-source-change-retention-target");
     let db = Db::open(&main_path).await.unwrap();
@@ -499,7 +499,7 @@ async fn metrics_store_migration_keeps_tombstones_when_legacy_source_changes() {
     db.update_legacy_metric_fixture_cpu("svc-a", 25.0)
         .await
         .unwrap();
-    metrics.migrate_from_legacy(&db).await.unwrap();
+    assert!(metrics.migrate_from_legacy(&db).await.is_err());
 
     let history = metrics
         .history_since("svc-a", "1970-01-01T00:00:00Z", None)
@@ -507,8 +507,16 @@ async fn metrics_store_migration_keeps_tombstones_when_legacy_source_changes() {
         .unwrap();
     assert_eq!(history.samples.len(), 1);
     assert_eq!(history.samples[0].sampled_at, retained_at);
-    assert_eq!(history.samples[0].cpu_percent, 25.0);
+    assert_eq!(history.samples[0].cpu_percent, 10.0);
     assert_eq!(metrics.pruned_legacy_ids().await.unwrap().len(), 1);
+    assert_eq!(
+        db.metrics_migration_state()
+            .await
+            .unwrap()
+            .as_ref()
+            .map(|state| state.state.as_str()),
+        Some("copying")
+    );
 }
 
 #[tokio::test]
