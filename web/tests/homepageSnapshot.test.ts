@@ -7,6 +7,7 @@ import {
   homepageSnapshotFromResponse,
   homepageSnapshotIsResourceStale,
   markHomepageSnapshotResourceStale,
+  normalizeHomepageHref,
   readHomepageSnapshot,
   writeHomepageSnapshot,
   type HomepageSnapshotCard,
@@ -111,6 +112,26 @@ const homepageResponse: HomepageNavResponse = {
 }
 
 describe('homepage snapshot cache', () => {
+  test('rejects unsafe href variants before a snapshot can be reused', () => {
+    expect(normalizeHomepageHref('/dashboard')).toBe('/dashboard')
+    expect(normalizeHomepageHref('https://api.example.com/path')).toBe(
+      'https://api.example.com/path',
+    )
+    for (const value of ['javascript:alert(1)', '//external.example', '/\t\\evil.example']) {
+      expect(normalizeHomepageHref(value)).toBeNull()
+    }
+
+    const storage = new MemoryStorage()
+    const unsafeSnapshot = homepageSnapshotFromResponse({
+      generatedAt: homepageResponse.generatedAt,
+      lastCheckAt: homepageResponse.lastCheckAt,
+      resourceSummary: overview,
+      cards: [{ ...card, href: 'javascript:alert(1)' }],
+    })
+    writeHomepageSnapshot(unsafeSnapshot, storage)
+    expect(readHomepageSnapshot(storage)).toBeNull()
+  })
+
   test('round-trips homepage snapshot v2', () => {
     const storage = new MemoryStorage()
     const snapshot = homepageSnapshotFromResponse({

@@ -1043,7 +1043,10 @@ fn normalize_homepage_href(value: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
-    if trimmed.starts_with('/') && !trimmed.starts_with("//") && !trimmed.starts_with("/\\") {
+    if trimmed.chars().any(char::is_control) || trimmed.contains('\\') {
+        return None;
+    }
+    if trimmed.starts_with('/') && !trimmed.starts_with("//") {
         return Some(trimmed.to_string());
     }
     let url = url::Url::parse(trimmed).ok()?;

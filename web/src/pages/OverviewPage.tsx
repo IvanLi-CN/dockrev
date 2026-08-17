@@ -37,6 +37,7 @@ import { buildUpdateServiceTarget } from "../updateTargets";
 import { isDockrevAppDemoRuntime } from "../demo/runtime";
 import {
   homepageSnapshotFromResponse,
+  normalizeHomepageHref,
   readHomepageSnapshot,
   writeHomepageSnapshot,
   type HomepageSnapshotCard,
@@ -147,24 +148,11 @@ function balanceHomepageGroups(
   return populatedColumns.length > 0 ? populatedColumns : [[]];
 }
 
-function normalizeHomepageHref(
-  value: string | null | undefined,
-): string | null {
-  const trimmed = (value ?? "").trim();
-  if (!trimmed) return null;
-  if (trimmed.startsWith("/") && !trimmed.startsWith("//") && !trimmed.startsWith("/\\")) return trimmed;
-  try {
-    const url = new URL(trimmed);
-    if (url.protocol === "http:" || url.protocol === "https:")
-      return url.toString();
-  } catch {
-    return null;
-  }
-  return null;
-}
-
 function snapshotCardsToNavCards(cards: HomepageSnapshotCard[]): HomepageNavCard[] {
-  return cards.map((card) => ({ ...card, source: "snapshot" }));
+  return cards.flatMap((card) => {
+    const href = normalizeHomepageHref(card.href);
+    return href ? [{ ...card, source: "snapshot" as const }] : [];
+  });
 }
 
 function navCardsToSnapshot(cards: HomepageNavCard[]): HomepageSnapshotCard[] {

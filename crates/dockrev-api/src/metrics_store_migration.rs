@@ -63,41 +63,38 @@ impl MetricsStore {
                 manifest.source_raw_revision == Some(revision.raw_revision);
             source_matches_manifest = raw_source_matches_manifest
                 && manifest.source_latest_revision == Some(revision.latest_revision);
-            if source_matches_manifest && migration_complete {
-                if self.target_is_trusted().await? {
-                    let pruned_legacy_ids = if active_service_ids.is_some() {
-                        BTreeSet::new()
-                    } else {
-                        self.pruned_legacy_ids().await?
-                    };
-                    let expected_latest = filter_pruned_legacy_latest(
-                        legacy_latest,
-                        &pruned_legacy_ids,
-                        active_service_ids,
-                    );
+            if source_matches_manifest && migration_complete && self.target_is_trusted().await? {
+                let pruned_legacy_ids = if active_service_ids.is_some() {
+                    BTreeSet::new()
+                } else {
+                    self.pruned_legacy_ids().await?
+                };
+                let expected_latest = filter_pruned_legacy_latest(
+                    legacy_latest,
+                    &pruned_legacy_ids,
+                    active_service_ids,
+                );
+                if !self
+                    .legacy_latest_projection_matches(&expected_latest)
+                    .await?
+                {
+                    self.sync_legacy_latest_samples(expected_latest.clone())
+                        .await?;
                     if !self
                         .legacy_latest_projection_matches(&expected_latest)
                         .await?
                     {
-                        self.sync_legacy_latest_samples(expected_latest.clone())
-                            .await?;
-                        if !self
-                            .legacy_latest_projection_matches(&expected_latest)
-                            .await?
-                        {
-                            let message =
-                                "legacy latest projection verification failed".to_string();
-                            db.set_metrics_migration_state(
-                                "copying",
-                                Some(&self.target_identity),
-                                Some(&message),
-                            )
-                            .await?;
-                            anyhow::bail!(message);
-                        }
+                        let message = "legacy latest projection verification failed".to_string();
+                        db.set_metrics_migration_state(
+                            "copying",
+                            Some(&self.target_identity),
+                            Some(&message),
+                        )
+                        .await?;
+                        anyhow::bail!(message);
                     }
-                    return Ok(());
                 }
+                return Ok(());
             }
         }
 

@@ -71,6 +71,7 @@ fn normalize_homepage_href_accepts_only_http_https_or_root_relative_paths() {
         "javascript:alert(1)",
         "//other.example",
         "/\\other.example",
+        "/\t\\evil.example",
         "relative",
     ] {
         assert_eq!(normalize_homepage_href(value), None, "{value}");
