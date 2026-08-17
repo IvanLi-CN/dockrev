@@ -56,6 +56,17 @@ async fn metrics_store_migration_is_idempotent_and_keeps_legacy_rows() {
     assert_eq!(metrics.integrity().await.unwrap(), source_before);
     assert_eq!(db.legacy_metrics_integrity().await.unwrap(), source_before);
 
+    metrics
+        .writer_call(|conn| {
+            conn.execute_batch(
+                r#"CREATE TRIGGER reject_rollup_rebuild
+                   BEFORE INSERT ON service_resource_rollups
+                   BEGIN SELECT RAISE(ABORT, 'unexpected rollup rebuild'); END;"#,
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
     metrics.migrate_from_legacy(&db).await.unwrap();
     assert_eq!(metrics.integrity().await.unwrap(), source_before);
 }

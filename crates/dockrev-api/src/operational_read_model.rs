@@ -222,7 +222,28 @@ ORDER BY st.name ASC, sv.name ASC
             values.push(((limit + 1) as i64).into());
             let sql = format!(r#"WITH filtered_jobs AS (
               SELECT j.id, j.type, j.scope, j.stack_id, j.service_id, j.status, j.created_by, j.reason,
-                j.created_at, j.started_at, j.finished_at, j.summary_json,
+                j.created_at, j.started_at, j.finished_at,
+                json_object(
+                  'progress', json_extract(j.summary_json, '$.progress'),
+                  'error', json_extract(j.summary_json, '$.error'),
+                  'failureStep', json_extract(j.summary_json, '$.failureStep'),
+                  'lastError', json_extract(j.summary_json, '$.lastError'),
+                  'pullTagWarnings', CASE
+                    WHEN json_extract(j.summary_json, '$.pullTagWarnings[0].lastError') IS NULL
+                     AND json_extract(j.summary_json, '$.pullTagWarnings[0].error') IS NULL
+                    THEN NULL
+                    ELSE json_array(json_object(
+                      'lastError', json_extract(j.summary_json, '$.pullTagWarnings[0].lastError'),
+                      'error', json_extract(j.summary_json, '$.pullTagWarnings[0].error')
+                    ))
+                  END,
+                  'action', json_extract(j.summary_json, '$.action'),
+                  'targetDisplayTag', json_extract(j.summary_json, '$.targetDisplayTag'),
+                  'targetTag', json_extract(j.summary_json, '$.targetTag'),
+                  'to', json_extract(j.summary_json, '$.to')
+                ) AS compact_summary_json,
+                json_extract(j.summary_json, '$.stacks') AS stacks_json,
+                json_extract(j.summary_json, '$.targets') AS targets_json,
                 COALESCE(service.name, stack.name, j.type) AS fallback_display_label
               FROM jobs j
               LEFT JOIN services service ON service.id = j.service_id
@@ -295,7 +316,7 @@ ORDER BY st.name ASC, sv.name ASC
                 END AS transition_priority,
                 stack_entry.key AS stack_index
               FROM filtered_jobs job
-              JOIN json_each(job.summary_json, '$.stacks') AS stack_entry
+              JOIN json_each(job.stacks_json) AS stack_entry
               WHERE job.type IN ('update', 'rollback')
                 AND json_type(stack_entry.value, CASE job.type
                   WHEN 'update' THEN '$.update'
@@ -321,7 +342,7 @@ ORDER BY st.name ASC, sv.name ASC
                 ) AS target_version,
                 target_entry.key AS target_index
               FROM filtered_jobs job
-              JOIN json_each(job.summary_json, '$.targets') AS target_entry
+              JOIN json_each(job.targets_json) AS target_entry
               WHERE NULLIF(trim(COALESCE(
                 json_extract(target_entry.value, '$.targetDisplayTag'),
                 json_extract(target_entry.value, '$.targetTag'),
@@ -339,25 +360,7 @@ ORDER BY st.name ASC, sv.name ASC
             )
             SELECT job.id, job.type, job.scope, job.stack_id, job.service_id, job.status,
                 job.created_by, job.reason, job.created_at, job.started_at, job.finished_at,
-                json_object(
-                  'progress', json_extract(job.summary_json, '$.progress'),
-                  'error', json_extract(job.summary_json, '$.error'),
-                  'failureStep', json_extract(job.summary_json, '$.failureStep'),
-                  'lastError', json_extract(job.summary_json, '$.lastError'),
-                  'pullTagWarnings', CASE
-                    WHEN json_extract(job.summary_json, '$.pullTagWarnings[0].lastError') IS NULL
-                     AND json_extract(job.summary_json, '$.pullTagWarnings[0].error') IS NULL
-                    THEN NULL
-                    ELSE json_array(json_object(
-                      'lastError', json_extract(job.summary_json, '$.pullTagWarnings[0].lastError'),
-                      'error', json_extract(job.summary_json, '$.pullTagWarnings[0].error')
-                    ))
-                  END,
-                  'action', json_extract(job.summary_json, '$.action'),
-                  'targetDisplayTag', json_extract(job.summary_json, '$.targetDisplayTag'),
-                  'targetTag', json_extract(job.summary_json, '$.targetTag'),
-                  'to', json_extract(job.summary_json, '$.to')
-                ),
+                job.compact_summary_json,
                 transition.transition_json, target.target_version, job.fallback_display_label
               FROM filtered_jobs job
               LEFT JOIN first_transitions transition ON transition.id = job.id

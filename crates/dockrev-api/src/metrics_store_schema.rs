@@ -50,6 +50,7 @@ pub(super) fn ensure_rollup_schema_columns(conn: &mut rusqlite::Connection) -> a
         ("net_tx_rate_avg", "REAL"),
         ("block_read_rate_avg", "REAL"),
         ("block_write_rate_avg", "REAL"),
+        ("integrity_json", "TEXT NOT NULL DEFAULT ''"),
     ] {
         if !columns.contains(name) {
             conn.execute(

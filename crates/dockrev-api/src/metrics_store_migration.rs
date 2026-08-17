@@ -98,7 +98,7 @@ impl MetricsStore {
                         .await?;
                         anyhow::bail!(message);
                     }
-                    if pruned_legacy_ids.is_empty() {
+                    if !self.rollups_are_intact().await? {
                         self.reconcile_rollups_from_raw().await?;
                     }
                     return Ok(());

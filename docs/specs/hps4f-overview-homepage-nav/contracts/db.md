@@ -32,10 +32,10 @@ Rules:
 
 - `service_resource_samples`：5 秒原始样本，保留 24 小时。
 - `service_resource_latest_samples`：每服务最新读模型。
-- `service_resource_rollups`：1 分钟桶保留 7 天，5 分钟桶保留 30 天；保存 CPU、内存、PIDs、容器数与速率的均值/峰值，以及累计计数首末值。
+- `service_resource_rollups`：1 分钟桶保留 7 天，5 分钟桶保留 30 天；保存 CPU、内存、PIDs、容器数与速率的均值/峰值，以及累计计数首末值。每行有确定性的完整性指纹，配合行数元数据仅在缺失或篡改时触发重建；正常完成迁移后的重启不会重建全部桶。
 - `metrics_migration_pruned_legacy_ids`：已从指标库 GC 的 legacy raw id 墓碑，用于可恢复迁移时保留留存裁剪结果。
 
-`OperationalReadModel` 的 compact jobs 查询使用 SQLite JSON 函数投影进度、错误、目标版本和必要的转移字段；请求路径不得选取或在 Rust 中反序列化完整 `jobs.summary_json`。
+`OperationalReadModel` 的 compact jobs 查询在筛选 CTE 内直接使用 SQLite JSON 函数投影进度、错误、目标版本和必要的转移字段；请求路径不得选取、传递或在 Rust 中反序列化完整 `jobs.summary_json`。
 
 ## `service_resource_latest_samples`
 

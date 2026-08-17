@@ -28,6 +28,9 @@ mod latest;
 #[path = "metrics_store_migration.rs"]
 mod migration;
 use migration::metrics_target_identity;
+#[path = "metrics_store_rollup_integrity.rs"]
+mod rollup_integrity;
+use rollup_integrity::refresh_rollup_integrity_tx;
 #[path = "metrics_store_schema.rs"]
 mod schema;
 use schema::{
@@ -99,6 +102,11 @@ CREATE TABLE IF NOT EXISTS metrics_migration_pruned_legacy_ids (
   legacy_id INTEGER PRIMARY KEY
 );
 
+CREATE TABLE IF NOT EXISTS metrics_rollup_integrity (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  row_count INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS service_resource_rollups (
   service_id TEXT NOT NULL,
   resolution_seconds INTEGER NOT NULL,
@@ -131,6 +139,7 @@ CREATE TABLE IF NOT EXISTS service_resource_rollups (
   net_tx_rate_peak REAL,
   block_read_rate_peak REAL,
   block_write_rate_peak REAL,
+  integrity_json TEXT NOT NULL DEFAULT '',
   PRIMARY KEY(service_id, resolution_seconds, bucket_start)
 );
 CREATE INDEX IF NOT EXISTS idx_metrics_rollups_lookup
@@ -663,8 +672,9 @@ impl MetricsStore {
         self.reader_call(metrics_integrity_from_connection).await
     }
 
-    /// Build rollups after a full legacy copy. Completed migrations deliberately skip this work:
-    /// older rollups can outlive the raw samples needed to reconstruct them.
+    /// Build rollups after a full legacy copy or an integrity failure. Older rollups can outlive
+    /// the raw samples needed to reconstruct them, so this only touches buckets represented by
+    /// retained raw samples.
     async fn reconcile_rollups_from_raw(&self) -> anyhow::Result<()> {
         self.writer_call(|conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -689,6 +699,7 @@ impl MetricsStore {
             for (service_id, resolution, bucket_start) in buckets {
                 rebuild_rollup_tx(&tx, &service_id, resolution, bucket_start)?;
             }
+            refresh_rollup_integrity_tx(&tx)?;
             tx.commit()?;
             Ok(())
         })
@@ -883,6 +894,7 @@ fn gc_batch_tx(
         params![MINUTE_RESOLUTION_SECONDS, minute_cutoff, GC_BATCH_SIZE as i64],
     )?;
     if minute_deleted > 0 {
+        refresh_rollup_integrity_tx(&tx)?;
         tx.commit()?;
         return Ok(true);
     }
@@ -891,6 +903,7 @@ fn gc_batch_tx(
         params![FIVE_MINUTE_RESOLUTION_SECONDS, five_minute_cutoff, GC_BATCH_SIZE as i64],
     )?;
     if five_minute_deleted > 0 {
+        refresh_rollup_integrity_tx(&tx)?;
         tx.commit()?;
         return Ok(true);
     }
@@ -910,6 +923,9 @@ fn gc_batch_tx(
                 )?;
             }
             if tx.execute(&sql, params![GC_BATCH_SIZE as i64])? > 0 {
+                if table == "service_resource_rollups" {
+                    refresh_rollup_integrity_tx(&tx)?;
+                }
                 tx.commit()?;
                 return Ok(true);
             }
@@ -941,6 +957,9 @@ fn gc_batch_tx(
                 tx.execute(&legacy_sql, values.as_slice())?;
             }
             if tx.execute(&sql, values.as_slice())? > 0 {
+                if table == "service_resource_rollups" {
+                    refresh_rollup_integrity_tx(&tx)?;
+                }
                 tx.commit()?;
                 return Ok(true);
             }
@@ -1028,6 +1047,9 @@ fn write_samples_tx(
     }
     for (service_id, resolution, bucket_start) in touched_rollups {
         rebuild_rollup_tx(&tx, &service_id, resolution, bucket_start)?;
+    }
+    if rollups {
+        refresh_rollup_integrity_tx(&tx)?;
     }
     tx.commit()?;
     Ok(inserted)
@@ -1312,8 +1334,14 @@ fn insert_rollup_tx(
           mem_used_peak, mem_limit_avg, mem_limit_peak, net_rx_first, net_rx_last, net_tx_first, net_tx_last,
           block_read_first, block_read_last, block_write_first, block_write_last, pids_avg, pids_peak,
           container_count_avg, container_count_peak, net_rx_rate_avg, net_tx_rate_avg, block_read_rate_avg,
-          block_write_rate_avg, net_rx_rate_peak, net_tx_rate_peak, block_read_rate_peak, block_write_rate_peak
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31)"#,
+          block_write_rate_avg, net_rx_rate_peak, net_tx_rate_peak, block_read_rate_peak, block_write_rate_peak,
+          integrity_json
+        ) VALUES (
+          ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22,
+          ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31,
+          json_array(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20,
+                     ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31)
+        )"#,
         params![
             service_id, resolution as i64, format_epoch(bucket.bucket_start)?, format_epoch(bucket.bucket_start + bucket.resolution_seconds as i64)?, bucket.count as i64,
             bucket.cpu_sum / bucket.count as f64, bucket.cpu_peak, average(bucket.mem_used_sum, bucket.mem_used_count), bucket.mem_used_peak.map(|value| value as i64),
