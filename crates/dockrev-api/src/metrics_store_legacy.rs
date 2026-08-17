@@ -5,14 +5,6 @@ use crate::db::ServiceResourceSampleInput;
 use super::MetricsStore;
 
 impl MetricsStore {
-    pub(super) async fn clear_pruned_legacy_ids(&self) -> anyhow::Result<()> {
-        self.writer_call(|conn| {
-            conn.execute("DELETE FROM metrics_migration_pruned_legacy_ids", [])?;
-            Ok(())
-        })
-        .await
-    }
-
     pub(super) async fn pruned_legacy_ids(&self) -> anyhow::Result<BTreeSet<i64>> {
         self.reader_call(|conn| {
             let mut stmt = conn.prepare(
@@ -21,6 +13,26 @@ impl MetricsStore {
             Ok(stmt
                 .query_map([], |row| row.get::<_, i64>(0))?
                 .collect::<Result<BTreeSet<_>, _>>()?)
+        })
+        .await
+    }
+
+    pub(super) async fn pruned_legacy_ids_are_intact(&self) -> anyhow::Result<bool> {
+        self.reader_call(|conn| {
+            let expected = conn.query_row(
+                "SELECT trusted_row_count, trusted_id_sum, trusted_id_square_sum FROM metrics_pruned_legacy_integrity WHERE id = 1",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
+            )?;
+            let actual = conn.query_row(
+                r#"SELECT COUNT(*),
+                          COALESCE(SUM(legacy_id % 65521), 0),
+                          COALESCE(SUM((legacy_id % 65521) * (legacy_id % 65521)), 0)
+                   FROM metrics_migration_pruned_legacy_ids"#,
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
+            )?;
+            Ok(expected == actual)
         })
         .await
     }

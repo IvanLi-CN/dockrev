@@ -34,12 +34,12 @@ use rollup_integrity::refresh_rollup_integrity_tx;
 #[path = "metrics_store_schema.rs"]
 mod schema;
 use schema::{
-    ensure_latest_schema, ensure_migration_manifest_schema, ensure_rollup_schema_columns,
-    ensure_sample_schema,
+    ensure_latest_schema, ensure_migration_manifest_schema, ensure_pruned_legacy_integrity_schema,
+    ensure_rollup_schema_columns, ensure_sample_schema,
 };
 #[path = "metrics_store_target_integrity.rs"]
 mod target_integrity;
-use target_integrity::trust_metrics_target_tx;
+use target_integrity::{trust_metrics_target_tx, trust_pruned_legacy_integrity_tx};
 
 pub const RAW_RETENTION_SECONDS: i64 = 24 * 60 * 60;
 pub const MINUTE_ROLLUP_RETENTION_SECONDS: i64 = 7 * 24 * 60 * 60;
@@ -105,6 +105,16 @@ CREATE TABLE IF NOT EXISTS metrics_migration_manifest (
 
 CREATE TABLE IF NOT EXISTS metrics_migration_pruned_legacy_ids (
   legacy_id INTEGER PRIMARY KEY
+);
+
+CREATE TABLE IF NOT EXISTS metrics_pruned_legacy_integrity (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  row_count INTEGER NOT NULL,
+  id_sum INTEGER NOT NULL,
+  id_square_sum INTEGER NOT NULL,
+  trusted_row_count INTEGER NOT NULL,
+  trusted_id_sum INTEGER NOT NULL,
+  trusted_id_square_sum INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS metrics_rollup_integrity (
@@ -199,6 +209,27 @@ CREATE TRIGGER IF NOT EXISTS metrics_target_pruned_legacy_delete
 CREATE TRIGGER IF NOT EXISTS metrics_target_pruned_legacy_update
   AFTER UPDATE ON metrics_migration_pruned_legacy_ids
   BEGIN UPDATE metrics_target_revision SET raw_revision = raw_revision + 1 WHERE id = 1; END;
+CREATE TRIGGER IF NOT EXISTS metrics_pruned_legacy_integrity_insert
+  AFTER INSERT ON metrics_migration_pruned_legacy_ids
+  BEGIN UPDATE metrics_pruned_legacy_integrity
+    SET row_count = row_count + 1,
+        id_sum = id_sum + (NEW.legacy_id % 65521),
+        id_square_sum = id_square_sum + ((NEW.legacy_id % 65521) * (NEW.legacy_id % 65521))
+    WHERE id = 1; END;
+CREATE TRIGGER IF NOT EXISTS metrics_pruned_legacy_integrity_delete
+  AFTER DELETE ON metrics_migration_pruned_legacy_ids
+  BEGIN UPDATE metrics_pruned_legacy_integrity
+    SET row_count = row_count - 1,
+        id_sum = id_sum - (OLD.legacy_id % 65521),
+        id_square_sum = id_square_sum - ((OLD.legacy_id % 65521) * (OLD.legacy_id % 65521))
+    WHERE id = 1; END;
+CREATE TRIGGER IF NOT EXISTS metrics_pruned_legacy_integrity_update
+  AFTER UPDATE ON metrics_migration_pruned_legacy_ids
+  BEGIN UPDATE metrics_pruned_legacy_integrity
+    SET id_sum = id_sum - (OLD.legacy_id % 65521) + (NEW.legacy_id % 65521),
+        id_square_sum = id_square_sum - ((OLD.legacy_id % 65521) * (OLD.legacy_id % 65521))
+          + ((NEW.legacy_id % 65521) * (NEW.legacy_id % 65521))
+    WHERE id = 1; END;
 "#;
 
 #[derive(Clone)]
@@ -316,6 +347,7 @@ impl MetricsStore {
             ensure_latest_schema(conn)?;
             ensure_rollup_schema_columns(conn)?;
             ensure_migration_manifest_schema(conn)?;
+            ensure_pruned_legacy_integrity_schema(conn)?;
             Ok(())
         })
         .await?;
@@ -948,6 +980,7 @@ fn gc_batch_tx(
         params![raw_cutoff, GC_BATCH_SIZE as i64],
     )?;
     if raw_deleted > 0 {
+        trust_pruned_legacy_integrity_tx(&tx)?;
         trust_metrics_target_tx(&tx)?;
         tx.commit()?;
         return Ok(true);
@@ -991,6 +1024,9 @@ fn gc_batch_tx(
                 if table == "service_resource_rollups" {
                     refresh_rollup_integrity_tx(&tx)?;
                 }
+                if table == "service_resource_samples" {
+                    trust_pruned_legacy_integrity_tx(&tx)?;
+                }
                 trust_metrics_target_tx(&tx)?;
                 tx.commit()?;
                 return Ok(true);
@@ -1025,6 +1061,9 @@ fn gc_batch_tx(
             if tx.execute(&sql, values.as_slice())? > 0 {
                 if table == "service_resource_rollups" {
                     refresh_rollup_integrity_tx(&tx)?;
+                }
+                if table == "service_resource_samples" {
+                    trust_pruned_legacy_integrity_tx(&tx)?;
                 }
                 trust_metrics_target_tx(&tx)?;
                 tx.commit()?;

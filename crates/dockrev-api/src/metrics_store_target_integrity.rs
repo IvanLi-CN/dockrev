@@ -10,6 +10,13 @@ impl MetricsStore {
                 r#"SELECT raw_revision = trusted_raw_revision
                          AND latest_revision = trusted_latest_revision
                          AND rollup_revision = trusted_rollup_revision
+                         AND EXISTS (
+                           SELECT 1 FROM metrics_pruned_legacy_integrity
+                           WHERE id = 1
+                             AND row_count = trusted_row_count
+                             AND id_sum = trusted_id_sum
+                             AND id_square_sum = trusted_id_square_sum
+                         )
                     FROM metrics_target_revision WHERE id = 1"#,
                 [],
                 |row| row.get::<_, i64>(0).map(|value| value != 0),
@@ -38,6 +45,18 @@ pub(super) fn trust_metrics_target_tx(tx: &Transaction<'_>) -> anyhow::Result<()
            SET trusted_raw_revision = raw_revision,
                trusted_latest_revision = latest_revision,
                trusted_rollup_revision = rollup_revision
+           WHERE id = 1"#,
+        [],
+    )?;
+    Ok(())
+}
+
+pub(super) fn trust_pruned_legacy_integrity_tx(tx: &Transaction<'_>) -> anyhow::Result<()> {
+    tx.execute(
+        r#"UPDATE metrics_pruned_legacy_integrity
+           SET trusted_row_count = row_count,
+               trusted_id_sum = id_sum,
+               trusted_id_square_sum = id_square_sum
            WHERE id = 1"#,
         [],
     )?;

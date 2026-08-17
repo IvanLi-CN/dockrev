@@ -478,6 +478,81 @@ async fn metrics_store_migration_keeps_tombstones_after_an_interrupted_repair() 
 }
 
 #[tokio::test]
+async fn metrics_store_migration_keeps_tombstones_when_legacy_source_changes() {
+    let main_path = temp_path("metrics-migration-source-change-retention-main");
+    let metrics_path = temp_path("metrics-migration-source-change-retention-target");
+    let db = Db::open(&main_path).await.unwrap();
+    let retained_at = format_time(time::OffsetDateTime::now_utc()).unwrap();
+    db.insert_legacy_metric_fixture(&[
+        sample("svc-a", "2000-01-01T00:00:00Z", 1.0, 100),
+        sample("svc-a", &retained_at, 10.0, 1_000),
+    ])
+    .await
+    .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    metrics
+        .gc(&BTreeSet::from(["svc-a".to_string()]))
+        .await
+        .unwrap();
+
+    db.update_legacy_metric_fixture_cpu("svc-a", 25.0)
+        .await
+        .unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+
+    let history = metrics
+        .history_since("svc-a", "1970-01-01T00:00:00Z", None)
+        .await
+        .unwrap();
+    assert_eq!(history.samples.len(), 1);
+    assert_eq!(history.samples[0].sampled_at, retained_at);
+    assert_eq!(history.samples[0].cpu_percent, 25.0);
+    assert_eq!(metrics.pruned_legacy_ids().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn metrics_store_migration_rejects_deleted_retention_tombstones() {
+    let main_path = temp_path("metrics-migration-missing-tombstone-main");
+    let metrics_path = temp_path("metrics-migration-missing-tombstone-target");
+    let db = Db::open(&main_path).await.unwrap();
+    let retained_at = format_time(time::OffsetDateTime::now_utc()).unwrap();
+    db.insert_legacy_metric_fixture(&[
+        sample("svc-a", "2000-01-01T00:00:00Z", 1.0, 100),
+        sample("svc-a", &retained_at, 10.0, 1_000),
+    ])
+    .await
+    .unwrap();
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    metrics
+        .gc(&BTreeSet::from(["svc-a".to_string()]))
+        .await
+        .unwrap();
+    metrics
+        .writer_call(|conn| {
+            conn.execute("DELETE FROM metrics_migration_pruned_legacy_ids", [])?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    metrics
+        .insert_samples(&[sample("svc-native", "2026-08-16T13:20:00Z", 5.0, 500)])
+        .await
+        .unwrap();
+
+    assert!(metrics.migrate_from_legacy(&db).await.is_err());
+    assert_eq!(
+        db.metrics_migration_state()
+            .await
+            .unwrap()
+            .as_ref()
+            .map(|state| state.state.as_str()),
+        Some("copying")
+    );
+}
+
+#[tokio::test]
 async fn metrics_store_migration_rejects_tombstones_missing_from_legacy_source() {
     let main_path = temp_path("metrics-migration-invalid-tombstone-main");
     let metrics_path = temp_path("metrics-migration-invalid-tombstone-target");

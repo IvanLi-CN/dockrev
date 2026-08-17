@@ -50,7 +50,6 @@ impl MetricsStore {
             state.state == "complete"
                 && state.target_identity.as_deref() == Some(self.target_identity.as_str())
         });
-        let mut retained_pruned_legacy_ids = BTreeSet::new();
         let mut source_matches_manifest = false;
         let revision = db.legacy_metric_revision().await?;
         let legacy_latest = db.list_legacy_metric_latest_samples().await?;
@@ -59,8 +58,12 @@ impl MetricsStore {
             source_matches_manifest = manifest.source_raw_revision == Some(revision.raw_revision)
                 && manifest.source_latest_revision == Some(revision.latest_revision);
             if source_matches_manifest && migration_complete {
-                let pruned_legacy_ids = self.pruned_legacy_ids().await?;
                 if self.target_is_trusted().await? {
+                    let pruned_legacy_ids = if active_service_ids.is_some() {
+                        BTreeSet::new()
+                    } else {
+                        self.pruned_legacy_ids().await?
+                    };
                     let expected_latest = filter_pruned_legacy_latest(
                         legacy_latest,
                         &pruned_legacy_ids,
@@ -87,20 +90,18 @@ impl MetricsStore {
                             anyhow::bail!(message);
                         }
                     }
-                    if !self.rollups_are_intact().await? {
-                        self.reconcile_rollups_from_raw().await?;
-                    }
                     return Ok(());
                 }
-                // Repairing a changed target must not re-import legacy samples that its own
-                // retention GC had intentionally pruned.
-                retained_pruned_legacy_ids = pruned_legacy_ids;
             }
         }
 
-        if source_matches_manifest && retained_pruned_legacy_ids.is_empty() {
-            retained_pruned_legacy_ids = self.pruned_legacy_ids().await?;
+        if !self.pruned_legacy_ids_are_intact().await? {
+            let message = "metrics migration tombstone integrity verification failed".to_string();
+            db.set_metrics_migration_state("copying", Some(&self.target_identity), Some(&message))
+                .await?;
+            anyhow::bail!(message);
         }
+        let retained_pruned_legacy_ids = self.pruned_legacy_ids().await?;
         if source_matches_manifest
             && !db
                 .legacy_metric_ids_exist(&retained_pruned_legacy_ids)
@@ -127,10 +128,6 @@ impl MetricsStore {
             .await?;
 
         self.clear_legacy_samples().await?;
-        if !source_matches_manifest {
-            self.clear_pruned_legacy_ids().await?;
-            retained_pruned_legacy_ids.clear();
-        }
 
         let mut after_id = 0_i64;
         loop {

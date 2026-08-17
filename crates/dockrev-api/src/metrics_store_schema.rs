@@ -117,3 +117,59 @@ pub(super) fn ensure_migration_manifest_schema(
     }
     Ok(())
 }
+
+pub(super) fn ensure_pruned_legacy_integrity_schema(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(metrics_pruned_legacy_integrity)")?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    let needs_trusted_backfill = !columns.contains("trusted_row_count");
+    for name in [
+        "trusted_row_count",
+        "trusted_id_sum",
+        "trusted_id_square_sum",
+    ] {
+        if !columns.contains(name) {
+            conn.execute(
+                &format!(
+                    "ALTER TABLE metrics_pruned_legacy_integrity ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0"
+                ),
+                [],
+            )?;
+        }
+    }
+    let metadata_count = conn.query_row(
+        "SELECT COUNT(*) FROM metrics_pruned_legacy_integrity WHERE id = 1",
+        [],
+        |row| row.get::<_, i64>(0),
+    )?;
+    if metadata_count == 0 {
+        conn.execute(
+            r#"INSERT INTO metrics_pruned_legacy_integrity (
+                   id, row_count, id_sum, id_square_sum,
+                   trusted_row_count, trusted_id_sum, trusted_id_square_sum
+               )
+               SELECT 1,
+                      COUNT(*),
+                      COALESCE(SUM(legacy_id % 65521), 0),
+                      COALESCE(SUM((legacy_id % 65521) * (legacy_id % 65521)), 0),
+                      COUNT(*),
+                      COALESCE(SUM(legacy_id % 65521), 0),
+                      COALESCE(SUM((legacy_id % 65521) * (legacy_id % 65521)), 0)
+               FROM metrics_migration_pruned_legacy_ids"#,
+            [],
+        )?;
+    } else if needs_trusted_backfill {
+        conn.execute(
+            r#"UPDATE metrics_pruned_legacy_integrity
+               SET trusted_row_count = row_count,
+                   trusted_id_sum = id_sum,
+                   trusted_id_square_sum = id_square_sum
+               WHERE id = 1"#,
+            [],
+        )?;
+    }
+    Ok(())
+}
