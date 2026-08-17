@@ -4,6 +4,7 @@ import {
   HOMEPAGE_NAV_SNAPSHOT_KEY,
   HOMEPAGE_RESOURCE_SUMMARY_KEY,
   HOMEPAGE_SNAPSHOT_KEY,
+  canRestorePersistedHomepageSnapshot,
   homepageSnapshotFromResponse,
   homepageSnapshotIsResourceStale,
   markHomepageSnapshotResourceStale,
@@ -112,6 +113,14 @@ const homepageResponse: HomepageNavResponse = {
 }
 
 describe('homepage snapshot cache', () => {
+  test('retains an unexpired persisted snapshot for live-refresh fallback', () => {
+    expect(canRestorePersistedHomepageSnapshot('fresh')).toBe(true)
+    expect(canRestorePersistedHomepageSnapshot('stale')).toBe(true)
+    expect(canRestorePersistedHomepageSnapshot('expired')).toBe(false)
+    expect(canRestorePersistedHomepageSnapshot('missing')).toBe(false)
+    expect(canRestorePersistedHomepageSnapshot('unsupported')).toBe(false)
+  })
+
   test('rejects unsafe href variants before a snapshot can be reused', () => {
     expect(normalizeHomepageHref('/dashboard')).toBe('/dashboard')
     expect(normalizeHomepageHref('https://api.example.com/path')).toBe(

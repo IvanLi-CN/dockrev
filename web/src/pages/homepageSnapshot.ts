@@ -136,6 +136,12 @@ export function normalizeHomepageHref(
   return null;
 }
 
+export function canRestorePersistedHomepageSnapshot(
+  status: "missing" | "fresh" | "stale" | "expired" | "unsupported",
+): status is "fresh" | "stale" {
+  return status === "fresh" || status === "stale";
+}
+
 function parseService(value: unknown): Service | null {
   if (!isRecord(value)) return null;
   const id = asString(value.id);

@@ -36,7 +36,9 @@ import { navigate } from "../routes";
 import { buildUpdateServiceTarget } from "../updateTargets";
 import { isDockrevAppDemoRuntime } from "../demo/runtime";
 import {
+  canRestorePersistedHomepageSnapshot,
   homepageSnapshotFromResponse,
+  markHomepageSnapshotResourceStale,
   normalizeHomepageHref,
   readHomepageSnapshot,
   writeHomepageSnapshot,
@@ -473,14 +475,29 @@ export function OverviewPage(props: {
         return;
       }
 
-      if (persisted.status !== "fresh") return;
+      if (
+        !canRestorePersistedHomepageSnapshot(persisted.status) ||
+        persisted.record === null
+      ) {
+        return;
+      }
       const payload = persisted.record.payload;
+      const resourceSummary =
+        persisted.status === "stale"
+          ? markHomepageSnapshotResourceStale({
+              version: 2,
+              generatedAt: payload.generatedAt,
+              lastCheckAt: payload.lastCheckAt,
+              resourceSummary: payload.resourceSummary,
+              cards: payload.cards,
+            }).resourceSummary
+          : payload.resourceSummary;
       setHasCachedNavSnapshot(true);
       setCachedCards(snapshotCardsToNavCards(payload.cards));
       setCards((current) =>
         current.length > 0 ? current : snapshotCardsToNavCards(payload.cards),
       );
-      setResourceOverview(payload.resourceSummary);
+      setResourceOverview(resourceSummary);
       setResourceFromCache(true);
     })();
     return () => {
