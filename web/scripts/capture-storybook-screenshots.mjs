@@ -242,6 +242,14 @@ async function main() {
     })
   }
 
+  const fitServiceResourceEvidenceFrame = async (page) => {
+    await page.locator('.serviceResourceEvidenceFrame').evaluate((frame) => {
+      const card = frame.querySelector('.svcResourceCard')
+      if (!(card instanceof HTMLElement)) throw new Error('Service resource card is missing.')
+      frame.style.height = `${card.scrollHeight + 48}px`
+    })
+  }
+
   const shots = [
     {
       id: 'layouts-appshell--overview',
@@ -321,16 +329,33 @@ async function main() {
       viewport: { width: 1280, height: 720 },
       setup: async (page) => {
         await page.locator('.svcResourceWindowSwitch').waitFor({ timeout: STORY_TIMEOUT_MS })
-        await page.getByRole('radio', { name: '3m' }).waitFor({ timeout: STORY_TIMEOUT_MS })
-        await page.getByRole('radio', { name: '1h' }).waitFor({ timeout: STORY_TIMEOUT_MS })
-        await page.getByRole('radio', { name: '24h' }).waitFor({ timeout: STORY_TIMEOUT_MS })
+        for (const label of ['3m', '1h', '24h', '7d', '30d']) {
+          await page.getByRole('radio', { name: label }).waitFor({ timeout: STORY_TIMEOUT_MS })
+        }
+        await page.getByRole('radio', { name: '30d' }).click()
+        await page.getByText('长时间窗口按时间桶展示历史均值').waitFor({ timeout: STORY_TIMEOUT_MS })
         await page.locator('.svcResourceWindowSwitch').evaluate((el) => el.scrollIntoView({ block: 'center', behavior: 'auto' }))
         await page.waitForTimeout(160)
+        await fitServiceResourceEvidenceFrame(page)
       },
       screenshot: async (page, filePath) => {
-        const el = page.locator('.svcResourceCard')
-        await el.waitFor({ timeout: STORY_TIMEOUT_MS })
-        await el.screenshot({ path: filePath })
+        await page.locator('.serviceResourceEvidenceFrame').screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'components-serviceresourcepanel--window-switch-contract',
+      file: 'service-resource-window-contract-mobile.png',
+      viewport: { width: 375, height: 900 },
+      setup: async (page) => {
+        await page.locator('.svcResourceWindowSwitch').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.getByRole('radio', { name: '30d' }).click()
+        await page.getByText('长时间窗口按时间桶展示历史均值').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.locator('.svcResourceWindowSwitch').evaluate((el) => el.scrollIntoView({ block: 'start', behavior: 'auto' }))
+        await page.waitForTimeout(160)
+        await fitServiceResourceEvidenceFrame(page)
+      },
+      screenshot: async (page, filePath) => {
+        await page.locator('.serviceResourceEvidenceFrame').screenshot({ path: filePath })
       },
     },
     {
@@ -558,6 +583,19 @@ async function main() {
       id: 'pages-servicespage--dashboard-demo',
       file: 'services-dashboard.png',
       setup: async () => {},
+    },
+    {
+      id: 'pages-servicespage--global-task-readable-label',
+      file: 'overview-global-task-readable-label.png',
+      viewport: { width: 1800, height: 960 },
+      setup: async (page) => {
+        await page.locator('.overviewJobsList').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.locator('.overviewJobTitle-discovery').waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        const dashboard = page.locator('.twoCol').first()
+        await dashboard.screenshot({ path: filePath })
+      },
     },
     {
       id: 'pages-queuepage--update-layer-progress',

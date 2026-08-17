@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 
-import type { JobListItem } from '../src/api'
+import type { CompactJobListItem, JobListItem } from '../src/api'
 import type { ManagementEvent } from '../src/managementEvents'
 import {
   doesManagementEventInvalidateUpdateSnapshot,
+  loadActiveUpdateJobs,
   pickLatestActiveUpdateJobs,
   isUpdateJobSnapshotCurrent,
   reconcileTrackedUpdateJobs,
@@ -28,6 +29,29 @@ function makeJob(overrides: Partial<JobListItem> & Pick<JobListItem, 'id'>): Job
     backupMode: 'inherit',
     summary: {},
     progress: null,
+    ...overrides,
+  }
+}
+
+function makeCompactJob(
+  overrides: Partial<CompactJobListItem> & Pick<CompactJobListItem, 'id'>,
+): CompactJobListItem {
+  return {
+    id: overrides.id,
+    type: 'update',
+    scope: 'service',
+    stackId: 'stack-1',
+    serviceId: 'svc-1',
+    status: 'running',
+    createdBy: 'ivan',
+    reason: 'ui',
+    createdAt: '2026-03-30T10:00:00.000Z',
+    startedAt: '2026-03-30T10:01:00.000Z',
+    finishedAt: null,
+    progress: null,
+    resultReason: null,
+    displayLabel: '更新',
+    targetVersion: null,
     ...overrides,
   }
 }
@@ -107,6 +131,29 @@ describe('pickLatestActiveUpdateJobs', () => {
 
     expect(pickLatestActiveUpdateJobs(jobs)).toEqual([
       { target: 'service:svc-1', jobId: 'job-fallback-newer', status: 'running' },
+    ])
+  })
+})
+
+describe('loadActiveUpdateJobs', () => {
+  test('paginates queued and running compact update jobs without reading terminal history', async () => {
+    const calls: Array<{ cursor?: string | null; status?: string }> = []
+    const jobs = await loadActiveUpdateJobs(async ({ cursor, status }) => {
+      calls.push({ cursor, status })
+      if (status === 'queued' && !cursor) {
+        return { jobs: [makeCompactJob({ id: 'queued-first', status: 'queued' })], nextCursor: 'queued-next' }
+      }
+      if (status === 'queued') {
+        return { jobs: [makeCompactJob({ id: 'queued-second', status: 'queued' })], nextCursor: null }
+      }
+      return { jobs: [makeCompactJob({ id: 'running-first' })], nextCursor: null }
+    })
+
+    expect(jobs.map((job) => job.id).sort()).toEqual(['queued-first', 'queued-second', 'running-first'])
+    expect(calls).toEqual([
+      { cursor: null, status: 'queued' },
+      { cursor: null, status: 'running' },
+      { cursor: 'queued-next', status: 'queued' },
     ])
   })
 })

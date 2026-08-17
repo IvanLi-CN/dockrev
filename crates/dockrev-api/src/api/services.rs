@@ -745,23 +745,29 @@ pub(super) async fn get_service_resource_usage_history(
     let window = q.window.unwrap_or_else(|| "1h".to_string());
     let Some(window_seconds) = resource_usage::parse_window_to_seconds(&window) else {
         return Err(ApiError::invalid_argument(
-            "window must be one of 3m/1h/24h",
+            "window must be one of 3m/1h/24h/7d/30d",
         ));
     };
-
     let since = (time::OffsetDateTime::now_utc() - time::Duration::seconds(window_seconds as i64))
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(|err| map_internal(err.into()))?;
-    let samples = state
-        .db
-        .list_service_resource_samples_since(&service_id, &since)
+    let resolution_seconds = match window.as_str() {
+        "7d" => Some(crate::metrics_store::MINUTE_RESOLUTION_SECONDS),
+        "30d" => Some(crate::metrics_store::FIVE_MINUTE_RESOLUTION_SECONDS),
+        _ => None,
+    };
+    let history = state
+        .metrics
+        .history_since(&service_id, &since, resolution_seconds)
         .await
         .map_err(map_internal)?;
 
     Ok(Json(ServiceResourceHistoryResponse {
         service_id,
         window,
-        samples,
+        samples: history.samples,
+        resolution_seconds: history.resolution_seconds,
+        peaks: resolution_seconds.map(|_| history.peaks),
     }))
 }
 
@@ -780,8 +786,13 @@ pub(super) async fn get_service_resource_usage_overview(
     let window = q.window.unwrap_or_else(|| "1h".to_string());
     let Some(window_seconds) = resource_usage::parse_window_to_seconds(&window) else {
         return Err(ApiError::invalid_argument(
-            "window must be one of 3m/1h/24h",
+            "window must be one of 3m/1h/24h/7d/30d",
         ));
+    };
+    let overview_resolution_seconds = match window.as_str() {
+        "7d" => Some(crate::metrics_store::MINUTE_RESOLUTION_SECONDS),
+        "30d" => Some(crate::metrics_store::FIVE_MINUTE_RESOLUTION_SECONDS),
+        _ => None,
     };
     let generated_at = time::OffsetDateTime::now_utc();
     let generated_at_label = generated_at
@@ -805,29 +816,44 @@ pub(super) async fn get_service_resource_usage_overview(
     let since = (generated_at - time::Duration::seconds(window_seconds as i64))
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(|err| map_internal(err.into()))?;
-    let rows = state
-        .db
-        .list_service_resource_latest_samples()
-        .await
-        .map_err(map_internal)?;
-    let recent_counts = state
-        .db
-        .list_service_resource_recent_counts_since(&since)
-        .await
-        .map_err(map_internal)?;
+    let (rows, recent_counts, active_service_ids) = tokio::try_join!(
+        state.metrics.list_latest_samples(),
+        state
+            .metrics
+            .list_recent_counts_since(&since, overview_resolution_seconds),
+        state.operational_reads.list_active_service_ids(),
+    )
+    .map_err(map_internal)?;
     let recent_count_by_service = recent_counts
         .into_iter()
         .map(|row| (row.service_id, row.sample_count))
         .collect::<std::collections::HashMap<_, _>>();
-    let services = rows
+    let mut latest_by_service = rows
         .into_iter()
-        .map(|row| {
+        .map(|row| (row.service_id.clone(), row))
+        .collect::<std::collections::HashMap<_, _>>();
+    let services = active_service_ids
+        .into_iter()
+        .map(|service_id| {
             let recent_sample_count = recent_count_by_service
-                .get(&row.service_id)
+                .get(&service_id)
                 .copied()
                 .unwrap_or(0);
             to_resource_overview_item_from_latest(
-                row,
+                latest_by_service.remove(&service_id).unwrap_or({
+                    crate::metrics_store::MetricsLatestSampleRow {
+                        service_id,
+                        sampled_at: None,
+                        cpu_percent: None,
+                        mem_used_bytes: None,
+                        mem_limit_bytes: None,
+                        net_rx_bytes: None,
+                        net_tx_bytes: None,
+                        prev_sampled_at: None,
+                        prev_net_rx_bytes: None,
+                        prev_net_tx_bytes: None,
+                    }
+                }),
                 generated_at,
                 stale_after_seconds,
                 Some(recent_sample_count),
@@ -851,48 +877,60 @@ pub(super) async fn get_homepage_nav(
 ) -> Result<Json<HomepageNavResponse>, ApiError> {
     let _user = require_user(&state, &headers).await?;
     const HOMEPAGE_RESOURCE_WINDOW: &str = "1h";
-    let settings = state
-        .db
-        .get_resource_monitor_settings()
-        .await
-        .map_err(map_internal)?;
     let generated_at = time::OffsetDateTime::now_utc();
     let generated_at_label = generated_at
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(|err| map_internal(err.into()))?;
-    let stale_after_seconds =
-        resource_usage::normalize_sample_interval_seconds(settings.sample_interval_seconds)
-            .saturating_mul(2)
-            .max(60);
     let homepage_window_seconds = resource_usage::parse_window_to_seconds(HOMEPAGE_RESOURCE_WINDOW)
         .ok_or_else(|| map_internal(anyhow::anyhow!("homepage resource window is invalid")))?;
     let since = (generated_at - time::Duration::seconds(homepage_window_seconds as i64))
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(|err| map_internal(err.into()))?;
-    let latest_samples = state
-        .db
-        .list_service_resource_latest_samples()
-        .await
-        .map_err(map_internal)?;
-    let recent_counts = state
-        .db
-        .list_service_resource_recent_counts_since(&since)
-        .await
-        .map_err(map_internal)?;
+    let (settings, latest_samples, recent_counts, mut rows) = tokio::try_join!(
+        state.operational_reads.get_resource_monitor_settings(),
+        state.metrics.list_latest_samples(),
+        state.metrics.list_recent_counts_since(&since, None),
+        state.operational_reads.list_homepage_nav_services(),
+    )
+    .map_err(map_internal)?;
+    let stale_after_seconds =
+        resource_usage::normalize_sample_interval_seconds(settings.sample_interval_seconds)
+            .saturating_mul(2)
+            .max(60);
     let recent_count_by_service = recent_counts
         .into_iter()
         .map(|row| (row.service_id, row.sample_count))
         .collect::<std::collections::HashMap<_, _>>();
-    let mut overview_services = latest_samples
+    let mut latest_by_service = latest_samples
+        .into_iter()
+        .map(|row| (row.service_id.clone(), row))
+        .collect::<std::collections::HashMap<_, _>>();
+    let active_service_ids = rows
         .iter()
-        .cloned()
-        .map(|row| {
+        .map(|row| row.service.id.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut overview_services = active_service_ids
+        .into_iter()
+        .map(|service_id| {
             let recent_sample_count = recent_count_by_service
-                .get(&row.service_id)
+                .get(&service_id)
                 .copied()
                 .unwrap_or(0);
             to_resource_overview_item_from_latest(
-                row,
+                latest_by_service.remove(&service_id).unwrap_or(
+                    crate::metrics_store::MetricsLatestSampleRow {
+                        service_id,
+                        sampled_at: None,
+                        cpu_percent: None,
+                        mem_used_bytes: None,
+                        mem_limit_bytes: None,
+                        net_rx_bytes: None,
+                        net_tx_bytes: None,
+                        prev_sampled_at: None,
+                        prev_net_rx_bytes: None,
+                        prev_net_tx_bytes: None,
+                    },
+                ),
                 generated_at,
                 stale_after_seconds,
                 Some(recent_sample_count),
@@ -902,27 +940,27 @@ pub(super) async fn get_homepage_nav(
         .collect::<Vec<_>>();
     overview_services.sort_by(|left, right| left.service_id.cmp(&right.service_id));
 
-    let mut rows = state
-        .db
-        .list_homepage_nav_services()
-        .await
-        .map_err(map_internal)?;
     let last_check_at = rows
         .iter()
         .map(|row| row.stack_last_check_at.as_str())
         .max()
         .map(ToString::to_string);
-    let metrics_by_service = overview_services
-        .iter()
-        .cloned()
-        .map(|item| (item.service_id.clone(), item))
-        .collect::<std::collections::HashMap<_, _>>();
+    let metrics_by_service = if settings.enabled {
+        overview_services
+            .iter()
+            .cloned()
+            .map(|item| (item.service_id.clone(), item))
+            .collect::<std::collections::HashMap<_, _>>()
+    } else {
+        std::collections::HashMap::new()
+    };
 
     let mut services = rows
         .iter_mut()
         .map(|row| row.service.clone())
         .collect::<Vec<_>>();
-    crate::api::stacks::enrich_services_with_version_inference(&state, &mut services).await?;
+    crate::api::stacks::enrich_services_with_version_inference(&state, &mut services, false)
+        .await?;
     crate::api::stacks::enrich_services_with_new_version_discovery_counts(&state, &mut services)
         .await?;
     for (index, service) in services.into_iter().enumerate() {
@@ -933,11 +971,7 @@ pub(super) async fn get_homepage_nav(
         .into_iter()
         .filter_map(|row| {
             let homepage = row.service.homepage.clone()?;
-            let href = homepage
-                .href
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())?;
+            let href = normalize_homepage_href(homepage.href.as_deref()?)?;
             Some(HomepageNavItem {
                 stack_id: row.stack_id,
                 stack_name: row.stack_name,
@@ -953,7 +987,7 @@ pub(super) async fn get_homepage_nav(
                     Some(state.config.dockrev_image_repo.as_str()),
                 ),
                 homepage: ServiceHomepage {
-                    href: Some(href.to_string()),
+                    href: Some(href),
                     ..homepage
                 },
                 candidate: row.service.candidate.clone(),
@@ -1004,8 +1038,26 @@ pub(super) async fn get_homepage_nav(
     }))
 }
 
+fn normalize_homepage_href(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.chars().any(char::is_control) || trimmed.contains('\\') {
+        return None;
+    }
+    if trimmed.starts_with('/') && !trimmed.starts_with("//") {
+        return Some(trimmed.to_string());
+    }
+    let url = url::Url::parse(trimmed).ok()?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return None;
+    }
+    Some(url.to_string())
+}
+
 fn to_resource_overview_item_from_latest(
-    mut row: crate::db::ServiceResourceLatestSampleRow,
+    mut row: crate::metrics_store::MetricsLatestSampleRow,
     generated_at: time::OffsetDateTime,
     stale_after_seconds: u64,
     sample_count_override: Option<u32>,

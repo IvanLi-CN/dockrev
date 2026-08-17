@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
+import { isCurrentHomepageRefresh } from '../src/pages/homepageRefreshState'
+
 function mergeHomepageCards<T extends { serviceId: string; source: 'live' | 'snapshot' }>(
   previous: T[],
   incoming: T[],
@@ -53,6 +55,36 @@ function visibleCards<T>(
 }
 
 describe('homepage refresh state', () => {
+  test('does not apply a delayed older response after a newer refresh completes', async () => {
+    let latestRequestId = 0
+    let applied: string | null = null
+    let resolveOlder!: (value: string) => void
+    let resolveNewer!: (value: string) => void
+    const older = new Promise<string>((resolve) => {
+      resolveOlder = resolve
+    })
+    const newer = new Promise<string>((resolve) => {
+      resolveNewer = resolve
+    })
+
+    const refresh = async (response: Promise<string>) => {
+      const requestId = ++latestRequestId
+      const value = await response
+      if (isCurrentHomepageRefresh(requestId, latestRequestId)) {
+        applied = value
+      }
+    }
+
+    const olderRefresh = refresh(older)
+    const newerRefresh = refresh(newer)
+    resolveNewer('newer')
+    await newerRefresh
+    resolveOlder('older')
+    await olderRefresh
+
+    expect(applied).toBe('newer')
+  })
+
   test('keeps cached cards before first live payload settles', () => {
     const cachedCards = [{ serviceId: 'svc-cached', source: 'snapshot' as const }]
     expect(visibleCards(false, [], cachedCards)).toEqual(cachedCards)

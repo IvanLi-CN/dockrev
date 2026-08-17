@@ -3,6 +3,8 @@ WORKDIR /src
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY src ./src
+COPY web/public ./web/public
 
 RUN cargo build -p dockrev-api --release
 

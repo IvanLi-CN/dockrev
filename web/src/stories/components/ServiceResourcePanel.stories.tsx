@@ -16,6 +16,17 @@ export default meta
 
 type Story = StoryObj<typeof ServiceResourcePanel>
 
+function withEvidenceFrame(StoryComponent: React.ComponentType) {
+  return (
+    <div
+      className="serviceResourceEvidenceFrame"
+      style={{ background: '#000', boxSizing: 'border-box', padding: 24 }}
+    >
+      <StoryComponent />
+    </div>
+  )
+}
+
 function expectStory(condition: unknown, message: string): asserts condition {
   if (!condition) throw new globalThis.Error(message)
 }
@@ -184,17 +195,11 @@ export const HighVariationCurves: Story = {
 
 export const WindowSwitchContract: Story = {
   parameters: { dockrevApiScenario: 'default' },
+  decorators: [withEvidenceFrame],
   play: async ({ canvasElement }) => {
-    expectStory(
-      canvasElement.textContent?.includes('页面打开后会叠加 1 秒 SSE 实时点'),
-      'live subtitle should explain that page-opened SSE points are mixed into the chart'
-    )
-    expectStory(
-      canvasElement.textContent?.includes('个样本（含实时点）'),
-      'window facts should clarify that live sample counts include realtime points'
-    )
+    expectStory(canvasElement.textContent?.includes('页面打开后会叠加 1 秒 SSE 实时点'), 'short windows should keep live samples')
 
-    const labels = ['3m', '1h', '24h'] as const
+    const labels = ['3m', '1h', '24h', '7d', '30d'] as const
     for (const label of labels) {
       const button = windowButton(canvasElement, label)
       expectStory(button, `${label} window button should be visible`)
@@ -211,5 +216,21 @@ export const WindowSwitchContract: Story = {
     button3m.click()
     await tick()
     expectStory(button3m.getAttribute('data-state') === 'on', '3m window button should become active')
+
+    const button30d = windowButton(canvasElement, '30d')
+    expectStory(button30d, '30d window button should be available')
+    button30d.click()
+    await tick()
+    expectStory(button30d.getAttribute('data-state') === 'on', '30d window button should become active')
+    expectStory(canvasElement.textContent?.includes('长时间窗口按时间桶展示历史均值'), 'long windows should remain aggregated')
+    expectStory(canvasElement.textContent?.includes('聚合历史'), 'long windows should not attach a realtime stream')
+    expectStory(
+      Number(canvasElement.querySelector('.svcResourceChart')?.getAttribute('data-point-count')) <= 480,
+      'long windows should downsample chart points to the rendering budget',
+    )
+    expectStory(
+      canvasElement.querySelector('.svcResourcePoint title')?.textContent?.includes('此桶峰值 CPU'),
+      'the latest aggregated point should expose its CPU peak tooltip',
+    )
   },
 }

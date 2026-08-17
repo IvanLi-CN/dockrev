@@ -18,6 +18,7 @@ import type {
   ServiceBackupTargetsResponse,
   ServiceBackupRecordsResponse,
   ServiceRepoLinkInferenceResponse,
+  ServiceResourcePeak,
   ServiceResourceSample,
   ServiceLogEventEnvelope,
   ServiceLogSnapshotResponse,
@@ -97,6 +98,7 @@ export type DockrevApiScenario =
   | 'overview-jobs-card-heavy-inflight'
   | 'overview-jobs-card-running-progress-modes'
   | 'overview-jobs-card-terminal-only'
+  | 'overview-jobs-card-global-labels'
   | 'overview-jobs-card-exact-five-non-terminal'
   | 'queue-mixed'
   | 'queue-progress-smoothing'
@@ -522,9 +524,11 @@ export function hashString(input: string): number {
   return Math.abs(h)
 }
 
-export function parseResourceWindow(windowRaw: string | null): { window: '3m' | '1h' | '24h'; seconds: number } {
+export function parseResourceWindow(windowRaw: string | null): { window: '3m' | '1h' | '24h' | '7d' | '30d'; seconds: number } {
   if (windowRaw === '3m') return { window: '3m', seconds: 3 * 60 }
   if (windowRaw === '24h') return { window: '24h', seconds: 24 * 60 * 60 }
+  if (windowRaw === '7d') return { window: '7d', seconds: 7 * 24 * 60 * 60 }
+  if (windowRaw === '30d') return { window: '30d', seconds: 30 * 24 * 60 * 60 }
   return { window: '1h', seconds: 60 * 60 }
 }
 
@@ -546,8 +550,8 @@ export function offsetMockVersion(input: string | null | undefined, delta: numbe
   return `${major}.${minor}.${Math.max(0, patch + delta)}`
 }
 
-export function buildResourceHistorySamples(serviceId: string, seconds: number): ServiceResourceSample[] {
-  const stepSeconds = 30
+export function buildResourceHistorySamples(serviceId: string, seconds: number, window?: string): ServiceResourceSample[] {
+  const stepSeconds = window === '7d' ? 60 : window === '30d' ? 300 : 30
   const points = Math.max(8, Math.floor(seconds / stepSeconds))
   const seed = hashString(serviceId)
   const baseCpu = 8 + (seed % 28)
@@ -591,6 +595,62 @@ export function buildResourceHistorySamples(serviceId: string, seconds: number):
   }
 
   return out
+}
+
+export function buildResourceHistoryPeaks(samples: ServiceResourceSample[]): ServiceResourcePeak[] {
+  return samples.map((sample, index) => {
+    const previous = samples[index - 1]
+    const elapsedSeconds = previous
+      ? Math.max(1, (Date.parse(sample.sampledAt) - Date.parse(previous.sampledAt)) / 1000)
+      : null
+    const rate = (current?: number, prior?: number) =>
+      elapsedSeconds && current !== undefined && prior !== undefined
+        ? Math.max(0, (current - prior) / elapsedSeconds) * 1.15
+        : undefined
+    return {
+      sampledAt: sample.sampledAt,
+      cpuPercent: sample.cpuPercent + 4,
+      memUsedBytes: sample.memUsedBytes,
+      memLimitBytes: sample.memLimitBytes,
+      pids: sample.pids,
+      containerCount: sample.containerCount,
+      netRxRateBps: rate(sample.netRxBytes, previous?.netRxBytes),
+      netTxRateBps: rate(sample.netTxBytes, previous?.netTxBytes),
+      blockReadRateBps: rate(sample.blockReadBytes, previous?.blockReadBytes),
+      blockWriteRateBps: rate(sample.blockWriteBytes, previous?.blockWriteBytes),
+    }
+  })
+}
+
+export function buildCompactMockJob(job: JobListItem, fixture: Fixture) {
+  const summary = isRecord(job.summary) ? job.summary : {}
+  const targetVersion = ['targetDisplayTag', 'targetTag', 'to']
+    .map((key) => summary[key])
+    .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+  const serviceName = job.serviceId
+    ? Object.values(fixture.stackById)
+        .flatMap((stack) => stack.services)
+        .find((service) => service.id === job.serviceId)?.name
+    : undefined
+  const stackName = job.stackId ? fixture.stackById[job.stackId]?.name : undefined
+  const lifecycleAction =
+    (job.type === 'service_lifecycle' || job.type === 'stack_lifecycle') && typeof summary.action === 'string'
+      ? summary.action
+      : ''
+  const lifecycleLabel =
+    lifecycleAction === 'start' ? '启动任务'
+      : lifecycleAction === 'stop' ? '停止任务'
+        : lifecycleAction === 'restart' ? '重启任务'
+          : undefined
+  return {
+    id: job.id, type: job.type, scope: job.scope, stackId: job.stackId, serviceId: job.serviceId,
+    status: job.status, createdBy: job.createdBy, reason: job.reason, createdAt: job.createdAt,
+    startedAt: job.startedAt, finishedAt: job.finishedAt,
+    ...(isRecord(summary.progress) ? { progress: summary.progress } : {}),
+    ...(job.resultReason ? { resultReason: job.resultReason } : {}),
+    displayLabel: lifecycleLabel ?? serviceName ?? stackName ?? job.type,
+    ...(targetVersion ? { targetVersion } : {}),
+  }
 }
 
 export function buildResourceSsePayload(

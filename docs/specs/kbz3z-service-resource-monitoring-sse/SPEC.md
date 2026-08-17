@@ -19,6 +19,7 @@
 
 - 系统设置支持资源监控开关与采样频率（5/10/30/60/300，默认 5），其语义是“全局历史采样周期”。
 - 历史采样按 service 落库，由一个进程级协调器在每个周期完成一次容器发现，原始样本固定保留 24 小时并自动分批清理。
+- 业务主库与指标库必须分文件存储。主库保留服务、设置与迁移状态；指标库承担原始样本、latest 读模型和分层汇总，避免持续采样阻塞交互读。
 - 服务详情页提供 1s SSE 实时流与趋势图（CPU/内存/网络/磁盘 I/O/PIDs）。
 - 服务详情资源监控面板强化头部层级、SSE 状态可见性、统一工具栏与移动端数值排版。
 - 资源监控关闭时，历史与实时接口统一返回 `409 resource_monitor_disabled`。
@@ -48,17 +49,17 @@
 
 - `GET /api/settings`：新增 `resourceMonitor`。
 - `PUT /api/settings`：支持写入 `resourceMonitor.enabled` 与 `resourceMonitor.sampleIntervalSeconds`。
-- `GET /api/services/{service_id}/resource-usage/history?window=3m|1h|24h`：返回历史样本序列。
+- `GET /api/services/{service_id}/resource-usage/history?window=3m|1h|24h|7d|30d`：短窗口返回原始样本；长窗口返回均值 `samples`、对齐 `peaks` 与 `resolutionSeconds`。
 - `GET /api/services/{service_id}/resource-usage/events`：SSE 事件
   - `resource_usage_snapshot`
   - `resource_usage_tick`
   - `resource_usage_error`
-- `GET /api/services/resource-usage/overview?window=3m|1h|24h`：Overview 聚合最新摘要，只返回 CPU、内存、网络 RX/TX、样本时间、stale 与样本数量，不提供图表序列或 SSE。
+- `GET /api/services/resource-usage/overview?window=3m|1h|24h|7d|30d`：Overview 聚合最新摘要，只返回 CPU、内存、网络 RX/TX、样本时间、stale 与样本数量，不提供图表序列或 SSE。
 - 监控关闭统一错误：`409` + `details.reason=resource_monitor_disabled`。
   - 例外：Overview 聚合摘要接口返回 `200 enabled=false`，用于导航页非阻塞降级。
 - `resourceMonitor.sampleIntervalSeconds` 的 wire shape 与合法值保持不变，但其契约为“全局协调历史采样周期”；`resourceMonitor.retentionDays` 固定为 `1`。
 - CPU 原始计数基线至少保留超过最长 `300s` cadence 的窗口；缺少 `system_cpu_usage` 等累计计数的 one-shot 响应不得安装基线，避免生成伪差分。
-- `ServiceResourcePanel` 继续沿用当前 `samples.length` 混合语义：既包含历史样本，也包含页面打开后的 `1s` SSE 实时点；本次只修正文案，不改字段含义。
+- `ServiceResourcePanel` 的短窗口继续允许叠加页面打开后的 `1s` SSE 实时点；`7d` 与 `30d` 只展示桶均值主线与对齐峰值提示，不能把实时原始点混入聚合序列。
 
 ## 数据与运行时设计
 
@@ -66,12 +67,15 @@
   - `resource_monitor_enabled INTEGER NOT NULL DEFAULT 1`
   - `resource_sample_interval_seconds INTEGER NOT NULL DEFAULT 5`
 - 历史采样频率合法值为 `5/10/30/60/300`；已有合法 `10` 继续保留，不做隐式迁移。
-- 新增 `service_resource_samples` 表与索引：
-  - `(service_id, sampled_at)`
-  - `(sampled_at)`
+- `DOCKREV_METRICS_DB_PATH` 默认为主库同目录下的 `metrics.sqlite3`，且启动必须拒绝它与 `DOCKREV_DB_PATH` 指向同一文件，包括主库创建前的符号链接别名。
+- 指标库包含 `service_resource_samples`、`service_resource_latest_samples` 与 `service_resource_rollups`。原始样本保留 24 小时，1 分钟桶保留 7 天，5 分钟桶保留 30 天。指标写事务必须通过受控写入 guard，读连接开启 `query_only` 与外键约束；legacy latest 投影刷新也必须在受控事务内完成，避免把内部修复误判为未受管 target 变更。
+- 启动时先从主库旧指标表可恢复复制到指标库。首次完整复制必须由主库迁移状态、幂等写入、稳定排序行哈希和行数验证控制；验证完成前不得启动新的采样写路径，旧表保持为回滚源。
+- 从旧表导入的原始行必须保存稳定内容签名。指标 GC 在删除带 legacy id 的原始行或孤儿服务数据前，必须记录该 id 的墓碑；后续启动以完整源哈希、保留原始行签名及“保留行数加墓碑数覆盖旧表行数”验证已迁移数据，深度恢复还必须比对墓碑活动 count/双校验和与受信快照，并验证每个墓碑对应主库源行。验证后 latest/rollup 只从现存 raw 重算；latest 还必须以来源标记重建 active service 的 legacy 投影并完成逐行验证，保留更新鲜的运行时样本，同时修复陈旧、缺失或时间回退的导入值；无来源列的旧 metrics latest 必须先标记为未知并保留，只有不早于未知行的 raw 或源投影才能替换它。rollup 以行级完整性指纹和行数元数据检测缺失或篡改，旧文件升级时从其既有桶字段补写指纹，仅在首次完整复制或校验失败时重建，已验证的重启不得全量重建。非 active service 的 legacy latest 不得回灌。必须保留超出 raw 留存期的 active latest 和长窗口桶；若已经 GC 的 legacy 或运行时 raw 使损坏的长窗口桶不可重建，迁移必须失败，不能把损坏值重新登记为完整。完整复制源变化时保留已验证墓碑；在清空旧 legacy raw 前必须记录其桶集合并随现存 raw 一同重建，确保已从源删除的 legacy 历史不会遗留在长窗口响应中，同时不触碰没有 legacy 来源的 native 长窗口桶；修复目标数据时不得复活已由 GC 裁剪的旧行。
+- 迁移 manifest 同时保存 legacy raw 与 latest 的稳定排序行哈希/行数、raw 最大 id 与源变更 revision；主库 source revision 仅在旧指标表变更时递增，健康重启不得扫描全部 raw。指标库 target revision 与受信 revision 不一致时必须重新执行深度验证；运行时 raw/latest 另以目标库内的增量行数和受信快照保护，任何 native 数据的未受信变更均不得猜测修复；空 target 中出现未受管 native 行也必须被识别为不可信。legacy projection 的重建写入不得绕过 guard。若 legacy raw 在已存在墓碑后改变，或 native raw 已裁剪后 rollup 不完整，系统不得假定长窗口桶仍可恢复，必须保持迁移未完成并阻断新采样路径。
+- `GET /api/jobs?view=compact` 的查询只经 SQLite JSON 投影读取进度、结果原因、展示标签和目标版本等派生字段，Rust 不得选取或反序列化完整 `summary_json`；默认 jobs 响应继续保持兼容。
 - 后台历史采样任务：
   - 仅在开关开启时运行，由单一进程级 coordinator 以设置频率执行全局周期。
-  - 每个周期只发现一次带 Compose 标签的运行容器，再将结果按 compose project/service fan-out 到历史写入；活跃 SSE 对同项目复用 in-flight 或不足一秒的缓存结果。
+  - 每个周期只发现一次带 Compose 标签的运行容器，再将结果按 compose project/service fan-out；全部成功项目的样本在指标库内只提交一个事务。活跃 SSE 对同项目复用 in-flight 或不足一秒的缓存结果。
   - 周期以目标 schedule time 推进；单轮耗时超过 interval 时跳过过期 tick，不补历史欠账、不生成 backlog。
   - 原始样本保留 24 小时。独立 GC 任务在启动后及每分钟最多连续删除 `10 x 10,000` 条过期样本，批间让出执行权并只输出聚合 GC 日志；不自动执行 `VACUUM`，且不得阻塞历史采样 cadence。
   - 退化仅记录结构化日志，至少包含 `interval_seconds`、`duration_ms`、`skipped_ticks`、`service_count`、`result`。
@@ -97,7 +101,7 @@
 - 顶部 Hero：标题、副说明、实时状态 badge 与窗口/样本/最近更新时间 facts 同屏可见。
 - 设置页与监控页文案必须明确：历史采样由全局协调周期驱动，页面样本数会混入打开页面后的实时 SSE 点。
 - 实时指标卡：CPU、内存作为主指标卡，网络速率、磁盘 I/O、PIDs 作为次级摘要卡。
-- 图表工具栏：同一区域内提供指标 tabs（CPU/内存/网络/磁盘 I/O/PIDs）与时间窗口切换（3m/1h/24h，默认 1h）。
+- 图表工具栏：同一区域内提供指标 tabs（CPU/内存/网络/磁盘 I/O/PIDs）与时间窗口切换（3m/1h/24h/7d/30d，默认 1h）。7 天和 30 天主线显示桶均值，最新点 hover 显示对应桶峰值。
 - 图表舞台：自研 SVG 趋势图保留单线/双线逻辑，并增强末端锚点、图例当前值与空/错态。所有指标将每个原始样本保持到下一次采样，以 right-continuous 阶梯表达变化，不平均数值、不生成斜线；CPU、内存、网络与磁盘 I/O 仅在阶梯拐角加极小圆角，PIDs 保持严格直角。单线面积填充必须复用对应阶梯路径且保持低视觉权重，双线图不绘制面积。
 - SSE：页面可见时订阅，断线退避重连（1s→2s→5s）。
 
@@ -184,13 +188,30 @@ PR: include
   viewport_strategy: `storybook-viewport`
   sensitive_exclusion: `N/A`
   submission_gate: `owner-approved`
+  evidence_binding_sha: `8e943e541a72a2889de64f0f2d4595f9cd312359`
   story_id_or_title: `Components/ServiceResourcePanel/WindowSwitchContract`
-  state: `interactive shared window contract`
-  evidence_note: 固定 1280x720 浏览器视口。资源监控工具栏直接展示 `3m / 1h / 24h` 三个共享时间窗口按钮，并通过 Storybook play 覆盖切换到 `24h` 与 `3m`，用于锁定窗口 contract 不回退。
+  state: `30d aggregated CPU history`
+  evidence_note: 固定 1280x720 浏览器视口。资源监控工具栏展示 `3m / 1h / 24h / 7d / 30d`，其中 `30d` 已选中。8,641 个五分钟聚合桶保留在响应中，图表渲染限为 480 个均值点，最近桶仍保留峰值提示。
 
 PR: include
 
 ![服务资源监控时间窗口 Contract](./assets/service-resource-window-contract.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `375x900`
+  viewport_strategy: `storybook-viewport`
+  sensitive_exclusion: `N/A`
+  submission_gate: `owner-approved`
+  evidence_binding_sha: `8e943e541a72a2889de64f0f2d4595f9cd312359`
+  story_id_or_title: `Components/ServiceResourcePanel/WindowSwitchContract`
+  state: `30d aggregate mobile toolbar`
+  evidence_note: 固定 375x900 浏览器视口。时间范围控件在移动端换行，`3m / 1h / 24h / 7d / 30d` 均可见，`30d` 选中后标题和聚合历史图表不溢出视口。
+
+PR: include
+
+![服务资源监控时间窗口 Contract 移动端](./assets/service-resource-window-contract-mobile.png)
 
 ## 变更记录（Change log）
 

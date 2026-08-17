@@ -14,6 +14,8 @@ use crate::{
     registry, service_check,
 };
 
+mod refresh_coordinator;
+
 pub const SNAPSHOT_PENDING_RETRY_AFTER_MS: u64 = 800;
 pub const SNAPSHOT_WORKER_MAX_CONCURRENCY: usize = 2;
 pub const SNAPSHOT_CACHE_TTL_DAYS: i64 = 7;
@@ -28,6 +30,7 @@ const SNAPSHOT_REASON_CACHE_STALE: &str = "cache_stale";
 const SNAPSHOT_REASON_ALL_FAILED: &str = "all_failed";
 const SNAPSHOT_REASON_API_SNAPSHOT_READ_MISS: &str = "api_snapshot_read_miss";
 const SNAPSHOT_REASON_STARTUP_WARMUP: &str = "startup_warmup";
+pub(super) const SNAPSHOT_REASON_BACKGROUND_REFRESH: &str = "background_refresh";
 
 #[derive(Clone, Debug)]
 pub struct SnapshotTaskProgress {
@@ -308,6 +311,7 @@ impl SnapshotWorker {
             .await
     }
 
+    #[allow(dead_code)]
     pub async fn ensure_low_priority_snapshot_scheduled(
         &self,
         image_repo: &str,
@@ -683,30 +687,6 @@ impl SnapshotWorker {
                 "reason": "buffer_overflow",
             }),
         )
-    }
-
-    pub fn spawn_startup_warmup(&self, host_platform: &str) {
-        let host_platform = host_platform.trim().to_string();
-        if host_platform.is_empty() {
-            return;
-        }
-        let worker = self.clone();
-        tokio::spawn(async move {
-            let seeds = match worker.db.list_snapshot_seed_targets().await {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::debug!(error = %e, "snapshot warmup list seeds failed");
-                    return;
-                }
-            };
-            for (image_ref, digest) in seeds {
-                if let Some(repo) = image_repo_from_image_ref(&image_ref) {
-                    let _ = worker
-                        .enqueue(&repo, &digest, &host_platform, "startup_warmup")
-                        .await;
-                }
-            }
-        });
     }
 
     async fn run_single_snapshot(
@@ -1186,6 +1166,7 @@ fn low_priority_reason_cooldown(reason: &str) -> Option<Duration> {
         SNAPSHOT_REASON_CACHE_STALE => Some(Duration::from_secs(30 * 60)),
         SNAPSHOT_REASON_ALL_FAILED => Some(Duration::from_secs(6 * 60 * 60)),
         SNAPSHOT_REASON_STARTUP_WARMUP => Some(Duration::from_secs(24 * 60 * 60)),
+        SNAPSHOT_REASON_BACKGROUND_REFRESH => Some(Duration::from_secs(30 * 60)),
         _ => None,
     }
 }
@@ -1307,10 +1288,11 @@ mod tests {
 
     use serde_json::json;
 
+    use super::refresh_coordinator::SNAPSHOT_REFRESH_INTERVAL_SECONDS;
     use super::{
-        SNAPSHOT_REASON_ALL_FAILED, SnapshotTaskWaitStatus, SnapshotWorker,
-        image_repo_from_image_ref, low_priority_cooldown_key, low_priority_reason_cooldown,
-        push_event_locked,
+        SNAPSHOT_REASON_ALL_FAILED, SNAPSHOT_REASON_BACKGROUND_REFRESH, SnapshotTaskWaitStatus,
+        SnapshotWorker, image_repo_from_image_ref, low_priority_cooldown_key,
+        low_priority_reason_cooldown, push_event_locked,
     };
     use crate::{
         db::Db,
@@ -1421,6 +1403,15 @@ mod tests {
 
         assert!(!enqueued);
         assert!(worker.snapshot_tasks().await.is_empty());
+    }
+
+    #[test]
+    fn background_snapshot_refresh_uses_the_thirty_minute_cadence() {
+        assert_eq!(SNAPSHOT_REFRESH_INTERVAL_SECONDS, 30 * 60);
+        assert_eq!(
+            low_priority_reason_cooldown(SNAPSHOT_REASON_BACKGROUND_REFRESH),
+            Some(Duration::from_secs(30 * 60))
+        );
     }
 
     #[tokio::test]

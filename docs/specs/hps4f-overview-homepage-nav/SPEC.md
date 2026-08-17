@@ -18,7 +18,9 @@
 ### Goals
 
 - 为首页引入单次 read model：新增 `GET /api/homepage/nav`，一次返回首页卡片、顶部资源摘要、更新时间与更新状态输入字段，去掉首页 `1 + N` 客户端扇出。
-- 为资源摘要引入轻量持久化 latest 表 `service_resource_latest_samples`，由采样写入时同步 upsert 最新样本与前一条网络计数；首页与 `/api/services/resource-usage/overview` 都读取该小表，不再在请求时扫描历史表。
+- 为资源摘要引入轻量持久化 latest 表 `service_resource_latest_samples`，由采样写入时同步 upsert 最新样本与前一条网络计数；首页与 `/api/services/resource-usage/overview` 都读取该小表，不再在请求时扫描历史表。legacy latest 投影刷新必须使用指标库受控写入事务，读连接开启 `query_only` 与外键约束，避免内部修复被误判为未受管 target 写入。
+- 首页热读将主库导航元数据、资源设置、镜像快照和发现记录全部经受限 query-only 读模型，与独立指标库的 latest/计数并行读取并按 `serviceId` 合并；请求路径不得调度快照刷新工作或回退到命令侧 `Db`。
+- 指标库迁移首次以稳定排序行哈希和行数完成验证；迁移后的 legacy raw 由稳定内容签名与 GC 墓碑保护，latest 以显式导入来源标记协调并逐行校验，重启时只重算现存 raw 所覆盖的派生值，同时保留较新的运行时 latest 与主库当前 active service 的 legacy latest，即使其 raw 已过期；非 active service 的 legacy latest 不得回灌，恢复流程不能复活或删除既有留存数据。
 - 将 SQLite 运行时固定切到 `WAL` 并配置非零 `busy_timeout`，把“读请求因为锁竞争超时/失败”从运维经验变成应用默认配置。
 - 保留“极速优先”的 cached-first 首屏，但升级为单一 `HomepageSnapshotV2`，把卡片和资源摘要收敛到同一时间戳快照。
 - live 响应到达后，首页必须按 `serviceId` in-place merge，禁止整页先清空、先缩到 partial live 子集、或随着单个服务返回连续整列重排。
@@ -79,11 +81,12 @@
 - live payload 如果最终为空，首页必须接受“当前没有可展示的服务入口”这一真实结果，不能错误回退旧缓存。
 - `service_resource_latest_samples` 必须由资源采样写入路径同步 upsert，保存最新样本和上一条网络计数与时间。
 - `/api/services/resource-usage/overview` 与 `/api/homepage/nav` 都必须从 latest 表读取，而不是在请求时扫描 `service_resource_samples` 历史大表。
-- 共享 `GET /api/services/resource-usage/overview` window contract 必须与服务详情资源监控保持一致，接受 `3m/1h/24h`；首页 `/api/homepage/nav` 自身仍固定以 `1h` 摘要语义构建 `resourceSummary`。
+- 共享 `GET /api/services/resource-usage/overview` window contract 必须与服务详情资源监控保持一致，接受 `3m/1h/24h/7d/30d`；首页 `/api/homepage/nav` 自身仍固定以 `1h` 摘要语义构建 `resourceSummary`。
 - SQLite 初始化必须在应用启动时固定执行：
   - `PRAGMA foreign_keys = ON`
   - `PRAGMA journal_mode = WAL`
   - `PRAGMA busy_timeout = 5000`
+- 指标库 target revision 与受信 revision 不一致时必须进入深度验证；空 target 中出现未受管 native raw/latest 行也必须被识别为不可信，不能以“当前 native 行数为零”跳过恢复保护。
 - 首页图标位必须固定尺寸，失败时立即回退统一默认图标；相同坏 URL 在同一浏览器会话里不得重复触发慢失败请求。
 - 首页卡片状态徽标与单服务更新按钮语义必须保持不回退：
   - 新标签打开 `homepage.href`
@@ -96,6 +99,8 @@
 
 - 首页 live payload 应用应复用已有卡片对象，尽量减少不必要的 React 重建与 DOM 抖动。
 - 首页 read model 的排序应稳定按 `stackName/serviceName` 输出，便于前端缓存 merge 与测试断言。
+- 首页版本推断快照必须通过批量读取获得；缓存未命中或过期只呈现 pending 状态，由后台快照 worker 的启动预热、30 分钟协调刷新与显式操作刷新。
+- 首页的新版本发现计数在解析通知展示标签时，必须按 `service_id` 做有界批量读取，再在 Rust 内以完整目标键精确过滤；不得为每个发现记录生成大规模 SQL `OR` 谓词。
 - 后端对显然不可解析或无效的 homepage icon 值应尽量直接返回 `null`/可回退值，减少浏览器侧重复失败。
 
 ## 功能与行为规格（Functional/Behavior Spec）
@@ -137,7 +142,7 @@
 ## 验收标准（Acceptance Criteria）
 
 - Given 真实 `https://dockrev.ivanli.cc/` reload，When 首页首屏加载，Then owner-facing 主数据链路收敛为单个 `GET /api/homepage/nav`，不再出现 `24 × /api/stacks/{id}` 扇出。
-- Given 101 现网或同量级本地种子数据，When `GET /api/homepage/nav` 处于 warm path，Then 目标响应时间 `< 500ms`；若未达标，必须继续提供 SQL/锁竞争证据，不能以“前端已平滑”收口。
+- Given 51 服务并持续 5 秒指标采样的代表性负载，When 100 次认证 `GET /api/homepage/nav` 请求在 warm path 执行，Then 后端 p95 必须不高于 `300ms`；若未达标，必须继续提供 SQL/锁竞争证据，不能以“前端已平滑”收口。
 - Given 首页存在缓存 snapshot，When 用户 reload，Then 卡片网格连续可见，不能先空白、不能先缩到 partial live 子集、不能在同一轮刷新里多次整列重排。
 - Given 首页图标失败，When 浏览器渲染卡片，Then 卡片高度、图标槽尺寸和列布局保持稳定；相同坏 URL 在同一会话里不重复慢失败。
 - Given live payload 最终为空，When 首页完成刷新，Then 页面显示真实空态，而不是错误保留缓存服务。
@@ -212,3 +217,20 @@
   PR caption: 无缓存冷启动时首页先显示稳定 skeleton，避免误导性空列表与整页抖动。
   image:
   ![Cold-start skeleton proof](./assets/overview-homepage-cold-start-skeleton-proof.png)
+
+- source_type: storybook_canvas
+  target_program: mock-only
+  capture_scope: element
+  requested_viewport: 1800x960
+  viewport_strategy: storybook-viewport
+  margin_policy: trim_only
+  evidence_surface: page
+  sensitive_exclusion: N/A (mock-only data)
+  submission_gate: approved
+  story_id_or_title: Pages/ServicesPage/GlobalTaskReadableLabel
+  state: global discovery task label
+  evidence_note: 运维面板的全局 discovery 任务使用可读的“发现扫描”标签和“全部”范围，不将内部 `discovery` 类型名作为可见主标签。
+  PR: include
+  PR caption: 全局任务卡片显示可读标签与范围，紧凑任务读模型不依赖原始 summary。
+  image:
+  ![Global task readable label](./assets/overview-global-task-readable-label.png)

@@ -26,8 +26,10 @@ mod ids;
 mod ignore;
 mod job_live_logs;
 mod management_events;
+mod metrics_store;
 mod models;
 mod notify;
+mod operational_read_model;
 mod preflight;
 mod registry;
 mod repo_link_backfill;
@@ -92,6 +94,13 @@ async fn main() -> anyhow::Result<()> {
     let config = config::Config::from_env()?;
     let bind = config.http_addr.clone();
     let db = db::Db::open(&config.db_path).await?;
+    let metrics = metrics_store::MetricsStore::open(&config.metrics_db_path).await?;
+    let active_service_ids = db.list_active_service_ids_for_metrics().await?;
+    metrics
+        .migrate_from_legacy_with_active_services(&db, &active_service_ids)
+        .await?;
+    let operational_reads =
+        operational_read_model::OperationalReadModel::open(&config.db_path).await?;
     let registry = std::sync::Arc::new(registry::HttpRegistryClient::new(
         config.docker_config_path.as_deref(),
         registry::HttpRegistryClientOptions {
@@ -129,6 +138,8 @@ async fn main() -> anyhow::Result<()> {
     let state = state::AppState::new(
         config,
         db,
+        metrics,
+        operational_reads,
         registry,
         runner,
         snapshot_worker,
@@ -156,6 +167,7 @@ async fn main() -> anyhow::Result<()> {
     let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
         .unwrap_or_else(|| "linux/amd64".to_string());
     state.snapshot_worker.spawn_startup_warmup(&host_platform);
+    state.snapshot_worker.spawn_periodic_refresh(&host_platform);
     state.snapshot_worker.spawn_gc_task();
 
     backup::spawn_cleanup_task(state.clone());
@@ -171,7 +183,11 @@ async fn main() -> anyhow::Result<()> {
     repo_link_backfill::spawn_tasks(state.clone());
     schedules::spawn_tasks(state.clone());
     auto_update::spawn_tasks(state.clone());
-    resource_usage::spawn_history_sampler(state.db.clone(), resource_sampling);
+    resource_usage::spawn_history_sampler(
+        state.db.clone(),
+        state.metrics.clone(),
+        resource_sampling,
+    );
     if let Err(err) = repo_link_backfill::enqueue_startup_backfill_if_needed(state.as_ref()).await {
         tracing::warn!(error = %err, "failed to enqueue startup repo link backfill");
     }

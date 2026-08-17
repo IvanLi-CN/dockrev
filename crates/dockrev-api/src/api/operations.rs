@@ -380,7 +380,7 @@ pub(super) async fn handle_check_worker_result(
         });
     }
     if let Some(image_repo) = image_repo {
-        if outcome.candidate_digest_changed
+        if (outcome.candidate_digest_changed || outcome.current_manifest_is_multi_arch)
             && current_needs_inference
             && let Some(current_digest) = current_digest.as_deref()
             && should_enqueue_new_version_inference(

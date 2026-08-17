@@ -17,6 +17,7 @@ use crate::{
     api::types::ServiceResourceSample,
     db::{Db, ServiceResourceSampleInput, ServiceResourceTarget},
     docker_engine::{DockerEngineClient, ProjectResourceCollection},
+    metrics_store::MetricsStore,
 };
 #[cfg(test)]
 use serde::Deserialize;
@@ -27,8 +28,6 @@ pub const DEFAULT_SAMPLE_INTERVAL_SECONDS: u64 = 5;
 const PARTIAL_SAMPLE_WARN_INTERVAL: Duration = Duration::from_secs(60);
 const RESOURCE_COLLECTION_CACHE_MAX_AGE: Duration = Duration::from_secs(1);
 const RESOURCE_HISTORY_GC_INTERVAL: Duration = Duration::from_secs(60);
-const RESOURCE_HISTORY_GC_BATCH_SIZE: u32 = 10_000;
-const RESOURCE_HISTORY_GC_MAX_BATCHES: usize = 10;
 static PARTIAL_SAMPLE_WARNINGS: OnceLock<std::sync::Mutex<BTreeMap<String, Instant>>> =
     OnceLock::new();
 
@@ -49,6 +48,8 @@ pub fn parse_window_to_seconds(window: &str) -> Option<u64> {
         "3m" => Some(3 * 60),
         "1h" => Some(60 * 60),
         "24h" => Some(24 * 60 * 60),
+        "7d" => Some(7 * 24 * 60 * 60),
+        "30d" => Some(30 * 24 * 60 * 60),
         _ => None,
     }
 }
@@ -669,8 +670,12 @@ fn try_remove_idle_sampler_entry(
     false
 }
 
-pub fn spawn_history_sampler(db: Db, coordinator: ResourceSamplingCoordinator) {
-    spawn_history_gc_task(db.clone());
+pub fn spawn_history_sampler(
+    db: Db,
+    metrics: MetricsStore,
+    coordinator: ResourceSamplingCoordinator,
+) {
+    spawn_history_gc_task(db.clone(), metrics.clone());
     tokio::spawn(async move {
         let mut interval = Duration::from_secs(DEFAULT_SAMPLE_INTERVAL_SECONDS);
         let mut next_run_at = Instant::now();
@@ -710,7 +715,7 @@ pub fn spawn_history_sampler(db: Db, coordinator: ResourceSamplingCoordinator) {
             if Instant::now() >= next_run_at {
                 let snapshots = build_project_history_snapshots(targets, interval_seconds);
                 let started_at = Instant::now();
-                let outcomes = sample_history_cycle_once(&db, &coordinator, &snapshots).await;
+                let outcomes = sample_history_cycle_once(&metrics, &coordinator, &snapshots).await;
                 let duration = started_at.elapsed();
                 let skipped_ticks =
                     advance_fixed_cadence(&mut next_run_at, interval, Instant::now());
@@ -729,10 +734,10 @@ pub fn spawn_history_sampler(db: Db, coordinator: ResourceSamplingCoordinator) {
     });
 }
 
-fn spawn_history_gc_task(db: Db) {
+fn spawn_history_gc_task(db: Db, metrics: MetricsStore) {
     tokio::spawn(async move {
         loop {
-            if let Err(e) = gc_history(&db).await {
+            if let Err(e) = gc_history(&db, &metrics).await {
                 tracing::warn!(error = %e, "resource monitor history gc failed");
             }
             tokio::time::sleep(RESOURCE_HISTORY_GC_INTERVAL).await;
@@ -740,36 +745,16 @@ fn spawn_history_gc_task(db: Db) {
     });
 }
 
-async fn gc_history(db: &Db) -> anyhow::Result<()> {
+async fn gc_history(db: &Db, metrics: &MetricsStore) -> anyhow::Result<()> {
+    let active_service_ids = db
+        .list_active_service_ids_for_metrics()
+        .await
+        .context("list active services for metrics gc")?;
+    metrics
+        .gc(&active_service_ids)
+        .await
+        .context("gc metrics store")?;
     let now = time::OffsetDateTime::now_utc();
-    let older_than = (now - time::Duration::days(RESOURCE_MONITOR_RETENTION_DAYS as i64))
-        .format(&time::format_description::well_known::Rfc3339)?;
-    let started_at = Instant::now();
-    let mut deleted = 0u64;
-    let mut batches = 0usize;
-    while batches < RESOURCE_HISTORY_GC_MAX_BATCHES {
-        let deleted_batch = db
-            .delete_expired_service_resource_samples(&older_than, RESOURCE_HISTORY_GC_BATCH_SIZE)
-            .await
-            .context("delete expired resource samples")?;
-        deleted += deleted_batch;
-        batches += 1;
-        if deleted_batch < u64::from(RESOURCE_HISTORY_GC_BATCH_SIZE) {
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
-    if deleted > 0 {
-        tracing::info!(
-            deleted,
-            retention_days = RESOURCE_MONITOR_RETENTION_DAYS,
-            batch_size = RESOURCE_HISTORY_GC_BATCH_SIZE,
-            batches,
-            max_batches = RESOURCE_HISTORY_GC_MAX_BATCHES,
-            duration_ms = started_at.elapsed().as_millis() as u64,
-            "resource monitor history gc completed"
-        );
-    }
     let job_older_than = (now - time::Duration::days(JOB_HISTORY_RETENTION_DAYS as i64))
         .format(&time::format_description::well_known::Rfc3339)?;
     let started_at = Instant::now();
@@ -877,7 +862,7 @@ fn log_project_history_run(
 }
 
 async fn sample_history_cycle_once(
-    db: &Db,
+    metrics: &MetricsStore,
     coordinator: &ResourceSamplingCoordinator,
     snapshots: &BTreeMap<String, ProjectHistorySnapshot>,
 ) -> BTreeMap<String, ProjectHistoryRunOutcome> {
@@ -896,39 +881,67 @@ async fn sample_history_cycle_once(
                 .collect();
         }
     };
+    let sampled_at = match now_rfc3339() {
+        Ok(value) => value,
+        Err(error) => {
+            let message = format!("create resource sample timestamp: {error}");
+            return snapshots
+                .keys()
+                .map(|project| {
+                    (
+                        project.clone(),
+                        ProjectHistoryRunOutcome::error(anyhow::anyhow!(message.clone())),
+                    )
+                })
+                .collect();
+        }
+    };
     let mut outcomes = BTreeMap::new();
+    let mut cycle_rows = Vec::new();
     for (project, snapshot) in snapshots {
         let outcome = match collections.get(project) {
             Some(Ok(collection)) => {
-                sample_history_project_collection(db, snapshot, collection).await
+                let rows = sample_history_project_collection(snapshot, collection, &sampled_at);
+                if rows.is_empty() {
+                    ProjectHistoryRunOutcome::empty()
+                } else {
+                    let inserted = rows.len();
+                    cycle_rows.extend(rows);
+                    ProjectHistoryRunOutcome::ok(inserted)
+                }
             }
             Some(Err(error)) => ProjectHistoryRunOutcome::error(anyhow::anyhow!(error.to_string())),
             None => ProjectHistoryRunOutcome::empty(),
         };
         outcomes.insert(project.clone(), outcome);
     }
+    if !cycle_rows.is_empty()
+        && let Err(error) = metrics
+            .insert_samples(&cycle_rows)
+            .await
+            .context("commit resource sample cycle")
+    {
+        for outcome in outcomes.values_mut().filter(|outcome| outcome.inserted > 0) {
+            *outcome = ProjectHistoryRunOutcome::error(anyhow::anyhow!(error.to_string()));
+        }
+    }
     outcomes
 }
 
-async fn sample_history_project_collection(
-    db: &Db,
+fn sample_history_project_collection(
     snapshot: &ProjectHistorySnapshot,
     collection: &ResourceCollection,
-) -> ProjectHistoryRunOutcome {
-    let sampled_at = match now_rfc3339() {
-        Ok(v) => v,
-        Err(e) => return ProjectHistoryRunOutcome::error(e),
-    };
-
+    sampled_at: &str,
+) -> Vec<ServiceResourceSampleInput> {
     log_partial_collection_failures(&snapshot.compose_project, collection);
-    let rows = snapshot
+    snapshot
         .services
         .iter()
         .filter_map(|target| {
             let sample = collection.samples.get(&target.service_name)?;
             Some(ServiceResourceSampleInput {
                 service_id: target.service_id.clone(),
-                sampled_at: sampled_at.clone(),
+                sampled_at: sampled_at.to_string(),
                 cpu_percent: sample.cpu_percent,
                 mem_used_bytes: sample.mem_used_bytes,
                 mem_limit_bytes: sample.mem_limit_bytes,
@@ -940,21 +953,7 @@ async fn sample_history_project_collection(
                 container_count: sample.container_count,
             })
         })
-        .collect::<Vec<_>>();
-
-    if rows.is_empty() {
-        return ProjectHistoryRunOutcome::empty();
-    }
-
-    match db
-        .insert_service_resource_samples(&rows)
-        .await
-        .context("insert resource samples")
-    {
-        Ok(inserted) if inserted > 0 => ProjectHistoryRunOutcome::ok(inserted),
-        Ok(_) => ProjectHistoryRunOutcome::empty(),
-        Err(e) => ProjectHistoryRunOutcome::error(e),
-    }
+        .collect::<Vec<_>>()
 }
 
 async fn sample_for_target(
@@ -983,8 +982,12 @@ async fn sample_for_target(
         mem_limit_bytes: sample.mem_limit_bytes,
         net_rx_bytes: sample.net_rx_bytes,
         net_tx_bytes: sample.net_tx_bytes,
+        net_rx_rate_bps: None,
+        net_tx_rate_bps: None,
         block_read_bytes: sample.block_read_bytes,
         block_write_bytes: sample.block_write_bytes,
+        block_read_rate_bps: None,
+        block_write_rate_bps: None,
         pids: sample.pids,
         container_count: sample.container_count,
     }))
@@ -1058,8 +1061,12 @@ impl ServiceAggregate {
             mem_limit_bytes: self.mem_seen.then_some(self.mem_limit_sum),
             net_rx_bytes: self.net_seen.then_some(self.net_rx_sum),
             net_tx_bytes: self.net_seen.then_some(self.net_tx_sum),
+            net_rx_rate_bps: None,
+            net_tx_rate_bps: None,
             block_read_bytes: self.block_seen.then_some(self.block_read_sum),
             block_write_bytes: self.block_seen.then_some(self.block_write_sum),
+            block_read_rate_bps: None,
+            block_write_rate_bps: None,
             pids: self.pids_seen.then_some(self.pids_sum),
             container_count: self.container_count,
         }

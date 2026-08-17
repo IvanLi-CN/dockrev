@@ -116,22 +116,6 @@ pub(super) async fn enqueue_snapshot_for_image_ref(
         .await;
 }
 
-async fn ensure_low_priority_snapshot_scheduled(
-    state: &Arc<AppState>,
-    image_repo: &str,
-    digest: &str,
-    host_platform: &str,
-    reason: &str,
-) {
-    let Some(normalized) = snapshot_worker::normalize_digest(digest) else {
-        return;
-    };
-    state
-        .snapshot_worker
-        .ensure_low_priority_snapshot_scheduled(image_repo, &normalized, host_platform, reason)
-        .await;
-}
-
 pub(super) fn needs_version_inference(service: &Service) -> bool {
     if !ignore::is_strict_semver(&service.image.tag) {
         return true;
@@ -384,7 +368,7 @@ pub(super) async fn resolve_candidate_resolved_tag(
         return Ok(resolved);
     };
     let notification_tags = state
-        .db
+        .operational_reads
         .list_stable_candidate_display_tags_for_notification_targets(&[(
             service_id.to_string(),
             notification_image_ref,
@@ -410,7 +394,7 @@ pub(super) async fn resolve_discovery_stable_tags_by_provenance(
 
     let notification_targets = crate::db::new_version_discovery_notification_targets(rows);
     let notification_tags = state
-        .db
+        .operational_reads
         .list_stable_candidate_display_tags_for_notification_targets(&notification_targets)
         .await
         .map_err(map_internal)?;
@@ -436,7 +420,7 @@ pub(super) async fn resolve_discovery_stable_tags_by_provenance(
         .collect::<Vec<_>>();
 
     let snapshot_rows = state
-        .db
+        .operational_reads
         .list_image_digest_tags_snapshots_for_targets(&host_platform, &snapshot_targets)
         .await
         .map_err(map_internal)?;
@@ -522,7 +506,7 @@ async fn apply_candidate_notification_fallbacks_to_services(
     }
 
     let notification_tags = state
-        .db
+        .operational_reads
         .list_stable_candidate_display_tags_for_notification_targets(&targets)
         .await
         .map_err(map_internal)?;
@@ -569,12 +553,58 @@ async fn apply_candidate_notification_fallbacks_to_services(
 pub(super) async fn enrich_services_with_version_inference(
     state: &Arc<AppState>,
     services: &mut [Service],
+    schedule_refresh: bool,
 ) -> Result<(), ApiError> {
-    use std::collections::HashMap;
+    use std::collections::{BTreeSet, HashMap};
 
     let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
         .unwrap_or_else(|| "linux/amd64".to_string());
-    let mut snapshot_cache: HashMap<String, Option<DigestSnapshotCacheValue>> = HashMap::new();
+    let snapshot_targets = services
+        .iter()
+        .filter_map(|service| {
+            let image_repo = snapshot_worker::image_repo_from_image_ref(&service.image.reference)?;
+            let mut digests = BTreeSet::new();
+            if !ignore::is_strict_semver(&service.image.tag)
+                && let Some(digest) = service
+                    .image
+                    .digest
+                    .as_deref()
+                    .and_then(snapshot_worker::normalize_digest)
+            {
+                digests.insert(digest);
+            }
+            if let Some(candidate) = service.candidate.as_ref()
+                && !ignore::is_strict_semver(&candidate.tag)
+                && let Some(digest) = snapshot_worker::normalize_digest(&candidate.digest)
+            {
+                digests.insert(digest);
+            }
+            (!digests.is_empty()).then_some((image_repo, digests))
+        })
+        .flat_map(|(image_repo, digests)| {
+            digests
+                .into_iter()
+                .map(move |digest| (image_repo.clone(), digest))
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let snapshot_rows = state
+        .operational_reads
+        .list_image_digest_tags_snapshots_for_targets(&host_platform, &snapshot_targets)
+        .await
+        .map_err(map_internal)?;
+    let mut snapshot_cache = snapshot_targets
+        .iter()
+        .map(|(image_repo, digest)| (format!("{image_repo}@{digest}@{host_platform}"), None))
+        .collect::<HashMap<String, Option<DigestSnapshotCacheValue>>>();
+    for row in snapshot_rows {
+        let key = format!("{}@{}@{}", row.image_repo, row.digest, row.host_platform);
+        snapshot_cache.insert(
+            key,
+            parse_digest_snapshot_row(&row.snapshot_json, &row.checked_at),
+        );
+    }
     let mut inflight_cache: HashMap<String, Option<String>> = HashMap::new();
 
     for svc in services.iter_mut() {
@@ -634,22 +664,7 @@ pub(super) async fn enrich_services_with_version_inference(
         for (digest, for_candidate) in digest_targets {
             let digest_key = format!("{image_repo}@{digest}@{host_platform}");
 
-            let snapshot_entry = if let Some(cached) = snapshot_cache.get(&digest_key) {
-                cached.clone()
-            } else {
-                let row = state
-                    .db
-                    .get_image_digest_tags_snapshot(&image_repo, &digest, &host_platform)
-                    .await
-                    .map_err(map_internal)?;
-                let parsed = row
-                    .as_ref()
-                    .and_then(|(snapshot_json, checked_at, _updated_at)| {
-                        parse_digest_snapshot_row(snapshot_json, checked_at)
-                    });
-                snapshot_cache.insert(digest_key.clone(), parsed.clone());
-                parsed
-            };
+            let snapshot_entry = snapshot_cache.get(&digest_key).cloned().unwrap_or(None);
 
             let mut enqueue_reason: Option<&str> = None;
             if let Some(snapshot_entry) = snapshot_entry.as_ref() {
@@ -673,15 +688,18 @@ pub(super) async fn enrich_services_with_version_inference(
 
             if let Some(reason) = enqueue_reason {
                 pending = true;
-                ensure_low_priority_snapshot_scheduled(
-                    state,
-                    &image_repo,
-                    &digest,
-                    &host_platform,
-                    reason,
-                )
-                .await;
                 pending_reason.get_or_insert_with(|| reason.to_string());
+                if schedule_refresh {
+                    state
+                        .snapshot_worker
+                        .ensure_low_priority_snapshot_scheduled(
+                            &image_repo,
+                            &digest,
+                            &host_platform,
+                            reason,
+                        )
+                        .await;
+                }
             }
 
             let in_flight_reason = if let Some(reason) = inflight_cache.get(&digest_key) {
@@ -817,7 +835,7 @@ pub(super) async fn enrich_services_with_new_version_discovery_counts(
     }
 
     let discovery_rows = state
-        .db
+        .operational_reads
         .list_new_version_discoveries_for_services(&contexts.keys().cloned().collect::<Vec<_>>())
         .await
         .map_err(map_internal)?;
@@ -863,7 +881,7 @@ pub(super) async fn get_stack(
     let Some(mut stack) = stack else {
         return Err(ApiError::not_found("stack not found"));
     };
-    enrich_services_with_version_inference(&state, &mut stack.services).await?;
+    enrich_services_with_version_inference(&state, &mut stack.services, true).await?;
     enrich_services_with_new_version_discovery_counts(&state, &mut stack.services).await?;
     let lifecycle_states = lifecycle_states_for_stack(&state, &stack, &stack.services).await;
     let services = stack

@@ -24,8 +24,10 @@ import type {
   VersionInferenceOverviewResponse,
   GetVersionInferenceOverviewInput,
   JobListItem,
+  CompactJobListItem,
   ListJobsInput,
   ListJobsResponse,
+  ListCompactJobsResponse,
   JobDetail,
   IgnoreRule,
   SettingsResponse,
@@ -693,6 +695,28 @@ export async function listJobs(input: ListJobsInput = {}): Promise<JobListItem[]
   }
 
   return jobs.slice(0, 2000)
+}
+
+export async function listCompactJobsPage(input: ListJobsInput = {}): Promise<ListCompactJobsResponse> {
+  const params = new URLSearchParams()
+  params.set('view', 'compact')
+  if (input.cursor) params.set('cursor', input.cursor)
+  if (input.limit != null) params.set('limit', String(input.limit))
+  const type = Array.isArray(input.type) ? input.type.join(',') : input.type
+  if (type) params.set('type', type)
+  if (input.status) params.set('status', input.status)
+  if (input.stackId) params.set('stackId', input.stackId)
+  if (input.serviceId) params.set('serviceId', input.serviceId)
+  const resp = await apiFetch(`/api/jobs?${params.toString()}`)
+  return (await resp.json()) as ListCompactJobsResponse
+}
+
+export async function listCompactJobs(input: ListJobsInput = {}): Promise<CompactJobListItem[]> {
+  const page = await listCompactJobsPage({
+    ...input,
+    limit: Math.min(input.limit ?? 200, 200),
+  })
+  return page.jobs
 }
 
 export async function getJob(jobId: string): Promise<JobDetail> {

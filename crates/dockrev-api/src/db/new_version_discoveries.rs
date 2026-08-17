@@ -652,7 +652,7 @@ pub(crate) fn new_version_discovery_notification_targets(
         .collect()
 }
 
-pub(super) fn list_new_version_discoveries_for_services_conn(
+pub(crate) fn list_new_version_discoveries_for_services_conn(
     conn: &rusqlite::Connection,
     service_ids: &[String],
 ) -> rusqlite::Result<Vec<NewVersionDiscoveryRow>> {

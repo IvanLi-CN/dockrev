@@ -1,7 +1,7 @@
 import type { GitHubPackagesRepo, StackDetail, StackListItem } from '../../../api'
 import { nowIso, type Fixture, type DockrevApiScenario } from './shared'
 import { buildDashboardDemo, baseEmpty, buildDigestPinnedImageDisplay, buildGuideLineLongNames, buildLinkIconCatalog, buildNoCandidates, buildResolvedTagDemo, buildServiceDetailComposeFallbacks, buildServiceDetailVersionAnomaly, buildServicesInferencePendingCandidateLoading, buildVersionTagsPopoverDemo } from './fixturesBase'
-import { RUNNING_JOB_ID, buildOverviewJobsCardExactFiveNonTerminal, buildOverviewJobsCardHeavyInFlight, buildOverviewJobsCardRunningProgressModes, buildOverviewJobsCardTerminalOnly, buildQueueBackupProgress, buildQueueHealthRollback, buildQueueLegacyProgress, buildQueueLongLogs, buildQueueMixed, buildQueueProgressSmoothing, buildQueueUpdateDownloadDeterminate, buildQueueUpdateIndeterminate, buildQueueUpdateLayerProgress, buildVersionInferenceIdleFixture, buildVersionInferenceOverviewFixture, buildVersionInferenceQueueBacklogFixture, buildVersionInferenceResyncRequiredFixture, buildVersionInferenceRunningFixture, buildVersionInferenceStaleAllFailedFixture } from './fixturesQueues'
+import { RUNNING_JOB_ID, buildOverviewJobsCardExactFiveNonTerminal, buildOverviewJobsCardGlobalLabels, buildOverviewJobsCardHeavyInFlight, buildOverviewJobsCardRunningProgressModes, buildOverviewJobsCardTerminalOnly, buildQueueBackupProgress, buildQueueHealthRollback, buildQueueLegacyProgress, buildQueueLongLogs, buildQueueMixed, buildQueueProgressSmoothing, buildQueueUpdateDownloadDeterminate, buildQueueUpdateIndeterminate, buildQueueUpdateLayerProgress, buildVersionInferenceIdleFixture, buildVersionInferenceOverviewFixture, buildVersionInferenceQueueBacklogFixture, buildVersionInferenceResyncRequiredFixture, buildVersionInferenceRunningFixture, buildVersionInferenceStaleAllFailedFixture } from './fixturesQueues'
 import { isCleanupMockScenario } from '../cleanupMockData'
 
 export function buildSettingsConfigured(): Fixture {
@@ -577,6 +577,7 @@ export function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fi
   if (scenario === 'overview-jobs-card-heavy-inflight') return buildOverviewJobsCardHeavyInFlight()
   if (scenario === 'overview-jobs-card-running-progress-modes') return buildOverviewJobsCardRunningProgressModes()
   if (scenario === 'overview-jobs-card-terminal-only') return buildOverviewJobsCardTerminalOnly()
+  if (scenario === 'overview-jobs-card-global-labels') return buildOverviewJobsCardGlobalLabels()
   if (scenario === 'overview-jobs-card-exact-five-non-terminal') return buildOverviewJobsCardExactFiveNonTerminal()
   if (scenario === 'queue-progress-smoothing') return buildQueueProgressSmoothing()
   if (scenario === 'queue-health-rollback') return buildQueueHealthRollback()

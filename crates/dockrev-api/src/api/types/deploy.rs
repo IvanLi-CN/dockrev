@@ -14,9 +14,17 @@ pub struct ServiceResourceSample {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub net_tx_bytes: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub net_rx_rate_bps: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub net_tx_rate_bps: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub block_read_bytes: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_write_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_read_rate_bps: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_write_rate_bps: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pids: Option<u64>,
     pub container_count: u32,
@@ -28,6 +36,10 @@ pub struct ServiceResourceHistoryResponse {
     pub service_id: String,
     pub window: String,
     pub samples: Vec<ServiceResourceSample>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution_seconds: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peaks: Option<Vec<crate::metrics_store::ServiceResourcePeak>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

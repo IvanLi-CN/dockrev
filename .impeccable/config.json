@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "design-system-color",
+        "value": "#000",
+        "createdAt": "2026-08-16T14:27:27.318Z",
+        "reason": "Intentional Storybook evidence frame; mock-only capture requires a uniform high-contrast border."
+      }
+    ]
+  }
+}

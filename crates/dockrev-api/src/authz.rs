@@ -230,6 +230,7 @@ mod tests {
             app_effective_version: "0.1.0".to_string(),
             http_addr: "127.0.0.1:0".to_string(),
             db_path: PathBuf::from(":memory:"),
+            metrics_db_path: PathBuf::from("/tmp/dockrev-authz-test-metrics.sqlite3"),
             docker_config_path: None,
             compose_bin: "docker-compose".to_string(),
             auth_forward_header_name: "X-Forwarded-User".parse().unwrap(),

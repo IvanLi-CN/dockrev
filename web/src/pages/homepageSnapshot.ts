@@ -110,6 +110,38 @@ function asOptionalString(value: unknown): string | null {
   return value == null || typeof value === "string" ? (value ?? null) : null;
 }
 
+export function normalizeHomepageHref(
+  value: string | null | undefined,
+): string | null {
+  const trimmed = (value ?? "").trim();
+  if (
+    !trimmed ||
+    [...trimmed].some((char) => {
+      const code = char.charCodeAt(0);
+      return code <= 0x1f || code === 0x7f;
+    }) ||
+    trimmed.includes("\\")
+  ) {
+    return null;
+  }
+  if (trimmed.startsWith("/") && !trimmed.startsWith("//")) return trimmed;
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      return url.toString();
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+export function canRestorePersistedHomepageSnapshot(
+  status: "missing" | "fresh" | "stale" | "expired" | "unsupported",
+): status is "fresh" | "stale" {
+  return status === "fresh" || status === "stale";
+}
+
 function parseService(value: unknown): Service | null {
   if (!isRecord(value)) return null;
   const id = asString(value.id);
@@ -178,9 +210,9 @@ function parseService(value: unknown): Service | null {
             }
           : { bindPaths: {}, volumeNames: {} },
         repoUrl: asOptionalString(value.settings.repoUrl),
-        autoUpdatePolicy: isRecord(value.settings.autoUpdatePolicy)
-          ? (value.settings.autoUpdatePolicy as AutoUpdatePolicy)
-          : undefined,
+        ...(isRecord(value.settings.autoUpdatePolicy)
+          ? { autoUpdatePolicy: value.settings.autoUpdatePolicy as AutoUpdatePolicy }
+          : {}),
       }
     : null;
   if (!settings) return null;
@@ -235,6 +267,8 @@ function parseSnapshotCard(value: unknown): HomepageSnapshotCard | null {
     href: asString(value.href),
   };
   if (Object.values(required).some((item) => item == null)) return null;
+  const href = normalizeHomepageHref(required.href);
+  if (!href) return null;
   if (typeof value.isDockrev !== "boolean") return null;
   const service = parseService(value.service);
   if (!service) return null;
@@ -300,6 +334,8 @@ function parseLegacyNavSnapshot(value: unknown): LegacyHomepageNavSnapshot | nul
       href: asString(entry.href),
     };
     if (Object.values(required).some((item) => item == null)) return null;
+    const href = normalizeHomepageHref(required.href);
+    if (!href) return null;
     return {
       id: required.id ?? "",
       stackId: required.stackId ?? "",

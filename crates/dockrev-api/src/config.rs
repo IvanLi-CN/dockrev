@@ -10,6 +10,7 @@ pub struct Config {
     pub app_effective_version: String,
     pub http_addr: String,
     pub db_path: PathBuf,
+    pub metrics_db_path: PathBuf,
     pub docker_config_path: Option<PathBuf>,
     pub compose_bin: String,
     pub auth_forward_header_name: HeaderName,
@@ -48,6 +49,19 @@ impl Config {
         let db_path = std::env::var("DOCKREV_DB_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("./data/dockrev.sqlite3"));
+        let metrics_db_path = std::env::var("DOCKREV_METRICS_DB_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                db_path
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new("."))
+                    .join("metrics.sqlite3")
+            });
+        if database_paths_match(&db_path, &metrics_db_path) {
+            return Err(anyhow::anyhow!(
+                "DOCKREV_METRICS_DB_PATH must not point to the same file as DOCKREV_DB_PATH"
+            ));
+        }
 
         let docker_config_path = std::env::var("DOCKREV_DOCKER_CONFIG")
             .ok()
@@ -219,6 +233,7 @@ impl Config {
             app_effective_version,
             http_addr,
             db_path,
+            metrics_db_path,
             docker_config_path,
             compose_bin,
             auth_forward_header_name,
@@ -243,6 +258,139 @@ impl Config {
             update_idempotent_retry_base_ms,
             update_idempotent_retry_max_ms,
         })
+    }
+}
+
+fn database_paths_match(left: &std::path::Path, right: &std::path::Path) -> bool {
+    fn lexical_absolute(path: &std::path::Path) -> PathBuf {
+        let candidate = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(path)
+        };
+        candidate
+            .components()
+            .fold(PathBuf::new(), |mut normalized, component| {
+                use std::path::Component;
+
+                match component {
+                    Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+                    Component::RootDir => normalized.push(std::path::MAIN_SEPARATOR.to_string()),
+                    Component::CurDir => {}
+                    Component::ParentDir => {
+                        normalized.pop();
+                    }
+                    Component::Normal(part) => normalized.push(part),
+                }
+                normalized
+            })
+    }
+
+    fn normalized(path: &std::path::Path) -> PathBuf {
+        let mut candidate = lexical_absolute(path);
+        for _ in 0..40 {
+            if let Ok(resolved) = std::fs::canonicalize(&candidate) {
+                return resolved;
+            }
+
+            let Some(parent) = candidate.parent() else {
+                return candidate;
+            };
+            let Some(file_name) = candidate.file_name() else {
+                return candidate;
+            };
+            let parent = std::fs::canonicalize(parent).unwrap_or_else(|_| lexical_absolute(parent));
+            let leaf = parent.join(file_name);
+            let is_symlink = std::fs::symlink_metadata(&leaf)
+                .map(|metadata| metadata.file_type().is_symlink())
+                .unwrap_or(false);
+            if !is_symlink {
+                return leaf;
+            }
+
+            let target = match std::fs::read_link(&leaf) {
+                Ok(target) => target,
+                Err(_) => return leaf,
+            };
+            candidate = if target.is_absolute() {
+                target
+            } else {
+                parent.join(target)
+            };
+            candidate = lexical_absolute(&candidate);
+        }
+
+        candidate
+    }
+
+    let left = normalized(left);
+    let right = normalized(right);
+    if left == right {
+        return true;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+
+        matches!(
+            (std::fs::metadata(&left), std::fs::metadata(&right)),
+            (Ok(left), Ok(right)) if left.dev() == right.dev() && left.ino() == right.ino()
+        )
+    }
+
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
+#[cfg(test)]
+mod database_path_tests {
+    use super::*;
+
+    #[test]
+    fn database_path_comparison_handles_relative_paths() {
+        assert!(database_paths_match(
+            std::path::Path::new("./data/dockrev.sqlite3"),
+            std::path::Path::new("data/dockrev.sqlite3"),
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn database_path_comparison_rejects_hard_link_aliases() {
+        let root = std::env::temp_dir().join(format!("dockrev-db-path-{}", ulid::Ulid::new()));
+        std::fs::create_dir_all(&root).unwrap();
+        let primary = root.join("dockrev.sqlite3");
+        let metrics = root.join("metrics.sqlite3");
+        std::fs::write(&primary, b"sqlite placeholder").unwrap();
+        std::fs::hard_link(&primary, &metrics).unwrap();
+
+        assert!(database_paths_match(&primary, &metrics));
+
+        std::fs::remove_file(metrics).unwrap();
+        std::fs::remove_file(primary).unwrap();
+        std::fs::remove_dir(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn database_path_comparison_rejects_dangling_symlink_aliases() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!("dockrev-db-path-{}", ulid::Ulid::new()));
+        std::fs::create_dir_all(&root).unwrap();
+        let primary = root.join("dockrev.sqlite3");
+        let metrics = root.join("metrics.sqlite3");
+        symlink("dockrev.sqlite3", &metrics).unwrap();
+
+        assert!(database_paths_match(&primary, &metrics));
+
+        std::fs::remove_file(metrics).unwrap();
+        std::fs::remove_dir(root).unwrap();
     }
 }
 

@@ -323,8 +323,12 @@ fn make_sample(cpu_percent: f64, mem_used_bytes: u64) -> ServiceResourceSample {
         mem_limit_bytes: Some(16_384),
         net_rx_bytes: Some(10_000),
         net_tx_bytes: Some(11_000),
+        net_rx_rate_bps: None,
+        net_tx_rate_bps: None,
         block_read_bytes: Some(12_000),
         block_write_bytes: Some(13_000),
+        block_read_rate_bps: None,
+        block_write_rate_bps: None,
         pids: Some(7),
         container_count: 1,
     }

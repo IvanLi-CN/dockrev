@@ -366,3 +366,22 @@ export const SameTagDigestUpdateVisible: Story = {
     await sleep(120);
   },
 };
+
+export const GlobalTaskReadableLabel: Story = {
+  parameters: {
+    dockrevApiScenario: "overview-jobs-card-global-labels",
+    viewport: { defaultViewport: "dockrevWide" },
+  },
+  render: renderServices("回归：全局任务使用可读标签，不显示内部类型名"),
+  play: async ({ canvasElement }) => {
+    await sleep(260);
+
+    const globalJob = Array.from(
+      canvasElement.querySelectorAll<HTMLElement>(".overviewJobListRow"),
+    ).find((row) => row.textContent?.includes("全部"));
+    expectStory(globalJob, "expected a global discovery task in the operations dashboard");
+    const label = globalJob?.querySelector<HTMLElement>(".overviewJobTitle")?.textContent ?? "";
+    expectStory(label.includes("发现扫描"), "expected the global discovery task to use its readable label");
+    expectStory(!label.includes("discovery"), "expected the internal discovery type to stay out of the visible label");
+  },
+};

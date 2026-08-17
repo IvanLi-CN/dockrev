@@ -391,9 +391,9 @@ pub struct JobListItem {
     pub stack_id: Option<String>,
     pub service_id: Option<String>,
     pub status: String,
-    pub created_at: String,
     pub created_by: String,
     pub reason: String,
+    pub created_at: String,
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
     pub allow_arch_mismatch: bool,
@@ -888,6 +888,41 @@ impl JobListItem {
 #[serde(rename_all = "camelCase")]
 pub struct ListJobsResponse {
     pub jobs: Vec<JobApiListItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobCompactListItem {
+    pub id: String,
+    pub r#type: String,
+    pub scope: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stack_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_id: Option<String>,
+    pub status: String,
+    pub created_by: String,
+    pub reason: String,
+    pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<JobProgress>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_reason: Option<JobResultReason>,
+    pub display_label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_version: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListCompactJobsResponse {
+    pub jobs: Vec<JobCompactListItem>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
 }

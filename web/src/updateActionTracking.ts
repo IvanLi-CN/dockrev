@@ -9,7 +9,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { ApiError, getJob, listJobs, type JobListItem } from './api'
+import { ApiError, getJob, listCompactJobsPage, type CompactJobListItem } from './api'
 import { useManagementEventBatch, type ManagementEvent } from './managementEvents'
 
 export const UPDATE_JOB_SETTLED_EVENT = 'dockrev:update-job-settled'
@@ -89,7 +89,7 @@ export function doesManagementEventInvalidateUpdateSnapshot(event: ManagementEve
   return Boolean(status && (isUpdateJobActiveStatus(status) || event.summary.terminal === true))
 }
 
-function resolveUpdateJobRecency(job: Pick<JobListItem, 'createdAt' | 'startedAt' | 'progress'>): number {
+function resolveUpdateJobRecency(job: Pick<CompactJobListItem, 'createdAt' | 'startedAt' | 'progress'>): number {
   const recencyCandidates = [job.startedAt, job.createdAt, job.progress?.updatedAt]
   for (const value of recencyCandidates) {
     if (typeof value !== 'string') continue
@@ -99,18 +99,9 @@ function resolveUpdateJobRecency(job: Pick<JobListItem, 'createdAt' | 'startedAt
   return Number.NEGATIVE_INFINITY
 }
 
-function resolveUpdateJobTargetVersion(summary: unknown): string | null {
-  if (!summary || typeof summary !== 'object' || Array.isArray(summary)) return null
-  const value = summary as Record<string, unknown>
-  for (const key of ['targetDisplayTag', 'targetTag', 'to']) {
-    if (typeof value[key] === 'string' && value[key].trim()) return value[key].trim()
-  }
-  return null
-}
-
 export function pickLatestActiveUpdateJobs(
   jobs: Array<
-    Pick<JobListItem, 'id' | 'type' | 'scope' | 'stackId' | 'serviceId' | 'status' | 'createdAt' | 'startedAt' | 'progress' | 'summary'>
+    Pick<CompactJobListItem, 'id' | 'type' | 'scope' | 'stackId' | 'serviceId' | 'status' | 'createdAt' | 'startedAt' | 'progress' | 'targetVersion'>
   >,
 ): HydratedActiveUpdateJob[] {
   const latestByTarget = new Map<
@@ -126,7 +117,7 @@ export function pickLatestActiveUpdateJobs(
     const target = resolveUpdateActionTargetKey(job.scope, job.stackId, job.serviceId)
     if (!target) continue
 
-    const targetVersion = resolveUpdateJobTargetVersion(job.summary)
+    const targetVersion = job.targetVersion ?? null
     const candidate = {
       target,
       jobId: job.id,
@@ -148,7 +139,32 @@ export function pickLatestActiveUpdateJobs(
   return Array.from(latestByTarget.values(), (entry) => entry.job)
 }
 
-type SettledUpdateJob = Pick<JobListItem, 'id' | 'scope' | 'stackId' | 'serviceId' | 'status' | 'summary'>
+type CompactJobsPageLoader = (
+  input: Parameters<typeof listCompactJobsPage>[0],
+) => ReturnType<typeof listCompactJobsPage>
+
+export async function loadActiveUpdateJobs(
+  loadPage: CompactJobsPageLoader = listCompactJobsPage,
+): Promise<CompactJobListItem[]> {
+  const loadStatus = async (status: 'queued' | 'running'): Promise<CompactJobListItem[]> => {
+    const jobs: CompactJobListItem[] = []
+    let cursor: string | null = null
+    do {
+      const page = await loadPage({ cursor, limit: 200, status, type: 'update' })
+      jobs.push(...page.jobs)
+      cursor = page.nextCursor ?? null
+    } while (cursor)
+    return jobs
+  }
+
+  const [queuedJobs, runningJobs] = await Promise.all([
+    loadStatus('queued'),
+    loadStatus('running'),
+  ])
+  return [...queuedJobs, ...runningJobs]
+}
+
+type SettledUpdateJob = Pick<CompactJobListItem, 'id' | 'scope' | 'stackId' | 'serviceId' | 'status'>
 
 function toUpdateJobSettledDetail(target: UpdateActionTargetKey, job: SettledUpdateJob): UpdateJobSettledDetail {
   return {
@@ -158,7 +174,7 @@ function toUpdateJobSettledDetail(target: UpdateActionTargetKey, job: SettledUpd
     scope: job.scope,
     stackId: job.stackId ?? null,
     serviceId: job.serviceId ?? null,
-    summary: job.summary,
+    summary: null,
   }
 }
 
@@ -198,7 +214,7 @@ export function resolveTrackedUpdateJobTransition(
 
 export function reconcileTrackedUpdateJobs(
   trackedJobs: Iterable<[UpdateActionTargetKey, ActiveUpdateJob]>,
-  jobs: JobListItem[],
+  jobs: CompactJobListItem[],
 ): UpdateJobSnapshotReconciliation {
   const active = pickLatestActiveUpdateJobs(jobs)
   const jobsById = new Map(jobs.map((job) => [job.id, job]))
@@ -330,33 +346,36 @@ function useProvideUpdateActionTracker(): UpdateActionTracker {
     if (!resyncRequired) return
     const resyncTrackedJobs = async (): Promise<void> => {
       const requestRevision = activeRevisionRef.current
+      const tracked = Array.from(activeByTargetRef.current.entries())
       try {
-        const jobs = await listJobs()
+        const snapshots = await Promise.all(
+          tracked.map(async ([target, trackedJob]) => {
+            try {
+              return { target, jobId: trackedJob.jobId, job: await getJob(trackedJob.jobId) }
+            } catch (error) {
+              return { target, jobId: trackedJob.jobId, error }
+            }
+          }),
+        )
         if (unmountedRef.current) return
         if (!isUpdateJobSnapshotCurrent(requestRevision, activeRevisionRef.current)) {
           void resyncTrackedJobs()
           return
         }
-        const reconciliation = reconcileTrackedUpdateJobs(activeByTargetRef.current.entries(), jobs)
-        for (const job of reconciliation.active) {
-          storeTrackedJob(job.target, job.jobId, job.status)
-        }
-        for (const { target, job } of reconciliation.settled) {
-          publishUpdateJobSettled(toUpdateJobSettledDetail(target, job))
-          clearRunningJob(target, job.id)
-        }
-        for (const { target, jobId } of reconciliation.unresolved) {
-          void getJob(jobId)
-            .then((job) => {
-              if (unmountedRef.current || isUpdateJobActiveStatus(job.status)) return
-              publishUpdateJobSettled(toUpdateJobSettledDetail(target, job))
-              clearRunningJob(target, jobId)
-            })
-            .catch((error: unknown) => {
-              if (!(error instanceof ApiError) || error.status !== 404) return
-              publishUpdateJobSettled(toMissingUpdateJobSettledDetail(target, jobId))
-              clearRunningJob(target, jobId)
-            })
+        for (const snapshot of snapshots) {
+          if ('error' in snapshot) {
+            if (snapshot.error instanceof ApiError && snapshot.error.status === 404) {
+              publishUpdateJobSettled(toMissingUpdateJobSettledDetail(snapshot.target, snapshot.jobId))
+              clearRunningJob(snapshot.target, snapshot.jobId)
+            }
+            continue
+          }
+          if (isUpdateJobActiveStatus(snapshot.job.status)) {
+            storeTrackedJob(snapshot.target, snapshot.job.id, snapshot.job.status)
+            continue
+          }
+          publishUpdateJobSettled(toUpdateJobSettledDetail(snapshot.target, snapshot.job))
+          clearRunningJob(snapshot.target, snapshot.job.id)
         }
       } catch {
         // A later management event or reconnect remains the recovery path.
@@ -371,7 +390,7 @@ function useProvideUpdateActionTracker(): UpdateActionTracker {
     const hydrateActiveJobs = async (): Promise<void> => {
       try {
         const requestRevision = activeRevisionRef.current
-        const jobs = await listJobs()
+        const jobs = await loadActiveUpdateJobs()
         if (cancelled || unmountedRef.current) return
         if (!isUpdateJobSnapshotCurrent(requestRevision, activeRevisionRef.current)) {
           void hydrateActiveJobs()

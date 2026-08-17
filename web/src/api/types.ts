@@ -1,3 +1,8 @@
+import type {
+  ServiceResourceOverviewItem,
+  ServiceResourceOverviewResponse
+} from './serviceResourceTypes'
+
 export type StackStatus = 'healthy' | 'degraded' | 'unknown'
 
 export type StackListItem = {
@@ -580,6 +585,29 @@ export type ListJobsResponse = {
   nextCursor?: string | null
 }
 
+export type CompactJobListItem = {
+  id: string
+  type: string
+  scope: string
+  stackId?: string | null
+  serviceId?: string | null
+  status: string
+  createdBy: string
+  reason: string
+  createdAt: string
+  startedAt?: string | null
+  finishedAt?: string | null
+  progress?: JobProgress | null
+  resultReason?: JobResultReason | null
+  displayLabel: string
+  targetVersion?: string | null
+}
+
+export type ListCompactJobsResponse = {
+  jobs: CompactJobListItem[]
+  nextCursor?: string | null
+}
+
 export type JobResultReason = {
   summary: string
   detail: string
@@ -727,46 +755,14 @@ export type PutSettingsInput = {
 export type ReleaseNotesView = 'original' | 'translated' | 'smart'
 export type ReleaseNotesProvider = 'gitHub' | 'octoRill'
 
-export type ServiceResourceUsageWindow = '3m' | '1h' | '24h'
-
-export type ServiceResourceSample = {
-  sampledAt: string
-  cpuPercent: number
-  memUsedBytes?: number
-  memLimitBytes?: number
-  netRxBytes?: number
-  netTxBytes?: number
-  blockReadBytes?: number
-  blockWriteBytes?: number
-  pids?: number
-  containerCount: number
-}
-
-export type ServiceResourceHistoryResponse = {
-  serviceId: string
-  window: ServiceResourceUsageWindow | string
-  samples: ServiceResourceSample[]
-}
-
-export type ServiceResourceOverviewItem = {
-  serviceId: string
-  sampledAt?: string | null
-  cpuPercent?: number | null
-  memUsedBytes?: number | null
-  memLimitBytes?: number | null
-  netRxRateBps?: number | null
-  netTxRateBps?: number | null
-  stale: boolean
-  sampleCount: number
-}
-
-export type ServiceResourceOverviewResponse = {
-  enabled: boolean
-  window: ServiceResourceUsageWindow | string
-  generatedAt: string
-  staleAfterSeconds: number
-  services: ServiceResourceOverviewItem[]
-}
+export type {
+  ServiceResourceHistoryResponse,
+  ServiceResourceOverviewItem,
+  ServiceResourceOverviewResponse,
+  ServiceResourcePeak,
+  ServiceResourceSample,
+  ServiceResourceUsageWindow
+} from './serviceResourceTypes'
 
 export type HomepageNavItem = {
   stackId: string

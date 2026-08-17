@@ -1,4 +1,5 @@
 import type { MockRouteContext } from '../context'
+import { buildCompactMockJob } from '../shared'
 
 export async function handleJobStateRoutes(ctx: MockRouteContext): Promise<Response | null> {
   const {
@@ -74,7 +75,9 @@ export async function handleJobStateRoutes(ctx: MockRouteContext): Promise<Respo
         : []
       return !(types.size > 0 && !types.has(job.type)) && !(status && job.status !== status) && !(stackId && job.stackId !== stackId) && !(serviceId && job.serviceId !== serviceId && !targetServiceIds.includes(serviceId))
     }).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
-    const jobs = filtered.slice(start, start + limit)
+    const jobs = filtered
+      .slice(start, start + limit)
+      .map((job) => (url?.searchParams.get('view') === 'compact' ? buildCompactMockJob(job, f) : job))
     const nextCursor = start + limit < filtered.length ? `mock:${start + limit}` : null
     return json({ jobs, nextCursor })
   }

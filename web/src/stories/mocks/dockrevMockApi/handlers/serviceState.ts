@@ -17,6 +17,7 @@ import {
 } from '../releaseNotes'
 import {
   buildResourceHistorySamples,
+  buildResourceHistoryPeaks,
   buildResourceSsePayload,
   isMaskLiteral,
   isNotificationTestChannel,
@@ -52,7 +53,6 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     buildMockGitHubReleasesDataset,
     buildMockGitHubReleasesResponse,
   } = ctx
-
   const jobStateResponse = await handleJobStateRoutes(ctx)
   if (jobStateResponse) return jobStateResponse
 
@@ -81,7 +81,6 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
   }
 
   if (method === 'GET' && urlPath === '/api/ignores') return json({ rules: f.ignores })
-
   if (method === 'POST' && urlPath === '/api/ignores') {
     const parsed = parseJsonBody(init?.body)
     const record = isRecord(parsed) ? parsed : {}
@@ -828,12 +827,14 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     const samples =
       scenario === 'service-detail-resource-monitor-empty'
         ? []
-        : buildResourceHistorySamples(serviceId, parsedWindow.seconds)
+        : buildResourceHistorySamples(serviceId, parsedWindow.seconds, parsedWindow.window)
 
+    const peaks = ['7d', '30d'].includes(parsedWindow.window) ? buildResourceHistoryPeaks(samples) : undefined
     return json({
       serviceId,
       window: parsedWindow.window,
       samples,
+      ...(peaks ? { resolutionSeconds: parsedWindow.window === '7d' ? 60 : 300, peaks } : {}),
     })
   }
 

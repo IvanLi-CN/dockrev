@@ -36,11 +36,15 @@ import { navigate } from "../routes";
 import { buildUpdateServiceTarget } from "../updateTargets";
 import { isDockrevAppDemoRuntime } from "../demo/runtime";
 import {
+  canRestorePersistedHomepageSnapshot,
   homepageSnapshotFromResponse,
+  markHomepageSnapshotResourceStale,
+  normalizeHomepageHref,
   readHomepageSnapshot,
   writeHomepageSnapshot,
   type HomepageSnapshotCard,
 } from "./homepageSnapshot";
+import { isCurrentHomepageRefresh } from "./homepageRefreshState";
 import {
   Button,
   Dialog,
@@ -147,24 +151,11 @@ function balanceHomepageGroups(
   return populatedColumns.length > 0 ? populatedColumns : [[]];
 }
 
-function normalizeHomepageHref(
-  value: string | null | undefined,
-): string | null {
-  const trimmed = (value ?? "").trim();
-  if (!trimmed) return null;
-  if (trimmed.startsWith("/") && !trimmed.startsWith("//")) return trimmed;
-  try {
-    const url = new URL(trimmed);
-    if (url.protocol === "http:" || url.protocol === "https:")
-      return url.toString();
-  } catch {
-    return null;
-  }
-  return null;
-}
-
 function snapshotCardsToNavCards(cards: HomepageSnapshotCard[]): HomepageNavCard[] {
-  return cards.map((card) => ({ ...card, source: "snapshot" }));
+  return cards.flatMap((card) => {
+    const href = normalizeHomepageHref(card.href);
+    return href ? [{ ...card, source: "snapshot" as const }] : [];
+  });
 }
 
 function navCardsToSnapshot(cards: HomepageNavCard[]): HomepageSnapshotCard[] {
@@ -435,6 +426,8 @@ export function OverviewPage(props: {
     return snapshotCardsToNavCards(snapshot.cards);
   });
   const [liveLoaded, setLiveLoaded] = useState(false);
+  const liveLoadedRef = useRef(false);
+  const refreshRequestIdRef = useRef(0);
   const [, setPersistedSnapshotStatus] = useState<
     "missing" | "fresh" | "stale" | "expired" | "unsupported"
   >("missing");
@@ -464,6 +457,7 @@ export function OverviewPage(props: {
         HOMEPAGE_PERSISTED_SNAPSHOT_KEY,
       );
       if (cancelled) return;
+      if (liveLoadedRef.current) return;
       setPersistedSnapshotStatus(persisted.status);
       setPersistedSnapshotFetchedAt(persisted.record?.fetchedAt ?? null);
 
@@ -485,14 +479,29 @@ export function OverviewPage(props: {
         return;
       }
 
-      if (persisted.status !== "fresh") return;
+      if (
+        !canRestorePersistedHomepageSnapshot(persisted.status) ||
+        persisted.record === null
+      ) {
+        return;
+      }
       const payload = persisted.record.payload;
+      const resourceSummary =
+        persisted.status === "stale"
+          ? markHomepageSnapshotResourceStale({
+              version: 2,
+              generatedAt: payload.generatedAt,
+              lastCheckAt: payload.lastCheckAt,
+              resourceSummary: payload.resourceSummary,
+              cards: payload.cards,
+            }).resourceSummary
+          : payload.resourceSummary;
       setHasCachedNavSnapshot(true);
       setCachedCards(snapshotCardsToNavCards(payload.cards));
       setCards((current) =>
         current.length > 0 ? current : snapshotCardsToNavCards(payload.cards),
       );
-      setResourceOverview(payload.resourceSummary);
+      setResourceOverview(resourceSummary);
       setResourceFromCache(true);
     })();
     return () => {
@@ -501,10 +510,15 @@ export function OverviewPage(props: {
   }, []);
 
   const refresh = useCallback(async () => {
+    const requestId = ++refreshRequestIdRef.current;
     setRefreshing(true);
     try {
       const payload = await getHomepageNav();
+      if (!isCurrentHomepageRefresh(requestId, refreshRequestIdRef.current)) {
+        return;
+      }
       const liveCards = homepageResponseToCards(payload.items);
+      liveLoadedRef.current = true;
       onLastScanHint(payload.lastCheckAt ?? undefined);
       setResourceOverview(payload.resourceSummary);
       setResourceFromCache(false);
@@ -535,12 +549,17 @@ export function OverviewPage(props: {
       setCachedCards(snapshotCardsToNavCards(snapshot.cards));
       setHasCachedNavSnapshot(true);
     } catch (value: unknown) {
+      if (!isCurrentHomepageRefresh(requestId, refreshRequestIdRef.current)) {
+        return;
+      }
       setResourceError(
         value instanceof Error ? value.message : String(value),
       );
       throw value;
     } finally {
-      setRefreshing(false);
+      if (isCurrentHomepageRefresh(requestId, refreshRequestIdRef.current)) {
+        setRefreshing(false);
+      }
     }
   }, [onLastScanHint]);
 

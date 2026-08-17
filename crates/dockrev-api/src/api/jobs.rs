@@ -9,12 +9,17 @@ pub(super) async fn list_jobs(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<ListJobsQuery>,
-) -> Result<Json<ListJobsResponse>, ApiError> {
+) -> Result<Response, ApiError> {
     let _user = require_user(&state, &headers).await?;
     let limit = query.limit.unwrap_or(100);
     if !(1..=200).contains(&limit) {
         return Err(ApiError::invalid_argument(
             "limit must be between 1 and 200",
+        ));
+    }
+    if !matches!(query.view.as_deref(), None | Some("compact")) {
+        return Err(ApiError::invalid_argument(
+            "view must be compact when provided",
         ));
     }
     let cursor = query
@@ -34,17 +39,31 @@ pub(super) async fn list_jobs(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let filters = crate::db::JobListFilters {
+        types,
+        status: query.status.clone().filter(|value| !value.is_empty()),
+        stack_id: query.stack_id.clone().filter(|value| !value.is_empty()),
+        service_id: query.service_id.clone().filter(|value| !value.is_empty()),
+        cursor,
+        limit,
+    };
+    if query.view.as_deref() == Some("compact") {
+        let (jobs, next_cursor) = state
+            .operational_reads
+            .list_compact_jobs(filters)
+            .await
+            .map_err(map_internal)?;
+        return Ok(Json(ListCompactJobsResponse {
+            jobs,
+            next_cursor: next_cursor.map(encode_jobs_cursor),
+        })
+        .into_response());
+    }
+
     let started_at = std::time::Instant::now();
     let page = state
         .db
-        .list_jobs_page(crate::db::JobListFilters {
-            types,
-            status: query.status.clone().filter(|value| !value.is_empty()),
-            stack_id: query.stack_id.clone().filter(|value| !value.is_empty()),
-            service_id: query.service_id.clone().filter(|value| !value.is_empty()),
-            cursor,
-            limit,
-        })
+        .list_jobs_page(filters)
         .await
         .map_err(map_internal)?;
     let elapsed = started_at.elapsed();
@@ -64,7 +83,8 @@ pub(super) async fn list_jobs(
     Ok(Json(ListJobsResponse {
         jobs: page.jobs.into_iter().map(|j| j.into_api()).collect(),
         next_cursor: page.next_cursor.map(encode_jobs_cursor),
-    }))
+    })
+    .into_response())
 }
 
 fn should_emit_slow_jobs_list_warning(
@@ -112,6 +132,8 @@ pub(super) struct ListJobsQuery {
     stack_id: Option<String>,
     #[serde(default)]
     service_id: Option<String>,
+    #[serde(default)]
+    view: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

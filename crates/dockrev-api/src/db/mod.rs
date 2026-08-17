@@ -37,8 +37,12 @@ pub(crate) use new_version_discoveries::{
     candidate_tag_allows_settled_fallback, canonical_candidate_identity_tag,
     canonical_visible_version_tag, collect_new_version_discovery_candidates_from_rows,
     count_new_version_discoveries_from_rows, infer_stable_candidate_display_tag_from_rows,
-    new_version_discovery_notification_targets, normalize_discovery_key,
-    stable_candidate_display_tag, stable_candidate_display_tag_from_tags,
+    list_new_version_discoveries_for_services_conn, new_version_discovery_notification_targets,
+    normalize_discovery_key, stable_candidate_display_tag, stable_candidate_display_tag_from_tags,
+};
+pub(crate) use new_version_notifications::{
+    NotificationTargetKey, StableCandidateDisplayTagsByNotificationTarget,
+    list_stable_candidate_display_tags_for_notification_targets_conn,
 };
 
 use crate::{
@@ -314,7 +318,7 @@ pub struct ServiceNewVersionTimelineContext {
     pub candidate_digest: Option<String>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ServiceResourceSampleInput {
     pub service_id: String,
     pub sampled_at: String,
@@ -336,6 +340,7 @@ pub struct ServiceResourceTarget {
     pub compose_project: String,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct ServiceResourceLatestSampleRow {
     pub service_id: String,
@@ -350,10 +355,68 @@ pub struct ServiceResourceLatestSampleRow {
     pub prev_net_tx_bytes: Option<u64>,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct ServiceResourceRecentCountRow {
     pub service_id: String,
     pub sample_count: u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct LegacyMetricSampleRow {
+    pub id: i64,
+    pub sample: ServiceResourceSampleInput,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LegacyMetricLatestSampleRow {
+    pub legacy_sample_id: Option<i64>,
+    pub service_id: String,
+    pub sampled_at: String,
+    pub cpu_percent: f64,
+    pub mem_used_bytes: Option<u64>,
+    pub mem_limit_bytes: Option<u64>,
+    pub net_rx_bytes: Option<u64>,
+    pub net_tx_bytes: Option<u64>,
+    pub block_read_bytes: Option<u64>,
+    pub block_write_bytes: Option<u64>,
+    pub pids: Option<u64>,
+    pub container_count: u32,
+    pub prev_sampled_at: Option<String>,
+    pub prev_net_rx_bytes: Option<u64>,
+    pub prev_net_tx_bytes: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LegacyMetricFingerprint {
+    pub max_id: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LegacyMetricRevision {
+    pub raw_revision: u64,
+    pub latest_revision: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LegacyMetricCoverageRow {
+    pub service_id: String,
+    pub raw_sample_count: u64,
+    pub latest_sampled_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LegacyMetricRollupCoverageRow {
+    pub service_id: String,
+    pub resolution_seconds: u32,
+    pub bucket_start: String,
+    pub sample_count: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct MetricsMigrationState {
+    pub state: String,
+    pub target_identity: Option<String>,
 }
 
 #[derive(Clone, Debug)]
