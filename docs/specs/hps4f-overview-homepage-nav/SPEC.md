@@ -18,7 +18,7 @@
 ### Goals
 
 - 为首页引入单次 read model：新增 `GET /api/homepage/nav`，一次返回首页卡片、顶部资源摘要、更新时间与更新状态输入字段，去掉首页 `1 + N` 客户端扇出。
-- 为资源摘要引入轻量持久化 latest 表 `service_resource_latest_samples`，由采样写入时同步 upsert 最新样本与前一条网络计数；首页与 `/api/services/resource-usage/overview` 都读取该小表，不再在请求时扫描历史表。
+- 为资源摘要引入轻量持久化 latest 表 `service_resource_latest_samples`，由采样写入时同步 upsert 最新样本与前一条网络计数；首页与 `/api/services/resource-usage/overview` 都读取该小表，不再在请求时扫描历史表。legacy latest 投影刷新必须使用指标库受控写入事务，读连接开启 `query_only` 与外键约束，避免内部修复被误判为未受管 target 写入。
 - 首页热读将主库导航元数据、资源设置、镜像快照和发现记录全部经受限 query-only 读模型，与独立指标库的 latest/计数并行读取并按 `serviceId` 合并；请求路径不得调度快照刷新工作或回退到命令侧 `Db`。
 - 指标库迁移首次以稳定排序行哈希和行数完成验证；迁移后的 legacy raw 由稳定内容签名与 GC 墓碑保护，latest 以显式导入来源标记协调并逐行校验，重启时只重算现存 raw 所覆盖的派生值，同时保留较新的运行时 latest 与主库当前 active service 的 legacy latest，即使其 raw 已过期；非 active service 的 legacy latest 不得回灌，恢复流程不能复活或删除既有留存数据。
 - 将 SQLite 运行时固定切到 `WAL` 并配置非零 `busy_timeout`，把“读请求因为锁竞争超时/失败”从运维经验变成应用默认配置。
@@ -86,6 +86,7 @@
   - `PRAGMA foreign_keys = ON`
   - `PRAGMA journal_mode = WAL`
   - `PRAGMA busy_timeout = 5000`
+- 指标库 target revision 与受信 revision 不一致时必须进入深度验证；空 target 中出现未受管 native raw/latest 行也必须被识别为不可信，不能以“当前 native 行数为零”跳过恢复保护。
 - 首页图标位必须固定尺寸，失败时立即回退统一默认图标；相同坏 URL 在同一浏览器会话里不得重复触发慢失败请求。
 - 首页卡片状态徽标与单服务更新按钮语义必须保持不回退：
   - 新标签打开 `homepage.href`
