@@ -27,6 +27,23 @@ pub(super) fn metrics_target_identity(path: &Path) -> String {
 
 impl MetricsStore {
     pub async fn migrate_from_legacy(&self, db: &Db) -> anyhow::Result<()> {
+        self.migrate_from_legacy_inner(db, None).await
+    }
+
+    pub async fn migrate_from_legacy_with_active_services(
+        &self,
+        db: &Db,
+        active_service_ids: &BTreeSet<String>,
+    ) -> anyhow::Result<()> {
+        self.migrate_from_legacy_inner(db, Some(active_service_ids))
+            .await
+    }
+
+    async fn migrate_from_legacy_inner(
+        &self,
+        db: &Db,
+        active_service_ids: Option<&BTreeSet<String>>,
+    ) -> anyhow::Result<()> {
         let state = db.metrics_migration_state().await?;
         let migration_complete = state.as_ref().is_some_and(|state| {
             state.state == "complete"
@@ -61,6 +78,7 @@ impl MetricsStore {
                     self.upsert_legacy_latest_samples(filter_pruned_legacy_latest(
                         legacy_latest,
                         &pruned_legacy_ids,
+                        active_service_ids,
                     ))
                     .await?;
                     if pruned_legacy_ids.is_empty() {
@@ -103,6 +121,7 @@ impl MetricsStore {
         self.upsert_legacy_latest_samples(filter_pruned_legacy_latest(
             legacy_latest,
             &retained_pruned_legacy_ids,
+            active_service_ids,
         ))
         .await?;
 
@@ -145,11 +164,14 @@ impl MetricsStore {
 fn filter_pruned_legacy_latest(
     rows: Vec<crate::db::LegacyMetricLatestSampleRow>,
     pruned_legacy_ids: &BTreeSet<i64>,
+    active_service_ids: Option<&BTreeSet<String>>,
 ) -> Vec<crate::db::LegacyMetricLatestSampleRow> {
     rows.into_iter()
         .filter(|row| {
-            !row.legacy_sample_id
-                .is_some_and(|id| pruned_legacy_ids.contains(&id))
+            active_service_ids.is_some_and(|ids| ids.contains(&row.service_id))
+                || !row
+                    .legacy_sample_id
+                    .is_some_and(|id| pruned_legacy_ids.contains(&id))
         })
         .collect()
 }

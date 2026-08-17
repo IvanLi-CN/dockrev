@@ -87,6 +87,42 @@ async fn metrics_store_migration_preserves_legacy_latest_after_raw_expiry() {
 }
 
 #[tokio::test]
+async fn metrics_store_migration_preserves_active_latest_after_raw_retention() {
+    let main_path = temp_path("metrics-migration-active-latest-main");
+    let metrics_path = temp_path("metrics-migration-active-latest-target");
+    let db = Db::open(&main_path).await.unwrap();
+    db.insert_legacy_metric_fixture(&[sample(
+        "svc-active-stale",
+        "2026-08-01T12:00:00Z",
+        42.0,
+        4_000,
+    )])
+    .await
+    .unwrap();
+
+    let metrics = MetricsStore::open(&metrics_path).await.unwrap();
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    metrics
+        .gc(&BTreeSet::from(["svc-active-stale".to_string()]))
+        .await
+        .unwrap();
+    assert_eq!(metrics.pruned_legacy_ids().await.unwrap().len(), 1);
+
+    metrics
+        .migrate_from_legacy_with_active_services(
+            &db,
+            &BTreeSet::from(["svc-active-stale".to_string()]),
+        )
+        .await
+        .unwrap();
+
+    let latest = metrics.list_latest_samples().await.unwrap();
+    assert_eq!(latest.len(), 1);
+    assert_eq!(latest[0].service_id, "svc-active-stale");
+    assert_eq!(latest[0].cpu_percent, Some(42.0));
+}
+
+#[tokio::test]
 async fn metrics_store_migration_restart_preserves_rollup_across_raw_retention_cutoff() {
     let main_path = temp_path("metrics-migration-rollup-retention-main");
     let metrics_path = temp_path("metrics-migration-rollup-retention-target");

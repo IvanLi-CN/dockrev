@@ -95,7 +95,10 @@ async fn main() -> anyhow::Result<()> {
     let bind = config.http_addr.clone();
     let db = db::Db::open(&config.db_path).await?;
     let metrics = metrics_store::MetricsStore::open(&config.metrics_db_path).await?;
-    metrics.migrate_from_legacy(&db).await?;
+    let active_service_ids = db.list_active_service_ids_for_metrics().await?;
+    metrics
+        .migrate_from_legacy_with_active_services(&db, &active_service_ids)
+        .await?;
     let operational_reads =
         operational_read_model::OperationalReadModel::open(&config.db_path).await?;
     let registry = std::sync::Arc::new(registry::HttpRegistryClient::new(
