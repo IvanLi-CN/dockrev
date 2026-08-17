@@ -71,6 +71,32 @@ def icon_variant(theme: str, include_background: bool) -> ET.Element:
     return root
 
 
+def maskable_icon_variant() -> ET.Element:
+    """Place the dark product mark in a platform-owned, opaque application canvas."""
+    source = icon_variant("dark", include_background=False)
+    root = ET.Element(
+        svg_tag("svg"),
+        {
+            "viewBox": "0 0 1024 1024",
+            "role": "img",
+            "aria-labelledby": "title desc",
+        },
+    )
+    title = ET.SubElement(root, svg_tag("title"), {"id": "title"})
+    title.text = "Dockrev maskable icon"
+    desc = ET.SubElement(root, svg_tag("desc"), {"id": "desc"})
+    desc.text = "Dockrev product mark inside a platform-safe opaque application canvas."
+    ET.SubElement(root, svg_tag("rect"), {"width": "1024", "height": "1024", "fill": "#010e2d"})
+
+    # The transparent mark's real alpha bounds are 777x741 on its 1024 canvas.
+    # This transform centers a 60% max-edge foreground without baking system chrome.
+    mark = ET.SubElement(root, svg_tag("g"), {"transform": "translate(91 110) scale(0.7906)"})
+    for child in list(source):
+        if child.tag not in {svg_tag("title"), svg_tag("desc")}:
+            mark.append(copy.deepcopy(child))
+    return root
+
+
 def logo_variant(theme: str) -> ET.Element:
     root = ET.Element(
         svg_tag("svg"),
@@ -148,16 +174,18 @@ def copy_to(path: Path, destinations: list[Path]) -> None:
         shutil.copyfile(path, destination)
 
 
-def generate_svg_assets() -> tuple[Path, Path, Path]:
+def generate_svg_assets() -> tuple[Path, Path, Path, Path]:
     icon_dark = GENERATED_DIR / "dockrev-icon-dark.svg"
     icon_light = GENERATED_DIR / "dockrev-icon-light.svg"
     icon_square = GENERATED_DIR / "dockrev-icon-square.svg"
+    icon_maskable = GENERATED_DIR / "dockrev-icon-maskable.svg"
     logo_dark = GENERATED_DIR / "dockrev-logo-dark.svg"
     logo_light = GENERATED_DIR / "dockrev-logo-light.svg"
 
     write_svg(icon_variant("dark", include_background=False), icon_dark)
     write_svg(icon_variant("light", include_background=False), icon_light)
     write_svg(icon_variant("dark", include_background=True), icon_square)
+    write_svg(maskable_icon_variant(), icon_maskable)
     write_svg(logo_variant("dark"), LOGO_SOURCE)
     write_svg(logo_variant("dark"), logo_dark)
     write_svg(logo_variant("light"), logo_light)
@@ -200,15 +228,18 @@ def generate_svg_assets() -> tuple[Path, Path, Path]:
             DOCS_PUBLIC_DIR / "dockrev-logo-light.svg",
         ],
     )
-    return icon_dark, icon_square, logo_dark
+    return icon_dark, icon_square, icon_maskable, logo_dark
 
 
-def generate_raster_assets(icon_dark: Path, icon_square: Path, logo_dark: Path) -> None:
+def generate_raster_assets(icon_dark: Path, icon_square: Path, icon_maskable: Path, logo_dark: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="dockrev-brand-") as temp_dir:
         temp = Path(temp_dir)
         icon_128 = temp / "icon-128.png"
         icon_180 = temp / "icon-180.png"
         icon_192 = temp / "icon-192.png"
+        maskable_icon_180 = temp / "maskable-icon-180.png"
+        maskable_icon_192 = temp / "maskable-icon-192.png"
+        maskable_icon_512 = temp / "maskable-icon-512.png"
         icon_256 = temp / "icon-256.png"
         icon_512 = temp / "icon-512.png"
         icon_1024_transparent = temp / "icon-transparent-1024.png"
@@ -222,6 +253,9 @@ def generate_raster_assets(icon_dark: Path, icon_square: Path, logo_dark: Path) 
         render_svg(icon_square, icon_192, 192, 192)
         render_svg(icon_square, icon_256, 256, 256)
         render_svg(icon_square, icon_512, 512, 512)
+        render_svg(icon_maskable, maskable_icon_180, 180, 180)
+        render_svg(icon_maskable, maskable_icon_192, 192, 192)
+        render_svg(icon_maskable, maskable_icon_512, 512, 512)
         render_svg(icon_dark, icon_1024_transparent, 1024, 1024)
         render_svg(icon_square, icon_2048, 2048, 2048)
         render_svg(logo_dark, logo_1280, 1280, 365)
@@ -293,10 +327,12 @@ def generate_raster_assets(icon_dark: Path, icon_square: Path, logo_dark: Path) 
                 DOCS_PUBLIC_DIR / "dockrev-icon.png",
             ],
         )
-        copy_to(icon_180, [WEB_PUBLIC_DIR / "apple-touch-icon.png", DOCS_PUBLIC_DIR / "apple-touch-icon.png"])
+        copy_to(maskable_icon_180, [WEB_PUBLIC_DIR / "apple-touch-icon.png", DOCS_PUBLIC_DIR / "apple-touch-icon.png"])
         copy_to(icon_192, [WEB_PUBLIC_DIR / "pwa-192.png"])
         copy_to(icon_256, [WEB_PUBLIC_DIR / "favicon.png", DOCS_PUBLIC_DIR / "favicon.png"])
         copy_to(icon_512, [WEB_PUBLIC_DIR / "pwa-512.png"])
+        copy_to(maskable_icon_192, [WEB_PUBLIC_DIR / "pwa-maskable-192.png"])
+        copy_to(maskable_icon_512, [WEB_PUBLIC_DIR / "pwa-maskable-512.png"])
         copy_to(favicon_ico, [WEB_PUBLIC_DIR / "favicon.ico", DOCS_PUBLIC_DIR / "favicon.ico"])
 
 
@@ -611,8 +647,8 @@ def main() -> None:
         raise RuntimeError(f"Missing required commands: {', '.join(missing)}")
     if not SOCIAL_FONT.exists():
         raise RuntimeError(f"Missing bundled social preview font: {SOCIAL_FONT}")
-    icon_dark, icon_square, logo_dark = generate_svg_assets()
-    generate_raster_assets(icon_dark, icon_square, logo_dark)
+    icon_dark, icon_square, icon_maskable, logo_dark = generate_svg_assets()
+    generate_raster_assets(icon_dark, icon_square, icon_maskable, logo_dark)
     generate_social_preview()
     generate_product_poster()
     generate_contact_sheet()

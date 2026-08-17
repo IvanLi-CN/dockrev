@@ -4,7 +4,7 @@
 
 - `vite-plugin-pwa` 已接入 `injectManifest`，`web/src/sw.ts` 统一承载低优先级 precache、全部正式路由的 app-shell fallback、Push 与通知点击回跳。
 - app bootstrap 已全局注册 service worker；Settings 页的 Web Push 订阅路径改为复用全局 worker，不再自行注册临时 `public/sw.js`。
-- 已新增 installability 所需的 `manifest.webmanifest`、`theme-color`、`apple-touch-icon`、`pwa-192.png` 与 `pwa-512.png`。
+- 已新增 installability 所需的 `manifest.webmanifest`、`theme-color`、regular `pwa-192.png` / `pwa-512.png`，以及独立的 maskable/Apple touch 派生物；Vite 从发生变化的安装资源字节计算 URL 版本。
 - 已实现全局 PWA 更新状态机：页面激活/focus/visible 时更新检查、可见态每小时轮询、`updatefound -> downloading`、仅以 Workbox `waiting -> ready` 作为完整缓存门禁，以及失败重试。
 - 已实现 single-flight 更新激活：手动“立即更新”和下一次 pathname 导航复用同一 `SKIP_WAITING` 请求，先提交目标 URL 再由 controllerchange 重载；查询参数和内部抽屉状态不会触发。
 - 已落统一只读快照层 `readonlySnapshotCache.ts`，并把首页旧 `localStorage` 快照迁移桥接到 IndexedDB。
@@ -22,6 +22,7 @@
 ## Validation
 
 - `bun run build`
+- `bun run test:pwa-assets`
 - `bun run lint`
 - `bun run build-storybook`
 - `bun run storybook:screenshots -- --only layouts-appshell--update-ready-bubble,layouts-appshell--update-ready-bubble-mobile`

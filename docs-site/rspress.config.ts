@@ -1,3 +1,7 @@
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'rspress/config';
 
 function normalizeBase(base: string | undefined): string {
@@ -8,6 +12,11 @@ function normalizeBase(base: string | undefined): string {
 }
 
 const docsBase = normalizeBase(process.env.DOCS_BASE);
+const docsRoot = resolve(fileURLToPath(new URL('.', import.meta.url)), 'docs');
+const appleTouchIconVersion = createHash('sha256')
+  .update(readFileSync(resolve(docsRoot, 'public', 'apple-touch-icon.png')))
+  .digest('hex')
+  .slice(0, 12);
 const withDocsBase = (assetPath: string): string => {
   const normalizedAssetPath = assetPath.startsWith('/') ? assetPath.slice(1) : assetPath;
   return `${docsBase}${normalizedAssetPath}`;
@@ -28,7 +37,7 @@ export default defineConfig({
     ['link', { rel: 'icon', type: 'image/svg+xml', href: withDocsBase('favicon.svg') }],
     ['link', { rel: 'icon', type: 'image/png', href: withDocsBase('favicon.png') }],
     ['link', { rel: 'icon', href: withDocsBase('favicon.ico'), sizes: 'any' }],
-    ['link', { rel: 'apple-touch-icon', href: withDocsBase('apple-touch-icon.png') }],
+    ['link', { rel: 'apple-touch-icon', href: `${withDocsBase('apple-touch-icon.png')}?v=${appleTouchIconVersion}` }],
     ['meta', { property: 'og:title', content: 'Dockrev' }],
     ['meta', { property: 'og:description', content: 'Self-hosted Docker/Compose update manager' }],
     ['meta', { property: 'og:image', content: withDocsBase('dockrev-social-preview.png') }],
