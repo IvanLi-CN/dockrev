@@ -50,10 +50,24 @@ impl MetricsStore {
                 r#"SELECT
                     (target.raw_revision != target.trusted_raw_revision
                         OR native.raw_row_count != native.trusted_raw_row_count)
-                       ,
+                       AND (
+                           native.raw_row_count != 0
+                           OR native.trusted_raw_row_count != 0
+                           OR EXISTS (
+                               SELECT 1 FROM service_resource_samples
+                               WHERE legacy_id IS NULL
+                           )
+                       ),
                     (target.latest_revision != target.trusted_latest_revision
                         OR native.latest_row_count != native.trusted_latest_row_count)
-                       ,
+                       AND (
+                           native.latest_row_count != 0
+                           OR native.trusted_latest_row_count != 0
+                           OR EXISTS (
+                               SELECT 1 FROM service_resource_latest_samples
+                               WHERE legacy_source != 1
+                           )
+                       ),
                      native.has_pruned_raw
                    FROM metrics_target_revision AS target
                    JOIN metrics_native_integrity AS native ON native.id = target.id

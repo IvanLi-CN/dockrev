@@ -1,7 +1,12 @@
 use anyhow::Context as _;
 use rusqlite::{TransactionBehavior, params};
 
-use super::{MetricsStore, target_integrity::trust_metrics_target_tx};
+use super::{
+    MetricsStore,
+    target_integrity::{
+        begin_managed_metrics_write_tx, end_managed_metrics_write_tx, trust_metrics_target_tx,
+    },
+};
 
 impl MetricsStore {
     pub(super) async fn sync_legacy_latest_samples(
@@ -10,6 +15,7 @@ impl MetricsStore {
     ) -> anyhow::Result<()> {
         self.writer_call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            begin_managed_metrics_write_tx(&tx)?;
             tx.execute(
                 "DELETE FROM service_resource_latest_samples WHERE legacy_source = 1",
                 [],
@@ -57,6 +63,7 @@ impl MetricsStore {
                     ],
                 )?;
             }
+            end_managed_metrics_write_tx(&tx)?;
             trust_metrics_target_tx(&tx)?;
             tx.commit()?;
             Ok(())

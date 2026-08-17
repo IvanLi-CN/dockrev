@@ -520,7 +520,7 @@ async fn metrics_store_migration_rejects_legacy_raw_changes_after_retention() {
 }
 
 #[tokio::test]
-async fn metrics_store_migration_rejects_corrupted_retained_legacy_content() {
+async fn metrics_store_migration_repairs_corrupted_retained_legacy_content() {
     let main_path = temp_path("metrics-migration-corrupted-retained-legacy-main");
     let metrics_path = temp_path("metrics-migration-corrupted-retained-legacy-target");
     let db = Db::open(&main_path).await.unwrap();
@@ -551,15 +551,13 @@ async fn metrics_store_migration_rejects_corrupted_retained_legacy_content() {
         .await
         .unwrap();
 
-    assert!(metrics.migrate_from_legacy(&db).await.is_err());
-    assert_eq!(
-        db.metrics_migration_state()
-            .await
-            .unwrap()
-            .as_ref()
-            .map(|state| state.state.as_str()),
-        Some("copying")
-    );
+    metrics.migrate_from_legacy(&db).await.unwrap();
+    let history = metrics
+        .history_since("svc-a", "1970-01-01T00:00:00Z", None)
+        .await
+        .unwrap();
+    assert_eq!(history.samples.len(), 1);
+    assert_eq!(history.samples[0].cpu_percent, 10.0);
 }
 
 #[tokio::test]

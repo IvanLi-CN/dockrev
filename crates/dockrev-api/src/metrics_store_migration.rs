@@ -181,7 +181,7 @@ impl MetricsStore {
             }
             after_id = batch.last().map(|row| row.id).unwrap_or(after_id);
             for row in &batch {
-                if retained_pruned_legacy_ids.contains(&row.id) {
+                if !retained_pruned_legacy_ids.contains(&row.id) {
                     retained_legacy_samples.insert(row.id, row.sample.clone());
                 }
             }
