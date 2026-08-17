@@ -44,6 +44,7 @@ import {
   writeHomepageSnapshot,
   type HomepageSnapshotCard,
 } from "./homepageSnapshot";
+import { isCurrentHomepageRefresh } from "./homepageRefreshState";
 import {
   Button,
   Dialog,
@@ -426,6 +427,7 @@ export function OverviewPage(props: {
   });
   const [liveLoaded, setLiveLoaded] = useState(false);
   const liveLoadedRef = useRef(false);
+  const refreshRequestIdRef = useRef(0);
   const [, setPersistedSnapshotStatus] = useState<
     "missing" | "fresh" | "stale" | "expired" | "unsupported"
   >("missing");
@@ -508,9 +510,13 @@ export function OverviewPage(props: {
   }, []);
 
   const refresh = useCallback(async () => {
+    const requestId = ++refreshRequestIdRef.current;
     setRefreshing(true);
     try {
       const payload = await getHomepageNav();
+      if (!isCurrentHomepageRefresh(requestId, refreshRequestIdRef.current)) {
+        return;
+      }
       const liveCards = homepageResponseToCards(payload.items);
       liveLoadedRef.current = true;
       onLastScanHint(payload.lastCheckAt ?? undefined);
@@ -543,12 +549,17 @@ export function OverviewPage(props: {
       setCachedCards(snapshotCardsToNavCards(snapshot.cards));
       setHasCachedNavSnapshot(true);
     } catch (value: unknown) {
+      if (!isCurrentHomepageRefresh(requestId, refreshRequestIdRef.current)) {
+        return;
+      }
       setResourceError(
         value instanceof Error ? value.message : String(value),
       );
       throw value;
     } finally {
-      setRefreshing(false);
+      if (isCurrentHomepageRefresh(requestId, refreshRequestIdRef.current)) {
+        setRefreshing(false);
+      }
     }
   }, [onLastScanHint]);
 
