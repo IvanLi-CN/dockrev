@@ -112,7 +112,7 @@ def assert_maskable(path: Path, expected_size: int) -> None:
         if max(abs(red - BACKGROUND[0]), abs(green - BACKGROUND[1]), abs(blue - BACKGROUND[2])) >= 16
     ]
     assert foreground, f"{path}: foreground is missing"
-    xs, ys = zip(*foreground, strict=True)
+    xs, ys = zip(*foreground)
     ratio = max(max(xs) - min(xs) + 1, max(ys) - min(ys) + 1) / width
     assert 0.58 <= ratio <= 0.62, f"{path}: foreground ratio {ratio:.3f} is outside 58%-62%"
     center = width / 2
