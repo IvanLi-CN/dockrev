@@ -145,6 +145,7 @@ def assert_build_contract(version: str) -> None:
     for asset in ("apple-touch-icon.png", "favicon.ico", "favicon.png"):
         assert f"{asset}?v={version}" in built_html, f"built {asset} URL is stale"
     worker = (DIST_DIR / "sw.js").read_text()
+    assert "ignoreURLParametersMatching" in worker, "built service worker does not match versioned icon URLs offline"
     for asset in INSTALL_ICON_ASSETS:
         assert asset in worker, f"Workbox precache omits {asset}"
 
@@ -167,6 +168,8 @@ def main() -> None:
     assert "purpose: 'any maskable'" not in config, "manifest reuses a combined purpose"
     assert "versionedPwaAsset('pwa-512.png')" in config, "regular URL is not content-versioned"
     assert "versionedPwaAsset('pwa-maskable-512.png')" in config, "maskable URL is not content-versioned"
+    service_worker = (WEB_DIR / "src" / "sw.ts").read_text()
+    assert "ignoreURLParametersMatching" in service_worker, "service worker does not match versioned icon URLs offline"
     index = (WEB_DIR / "index.html").read_text()
     assert "%INSTALL_ICON_VERSION%" in index, "Apple touch URL is not content-versioned"
     docs_config = (WEB_DIR.parent / "docs-site" / "rspress.config.ts").read_text()
