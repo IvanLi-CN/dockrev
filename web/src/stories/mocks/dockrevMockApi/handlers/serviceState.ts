@@ -36,9 +36,9 @@ async function waitForMockEventGate(
   if (eventGates.released.has(gate)) return
   eventGates.waiting.add(gate)
   try {
-    await new Promise<void>((resolve) => {
+    await new Promise<void>((resolve, reject) => {
       const eventName = `dockrev:release-service-log-events:${gate}`
-      const abort = () => resolve()
+      const abort = () => reject(new Error('Mock service log event gate was cancelled'))
       const release = () => {
         if (globalThis.__DOCKREV_MOCK_EVENT_GATES__ !== eventGates) return
         eventGates.abortController.signal.removeEventListener('abort', abort)
