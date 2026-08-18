@@ -793,7 +793,7 @@ async function runInteractive({ baseUrl, browser }) {
     expectedCount: "101",
     initialCount: 100,
     label: "ordinary append",
-    storyId: "pages-servicedetailpage--logs-section-follows-after-append",
+    storyId: "pages-service-log-follow--follows-after-append",
     tailIndex: 100,
     tailMarker: "follow-after-append",
   });
@@ -804,7 +804,7 @@ async function runInteractive({ baseUrl, browser }) {
     expectedCount: "2000",
     initialCount: 2000,
     label: "buffer eviction",
-    storyId: "pages-servicedetailpage--logs-section-follows-after-buffer-eviction",
+    storyId: "pages-service-log-follow--follows-after-buffer-eviction",
     evictedHeadMarker: "trace=req-0000",
     expectedHeadMarker: "worker cycle=1",
     tailIndex: 1999,
