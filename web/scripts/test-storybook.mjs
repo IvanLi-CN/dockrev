@@ -320,6 +320,121 @@ async function assertServiceLogsLightContrast({ baseUrl, browser }) {
   }
 }
 
+async function assertServiceLogsFollowAfterNewLog({
+  baseUrl,
+  browser,
+  eventGate,
+  expectedCount,
+  initialCount,
+  label,
+  storyId,
+  tailIndex,
+  tailMarker,
+}) {
+  const page = await browser.newPage();
+  try {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    const base = normalizeBaseUrl(baseUrl);
+    const url = new URL("iframe.html", base);
+    url.searchParams.set("id", storyId);
+    url.searchParams.set("viewMode", "story");
+    await page.goto(url.toString(), { waitUntil: "domcontentloaded" });
+
+    const terminal = page.locator(
+      `.serviceLogsTerminal[data-service-logs-total-count="${initialCount}"]`,
+    );
+    const viewport = page.getByRole("region", { name: "服务实时日志" });
+    await terminal.waitFor({ timeout: 15_000 });
+    await viewport.waitFor({ timeout: 15_000 });
+    await page.getByRole("button", { name: "Raw" }).click();
+    await page.locator('.serviceLogRow[data-view="raw"]').first().waitFor({ timeout: 10_000 });
+
+    await viewport.evaluate((element) => {
+      element.scrollTop = 0;
+      element.dispatchEvent(new Event("scroll"));
+    });
+    await page.waitForFunction(
+      () =>
+        Array.from(document.querySelectorAll("button")).some(
+          (button) => button.textContent?.trim() === "跳到最新",
+        ),
+      null,
+      { timeout: 10_000 },
+    );
+    const jumped = await page.evaluate(() => {
+      const button = Array.from(document.querySelectorAll("button")).find(
+        (item) => item.textContent?.trim() === "跳到最新",
+      );
+      if (!button) return false;
+      button.click();
+      return true;
+    });
+    if (!jumped) throw new Error("Expected service logs jump-to-latest control to be available.");
+    await page.evaluate((gate) => {
+      window.__DOCKREV_MOCK_EVENT_GATES__ ??= new Set();
+      window.__DOCKREV_MOCK_EVENT_GATES__.add(gate);
+      window.dispatchEvent(new Event(`dockrev:release-service-log-events:${gate}`));
+    }, eventGate);
+
+    await page.waitForFunction(
+      (expectedCount) =>
+        document.querySelector('.serviceLogsTerminal')?.dataset.serviceLogsTotalCount === expectedCount,
+      expectedCount,
+      { timeout: 5_000 },
+    );
+    await page.evaluate(
+      () =>
+        new Promise((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(resolve));
+        }),
+    );
+    const tailSelector = `.serviceLogRow[data-index="${tailIndex}"]`;
+    let state = await page.evaluate(({ tailMarker, tailSelector }) => {
+      const viewport = document.querySelector('[aria-label="服务实时日志"]');
+      const terminal = document.querySelector('.serviceLogsTerminal');
+      const tail = document.querySelector(tailSelector);
+      const jump = Array.from(document.querySelectorAll("button")).some(
+        (button) => button.textContent?.trim() === "跳到最新",
+      );
+      return {
+        bufferCount: terminal?.dataset.serviceLogsTotalCount,
+        distanceFromBottom: viewport ? viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight : null,
+        jump,
+        tailVisible: tail?.textContent?.includes(tailMarker) === true,
+      };
+    }, { tailMarker, tailSelector });
+    if (!state.tailVisible) {
+      await viewport.evaluate((element) => {
+        element.scrollTop = element.scrollHeight;
+        element.dispatchEvent(new Event("scroll"));
+      });
+      await page.waitForFunction(
+        ({ tailMarker, tailSelector }) =>
+          document.querySelector(tailSelector)?.textContent?.includes(tailMarker) === true,
+        { tailMarker, tailSelector },
+        { timeout: 5_000 },
+      );
+      state = await page.evaluate(() => {
+        const viewport = document.querySelector('[aria-label="服务实时日志"]');
+        return {
+          bufferCount: document.querySelector('.serviceLogsTerminal')?.dataset.serviceLogsTotalCount,
+          distanceFromBottom: viewport ? viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight : null,
+          jump: Array.from(document.querySelectorAll("button")).some(
+            (button) => button.textContent?.trim() === "跳到最新",
+          ),
+          tailVisibleAfterManualScroll: true,
+        };
+      });
+      throw new Error(`Service logs lost the tail after ${label}: ${JSON.stringify(state)}`);
+    }
+    if (state.bufferCount !== expectedCount || state.distanceFromBottom == null || state.distanceFromBottom >= 48 || state.jump) {
+      throw new Error(`Service logs stopped following after ${label}: ${JSON.stringify(state)}`);
+    }
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
 async function assertHoverPinKeepsPopoverOpen({
   page,
   trigger,
@@ -645,6 +760,28 @@ async function runInteractive({ baseUrl, browser }) {
   await runRollbackRefreshRace({ baseUrl, browser });
 
   await assertServiceLogsLightContrast({ baseUrl, browser });
+  await assertServiceLogsFollowAfterNewLog({
+    baseUrl,
+    browser,
+    eventGate: "follow-after-append",
+    expectedCount: "101",
+    initialCount: 100,
+    label: "ordinary append",
+    storyId: "pages-servicedetailpage--logs-section-follows-after-append",
+    tailIndex: 100,
+    tailMarker: "follow-after-append",
+  });
+  await assertServiceLogsFollowAfterNewLog({
+    baseUrl,
+    browser,
+    eventGate: "follow-after-buffer-eviction",
+    expectedCount: "2000",
+    initialCount: 2000,
+    label: "buffer eviction",
+    storyId: "pages-servicedetailpage--logs-section-follows-after-buffer-eviction",
+    tailIndex: 1999,
+    tailMarker: "follow-after-buffer-eviction",
+  });
 
   // Version directory navigation must converge even when the target card is not rendered yet.
   {

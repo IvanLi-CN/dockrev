@@ -142,6 +142,7 @@ export type DockrevMockApiOptions = {
 
 export type ServiceLogsMockDataset = {
   snapshot: ServiceLogSnapshotResponse
+  eventsGate?: string
   eventsPayload?: string
 }
 
@@ -386,6 +387,7 @@ export type VersionInferenceEventMock = {
 
 declare global {
   var __DOCKREV_MOCK_DEBUG__: MockDebug | undefined
+  var __DOCKREV_MOCK_EVENT_GATES__: Set<string> | undefined
 }
 
 export type Fixture = {

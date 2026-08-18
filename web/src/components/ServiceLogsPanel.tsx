@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { Input, Button, OverlayScrollArea, Pill, SearchIcon } from '../ui'
 import {
@@ -121,19 +121,21 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
   }, [query, scrollViewport])
 
   useEffect(() => {
-    if (!follow) return
-    if (filteredRecords.length === 0) return
-    virtualizer.scrollToIndex(filteredRecords.length - 1, { align: 'end' })
-  }, [filteredRecords.length, follow, virtualizer])
-
-  useEffect(() => {
     if (query.trim()) setFollow(false)
     else if (isAtBottom) setFollow(true)
   }, [isAtBottom, query])
 
-  useEffect(() => {
+  const latestRecordId = filteredRecords.at(-1)?.id
+
+  useLayoutEffect(() => {
     virtualizer.measure()
   }, [filteredRecords, logView, resetNonce, virtualizer, wrapLines])
+
+  useLayoutEffect(() => {
+    if (!follow) return
+    if (filteredRecords.length === 0) return
+    virtualizer.scrollToIndex(filteredRecords.length - 1, { align: 'end' })
+  }, [filteredRecords.length, follow, latestRecordId, virtualizer])
 
   const items = virtualizer.getVirtualItems()
   const offsetTop = items[0]?.start ?? 0

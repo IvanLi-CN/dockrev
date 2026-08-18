@@ -27,6 +27,22 @@ import {
   parseResourceWindow,
   toNotificationsResponse,
 } from '../shared'
+
+async function waitForMockEventGate(gate: string): Promise<void> {
+  const gates = globalThis.__DOCKREV_MOCK_EVENT_GATES__ ??= new Set<string>()
+  if (gates.has(gate)) return
+  await new Promise<void>((resolve) => {
+    globalThis.addEventListener(
+      `dockrev:release-service-log-events:${gate}`,
+      () => {
+        gates.add(gate)
+        resolve()
+      },
+      { once: true },
+    )
+  })
+}
+
 export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<Response | null> {
   const {
     digestSnapshotPendingAttempts,
@@ -949,6 +965,7 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     const serviceId = decodeURIComponent(parts[2] ?? '')
     const dataset = f.serviceLogsByServiceId[serviceId] ?? null
     if (!dataset) return json({ error: 'not found' }, { status: 404 })
+    if (dataset.eventsGate) await waitForMockEventGate(dataset.eventsGate)
     return new Response(dataset.eventsPayload || ': keep-alive\n\n', {
       status: 200,
       headers: {
