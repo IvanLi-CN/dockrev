@@ -981,7 +981,9 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     const dataset = f.serviceLogsByServiceId[serviceId] ?? null
     if (!dataset) return json({ error: 'not found' }, { status: 404 })
     if (dataset.eventsGate) await waitForMockEventGate(dataset.eventsGate, serviceLogEventGates)
-    return new Response(dataset.eventsPayload || ': keep-alive\n\n', {
+    const eventsPayload = dataset.eventsPayload
+    if (dataset.eventsGate) dataset.eventsPayload = undefined
+    return new Response(eventsPayload || ': keep-alive\n\n', {
       status: 200,
       headers: {
         'Content-Type': 'text/event-stream',

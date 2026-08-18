@@ -365,23 +365,7 @@ async function assertServiceLogsFollowAfterNewLog({
       element.scrollTop = 0;
       element.dispatchEvent(new Event("scroll"));
     });
-    await page.waitForFunction(
-      () =>
-        Array.from(document.querySelectorAll("button")).some(
-          (button) => button.textContent?.trim() === "跳到最新",
-        ),
-      null,
-      { timeout: 10_000 },
-    );
-    const jumped = await page.evaluate(() => {
-      const button = Array.from(document.querySelectorAll("button")).find(
-        (item) => item.textContent?.trim() === "跳到最新",
-      );
-      if (!button) return false;
-      button.click();
-      return true;
-    });
-    if (!jumped) throw new Error("Expected service logs jump-to-latest control to be available.");
+    await page.getByRole("button", { name: "跳到最新" }).click({ timeout: 10_000 });
     await page.evaluate((gate) => {
       const eventGates = window.__DOCKREV_MOCK_EVENT_GATES__;
       if (!(eventGates?.released instanceof Set && eventGates.waiting instanceof Set)) {
@@ -445,6 +429,14 @@ async function assertServiceLogsFollowAfterNewLog({
       }, { tailLastLine, tailMarker, tailSelector });
       throw new Error(`Service logs stopped following after ${label}: ${JSON.stringify(state)}`);
     });
+
+    const repeatedPayload = await page.evaluate(async (serviceId) => {
+      const response = await fetch(`/api/services/${encodeURIComponent(serviceId)}/logs/events`);
+      return response.text();
+    }, "svc-prod-api");
+    if (repeatedPayload.includes(tailMarker)) {
+      throw new Error(`Service log event payload repeated after ${label}.`);
+    }
 
     if (evictedHeadMarker && expectedHeadMarker) {
       await viewport.evaluate((element) => {
