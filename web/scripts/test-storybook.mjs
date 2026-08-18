@@ -351,8 +351,13 @@ async function assertServiceLogsFollowAfterNewLog({
     await page.getByRole("button", { name: "Raw" }).click();
     await page.locator('.serviceLogRow[data-view="raw"]').first().waitFor({ timeout: 10_000 });
     await page.waitForFunction(
-      () => window.__DOCKREV_MOCK_EVENT_GATES__?.released instanceof Set,
-      null,
+      (gate) => {
+        const eventGates = window.__DOCKREV_MOCK_EVENT_GATES__;
+        return eventGates?.released instanceof Set
+          && eventGates.waiting instanceof Set
+          && eventGates.waiting.has(gate);
+      },
+      eventGate,
       { timeout: 10_000 },
     );
 
@@ -379,8 +384,8 @@ async function assertServiceLogsFollowAfterNewLog({
     if (!jumped) throw new Error("Expected service logs jump-to-latest control to be available.");
     await page.evaluate((gate) => {
       const eventGates = window.__DOCKREV_MOCK_EVENT_GATES__;
-      if (!(eventGates?.released instanceof Set)) {
-        throw new Error("Expected the current service log event gate to be installed.");
+      if (!(eventGates?.released instanceof Set && eventGates.waiting instanceof Set)) {
+        throw new Error("Expected the current service log event gate to be armed.");
       }
       eventGates.released.add(gate);
       window.dispatchEvent(new Event(`dockrev:release-service-log-events:${gate}`));

@@ -148,6 +148,7 @@ export type ServiceLogsMockDataset = {
 
 export type MockServiceLogEventGateState = {
   released: Set<string>
+  waiting: Set<string>
   abortController: AbortController
 }
 

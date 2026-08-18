@@ -178,6 +178,7 @@ export function installDockrevMockApi(
   globalThis.__DOCKREV_MOCK_EVENT_GATES__?.abortController?.abort()
   const serviceLogEventGates: MockServiceLogEventGateState = {
     released: new Set<string>(),
+    waiting: new Set<string>(),
     abortController: new AbortController(),
   }
   globalThis.__DOCKREV_MOCK_EVENT_GATES__ = serviceLogEventGates

@@ -34,22 +34,27 @@ async function waitForMockEventGate(
   eventGates: MockServiceLogEventGateState,
 ): Promise<void> {
   if (eventGates.released.has(gate)) return
-  await new Promise<void>((resolve) => {
-    const eventName = `dockrev:release-service-log-events:${gate}`
-    const abort = () => resolve()
-    const release = () => {
-      if (globalThis.__DOCKREV_MOCK_EVENT_GATES__ !== eventGates) return
-      eventGates.abortController.signal.removeEventListener('abort', abort)
-      eventGates.released.add(gate)
-      resolve()
-    }
-    eventGates.abortController.signal.addEventListener('abort', abort, { once: true })
-    globalThis.addEventListener(
-      eventName,
-      release,
-      { once: true, signal: eventGates.abortController.signal },
-    )
-  })
+  eventGates.waiting.add(gate)
+  try {
+    await new Promise<void>((resolve) => {
+      const eventName = `dockrev:release-service-log-events:${gate}`
+      const abort = () => resolve()
+      const release = () => {
+        if (globalThis.__DOCKREV_MOCK_EVENT_GATES__ !== eventGates) return
+        eventGates.abortController.signal.removeEventListener('abort', abort)
+        eventGates.released.add(gate)
+        resolve()
+      }
+      eventGates.abortController.signal.addEventListener('abort', abort, { once: true })
+      globalThis.addEventListener(
+        eventName,
+        release,
+        { once: true, signal: eventGates.abortController.signal },
+      )
+    })
+  } finally {
+    eventGates.waiting.delete(gate)
+  }
 }
 
 export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<Response | null> {
