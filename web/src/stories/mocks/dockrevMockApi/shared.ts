@@ -146,6 +146,11 @@ export type ServiceLogsMockDataset = {
   eventsPayload?: string
 }
 
+export type MockServiceLogEventGateState = {
+  released: Set<string>
+  abortController: AbortController
+}
+
 export type DockrevMockGitHubReleasesDataset = {
   authMode?: GitHubReleaseAuthMode
   repo?: ServiceGitHubRepoRef | null
@@ -387,7 +392,7 @@ export type VersionInferenceEventMock = {
 
 declare global {
   var __DOCKREV_MOCK_DEBUG__: MockDebug | undefined
-  var __DOCKREV_MOCK_EVENT_GATES__: Set<string> | undefined
+  var __DOCKREV_MOCK_EVENT_GATES__: MockServiceLogEventGateState | undefined
 }
 
 export type Fixture = {

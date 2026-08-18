@@ -23,22 +23,31 @@ import {
   isNotificationTestChannel,
   isVariableMaskLiteral,
   isValidTelegramBotToken,
+  type MockServiceLogEventGateState,
   mockNotificationChannelResult,
   parseResourceWindow,
   toNotificationsResponse,
 } from '../shared'
 
-async function waitForMockEventGate(gate: string): Promise<void> {
-  const gates = globalThis.__DOCKREV_MOCK_EVENT_GATES__ ??= new Set<string>()
-  if (gates.has(gate)) return
+async function waitForMockEventGate(
+  gate: string,
+  eventGates: MockServiceLogEventGateState,
+): Promise<void> {
+  if (eventGates.released.has(gate)) return
   await new Promise<void>((resolve) => {
+    const eventName = `dockrev:release-service-log-events:${gate}`
+    const abort = () => resolve()
+    const release = () => {
+      if (globalThis.__DOCKREV_MOCK_EVENT_GATES__ !== eventGates) return
+      eventGates.abortController.signal.removeEventListener('abort', abort)
+      eventGates.released.add(gate)
+      resolve()
+    }
+    eventGates.abortController.signal.addEventListener('abort', abort, { once: true })
     globalThis.addEventListener(
-      `dockrev:release-service-log-events:${gate}`,
-      () => {
-        gates.add(gate)
-        resolve()
-      },
-      { once: true },
+      eventName,
+      release,
+      { once: true, signal: eventGates.abortController.signal },
     )
   })
 }
@@ -60,6 +69,7 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     nowIso,
     parseJsonBody,
     scenario,
+    serviceLogEventGates,
     state: f,
     url,
     urlPath,
@@ -965,7 +975,7 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     const serviceId = decodeURIComponent(parts[2] ?? '')
     const dataset = f.serviceLogsByServiceId[serviceId] ?? null
     if (!dataset) return json({ error: 'not found' }, { status: 404 })
-    if (dataset.eventsGate) await waitForMockEventGate(dataset.eventsGate)
+    if (dataset.eventsGate) await waitForMockEventGate(dataset.eventsGate, serviceLogEventGates)
     return new Response(dataset.eventsPayload || ': keep-alive\n\n', {
       status: 200,
       headers: {

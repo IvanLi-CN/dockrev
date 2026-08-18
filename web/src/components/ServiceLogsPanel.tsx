@@ -125,22 +125,39 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
     else if (isAtBottom) setFollow(true)
   }, [isAtBottom, query])
 
+  const hasQuery = query.trim().length > 0
   const latestRecordId = filteredRecords.at(-1)?.id
 
   useLayoutEffect(() => {
     virtualizer.measure()
-  }, [filteredRecords, logView, resetNonce, virtualizer, wrapLines])
+  }, [logView, resetNonce, virtualizer, wrapLines])
 
   useLayoutEffect(() => {
-    if (!follow) return
+    if (!follow || hasQuery) return
     if (filteredRecords.length === 0) return
-    virtualizer.scrollToIndex(filteredRecords.length - 1, { align: 'end' })
-  }, [filteredRecords.length, follow, latestRecordId, virtualizer])
+    const targetIndex = filteredRecords.length - 1
+    virtualizer.scrollToIndex(targetIndex, { align: 'end' })
+
+    let alignTailFrame: number | undefined
+    const measureTailFrame = window.requestAnimationFrame(() => {
+      alignTailFrame = window.requestAnimationFrame(() => {
+        const tail = scrollViewport?.querySelector<HTMLElement>(
+          `.serviceLogRow[data-index="${targetIndex}"]`,
+        )
+        if (tail) virtualizer.measureElement(tail)
+        virtualizer.scrollToIndex(targetIndex, { align: 'end' })
+      })
+    })
+
+    return () => {
+      window.cancelAnimationFrame(measureTailFrame)
+      if (alignTailFrame != null) window.cancelAnimationFrame(alignTailFrame)
+    }
+  }, [filteredRecords.length, follow, hasQuery, latestRecordId, logView, resetNonce, scrollViewport, virtualizer, wrapLines])
 
   const items = virtualizer.getVirtualItems()
   const offsetTop = items[0]?.start ?? 0
   const showJump = !follow && records.length > 0
-  const hasQuery = query.trim().length > 0
   const renderedCount = Math.min(items.length, filteredRecords.length)
   const errorCount = useMemo(
     () => filteredRecords.reduce((count, record) => (record.level === 'error' ? count + 1 : count), 0),

@@ -36,6 +36,7 @@ import {
   MockEventSource,
   buildResourceHistorySamples,
   type Fixture,
+  type MockServiceLogEventGateState,
   getBoolean,
   getString,
   isRecord,
@@ -174,6 +175,12 @@ export function installDockrevMockApi(
   }
 
   globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug()
+  globalThis.__DOCKREV_MOCK_EVENT_GATES__?.abortController?.abort()
+  const serviceLogEventGates: MockServiceLogEventGateState = {
+    released: new Set<string>(),
+    abortController: new AbortController(),
+  }
+  globalThis.__DOCKREV_MOCK_EVENT_GATES__ = serviceLogEventGates
   if (typeof window !== 'undefined') {
     globalThis.EventSource = MockEventSource as unknown as typeof EventSource
   }
@@ -471,6 +478,7 @@ export function installDockrevMockApi(
         digestSnapshotPendingAttempts,
         forcedDigestSnapshotPendingAttempts,
         cleanupRuntime,
+        serviceLogEventGates,
       }
 
       if (method === 'GET' && urlPath === '/api/deploy-check/report' && options.deployCheckReportSequence?.length) { const sequence = options.deployCheckReportSequence; return json(sequence[Math.min(deployCheckReportSequenceIndex++, sequence.length - 1)]) }
