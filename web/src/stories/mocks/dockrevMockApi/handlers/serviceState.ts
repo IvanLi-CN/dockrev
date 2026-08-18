@@ -23,10 +23,40 @@ import {
   isNotificationTestChannel,
   isVariableMaskLiteral,
   isValidTelegramBotToken,
+  type MockServiceLogEventGateState,
   mockNotificationChannelResult,
   parseResourceWindow,
   toNotificationsResponse,
 } from '../shared'
+
+async function waitForMockEventGate(
+  gate: string,
+  eventGates: MockServiceLogEventGateState,
+): Promise<void> {
+  if (eventGates.released.has(gate)) return
+  eventGates.waiting.add(gate)
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const eventName = `dockrev:release-service-log-events:${gate}`
+      const abort = () => reject(new Error('Mock service log event gate was cancelled'))
+      const release = () => {
+        if (globalThis.__DOCKREV_MOCK_EVENT_GATES__ !== eventGates) return
+        eventGates.abortController.signal.removeEventListener('abort', abort)
+        eventGates.released.add(gate)
+        resolve()
+      }
+      eventGates.abortController.signal.addEventListener('abort', abort, { once: true })
+      globalThis.addEventListener(
+        eventName,
+        release,
+        { once: true, signal: eventGates.abortController.signal },
+      )
+    })
+  } finally {
+    eventGates.waiting.delete(gate)
+  }
+}
+
 export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<Response | null> {
   const {
     digestSnapshotPendingAttempts,
@@ -44,6 +74,7 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     nowIso,
     parseJsonBody,
     scenario,
+    serviceLogEventGates,
     state: f,
     url,
     urlPath,
@@ -949,7 +980,10 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     const serviceId = decodeURIComponent(parts[2] ?? '')
     const dataset = f.serviceLogsByServiceId[serviceId] ?? null
     if (!dataset) return json({ error: 'not found' }, { status: 404 })
-    return new Response(dataset.eventsPayload || ': keep-alive\n\n', {
+    if (dataset.eventsGate) await waitForMockEventGate(dataset.eventsGate, serviceLogEventGates)
+    const eventsPayload = dataset.eventsPayload
+    if (dataset.eventsGate) dataset.eventsPayload = undefined
+    return new Response(eventsPayload || ': keep-alive\n\n', {
       status: 200,
       headers: {
         'Content-Type': 'text/event-stream',

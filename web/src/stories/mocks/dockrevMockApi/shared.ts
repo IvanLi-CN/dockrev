@@ -142,7 +142,14 @@ export type DockrevMockApiOptions = {
 
 export type ServiceLogsMockDataset = {
   snapshot: ServiceLogSnapshotResponse
+  eventsGate?: string
   eventsPayload?: string
+}
+
+export type MockServiceLogEventGateState = {
+  released: Set<string>
+  waiting: Set<string>
+  abortController: AbortController
 }
 
 export type DockrevMockGitHubReleasesDataset = {
@@ -386,6 +393,7 @@ export type VersionInferenceEventMock = {
 
 declare global {
   var __DOCKREV_MOCK_DEBUG__: MockDebug | undefined
+  var __DOCKREV_MOCK_EVENT_GATES__: MockServiceLogEventGateState | undefined
 }
 
 export type Fixture = {

@@ -320,6 +320,144 @@ async function assertServiceLogsLightContrast({ baseUrl, browser }) {
   }
 }
 
+async function assertServiceLogsFollowAfterNewLog({
+  baseUrl,
+  browser,
+  eventGate,
+  expectedCount,
+  initialCount,
+  label,
+  storyId,
+  evictedHeadMarker,
+  expectedHeadMarker,
+  tailIndex,
+  tailMarker,
+}) {
+  const page = await browser.newPage();
+  try {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    const base = normalizeBaseUrl(baseUrl);
+    const url = new URL("iframe.html", base);
+    url.searchParams.set("id", storyId);
+    url.searchParams.set("viewMode", "story");
+    await page.goto(url.toString(), { waitUntil: "domcontentloaded" });
+
+    const terminal = page.locator(
+      `.serviceLogsTerminal[data-service-logs-total-count="${initialCount}"]`,
+    );
+    const viewport = page.getByRole("region", { name: "服务实时日志" });
+    await terminal.waitFor({ timeout: 15_000 });
+    await viewport.waitFor({ timeout: 15_000 });
+    await page.getByRole("button", { name: "Raw" }).click();
+    await page.locator('.serviceLogRow[data-view="raw"]').first().waitFor({ timeout: 10_000 });
+    await page.waitForFunction(
+      (gate) => {
+        const eventGates = window.__DOCKREV_MOCK_EVENT_GATES__;
+        return eventGates?.released instanceof Set
+          && eventGates.waiting instanceof Set
+          && eventGates.waiting.has(gate);
+      },
+      eventGate,
+      { timeout: 10_000 },
+    );
+
+    await viewport.evaluate((element) => {
+      element.scrollTop = 0;
+      element.dispatchEvent(new Event("scroll"));
+    });
+    await page.getByRole("button", { name: "跳到最新" }).click({ timeout: 10_000 });
+    await page.evaluate((gate) => {
+      const eventGates = window.__DOCKREV_MOCK_EVENT_GATES__;
+      if (!(eventGates?.released instanceof Set && eventGates.waiting instanceof Set)) {
+        throw new Error("Expected the current service log event gate to be armed.");
+      }
+      eventGates.released.add(gate);
+      window.dispatchEvent(new Event(`dockrev:release-service-log-events:${gate}`));
+    }, eventGate);
+
+    await page.waitForFunction(
+      (expectedCount) =>
+        document.querySelector('.serviceLogsTerminal')?.dataset.serviceLogsTotalCount === expectedCount,
+      expectedCount,
+      { timeout: 5_000 },
+    );
+    const tailSelector = `.serviceLogRow[data-index="${tailIndex}"]`;
+    const tailLastLine = "trace detail 24";
+    await page.waitForFunction(
+      ({ expectedCount, tailLastLine, tailMarker, tailSelector }) => {
+        const viewport = document.querySelector('[aria-label="服务实时日志"]');
+        const terminal = document.querySelector('.serviceLogsTerminal');
+        const tail = document.querySelector(tailSelector);
+        const jump = Array.from(document.querySelectorAll("button")).some(
+          (button) => button.textContent?.trim() === "跳到最新",
+        );
+        if (!(viewport instanceof HTMLElement) || !(tail instanceof HTMLElement)) return false;
+        const viewportRect = viewport.getBoundingClientRect();
+        const tailRect = tail.getBoundingClientRect();
+        return terminal?.dataset.serviceLogsTotalCount === expectedCount
+          && tail.textContent?.includes(tailMarker)
+          && tail.textContent?.includes(tailLastLine)
+          && viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 48
+          && tailRect.top >= viewportRect.top
+          && tailRect.bottom <= viewportRect.bottom + 1
+          && !jump;
+      },
+      { expectedCount, tailLastLine, tailMarker, tailSelector },
+      { timeout: 10_000 },
+    ).catch(async () => {
+      const state = await page.evaluate(({ tailLastLine, tailMarker, tailSelector }) => {
+        const viewport = document.querySelector('[aria-label="服务实时日志"]');
+        const terminal = document.querySelector('.serviceLogsTerminal');
+        const tail = document.querySelector(tailSelector);
+        const viewportRect = viewport?.getBoundingClientRect();
+        const tailRect = tail?.getBoundingClientRect();
+        return {
+          bufferCount: terminal?.dataset.serviceLogsTotalCount,
+          distanceFromBottom: viewport ? viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight : null,
+          jump: Array.from(document.querySelectorAll("button")).some(
+            (button) => button.textContent?.trim() === "跳到最新",
+          ),
+          tailLastLineVisible: tail?.textContent?.includes(tailLastLine) === true,
+          tailVisible: tail?.textContent?.includes(tailMarker) === true,
+          tailFullyVisible: Boolean(
+            viewportRect
+              && tailRect
+              && tailRect.top >= viewportRect.top
+              && tailRect.bottom <= viewportRect.bottom + 1,
+          ),
+        };
+      }, { tailLastLine, tailMarker, tailSelector });
+      throw new Error(`Service logs stopped following after ${label}: ${JSON.stringify(state)}`);
+    });
+
+    const repeatedPayload = await page.evaluate(async (serviceId) => {
+      const response = await fetch(`/api/services/${encodeURIComponent(serviceId)}/logs/events`);
+      return response.text();
+    }, "svc-prod-api");
+    if (repeatedPayload.includes(tailMarker)) {
+      throw new Error(`Service log event payload repeated after ${label}.`);
+    }
+
+    if (evictedHeadMarker && expectedHeadMarker) {
+      await viewport.evaluate((element) => {
+        element.scrollTop = 0;
+        element.dispatchEvent(new Event("scroll"));
+      });
+      await page.waitForFunction(
+        ({ evictedHeadMarker, expectedHeadMarker }) => {
+          const head = document.querySelector('.serviceLogRow[data-index="0"]');
+          return head?.textContent?.includes(expectedHeadMarker)
+            && !head.textContent?.includes(evictedHeadMarker);
+        },
+        { evictedHeadMarker, expectedHeadMarker },
+        { timeout: 10_000 },
+      );
+    }
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
 async function assertHoverPinKeepsPopoverOpen({
   page,
   trigger,
@@ -645,6 +783,30 @@ async function runInteractive({ baseUrl, browser }) {
   await runRollbackRefreshRace({ baseUrl, browser });
 
   await assertServiceLogsLightContrast({ baseUrl, browser });
+  await assertServiceLogsFollowAfterNewLog({
+    baseUrl,
+    browser,
+    eventGate: "follow-after-append",
+    expectedCount: "101",
+    initialCount: 100,
+    label: "ordinary append",
+    storyId: "pages-service-log-follow--follows-after-append",
+    tailIndex: 100,
+    tailMarker: "follow-after-append",
+  });
+  await assertServiceLogsFollowAfterNewLog({
+    baseUrl,
+    browser,
+    eventGate: "follow-after-buffer-eviction",
+    expectedCount: "2000",
+    initialCount: 2000,
+    label: "buffer eviction",
+    storyId: "pages-service-log-follow--follows-after-buffer-eviction",
+    evictedHeadMarker: "trace=req-0000",
+    expectedHeadMarker: "worker cycle=1",
+    tailIndex: 1999,
+    tailMarker: "follow-after-buffer-eviction",
+  });
 
   // Version directory navigation must converge even when the target card is not rendered yet.
   {

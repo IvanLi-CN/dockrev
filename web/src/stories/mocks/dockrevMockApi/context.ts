@@ -7,7 +7,7 @@ import type {
   StackDetail,
 } from '../../../api'
 import type { CleanupMockRuntimeState } from '../cleanupMockData'
-import type { DockrevApiScenario, Fixture, MockDebug } from './shared'
+import type { DockrevApiScenario, Fixture, MockDebug, MockServiceLogEventGateState } from './shared'
 
 export type FindServiceResult = {
   stack: StackDetail
@@ -79,4 +79,5 @@ export type MockRouteContext = {
   digestSnapshotPendingAttempts: Map<string, number>
   forcedDigestSnapshotPendingAttempts: Map<string, number>
   cleanupRuntime: CleanupMockRuntimeState
+  serviceLogEventGates: MockServiceLogEventGateState
 }

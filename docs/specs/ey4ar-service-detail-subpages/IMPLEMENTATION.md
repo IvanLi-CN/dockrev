@@ -26,6 +26,7 @@
 - `更新记录` 仅在激活且在线时订阅全局 jobs SSE；事件按 250ms 去抖刷新，连续三次错误后按队列同款 10 秒轮询与 3 秒重连降级，切离 section 或卸载时清理资源。
 - 只读快照继续缓存 jobs；离线 history 只回放 60 秒 fresh snapshot，日志和设置仍要求联网。
 - 已新增服务级日志 snapshot + SSE 合同、`ServiceLogHub` 共享缓冲、`service_log_reset` 断线补偿语义，以及前端 `ServiceLogsPanel` 的虚拟滚动、搜索、自动换行开关与吸底交互。
+- 日志自动跟随现以列表长度与末条日志 ID 共同驱动，并在虚拟列表完成新尾行测量后贴底；普通追加和 2,000 行满缓冲淘汰最旧行后替换末条的场景都保持跟随。Storybook mock 与交互校验会在用户上滚、点击“跳到最新”后延迟注入多行 SSE 尾日志，验证两条路径的真实滚动位置。
 - 日志实现语义已收敛为“单服务日志流”，不再在产品接口或界面上暴露容器聚合模型。
 - 日志解析已按 Dozzle-like grouped log 语义保留 Docker timestamp 元信息，并将应用输出中的空行、缩进行、`Caused by:` 等 continuation 合并进同一逻辑日志记录；未结构化的 inline tracing 行仍由前端避免重复渲染等级文本。
 - 服务日志 API 已在 `ServiceLogLine` 上提供可选结构化 `meta`，支持 `json / logfmt / text` 归一化；其中 Rust `tracing` 默认文本输出会在 text meta 中提取应用级 `level/message/timestamp` 与 `key=value` attributes，前端默认 Human 视图渲染结构化摘要与 metadata chips，并保留 Raw 视图用于查看原始输出。
@@ -59,6 +60,7 @@
 - `web/tests/updateActionTracking.test.ts`
 - `web/src/pages/useServiceLogsState.ts`
 - `web/src/components/ServiceLogsPanel.tsx`
+- `web/scripts/test-storybook.mjs`
 - `web/src/stories/mocks/PageHarness.tsx`
 - `web/src/stories/pages/ServiceDetailPage.stories.tsx`
 - `web/src/stories/pages/serviceDetailVersionsStories.tsx`
