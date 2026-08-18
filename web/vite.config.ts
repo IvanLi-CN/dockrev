@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import tailwindcss from '@tailwindcss/vite'
@@ -11,14 +14,31 @@ function normalizeBasePath(basePath: string | undefined): string {
   return withLeadingSlash.endsWith('/') ? withLeadingSlash : `${withLeadingSlash}/`
 }
 
-function dockrevAppHtmlPlugin(pwaEnabled: boolean): Plugin {
+function dockrevAppHtmlPlugin(pwaEnabled: boolean, iconVersion: string): Plugin {
   return {
     name: 'dockrev-app-html-contract',
     transformIndexHtml(html) {
-      if (pwaEnabled) return html
-      return html.replace(/^\s*<link rel="manifest" href="[^"]+" \/>\s*$/m, '')
+      const versionedHtml = html.replaceAll('%INSTALL_ICON_VERSION%', iconVersion)
+      if (pwaEnabled) return versionedHtml
+      return versionedHtml.replace(/^\s*<link rel="manifest" href="[^"]+" \/>\s*$/m, '')
     },
   }
+}
+
+function installIconVersion(): string {
+  const hash = createHash('sha256')
+  for (const asset of [
+    'apple-touch-icon.png',
+    'favicon.ico',
+    'favicon.png',
+    'pwa-192.png',
+    'pwa-512.png',
+    'pwa-maskable-192.png',
+    'pwa-maskable-512.png',
+  ]) {
+    hash.update(readFileSync(resolve('public', asset)))
+  }
+  return hash.digest('hex').slice(0, 12)
 }
 
 // https://vite.dev/config/
@@ -34,11 +54,13 @@ export default defineConfig(({ mode }) => {
   const base = normalizeBasePath(env.DOCKREV_WEB_BASE)
   const pwaEnabled = !['0', 'false', 'off'].includes((env.DOCKREV_PWA ?? '').trim().toLowerCase())
   const pwaAsset = (assetPath: string) => `${base}${assetPath}`
+  const iconVersion = installIconVersion()
+  const versionedPwaAsset = (assetPath: string) => `${pwaAsset(assetPath)}?v=${iconVersion}`
 
   return {
     base,
     plugins: [
-      dockrevAppHtmlPlugin(pwaEnabled),
+      dockrevAppHtmlPlugin(pwaEnabled, iconVersion),
       react(),
       tailwindcss(),
       VitePWA({
@@ -52,7 +74,15 @@ export default defineConfig(({ mode }) => {
         injectManifest: {
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         },
-        includeAssets: ['favicon.ico', 'favicon.png', 'apple-touch-icon.png', 'pwa-192.png', 'pwa-512.png'],
+        includeAssets: [
+          'favicon.ico',
+          'favicon.png',
+          'apple-touch-icon.png',
+          'pwa-192.png',
+          'pwa-512.png',
+          'pwa-maskable-192.png',
+          'pwa-maskable-512.png',
+        ],
         manifest: {
           id: base,
           name: 'Dockrev',
@@ -64,9 +94,10 @@ export default defineConfig(({ mode }) => {
           start_url: base,
           scope: base,
           icons: [
-            { src: pwaAsset('pwa-192.png'), sizes: '192x192', type: 'image/png' },
-            { src: pwaAsset('pwa-512.png'), sizes: '512x512', type: 'image/png' },
-            { src: pwaAsset('pwa-512.png'), sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+            { src: versionedPwaAsset('pwa-192.png'), sizes: '192x192', type: 'image/png', purpose: 'any' },
+            { src: versionedPwaAsset('pwa-512.png'), sizes: '512x512', type: 'image/png', purpose: 'any' },
+            { src: versionedPwaAsset('pwa-maskable-192.png'), sizes: '192x192', type: 'image/png', purpose: 'maskable' },
+            { src: versionedPwaAsset('pwa-maskable-512.png'), sizes: '512x512', type: 'image/png', purpose: 'maskable' },
           ],
         },
       }),

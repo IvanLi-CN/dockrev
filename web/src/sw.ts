@@ -17,7 +17,9 @@ addPlugins([
   },
 ])
 
-precacheAndRoute(self.__WB_MANIFEST)
+precacheAndRoute(self.__WB_MANIFEST, {
+  ignoreURLParametersMatching: [/^v$/],
+})
 cleanupOutdatedCaches()
 clientsClaim()
 
