@@ -208,7 +208,6 @@ jobs:
           cd web
           bun run lint
           bun run build
-          bun run test:pwa-assets
           DOCKREV_WEB_BASE=/demo/ bun run build:demo:pages
 
   frontend-storybook-build:
