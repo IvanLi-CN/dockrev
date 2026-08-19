@@ -178,3 +178,4 @@ None
 
 - `docs/specs/p7k2m-ghcr-webhook-inbox/SPEC.md`
 - `docs/specs/g5m9c-ghcr-webhook-jobization/SPEC.md`
+- `docs/specs/async-data-continuity/SPEC.md`

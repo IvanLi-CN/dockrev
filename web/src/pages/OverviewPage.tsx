@@ -80,11 +80,22 @@ const HOMEPAGE_PERSISTED_SNAPSHOT_KEY = buildReadonlySnapshotKey(
 const HOMEPAGE_PERSISTED_SNAPSHOT_STALE_MS = 60_000;
 
 type PersistedHomepageSnapshotPayload = {
+  version: 2;
+  readiness: { navigation: boolean; resources: boolean };
+  committedQueryKey: "homepage-nav";
   generatedAt: string;
   lastCheckAt: string | null;
   resourceSummary: ServiceResourceOverviewResponse;
   cards: HomepageSnapshotCard[];
 };
+
+function isPersistedHomepageSnapshotPayload(value: unknown): value is PersistedHomepageSnapshotPayload {
+  if (!value || typeof value !== "object") return false;
+  const payload = value as Record<string, unknown>;
+  if (payload.version !== 2 || payload.committedQueryKey !== "homepage-nav" || !payload.readiness || typeof payload.readiness !== "object") return false;
+  const readiness = payload.readiness as Record<string, unknown>;
+  return typeof payload.generatedAt === "string" && Array.isArray(payload.cards) && readiness.navigation === true && readiness.resources === true;
+}
 
 type HomepageNavCard = HomepageSnapshotCard & {
   source: "live" | "snapshot";
@@ -466,6 +477,9 @@ export function OverviewPage(props: {
         void writeReadonlySnapshot(
           HOMEPAGE_PERSISTED_SNAPSHOT_KEY,
           {
+            version: 2,
+            readiness: { navigation: true, resources: true },
+            committedQueryKey: "homepage-nav",
             generatedAt: legacy.generatedAt,
             lastCheckAt: legacy.lastCheckAt,
             resourceSummary: legacy.resourceSummary,
@@ -481,7 +495,8 @@ export function OverviewPage(props: {
 
       if (
         !canRestorePersistedHomepageSnapshot(persisted.status) ||
-        persisted.record === null
+        persisted.record === null ||
+        !isPersistedHomepageSnapshotPayload(persisted.record.payload)
       ) {
         return;
       }
@@ -536,6 +551,9 @@ export function OverviewPage(props: {
       void writeReadonlySnapshot(
         HOMEPAGE_PERSISTED_SNAPSHOT_KEY,
         {
+          version: 2,
+          readiness: { navigation: true, resources: true },
+          committedQueryKey: "homepage-nav",
           generatedAt: snapshot.generatedAt,
           lastCheckAt: snapshot.lastCheckAt,
           resourceSummary: snapshot.resourceSummary,

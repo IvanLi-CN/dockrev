@@ -25,6 +25,7 @@ import { useSupervisorHealth } from '../useSupervisorHealth'
 import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay, inferResolvedTagsFromSnapshot, isStrictSemverTag } from '../versionDisplay'
 import { isRollbackTargetRefreshCurrent, retryRollbackTargetDigestMismatch } from './rollbackTargetRefresh'
 import { managementEventAffectsServiceDetail } from './serviceDetailManagement'
+import type { AsyncDataPhase } from '../asyncData'
 export { managementEventAffectsServiceDetail } from './serviceDetailManagement'
 
 export function useServiceDetailPageState(props: {
@@ -37,8 +38,10 @@ export function useServiceDetailPageState(props: {
   const [stack, setStack] = useState<StackDetail | null>(null)
   const [service, setService] = useState<Service | null>(null)
   const [settings, setSettings] = useState<ServiceSettings | null>(null)
+  const [settingsPhase, setSettingsPhase] = useState<AsyncDataPhase>('initial-loading')
   const [backupTargets, setBackupTargets] = useState<ServiceBackupTargetsResponse | null>(null)
   const [backupRecords, setBackupRecords] = useState<ServiceBackupRecordItem[]>([])
+  const [backupPhase, setBackupPhase] = useState<AsyncDataPhase>('initial-loading')
   const [stackSettings, setStackSettings] = useState<StackSettings | null>(null)
   const [rules, setRules] = useState<IgnoreRule[]>([])
   const [busy, setBusy] = useState(false)
@@ -113,9 +116,13 @@ export function useServiceDetailPageState(props: {
   const rollbackTargetRef = useRef(rollbackTarget)
   const rollbackTargetRefreshingRef = useRef(rollbackTargetRefreshing)
   const serviceRef = useRef(service)
+  const settingsRef = useRef(settings)
+  const backupRecordsRef = useRef(backupRecords)
   rollbackTargetRef.current = rollbackTarget
   rollbackTargetRefreshingRef.current = rollbackTargetRefreshing
   serviceRef.current = service
+  settingsRef.current = settings
+  backupRecordsRef.current = backupRecords
 
   const [newRuleKind, setNewRuleKind] = useState<'exact' | 'prefix' | 'regex' | 'semver'>('regex')
   const [newRuleValue, setNewRuleValue] = useState('.*')
@@ -205,6 +212,8 @@ export function useServiceDetailPageState(props: {
     const stackRequestId = ++stackRefreshRequestIdRef.current
     let appliedFullRefreshRoot = false
     setError(null)
+    setSettingsPhase(settingsRef.current ? 'refreshing' : 'initial-loading')
+    setBackupPhase(backupRecordsRef.current.length > 0 ? 'refreshing' : 'initial-loading')
     setRollbackTargetRefreshing(true)
     onLastScanHint?.(undefined)
     try {
@@ -245,9 +254,19 @@ export function useServiceDetailPageState(props: {
         fullRefreshRequestId < latestAppliedFullRefreshRequestIdRef.current
       ) return
 
-      if (settingsRes.status === 'fulfilled') setSettings(settingsRes.value)
+      if (settingsRes.status === 'fulfilled') {
+        setSettings(settingsRes.value)
+        setSettingsPhase('ready-data')
+      } else {
+        setSettingsPhase('error')
+      }
       if (backupTargetsRes.status === 'fulfilled') setBackupTargets(backupTargetsRes.value)
       if (backupRecordsRes.status === 'fulfilled') setBackupRecords(backupRecordsRes.value.records)
+      if (backupTargetsRes.status === 'fulfilled' && backupRecordsRes.status === 'fulfilled') {
+        setBackupPhase(backupRecordsRes.value.records.length === 0 ? 'ready-empty' : 'ready-data')
+      } else {
+        setBackupPhase('error')
+      }
       if (stackSettingsRes.status === 'fulfilled') setStackSettings(stackSettingsRes.value)
       if (rulesRes.status === 'fulfilled') {
         setRules(rulesRes.value.filter((r) => r.scope.serviceId === serviceId))
@@ -382,7 +401,7 @@ export function useServiceDetailPageState(props: {
     setLifecycleSettledJobId(null)
     fullRefreshRequestIdRef.current += 1
     stackRefreshRequestIdRef.current += 1
-    setStack(null); setService(null); setSettings(null); setBackupTargets(null); setBackupRecords([]); setStackSettings(null); setRules([]); setLifecycleStatus(null); setLastSuccessfulRefreshAt(null)
+    setStack(null); setService(null); setSettings(null); setSettingsPhase('initial-loading'); setBackupTargets(null); setBackupRecords([]); setBackupPhase('initial-loading'); setStackSettings(null); setRules([]); setLifecycleStatus(null); setLastSuccessfulRefreshAt(null)
     setRollbackTarget(null); setRollbackActiveTarget(null); setRollbackTargetRefreshing(false)
     setError(null); setNotice(null); setBusy(false); setRepoInferBusy(false)
 
@@ -1148,6 +1167,7 @@ export function useServiceDetailPageState(props: {
     bannerDetail,
     bannerTitle,
     backupRecords,
+    backupPhase,
     backupTargets,
     busy,
     composeEnvFile,
@@ -1188,6 +1208,7 @@ export function useServiceDetailPageState(props: {
     setRepoInferBusy,
     setSettings,
     settings,
+    settingsPhase,
     stackSettings,
     settingsBusy,
     stack,

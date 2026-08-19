@@ -7,6 +7,7 @@ import {
   resolveAggregateUpdateActionState,
 } from "../aggregateUpdateGuard";
 import { AggregateUpdatePreviewList } from "../components/AggregateUpdatePreviewList";
+import { Skeleton } from "../components/AsyncDataRegion";
 import { CurrentVersionPopover } from "../components/CurrentVersionPopover";
 import { ServiceUpdateConfirmDetails } from "../components/ServiceUpdateConfirmDetails";
 import { UpdateCandidateFilters } from "../components/UpdateCandidateFilters";
@@ -63,6 +64,7 @@ export function OperationsDashboardSectionView(props: {
     collapsed,
     countsAll,
     details,
+    discoveryLoaded,
     discoverySummary,
     effectiveDiscoveryScanAt,
     error,
@@ -71,6 +73,7 @@ export function OperationsDashboardSectionView(props: {
     isTargetBusy,
     isTargetSubmitting,
     jobsSummary,
+    jobsLoaded,
     noticeCheckJobId,
     noticeDiscoveryJobId,
     noticeJobId,
@@ -109,16 +112,22 @@ export function OperationsDashboardSectionView(props: {
             </div>
           </div>
           <div className="chipRow" style={{ marginTop: 14 }}>
-            <div className="chipStatic">{`运行中: ${jobsSummary.running}`}</div>
-            <div className="chipStatic">{`失败: ${jobsSummary.failed}`}</div>
-            <div className="chipStatic">{`回滚: ${jobsSummary.rolled}`}</div>
-            <div className="chipStatic">{`成功: ${jobsSummary.success}`}</div>
-            {jobsSummary.other > 0 ? (
+            <div className="chipStatic">{`运行中: ${jobsLoaded ? jobsSummary.running : "—"}`}</div>
+            <div className="chipStatic">{`失败: ${jobsLoaded ? jobsSummary.failed : "—"}`}</div>
+            <div className="chipStatic">{`回滚: ${jobsLoaded ? jobsSummary.rolled : "—"}`}</div>
+            <div className="chipStatic">{`成功: ${jobsLoaded ? jobsSummary.success : "—"}`}</div>
+            {jobsLoaded && jobsSummary.other > 0 ? (
               <div className="chipStatic">{`其他: ${jobsSummary.other}`}</div>
             ) : null}
           </div>
           <div className="overviewJobsList">
-            {overviewCardJobs.length === 0 ? (
+            {!jobsLoaded ? (
+              <div className="asyncDataSkeleton" aria-label="正在加载任务摘要">
+                <Skeleton shape="line" />
+                <Skeleton shape="line" />
+                <Skeleton shape="line" />
+              </div>
+            ) : overviewCardJobs.length === 0 ? (
               <div className="muted">暂无任务</div>
             ) : (
               overviewCardJobs.map((job) => {
@@ -224,40 +233,40 @@ export function OperationsDashboardSectionView(props: {
             <div className="discoveryStatChip discoveryStatChipTotal">
               <span className="discoveryStatLabel">异常项目</span>
               <span className="discoveryStatValue">
-                {discoverySummary.issueCount}
+                {discoveryLoaded ? discoverySummary.issueCount : "—"}
               </span>
             </div>
             <div className="discoveryStatChip discoveryStatChipWarn">
               <span className="discoveryStatLabel">告警</span>
               <span className="discoveryStatValue">
-                {discoverySummary.warning.length}
+                {discoveryLoaded ? discoverySummary.warning.length : "—"}
               </span>
             </div>
             <div className="discoveryStatChip discoveryStatChipBad">
               <span className="discoveryStatLabel">缺失</span>
               <span className="discoveryStatValue">
-                {discoverySummary.missing.length}
+                {discoveryLoaded ? discoverySummary.missing.length : "—"}
               </span>
             </div>
             <div className="discoveryStatChip discoveryStatChipBad">
               <span className="discoveryStatLabel">无效</span>
               <span className="discoveryStatValue">
-                {discoverySummary.invalid.length}
+                {discoveryLoaded ? discoverySummary.invalid.length : "—"}
               </span>
             </div>
             <div className="discoveryStatChip discoveryStatChipInfo">
               <span className="discoveryStatLabel">活跃</span>
               <span className="discoveryStatValue">
-                {discoverySummary.active.length}
+                {discoveryLoaded ? discoverySummary.active.length : "—"}
               </span>
             </div>
             <div className="discoveryStatChip discoveryStatChipStopped">
               <span className="discoveryStatLabel">已停止</span>
               <span className="discoveryStatValue">
-                {discoverySummary.stoppedCount}
+                {discoveryLoaded ? discoverySummary.stoppedCount : "—"}
               </span>
             </div>
-            {effectiveDiscoveryScanAt ? (
+            {discoveryLoaded && effectiveDiscoveryScanAt ? (
               <div className="discoveryStatChip discoveryStatChipScan">
                 <span className="discoveryStatLabel">最近扫描</span>
                 <span className="discoveryStatValue">
@@ -267,11 +276,18 @@ export function OperationsDashboardSectionView(props: {
             ) : null}
           </div>
           <div className="muted discoverySummaryLead">
-            {discoverySummary.issueCount > 0
+            {!discoveryLoaded
+              ? "正在加载 discovery projects…"
+              : discoverySummary.issueCount > 0
               ? `共 ${discoverySummary.issueCount} 个异常项目，优先展示最近 ${discoverySummary.issues.length} 个需要立即处理的条目。`
               : "最近一次扫描未发现需要处理的 warning / missing / invalid 项目。"}
           </div>
-          {discoverySummary.issues.length > 0 ? (
+          {!discoveryLoaded ? (
+            <div className="asyncDataSkeleton" aria-label="正在加载发现异常">
+              <Skeleton shape="line" />
+              <Skeleton shape="line" />
+            </div>
+          ) : discoverySummary.issues.length > 0 ? (
             <div className="discoveryIssueList">
               {discoverySummary.issues.map((issue) => {
                 const metaParts = buildDiscoveryIssueMetaParts(issue);
@@ -341,7 +357,7 @@ export function OperationsDashboardSectionView(props: {
               </div>
             </div>
           )}
-          {discoverySummary.stopped.length > 0 ? (
+          {discoveryLoaded && discoverySummary.stopped.length > 0 ? (
             <div className="discoveryStoppedSection">
               <div className="discoveryStoppedHeader">
                 <div className="discoveryStoppedTitle">已停止，可启动</div>

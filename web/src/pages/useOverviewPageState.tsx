@@ -62,10 +62,25 @@ const SERVICES_OVERVIEW_SNAPSHOT_KEY = buildReadonlySnapshotKey('services', 'ope
 const SERVICES_OVERVIEW_SNAPSHOT_STALE_MS = 60_000
 
 type ServicesOverviewSnapshotPayload = {
+  version: 2
+  readiness: {
+    stacks: boolean
+    jobs: boolean
+    discovery: boolean
+  }
+  committedQueryKey: string
   stacks: StackListItem[]
   details: Record<string, StackDetail | undefined>
   jobs: CompactJobListItem[]
   discoveredProjects: DiscoveredProject[]
+}
+
+function isServicesOverviewSnapshotPayload(value: unknown): value is ServicesOverviewSnapshotPayload {
+  if (!value || typeof value !== 'object') return false
+  const payload = value as Record<string, unknown>
+  if (payload.version !== 2 || typeof payload.committedQueryKey !== 'string' || !payload.readiness || typeof payload.readiness !== 'object') return false
+  const readiness = payload.readiness as Record<string, unknown>
+  return Array.isArray(payload.stacks) && Array.isArray(payload.jobs) && Array.isArray(payload.discoveredProjects) && readiness.stacks === true && readiness.jobs === true && readiness.discovery === true
 }
 
 export function useOverviewPageState(props: {
@@ -86,6 +101,10 @@ export function useOverviewPageState(props: {
   })
   const [jobs, setJobs] = useState<CompactJobListItem[]>([])
   const [discoveredProjects, setDiscoveredProjects] = useState<DiscoveredProject[]>([])
+  const [stacksLoaded, setStacksLoaded] = useState(false)
+  const [stackDetailsLoaded, setStackDetailsLoaded] = useState(false)
+  const [jobsLoaded, setJobsLoaded] = useState(false)
+  const [discoveryLoaded, setDiscoveryLoaded] = useState(false)
   const [activeDiscoveryIssue, setActiveDiscoveryIssue] = useState<DiscoveryIssueItem | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [noticeJobId, setNoticeJobId] = useState<string | null>(null)
@@ -117,12 +136,17 @@ export function useOverviewPageState(props: {
       setSnapshotStatus(snapshot.status)
       setSnapshotFetchedAt(snapshot.record?.fetchedAt ?? null)
       setSnapshotAnchorFetchedAt(snapshot.record?.fetchedAt ?? null)
-      if (snapshot.status !== 'fresh') return
-      setStacks(snapshot.record.payload.stacks)
-      setDetails(snapshot.record.payload.details)
-      setJobs(snapshot.record.payload.jobs)
-      setDiscoveredProjects(snapshot.record.payload.discoveredProjects)
-      const maxLastScan = snapshot.record.payload.stacks.map((item) => item.lastCheckAt).sort().at(-1)
+      if (snapshot.status !== 'fresh' || !isServicesOverviewSnapshotPayload(snapshot.record.payload)) return
+      const payload = snapshot.record.payload
+      setStacks(payload.stacks)
+      setDetails(payload.details)
+      setJobs(payload.jobs)
+      setDiscoveredProjects(payload.discoveredProjects)
+      setStacksLoaded(true)
+      setStackDetailsLoaded(true)
+      setJobsLoaded(true)
+      setDiscoveryLoaded(true)
+      const maxLastScan = payload.stacks.map((item) => item.lastCheckAt).sort().at(-1)
       onLastScanHint(maxLastScan)
       setSnapshotActive(true)
     })()
@@ -170,14 +194,17 @@ export function useOverviewPageState(props: {
       if (jobsRes.status === 'fulfilled' && requestId >= latestAppliedJobsRequestIdRef.current) {
         latestAppliedJobsRequestIdRef.current = requestId
         setJobs(jobsRes.value.jobs)
+        setJobsLoaded(true)
       }
       if (projectsRes.status === 'fulfilled' && requestId >= latestAppliedProjectsRequestIdRef.current) {
         latestAppliedProjectsRequestIdRef.current = requestId
         setDiscoveredProjects(projectsRes.value)
+        setDiscoveryLoaded(true)
       }
       if (requestId < latestAppliedStacksRequestIdRef.current) return
       latestAppliedStacksRequestIdRef.current = requestId
       setStacks(s)
+      setStacksLoaded(true)
       onLastScanHint(maxLastScan)
       setError(errors.length > 0 ? errors.join(' · ') : null)
 
@@ -193,6 +220,7 @@ export function useOverviewPageState(props: {
       )
       if (requestId < latestAppliedStacksRequestIdRef.current) return
       setDetails(Object.fromEntries(results))
+      setStackDetailsLoaded(results.every(([, detail]) => detail !== undefined))
       if (errors.length === 0 && results.every(([, detail]) => detail !== undefined)) {
         setSnapshotActive(false)
         setSnapshotAnchorFetchedAt(null)
@@ -218,6 +246,7 @@ export function useOverviewPageState(props: {
     )
 
     setDetails((prev) => ({ ...prev, ...Object.fromEntries(results) }))
+    setStackDetailsLoaded(results.every(([, detail]) => detail !== undefined))
   }, [])
 
   const patchStackList = useCallback(
@@ -229,6 +258,7 @@ export function useOverviewPageState(props: {
       const maxLastScan = next.map((item) => item.lastCheckAt).sort().at(-1)
 
       setStacks(next)
+      setStacksLoaded(true)
       onLastScanHint(maxLastScan)
     },
     [onLastScanHint],
@@ -292,10 +322,13 @@ export function useOverviewPageState(props: {
   }, [requestRefresh])
 
   useEffect(() => {
-    if (stacks.length === 0 && jobs.length === 0 && discoveredProjects.length === 0) return
+    if (!stacksLoaded || !stackDetailsLoaded || !jobsLoaded || !discoveryLoaded) return
     void writeReadonlySnapshot(
       SERVICES_OVERVIEW_SNAPSHOT_KEY,
       {
+        version: 2,
+        readiness: { stacks: true, jobs: true, discovery: true },
+        committedQueryKey: filter,
         stacks,
         details,
         jobs,
@@ -306,7 +339,7 @@ export function useOverviewPageState(props: {
         fetchedAt: snapshotAnchorFetchedAt ? Date.parse(snapshotAnchorFetchedAt) || undefined : undefined,
       },
     )
-  }, [details, discoveredProjects, jobs, snapshotAnchorFetchedAt, stacks])
+  }, [details, discoveredProjects, discoveryLoaded, filter, jobs, jobsLoaded, snapshotAnchorFetchedAt, stackDetailsLoaded, stacks, stacksLoaded])
 
   useManagementEventBatch(({ events, resyncRequired }) => {
     const stackIds = new Set<string>()
@@ -348,8 +381,14 @@ export function useOverviewPageState(props: {
     const sync = async () => {
       if (refreshAll) return requestRefresh()
       const tasks: Promise<unknown>[] = []
-      if (jobsChanged) tasks.push(listCompactJobsPage({ limit: 200 }).then((page) => setJobs(page.jobs)))
-      if (discoveryChanged) tasks.push(listDiscoveryProjects('exclude').then(setDiscoveredProjects))
+      if (jobsChanged) tasks.push(listCompactJobsPage({ limit: 200 }).then((page) => {
+        setJobs(page.jobs)
+        setJobsLoaded(true)
+      }))
+      if (discoveryChanged) tasks.push(listDiscoveryProjects('exclude').then((projects) => {
+        setDiscoveredProjects(projects)
+        setDiscoveryLoaded(true)
+      }))
       if (stackIds.size > 0) {
         const ids = [...stackIds]
         tasks.push(patchStackDetails(ids), patchStackList(ids))
@@ -826,6 +865,7 @@ export function useOverviewPageState(props: {
     collapsed,
     countsAll,
     details,
+    discoveryLoaded,
     discoverySummary,
     effectiveDiscoveryScanAt,
     error,
@@ -834,6 +874,7 @@ export function useOverviewPageState(props: {
     isTargetBusy,
     isTargetSubmitting,
     jobsSummary,
+    jobsLoaded,
     noticeCheckJobId,
     noticeDiscoveryJobId,
     noticeJobId,
@@ -850,6 +891,7 @@ export function useOverviewPageState(props: {
     snapshotFetchedAt,
     snapshotStatus,
     stacks,
+    stacksLoaded: stacksLoaded && stackDetailsLoaded,
     supervisor,
     toggleStackCollapsed,
     totalServicesAll,

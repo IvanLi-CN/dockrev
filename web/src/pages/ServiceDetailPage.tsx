@@ -35,6 +35,8 @@ import { AutoUpdatePolicyResultCard } from "../components/AutoUpdatePolicyResult
 import { RecentUpdateRecords, ServiceOperationHistory, filterServiceOperationJobs, selectRecentServiceUpdateJobs, selectServiceOperationJobs } from "../components/RecentUpdateRecords";
 import { ResponsiveSettingsDrawer } from "../components/ResponsiveSettingsDrawer";
 import { ServiceVersionsSection } from "../components/ServiceVersionsSection";
+import { AsyncDataRegion, AsyncDataSkeleton } from "../components/AsyncDataRegion";
+import type { AsyncDataPhase, AsyncDataSource } from "../asyncData";
 import { ServiceMobileActionMenu, ServiceStackDetailAction } from "../components/ServiceSplitActionButton";
 import { ImageLinkIcons, RepositoryLinkIcon, splitImageNameForDisplay, splitImageRef } from "../imageLinks";
 import { publishServiceTreeRefresh } from "../serviceTreeRefresh";
@@ -59,6 +61,14 @@ function errorMessage(e: unknown): string {
 const SERVICE_DETAIL_SNAPSHOT_STALE_MS = 60_000;
 const SERVICE_DETAIL_MONITORING_WINDOW: ServiceResourceUsageWindow = "1h";
 type ServiceDetailSnapshotPayload = {
+  version: 2;
+  readiness: {
+    stack: boolean;
+    history: boolean;
+    backup: boolean;
+    monitoring: boolean;
+  };
+  committedQueryKey: string;
   stack: StackDetail;
   jobs: JobListItem[];
   historyCursor?: string | null;
@@ -68,6 +78,14 @@ type ServiceDetailSnapshotPayload = {
   backupRecords: ServiceBackupRecordItem[];
   monitoring: ServiceResourceSnapshot | null;
 };
+
+function isServiceDetailSnapshotPayload(value: unknown): value is ServiceDetailSnapshotPayload {
+  if (!value || typeof value !== "object") return false;
+  const payload = value as Record<string, unknown>;
+  if (payload.version !== 2 || typeof payload.committedQueryKey !== "string" || !payload.readiness || typeof payload.readiness !== "object") return false;
+  const readiness = payload.readiness as Record<string, unknown>;
+  return Boolean(payload.stack) && Array.isArray(payload.jobs) && Array.isArray(payload.backupRecords) && readiness.stack === true && readiness.history === true && readiness.backup === true && readiness.monitoring === true;
+}
 export function ServiceDetailPage(props: {
   stackId: string;
   serviceId: string;
@@ -87,6 +105,7 @@ export function ServiceDetailPage(props: {
     bannerClass,
     bannerDetail,
     bannerTitle,
+    backupPhase,
     backupRecords,
     busy,
     composeEnvFile,
@@ -125,6 +144,7 @@ export function ServiceDetailPage(props: {
     setNewRuleValue,
     setRepoInferBusy,
     settings,
+    settingsPhase,
     settingsBusy,
     stack,
     stackSettings,
@@ -135,6 +155,9 @@ export function ServiceDetailPage(props: {
   } = useServiceDetailPageState(props);
   const visibleRollbackTarget = rollbackTargetRefreshing ? null : rollbackTarget
   const [jobs, setJobs] = useState<JobListItem[]>([]);
+  const [historyPhase, setHistoryPhase] = useState<AsyncDataPhase>("initial-loading");
+  const [historySource, setHistorySource] = useState<AsyncDataSource>("none");
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [versionJobs, setVersionJobs] = useState<JobListItem[]>([]);
   const [versionJobsLoaded, setVersionJobsLoaded] = useState(false);
   const [historyCursor, setHistoryCursor] = useState<string | null>(null);
@@ -144,6 +167,7 @@ export function ServiceDetailPage(props: {
   const historyCursorRef = useRef<string | null>(null);
   const currentServiceIdRef = useRef(props.serviceId);
   const historyRequestIdRef = useRef(0);
+  const historyHasCommittedDataRef = useRef(false);
   const versionJobsRequestIdRef = useRef(0);
   currentServiceIdRef.current = props.serviceId;
   const [monitoringSnapshot, setMonitoringSnapshot] = useState<ServiceResourceSnapshot | null>(null);
@@ -152,6 +176,9 @@ export function ServiceDetailPage(props: {
   const [snapshotFetchedAt, setSnapshotFetchedAt] = useState<string | null>(null);
   const [snapshotAnchorFetchedAt, setSnapshotAnchorFetchedAt] = useState<string | null>(null);
   const [snapshotActive, setSnapshotActive] = useState(false);
+  const [historySnapshotHydrated, setHistorySnapshotHydrated] = useState(false);
+  const snapshotActiveRef = useRef(snapshotActive);
+  snapshotActiveRef.current = snapshotActive;
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
   const [tagDrawerOpen, setTagDrawerOpen] = useState(false);
   const [serviceSettingsDrawerOpen, setServiceSettingsDrawerOpen] = useState(false);
@@ -163,19 +190,32 @@ export function ServiceDetailPage(props: {
     const requestedServiceId = props.serviceId;
     const requestId = ++historyRequestIdRef.current;
     const isPagination = nextCursorStack != null;
+    setHistorySource(snapshotActiveRef.current ? "fresh-snapshot" : isPagination ? "memory" : "live");
+    setHistoryPhase(historyHasCommittedDataRef.current ? "refreshing" : "initial-loading");
+    setHistoryError(null);
     if (isPagination) setHistoryPaginationBusy(true);
-    const page = await listJobsPage({ serviceId: requestedServiceId, type: ["update", "rollback", "service_lifecycle", "stack_lifecycle"], limit: 20, cursor }).finally(() => {
+    try {
+      const page = await listJobsPage({ serviceId: requestedServiceId, type: ["update", "rollback", "service_lifecycle", "stack_lifecycle"], limit: 20, cursor });
+      if (requestId !== historyRequestIdRef.current || currentServiceIdRef.current !== requestedServiceId) return;
+      setJobs(page.jobs);
+      historyHasCommittedDataRef.current = true;
+      setHistoryPhase(page.jobs.length === 0 ? "ready-empty" : "ready-data");
+      historyCursorRef.current = cursor;
+      setHistoryCursor(cursor);
+      setHistoryNextCursor(page.nextCursor ?? null);
+      if (nextCursorStack != null) setHistoryCursorStack(nextCursorStack);
+      if (!activateLive) return;
+      setSnapshotActive(false);
+      setSnapshotAnchorFetchedAt(null);
+    } catch (reason: unknown) {
+      if (requestId === historyRequestIdRef.current && currentServiceIdRef.current === requestedServiceId) {
+        setHistoryError(errorMessage(reason));
+        setHistoryPhase("error");
+      }
+      throw reason;
+    } finally {
       if (isPagination) setHistoryPaginationBusy(false);
-    });
-    if (requestId !== historyRequestIdRef.current || currentServiceIdRef.current !== requestedServiceId) return;
-    setJobs(page.jobs);
-    historyCursorRef.current = cursor;
-    setHistoryCursor(cursor);
-    setHistoryNextCursor(page.nextCursor ?? null);
-    if (nextCursorStack != null) setHistoryCursorStack(nextCursorStack);
-    if (!activateLive) return;
-    setSnapshotActive(false);
-    setSnapshotAnchorFetchedAt(null);
+    }
   }, [props.serviceId]);
   const refreshVersionJobs = useCallback(async () => {
     const requestedServiceId = props.serviceId;
@@ -193,15 +233,23 @@ export function ServiceDetailPage(props: {
       setSnapshotStatus(snapshot.status);
       setSnapshotFetchedAt(snapshot.record?.fetchedAt ?? null);
       setSnapshotAnchorFetchedAt(snapshot.record?.fetchedAt ?? null);
-      if (snapshot.status !== "fresh") return;
-      setSnapshotPayload(snapshot.record.payload);
-      const snapshotHistoryCursor = snapshot.record.payload.historyCursor ?? null;
+      if (snapshot.status !== "fresh" || !isServiceDetailSnapshotPayload(snapshot.record.payload)) {
+        setHistorySnapshotHydrated(true);
+        return;
+      }
+      const payload = snapshot.record.payload;
+      setSnapshotPayload(payload);
+      const snapshotHistoryCursor = payload.historyCursor ?? null;
       historyCursorRef.current = snapshotHistoryCursor;
       setHistoryCursor(snapshotHistoryCursor);
-      setHistoryNextCursor(snapshot.record.payload.historyNextCursor ?? null);
-      setHistoryCursorStack(snapshot.record.payload.historyCursorStack ?? []);
-      setMonitoringSnapshot(snapshot.record.payload.monitoring ?? null);
+      setHistoryNextCursor(payload.historyNextCursor ?? null);
+      setHistoryCursorStack(payload.historyCursorStack ?? []);
+      setMonitoringSnapshot(payload.monitoring ?? null);
+      setJobs(payload.jobs);
+      historyHasCommittedDataRef.current = true;
+      setHistoryPhase(payload.jobs.length === 0 ? "ready-empty" : "ready-data");
       setSnapshotActive(true);
+      setHistorySnapshotHydrated(true);
     })();
     return () => {
       cancelled = true;
@@ -213,13 +261,24 @@ export function ServiceDetailPage(props: {
     versionJobsRequestIdRef.current += 1;
     historyCursorRef.current = null;
     setJobs([]);
+    historyHasCommittedDataRef.current = false;
+    setHistoryPhase("initial-loading");
+    setHistoryError(null);
     setVersionJobs([]);
     setVersionJobsLoaded(false);
     setHistoryCursor(null);
     setHistoryNextCursor(null);
     setHistoryCursorStack([]);
-    void refreshRecentJobs(false, null).catch(() => undefined);
-  }, [props.serviceId, refreshRecentJobs]);
+    setSnapshotPayload(null);
+    setSnapshotActive(false);
+    setSnapshotAnchorFetchedAt(null);
+    setHistorySnapshotHydrated(false);
+  }, [props.serviceId]);
+
+  useEffect(() => {
+    if (!historySnapshotHydrated) return;
+    void refreshRecentJobs(false, historyCursorRef.current).catch(() => undefined);
+  }, [historySnapshotHydrated, props.serviceId, refreshRecentJobs]);
 
   useEffect(() => {
     void refreshVersionJobs().catch(() => undefined);
@@ -292,6 +351,14 @@ export function ServiceDetailPage(props: {
     void writeReadonlySnapshot(
       snapshotKey,
       {
+        version: 2,
+        readiness: {
+          stack: true,
+          history: historyPhase === "ready-data" || historyPhase === "ready-empty",
+          backup: backupPhase === "ready-data" || backupPhase === "ready-empty",
+          monitoring: monitoringSnapshot !== null,
+        },
+        committedQueryKey: `${props.stackId}:${props.serviceId}:${historyCursor ?? ""}`,
         stack: sanitizeReadonlyStackSnapshot(stack),
         jobs,
         historyCursor,
@@ -306,12 +373,12 @@ export function ServiceDetailPage(props: {
         fetchedAt: snapshotAnchorFetchedAt ? Date.parse(snapshotAnchorFetchedAt) || undefined : undefined,
       },
     );
-  }, [backupRecords, backupTargets, historyCursor, historyCursorStack, historyNextCursor, jobs, monitoringSnapshot, service, snapshotAnchorFetchedAt, snapshotKey, stack]);
+  }, [backupPhase, backupRecords, backupTargets, historyCursor, historyCursorStack, historyNextCursor, historyPhase, jobs, monitoringSnapshot, props.serviceId, props.stackId, service, snapshotAnchorFetchedAt, snapshotKey, stack]);
 
   const snapshotService = useMemo(() => snapshotPayload?.stack.services.find((item) => item.id === props.serviceId) ?? null, [props.serviceId, snapshotPayload]);
   const effectiveStack = stack ?? snapshotPayload?.stack ?? null;
   const effectiveService = service ?? snapshotService;
-  const effectiveJobs = snapshotActive ? (snapshotPayload?.jobs ?? jobs) : jobs;
+  const effectiveJobs = jobs;
   const effectiveBackupTargets = snapshotActive ? (snapshotPayload?.backupTargets ?? backupTargets) : backupTargets;
   const effectiveBackupRecords = snapshotActive ? (snapshotPayload?.backupRecords ?? backupRecords) : backupRecords;
   const effectiveMonitoringSnapshot = snapshotActive ? (snapshotPayload?.monitoring ?? monitoringSnapshot) : monitoringSnapshot;
@@ -381,7 +448,18 @@ export function ServiceDetailPage(props: {
         </div>
       );
     }
-    return <div className="muted">加载中…</div>;
+    return (
+      <div className="page">
+        <AsyncDataRegion
+          error={error}
+          hasData={false}
+          label="正在加载服务详情"
+          onRetry={() => void requestRefresh()}
+          phase={error ? "error" : "initial-loading"}
+          skeleton={<AsyncDataSkeleton className="serviceDetailLoadingSkeleton" lines={7} />}
+        />
+      </div>
+    );
   }
 
   const policy = settings?.autoUpdatePolicy ?? stackSettings?.autoUpdatePolicy ?? createDefaultAutoUpdatePolicy("inherit");
@@ -409,7 +487,7 @@ export function ServiceDetailPage(props: {
   const imageNameDisplay = splitImageNameForDisplay(splitImageRef(effectiveService.image.ref).name, effectiveService.image.tag);
   const renderOverviewSection = () => (
     <div className="svcDetailSectionStack">
-      <RecentUpdateRecords jobs={recentUpdateJobs} />
+      <RecentUpdateRecords jobs={recentUpdateJobs} loading={!snapshotActive && historyPhase === "initial-loading"} />
       <div className="card serviceDetailIdentifiersCard" data-service-detail-section-card="service-identifiers">
         <div className="serviceDetailIdentifiersHead">
           <div>
@@ -442,6 +520,15 @@ export function ServiceDetailPage(props: {
   );
   const renderHistorySection = () => (
     <div className="svcDetailSectionStack">
+      <AsyncDataRegion
+        error={historyPhase === "error" ? historyError : null}
+        hasData={effectiveJobs.length > 0}
+        label="正在刷新服务操作记录"
+        onRetry={() => void refreshRecentJobs(false, historyCursorRef.current).catch(() => undefined)}
+        phase={historyPhase}
+        skeleton={<AsyncDataSkeleton className="serviceOperationHistoryLoading" lines={5} />}
+        source={historySource}
+      >
       <ServiceOperationHistory
         backupRecords={effectiveBackupRecords}
         key={serviceId}
@@ -463,6 +550,7 @@ export function ServiceDetailPage(props: {
           void refreshRecentJobs(false, historyNextCursor, [...historyCursorStack, historyCursor]);
         }}
       />
+      </AsyncDataRegion>
     </div>
   );
   const renderVersionsSection = () => (
@@ -500,6 +588,15 @@ export function ServiceDetailPage(props: {
 
   const renderBackupSection = () => (
     <div className="svcDetailSectionStack">
+      <AsyncDataRegion
+        error={backupPhase === "error" ? error : null}
+        hasData={effectiveBackupTargets !== null || effectiveBackupRecords.length > 0}
+        label="正在刷新服务备份信息"
+        onRetry={() => void requestRefresh()}
+        phase={snapshotActive ? (effectiveBackupRecords.length === 0 ? "ready-empty" : "ready-data") : backupPhase}
+        skeleton={<AsyncDataSkeleton className="serviceBackupLoadingSkeleton" lines={6} />}
+        source={snapshotActive ? "fresh-snapshot" : "live"}
+      >
       <div className="card serviceBackupSummaryCard" data-service-detail-section-card="backup-summary">
         <div className="serviceBackupSummaryHead">
           <div>
@@ -552,6 +649,7 @@ export function ServiceDetailPage(props: {
         </div>
         <BackupRecordList records={effectiveBackupRecords} />
       </div>
+      </AsyncDataRegion>
     </div>
   );
 
@@ -563,7 +661,16 @@ export function ServiceDetailPage(props: {
 
   const renderSettingsSection = () => (
     <div className="svcDetailSectionStack">
-      {readonlyUi || !settings ? <ServiceDetailReadonlyBlocked detail="设置页包含敏感配置与写操作，不会持久化到本地；恢复联网后才可编辑。" title="当前离线，设置页需要联网。" /> : null}
+      {!isOnline ? <ServiceDetailReadonlyBlocked detail="设置页包含敏感配置与写操作，不会持久化到本地；恢复联网后才可编辑。" title="当前离线，设置页需要联网。" /> : null}
+      {isOnline ? (
+        <AsyncDataRegion
+          error={settingsPhase === "error" ? error : null}
+          hasData={settings !== null}
+          label="正在加载服务设置"
+          onRetry={() => void requestRefresh()}
+          phase={settingsPhase}
+          skeleton={<AsyncDataSkeleton className="serviceSettingsLoadingSkeleton" lines={8} />}
+        >
       {!readonlyUi && settings ? (
         <>
           <div data-service-detail-section-card="auto-policy">
@@ -769,6 +876,8 @@ export function ServiceDetailPage(props: {
             <div className="svcDangerZoneActions">{dangerousActions}</div>
           </div>
         </>
+      ) : null}
+        </AsyncDataRegion>
       ) : null}
     </div>
   );

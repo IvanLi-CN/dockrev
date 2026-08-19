@@ -18,6 +18,8 @@ import {
 } from '../readonlySnapshotCache'
 import { navigate } from '../routes'
 import { Button, Mono, Pill } from '../ui'
+import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
+import type { AsyncDataPhase, AsyncDataSource } from '../asyncData'
 
 type Filter = 'all' | 'queued' | 'running' | 'success' | 'failed' | 'rolled_back' | 'cancelled'
 type VersionInferenceSummary = {
@@ -166,6 +168,13 @@ const QUEUE_SNAPSHOT_KEY = buildReadonlySnapshotKey('queue', 'jobs-overview')
 const QUEUE_SNAPSHOT_STALE_MS = 60_000
 
 type QueueSnapshotPayload = {
+  version: 2
+  readiness: {
+    jobs: boolean
+    versionInference: boolean
+    ghcr: boolean
+  }
+  committedQueryKey: string
   jobs: JobListItem[]
   filter?: Filter
   currentCursor?: string | null
@@ -175,6 +184,17 @@ type QueueSnapshotPayload = {
   versionInferenceLoaded: boolean
   ghcrSummary: GhcrWebhookSummary
   ghcrLoaded: boolean
+}
+
+function isQueueSnapshotPayload(value: unknown): value is QueueSnapshotPayload {
+  if (!isRecord(value) || value.version !== 2 || !isRecord(value.readiness)) return false
+  return (
+    typeof value.committedQueryKey === 'string' &&
+    Array.isArray(value.jobs) &&
+    typeof value.readiness.jobs === 'boolean' &&
+    typeof value.readiness.versionInference === 'boolean' &&
+    typeof value.readiness.ghcr === 'boolean'
+  )
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -248,6 +268,8 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
   const { isOnline } = usePwaStatus()
   const [jobs, setJobs] = useState<JobListItem[]>([])
   const [jobsLoaded, setJobsLoaded] = useState(false)
+  const [jobsPhase, setJobsPhase] = useState<AsyncDataPhase>('initial-loading')
+  const [jobsSource, setJobsSource] = useState<AsyncDataSource>('none')
   const [jobsLiveLoaded, setJobsLiveLoaded] = useState(false)
   const [filter, setFilter] = useState<Filter>('all')
   const [currentCursor, setCurrentCursor] = useState<string | null>(null)
@@ -272,7 +294,10 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
   const [snapshotFetchedAt, setSnapshotFetchedAt] = useState<string | null>(null)
   const [snapshotAnchorFetchedAt, setSnapshotAnchorFetchedAt] = useState<string | null>(null)
   const [snapshotActive, setSnapshotActive] = useState(false)
+  const [snapshotHydrated, setSnapshotHydrated] = useState(false)
   const refreshRequestIdRef = useRef(0)
+  const jobsLoadedRef = useRef(false)
+  const snapshotActiveRef = useRef(false)
   const currentCursorRef = useRef<string | null>(null)
   const filterRef = useRef<Filter>('all')
   const inferenceRequestIdRef = useRef(0)
@@ -286,47 +311,67 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
       setSnapshotStatus(snapshot.status)
       setSnapshotFetchedAt(snapshot.record?.fetchedAt ?? null)
       setSnapshotAnchorFetchedAt(snapshot.record?.fetchedAt ?? null)
-      if (snapshot.status !== 'fresh') return
-      setJobs(snapshot.record.payload.jobs)
+      if (snapshot.status !== 'fresh' || !isQueueSnapshotPayload(snapshot.record.payload)) {
+        setSnapshotHydrated(true)
+        return
+      }
+      const payload = snapshot.record.payload
+      setJobs(payload.jobs)
       setJobsLoaded(true)
-      const snapshotFilter = snapshot.record.payload.filter ?? 'all'
-      const snapshotCursor = snapshot.record.payload.currentCursor ?? null
+      jobsLoadedRef.current = true
+      const snapshotFilter = payload.filter ?? 'all'
+      const snapshotCursor = payload.currentCursor ?? null
       filterRef.current = snapshotFilter
       currentCursorRef.current = snapshotCursor
       setFilter(snapshotFilter)
       setCurrentCursor(snapshotCursor)
-      setNextCursor(snapshot.record.payload.nextCursor ?? null)
-      setCursorStack(snapshot.record.payload.cursorStack ?? [])
-      setVersionInferenceSummary(snapshot.record.payload.versionInferenceSummary)
-      setVersionInferenceLoaded(snapshot.record.payload.versionInferenceLoaded)
-      setGhcrSummary(snapshot.record.payload.ghcrSummary)
-      setGhcrLoaded(snapshot.record.payload.ghcrLoaded)
+      setNextCursor(payload.nextCursor ?? null)
+      setCursorStack(payload.cursorStack ?? [])
+      setVersionInferenceSummary(payload.versionInferenceSummary)
+      setVersionInferenceLoaded(payload.readiness.versionInference)
+      setGhcrSummary(payload.ghcrSummary)
+      setGhcrLoaded(payload.readiness.ghcr)
+      setJobsSource('fresh-snapshot')
+      setJobsPhase(payload.jobs.length === 0 ? 'ready-empty' : 'ready-data')
       setSnapshotActive(true)
+      snapshotActiveRef.current = true
+      setSnapshotHydrated(true)
     })()
     return () => {
       cancelled = true
     }
   }, [])
 
-  const refresh = useCallback(async (cursor: string | null = currentCursorRef.current) => {
+  const refresh = useCallback(async (
+    cursor: string | null = currentCursorRef.current,
+    requestedFilter: Filter = filterRef.current,
+    source: AsyncDataSource = 'live',
+  ) => {
     const requestId = ++refreshRequestIdRef.current
     setError(null)
+    setJobsSource(snapshotActiveRef.current ? 'fresh-snapshot' : source)
+    setJobsPhase(jobsLoadedRef.current ? 'refreshing' : 'initial-loading')
     try {
       const page = await listJobsPage({
         cursor,
         limit: 100,
-        status: filterRef.current === 'all' ? null : filterRef.current,
+        status: requestedFilter === 'all' ? null : requestedFilter,
       })
       if (requestId !== refreshRequestIdRef.current) return false
       setJobs(page.jobs)
+      filterRef.current = requestedFilter
+      setFilter(requestedFilter)
       currentCursorRef.current = cursor
       setCurrentCursor(cursor)
       setNextCursor(page.nextCursor ?? null)
       setJobsLoaded(true)
+      jobsLoadedRef.current = true
       setJobsLiveLoaded(true)
+      setJobsPhase(page.jobs.length === 0 ? 'ready-empty' : 'ready-data')
       return true
     } catch (e: unknown) {
       if (requestId !== refreshRequestIdRef.current) return false
+      setJobsPhase('error')
       throw e
     }
   }, [])
@@ -335,7 +380,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
     if (paginationBusy) return
     setPaginationBusy(true)
     try {
-      if (await refresh(cursor)) setCursorStack(nextStack)
+      if (await refresh(cursor, filterRef.current, 'memory')) setCursorStack(nextStack)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -344,8 +389,9 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
   }, [paginationBusy, refresh])
 
   useEffect(() => {
+    if (!snapshotHydrated) return
     void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-  }, [refresh])
+  }, [refresh, snapshotHydrated])
 
   const refreshVersionInferenceSummary = useCallback(async () => {
     const requestId = ++inferenceRequestIdRef.current
@@ -412,7 +458,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
           void (async () => {
             setBusy(true)
             try {
-              await Promise.all([refresh(), refreshVersionInferenceSummary(), refreshGhcrSummary()])
+              await Promise.all([refresh(currentCursorRef.current, filterRef.current, 'memory'), refreshVersionInferenceSummary(), refreshGhcrSummary()])
             } catch (e: unknown) {
               setError(e instanceof Error ? e.message : String(e))
             } finally {
@@ -429,12 +475,20 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
   useEffect(() => {
     if (!jobsLiveLoaded || !versionInferenceLiveLoaded || !ghcrLiveLoaded) return
     setSnapshotActive(false)
+    snapshotActiveRef.current = false
     setSnapshotAnchorFetchedAt(null)
   }, [ghcrLiveLoaded, jobsLiveLoaded, versionInferenceLiveLoaded])
 
   useEffect(() => {
     if (!jobsLoaded && !versionInferenceLoaded && !ghcrLoaded) return
     const payload: QueueSnapshotPayload = {
+      version: 2,
+      readiness: {
+        jobs: jobsLoaded,
+        versionInference: versionInferenceLoaded,
+        ghcr: ghcrLoaded,
+      },
+      committedQueryKey: `${filter}:${currentCursor ?? ''}:${nextCursor ?? ''}`,
       jobs,
       filter,
       currentCursor,
@@ -479,7 +533,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
             void (async () => {
               setBusy(true)
               try {
-                await Promise.all([refresh(), refreshVersionInferenceSummary(), refreshGhcrSummary()])
+                await Promise.all([refresh(currentCursorRef.current, filterRef.current, 'memory'), refreshVersionInferenceSummary(), refreshGhcrSummary()])
               } catch (e: unknown) {
                 setError(e instanceof Error ? e.message : String(e))
               } finally {
@@ -503,15 +557,14 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
               <button
                 key={k}
                 className={filter === k ? 'chip chipActive' : 'chip'}
+                aria-busy={jobsPhase === 'refreshing' || undefined}
+                disabled={jobsPhase === 'initial-loading' || jobsPhase === 'refreshing'}
                 onClick={() => {
-                  if (k === filter) return
-                  filterRef.current = k
-                  setFilter(k)
-                  currentCursorRef.current = null
-                  setCurrentCursor(null)
-                  setNextCursor(null)
-                  setCursorStack([])
-                  void refresh(null).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+                  if (k === filter || jobsPhase === 'initial-loading' || jobsPhase === 'refreshing') return
+                  void refresh(null, k, 'memory').then((applied) => {
+                    if (!applied) return
+                    setCursorStack([])
+                  }).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
                 }}
                 type="button"
               >
@@ -536,16 +589,16 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
             </div>
             <div className="queueMeta">
               <span>
-                snapshots <Mono>{versionInferenceSummary.snapshotsTotal}</Mono>
+                snapshots <Mono>{versionInferenceLoaded ? versionInferenceSummary.snapshotsTotal : '—'}</Mono>
               </span>
               <span>
-                queued <Mono>{versionInferenceSummary.queued}</Mono>
+                queued <Mono>{versionInferenceLoaded ? versionInferenceSummary.queued : '—'}</Mono>
               </span>
               <span>
-                running <Mono>{versionInferenceSummary.running}</Mono>
+                running <Mono>{versionInferenceLoaded ? versionInferenceSummary.running : '—'}</Mono>
               </span>
               <span>
-                all_failed <Mono>{versionInferenceSummary.allFailed}</Mono>
+                all_failed <Mono>{versionInferenceLoaded ? versionInferenceSummary.allFailed : '—'}</Mono>
               </span>
             </div>
             <div className="muted" style={{ marginTop: 8 }}>
@@ -579,25 +632,25 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
             </div>
             <div className="queueMeta">
               <span>
-                tracked <Mono>{ghcrSummary.tracked}</Mono>
+                tracked <Mono>{ghcrLoaded ? ghcrSummary.tracked : '—'}</Mono>
               </span>
               <span>
-                ok <Mono>{ghcrSummary.ok}</Mono>
+                ok <Mono>{ghcrLoaded ? ghcrSummary.ok : '—'}</Mono>
               </span>
               <span>
-                missing <Mono>{ghcrSummary.missing}</Mono>
+                missing <Mono>{ghcrLoaded ? ghcrSummary.missing : '—'}</Mono>
               </span>
               <span>
-                error <Mono>{ghcrSummary.error}</Mono>
+                error <Mono>{ghcrLoaded ? ghcrSummary.error : '—'}</Mono>
               </span>
               <span>
-                conflict <Mono>{ghcrSummary.conflict}</Mono>
+                conflict <Mono>{ghcrLoaded ? ghcrSummary.conflict : '—'}</Mono>
               </span>
               <span>
-                jobsQueued <Mono>{ghcrSummary.jobsQueued}</Mono>
+                jobsQueued <Mono>{ghcrLoaded ? ghcrSummary.jobsQueued : '—'}</Mono>
               </span>
               <span>
-                jobsRunning <Mono>{ghcrSummary.jobsRunning}</Mono>
+                jobsRunning <Mono>{ghcrLoaded ? ghcrSummary.jobsRunning : '—'}</Mono>
               </span>
             </div>
             <div className="muted" style={{ marginTop: 8 }}>
@@ -614,7 +667,16 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
           </div>
         </button>
 
-        <div className="queueList">
+        <AsyncDataRegion
+          className="queueList"
+          error={error}
+          hasData={jobsLoaded}
+          label="正在刷新任务队列"
+          onRetry={() => void refresh(currentCursorRef.current, filterRef.current, 'memory').catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))}
+          phase={jobsPhase}
+          skeleton={<AsyncDataSkeleton className="queueLoadingSkeleton" lines={4} />}
+          source={jobsSource}
+        >
           {filtered.map((j) => {
             const readable = formatJobReadableDisplay(j.type, j.scope, j.summary)
             const progressLabel = formatProgressLabel(j)
@@ -710,8 +772,8 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
               </div>
             )
           })}
-          {filtered.length === 0 ? <div className="muted">暂无任务</div> : null}
-        </div>
+          {jobsLoaded && filtered.length === 0 ? <div className="muted">暂无任务</div> : null}
+        </AsyncDataRegion>
         <div className="sectionRow" style={{ marginTop: 12 }}>
           <div className="muted">每页 100 条</div>
           <div className="chipRow" style={{ marginLeft: 'auto' }}>

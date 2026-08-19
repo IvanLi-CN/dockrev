@@ -14,7 +14,7 @@ async function bootstrap() {
   if (isDockrevAppDemoBuild()) {
     const { installAppDemoApi } = await import('./demo/appDemoApi')
     restorePendingPagesDemoPath()
-    installAppDemoApi()
+    await installAppDemoApi()
   }
 
   createRoot(document.getElementById('root')!).render(

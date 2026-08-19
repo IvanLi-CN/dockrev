@@ -18,6 +18,8 @@ import { createDefaultAutoUpdatePolicy } from '../components/AutoUpdatePolicyEdi
 import { AutoUpdatePolicyDrawer } from '../components/AutoUpdatePolicyDrawer'
 import { AutoUpdatePolicyResultCard } from '../components/AutoUpdatePolicyResultCard'
 import { RecentUpdateRecords, selectRecentStackUpdateJobs } from '../components/RecentUpdateRecords'
+import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
+import type { AsyncDataPhase, AsyncDataSource } from '../asyncData'
 import { ReadonlySnapshotNotice } from '../components/ReadonlySnapshotNotice'
 import { ServiceMobileActionMenu, ServiceSplitActionButton } from '../components/ServiceSplitActionButton'
 import { useConfirm } from '../confirm'
@@ -79,9 +81,24 @@ function activeOperation(status: string | null | undefined): boolean {
 const STACK_DETAIL_SNAPSHOT_STALE_MS = 60_000
 
 type StackDetailSnapshotPayload = {
+  version: 2
+  readiness: {
+    stack: boolean
+    jobs: boolean
+  }
+  committedQueryKey: string
   stack: StackDetail
   jobs: JobListItem[]
   policy: StackSettings['autoUpdatePolicy'] | null
+}
+
+function isStackDetailSnapshotPayload(value: unknown): value is StackDetailSnapshotPayload {
+  if (!value || typeof value !== 'object') return false
+  const payload = value as Record<string, unknown>
+  if (payload.version !== 2 || typeof payload.committedQueryKey !== 'string') return false
+  if (!payload.readiness || typeof payload.readiness !== 'object') return false
+  const readiness = payload.readiness as Record<string, unknown>
+  return Boolean(payload.stack) && Array.isArray(payload.jobs) && readiness.stack === true && readiness.jobs === true
 }
 
 export function StackDetailPage(props: {
@@ -114,25 +131,45 @@ export function StackDetailPage(props: {
   const [snapshotFetchedAt, setSnapshotFetchedAt] = useState<string | null>(null)
   const [snapshotAnchorFetchedAt, setSnapshotAnchorFetchedAt] = useState<string | null>(null)
   const [snapshotActive, setSnapshotActive] = useState(false)
+  const [snapshotHydrated, setSnapshotHydrated] = useState(false)
+  const [loadPhase, setLoadPhase] = useState<AsyncDataPhase>('initial-loading')
+  const [loadSource, setLoadSource] = useState<AsyncDataSource>('none')
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const stackRef = useRef(stack)
+  const snapshotActiveRef = useRef(snapshotActive)
+  stackRef.current = stack
+  snapshotActiveRef.current = snapshotActive
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (source: AsyncDataSource = 'live') => {
     const requestedStackId = stackId
     if (stackIdRef.current !== requestedStackId) return
     const requestId = ++refreshRequestIdRef.current
+    setLoadSource(snapshotActiveRef.current ? 'fresh-snapshot' : source)
+    setLoadPhase(stackRef.current ? 'refreshing' : 'initial-loading')
+    setLoadError(null)
     setError(null)
     onLastScanHint(undefined)
-    const [stackRes, settingsRes, jobsRes] = await Promise.all([
-      getStack(requestedStackId),
-      getStackSettings(requestedStackId),
-      listJobs().catch(() => []),
-    ])
-    if (stackIdRef.current !== requestedStackId || requestId !== refreshRequestIdRef.current) return
-    setStack(stackRes)
-    setSettings(settingsRes)
-    setCachedPolicy(settingsRes.autoUpdatePolicy ?? null)
-    setJobs(jobsRes)
-    setSnapshotActive(false)
-    setSnapshotAnchorFetchedAt(null)
+    try {
+      const [stackRes, settingsRes, jobsRes] = await Promise.all([
+        getStack(requestedStackId),
+        getStackSettings(requestedStackId),
+        listJobs().catch(() => []),
+      ])
+      if (stackIdRef.current !== requestedStackId || requestId !== refreshRequestIdRef.current) return
+      setStack(stackRes)
+      setSettings(settingsRes)
+      setCachedPolicy(settingsRes.autoUpdatePolicy ?? null)
+      setJobs(jobsRes)
+      setLoadPhase('ready-data')
+      setSnapshotActive(false)
+      snapshotActiveRef.current = false
+      setSnapshotAnchorFetchedAt(null)
+    } catch (reason: unknown) {
+      if (stackIdRef.current !== requestedStackId || requestId !== refreshRequestIdRef.current) return
+      setLoadError(errorMessage(reason))
+      setLoadPhase('error')
+      throw reason
+    }
   }, [onLastScanHint, stackId])
 
   const refreshLifecycleStatus = useCallback(async () => {
@@ -221,11 +258,19 @@ export function StackDetailPage(props: {
       setSnapshotStatus(snapshot.status)
       setSnapshotFetchedAt(snapshot.record?.fetchedAt ?? null)
       setSnapshotAnchorFetchedAt(snapshot.record?.fetchedAt ?? null)
-      if (snapshot.status !== 'fresh') return
-      setStack(snapshot.record.payload.stack)
-      setJobs(snapshot.record.payload.jobs)
-      setCachedPolicy(snapshot.record.payload.policy ?? null)
+      if (snapshot.status !== 'fresh' || !isStackDetailSnapshotPayload(snapshot.record.payload)) {
+        setSnapshotHydrated(true)
+        return
+      }
+      const payload = snapshot.record.payload
+      setStack(payload.stack)
+      setJobs(payload.jobs)
+      setCachedPolicy(payload.policy ?? null)
+      setLoadSource('fresh-snapshot')
+      setLoadPhase('ready-data')
       setSnapshotActive(true)
+      snapshotActiveRef.current = true
+      setSnapshotHydrated(true)
     })()
     return () => {
       cancelled = true
@@ -233,8 +278,9 @@ export function StackDetailPage(props: {
   }, [snapshotKey])
 
   useEffect(() => {
+    if (!snapshotHydrated) return
     void refresh().catch((e: unknown) => setError(errorMessage(e)))
-  }, [refresh])
+  }, [refresh, snapshotHydrated])
 
   useEffect(() => {
     lifecycleActiveJobIdRef.current = null
@@ -270,6 +316,9 @@ export function StackDetailPage(props: {
     void writeReadonlySnapshot(
       snapshotKey,
       {
+        version: 2,
+        readiness: { stack: true, jobs: true },
+        committedQueryKey: stackId,
         stack,
         jobs,
         policy: settings?.autoUpdatePolicy ?? cachedPolicy ?? null,
@@ -279,7 +328,7 @@ export function StackDetailPage(props: {
         fetchedAt: snapshotAnchorFetchedAt ? Date.parse(snapshotAnchorFetchedAt) || undefined : undefined,
       },
     )
-  }, [cachedPolicy, jobs, settings?.autoUpdatePolicy, snapshotAnchorFetchedAt, snapshotKey, stack])
+  }, [cachedPolicy, jobs, settings?.autoUpdatePolicy, snapshotAnchorFetchedAt, snapshotKey, stack, stackId])
 
   useEffect(() => {
     const lifecycleJob = activeLifecycleJobType === 'stack_lifecycle' && activeLifecycleJobId && activeLifecycleJobStatus
@@ -368,7 +417,18 @@ export function StackDetailPage(props: {
         </div>
       )
     }
-    return <div className="muted">加载中…</div>
+    return (
+      <div className="page">
+        <AsyncDataRegion
+          error={loadError ?? error}
+          hasData={false}
+          label="正在加载 Stack 详情"
+          onRetry={() => void refresh()}
+          phase={loadPhase}
+          skeleton={<AsyncDataSkeleton className="stackDetailLoadingSkeleton" lines={8} />}
+        />
+      </div>
+    )
   }
 
   const policy = settings?.autoUpdatePolicy ?? cachedPolicy ?? createDefaultAutoUpdatePolicy('override')
@@ -389,6 +449,15 @@ export function StackDetailPage(props: {
           onAction={() => void refresh()}
         />
       ) : null}
+      <AsyncDataRegion
+        className="stackDetailData"
+        error={loadError}
+        hasData
+        label="正在刷新 Stack 详情"
+        onRetry={() => void refresh('memory')}
+        phase={loadPhase}
+        source={loadSource}
+      >
       <section className="detailHeroShell">
         <div className="stackDetailHero detailHeroCard detailHeroCardStack">
           <div className="detailHeroPrimary">
@@ -506,6 +575,7 @@ export function StackDetailPage(props: {
         policy={autoPolicyDraft}
         scope="stack"
       />
+      </AsyncDataRegion>
       {error ? <div className="error">{error}</div> : null}
     </div>
   )

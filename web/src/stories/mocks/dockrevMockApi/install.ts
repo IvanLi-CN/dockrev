@@ -53,6 +53,7 @@ export function installDockrevMockApi(
   scenario: DockrevApiScenario,
   options: DockrevMockApiOptions = {},
 ) {
+  const apiRouteAttempts = new Map<string, number>()
   const state = scenario === 'error' ? null : cloneFixture(options.initialFixture ?? buildFixture(scenario))
   const cleanupScenario: CleanupMockScenario | null =
     options.cleanupScenario ?? (isCleanupMockScenario(scenario) ? scenario : null)
@@ -371,6 +372,21 @@ export function installDockrevMockApi(
     })()
     const urlPath = url ? url.pathname : urlString
     const urlPathWithQuery = url ? `${url.pathname}${url.search}` : urlString
+
+    const routeKey = `${method} ${urlPath}`
+    const routeBehavior = options.dockrevApiBehaviorByRoute?.[routeKey]
+    if (routeBehavior?.delayMs && routeBehavior.delayMs > 0) {
+      await new Promise<void>((resolve) => globalThis.setTimeout(resolve, routeBehavior.delayMs))
+    }
+    if (routeBehavior && (routeBehavior.failTimes ?? 0) > 0) {
+      const attempt = (apiRouteAttempts.get(routeKey) ?? 0) + 1
+      apiRouteAttempts.set(routeKey, attempt)
+      if (attempt <= (routeBehavior.failTimes ?? 0)) {
+        return json(routeBehavior.failureBody ?? { error: 'mock route failure' }, {
+          status: routeBehavior.failureStatus ?? 503,
+        })
+      }
+    }
 
     if (
       scenario === 'settings-configured-load-slow' &&

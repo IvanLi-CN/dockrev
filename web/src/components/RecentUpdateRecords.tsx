@@ -183,6 +183,7 @@ export function ServiceOperationHistory(props: {
   paginationDisabled?: boolean
   onPrevious: () => void
   onNext: () => void
+  loading?: boolean
 }) {
   const backupSummaryByJobId = useMemo(() => summarizeServiceOperationBackups(props.backupRecords), [props.backupRecords])
 
@@ -297,7 +298,8 @@ export function ServiceOperationHistory(props: {
             </div>
           )
         })}
-        {props.jobs.length === 0 ? <div className="serviceOperationHistoryEmpty">当前服务暂无操作记录。</div> : null}
+        {props.loading ? <div className="serviceOperationHistoryEmpty" data-service-operation-history-state="loading">正在加载服务操作记录…</div> : null}
+        {!props.loading && props.jobs.length === 0 ? <div className="serviceOperationHistoryEmpty">当前服务暂无操作记录。</div> : null}
       </div>
       {props.hasPrevious || props.hasNext ? (
         <nav className="serviceOperationHistoryPager" aria-label="更新记录分页">
@@ -328,7 +330,7 @@ export function ServiceOperationHistory(props: {
   )
 }
 
-export function RecentUpdateRecords(props: { jobs: JobListItem[] }) {
+export function RecentUpdateRecords(props: { jobs: JobListItem[]; loading?: boolean }) {
   return (
     <div className="card recentUpdatesCard">
       <div className="recentUpdatesHead">
@@ -336,7 +338,7 @@ export function RecentUpdateRecords(props: { jobs: JobListItem[] }) {
           <div className="title">最近更新记录</div>
           <div className="muted">只显示最近三次更新任务。</div>
         </div>
-        <Pill tone={props.jobs.length > 0 ? 'info' : 'muted'}>{props.jobs.length}/3</Pill>
+        <Pill tone={props.loading ? 'muted' : props.jobs.length > 0 ? 'info' : 'muted'}>{props.loading ? '—' : `${props.jobs.length}/3`}</Pill>
       </div>
       <div className="recentUpdatesList">
         {props.jobs.map((job) => {
@@ -368,7 +370,8 @@ export function RecentUpdateRecords(props: { jobs: JobListItem[] }) {
             </div>
           )
         })}
-        {props.jobs.length === 0 ? <div className="muted">暂无更新记录</div> : null}
+        {props.loading ? <div className="muted" data-recent-updates-state="loading">正在加载更新记录…</div> : null}
+        {!props.loading && props.jobs.length === 0 ? <div className="muted">暂无更新记录</div> : null}
       </div>
     </div>
   )

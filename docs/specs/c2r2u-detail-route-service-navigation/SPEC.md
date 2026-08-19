@@ -275,3 +275,7 @@ PR: include
 - PR: include
 
 ![服务树移动抽屉紧凑布局](./assets/service-tree-runtime-mobile.png)
+
+## Related Contract
+
+- `docs/specs/async-data-continuity/SPEC.md`

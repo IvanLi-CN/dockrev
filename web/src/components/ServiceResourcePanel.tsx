@@ -129,20 +129,19 @@ function compareSamplesByTime(a: ServiceResourceSample, b: ServiceResourceSample
   return ta - tb
 }
 
-function trimSortedSamples(samples: ServiceResourceSample[], windowSeconds: number): ServiceResourceSample[] {
+export function trimSamplesToWindow(
+  samples: ServiceResourceSample[],
+  windowSeconds: number,
+  now = Date.now(),
+): ServiceResourceSample[] {
   if (!samples.length) return []
-  const latestTs = parseSampleTs(samples[samples.length - 1]) ?? Date.now()
-  const cutoff = latestTs - windowSeconds * 1000
-  return samples.filter((sample) => {
-    const ts = parseSampleTs(sample)
-    return ts === null || ts >= cutoff
-  })
-}
-
-function trimSamplesToWindow(samples: ServiceResourceSample[], windowSeconds: number): ServiceResourceSample[] {
-  if (!samples.length) return []
-  const sorted = [...samples].sort(compareSamplesByTime)
-  return trimSortedSamples(sorted, windowSeconds)
+  const cutoff = now - Math.max(0, windowSeconds) * 1000
+  return samples
+    .filter((sample) => {
+      const ts = parseSampleTs(sample)
+      return ts !== null && ts >= cutoff && ts <= now
+    })
+    .sort(compareSamplesByTime)
 }
 
 function chartSamplesForWindow(samples: ServiceResourceSample[], isAggregatedWindow: boolean): ServiceResourceSample[] {
@@ -426,7 +425,7 @@ export function ServiceResourcePanel(props: {
   const [metricTab, setMetricTab] = useState<MetricTabKey>('cpu')
   const [samples, setSamples] = useState<ServiceResourceSample[]>(initialSnapshot?.samples ?? [])
   const [peaks, setPeaks] = useState<ServiceResourcePeak[]>([])
-  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(!readonly && initialSnapshot === null)
   const [historyError, setHistoryError] = useState<string | null>(null)
   const [monitorDisabled, setMonitorDisabled] = useState(
     initialSnapshot?.monitorDisabled === true,
@@ -526,7 +525,7 @@ export function ServiceResourcePanel(props: {
     const appendSample = (sample: ServiceResourceSample) => {
       setSamples((prev) => {
         const next = appendSampleToSorted(prev, sample)
-        return trimSortedSamples(next, windowSecondsRef.current)
+        return trimSamplesToWindow(next, windowSecondsRef.current)
       })
     }
 

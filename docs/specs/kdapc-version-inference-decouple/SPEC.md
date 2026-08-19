@@ -182,3 +182,4 @@
 
 - `docs/plan/4cn9r:check-snapshot-decouple-worker/PLAN.md`
 - `docs/plan/zdg25:auto-version-inference-ui/PLAN.md`
+- `docs/specs/async-data-continuity/SPEC.md`

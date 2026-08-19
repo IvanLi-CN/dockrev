@@ -2569,6 +2569,106 @@ html[data-theme="light"] .releaseDrawerContent {
   animation: btnInlineSpin 0.7s linear infinite;
 }
 
+.asyncDataRegion {
+  position: relative;
+  min-width: 0;
+}
+
+.asyncDataSkeleton {
+  display: grid;
+  gap: 10px;
+  min-height: 92px;
+  align-content: center;
+  padding: 14px;
+}
+
+.skeleton,
+.homepageSkeletonLine,
+.homepageSkeletonPill,
+.homepageSkeletonBlock {
+  display: block;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--dockrev-surface-strong) 88%, var(--panel) 12%),
+    color-mix(in srgb, var(--color-primary) 14%, var(--dockrev-surface-strong) 86%),
+    color-mix(in srgb, var(--dockrev-surface-strong) 88%, var(--panel) 12%)
+  );
+  background-size: 220% 100%;
+  animation: homepageSkeletonSweep 1400ms cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.skeletonLine {
+  width: min(220px, 72%);
+  height: 13px;
+  border-radius: 999px;
+}
+
+.skeletonPill {
+  width: 52px;
+  height: 20px;
+  border-radius: 999px;
+}
+
+.skeletonBlock {
+  min-height: 64px;
+  border-radius: 7px;
+}
+
+.asyncDataSkeletonShort {
+  width: min(126px, 48%);
+}
+
+.asyncDataOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 52px;
+  padding: 14px;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--panel) 68%, transparent);
+  color: var(--text);
+  text-align: center;
+  backdrop-filter: blur(6px) saturate(115%);
+  -webkit-backdrop-filter: blur(6px) saturate(115%);
+  animation: asyncDataOverlayIn 160ms ease-out both;
+}
+
+.asyncDataLoadingOverlay {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.asyncDataErrorOverlay {
+  border: 1px solid color-mix(in srgb, var(--color-error) 58%, var(--borderColor));
+  color: color-mix(in srgb, var(--color-error) 74%, var(--text));
+  font-size: 13px;
+}
+
+.asyncDataErrorCopy {
+  max-width: min(440px, 70%);
+}
+
+.asyncDataRetry {
+  flex: 0 0 auto;
+}
+
+.asyncDataSpinner {
+  animation: asyncDataSpin 0.8s linear infinite;
+}
+
+@keyframes asyncDataOverlayIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes asyncDataSpin {
+  to { transform: rotate(360deg); }
+}
+
 @keyframes btnInlineSpin {
   to {
     transform: rotate(360deg);
@@ -2577,6 +2677,12 @@ html[data-theme="light"] .releaseDrawerContent {
 
 @media (prefers-reduced-motion: reduce) {
   .btnInlineSpinner {
+    animation: none;
+  }
+
+  .asyncDataOverlay,
+  .asyncDataSpinner,
+  .skeleton {
     animation: none;
   }
 

@@ -6,8 +6,21 @@ import {
 import { useManagementEventBatch } from '../managementEvents'
 import { navigate } from '../routes'
 import { Button, Chip, Input, Mono, Pill, SelectField } from '../ui'
+import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
+import type { AsyncDataPhase, AsyncDataSource } from '../asyncData'
 
 type DeliveryFilter = 'all' | 'processed' | 'ignored' | 'rejected'
+
+type DeliveryQuery = {
+  page: number
+  perPage: number
+  filter: DeliveryFilter
+  query: string
+}
+
+function sameDeliveryQuery(left: DeliveryQuery, right: DeliveryQuery) {
+  return left.page === right.page && left.perPage === right.perPage && left.filter === right.filter && left.query === right.query
+}
 
 function formatShort(ts?: string | null): string {
   if (!ts) return '-'
@@ -78,54 +91,72 @@ const EMPTY_DELIVERIES: ListGitHubPackagesWebhookDeliveriesResponse = {
 
 export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNode) => void }) {
   const { onTopActions } = props
-  const [page, setPage] = useState(1)
-  const [perPage, setPerPage] = useState(50)
-  const [filter, setFilter] = useState<DeliveryFilter>('all')
+  const [committedQuery, setCommittedQuery] = useState<DeliveryQuery>({
+    page: 1,
+    perPage: 50,
+    filter: 'all',
+    query: '',
+  })
+  const { page, perPage, filter, query } = committedQuery
   const [searchInput, setSearchInput] = useState('')
-  const [query, setQuery] = useState('')
   const [data, setData] = useState<ListGitHubPackagesWebhookDeliveriesResponse>(EMPTY_DELIVERIES)
+  const [phase, setPhase] = useState<AsyncDataPhase>('initial-loading')
+  const [source, setSource] = useState<AsyncDataSource>('none')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [openReasonDeliveryId, setOpenReasonDeliveryId] = useState<string | null>(null)
   const refreshRequestIdRef = useRef(0)
+  const hasCommittedDataRef = useRef(false)
+  const initialLoadStartedRef = useRef(false)
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (nextQuery: DeliveryQuery = committedQuery, nextSource: AsyncDataSource = 'live') => {
     const requestId = ++refreshRequestIdRef.current
+    setSource(nextSource)
+    setPhase(hasCommittedDataRef.current ? 'refreshing' : 'initial-loading')
     setError(null)
     try {
       const next = await listGitHubPackagesWebhookDeliveries({
-        page,
-        perPage,
-        decision: filter,
-        q: query,
+        page: nextQuery.page,
+        perPage: nextQuery.perPage,
+        decision: nextQuery.filter,
+        q: nextQuery.query,
       })
       if (requestId !== refreshRequestIdRef.current) return
       setData(next)
+      setCommittedQuery((current) => sameDeliveryQuery(current, nextQuery) ? current : nextQuery)
+      hasCommittedDataRef.current = true
+      setPhase(next.deliveries.length === 0 ? 'ready-empty' : 'ready-data')
     } catch (e: unknown) {
       if (requestId !== refreshRequestIdRef.current) return
       setError(errorMessage(e))
+      setPhase('error')
+      throw e
     }
-  }, [filter, page, perPage, query])
+  }, [committedQuery])
 
   useEffect(() => {
-    void refresh()
+    if (initialLoadStartedRef.current) return
+    initialLoadStartedRef.current = true
+    void refresh().catch(() => undefined)
   }, [refresh])
 
   useManagementEventBatch(({ events, resyncRequired }) => {
     if (!resyncRequired && !events.some((event) => event.domain === 'github_packages')) return
-    void refresh().catch((reason: unknown) => setError(errorMessage(reason)))
+    void refresh(committedQuery).catch((reason: unknown) => setError(errorMessage(reason)))
   })
+
+  const queryBusy = phase === 'initial-loading' || phase === 'refreshing'
 
   useEffect(() => {
     onTopActions(
       <Button
         variant="ghost"
-        disabled={busy}
+        disabled={busy || queryBusy}
         onClick={() => {
           void (async () => {
             setBusy(true)
             try {
-              await refresh()
+              await refresh(committedQuery, 'memory')
             } finally {
               setBusy(false)
             }
@@ -135,14 +166,14 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
         刷新
       </Button>,
     )
-  }, [busy, onTopActions, refresh])
+  }, [busy, committedQuery, onTopActions, queryBusy, refresh])
 
   const maxPage = useMemo(() => Math.max(1, Math.ceil(data.filteredTotal / perPage)), [data.filteredTotal, perPage])
 
   useEffect(() => {
     if (page <= maxPage) return
-    setPage(maxPage)
-  }, [maxPage, page])
+    void refresh({ ...committedQuery, page: maxPage }, 'memory').catch(() => undefined)
+  }, [committedQuery, maxPage, page, refresh])
 
   useEffect(() => {
     setOpenReasonDeliveryId(null)
@@ -182,12 +213,21 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
 
   return (
     <div className="page ghcrInboxPage">
+      <AsyncDataRegion
+        error={error}
+        hasData={hasCommittedDataRef.current}
+        label="正在刷新 GHCR Webhook 收件箱"
+        onRetry={() => void refresh(committedQuery, 'memory').catch(() => undefined)}
+        phase={phase}
+        skeleton={<AsyncDataSkeleton className="ghcrInboxLoadingSkeleton" lines={8} />}
+        source={source}
+      >
       <div className="ghcrInboxSummaryGrid">
         {summaryItems.map((item) => (
           <div key={item.label} className="ghcrInboxSummaryItem">
             <div className="muted">{item.label}</div>
             <div className="ghcrInboxSummaryValue">
-              <Mono>{item.value}</Mono>
+              <Mono>{phase === 'initial-loading' ? '—' : item.value}</Mono>
             </div>
           </div>
         ))}
@@ -197,43 +237,43 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
         <div className="chipRow ghcrInboxFilterRow">
           <Chip
             active={filter === 'all'}
+            disabled={busy || queryBusy}
             onClick={() => {
-              setFilter('all')
-              setPage(1)
+              if (!busy && !queryBusy) void refresh({ ...committedQuery, filter: 'all', page: 1 }, 'memory').catch(() => undefined)
             }}
           >
             <span>全部</span>
-            <span className="chipCount">{data.total}</span>
+            <span className="chipCount">{phase === 'initial-loading' ? '—' : data.total}</span>
           </Chip>
           <Chip
             active={filter === 'processed'}
+            disabled={busy || queryBusy}
             onClick={() => {
-              setFilter('processed')
-              setPage(1)
+              if (!busy && !queryBusy) void refresh({ ...committedQuery, filter: 'processed', page: 1 }, 'memory').catch(() => undefined)
             }}
           >
             <span>已处理</span>
-            <span className="chipCount">{data.summary.processed}</span>
+            <span className="chipCount">{phase === 'initial-loading' ? '—' : data.summary.processed}</span>
           </Chip>
           <Chip
             active={filter === 'ignored'}
+            disabled={busy || queryBusy}
             onClick={() => {
-              setFilter('ignored')
-              setPage(1)
+              if (!busy && !queryBusy) void refresh({ ...committedQuery, filter: 'ignored', page: 1 }, 'memory').catch(() => undefined)
             }}
           >
             <span>已忽略</span>
-            <span className="chipCount">{data.summary.ignored}</span>
+            <span className="chipCount">{phase === 'initial-loading' ? '—' : data.summary.ignored}</span>
           </Chip>
           <Chip
             active={filter === 'rejected'}
+            disabled={busy || queryBusy}
             onClick={() => {
-              setFilter('rejected')
-              setPage(1)
+              if (!busy && !queryBusy) void refresh({ ...committedQuery, filter: 'rejected', page: 1 }, 'memory').catch(() => undefined)
             }}
           >
             <span>已拒绝</span>
-            <span className="chipCount">{data.summary.rejected}</span>
+            <span className="chipCount">{phase === 'initial-loading' ? '—' : data.summary.rejected}</span>
           </Chip>
         </div>
 
@@ -244,28 +284,26 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
             onKeyDown={(event) => {
               if (event.key !== 'Enter') return
               event.preventDefault()
-              setPage(1)
-              setQuery(searchInput.trim())
+              void refresh({ ...committedQuery, page: 1, query: searchInput.trim() }, 'memory').catch(() => undefined)
             }}
             placeholder="搜索仓库 / 原因 / 任务"
             value={searchInput}
           />
           <Button
             variant="ghost"
+            disabled={busy || queryBusy}
             onClick={() => {
-              setPage(1)
-              setQuery(searchInput.trim())
+              void refresh({ ...committedQuery, page: 1, query: searchInput.trim() }, 'memory').catch(() => undefined)
             }}
           >
             搜索
           </Button>
           <Button
             variant="ghost"
-            disabled={!query && !searchInput}
+            disabled={queryBusy || (!query && !searchInput)}
             onClick={() => {
               setSearchInput('')
-              setQuery('')
-              setPage(1)
+              void refresh({ ...committedQuery, page: 1, query: '' }, 'memory').catch(() => undefined)
             }}
           >
             清除
@@ -278,25 +316,25 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
           </label>
           <SelectField
             className="select"
+            disabled={queryBusy}
             id="ghcr-inbox-per-page"
             onChange={(value) => {
               const next = Number.parseInt(value, 10)
-              setPerPage(Number.isFinite(next) && next > 0 ? next : 50)
-              setPage(1)
+              void refresh({ ...committedQuery, page: 1, perPage: Number.isFinite(next) && next > 0 ? next : 50 }, 'memory').catch(() => undefined)
             }}
             options={PER_PAGE_OPTIONS.map((option) => ({ value: String(option), label: String(option) }))}
             value={String(perPage)}
           />
           <span className="muted">
-            第 {page} / {maxPage} 页（筛选后 {data.filteredTotal} / 总计 {data.total}）
+            {phase === 'initial-loading' ? '正在加载记录…' : `第 ${page} / ${maxPage} 页（筛选后 ${data.filteredTotal} / 总计 ${data.total}）`}
           </span>
-          <Button variant="ghost" disabled={busy || page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
+          <Button variant="ghost" disabled={queryBusy || busy || page <= 1} onClick={() => void refresh({ ...committedQuery, page: Math.max(1, page - 1) }, 'memory').catch(() => undefined)}>
             上一页
           </Button>
           <Button
             variant="ghost"
-            disabled={busy || page >= maxPage}
-            onClick={() => setPage((value) => Math.min(maxPage, value + 1))}
+            disabled={queryBusy || busy || page >= maxPage}
+            onClick={() => void refresh({ ...committedQuery, page: Math.min(maxPage, page + 1) }, 'memory').catch(() => undefined)}
           >
             下一页
           </Button>
@@ -322,7 +360,7 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
           <div>任务</div>
         </div>
 
-        {data.deliveries.length === 0 ? (
+        {phase === 'ready-empty' ? (
           <div className="ghcrInboxEmpty muted">
             {query || filter !== 'all' ? '当前筛选条件下没有记录' : '还没有收到 GHCR Webhook 请求'}
           </div>
@@ -431,7 +469,7 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
         ))}
       </div>
 
-      {error ? <div className="error">{error}</div> : null}
+      </AsyncDataRegion>
     </div>
   )
 }

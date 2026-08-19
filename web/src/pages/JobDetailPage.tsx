@@ -7,6 +7,7 @@ import { formatJobProgressDownload, parseJobProgressDownload } from '../jobProgr
 import { TaskResultReason } from '../components/TaskResultReason'
 import { navigate } from '../routes'
 import { Button, Chip, IconButton, Mono, OverlayScrollArea, Pill, Switch } from '../ui'
+import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
 
 function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' | 'info' {
   if (status === 'success') return 'ok'
@@ -550,6 +551,21 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
       </>,
     )
   }, [busy, onTopActions, refresh])
+
+  if (!job) {
+    return (
+      <div className="page jobDetailPage">
+        <AsyncDataRegion
+          error={error}
+          hasData={false}
+          label="正在加载任务详情"
+          onRetry={() => void refresh().catch((reason: unknown) => setError(errorMessage(reason)))}
+          phase={error ? 'error' : 'initial-loading'}
+          skeleton={<AsyncDataSkeleton className="jobDetailLoadingSkeleton" lines={9} />}
+        />
+      </div>
+    )
+  }
 
   const knownProgressPercent = progress ? getKnownProgressPercent(progress) : null
   const knownPlannedPercent = progress ? getKnownPlannedProgressPercent(progress) : null

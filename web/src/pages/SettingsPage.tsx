@@ -17,6 +17,7 @@ import {
 SETTINGS_GHCR_WEBHOOK_ID
 } from '../settingsFocus'
 import { Button,Input,Mono,SelectField,Switch } from '../ui'
+import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
 import { webhookStateDotClass,webhookStateIcon } from '../webhookStatus'
 import { GitHubPackagesRepoPicker } from './settings/GitHubPackagesRepoPicker'
 import {
@@ -101,7 +102,18 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
     webPushEndpoint,
   } = useSettingsPageState(props)
   if (!settings || !notifications || !githubPackages) {
-    return <div className="muted">加载中…</div>
+    return (
+      <div className="page settingsPage" data-mobile-settings-section={props.section ?? 'index'}>
+        <AsyncDataRegion
+          error={error}
+          hasData={false}
+          label="正在加载系统设置"
+          onRetry={() => void refresh().catch((reason: unknown) => setError(errorMessage(reason)))}
+          phase={error ? 'error' : 'initial-loading'}
+          skeleton={<AsyncDataSkeleton className="settingsLoadingSkeleton" lines={10} />}
+        />
+      </div>
+    )
   }
   return (
     <div className="page settingsPage" data-mobile-settings-section={props.section ?? 'index'}>
@@ -1176,9 +1188,7 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                 ) : null}
               </div>
             ) : (
-              <div className="muted" style={{ marginTop: 10 }}>
-                加载中…
-              </div>
+              <AsyncDataSkeleton className="settingsGhcrPreviewSkeleton" lines={2} />
             )}
           </div>
 

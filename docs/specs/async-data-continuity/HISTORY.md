@@ -1,0 +1,15 @@
+# Dockrev 异步数据连续性与加载反馈 演进历史
+
+> 记录影响长期行为的决策原因；规范正文仍以 `./SPEC.md` 为准。
+
+## Decision Trace
+
+- 使用区域级状态而不是整页全局 loading，避免多请求页面因一个失败域而失去已成功内容。
+- 冷启动不设置最短骨架时长；已有内容只在真实慢请求时以 200ms/800ms 门槛显示遮罩，避免短请求闪烁。
+- fresh snapshot 保持既有 60 秒边界，并通过 v2 readiness 和 committed query key 消除旧 payload 的“空即成功”歧义。
+- 时间窗以当前时间而非最后一个样本为锚点，防止长时间离线缓存把历史样本伪装成当前监控数据。
+
+## References
+
+- `./SPEC.md`
+- `./IMPLEMENTATION.md`
