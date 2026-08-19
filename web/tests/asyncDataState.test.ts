@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   asyncOverlayDelay,
   canShowAsyncEmpty,
+  formatAsyncDataError,
   hasCompleteAsyncReadiness,
   isAsyncDataBusy,
   isAsyncDataOffline,
@@ -23,6 +24,11 @@ describe('async data continuity contract', () => {
   test('uses trigger intent rather than cache source for overlay thresholds', () => {
     expect(asyncOverlayDelay('user-action')).toBe(200)
     expect(asyncOverlayDelay('background')).toBe(800)
+  })
+
+  test('turns structured failures into concise user-facing messages', () => {
+    expect(formatAsyncDataError('{"error":"任务队列暂时不可用，请重试。"}')).toBe('任务队列暂时不可用，请重试。')
+    expect(formatAsyncDataError('')).toBe('加载失败，请重试。')
   })
 
   test('trims resource snapshots against the current time window', () => {

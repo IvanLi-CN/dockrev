@@ -1,6 +1,13 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { CircleAlert, LoaderCircle, RotateCw } from 'lucide-react'
-import { asyncOverlayDelay, isAsyncDataBusy, type AsyncDataPhase, type AsyncDataSource, type AsyncDataTrigger } from '../asyncData'
+import {
+  asyncOverlayDelay,
+  formatAsyncDataError,
+  isAsyncDataBusy,
+  type AsyncDataPhase,
+  type AsyncDataSource,
+  type AsyncDataTrigger,
+} from '../asyncData'
 import { Button } from '../ui'
 
 export type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
@@ -85,7 +92,7 @@ export function AsyncDataRegion(props: {
         <div className="asyncDataOverlay asyncDataErrorOverlay" role="alert">
           <CircleAlert aria-hidden="true" size={18} strokeWidth={2} />
           <div className="asyncDataErrorCopy">
-            <span>{error?.trim() || '加载失败，请重试。'}</span>
+            <span>{formatAsyncDataError(error)}</span>
           </div>
           {onRetry ? (
             <Button
