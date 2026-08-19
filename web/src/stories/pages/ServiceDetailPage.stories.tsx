@@ -643,7 +643,7 @@ export const LogsSectionEvidence: Story = {
     expectStory(Boolean(findButton(canvasElement, "Raw")), "logs evidence story should expose raw toggle");
     expectStory(Boolean(findButton(canvasElement, "自动换行 关")), "logs evidence story should expose wrap toggle");
 
-    const assertAligned = () => {
+    const assertDesktopAligned = () => {
       const headerCells = canvasElement.querySelectorAll<HTMLElement>(".serviceLogsTerminalHead > span");
       const firstRowCells = canvasElement.querySelectorAll<HTMLElement>(".serviceLogRow:first-of-type > span");
       expectStory(headerCells.length === 3, "logs header should render three columns");
@@ -655,18 +655,38 @@ export const LogsSectionEvidence: Story = {
       }
     };
 
+    const assertMobileRows = () => {
+      const header = canvasElement.querySelector<HTMLElement>(".serviceLogsTerminalHead");
+      const row = canvasElement.querySelector<HTMLElement>(".serviceLogRow");
+      const timestamp = row?.querySelector<HTMLElement>(".serviceLogTs");
+      const level = row?.querySelector<HTMLElement>(".serviceLogLevel");
+      const message = row?.querySelector<HTMLElement>(".serviceLogMsg");
+      expectStory(header && getComputedStyle(header).display === "none", "mobile logs should hide the table header");
+      expectStory(row && timestamp && level && message, "mobile logs should render timestamp, level, and message cells");
+      expectStory(getComputedStyle(row).gridTemplateAreas.includes("time level"), "mobile logs should keep time and level on the first row");
+      expectStory(getComputedStyle(row).gridTemplateAreas.includes("message message"), "mobile logs should span the message across the second row");
+      expectStory(getComputedStyle(timestamp).gridArea === "time", "mobile timestamp should occupy the time area");
+      expectStory(getComputedStyle(level).gridArea === "level", "mobile level should occupy the level area");
+      expectStory(getComputedStyle(message).gridArea === "message", "mobile message should occupy the message area");
+      expectNearlyEqual(message.getBoundingClientRect().left, timestamp.getBoundingClientRect().left, 1, "mobile message should align with the timestamp block");
+      expectStory(
+        message.getBoundingClientRect().top >= Math.max(timestamp.getBoundingClientRect().bottom, level.getBoundingClientRect().bottom) - 1,
+        "mobile message should render below the time and level row",
+      );
+    };
+
     await step("desktop columns stay aligned", async () => {
       globalThis.innerWidth = 1280;
       globalThis.dispatchEvent(new Event("resize"));
       await waitForCondition(() => canvasElement.querySelectorAll(".serviceLogRow:first-of-type > span").length === 3);
-      assertAligned();
+      assertDesktopAligned();
     });
 
-    await step("mobile columns stay aligned", async () => {
+    await step("mobile logs use two-row stream layout", async () => {
       globalThis.innerWidth = 390;
       globalThis.dispatchEvent(new Event("resize"));
       await waitForCondition(() => canvasElement.querySelectorAll(".serviceLogRow:first-of-type > span").length === 3);
-      assertAligned();
+      assertMobileRows();
       globalThis.innerWidth = 1280;
       globalThis.dispatchEvent(new Event("resize"));
     });

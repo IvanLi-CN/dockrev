@@ -338,38 +338,65 @@ async function assertServiceLogsTimestampLayout({ baseUrl, browser, label, story
     const assertLayout = async (mode) => {
       const layout = await page.evaluate(() => {
         const terminal = document.querySelector(".serviceLogsTerminal");
+        const header = document.querySelector(".serviceLogsTerminalHead");
         const headerTime = document.querySelector(".serviceLogsTerminalHead > span");
-        const timestamp = document.querySelector(`.serviceLogRow[data-view="${document.querySelector('.serviceLogsTerminal')?.getAttribute('data-service-logs-view')}"] .serviceLogTs`);
+        const row = document.querySelector(`.serviceLogRow[data-view="${document.querySelector('.serviceLogsTerminal')?.getAttribute('data-service-logs-view')}"]`);
+        const timestamp = row?.querySelector(".serviceLogTs");
         const time = timestamp?.querySelector(".serviceLogTsTime");
         const date = timestamp?.querySelector(".serviceLogTsDate");
-        if (!(terminal instanceof HTMLElement && headerTime instanceof HTMLElement && timestamp instanceof HTMLElement && time instanceof HTMLElement && date instanceof HTMLElement)) {
+        const level = row?.querySelector(".serviceLogLevel");
+        const message = row?.querySelector(".serviceLogMsg");
+        if (!(terminal instanceof HTMLElement && header instanceof HTMLElement && row instanceof HTMLElement && timestamp instanceof HTMLElement && time instanceof HTMLElement && date instanceof HTMLElement && level instanceof HTMLElement && message instanceof HTMLElement)) {
           return null;
         }
-        const headerRect = headerTime.getBoundingClientRect();
+        const headerRect = headerTime?.getBoundingClientRect();
         const timestampRect = timestamp.getBoundingClientRect();
         const timeRect = time.getBoundingClientRect();
         const dateRect = date.getBoundingClientRect();
+        const levelRect = level.getBoundingClientRect();
+        const messageRect = message.getBoundingClientRect();
         return {
           dateAfterTime: Boolean(time.compareDocumentPosition(date) & Node.DOCUMENT_POSITION_FOLLOWING),
-          timeColumn: getComputedStyle(headerTime.parentElement).gridTemplateColumns.split(" ")[0],
+          timeColumn: headerTime?.parentElement ? getComputedStyle(headerTime.parentElement).gridTemplateColumns.split(" ")[0] : "",
           inlinePadding: getComputedStyle(terminal).getPropertyValue("--service-log-inline-padding").trim(),
-          leftDelta: timestampRect.left - headerRect.left,
+          leftDelta: headerRect ? timestampRect.left - headerRect.left : null,
           mode: terminal.dataset.serviceLogsView,
           timeAboveDate: timeRect.top < dateRect.top,
+          headerDisplay: getComputedStyle(header).display,
+          rowAreas: getComputedStyle(row).gridTemplateAreas,
+          timestampArea: getComputedStyle(timestamp).gridArea,
+          levelArea: getComputedStyle(level).gridArea,
+          messageArea: getComputedStyle(message).gridArea,
+          messageLeftDelta: messageRect.left - timestampRect.left,
+          messageBelowHeader: messageRect.top >= Math.max(timeRect.bottom, dateRect.bottom, levelRect.bottom) - 1,
         };
       });
       if (!layout) throw new Error(`Missing timestamp layout (${label}, ${mode}).`);
       if (layout.mode !== mode || !layout.dateAfterTime || !layout.timeAboveDate) {
         throw new Error(`Timestamp order failed (${label}, ${mode}): ${JSON.stringify(layout)}`);
       }
-      const expectedPadding = viewport.width <= 960 ? "14px" : "18px";
-      const expectedTimeColumn = viewport.width <= 960 ? "112px" : "128px";
+      if (viewport.width <= 960) {
+        if (
+          layout.inlinePadding !== "14px" ||
+          layout.headerDisplay !== "none" ||
+          !layout.rowAreas.includes("time level") ||
+          !layout.rowAreas.includes("message message") ||
+          layout.timestampArea !== "time" ||
+          layout.levelArea !== "level" ||
+          layout.messageArea !== "message" ||
+          !approxEqual(layout.messageLeftDelta, 0, 1) ||
+          !layout.messageBelowHeader
+        ) {
+          throw new Error(`Mobile timestamp row layout failed (${label}, ${mode}): ${JSON.stringify(layout)}`);
+        }
+        return;
+      }
       if (
-        layout.inlinePadding !== expectedPadding ||
-        layout.timeColumn !== expectedTimeColumn ||
+        layout.inlinePadding !== "18px" ||
+        layout.timeColumn !== "128px" ||
         !approxEqual(layout.leftDelta, 0, 1)
       ) {
-        throw new Error(`Timestamp alignment failed (${label}, ${mode}): ${JSON.stringify(layout)}`);
+        throw new Error(`Desktop timestamp alignment failed (${label}, ${mode}): ${JSON.stringify(layout)}`);
       }
     };
 

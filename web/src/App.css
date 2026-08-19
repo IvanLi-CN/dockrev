@@ -6300,24 +6300,36 @@ html[data-theme="light"] .serviceLogsTerminal {
   }
 
   .serviceLogsTerminal {
-    --service-log-col-time: 112px;
     --service-log-col-level: 56px;
     --service-log-inline-padding: 14px;
   }
 
   .serviceLogRow {
-    grid-template-columns:
-      var(--service-log-col-time) var(--service-log-col-level)
-      minmax(0, 1fr);
-    gap: 4px;
+    grid-template-columns: minmax(0, 1fr) var(--service-log-col-level);
+    grid-template-areas:
+      "time level"
+      "message message";
+    column-gap: 8px;
+    row-gap: 4px;
+    padding-top: 7px;
+    padding-bottom: 7px;
+  }
+
+  .serviceLogTs {
+    grid-area: time;
+  }
+
+  .serviceLogLevel {
+    grid-area: level;
+    justify-self: end;
+  }
+
+  .serviceLogMsg {
+    grid-area: message;
   }
 
   .serviceLogsTerminalHead {
-    grid-template-columns:
-      var(--service-log-col-time) var(--service-log-col-level)
-      minmax(0, 1fr);
-    gap: 4px;
-    padding: 10px var(--service-log-inline-padding);
+    display: none;
   }
 
   .serviceLogsJumpWrap {
