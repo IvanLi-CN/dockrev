@@ -344,6 +344,7 @@ async function assertServiceLogsTimestampLayout({ baseUrl, browser, label, story
         const timestamp = row?.querySelector(".serviceLogTs");
         const time = timestamp?.querySelector(".serviceLogTsTime");
         const date = timestamp?.querySelector(".serviceLogTsDate");
+        const dateDivider = row?.querySelector(".serviceLogDateDivider");
         const level = row?.querySelector(".serviceLogLevel");
         const message = row?.querySelector(".serviceLogMsg");
         if (!(terminal instanceof HTMLElement && header instanceof HTMLElement && row instanceof HTMLElement && timestamp instanceof HTMLElement && time instanceof HTMLElement && date instanceof HTMLElement && level instanceof HTMLElement && message instanceof HTMLElement)) {
@@ -355,6 +356,18 @@ async function assertServiceLogsTimestampLayout({ baseUrl, browser, label, story
         const dateRect = date.getBoundingClientRect();
         const levelRect = level.getBoundingClientRect();
         const messageRect = message.getBoundingClientRect();
+        const rows = Array.from(document.querySelectorAll(`.serviceLogRow[data-view="${document.querySelector('.serviceLogsTerminal')?.getAttribute('data-service-logs-view')}"]`));
+        let expectedDateDividerCount = 0;
+        let previousDate = null;
+        for (const candidate of rows) {
+          const candidateDate = candidate.getAttribute("data-log-date");
+          if (!candidateDate) {
+            previousDate = null;
+            continue;
+          }
+          if (candidateDate !== previousDate) expectedDateDividerCount += 1;
+          previousDate = candidateDate;
+        }
         const utcMatch = /UTC:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)$/.exec(timestamp.getAttribute("title") ?? "");
         const expectedTimestamp = utcMatch ? new Date(utcMatch[1]) : null;
         const getStamp = (value) => {
@@ -379,6 +392,16 @@ async function assertServiceLogsTimestampLayout({ baseUrl, browser, label, story
           leftDelta: headerRect ? timestampRect.left - headerRect.left : null,
           mode: terminal.dataset.serviceLogsView,
           timeAboveDate: timeRect.top < dateRect.top,
+          timestampSingleLine: timestampRect.height <= timeRect.height + 1,
+          dateDisplay: getComputedStyle(date).display,
+          dateDividerDisplay: dateDivider ? getComputedStyle(dateDivider).display : "none",
+          dateDividerArea: dateDivider ? getComputedStyle(dateDivider).gridArea : "",
+          dateDividerText: dateDivider?.textContent?.trim() ?? "",
+          dateDividerCount: rows.filter((candidate) => {
+            const divider = candidate.querySelector(".serviceLogDateDivider");
+            return candidate.getAttribute("data-date-divider") === "true" && divider && getComputedStyle(divider).display !== "none";
+          }).length,
+          expectedDateDividerCount,
           headerDisplay: getComputedStyle(header).display,
           rowAreas: getComputedStyle(row).gridTemplateAreas,
           timestampArea: getComputedStyle(timestamp).gridArea,
@@ -393,16 +416,23 @@ async function assertServiceLogsTimestampLayout({ baseUrl, browser, label, story
         };
       }, expectedTimeZone);
       if (!layout) throw new Error(`Missing timestamp layout (${label}, ${mode}).`);
-      if (layout.mode !== mode || !layout.dateAfterTime || !layout.timeAboveDate) {
+      if (layout.mode !== mode || !layout.dateAfterTime || (viewport.width > 700 && !layout.timeAboveDate)) {
         throw new Error(`Timestamp order failed (${label}, ${mode}): ${JSON.stringify(layout)}`);
       }
-      if (layout.expectedTime !== layout.timeText || layout.expectedDate !== layout.dateText) {
+      if (layout.expectedTime !== layout.timeText) {
         throw new Error(`Timestamp timezone formatting failed (${label}, ${mode}, ${expectedTimeZone}): ${JSON.stringify(layout)}`);
       }
       if (viewport.width <= 700) {
         if (
           layout.inlinePadding !== "14px" ||
           layout.headerDisplay !== "none" ||
+          layout.dateDisplay !== "none" ||
+          layout.dateDividerDisplay !== "flex" ||
+          layout.dateDividerArea !== "date" ||
+          layout.dateDividerText !== layout.expectedDate ||
+          layout.dateDividerCount !== layout.expectedDateDividerCount ||
+          !layout.timestampSingleLine ||
+          !layout.rowAreas.includes("date date") ||
           !layout.rowAreas.includes("time level") ||
           !layout.rowAreas.includes("message message") ||
           layout.timestampArea !== "time" ||
@@ -418,6 +448,8 @@ async function assertServiceLogsTimestampLayout({ baseUrl, browser, label, story
       if (
         layout.inlinePadding !== "18px" ||
         layout.timeColumn !== "128px" ||
+        layout.dateText !== layout.expectedDate ||
+        layout.dateDividerCount !== 0 ||
         !approxEqual(layout.leftDelta, 0, 1)
       ) {
         throw new Error(`Desktop timestamp alignment failed (${label}, ${mode}): ${JSON.stringify(layout)}`);

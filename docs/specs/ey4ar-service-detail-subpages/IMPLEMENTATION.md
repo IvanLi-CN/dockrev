@@ -31,7 +31,7 @@
 - 日志解析已按 Dozzle-like grouped log 语义保留 Docker timestamp 元信息，并将应用输出中的空行、缩进行、`Caused by:` 等 continuation 合并进同一逻辑日志记录；未结构化的 inline tracing 行仍由前端避免重复渲染等级文本。
 - 服务日志 API 已在 `ServiceLogLine` 上提供可选结构化 `meta`，支持 `json / logfmt / text` 归一化；其中 Rust `tracing` 默认文本输出会在 text meta 中提取应用级 `level/message/timestamp` 与 `key=value` attributes，前端默认 Human 视图渲染结构化摘要与 metadata chips，并保留 Raw 视图用于查看原始输出。
 - 服务日志终端已收敛为局部主题令牌：亮色模式使用完整浅色终端，并为表头、正文、时间、元数据、等级、悬浮与 ANSI 前景色提供独立值；暗色模式维持既有终端外观。Storybook 的亮色场景与交互测试会在 Human / Raw 两种模式下校验计算后的文字对比度。
-- 日志时间块已固定为时间第一行、日期第二行；桌面表头与正文行通过日志终端共享的 `18px` 水平边距令牌对齐，不再依赖 OverlayScrollbars 内部 viewport 节点，时间轨道为 `128px`。窄屏使用 `14px` 水平边距并隐藏终端表头，日志行改为时间块/等级首行与正文跨列次行，不再使用固定时间列轨道。桌面、真实 `393x852` 移动端、Human/Raw 与 UTC 切换均由独立 Storybook 场景与浏览器断言覆盖；UTC 断言会按时间戳标题计算期望的时间/日期文本，而不是只检查按钮状态。
+- 日志时间块桌面保持时间第一行、日期第二行；桌面表头与正文行通过日志终端共享的 `18px` 水平边距令牌对齐，不再依赖 OverlayScrollbars 内部 viewport 节点，时间轨道为 `128px`。窄屏使用 `14px` 水平边距并隐藏终端表头，日志行改为单行时间/等级首行与正文跨列次行，行内隐藏重复日期，并在首条有效记录及换日处渲染一次居中日期分隔线，不使用固定时间列轨道。桌面、真实 `393x852` 移动端、Human/Raw 与 UTC 切换均由独立 Storybook 场景与浏览器断言覆盖；UTC 断言会按时间戳标题计算期望的时间/日期文本与日期分隔线文本，而不是只检查按钮状态。
 - 时间列布局证据使用独立的桌面与移动端 render story，避免继承会改变筛选模式的异步 play；跟随最新回归等待可见跳转按钮后在页面轮询中触发点击，确保虚拟列表重排时仍验证真实吸底行为。
 - 服务日志采集同时消费 `docker logs` 的 stdout 与 stderr stream；snapshot 与 SSE live tail 均覆盖仅向 stderr 写日志的容器。
 - 已更新 `PageHarness`、服务树 section 标签与服务详情 Storybook stories，补齐旧链接默认概览、tabs route 切换、更新记录深链/混合列表/空态/click-Enter-Space 跳转/受控回滚入口、备份页状态、日志深链与搜索交互、Human/Raw 日志切换、设置抽屉入口与监控页稳定渲染。

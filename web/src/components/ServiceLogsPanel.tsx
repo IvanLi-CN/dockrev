@@ -22,13 +22,14 @@ function pad3(n: number): string {
 function formatLogStamp(
   ts: string,
   tz: LogTimeZone,
-): { date: string; time: string; title: string } {
+): { date: string; time: string; title: string; isValid: boolean } {
   const value = (ts ?? '').trim()
   if (!value) {
     return {
       date: '-',
       time: '-',
       title: '-',
+      isValid: false,
     }
   }
   const date = new Date(value)
@@ -37,6 +38,7 @@ function formatLogStamp(
       date: value,
       time: '',
       title: value,
+      isValid: false,
     }
   }
   const year = tz === 'utc' ? date.getUTCFullYear() : date.getFullYear()
@@ -50,6 +52,7 @@ function formatLogStamp(
     date: `${year}-${pad2(month)}-${pad2(day)}`,
     time: `${pad2(hours)}:${pad2(minutes)}:${pad2(seconds)}.${pad3(milliseconds)}`,
     title: `${LOCAL_TZ}: ${date.toLocaleString()} · UTC: ${date.toISOString()}`,
+    isValid: true,
   }
 }
 
@@ -327,6 +330,9 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
                     const record = filteredRecords[item.index]
                     if (!record) return null
                     const stamp = formatLogStamp(record.ts, logTz)
+                    const previousRecord = filteredRecords[item.index - 1]
+                    const previousStamp = previousRecord ? formatLogStamp(previousRecord.ts, logTz) : null
+                    const showDateDivider = stamp.isValid && (!previousStamp?.isValid || previousStamp.date !== stamp.date)
                     const metaEntries = logView === 'human' ? metadataEntries(record) : []
                     return (
                       <div
@@ -336,13 +342,16 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
                         data-index={item.index}
                         data-inline-level={record.inlineLevel ? 'true' : 'false'}
                         data-level={record.level}
+                        data-log-date={stamp.isValid ? stamp.date : undefined}
                         data-multiline={record.multiline ? 'true' : 'false'}
+                        data-date-divider={showDateDivider ? 'true' : 'false'}
                         data-view={logView}
                         data-wrap={wrapLines ? 'true' : 'false'}
                         key={record.id}
                         ref={virtualizer.measureElement}
                       >
-                        <span className="mono serviceLogTs" title={stamp.title}>
+                        {showDateDivider ? <div className="serviceLogDateDivider">{stamp.date}</div> : null}
+                        <span className="mono serviceLogTs" data-valid={stamp.isValid ? 'true' : 'false'} title={stamp.title}>
                           {stamp.time ? <span className="serviceLogTsTime">{stamp.time}</span> : null}
                           <span className="serviceLogTsDate">{stamp.date}</span>
                         </span>
