@@ -44,6 +44,36 @@ export function buildMultilineLogsSnapshot(serviceId: string): ServiceLogSnapsho
   };
 }
 
+export function buildDateBoundaryLogsSnapshot(serviceId: string): ServiceLogSnapshotResponse {
+  return {
+    serviceId,
+    lines: [
+      {
+        ts: "2026-06-29T23:59:59.000Z",
+        raw: "same day before invalid timestamp",
+        plain: "same day before invalid timestamp",
+      },
+      {
+        ts: "not-a-timestamp",
+        raw: "invalid timestamp fallback",
+        plain: "invalid timestamp fallback",
+      },
+      {
+        ts: "2026-06-29T23:59:59.500Z",
+        raw: "same day after invalid timestamp",
+        plain: "same day after invalid timestamp",
+      },
+      {
+        ts: "2026-06-30T00:00:00.000Z",
+        raw: "next UTC day",
+        plain: "next UTC day",
+      },
+    ],
+    lastEventId: 4,
+    bufferLimit: 2000,
+  };
+}
+
 export const paginatedHistoryJobs: JobListItem[] = Array.from({ length: 23 }, (_, index) => {
   const sequence = 23 - index;
   const timestamp = new Date(Date.parse("2026-07-12T16:30:00.000Z") - index * 60_000).toISOString();

@@ -130,6 +130,15 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
 
   const hasQuery = query.trim().length > 0
   const latestRecordId = filteredRecords.at(-1)?.id
+  const formattedStamps = useMemo(() => {
+    let previousValidDate: string | null = null
+    return filteredRecords.map((record) => {
+      const stamp = formatLogStamp(record.ts, logTz)
+      const showDateDivider = stamp.isValid && stamp.date !== previousValidDate
+      if (stamp.isValid) previousValidDate = stamp.date
+      return { ...stamp, showDateDivider }
+    })
+  }, [filteredRecords, logTz])
 
   useLayoutEffect(() => {
     virtualizer.measure()
@@ -329,10 +338,7 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
                   {items.map((item) => {
                     const record = filteredRecords[item.index]
                     if (!record) return null
-                    const stamp = formatLogStamp(record.ts, logTz)
-                    const previousRecord = filteredRecords[item.index - 1]
-                    const previousStamp = previousRecord ? formatLogStamp(previousRecord.ts, logTz) : null
-                    const showDateDivider = stamp.isValid && (!previousStamp?.isValid || previousStamp.date !== stamp.date)
+                    const stamp = formattedStamps[item.index]!
                     const metaEntries = logView === 'human' ? metadataEntries(record) : []
                     return (
                       <div
@@ -344,13 +350,13 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
                         data-level={record.level}
                         data-log-date={stamp.isValid ? stamp.date : undefined}
                         data-multiline={record.multiline ? 'true' : 'false'}
-                        data-date-divider={showDateDivider ? 'true' : 'false'}
+                        data-date-divider={stamp.showDateDivider ? 'true' : 'false'}
                         data-view={logView}
                         data-wrap={wrapLines ? 'true' : 'false'}
                         key={record.id}
                         ref={virtualizer.measureElement}
                       >
-                        {showDateDivider ? <div className="serviceLogDateDivider">{stamp.date}</div> : null}
+                        {stamp.showDateDivider ? <div className="serviceLogDateDivider">{stamp.date}</div> : null}
                         <span className="mono serviceLogTs" data-valid={stamp.isValid ? 'true' : 'false'} title={stamp.title}>
                           {stamp.time ? <span className="serviceLogTsTime">{stamp.time}</span> : null}
                           <span className="serviceLogTsDate">{stamp.date}</span>

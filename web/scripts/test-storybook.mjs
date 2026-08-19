@@ -357,15 +357,12 @@ async function assertServiceLogsTimestampLayout({ baseUrl, browser, label, story
         const levelRect = level.getBoundingClientRect();
         const messageRect = message.getBoundingClientRect();
         const rows = Array.from(document.querySelectorAll(`.serviceLogRow[data-view="${document.querySelector('.serviceLogsTerminal')?.getAttribute('data-service-logs-view')}"]`));
-        let expectedDateDividerCount = 0;
+        const expectedDateDividers = [];
         let previousDate = null;
         for (const candidate of rows) {
           const candidateDate = candidate.getAttribute("data-log-date");
-          if (!candidateDate) {
-            previousDate = null;
-            continue;
-          }
-          if (candidateDate !== previousDate) expectedDateDividerCount += 1;
+          if (!candidateDate) continue;
+          if (candidateDate !== previousDate) expectedDateDividers.push(candidateDate);
           previousDate = candidateDate;
         }
         const utcMatch = /UTC:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)$/.exec(timestamp.getAttribute("title") ?? "");
@@ -397,11 +394,11 @@ async function assertServiceLogsTimestampLayout({ baseUrl, browser, label, story
           dateDividerDisplay: dateDivider ? getComputedStyle(dateDivider).display : "none",
           dateDividerArea: dateDivider ? getComputedStyle(dateDivider).gridArea : "",
           dateDividerText: dateDivider?.textContent?.trim() ?? "",
-          dateDividerCount: rows.filter((candidate) => {
+          dateDividerTexts: rows.filter((candidate) => {
             const divider = candidate.querySelector(".serviceLogDateDivider");
             return candidate.getAttribute("data-date-divider") === "true" && divider && getComputedStyle(divider).display !== "none";
-          }).length,
-          expectedDateDividerCount,
+          }).map((candidate) => candidate.querySelector(".serviceLogDateDivider")?.textContent?.trim() ?? ""),
+          expectedDateDividers,
           headerDisplay: getComputedStyle(header).display,
           rowAreas: getComputedStyle(row).gridTemplateAreas,
           timestampArea: getComputedStyle(timestamp).gridArea,
@@ -430,7 +427,7 @@ async function assertServiceLogsTimestampLayout({ baseUrl, browser, label, story
           layout.dateDividerDisplay !== "flex" ||
           layout.dateDividerArea !== "date" ||
           layout.dateDividerText !== layout.expectedDate ||
-          layout.dateDividerCount !== layout.expectedDateDividerCount ||
+          JSON.stringify(layout.dateDividerTexts) !== JSON.stringify(layout.expectedDateDividers) ||
           !layout.timestampSingleLine ||
           !layout.rowAreas.includes("date date") ||
           !layout.rowAreas.includes("time level") ||
@@ -449,7 +446,7 @@ async function assertServiceLogsTimestampLayout({ baseUrl, browser, label, story
         layout.inlinePadding !== "18px" ||
         layout.timeColumn !== "128px" ||
         layout.dateText !== layout.expectedDate ||
-        layout.dateDividerCount !== 0 ||
+        layout.dateDividerTexts.length !== 0 ||
         !approxEqual(layout.leftDelta, 0, 1)
       ) {
         throw new Error(`Desktop timestamp alignment failed (${label}, ${mode}): ${JSON.stringify(layout)}`);
@@ -509,6 +506,14 @@ async function assertServiceLogsFollowAfterNewLog({
       { timeout: 10_000 },
     );
 
+    await page.waitForFunction(
+      () => {
+        const element = document.querySelector('[aria-label="服务实时日志"]');
+        return element instanceof HTMLElement && element.scrollHeight - element.clientHeight > 48;
+      },
+      null,
+      { timeout: 10_000 },
+    );
     await viewport.evaluate((element) => {
       element.scrollTop = 0;
       element.dispatchEvent(new Event("scroll"));
