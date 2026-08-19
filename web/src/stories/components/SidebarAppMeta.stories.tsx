@@ -94,11 +94,13 @@ export const CollapsedFlyout: Story = {
     await wait(360)
     expectStory(!doc.querySelector('.sidebarAppMetaPopover'), 'Unpinned flyout should close after pointer leave')
 
+    trigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' }))
     trigger.click()
     await wait(100)
     flyout = doc.querySelector<HTMLElement>('.sidebarAppMetaPopover')
     expectStory(flyout, 'Click should pin the flyout open')
 
+    trigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' }))
     trigger.click()
     await wait(100)
     expectStory(!doc.querySelector('.sidebarAppMetaPopover'), 'Second click should close the pinned flyout')

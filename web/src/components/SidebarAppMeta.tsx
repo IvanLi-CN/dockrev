@@ -128,6 +128,13 @@ export function SidebarAppMeta(props: {
           className="sidebarAppMetaPopover"
           aria-label="Dockrev release and repository information"
           {...contentProps}
+          onPointerDownOutside={(event) => {
+            if (triggerRef.current?.contains(event.target as Node)) {
+              event.preventDefault()
+              return
+            }
+            contentProps.onPointerDownOutside?.(event)
+          }}
           onOpenAutoFocus={(event) => {
             if (keyboardOpenRef.current) {
               return
