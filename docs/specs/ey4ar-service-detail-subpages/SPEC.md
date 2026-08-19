@@ -298,6 +298,8 @@
   When 断线后请求的 `afterId` 已超出 ring buffer
   Then 服务端发送 `service_log_reset`，前端随后重抓 snapshot 而不是静默丢日志。
 
+- Given 服务详情 stories 已更新
+  When 运行 Storybook interaction 回归
   Then 至少能验证旧链接默认概览、tabs active/顺序切换行为、更新记录深链/混合列表/备份摘要命中与空占位/空态/行级跳转、备份页与日志页的核心入口稳定可用、桌面日志三列对齐、`393x852` 移动端日志表头隐藏、时间/等级首行保持单行、正文次行跨列且日期分隔线按换日出现、移动端更新记录无横向滚动，以及设置页或监控页稳定渲染；时间布局证据故事必须独立渲染，不继承会异步改变显示模式的交互。
 
 ## 验收清单（Acceptance checklist）
