@@ -110,7 +110,7 @@ export function SidebarAppMeta(props: {
               const keyboardOpening = event.detail === 0 && !pinned
               keyboardOpenRef.current = keyboardOpening
               triggerProps.onClick()
-              if (keyboardOpening && open) {
+              if (keyboardOpening) {
                 window.requestAnimationFrame(() => contentRef.current?.querySelector<HTMLElement>('a')?.focus())
               }
             }}
@@ -137,6 +137,7 @@ export function SidebarAppMeta(props: {
           }}
           onOpenAutoFocus={(event) => {
             if (keyboardOpenRef.current) {
+              event.preventDefault()
               return
             }
             contentProps.onOpenAutoFocus?.(event)
