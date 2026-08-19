@@ -240,6 +240,10 @@ export const CollapsedSidebar: Story = {
       Boolean(canvasElement.querySelector('.sidebarMeta .themePreferenceIconButton')),
       'Collapsed sidebar should expose the compact theme icon control',
     )
+    const appMetaSlot = canvasElement.querySelector<HTMLElement>('[data-slot="sidebar-app-meta"]')
+    const appMetaTriggers = canvasElement.querySelectorAll('.sidebarAppMetaTrigger')
+    expectStory(appMetaSlot && Math.abs(appMetaSlot.getBoundingClientRect().height - 44) <= 1, 'Collapsed App meta slot should remain 44px high')
+    expectStory(appMetaTriggers.length === 1, 'Collapsed App meta should render one flyout trigger')
   },
 }
 export const SidebarToggleInteraction: Story = {
@@ -247,6 +251,9 @@ export const SidebarToggleInteraction: Story = {
   play: async ({ canvasElement }) => {
     const toggle = canvasElement.querySelector<HTMLButtonElement>('.sidebarCollapseButton')
     expectStory(toggle?.getAttribute('aria-expanded') === 'true', 'Sidebar toggle should report expanded state first')
+    const expandedMetaSlot = canvasElement.querySelector<HTMLElement>('[data-slot="sidebar-app-meta"]')
+    expectStory(expandedMetaSlot, 'Expanded sidebar should render the App meta slot')
+    const expandedMetaRect = expandedMetaSlot.getBoundingClientRect()
     toggle?.click()
     await new Promise((resolve) => setTimeout(resolve, 80))
 
@@ -256,6 +263,18 @@ export const SidebarToggleInteraction: Story = {
     expectStory(
       window.localStorage.getItem(APP_SHELL_SIDEBAR_COLLAPSED_STORAGE_KEY) === '1',
       'Sidebar collapsed state should persist to localStorage',
+    )
+    const collapsedMetaSlot = canvasElement.querySelector<HTMLElement>('[data-slot="sidebar-app-meta"]')
+    expectStory(collapsedMetaSlot, 'Collapsed sidebar should retain the App meta slot')
+    const collapsedMetaRect = collapsedMetaSlot.getBoundingClientRect()
+    expectStory(
+      Math.abs(expandedMetaRect.height - collapsedMetaRect.height) <= 1,
+      'App meta slot height should remain stable across sidebar states',
+    )
+    expectStory(
+      Math.abs(expandedMetaRect.top - collapsedMetaRect.top) <= 1 &&
+        Math.abs(expandedMetaRect.bottom - collapsedMetaRect.bottom) <= 1,
+      'App meta slot should keep its vertical position across sidebar states',
     )
   },
 }

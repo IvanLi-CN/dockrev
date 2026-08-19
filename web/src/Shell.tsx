@@ -15,7 +15,7 @@ import { getDockrevVersion } from './api'
 import { AppShellStatusBanner } from './components/AppShellStatusBanner'
 import { PwaUpdateBubble } from './components/PwaUpdateBubble'
 import { usePwaStatus } from './pwaStatus'
-import { Button, GitHubIcon, Mono, OverlayScrollArea, ToggleGroup, ToggleGroupItem } from './ui'
+import { Button, Mono, OverlayScrollArea, ToggleGroup, ToggleGroupItem } from './ui'
 import { ConfirmProvider } from './ConfirmProvider'
 import { BrandLogo } from './BrandLogo'
 import { UpdateActionTrackerProvider } from './updateActionTracking'
@@ -23,6 +23,7 @@ import type { Route } from './routes'
 import { currentHref, navigate } from './routes'
 import { TopbarUserIdentity } from './components/TopbarUserIdentity'
 import { ThemePreferenceControl } from './components/ThemePreferenceControl'
+import { SidebarAppMeta } from './components/SidebarAppMeta'
 import type { TopbarAuthIdentity } from './topbarAuthIdentity'
 
 const MOBILE_MENU_MEDIA_QUERY = "(max-width: 960px)";
@@ -502,66 +503,11 @@ export function AppShell(props: {
                 </div>
               ) : null}
               <div className="sidebarMetaDivider" aria-hidden="true" />
-              <div className="sidebarMetaTop">
-                {!sidebarCollapsed ? (
-                  versionHref ? (
-                    <a
-                      className="sidebarMetaVersion"
-                      href={versionHref}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      aria-label={`Release on GitHub: ${versionDisplay}`}
-                      title={`Release: ${versionDisplay}`}
-                    >
-                      <Mono>{versionDisplay}</Mono>
-                    </a>
-                  ) : (
-                    <Mono>{versionDisplay}</Mono>
-                  )
-                ) : null}
-                {sidebarCollapsed && versionHref ? (
-                  <a
-                    className="sidebarMetaIcon"
-                    href={versionHref}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label={`Release on GitHub: ${versionDisplay}`}
-                    title={`Release: ${versionDisplay}`}
-                  >
-                    <span className="mono" aria-hidden="true">
-                      v
-                    </span>
-                  </a>
-                ) : null}
-                {sidebarCollapsed && !versionHref ? (
-                  <span
-                    className="sidebarMetaIcon sidebarMetaIconDisabled"
-                    aria-hidden="true"
-                  >
-                    <Mono>v</Mono>
-                  </span>
-                ) : null}
-                <a
-                  className="sidebarMetaIcon"
-                  href="https://github.com/IvanLi-CN/dockrev"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="GitHub repository"
-                  title="GitHub: IvanLi-CN/dockrev"
-                >
-                  <GitHubIcon className="sidebarMetaGitHub" />
-                </a>
-              </div>
-              {!sidebarCollapsed ? (
-                <a
-                  className="sidebarMetaPowered"
-                  href="https://github.com/IvanLi-CN"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Powered by <span className="mono">Ivan Li</span>
-                </a>
-              ) : null}
+              <SidebarAppMeta
+                collapsed={sidebarCollapsed}
+                versionDisplay={versionDisplay}
+                versionHref={versionHref}
+              />
             </div>
           </OverlayScrollArea>
 
