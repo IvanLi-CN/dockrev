@@ -112,5 +112,14 @@ export const CollapsedFlyout: Story = {
     doc.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Escape' }))
     await wait(100)
     expectStory(!doc.querySelector('.sidebarAppMetaPopover'), 'Escape should close the keyboard-opened flyout')
+    expectStory(doc.activeElement === trigger, 'Escape should restore focus to the trigger')
+
+    trigger.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))
+    await wait(100)
+    trigger.focus()
+    trigger.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }))
+    await wait(100)
+    flyout = doc.querySelector<HTMLElement>('.sidebarAppMetaPopover')
+    expectStory(flyout?.querySelector('a') === doc.activeElement, 'Keyboard pinning should focus an already hover-open flyout')
   },
 }

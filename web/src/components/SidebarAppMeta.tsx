@@ -77,8 +77,10 @@ export function SidebarAppMeta(props: {
   versionHref: string | null
 }) {
   const hoverCapable = useHoverCapable()
+  const contentRef = useRef<HTMLDivElement>(null)
   const keyboardOpenRef = useRef(false)
-  const { contentProps, open, triggerProps } = useHoverPinnedPopover({
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const { contentProps, open, pinned, triggerProps } = useHoverPinnedPopover({
     hoverEnabled: hoverCapable,
   })
 
@@ -98,14 +100,19 @@ export function SidebarAppMeta(props: {
       <Popover open={open} onOpenChange={() => {}}>
         <PopoverTrigger asChild>
           <button
+            ref={triggerRef}
             type="button"
             className="sidebarAppMetaTrigger"
             aria-label={`应用信息：版本 ${props.versionDisplay}，GitHub 仓库，Powered by Ivan Li`}
             title="应用信息"
             {...triggerProps}
             onClick={(event) => {
-              keyboardOpenRef.current = event.detail === 0
+              const keyboardOpening = event.detail === 0 && !pinned
+              keyboardOpenRef.current = keyboardOpening
               triggerProps.onClick()
+              if (keyboardOpening && open) {
+                window.requestAnimationFrame(() => contentRef.current?.querySelector<HTMLElement>('a')?.focus())
+              }
             }}
           >
             <span className="sidebarAppMetaTriggerVersion" aria-hidden="true">
@@ -115,6 +122,7 @@ export function SidebarAppMeta(props: {
           </button>
         </PopoverTrigger>
         <PopoverContent
+          ref={contentRef}
           side="right"
           align="end"
           className="sidebarAppMetaPopover"
@@ -122,10 +130,18 @@ export function SidebarAppMeta(props: {
           {...contentProps}
           onOpenAutoFocus={(event) => {
             if (keyboardOpenRef.current) {
-              keyboardOpenRef.current = false
               return
             }
             contentProps.onOpenAutoFocus?.(event)
+          }}
+          onCloseAutoFocus={(event) => {
+            if (keyboardOpenRef.current) {
+              event.preventDefault()
+              keyboardOpenRef.current = false
+              triggerRef.current?.focus()
+              return
+            }
+            contentProps.onCloseAutoFocus?.(event)
           }}
         >
           <AppMetaContent
