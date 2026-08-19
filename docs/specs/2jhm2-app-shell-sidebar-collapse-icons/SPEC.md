@@ -121,3 +121,39 @@ PR: include
 - requested_viewport: 390x900
 - viewport_strategy: devtools-emulate
 - PR: include
+
+### Stable App Meta Slot
+
+PR: include
+
+![Expanded sidebar keeps the App meta slot at button height](./assets/sidebar-app-meta-expanded.png)
+
+- source_type: ui_demo
+- target_program: mock-only
+- capture_scope: browser viewport
+- requested_viewport: 1440x900
+- viewport_strategy: controlled browser viewport
+- state: expanded sidebar with a 44px App meta slot
+
+PR: include
+
+![Collapsed sidebar opens the shared App meta content to the right](./assets/sidebar-app-meta-collapsed-flyout.png)
+
+- source_type: ui_demo
+- target_program: mock-only
+- capture_scope: browser viewport
+- requested_viewport: 1440x900
+- viewport_strategy: controlled browser viewport
+- state: collapsed sidebar with the 44px trigger and right-side flyout open
+
+PR: include
+
+![Reusable SidebarAppMeta component](./assets/sidebar-app-meta-component.png)
+
+- source_type: storybook_canvas
+- target_program: mock-only
+- capture_scope: component
+- story_id_or_title: Components/SidebarAppMeta/Expanded
+- requested_viewport: 600x160
+- viewport_strategy: storybook-viewport
+- state: expanded reusable component with normalized outer margin
