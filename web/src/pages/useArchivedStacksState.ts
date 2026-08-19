@@ -6,7 +6,7 @@ import {
   type StackListItem,
 } from "../api";
 import { useManagementEventBatch } from "../managementEvents";
-import type { AsyncDataPhase } from "../asyncData";
+import type { AsyncDataPhase, AsyncDataTrigger } from "../asyncData";
 
 export function useArchivedStacksState() {
   const [archivedStacks, setArchivedStacks] = useState<StackListItem[]>([]);
@@ -14,9 +14,12 @@ export function useArchivedStacksState() {
     Record<string, StackDetail | undefined>
   >({});
   const [phase, setPhase] = useState<AsyncDataPhase>("initial-loading");
+  const [loaded, setLoaded] = useState(false);
+  const [trigger, setTrigger] = useState<AsyncDataTrigger>("background");
   const [error, setError] = useState<string | null>(null);
 
-  const requestRefresh = useCallback(async () => {
+  const requestRefresh = useCallback(async (nextTrigger: AsyncDataTrigger = "background") => {
+    setTrigger(nextTrigger);
     setPhase((current) => current === "initial-loading" ? "initial-loading" : "refreshing");
     setError(null);
     try {
@@ -32,6 +35,7 @@ export function useArchivedStacksState() {
       );
       setArchivedStacks(stacks);
       setArchivedDetails(Object.fromEntries(results));
+      setLoaded(true);
       setPhase(stacks.length === 0 ? "ready-empty" : "ready-data");
     } catch (reason: unknown) {
       const message = reason instanceof Error ? reason.message : String(reason);
@@ -42,7 +46,7 @@ export function useArchivedStacksState() {
   }, []);
 
   useEffect(() => {
-    void Promise.resolve().then(requestRefresh).catch(() => {});
+    void Promise.resolve().then(() => requestRefresh()).catch(() => {});
   }, [requestRefresh]);
 
   useManagementEventBatch(({ events, resyncRequired }) => {
@@ -60,7 +64,9 @@ export function useArchivedStacksState() {
     archivedDetails,
     archivedStacks,
     error,
+    loaded,
     phase,
     requestRefresh,
+    trigger,
   };
 }

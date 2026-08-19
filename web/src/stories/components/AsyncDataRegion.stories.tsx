@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react'
 import { AsyncDataRegion, AsyncDataSkeleton } from '../../components/AsyncDataRegion'
-import type { AsyncDataPhase, AsyncDataSource } from '../../asyncData'
+import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../../asyncData'
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -27,6 +27,7 @@ function RegionContents() {
 function RegionPreview(props: {
   phase: AsyncDataPhase
   source?: AsyncDataSource
+  trigger?: AsyncDataTrigger
   hasData?: boolean
   error?: string
 }) {
@@ -39,13 +40,14 @@ function RegionPreview(props: {
       phase={props.phase}
       skeleton={<AsyncDataSkeleton lines={5} />}
       source={props.source}
+      trigger={props.trigger}
     >
       <RegionContents />
     </AsyncDataRegion>
   )
 }
 
-function TimedRefreshPreview(props: { source: AsyncDataSource }) {
+function TimedRefreshPreview(props: { source: AsyncDataSource; trigger: AsyncDataTrigger }) {
   const [phase, setPhase] = useState<AsyncDataPhase>('ready-data')
 
   useEffect(() => {
@@ -53,7 +55,7 @@ function TimedRefreshPreview(props: { source: AsyncDataSource }) {
     return () => window.clearTimeout(timer)
   }, [])
 
-  return <RegionPreview hasData phase={phase} source={props.source} />
+  return <RegionPreview hasData phase={phase} source={props.source} trigger={props.trigger} />
 }
 
 const meta = {
@@ -77,7 +79,7 @@ export const InitialLoading: Story = {
 }
 
 export const UserActionRefresh: Story = {
-  render: () => <TimedRefreshPreview source="memory" />,
+  render: () => <TimedRefreshPreview source="fresh-snapshot" trigger="user-action" />,
   play: async ({ canvasElement }) => {
     await sleep(250)
     if (!canvasElement.querySelector('[role="status"]')) {
@@ -87,7 +89,7 @@ export const UserActionRefresh: Story = {
 }
 
 export const FreshSnapshotRefresh: Story = {
-  render: () => <TimedRefreshPreview source="fresh-snapshot" />,
+  render: () => <TimedRefreshPreview source="fresh-snapshot" trigger="background" />,
   play: async ({ canvasElement }) => {
     await sleep(840)
     if (!canvasElement.querySelector('[role="status"]')) {

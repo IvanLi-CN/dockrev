@@ -19,7 +19,7 @@ import { useManagementEventBatch } from '../managementEvents'
 import { navigate } from '../routes'
 import { Button, Chip, Input, Mono, Pill, ResponsiveActionButton, SelectField } from '../ui'
 import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
-import type { AsyncDataPhase, AsyncDataSource } from '../asyncData'
+import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
 import { webhookStateDotClass, webhookStateIcon } from '../webhookStatus'
 
 type RepoStateFilter = 'all' | 'ok' | 'missing' | 'error' | 'conflict' | 'queued' | 'running' | 'unknown'
@@ -143,17 +143,20 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
   const [error, setError] = useState<string | null>(null)
   const [phase, setPhase] = useState<AsyncDataPhase>('initial-loading')
   const [source, setSource] = useState<AsyncDataSource>('none')
+  const [trigger, setTrigger] = useState<AsyncDataTrigger>('background')
   const refreshRequestIdRef = useRef(0)
   const hasCommittedDataRef = useRef(false)
   const committedQueryRef = useRef<RepoQuery>({ filter, query, page, perPage })
   const filterRowRef = useRef<HTMLDivElement | null>(null)
   committedQueryRef.current = { filter, query, page, perPage }
 
-  const refresh = useCallback(async (opts?: AsyncDataSource | { source?: AsyncDataSource; query?: RepoQuery }): Promise<void> => {
+  const refresh = useCallback(async (opts?: AsyncDataSource | { source?: AsyncDataSource; trigger?: AsyncDataTrigger; query?: RepoQuery }): Promise<void> => {
     const requestId = ++refreshRequestIdRef.current
     const requestedQuery = typeof opts === 'string' ? committedQueryRef.current : (opts?.query ?? committedQueryRef.current)
     const requestedSource = typeof opts === 'string' ? opts : (opts?.source ?? 'live')
+    const requestedTrigger = typeof opts === 'string' ? 'background' : (opts?.trigger ?? 'background')
     setSource(requestedSource)
+    setTrigger(requestedTrigger)
     setPhase(hasCommittedDataRef.current ? 'refreshing' : 'initial-loading')
     setError(null)
     try {
@@ -218,7 +221,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
             setBusy(true)
             setError(null)
             try {
-              await refresh()
+              await refresh({ trigger: 'user-action' })
             } catch (e: unknown) {
               setError(errorMessage(e))
             } finally {
@@ -322,20 +325,20 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
   )
 
   const updateFilter = useCallback((nextFilter: RepoStateFilter) => {
-    void refresh({ source: 'memory', query: { ...committedQueryRef.current, filter: nextFilter, page: 1 } })
+    void refresh({ source: 'memory', trigger: 'user-action', query: { ...committedQueryRef.current, filter: nextFilter, page: 1 } })
   }, [refresh])
 
   const submitSearch = useCallback(() => {
-    void refresh({ source: 'memory', query: { ...committedQueryRef.current, query: queryInput.trim(), page: 1 } })
+    void refresh({ source: 'memory', trigger: 'user-action', query: { ...committedQueryRef.current, query: queryInput.trim(), page: 1 } })
   }, [queryInput, refresh])
 
   const clearSearch = useCallback(() => {
     setQueryInput('')
-    void refresh({ source: 'memory', query: { ...committedQueryRef.current, query: '', page: 1 } })
+    void refresh({ source: 'memory', trigger: 'user-action', query: { ...committedQueryRef.current, query: '', page: 1 } })
   }, [refresh])
 
   const goToPage = useCallback((nextPage: number) => {
-    void refresh({ source: 'memory', query: { ...committedQueryRef.current, page: Math.max(1, nextPage) } })
+    void refresh({ source: 'memory', trigger: 'user-action', query: { ...committedQueryRef.current, page: Math.max(1, nextPage) } })
   }, [refresh])
 
   useEffect(() => {
@@ -379,10 +382,11 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
       error={error}
       hasData={hasCommittedDataRef.current}
       label="正在刷新 GHCR Webhook 维护数据"
-      onRetry={() => void refresh('memory')}
+      onRetry={() => void refresh({ source: 'memory', trigger: 'user-action' })}
       phase={phase}
       skeleton={<AsyncDataSkeleton className="ghcrRegistryLoadingSkeleton" lines={10} />}
       source={source}
+      trigger={trigger}
     >
       <div className="ghcrRegistrySummaryGrid">
         <div className="ghcrRegistrySummaryItem">
@@ -516,7 +520,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
                 setError(null)
                 try {
                   await triggerGitHubPackagesWebhookSyncAll()
-                  await refresh('memory')
+                  await refresh({ source: 'memory', trigger: 'user-action' })
                 } catch (e: unknown) {
                   setError(errorMessage(e))
                 } finally {
@@ -548,6 +552,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
               const nextPerPage = Number.parseInt(value, 10)
               void refresh({
                 source: 'memory',
+                trigger: 'user-action',
                 query: {
                   ...committedQueryRef.current,
                   page: 1,

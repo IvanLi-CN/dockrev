@@ -14,7 +14,7 @@ import { useManagementEventBatch } from '../managementEvents'
 import { navigate } from '../routes'
 import { Button, Mono, Pill } from '../ui'
 import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
-import type { AsyncDataPhase, AsyncDataSource } from '../asyncData'
+import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
 
 const GHCR_JOB_TYPES = new Set([
   'github_packages_webhook',
@@ -75,14 +75,16 @@ export function GhcrWebhookQueuePage(props: { onTopActions: (node: React.ReactNo
   const [jobs, setJobs] = useState<JobListItem[]>([])
   const [phase, setPhase] = useState<AsyncDataPhase>('initial-loading')
   const [source, setSource] = useState<AsyncDataSource>('none')
+  const [trigger, setTrigger] = useState<AsyncDataTrigger>('background')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const refreshRequestIdRef = useRef(0)
   const hasCommittedDataRef = useRef(false)
 
-  const refresh = useCallback(async (nextSource: AsyncDataSource = 'live') => {
+  const refresh = useCallback(async (nextSource: AsyncDataSource = 'live', nextTrigger: AsyncDataTrigger = 'background') => {
     const requestId = ++refreshRequestIdRef.current
     setSource(nextSource)
+    setTrigger(nextTrigger)
     setPhase(hasCommittedDataRef.current ? 'refreshing' : 'initial-loading')
     setError(null)
     try {
@@ -124,7 +126,7 @@ export function GhcrWebhookQueuePage(props: { onTopActions: (node: React.ReactNo
           void (async () => {
             setBusy(true)
             try {
-              await refresh('memory')
+              await refresh('memory', 'user-action')
             } catch (e: unknown) {
               setError(errorMessage(e))
             } finally {
@@ -148,10 +150,11 @@ export function GhcrWebhookQueuePage(props: { onTopActions: (node: React.ReactNo
         error={error}
         hasData={overview !== null}
         label="正在刷新 GHCR Webhook 状态"
-        onRetry={() => void refresh('memory').catch((reason: unknown) => setError(errorMessage(reason)))}
+        onRetry={() => void refresh('memory', 'user-action').catch((reason: unknown) => setError(errorMessage(reason)))}
         phase={phase}
         skeleton={<AsyncDataSkeleton className="ghcrQueueLoadingSkeleton" lines={7} />}
         source={source}
+        trigger={trigger}
       >
         <div className="sectionRow">
           <div className="title">GHCR Webhook 状态</div>

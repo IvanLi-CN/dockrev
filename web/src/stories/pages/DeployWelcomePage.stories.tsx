@@ -181,12 +181,33 @@ export const InitialPending: Story = {
   },
   render: () => renderPage('验证首次无缓存时仅显示 pending shell，待 poll 后再进入 checklist'),
   play: async ({ canvasElement }) => {
-    await waitForCondition(() => canvasElement.textContent?.includes('正在加载部署检查报告…') ?? false)
+    await waitForCondition(() => Boolean(canvasElement.querySelector('[data-async-data-phase="initial-loading"] .skeleton')))
     await sleep(120)
     expectStory(
       !(canvasElement.textContent?.includes('无法加载检查报告') ?? false),
       'initial pending should not flash the failure copy while the first report is still pending',
     )
-    await waitForCondition(() => canvasElement.textContent?.includes('重试') ?? false)
+  },
+}
+
+export const InitialErrorAndRetry: Story = {
+  parameters: {
+    dockrevApiScenario: 'settings-configured',
+    dockrevApiBehaviorByRoute: {
+      'GET /api/deploy-check/report': {
+        delayMs: 80,
+        failTimes: 1,
+        failureStatus: 503,
+        failureBody: { error: 'mock deploy report unavailable' },
+      },
+    },
+  },
+  render: () => renderPage(),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(canvasElement.querySelector('[role="alert"]')))
+    const retry = canvasElement.querySelector<HTMLButtonElement>('[aria-label="重试加载"]')
+    expectStory(Boolean(retry), 'initial deploy report failure must expose retry')
+    retry?.click()
+    await waitForCondition(() => canvasElement.textContent?.includes('部署功能完整性检查清单') ?? false)
   },
 }

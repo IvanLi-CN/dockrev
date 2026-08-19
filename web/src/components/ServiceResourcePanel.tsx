@@ -14,6 +14,8 @@ import {
   scaleResourceChartPoint,
   type ResourceChartInterpolation,
 } from './resourceChartPaths'
+import { AsyncDataRegion, AsyncDataSkeleton } from './AsyncDataRegion'
+import type { AsyncDataPhase, AsyncDataTrigger } from '../asyncData'
 
 type MetricTabKey = 'cpu' | 'memory' | 'network' | 'disk' | 'pids'
 
@@ -423,9 +425,14 @@ export function ServiceResourcePanel(props: {
     initialSnapshot?.windowKey ?? '1h',
   )
   const [metricTab, setMetricTab] = useState<MetricTabKey>('cpu')
-  const [samples, setSamples] = useState<ServiceResourceSample[]>(initialSnapshot?.samples ?? [])
+  const [samples, setSamples] = useState<ServiceResourceSample[]>(() =>
+    initialSnapshot ? trimSamplesToWindow(initialSnapshot.samples, WINDOW_SECONDS[initialSnapshot.windowKey]) : [],
+  )
   const [peaks, setPeaks] = useState<ServiceResourcePeak[]>([])
   const [historyLoading, setHistoryLoading] = useState(!readonly && initialSnapshot === null)
+  const [historyLoaded, setHistoryLoaded] = useState(initialSnapshot !== null)
+  const [historyReloadTick, setHistoryReloadTick] = useState(0)
+  const [historyTrigger, setHistoryTrigger] = useState<AsyncDataTrigger>('background')
   const [historyError, setHistoryError] = useState<string | null>(null)
   const [monitorDisabled, setMonitorDisabled] = useState(
     initialSnapshot?.monitorDisabled === true,
@@ -446,11 +453,12 @@ export function ServiceResourcePanel(props: {
   useEffect(() => {
     if (!readonly || !initialSnapshot) return
     setWindowKey(initialSnapshot.windowKey)
-    setSamples(initialSnapshot.samples)
+    setSamples(trimSamplesToWindow(initialSnapshot.samples, WINDOW_SECONDS[initialSnapshot.windowKey]))
     setPeaks([])
     setMonitorDisabled(initialSnapshot.monitorDisabled === true)
     setHistoryError(null)
     setHistoryLoading(false)
+    setHistoryLoaded(true)
     setStreamError(null)
     setStreamState('idle')
   }, [initialSnapshot, readonly])
@@ -481,6 +489,7 @@ export function ServiceResourcePanel(props: {
         setMonitorDisabled(false)
         setSamples(trimSamplesToWindow(response.samples, WINDOW_SECONDS[windowKey]))
         setPeaks(response.peaks ?? [])
+        setHistoryLoaded(true)
       } catch (error: unknown) {
         if (cancelled) return
         if (isMonitorDisabledError(error)) {
@@ -502,7 +511,7 @@ export function ServiceResourcePanel(props: {
     return () => {
       cancelled = true
     }
-  }, [readonly, serviceId, windowKey])
+  }, [historyReloadTick, readonly, serviceId, windowKey])
 
   useEffect(() => {
     if (readonly || isAggregatedWindow || !isPageVisible || monitorDisabled) {
@@ -779,6 +788,11 @@ export function ServiceResourcePanel(props: {
     : null
 
   const sampleUnit = readonly ? '已缓存' : isAggregatedWindow ? '聚合桶' : '样本（含实时点）'
+  const historyPhase: AsyncDataPhase = historyError
+    ? 'error'
+    : historyLoading
+      ? historyLoaded ? 'refreshing' : 'initial-loading'
+      : samples.length === 0 ? 'ready-empty' : 'ready-data'
   const chartContext = historyLoading
     ? `${WINDOW_META_LABELS[windowKey]} · 正在加载历史样本`
     : samples.length > 0
@@ -905,7 +919,11 @@ export function ServiceResourcePanel(props: {
                     value={windowKey}
                     onValueChange={(value) => {
                       if (!value) return
-                      setWindowKey(value as ServiceResourceUsageWindow)
+                      const nextWindowKey = value as ServiceResourceUsageWindow
+                      setHistoryTrigger('user-action')
+                      setSamples((current) => trimSamplesToWindow(current, WINDOW_SECONDS[nextWindowKey]))
+                      setPeaks([])
+                      setWindowKey(nextWindowKey)
                     }}
                     aria-label="时间窗口切换"
                   >
@@ -923,7 +941,19 @@ export function ServiceResourcePanel(props: {
               </div>
             </div>
 
-            <div className="svcResourceChartStage">
+            <AsyncDataRegion
+              className="svcResourceChartStage"
+              error={historyError}
+              hasData={historyLoaded}
+              label="正在刷新监控历史"
+              onRetry={() => {
+                setHistoryTrigger('user-action')
+                setHistoryReloadTick((current) => current + 1)
+              }}
+              phase={historyPhase}
+              skeleton={<AsyncDataSkeleton className="svcResourceChartLoadingSkeleton" lines={5} />}
+              trigger={historyTrigger}
+            >
               <div className="svcResourceChartStageHead">
                 <div className="svcResourceChartTitleBlock">
                   <div className="svcResourceChartEyebrow">{activeMetric.label}</div>
@@ -938,19 +968,13 @@ export function ServiceResourcePanel(props: {
                 </div>
               </div>
 
-              {historyLoading ? (
-                <div className="svcResourceChartEmpty">正在加载历史采样…</div>
-              ) : historyError ? (
-                <div className="svcResourceChartEmpty">历史数据加载失败：{historyError}</div>
-              ) : (
-                <ResourceLineChart
-                  series={chartSeries}
-                  yFormatter={yFormatter}
-                  emptyText="当前窗口暂无可展示的监控数据"
-                  latestPeakLabel={latestPeakLabel}
-                />
-              )}
-            </div>
+              <ResourceLineChart
+                series={chartSeries}
+                yFormatter={yFormatter}
+                emptyText="当前窗口暂无可展示的监控数据"
+                latestPeakLabel={latestPeakLabel}
+              />
+            </AsyncDataRegion>
           </Tabs>
 
           <div className="svcResourceStreamStatus">{streamStatusLabel}</div>

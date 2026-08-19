@@ -36,7 +36,7 @@ import { RecentUpdateRecords, ServiceOperationHistory, filterServiceOperationJob
 import { ResponsiveSettingsDrawer } from "../components/ResponsiveSettingsDrawer";
 import { ServiceVersionsSection } from "../components/ServiceVersionsSection";
 import { AsyncDataRegion, AsyncDataSkeleton } from "../components/AsyncDataRegion";
-import type { AsyncDataPhase, AsyncDataSource } from "../asyncData";
+import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from "../asyncData";
 import { ServiceMobileActionMenu, ServiceStackDetailAction } from "../components/ServiceSplitActionButton";
 import { ImageLinkIcons, RepositoryLinkIcon, splitImageNameForDisplay, splitImageRef } from "../imageLinks";
 import { publishServiceTreeRefresh } from "../serviceTreeRefresh";
@@ -157,6 +157,7 @@ export function ServiceDetailPage(props: {
   const [jobs, setJobs] = useState<JobListItem[]>([]);
   const [historyPhase, setHistoryPhase] = useState<AsyncDataPhase>("initial-loading");
   const [historySource, setHistorySource] = useState<AsyncDataSource>("none");
+  const [historyTrigger, setHistoryTrigger] = useState<AsyncDataTrigger>("background");
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [versionJobs, setVersionJobs] = useState<JobListItem[]>([]);
   const [versionJobsLoaded, setVersionJobsLoaded] = useState(false);
@@ -186,11 +187,12 @@ export function ServiceDetailPage(props: {
   const [autoPolicyDraft, setAutoPolicyDraft] = useState(() => createDefaultAutoUpdatePolicy("inherit"));
   const [serviceSettingsDraft, setServiceSettingsDraft] = useState<ServiceSettings | null>(null);
   const [serviceBackupTargetsDraft, setServiceBackupTargetsDraft] = useState<BackupTargetsDraft>(() => createBackupTargetsDraft(null));
-  const refreshRecentJobs = useCallback(async (activateLive = false, cursor: string | null = historyCursorRef.current, nextCursorStack?: (string | null)[]) => {
+  const refreshRecentJobs = useCallback(async (activateLive = false, cursor: string | null = historyCursorRef.current, nextCursorStack?: (string | null)[], trigger: AsyncDataTrigger = "background") => {
     const requestedServiceId = props.serviceId;
     const requestId = ++historyRequestIdRef.current;
     const isPagination = nextCursorStack != null;
     setHistorySource(snapshotActiveRef.current ? "fresh-snapshot" : isPagination ? "memory" : "live");
+    setHistoryTrigger(trigger);
     setHistoryPhase(historyHasCommittedDataRef.current ? "refreshing" : "initial-loading");
     setHistoryError(null);
     if (isPagination) setHistoryPaginationBusy(true);
@@ -522,12 +524,13 @@ export function ServiceDetailPage(props: {
     <div className="svcDetailSectionStack">
       <AsyncDataRegion
         error={historyPhase === "error" ? historyError : null}
-        hasData={effectiveJobs.length > 0}
+        hasData={historyHasCommittedDataRef.current}
         label="正在刷新服务操作记录"
-        onRetry={() => void refreshRecentJobs(false, historyCursorRef.current).catch(() => undefined)}
+        onRetry={() => void refreshRecentJobs(false, historyCursorRef.current, undefined, "user-action").catch(() => undefined)}
         phase={historyPhase}
         skeleton={<AsyncDataSkeleton className="serviceOperationHistoryLoading" lines={5} />}
         source={historySource}
+        trigger={historyTrigger}
       >
       <ServiceOperationHistory
         backupRecords={effectiveBackupRecords}
@@ -543,11 +546,11 @@ export function ServiceDetailPage(props: {
         paginationDisabled={readonlyUi || historyPaginationBusy}
         onPrevious={() => {
           const previous = historyCursorStack[historyCursorStack.length - 1] ?? null;
-          void refreshRecentJobs(false, previous, historyCursorStack.slice(0, -1));
+          void refreshRecentJobs(false, previous, historyCursorStack.slice(0, -1), "user-action");
         }}
         onNext={() => {
           if (!historyNextCursor) return;
-          void refreshRecentJobs(false, historyNextCursor, [...historyCursorStack, historyCursor]);
+          void refreshRecentJobs(false, historyNextCursor, [...historyCursorStack, historyCursor], "user-action");
         }}
       />
       </AsyncDataRegion>

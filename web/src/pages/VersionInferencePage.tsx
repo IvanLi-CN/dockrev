@@ -10,7 +10,7 @@ import { useManagementEventBatch, useManagementEvents } from '../managementEvent
 import { usePwaStatus } from '../pwaStatus'
 import { buildReadonlySnapshotKey, readReadonlySnapshot, writeReadonlySnapshot } from '../readonlySnapshotCache'
 import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
-import type { AsyncDataPhase, AsyncDataSource } from '../asyncData'
+import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
 import { Button, Input, Mono, Pill, SelectField, ToggleGroup, ToggleGroupItem } from '../ui'
 
 type StatusFilter = 'all' | 'queued' | 'running' | 'ready' | 'stale' | 'all_failed'
@@ -190,6 +190,7 @@ export function VersionInferencePage(props: {
   const [snapshotActive, setSnapshotActive] = useState(false)
   const [snapshotHydrated, setSnapshotHydrated] = useState(false)
   const [refreshSource, setRefreshSource] = useState<AsyncDataSource>('none')
+  const [refreshTrigger, setRefreshTrigger] = useState<AsyncDataTrigger>('background')
   const refreshRequestIdRef = useRef(0)
   const snapshotActiveRef = useRef(snapshotActive)
   const committedQueryRef = useRef<VersionInferenceQuery>({ statusFilter, query, page, perPage })
@@ -228,13 +229,14 @@ export function VersionInferencePage(props: {
   }, [])
 
   const refresh = useCallback(
-    async (opts?: { silent?: boolean; source?: AsyncDataSource; query?: VersionInferenceQuery }) => {
+    async (opts?: { silent?: boolean; source?: AsyncDataSource; trigger?: AsyncDataTrigger; query?: VersionInferenceQuery }) => {
       const requestId = ++refreshRequestIdRef.current
       const silent = opts?.silent === true
       const requestedQuery = opts?.query ?? committedQueryRef.current
 
       if (!silent) setManualBusy(true)
       setRefreshSource(snapshotActiveRef.current ? 'fresh-snapshot' : (opts?.source ?? 'live'))
+      setRefreshTrigger(opts?.trigger ?? 'background')
       setLoading(true)
       setError(null)
       retryQueryRef.current = requestedQuery
@@ -280,6 +282,7 @@ export function VersionInferencePage(props: {
       void refresh({
         silent: true,
         source: 'memory',
+        trigger: 'user-action',
         query: { ...committedQueryRef.current, page: 1, query: queryInput.trim() },
       })
     }, QUERY_DEBOUNCE_MS)
@@ -302,7 +305,7 @@ export function VersionInferencePage(props: {
         variant="ghost"
         disabled={manualBusy || !isOnline}
         onClick={() => {
-          void refresh({ silent: false, source: 'memory' })
+          void refresh({ silent: false, source: 'memory', trigger: 'user-action' })
         }}
       >
         刷新
@@ -366,7 +369,7 @@ export function VersionInferencePage(props: {
           actionLabel="重试刷新"
           actionDisabled={!isOnline || manualBusy}
           onAction={() => {
-            void refresh({ silent: false, source: 'memory' })
+            void refresh({ silent: false, source: 'memory', trigger: 'user-action' })
           }}
         />
       ) : !overview && !loading && !isOnline ? (
@@ -380,10 +383,11 @@ export function VersionInferencePage(props: {
         error={error}
         hasData={Boolean(overview)}
         label="正在刷新版本推测状态"
-        onRetry={() => void refresh({ silent: false, source: 'memory', query: retryQueryRef.current })}
+        onRetry={() => void refresh({ silent: false, source: 'memory', trigger: 'user-action', query: retryQueryRef.current })}
         phase={dataPhase}
         skeleton={<AsyncDataSkeleton className="versionInferenceLoadingSkeleton" lines={8} />}
         source={refreshSource}
+        trigger={refreshTrigger}
       >
       <div className="card">
         <div className="sectionRow versionInferenceSummaryHead">
@@ -451,6 +455,7 @@ export function VersionInferencePage(props: {
               void refresh({
                 silent: true,
                 source: 'memory',
+                trigger: 'user-action',
                 query: { ...committedQueryRef.current, statusFilter: value as StatusFilter, page: 1 },
               })
             }}
@@ -484,6 +489,7 @@ export function VersionInferencePage(props: {
                 void refresh({
                   silent: true,
                   source: 'memory',
+                  trigger: 'user-action',
                   query: {
                     ...committedQueryRef.current,
                     page: 1,
@@ -503,6 +509,7 @@ export function VersionInferencePage(props: {
               onClick={() => void refresh({
                 silent: true,
                 source: 'memory',
+                trigger: 'user-action',
                 query: { ...committedQueryRef.current, page: Math.max(1, currentPage - 1) },
               })}
             >
@@ -514,6 +521,7 @@ export function VersionInferencePage(props: {
               onClick={() => void refresh({
                 silent: true,
                 source: 'memory',
+                trigger: 'user-action',
                 query: { ...committedQueryRef.current, page: Math.min(totalPages, currentPage + 1) },
               })}
             >

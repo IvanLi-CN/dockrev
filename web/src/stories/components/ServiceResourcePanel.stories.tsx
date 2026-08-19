@@ -46,6 +46,10 @@ function tick(): Promise<void> {
   return new Promise((resolve) => window.requestAnimationFrame(() => resolve()))
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
 const operationalCpuBaseline = [31, 32, 31, 33, 32, 34, 33, 32, 33, 34, 33, 32, 34, 35, 37, 39, 36, 34, 33, 32, 33, 34, 33, 32, 33]
 const operationalPidBaseline = [17, 17, 17, 17, 17, 18, 18, 18, 18, 18, 18, 18, 18, 19, 19, 19, 19, 18, 18, 18, 18, 18, 18, 18, 18]
 
@@ -91,6 +95,28 @@ export const Default: Story = {
 
 export const EmptyHistory: Story = {
   parameters: { dockrevApiScenario: 'service-detail-resource-monitor-empty' },
+}
+
+export const InitialHistoryErrorAndRetry: Story = {
+  parameters: {
+    dockrevApiScenario: 'default',
+    dockrevApiBehaviorByRoute: {
+      'GET /api/services/svc-prod-api/resource-usage/history': {
+        delayMs: 80,
+        failTimes: 1,
+        failureStatus: 503,
+        failureBody: { error: 'mock resource history unavailable' },
+      },
+    },
+  },
+  play: async ({ canvasElement }) => {
+    await sleep(140)
+    const retry = canvasElement.querySelector<HTMLButtonElement>('[aria-label="重试加载"]')
+    expectStory(Boolean(retry && canvasElement.querySelector('[role="alert"]')), 'initial history failure must expose a retry overlay')
+    retry?.click()
+    await sleep(140)
+    expectStory(Boolean(canvasElement.querySelector('.svcResourceChart')), 'resource history retry should restore the chart')
+  },
 }
 
 export const MonitorDisabled: Story = {

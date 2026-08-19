@@ -9739,6 +9739,24 @@ html[data-theme="light"] .serviceLogsTerminal {
   padding-top: 4px;
 }
 
+.svcResourceChartLoadingSkeleton {
+  min-height: 278px;
+  padding: 18px 0;
+}
+
+.detailRouteTreeLoadingSkeleton {
+  min-height: 168px;
+}
+
+.detailRouteServiceLoadingSkeleton {
+  min-height: 88px;
+}
+
+.deployWelcomeLoadingSkeleton {
+  min-height: 220px;
+  padding: 24px 0 0;
+}
+
 .svcResourceChartStageHead {
   display: flex;
   align-items: stretch;

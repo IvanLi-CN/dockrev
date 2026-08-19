@@ -1,9 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { CircleAlert, LoaderCircle, RotateCw } from 'lucide-react'
-import { asyncOverlayDelay, isAsyncDataBusy, type AsyncDataPhase, type AsyncDataSource } from '../asyncData'
+import { asyncOverlayDelay, isAsyncDataBusy, type AsyncDataPhase, type AsyncDataSource, type AsyncDataTrigger } from '../asyncData'
 import { Button } from '../ui'
 
-export type { AsyncDataPhase, AsyncDataSource } from '../asyncData'
+export type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
 
 export function Skeleton(props: {
   className?: string
@@ -27,6 +27,7 @@ export function AsyncDataSkeleton(props: { className?: string; lines?: number })
 export function AsyncDataRegion(props: {
   phase: AsyncDataPhase
   source?: AsyncDataSource
+  trigger?: AsyncDataTrigger
   hasData?: boolean
   className?: string
   label?: string
@@ -39,6 +40,7 @@ export function AsyncDataRegion(props: {
   const {
     phase,
     source = 'none',
+    trigger = 'background',
     hasData = false,
     className,
     label = '正在加载数据',
@@ -57,9 +59,9 @@ export function AsyncDataRegion(props: {
       setShowDelayedOverlay(false)
       return
     }
-    const timer = window.setTimeout(() => setShowDelayedOverlay(true), asyncOverlayDelay(source))
+    const timer = window.setTimeout(() => setShowDelayedOverlay(true), asyncOverlayDelay(trigger))
     return () => window.clearTimeout(timer)
-  }, [phase, source])
+  }, [phase, trigger])
 
   const showLoadingOverlay = phase === 'refreshing' && showDelayedOverlay
   const showErrorOverlay = phase === 'error'
@@ -70,6 +72,7 @@ export function AsyncDataRegion(props: {
       className={`asyncDataRegion ${className ?? ''}`}
       data-async-data-phase={phase}
       data-async-data-source={source}
+      data-async-data-trigger={trigger}
     >
       {initialSkeleton ? skeleton : children}
       {showLoadingOverlay ? (

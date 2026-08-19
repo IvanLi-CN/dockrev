@@ -35,8 +35,10 @@ export function ServicesPage(props: {
     archivedDetails,
     archivedStacks,
     error: archivedError,
+    loaded: archivedLoaded,
     phase: archivedPhase,
     requestRefresh: requestArchivedRefresh,
+    trigger: archivedTrigger,
   } = useArchivedStacksState();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -74,7 +76,7 @@ export function ServicesPage(props: {
               setBusy(true);
               setError(null);
               try {
-                await Promise.all([requestRefresh(), requestArchivedRefresh()]);
+                await Promise.all([requestRefresh(), requestArchivedRefresh("user-action")]);
               } catch (value: unknown) {
                 setError(
                   value instanceof Error
@@ -99,11 +101,12 @@ export function ServicesPage(props: {
       <AsyncDataRegion
         className="card"
         error={archivedError}
-        hasData={archivedStacks.length > 0 || archivedServices.length > 0}
+        hasData={archivedLoaded}
         label="正在刷新归档对象"
-        onRetry={() => void requestArchivedRefresh().catch(() => undefined)}
+        onRetry={() => void requestArchivedRefresh("user-action").catch(() => undefined)}
         phase={archivedPhase}
         skeleton={<AsyncDataSkeleton className="archivedStacksLoadingSkeleton" lines={4} />}
+        trigger={archivedTrigger}
       >
         <div className="sectionRow">
           <div>

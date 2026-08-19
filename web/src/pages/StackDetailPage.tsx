@@ -19,7 +19,7 @@ import { AutoUpdatePolicyDrawer } from '../components/AutoUpdatePolicyDrawer'
 import { AutoUpdatePolicyResultCard } from '../components/AutoUpdatePolicyResultCard'
 import { RecentUpdateRecords, selectRecentStackUpdateJobs } from '../components/RecentUpdateRecords'
 import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
-import type { AsyncDataPhase, AsyncDataSource } from '../asyncData'
+import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
 import { ReadonlySnapshotNotice } from '../components/ReadonlySnapshotNotice'
 import { ServiceMobileActionMenu, ServiceSplitActionButton } from '../components/ServiceSplitActionButton'
 import { useConfirm } from '../confirm'
@@ -134,17 +134,19 @@ export function StackDetailPage(props: {
   const [snapshotHydrated, setSnapshotHydrated] = useState(false)
   const [loadPhase, setLoadPhase] = useState<AsyncDataPhase>('initial-loading')
   const [loadSource, setLoadSource] = useState<AsyncDataSource>('none')
+  const [loadTrigger, setLoadTrigger] = useState<AsyncDataTrigger>('background')
   const [loadError, setLoadError] = useState<string | null>(null)
   const stackRef = useRef(stack)
   const snapshotActiveRef = useRef(snapshotActive)
   stackRef.current = stack
   snapshotActiveRef.current = snapshotActive
 
-  const refresh = useCallback(async (source: AsyncDataSource = 'live') => {
+  const refresh = useCallback(async (source: AsyncDataSource = 'live', trigger: AsyncDataTrigger = 'background') => {
     const requestedStackId = stackId
     if (stackIdRef.current !== requestedStackId) return
     const requestId = ++refreshRequestIdRef.current
     setLoadSource(snapshotActiveRef.current ? 'fresh-snapshot' : source)
+    setLoadTrigger(trigger)
     setLoadPhase(stackRef.current ? 'refreshing' : 'initial-loading')
     setLoadError(null)
     setError(null)
@@ -182,9 +184,9 @@ export function StackDetailPage(props: {
     return next
   }, [stackId])
 
-  const refreshAll = useCallback(async () => {
+  const refreshAll = useCallback(async (trigger: AsyncDataTrigger = 'background') => {
     await Promise.all([
-      refresh(),
+      refresh('live', trigger),
       refreshLifecycleStatus().catch(() => undefined),
     ])
   }, [refresh, refreshLifecycleStatus])
@@ -388,7 +390,7 @@ export function StackDetailPage(props: {
             primary={lifecyclePrimary}
           />
           <Button disabled={busy} onClick={() => navigate({ name: 'services' })}>返回服务</Button>
-          <Button disabled={busy || !isOnline} onClick={() => void refreshAll()}>刷新</Button>
+          <Button disabled={busy || !isOnline} onClick={() => void refreshAll('user-action')}>刷新</Button>
         </div>
         <ServiceMobileActionMenu
           ariaLabel="Stack 操作"
@@ -396,7 +398,7 @@ export function StackDetailPage(props: {
             { id: 'lifecycle', items: lifecycleItems },
             { id: 'navigation', items: [
               { id: 'return-services', label: '返回服务', icon: ArrowLeft, disabled: busy, onSelect: () => navigate({ name: 'services' }) },
-              { id: 'refresh', label: '刷新', icon: RefreshCw, disabled: busy || !isOnline, description: !isOnline ? '离线时无法刷新' : undefined, onSelect: () => void refreshAll() },
+              { id: 'refresh', label: '刷新', icon: RefreshCw, disabled: busy || !isOnline, description: !isOnline ? '离线时无法刷新' : undefined, onSelect: () => void refreshAll('user-action') },
             ] },
           ]}
         />
@@ -423,7 +425,7 @@ export function StackDetailPage(props: {
           error={loadError ?? error}
           hasData={false}
           label="正在加载 Stack 详情"
-          onRetry={() => void refresh()}
+          onRetry={() => void refresh('memory', 'user-action')}
           phase={loadPhase}
           skeleton={<AsyncDataSkeleton className="stackDetailLoadingSkeleton" lines={8} />}
         />
@@ -446,7 +448,7 @@ export function StackDetailPage(props: {
           fetchedAt={snapshotFetchedAt}
           actionLabel="重试刷新"
           actionDisabled={!isOnline || busy}
-          onAction={() => void refresh()}
+          onAction={() => void refresh('memory', 'user-action')}
         />
       ) : null}
       <AsyncDataRegion
@@ -454,9 +456,10 @@ export function StackDetailPage(props: {
         error={loadError}
         hasData
         label="正在刷新 Stack 详情"
-        onRetry={() => void refresh('memory')}
+        onRetry={() => void refresh('memory', 'user-action')}
         phase={loadPhase}
         source={loadSource}
+        trigger={loadTrigger}
       >
       <section className="detailHeroShell">
         <div className="stackDetailHero detailHeroCard detailHeroCardStack">

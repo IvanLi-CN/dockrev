@@ -7,7 +7,7 @@ import { useManagementEventBatch } from '../managementEvents'
 import { navigate } from '../routes'
 import { Button, Chip, Input, Mono, Pill, SelectField } from '../ui'
 import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
-import type { AsyncDataPhase, AsyncDataSource } from '../asyncData'
+import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
 
 type DeliveryFilter = 'all' | 'processed' | 'ignored' | 'rejected'
 
@@ -102,6 +102,7 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
   const [data, setData] = useState<ListGitHubPackagesWebhookDeliveriesResponse>(EMPTY_DELIVERIES)
   const [phase, setPhase] = useState<AsyncDataPhase>('initial-loading')
   const [source, setSource] = useState<AsyncDataSource>('none')
+  const [trigger, setTrigger] = useState<AsyncDataTrigger>('background')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [openReasonDeliveryId, setOpenReasonDeliveryId] = useState<string | null>(null)
@@ -109,9 +110,10 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
   const hasCommittedDataRef = useRef(false)
   const initialLoadStartedRef = useRef(false)
 
-  const refresh = useCallback(async (nextQuery: DeliveryQuery = committedQuery, nextSource: AsyncDataSource = 'live') => {
+  const refresh = useCallback(async (nextQuery: DeliveryQuery = committedQuery, nextSource: AsyncDataSource = 'live', nextTrigger: AsyncDataTrigger = 'background') => {
     const requestId = ++refreshRequestIdRef.current
     setSource(nextSource)
+    setTrigger(nextTrigger)
     setPhase(hasCommittedDataRef.current ? 'refreshing' : 'initial-loading')
     setError(null)
     try {
@@ -156,7 +158,7 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
           void (async () => {
             setBusy(true)
             try {
-              await refresh(committedQuery, 'memory')
+              await refresh(committedQuery, 'memory', 'user-action')
             } finally {
               setBusy(false)
             }
@@ -217,10 +219,11 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
         error={error}
         hasData={hasCommittedDataRef.current}
         label="正在刷新 GHCR Webhook 收件箱"
-        onRetry={() => void refresh(committedQuery, 'memory').catch(() => undefined)}
+        onRetry={() => void refresh(committedQuery, 'memory', 'user-action').catch(() => undefined)}
         phase={phase}
         skeleton={<AsyncDataSkeleton className="ghcrInboxLoadingSkeleton" lines={8} />}
         source={source}
+        trigger={trigger}
       >
       <div className="ghcrInboxSummaryGrid">
         {summaryItems.map((item) => (
@@ -239,7 +242,7 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
             active={filter === 'all'}
             disabled={busy || queryBusy}
             onClick={() => {
-              if (!busy && !queryBusy) void refresh({ ...committedQuery, filter: 'all', page: 1 }, 'memory').catch(() => undefined)
+              if (!busy && !queryBusy) void refresh({ ...committedQuery, filter: 'all', page: 1 }, 'memory', 'user-action').catch(() => undefined)
             }}
           >
             <span>全部</span>
@@ -249,7 +252,7 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
             active={filter === 'processed'}
             disabled={busy || queryBusy}
             onClick={() => {
-              if (!busy && !queryBusy) void refresh({ ...committedQuery, filter: 'processed', page: 1 }, 'memory').catch(() => undefined)
+              if (!busy && !queryBusy) void refresh({ ...committedQuery, filter: 'processed', page: 1 }, 'memory', 'user-action').catch(() => undefined)
             }}
           >
             <span>已处理</span>
@@ -259,7 +262,7 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
             active={filter === 'ignored'}
             disabled={busy || queryBusy}
             onClick={() => {
-              if (!busy && !queryBusy) void refresh({ ...committedQuery, filter: 'ignored', page: 1 }, 'memory').catch(() => undefined)
+              if (!busy && !queryBusy) void refresh({ ...committedQuery, filter: 'ignored', page: 1 }, 'memory', 'user-action').catch(() => undefined)
             }}
           >
             <span>已忽略</span>
@@ -269,7 +272,7 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
             active={filter === 'rejected'}
             disabled={busy || queryBusy}
             onClick={() => {
-              if (!busy && !queryBusy) void refresh({ ...committedQuery, filter: 'rejected', page: 1 }, 'memory').catch(() => undefined)
+              if (!busy && !queryBusy) void refresh({ ...committedQuery, filter: 'rejected', page: 1 }, 'memory', 'user-action').catch(() => undefined)
             }}
           >
             <span>已拒绝</span>
@@ -284,7 +287,7 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
             onKeyDown={(event) => {
               if (event.key !== 'Enter') return
               event.preventDefault()
-              void refresh({ ...committedQuery, page: 1, query: searchInput.trim() }, 'memory').catch(() => undefined)
+              void refresh({ ...committedQuery, page: 1, query: searchInput.trim() }, 'memory', 'user-action').catch(() => undefined)
             }}
             placeholder="搜索仓库 / 原因 / 任务"
             value={searchInput}
@@ -293,7 +296,7 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
             variant="ghost"
             disabled={busy || queryBusy}
             onClick={() => {
-              void refresh({ ...committedQuery, page: 1, query: searchInput.trim() }, 'memory').catch(() => undefined)
+              void refresh({ ...committedQuery, page: 1, query: searchInput.trim() }, 'memory', 'user-action').catch(() => undefined)
             }}
           >
             搜索
@@ -303,7 +306,7 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
             disabled={queryBusy || (!query && !searchInput)}
             onClick={() => {
               setSearchInput('')
-              void refresh({ ...committedQuery, page: 1, query: '' }, 'memory').catch(() => undefined)
+              void refresh({ ...committedQuery, page: 1, query: '' }, 'memory', 'user-action').catch(() => undefined)
             }}
           >
             清除
@@ -320,7 +323,7 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
             id="ghcr-inbox-per-page"
             onChange={(value) => {
               const next = Number.parseInt(value, 10)
-              void refresh({ ...committedQuery, page: 1, perPage: Number.isFinite(next) && next > 0 ? next : 50 }, 'memory').catch(() => undefined)
+              void refresh({ ...committedQuery, page: 1, perPage: Number.isFinite(next) && next > 0 ? next : 50 }, 'memory', 'user-action').catch(() => undefined)
             }}
             options={PER_PAGE_OPTIONS.map((option) => ({ value: String(option), label: String(option) }))}
             value={String(perPage)}
@@ -328,13 +331,13 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
           <span className="muted">
             {phase === 'initial-loading' ? '正在加载记录…' : `第 ${page} / ${maxPage} 页（筛选后 ${data.filteredTotal} / 总计 ${data.total}）`}
           </span>
-          <Button variant="ghost" disabled={queryBusy || busy || page <= 1} onClick={() => void refresh({ ...committedQuery, page: Math.max(1, page - 1) }, 'memory').catch(() => undefined)}>
+          <Button variant="ghost" disabled={queryBusy || busy || page <= 1} onClick={() => void refresh({ ...committedQuery, page: Math.max(1, page - 1) }, 'memory', 'user-action').catch(() => undefined)}>
             上一页
           </Button>
           <Button
             variant="ghost"
             disabled={queryBusy || busy || page >= maxPage}
-            onClick={() => void refresh({ ...committedQuery, page: Math.min(maxPage, page + 1) }, 'memory').catch(() => undefined)}
+            onClick={() => void refresh({ ...committedQuery, page: Math.min(maxPage, page + 1) }, 'memory', 'user-action').catch(() => undefined)}
           >
             下一页
           </Button>

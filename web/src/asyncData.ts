@@ -8,11 +8,13 @@ export type AsyncDataPhase =
 
 export type AsyncDataSource = 'none' | 'live' | 'memory' | 'fresh-snapshot'
 
+export type AsyncDataTrigger = 'user-action' | 'background'
+
 export const USER_ACTION_OVERLAY_DELAY_MS = 200
 export const BACKGROUND_OVERLAY_DELAY_MS = 800
 
-export function asyncOverlayDelay(source: AsyncDataSource): number {
-  return source === 'fresh-snapshot' ? BACKGROUND_OVERLAY_DELAY_MS : USER_ACTION_OVERLAY_DELAY_MS
+export function asyncOverlayDelay(trigger: AsyncDataTrigger): number {
+  return trigger === 'background' ? BACKGROUND_OVERLAY_DELAY_MS : USER_ACTION_OVERLAY_DELAY_MS
 }
 
 export function isAsyncDataBusy(phase: AsyncDataPhase): boolean {
@@ -25,4 +27,8 @@ export function canShowAsyncEmpty(phase: AsyncDataPhase): boolean {
 
 export function isAsyncDataOffline(phase: AsyncDataPhase, isOnline: boolean): boolean {
   return phase === 'offline' && !isOnline
+}
+
+export function hasCompleteAsyncReadiness(readiness: Record<string, unknown>, domains: readonly string[]): boolean {
+  return domains.every((domain) => readiness[domain] === true)
 }

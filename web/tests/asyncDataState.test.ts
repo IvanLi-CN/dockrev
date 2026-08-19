@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   asyncOverlayDelay,
   canShowAsyncEmpty,
+  hasCompleteAsyncReadiness,
   isAsyncDataBusy,
   isAsyncDataOffline,
 } from '../src/asyncData'
@@ -19,10 +20,9 @@ describe('async data continuity contract', () => {
     expect(isAsyncDataOffline('offline', false)).toBe(true)
   })
 
-  test('uses the short user-action and long snapshot overlay thresholds', () => {
-    expect(asyncOverlayDelay('memory')).toBe(200)
-    expect(asyncOverlayDelay('live')).toBe(200)
-    expect(asyncOverlayDelay('fresh-snapshot')).toBe(800)
+  test('uses trigger intent rather than cache source for overlay thresholds', () => {
+    expect(asyncOverlayDelay('user-action')).toBe(200)
+    expect(asyncOverlayDelay('background')).toBe(800)
   })
 
   test('trims resource snapshots against the current time window', () => {
@@ -38,5 +38,21 @@ describe('async data continuity contract', () => {
     const trimmed = trimSamplesToWindow(samples, 1_800, now)
 
     expect(trimmed.map((sample) => sample.cpuPercent)).toEqual([2, 4])
+  })
+
+  test('rejects incomplete queue snapshots so failed domains cannot become cached zeroes', () => {
+    const complete = {
+      version: 2,
+      readiness: { jobs: true, versionInference: true, ghcr: true },
+      committedQueryKey: 'all::',
+      jobs: [],
+      versionInferenceSummary: {},
+      versionInferenceLoaded: true,
+      ghcrSummary: {},
+      ghcrLoaded: true,
+    }
+
+    expect(hasCompleteAsyncReadiness(complete.readiness, ['jobs', 'versionInference', 'ghcr'])).toBe(true)
+    expect(hasCompleteAsyncReadiness({ ...complete.readiness, ghcr: false }, ['jobs', 'versionInference', 'ghcr'])).toBe(false)
   })
 })
