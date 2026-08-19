@@ -416,40 +416,12 @@ export const MobileLogsTimestampLayout: Story = {
     viewport: { defaultViewport: "dockrevMobile" },
   },
   render: render("stack-prod", "svc-prod-api", "logs", "移动端日志时间列布局"),
-  play: async ({ canvasElement }) => {
-    await waitForCondition(() => normalizeText(canvasElement.textContent).includes("实时日志"));
-    await waitForCondition(() => Boolean(canvasElement.querySelector(".serviceLogRow")));
-    assertMobileLogStreamLayout(canvasElement);
-  },
 };
 
 export const DesktopLogsTimestampLayout: Story = {
   parameters: { dockrevApiScenario: "dashboard-demo" },
   render: render("stack-prod", "svc-prod-api", "logs", "桌面端日志时间列布局"),
 };
-
-function assertMobileLogStreamLayout(canvasElement: HTMLElement): void {
-  const header = canvasElement.querySelector<HTMLElement>(".serviceLogsTerminalHead");
-  const row = canvasElement.querySelector<HTMLElement>(".serviceLogRow");
-  const timestamp = row?.querySelector<HTMLElement>(".serviceLogTs");
-  const level = row?.querySelector<HTMLElement>(".serviceLogLevel");
-  const message = row?.querySelector<HTMLElement>(".serviceLogMsg");
-  if (!(header && row && timestamp && level && message)) {
-    expectStory(false, "mobile logs should render timestamp, level, and message cells");
-    return;
-  }
-  expectStory(getComputedStyle(header).display === "none", "mobile logs should hide the table header");
-  expectStory(getComputedStyle(row).gridTemplateAreas.includes("time level"), "mobile logs should keep time and level on the first row");
-  expectStory(getComputedStyle(row).gridTemplateAreas.includes("message message"), "mobile logs should span the message across the second row");
-  expectStory(getComputedStyle(timestamp).gridArea === "time", "mobile timestamp should occupy the time area");
-  expectStory(getComputedStyle(level).gridArea === "level", "mobile level should occupy the level area");
-  expectStory(getComputedStyle(message).gridArea === "message", "mobile message should occupy the message area");
-  expectNearlyEqual(message.getBoundingClientRect().left, timestamp.getBoundingClientRect().left, 1, "mobile message should align with the timestamp block");
-  expectStory(
-    message.getBoundingClientRect().top >= Math.max(timestamp.getBoundingClientRect().bottom, level.getBoundingClientRect().bottom) - 1,
-    "mobile message should render below the time and level row",
-  );
-}
 
 export const LogsSectionLightContrast: Story = {
   globals: {

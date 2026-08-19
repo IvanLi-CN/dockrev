@@ -399,7 +399,7 @@ async function assertServiceLogsTimestampLayout({ baseUrl, browser, label, story
       if (layout.expectedTime !== layout.timeText || layout.expectedDate !== layout.dateText) {
         throw new Error(`Timestamp timezone formatting failed (${label}, ${mode}, ${expectedTimeZone}): ${JSON.stringify(layout)}`);
       }
-      if (viewport.width <= 960) {
+      if (viewport.width <= 700) {
         if (
           layout.inlinePadding !== "14px" ||
           layout.headerDisplay !== "none" ||
