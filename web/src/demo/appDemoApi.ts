@@ -66,7 +66,9 @@ function asyncBehavior(state: ReturnType<typeof readPublicDemoAsyncState>) {
     return {
       'GET /api/jobs': {
         delayMs: 350,
-        failTimes: 1,
+        // Strict Mode mounts the initial reader twice in development; both reads
+        // must fail so the error overlay remains visible until an explicit retry.
+        failTimes: 2,
         failureStatus: 503,
         failureBody: { error: 'mock queue unavailable' },
       },
