@@ -113,6 +113,7 @@ export function SidebarAppMeta(props: {
           side="right"
           align="end"
           className="sidebarAppMetaPopover"
+          aria-label="Dockrev release and repository information"
           {...contentProps}
         >
           <AppMetaContent

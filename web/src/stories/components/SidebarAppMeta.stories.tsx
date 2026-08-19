@@ -87,6 +87,7 @@ export const CollapsedFlyout: Story = {
     const doc = canvasElement.ownerDocument
     let flyout = doc.querySelector<HTMLElement>('.sidebarAppMetaPopover')
     expectStory(flyout?.getAttribute('data-side') === 'right', 'Flyout should open to the right through the portal')
+    expectStory(flyout?.getAttribute('aria-label')?.includes('release'), 'Flyout dialog should have an accessible name')
     expectStory(flyout?.textContent?.includes('Powered by Ivan Li'), 'Flyout should reuse the expanded content')
 
     trigger.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, pointerType: 'mouse' }))
