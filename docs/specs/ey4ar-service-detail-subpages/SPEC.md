@@ -417,6 +417,40 @@ Caption: 更新任务进入执行阶段后，顶部动作、共享状态信息�
 
 ![服务详情日志亮色 Raw ANSI（移动端）](./assets/service-detail-logs-light-raw-mobile.png)
 
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `component`
+  requested_viewport: `1440x1000`
+  viewport_strategy: `controlled-viewport`
+  margin_policy: `trim_only`
+  evidence_surface: `serviceLogsTerminal`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/DesktopLogsTimestampLayout`
+  state: `desktop timestamp column alignment`
+  evidence_note: 桌面日志时间轨道收窄至 `128px`，时间在上、日期在下，表头与正文共享 `18px` 水平边距。
+  PR: include
+  PR caption: 桌面日志时间列保持紧凑，并与表头共享一致边距。
+
+![服务详情日志时间布局（桌面）](./assets/service-detail-logs-timestamp-layout-desktop.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `component`
+  requested_viewport: `393x852`
+  viewport_strategy: `controlled-viewport`
+  margin_policy: `trim_only`
+  evidence_surface: `serviceLogsTerminal`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/ServiceDetailPage/MobileLogsTimestampLayout`
+  state: `mobile stream rows with unique date dividers`
+  evidence_note: 移动端以单行时间和等级、次行正文展示日志；普通日志之间保留淡分界线，日期组件不会与普通分界线连续叠加，同一日期只显示一次。
+  PR: include
+  PR caption: 移动端日志改为流式两行布局，并消除重复日期和连续分隔线。
+
+![服务详情日志时间布局（移动端）](./assets/service-detail-logs-timestamp-layout-mobile.png)
+
 ## Visual Evidence (PR)
 
 - final_set: `release-notes-locate`
