@@ -343,8 +343,8 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
                         ref={virtualizer.measureElement}
                       >
                         <span className="mono serviceLogTs" title={stamp.title}>
+                          {stamp.time ? <span className="serviceLogTsTime">{stamp.time}</span> : null}
                           <span className="serviceLogTsDate">{stamp.date}</span>
-                          <span className="serviceLogTsTime">{stamp.time}</span>
                         </span>
                         <span
                           className={`mono logLvl serviceLogLevel logLvl-${record.level}${record.inlineLevel ? ' serviceLogLevelInline' : ''}`}

@@ -95,6 +95,7 @@
 - `日志` 必须通过 `GET /api/services/{service_id}/logs?tail=500` 提供最近缓冲 snapshot，并通过 `GET /api/services/{service_id}/logs/events?afterId=` 建立 SSE 增量续流；SSE 继续支持 `Last-Event-ID`、`Cache-Control: no-cache` 与 `X-Accel-Buffering: no`。
 - `日志` 必须保留 ANSI 颜色渲染，同时维护 strip-ANSI 文本用于大小写不敏感的当前缓冲过滤搜索。
 - `日志` 终端必须使用服务日志局部主题令牌；亮色主题提供不透明浅色终端、表头、行悬浮、时间、Human 正文、元数据、等级与 ANSI 前景色，Human 和 Raw 两种模式中的文字相对各自终端表面均至少达到 WCAG AA `4.5:1`，暗色主题继续保持既有终端语义。
+- `日志` 时间列必须在每条有效记录中按“时间第一行、日期第二行”展示；正文时间列的左右内边距必须与表头一致，桌面使用 `18px`、窄屏使用 `14px`，时间轨道分别固定为 `128px` 与 `112px`，且该对齐不得依赖滚动组件的内部 DOM 结构。
 - `日志` 必须在 `ServiceLogLine` 中保留 `ts/raw/plain`，并允许后端返回可选 `meta`：`format=json|logfmt|text`、应用级 `level`、应用时间戳、主消息、结构化 attributes 与重点字段列表。
 - `日志` 默认展示 Human 视图：优先使用 `meta.message` 与应用级 `meta.level`，将 `component/event/route/phase/elapsed_ms` 等重点 attributes 渲染为紧凑元数据；缺少 `meta` 时回退到原有 ANSI/关键词推断。
 - `日志` 必须提供 Human / Raw 显式切换；Raw 视图必须保留原始输出与 ANSI 分段渲染，Human 视图不得把长 metadata 截断到视口外。
@@ -280,6 +281,10 @@
 - Given 服务详情页处于亮色主题的 `日志`
   When 用户查看 Human 或切换到 Raw
   Then 浅色终端表面、表头、时间、正文、元数据、等级与 ANSI 语义色均保持可读，且不会回退为暗色嵌入面。
+
+- Given 服务详情页处于 `日志` 且存在可解析时间戳
+  When 用户查看任意 Human/Raw 或 Local/UTC 日志行
+  Then 时间显示在第一行、日期显示在第二行，正文时间列左缘与“时间”表头对齐；桌面内边距为 `18px` 且时间轨道为 `128px`，窄屏内边距为 `14px` 且时间轨道为 `112px`。
 
 - Given 服务详情页处于 `设置`
   When 用户查看页面主体

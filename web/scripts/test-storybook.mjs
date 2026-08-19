@@ -320,6 +320,71 @@ async function assertServiceLogsLightContrast({ baseUrl, browser }) {
   }
 }
 
+async function assertServiceLogsTimestampLayout({ baseUrl, browser, label, storyId, viewport }) {
+  const page = await browser.newPage();
+  try {
+    await page.setViewportSize(viewport);
+    const base = normalizeBaseUrl(baseUrl);
+    const url = new URL("iframe.html", base);
+    url.searchParams.set("id", storyId);
+    url.searchParams.set("viewMode", "story");
+    await page.goto(url.toString(), { waitUntil: "domcontentloaded" });
+    await page.locator(".serviceLogsTerminal").waitFor({ timeout: 10_000 });
+    await page.locator(".serviceLogTsTime").first().waitFor({ timeout: 10_000 });
+
+    await page.getByRole("button", { name: "Human" }).click();
+    await page.locator('.serviceLogRow[data-view="human"] .serviceLogTsTime').first().waitFor({ timeout: 10_000 });
+
+    const assertLayout = async (mode) => {
+      const layout = await page.evaluate(() => {
+        const terminal = document.querySelector(".serviceLogsTerminal");
+        const headerTime = document.querySelector(".serviceLogsTerminalHead > span");
+        const timestamp = document.querySelector(`.serviceLogRow[data-view="${document.querySelector('.serviceLogsTerminal')?.getAttribute('data-service-logs-view')}"] .serviceLogTs`);
+        const time = timestamp?.querySelector(".serviceLogTsTime");
+        const date = timestamp?.querySelector(".serviceLogTsDate");
+        if (!(terminal instanceof HTMLElement && headerTime instanceof HTMLElement && timestamp instanceof HTMLElement && time instanceof HTMLElement && date instanceof HTMLElement)) {
+          return null;
+        }
+        const headerRect = headerTime.getBoundingClientRect();
+        const timestampRect = timestamp.getBoundingClientRect();
+        const timeRect = time.getBoundingClientRect();
+        const dateRect = date.getBoundingClientRect();
+        return {
+          dateAfterTime: Boolean(time.compareDocumentPosition(date) & Node.DOCUMENT_POSITION_FOLLOWING),
+          timeColumn: getComputedStyle(headerTime.parentElement).gridTemplateColumns.split(" ")[0],
+          inlinePadding: getComputedStyle(terminal).getPropertyValue("--service-log-inline-padding").trim(),
+          leftDelta: timestampRect.left - headerRect.left,
+          mode: terminal.dataset.serviceLogsView,
+          timeAboveDate: timeRect.top < dateRect.top,
+        };
+      });
+      if (!layout) throw new Error(`Missing timestamp layout (${label}, ${mode}).`);
+      if (layout.mode !== mode || !layout.dateAfterTime || !layout.timeAboveDate) {
+        throw new Error(`Timestamp order failed (${label}, ${mode}): ${JSON.stringify(layout)}`);
+      }
+      const expectedPadding = viewport.width <= 960 ? "14px" : "18px";
+      const expectedTimeColumn = viewport.width <= 960 ? "112px" : "128px";
+      if (
+        layout.inlinePadding !== expectedPadding ||
+        layout.timeColumn !== expectedTimeColumn ||
+        !approxEqual(layout.leftDelta, 0, 1)
+      ) {
+        throw new Error(`Timestamp alignment failed (${label}, ${mode}): ${JSON.stringify(layout)}`);
+      }
+    };
+
+    await assertLayout("human");
+    await page.getByRole("button", { name: "Raw" }).click();
+    await page.locator('.serviceLogRow[data-view="raw"] .serviceLogTsTime').first().waitFor({ timeout: 10_000 });
+    await assertLayout("raw");
+    await page.getByRole("button", { name: "UTC" }).click();
+    await page.locator('button[aria-pressed="true"]', { hasText: "UTC" }).waitFor({ timeout: 10_000 });
+    await assertLayout("raw");
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
 async function assertServiceLogsFollowAfterNewLog({
   baseUrl,
   browser,
@@ -782,6 +847,20 @@ async function runInteractive({ baseUrl, browser }) {
   // Keep the rollback refresh race in the CI interaction suite, not only in the story play callback.
   await runRollbackRefreshRace({ baseUrl, browser });
 
+  await assertServiceLogsTimestampLayout({
+    baseUrl,
+    browser,
+    label: "desktop",
+    storyId: "pages-servicedetailpage--logs-section",
+    viewport: { width: 1440, height: 1000 },
+  });
+  await assertServiceLogsTimestampLayout({
+    baseUrl,
+    browser,
+    label: "mobile",
+    storyId: "pages-servicedetailpage--mobile-logs-timestamp-layout",
+    viewport: { width: 393, height: 852 },
+  });
   await assertServiceLogsLightContrast({ baseUrl, browser });
   await assertServiceLogsFollowAfterNewLog({
     baseUrl,

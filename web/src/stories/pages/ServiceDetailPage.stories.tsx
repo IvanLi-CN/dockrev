@@ -364,6 +364,17 @@ export const LogsSection: Story = {
     expectStory(normalizeText(canvasElement.textContent).includes("admin_read"), "logs should render structured metadata chips");
     const tracingRow = findLogRowContaining(canvasElement, "openai proxy request started");
     expectStory(tracingRow, "logs should render parsed tracing text message");
+    const timestamp = tracingRow?.querySelector<HTMLElement>(".serviceLogTs");
+    const time = timestamp?.querySelector<HTMLElement>(".serviceLogTsTime");
+    const date = timestamp?.querySelector<HTMLElement>(".serviceLogTsDate");
+    const headerTime = canvasElement.querySelector<HTMLElement>(".serviceLogsTerminalHead > span");
+    expectStory(timestamp && time && date && headerTime, "logs timestamp cells should render both time and date");
+    expectStory(Boolean(time.compareDocumentPosition(date) & Node.DOCUMENT_POSITION_FOLLOWING), "logs should render time before date");
+    expectStory(time.getBoundingClientRect().top < date.getBoundingClientRect().top, "logs should place time above date");
+    expectStory(
+      Math.abs(timestamp.getBoundingClientRect().left - headerTime.getBoundingClientRect().left) <= 1,
+      "logs timestamp body should align with the time header",
+    );
     expectStory(tracingRow?.getAttribute("data-format") === "text", "tracing text row should stay text-formatted");
     expectStory(tracingRow?.getAttribute("data-level") === "info", "tracing text row should expose parsed info level");
     expectStory(normalizeText(tracingRow?.querySelector(".serviceLogLevel")?.textContent) === "INFO", "tracing text row should show parsed level badge");
@@ -381,6 +392,9 @@ export const LogsSection: Story = {
     expectStory(canvasElement.querySelector('[data-service-logs-virtualized="true"]')?.getAttribute("data-service-logs-wrap") === "off", "logs should default to nowrap mode");
     findButton(canvasElement, "Raw")?.click();
     await waitForCondition(() => canvasElement.querySelector('[data-service-logs-virtualized="true"]')?.getAttribute("data-service-logs-view") === "raw");
+    const rawTimestamp = canvasElement.querySelector<HTMLElement>('.serviceLogRow[data-view="raw"] .serviceLogTs');
+    expectStory(rawTimestamp?.querySelector(".serviceLogTsTime"), "raw logs should keep the time line");
+    expectStory(rawTimestamp?.querySelector(".serviceLogTsDate"), "raw logs should keep the date line");
     expectStory(normalizeText(canvasElement.textContent).includes('"timestamp"'), "raw mode should expose original JSON text");
     expectStory(normalizeText(canvasElement.textContent).includes("2026-07-07T05:54:01.126674Z INFO openai proxy request started"), "raw mode should expose original tracing text with application timestamp and level");
     findButton(canvasElement, "Human")?.click();
@@ -393,6 +407,14 @@ export const LogsSection: Story = {
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
     await waitForCondition(() => normalizeText(canvasElement.textContent).includes("runtime perf"));
+  },
+};
+
+export const MobileLogsTimestampLayout: Story = {
+  ...LogsSection,
+  parameters: {
+    ...LogsSection.parameters,
+    viewport: { defaultViewport: "dockrevMobile" },
   },
 };
 
@@ -460,7 +482,7 @@ export const MobileSettingsOfflineReadonly: Story = {
 export const MobileLogsSection: Story = {
   parameters: {
     dockrevApiScenario: "dashboard-demo",
-    viewport: { defaultViewport: "mobile1" },
+    viewport: { defaultViewport: "dockrevMobile" },
   },
   render: render("stack-prod", "svc-prod-api", "logs", "移动端使用底部主导航，抽屉承载服务树"),
   play: async ({ canvasElement }) => {

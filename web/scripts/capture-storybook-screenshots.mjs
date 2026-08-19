@@ -483,6 +483,54 @@ async function main() {
       },
     },
     {
+      id: 'pages-servicedetailpage--logs-section',
+      file: 'service-detail-logs-timestamp-layout-desktop.png',
+      viewport: { width: 1440, height: 1000 },
+      setup: async (page) => {
+        const terminal = page.locator('.serviceLogsTerminal')
+        await terminal.waitFor({ state: 'attached', timeout: STORY_TIMEOUT_MS })
+        await page.locator('.serviceLogTsTime').first().waitFor({ state: 'attached', timeout: STORY_TIMEOUT_MS })
+        await page.locator('[aria-label="服务实时日志"]').evaluate((element) => {
+          if (!(element instanceof HTMLElement)) return
+          element.scrollTop = 0
+        })
+        const jump = page.locator('.serviceLogsJumpWrap')
+        if (await jump.count()) {
+          await jump.evaluate((element) => {
+            if (element instanceof HTMLElement) element.style.visibility = 'hidden'
+          })
+        }
+        await terminal.evaluate((element) => element.scrollIntoView({ block: 'start', behavior: 'auto' }))
+      },
+      screenshot: async (page, filePath) => {
+        await page.locator('.serviceLogsTerminal').screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'pages-servicedetailpage--mobile-logs-timestamp-layout',
+      file: 'service-detail-logs-timestamp-layout-mobile.png',
+      viewport: { width: 393, height: 852 },
+      setup: async (page) => {
+        const terminal = page.locator('.serviceLogsTerminal')
+        await terminal.waitFor({ state: 'attached', timeout: STORY_TIMEOUT_MS })
+        await page.locator('.serviceLogTsTime').first().waitFor({ state: 'attached', timeout: STORY_TIMEOUT_MS })
+        await page.locator('[aria-label="服务实时日志"]').evaluate((element) => {
+          if (!(element instanceof HTMLElement)) return
+          element.scrollTop = 0
+        })
+        const jump = page.locator('.serviceLogsJumpWrap')
+        if (await jump.count()) {
+          await jump.evaluate((element) => {
+            if (element instanceof HTMLElement) element.style.visibility = 'hidden'
+          })
+        }
+        await terminal.evaluate((element) => element.scrollIntoView({ block: 'start', behavior: 'auto' }))
+      },
+      screenshot: async (page, filePath) => {
+        await page.locator('.serviceLogsTerminal').screenshot({ path: filePath })
+      },
+    },
+    {
       id: 'pages-servicedetailpage--mobile-logs-section-light-contrast',
       file: 'service-detail-logs-light-raw-mobile.png',
       viewport: { width: 393, height: 852 },
