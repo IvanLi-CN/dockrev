@@ -430,15 +430,19 @@ async function assertServiceLogsFollowAfterNewLog({
       element.scrollTop = 0;
       element.dispatchEvent(new Event("scroll"));
     });
-    await page.evaluate(() => {
-      const button = Array.from(document.querySelectorAll("button")).find(
-        (candidate) => candidate.textContent?.trim() === "跳到最新",
-      );
-      if (!(button instanceof HTMLElement)) {
-        throw new Error("Expected the jump-to-latest button to be mounted.");
-      }
-      button.click();
-    });
+    await page.waitForFunction(
+      () => {
+        const button = Array.from(document.querySelectorAll(".serviceLogsJumpWrap button")).find(
+          (candidate) => candidate.textContent?.trim() === "跳到最新",
+        );
+        if (!(button instanceof HTMLButtonElement)) return false;
+        if (button.disabled || button.getClientRects().length === 0) return false;
+        button.click();
+        return true;
+      },
+      null,
+      { timeout: 10_000 },
+    );
     await page.evaluate((gate) => {
       const eventGates = window.__DOCKREV_MOCK_EVENT_GATES__;
       if (!(eventGates?.released instanceof Set && eventGates.waiting instanceof Set)) {
@@ -859,7 +863,7 @@ async function runInteractive({ baseUrl, browser }) {
     baseUrl,
     browser,
     label: "desktop",
-    storyId: "pages-servicedetailpage--logs-section",
+    storyId: "pages-servicedetailpage--desktop-logs-timestamp-layout",
     viewport: { width: 1440, height: 1000 },
   });
   await assertServiceLogsTimestampLayout({

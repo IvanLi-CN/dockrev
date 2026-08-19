@@ -483,7 +483,7 @@ async function main() {
       },
     },
     {
-      id: 'pages-servicedetailpage--logs-section',
+      id: 'pages-servicedetailpage--desktop-logs-timestamp-layout',
       file: 'service-detail-logs-timestamp-layout-desktop.png',
       viewport: { width: 1440, height: 1000 },
       setup: async (page) => {

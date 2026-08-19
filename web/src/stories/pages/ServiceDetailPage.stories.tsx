@@ -418,6 +418,11 @@ export const MobileLogsTimestampLayout: Story = {
   render: render("stack-prod", "svc-prod-api", "logs", "移动端日志时间列布局"),
 };
 
+export const DesktopLogsTimestampLayout: Story = {
+  parameters: { dockrevApiScenario: "dashboard-demo" },
+  render: render("stack-prod", "svc-prod-api", "logs", "桌面端日志时间列布局"),
+};
+
 export const LogsSectionLightContrast: Story = {
   globals: {
     backgrounds: { value: "light" },
