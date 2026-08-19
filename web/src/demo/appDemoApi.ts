@@ -1,6 +1,6 @@
 import { writeDockrevRuntimeMode } from './runtime'
 import { installDockrevMockApi } from '../stories/mocks/dockrevMockApi/install'
-import { buildReadonlySnapshotKey, writeReadonlySnapshot } from '../readonlySnapshotCache'
+import { buildReadonlySnapshotKey, deleteReadonlySnapshot, writeReadonlySnapshot } from '../readonlySnapshotCache'
 import {
   loadPublicDemoFixture,
   PUBLIC_DEMO_CLEANUP_SCENARIO,
@@ -82,7 +82,10 @@ export async function installAppDemoApi(): Promise<DemoInstallResult> {
   const asyncState = readPublicDemoAsyncState()
   const initialFixture = loadPublicDemoFixture()
   savePublicDemoFixture(initialFixture)
-  if (asyncState === 'cache-refresh') {
+  if (asyncState === 'cold') {
+    // A deterministic cold-start demo cannot inherit a prior local preview snapshot.
+    await deleteReadonlySnapshot(QUEUE_SNAPSHOT_KEY)
+  } else if (asyncState === 'cache-refresh') {
     await writeReadonlySnapshot(QUEUE_SNAPSHOT_KEY, queueSummarySnapshot(initialFixture), {
       staleAfterMs: 60_000,
     })
