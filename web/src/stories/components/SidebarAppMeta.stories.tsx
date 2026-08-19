@@ -17,6 +17,7 @@ function StorySurface(props: {
   return (
     <div
       style={{
+        display: 'inline-flex',
         width: props.collapsed ? 72 : 292,
         margin: 24,
         padding: props.collapsed ? '20px 14px' : '20px 24px',
