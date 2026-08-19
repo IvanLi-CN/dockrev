@@ -430,7 +430,15 @@ async function assertServiceLogsFollowAfterNewLog({
       element.scrollTop = 0;
       element.dispatchEvent(new Event("scroll"));
     });
-    await page.getByRole("button", { name: "跳到最新" }).click({ timeout: 10_000 });
+    await page.evaluate(() => {
+      const button = Array.from(document.querySelectorAll("button")).find(
+        (candidate) => candidate.textContent?.trim() === "跳到最新",
+      );
+      if (!(button instanceof HTMLElement)) {
+        throw new Error("Expected the jump-to-latest button to be mounted.");
+      }
+      button.click();
+    });
     await page.evaluate((gate) => {
       const eventGates = window.__DOCKREV_MOCK_EVENT_GATES__;
       if (!(eventGates?.released instanceof Set && eventGates.waiting instanceof Set)) {

@@ -411,11 +411,11 @@ export const LogsSection: Story = {
 };
 
 export const MobileLogsTimestampLayout: Story = {
-  ...LogsSection,
   parameters: {
-    ...LogsSection.parameters,
+    dockrevApiScenario: "dashboard-demo",
     viewport: { defaultViewport: "dockrevMobile" },
   },
+  render: render("stack-prod", "svc-prod-api", "logs", "移动端日志时间列布局"),
 };
 
 export const LogsSectionLightContrast: Story = {
