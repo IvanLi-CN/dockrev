@@ -335,8 +335,8 @@ async function assertServiceLogsTimestampLayout({ baseUrl, browser, label, story
     await page.getByRole("button", { name: "Human" }).click();
     await page.locator('.serviceLogRow[data-view="human"] .serviceLogTsTime').first().waitFor({ timeout: 10_000 });
 
-    const assertLayout = async (mode) => {
-      const layout = await page.evaluate(() => {
+    const assertLayout = async (mode, expectedTimeZone) => {
+      const layout = await page.evaluate((timeZone) => {
         const terminal = document.querySelector(".serviceLogsTerminal");
         const header = document.querySelector(".serviceLogsTerminalHead");
         const headerTime = document.querySelector(".serviceLogsTerminalHead > span");
@@ -355,6 +355,23 @@ async function assertServiceLogsTimestampLayout({ baseUrl, browser, label, story
         const dateRect = date.getBoundingClientRect();
         const levelRect = level.getBoundingClientRect();
         const messageRect = message.getBoundingClientRect();
+        const utcMatch = /UTC:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)$/.exec(timestamp.getAttribute("title") ?? "");
+        const expectedTimestamp = utcMatch ? new Date(utcMatch[1]) : null;
+        const getStamp = (value) => {
+          if (!value || Number.isNaN(value.valueOf())) return null;
+          const year = timeZone === "utc" ? value.getUTCFullYear() : value.getFullYear();
+          const month = timeZone === "utc" ? value.getUTCMonth() + 1 : value.getMonth() + 1;
+          const day = timeZone === "utc" ? value.getUTCDate() : value.getDate();
+          const hours = timeZone === "utc" ? value.getUTCHours() : value.getHours();
+          const minutes = timeZone === "utc" ? value.getUTCMinutes() : value.getMinutes();
+          const seconds = timeZone === "utc" ? value.getUTCSeconds() : value.getSeconds();
+          const milliseconds = timeZone === "utc" ? value.getUTCMilliseconds() : value.getMilliseconds();
+          return {
+            date: `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+            time: `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`,
+          };
+        };
+        const expectedStamp = getStamp(expectedTimestamp);
         return {
           dateAfterTime: Boolean(time.compareDocumentPosition(date) & Node.DOCUMENT_POSITION_FOLLOWING),
           timeColumn: headerTime?.parentElement ? getComputedStyle(headerTime.parentElement).gridTemplateColumns.split(" ")[0] : "",
@@ -369,11 +386,18 @@ async function assertServiceLogsTimestampLayout({ baseUrl, browser, label, story
           messageArea: getComputedStyle(message).gridArea,
           messageLeftDelta: messageRect.left - timestampRect.left,
           messageBelowHeader: messageRect.top >= Math.max(timeRect.bottom, dateRect.bottom, levelRect.bottom) - 1,
+          timeText: time.textContent?.trim() ?? "",
+          dateText: date.textContent?.trim() ?? "",
+          expectedTime: expectedStamp?.time ?? null,
+          expectedDate: expectedStamp?.date ?? null,
         };
-      });
+      }, expectedTimeZone);
       if (!layout) throw new Error(`Missing timestamp layout (${label}, ${mode}).`);
       if (layout.mode !== mode || !layout.dateAfterTime || !layout.timeAboveDate) {
         throw new Error(`Timestamp order failed (${label}, ${mode}): ${JSON.stringify(layout)}`);
+      }
+      if (layout.expectedTime !== layout.timeText || layout.expectedDate !== layout.dateText) {
+        throw new Error(`Timestamp timezone formatting failed (${label}, ${mode}, ${expectedTimeZone}): ${JSON.stringify(layout)}`);
       }
       if (viewport.width <= 960) {
         if (
@@ -400,13 +424,13 @@ async function assertServiceLogsTimestampLayout({ baseUrl, browser, label, story
       }
     };
 
-    await assertLayout("human");
+    await assertLayout("human", "local");
     await page.getByRole("button", { name: "Raw" }).click();
     await page.locator('.serviceLogRow[data-view="raw"] .serviceLogTsTime').first().waitFor({ timeout: 10_000 });
-    await assertLayout("raw");
+    await assertLayout("raw", "local");
     await page.getByRole("button", { name: "UTC" }).click();
     await page.locator('button[aria-pressed="true"]', { hasText: "UTC" }).waitFor({ timeout: 10_000 });
-    await assertLayout("raw");
+    await assertLayout("raw", "utc");
   } finally {
     await page.close().catch(() => {});
   }
