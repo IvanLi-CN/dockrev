@@ -805,8 +805,6 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
             </Button>
           </div>
         </div>
-
-        {error ? <div className="error">{error}</div> : null}
       </div>
     </div>
   )
