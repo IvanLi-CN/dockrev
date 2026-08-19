@@ -79,6 +79,7 @@ export function SidebarAppMeta(props: {
   const hoverCapable = useHoverCapable()
   const contentRef = useRef<HTMLDivElement>(null)
   const keyboardOpenRef = useRef(false)
+  const restoreFocusOnCloseRef = useRef(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const { contentProps, open, pinned, triggerProps } = useHoverPinnedPopover({
     hoverEnabled: hoverCapable,
@@ -143,13 +144,19 @@ export function SidebarAppMeta(props: {
             contentProps.onOpenAutoFocus?.(event)
           }}
           onCloseAutoFocus={(event) => {
-            if (keyboardOpenRef.current) {
+            const restoreFocus = restoreFocusOnCloseRef.current
+            keyboardOpenRef.current = false
+            restoreFocusOnCloseRef.current = false
+            if (restoreFocus) {
               event.preventDefault()
-              keyboardOpenRef.current = false
               triggerRef.current?.focus()
               return
             }
             contentProps.onCloseAutoFocus?.(event)
+          }}
+          onEscapeKeyDown={(event) => {
+            restoreFocusOnCloseRef.current = keyboardOpenRef.current
+            contentProps.onEscapeKeyDown?.(event)
           }}
         >
           <AppMetaContent

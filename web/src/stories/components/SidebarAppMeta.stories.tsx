@@ -15,19 +15,24 @@ function StorySurface(props: {
   versionHref: string | null
 }) {
   return (
-    <div
-      style={{
-        display: 'inline-flex',
-        width: props.collapsed ? 72 : 292,
-        margin: 24,
-        padding: props.collapsed ? '20px 14px' : '20px 24px',
-        border: '1px solid var(--borderColor)',
-        borderRadius: 10,
-        background: 'color-mix(in srgb, var(--panel2) 88%, var(--color-primary) 12%)',
-      }}
-    >
-      <SidebarAppMeta {...props} />
-    </div>
+    <>
+      <div
+        style={{
+          display: 'inline-flex',
+          width: props.collapsed ? 72 : 292,
+          margin: 24,
+          padding: props.collapsed ? '20px 14px' : '20px 24px',
+          border: '1px solid var(--borderColor)',
+          borderRadius: 10,
+          background: 'color-mix(in srgb, var(--panel2) 88%, var(--color-primary) 12%)',
+        }}
+      >
+        <SidebarAppMeta {...props} />
+      </div>
+      <button data-story-outside type="button" style={{ position: 'fixed', width: 1, height: 1, opacity: 0 }}>
+        Outside
+      </button>
+    </>
   )
 }
 
@@ -123,5 +128,11 @@ export const CollapsedFlyout: Story = {
     await wait(100)
     flyout = doc.querySelector<HTMLElement>('.sidebarAppMetaPopover')
     expectStory(flyout?.querySelector('a') === doc.activeElement, 'Keyboard pinning should focus an already hover-open flyout')
+
+    const outside = canvasElement.querySelector<HTMLButtonElement>('[data-story-outside]')
+    outside?.focus()
+    await wait(100)
+    expectStory(!doc.querySelector('.sidebarAppMetaPopover'), 'Focusing outside should close the keyboard-opened flyout')
+    expectStory(doc.activeElement === outside, 'Focus-out dismissal should preserve the new focus target')
   },
 }
