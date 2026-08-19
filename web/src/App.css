@@ -5842,8 +5842,9 @@ html[data-theme="light"] .modalOverlay {
 }
 
 .serviceLogsTerminal {
-  --service-log-col-time: 170px;
+  --service-log-col-time: 128px;
   --service-log-col-level: 64px;
+  --service-log-inline-padding: 18px;
   --service-log-terminal-background:
     linear-gradient(
       180deg,
@@ -5954,7 +5955,7 @@ html[data-theme="light"] .serviceLogsTerminal {
     minmax(0, 1fr);
   gap: 12px;
   align-items: center;
-  padding: 10px 18px;
+  padding: 10px var(--service-log-inline-padding);
   border-bottom: 1px solid var(--service-log-terminal-head-border);
   background: var(--service-log-terminal-head-background);
   color: var(--service-log-terminal-head-text);
@@ -5969,14 +5970,9 @@ html[data-theme="light"] .serviceLogsTerminal {
 }
 
 .serviceLogsViewport {
-  --service-logs-viewport-padding: 8px 18px 10px;
   min-height: 420px;
   height: min(72vh, 760px);
   scrollbar-gutter: stable;
-}
-
-.serviceLogsViewport [data-overlayscrollbars-viewport] {
-  padding: var(--service-logs-viewport-padding);
 }
 
 .overlayScrollAreaStory {
@@ -6043,7 +6039,7 @@ html[data-theme="light"] .serviceLogsTerminal {
     minmax(0, 1fr);
   gap: 12px;
   align-items: start;
-  padding: 5px 0;
+  padding: 5px var(--service-log-inline-padding);
   border-radius: 8px;
   font-family:
     ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
@@ -6069,6 +6065,10 @@ html[data-theme="light"] .serviceLogsTerminal {
   gap: 2px;
   color: var(--service-log-text-muted);
   font-variant-numeric: tabular-nums;
+}
+
+.serviceLogDateDivider {
+  display: none;
 }
 
 .serviceLogTsDate {
@@ -6304,27 +6304,74 @@ html[data-theme="light"] .serviceLogsTerminal {
   }
 
   .serviceLogsTerminal {
-    --service-log-col-time: 128px;
     --service-log-col-level: 56px;
+    --service-log-inline-padding: 14px;
   }
 
   .serviceLogRow {
-    grid-template-columns:
-      var(--service-log-col-time) var(--service-log-col-level)
-      minmax(0, 1fr);
-    gap: 4px;
+    grid-template-columns: minmax(0, 1fr) var(--service-log-col-level);
+    grid-template-areas:
+      "time level"
+      "message message";
+    column-gap: 8px;
+    row-gap: 4px;
+    padding-top: 7px;
+    padding-bottom: 7px;
+  }
+
+  .serviceLogRow + .serviceLogRow:not([data-date-divider="true"]) {
+    border-top: 1px solid color-mix(in srgb, var(--service-log-terminal-head-border) 58%, transparent);
+  }
+
+  .serviceLogRow[data-date-divider="true"] {
+    grid-template-areas:
+      "date date"
+      "time level"
+      "message message";
+  }
+
+  .serviceLogTs {
+    grid-area: time;
+    flex-direction: row;
+    align-items: baseline;
+    gap: 6px;
+  }
+
+  .serviceLogTs[data-valid="true"] .serviceLogTsDate {
+    display: none;
+  }
+
+  .serviceLogDateDivider {
+    display: flex;
+    grid-area: date;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    color: var(--service-log-text-subtle);
+    font-size: 10px;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+
+  .serviceLogDateDivider::before,
+  .serviceLogDateDivider::after {
+    content: "";
+    flex: 1 1 auto;
+    min-width: 12px;
+    border-top: 1px solid var(--service-log-terminal-head-border);
+  }
+
+  .serviceLogLevel {
+    grid-area: level;
+    justify-self: end;
+  }
+
+  .serviceLogMsg {
+    grid-area: message;
   }
 
   .serviceLogsTerminalHead {
-    grid-template-columns:
-      var(--service-log-col-time) var(--service-log-col-level)
-      minmax(0, 1fr);
-    gap: 4px;
-    padding: 10px 14px;
-  }
-
-  .serviceLogsViewport {
-    --service-logs-viewport-padding: 8px 14px 10px;
+    display: none;
   }
 
   .serviceLogsJumpWrap {

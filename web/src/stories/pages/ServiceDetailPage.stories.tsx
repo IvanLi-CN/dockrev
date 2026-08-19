@@ -5,10 +5,12 @@ import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
 import { expectMobileTopbarMonitorHidden, expectNoLegacyServiceDetailHero, expectTopbarMonitorSummary } from "./serviceDetailHeaderAssertions";
 import { expectHistoryColumnsAligned } from "./serviceDetailHistoryAssertions";
 import { expectLightServiceLogsContrast } from "./serviceLogsLightContrastStory";
+import { expectDesktopLogTimestampLayout } from "./serviceDetailLogsStories";
 import { buildLongLogsSnapshot, buildMultilineLogsSnapshot, historyReleaseNotes, paginatedHistoryJobs, partialHistoryBackupRecords } from "./serviceDetailPageStoryFixtures";
 import { assertRecentUpdateKeyboardNavigation, assertRecentUpdateReasonPopoverStaysOnRoute } from "./recentUpdateStoryAssertions";
 import { drawerText, findActionButton, findHistoryRowByJobId, findLogRowContaining, findSectionCard, findTab, render, tabLabels, type ServiceDetailStory } from "./serviceDetailStoryShared";
 export { ActiveUpdateWithoutCandidate, DockrevVersionsSelfUpgrade, DockrevVersionsSelfUpgradeVisual, DockrevVersionsSelfUpgradeOffline, MobileVersionsSection, VersionsSection, VersionsSectionActionGuard, VersionsSectionIntermediateWidth, VersionsSectionIntermediateWideActions } from "./serviceDetailVersionsStories";
+export { DesktopLogsTimestampLayout, LogsSectionDateBoundaries, MobileLogsTimestampLayout } from "./serviceDetailLogsStories";
 import { expectNearlyEqual, expectStory, findButton, findButtons, findLink, normalizeText, waitForCondition } from "./storyAssertions";
 
 const meta: Meta<typeof ServiceDetailPage> = {
@@ -364,6 +366,7 @@ export const LogsSection: Story = {
     expectStory(normalizeText(canvasElement.textContent).includes("admin_read"), "logs should render structured metadata chips");
     const tracingRow = findLogRowContaining(canvasElement, "openai proxy request started");
     expectStory(tracingRow, "logs should render parsed tracing text message");
+    expectDesktopLogTimestampLayout(canvasElement, tracingRow);
     expectStory(tracingRow?.getAttribute("data-format") === "text", "tracing text row should stay text-formatted");
     expectStory(tracingRow?.getAttribute("data-level") === "info", "tracing text row should expose parsed info level");
     expectStory(normalizeText(tracingRow?.querySelector(".serviceLogLevel")?.textContent) === "INFO", "tracing text row should show parsed level badge");
@@ -381,6 +384,9 @@ export const LogsSection: Story = {
     expectStory(canvasElement.querySelector('[data-service-logs-virtualized="true"]')?.getAttribute("data-service-logs-wrap") === "off", "logs should default to nowrap mode");
     findButton(canvasElement, "Raw")?.click();
     await waitForCondition(() => canvasElement.querySelector('[data-service-logs-virtualized="true"]')?.getAttribute("data-service-logs-view") === "raw");
+    const rawTimestamp = canvasElement.querySelector<HTMLElement>('.serviceLogRow[data-view="raw"] .serviceLogTs');
+    expectStory(rawTimestamp?.querySelector(".serviceLogTsTime"), "raw logs should keep the time line");
+    expectStory(rawTimestamp?.querySelector(".serviceLogTsDate"), "raw logs should keep the date line");
     expectStory(normalizeText(canvasElement.textContent).includes('"timestamp"'), "raw mode should expose original JSON text");
     expectStory(normalizeText(canvasElement.textContent).includes("2026-07-07T05:54:01.126674Z INFO openai proxy request started"), "raw mode should expose original tracing text with application timestamp and level");
     findButton(canvasElement, "Human")?.click();
@@ -460,7 +466,7 @@ export const MobileSettingsOfflineReadonly: Story = {
 export const MobileLogsSection: Story = {
   parameters: {
     dockrevApiScenario: "dashboard-demo",
-    viewport: { defaultViewport: "mobile1" },
+    viewport: { defaultViewport: "dockrevMobile" },
   },
   render: render("stack-prod", "svc-prod-api", "logs", "移动端使用底部主导航，抽屉承载服务树"),
   play: async ({ canvasElement }) => {
@@ -616,7 +622,7 @@ export const LogsSectionEvidence: Story = {
     expectStory(Boolean(findButton(canvasElement, "Raw")), "logs evidence story should expose raw toggle");
     expectStory(Boolean(findButton(canvasElement, "自动换行 关")), "logs evidence story should expose wrap toggle");
 
-    const assertAligned = () => {
+    const assertDesktopAligned = () => {
       const headerCells = canvasElement.querySelectorAll<HTMLElement>(".serviceLogsTerminalHead > span");
       const firstRowCells = canvasElement.querySelectorAll<HTMLElement>(".serviceLogRow:first-of-type > span");
       expectStory(headerCells.length === 3, "logs header should render three columns");
@@ -632,17 +638,9 @@ export const LogsSectionEvidence: Story = {
       globalThis.innerWidth = 1280;
       globalThis.dispatchEvent(new Event("resize"));
       await waitForCondition(() => canvasElement.querySelectorAll(".serviceLogRow:first-of-type > span").length === 3);
-      assertAligned();
+      assertDesktopAligned();
     });
 
-    await step("mobile columns stay aligned", async () => {
-      globalThis.innerWidth = 390;
-      globalThis.dispatchEvent(new Event("resize"));
-      await waitForCondition(() => canvasElement.querySelectorAll(".serviceLogRow:first-of-type > span").length === 3);
-      assertAligned();
-      globalThis.innerWidth = 1280;
-      globalThis.dispatchEvent(new Event("resize"));
-    });
   },
 };
 

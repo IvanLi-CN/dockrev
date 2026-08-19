@@ -320,6 +320,158 @@ async function assertServiceLogsLightContrast({ baseUrl, browser }) {
   }
 }
 
+async function assertServiceLogsTimestampLayout({ baseUrl, browser, label, storyId, viewport }) {
+  const page = await browser.newPage();
+  try {
+    await page.setViewportSize(viewport);
+    const base = normalizeBaseUrl(baseUrl);
+    const url = new URL("iframe.html", base);
+    url.searchParams.set("id", storyId);
+    url.searchParams.set("viewMode", "story");
+    await page.goto(url.toString(), { waitUntil: "domcontentloaded" });
+    await page.locator(".serviceLogsTerminal").waitFor({ timeout: 10_000 });
+    await page.locator(".serviceLogTsTime").first().waitFor({ timeout: 10_000 });
+
+    await page.getByRole("button", { name: "Human" }).click();
+    await page.locator('.serviceLogRow[data-view="human"] .serviceLogTsTime').first().waitFor({ timeout: 10_000 });
+
+    const assertLayout = async (mode, expectedTimeZone) => {
+      const layout = await page.evaluate((timeZone) => {
+        const terminal = document.querySelector(".serviceLogsTerminal");
+        const header = document.querySelector(".serviceLogsTerminalHead");
+        const headerTime = document.querySelector(".serviceLogsTerminalHead > span");
+        const row = document.querySelector(`.serviceLogRow[data-view="${document.querySelector('.serviceLogsTerminal')?.getAttribute('data-service-logs-view')}"]`);
+        const timestamp = row?.querySelector(".serviceLogTs");
+        const time = timestamp?.querySelector(".serviceLogTsTime");
+        const date = timestamp?.querySelector(".serviceLogTsDate");
+        const dateDivider = row?.querySelector(".serviceLogDateDivider");
+        const level = row?.querySelector(".serviceLogLevel");
+        const message = row?.querySelector(".serviceLogMsg");
+        if (!(terminal instanceof HTMLElement && header instanceof HTMLElement && row instanceof HTMLElement && timestamp instanceof HTMLElement && time instanceof HTMLElement && date instanceof HTMLElement && level instanceof HTMLElement && message instanceof HTMLElement)) {
+          return null;
+        }
+        const headerRect = headerTime?.getBoundingClientRect();
+        const timestampRect = timestamp.getBoundingClientRect();
+        const timeRect = time.getBoundingClientRect();
+        const dateRect = date.getBoundingClientRect();
+        const levelRect = level.getBoundingClientRect();
+        const messageRect = message.getBoundingClientRect();
+        const rows = Array.from(document.querySelectorAll(`.serviceLogRow[data-view="${document.querySelector('.serviceLogsTerminal')?.getAttribute('data-service-logs-view')}"]`));
+        const ordinarySeparatedRow = rows.find((candidate, index) => index > 0 && candidate.getAttribute("data-date-divider") !== "true");
+        const dateSeparatedRow = rows.find((candidate) => candidate.getAttribute("data-date-divider") === "true");
+        const expectedDateDividers = [];
+        const shownDates = new Set();
+        for (const candidate of rows) {
+          const candidateDate = candidate.getAttribute("data-log-date");
+          if (!candidateDate) continue;
+          if (shownDates.has(candidateDate)) continue;
+          shownDates.add(candidateDate);
+          expectedDateDividers.push(candidateDate);
+        }
+        const utcMatch = /UTC:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)$/.exec(timestamp.getAttribute("title") ?? "");
+        const expectedTimestamp = utcMatch ? new Date(utcMatch[1]) : null;
+        const getStamp = (value) => {
+          if (!value || Number.isNaN(value.valueOf())) return null;
+          const year = timeZone === "utc" ? value.getUTCFullYear() : value.getFullYear();
+          const month = timeZone === "utc" ? value.getUTCMonth() + 1 : value.getMonth() + 1;
+          const day = timeZone === "utc" ? value.getUTCDate() : value.getDate();
+          const hours = timeZone === "utc" ? value.getUTCHours() : value.getHours();
+          const minutes = timeZone === "utc" ? value.getUTCMinutes() : value.getMinutes();
+          const seconds = timeZone === "utc" ? value.getUTCSeconds() : value.getSeconds();
+          const milliseconds = timeZone === "utc" ? value.getUTCMilliseconds() : value.getMilliseconds();
+          return {
+            date: `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+            time: `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`,
+          };
+        };
+        const expectedStamp = getStamp(expectedTimestamp);
+        return {
+          dateAfterTime: Boolean(time.compareDocumentPosition(date) & Node.DOCUMENT_POSITION_FOLLOWING),
+          timeColumn: headerTime?.parentElement ? getComputedStyle(headerTime.parentElement).gridTemplateColumns.split(" ")[0] : "",
+          inlinePadding: getComputedStyle(terminal).getPropertyValue("--service-log-inline-padding").trim(),
+          leftDelta: headerRect ? timestampRect.left - headerRect.left : null,
+          mode: terminal.dataset.serviceLogsView,
+          timeAboveDate: timeRect.top < dateRect.top,
+          timestampSingleLine: timestampRect.height <= timeRect.height + 1,
+          dateDisplay: getComputedStyle(date).display,
+          dateDividerDisplay: dateDivider ? getComputedStyle(dateDivider).display : "none",
+          dateDividerArea: dateDivider ? getComputedStyle(dateDivider).gridArea : "",
+          dateDividerText: dateDivider?.textContent?.trim() ?? "",
+          dateDividerTexts: rows.filter((candidate) => {
+            const divider = candidate.querySelector(".serviceLogDateDivider");
+            return candidate.getAttribute("data-date-divider") === "true" && divider && getComputedStyle(divider).display !== "none";
+          }).map((candidate) => candidate.querySelector(".serviceLogDateDivider")?.textContent?.trim() ?? ""),
+          expectedDateDividers,
+          ordinaryRowBorderTop: ordinarySeparatedRow ? getComputedStyle(ordinarySeparatedRow).borderTopWidth : "0px",
+          dateRowBorderTop: dateSeparatedRow ? getComputedStyle(dateSeparatedRow).borderTopWidth : "0px",
+          headerDisplay: getComputedStyle(header).display,
+          rowAreas: getComputedStyle(row).gridTemplateAreas,
+          timestampArea: getComputedStyle(timestamp).gridArea,
+          levelArea: getComputedStyle(level).gridArea,
+          messageArea: getComputedStyle(message).gridArea,
+          messageLeftDelta: messageRect.left - timestampRect.left,
+          messageBelowHeader: messageRect.top >= Math.max(timeRect.bottom, dateRect.bottom, levelRect.bottom) - 1,
+          timeText: time.textContent?.trim() ?? "",
+          dateText: date.textContent?.trim() ?? "",
+          expectedTime: expectedStamp?.time ?? null,
+          expectedDate: expectedStamp?.date ?? null,
+        };
+      }, expectedTimeZone);
+      if (!layout) throw new Error(`Missing timestamp layout (${label}, ${mode}).`);
+      if (layout.mode !== mode || !layout.dateAfterTime || (viewport.width > 700 && !layout.timeAboveDate)) {
+        throw new Error(`Timestamp order failed (${label}, ${mode}): ${JSON.stringify(layout)}`);
+      }
+      if (layout.expectedTime !== layout.timeText) {
+        throw new Error(`Timestamp timezone formatting failed (${label}, ${mode}, ${expectedTimeZone}): ${JSON.stringify(layout)}`);
+      }
+      if (viewport.width <= 700) {
+        if (
+          layout.inlinePadding !== "14px" ||
+          layout.headerDisplay !== "none" ||
+          layout.dateDisplay !== "none" ||
+          layout.dateDividerDisplay !== "flex" ||
+          layout.dateDividerArea !== "date" ||
+          layout.dateDividerText !== layout.expectedDate ||
+          JSON.stringify(layout.dateDividerTexts) !== JSON.stringify(layout.expectedDateDividers) ||
+          !layout.timestampSingleLine ||
+          !layout.rowAreas.includes("date date") ||
+          !layout.rowAreas.includes("time level") ||
+          !layout.rowAreas.includes("message message") ||
+          layout.timestampArea !== "time" ||
+          layout.levelArea !== "level" ||
+          layout.messageArea !== "message" ||
+          layout.ordinaryRowBorderTop !== "1px" ||
+          layout.dateRowBorderTop !== "0px" ||
+          !approxEqual(layout.messageLeftDelta, 0, 1) ||
+          !layout.messageBelowHeader
+        ) {
+          throw new Error(`Mobile timestamp row layout failed (${label}, ${mode}): ${JSON.stringify(layout)}`);
+        }
+        return;
+      }
+      if (
+        layout.inlinePadding !== "18px" ||
+        layout.timeColumn !== "128px" ||
+        layout.dateText !== layout.expectedDate ||
+        layout.dateDividerTexts.length !== 0 ||
+        !approxEqual(layout.leftDelta, 0, 1)
+      ) {
+        throw new Error(`Desktop timestamp alignment failed (${label}, ${mode}): ${JSON.stringify(layout)}`);
+      }
+    };
+
+    await assertLayout("human", "local");
+    await page.getByRole("button", { name: "Raw" }).click();
+    await page.locator('.serviceLogRow[data-view="raw"] .serviceLogTsTime').first().waitFor({ timeout: 10_000 });
+    await assertLayout("raw", "local");
+    await page.getByRole("button", { name: "UTC" }).click();
+    await page.locator('button[aria-pressed="true"]', { hasText: "UTC" }).waitFor({ timeout: 10_000 });
+    await assertLayout("raw", "utc");
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
 async function assertServiceLogsFollowAfterNewLog({
   baseUrl,
   browser,
@@ -361,11 +513,31 @@ async function assertServiceLogsFollowAfterNewLog({
       { timeout: 10_000 },
     );
 
+    await page.waitForFunction(
+      () => {
+        const element = document.querySelector('[aria-label="服务实时日志"]');
+        return element instanceof HTMLElement && element.scrollHeight - element.clientHeight > 48;
+      },
+      null,
+      { timeout: 10_000 },
+    );
     await viewport.evaluate((element) => {
       element.scrollTop = 0;
       element.dispatchEvent(new Event("scroll"));
     });
-    await page.getByRole("button", { name: "跳到最新" }).click({ timeout: 10_000 });
+    await page.waitForFunction(
+      () => {
+        const button = Array.from(document.querySelectorAll(".serviceLogsJumpWrap button")).find(
+          (candidate) => candidate.textContent?.trim() === "跳到最新",
+        );
+        if (!(button instanceof HTMLButtonElement)) return false;
+        if (button.disabled || button.getClientRects().length === 0) return false;
+        button.click();
+        return true;
+      },
+      null,
+      { timeout: 10_000 },
+    );
     await page.evaluate((gate) => {
       const eventGates = window.__DOCKREV_MOCK_EVENT_GATES__;
       if (!(eventGates?.released instanceof Set && eventGates.waiting instanceof Set)) {
@@ -782,6 +954,20 @@ async function runInteractive({ baseUrl, browser }) {
   // Keep the rollback refresh race in the CI interaction suite, not only in the story play callback.
   await runRollbackRefreshRace({ baseUrl, browser });
 
+  await assertServiceLogsTimestampLayout({
+    baseUrl,
+    browser,
+    label: "desktop",
+    storyId: "pages-servicedetailpage--desktop-logs-timestamp-layout",
+    viewport: { width: 1440, height: 1000 },
+  });
+  await assertServiceLogsTimestampLayout({
+    baseUrl,
+    browser,
+    label: "mobile",
+    storyId: "pages-servicedetailpage--mobile-logs-timestamp-layout",
+    viewport: { width: 393, height: 852 },
+  });
   await assertServiceLogsLightContrast({ baseUrl, browser });
   await assertServiceLogsFollowAfterNewLog({
     baseUrl,
