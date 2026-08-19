@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { GitHubIcon, Mono, Popover, PopoverContent, PopoverTrigger } from '../ui'
 import { useHoverPinnedPopover } from './HoverPinnedPopover'
 
@@ -77,6 +77,7 @@ export function SidebarAppMeta(props: {
   versionHref: string | null
 }) {
   const hoverCapable = useHoverCapable()
+  const keyboardOpenRef = useRef(false)
   const { contentProps, open, triggerProps } = useHoverPinnedPopover({
     hoverEnabled: hoverCapable,
   })
@@ -102,6 +103,10 @@ export function SidebarAppMeta(props: {
             aria-label={`应用信息：版本 ${props.versionDisplay}，GitHub 仓库，Powered by Ivan Li`}
             title="应用信息"
             {...triggerProps}
+            onClick={(event) => {
+              keyboardOpenRef.current = event.detail === 0
+              triggerProps.onClick()
+            }}
           >
             <span className="sidebarAppMetaTriggerVersion" aria-hidden="true">
               <Mono>v</Mono>
@@ -115,6 +120,13 @@ export function SidebarAppMeta(props: {
           className="sidebarAppMetaPopover"
           aria-label="Dockrev release and repository information"
           {...contentProps}
+          onOpenAutoFocus={(event) => {
+            if (keyboardOpenRef.current) {
+              keyboardOpenRef.current = false
+              return
+            }
+            contentProps.onOpenAutoFocus?.(event)
+          }}
         >
           <AppMetaContent
             versionDisplay={props.versionDisplay}
