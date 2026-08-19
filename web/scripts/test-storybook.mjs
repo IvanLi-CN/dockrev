@@ -357,6 +357,8 @@ async function assertServiceLogsTimestampLayout({ baseUrl, browser, label, story
         const levelRect = level.getBoundingClientRect();
         const messageRect = message.getBoundingClientRect();
         const rows = Array.from(document.querySelectorAll(`.serviceLogRow[data-view="${document.querySelector('.serviceLogsTerminal')?.getAttribute('data-service-logs-view')}"]`));
+        const ordinarySeparatedRow = rows.find((candidate, index) => index > 0 && candidate.getAttribute("data-date-divider") !== "true");
+        const dateSeparatedRow = rows.find((candidate) => candidate.getAttribute("data-date-divider") === "true");
         const expectedDateDividers = [];
         const shownDates = new Set();
         for (const candidate of rows) {
@@ -400,6 +402,8 @@ async function assertServiceLogsTimestampLayout({ baseUrl, browser, label, story
             return candidate.getAttribute("data-date-divider") === "true" && divider && getComputedStyle(divider).display !== "none";
           }).map((candidate) => candidate.querySelector(".serviceLogDateDivider")?.textContent?.trim() ?? ""),
           expectedDateDividers,
+          ordinaryRowBorderTop: ordinarySeparatedRow ? getComputedStyle(ordinarySeparatedRow).borderTopWidth : "0px",
+          dateRowBorderTop: dateSeparatedRow ? getComputedStyle(dateSeparatedRow).borderTopWidth : "0px",
           headerDisplay: getComputedStyle(header).display,
           rowAreas: getComputedStyle(row).gridTemplateAreas,
           timestampArea: getComputedStyle(timestamp).gridArea,
@@ -436,6 +440,8 @@ async function assertServiceLogsTimestampLayout({ baseUrl, browser, label, story
           layout.timestampArea !== "time" ||
           layout.levelArea !== "level" ||
           layout.messageArea !== "message" ||
+          layout.ordinaryRowBorderTop !== "1px" ||
+          layout.dateRowBorderTop !== "0px" ||
           !approxEqual(layout.messageLeftDelta, 0, 1) ||
           !layout.messageBelowHeader
         ) {
