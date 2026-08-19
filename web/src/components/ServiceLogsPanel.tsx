@@ -131,11 +131,11 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
   const hasQuery = query.trim().length > 0
   const latestRecordId = filteredRecords.at(-1)?.id
   const formattedStamps = useMemo(() => {
-    let previousValidDate: string | null = null
+    const shownDates = new Set<string>()
     return filteredRecords.map((record) => {
       const stamp = formatLogStamp(record.ts, logTz)
-      const showDateDivider = stamp.isValid && stamp.date !== previousValidDate
-      if (stamp.isValid) previousValidDate = stamp.date
+      const showDateDivider = stamp.isValid && !shownDates.has(stamp.date)
+      if (stamp.isValid) shownDates.add(stamp.date)
       return { ...stamp, showDateDivider }
     })
   }, [filteredRecords, logTz])

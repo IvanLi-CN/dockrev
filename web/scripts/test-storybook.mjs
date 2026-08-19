@@ -358,12 +358,13 @@ async function assertServiceLogsTimestampLayout({ baseUrl, browser, label, story
         const messageRect = message.getBoundingClientRect();
         const rows = Array.from(document.querySelectorAll(`.serviceLogRow[data-view="${document.querySelector('.serviceLogsTerminal')?.getAttribute('data-service-logs-view')}"]`));
         const expectedDateDividers = [];
-        let previousDate = null;
+        const shownDates = new Set();
         for (const candidate of rows) {
           const candidateDate = candidate.getAttribute("data-log-date");
           if (!candidateDate) continue;
-          if (candidateDate !== previousDate) expectedDateDividers.push(candidateDate);
-          previousDate = candidateDate;
+          if (shownDates.has(candidateDate)) continue;
+          shownDates.add(candidateDate);
+          expectedDateDividers.push(candidateDate);
         }
         const utcMatch = /UTC:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)$/.exec(timestamp.getAttribute("title") ?? "");
         const expectedTimestamp = utcMatch ? new Date(utcMatch[1]) : null;

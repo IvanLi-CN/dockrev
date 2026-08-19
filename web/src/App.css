@@ -6317,6 +6317,7 @@ html[data-theme="light"] .serviceLogsTerminal {
     row-gap: 4px;
     padding-top: 7px;
     padding-bottom: 7px;
+    border-bottom: 1px solid color-mix(in srgb, var(--service-log-terminal-head-border) 58%, transparent);
   }
 
   .serviceLogRow[data-date-divider="true"] {
