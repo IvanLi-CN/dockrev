@@ -14,6 +14,7 @@
 - 已迁移：首页、服务大盘、Queue、版本推测、Stack、Service 只读数据域、Job Detail、系统设置、部署检查、GHCR 三页和服务树的冷启动、刷新、局部失败与查询竞态状态。
 - 已实现：v2 fresh snapshot 的版本/readiness/committed-query-key 合同，以及资源历史按当前时间窗裁剪。
 - 已验证：mock 路由延迟/失败合同、Storybook 状态矩阵、Web 单测、lint、production/demo 构建和全量 Storybook 交互巡检。
+- 已收敛：服务详情核心请求使用独立错误覆盖层与重试；只在只读数据域完整 ready 后写入快照；部署检查、GHCR 刷新和 Job Detail 故事均丢弃旧请求或阻止重复触发。
 - 视觉证据：主人已确认 `assets/queue-cold-desktop.png`、`assets/queue-cache-refresh-desktop.png`、`assets/queue-error-desktop.png`、`assets/queue-cold-mobile.png`、`assets/queue-cache-refresh-mobile.png`；覆盖桌面与 `393x852` 移动端。
 
 ## References
