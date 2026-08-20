@@ -19,7 +19,7 @@ import { AutoUpdatePolicyDrawer } from '../components/AutoUpdatePolicyDrawer'
 import { AutoUpdatePolicyResultCard } from '../components/AutoUpdatePolicyResultCard'
 import { RecentUpdateRecords, selectRecentStackUpdateJobs } from '../components/RecentUpdateRecords'
 import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
-import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
+import { asyncFreshnessWindow, type AsyncDataPhase, type AsyncDataSource, type AsyncDataTrigger } from '../asyncData'
 import { ReadonlySnapshotNotice } from '../components/ReadonlySnapshotNotice'
 import { ServiceMobileActionMenu, ServiceSplitActionButton } from '../components/ServiceSplitActionButton'
 import { useConfirm } from '../confirm'
@@ -78,7 +78,7 @@ function activeOperation(status: string | null | undefined): boolean {
   return status === 'queued' || status === 'running'
 }
 
-const STACK_DETAIL_SNAPSHOT_STALE_MS = 60_000
+const STACK_DETAIL_SNAPSHOT_STALE_MS = asyncFreshnessWindow('operational')
 
 type StackDetailSnapshotPayload = {
   version: 2
@@ -673,7 +673,7 @@ export function StackDetailPage(props: {
             setError(null)
             try {
               await putStackSettings(stack.id, { autoUpdatePolicy: autoPolicyDraft })
-              await refresh()
+              await refresh('memory', 'user-action')
             } catch (e: unknown) {
               setError(errorMessage(e))
             } finally {

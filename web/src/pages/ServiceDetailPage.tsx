@@ -36,7 +36,7 @@ import { RecentUpdateRecords, ServiceOperationHistory, filterServiceOperationJob
 import { ResponsiveSettingsDrawer } from "../components/ResponsiveSettingsDrawer";
 import { ServiceVersionsSection } from "../components/ServiceVersionsSection";
 import { AsyncDataRegion, AsyncDataSkeleton } from "../components/AsyncDataRegion";
-import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from "../asyncData";
+import { asyncFreshnessWindow, type AsyncDataPhase, type AsyncDataSource, type AsyncDataTrigger } from "../asyncData";
 import { ServiceMobileActionMenu, ServiceStackDetailAction } from "../components/ServiceSplitActionButton";
 import { ImageLinkIcons, RepositoryLinkIcon, splitImageNameForDisplay, splitImageRef } from "../imageLinks";
 import { publishServiceTreeRefresh } from "../serviceTreeRefresh";
@@ -59,7 +59,7 @@ function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message;
   return String(e);
 }
-const SERVICE_DETAIL_SNAPSHOT_STALE_MS = 60_000;
+const SERVICE_DETAIL_SNAPSHOT_STALE_MS = asyncFreshnessWindow("operational");
 const SERVICE_DETAIL_MONITORING_WINDOW: ServiceResourceUsageWindow = "1h";
 type ServiceDetailSnapshotPayload = {
   version: 2;
@@ -721,7 +721,7 @@ export function ServiceDetailPage(props: {
                         setError(null);
                         try {
                           await deleteIgnore(r.id);
-                          await requestRefresh();
+                          await requestRefresh("user-action");
                         } catch (e: unknown) {
                           setError(errorMessage(e));
                         } finally {
@@ -778,7 +778,7 @@ export function ServiceDetailPage(props: {
                           value: newRuleValue,
                           note: newRuleNote,
                         });
-                        await requestRefresh();
+                        await requestRefresh("user-action");
                       } catch (e: unknown) {
                         setError(errorMessage(e));
                       } finally {
@@ -842,7 +842,7 @@ export function ServiceDetailPage(props: {
           fetchedAt={snapshotFetchedAt}
           actionLabel="重试刷新"
           actionDisabled={!isOnline || busy}
-          onAction={() => void requestRefresh()}
+          onAction={() => void requestRefresh("user-action")}
         />
       ) : !isOnline ? (
         <ReadonlySnapshotNotice tone="warn" title="当前离线。" detail="仅在存在可用缓存时显示只读内容；日志与设置需要联网。" />
@@ -947,7 +947,7 @@ export function ServiceDetailPage(props: {
                   autoUpdatePolicy: autoPolicyDraft,
                   repoUrl: undefined,
                 });
-                await requestRefresh();
+                await requestRefresh("user-action");
               } catch (e: unknown) {
                 setError(errorMessage(e));
               } finally {
@@ -964,7 +964,7 @@ export function ServiceDetailPage(props: {
       ) : null}
       <ResponsiveSettingsDrawer description="写回原始 Compose 文件里的镜像 tag；保存后不会自动执行 compose up。" onOpenChange={setTagDrawerOpen} open={tagDrawerOpen} title="部署 tag">
         <div className="settingsDrawerSection">
-          <ServiceComposeTagField busy={settingsBusy} currentTag={effectiveService.image.tag} onError={setError} onSaved={() => requestRefresh().then(() => publishServiceTreeRefresh({ stackId: props.stackId, serviceId: props.serviceId, reason: "compose-tag-saved" }))} serviceId={props.serviceId} />
+          <ServiceComposeTagField busy={settingsBusy} currentTag={effectiveService.image.tag} onError={setError} onSaved={() => requestRefresh("user-action").then(() => publishServiceTreeRefresh({ stackId: props.stackId, serviceId: props.serviceId, reason: "compose-tag-saved" }))} serviceId={props.serviceId} />
         </div>
       </ResponsiveSettingsDrawer>
       <ResponsiveSettingsDrawer
@@ -1045,7 +1045,7 @@ export function ServiceDetailPage(props: {
                       autoUpdatePolicy: settings?.autoUpdatePolicy,
                       repoUrl: (serviceProtectionDraft.repoUrl ?? "").trim() || null,
                     });
-                    await requestRefresh();
+                    await requestRefresh("user-action");
                     setServiceSettingsDrawerOpen(false);
                     setServiceSettingsDraft(null);
                   } catch (e: unknown) {
@@ -1164,7 +1164,7 @@ export function ServiceDetailPage(props: {
                     setError(null);
                     try {
                       await putServiceBackupTargets(props.serviceId, backupTargetRequestFromDraft(serviceBackupTargetsDraft));
-                      await requestRefresh();
+                      await requestRefresh("user-action");
                     } catch (e: unknown) {
                       setError(errorMessage(e));
                     } finally {

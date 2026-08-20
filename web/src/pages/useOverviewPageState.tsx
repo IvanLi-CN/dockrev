@@ -6,17 +6,16 @@ resolveAggregateUpdateActionState,
 } from '../aggregateUpdateGuard'
 import {
 ApiError,
-  getStack,
+  getStacksOverview,
 listDiscoveryProjects,
 listCompactJobsPage,
-listStacks,
 triggerCheck,
 triggerDiscoveryScan,
 triggerUpdate,
 type DiscoveredProject,
 type CompactJobListItem,
 type Service,
-type StackDetail,
+  type StackOverviewDetail,
 type StackListItem,
 type TriggerUpdateInput
 } from '../api'
@@ -43,7 +42,7 @@ import { useManagementEventBatch } from '../managementEvents'
 import { usePwaStatus } from '../pwaStatus'
 import { buildReadonlySnapshotKey, readReadonlySnapshot, writeReadonlySnapshot } from '../readonlySnapshotCache'
 import { useSupervisorHealth } from '../useSupervisorHealth'
-import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
+import { asyncFreshnessWindow, type AsyncDataPhase, type AsyncDataSource, type AsyncDataTrigger } from '../asyncData'
 import { buildAllAggregateScope } from './aggregateUpdateScope'
 import { selectOverviewJobsForCard,toOverviewJobCardItem } from './overviewJobsCard'
 
@@ -60,7 +59,7 @@ writeUpdateCandidateFilterToUrl,
 } from './overviewHelpers'
 
 const SERVICES_OVERVIEW_SNAPSHOT_KEY = buildReadonlySnapshotKey('services', 'operations-dashboard')
-const SERVICES_OVERVIEW_SNAPSHOT_STALE_MS = 60_000
+const SERVICES_OVERVIEW_SNAPSHOT_STALE_MS = asyncFreshnessWindow('operational')
 
 type ServicesOverviewSnapshotPayload = {
   version: 2
@@ -71,7 +70,7 @@ type ServicesOverviewSnapshotPayload = {
   }
   committedQueryKey: string
   stacks: StackListItem[]
-  details: Record<string, StackDetail | undefined>
+  details: Record<string, StackOverviewDetail | undefined>
   jobs: CompactJobListItem[]
   discoveredProjects: DiscoveredProject[]
 }
@@ -101,7 +100,7 @@ export function useOverviewPageState(props: {
   const [filter, setFilter] = useState<UpdateCandidateFilter>(() => readUpdateCandidateFilterFromUrl() ?? 'all')
   const [candidateSearch, setCandidateSearch] = useState('')
   const [stacks, setStacks] = useState<StackListItem[]>([])
-  const [details, setDetails] = useState<Record<string, StackDetail | undefined>>({})
+  const [details, setDetails] = useState<Record<string, StackOverviewDetail | undefined>>({})
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
     const initialFilter = readUpdateCandidateFilterFromUrl() ?? 'all'
     return readCollapsedFromStorage(initialFilter)
@@ -138,7 +137,7 @@ export function useOverviewPageState(props: {
   const stacksLoadedRef = useRef(false)
   const jobsLoadedRef = useRef(false)
   const discoveryLoadedRef = useRef(false)
-  const detailsRef = useRef<Record<string, StackDetail | undefined>>({})
+  const detailsRef = useRef<Record<string, StackOverviewDetail | undefined>>({})
   stacksLoadedRef.current = stacksLoaded
   jobsLoadedRef.current = jobsLoaded
   discoveryLoadedRef.current = discoveryLoaded
@@ -268,9 +267,9 @@ export function useOverviewPageState(props: {
 
     const refreshStacks = async () => {
       if (!domains.has('stacks')) return true
-      let nextStacks: StackListItem[]
+      let overview: Awaited<ReturnType<typeof getStacksOverview>>
       try {
-        nextStacks = await listStacks()
+        overview = await getStacksOverview()
       } catch (error: unknown) {
         if (requestId === latestAppliedStacksRequestIdRef.current) {
           setStacksLoadError(error instanceof Error ? error.message : String(error))
@@ -280,32 +279,24 @@ export function useOverviewPageState(props: {
       }
       if (requestId !== latestAppliedStacksRequestIdRef.current) return false
 
-      const maxLastScan = nextStacks.map((item) => item.lastCheckAt).sort().at(-1)
-      setStacks(nextStacks)
+      const maxLastScan = overview.stacks.map((item) => item.lastCheckAt).sort().at(-1)
+      setStacks(overview.stacks)
       onLastScanHint(maxLastScan)
-      const details = await Promise.all(
-        nextStacks.map(async (item) => {
-          try {
-            return { id: item.id, detail: await getStack(item.id) }
-          } catch {
-            return { id: item.id, detail: undefined }
-          }
-        }),
-      )
       if (requestId !== latestAppliedStacksRequestIdRef.current) return false
+      const summaryByStackId = new Map(overview.details.map((detail) => [detail.id, detail]))
       const nextDetails = Object.fromEntries(
-        nextStacks.map((item) => [item.id, details.find((result) => result.id === item.id)?.detail ?? detailsRef.current[item.id]]),
+        overview.stacks.map((item) => [item.id, summaryByStackId.get(item.id) ?? detailsRef.current[item.id]]),
       )
       setDetails(nextDetails)
-      const detailsReady = details.every(({ detail }) => detail !== undefined)
+      const detailsReady = overview.stacks.every((item) => nextDetails[item.id] !== undefined)
       setStackDetailsLoaded(detailsReady)
       if (!detailsReady) {
-        setStacksLoadError('部分 Stack 详情暂时不可用，请重试。')
+        setStacksLoadError('部分候选摘要暂时不可用，请重试。')
         setStacksPhase('error')
         return false
       }
       setStacksLoaded(true)
-      setStacksPhase(nextStacks.length === 0 ? 'ready-empty' : 'ready-data')
+      setStacksPhase(overview.stacks.length === 0 ? 'ready-empty' : 'ready-data')
       return true
     }
 

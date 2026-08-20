@@ -128,6 +128,12 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
   const runningRef = useRef(false)
   const failedScopesRef = useRef<Set<SaveScope>>(new Set())
   const lastSavedHashRef = useRef<Map<SaveScope, string>>(new Map())
+  const deferredRemoteRef = useRef<{
+    settings?: SettingsResponse
+    notifications?: NotificationConfig
+    githubPackages?: { ghcr: GitHubPackagesSettingsResponse; pat: string }
+  }>({})
+  const refreshAfterSaveRef = useRef<(scope: SaveScope) => void>(() => {})
   const waitersRef = useRef<
     Array<{
       scopes: Set<SaveScope>
@@ -326,6 +332,7 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
           continue
         }
         const submittedFields = new Set(pendingFields)
+        let saved = false
         pendingFieldsRef.current.set(scope, new Set())
         inFlightScopeRef.current = scope
         setAutoSaveSavingScope(scope)
@@ -382,6 +389,7 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
           }
           setAutoSaveUpdatedAt(new Date().toISOString())
           setAutoSavePhase(queueRef.current.length > 0 ? 'queued' : 'saved')
+          saved = true
         } catch (e: unknown) {
           const currentFields = pendingFieldsRef.current.get(scope) ?? new Set<string>()
           for (const field of submittedFields) currentFields.add(field)
@@ -392,6 +400,7 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
         } finally {
           inFlightScopeRef.current = null
           setAutoSaveSavingScope(null)
+          if (saved) refreshAfterSaveRef.current(scope)
           settleWaiters()
         }
       }
@@ -582,6 +591,11 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
             },
           },
         }
+        if (!isScopeIdle('backup')) {
+          deferredRemoteRef.current.settings = nextSettings
+          setSettingsLoadPhase('ready-data')
+          return null
+        }
         setSettings(nextSettings)
         setOctoRillApiKeyTouched(false)
         setOctoRillApiKeyFocused(false)
@@ -601,6 +615,11 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
         const response = await getNotifications()
         if (requestId !== latestNotificationsRefreshRequestIdRef.current) return null
         const nextNotifications = normalizeNotificationsForUi(response)
+        if (!isScopeIdle('notifications')) {
+          deferredRemoteRef.current.notifications = nextNotifications
+          setNotificationsLoadPhase('ready-data')
+          return null
+        }
         setNotifications(nextNotifications)
         setTelegramBotTokenVisible(false)
         setTelegramBotTokenTouched(false)
@@ -630,6 +649,11 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
         })()
         const nextGhcr = { ...gh, callbackUrl: gh.callbackUrl || defaultCallbackUrl }
         const nextPat = gh.patMasked ?? ''
+        if (!isScopeIdle('ghcr')) {
+          deferredRemoteRef.current.githubPackages = { ghcr: nextGhcr, pat: nextPat }
+          setGithubPackagesLoadPhase('ready-data')
+          return null
+        }
         setGitHubPackages(nextGhcr)
         setGitHubPackagesPat(nextPat)
         setGithubPackagesLoadPhase('ready-data')
@@ -658,7 +682,16 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
         hasPersistedPat: Boolean(nextGithubPackages.ghcr.patMasked),
       },
     })
-  }, [resetAutoSaveBaselines])
+  }, [isScopeIdle, resetAutoSaveBaselines])
+  useEffect(() => {
+    refreshAfterSaveRef.current = (scope) => {
+      const domain = scope === 'backup' ? 'settings' : scope === 'notifications' ? 'notifications' : 'githubPackages'
+      void refresh({ source: 'memory', trigger: 'background', domains: [domain] })
+    }
+    return () => {
+      refreshAfterSaveRef.current = () => {}
+    }
+  }, [refresh])
   useEffect(() => {
     void refresh()
   }, [refresh])

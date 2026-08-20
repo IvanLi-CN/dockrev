@@ -14,7 +14,7 @@ import { useManagementEventBatch } from '../managementEvents'
 import { navigate } from '../routes'
 import { Button, Mono, Pill } from '../ui'
 import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
-import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
+import { isAsyncDataBusy, type AsyncDataPhase, type AsyncDataSource, type AsyncDataTrigger } from '../asyncData'
 
 const GHCR_JOB_TYPES = new Set([
   'github_packages_webhook',
@@ -121,7 +121,7 @@ export function GhcrWebhookQueuePage(props: { onTopActions: (node: React.ReactNo
     onTopActions(
       <Button
         variant="ghost"
-        disabled={busy || phase === 'initial-loading' || phase === 'refreshing'}
+        disabled={busy || isAsyncDataBusy(phase, trigger)}
         onClick={() => {
           void (async () => {
             setBusy(true)
@@ -138,7 +138,7 @@ export function GhcrWebhookQueuePage(props: { onTopActions: (node: React.ReactNo
         刷新
       </Button>,
     )
-  }, [busy, onTopActions, phase, refresh])
+  }, [busy, onTopActions, phase, refresh, trigger])
 
   const runningJob = useMemo(() => jobs.find((job) => job.status === 'running') ?? null, [jobs])
   const recentJobs = useMemo(() => jobs.slice(0, 20), [jobs])
@@ -245,7 +245,7 @@ export function GhcrWebhookQueuePage(props: { onTopActions: (node: React.ReactNo
                             setError(null)
                             try {
                               await triggerGitHubPackagesWebhookSyncRepo({ fullName: repo.fullName })
-                              await refresh()
+                              await refresh('memory', 'user-action')
                             } catch (e: unknown) {
                               setError(errorMessage(e))
                             } finally {
@@ -267,7 +267,7 @@ export function GhcrWebhookQueuePage(props: { onTopActions: (node: React.ReactNo
                             setError(null)
                             try {
                               await deleteGitHubPackagesRepo({ fullName: repo.fullName })
-                              await refresh()
+                              await refresh('memory', 'user-action')
                             } catch (e: unknown) {
                               setError(errorMessage(e))
                             } finally {
@@ -301,7 +301,7 @@ export function GhcrWebhookQueuePage(props: { onTopActions: (node: React.ReactNo
                           setError(null)
                           try {
                             await deleteGitHubPackagesRepo({ fullName: repo.fullName })
-                            await refresh()
+                            await refresh('memory', 'user-action')
                           } catch (e: unknown) {
                             setError(errorMessage(e))
                           } finally {

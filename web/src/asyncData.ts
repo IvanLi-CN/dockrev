@@ -9,16 +9,38 @@ export type AsyncDataPhase =
 export type AsyncDataSource = 'none' | 'live' | 'memory' | 'fresh-snapshot'
 
 export type AsyncDataTrigger = 'user-action' | 'background'
+export type AsyncDataRequestIntent = 'initial' | AsyncDataTrigger
+export type AsyncFreshnessProfile = 'volatile' | 'operational' | 'configuration'
 
 export const USER_ACTION_OVERLAY_DELAY_MS = 200
-export const BACKGROUND_OVERLAY_DELAY_MS = 800
+export const BACKGROUND_NOTICE_DELAY_MS = 5_000
+export const BACKGROUND_NOTICE_SUCCESS_VISIBLE_MS = 1_500
+export const ASYNC_GET_DEADLINE_MS = 15_000
 
-export function asyncOverlayDelay(trigger: AsyncDataTrigger): number {
-  return trigger === 'background' ? BACKGROUND_OVERLAY_DELAY_MS : USER_ACTION_OVERLAY_DELAY_MS
+export const ASYNC_FRESHNESS_MS: Record<AsyncFreshnessProfile, number> = {
+  volatile: 15_000,
+  operational: 60_000,
+  configuration: 300_000,
 }
 
-export function isAsyncDataBusy(phase: AsyncDataPhase): boolean {
-  return phase === 'initial-loading' || phase === 'refreshing'
+export function asyncOverlayDelay(trigger: AsyncDataTrigger): number {
+  return trigger === 'user-action' ? USER_ACTION_OVERLAY_DELAY_MS : 0
+}
+
+export function asyncBackgroundNoticeDelay(): number {
+  return BACKGROUND_NOTICE_DELAY_MS
+}
+
+export function asyncFreshnessWindow(profile: AsyncFreshnessProfile): number {
+  return ASYNC_FRESHNESS_MS[profile]
+}
+
+export function isAsyncDataBusy(phase: AsyncDataPhase, trigger: AsyncDataTrigger = 'user-action'): boolean {
+  return phase === 'initial-loading' || (phase === 'refreshing' && trigger === 'user-action')
+}
+
+export function isAsyncBackgroundRefresh(phase: AsyncDataPhase, trigger: AsyncDataTrigger): boolean {
+  return phase === 'refreshing' && trigger === 'background'
 }
 
 export function canShowAsyncEmpty(phase: AsyncDataPhase): boolean {

@@ -88,12 +88,25 @@ export const UserActionRefresh: Story = {
   },
 }
 
-export const FreshSnapshotRefresh: Story = {
+export const PassiveBackgroundRefresh: Story = {
   render: () => <TimedRefreshPreview source="fresh-snapshot" trigger="background" />,
   play: async ({ canvasElement }) => {
-    await sleep(840)
-    if (!canvasElement.querySelector('[role="status"]')) {
-      throw new Error('snapshot refresh should show its delayed overlay after 800ms')
+    await sleep(300)
+    if (canvasElement.querySelector('.asyncDataOverlay')) {
+      throw new Error('background refresh must not mount a blocking overlay')
+    }
+    if (canvasElement.querySelector('[aria-busy="true"]')) {
+      throw new Error('background refresh must not mark committed content busy')
+    }
+  },
+}
+
+export const PassiveBackgroundNotice: Story = {
+  render: () => <TimedRefreshPreview source="fresh-snapshot" trigger="background" />,
+  play: async ({ canvasElement }) => {
+    await sleep(5_150)
+    if (!canvasElement.querySelector('.asyncDataBackgroundNotice')) {
+      throw new Error('long background refresh should expose a passive in-region notice')
     }
   },
 }

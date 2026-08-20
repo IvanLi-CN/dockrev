@@ -1,4 +1,4 @@
-import type { StackDetail, StackListItem } from '../api'
+import type { StackOverviewDetail, StackListItem } from '../api'
 import { partitionAggregateUpdateServices } from '../aggregateUpdateGuard'
 import type { AggregateUpdatePreviewListItem } from '../components/AggregateUpdatePreviewList'
 import type { UpdateCandidateFilter } from '../components/UpdateCandidateFilters'
@@ -6,7 +6,7 @@ import { serviceRowStatus, type RowStatus } from '../updateStatus'
 import { matchesCandidateSearch } from './operationsDashboardShared'
 
 type ServiceRow = {
-  svc: StackDetail['services'][number]
+  svc: StackOverviewDetail['services'][number]
   stt: RowStatus
 }
 
@@ -16,9 +16,9 @@ export type AggregateScopeSummary = {
   actionableCount: number
   isFilteredSubset: boolean
   rows: ServiceRow[]
-  visibleServices: StackDetail['services']
+  visibleServices: StackOverviewDetail['services']
   previewItems: AggregateUpdatePreviewListItem[]
-  actionableServices: StackDetail['services']
+  actionableServices: StackOverviewDetail['services']
   counts: ReturnType<typeof partitionAggregateUpdateServices>['counts']
   guardedPreviewCount: number
 }
@@ -36,7 +36,7 @@ function withDisplayName(
 }
 
 function buildVisibleRows(
-  detail: StackDetail,
+  detail: StackOverviewDetail,
   filter: UpdateCandidateFilter,
   candidateSearch: string,
 ): ServiceRow[] {
@@ -48,7 +48,7 @@ function buildVisibleRows(
 }
 
 export function buildStackAggregateScope(
-  detail: StackDetail,
+  detail: StackOverviewDetail,
   filter: UpdateCandidateFilter,
   candidateSearch: string,
 ): AggregateScopeSummary {
@@ -77,7 +77,7 @@ export function buildStackAggregateScope(
 
 export function buildAllAggregateScope(input: {
   stacks: StackListItem[]
-  details: Record<string, StackDetail | undefined>
+  details: Record<string, StackOverviewDetail | undefined>
   filter: UpdateCandidateFilter
   candidateSearch: string
 }): Omit<AggregateScopeSummary, 'rows' | 'visibleServices'> {
@@ -86,7 +86,7 @@ export function buildAllAggregateScope(input: {
   let actionableCount = 0
   let guardedPreviewCount = 0
   const previewItems: AggregateUpdatePreviewListItem[] = []
-  const actionableServices: StackDetail['services'] = []
+  const actionableServices: StackOverviewDetail['services'] = []
   const counts = {
     updatable: 0,
     hint: 0,

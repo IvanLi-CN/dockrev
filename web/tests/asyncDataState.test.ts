@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import {
   asyncOverlayDelay,
+  asyncBackgroundNoticeDelay,
+  asyncFreshnessWindow,
+  isAsyncBackgroundRefresh,
   canShowAsyncEmpty,
   formatAsyncDataError,
   hasCompleteAsyncReadiness,
@@ -21,9 +24,18 @@ describe('async data continuity contract', () => {
     expect(isAsyncDataOffline('offline', false)).toBe(true)
   })
 
-  test('uses trigger intent rather than cache source for overlay thresholds', () => {
+  test('uses user intent for blocking overlays and background notice timing', () => {
     expect(asyncOverlayDelay('user-action')).toBe(200)
-    expect(asyncOverlayDelay('background')).toBe(800)
+    expect(asyncOverlayDelay('background')).toBe(0)
+    expect(asyncBackgroundNoticeDelay()).toBe(5_000)
+    expect(isAsyncBackgroundRefresh('refreshing', 'background')).toBe(true)
+    expect(isAsyncBackgroundRefresh('refreshing', 'user-action')).toBe(false)
+  })
+
+  test('uses the agreed per-domain freshness windows', () => {
+    expect(asyncFreshnessWindow('volatile')).toBe(15_000)
+    expect(asyncFreshnessWindow('operational')).toBe(60_000)
+    expect(asyncFreshnessWindow('configuration')).toBe(300_000)
   })
 
   test('turns structured failures into concise user-facing messages', () => {

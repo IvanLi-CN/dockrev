@@ -8,6 +8,23 @@ pub struct ListStacksResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct StacksOverviewResponse {
+    pub stacks: Vec<StackListItem>,
+    pub details: Vec<StackOverviewDetail>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackOverviewDetail {
+    pub id: String,
+    pub name: String,
+    pub services: Vec<Service>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archived: Option<bool>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StackListItem {
     pub id: String,
     pub name: String,

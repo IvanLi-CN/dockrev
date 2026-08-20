@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { CircleAlert, LoaderCircle, RotateCw } from 'lucide-react'
+import { Check, CircleAlert, LoaderCircle, RotateCw } from 'lucide-react'
 import {
+  BACKGROUND_NOTICE_SUCCESS_VISIBLE_MS,
+  asyncBackgroundNoticeDelay,
   asyncOverlayDelay,
   formatAsyncDataError,
   isAsyncDataBusy,
@@ -10,7 +12,7 @@ import {
 } from '../asyncData'
 import { Button } from '../ui'
 
-export type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
+export type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger, AsyncDataRequestIntent } from '../asyncData'
 
 export function Skeleton(props: {
   className?: string
@@ -60,11 +62,13 @@ export function AsyncDataRegion(props: {
   const [showDelayedOverlay, setShowDelayedOverlay] = useState(false)
   const [loadingOverlayMounted, setLoadingOverlayMounted] = useState(false)
   const [loadingOverlayLeaving, setLoadingOverlayLeaving] = useState(false)
-  const busy = isAsyncDataBusy(phase)
+  const [backgroundNotice, setBackgroundNotice] = useState<'hidden' | 'syncing' | 'success' | 'error'>('hidden')
+  const busy = isAsyncDataBusy(phase, trigger)
   const initialSkeleton = phase === 'initial-loading' || (phase === 'error' && !hasData)
+  const passiveBackground = trigger === 'background' && hasData
 
   useEffect(() => {
-    if (phase !== 'refreshing') {
+    if (phase !== 'refreshing' || trigger !== 'user-action') {
       setShowDelayedOverlay(false)
       return
     }
@@ -72,8 +76,30 @@ export function AsyncDataRegion(props: {
     return () => window.clearTimeout(timer)
   }, [phase, trigger])
 
-  const showLoadingOverlay = phase === 'refreshing' && showDelayedOverlay
-  const showErrorOverlay = phase === 'error'
+  useEffect(() => {
+    if (!passiveBackground) {
+      setBackgroundNotice('hidden')
+      return
+    }
+    if (phase === 'refreshing') {
+      const timer = window.setTimeout(() => setBackgroundNotice('syncing'), asyncBackgroundNoticeDelay())
+      return () => window.clearTimeout(timer)
+    }
+    if (phase === 'error') {
+      setBackgroundNotice('error')
+      return
+    }
+    setBackgroundNotice((current) => (current === 'syncing' ? 'success' : 'hidden'))
+  }, [passiveBackground, phase])
+
+  useEffect(() => {
+    if (backgroundNotice !== 'success') return
+    const timer = window.setTimeout(() => setBackgroundNotice('hidden'), BACKGROUND_NOTICE_SUCCESS_VISIBLE_MS)
+    return () => window.clearTimeout(timer)
+  }, [backgroundNotice])
+
+  const showLoadingOverlay = trigger === 'user-action' && phase === 'refreshing' && showDelayedOverlay
+  const showErrorOverlay = phase === 'error' && !passiveBackground
 
   useEffect(() => {
     if (showErrorOverlay) {
@@ -129,6 +155,24 @@ export function AsyncDataRegion(props: {
               variant="ghost"
             >
               <RotateCw aria-hidden="true" size={14} strokeWidth={2} />
+              重试
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      {backgroundNotice !== 'hidden' ? (
+        <div
+          className={`asyncDataBackgroundNotice asyncDataBackgroundNotice${backgroundNotice[0]!.toUpperCase()}${backgroundNotice.slice(1)}`}
+          role={backgroundNotice === 'error' ? 'alert' : 'status'}
+          aria-live="polite"
+        >
+          {backgroundNotice === 'syncing' ? <LoaderCircle aria-hidden="true" className="asyncDataSpinner" size={14} strokeWidth={2} /> : null}
+          {backgroundNotice === 'success' ? <Check aria-hidden="true" size={14} strokeWidth={2} /> : null}
+          {backgroundNotice === 'error' ? <CircleAlert aria-hidden="true" size={14} strokeWidth={2} /> : null}
+          <span>{backgroundNotice === 'syncing' ? label : backgroundNotice === 'success' ? '已同步' : '同步未完成，仍显示上次成功数据'}</span>
+          {backgroundNotice === 'error' && onRetry ? (
+            <Button ariaLabel="重试后台同步" className="asyncDataBackgroundRetry" disabled={retryDisabled} onClick={onRetry} variant="ghost">
+              <RotateCw aria-hidden="true" size={13} strokeWidth={2} />
               重试
             </Button>
           ) : null}

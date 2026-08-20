@@ -14,6 +14,67 @@ pub(super) async fn list_stacks(
     Ok(Json(ListStacksResponse { stacks }))
 }
 
+pub(super) async fn get_stacks_overview(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<StacksOverviewResponse>, ApiError> {
+    let _user = require_user(&state, &headers).await?;
+    let stacks = state
+        .db
+        .list_stacks(crate::db::ArchivedFilter::Exclude)
+        .await
+        .map_err(map_internal)?;
+    let rows = state
+        .operational_reads
+        .list_homepage_nav_services()
+        .await
+        .map_err(map_internal)?;
+
+    let mut services_by_stack = std::collections::HashMap::<String, Vec<Service>>::new();
+    let mut names_by_stack = std::collections::HashMap::<String, String>::new();
+    for row in rows {
+        names_by_stack.insert(row.stack_id.clone(), row.stack_name);
+        services_by_stack
+            .entry(row.stack_id)
+            .or_default()
+            .push(row.service);
+    }
+
+    let mut services = services_by_stack
+        .values()
+        .flatten()
+        .cloned()
+        .collect::<Vec<_>>();
+    enrich_services_with_version_inference(&state, &mut services, true).await?;
+    enrich_services_with_new_version_discovery_counts(&state, &mut services).await?;
+    let services_by_id = services
+        .into_iter()
+        .map(|service| (service.id.clone(), service))
+        .collect::<std::collections::HashMap<_, _>>();
+
+    let details = stacks
+        .iter()
+        .map(|stack| {
+            let services = services_by_stack
+                .remove(&stack.id)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|service| services_by_id.get(&service.id).cloned().unwrap_or(service))
+                .collect();
+            StackOverviewDetail {
+                id: stack.id.clone(),
+                name: names_by_stack
+                    .remove(&stack.id)
+                    .unwrap_or_else(|| stack.name.clone()),
+                services,
+                archived: stack.archived,
+            }
+        })
+        .collect();
+
+    Ok(Json(StacksOverviewResponse { stacks, details }))
+}
+
 pub(super) async fn get_stack_settings(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,

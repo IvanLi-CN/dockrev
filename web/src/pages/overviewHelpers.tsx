@@ -3,7 +3,7 @@ import {
 type DiscoveredProject,
 type Service,
 type ServiceDigestTagsScanSummary,
-type StackDetail,
+type StackOverviewDetail,
 type StackListItem
 } from '../api'
 import { type AggregateUpdatePreviewListItem } from '../components/AggregateUpdatePreviewList'
@@ -397,7 +397,7 @@ export function writeCollapsedToStorage(filter: UpdateCandidateFilter, value: Re
 export function withCollapseDefaults(
   collapsed: Record<string, boolean>,
   stacks: StackListItem[],
-  details?: Record<string, StackDetail | undefined>,
+  details?: Record<string, StackOverviewDetail | undefined>,
   filter: UpdateCandidateFilter = 'all',
 ): Record<string, boolean> {
   const next = { ...collapsed }

@@ -25,7 +25,7 @@ import { useSupervisorHealth } from '../useSupervisorHealth'
 import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay, inferResolvedTagsFromSnapshot, isStrictSemverTag } from '../versionDisplay'
 import { isRollbackTargetRefreshCurrent, retryRollbackTargetDigestMismatch } from './rollbackTargetRefresh'
 import { managementEventAffectsServiceDetail } from './serviceDetailManagement'
-import type { AsyncDataPhase, AsyncDataTrigger } from '../asyncData'
+import { asyncFreshnessWindow, type AsyncDataPhase, type AsyncDataTrigger } from '../asyncData'
 export { managementEventAffectsServiceDetail } from './serviceDetailManagement'
 export function useServiceDetailPageState(props: {
   stackId: string
@@ -222,7 +222,7 @@ export function useServiceDetailPageState(props: {
     if (stackRequestId !== stackRefreshRequestIdRef.current || stackRequestId < latestAppliedStackRefreshRequestIdRef.current) return
     latestAppliedStackRefreshRequestIdRef.current = stackRequestId
     latestAppliedFullRefreshRequestIdRef.current = fullRefreshRequestId
-    setStack(st); setService(svc); setCorePhase('ready-data'); primeRollbackTargetRefresh(svc)
+    setStack(st); setService(svc); setCorePhase('ready-data'); setLastSuccessfulRefreshAt(new Date().toISOString()); primeRollbackTargetRefresh(svc)
     void Promise.allSettled([getServiceBackupTargets(serviceId), getServiceBackupRecords(serviceId)]).then(([backupTargetsRes, backupRecordsRes]) => {
       if (stackRequestId !== stackRefreshRequestIdRef.current || stackRequestId < latestAppliedStackRefreshRequestIdRef.current || fullRefreshRequestId < latestAppliedFullRefreshRequestIdRef.current) return
       if (backupTargetsRes.status === 'fulfilled') setBackupTargets(backupTargetsRes.value)
@@ -260,7 +260,6 @@ export function useServiceDetailPageState(props: {
       setRollbackTarget(null); setRollbackActiveTarget(null); setRollbackTargetRefreshing(false)
     }
     if (settingsErrors.length > 0) { setSettingsError(settingsErrors.join(' · ')); setSettingsPhase('error') } else { setSettingsError(null); setSettingsPhase('ready-data') }
-    if (settingsRes.status === 'fulfilled') setLastSuccessfulRefreshAt(new Date().toISOString())
   }, [onLastScanHint, primeRollbackTargetRefresh, serviceId, settleRollbackTargetSnapshot, stackId])
   const refreshStackOnly = useCallback(async (expectedPageGeneration = pageGenerationRef.current) => {
     if (expectedPageGeneration !== pageGenerationRef.current) return
@@ -326,10 +325,15 @@ export function useServiceDetailPageState(props: {
   )
   const [refreshTrigger, setRefreshTrigger] = useState<AsyncDataTrigger>('background'); const refreshTriggerRef = useRef<AsyncDataTrigger>('background')
   const backgroundRefresh = useCallback(async () => {
-    if (refreshTriggerRef.current !== 'user-action') { refreshTriggerRef.current = 'background'; setRefreshTrigger('background') }
+    if (refreshTriggerRef.current !== 'user-action') {
+      const refreshedAt = lastSuccessfulRefreshAt ? Date.parse(lastSuccessfulRefreshAt) : Number.NaN
+      if (Number.isFinite(refreshedAt) && Date.now() - refreshedAt < asyncFreshnessWindow('operational')) return
+      refreshTriggerRef.current = 'background'
+      setRefreshTrigger('background')
+    }
     await refresh()
     refreshTriggerRef.current = 'background'
-  }, [refresh])
+  }, [lastSuccessfulRefreshAt, refresh])
   const pageResumeRefresh = usePageResumeRefresh(backgroundRefresh, { onError: (error: unknown) => { if (pageGeneration === pageGenerationRef.current) setError(errorMessage(error)) } })
   const requestRefresh = useCallback((trigger: AsyncDataTrigger = 'background') => {
     refreshTriggerRef.current = trigger
@@ -514,7 +518,7 @@ export function useServiceDetailPageState(props: {
       } else {
         await archiveService(service.id)
       }
-      await requestRefresh()
+      await requestRefresh('user-action')
     } catch (e: unknown) {
       if (generation === pageGenerationRef.current) setError(errorMessage(e))
     } finally {
@@ -533,7 +537,7 @@ export function useServiceDetailPageState(props: {
         value: '.*',
         note: 'blocked via UI',
       })
-      await requestRefresh()
+      await requestRefresh('user-action')
     } catch (e: unknown) {
       if (generation === pageGenerationRef.current) setError(errorMessage(e))
     } finally {
@@ -734,7 +738,7 @@ export function useServiceDetailPageState(props: {
         if (e instanceof ApiError && e.status === 401) setError('需要登录/鉴权（Forward Auth）')
         else if (e instanceof ApiError && e.status === 409) {
           setError('扫描结果已变化，请刷新并重新扫描后再更新')
-          await requestRefresh()
+          await requestRefresh('user-action')
         } else setError(errorMessage(e))
       } finally {
         if (generation === pageGenerationRef.current) setBusy(false)
@@ -818,7 +822,7 @@ export function useServiceDetailPageState(props: {
                 return
               }
               setError('扫描结果已变化，请刷新并重新扫描后再更新')
-              await requestRefresh()
+              await requestRefresh('user-action')
             }
           } else setError(e.message)
         } else {

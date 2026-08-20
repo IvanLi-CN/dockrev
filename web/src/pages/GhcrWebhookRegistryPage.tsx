@@ -19,7 +19,7 @@ import { useManagementEventBatch } from '../managementEvents'
 import { navigate } from '../routes'
 import { Button, Chip, Input, Mono, Pill, ResponsiveActionButton, SelectField } from '../ui'
 import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
-import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
+import { isAsyncDataBusy, type AsyncDataPhase, type AsyncDataSource, type AsyncDataTrigger } from '../asyncData'
 import { webhookStateDotClass, webhookStateIcon } from '../webhookStatus'
 
 type RepoStateFilter = 'all' | 'ok' | 'missing' | 'error' | 'conflict' | 'queued' | 'running' | 'unknown'
@@ -215,7 +215,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
     onTopActions(
       <Button
         variant="ghost"
-        disabled={busy || phase === 'initial-loading' || phase === 'refreshing'}
+        disabled={busy || isAsyncDataBusy(phase, trigger)}
         onClick={() => {
           void (async () => {
             setBusy(true)
@@ -233,7 +233,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
         刷新
       </Button>,
     )
-  }, [busy, onTopActions, phase, refresh])
+  }, [busy, onTopActions, phase, refresh, trigger])
 
   const repos = repoPage?.repos ?? EMPTY_REPOS
 
@@ -266,7 +266,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
     [perPage, repoPage?.filteredTotal, repoPage?.perPage],
   )
   const currentPage = page
-  const dataBusy = phase === 'initial-loading' || phase === 'refreshing'
+  const dataBusy = isAsyncDataBusy(phase, trigger)
 
   const runningJob = useMemo(() => jobs.find((job) => job.status === 'running') ?? null, [jobs])
 
@@ -548,7 +548,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
           <SelectField
             ariaLabel="每页仓库数量"
             className="select"
-            disabled={busy || phase === 'initial-loading' || phase === 'refreshing'}
+            disabled={busy || dataBusy}
             onChange={(value) => {
               const nextPerPage = Number.parseInt(value, 10)
               void refresh({
@@ -679,7 +679,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
                         setError(null)
                         try {
                           await triggerGitHubPackagesWebhookSyncRepo({ fullName: repo.fullName })
-                          await refresh()
+                          await refresh({ source: 'memory', trigger: 'user-action' })
                         } catch (e: unknown) {
                           setError(errorMessage(e))
                         } finally {
@@ -702,7 +702,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
                           setError(null)
                           try {
                             await deleteGitHubPackagesRepo({ fullName: repo.fullName })
-                            await refresh()
+                            await refresh({ source: 'memory', trigger: 'user-action' })
                           } catch (e: unknown) {
                             setError(errorMessage(e))
                           } finally {
@@ -769,7 +769,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
                         setError(null)
                         try {
                           await deleteGitHubPackagesRepo({ fullName: repo.fullName })
-                          await refresh()
+                          await refresh({ source: 'memory', trigger: 'user-action' })
                         } catch (e: unknown) {
                           setError(errorMessage(e))
                         } finally {

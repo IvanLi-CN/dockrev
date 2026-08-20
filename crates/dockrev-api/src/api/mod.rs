@@ -176,6 +176,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/stacks",
             get(list_stacks).post(register_stack_disabled),
         )
+        .route("/api/stacks/overview", get(get_stacks_overview))
         .route("/api/stacks/{stack_id}", get(get_stack))
         .route(
             "/api/stacks/{stack_id}/settings",

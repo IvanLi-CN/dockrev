@@ -141,17 +141,32 @@ export function DetailRouteServiceTree(props: {
         stackList.push(stack)
       }
       if (!mountedRef.current || requestId !== treeRequestIdRef.current) return
-      setStacks(
-        stackList.map((stack) => ({
-          ...stack,
-          detail: null,
-          detailStatus: 'idle',
-          detailError: null,
-          detailTrigger: 'background',
-          detailRevision: 0,
-          detailLoadedRevision: 0,
-        })),
-      )
+      setStacks((current) => {
+        const previousById = new Map(current.map((stack) => [stack.id, stack]))
+        return stackList.map((stack) => {
+          const previous = previousById.get(stack.id)
+          if (!previous) {
+            return {
+              ...stack,
+              detail: null,
+              detailStatus: 'idle',
+              detailError: null,
+              detailTrigger: 'background',
+              detailRevision: 0,
+              detailLoadedRevision: 0,
+            }
+          }
+          return {
+            ...stack,
+            detail: previous.detail,
+            detailStatus: previous.detailStatus,
+            detailError: previous.detailError,
+            detailTrigger: previous.detailTrigger,
+            detailRevision: previous.detailRevision,
+            detailLoadedRevision: previous.detailLoadedRevision,
+          }
+        })
+      })
       setTreeLoaded(true)
       setDetailFetchTick((current) => current + 1)
     } catch (value: unknown) {

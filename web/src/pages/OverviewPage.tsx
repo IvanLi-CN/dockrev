@@ -66,7 +66,7 @@ import {
 import { HomepageFloatingToolPanel } from "./OverviewFloatingToolPanel";
 import { HomepageNavSkeleton } from "./HomepageNavSkeleton";
 import { AsyncDataRegion } from "../components/AsyncDataRegion";
-import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from "../asyncData";
+import { asyncFreshnessWindow, type AsyncDataPhase, type AsyncDataSource, type AsyncDataTrigger } from "../asyncData";
 
 const HOMEPAGE_COLUMN_BREAKPOINTS = [
   { query: "(max-width: 720px)", columns: 1 },
@@ -77,7 +77,7 @@ const HOMEPAGE_PERSISTED_SNAPSHOT_KEY = buildReadonlySnapshotKey(
   "overview",
   "homepage-nav",
 );
-const HOMEPAGE_PERSISTED_SNAPSHOT_STALE_MS = 60_000;
+const HOMEPAGE_PERSISTED_SNAPSHOT_STALE_MS = asyncFreshnessWindow("operational");
 
 type PersistedHomepageSnapshotPayload = {
   version: 2;
@@ -757,7 +757,7 @@ export function OverviewPage(props: {
               setBusy(true);
               setError(null);
               try {
-                await requestRefresh();
+                await requestRefresh({ trigger: 'user-action' });
               } catch (value: unknown) {
                 setError(
                   value instanceof Error ? value.message : String(value),

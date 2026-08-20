@@ -7,7 +7,7 @@ import { useManagementEventBatch } from '../managementEvents'
 import { navigate } from '../routes'
 import { Button, Chip, Input, Mono, Pill, SelectField } from '../ui'
 import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
-import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
+import { isAsyncDataBusy, type AsyncDataPhase, type AsyncDataSource, type AsyncDataTrigger } from '../asyncData'
 
 type DeliveryFilter = 'all' | 'processed' | 'ignored' | 'rejected'
 
@@ -147,7 +147,7 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
     void refresh(committedQuery).catch((reason: unknown) => setError(errorMessage(reason)))
   })
 
-  const queryBusy = phase === 'initial-loading' || phase === 'refreshing'
+  const queryBusy = isAsyncDataBusy(phase, trigger)
 
   useEffect(() => {
     onTopActions(

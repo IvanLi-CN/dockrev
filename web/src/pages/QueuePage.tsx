@@ -19,7 +19,7 @@ import {
 import { navigate } from '../routes'
 import { Button, Mono, Pill } from '../ui'
 import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
-import { hasCompleteAsyncReadiness, type AsyncDataPhase, type AsyncDataSource, type AsyncDataTrigger } from '../asyncData'
+import { asyncFreshnessWindow, hasCompleteAsyncReadiness, isAsyncDataBusy, type AsyncDataPhase, type AsyncDataSource, type AsyncDataTrigger } from '../asyncData'
 
 type Filter = 'all' | 'queued' | 'running' | 'success' | 'failed' | 'rolled_back' | 'cancelled'
 type VersionInferenceSummary = {
@@ -165,7 +165,7 @@ function shouldShowFinishedAt(job: JobListItem): boolean {
 }
 
 const QUEUE_SNAPSHOT_KEY = buildReadonlySnapshotKey('queue', 'jobs-overview')
-const QUEUE_SNAPSHOT_STALE_MS = 60_000
+const QUEUE_SNAPSHOT_STALE_MS = asyncFreshnessWindow('operational')
 
 type QueueSnapshotPayload = {
   version: 2
@@ -564,6 +564,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
   ])
 
   const filtered = filter === 'all' ? jobs : jobs.filter((job) => job.status === filter)
+  const jobsBusy = isAsyncDataBusy(jobsPhase, jobsTrigger)
 
   return (
     <div className="page">
@@ -607,10 +608,10 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
               <button
                 key={k}
                 className={filter === k ? 'chip chipActive' : 'chip'}
-                aria-busy={jobsPhase === 'refreshing' || undefined}
-                disabled={jobsPhase === 'initial-loading' || jobsPhase === 'refreshing'}
+                aria-busy={jobsBusy || undefined}
+                disabled={jobsBusy}
                 onClick={() => {
-                  if (k === filter || jobsPhase === 'initial-loading' || jobsPhase === 'refreshing') return
+                  if (k === filter || jobsBusy) return
                   void refresh(null, k, { source: 'memory', trigger: 'user-action' }).then((applied) => {
                     if (!applied) return
                     setCursorStack([])

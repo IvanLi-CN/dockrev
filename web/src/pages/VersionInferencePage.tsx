@@ -10,7 +10,7 @@ import { useManagementEventBatch, useManagementEvents } from '../managementEvent
 import { usePwaStatus } from '../pwaStatus'
 import { buildReadonlySnapshotKey, readReadonlySnapshot, writeReadonlySnapshot } from '../readonlySnapshotCache'
 import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
-import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
+import { asyncFreshnessWindow, isAsyncDataBusy, type AsyncDataPhase, type AsyncDataSource, type AsyncDataTrigger } from '../asyncData'
 import { Button, Input, Mono, Pill, SelectField, ToggleGroup, ToggleGroupItem } from '../ui'
 
 type StatusFilter = 'all' | 'queued' | 'running' | 'ready' | 'stale' | 'all_failed'
@@ -26,7 +26,7 @@ const STATUS_FILTERS: readonly StatusFilter[] = ['all', 'queued', 'running', 're
 const PER_PAGE_OPTIONS = [20, 50, 100, 200] as const
 const QUERY_DEBOUNCE_MS = 250
 const VERSION_INFERENCE_SNAPSHOT_KEY = buildReadonlySnapshotKey('queue', 'version-inference-overview')
-const VERSION_INFERENCE_SNAPSHOT_STALE_MS = 60_000
+const VERSION_INFERENCE_SNAPSHOT_STALE_MS = asyncFreshnessWindow('operational')
 
 type VersionInferenceSnapshotPayload = {
   version: 2
@@ -371,7 +371,7 @@ export function VersionInferencePage(props: {
         : rows.length === 0
           ? 'ready-empty'
           : 'ready-data'
-  const dataBusy = dataPhase === 'initial-loading' || dataPhase === 'refreshing'
+  const dataBusy = isAsyncDataBusy(dataPhase, refreshTrigger)
   const gcTip = useMemo(() => {
     const gc = overview?.gc
     if (!gc) return 'GC 状态加载中'

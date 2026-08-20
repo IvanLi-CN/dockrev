@@ -2778,6 +2778,51 @@ html[data-theme="light"] .releaseDrawerContent {
   transition: opacity 160ms ease-out;
 }
 
+.asyncDataBackgroundNotice {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(520px, calc(100% - 24px));
+  min-height: 28px;
+  padding: 5px 9px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 82%, var(--color-primary) 18%);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--text) 14%, transparent);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  pointer-events: auto;
+}
+
+.asyncDataBackgroundNoticeError {
+  border-color: color-mix(in srgb, var(--color-error) 48%, var(--borderColor));
+  color: color-mix(in srgb, var(--color-error) 72%, var(--text));
+}
+
+.asyncDataBackgroundNoticeSuccess {
+  color: var(--color-success);
+}
+
+.asyncDataBackgroundRetry {
+  min-height: 22px;
+  height: 22px;
+  padding: 0 7px;
+  font-size: 11px;
+}
+
+@media (max-width: 620px) {
+  .asyncDataBackgroundNotice {
+    top: 8px;
+    right: 8px;
+    max-width: calc(100% - 16px);
+  }
+}
+
 .asyncDataOverlayLeaving {
   opacity: 0;
   pointer-events: none;
@@ -12492,6 +12537,30 @@ html[data-theme="light"] .btnPrimary {
 
 .table {
   gap: 6px;
+}
+
+.candidateVirtualTable {
+  min-width: 0;
+}
+
+.candidateVirtualScroller {
+  max-height: min(72vh, 960px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.candidateVirtualCanvas {
+  position: relative;
+  min-width: 100%;
+}
+
+.candidateVirtualItem {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  padding-bottom: 6px;
 }
 
 .tableGroup {

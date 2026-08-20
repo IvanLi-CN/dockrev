@@ -1,7 +1,11 @@
 import {
+  useEffect,
+  useMemo,
+  useRef,
   type CSSProperties,
   type ReactNode,
 } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   DOCKREV_AGGREGATE_GUARD_HINT,
   resolveAggregateUpdateActionState,
@@ -101,6 +105,31 @@ export function OperationsDashboardSectionView(props: {
     loadSource,
     loadTrigger,
   } = props.state;
+  const candidateScrollRef = useRef<HTMLDivElement | null>(null);
+  const candidateGroups = useMemo(
+    () =>
+      stacks.flatMap((stack) => {
+        const detail = details[stack.id];
+        if (!detail) return [];
+        const scope = buildStackAggregateScope(detail, filter, candidateSearch);
+        return scope.rows.length > 0 ? [{ stack, detail, scope }] : [];
+      }),
+    [candidateSearch, details, filter, stacks],
+  );
+  // TanStack Virtual returns imperative measurement functions that React Compiler must not memoize.
+  // eslint-disable-next-line react-hooks/incompatible-library
+  const candidateVirtualizer = useVirtualizer({
+    count: candidateGroups.length,
+    getScrollElement: () => candidateScrollRef.current,
+    estimateSize: () => 164,
+    overscan: 5,
+    getItemKey: (index) => candidateGroups[index]?.stack.id ?? index,
+    measureElement: (element) => element.getBoundingClientRect().height,
+  });
+
+  useEffect(() => {
+    candidateVirtualizer.measure();
+  }, [candidateGroups.length, candidateVirtualizer, collapsed]);
 
   return (
     <>
@@ -465,7 +494,7 @@ export function OperationsDashboardSectionView(props: {
           />
         </div>
 
-        <div className="table" style={{ marginTop: 14 }}>
+        <div className="table candidateVirtualTable" style={{ marginTop: 14 }}>
           <div className="tableHeader">
             <div>Service</div>
             <div>Image</div>
@@ -474,19 +503,20 @@ export function OperationsDashboardSectionView(props: {
             <div>操作</div>
           </div>
 
-          {stacks.map((st) => {
-            const d = details[st.id];
-            if (!d) return null;
-
-            const scope = buildStackAggregateScope(
-              d,
-              filter,
-              candidateSearch,
-            );
+          <div
+            aria-label="服务候选列表"
+            className="candidateVirtualScroller"
+            ref={candidateScrollRef}
+          >
+            <div
+              className="candidateVirtualCanvas"
+              style={{ height: candidateVirtualizer.getTotalSize() }}
+            >
+          {candidateVirtualizer.getVirtualItems().map((virtualRow) => {
+            const candidateGroup = candidateGroups[virtualRow.index];
+            if (!candidateGroup) return null;
+            const { stack: st, detail: d, scope } = candidateGroup;
             const rows = scope.rows;
-
-            if (rows.length === 0) return null;
-
             const isCollapsed = collapsed[st.id] ?? false;
             const totalServices = scope.visibleServiceCount;
             const groupSummary = formatGroupSummary(
@@ -515,6 +545,12 @@ export function OperationsDashboardSectionView(props: {
             return (
               <div
                 key={st.id}
+                className="candidateVirtualItem"
+                data-index={virtualRow.index}
+                ref={candidateVirtualizer.measureElement}
+                style={{ transform: `translateY(${virtualRow.start}px)` }}
+              >
+              <div
                 className={
                   isCollapsed ? "tableGroup" : "tableGroup tableGroupExpanded"
                 }
@@ -1094,8 +1130,11 @@ export function OperationsDashboardSectionView(props: {
                     })
                   : null}
               </div>
+              </div>
             );
           })}
+            </div>
+          </div>
         </div>
       </div>
 

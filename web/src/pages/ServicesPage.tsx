@@ -163,7 +163,7 @@ export function ServicesPage(props: {
                                 await restoreStack(stack.id);
                                 await Promise.all([
                                   requestRefresh({ source: "memory", trigger: "user-action" }),
-                                  requestArchivedRefresh(),
+                                  requestArchivedRefresh("user-action"),
                                 ]);
                               } catch (value: unknown) {
                                 setError(
@@ -250,7 +250,7 @@ export function ServicesPage(props: {
                               await restoreService(item.svc.id);
                               await Promise.all([
                                 requestRefresh({ source: "memory", trigger: "user-action" }),
-                                requestArchivedRefresh(),
+                                requestArchivedRefresh("user-action"),
                               ]);
                             } catch (value: unknown) {
                               setError(

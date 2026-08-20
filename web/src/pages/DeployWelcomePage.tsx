@@ -14,7 +14,7 @@ import { useManagementEventBatch } from '../managementEvents'
 import { navigate } from '../routes'
 import { Button, Label, Switch } from '../ui'
 import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
-import type { AsyncDataPhase, AsyncDataTrigger } from '../asyncData'
+import { isAsyncDataBusy, type AsyncDataPhase, type AsyncDataTrigger } from '../asyncData'
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
@@ -230,6 +230,7 @@ export function DeployWelcomePage() {
     : !report
       ? 'initial-loading'
       : loading ? 'refreshing' : 'ready-data'
+  const reportBusy = isAsyncDataBusy(reportPhase, reportTrigger)
 
   async function enterDashboard() {
     if (hasBlockingFailures) return
@@ -381,7 +382,7 @@ export function DeployWelcomePage() {
               <p className="deployWelcomeActionHint">勾选后，后续访问首页将直接进入 Dashboard；可在设置页手动重新打开本页面。</p>
             </div>
             <div className="deployWelcomeActions">
-              <Button variant="ghost" disabled={loading || saving} onClick={() => void refresh('user-action')}>
+              <Button variant="ghost" disabled={reportBusy || saving} onClick={() => void refresh('user-action')}>
                 重新检查
               </Button>
               <Button

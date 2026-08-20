@@ -16,6 +16,18 @@ export type StackListItem = {
   archivedServices?: number
 }
 
+export type StackOverviewDetail = {
+  id: string
+  name: string
+  services: Service[]
+  archived?: boolean
+}
+
+export type StacksOverviewResponse = {
+  stacks: StackListItem[]
+  details: StackOverviewDetail[]
+}
+
 export type ComposeConfig = {
   type: string
   composeFiles: string[]

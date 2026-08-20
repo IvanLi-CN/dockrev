@@ -19,6 +19,7 @@ type DemoInstallResult = {
 let installed = false
 
 const QUEUE_SNAPSHOT_KEY = buildReadonlySnapshotKey('queue', 'jobs-overview')
+const SERVICES_OVERVIEW_SNAPSHOT_KEY = buildReadonlySnapshotKey('services', 'operations-dashboard')
 
 function queueSummarySnapshot(fixture: Fixture) {
   const repos = fixture.githubPackagesRepos.filter((repo) => repo.selected)
@@ -55,9 +56,37 @@ function queueSummarySnapshot(fixture: Fixture) {
   }
 }
 
+function servicesOverviewSnapshot(fixture: Fixture) {
+  const stacks = fixture.stacks.filter((stack) => !stack.archived)
+  const details = Object.fromEntries(
+    stacks.flatMap((stack) => {
+      const detail = fixture.stackById[stack.id]
+      return detail
+        ? [[stack.id, {
+            id: detail.id,
+            name: detail.name,
+            services: detail.services,
+            ...(detail.archived === undefined ? {} : { archived: detail.archived }),
+          }]]
+        : []
+    }),
+  )
+  return {
+    version: 2 as const,
+    readiness: { stacks: true, jobs: true, discovery: true },
+    committedQueryKey: 'all',
+    stacks,
+    details,
+    jobs: fixture.jobs,
+    discoveredProjects: fixture.discoveredProjects,
+  }
+}
+
 function asyncBehavior(state: ReturnType<typeof readPublicDemoAsyncState>) {
   const delayedQueueRead = {
+    'GET /api/stacks/overview': { delayMs: 6_200 },
     'GET /api/jobs': { delayMs: 3_000 },
+    'GET /api/discovery/projects': { delayMs: 3_000 },
     'GET /api/version-inference/overview': { delayMs: 3_000 },
     'GET /api/github-packages/webhook/overview': { delayMs: 3_000 },
   }
@@ -71,6 +100,12 @@ function asyncBehavior(state: ReturnType<typeof readPublicDemoAsyncState>) {
         failTimes: 5,
         failureStatus: 503,
         failureBody: { error: '任务队列暂时不可用，请重试。' },
+      },
+      'GET /api/stacks/overview': {
+        delayMs: 350,
+        failTimes: 5,
+        failureStatus: 503,
+        failureBody: { error: '候选摘要暂时不可用，请重试。' },
       },
     }
   }
@@ -87,8 +122,12 @@ export async function installAppDemoApi(): Promise<DemoInstallResult> {
   if (asyncState === 'cold') {
     // A deterministic cold-start demo cannot inherit a prior local preview snapshot.
     await deleteReadonlySnapshot(QUEUE_SNAPSHOT_KEY)
-  } else if (asyncState === 'cache-refresh') {
+    await deleteReadonlySnapshot(SERVICES_OVERVIEW_SNAPSHOT_KEY)
+  } else if (asyncState === 'cache-refresh' || asyncState === 'error') {
     await writeReadonlySnapshot(QUEUE_SNAPSHOT_KEY, queueSummarySnapshot(initialFixture), {
+      staleAfterMs: 60_000,
+    })
+    await writeReadonlySnapshot(SERVICES_OVERVIEW_SNAPSHOT_KEY, servicesOverviewSnapshot(initialFixture), {
       staleAfterMs: 60_000,
     })
   }

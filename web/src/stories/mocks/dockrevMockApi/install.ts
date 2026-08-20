@@ -798,6 +798,20 @@ export function installDockrevMockApi(
     // stacks
     const lifecycleResponse = handleServiceLifecycleRoute({ scenario, method, urlPath, init, fixture: f, findService, jobSeqRef, json })
     if (lifecycleResponse) return lifecycleResponse
+    if (method === 'GET' && urlPath === '/api/stacks/overview') {
+      const stacks = f.stacks.filter((stack) => !stack.archived)
+      const details = stacks.flatMap((stack) => {
+        const detail = f.stackById[stack.id]
+        if (!detail) return []
+        return [{
+          id: detail.id,
+          name: detail.name,
+          services: detail.services,
+          ...(detail.archived === undefined ? {} : { archived: detail.archived }),
+        }]
+      })
+      return json({ stacks, details })
+    }
     if (method === 'GET' && (urlPathWithQuery === '/api/stacks' || urlPathWithQuery.startsWith('/api/stacks?'))) {
       const query = url?.search ? url.search.slice(1) : urlPathWithQuery.includes('?') ? urlPathWithQuery.split('?')[1] : ''
       const params = new URLSearchParams(query)

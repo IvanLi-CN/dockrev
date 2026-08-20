@@ -1,4 +1,39 @@
 #[tokio::test]
+async fn stacks_overview_returns_summary_without_stack_detail_payload() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let compose_path = format!("/tmp/dockrev-overview-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "overview-demo", &compose_path).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/stacks/overview")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = response_json(response).await;
+    assert_eq!(body["stacks"][0]["id"], stack_id);
+    assert_eq!(body["details"][0]["id"], stack_id);
+    assert_eq!(body["details"][0]["services"][0]["name"], "web");
+    assert!(body["details"][0].get("compose").is_none());
+
+    let _ = std::fs::remove_file(compose_path);
+}
+
+#[tokio::test]
 async fn update_stop_endpoint_accepts_once_then_conflicts_and_audits_requester() {
     let state = test_state_with_authz(":memory:", Some("alice"), None, false).await;
     let app = api::router(state.clone());

@@ -2,6 +2,7 @@ export * from './api/types'
 
 import type {
   StackListItem,
+  StacksOverviewResponse,
   StackSettings,
   ServiceSettings,
   ServiceBackupRecordsResponse,
@@ -67,6 +68,7 @@ import type {
   RemoveGitHubPackagesTargetResponse,
   ServiceLifecycleState
 } from './api/types'
+import { ASYNC_GET_DEADLINE_MS } from './asyncData'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -87,6 +89,37 @@ export class ApiError extends Error {
     this.code = input.code
     this.details = input.details
     this.bodyText = input.bodyText
+  }
+}
+
+export class ApiRequestTimeoutError extends ApiError {
+  constructor() {
+    super({ status: 408, code: 'request_timeout', message: '请求超时，请重试。' })
+    this.name = 'ApiRequestTimeoutError'
+  }
+}
+
+function isReadRequest(init?: RequestInit): boolean {
+  return (init?.method ?? 'GET').toUpperCase() === 'GET'
+}
+
+function createReadRequestDeadline(signal: AbortSignal | null | undefined) {
+  const controller = new AbortController()
+  let timedOut = false
+  const relayAbort = () => controller.abort(signal?.reason)
+  if (signal?.aborted) relayAbort()
+  else signal?.addEventListener('abort', relayAbort, { once: true })
+  const timer = globalThis.setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, ASYNC_GET_DEADLINE_MS)
+  return {
+    signal: controller.signal,
+    didTimeout: () => timedOut,
+    dispose: () => {
+      globalThis.clearTimeout(timer)
+      signal?.removeEventListener('abort', relayAbort)
+    },
   }
 }
 
@@ -148,7 +181,7 @@ export function asAuthRequiredDetails(details: unknown): AuthRequiredDetails | n
 }
 
 function dispatchAuthRequired(error: ApiError) {
-  if (typeof window === 'undefined') return
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return
   if (error.status !== 401 || error.code !== 'auth_required') return
   window.dispatchEvent(
     new CustomEvent(AUTH_REQUIRED_EVENT, {
@@ -163,18 +196,28 @@ function dispatchAuthRequired(error: ApiError) {
 }
 
 function dispatchAuthRecovered() {
-  if (typeof window === 'undefined') return
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return
   window.dispatchEvent(new CustomEvent(AUTH_RECOVERED_EVENT))
 }
 
 async function apiFetch(path: string, init?: RequestInit) {
-  const resp = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers || {}),
-    },
-  })
+  const deadline = isReadRequest(init) ? createReadRequestDeadline(init?.signal) : null
+  let resp: Response
+  try {
+    resp = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      signal: deadline?.signal ?? init?.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(init?.headers || {}),
+      },
+    })
+  } catch (error) {
+    if (deadline?.didTimeout()) throw new ApiRequestTimeoutError()
+    throw error
+  } finally {
+    deadline?.dispose()
+  }
 
   if (!resp.ok) {
     const contentType = resp.headers.get('content-type') ?? ''
@@ -226,6 +269,11 @@ export async function listStacks(): Promise<StackListItem[]> {
   const resp = await apiFetch('/api/stacks')
   const data = await resp.json()
   return data.stacks as StackListItem[]
+}
+
+export async function getStacksOverview(): Promise<StacksOverviewResponse> {
+  const resp = await apiFetch('/api/stacks/overview')
+  return (await resp.json()) as StacksOverviewResponse
 }
 
 export async function listStacksArchived(filter: 'exclude' | 'include' | 'only'): Promise<StackListItem[]> {
