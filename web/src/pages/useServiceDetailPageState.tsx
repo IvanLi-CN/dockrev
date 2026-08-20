@@ -25,9 +25,8 @@ import { useSupervisorHealth } from '../useSupervisorHealth'
 import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay, inferResolvedTagsFromSnapshot, isStrictSemverTag } from '../versionDisplay'
 import { isRollbackTargetRefreshCurrent, retryRollbackTargetDigestMismatch } from './rollbackTargetRefresh'
 import { managementEventAffectsServiceDetail } from './serviceDetailManagement'
-import type { AsyncDataPhase } from '../asyncData'
+import type { AsyncDataPhase, AsyncDataTrigger } from '../asyncData'
 export { managementEventAffectsServiceDetail } from './serviceDetailManagement'
-
 export function useServiceDetailPageState(props: {
   stackId: string
   serviceId: string
@@ -126,11 +125,9 @@ export function useServiceDetailPageState(props: {
   serviceRef.current = service
   settingsRef.current = settings
   backupRecordsRef.current = backupRecords
-
   const [newRuleKind, setNewRuleKind] = useState<'exact' | 'prefix' | 'regex' | 'semver'>('regex')
   const [newRuleValue, setNewRuleValue] = useState('.*')
   const [newRuleNote, setNewRuleNote] = useState('blocked via UI')
-
   const warnRollbackTargetDiscard = useCallback(
     (reason: string, requestId: number, svc: Service | null, target: ServiceRollbackTargetResponse | null, source: string) => {
       console.warn('[dockrev] discard rollback target response', {
@@ -145,7 +142,6 @@ export function useServiceDetailPageState(props: {
     },
     [serviceId],
   )
-
   const applyRollbackTargetSnapshot = useCallback((requestId: number, svc: Service | null, target: ServiceRollbackTargetResponse | null, source: string): 'applied' | 'outdated' | 'digest_mismatch' => {
     if (!isRollbackTargetRefreshCurrent(requestId, stackRefreshRequestIdRef.current, latestAppliedStackRefreshRequestIdRef.current)) {
       warnRollbackTargetDiscard('outdated_request', requestId, svc, target, source)
@@ -161,7 +157,6 @@ export function useServiceDetailPageState(props: {
     setRollbackTargetRefreshing(false)
     return 'applied'
   }, [warnRollbackTargetDiscard])
-
   const settleRollbackTargetSnapshot = useCallback(async (requestId: number, svc: Service, target: ServiceRollbackTargetResponse | null) => {
     const result = await retryRollbackTargetDigestMismatch({
       initialTarget: target,
@@ -193,7 +188,6 @@ export function useServiceDetailPageState(props: {
     }
     throw result.error
   }, [applyRollbackTargetSnapshot, serviceId, warnRollbackTargetDiscard])
-
   const primeRollbackTargetRefresh = useCallback((svc: Service | null) => {
     if (!svc || isDockrevService(svc)) {
       setRollbackTarget(null)
@@ -209,7 +203,6 @@ export function useServiceDetailPageState(props: {
     if (!rollbackActiveTarget?.activeJobId) setRollbackActiveTarget(null)
     setRollbackTargetRefreshing(true)
   }, [rollbackActiveTarget, rollbackTarget])
-
   const refresh = useCallback(async () => {
     const fullRefreshRequestId = ++fullRefreshRequestIdRef.current
     const stackRequestId = ++stackRefreshRequestIdRef.current
@@ -231,7 +224,6 @@ export function useServiceDetailPageState(props: {
         setService(svc)
         primeRollbackTargetRefresh(svc)
       }
-
       const backupResult = Promise.allSettled([
         getServiceBackupTargets(serviceId),
         getServiceBackupRecords(serviceId),
@@ -268,18 +260,15 @@ export function useServiceDetailPageState(props: {
         (reason: unknown) => ({ status: 'rejected' as const, reason }),
       )
       const errors: string[] = []
-
       if (settingsRes.status === 'rejected') errors.push(errorMessage(settingsRes.reason))
       if (stackSettingsRes.status === 'rejected') errors.push(errorMessage(stackSettingsRes.reason))
       if (rulesRes.status === 'rejected') errors.push(errorMessage(rulesRes.reason))
       if (rollbackRes.status === 'rejected') errors.push(errorMessage(rollbackRes.reason))
-
       if (
         stackRequestId !== stackRefreshRequestIdRef.current ||
         stackRequestId < latestAppliedStackRefreshRequestIdRef.current ||
         fullRefreshRequestId < latestAppliedFullRefreshRequestIdRef.current
       ) return
-
       if (settingsRes.status === 'fulfilled') {
         setSettings(settingsRes.value)
         setSettingsPhase('ready-data')
@@ -314,7 +303,6 @@ export function useServiceDetailPageState(props: {
       throw error
     }
   }, [onLastScanHint, primeRollbackTargetRefresh, serviceId, settleRollbackTargetSnapshot, stackId])
-
   const refreshStackOnly = useCallback(async (expectedPageGeneration = pageGenerationRef.current) => {
     if (expectedPageGeneration !== pageGenerationRef.current) return
     const requestId = ++stackRefreshRequestIdRef.current
@@ -344,7 +332,6 @@ export function useServiceDetailPageState(props: {
       throw error
     }
   }, [primeRollbackTargetRefresh, serviceId, settleRollbackTargetSnapshot, stackId])
-
   const patchServiceInStack = useCallback(
     (patch: (svc: Service) => Service) => {
       setStack((prev) => {
@@ -358,7 +345,6 @@ export function useServiceDetailPageState(props: {
         if (!changed) return prev
         return { ...prev, services: nextServices }
       })
-
       setService((prev) => {
         if (!prev || prev.id !== serviceId) return prev
         return patch(prev)
@@ -366,9 +352,16 @@ export function useServiceDetailPageState(props: {
     },
     [serviceId],
   )
-
-  const requestRefresh = usePageResumeRefresh(refresh, { onError: (error: unknown) => { if (pageGeneration === pageGenerationRef.current) setError(errorMessage(error)) } })
-
+  const [refreshTrigger, setRefreshTrigger] = useState<AsyncDataTrigger>('background')
+  const backgroundRefresh = useCallback(async () => {
+    setRefreshTrigger('background')
+    await refresh()
+  }, [refresh])
+  const pageResumeRefresh = usePageResumeRefresh(backgroundRefresh, { onError: (error: unknown) => { if (pageGeneration === pageGenerationRef.current) setError(errorMessage(error)) } })
+  const requestRefresh = useCallback((trigger: AsyncDataTrigger = 'background') => {
+    setRefreshTrigger(trigger)
+    return pageResumeRefresh()
+  }, [pageResumeRefresh])
   const refreshLifecycleStatus = useCallback(async (expectedPageGeneration = pageGenerationRef.current) => {
     if (expectedPageGeneration !== pageGenerationRef.current) return
     const requestId = ++lifecycleStatusRequestIdRef.current
@@ -393,7 +386,6 @@ export function useServiceDetailPageState(props: {
       throw error
     }
   }, [service])
-
   const seedLifecycleActiveJob = useCallback(
     (jobId: string, type: 'rollback' | 'service_lifecycle', action: ServiceLifecycleAction | null = null) => {
       lifecycleStatusRequestIdRef.current += 1
@@ -406,7 +398,6 @@ export function useServiceDetailPageState(props: {
     },
     [],
   )
-
   useEffect(() => {
     const clearSubmittingTokens = () => {
       for (const target of submittingTokensRef.current.values()) {
@@ -424,26 +415,21 @@ export function useServiceDetailPageState(props: {
     setStack(null); setService(null); setSettings(null); setSettingsPhase('initial-loading'); setBackupTargets(null); setBackupRecords([]); setBackupLoaded(false); setBackupLoadError(null); setBackupPhase('initial-loading'); setStackSettings(null); setRules([]); setLifecycleStatus(null); setLastSuccessfulRefreshAt(null)
     setRollbackTarget(null); setRollbackActiveTarget(null); setRollbackTargetRefreshing(false)
     setError(null); setNotice(null); setBusy(false); setRepoInferBusy(false)
-
     return clearSubmittingTokens
   }, [endSubmitting, serviceId, stackId])
-
   useEffect(() => {
     const generation = pageGenerationRef.current
     void requestRefresh().catch((e: unknown) => {
       if (generation === pageGenerationRef.current) setError(errorMessage(e))
     })
   }, [requestRefresh, serviceId, stackId])
-
   useEffect(() => {
     void refreshLifecycleStatus(pageGenerationRef.current).catch(() => {})
   }, [refreshLifecycleStatus])
-
   useEffect(() => {
     const onUpdateJobSettled = (evt: Event) => {
       const detail = evt instanceof CustomEvent ? (evt.detail as UpdateJobSettledDetail | null) : null
       if (!detail) return
-
       const matchesCurrent =
         detail.scope === 'all' ||
         detail.target === 'all' ||
@@ -452,17 +438,14 @@ export function useServiceDetailPageState(props: {
         detail.target === `stack:${stackId}` ||
         detail.target === `service:${serviceId}`
       if (!matchesCurrent) return
-
       const generation = pageGenerationRef.current
       void refreshStackOnly(generation).catch((error: unknown) => { if (generation === pageGenerationRef.current) setError(errorMessage(error)) })
     }
-
     window.addEventListener(UPDATE_JOB_SETTLED_EVENT, onUpdateJobSettled)
     return () => {
       window.removeEventListener(UPDATE_JOB_SETTLED_EVENT, onUpdateJobSettled)
     }
   }, [refreshStackOnly, serviceId, stackId])
-
   useEffect(() => {
     const previousActiveJobId = rollbackActiveJobIdRef.current
     rollbackActiveJobIdRef.current = rollbackActiveJobId
@@ -470,9 +453,7 @@ export function useServiceDetailPageState(props: {
       publishServiceTreeRefresh({ stackId, serviceId, reason: 'rollback-job-settled' })
     }
   }, [rollbackActiveJobId, serviceId, stackId])
-
   useRollbackTargetInvariantWarning(service, rollbackTarget)
-
   const applyDigestSnapshotUpdate = useCallback(
     (detail: DigestSnapshotUpdatedDetail) => {
       const imageRepo = (detail.imageRepo ?? '').trim().toLowerCase()
@@ -480,17 +461,13 @@ export function useServiceDetailPageState(props: {
       const triggerServiceId = (detail.triggerServiceId ?? '').trim()
       if (!imageRepo || !digestNorm) return
       if (!triggerServiceId || triggerServiceId !== serviceId) return
-
       const failures = scanHasFailures(detail.scan)
       const complete = scanIsComplete(detail.scan)
-
       patchServiceInStack((prev) => {
         const svcRepo = imageRepoFromImageRef(prev.image.ref)
         if (!svcRepo || svcRepo !== imageRepo) return prev
-
         let changed = false
         let next: Service = prev
-
         const currentDigest = normalizeDigest(prev.image.digest)?.toLowerCase() ?? null
         if (currentDigest && currentDigest === digestNorm && !isStrictSemverTag(prev.image.tag)) {
           const inferred = inferResolvedTagsFromSnapshot(detail.tags, prev.image.tag)
@@ -507,7 +484,6 @@ export function useServiceDetailPageState(props: {
             }
           }
         }
-
         const candidate = next.candidate
         const candidateDigest = candidate ? normalizeDigest(candidate.digest)?.toLowerCase() ?? null : null
         if (candidate && candidateDigest && candidateDigest === digestNorm && !isStrictSemverTag(candidate.tag)) {
@@ -521,13 +497,11 @@ export function useServiceDetailPageState(props: {
             }
           }
         }
-
         return changed ? next : prev
       })
     },
     [patchServiceInStack, serviceId],
   )
-
   useEffect(() => {
     if (typeof window === 'undefined') return
     const onDigestSnapshotUpdated = (evt: Event) => {
@@ -543,7 +517,6 @@ export function useServiceDetailPageState(props: {
       window.removeEventListener(DIGEST_SNAPSHOT_UPDATED_EVENT, onDigestSnapshotUpdated)
     }
   }, [applyDigestSnapshotUpdate])
-
   useManagementEventBatch(({ events, resyncRequired }) => {
     const relevant = resyncRequired || events.some((event) =>
       managementEventAffectsServiceDetail(event, stackId, serviceId, service),
@@ -554,7 +527,6 @@ export function useServiceDetailPageState(props: {
       .then(() => { if (generation === pageGenerationRef.current) publishServiceTreeRefresh({ stackId, serviceId, reason: 'management-event' }) })
       .catch((error: unknown) => { if (generation === pageGenerationRef.current) setError(errorMessage(error)) })
   })
-
   const archiveOrRestoreService = useCallback(async () => {
     if (!service) return
     const generation = pageGeneration
@@ -573,7 +545,6 @@ export function useServiceDetailPageState(props: {
       if (generation === pageGenerationRef.current) setBusy(false)
     }
   }, [pageGeneration, requestRefresh, service])
-
   const blockServiceUpdates = useCallback(async () => {
     const generation = pageGeneration
     setBusy(true)
@@ -593,7 +564,6 @@ export function useServiceDetailPageState(props: {
       if (generation === pageGenerationRef.current) setBusy(false)
     }
   }, [pageGeneration, requestRefresh, serviceId])
-
   const requestRollback = useCallback(() => {
     void (async () => {
       const generation = pageGeneration
@@ -712,7 +682,6 @@ export function useServiceDetailPageState(props: {
       }
     })()
   }, [confirm, pageGeneration, refreshLifecycleStatus, refreshStackOnly, rollbackActiveJobId, rollbackBackupValue, rollbackTarget, seedLifecycleActiveJob, service, serviceId, stack?.name, stackId])
-
   const requestLifecycleAction = useCallback((action: ServiceLifecycleAction) => {
     void (async () => {
       const generation = pageGeneration
@@ -764,7 +733,6 @@ export function useServiceDetailPageState(props: {
       }
     })()
   }, [activeLifecycleJob?.id, confirm, pageGeneration, refreshLifecycleStatus, seedLifecycleActiveJob, service, serviceId, stackId])
-
   const requestPreviewUpdate = useCallback(() => {
     void (async () => {
       const generation = pageGeneration
@@ -797,7 +765,6 @@ export function useServiceDetailPageState(props: {
       }
     })()
   }, [pageGeneration, requestRefresh, service, stackId])
-
   const requestApplyUpdate = useCallback(() => {
     void (async () => {
       const generation = pageGeneration
@@ -904,15 +871,12 @@ export function useServiceDetailPageState(props: {
     stackId,
     trackJob,
   ])
-
   const openDockrevSelfUpgrade = useCallback(() => {
     openSelfUpgradeUrl(selfUpgradeUrl)
   }, [selfUpgradeUrl])
-
   const retryDockrevSelfUpgrade = useCallback(() => {
     void checkSupervisor()
   }, [checkSupervisor])
-
   const dockrevSelfUpgradeAction = useMemo(() => {
     if (!service || !isDockrevService(service)) return null
     const disabledReason =
@@ -942,7 +906,6 @@ export function useServiceDetailPageState(props: {
     supervisorErrorAt,
     supervisorState.status,
   ])
-
   const topActions = useMemo(() => {
     if (dockrevSelfUpgradeAction) {
       const selfUpgradeItems = [
@@ -963,7 +926,6 @@ export function useServiceDetailPageState(props: {
         </>
       )
     }
-
     const candidateReason = !service
       ? '服务信息加载中'
       : service.ignore?.matched
@@ -1056,7 +1018,6 @@ export function useServiceDetailPageState(props: {
       ? { ...lifecycleItems.find((item) => item.id === `lifecycle-${activeLifecycleJob.action ?? 'restart'}`)!, label: activeLifecycleJob.status === 'queued' ? '操作排队中…' : '操作进行中…', disabled: false, loading: true, loadingClickable: true, description: '任务进行中，点击查看任务详情' }
       : lifecycleState === 'stopped' ? lifecycleItems[0] : lifecycleItems[1]
     const stackItem = { id: 'stack-details', label: 'Stack 详情', icon: Layers3, disabled: busy, onSelect: () => navigate({ name: 'stack' as const, stackId }) }
-
     return (
       <>
         <div className="serviceDesktopActions">
@@ -1072,7 +1033,6 @@ export function useServiceDetailPageState(props: {
       </>
     )
   }, [activeLifecycleJob, activeOperation, activeOperationOwner, activeRollbackJob, activeUpdateJob, applyActiveJob, applySubmitting, busy, dockrevSelfUpgradeAction, lifecycleStatus, requestApplyUpdate, requestLifecycleAction, requestPreviewUpdate, requestRollback, rollbackActiveJobStatus, rollbackHint, rollbackTarget?.available, rollbackTargetRefreshing, service, stackId])
-
   const dangerousActions = useMemo(
     () => (
       <>
@@ -1098,10 +1058,8 @@ export function useServiceDetailPageState(props: {
     ),
     [archiveOrRestoreService, blockServiceUpdates, busy, service],
   )
-
   const draftRepoUrl = useMemo(() => normalizeExternalHttpUrl(settings?.repoUrl), [settings?.repoUrl])
   const settingsBusy = busy || repoInferBusy
-
   const tone = useMemo(() => (service ? svcTone(service) : 'muted'), [service])
   const bannerClass = operationProgress
     ? 'svcBanner svcBannerInfo'
@@ -1114,7 +1072,6 @@ export function useServiceDetailPageState(props: {
         : tone === 'bad'
           ? 'svcBannerDot svcBannerDotBad'
           : 'svcBannerDot'
-
   const bannerTitle = useMemo(() => {
     if (operationProgress) return operationProgress.bannerLabel
     if (!service) return '加载中…'
@@ -1127,10 +1084,8 @@ export function useServiceDetailPageState(props: {
     if (st === 'hint') return '需确认（arch 未知）'
     return '可更新'
   }, [operationProgress, service])
-
   const bannerDetail = useMemo<ReactNode>(() => {
     if (!service) return null
-
     const currentTag = formatTagDisplay(
       service.image.tag,
       service.image.resolvedTag,
@@ -1158,7 +1113,6 @@ export function useServiceDetailPageState(props: {
       </span>
     )
   }, [service])
-
   const rawComposeType = typeof stack?.compose?.type === 'string' ? stack.compose.type.trim() : ''
   const composeType = rawComposeType || '-'
   const composeFilesRaw = Array.isArray(stack?.compose?.composeFiles) ? stack.compose.composeFiles : []
@@ -1208,6 +1162,7 @@ export function useServiceDetailPageState(props: {
     operationProgress,
     repoInferBusy,
     requestRefresh,
+    refreshTrigger,
     requestApplyUpdate,
     requestRollback,
     rollbackTarget,

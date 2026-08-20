@@ -64,6 +64,9 @@ import {
   HomepageTopStrip,
 } from "./OverviewPageChrome";
 import { HomepageFloatingToolPanel } from "./OverviewFloatingToolPanel";
+import { HomepageNavSkeleton } from "./HomepageNavSkeleton";
+import { AsyncDataRegion } from "../components/AsyncDataRegion";
+import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from "../asyncData";
 
 const HOMEPAGE_COLUMN_BREAKPOINTS = [
   { query: "(max-width: 720px)", columns: 1 },
@@ -413,6 +416,7 @@ export function OverviewPage(props: {
   const [resourceError, setResourceError] = useState<string | null>(null);
   const [noticeCheckJobId, setNoticeCheckJobId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(true);
+  const [refreshTrigger, setRefreshTrigger] = useState<AsyncDataTrigger>('background');
   const [cachedCards, setCachedCards] = useState<HomepageNavCard[]>([]);
   const [hasCachedNavSnapshot, setHasCachedNavSnapshot] = useState(false);
   const [resourceFromCache, setResourceFromCache] = useState(false);
@@ -477,8 +481,9 @@ export function OverviewPage(props: {
     };
   }, []);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (options: { trigger?: AsyncDataTrigger } = {}) => {
     const requestId = ++refreshRequestIdRef.current;
+    setRefreshTrigger(options.trigger ?? 'background');
     setRefreshing(true);
     try {
       const payload = await getHomepageNav();
@@ -534,6 +539,13 @@ export function OverviewPage(props: {
   }, [onLastScanHint]);
 
   const requestRefresh = refresh;
+  const homepageHasData = cards.length > 0 || hasCachedNavSnapshot || liveLoaded;
+  const homepagePhase: AsyncDataPhase = resourceError
+    ? 'error'
+    : refreshing
+      ? homepageHasData ? 'refreshing' : 'initial-loading'
+      : homepageHasData ? 'ready-data' : 'ready-empty';
+  const homepageSource: AsyncDataSource = liveLoaded ? 'live' : hasCachedNavSnapshot ? 'fresh-snapshot' : 'none';
 
   useEffect(() => {
     void requestRefresh().catch((value: unknown) =>
@@ -553,7 +565,7 @@ export function OverviewPage(props: {
               setBusy(true);
               setError(null);
               try {
-                await requestRefresh();
+                await requestRefresh({ trigger: 'user-action' });
               } catch (value: unknown) {
                 setError(
                   value instanceof Error ? value.message : String(value),
@@ -579,7 +591,7 @@ export function OverviewPage(props: {
               try {
                 const response = await triggerCheck("all");
                 setNoticeCheckJobId(response.checkId);
-                await requestRefresh();
+                await requestRefresh({ trigger: 'user-action' });
               } catch (value: unknown) {
                 if (value instanceof ApiError && value.status === 409) {
                   const details = value.details;
@@ -797,43 +809,18 @@ export function OverviewPage(props: {
         ) : null}
       </div>
 
-      {groupedCards.length === 0 && refreshing && !hasCachedNavSnapshot ? (
-        <div className="homepageNavSkeleton" aria-label="正在加载服务入口">
-          {Array.from({ length: 3 }).map((_, groupIndex) => (
-            <section
-              key={`homepage-skeleton-group-${groupIndex}`}
-              className="homepageDashboardGroup homepageDashboardGroupSkeleton"
-            >
-              <div className="homepageDashboardGroupHeader">
-                <span className="homepageSkeletonLine homepageSkeletonTitle" />
-                <span className="homepageSkeletonPill" />
-              </div>
-              <div className="homepageDashboardStack">
-                {Array.from({ length: groupIndex === 0 ? 2 : 1 }).map((__, cardIndex) => (
-                  <div
-                    key={`homepage-skeleton-card-${groupIndex}-${cardIndex}`}
-                    className="homepageServiceCard homepageServiceCardSkeleton"
-                  >
-                    <div className="homepageServiceCardTop">
-                      <span className="homepageServiceIcon homepageSkeletonBlock" />
-                      <span className="homepageServiceCardIdentity">
-                        <span className="homepageSkeletonLine" />
-                        <span className="homepageSkeletonLine homepageSkeletonLineShort" />
-                      </span>
-                      <span className="homepageServiceDetailButton homepageSkeletonBlock" />
-                    </div>
-                    <div className="homepageServiceMetricsGrid">
-                      {["CPU", "MEM", "RX", "TX"].map((label) => (
-                        <CardMetric key={label} value="-" label={label} />
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-          ))}
-        </div>
-      ) : groupedCards.length === 0 ? (
+      <AsyncDataRegion
+        className="homepageNavRegion"
+        error={resourceError}
+        hasData={homepageHasData}
+        label="正在刷新服务入口"
+        onRetry={() => void requestRefresh({ trigger: 'user-action' }).catch(() => undefined)}
+        phase={homepagePhase}
+        skeleton={<HomepageNavSkeleton />}
+        source={homepageSource}
+        trigger={refreshTrigger}
+      >
+      {groupedCards.length === 0 ? (
         <div className="homepageEmptyState">
           <Activity className="homepageEmptyIcon" aria-hidden="true" />
           <div>
@@ -956,6 +943,7 @@ export function OverviewPage(props: {
           ))}
         </div>
       )}
+      </AsyncDataRegion>
 
       {error ? <div className="error">{error}</div> : null}
       {noticeCheckJobId ? (

@@ -138,9 +138,11 @@ export function useOverviewPageState(props: {
   const stacksLoadedRef = useRef(false)
   const jobsLoadedRef = useRef(false)
   const discoveryLoadedRef = useRef(false)
+  const detailsRef = useRef<Record<string, StackDetail | undefined>>({})
   stacksLoadedRef.current = stacksLoaded
   jobsLoadedRef.current = jobsLoaded
   discoveryLoadedRef.current = discoveryLoaded
+  detailsRef.current = details
   const { beginSubmitting, endSubmitting, trackJob, isTargetBusy, getActiveJobByTarget, isTargetSubmitting } =
     useUpdateActionTracker()
   const supervisor = useSupervisorHealth()
@@ -280,27 +282,30 @@ export function useOverviewPageState(props: {
 
       const maxLastScan = nextStacks.map((item) => item.lastCheckAt).sort().at(-1)
       setStacks(nextStacks)
-      setStacksLoaded(true)
       onLastScanHint(maxLastScan)
       const details = await Promise.all(
         nextStacks.map(async (item) => {
           try {
-            return [item.id, await getStack(item.id)] as const
+            return { id: item.id, detail: await getStack(item.id) }
           } catch {
-            return [item.id, undefined] as const
+            return { id: item.id, detail: undefined }
           }
         }),
       )
       if (requestId !== latestAppliedStacksRequestIdRef.current) return false
-      setDetails(Object.fromEntries(details))
-      const detailsReady = details.every(([, detail]) => detail !== undefined)
+      const nextDetails = Object.fromEntries(
+        nextStacks.map((item) => [item.id, details.find((result) => result.id === item.id)?.detail ?? detailsRef.current[item.id]]),
+      )
+      setDetails(nextDetails)
+      const detailsReady = details.every(({ detail }) => detail !== undefined)
       setStackDetailsLoaded(detailsReady)
       if (!detailsReady) {
         setStacksLoadError('部分 Stack 详情暂时不可用，请重试。')
         setStacksPhase('error')
         return false
       }
-      setStacksPhase('ready-data')
+      setStacksLoaded(true)
+      setStacksPhase(nextStacks.length === 0 ? 'ready-empty' : 'ready-data')
       return true
     }
 

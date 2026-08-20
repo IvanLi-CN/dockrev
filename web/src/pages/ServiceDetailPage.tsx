@@ -41,6 +41,7 @@ import { ServiceMobileActionMenu, ServiceStackDetailAction } from "../components
 import { ImageLinkIcons, RepositoryLinkIcon, splitImageNameForDisplay, splitImageRef } from "../imageLinks";
 import { publishServiceTreeRefresh } from "../serviceTreeRefresh";
 import { ServiceComposeTagField } from "./ServiceComposeTagField";
+import { ServiceDetailIdentifiersCard } from "./ServiceDetailIdentifiersCard";
 import {
   backupPolicyHint,
   backupRelationshipLabel,
@@ -78,7 +79,6 @@ type ServiceDetailSnapshotPayload = {
   backupRecords: ServiceBackupRecordItem[];
   monitoring: ServiceResourceSnapshot | null;
 };
-
 function isServiceDetailSnapshotPayload(value: unknown): value is ServiceDetailSnapshotPayload {
   if (!value || typeof value !== "object") return false;
   const payload = value as Record<string, unknown>;
@@ -129,6 +129,7 @@ export function ServiceDetailPage(props: {
     applySubmitting,
     repoInferBusy,
     requestRefresh,
+    refreshTrigger,
     requestApplyUpdate,
     requestRollback,
     rollbackTarget,
@@ -259,7 +260,6 @@ export function ServiceDetailPage(props: {
       cancelled = true;
     };
   }, [snapshotKey]);
-
   useEffect(() => {
     historyRequestIdRef.current += 1;
     versionJobsRequestIdRef.current += 1;
@@ -278,12 +278,10 @@ export function ServiceDetailPage(props: {
     setSnapshotAnchorFetchedAt(null);
     setHistorySnapshotHydrated(false);
   }, [props.serviceId]);
-
   useEffect(() => {
     if (!historySnapshotHydrated) return;
     void refreshRecentJobs(false, historyCursorRef.current).catch(() => undefined);
   }, [historySnapshotHydrated, props.serviceId, refreshRecentJobs]);
-
   useEffect(() => {
     void refreshVersionJobs().catch(() => undefined);
   }, [refreshVersionJobs]);
@@ -292,13 +290,11 @@ export function ServiceDetailPage(props: {
     void refreshRecentJobs().catch(() => undefined);
     void refreshVersionJobs().catch(() => undefined);
   }, [notice?.jobId, refreshRecentJobs, refreshVersionJobs]);
-
   useEffect(() => {
     if (!lifecycleSettledJobId) return;
     void refreshRecentJobs(true).catch(() => undefined);
     void refreshVersionJobs().catch(() => undefined);
   }, [lifecycleSettledJobId, refreshRecentJobs, refreshVersionJobs]);
-
   useManagementEventBatch(({ events, resyncRequired }) => {
     if (!isOnline) return;
     const relevant = resyncRequired || events.some((event) =>
@@ -313,7 +309,6 @@ export function ServiceDetailPage(props: {
     void refreshRecentJobs(true).catch(() => undefined);
     void refreshVersionJobs().catch(() => undefined);
   });
-
   useEffect(() => {
     let cancelled = false;
     if (!isOnline) return undefined;
@@ -343,13 +338,11 @@ export function ServiceDetailPage(props: {
       cancelled = true;
     };
   }, [isOnline, props.serviceId]);
-
   useEffect(() => {
     if (!lastSuccessfulRefreshAt) return;
     setSnapshotActive(false);
     setSnapshotAnchorFetchedAt(null);
   }, [lastSuccessfulRefreshAt]);
-
   useEffect(() => {
     if (!stack || !service) return;
     void writeReadonlySnapshot(
@@ -378,7 +371,6 @@ export function ServiceDetailPage(props: {
       },
     );
   }, [backupPhase, backupRecords, backupTargets, historyCursor, historyCursorStack, historyNextCursor, historyPhase, jobs, monitoringSnapshot, props.serviceId, props.stackId, service, snapshotAnchorFetchedAt, snapshotKey, stack]);
-
   const snapshotService = useMemo(() => snapshotPayload?.stack.services.find((item) => item.id === props.serviceId) ?? null, [props.serviceId, snapshotPayload]);
   const effectiveStack = stack ?? snapshotPayload?.stack ?? null;
   const effectiveService = service ?? snapshotService;
@@ -391,24 +383,21 @@ export function ServiceDetailPage(props: {
     if (!effectiveStack || !effectiveService) return null;
     return <ServiceTopbarMonitorSummary snapshot={effectiveMonitoringSnapshot} />;
   }, [effectiveMonitoringSnapshot, effectiveService, effectiveStack]);
-
   useEffect(() => {
     onPageTitle?.(effectiveService?.name ?? "");
     return () => onPageTitle?.("");
   }, [effectiveService?.id, effectiveService?.name, onPageTitle]);
-
   useEffect(() => {
     onTopbarContent?.(topbarMonitorSummary);
     return () => onTopbarContent?.(null);
   }, [onTopbarContent, topbarMonitorSummary]);
-
   useEffect(() => {
     if (readonlyUi) {
       onTopActions(
         <>
           <div className="serviceDesktopActions">
             <ServiceStackDetailAction disabled={busy} onClick={() => navigate({ name: "stack", stackId: props.stackId })} />
-            <Button disabled={busy || !isOnline} onClick={() => void requestRefresh()}>
+            <Button disabled={busy || !isOnline} onClick={() => void requestRefresh("user-action")}>
               刷新
             </Button>
           </div>
@@ -423,7 +412,7 @@ export function ServiceDetailPage(props: {
                     icon: RotateCw,
                     disabled: busy || !isOnline,
                     description: !isOnline ? "当前离线，无法刷新服务详情" : undefined,
-                    onSelect: () => void requestRefresh(),
+                    onSelect: () => void requestRefresh("user-action"),
                   },
                   {
                     id: "stack-detail",
@@ -443,7 +432,6 @@ export function ServiceDetailPage(props: {
     onTopActions(topActions);
     return () => onTopActions(null);
   }, [busy, isOnline, onTopActions, props.stackId, readonlyUi, requestRefresh, topActions]);
-
   if (!effectiveStack || !effectiveService) {
     if (!isOnline) {
       return (
@@ -458,14 +446,13 @@ export function ServiceDetailPage(props: {
           error={error}
           hasData={false}
           label="正在加载服务详情"
-          onRetry={() => void requestRefresh()}
+          onRetry={() => void requestRefresh("user-action")}
           phase={error ? "error" : "initial-loading"}
           skeleton={<AsyncDataSkeleton className="serviceDetailLoadingSkeleton" lines={7} />}
         />
       </div>
     );
   }
-
   const policy = settings?.autoUpdatePolicy ?? stackSettings?.autoUpdatePolicy ?? createDefaultAutoUpdatePolicy("inherit");
   const serviceProtectionDraft = serviceSettingsDraft ?? settings ?? effectiveService.settings;
   const visibleRepoUrl = serviceSettingsDrawerOpen ? serviceProtectionDraft.repoUrl : draftRepoUrl;
@@ -492,34 +479,7 @@ export function ServiceDetailPage(props: {
   const renderOverviewSection = () => (
     <div className="svcDetailSectionStack">
       <RecentUpdateRecords jobs={recentUpdateJobs} loading={!snapshotActive && historyPhase === "initial-loading"} />
-      <div className="card serviceDetailIdentifiersCard" data-service-detail-section-card="service-identifiers">
-        <div className="serviceDetailIdentifiersHead">
-          <div>
-            <div className="title">服务标识</div>
-            <div className="muted">镜像引用与内部标识只在概览保留，避免其余子页重复占用页头空间。</div>
-          </div>
-        </div>
-        <div className="serviceDetailIdentifiersGrid">
-          <div className="serviceDetailIdentifierItem">
-            <div className="serviceDetailIdentifierLabel">Image Ref</div>
-            <div className="serviceDetailIdentifierValue">
-              <Mono>{effectiveService.image.ref}</Mono>
-            </div>
-          </div>
-          <div className="serviceDetailIdentifierItem">
-            <div className="serviceDetailIdentifierLabel">Service ID</div>
-            <div className="serviceDetailIdentifierValue">
-              <Mono>{effectiveService.id}</Mono>
-            </div>
-          </div>
-          <div className="serviceDetailIdentifierItem">
-            <div className="serviceDetailIdentifierLabel">Stack ID</div>
-            <div className="serviceDetailIdentifierValue">
-              <Mono>{effectiveStack.id}</Mono>
-            </div>
-          </div>
-        </div>
-      </div>
+      <ServiceDetailIdentifiersCard service={effectiveService} stack={effectiveStack} />
     </div>
   );
   const renderHistorySection = () => (
@@ -584,21 +544,20 @@ export function ServiceDetailPage(props: {
       )}
     </div>
   );
-
   const renderMonitoringSection = () => (
     <div className="svcDetailSectionStack">
-      <ServiceResourcePanel initialSnapshot={readonlyUi ? (monitoringSnapshot ?? snapshotPayload?.monitoring ?? null) : undefined} readonly={readonlyUi} serviceId={effectiveService.id} />
+      <ServiceResourcePanel initialSnapshot={readonlyUi ? (monitoringSnapshot ?? snapshotPayload?.monitoring ?? null) : undefined} isOnline={isOnline} readonly={readonlyUi} serviceId={effectiveService.id} />
     </div>
   );
-
   const renderBackupSection = () => (
     <div className="svcDetailSectionStack">
       <AsyncDataRegion
         error={backupPhase === "error" ? backupLoadError ?? error : null}
         hasData={snapshotActive || backupLoaded}
         label="正在刷新服务备份信息"
-        onRetry={() => void requestRefresh()}
-        phase={backupPhase === "error" ? "error" : snapshotActive && backupPhase === "initial-loading" ? (effectiveBackupRecords.length === 0 ? "ready-empty" : "ready-data") : backupPhase}
+        onRetry={() => void requestRefresh("user-action")}
+        trigger={refreshTrigger}
+        phase={snapshotActive && backupPhase === "initial-loading" ? "refreshing" : backupPhase}
         skeleton={<AsyncDataSkeleton className="serviceBackupLoadingSkeleton" lines={6} />}
         source={snapshotActive ? "fresh-snapshot" : "live"}
       >
@@ -644,7 +603,6 @@ export function ServiceDetailPage(props: {
           )}
         </div>
       </div>
-
       <div className="card" data-service-detail-section-card="backup-records">
         <div className="serviceBackupSummaryHead">
           <div>
@@ -657,13 +615,11 @@ export function ServiceDetailPage(props: {
       </AsyncDataRegion>
     </div>
   );
-
   const renderLogsSection = () => (
     <div className="svcDetailSectionStack">
       {readonlyUi ? <ServiceDetailReadonlyBlocked detail="日志流不做持久化。恢复联网后才能重新建立实时日志连接。" title="当前离线，日志页需要联网。" /> : <ServiceLogsPanel serviceId={effectiveService.id} />}
     </div>
   );
-
   const renderSettingsSection = () => (
     <div className="svcDetailSectionStack">
       {!isOnline ? <ServiceDetailReadonlyBlocked detail="设置页包含敏感配置与写操作，不会持久化到本地；恢复联网后才可编辑。" title="当前离线，设置页需要联网。" /> : null}
@@ -672,7 +628,8 @@ export function ServiceDetailPage(props: {
           error={settingsPhase === "error" ? error : null}
           hasData={settings !== null}
           label="正在加载服务设置"
-          onRetry={() => void requestRefresh()}
+          onRetry={() => void requestRefresh("user-action")}
+          trigger={refreshTrigger}
           phase={settingsPhase}
           skeleton={<AsyncDataSkeleton className="serviceSettingsLoadingSkeleton" lines={8} />}
         >
@@ -719,7 +676,6 @@ export function ServiceDetailPage(props: {
               </div>
             </div>
           </div>
-
           <div className="card serviceSafeguardCard">
             <div>
               <div className="title">部署 tag</div>
@@ -734,7 +690,6 @@ export function ServiceDetailPage(props: {
               </Button>
             </div>
           </div>
-
           <div className="card serviceSafeguardCard">
             <div>
               <div className="title">服务保护设置</div>
@@ -752,10 +707,8 @@ export function ServiceDetailPage(props: {
               </Button>
             </div>
           </div>
-
           <div className="card" data-service-detail-section-card="ignore-rules">
             <div className="title">忽略规则</div>
-
             <div className="ruleList">
               {rules.map((r) => (
                 <div key={r.id} className="ruleRow" style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
@@ -853,7 +806,6 @@ export function ServiceDetailPage(props: {
               </div>
             </div>
           </div>
-
           <div className="card" data-service-detail-section-card="webhook">
             <div className="title">Webhook 触发（服务级）</div>
             <div className="muted">用于外部系统触发：更新此服务 / 更新 compose / 更新全部</div>
@@ -870,7 +822,6 @@ export function ServiceDetailPage(props: {
               <div className="muted">dryRun=仅预览；backup=inherit/on/off；rollback=inherit/on/off</div>
             </div>
           </div>
-
           <div className="card svcDangerZoneCard" data-service-detail-section-card="danger-zone">
             <div className="svcDangerZoneHead">
               <div>
@@ -886,7 +837,6 @@ export function ServiceDetailPage(props: {
       ) : null}
     </div>
   );
-
   const renderSection = () => {
     if (sectionValue === "versions") return renderVersionsSection();
     if (sectionValue === "history") return renderHistorySection();
@@ -896,7 +846,6 @@ export function ServiceDetailPage(props: {
     if (sectionValue === "settings") return renderSettingsSection();
     return renderOverviewSection();
   };
-
   return (
     <div className="page">
       {snapshotActive ? (
@@ -968,7 +917,6 @@ export function ServiceDetailPage(props: {
           </Tabs>
         </OverlayScrollArea>
       </section>
-
       {semverDowngradeAnomaly ? (
         <div className="svcAnomalyAlert" role="alert">
           <div className="svcAnomalyAlertTitle">
@@ -982,15 +930,12 @@ export function ServiceDetailPage(props: {
           </div>
         </div>
       ) : null}
-
       {isDockrevService(effectiveService) && supervisorState.status === "offline" ? (
         <div className="muted" style={{ marginTop: 10 }}>
           supervisor offline · {supervisorErrorAt ?? "-"}
         </div>
       ) : null}
-
       {renderSection()}
-
       {settings ? (
         <AutoUpdatePolicyDrawer
           busy={settingsBusy}
@@ -1021,13 +966,11 @@ export function ServiceDetailPage(props: {
           stackPolicy={stackSettings?.autoUpdatePolicy ?? null}
         />
       ) : null}
-
       <ResponsiveSettingsDrawer description="写回原始 Compose 文件里的镜像 tag；保存后不会自动执行 compose up。" onOpenChange={setTagDrawerOpen} open={tagDrawerOpen} title="部署 tag">
         <div className="settingsDrawerSection">
           <ServiceComposeTagField busy={settingsBusy} currentTag={effectiveService.image.tag} onError={setError} onSaved={() => requestRefresh().then(() => publishServiceTreeRefresh({ stackId: props.stackId, serviceId: props.serviceId, reason: "compose-tag-saved" }))} serviceId={props.serviceId} />
         </div>
       </ResponsiveSettingsDrawer>
-
       <ResponsiveSettingsDrawer
         description="配置失败回滚与代码仓库。"
         onOpenChange={(open) => {
@@ -1042,7 +985,6 @@ export function ServiceDetailPage(props: {
         <div className="settingsDrawerSection">
           <div className="title">更新前备份 / 回滚</div>
           <div className="muted">服务级策略（失败回滚 + 备份 targets 三态选择）</div>
-
           <div className="kv">
             <div className="kvRow">
               <div className="label">失败回滚（autoRollback）</div>
@@ -1093,7 +1035,6 @@ export function ServiceDetailPage(props: {
               </div>
             </div>
           </div>
-
           <div className="formActions">
             <Button
               variant="primary"
@@ -1124,12 +1065,10 @@ export function ServiceDetailPage(props: {
           </div>
         </div>
       </ResponsiveSettingsDrawer>
-
       <ResponsiveSettingsDrawer description="配置当前服务升级前的备份 targets 与默认存储说明。" onOpenChange={setBackupSettingsDrawerOpen} open={backupSettingsDrawerOpen} title="备份设置">
         <div className="settingsDrawerSection">
           <div className="sectionTitle">备份项（服务级）</div>
           <div className="muted">每个 target 单独选择一个策略；数字表示关联服务数，停机备份会一起协调这些服务。</div>
-
           <div className="serviceBackupPicker">
             <div className="serviceBackupMetaCard">
               <div className="label">备份说明</div>
@@ -1155,7 +1094,6 @@ export function ServiceDetailPage(props: {
                 <div className="muted">加载备份说明中…</div>
               )}
             </div>
-
             {serviceBackupTargetsDraft.volumeNames.length === 0 && serviceBackupTargetsDraft.bindPaths.length === 0 ? (
               <div className="serviceBackupEmptyState">当前服务在 Compose 中未发现可备份 volume 或 bind path。</div>
             ) : (
@@ -1189,7 +1127,6 @@ export function ServiceDetailPage(props: {
                     </div>
                   ))}
                 </div>
-
                 <div className="serviceBackupGroup">
                   <div className="label">Bind paths</div>
                   {serviceBackupTargetsDraft.bindPaths.length === 0 ? <div className="muted">当前服务未声明可备份 bind path。</div> : null}
@@ -1221,7 +1158,6 @@ export function ServiceDetailPage(props: {
                 </div>
               </>
             )}
-
             <div className="formActions">
               <Button
                 variant="primary"

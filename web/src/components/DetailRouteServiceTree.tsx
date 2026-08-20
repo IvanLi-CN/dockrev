@@ -224,6 +224,12 @@ export function DetailRouteServiceTree(props: {
           }
         }),
       )
+      if (results.some((result) => {
+        const current = stacksRef.current.find((stack) => stack.id === result.stackId)
+        return current != null && current.detailRevision > result.revision
+      })) {
+        setDetailFetchTick((current) => current + 1)
+      }
     })
   }, [detailFetchTick, expandedStackIds])
 

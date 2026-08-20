@@ -213,6 +213,9 @@ export const RunningDualProgress: Story = {
       </PageHarness>
     )
   },
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(canvasElement.querySelector('.jobProgressBarDual')))
+  },
 }
 
 export const UpdateLayerProgress: Story = {
