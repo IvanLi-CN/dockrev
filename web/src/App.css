@@ -349,6 +349,142 @@ html[data-theme="light"] .brandLogoForLight {
   color: inherit;
 }
 
+.sidebarAppMeta {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 44px;
+  min-height: 44px;
+  align-items: center;
+  justify-content: stretch;
+}
+
+.sidebarAppMetaContent {
+  display: flex;
+  width: 100%;
+  height: 44px;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted2);
+}
+
+.sidebarAppMetaContentPopover {
+  width: max-content;
+  min-width: 236px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 24%, var(--borderColor) 76%);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel2) 96%, var(--color-primary) 4%);
+  box-shadow: 0 18px 48px rgba(1, 8, 20, 0.42);
+}
+
+.sidebarAppMetaVersion,
+.sidebarAppMetaPowered,
+.sidebarAppMetaLink {
+  color: inherit;
+  text-decoration: none;
+}
+
+.sidebarAppMetaVersion {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebarAppMetaVersion:hover,
+.sidebarAppMetaPowered:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.sidebarAppMetaVersionDisabled {
+  opacity: 0.68;
+}
+
+.sidebarAppMetaLink {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+}
+
+.sidebarAppMetaLink:hover {
+  border-color: var(--borderColor);
+  background: var(--dockrev-surface-strong);
+  color: var(--text);
+}
+
+.sidebarAppMetaGithub svg {
+  width: 16px;
+  height: 16px;
+}
+
+.sidebarAppMetaPowered {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebarAppMetaTrigger {
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 66%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--dockrev-surface) 82%, transparent);
+  color: var(--muted2);
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+}
+
+.sidebarAppMetaTrigger:hover,
+.sidebarAppMetaTrigger[data-state='open'] {
+  border-color: color-mix(in srgb, var(--color-primary) 42%, var(--borderColor) 58%);
+  background: color-mix(in srgb, var(--dockrev-surface-strong) 88%, transparent);
+  color: var(--color-primary);
+}
+
+.sidebarAppMetaTrigger svg {
+  width: 15px;
+  height: 15px;
+}
+
+.sidebarAppMetaTriggerVersion {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+}
+
+.sidebarAppMetaPopover {
+  width: max-content;
+  padding: 0;
+}
+
+.sidebarAppMetaPopover .sidebarAppMetaContent {
+  width: max-content;
+}
+
 .mobileBottomNav {
   display: none;
 }
@@ -11799,12 +11935,16 @@ html[data-theme="light"] .brandLogoThemeSwitch {
 
 .appShellSidebarCollapsed .sidebarMeta {
   width: 100%;
-  padding: 0 0 8px;
+  padding: 0 0 10px;
+}
+
+.appShellSidebarCollapsed .sidebarAppMeta {
+  justify-content: center;
 }
 
 .appShellSidebarCollapsed .sidebarMetaDivider {
   width: 44px;
-  margin: 18px auto 12px;
+  margin: 20px auto 14px;
 }
 
 .appShellSidebarCollapsed .topbarUserSlotSidebar {
@@ -11842,6 +11982,17 @@ html[data-theme="light"] .brandLogoThemeSwitch {
 
 .appShellSidebarCollapsed .sidebarThemeControl {
   margin-top: 10px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebarAppMetaTrigger,
+  .sidebarAppMetaLink {
+    transition: none;
+  }
+
+  .sidebarAppMetaPopover[data-state='open'] {
+    animation: none;
+  }
 }
 
 .content {
