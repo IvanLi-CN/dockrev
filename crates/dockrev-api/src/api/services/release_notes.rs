@@ -582,6 +582,16 @@ fn split_repo_full_name(full_name: &str) -> Option<(&str, &str)> {
     Some((owner, repo))
 }
 
+fn should_refresh_octo_rill_first_window(
+    refresh: Option<ServiceReleaseNotesRefreshRequest>,
+    requested_cursor: Option<&str>,
+    upstream_cursor: Option<&str>,
+) -> bool {
+    refresh == Some(ServiceReleaseNotesRefreshRequest::IfStale)
+        && requested_cursor.is_none_or(|value| value.trim().is_empty())
+        && upstream_cursor.is_none()
+}
+
 pub(super) async fn fetch_octo_rill_public_release_notes(
     settings: &OctoRillReleaseNotesSettings,
     repo: &ServiceGitHubRepoRef,
@@ -1046,8 +1056,11 @@ pub(crate) async fn list_service_release_notes(
         let upstream_cursor = cursor
             .as_deref()
             .and_then(upstream_cursor_from_octo_rill_cursor);
-        let refresh_if_stale = query.refresh == Some(ServiceReleaseNotesRefreshRequest::IfStale)
-            && upstream_cursor.is_none();
+        let refresh_if_stale = should_refresh_octo_rill_first_window(
+            query.refresh,
+            query.cursor.as_deref(),
+            upstream_cursor.as_deref(),
+        );
         return Ok(Json(
             match fetch_octo_rill_public_release_notes(
                 &release_notes_settings.octo_rill,
@@ -1365,6 +1378,25 @@ mod tests {
             upstream_cursor_from_octo_rill_cursor(&client_cursor).as_deref(),
             Some(upstream)
         );
+    }
+
+    #[test]
+    fn octo_rill_refresh_requires_a_cursorless_first_window() {
+        assert!(should_refresh_octo_rill_first_window(
+            Some(ServiceReleaseNotesRefreshRequest::IfStale),
+            None,
+            None,
+        ));
+        assert!(!should_refresh_octo_rill_first_window(
+            Some(ServiceReleaseNotesRefreshRequest::IfStale),
+            Some("octo:opaque-cursor"),
+            Some("opaque-cursor"),
+        ));
+        assert!(!should_refresh_octo_rill_first_window(
+            Some(ServiceReleaseNotesRefreshRequest::IfStale),
+            Some("invalid-cursor"),
+            None,
+        ));
     }
 
     #[derive(Debug, Default, serde::Deserialize)]

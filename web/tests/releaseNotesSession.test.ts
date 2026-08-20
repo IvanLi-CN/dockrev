@@ -161,4 +161,15 @@ describe('release notes refresh retry policy', () => {
     expect(__releaseNotesSessionTestUtils.releaseNotesRefreshRetryDelayMs(fresh)).toBeNull()
     expect(__releaseNotesSessionTestUtils.releaseNotesRefreshRetryDelayMs(makeReadyResponse('gitHub', 'original'))).toBeNull()
   })
+
+  test('retries a failed request for a cached fresh OctoRill response after one minute', () => {
+    const fresh = makeReadyResponse('octoRill', 'smart')
+    fresh.refresh = { state: 'fresh' }
+    fresh.stale = {
+      reason: 'requestFailed',
+      message: 'OctoRill 暂时不可用。',
+    }
+
+    expect(__releaseNotesSessionTestUtils.releaseNotesRefreshRetryDelayMs(fresh)).toBe(60_000)
+  })
 })

@@ -25,6 +25,9 @@ export function releaseNotesRefreshRetryDelayMs(
   response: ServiceReleaseNotesResponse | null | undefined,
 ): number | null {
   const refresh = response?.source === 'octoRill' ? response.refresh : null
+  if (refresh && response?.stale?.reason === 'requestFailed') {
+    return MAX_REFRESH_RETRY_SECONDS * 1000
+  }
   if (!refresh || !['queued', 'running', 'backoff'].includes(refresh.state)) return null
   const retryAfterSeconds = Number.isFinite(refresh.retryAfterSeconds)
     ? Math.round(refresh.retryAfterSeconds!)
