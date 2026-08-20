@@ -19,6 +19,28 @@ type CachedReleaseNotesSnapshot = {
 }
 
 const releaseNotesSnapshotCache = new Map<string, CachedReleaseNotesSnapshot>()
+const MAX_REFRESH_RETRY_SECONDS = 60
+
+export function releaseNotesRefreshRetryDelayMs(
+  response: ServiceReleaseNotesResponse | null | undefined,
+): number | null {
+  const refresh = response?.source === 'octoRill' ? response.refresh : null
+  if (refresh && response?.stale?.reason === 'requestFailed') {
+    return MAX_REFRESH_RETRY_SECONDS * 1000
+  }
+  if (!refresh || !['queued', 'running', 'backoff'].includes(refresh.state)) return null
+  const retryAfterSeconds = Number.isFinite(refresh.retryAfterSeconds)
+    ? Math.round(refresh.retryAfterSeconds!)
+    : MAX_REFRESH_RETRY_SECONDS
+  return Math.min(MAX_REFRESH_RETRY_SECONDS, Math.max(1, retryAfterSeconds)) * 1000
+}
+
+export function isCurrentReleaseNotesRefreshRequest(
+  activeRequest: AbortController | null,
+  candidate: AbortController,
+): boolean {
+  return activeRequest === candidate && !candidate.signal.aborted
+}
 
 function snapshotCacheKey(serviceId: string, source: ServiceReleaseNotesResponse['source']): string {
   return `${serviceId}::${source}`
@@ -81,6 +103,8 @@ function resetReleaseNotesSnapshotCache() {
 export const __releaseNotesSessionTestUtils = {
   cacheReleaseNotesSnapshot,
   buildStaleSnapshotResponse,
+  isCurrentReleaseNotesRefreshRequest,
+  releaseNotesRefreshRetryDelayMs,
   resetReleaseNotesSnapshotCache,
 }
 
@@ -114,6 +138,7 @@ export function useServiceReleaseNotesSession(
   const activeSessionRef = useRef<string | null>(null)
   const inFlightPagesRef = useRef<Map<string, Promise<ServiceReleaseNotesResponse | null>>>(new Map())
   const responseRef = useRef<ServiceReleaseNotesResponse | null>(null)
+  const refreshAbortRef = useRef<AbortController | null>(null)
   const olderCursorRef = useRef<string | null>(null)
   const newerCursorRef = useRef<string | null>(null)
 
@@ -146,6 +171,8 @@ export function useServiceReleaseNotesSession(
   }, [input.enabled, input.locateTargetVersion, input.serviceId, input.targetVersion])
 
   const resetState = useCallback(() => {
+    refreshAbortRef.current?.abort()
+    refreshAbortRef.current = null
     inFlightPagesRef.current.clear()
     setLoadState('idle')
     setResponse(null)
@@ -158,6 +185,26 @@ export function useServiceReleaseNotesSession(
     setOlderFailure(null)
     setNewerFailure(null)
   }, [])
+
+  const fetchInitialWindow = useCallback(async (signal?: AbortSignal): Promise<ServiceReleaseNotesResponse> => {
+    if (!input.serviceId) throw new Error('service id is required')
+    const requestInit = signal ? { signal } : undefined
+    return input.locateTargetVersion && input.targetVersion?.trim()
+      ? await locateServiceReleaseNotes(
+          input.serviceId,
+          {
+            version: input.targetVersion.trim(),
+            limit: input.limit,
+            refresh: 'if_stale',
+          },
+          requestInit,
+        )
+      : await getServiceReleaseNotes(
+          input.serviceId,
+          { limit: input.limit, refresh: 'if_stale' },
+          requestInit,
+        )
+  }, [input.limit, input.locateTargetVersion, input.serviceId, input.targetVersion])
 
   const fetchDirectionPage = useCallback(
     async (expectedSession: string, direction: PageDirection, cursor: string): Promise<ServiceReleaseNotesResponse | null> => {
@@ -205,17 +252,13 @@ export function useServiceReleaseNotesSession(
     setLoadState('loading')
 
     let cancelled = false
+    const controller = new AbortController()
+    refreshAbortRef.current = controller
 
     void (async () => {
       let nextResponse: ServiceReleaseNotesResponse
       try {
-        nextResponse =
-          input.locateTargetVersion && input.targetVersion?.trim()
-            ? await locateServiceReleaseNotes(input.serviceId!, {
-                version: input.targetVersion.trim(),
-                limit: input.limit,
-              })
-            : await getServiceReleaseNotes(input.serviceId!, { limit: input.limit })
+        nextResponse = await fetchInitialWindow(controller.signal)
       } catch (error) {
         nextResponse = buildReleaseNotesFailureResponse(error, null, input.limit)
       }
@@ -258,16 +301,123 @@ export function useServiceReleaseNotesSession(
 
     return () => {
       cancelled = true
+      controller.abort()
+      if (refreshAbortRef.current === controller) refreshAbortRef.current = null
     }
   }, [
     input.enabled,
     input.limit,
-    input.locateTargetVersion,
     input.serviceId,
-    input.targetVersion,
+    fetchInitialWindow,
     resetState,
     sessionKey,
   ])
+
+  const refreshRetryDelayMs = releaseNotesRefreshRetryDelayMs(response)
+
+  useEffect(() => {
+    if (!input.enabled || !input.serviceId || !sessionKey || !refreshRetryDelayMs) return
+
+    let cancelled = false
+    let timer: number | null = null
+    let controller: AbortController | null = null
+
+    const clearScheduledRefresh = () => {
+      if (timer == null) return
+      window.clearTimeout(timer)
+      timer = null
+    }
+
+    const revalidate = () => {
+      if (cancelled || document.visibilityState === 'hidden') return
+      clearScheduledRefresh()
+      const requestController = new AbortController()
+      refreshAbortRef.current?.abort()
+      controller = requestController
+      refreshAbortRef.current = requestController
+      const requestIsCurrent = () =>
+        !cancelled
+        && activeSessionRef.current === sessionKey
+        && document.visibilityState !== 'hidden'
+        && isCurrentReleaseNotesRefreshRequest(controller, requestController)
+
+      void (async () => {
+        let nextResponse: ServiceReleaseNotesResponse
+        try {
+          nextResponse = await fetchInitialWindow(requestController.signal)
+        } catch (error) {
+          if (!requestIsCurrent()) return
+          const message = buildReleaseNotesFailureResponse(error, null, input.limit).message
+          setResponse((previous) => previous ? {
+            ...previous,
+            stale: {
+              reason: 'requestFailed',
+              message: message ?? '当前仅显示该数据源最近一次成功结果。',
+            },
+            refresh: previous.refresh ? { ...previous.refresh, retryAfterSeconds: MAX_REFRESH_RETRY_SECONDS } : previous.refresh,
+          } : previous)
+          return
+        }
+
+        if (!requestIsCurrent()) return
+        if (nextResponse.status !== 'ready') {
+          setResponse((previous) => previous ? {
+            ...previous,
+            stale: {
+              reason: 'requestFailed',
+              message: nextResponse.message?.trim() || '当前仅显示该数据源最近一次成功结果。',
+            },
+            refresh: previous.refresh ? { ...previous.refresh, retryAfterSeconds: MAX_REFRESH_RETRY_SECONDS } : previous.refresh,
+          } : nextResponse)
+          return
+        }
+
+        const nextOlderCursor = nextResponse.nextCursor?.trim() || null
+        const nextNewerCursor = nextResponse.previousCursor?.trim() || null
+        setResponse(nextResponse)
+        setItems((previous) => {
+          const merged = mergeReleaseNoteItems(previous, nextResponse.items, 'newer')
+          cacheReleaseNotesSnapshot({
+            serviceId: input.serviceId!,
+            response: nextResponse,
+            items: merged,
+            olderCursor: nextOlderCursor,
+            newerCursor: nextNewerCursor,
+          })
+          return merged
+        })
+        setOlderCursor(nextOlderCursor)
+        setNewerCursor(nextNewerCursor)
+      })()
+    }
+
+    const schedule = (delay: number) => {
+      if (timer != null || document.visibilityState === 'hidden') return
+      timer = window.setTimeout(() => {
+        timer = null
+        revalidate()
+      }, delay)
+    }
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        revalidate()
+        return
+      }
+      clearScheduledRefresh()
+      controller?.abort()
+      if (refreshAbortRef.current === controller) refreshAbortRef.current = null
+    }
+
+    schedule(refreshRetryDelayMs)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      cancelled = true
+      clearScheduledRefresh()
+      controller?.abort()
+      if (refreshAbortRef.current === controller) refreshAbortRef.current = null
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [fetchInitialWindow, input.enabled, input.limit, input.serviceId, refreshRetryDelayMs, response, sessionKey])
 
   const loadOlder = useCallback(async () => {
     if (!sessionKey || !input.serviceId || loadingOlder || !olderCursor) return

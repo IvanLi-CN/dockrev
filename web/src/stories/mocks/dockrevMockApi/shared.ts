@@ -15,6 +15,7 @@ import type {
   ServiceGitHubReleasesStatus,
   ServiceGitHubRepoRef,
   ServiceReleaseNotesAnchor,
+  ServiceReleaseNotesStale,
   ServiceBackupTargetsResponse,
   ServiceBackupRecordsResponse,
   ServiceRepoLinkInferenceResponse,
@@ -165,6 +166,7 @@ export type DockrevMockGitHubReleasesDataset = {
   repo?: ServiceGitHubRepoRef | null
   listStatus?: ServiceGitHubReleasesStatus
   listMessage?: string | null
+  stale?: ServiceReleaseNotesStale | null
   items?: ServiceGitHubReleaseItem[]
   locateByVersion?: Record<string, Partial<ServiceReleaseNotesAnchor>>
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type FocusEvent } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FocusEvent } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 
 import {
@@ -8,6 +8,7 @@ import {
 import {
   releaseNotesBodyForView,
   findReleaseNoteIndex,
+  releaseNotesRefreshAlert,
   releaseNotesShouldOfferSettingsAction,
   releaseNotesSourceLabel,
   releaseNotesTagMatchesVersion,
@@ -16,12 +17,13 @@ import {
 import { navigate } from '../routes'
 import { closeGitHubReleaseDrawer } from '../releaseDrawer'
 import { useServiceReleaseNotesSession } from '../useServiceReleaseNotesSession'
+import './GitHubReleaseDrawer.css'
+import { ReleaseNotesStaleAlert } from './ReleaseNotesStaleAlert'
 import {
   Button,
   Drawer,
   DrawerClose,
   DrawerContent,
-  DrawerDescription,
   DrawerHeader,
   DrawerTitle,
   ExternalLinkIcon,
@@ -111,6 +113,7 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
   const sessionKey = props.open && serviceId ? `${serviceId}::${targetVersion ?? ''}` : null
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const targetScrollKeyRef = useRef<string | null>(null)
+  const visibleReleaseAnchorRef = useRef<{ id: string; offset: number } | null>(null)
   const highlightTimerRef = useRef<number | null>(null)
   const infoCloseTimerRef = useRef<number | null>(null)
 
@@ -152,6 +155,7 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
 
   useEffect(() => {
     targetScrollKeyRef.current = null
+    visibleReleaseAnchorRef.current = null
     setHighlightedId(null)
     setInfoPanelOpen(false)
     setExpandedIds(new Set())
@@ -178,6 +182,32 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
     },
     measureElement: (element) => element.getBoundingClientRect().height,
   })
+
+  useLayoutEffect(() => {
+    const scrollElement = scrollRef.current
+    const previousAnchor = visibleReleaseAnchorRef.current
+    if (scrollElement && previousAnchor) {
+      const nextAnchor = Array.from(scrollElement.querySelectorAll<HTMLElement>('[data-release-id]'))
+        .find((element) => element.dataset.releaseId === previousAnchor.id)
+      if (nextAnchor) {
+        const nextOffset = nextAnchor.getBoundingClientRect().top - scrollElement.getBoundingClientRect().top
+        scrollElement.scrollTop += nextOffset - previousAnchor.offset
+      }
+    }
+
+    return () => {
+      if (!scrollElement) return
+      const viewport = scrollElement.getBoundingClientRect()
+      const visible = Array.from(scrollElement.querySelectorAll<HTMLElement>('[data-release-id]'))
+        .find((row) => {
+          const rect = row.getBoundingClientRect()
+          return rect.bottom > viewport.top && rect.top < viewport.bottom
+        })
+      visibleReleaseAnchorRef.current = visible
+        ? { id: visible.dataset.releaseId ?? '', offset: visible.getBoundingClientRect().top - viewport.top }
+        : null
+    }
+  }, [items])
 
   useEffect(() => {
     virtualizer.measure()
@@ -213,12 +243,11 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
     const absoluteIndex = findReleaseNoteIndex(items, targetVersion)
     if (absoluteIndex < 0 || items.length <= absoluteIndex) return
 
-    const key = `${sessionKey}:${absoluteIndex}`
-    if (targetScrollKeyRef.current === key) return
-    targetScrollKeyRef.current = key
-
     const targetItem = items[absoluteIndex]
     if (!targetItem) return
+    const key = `${sessionKey}:${targetItem.id}`
+    if (targetScrollKeyRef.current === key) return
+    targetScrollKeyRef.current = key
 
     const frame = window.requestAnimationFrame(() => {
       virtualizer.scrollToIndex(absoluteIndex, { align: 'center', behavior: 'smooth' })
@@ -260,9 +289,7 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
   }, [listResponse])
 
   const surfaceBanner = isReady ? locateBanner : listBanner ?? locateBanner
-  const staleBanner = listResponse?.stale
-    ? { tone: 'warning' as const, message: listResponse.stale.message }
-    : null
+  const staleBanner = releaseNotesRefreshAlert(listResponse)
   const loaderVisible = loadState === 'loading' && items.length === 0
   const unsupportedOrErrored = loadState === 'ready' && listResponse && listResponse.status !== 'ready'
   const emptyReady = isReady && items.length === 0
@@ -315,7 +342,7 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
       open={props.open && Boolean(serviceId)}
       onOpenChange={props.onOpenChange}
     >
-      <DrawerContent className="releaseDrawerContent" aria-describedby="github-release-drawer-description">
+      <DrawerContent className="releaseDrawerContent">
         <DrawerHeader className="releaseDrawerHeader">
           <div className="releaseDrawerHeaderTop">
             <div className="releaseDrawerHeaderText">
@@ -372,11 +399,6 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
                   </div>
                 ) : null}
               </div>
-              <DrawerDescription asChild>
-                <div className="releaseDrawerDescription" id="github-release-drawer-description">
-                  查看该服务对应仓库的发布记录，并可按版本号快速定位。
-                </div>
-              </DrawerDescription>
             </div>
             <div className="releaseDrawerHeaderActions">
               {repoUrl ? (
@@ -403,34 +425,30 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
               </DrawerClose>
             </div>
           </div>
-          {repo ? (
-            <div className="releaseDrawerHeaderMeta">
-              <span className="releaseDrawerChip"><Mono>{repo.fullName}</Mono></span>
-              {listResponse?.source ? (
-                <span className="releaseDrawerChip">{releaseNotesSourceLabel(listResponse)}</span>
+          {repo || (isReady && listResponse?.source === 'octoRill') ? (
+            <div className="releaseDrawerHeaderControls">
+              {repo ? (
+                <div className="releaseDrawerHeaderMeta">
+                  <span className="releaseDrawerChip"><Mono>{repo.fullName}</Mono></span>
+                  {listResponse?.source ? (
+                    <span className="releaseDrawerChip">{releaseNotesSourceLabel(listResponse)}</span>
+                  ) : null}
+                </div>
               ) : null}
-            </div>
-          ) : null}
-          {isReady && listResponse?.source === 'octoRill' ? (
-            <div className="releaseDrawerViewTabs" aria-label="发布说明视图">
-              {(['smart', 'translated', 'original'] as const).map((view) => (
-                <button
-                  key={view}
-                  type="button"
-                  className={cn('releaseDrawerViewTab', viewMode === view && 'releaseDrawerViewTabActive')}
-                  aria-pressed={viewMode === view}
-                  onClick={() => setViewMode(view)}
-                >
-                  {releaseNotesViewLabel(view)}
-                </button>
-              ))}
-            </div>
-          ) : null}
-          {staleBanner ? (
-            <div className="releaseDrawerBanner releaseDrawerBanner-warning" data-release-drawer-banner="stale">
-              <span>{staleBanner.message}</span>
-              {showSettingsAction ? (
-                <Button variant="ghost" onClick={openSettings}>打开设置</Button>
+              {isReady && listResponse?.source === 'octoRill' ? (
+                <div className="releaseDrawerViewTabs" aria-label="发布说明视图">
+                  {(['smart', 'translated', 'original'] as const).map((view) => (
+                    <button
+                      key={view}
+                      type="button"
+                      className={cn('releaseDrawerViewTab', viewMode === view && 'releaseDrawerViewTabActive')}
+                      aria-pressed={viewMode === view}
+                      onClick={() => setViewMode(view)}
+                    >
+                      {releaseNotesViewLabel(view)}
+                    </button>
+                  ))}
+                </div>
               ) : null}
             </div>
           ) : null}
@@ -472,7 +490,7 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
           ) : null}
 
           {isReady && items.length > 0 ? (
-            <div className="releaseDrawerScrollShell">
+            <div className="releaseDrawerScrollShell releaseNotesAlertHost">
               <ScrollArea
                 className="releaseDrawerScrollArea"
                 type="always"
@@ -553,6 +571,7 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
                         <article
                           key={virtualRow.key}
                           data-index={itemIndex}
+                          data-release-id={item.id}
                           data-release-tag={item.tagName}
                           data-release-highlighted={matched ? 'true' : 'false'}
                           ref={virtualizer.measureElement}
@@ -619,6 +638,14 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
                   </div>
                 </div>
               </ScrollArea>
+              {staleBanner ? (
+                <ReleaseNotesStaleAlert
+                  className="releaseNotesStaleAlertFloating"
+                  dataAttribute="data-release-drawer-banner"
+                  title={staleBanner.title}
+                  message={staleBanner.message}
+                />
+              ) : null}
             </div>
           ) : null}
         </div>

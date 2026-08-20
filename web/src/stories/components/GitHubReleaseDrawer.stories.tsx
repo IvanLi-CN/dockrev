@@ -310,6 +310,14 @@ const compactDataset: DockrevMockGitHubReleasesDataset = {
   items: buildReleaseItems([...compactReleaseTags], true),
 }
 
+const staleCacheDataset: DockrevMockGitHubReleasesDataset = {
+  ...compactDataset,
+  stale: {
+    reason: 'requestFailed',
+    message: '暂时无法读取最新发布记录，正在显示最近一次成功结果。',
+  },
+}
+
 const gitHubProviderFixture = (() => {
   const fixture = buildFixture('default')
   fixture.settings.releaseNotes.provider = 'gitHub'
@@ -389,22 +397,18 @@ function assertVisibleReleaseRowsDoNotOverlap() {
 
 function readReleaseDrawerLayoutSnapshot() {
   const header = document.querySelector('.releaseDrawerHeader')
-  const description = document.querySelector('.releaseDrawerDescription')
   const banner = document.querySelector('[data-release-drawer-banner]')
   const scrollRegion = document.querySelector('.releaseDrawerScrollViewport')
   if (!(header instanceof HTMLElement)) throw new Error('expected release drawer header')
-  if (!(description instanceof HTMLElement)) throw new Error('expected release drawer description')
   if (!(banner instanceof HTMLElement)) throw new Error('expected release drawer banner')
   if (!(scrollRegion instanceof HTMLElement)) throw new Error('expected release drawer scroll region')
 
   const headerRect = header.getBoundingClientRect()
-  const descriptionRect = description.getBoundingClientRect()
   const bannerRect = banner.getBoundingClientRect()
   const scrollRect = scrollRegion.getBoundingClientRect()
 
   return {
     headerBottom: headerRect.bottom,
-    descriptionTop: descriptionRect.top,
     bannerTop: bannerRect.top,
     scrollTop: scrollRect.top,
   }
@@ -414,7 +418,6 @@ function assertTooltipDoesNotChangeDocumentFlow(before: ReturnType<typeof readRe
   const after = readReleaseDrawerLayoutSnapshot()
   const changed =
     Math.abs(after.headerBottom - before.headerBottom) > 1 ||
-    Math.abs(after.descriptionTop - before.descriptionTop) > 1 ||
     Math.abs(after.bannerTop - before.bannerTop) > 1 ||
     Math.abs(after.scrollTop - before.scrollTop) > 1
 
@@ -439,8 +442,37 @@ export const OctoRillSmartDefault: Story = {
     await new Promise((resolve) => setTimeout(resolve, 360))
     const drawer = document.querySelector('[data-release-drawer="true"]')
     if (!(drawer instanceof HTMLElement)) throw new Error('expected release drawer content to render')
+    if (drawer.textContent?.includes('查看该服务对应仓库的发布记录')) {
+      throw new Error('expected the release drawer to omit implementation-oriented header copy')
+    }
+    const controls = document.querySelector('.releaseDrawerHeaderControls')
+    const meta = document.querySelector('.releaseDrawerHeaderMeta')
+    const tabs = document.querySelector('.releaseDrawerViewTabs')
+    if (!(controls instanceof HTMLElement) || !(meta instanceof HTMLElement) || !(tabs instanceof HTMLElement)) {
+      throw new Error('expected repository metadata and release-note views to share the header controls row')
+    }
+    const controlsStyle = getComputedStyle(controls)
+    if (controlsStyle.display !== 'grid' || controlsStyle.gridTemplateColumns.split(' ').length !== 2) {
+      throw new Error('expected desktop header controls to use a two-column end-aligned layout')
+    }
+    const controlsRect = controls.getBoundingClientRect()
+    const tabsRect = tabs.getBoundingClientRect()
+    if (Math.abs(meta.getBoundingClientRect().top - tabsRect.top) > 2 || Math.abs(tabsRect.right - controlsRect.right) > 2) {
+      throw new Error('expected repository metadata and view controls to align on one row at opposite ends')
+    }
     if (!drawer.textContent?.includes('润色摘要')) {
       throw new Error('expected smart release notes to be visible by default')
+    }
+    const repositoryLink = document.querySelector('.releaseDrawerIconLink')
+    const repositoryLinkIcon = repositoryLink?.querySelector('svg')
+    if (!(repositoryLink instanceof HTMLElement) || !(repositoryLinkIcon instanceof SVGElement)) {
+      throw new Error('expected repository external link icon')
+    }
+    if (
+      repositoryLinkIcon.getAttribute('fill') !== 'none'
+      || repositoryLinkIcon.getAttribute('stroke') !== 'currentColor'
+    ) {
+      throw new Error('expected repository external link icon to inherit its themed foreground color')
     }
     const activeView = document.querySelector('.releaseDrawerViewTabActive')
     if (!activeView?.textContent?.includes('润色')) {
@@ -475,6 +507,43 @@ export const GitHubOriginalOnly: Story = {
     const chips = Array.from(document.querySelectorAll('.releaseDrawerChip')).map((node) => node.textContent?.trim() ?? '')
     if (!chips.includes('GitHub Releases')) {
       throw new Error('expected GitHub provider source chip')
+    }
+  },
+}
+
+export const CachedReleaseNotesAlert: Story = {
+  args: {
+    open: true,
+    serviceId: 'svc-release-drawer-stale',
+    onOpenChange: () => {},
+  },
+  parameters: {
+    dockrevApiScenario: 'default',
+    dockrevGitHubReleasesByServiceId: {
+      'svc-release-drawer-stale': staleCacheDataset,
+    },
+  },
+  play: async () => {
+    await new Promise((resolve) => setTimeout(resolve, 360))
+    const drawer = document.querySelector('[data-release-drawer="true"]')
+    const alert = document.querySelector('[data-release-drawer-banner="stale"]')
+    const scrollViewport = document.querySelector('.releaseDrawerScrollViewport')
+    if (!(drawer instanceof HTMLElement) || !(alert instanceof HTMLElement) || !(scrollViewport instanceof HTMLElement)) {
+      throw new Error('expected cached release notes to render with a status alert')
+    }
+    if (alert.dataset.slot !== 'alert' || alert.getAttribute('role') !== 'status' || alert.getAttribute('aria-live') !== 'polite') {
+      throw new Error('expected cached release notes feedback to use the polite Alert primitive')
+    }
+    if (!alert.textContent?.includes('发布记录暂未更新')) {
+      throw new Error('expected cached release notes Alert title')
+    }
+    if (getComputedStyle(alert).position !== 'absolute') {
+      throw new Error('expected cached release notes Alert to stay outside the static document flow')
+    }
+    const alertRect = alert.getBoundingClientRect()
+    const viewportRect = scrollViewport.getBoundingClientRect()
+    if (alertRect.bottom > viewportRect.bottom - 8 || alertRect.top < viewportRect.top + 8) {
+      throw new Error('expected cached release notes Alert to stay within the scroll shell')
     }
   },
 }

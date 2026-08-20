@@ -104,7 +104,17 @@ export function SearchIcon(props: { className?: string }) {
 
 export function ExternalLinkIcon(props: { className?: string }) {
   return (
-    <svg className={props.className} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <svg
+      className={props.className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.8"
+      aria-hidden="true"
+      focusable="false"
+    >
       <path d="M14 5h5v5" />
       <path d="M10 14 19 5" />
       <path d="M19 13v5a1 1 0 0 1-1 1h-12a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5" />

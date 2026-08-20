@@ -1,13 +1,16 @@
 import type {
   NewVersionDiscoveryTimelineResponse,
-  ServiceGitHubReleaseItem,
   ServiceGitHubReleasesResponse,
-  ServiceGitHubReleasesStatus,
-  ServiceGitHubRepoRef,
   StackDetail,
 } from '../../../api'
 import type { CleanupMockRuntimeState } from '../cleanupMockData'
-import type { DockrevApiScenario, Fixture, MockDebug, MockServiceLogEventGateState } from './shared'
+import type {
+  DockrevApiScenario,
+  DockrevMockGitHubReleasesDataset,
+  Fixture,
+  MockDebug,
+  MockServiceLogEventGateState,
+} from './shared'
 
 export type FindServiceResult = {
   stack: StackDetail
@@ -46,24 +49,7 @@ export type MockRouteContext = {
   ) => ServiceGitHubReleasesResponse
   buildMockGitHubReleasesDataset: (
     serviceId: string,
-  ) => {
-    authMode?: 'pat' | 'anonymous'
-    repo?: ServiceGitHubRepoRef | null
-    listStatus?: ServiceGitHubReleasesStatus
-    listMessage?: string | null
-    items?: ServiceGitHubReleaseItem[]
-    locateByVersion?: Record<
-      string,
-      {
-        status?: 'found' | 'outsideWindow' | 'notFound' | 'unavailable'
-        version?: string
-        matchedTag?: string | null
-        indexWithinWindow?: number | null
-        absoluteIndex?: number | null
-        message?: string | null
-      }
-    >
-  }
+  ) => DockrevMockGitHubReleasesDataset
   applyMockUpdateSettlement: (
     serviceId: string,
     targetTag: string,

@@ -419,6 +419,7 @@ async fn fetch_octo_rill_public_release_notes_uses_releases_endpoint_and_maps_it
         release_notes::ServiceReleaseNotesDirection::Older,
         20,
         None,
+        false,
     )
     .await
     .expect("public releases response should map cleanly");
@@ -474,6 +475,7 @@ async fn fetch_octo_rill_public_release_notes_passes_cursor_and_newer_direction(
         release_notes::ServiceReleaseNotesDirection::Newer,
         5,
         None,
+        false,
     )
     .await
     .expect("cursor paging should work");
@@ -538,6 +540,7 @@ async fn fetch_octo_rill_public_release_notes_uses_highlight_window_for_locate()
         release_notes::ServiceReleaseNotesDirection::Older,
         5,
         Some("v1.2.3"),
+        false,
     )
     .await
     .expect("highlight locate window should map");
@@ -567,6 +570,7 @@ async fn fetch_octo_rill_public_release_notes_maps_unauthorized_status() {
         release_notes::ServiceReleaseNotesDirection::Older,
         5,
         None,
+        false,
     )
     .await
     .expect_err("401 should map to unauthorized");

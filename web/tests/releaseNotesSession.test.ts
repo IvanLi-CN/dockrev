@@ -143,3 +143,42 @@ describe('release notes session stale snapshots', () => {
     expect(stale?.response.items.map((item) => item.tagName)).toEqual(['v1.2.3'])
   })
 })
+
+describe('release notes refresh retry policy', () => {
+  test('uses the server retry interval for active refreshes and caps backoff at one minute', () => {
+    const queued = makeReadyResponse('octoRill', 'smart')
+    queued.refresh = { state: 'queued', retryAfterSeconds: 2 }
+    expect(__releaseNotesSessionTestUtils.releaseNotesRefreshRetryDelayMs(queued)).toBe(2_000)
+
+    const backoff = makeReadyResponse('octoRill', 'smart')
+    backoff.refresh = { state: 'backoff', retryAfterSeconds: 120 }
+    expect(__releaseNotesSessionTestUtils.releaseNotesRefreshRetryDelayMs(backoff)).toBe(60_000)
+  })
+
+  test('does not schedule retries when refresh is fresh or absent', () => {
+    const fresh = makeReadyResponse('octoRill', 'smart')
+    fresh.refresh = { state: 'fresh' }
+    expect(__releaseNotesSessionTestUtils.releaseNotesRefreshRetryDelayMs(fresh)).toBeNull()
+    expect(__releaseNotesSessionTestUtils.releaseNotesRefreshRetryDelayMs(makeReadyResponse('gitHub', 'original'))).toBeNull()
+  })
+
+  test('retries a failed request for a cached fresh OctoRill response after one minute', () => {
+    const fresh = makeReadyResponse('octoRill', 'smart')
+    fresh.refresh = { state: 'fresh' }
+    fresh.stale = {
+      reason: 'requestFailed',
+      message: 'OctoRill 暂时不可用。',
+    }
+
+    expect(__releaseNotesSessionTestUtils.releaseNotesRefreshRetryDelayMs(fresh)).toBe(60_000)
+  })
+
+  test('ignores a refresh request that was replaced by visibility recovery', () => {
+    const first = new AbortController()
+    const replacement = new AbortController()
+    first.abort()
+
+    expect(__releaseNotesSessionTestUtils.isCurrentReleaseNotesRefreshRequest(replacement, first)).toBe(false)
+    expect(__releaseNotesSessionTestUtils.isCurrentReleaseNotesRefreshRequest(replacement, replacement)).toBe(true)
+  })
+})

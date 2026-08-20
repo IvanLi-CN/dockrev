@@ -120,6 +120,7 @@ export function ServiceVersionCard(props: {
         card.currentMatch && "serviceVersionCardCurrent",
       )}
       data-service-version-card="true"
+      data-release-id={card.item.id}
       data-release-tag={card.item.tagName}
       data-version-card-current={card.currentMatch ? "true" : "false"}
       data-version-card-older={card.olderThanCurrent ? "true" : "false"}
