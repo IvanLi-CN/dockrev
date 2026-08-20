@@ -215,7 +215,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
     onTopActions(
       <Button
         variant="ghost"
-        disabled={busy}
+        disabled={busy || phase === 'initial-loading' || phase === 'refreshing'}
         onClick={() => {
           void (async () => {
             setBusy(true)
@@ -233,7 +233,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
         刷新
       </Button>,
     )
-  }, [busy, onTopActions, refresh])
+  }, [busy, onTopActions, phase, refresh])
 
   const repos = repoPage?.repos ?? EMPTY_REPOS
 

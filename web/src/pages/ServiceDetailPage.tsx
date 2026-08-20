@@ -100,34 +100,16 @@ export function ServiceDetailPage(props: {
   const { isOnline } = usePwaStatus();
   const snapshotKey = buildReadonlySnapshotKey("service-detail", `${props.stackId}:${props.serviceId}`);
   const {
-    anomalyCandidateTag,
-    anomalyCurrentTag,
-    bannerClass,
-    bannerDetail,
-    bannerTitle,
+    anomalyCandidateTag, anomalyCurrentTag, bannerClass, bannerDetail, bannerTitle,
     backupPhase,
     backupLoaded,
     backupLoadError,
-    backupRecords,
-    busy,
-    composeEnvFile,
-    composeFiles,
-    composeType,
-    dockrevSelfUpgradeAction,
-    dotClass,
-    draftRepoUrl,
-    error,
-    lastSuccessfulRefreshAt,
-    lifecycleSettledJobId,
-    newRuleKind,
-    newRuleNote,
-    newRuleValue,
-    notice,
-    operationProgress,
-    backupTargets,
-    applyActiveJob,
-    applySubmitting,
-    repoInferBusy,
+    backupRecords, busy, composeEnvFile, composeFiles, composeType,
+    coreError,
+    corePhase,
+    dockrevSelfUpgradeAction, dotClass, draftRepoUrl, error, lastSuccessfulRefreshAt,
+    lifecycleSettledJobId, newRuleKind, newRuleNote, newRuleValue, notice, operationProgress,
+    backupTargets, applyActiveJob, applySubmitting, repoInferBusy,
     requestRefresh,
     refreshTrigger,
     requestApplyUpdate,
@@ -238,7 +220,7 @@ export function ServiceDetailPage(props: {
       setSnapshotStatus(snapshot.status);
       setSnapshotFetchedAt(snapshot.record?.fetchedAt ?? null);
       setSnapshotAnchorFetchedAt(snapshot.record?.fetchedAt ?? null);
-      if (snapshot.status !== "fresh" || !isServiceDetailSnapshotPayload(snapshot.record.payload)) {
+      if (snapshot.status !== "fresh" || !isServiceDetailSnapshotPayload(snapshot.record.payload) || !snapshot.record.payload.committedQueryKey.startsWith(`${props.stackId}:${props.serviceId}:`)) {
         setHistorySnapshotHydrated(true);
         return;
       }
@@ -344,7 +326,7 @@ export function ServiceDetailPage(props: {
     setSnapshotAnchorFetchedAt(null);
   }, [lastSuccessfulRefreshAt]);
   useEffect(() => {
-    if (!stack || !service) return;
+    if (!stack || !service || !["ready-data", "ready-empty"].includes(historyPhase) || !["ready-data", "ready-empty"].includes(backupPhase) || !monitoringSnapshot) return;
     void writeReadonlySnapshot(
       snapshotKey,
       {
@@ -375,10 +357,10 @@ export function ServiceDetailPage(props: {
   const effectiveStack = stack ?? snapshotPayload?.stack ?? null;
   const effectiveService = service ?? snapshotService;
   const effectiveJobs = jobs;
-  const effectiveBackupTargets = snapshotActive ? (snapshotPayload?.backupTargets ?? backupTargets) : backupTargets;
-  const effectiveBackupRecords = snapshotActive ? (snapshotPayload?.backupRecords ?? backupRecords) : backupRecords;
-  const effectiveMonitoringSnapshot = snapshotActive ? (snapshotPayload?.monitoring ?? monitoringSnapshot) : monitoringSnapshot;
-  const readonlyUi = !isOnline || snapshotActive;
+  const effectiveBackupTargets = snapshotPayload && backupPhase !== "ready-data" && backupPhase !== "ready-empty" ? (snapshotPayload.backupTargets ?? backupTargets) : backupTargets;
+  const effectiveBackupRecords = snapshotPayload && backupPhase !== "ready-data" && backupPhase !== "ready-empty" ? (snapshotPayload.backupRecords ?? backupRecords) : backupRecords;
+  const effectiveMonitoringSnapshot = monitoringSnapshot ?? snapshotPayload?.monitoring ?? null;
+  const readonlyUi = !isOnline;
   const topbarMonitorSummary = useMemo(() => {
     if (!effectiveStack || !effectiveService) return null;
     return <ServiceTopbarMonitorSummary snapshot={effectiveMonitoringSnapshot} />;
@@ -861,6 +843,16 @@ export function ServiceDetailPage(props: {
       ) : !isOnline ? (
         <ReadonlySnapshotNotice tone="warn" title="当前离线。" detail="仅在存在可用缓存时显示只读内容；日志与设置需要联网。" />
       ) : null}
+      <AsyncDataRegion
+        className="serviceDetailDataRegion"
+        error={coreError}
+        hasData={Boolean(effectiveStack && effectiveService)}
+        label="正在刷新服务详情"
+        onRetry={() => void requestRefresh("user-action")}
+        phase={corePhase}
+        skeleton={<AsyncDataSkeleton className="serviceDetailLoadingSkeleton" lines={7} />}
+        trigger={refreshTrigger}
+      >
       <section className="detailHeroShell">
         <div className={`${effectiveBannerClass} svcDetailSummaryRail`} data-service-detail-context="status-summary" aria-live={operationProgress ? "polite" : undefined} role={operationProgress ? "status" : undefined}>
           <div className="svcDetailSummaryLead">
@@ -1183,6 +1175,7 @@ export function ServiceDetailPage(props: {
           </div>
         </div>
       </ResponsiveSettingsDrawer>
+      </AsyncDataRegion>
       {error ? <div className="error">{error}</div> : null}
       {notice ? (
         <div className="success">

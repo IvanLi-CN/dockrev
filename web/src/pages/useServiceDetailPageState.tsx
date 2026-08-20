@@ -36,13 +36,11 @@ export function useServiceDetailPageState(props: {
   const confirm = useConfirm()
   const [stack, setStack] = useState<StackDetail | null>(null)
   const [service, setService] = useState<Service | null>(null)
-  const [settings, setSettings] = useState<ServiceSettings | null>(null)
-  const [settingsPhase, setSettingsPhase] = useState<AsyncDataPhase>('initial-loading')
+  const [corePhase, setCorePhase] = useState<AsyncDataPhase>('initial-loading'); const [coreError, setCoreError] = useState<string | null>(null)
+  const [settings, setSettings] = useState<ServiceSettings | null>(null); const [settingsPhase, setSettingsPhase] = useState<AsyncDataPhase>('initial-loading')
   const [backupTargets, setBackupTargets] = useState<ServiceBackupTargetsResponse | null>(null)
   const [backupRecords, setBackupRecords] = useState<ServiceBackupRecordItem[]>([])
-  const [backupPhase, setBackupPhase] = useState<AsyncDataPhase>('initial-loading')
-  const [backupLoaded, setBackupLoaded] = useState(false)
-  const [backupLoadError, setBackupLoadError] = useState<string | null>(null)
+  const [backupPhase, setBackupPhase] = useState<AsyncDataPhase>('initial-loading'); const [backupLoaded, setBackupLoaded] = useState(false); const [backupLoadError, setBackupLoadError] = useState<string | null>(null)
   const [stackSettings, setStackSettings] = useState<StackSettings | null>(null)
   const [rules, setRules] = useState<IgnoreRule[]>([])
   const [busy, setBusy] = useState(false)
@@ -51,24 +49,17 @@ export function useServiceDetailPageState(props: {
   const [notice, setNotice] = useState<{ jobId: string; kind: 'update' | 'rollback' | 'lifecycle' } | null>(null)
   const [rollbackTarget, setRollbackTarget] = useState<ServiceRollbackTargetResponse | null>(null)
   const [rollbackActiveTarget, setRollbackActiveTarget] = useState<ServiceRollbackTargetResponse | null>(null)
-  const { beginSubmitting, endSubmitting, trackJob, getActiveJobByTarget, isTargetSubmitting } =
-    useUpdateActionTracker()
+  const { beginSubmitting, endSubmitting, trackJob, getActiveJobByTarget, isTargetSubmitting } = useUpdateActionTracker()
   const { state: supervisorState, check: checkSupervisor } = useSupervisorHealth()
   const supervisorErrorAt = supervisorState.status === 'offline' ? supervisorState.errorAt : undefined
   const supervisorError = supervisorState.status === 'offline' ? supervisorState.error : undefined
   const selfUpgradeUrl = useMemo(() => selfUpgradeBaseUrl(), [])
-  const applyActionKey = useMemo(
-    () => resolveUpdateActionTargetKey('service', stackId, serviceId),
-    [serviceId, stackId],
-  )
+  const applyActionKey = useMemo(() => resolveUpdateActionTargetKey('service', stackId, serviceId), [serviceId, stackId])
   const applyActiveJob = applyActionKey ? getActiveJobByTarget(applyActionKey) : null
   const applySubmitting = applyActionKey ? isTargetSubmitting(applyActionKey) : false
   const [rollbackTargetRefreshing, setRollbackTargetRefreshing] = useState(false)
-  const [lifecycleStatus, setLifecycleStatus] = useState<ServiceLifecycleStatusResponse | null>(null)
-  const [lifecycleSettledJobId, setLifecycleSettledJobId] = useState<string | null>(null)
-  const lifecycleActiveJobIdRef = useRef<string | null>(null)
-  const lifecycleStatusRequestIdRef = useRef(0)
-  const rollbackActiveJobIdRef = useRef<string | null>(null)
+  const [lifecycleStatus, setLifecycleStatus] = useState<ServiceLifecycleStatusResponse | null>(null); const [lifecycleSettledJobId, setLifecycleSettledJobId] = useState<string | null>(null)
+  const lifecycleActiveJobIdRef = useRef<string | null>(null); const lifecycleStatusRequestIdRef = useRef(0); const rollbackActiveJobIdRef = useRef<string | null>(null)
   const submittingTokensRef = useRef(new Map<symbol, UpdateActionTargetKey>())
   const [lastSuccessfulRefreshAt, setLastSuccessfulRefreshAt] = useState<string | null>(null)
   const lifecycleJob = lifecycleStatus?.activeJob ?? null
@@ -117,12 +108,14 @@ export function useServiceDetailPageState(props: {
   const rollbackTargetRef = useRef(rollbackTarget)
   const rollbackTargetRefreshingRef = useRef(rollbackTargetRefreshing)
   const serviceRef = useRef(service)
+  const stackRef = useRef(stack)
   const settingsRef = useRef(settings)
   const backupRecordsRef = useRef(backupRecords)
   const backupHasCommittedDataRef = useRef(false)
   rollbackTargetRef.current = rollbackTarget
   rollbackTargetRefreshingRef.current = rollbackTargetRefreshing
   serviceRef.current = service
+  stackRef.current = stack
   settingsRef.current = settings
   backupRecordsRef.current = backupRecords
   const [newRuleKind, setNewRuleKind] = useState<'exact' | 'prefix' | 'regex' | 'semver'>('regex')
@@ -207,10 +200,8 @@ export function useServiceDetailPageState(props: {
     const fullRefreshRequestId = ++fullRefreshRequestIdRef.current
     const stackRequestId = ++stackRefreshRequestIdRef.current
     let appliedFullRefreshRoot = false
-    setError(null)
-    setSettingsPhase(settingsRef.current ? 'refreshing' : 'initial-loading')
-    setBackupPhase(backupHasCommittedDataRef.current ? 'refreshing' : 'initial-loading')
-    setBackupLoadError(null)
+    setError(null); setCorePhase(stackRef.current ? 'refreshing' : 'initial-loading'); setCoreError(null)
+    setSettingsPhase(settingsRef.current ? 'refreshing' : 'initial-loading'); setBackupPhase(backupHasCommittedDataRef.current ? 'refreshing' : 'initial-loading'); setBackupLoadError(null)
     setRollbackTargetRefreshing(true)
     onLastScanHint?.(undefined)
     try {
@@ -222,9 +213,10 @@ export function useServiceDetailPageState(props: {
         appliedFullRefreshRoot = true
         setStack(st)
         setService(svc)
+        setCorePhase('ready-data')
         primeRollbackTargetRefresh(svc)
       }
-      const backupResult = Promise.allSettled([
+      void Promise.allSettled([
         getServiceBackupTargets(serviceId),
         getServiceBackupRecords(serviceId),
       ]).then(([backupTargetsRes, backupRecordsRes]) => {
@@ -290,7 +282,7 @@ export function useServiceDetailPageState(props: {
         setRollbackTarget(null); setRollbackActiveTarget(null); setRollbackTargetRefreshing(false)
       }
       if (errors.length > 0) throw new Error(errors.join(' · '))
-      if (await backupResult) setLastSuccessfulRefreshAt(new Date().toISOString())
+      if (settingsRes.status === 'fulfilled') setLastSuccessfulRefreshAt(new Date().toISOString())
     } catch (error: unknown) {
       if (
         stackRequestId !== stackRefreshRequestIdRef.current ||
@@ -300,6 +292,8 @@ export function useServiceDetailPageState(props: {
       setRollbackTarget(null)
       setRollbackActiveTarget(null)
       setRollbackTargetRefreshing(false)
+      setCoreError(errorMessage(error))
+      setCorePhase('error')
       throw error
     }
   }, [onLastScanHint, primeRollbackTargetRefresh, serviceId, settleRollbackTargetSnapshot, stackId])
@@ -314,6 +308,8 @@ export function useServiceDetailPageState(props: {
       const svc = st.services.find((s) => s.id === serviceId) ?? null
       setStack(st)
       setService(svc)
+      setCorePhase('ready-data')
+      setCoreError(null)
       primeRollbackTargetRefresh(svc)
       if (!svc || isDockrevService(svc)) {
         setRollbackTarget(null)
@@ -329,6 +325,8 @@ export function useServiceDetailPageState(props: {
       setRollbackTarget(null)
       setRollbackActiveTarget(null)
       setRollbackTargetRefreshing(false)
+      setCoreError(errorMessage(error))
+      setCorePhase('error')
       throw error
     }
   }, [primeRollbackTargetRefresh, serviceId, settleRollbackTargetSnapshot, stackId])
@@ -362,6 +360,8 @@ export function useServiceDetailPageState(props: {
     setRefreshTrigger(trigger)
     return pageResumeRefresh()
   }, [pageResumeRefresh])
+  const requestRefreshRef = useRef(requestRefresh)
+  requestRefreshRef.current = requestRefresh
   const refreshLifecycleStatus = useCallback(async (expectedPageGeneration = pageGenerationRef.current) => {
     if (expectedPageGeneration !== pageGenerationRef.current) return
     const requestId = ++lifecycleStatusRequestIdRef.current
@@ -419,10 +419,10 @@ export function useServiceDetailPageState(props: {
   }, [endSubmitting, serviceId, stackId])
   useEffect(() => {
     const generation = pageGenerationRef.current
-    void requestRefresh().catch((e: unknown) => {
+    void requestRefreshRef.current().catch((e: unknown) => {
       if (generation === pageGenerationRef.current) setError(errorMessage(e))
     })
-  }, [requestRefresh, serviceId, stackId])
+  }, [serviceId, stackId])
   useEffect(() => {
     void refreshLifecycleStatus(pageGenerationRef.current).catch(() => {})
   }, [refreshLifecycleStatus])
@@ -1189,6 +1189,8 @@ export function useServiceDetailPageState(props: {
     stackSettings,
     settingsBusy,
     stack,
+    corePhase,
+    coreError,
     supervisorErrorAt,
     supervisorState,
     topActions,

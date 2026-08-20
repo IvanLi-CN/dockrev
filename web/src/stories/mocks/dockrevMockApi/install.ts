@@ -17,6 +17,7 @@ import { buildFixture } from './fixturesMisc'
 import { RUNNING_JOB_ID } from './fixturesQueues'
 import { buildMockGitHubReleasesDataset, buildMockGitHubReleasesResponse } from './githubReleases'
 import { handleGhcrRoutes } from './handlers/ghcr'
+import { handleJobStateRoutes } from './handlers/jobState'
 import { handleServiceLifecycleRoute } from './handlers/serviceLifecycle'
 import { handleServiceStateRoutes } from './handlers/serviceState'
 import {
@@ -477,6 +478,8 @@ export function installDockrevMockApi(
       if (method === 'GET' && urlPath === '/api/deploy-check/report' && options.deployCheckReportSequence?.length) { const sequence = options.deployCheckReportSequence; return json(sequence[Math.min(deployCheckReportSequenceIndex++, sequence.length - 1)]) }
       const ghcrResponse = await handleGhcrRoutes(routeCtx)
       if (ghcrResponse) return ghcrResponse
+      const jobStateResponse = await handleJobStateRoutes(routeCtx)
+      if (jobStateResponse) return jobStateResponse
       if (urlPath === '/api/version' && method === 'GET') {
         // Use an existing repo tag so the version link in UI can be exercised in Storybook.
         return json({ version: '0.5.0' })

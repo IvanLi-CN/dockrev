@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   getDeployCheckReport,
   getDeployWelcome,
@@ -124,13 +124,16 @@ export function DeployWelcomePage() {
   const [reportRefreshing, setReportRefreshing] = useState(false)
   const [reportRefreshError, setReportRefreshError] = useState<string | null>(null)
   const [reportTrigger, setReportTrigger] = useState<AsyncDataTrigger>('background')
+  const refreshRequestIdRef = useRef(0)
 
   const refresh = useCallback(async (trigger: AsyncDataTrigger = 'background') => {
+    const requestId = ++refreshRequestIdRef.current
     setReportTrigger(trigger)
     setLoading(true)
     setError(null)
     setReportRefreshError(null)
     const [reportResult, welcomeResult] = await Promise.allSettled([getDeployCheckReport(), getDeployWelcome()])
+    if (requestId !== refreshRequestIdRef.current) return
     let reportError: string | null = null
 
     if (reportResult.status === 'fulfilled') {
@@ -163,6 +166,7 @@ export function DeployWelcomePage() {
   }, [])
 
   const retryInitialReportRefresh = useCallback(async () => {
+    const requestId = ++refreshRequestIdRef.current
     setReportTrigger('user-action')
     setLoading(true)
     setReportRefreshing(true)
@@ -170,6 +174,7 @@ export function DeployWelcomePage() {
     setReportRefreshError(null)
     try {
       const settled = await refreshDeployCheckReport()
+      if (requestId !== refreshRequestIdRef.current) return
       setReportRefreshError(null)
       if (settled.report) {
         setReport(settled.report)

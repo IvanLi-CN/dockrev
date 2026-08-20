@@ -121,7 +121,7 @@ export function GhcrWebhookQueuePage(props: { onTopActions: (node: React.ReactNo
     onTopActions(
       <Button
         variant="ghost"
-        disabled={busy}
+        disabled={busy || phase === 'initial-loading' || phase === 'refreshing'}
         onClick={() => {
           void (async () => {
             setBusy(true)
@@ -138,7 +138,7 @@ export function GhcrWebhookQueuePage(props: { onTopActions: (node: React.ReactNo
         刷新
       </Button>,
     )
-  }, [busy, onTopActions, refresh])
+  }, [busy, onTopActions, phase, refresh])
 
   const runningJob = useMemo(() => jobs.find((job) => job.status === 'running') ?? null, [jobs])
   const recentJobs = useMemo(() => jobs.slice(0, 20), [jobs])
