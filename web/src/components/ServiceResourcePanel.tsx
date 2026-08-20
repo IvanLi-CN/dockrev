@@ -14,6 +14,8 @@ import {
   scaleResourceChartPoint,
   type ResourceChartInterpolation,
 } from './resourceChartPaths'
+import { AsyncDataRegion, AsyncDataSkeleton } from './AsyncDataRegion'
+import type { AsyncDataPhase, AsyncDataTrigger } from '../asyncData'
 
 type MetricTabKey = 'cpu' | 'memory' | 'network' | 'disk' | 'pids'
 
@@ -129,20 +131,19 @@ function compareSamplesByTime(a: ServiceResourceSample, b: ServiceResourceSample
   return ta - tb
 }
 
-function trimSortedSamples(samples: ServiceResourceSample[], windowSeconds: number): ServiceResourceSample[] {
+export function trimSamplesToWindow(
+  samples: ServiceResourceSample[],
+  windowSeconds: number,
+  now = Date.now(),
+): ServiceResourceSample[] {
   if (!samples.length) return []
-  const latestTs = parseSampleTs(samples[samples.length - 1]) ?? Date.now()
-  const cutoff = latestTs - windowSeconds * 1000
-  return samples.filter((sample) => {
-    const ts = parseSampleTs(sample)
-    return ts === null || ts >= cutoff
-  })
-}
-
-function trimSamplesToWindow(samples: ServiceResourceSample[], windowSeconds: number): ServiceResourceSample[] {
-  if (!samples.length) return []
-  const sorted = [...samples].sort(compareSamplesByTime)
-  return trimSortedSamples(sorted, windowSeconds)
+  const cutoff = now - Math.max(0, windowSeconds) * 1000
+  return samples
+    .filter((sample) => {
+      const ts = parseSampleTs(sample)
+      return ts !== null && ts >= cutoff && ts <= now
+    })
+    .sort(compareSamplesByTime)
 }
 
 function chartSamplesForWindow(samples: ServiceResourceSample[], isAggregatedWindow: boolean): ServiceResourceSample[] {
@@ -417,16 +418,25 @@ export function ServiceResourcePanel(props: {
   serviceId: string
   readonly?: boolean
   initialSnapshot?: ServiceResourceSnapshot | null
+  isOnline?: boolean
 }) {
-  const { serviceId, readonly = false, initialSnapshot = null } = props
+  const { serviceId, readonly = false, initialSnapshot = null, isOnline = true } = props
+  const initialSnapshotSamples = initialSnapshot
+    ? trimSamplesToWindow(initialSnapshot.samples, WINDOW_SECONDS[initialSnapshot.windowKey])
+    : []
+  const initialSnapshotHasData = initialSnapshotSamples.length > 0 || initialSnapshot?.monitorDisabled === true
+  const effectiveReadonly = readonly && (isOnline === false || initialSnapshotHasData)
 
   const [windowKey, setWindowKey] = useState<ServiceResourceUsageWindow>(
     initialSnapshot?.windowKey ?? '1h',
   )
   const [metricTab, setMetricTab] = useState<MetricTabKey>('cpu')
-  const [samples, setSamples] = useState<ServiceResourceSample[]>(initialSnapshot?.samples ?? [])
+  const [samples, setSamples] = useState<ServiceResourceSample[]>(initialSnapshotSamples)
   const [peaks, setPeaks] = useState<ServiceResourcePeak[]>([])
-  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(!effectiveReadonly)
+  const [historyLoaded, setHistoryLoaded] = useState(initialSnapshotHasData)
+  const [historyReloadTick, setHistoryReloadTick] = useState(0)
+  const [historyTrigger, setHistoryTrigger] = useState<AsyncDataTrigger>('background')
   const [historyError, setHistoryError] = useState<string | null>(null)
   const [monitorDisabled, setMonitorDisabled] = useState(
     initialSnapshot?.monitorDisabled === true,
@@ -445,16 +455,25 @@ export function ServiceResourcePanel(props: {
   }, [windowKey])
 
   useEffect(() => {
-    if (!readonly || !initialSnapshot) return
-    setWindowKey(initialSnapshot.windowKey)
-    setSamples(initialSnapshot.samples)
-    setPeaks([])
-    setMonitorDisabled(initialSnapshot.monitorDisabled === true)
-    setHistoryError(null)
-    setHistoryLoading(false)
-    setStreamError(null)
-    setStreamState('idle')
-  }, [initialSnapshot, readonly])
+    if (effectiveReadonly && initialSnapshot) {
+      const trimmedSamples = trimSamplesToWindow(initialSnapshot.samples, WINDOW_SECONDS[initialSnapshot.windowKey])
+      const snapshotHasData = trimmedSamples.length > 0 || initialSnapshot.monitorDisabled === true
+      setWindowKey(initialSnapshot.windowKey)
+      setSamples(trimmedSamples)
+      setPeaks([])
+      setMonitorDisabled(initialSnapshot.monitorDisabled === true)
+      setHistoryError(null)
+      setHistoryLoading(false)
+      setHistoryLoaded(snapshotHasData)
+      setStreamError(null)
+      setStreamState('idle')
+      return
+    }
+    if (readonly && !initialSnapshot && isOnline === false) {
+      setHistoryLoading(false)
+      setHistoryLoaded(false)
+    }
+  }, [effectiveReadonly, initialSnapshot, isOnline, readonly])
 
   useEffect(() => {
     if (typeof document === 'undefined') return undefined
@@ -466,7 +485,7 @@ export function ServiceResourcePanel(props: {
   }, [])
 
   useEffect(() => {
-    if (readonly) {
+    if (effectiveReadonly) {
       setHistoryLoading(false)
       return undefined
     }
@@ -482,6 +501,7 @@ export function ServiceResourcePanel(props: {
         setMonitorDisabled(false)
         setSamples(trimSamplesToWindow(response.samples, WINDOW_SECONDS[windowKey]))
         setPeaks(response.peaks ?? [])
+        setHistoryLoaded(true)
       } catch (error: unknown) {
         if (cancelled) return
         if (isMonitorDisabledError(error)) {
@@ -503,10 +523,10 @@ export function ServiceResourcePanel(props: {
     return () => {
       cancelled = true
     }
-  }, [readonly, serviceId, windowKey])
+  }, [historyReloadTick, effectiveReadonly, serviceId, windowKey])
 
   useEffect(() => {
-    if (readonly || isAggregatedWindow || !isPageVisible || monitorDisabled) {
+    if (effectiveReadonly || isAggregatedWindow || !isPageVisible || monitorDisabled) {
       setStreamState('idle')
       return undefined
     }
@@ -526,7 +546,7 @@ export function ServiceResourcePanel(props: {
     const appendSample = (sample: ServiceResourceSample) => {
       setSamples((prev) => {
         const next = appendSampleToSorted(prev, sample)
-        return trimSortedSamples(next, windowSecondsRef.current)
+        return trimSamplesToWindow(next, windowSecondsRef.current)
       })
     }
 
@@ -614,7 +634,7 @@ export function ServiceResourcePanel(props: {
       closeSource()
       setStreamState('idle')
     }
-  }, [isAggregatedWindow, isPageVisible, monitorDisabled, readonly, serviceId])
+  }, [isAggregatedWindow, isPageVisible, monitorDisabled, effectiveReadonly, serviceId])
 
   const chartSamples = useMemo(
     () => chartSamplesForWindow(samples, isAggregatedWindow),
@@ -727,7 +747,7 @@ export function ServiceResourcePanel(props: {
     return (value: number) => `${Math.round(value)}`
   }, [metricTab])
 
-  const streamStatusLabel = readonly
+  const streamStatusLabel = effectiveReadonly
     ? '离线缓存（只读）'
     : isAggregatedWindow
       ? '聚合历史（只读）'
@@ -742,7 +762,7 @@ export function ServiceResourcePanel(props: {
             : '页面不可见，实时连接已暂停'
 
   const streamBadge = useMemo(() => {
-    if (readonly) return { label: '本地缓存', className: 'svcResourceStatusIdle' }
+    if (effectiveReadonly) return { label: '本地缓存', className: 'svcResourceStatusIdle' }
     if (isAggregatedWindow) return { label: '聚合历史', className: 'svcResourceStatusIdle' }
     if (monitorDisabled) return { label: '监控关闭', className: 'svcResourceStatusWarn' }
     if (streamError) return { label: '实时异常', className: 'svcResourceStatusBad' }
@@ -752,7 +772,7 @@ export function ServiceResourcePanel(props: {
     }
     if (!isPageVisible) return { label: '已暂停', className: 'svcResourceStatusIdle' }
     return { label: '未连接', className: 'svcResourceStatusIdle' }
-  }, [isAggregatedWindow, isPageVisible, monitorDisabled, readonly, streamError, streamState])
+  }, [isAggregatedWindow, isPageVisible, monitorDisabled, effectiveReadonly, streamError, streamState])
 
   const activeMetric = TAB_OPTIONS.find((item) => item.key === metricTab) ?? TAB_OPTIONS[0]
   const activeMetricCopy = METRIC_PANEL_COPY[metricTab]
@@ -779,12 +799,19 @@ export function ServiceResourcePanel(props: {
             : `此桶峰值 PIDs ${formatCount(latestPeak.pids)}`
     : null
 
-  const sampleUnit = readonly ? '已缓存' : isAggregatedWindow ? '聚合桶' : '样本（含实时点）'
+  const sampleUnit = effectiveReadonly ? '已缓存' : isAggregatedWindow ? '聚合桶' : '样本（含实时点）'
+  const historyPhase: AsyncDataPhase = !isOnline && samples.length === 0 && !monitorDisabled
+    ? 'offline'
+    : historyError
+      ? 'error'
+      : historyLoading
+        ? historyLoaded ? 'refreshing' : 'initial-loading'
+        : samples.length === 0 ? 'ready-empty' : 'ready-data'
   const chartContext = historyLoading
     ? `${WINDOW_META_LABELS[windowKey]} · 正在加载历史样本`
     : samples.length > 0
       ? `${WINDOW_META_LABELS[windowKey]} · ${samples.length} 个${sampleUnit}`
-      : `${WINDOW_META_LABELS[windowKey]} · 暂无${readonly ? '缓存' : '历史或实时'}样本`
+      : `${WINDOW_META_LABELS[windowKey]} · 暂无${effectiveReadonly ? '缓存' : '历史或实时'}样本`
 
   const statCards = [
     {
@@ -832,7 +859,7 @@ export function ServiceResourcePanel(props: {
           <div className="svcResourceTitleBlock">
             <div className="title svcResourceTitle">资源监控</div>
             <div className="muted svcResourceSubtitle">
-              {readonly
+              {effectiveReadonly
                 ? '当前展示最近一次缓存到本地的监控样本；恢复联网后才会继续拉取历史并恢复实时推送。'
                 : isAggregatedWindow
                   ? '长时间窗口按时间桶展示历史均值；最近桶保留峰值提示。'
@@ -854,7 +881,7 @@ export function ServiceResourcePanel(props: {
           <div className="svcResourceFact">最近更新 {formatSampleTime(latestSample)}</div>
         </div>
 
-        {streamError && !monitorDisabled && !readonly ? <div className="svcResourceSubtleAlert">实时状态：{streamError}</div> : null}
+        {streamError && !monitorDisabled && !effectiveReadonly ? <div className="svcResourceSubtleAlert">实时状态：{streamError}</div> : null}
       </div>
 
       {monitorDisabled ? (
@@ -893,7 +920,7 @@ export function ServiceResourcePanel(props: {
 
               <div className="svcResourceToolbarGroup svcResourceToolbarGroupWindow">
                 <div className="svcResourceToolbarLabel">时间范围</div>
-                {readonly ? (
+                {effectiveReadonly ? (
                   <div className="svcResourceWindowSwitch" aria-label="时间窗口切换">
                     <div className="svcResourceWindowBtn active" aria-disabled="true">
                       {WINDOW_META_LABELS[windowKey]}
@@ -906,7 +933,11 @@ export function ServiceResourcePanel(props: {
                     value={windowKey}
                     onValueChange={(value) => {
                       if (!value) return
-                      setWindowKey(value as ServiceResourceUsageWindow)
+                      const nextWindowKey = value as ServiceResourceUsageWindow
+                      setHistoryTrigger('user-action')
+                      setSamples((current) => trimSamplesToWindow(current, WINDOW_SECONDS[nextWindowKey]))
+                      setPeaks([])
+                      setWindowKey(nextWindowKey)
                     }}
                     aria-label="时间窗口切换"
                   >
@@ -924,7 +955,19 @@ export function ServiceResourcePanel(props: {
               </div>
             </div>
 
-            <div className="svcResourceChartStage">
+            <AsyncDataRegion
+              className="svcResourceChartStage"
+              error={historyError}
+              hasData={historyLoaded}
+              label="正在刷新监控历史"
+              onRetry={() => {
+                setHistoryTrigger('user-action')
+                setHistoryReloadTick((current) => current + 1)
+              }}
+              phase={historyPhase}
+              skeleton={<AsyncDataSkeleton className="svcResourceChartLoadingSkeleton" lines={5} />}
+              trigger={historyTrigger}
+            >
               <div className="svcResourceChartStageHead">
                 <div className="svcResourceChartTitleBlock">
                   <div className="svcResourceChartEyebrow">{activeMetric.label}</div>
@@ -939,19 +982,13 @@ export function ServiceResourcePanel(props: {
                 </div>
               </div>
 
-              {historyLoading ? (
-                <div className="svcResourceChartEmpty">正在加载历史采样…</div>
-              ) : historyError ? (
-                <div className="svcResourceChartEmpty">历史数据加载失败：{historyError}</div>
-              ) : (
-                <ResourceLineChart
-                  series={chartSeries}
-                  yFormatter={yFormatter}
-                  emptyText="当前窗口暂无可展示的监控数据"
-                  latestPeakLabel={latestPeakLabel}
-                />
-              )}
-            </div>
+              <ResourceLineChart
+                series={chartSeries}
+                yFormatter={yFormatter}
+                emptyText="当前窗口暂无可展示的监控数据"
+                latestPeakLabel={latestPeakLabel}
+              />
+            </AsyncDataRegion>
           </Tabs>
 
           <div className="svcResourceStreamStatus">{streamStatusLabel}</div>

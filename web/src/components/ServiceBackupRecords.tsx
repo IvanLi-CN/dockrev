@@ -1,6 +1,7 @@
 import type { ServiceBackupRecordAsset, ServiceBackupRecordItem } from '../api'
 import { formatBytes } from '../pages/settings/helpers'
 import { Pill } from '../ui'
+import { AsyncDataSkeleton } from './AsyncDataRegion'
 
 function formatDateTime(value: string | null | undefined): string {
   const date = value ? new Date(value) : null
@@ -40,7 +41,10 @@ function backupAssetStatusLabel(asset: ServiceBackupRecordAsset): string {
   }
 }
 
-export function BackupRecordList(props: { records: ServiceBackupRecordItem[] }) {
+export function BackupRecordList(props: { records: ServiceBackupRecordItem[]; loading?: boolean }) {
+  if (props.loading) {
+    return <AsyncDataSkeleton className="serviceBackupRecordsLoading" lines={3} />
+  }
   if (props.records.length === 0) {
     return (
       <div className="serviceBackupRecordsEmpty" data-service-backup-records-state="empty">

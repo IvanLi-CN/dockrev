@@ -65,6 +65,28 @@ export const RuntimeStateMatrixMobile: Story = {
   },
 }
 
+export const InitialErrorAndRetry: Story = {
+  parameters: {
+    dockrevApiScenario: 'dashboard-demo',
+    dockrevApiBehaviorByRoute: {
+      'GET /api/stacks': {
+        delayMs: 80,
+        failTimes: 1,
+        failureStatus: 503,
+        failureBody: { error: 'mock service tree unavailable' },
+      },
+    },
+  },
+  render: render('desktop'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(canvasElement.querySelector('[role="alert"]')))
+    const retry = canvasElement.querySelector<HTMLButtonElement>('[aria-label="重试加载"]')
+    expectStory(Boolean(retry), 'service tree failure must expose a retry overlay')
+    retry?.click()
+    await waitForCondition(() => Boolean(canvasElement.querySelector('.detailRouteStackLink')))
+  },
+}
+
 export const ServiceContextMenuRunning: Story = {
   render: render('desktop'),
   play: async ({ canvasElement }) => {

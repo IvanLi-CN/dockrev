@@ -573,12 +573,13 @@ export function ResponsiveActionButton(props: {
   )
 }
 
-export function Chip(props: { children: ReactNode; active?: boolean; onClick?: () => void; title?: string }) {
+export function Chip(props: { children: ReactNode; active?: boolean; disabled?: boolean; onClick?: () => void; title?: string }) {
   const active = props.active ?? false
   return (
     <Toggle
       aria-pressed={active}
       className={cn('chip', active && 'chipActive')}
+      disabled={props.disabled}
       onPressedChange={() => props.onClick?.()}
       pressed={active}
       title={props.title}

@@ -13,6 +13,8 @@ import { useConfirm } from '../confirm'
 import { useManagementEventBatch } from '../managementEvents'
 import { navigate } from '../routes'
 import { Button, Mono, Pill } from '../ui'
+import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
+import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
 
 const GHCR_JOB_TYPES = new Set([
   'github_packages_webhook',
@@ -71,21 +73,37 @@ export function GhcrWebhookQueuePage(props: { onTopActions: (node: React.ReactNo
   const [overview, setOverview] = useState<GitHubPackagesWebhookOverviewResponse | null>(null)
   const [repos, setRepos] = useState<GitHubPackagesRepo[]>([])
   const [jobs, setJobs] = useState<JobListItem[]>([])
+  const [phase, setPhase] = useState<AsyncDataPhase>('initial-loading')
+  const [source, setSource] = useState<AsyncDataSource>('none')
+  const [trigger, setTrigger] = useState<AsyncDataTrigger>('background')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const refreshRequestIdRef = useRef(0)
+  const hasCommittedDataRef = useRef(false)
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (nextSource: AsyncDataSource = 'live', nextTrigger: AsyncDataTrigger = 'background') => {
     const requestId = ++refreshRequestIdRef.current
-    const [nextOverview, repoResp, allJobs] = await Promise.all([
-      getGitHubPackagesWebhookOverview(),
-      listGitHubPackagesRepos({ page: 1, perPage: 200, selectedFilter: 'selected' }),
-      listJobs(),
-    ])
-    if (requestId !== refreshRequestIdRef.current) return
-    setOverview(nextOverview)
-    setRepos(repoResp.repos)
-    setJobs(allJobs.filter((job) => isGhcrJobType(job.type)))
+    setSource(nextSource)
+    setTrigger(nextTrigger)
+    setPhase(hasCommittedDataRef.current ? 'refreshing' : 'initial-loading')
+    setError(null)
+    try {
+      const [nextOverview, repoResp, allJobs] = await Promise.all([
+        getGitHubPackagesWebhookOverview(),
+        listGitHubPackagesRepos({ page: 1, perPage: 200, selectedFilter: 'selected' }),
+        listJobs(),
+      ])
+      if (requestId !== refreshRequestIdRef.current) return
+      setOverview(nextOverview)
+      setRepos(repoResp.repos)
+      setJobs(allJobs.filter((job) => isGhcrJobType(job.type)))
+      hasCommittedDataRef.current = true
+      setPhase('ready-data')
+    } catch (reason: unknown) {
+      if (requestId !== refreshRequestIdRef.current) return
+      setPhase('error')
+      throw reason
+    }
   }, [])
 
   useEffect(() => {
@@ -103,12 +121,12 @@ export function GhcrWebhookQueuePage(props: { onTopActions: (node: React.ReactNo
     onTopActions(
       <Button
         variant="ghost"
-        disabled={busy}
+        disabled={busy || phase === 'initial-loading' || phase === 'refreshing'}
         onClick={() => {
           void (async () => {
             setBusy(true)
             try {
-              await refresh()
+              await refresh('memory', 'user-action')
             } catch (e: unknown) {
               setError(errorMessage(e))
             } finally {
@@ -120,14 +138,24 @@ export function GhcrWebhookQueuePage(props: { onTopActions: (node: React.ReactNo
         刷新
       </Button>,
     )
-  }, [busy, onTopActions, refresh])
+  }, [busy, onTopActions, phase, refresh])
 
   const runningJob = useMemo(() => jobs.find((job) => job.status === 'running') ?? null, [jobs])
   const recentJobs = useMemo(() => jobs.slice(0, 20), [jobs])
 
   return (
     <div className="page">
-      <div className="card">
+      <AsyncDataRegion
+        className="card"
+        error={error}
+        hasData={overview !== null}
+        label="正在刷新 GHCR Webhook 状态"
+        onRetry={() => void refresh('memory', 'user-action').catch((reason: unknown) => setError(errorMessage(reason)))}
+        phase={phase}
+        skeleton={<AsyncDataSkeleton className="ghcrQueueLoadingSkeleton" lines={7} />}
+        source={source}
+        trigger={trigger}
+      >
         <div className="sectionRow">
           <div className="title">GHCR Webhook 状态</div>
           <div className="chipRow" style={{ marginLeft: 'auto' }}>
@@ -139,25 +167,25 @@ export function GhcrWebhookQueuePage(props: { onTopActions: (node: React.ReactNo
 
         <div className="queueMeta" style={{ marginTop: 10 }}>
           <span>
-            tracked <Mono>{overview?.summary.tracked ?? 0}</Mono>
+            tracked <Mono>{overview?.summary.tracked ?? '—'}</Mono>
           </span>
           <span>
-            ok <Mono>{overview?.summary.ok ?? 0}</Mono>
+            ok <Mono>{overview?.summary.ok ?? '—'}</Mono>
           </span>
           <span>
-            missing <Mono>{overview?.summary.missing ?? 0}</Mono>
+            missing <Mono>{overview?.summary.missing ?? '—'}</Mono>
           </span>
           <span>
-            error <Mono>{overview?.summary.error ?? 0}</Mono>
+            error <Mono>{overview?.summary.error ?? '—'}</Mono>
           </span>
           <span>
-            conflict <Mono>{overview?.summary.conflict ?? 0}</Mono>
+            conflict <Mono>{overview?.summary.conflict ?? '—'}</Mono>
           </span>
           <span>
-            jobsQueued <Mono>{overview?.jobsQueued ?? 0}</Mono>
+            jobsQueued <Mono>{overview?.jobsQueued ?? '—'}</Mono>
           </span>
           <span>
-            jobsRunning <Mono>{overview?.jobsRunning ?? 0}</Mono>
+            jobsRunning <Mono>{overview?.jobsRunning ?? '—'}</Mono>
           </span>
           <span>
             lastAuditAt <Mono>{formatShort(overview?.lastAuditAt)}</Mono>
@@ -171,7 +199,7 @@ export function GhcrWebhookQueuePage(props: { onTopActions: (node: React.ReactNo
         ) : null}
 
         <div className="queueList" style={{ marginTop: 12 }}>
-          {repos.length === 0 ? <div className="muted">暂无已跟踪仓库</div> : null}
+          {phase === 'ready-data' && repos.length === 0 ? <div className="muted">暂无已跟踪仓库</div> : null}
           {repos.map((repo) => {
             const state = normalizeWebhookState(repo.webhookState)
             const showRetryDelete = state === 'error' && (repo.lastOp ?? '') === 'unregister'
@@ -296,7 +324,7 @@ export function GhcrWebhookQueuePage(props: { onTopActions: (node: React.ReactNo
 
         <div className="title" style={{ marginTop: 16 }}>最近 GHCR Webhook Jobs</div>
         <div className="queueList">
-          {recentJobs.length === 0 ? <div className="muted">暂无任务</div> : null}
+          {phase === 'ready-data' && recentJobs.length === 0 ? <div className="muted">暂无任务</div> : null}
           {recentJobs.map((job) => (
             <button key={job.id} className="queueItem" onClick={() => navigate({ name: 'job', jobId: job.id })}>
               <div className="queueMain">
@@ -325,8 +353,7 @@ export function GhcrWebhookQueuePage(props: { onTopActions: (node: React.ReactNo
           ))}
         </div>
 
-        {error ? <div className="error">{error}</div> : null}
-      </div>
+      </AsyncDataRegion>
     </div>
   )
 }

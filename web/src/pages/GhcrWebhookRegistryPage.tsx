@@ -18,9 +18,18 @@ import { useConfirm } from '../confirm'
 import { useManagementEventBatch } from '../managementEvents'
 import { navigate } from '../routes'
 import { Button, Chip, Input, Mono, Pill, ResponsiveActionButton, SelectField } from '../ui'
+import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
+import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
 import { webhookStateDotClass, webhookStateIcon } from '../webhookStatus'
 
 type RepoStateFilter = 'all' | 'ok' | 'missing' | 'error' | 'conflict' | 'queued' | 'running' | 'unknown'
+
+type RepoQuery = {
+  filter: RepoStateFilter
+  query: string
+  page: number
+  perPage: number
+}
 
 const REPO_PER_PAGE_OPTIONS = [25, 50, 100] as const
 const DEFAULT_REPO_PER_PAGE = 50
@@ -132,68 +141,68 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
   const [perPage, setPerPage] = useState<number>(DEFAULT_REPO_PER_PAGE)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [phase, setPhase] = useState<AsyncDataPhase>('initial-loading')
+  const [source, setSource] = useState<AsyncDataSource>('none')
+  const [trigger, setTrigger] = useState<AsyncDataTrigger>('background')
   const refreshRequestIdRef = useRef(0)
+  const hasCommittedDataRef = useRef(false)
+  const committedQueryRef = useRef<RepoQuery>({ filter, query, page, perPage })
   const filterRowRef = useRef<HTMLDivElement | null>(null)
-  const refreshRunningRef = useRef(false)
-  const refreshQueuedRef = useRef(false)
-  const runRefreshOnceRef = useRef<() => Promise<void>>(async () => undefined)
+  committedQueryRef.current = { filter, query, page, perPage }
 
-  const runRefreshOnce = useCallback(async (): Promise<void> => {
+  const refresh = useCallback(async (opts?: AsyncDataSource | { source?: AsyncDataSource; trigger?: AsyncDataTrigger; query?: RepoQuery }): Promise<void> => {
     const requestId = ++refreshRequestIdRef.current
+    const requestedQuery = typeof opts === 'string' ? committedQueryRef.current : (opts?.query ?? committedQueryRef.current)
+    const requestedSource = typeof opts === 'string' ? opts : (opts?.source ?? 'live')
+    const requestedTrigger = typeof opts === 'string' ? 'background' : (opts?.trigger ?? 'background')
+    setSource(requestedSource)
+    setTrigger(requestedTrigger)
+    setPhase(hasCommittedDataRef.current ? 'refreshing' : 'initial-loading')
     setError(null)
     try {
-      const [nextOverview, nextRepoPage, activeJobs] = await Promise.all([
+      const [nextOverview, initialRepoPage, activeJobs] = await Promise.all([
         getGitHubPackagesWebhookOverview(),
         listGitHubPackagesRepos({
-          page,
-          perPage,
-          q: query,
+          page: requestedQuery.page,
+          perPage: requestedQuery.perPage,
+          q: requestedQuery.query,
           selectedFilter: 'selected',
-          webhookState: filter,
+          webhookState: requestedQuery.filter,
         }),
         listActiveGhcrJobs(),
       ])
       if (requestId !== refreshRequestIdRef.current) return
+      let nextRepoPage = initialRepoPage
       const maxPage = Math.max(1, Math.ceil(nextRepoPage.filteredTotal / nextRepoPage.perPage))
       if (nextRepoPage.page > maxPage) {
-        setPage(maxPage)
-        return
+        nextRepoPage = await listGitHubPackagesRepos({
+          page: maxPage,
+          perPage: requestedQuery.perPage,
+          q: requestedQuery.query,
+          selectedFilter: 'selected',
+          webhookState: requestedQuery.filter,
+        })
+        if (requestId !== refreshRequestIdRef.current) return
       }
       setOverview(nextOverview)
       setRepoPage(nextRepoPage)
       setJobs(activeJobs)
+      setFilter(requestedQuery.filter)
+      setQuery(requestedQuery.query)
+      setPage(nextRepoPage.page)
+      setPerPage(requestedQuery.perPage)
+      hasCommittedDataRef.current = true
+      setPhase(nextRepoPage.repos.length === 0 ? 'ready-empty' : 'ready-data')
     } catch (e: unknown) {
       if (requestId !== refreshRequestIdRef.current) return
       setError(errorMessage(e))
+      setPhase('error')
     }
-  }, [filter, page, perPage, query])
-
-  runRefreshOnceRef.current = runRefreshOnce
-
-  const refresh = useCallback(
-    async () => {
-      if (refreshRunningRef.current) {
-        refreshQueuedRef.current = true
-        return
-      }
-
-      refreshRunningRef.current = true
-      refreshQueuedRef.current = true
-      try {
-        while (refreshQueuedRef.current) {
-          refreshQueuedRef.current = false
-          await runRefreshOnceRef.current()
-        }
-      } finally {
-        refreshRunningRef.current = false
-      }
-    },
-    [],
-  )
+  }, [])
 
   useEffect(() => {
     void refresh()
-  }, [filter, page, perPage, query, refresh])
+  }, [refresh])
 
   useManagementEventBatch(({ events, resyncRequired }) => {
     if (!resyncRequired && !events.some((event) =>
@@ -206,13 +215,13 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
     onTopActions(
       <Button
         variant="ghost"
-        disabled={busy}
+        disabled={busy || phase === 'initial-loading' || phase === 'refreshing'}
         onClick={() => {
           void (async () => {
             setBusy(true)
             setError(null)
             try {
-              await refresh()
+              await refresh({ trigger: 'user-action' })
             } catch (e: unknown) {
               setError(errorMessage(e))
             } finally {
@@ -224,9 +233,9 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
         刷新
       </Button>,
     )
-  }, [busy, onTopActions, refresh])
+  }, [busy, onTopActions, phase, refresh])
 
-  const repos = repoPage?.page === page ? repoPage.repos : EMPTY_REPOS
+  const repos = repoPage?.repos ?? EMPTY_REPOS
 
   const summary = useMemo(() => {
     const fallback = {
@@ -257,6 +266,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
     [perPage, repoPage?.filteredTotal, repoPage?.perPage],
   )
   const currentPage = page
+  const dataBusy = phase === 'initial-loading' || phase === 'refreshing'
 
   const runningJob = useMemo(() => jobs.find((job) => job.status === 'running') ?? null, [jobs])
 
@@ -314,34 +324,22 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
     [summary.conflict, summary.error, summary.missing, summary.ok, summary.queued, summary.running, summary.tracked, summary.unknown],
   )
 
-  const invalidatePendingRefresh = useCallback(() => {
-    refreshRequestIdRef.current += 1
-    setRepoPage(null)
-  }, [])
-
   const updateFilter = useCallback((nextFilter: RepoStateFilter) => {
-    invalidatePendingRefresh()
-    setFilter(nextFilter)
-    setPage(1)
-  }, [invalidatePendingRefresh])
+    void refresh({ source: 'memory', trigger: 'user-action', query: { ...committedQueryRef.current, filter: nextFilter, page: 1 } })
+  }, [refresh])
 
   const submitSearch = useCallback(() => {
-    invalidatePendingRefresh()
-    setQuery(queryInput.trim())
-    setPage(1)
-  }, [invalidatePendingRefresh, queryInput])
+    void refresh({ source: 'memory', trigger: 'user-action', query: { ...committedQueryRef.current, query: queryInput.trim(), page: 1 } })
+  }, [queryInput, refresh])
 
   const clearSearch = useCallback(() => {
-    invalidatePendingRefresh()
     setQueryInput('')
-    setQuery('')
-    setPage(1)
-  }, [invalidatePendingRefresh])
+    void refresh({ source: 'memory', trigger: 'user-action', query: { ...committedQueryRef.current, query: '', page: 1 } })
+  }, [refresh])
 
   const goToPage = useCallback((nextPage: number) => {
-    invalidatePendingRefresh()
-    setPage(Math.max(1, nextPage))
-  }, [invalidatePendingRefresh])
+    void refresh({ source: 'memory', trigger: 'user-action', query: { ...committedQueryRef.current, page: Math.max(1, nextPage) } })
+  }, [refresh])
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined
@@ -379,19 +377,29 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
   }, [filterItems])
 
   return (
-    <div className="page ghcrRegistryPage">
+    <AsyncDataRegion
+      className="page ghcrRegistryPage"
+      error={error}
+      hasData={hasCommittedDataRef.current}
+      label="正在刷新 GHCR Webhook 维护数据"
+      onRetry={() => void refresh({ source: 'memory', trigger: 'user-action' })}
+      phase={phase}
+      skeleton={<AsyncDataSkeleton className="ghcrRegistryLoadingSkeleton" lines={10} />}
+      source={source}
+      trigger={trigger}
+    >
       <div className="ghcrRegistrySummaryGrid">
         <div className="ghcrRegistrySummaryItem">
           <div className="muted">Tracked Repos</div>
           <div className="ghcrRegistrySummaryValue">
-            <Mono>{summary.tracked}</Mono>
+            <Mono>{phase === 'initial-loading' ? '—' : summary.tracked}</Mono>
           </div>
         </div>
         <div className="ghcrRegistrySummaryItem">
           <div className="muted">Webhook 状态</div>
           <div className="ghcrRegistrySummaryValue">
             <Mono>
-              ok {summary.ok} · missing {summary.missing} · error {summary.error} · conflict {summary.conflict}
+              {phase === 'initial-loading' ? '正在加载…' : `ok ${summary.ok} · missing ${summary.missing} · error ${summary.error} · conflict ${summary.conflict}`}
             </Mono>
           </div>
         </div>
@@ -399,7 +407,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
           <div className="muted">Job 状态</div>
           <div className="ghcrRegistrySummaryValue">
             <Mono>
-              queued {overview?.jobsQueued ?? 0} · running {overview?.jobsRunning ?? 0}
+              {phase === 'initial-loading' ? '正在加载…' : `queued ${overview?.jobsQueued ?? '—'} · running ${overview?.jobsRunning ?? '—'}`}
             </Mono>
           </div>
         </div>
@@ -421,6 +429,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
             <Chip
               key={it.key}
               active={filter === it.key}
+              disabled={dataBusy || busy}
               onClick={() => updateFilter(it.key as RepoStateFilter)}
               title={`${it.label}: ${it.count}`}
             >
@@ -437,6 +446,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
             </label>
             <SelectField
               className="select ghcrRegistryFilterSelect"
+              disabled={dataBusy || busy}
               id="ghcr-registry-filter-select"
               onChange={(value) => updateFilter(value as RepoStateFilter)}
               options={filterItems.map((item) => ({
@@ -451,6 +461,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
         <div className="ghcrRegistrySearchForm">
           <Input
             className="input"
+            disabled={dataBusy || busy}
             onChange={(event) => setQueryInput(event.target.value)}
             onKeyDown={(event) => {
               if (event.key !== 'Enter') return
@@ -460,12 +471,12 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
             placeholder="搜索 owner/repo、状态、hookId、错误信息"
             value={queryInput}
           />
-          <Button variant="ghost" onClick={submitSearch}>
+          <Button variant="ghost" disabled={dataBusy || busy} onClick={submitSearch}>
             搜索
           </Button>
           <Button
             variant="ghost"
-            disabled={!query && !queryInput}
+            disabled={dataBusy || busy || (!query && !queryInput)}
             onClick={clearSearch}
           >
             清除
@@ -475,7 +486,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
         <div className="chipRow" style={{ marginLeft: 'auto' }}>
           <ResponsiveActionButton
             variant="ghost"
-            disabled={busy && !activeSyncAllJob}
+            disabled={dataBusy || (busy && !activeSyncAllJob)}
             label={
               activeSyncAllJob?.status === 'running'
                 ? '全量同步中…'
@@ -509,7 +520,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
                 setError(null)
                 try {
                   await triggerGitHubPackagesWebhookSyncAll()
-                  await refresh()
+                  await refresh({ source: 'memory', trigger: 'user-action' })
                 } catch (e: unknown) {
                   setError(errorMessage(e))
                 } finally {
@@ -530,32 +541,40 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
 
       <div className="ghcrRegistryPager" aria-label="仓库分页">
         <span className="muted">
-          {repoPage ? `第 ${currentPage} / ${maxPage} 页，共 ${repoPage.filteredTotal} 个仓库` : '正在加载仓库…'}
+          {phase === 'initial-loading' ? '正在加载仓库…' : repoPage ? `第 ${currentPage} / ${maxPage} 页，共 ${repoPage.filteredTotal} 个仓库` : '暂无已提交页面'}
         </span>
         <label className="ghcrRegistryPerPage">
           <span className="muted">每页</span>
           <SelectField
             ariaLabel="每页仓库数量"
             className="select"
+            disabled={busy || phase === 'initial-loading' || phase === 'refreshing'}
             onChange={(value) => {
-              invalidatePendingRefresh()
-              setPerPage(Number.parseInt(value, 10))
-              setPage(1)
+              const nextPerPage = Number.parseInt(value, 10)
+              void refresh({
+                source: 'memory',
+                trigger: 'user-action',
+                query: {
+                  ...committedQueryRef.current,
+                  page: 1,
+                  perPage: Number.isFinite(nextPerPage) && nextPerPage > 0 ? nextPerPage : DEFAULT_REPO_PER_PAGE,
+                },
+              })
             }}
             options={REPO_PER_PAGE_OPTIONS.map((size) => ({ value: String(size), label: String(size) }))}
             value={String(perPage)}
           />
         </label>
-        <Button variant="ghost" disabled={currentPage <= 1} onClick={() => goToPage(currentPage - 1)}>
+        <Button variant="ghost" disabled={dataBusy || busy || currentPage <= 1} onClick={() => goToPage(currentPage - 1)}>
           上一页
         </Button>
-        <Button variant="ghost" disabled={currentPage >= maxPage} onClick={() => goToPage(Math.min(maxPage, currentPage + 1))}>
+        <Button variant="ghost" disabled={dataBusy || busy || currentPage >= maxPage} onClick={() => goToPage(Math.min(maxPage, currentPage + 1))}>
           下一页
         </Button>
       </div>
 
       <div className="ghcrRegistryList">
-        {repos.length === 0 ? (
+        {phase === 'ready-empty' ? (
           <div className="ghcrRegistryEmpty muted">{query || filter !== 'all' ? '当前筛选条件下无仓库' : '暂无已跟踪仓库'}</div>
         ) : null}
 
@@ -766,7 +785,6 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
         })}
       </div>
 
-      {error ? <div className="error">{error}</div> : null}
-    </div>
+    </AsyncDataRegion>
   )
 }

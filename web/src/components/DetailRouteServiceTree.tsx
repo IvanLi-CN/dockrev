@@ -8,12 +8,16 @@ import { Mono } from '../ui'
 import { UPDATE_JOB_SETTLED_EVENT, type UpdateJobSettledDetail } from '../updateActionTracking'
 import { serviceRowStatus, statusLabel } from '../updateStatus'
 import { ServiceTreeContextActions } from './ServiceTreeContextActions'
+import { AsyncDataRegion, AsyncDataSkeleton } from './AsyncDataRegion'
+import type { AsyncDataPhase, AsyncDataTrigger } from '../asyncData'
 
 type DetailRoute = Extract<Route, { name: 'stack' | 'service' }>
 
 type TreeStack = StackListItem & {
   detail: StackDetail | null
   detailStatus: 'idle' | 'loading' | 'loaded' | 'error'
+  detailError: string | null
+  detailTrigger: AsyncDataTrigger
   detailRevision: number
   detailLoadedRevision: number
 }
@@ -89,12 +93,16 @@ export function DetailRouteServiceTree(props: {
 }) {
   const [stacks, setStacks] = useState<TreeStack[]>([])
   const [loading, setLoading] = useState(true)
+  const [treeLoaded, setTreeLoaded] = useState(false)
+  const [treeTrigger, setTreeTrigger] = useState<AsyncDataTrigger>('background')
   const [error, setError] = useState<string | null>(null)
   const [expandedStackIds, setExpandedStackIds] = useState<string[]>([])
   const [detailFetchTick, setDetailFetchTick] = useState(0)
   const inFlightStackIdsRef = useRef<Set<string>>(new Set())
   const stacksRef = useRef<TreeStack[]>([])
   const mountedRef = useRef(true)
+  const treeRequestIdRef = useRef(0)
+  const treeGenerationRef = useRef(0)
   stacksRef.current = stacks
 
   const detailRoute = isDetailRoute(props.route) ? props.route : null
@@ -113,7 +121,49 @@ export function DetailRouteServiceTree(props: {
     }
   }, [])
 
+  const refreshTree = useCallback(async (trigger: AsyncDataTrigger = 'background') => {
+    const requestId = ++treeRequestIdRef.current
+    treeGenerationRef.current += 1
+    setTreeTrigger(trigger)
+    setLoading(true)
+    setError(null)
+    try {
+      inFlightStackIdsRef.current.clear()
+      const [activeStacks, archivedStacks] = await Promise.all([
+        listStacks(),
+        listStacksArchived('only').catch(() => []),
+      ])
+      const stackList = [...activeStacks]
+      const seenStackIds = new Set(activeStacks.map((stack) => stack.id))
+      for (const stack of archivedStacks) {
+        if (seenStackIds.has(stack.id)) continue
+        seenStackIds.add(stack.id)
+        stackList.push(stack)
+      }
+      if (!mountedRef.current || requestId !== treeRequestIdRef.current) return
+      setStacks(
+        stackList.map((stack) => ({
+          ...stack,
+          detail: null,
+          detailStatus: 'idle',
+          detailError: null,
+          detailTrigger: 'background',
+          detailRevision: 0,
+          detailLoadedRevision: 0,
+        })),
+      )
+      setTreeLoaded(true)
+      setDetailFetchTick((current) => current + 1)
+    } catch (value: unknown) {
+      if (!mountedRef.current || requestId !== treeRequestIdRef.current) return
+      setError(value instanceof Error ? value.message : String(value))
+    } finally {
+      if (mountedRef.current && requestId === treeRequestIdRef.current) setLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
+    const expectedTreeGeneration = treeGenerationRef.current
     const pendingStackIds = expandedStackIds.filter((stackId) =>
       stacksRef.current.some((stack) =>
         stack.id === stackId &&
@@ -132,7 +182,7 @@ export function DetailRouteServiceTree(props: {
 
     setStacks((current) =>
       current.map((stack) =>
-        pendingStackIdSet.has(stack.id) ? { ...stack, detailStatus: 'loading' } : stack,
+        pendingStackIdSet.has(stack.id) ? { ...stack, detailStatus: 'loading', detailError: null } : stack,
       ),
     )
 
@@ -144,15 +194,22 @@ export function DetailRouteServiceTree(props: {
             stackId,
             revision: requestedRevisions.get(stackId) ?? 0,
             detail,
+            detailError: null,
             detailStatus: 'loaded' as const,
           }
-        } catch {
-          return { stackId, revision: requestedRevisions.get(stackId) ?? 0, detail: null, detailStatus: 'error' as const }
+        } catch (error: unknown) {
+          return {
+            stackId,
+            revision: requestedRevisions.get(stackId) ?? 0,
+            detail: null,
+            detailError: error instanceof Error ? error.message : String(error),
+            detailStatus: 'error' as const,
+          }
         }
       }),
     ).then((results) => {
       for (const result of results) inFlightStackIdsRef.current.delete(result.stackId)
-      if (!mountedRef.current) return
+      if (!mountedRef.current || expectedTreeGeneration !== treeGenerationRef.current) return
       const byId = new Map(results.map((result) => [result.stackId, result]))
       setStacks((current) =>
         current.map((stack) => {
@@ -160,64 +217,30 @@ export function DetailRouteServiceTree(props: {
           if (!next) return stack
           return {
             ...stack,
-            detail: next.detail,
+            detail: next.detail ?? stack.detail,
+            detailError: next.detailError ?? null,
             detailStatus: next.detailStatus,
             detailLoadedRevision: Math.max(stack.detailLoadedRevision, next.revision),
           }
         }),
       )
+      if (results.some((result) => {
+        const current = stacksRef.current.find((stack) => stack.id === result.stackId)
+        return current != null && current.detailRevision > result.revision
+      })) {
+        setDetailFetchTick((current) => current + 1)
+      }
     })
   }, [detailFetchTick, expandedStackIds])
 
   useEffect(() => {
-    let cancelled = false
+    void refreshTree()
+  }, [refreshTree])
 
-    const load = async () => {
-      setLoading(true)
-      setError(null)
-      try {
-        inFlightStackIdsRef.current.clear()
-        const [activeStacks, archivedStacks] = await Promise.all([
-          listStacks(),
-          listStacksArchived('only').catch(() => []),
-        ])
-        const stackList = [...activeStacks]
-        const seenStackIds = new Set(activeStacks.map((stack) => stack.id))
-        for (const stack of archivedStacks) {
-          if (seenStackIds.has(stack.id)) continue
-          seenStackIds.add(stack.id)
-          stackList.push(stack)
-        }
-        if (cancelled) return
-        setStacks(
-          stackList.map((stack) => ({
-            ...stack,
-            detail: null,
-            detailStatus: 'idle',
-            detailRevision: 0,
-            detailLoadedRevision: 0,
-          })),
-        )
-        setDetailFetchTick((current) => current + 1)
-      } catch (value: unknown) {
-        if (cancelled) return
-        setError(value instanceof Error ? value.message : String(value))
-        setStacks([])
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-
-    void load()
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  const requestStackRefresh = useCallback((stackId: string) => {
+  const requestStackRefresh = useCallback((stackId: string, trigger: AsyncDataTrigger = 'background') => {
     setStacks((current) =>
       current.map((stack) =>
-        stack.id === stackId ? { ...stack, detailRevision: stack.detailRevision + 1 } : stack,
+        stack.id === stackId ? { ...stack, detailRevision: stack.detailRevision + 1, detailTrigger: trigger } : stack,
       ),
     )
     setDetailFetchTick((current) => current + 1)
@@ -267,7 +290,11 @@ export function DetailRouteServiceTree(props: {
   })
 
   const treeClassName = props.variant === 'mobile' ? 'detailRouteTree detailRouteTreeMobile' : 'detailRouteTree'
-  const showState = useMemo(() => loading || Boolean(error) || stacks.length === 0, [error, loading, stacks.length])
+  const treePhase: AsyncDataPhase = error
+    ? 'error'
+    : loading
+      ? treeLoaded ? 'refreshing' : 'initial-loading'
+      : stacks.length === 0 ? 'ready-empty' : 'ready-data'
   const totalServices = useMemo(
     () => stacks.reduce((sum, stack) => sum + (stack.detail?.services.length ?? stack.services), 0),
     [stacks],
@@ -328,7 +355,7 @@ export function DetailRouteServiceTree(props: {
       <div className="detailRouteTreeIntro">
         <div className="detailRouteTreeTitleRow">
           <div className="detailRouteTreeTitle">服务导航</div>
-          {!showState ? (
+          {treePhase === 'ready-data' ? (
             <div className="detailRouteTreeMeta" aria-label="导航统计">
               <Mono>{stacks.length}</Mono>
               <span>个 Stack</span>
@@ -356,12 +383,18 @@ export function DetailRouteServiceTree(props: {
         </div>
       </div>
 
-      {showState ? (
-        <div className="detailRouteTreeState">
-          {loading ? <div className="muted">加载服务列表…</div> : null}
-          {!loading && error ? <div className="muted">服务树暂不可用：{error}</div> : null}
-          {!loading && !error && stacks.length === 0 ? <div className="muted">暂无可导航的 Stack</div> : null}
-        </div>
+      <AsyncDataRegion
+        className="detailRouteTreeAsync"
+        error={error}
+        hasData={treeLoaded}
+        label="正在刷新服务导航"
+        onRetry={() => void refreshTree('user-action')}
+        phase={treePhase}
+        skeleton={<AsyncDataSkeleton className="detailRouteTreeLoadingSkeleton" lines={6} />}
+        trigger={treeTrigger}
+      >
+      {treePhase === 'ready-empty' ? (
+        <div className="detailRouteTreeState"><div className="muted">暂无可导航的 Stack</div></div>
       ) : (
         <div className="detailRouteTreeList">
           {stacks.map((stack) => {
@@ -417,20 +450,34 @@ export function DetailRouteServiceTree(props: {
                   </ServiceTreeContextActions>
                 </div>
                 {expanded ? (
-                  <div className="detailRouteServiceList" role="list" aria-label={`${stack.name} 服务`}>
-                    {stack.detailStatus === 'loading' ? <div className="muted">加载服务列表…</div> : null}
-                    {stack.detailStatus === 'error' ? <div className="muted">服务列表暂不可用</div> : null}
+                  <AsyncDataRegion
+                    className="detailRouteServiceList"
+                    error={stack.detailError}
+                    hasData={stack.detail !== null}
+                    label="正在刷新服务列表"
+                    onRetry={() => requestStackRefresh(stack.id, 'user-action')}
+                    phase={
+                      stack.detailStatus === 'error'
+                        ? 'error'
+                        : stack.detailStatus === 'loading'
+                          ? stack.detail ? 'refreshing' : 'initial-loading'
+                          : services.length === 0 ? 'ready-empty' : 'ready-data'
+                    }
+                    skeleton={<AsyncDataSkeleton className="detailRouteServiceLoadingSkeleton" lines={3} />}
+                    trigger={stack.detailTrigger}
+                  >
                     {stack.detailStatus === 'loaded' && services.length === 0 ? <div className="muted">暂无服务</div> : null}
-                    {stack.detailStatus === 'loaded'
+                    {(stack.detailStatus === 'loaded' || stack.detailStatus === 'error')
                       ? services.map((service) => renderServiceLink(stack, service))
                       : null}
-                  </div>
+                  </AsyncDataRegion>
                 ) : null}
               </section>
             )
           })}
         </div>
       )}
+      </AsyncDataRegion>
     </div>
   )
 }

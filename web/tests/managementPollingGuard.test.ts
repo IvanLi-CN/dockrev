@@ -44,10 +44,11 @@ describe('management polling guard', () => {
     expect(source).not.toContain('setTimeout(')
   })
 
-  test('replaces stack lists from complete REST snapshots', () => {
+  test('refreshes stack lists from complete REST snapshots with the guarded request path', () => {
     const overview = readFileSync(resolve(import.meta.dir, '..', 'src/pages/useOverviewPageState.tsx'), 'utf8')
     const services = readFileSync(resolve(import.meta.dir, '..', 'src/pages/useServicesPageState.tsx'), 'utf8')
-    expect(overview).toContain('setStacks(next)')
+    expect(overview).toContain('requestRefresh({ domains })')
+    expect(overview).toContain('setStacks(nextStacks)')
     expect(services).toContain('setStacks(nextStacks)')
     expect(services).toContain('setArchivedStacks(nextArchived)')
     expect(overview).not.toContain('prev.map((item) => byId.get(item.id) ?? item)')

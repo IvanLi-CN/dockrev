@@ -119,6 +119,7 @@ export type DockrevApiScenario =
   | 'error'
 
 export type DockrevMockApiOptions = {
+  dockrevApiBehaviorByRoute?: Record<string, DockrevApiRouteBehavior>
   cleanupScenario?: CleanupMockScenario
   initialFixture?: Fixture
   onStateChange?: (fixture: Fixture) => void
@@ -138,6 +139,13 @@ export type DockrevMockApiOptions = {
     status: number
     body: unknown
   }
+}
+
+export type DockrevApiRouteBehavior = {
+  delayMs?: number
+  failTimes?: number
+  failureStatus?: number
+  failureBody?: unknown
 }
 
 export type ServiceLogsMockDataset = {

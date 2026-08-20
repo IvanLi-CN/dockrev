@@ -9,15 +9,55 @@ import { ReadonlySnapshotNotice } from '../components/ReadonlySnapshotNotice'
 import { useManagementEventBatch, useManagementEvents } from '../managementEvents'
 import { usePwaStatus } from '../pwaStatus'
 import { buildReadonlySnapshotKey, readReadonlySnapshot, writeReadonlySnapshot } from '../readonlySnapshotCache'
+import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
+import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
 import { Button, Input, Mono, Pill, SelectField, ToggleGroup, ToggleGroupItem } from '../ui'
 
 type StatusFilter = 'all' | 'queued' | 'running' | 'ready' | 'stale' | 'all_failed'
+
+type VersionInferenceQuery = {
+  statusFilter: StatusFilter
+  query: string
+  page: number
+  perPage: number
+}
 
 const STATUS_FILTERS: readonly StatusFilter[] = ['all', 'queued', 'running', 'ready', 'stale', 'all_failed']
 const PER_PAGE_OPTIONS = [20, 50, 100, 200] as const
 const QUERY_DEBOUNCE_MS = 250
 const VERSION_INFERENCE_SNAPSHOT_KEY = buildReadonlySnapshotKey('queue', 'version-inference-overview')
 const VERSION_INFERENCE_SNAPSHOT_STALE_MS = 60_000
+
+type VersionInferenceSnapshotPayload = {
+  version: 2
+  readiness: { overview: boolean }
+  committedQueryKey: string
+  query: VersionInferenceQuery
+  overview: VersionInferenceOverviewResponse
+}
+
+function versionInferenceQueryKey(query: VersionInferenceQuery): string {
+  return `${query.statusFilter}:${query.query}:${query.page}:${query.perPage}`
+}
+
+function isVersionInferenceQuery(value: unknown): value is VersionInferenceQuery {
+  if (!value || typeof value !== 'object') return false
+  const query = value as Record<string, unknown>
+  return STATUS_FILTERS.includes(query.statusFilter as StatusFilter) &&
+    typeof query.query === 'string' &&
+    typeof query.page === 'number' && Number.isFinite(query.page) && query.page >= 1 &&
+    typeof query.perPage === 'number' && PER_PAGE_OPTIONS.includes(query.perPage as typeof PER_PAGE_OPTIONS[number])
+}
+
+function isVersionInferenceSnapshotPayload(value: unknown): value is VersionInferenceSnapshotPayload {
+  if (!value || typeof value !== 'object') return false
+  const payload = value as Record<string, unknown>
+  return payload.version === 2 && payload.readiness instanceof Object &&
+    (payload.readiness as Record<string, unknown>).overview === true &&
+    isVersionInferenceQuery(payload.query) &&
+    payload.committedQueryKey === versionInferenceQueryKey(payload.query) &&
+    Boolean(payload.overview)
+}
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
@@ -166,7 +206,16 @@ export function VersionInferencePage(props: {
   const [snapshotFetchedAt, setSnapshotFetchedAt] = useState<string | null>(null)
   const [snapshotAnchorFetchedAt, setSnapshotAnchorFetchedAt] = useState<string | null>(null)
   const [snapshotActive, setSnapshotActive] = useState(false)
+  const [snapshotHydrated, setSnapshotHydrated] = useState(false)
+  const [refreshSource, setRefreshSource] = useState<AsyncDataSource>('none')
+  const [refreshTrigger, setRefreshTrigger] = useState<AsyncDataTrigger>('background')
   const refreshRequestIdRef = useRef(0)
+  const snapshotActiveRef = useRef(snapshotActive)
+  const committedQueryRef = useRef<VersionInferenceQuery>({ statusFilter, query, page, perPage })
+  const retryQueryRef = useRef<VersionInferenceQuery>(committedQueryRef.current)
+  const searchInitializedRef = useRef(false)
+  snapshotActiveRef.current = snapshotActive
+  committedQueryRef.current = { statusFilter, query, page, perPage }
 
   useEffect(() => {
     onLastScanHint?.(undefined)
@@ -175,55 +224,67 @@ export function VersionInferencePage(props: {
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const snapshot = await readReadonlySnapshot<VersionInferenceOverviewResponse>(VERSION_INFERENCE_SNAPSHOT_KEY)
+      const snapshot = await readReadonlySnapshot<VersionInferenceSnapshotPayload>(VERSION_INFERENCE_SNAPSHOT_KEY)
       if (cancelled) return
       setSnapshotStatus(snapshot.status)
       setSnapshotFetchedAt(snapshot.record?.fetchedAt ?? null)
       setSnapshotAnchorFetchedAt(snapshot.record?.fetchedAt ?? null)
-      if (snapshot.status !== 'fresh') return
-      setOverview(snapshot.record.payload)
+      if (snapshot.status !== 'fresh' || !isVersionInferenceSnapshotPayload(snapshot.record.payload)) {
+        setSnapshotHydrated(true)
+        return
+      }
+      const payload = snapshot.record.payload
+      setOverview(payload.overview)
+      setStatusFilter(payload.query.statusFilter)
+      setQueryInput(payload.query.query)
+      setQuery(payload.query.query)
+      setPage(payload.query.page)
+      setPerPage(payload.query.perPage)
+      committedQueryRef.current = payload.query
+      retryQueryRef.current = payload.query
       setLoading(false)
       setSnapshotActive(true)
+      snapshotActiveRef.current = true
       setLastRefreshAt(snapshot.record.fetchedAt)
+      setRefreshSource('fresh-snapshot')
+      setSnapshotHydrated(true)
     })()
     return () => {
       cancelled = true
     }
   }, [])
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setPage(1)
-      setQuery(queryInput.trim())
-    }, QUERY_DEBOUNCE_MS)
-    return () => window.clearTimeout(timer)
-  }, [queryInput])
-
   const refresh = useCallback(
-    async (opts?: { silent?: boolean }) => {
+    async (opts?: { silent?: boolean; source?: AsyncDataSource; trigger?: AsyncDataTrigger; query?: VersionInferenceQuery }) => {
       const requestId = ++refreshRequestIdRef.current
       const silent = opts?.silent === true
+      const requestedQuery = opts?.query ?? committedQueryRef.current
 
       if (!silent) setManualBusy(true)
+      setRefreshSource(snapshotActiveRef.current ? 'fresh-snapshot' : (opts?.source ?? 'live'))
+      setRefreshTrigger(opts?.trigger ?? 'background')
+      setLoading(true)
       setError(null)
+      retryQueryRef.current = requestedQuery
 
       try {
         const next = await getVersionInferenceOverview({
-          q: query || null,
-          status: statusFilter === 'all' ? null : statusFilter,
-          page,
-          perPage,
+          q: requestedQuery.query || null,
+          status: requestedQuery.statusFilter === 'all' ? null : requestedQuery.statusFilter,
+          page: requestedQuery.page,
+          perPage: requestedQuery.perPage,
         })
         if (requestId !== refreshRequestIdRef.current) return
 
         setOverview(next)
         setLastRefreshAt(new Date().toISOString())
         setSnapshotActive(false)
+        snapshotActiveRef.current = false
         setSnapshotAnchorFetchedAt(null)
-        setPage((prev) => {
-          const normalized = Number.isFinite(next.page) ? Math.max(1, Math.round(next.page)) : prev
-          return prev === normalized ? prev : normalized
-        })
+        setStatusFilter(requestedQuery.statusFilter)
+        setQuery(requestedQuery.query)
+        setPerPage(requestedQuery.perPage)
+        setPage(Number.isFinite(next.page) ? Math.max(1, Math.round(next.page)) : requestedQuery.page)
       } catch (e: unknown) {
         if (requestId !== refreshRequestIdRef.current) return
         setError(errorMessage(e))
@@ -234,13 +295,30 @@ export function VersionInferencePage(props: {
         }
       }
     },
-    [page, perPage, query, statusFilter],
+    [],
   )
 
   useEffect(() => {
-    setLoading(true)
+    if (!snapshotHydrated) return
+    if (!searchInitializedRef.current) {
+      searchInitializedRef.current = true
+      return
+    }
+    const timer = window.setTimeout(() => {
+      void refresh({
+        silent: true,
+        source: 'memory',
+        trigger: 'user-action',
+        query: { ...committedQueryRef.current, page: 1, query: queryInput.trim() },
+      })
+    }, QUERY_DEBOUNCE_MS)
+    return () => window.clearTimeout(timer)
+  }, [queryInput, refresh, snapshotHydrated])
+
+  useEffect(() => {
+    if (!snapshotHydrated) return
     void refresh({ silent: true })
-  }, [refresh])
+  }, [refresh, snapshotHydrated])
 
   useManagementEventBatch(({ events, resyncRequired }) => {
     if (!resyncRequired && !events.some((event) => event.domain === 'version_inference')) return
@@ -253,7 +331,7 @@ export function VersionInferencePage(props: {
         variant="ghost"
         disabled={manualBusy || !isOnline}
         onClick={() => {
-          void refresh({ silent: false })
+          void refresh({ silent: false, source: 'memory', trigger: 'user-action' })
         }}
       >
         刷新
@@ -263,11 +341,17 @@ export function VersionInferencePage(props: {
 
   useEffect(() => {
     if (!overview) return
-    void writeReadonlySnapshot(VERSION_INFERENCE_SNAPSHOT_KEY, overview, {
+    void writeReadonlySnapshot(VERSION_INFERENCE_SNAPSHOT_KEY, {
+      version: 2,
+      readiness: { overview: true },
+      committedQueryKey: versionInferenceQueryKey({ statusFilter, query, page, perPage }),
+      query: { statusFilter, query, page, perPage },
+      overview,
+    }, {
       staleAfterMs: VERSION_INFERENCE_SNAPSHOT_STALE_MS,
       fetchedAt: snapshotAnchorFetchedAt ? Date.parse(snapshotAnchorFetchedAt) || undefined : undefined,
     })
-  }, [overview, snapshotAnchorFetchedAt])
+  }, [overview, page, perPage, query, snapshotAnchorFetchedAt, statusFilter])
 
   const totalPages = useMemo(() => {
     const total = overview?.total ?? 0
@@ -278,6 +362,16 @@ export function VersionInferencePage(props: {
   const currentPage = overview?.page ?? page
   const summary = overview?.summary ?? null
   const rows = useMemo(() => sortRows(overview?.rows ?? []), [overview?.rows])
+  const dataPhase: AsyncDataPhase = error
+    ? 'error'
+    : !overview
+      ? 'initial-loading'
+      : loading
+        ? 'refreshing'
+        : rows.length === 0
+          ? 'ready-empty'
+          : 'ready-data'
+  const dataBusy = dataPhase === 'initial-loading' || dataPhase === 'refreshing'
   const gcTip = useMemo(() => {
     const gc = overview?.gc
     if (!gc) return 'GC 状态加载中'
@@ -302,7 +396,7 @@ export function VersionInferencePage(props: {
           actionLabel="重试刷新"
           actionDisabled={!isOnline || manualBusy}
           onAction={() => {
-            void refresh({ silent: false })
+            void refresh({ silent: false, source: 'memory', trigger: 'user-action' })
           }}
         />
       ) : !overview && !loading && !isOnline ? (
@@ -312,6 +406,16 @@ export function VersionInferencePage(props: {
           detail="请恢复联网后重新加载该页面。"
         />
       ) : null}
+      <AsyncDataRegion
+        error={error}
+        hasData={Boolean(overview)}
+        label="正在刷新版本推测状态"
+        onRetry={() => void refresh({ silent: false, source: 'memory', trigger: 'user-action', query: retryQueryRef.current })}
+        phase={dataPhase}
+        skeleton={<AsyncDataSkeleton className="versionInferenceLoadingSkeleton" lines={8} />}
+        source={refreshSource}
+        trigger={refreshTrigger}
+      >
       <div className="card">
         <div className="sectionRow versionInferenceSummaryHead">
           <div className="title versionInferenceSummaryTitle">任务与缓存总览</div>
@@ -328,31 +432,31 @@ export function VersionInferencePage(props: {
         <div className="versionInferenceMetrics">
           <div className="versionInferenceMetric">
             <span>并发上限</span>
-            <strong>{overview?.worker.maxConcurrency ?? 0}</strong>
+            <strong>{overview ? overview.worker.maxConcurrency : '—'}</strong>
           </div>
           <div className="versionInferenceMetric">
             <span>队列中</span>
-            <strong>{overview?.worker.queued ?? 0}</strong>
+            <strong>{overview ? overview.worker.queued : '—'}</strong>
           </div>
           <div className="versionInferenceMetric">
             <span>运行中</span>
-            <strong>{overview?.worker.running ?? 0}</strong>
+            <strong>{overview ? overview.worker.running : '—'}</strong>
           </div>
           <div className="versionInferenceMetric">
             <span>进行中总数</span>
-            <strong>{overview?.worker.inFlight ?? 0}</strong>
+            <strong>{overview ? overview.worker.inFlight : '—'}</strong>
           </div>
           <div className="versionInferenceMetric">
             <span>缓存快照</span>
-            <strong>{summary?.snapshotsTotal ?? 0}</strong>
+            <strong>{summary ? summary.snapshotsTotal : '—'}</strong>
           </div>
           <div className="versionInferenceMetric">
             <span>已就绪</span>
-            <strong>{summary?.ready ?? 0}</strong>
+            <strong>{summary ? summary.ready : '—'}</strong>
           </div>
           <div className="versionInferenceMetric">
             <span>失败</span>
-            <strong>{summary?.allFailed ?? 0}</strong>
+            <strong>{summary ? summary.allFailed : '—'}</strong>
           </div>
         </div>
       </div>
@@ -364,6 +468,7 @@ export function VersionInferencePage(props: {
         <div className="versionInferenceControls">
           <Input
             className="input versionInferenceSearch"
+            disabled={dataBusy}
             onChange={(e) => setQueryInput(e.target.value)}
             placeholder="搜索镜像仓库（q）"
             value={queryInput}
@@ -372,9 +477,14 @@ export function VersionInferencePage(props: {
           <ToggleGroup
             className="chipRow"
             onValueChange={(value) => {
+              if (dataBusy) return
               if (!value) return
-              setStatusFilter(value as StatusFilter)
-              setPage(1)
+              void refresh({
+                silent: true,
+                source: 'memory',
+                trigger: 'user-action',
+                query: { ...committedQueryRef.current, statusFilter: value as StatusFilter, page: 1 },
+              })
             }}
             type="single"
             value={statusFilter}
@@ -383,6 +493,7 @@ export function VersionInferencePage(props: {
               <ToggleGroupItem
                 key={key}
                 className={statusFilter === key ? 'chip chipActive' : 'chip'}
+                disabled={dataBusy}
                 value={key}
                 variant="outline"
               >
@@ -398,33 +509,54 @@ export function VersionInferencePage(props: {
             </label>
             <SelectField
               className="select"
+              disabled={dataBusy}
               id="version-inference-per-page"
               onChange={(value) => {
                 const next = Number.parseInt(value, 10)
-                setPerPage(Number.isFinite(next) && next > 0 ? next : 50)
-                setPage(1)
+                void refresh({
+                  silent: true,
+                  source: 'memory',
+                  trigger: 'user-action',
+                  query: {
+                    ...committedQueryRef.current,
+                    page: 1,
+                    perPage: Number.isFinite(next) && next > 0 ? next : 50,
+                  },
+                })
               }}
               options={PER_PAGE_OPTIONS.map((value) => ({ value: String(value), label: String(value) }))}
               value={String(perPage)}
             />
             <span className="muted">
-              第 {currentPage} / {totalPages} 页（总计 {overview?.total ?? 0}）
+              {overview ? `第 ${currentPage} / ${totalPages} 页（总计 ${overview.total}）` : '正在加载分页…'}
             </span>
-            <Button variant="ghost" disabled={manualBusy || currentPage <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+            <Button
+              variant="ghost"
+              disabled={dataBusy || manualBusy || currentPage <= 1}
+              onClick={() => void refresh({
+                silent: true,
+                source: 'memory',
+                trigger: 'user-action',
+                query: { ...committedQueryRef.current, page: Math.max(1, currentPage - 1) },
+              })}
+            >
               上一页
             </Button>
             <Button
               variant="ghost"
-              disabled={manualBusy || currentPage >= totalPages}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={dataBusy || manualBusy || currentPage >= totalPages}
+              onClick={() => void refresh({
+                silent: true,
+                source: 'memory',
+                trigger: 'user-action',
+                query: { ...committedQueryRef.current, page: Math.min(totalPages, currentPage + 1) },
+              })}
             >
               下一页
             </Button>
           </div>
         </div>
       </div>
-
-      {error ? <div className="error">{error}</div> : null}
 
       <div className="card">
         <div className="sectionRow versionInferenceListHead">
@@ -439,8 +571,7 @@ export function VersionInferencePage(props: {
           </button>
         </div>
         <div className="versionInferenceList">
-          {loading && !overview ? <div className="muted">正在加载…</div> : null}
-          {!loading && overview && rows.length === 0 ? <div className="muted">当前筛选条件下没有数据</div> : null}
+          {dataPhase === 'ready-empty' ? <div className="muted">当前筛选条件下没有数据</div> : null}
 
           {rows.map((row) => {
             const progress = segmentedProgress(row.progress)
@@ -502,6 +633,7 @@ export function VersionInferencePage(props: {
           })}
         </div>
       </div>
+      </AsyncDataRegion>
     </div>
   )
 }

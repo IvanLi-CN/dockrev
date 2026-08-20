@@ -27,6 +27,32 @@ export const Default: Story = {
   },
 }
 
+export const ColdLoading: Story = {
+  parameters: {
+    dockrevApiScenario: 'queue-mixed',
+    dockrevApiBehaviorByRoute: {
+      'GET /api/jobs': { delayMs: 900 },
+      'GET /api/version-inference/overview': { delayMs: 900 },
+      'GET /api/github-packages/webhook/overview': { delayMs: 900 },
+    },
+  },
+  render: () => (
+    <PageHarness route={{ name: 'queue' }} title="任务队列">
+      {({ onTopActions }) => <QueuePage onTopActions={onTopActions} />}
+    </PageHarness>
+  ),
+  play: async ({ canvasElement }) => {
+    await sleep(120)
+    const jobsRegion = canvasElement.querySelector('[data-async-data-phase="initial-loading"]')
+    if (!jobsRegion?.querySelector('.skeleton')) {
+      throw new globalThis.Error('cold queue must render a jobs skeleton')
+    }
+    if (canvasElement.textContent?.includes('暂无任务')) {
+      throw new globalThis.Error('cold queue must not report an empty job list')
+    }
+  },
+}
+
 export const DashboardDemo: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo' },
   render: () => {

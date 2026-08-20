@@ -17,6 +17,7 @@ import { UpdateActionTrackerProvider } from '../../updateActionTracking'
 export const withDockrevMockApi: Decorator = (Story, context) => {
   const scenario = (context.parameters?.dockrevApiScenario ?? 'default') as DockrevApiScenario
   const options = {
+    dockrevApiBehaviorByRoute: context.parameters?.dockrevApiBehaviorByRoute,
     initialFixture: context.parameters?.dockrevInitialFixture,
     jobsOverride: context.parameters?.dockrevJobsOverride,
     jobsEventsPayload: context.parameters?.dockrevJobsEventsPayload,

@@ -17,6 +17,7 @@ import { buildFixture } from './fixturesMisc'
 import { RUNNING_JOB_ID } from './fixturesQueues'
 import { buildMockGitHubReleasesDataset, buildMockGitHubReleasesResponse } from './githubReleases'
 import { handleGhcrRoutes } from './handlers/ghcr'
+import { handleJobStateRoutes } from './handlers/jobState'
 import { handleServiceLifecycleRoute } from './handlers/serviceLifecycle'
 import { handleServiceStateRoutes } from './handlers/serviceState'
 import {
@@ -48,11 +49,11 @@ import {
   summarizeVersionInferenceRows,
   type VersionInferenceOverviewMock,
 } from './shared'
-
 export function installDockrevMockApi(
   scenario: DockrevApiScenario,
   options: DockrevMockApiOptions = {},
 ) {
+  const apiRouteAttempts = new Map<string, number>()
   const state = scenario === 'error' ? null : cloneFixture(options.initialFixture ?? buildFixture(scenario))
   const cleanupScenario: CleanupMockScenario | null =
     options.cleanupScenario ?? (isCleanupMockScenario(scenario) ? scenario : null)
@@ -151,7 +152,6 @@ export function installDockrevMockApi(
     const completedPercent = queueProgressDemoSteps[queueProgressDemoStep]
     const plannedPercent = Math.min(100, completedPercent + 16)
     const updatedAt = nowIso()
-
     const patchProgress = (job: JobListItem | JobDetail | undefined) => {
       if (!job || job.id !== RUNNING_JOB_ID || !job.progress) return
       job.progress = {
@@ -167,13 +167,10 @@ export function installDockrevMockApi(
         updatedAt,
       }
     }
-
     for (const job of state.jobs) patchProgress(job)
     patchProgress(state.jobById[RUNNING_JOB_ID])
-
     return completedPercent
   }
-
   globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug()
   globalThis.__DOCKREV_MOCK_EVENT_GATES__?.abortController?.abort()
   const serviceLogEventGates: MockServiceLogEventGateState = {
@@ -186,7 +183,6 @@ export function installDockrevMockApi(
     globalThis.EventSource = MockEventSource as unknown as typeof EventSource
   }
   MockEventSource.pollIntervalMs = resolveMockEventSourcePollInterval(scenario)
-
   function findService(serviceId: string) {
     if (!state) return null
     for (const st of Object.values(state.stackById)) {
@@ -195,7 +191,6 @@ export function installDockrevMockApi(
     }
     return null
   }
-
   function parseMockGitHubRepoRef(input: string | null | undefined): ServiceGitHubRepoRef | null {
     const trimmed = (input ?? '').trim()
     if (!trimmed) return null
@@ -209,17 +204,14 @@ export function installDockrevMockApi(
       htmlUrl: `https://github.com/${owner}/${repo}`,
     }
   }
-
   function canApplyMockUpdate(service: StackDetail['services'][number]) {
     if (service.archived || isDockrevImageRef(service.image.ref)) return false
     const status = serviceRowStatus(service)
     return status === 'updatable' || status === 'hint'
   }
-
   function countMockUpdates(stack: StackDetail) {
     return stack.services.filter((service) => canApplyMockUpdate(service)).length
   }
-
   function syncStackListItem(stackId: string) {
     if (!state) return
     const detail = state.stackById[stackId]
@@ -228,7 +220,6 @@ export function installDockrevMockApi(
     if (!item) return
     item.updates = countMockUpdates(detail)
   }
-
   function selectUpdateServiceIds(scope: string, stackId: string | null, serviceId: string | null) {
     if (!state) return []
     if (scope === 'service') return serviceId ? [serviceId] : []
@@ -240,7 +231,6 @@ export function installDockrevMockApi(
       stack.services.filter((service) => canApplyMockUpdate(service)).map((service) => service.id),
     )
   }
-
   function applyMockUpdateSettlement(
     serviceId: string,
     targetTag: string,
@@ -249,7 +239,6 @@ export function installDockrevMockApi(
   ) {
     const found = findService(serviceId)
     if (!found || !found.svc.candidate) return
-
     const candidate = found.svc.candidate
     const previousDigest = found.svc.image.digest ?? ''
     const previousDisplayTag = found.svc.image.resolvedTag?.trim() || found.svc.image.tag?.trim() || null
@@ -257,7 +246,6 @@ export function installDockrevMockApi(
     const nextDigest = targetDigest.trim()
     const nextResolvedTag = candidate.resolvedTag?.trim() || nextTag
     const normalizedPullTags = pullTags.map((tag) => tag.trim()).filter(Boolean)
-
     found.svc.image = {
       ...found.svc.image,
       tag: nextTag,
@@ -276,10 +264,8 @@ export function installDockrevMockApi(
       }
     }
     syncStackListItem(found.stack.id)
-
     applyRollbackTargetRaceAfterUpdate({ rollbackTargets: state!.rollbackTargetByServiceId, raceByServiceId: rollbackTargetRaceByServiceId, scenario, serviceId, nextTag, nextDigest, nextResolvedTag, previousDigest, previousDisplayTag })
   }
-
   function buildHomepageNavResponse(f: Fixture): HomepageNavResponse {
     const generatedAt = new Date().toISOString()
     const staleAfterSeconds = Math.max(60, f.settings.resourceMonitor.sampleIntervalSeconds * 2)
@@ -357,7 +343,6 @@ export function installDockrevMockApi(
         ),
     }
   }
-
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase()
     const urlString = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
@@ -371,7 +356,20 @@ export function installDockrevMockApi(
     })()
     const urlPath = url ? url.pathname : urlString
     const urlPathWithQuery = url ? `${url.pathname}${url.search}` : urlString
-
+    const routeKey = `${method} ${urlPath}`
+    const routeBehavior = options.dockrevApiBehaviorByRoute?.[routeKey]
+    if (routeBehavior?.delayMs && routeBehavior.delayMs > 0) {
+      await new Promise<void>((resolve) => globalThis.setTimeout(resolve, routeBehavior.delayMs))
+    }
+    if (routeBehavior && (routeBehavior.failTimes ?? 0) > 0) {
+      const attempt = (apiRouteAttempts.get(routeKey) ?? 0) + 1
+      apiRouteAttempts.set(routeKey, attempt)
+      if (attempt <= (routeBehavior.failTimes ?? 0)) {
+        return json(routeBehavior.failureBody ?? { error: 'mock route failure' }, {
+          status: routeBehavior.failureStatus ?? 503,
+        })
+      }
+    }
     if (
       scenario === 'settings-configured-load-slow' &&
       method === 'GET' &&
@@ -383,7 +381,6 @@ export function installDockrevMockApi(
         globalThis.setTimeout(() => resolve(), 550)
       })
     }
-
     if (urlPath === '/supervisor/health' && method === 'GET') {
       return json({ ok: true })
     }
@@ -404,13 +401,10 @@ export function installDockrevMockApi(
         logs: [],
       })
     }
-
     if (!urlPath.startsWith('/api/')) return realFetch(input, init)
-
     if (scenario === 'error') {
       return json({ error: 'mock error' }, { status: 500 })
     }
-
     if (!state) return json({ error: 'mock not initialized' }, { status: 500 })
     const f = state
     try {
@@ -481,11 +475,11 @@ export function installDockrevMockApi(
         cleanupRuntime,
         serviceLogEventGates,
       }
-
       if (method === 'GET' && urlPath === '/api/deploy-check/report' && options.deployCheckReportSequence?.length) { const sequence = options.deployCheckReportSequence; return json(sequence[Math.min(deployCheckReportSequenceIndex++, sequence.length - 1)]) }
       const ghcrResponse = await handleGhcrRoutes(routeCtx)
       if (ghcrResponse) return ghcrResponse
-
+      const jobStateResponse = await handleJobStateRoutes(routeCtx)
+      if (jobStateResponse) return jobStateResponse
       if (urlPath === '/api/version' && method === 'GET') {
         // Use an existing repo tag so the version link in UI can be exercised in Storybook.
         return json({ version: '0.5.0' })
@@ -498,7 +492,6 @@ export function installDockrevMockApi(
       const status = (params.get('status') ?? '').trim().toLowerCase()
       const validStatus = new Set(['', 'all', 'queued', 'running', 'ready', 'stale', 'all_failed'])
       if (!validStatus.has(status)) return json({ error: 'invalid status filter' }, { status: 400 })
-
       const summary = summarizeVersionInferenceRows(f.versionInferenceOverview.rows)
       const rows = f.versionInferenceOverview.rows.filter((row) => {
         if (status && status !== 'all' && row.status.toLowerCase() !== status) return false
@@ -508,7 +501,6 @@ export function installDockrevMockApi(
       })
       const offset = (page - 1) * perPage
       const pagedRows = rows.slice(offset, offset + perPage)
-
       return json({
         worker: f.versionInferenceOverview.worker,
         gc: f.versionInferenceOverview.gc,
@@ -536,7 +528,6 @@ export function installDockrevMockApi(
         },
       })
     }
-
     if (urlPath === '/api/events' && method === 'GET') {
       const headers = init?.headers
       const headerCursor = headers instanceof Headers
@@ -567,7 +558,6 @@ export function installDockrevMockApi(
       const body = events.map((event) => `id: ${event.cursor}\nevent: management\ndata: ${JSON.stringify(event.data)}\n\n`).join('')
       return new Response(body || ': keep-alive\n\n', { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'x-accel-buffering': 'no', 'x-dockrev-management-cursor': formatMockManagementCursor(managementEventsGeneration, latestId) } })
     }
-
     if (urlPath === '/api/jobs/events' && method === 'GET' && options.jobsEventsPayload != null) {
       const debug = globalThis.__DOCKREV_MOCK_DEBUG__ ?? (globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug())
       debug.jobsEventsCalls += 1
@@ -580,7 +570,6 @@ export function installDockrevMockApi(
         },
       })
     }
-
     if (urlPath === '/api/jobs/events' && method === 'GET' && scenario === 'queue-progress-smoothing') {
       const params = url?.searchParams ?? new URLSearchParams()
       const afterId = Number(params.get('afterId') ?? '0') || 0
@@ -611,7 +600,6 @@ export function installDockrevMockApi(
         },
       })
     }
-
     if (method === 'GET' && /^\/api\/jobs\/[^/]+\/events$/.test(urlPath)) {
       const params = url?.searchParams ?? new URLSearchParams()
       const afterId = Number(params.get('afterId') ?? '0') || 0
@@ -620,7 +608,6 @@ export function installDockrevMockApi(
       if (!live) {
         return json({ error: 'not found' }, { status: 404 })
       }
-
       let transientBody = ''
       if ((scenario === 'queue-long-logs' || scenario === 'queue-backup-progress') && jobId === 'job-live-long' && live.status === 'running' && afterId >= live.logsLastId) {
         const nextId = live.logsLastId + 1
@@ -658,7 +645,6 @@ export function installDockrevMockApi(
           liveTerminalStateRef.commandSeq = liveTerminalStateRef.frame = liveTerminalStateRef.polls = 0; liveTerminalStateRef.completed = true
         }
       }
-
       const startIndex = Math.max(0, afterId)
       const nextLines = live.logs.slice(startIndex).slice(0, 200)
       const body = transientBody + nextLines
@@ -667,7 +653,6 @@ export function installDockrevMockApi(
           return `id: ${eventId}\nevent: job_log\ndata: ${JSON.stringify({ type: 'job_log', ...line })}\n\n`
         })
         .join('')
-
       return new Response(body || ': keep-alive\n\n', {
         status: 200,
         headers: {
@@ -677,7 +662,6 @@ export function installDockrevMockApi(
         },
       })
     }
-
     if (cleanupScenario && method === 'POST' && urlPath === '/api/cleanups/scan-runs') {
       const request = parseCleanupScanRequest(init?.body)
       cleanupRuntime.nextScanRunSeq += 1
@@ -710,7 +694,6 @@ export function installDockrevMockApi(
       cleanupRuntime.scanRuns.set(scanId, events)
       return json({ scanId, previousSnapshot, retryAfterMs: 450 })
     }
-
     if (cleanupScenario && method === 'GET' && urlPath.match(/^\/api\/cleanups\/scan-runs\/[^/]+\/events$/)) {
       const scanId = decodeURIComponent(urlPath.split('/')[4] ?? '')
       const afterId = Number.parseInt(url?.searchParams.get('afterId') ?? '0', 10)
@@ -727,7 +710,6 @@ export function installDockrevMockApi(
         },
       })
     }
-
     if (cleanupScenario && method === 'POST' && urlPath === '/api/cleanups/scan') {
       if (cleanupScenario === 'cleanup-console-scan-pending') {
         const request = parseCleanupScanRequest(init?.body)
@@ -767,7 +749,6 @@ export function installDockrevMockApi(
       const request = parseCleanupScanRequest(init?.body)
       return json(buildCleanupMockScanResponse(cleanupScenario, request))
     }
-
     if (cleanupScenario && method === 'POST' && urlPath === '/api/cleanups/apply') {
       if (cleanupScenario === 'cleanup-console-apply-slow') {
         return new Promise<Response>(() => {})
@@ -778,7 +759,6 @@ export function installDockrevMockApi(
       }
       const result = resolveCleanupMockApply(cleanupScenario, parsed, cleanupRuntime)
       if (!result.ok) return json(result.body, { status: result.status })
-
       const createdAt = nowIso(-400)
       const jobId = result.jobId
       const job: JobListItem = {
@@ -815,7 +795,6 @@ export function installDockrevMockApi(
       }
       return json({ jobId })
     }
-
     // stacks
     const lifecycleResponse = handleServiceLifecycleRoute({ scenario, method, urlPath, init, fixture: f, findService, jobSeqRef, json })
     if (lifecycleResponse) return lifecycleResponse
@@ -823,11 +802,9 @@ export function installDockrevMockApi(
       const query = url?.search ? url.search.slice(1) : urlPathWithQuery.includes('?') ? urlPathWithQuery.split('?')[1] : ''
       const params = new URLSearchParams(query)
       const archived = params.get('archived') ?? 'exclude'
-
       let stacks = f.stacks
       if (archived === 'only') stacks = stacks.filter((s) => Boolean(s.archived))
       if (archived === 'exclude') stacks = stacks.filter((s) => !s.archived)
-
       return json({ stacks })
     }
     if (method === 'GET' && urlPath.startsWith('/api/stacks/') && urlPath.endsWith('/settings')) {
@@ -866,7 +843,6 @@ export function installDockrevMockApi(
       if (f.stackById[id]) f.stackById[id].archived = false
       return json({}, { status: 204 })
     }
-
     // checks / updates
     if (method === 'POST' && urlPath === '/api/checks') return json({ checkId: `check-${Math.random().toString(16).slice(2)}` })
     if (method === 'POST' && urlPath === '/api/updates') {
@@ -888,7 +864,6 @@ export function installDockrevMockApi(
       const targets = Array.isArray(parsed.targets)
         ? parsed.targets.map((item) => (item && typeof item === 'object' ? (item as Record<string, unknown>) : null))
         : null
-
       if (scope === 'service' && !serviceId) {
         return json(
           { error: { code: 'invalid_argument', message: 'serviceId is required for scope=service' } },
@@ -901,7 +876,6 @@ export function installDockrevMockApi(
           { status: 400 },
         )
       }
-
       const affectedServiceIds = selectUpdateServiceIds(scope, stackId, serviceId)
       const targetsByService = new Map<string, { targetTag: string; targetDigest: string; pullTags: string[] }>()
       if (scope === 'service') {
@@ -965,7 +939,6 @@ export function installDockrevMockApi(
           )
         }
       }
-
       jobSeqRef.value += 1
       const jobId = `job-ui-${jobSeqRef.value}`
       const startsQueued = scenario === 'dashboard-demo-slow-update'
@@ -1036,7 +1009,6 @@ export function installDockrevMockApi(
       const serviceId = decodeURIComponent(urlPath.split('/').slice(3, -1).join('/'))
       const found = findService(serviceId)
       if (!found) return json({ error: { code: 'not_found', message: 'service not found' } }, { status: 404 })
-
       const currentDigest = found.svc.image.digest ?? ''
       const currentDisplayTag = found.svc.image.resolvedTag ?? found.svc.image.tag ?? null
       const rollbackRaceResponse = await maybeServeRollbackTargetRaceResponse(scenario, serviceId, rollbackTargetRaceByServiceId)
@@ -1056,7 +1028,6 @@ export function installDockrevMockApi(
           activeJobStatus: null,
         } satisfies ServiceRollbackTargetResponse)
       }
-
       return json({
         ...target,
         currentDigest: target.currentDigest || currentDigest,
@@ -1067,7 +1038,6 @@ export function installDockrevMockApi(
       const serviceId = decodeURIComponent(urlPath.split('/').slice(3, -1).join('/'))
       const found = findService(serviceId)
       if (!found) return json({ error: { code: 'not_found', message: 'service not found' } }, { status: 404 })
-
       const target = f.rollbackTargetByServiceId[serviceId] ?? {
         available: false,
         currentDigest: found.svc.image.digest ?? '',
@@ -1080,7 +1050,6 @@ export function installDockrevMockApi(
         activeJobId: null,
         activeJobStatus: null,
       } satisfies ServiceRollbackTargetResponse
-
       if (!target.available || !target.targetDigest) {
         return json(
           {
@@ -1096,7 +1065,6 @@ export function installDockrevMockApi(
           { status: 409 },
         )
       }
-
       jobSeqRef.value += 1
       const jobId = `job-rollback-ui-${jobSeqRef.value}`
       const createdAt = nowIso(-1_500)
@@ -1141,11 +1109,9 @@ export function installDockrevMockApi(
         activeJobStatus: 'running',
         unavailableReason: 'rollback_in_progress',
       }
-
       window.setTimeout(() => {
         const live = f.jobById[jobId]
         if (!live || (live.status !== 'queued' && live.status !== 'running')) return
-
         const finishedAt = nowIso()
         found.svc.image = {
           ...found.svc.image,
@@ -1158,7 +1124,6 @@ export function installDockrevMockApi(
         }
         found.svc.candidate = null
         syncStackListItem(found.stack.id)
-
         const nextLogs = [...live.logs, { ts: finishedAt, level: 'info', msg: 'Rollback finished.' }]
         f.jobById[jobId] = {
           ...live,
@@ -1182,13 +1147,10 @@ export function installDockrevMockApi(
         }
         persistState()
       }, 1_200)
-
       return json({ jobId })
     }
-
     const serviceStateResponse = await handleServiceStateRoutes(routeCtx)
     if (serviceStateResponse) return serviceStateResponse
-
     return json({ error: `unhandled mock route: ${method} ${urlString}` }, { status: 501 })
     } finally {
       persistState()

@@ -3,6 +3,10 @@ import { VersionInferencePage } from '../../pages/VersionInferencePage'
 import { PageHarness } from '../mocks/PageHarness'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 const meta: Meta<typeof VersionInferencePage> = {
   title: 'Pages/VersionInferencePage',
   component: VersionInferencePage,
@@ -20,6 +24,60 @@ export const Idle: Story = {
         {({ onTopActions }) => <VersionInferencePage onTopActions={onTopActions} />}
       </PageHarness>
     )
+  },
+}
+
+export const ColdLoading: Story = {
+  parameters: {
+    dockrevApiScenario: 'version-inference-running',
+    dockrevApiBehaviorByRoute: {
+      'GET /api/version-inference/overview': { delayMs: 900 },
+    },
+  },
+  render: () => (
+    <PageHarness route={{ name: 'version-inference' }} title="版本推测">
+      {({ onTopActions }) => <VersionInferencePage onTopActions={onTopActions} />}
+    </PageHarness>
+  ),
+  play: async ({ canvasElement }) => {
+    await sleep(100)
+    if (!canvasElement.querySelector('[data-async-data-phase="initial-loading"] .skeleton')) {
+      throw new Error('cold version inference must render a skeleton')
+    }
+    if (canvasElement.textContent?.includes('并发上限0')) {
+      throw new Error('cold version inference must not report zero metrics')
+    }
+  },
+}
+
+export const InitialErrorAndRetry: Story = {
+  parameters: {
+    dockrevApiScenario: 'version-inference-running',
+    dockrevApiBehaviorByRoute: {
+      'GET /api/version-inference/overview': {
+        delayMs: 100,
+        failTimes: 1,
+        failureStatus: 503,
+        failureBody: { error: 'mock inference unavailable' },
+      },
+    },
+  },
+  render: () => (
+    <PageHarness route={{ name: 'version-inference' }} title="版本推测">
+      {({ onTopActions }) => <VersionInferencePage onTopActions={onTopActions} />}
+    </PageHarness>
+  ),
+  play: async ({ canvasElement }) => {
+    await sleep(180)
+    const retry = canvasElement.querySelector<HTMLButtonElement>('[aria-label="重试加载"]')
+    if (!retry || !canvasElement.querySelector('[role="alert"]')) {
+      throw new Error('initial inference failure must expose an error overlay and retry')
+    }
+    retry.click()
+    await sleep(160)
+    if (!canvasElement.textContent?.includes('统一状态列表')) {
+      throw new Error('retry should recover the version inference data region')
+    }
   },
 }
 

@@ -14,6 +14,7 @@ export const PUBLIC_DEMO_FIXTURE_STORAGE_KEY = 'dockrev:public-demo:fixture:v1'
 export const PUBLIC_DEMO_SCENARIOS = [
   'settings-configured',
   'queue-long-logs',
+  'queue-mixed',
   'service-action-progress',
   'dashboard-demo-hydrated-update',
   'overview-discovery-readable',
@@ -21,6 +22,8 @@ export const PUBLIC_DEMO_SCENARIOS = [
 export type PublicDemoScenario = (typeof PUBLIC_DEMO_SCENARIOS)[number]
 export const PUBLIC_DEMO_SCENARIO: PublicDemoScenario = 'settings-configured'
 export const PUBLIC_DEMO_CLEANUP_SCENARIO = 'cleanup-console-storage-normal'
+export const PUBLIC_DEMO_ASYNC_STATES = ['default', 'cold', 'cache-refresh', 'error'] as const
+export type PublicDemoAsyncState = (typeof PUBLIC_DEMO_ASYNC_STATES)[number]
 const PUBLIC_DEMO_VERSION_SERVICE_ID = 'svc-prod-api'
 const PUBLIC_DEMO_VERSION_REPO_URL = 'https://github.com/acme/api'
 
@@ -71,12 +74,27 @@ function parsePublicDemoScenario(value: string | null | undefined): PublicDemoSc
     : PUBLIC_DEMO_SCENARIO
 }
 
+function parsePublicDemoAsyncState(value: string | null | undefined): PublicDemoAsyncState {
+  return value != null && PUBLIC_DEMO_ASYNC_STATES.includes(value as PublicDemoAsyncState)
+    ? value as PublicDemoAsyncState
+    : 'default'
+}
+
 export function readPublicDemoScenario(): PublicDemoScenario {
   if (typeof window === 'undefined') return PUBLIC_DEMO_SCENARIO
   try {
     return parsePublicDemoScenario(new URL(window.location.href).searchParams.get('demoScenario'))
   } catch {
     return PUBLIC_DEMO_SCENARIO
+  }
+}
+
+export function readPublicDemoAsyncState(): PublicDemoAsyncState {
+  if (typeof window === 'undefined') return 'default'
+  try {
+    return parsePublicDemoAsyncState(new URL(window.location.href).searchParams.get('demoAsyncState'))
+  } catch {
+    return 'default'
   }
 }
 

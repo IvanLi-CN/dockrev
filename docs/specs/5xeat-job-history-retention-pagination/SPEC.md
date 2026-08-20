@@ -44,3 +44,7 @@ PR: include
 
 PR: include
 ![服务更新历史游标分页](./assets/service-history-cursor-page.png)
+
+## Related Contract
+
+- `docs/specs/async-data-continuity/SPEC.md`

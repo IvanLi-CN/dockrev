@@ -213,6 +213,10 @@ export const RunningDualProgress: Story = {
       </PageHarness>
     )
   },
+  play: async ({ canvasElement }) => {
+    findButton(canvasElement, '刷新')?.click()
+    await waitForCondition(() => Boolean(canvasElement.querySelector('.jobProgressBarDual')))
+  },
 }
 
 export const UpdateLayerProgress: Story = {
@@ -340,6 +344,10 @@ export const LegacyProgressFallback: Story = {
         {({ onTopActions }) => <JobDetailPage jobId="job-legacy-running" onTopActions={onTopActions} />}
       </PageHarness>
     )
+  },
+  play: async ({ canvasElement }) => {
+    findButton(canvasElement, '刷新')?.click()
+    await waitForCondition(() => Boolean(canvasElement.querySelector('.jobProgressBarDual')))
   },
 }
 

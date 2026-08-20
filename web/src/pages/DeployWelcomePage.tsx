@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   getDeployCheckReport,
   getDeployWelcome,
@@ -13,6 +13,8 @@ import {
 import { useManagementEventBatch } from '../managementEvents'
 import { navigate } from '../routes'
 import { Button, Label, Switch } from '../ui'
+import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
+import type { AsyncDataPhase, AsyncDataTrigger } from '../asyncData'
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
@@ -121,12 +123,17 @@ export function DeployWelcomePage() {
   const [error, setError] = useState<string | null>(null)
   const [reportRefreshing, setReportRefreshing] = useState(false)
   const [reportRefreshError, setReportRefreshError] = useState<string | null>(null)
+  const [reportTrigger, setReportTrigger] = useState<AsyncDataTrigger>('background')
+  const refreshRequestIdRef = useRef(0)
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (trigger: AsyncDataTrigger = 'background') => {
+    const requestId = ++refreshRequestIdRef.current
+    setReportTrigger(trigger)
     setLoading(true)
     setError(null)
     setReportRefreshError(null)
     const [reportResult, welcomeResult] = await Promise.allSettled([getDeployCheckReport(), getDeployWelcome()])
+    if (requestId !== refreshRequestIdRef.current) return
     let reportError: string | null = null
 
     if (reportResult.status === 'fulfilled') {
@@ -159,12 +166,15 @@ export function DeployWelcomePage() {
   }, [])
 
   const retryInitialReportRefresh = useCallback(async () => {
+    const requestId = ++refreshRequestIdRef.current
+    setReportTrigger('user-action')
     setLoading(true)
     setReportRefreshing(true)
     setError(null)
     setReportRefreshError(null)
     try {
       const settled = await refreshDeployCheckReport()
+      if (requestId !== refreshRequestIdRef.current) return
       setReportRefreshError(null)
       if (settled.report) {
         setReport(settled.report)
@@ -215,6 +225,11 @@ export function DeployWelcomePage() {
   const hasBlockingFailures = report
     ? hasBlockingDeployCheckFailure(report)
     : Boolean(reportRefreshError)
+  const reportPhase: AsyncDataPhase = reportRefreshError
+    ? 'error'
+    : !report
+      ? 'initial-loading'
+      : loading ? 'refreshing' : 'ready-data'
 
   async function enterDashboard() {
     if (hasBlockingFailures) return
@@ -239,22 +254,21 @@ export function DeployWelcomePage() {
     return (
       <div className="deployWelcomeRoot">
         <main className="deployWelcomeMain">
-          <section className="deployWelcomePanel">
-            <p className="deployWelcomeEyebrow">Deployment Checklist</p>
-            <h1 className="deployWelcomeTitle">部署功能完整性检查</h1>
-            <p className="deployWelcomeSubtitle">{loading ? '正在加载部署检查报告…' : error ?? '无法加载检查报告'}</p>
-            <div className="deployWelcomeActions">
-              <Button
-                variant="primary"
-                disabled={loading}
-                onClick={() => {
-                  void retryInitialReportRefresh()
-                }}
-              >
-                重试
-              </Button>
-            </div>
-          </section>
+          <AsyncDataRegion
+            className="deployWelcomeAsyncRegion"
+            error={reportRefreshError ?? error}
+            hasData={false}
+            label="正在加载部署检查报告"
+            onRetry={() => void retryInitialReportRefresh()}
+            phase={reportPhase}
+            skeleton={
+              <section className="deployWelcomePanel">
+                <p className="deployWelcomeEyebrow">Deployment Checklist</p>
+                <AsyncDataSkeleton className="deployWelcomeLoadingSkeleton" lines={7} />
+              </section>
+            }
+            trigger={reportTrigger}
+          />
         </main>
       </div>
     )
@@ -263,6 +277,15 @@ export function DeployWelcomePage() {
   return (
     <div className="deployWelcomeRoot">
       <main className="deployWelcomeMain">
+        <AsyncDataRegion
+          className="deployWelcomeAsyncRegion"
+          error={reportRefreshError}
+          hasData
+          label="正在重新检查部署能力"
+          onRetry={() => void refresh('user-action')}
+          phase={reportPhase}
+          trigger={reportTrigger}
+        >
         <section className={`deployWelcomePanel deployWelcomeSummaryPanel ${hasBlockingFailures ? 'is-fail' : 'is-pass'}`}>
           <div className="deployWelcomeSummaryHead">
             <div>
@@ -358,7 +381,7 @@ export function DeployWelcomePage() {
               <p className="deployWelcomeActionHint">勾选后，后续访问首页将直接进入 Dashboard；可在设置页手动重新打开本页面。</p>
             </div>
             <div className="deployWelcomeActions">
-              <Button variant="ghost" disabled={loading || saving} onClick={() => void refresh()}>
+              <Button variant="ghost" disabled={loading || saving} onClick={() => void refresh('user-action')}>
                 重新检查
               </Button>
               <Button
@@ -372,6 +395,7 @@ export function DeployWelcomePage() {
           </div>
           {error ? <div className="error">{error}</div> : null}
         </section>
+        </AsyncDataRegion>
       </main>
     </div>
   )

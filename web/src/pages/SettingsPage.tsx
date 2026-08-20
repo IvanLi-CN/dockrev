@@ -17,8 +17,10 @@ import {
 SETTINGS_GHCR_WEBHOOK_ID
 } from '../settingsFocus'
 import { Button,Input,Mono,SelectField,Switch } from '../ui'
+import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
 import { webhookStateDotClass,webhookStateIcon } from '../webhookStatus'
 import { GitHubPackagesRepoPicker } from './settings/GitHubPackagesRepoPicker'
+import { SettingsAuthCard } from './settings/SettingsAuthCard'
 import {
 GHCR_PREVIEW_LIMIT,
 errorMessage,
@@ -50,6 +52,8 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
     ghcrResolvePending,
     ghcrWebhookAuditCronInputClassName,
     githubPackages,
+    githubPackagesLoadError,
+    githubPackagesLoadPhase,
     githubPackagesNewRepo,
     githubPackagesPat,
     githubPackagesTrackedRepos,
@@ -59,6 +63,8 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
     notificationTestRunning,
     notificationTestStates,
     notifications,
+    notificationsLoadError,
+    notificationsLoadPhase,
     openGhcrRegistry,
     octoRillApiBaseUrlInputClassName,
     octoRillApiKeyFocused,
@@ -83,10 +89,16 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
     setTelegramBotTokenTouched,
     setTelegramBotTokenVisible,
     settings,
+    settingsLoadError,
+    settingsLoadPhase,
     showAutoSaveToast,
     showInstancePublicBaseUrlSuggestBubble,
     showTelegramBotTokenEye,
     suggestedPublicBaseUrl,
+    trackedReposLoadError,
+    trackedReposLoadPhase,
+    trackedReposLoadSource,
+    trackedReposLoadTrigger,
     supervisor,
     telegramBotTokenInputClassName,
     telegramBotTokenVisible,
@@ -99,9 +111,24 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
     updateResourceMonitor,
     updateSchedules,
     webPushEndpoint,
+    loadSource,
+    loadTrigger,
   } = useSettingsPageState(props)
-  if (!settings || !notifications || !githubPackages) {
-    return <div className="muted">加载中…</div>
+  if (!settings) {
+    return (
+      <div className="page settingsPage" data-mobile-settings-section={props.section ?? 'index'}>
+        <AsyncDataRegion
+          error={settingsLoadError}
+          hasData={false}
+          label="正在加载系统设置"
+          onRetry={() => void refresh({ source: 'memory', trigger: 'user-action' })}
+          phase={settingsLoadPhase}
+          skeleton={<AsyncDataSkeleton className="settingsLoadingSkeleton" lines={10} />}
+          source={loadSource}
+          trigger={loadTrigger}
+        />
+      </div>
+    )
   }
   return (
     <div className="page settingsPage" data-mobile-settings-section={props.section ?? 'index'}>
@@ -109,63 +136,19 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
       <SettingsMobileNavigation section={props.section} />
       <div className="twoCol settingsContentGrid">
         <div className="settingsCol">
-          <div className="card settingsSectionCard" data-settings-section="account" data-mobile-active={props.section === 'account' || undefined}>
-            <div className="title">鉴权（Forward Auth）</div>
-            <div className="muted">认证由入口代理负责；Dockrev 按用户/组执行项目侧鉴权（运行时只读）</div>
-            <div className="kv">
-              <div className="kvRow">
-                <div className="label">用户头</div>
-                <div className="mono">{settings.auth.forwardHeaderName}</div>
-              </div>
-              <div className="kvRow">
-                <div className="label">组头</div>
-                <div className="mono">{settings.auth.groupHeaderName}</div>
-              </div>
-              <div className="kvRow">
-                <div className="label">鉴权模式</div>
-                <div className="mono">{settings.auth.authorizationMode}</div>
-              </div>
-              <div className="kvRow">
-                <div className="label">允许用户</div>
-                <div className="mono">{settings.auth.allowedUserMasked || '-'}</div>
-              </div>
-              <div className="kvRow">
-                <div className="label">允许组</div>
-                <div className="mono">{settings.auth.allowedGroupMasked || '-'}</div>
-              </div>
-
-              <div className="kvRow">
-                <div className="label">当前用户</div>
-                <div className="mono">{settings.auth.currentUser || '-'}</div>
-              </div>
-
-              <div className="kvRow">
-                <div className="label">当前组</div>
-                <div className="mono">{settings.auth.currentGroups.length ? settings.auth.currentGroups.join(', ') : '-'}</div>
-              </div>
-
-              <div className="kvRow">
-                <div className="label">命中方式</div>
-                <div className="mono">{settings.auth.matchedBy || '-'}</div>
-              </div>
-
-              <div className="kvRow">
-                <div className="label">允许匿名（开发环境）</div>
-                <div className="muted">{settings.auth.allowAnonymousInDev ? 'on' : 'off'}</div>
-              </div>
-
-              <div className="muted" style={{ marginTop: 6 }}>
-                该区域由启动配置控制：`DOCKREV_AUTH_FORWARD_HEADER_NAME` / `DOCKREV_AUTH_GROUP_HEADER_NAME` /
-                `DOCKREV_AUTH_ALLOWED_USER` / `DOCKREV_AUTH_ALLOWED_GROUP` /
-                `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV`，修改后需重启服务生效。
-              </div>
-            </div>
-          </div>
-
+          <AsyncDataRegion
+            className="settingsCoreRegion"
+            error={settingsLoadError}
+            hasData
+            label="正在刷新基础设置"
+            onRetry={() => void refresh({ source: 'memory', trigger: 'user-action', domains: ['settings'] })}
+            phase={settingsLoadPhase}
+            source={loadSource}
+            trigger={loadTrigger}>
+          <SettingsAuthCard auth={settings.auth} section={props.section} />
           <div className="card settingsSectionCard" data-settings-section="maintenance" data-mobile-active={props.section === 'maintenance' || undefined}>
             <div className="title">自我升级</div>
             <div className="muted">Dockrev 更新 Dockrev：由独立 supervisor 提供页面与执行者（默认 {selfUpgradeUrl}）</div>
-
             <div className="kv">
               <div className="kvRow">
                 <div className="label">Supervisor 状态</div>
@@ -188,7 +171,6 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                 </div>
               ) : null}
             </div>
-
             <div className="formActions">
               <Button
                 variant="primary"
@@ -211,11 +193,9 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
               </Button>
             </div>
           </div>
-
           <div className="card settingsSectionCard" data-settings-section="maintenance" data-mobile-active={props.section === 'maintenance' || undefined}>
             <div className="title">部署检查</div>
             <div className="muted">手动打开部署检查清单页，不会修改“自动打开”偏好。</div>
-
             <div className="formActions">
               <Button
                 variant="primary"
@@ -228,11 +208,9 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
               </Button>
             </div>
           </div>
-
           <div className="card settingsSectionCard" data-settings-section="backup" data-mobile-active={props.section === 'backup' || undefined}>
             <div className="title">备份默认策略</div>
             <div className="muted">默认 fail-closed；目标过大可按阈值跳过（force 可覆盖）</div>
-
             <div className="kv">
               <div className="kvRow">
                 <div className="label">启用更新前备份</div>
@@ -293,11 +271,9 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
               </div>
             </div>
           </div>
-
           <div className="card settingsSectionCard" data-settings-section="monitoring" data-mobile-active={props.section === 'monitoring' || undefined}>
             <div className="title">资源监控</div>
             <div className="muted">控制全局协调的历史采样周期，以及单服务 1s 实时 SSE 推送。</div>
-
             <div className="kv">
               <div className="kvRow">
                 <div className="label">启用资源监控</div>
@@ -316,7 +292,6 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                   <div className="muted">{settings.resourceMonitor.enabled ? 'on' : 'off'}</div>
                 </div>
               </div>
-
               <div className="kvRow">
                 <div className="label">历史采样频率（全局周期）</div>
                 <div>
@@ -345,18 +320,15 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                   </div>
                 </div>
               </div>
-
               <div className="kvRow">
                 <div className="label">历史保留</div>
                 <div className="muted">{settings.resourceMonitor.retentionDays} 天（固定）</div>
               </div>
             </div>
           </div>
-
           <div className="card settingsSectionCard" data-settings-section="schedules" data-mobile-active={props.section === 'schedules' || undefined}>
             <div className="title">定时任务</div>
             <div className="muted">cron 按服务端本地时区解释（TZ）；5 段表达式会自动补秒=0。</div>
-
             <div className="kv">
               <div className="kvRow">
                 <div className="label">定期检查更新</div>
@@ -378,7 +350,6 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                   <div className="muted">{settings.schedules.updateCheck.enabled ? 'on' : 'off'}</div>
                 </div>
               </div>
-
               <div className="kvRow">
                 <div className="label">Cron（检查更新）</div>
                 <div>
@@ -399,7 +370,6 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                   </div>
                 </div>
               </div>
-
               <div className="kvRow">
                 <div className="label">Webhook 巡查（GHCR audit_all）</div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -420,7 +390,6 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                   <div className="muted">{settings.schedules.ghcrWebhookAudit.enabled ? 'on' : 'off'}</div>
                 </div>
               </div>
-
               <div className="kvRow">
                 <div className="label">Cron（Webhook 巡查）</div>
                 <div>
@@ -443,11 +412,9 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
               </div>
             </div>
           </div>
-
           <div className="card settingsSectionCard" data-settings-section="release-notes" data-mobile-active={props.section === 'release-notes' || undefined}>
             <div className="title">OctoRill 更新日志</div>
             <div className="muted">统一 release notes 数据源由这里全局决定；版本页和发布抽屉只服从这里的设置，不会在别处自动切换或回退。</div>
-
             <div className="kv">
               <div className="settingsFieldRow">
                 <div className="label settingsFieldLabel">数据源</div>
@@ -476,7 +443,6 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                   设成啥就用啥；若所选源失败，只会显示同源旧结果或错误态，不会跨源补位。
                 </div>
               </div>
-
               <div className="settingsFieldRow">
                 <div className="label settingsFieldLabel">API Base URL</div>
                 <div className="settingsFieldControl">
@@ -497,7 +463,6 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                   保存时会去掉尾部 <Mono>/</Mono>；不要填写带账号密码的 URL。
                 </div>
               </div>
-
               <div className="settingsFieldRow">
                 <div className="label settingsFieldLabel">API Key</div>
                 <div className="settingsFieldControl">
@@ -536,7 +501,6 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                   已保存时显示等长圆点掩码；清空后自动保存会删除当前 key。
                 </div>
               </div>
-
               <div className="settingsFieldRow">
                 <div className="label settingsFieldLabel">默认视图</div>
                 <div className="settingsFieldControl">
@@ -565,11 +529,9 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
               </div>
             </div>
           </div>
-
           <div className="card settingsSectionCard" data-settings-section="integrations" data-mobile-active={props.section === 'integrations' || undefined}>
             <div className="title">实例 Public Base URL</div>
             <div className="muted">用于在通知中生成可点击的绝对链接（服务详情 / 任务详情）。</div>
-
             <div className="kv">
               <div className="kvRow">
                 <div className="label">Public Base URL</div>
@@ -620,11 +582,21 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
               </div>
             </div>
           </div>
-
+          </AsyncDataRegion>
+          {notifications ? (
+          <AsyncDataRegion
+            className="settingsNotificationsRegion"
+            error={notificationsLoadError}
+            hasData
+            label="正在刷新通知设置"
+            onRetry={() => void refresh({ source: 'memory', trigger: 'user-action', domains: ['notifications'] })}
+            phase={notificationsLoadPhase}
+            source={loadSource}
+            trigger={loadTrigger}
+          >
           <div className="card settingsSectionCard" data-settings-section="notifications" data-mobile-active={props.section === 'notifications' || undefined}>
             <div className="title">通知</div>
             <div className="muted">先选择通知事件，再为每个渠道配置发送方式。</div>
-
             <div className="kv" style={{ marginBottom: 12 }}>
               <div className="kvRow">
                 <div className="label">更新完成通知</div>
@@ -646,7 +618,6 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                   <div className="muted">{normalizeNotificationEvents(notifications.events).update ? 'on' : 'off'}</div>
                 </div>
               </div>
-
               <div className="kvRow">
                 <div className="label">发现新版本通知（定时检查）</div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -667,7 +638,6 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                   <div className="muted">{normalizeNotificationEvents(notifications.events).newVersion ? 'on' : 'off'}</div>
                 </div>
               </div>
-
               <div className="kvRow">
                 <div className="label">GitHub Webhook 异常通知（巡检）</div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -691,7 +661,6 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                 </div>
               </div>
             </div>
-
             <NotificationChannelCard
               channel="email"
               title="Email"
@@ -723,7 +692,6 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                 />
               </div>
             </NotificationChannelCard>
-
             <NotificationChannelCard
               channel="webhook"
               title="Webhook"
@@ -755,7 +723,6 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                 />
               </div>
             </NotificationChannelCard>
-
             <NotificationChannelCard
               channel="telegram"
               title="Telegram"
@@ -829,7 +796,6 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                 />
               </div>
             </NotificationChannelCard>
-
             <NotificationChannelCard
               channel="webPush"
               title="Web Push（Chrome / VAPID）"
@@ -885,7 +851,6 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                   }
                 />
               </div>
-
               <div className="formActions" style={{ marginTop: 10 }}>
                 <Button
                   variant="ghost"
@@ -927,21 +892,41 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                   取消订阅
                 </Button>
               </div>
-
               {webPushEndpoint ? (
                 <div className="muted" style={{ marginTop: 10 }}>
                   endpoint <Mono>{webPushEndpoint.slice(0, 40)}…</Mono>
                 </div>
               ) : null}
             </NotificationChannelCard>
-
             {error ? <div className="error">{error}</div> : null}
           </div>
-
-          {error ? <div className="error">{error}</div> : null}
+          </AsyncDataRegion>
+          ) : (
+            <AsyncDataRegion
+              className="settingsNotificationsRegion"
+              error={notificationsLoadError}
+              hasData={false}
+              label="正在加载通知设置"
+              onRetry={() => void refresh({ source: 'memory', trigger: 'user-action', domains: ['notifications'] })}
+              phase={notificationsLoadPhase}
+              skeleton={<AsyncDataSkeleton className="settingsLoadingSkeleton" lines={5} />}
+              source={loadSource}
+              trigger={loadTrigger}
+            />
+          )}
         </div>
-
         <div className="settingsCol">
+          {githubPackages ? (
+          <AsyncDataRegion
+            className="settingsGhcrRegion"
+            error={githubPackagesLoadError}
+            hasData
+            label="正在刷新 GHCR 设置"
+            onRetry={() => void refresh({ source: 'memory', trigger: 'user-action', domains: ['githubPackages'] })}
+            phase={githubPackagesLoadPhase}
+            source={loadSource}
+            trigger={loadTrigger}
+          >
           <div className="card settingsSectionCard" data-settings-section="integrations" data-mobile-active={props.section === 'integrations' || undefined} id={SETTINGS_GHCR_WEBHOOK_ID}>
           <div className="title">GitHub Packages（GHCR）Webhook</div>
           <div className="muted">在 GHCR 发布新版本时自动触发 Dockrev 扫描（事件：package.published）</div>
@@ -954,7 +939,6 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
               </Button>
             </div>
           ) : null}
-
           <div className="settingsSection">
             <div className="settingHead">
               <div className="sectionTitle">启用</div>
@@ -966,7 +950,6 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                 }
               />
             </div>
-
             <div className="kv">
               <div className="kvRow">
                 <div className="label">GitHub PAT（留空=保持原值）</div>
@@ -979,7 +962,6 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                   placeholder="ghp_..."
                 />
               </div>
-
               <div className="kvRow">
                 <div className="label">Callback URL</div>
                 <Input
@@ -993,13 +975,11 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
               </div>
             </div>
           </div>
-
           <div className="settingsSection">
             <div className="settingHead">
               <div className="sectionTitle">Repos</div>
               <div className="muted">{githubPackages.reposSelectedTotal} 个</div>
             </div>
-
             <div className="kv">
               <div className="kvRow">
                 <div className="label">添加 Repo</div>
@@ -1030,8 +1010,8 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                             if (!fullName) throw new Error('resolve returned empty repo')
                             await setGitHubPackagesRepoSelected({ fullName, selected: true })
                             setGitHubPackagesNewRepo('')
-                            await refresh()
-                            await refreshTrackedRepos()
+                            await refresh({ source: 'memory', trigger: 'user-action' })
+                            await refreshTrackedRepos({ source: 'memory', trigger: 'user-action' })
                             return
                           }
                           if (resolved.kind === 'owner') {
@@ -1065,8 +1045,8 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                               await setGitHubPackagesRepoSelected({ fullName: r.fullName, selected: r.selected })
                             }
                             setGitHubPackagesNewRepo('')
-                            await refresh()
-                            await refreshTrackedRepos()
+                            await refresh({ source: 'memory', trigger: 'user-action' })
+                            await refreshTrackedRepos({ source: 'memory', trigger: 'user-action' })
                             return
                           }
                           throw new Error(`unsupported resolve kind: ${resolved.kind}`)
@@ -1091,7 +1071,17 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                 </div>
               </div>
             </div>
-
+            <AsyncDataRegion
+              className="settingsGhcrPreviewRegion"
+              error={trackedReposLoadError}
+              hasData={githubPackagesTrackedRepos !== null}
+              label="正在刷新已跟踪仓库"
+              onRetry={() => void refreshTrackedRepos({ source: 'memory', trigger: 'user-action' })}
+              phase={trackedReposLoadPhase}
+              skeleton={<AsyncDataSkeleton className="settingsGhcrPreviewSkeleton" lines={2} />}
+              source={trackedReposLoadSource}
+              trigger={trackedReposLoadTrigger}
+            >
             {githubPackagesTrackedRepos ? (
               <div style={{ marginTop: 10 }}>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
@@ -1110,7 +1100,6 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                     收件箱
                   </Button>
                 </div>
-
                 {githubPackagesTrackedRepos.repos.length ? (
                   <div
                     style={{
@@ -1168,7 +1157,6 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                     暂无已跟踪仓库
                   </div>
                 )}
-
                 {githubPackagesTrackedRepos.filteredTotal > githubPackagesTrackedRepos.repos.length ? (
                   <div className="muted" style={{ marginTop: 10 }}>
                     设置页仅展示前 {GHCR_PREVIEW_LIMIT} 条，更多仓库请点击“查看更多”进入维护页。
@@ -1177,13 +1165,26 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
               </div>
             ) : (
               <div className="muted" style={{ marginTop: 10 }}>
-                加载中…
+                暂无已跟踪仓库
               </div>
             )}
+            </AsyncDataRegion>
           </div>
-
-          {error ? <div className="error">{error}</div> : null}
           </div>
+          </AsyncDataRegion>
+          ) : (
+            <AsyncDataRegion
+              className="settingsGhcrRegion"
+              error={githubPackagesLoadError}
+              hasData={false}
+              label="正在加载 GHCR 设置"
+              onRetry={() => void refresh({ source: 'memory', trigger: 'user-action', domains: ['githubPackages'] })}
+              phase={githubPackagesLoadPhase}
+              skeleton={<AsyncDataSkeleton className="settingsLoadingSkeleton" lines={5} />}
+              source={loadSource}
+              trigger={loadTrigger}
+            />
+          )}
         </div>
       </div>
       {showAutoSaveToast ? (

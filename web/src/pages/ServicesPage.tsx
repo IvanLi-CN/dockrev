@@ -3,6 +3,7 @@ import { restoreService, restoreStack, type Service } from "../api";
 import { ReadonlySnapshotNotice } from "../components/ReadonlySnapshotNotice";
 import { navigate } from "../routes";
 import { Button, Mono, Pill } from "../ui";
+import { AsyncDataRegion, AsyncDataSkeleton } from "../components/AsyncDataRegion";
 import { splitImageNameForDisplay, splitImageRef } from "../imageLinks";
 import { formatCurrentTagDisplay as formatTagDisplay } from "../versionDisplay";
 import {
@@ -33,7 +34,11 @@ export function ServicesPage(props: {
   const {
     archivedDetails,
     archivedStacks,
+    error: archivedError,
+    loaded: archivedLoaded,
+    phase: archivedPhase,
     requestRefresh: requestArchivedRefresh,
+    trigger: archivedTrigger,
   } = useArchivedStacksState();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -71,7 +76,7 @@ export function ServicesPage(props: {
               setBusy(true);
               setError(null);
               try {
-                await Promise.all([requestRefresh(), requestArchivedRefresh()]);
+                await Promise.all([requestRefresh({ source: "memory", trigger: "user-action" }), requestArchivedRefresh("user-action")]);
               } catch (value: unknown) {
                 setError(
                   value instanceof Error
@@ -93,7 +98,16 @@ export function ServicesPage(props: {
       ) : null}
       <OperationsDashboardSectionView state={state} />
 
-      <div className="card">
+      <AsyncDataRegion
+        className="card"
+        error={archivedError}
+        hasData={archivedLoaded}
+        label="正在刷新归档对象"
+        onRetry={() => void requestArchivedRefresh("user-action").catch(() => undefined)}
+        phase={archivedPhase}
+        skeleton={<AsyncDataSkeleton className="archivedStacksLoadingSkeleton" lines={4} />}
+        trigger={archivedTrigger}
+      >
         <div className="sectionRow">
           <div>
             <div className="title">已归档</div>
@@ -102,7 +116,7 @@ export function ServicesPage(props: {
             </div>
           </div>
         </div>
-        {archivedStacks.length === 0 && archivedServices.length === 0 ? (
+        {archivedPhase === "ready-empty" && archivedStacks.length === 0 && archivedServices.length === 0 ? (
           <div className="muted">暂无归档对象</div>
         ) : null}
 
@@ -148,7 +162,7 @@ export function ServicesPage(props: {
                               try {
                                 await restoreStack(stack.id);
                                 await Promise.all([
-                                  requestRefresh(),
+                                  requestRefresh({ source: "memory", trigger: "user-action" }),
                                   requestArchivedRefresh(),
                                 ]);
                               } catch (value: unknown) {
@@ -235,7 +249,7 @@ export function ServicesPage(props: {
                             try {
                               await restoreService(item.svc.id);
                               await Promise.all([
-                                requestRefresh(),
+                                requestRefresh({ source: "memory", trigger: "user-action" }),
                                 requestArchivedRefresh(),
                               ]);
                             } catch (value: unknown) {
@@ -272,7 +286,7 @@ export function ServicesPage(props: {
             </div>
           </div>
         ) : null}
-      </div>
+      </AsyncDataRegion>
 
       {error ? <div className="error">{error}</div> : null}
       {busy ? <div className="muted">处理中…</div> : null}

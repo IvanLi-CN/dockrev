@@ -138,8 +138,8 @@ export function normalizeHomepageHref(
 
 export function canRestorePersistedHomepageSnapshot(
   status: "missing" | "fresh" | "stale" | "expired" | "unsupported",
-): status is "fresh" | "stale" {
-  return status === "fresh" || status === "stale";
+): status is "fresh" {
+  return status === "fresh";
 }
 
 function parseService(value: unknown): Service | null {
@@ -290,7 +290,7 @@ function parseSnapshotCard(value: unknown): HomepageSnapshotCard | null {
   };
 }
 
-function parseSnapshotV2(value: unknown): HomepageSnapshotV2 | null {
+export function parseSnapshotV2(value: unknown): HomepageSnapshotV2 | null {
   if (!isRecord(value)) return null;
   if (value.version !== SNAPSHOT_VERSION) return null;
   const generatedAt = asString(value.generatedAt);
@@ -443,7 +443,7 @@ function legacyCardToSnapshotCard(card: LegacyHomepageNavCardSnapshotItem): Home
   };
 }
 
-function tryMigrateLegacySnapshot(
+export function tryMigrateLegacySnapshot(
   storage: SnapshotStorage | null,
 ): HomepageSnapshotV2 | null {
   const nav = parseLegacyNavSnapshot(readJson(storage, HOMEPAGE_NAV_SNAPSHOT_KEY));
@@ -483,9 +483,8 @@ function tryMigrateLegacySnapshot(
 export function readHomepageSnapshot(
   storage: SnapshotStorage | null = browserStorage(),
 ): HomepageSnapshotV2 | null {
-  const current = parseSnapshotV2(readJson(storage, HOMEPAGE_SNAPSHOT_KEY));
-  if (current && homepageSnapshotIsFresh(current)) return current;
-  return tryMigrateLegacySnapshot(storage);
+  void storage;
+  return null;
 }
 
 export function writeHomepageSnapshot(

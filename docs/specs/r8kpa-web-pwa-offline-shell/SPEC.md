@@ -175,3 +175,7 @@ PR: include
 - requested_viewport: 1440x1080
 - viewport_strategy: storybook-static
 - PR: include
+
+## Related Contract
+
+- `docs/specs/async-data-continuity/SPEC.md`

@@ -38,6 +38,7 @@ import { Button,Mono } from '../ui'
 import { isPwaRuntimeEnabled } from '../pwaStatus'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { useManagementEventBatch } from '../managementEvents'
+import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
 import {
 GHCR_PREVIEW_LIMIT,
 PAT_MASK,
@@ -70,7 +71,7 @@ type AutoSavePhase,
 type GhcrDraft,
 type SaveScope
 } from './settings/helpers'
-
+type SettingsDataDomain = 'settings' | 'notifications' | 'githubPackages'
 export function useSettingsPageState(props: { onTopActions: (node: React.ReactNode) => void }) {
   const { onTopActions } = props
   const confirm = useConfirm()
@@ -89,6 +90,18 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
   const [ghcrResolvePending, setGhcrResolvePending] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [settingsLoadPhase, setSettingsLoadPhase] = useState<AsyncDataPhase>('initial-loading')
+  const [notificationsLoadPhase, setNotificationsLoadPhase] = useState<AsyncDataPhase>('initial-loading')
+  const [githubPackagesLoadPhase, setGithubPackagesLoadPhase] = useState<AsyncDataPhase>('initial-loading')
+  const [settingsLoadError, setSettingsLoadError] = useState<string | null>(null)
+  const [notificationsLoadError, setNotificationsLoadError] = useState<string | null>(null)
+  const [githubPackagesLoadError, setGithubPackagesLoadError] = useState<string | null>(null)
+  const [trackedReposLoadPhase, setTrackedReposLoadPhase] = useState<AsyncDataPhase>('initial-loading')
+  const [trackedReposLoadError, setTrackedReposLoadError] = useState<string | null>(null)
+  const [trackedReposLoadSource, setTrackedReposLoadSource] = useState<AsyncDataSource>('none')
+  const [trackedReposLoadTrigger, setTrackedReposLoadTrigger] = useState<AsyncDataTrigger>('background')
+  const [loadSource, setLoadSource] = useState<AsyncDataSource>('none')
+  const [loadTrigger, setLoadTrigger] = useState<AsyncDataTrigger>('background')
   const [webPushEndpoint, setWebPushEndpoint] = useState<string | null>(null)
   const [autoSavePhase, setAutoSavePhase] = useState<AutoSavePhase>('idle')
   const [autoSaveIssue, setAutoSaveIssue] = useState<AutoSaveIssue | null>(null)
@@ -104,7 +117,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
   const [instancePublicBaseUrlSuggestDismissed, setInstancePublicBaseUrlSuggestDismissed] = useState(() =>
     readInstancePublicBaseUrlSuggestDismissedFromStorage(),
   )
-
   const settingsRef = useRef<SettingsResponse | null>(null)
   const notificationsRef = useRef<NotificationConfig | null>(null)
   const ghcrRef = useRef<GhcrDraft | null>(null)
@@ -123,18 +135,21 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
       reject: (error: Error) => void
     }>
   >([])
-
+  const refreshRequestIdRef = useRef(0)
+  const latestSettingsRefreshRequestIdRef = useRef(0)
+  const latestNotificationsRefreshRequestIdRef = useRef(0)
+  const latestGithubPackagesRefreshRequestIdRef = useRef(0)
+  const trackedReposRefreshRequestIdRef = useRef(0)
+  const trackedReposRef = useRef<ListGitHubPackagesReposResponse | null>(null)
+  trackedReposRef.current = githubPackagesTrackedRepos
   const supervisor = useSupervisorHealth()
   const selfUpgradeUrl = useMemo(() => selfUpgradeBaseUrl(), [])
-
   useEffect(() => {
     settingsRef.current = settings
   }, [settings])
-
   useEffect(() => {
     notificationsRef.current = notifications
   }, [notifications])
-
   useEffect(() => {
     ghcrRef.current = githubPackages
       ? {
@@ -145,11 +160,9 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
         }
       : null
   }, [githubPackages, githubPackagesPat])
-
   const syncQueuedScopesState = useCallback(() => {
     setAutoSaveQueuedScopes([...queueRef.current])
   }, [])
-
   const isScopeIdle = useCallback((scope: SaveScope) => {
     if (timersRef.current.has(scope)) return false
     if (queuedSetRef.current.has(scope)) return false
@@ -157,7 +170,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     const pending = pendingFieldsRef.current.get(scope)
     return !pending || pending.size === 0
   }, [])
-
   const settleWaiters = useCallback(() => {
     if (!waitersRef.current.length) return
     const remain: typeof waitersRef.current = []
@@ -183,7 +195,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     }
     waitersRef.current = remain
   }, [autoSaveIssue, isScopeIdle])
-
   const buildScopePayload = useCallback((scope: SaveScope): unknown => {
     if (scope === 'backup') {
       if (!settingsRef.current) return null
@@ -202,7 +213,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
       pat: pat ? pat : null,
     }
   }, [])
-
   const persistScopePayload = useCallback(async (scope: SaveScope, payload: unknown) => {
     if (scope === 'backup') {
       await putSettings(payload as PutSettingsInput, settingsRef.current?.backup.baseDir)
@@ -220,7 +230,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
       },
     )
   }, [])
-
   const buildAutoSaveIssue = useCallback((scope: SaveScope, fieldPath: string, e: unknown): AutoSaveIssue => {
     let reason: string | null = null
     let apiField: string | null = null
@@ -229,7 +238,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
       apiField = readField(e.details)
     }
     if (!reason && scope === 'ghcr') reason = 'ghcr_pat_unsaved_or_save_failed'
-
     const fallback = errorMessage(e)
     let message = `自动保存失败（${mapScopeLabel(scope)}）：${fallback}`
     if (reason === 'cron_invalid') message = 'Cron 表达式不合法，请检查格式（5 段或 6/7 段）'
@@ -244,7 +252,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
       message = 'OctoRill API Base URL 格式不合法，请填写不含账号密码的 http(s) 绝对 URL'
     else if (reason === 'github_upstream_timeout') message = 'GitHub 响应超时，请稍后重试'
     else if (reason === 'github_upstream_unavailable') message = 'GitHub 请求失败，请稍后重试'
-
     return {
       scope,
       fieldPath: apiField ?? fieldPath,
@@ -253,29 +260,24 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
       at: new Date().toISOString(),
     }
   }, [])
-
   const runAutoSaveQueue = useCallback(async () => {
     if (runningRef.current) return
     runningRef.current = true
-
     try {
       while (queueRef.current.length > 0) {
         const scope = queueRef.current.shift()!
         queuedSetRef.current.delete(scope)
         syncQueuedScopesState()
-
         const pendingFields = pendingFieldsRef.current.get(scope)
         if (!pendingFields || pendingFields.size === 0) {
           settleWaiters()
           continue
         }
-
         const payload = buildScopePayload(scope)
         if (!payload) {
           settleWaiters()
           continue
         }
-
         if (scope === 'ghcr') {
           const ghcrDraft = ghcrRef.current
           if (ghcrDraft) {
@@ -295,7 +297,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
             }
           }
         }
-
         if (scope === 'notifications') {
           const currentNotifications = notificationsRef.current
           if (currentNotifications) {
@@ -315,7 +316,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
             }
           }
         }
-
         const payloadHash = JSON.stringify(payload)
         if (lastSavedHashRef.current.get(scope) === payloadHash) {
           pendingFieldsRef.current.set(scope, new Set())
@@ -325,14 +325,12 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
           settleWaiters()
           continue
         }
-
         const submittedFields = new Set(pendingFields)
         pendingFieldsRef.current.set(scope, new Set())
         inFlightScopeRef.current = scope
         setAutoSaveSavingScope(scope)
         setAutoSavePhase('saving')
         setAutoSaveIssue((prev) => (prev?.scope === scope ? null : prev))
-
         try {
           await persistScopePayload(scope, payload)
           failedScopesRef.current.delete(scope)
@@ -408,7 +406,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     settleWaiters,
     syncQueuedScopesState,
   ])
-
   const enqueueScope = useCallback(
     (scope: SaveScope) => {
       if (queuedSetRef.current.has(scope)) return
@@ -420,14 +417,12 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     },
     [runAutoSaveQueue, syncQueuedScopesState],
   )
-
   const markFieldDirty = useCallback(
     (scope: SaveScope, fieldPath: string, debounceMs: number) => {
       failedScopesRef.current.delete(scope)
       const fields = pendingFieldsRef.current.get(scope) ?? new Set<string>()
       fields.add(fieldPath)
       pendingFieldsRef.current.set(scope, fields)
-
       const existing = timersRef.current.get(scope)
       if (typeof existing === 'number') window.clearTimeout(existing)
       const timer = window.setTimeout(() => {
@@ -441,11 +436,9 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     },
     [enqueueScope, settleWaiters],
   )
-
   const flushAutoSave = useCallback(
     async (scopes?: SaveScope[]) => {
       const target = new Set(scopes ?? SAVE_SCOPE_ORDER)
-
       for (const scope of target) {
         const timer = timersRef.current.get(scope)
         if (typeof timer === 'number') {
@@ -455,9 +448,7 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
         const pendingFields = pendingFieldsRef.current.get(scope)
         if (pendingFields && pendingFields.size > 0) enqueueScope(scope)
       }
-
       void runAutoSaveQueue()
-
       const failedScope = SAVE_SCOPE_ORDER.find(
         (scope) => target.has(scope) && failedScopesRef.current.has(scope),
       )
@@ -469,17 +460,14 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
             : `自动保存失败（${mapScopeLabel(failedScope)}），请修正后重试。`
         throw new Error(message)
       }
-
       const allIdle = SAVE_SCOPE_ORDER.filter((scope) => target.has(scope)).every((scope) => isScopeIdle(scope))
       if (allIdle) return
-
       await new Promise<void>((resolve, reject) => {
         waitersRef.current.push({ scopes: target, resolve, reject })
       })
     },
     [autoSaveIssue, enqueueScope, isScopeIdle, runAutoSaveQueue],
   )
-
   const resetAutoSaveBaselines = useCallback(
     (next: {
       settings: SettingsResponse
@@ -499,7 +487,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
       setAutoSavePhase('idle')
       setAutoSaveUpdatedAt(null)
       syncQueuedScopesState()
-
       settingsRef.current = next.settings
       notificationsRef.current = next.notifications
       ghcrRef.current = next.ghcr
@@ -516,86 +503,168 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     },
     [syncQueuedScopesState],
   )
-
-  const refreshTrackedRepos = useCallback(async () => {
-    const [resp, jobs] = await Promise.all([
-      listGitHubPackagesRepos({
+  const refreshTrackedRepos = useCallback(async (options: {
+    source?: AsyncDataSource
+    trigger?: AsyncDataTrigger
+  } = {}) => {
+    const requestId = ++trackedReposRefreshRequestIdRef.current
+    setTrackedReposLoadSource(options.source ?? 'live')
+    setTrackedReposLoadTrigger(options.trigger ?? 'background')
+    setTrackedReposLoadPhase(trackedReposRef.current ? 'refreshing' : 'initial-loading')
+    setTrackedReposLoadError(null)
+    const jobsPromise = listJobs().catch(() => null)
+    try {
+      const resp = await listGitHubPackagesRepos({
         page: 1,
         perPage: GHCR_PREVIEW_LIMIT,
         selectedFilter: 'selected',
-      }),
-      listJobs(),
-    ])
-    setGitHubPackagesTrackedRepos(resp)
-    const liveJob =
-      jobs.find((job) => isGhcrLiveJob(job) && job.status === 'running') ??
-      jobs.find((job) => isGhcrLiveJob(job)) ??
-      null
-    setGhcrLiveJob(liveJob)
-  }, [])
-
-  const refresh = useCallback(async () => {
-    setError(null)
-    const rawSettings = await getSettings()
-    const nextSettings: SettingsResponse = {
-      ...rawSettings,
-      instance: rawSettings.instance ?? { publicBaseUrl: null },
-      releaseNotes: {
-        provider: rawSettings.releaseNotes?.provider ?? 'gitHub',
-        octoRill: {
-          enabled: rawSettings.releaseNotes?.octoRill.enabled ?? false,
-          apiBaseUrl: rawSettings.releaseNotes?.octoRill.apiBaseUrl ?? '',
-          apiKeyMasked: rawSettings.releaseNotes?.octoRill.apiKeyMasked ?? null,
-          apiKey: rawSettings.releaseNotes?.octoRill.apiKeyMasked ?? '',
-          defaultView: rawSettings.releaseNotes?.octoRill.defaultView ?? 'smart',
-        },
-      },
+      })
+      if (requestId !== trackedReposRefreshRequestIdRef.current) return
+      setGitHubPackagesTrackedRepos(resp)
+      setTrackedReposLoadPhase(resp.repos.length === 0 ? 'ready-empty' : 'ready-data')
+    } catch (reason: unknown) {
+      if (requestId !== trackedReposRefreshRequestIdRef.current) return
+      setTrackedReposLoadError(errorMessage(reason))
+      setTrackedReposLoadPhase('error')
     }
-    const nextNotifications = normalizeNotificationsForUi(await getNotifications())
-    const gh = await getGitHubPackagesSettings()
-    const defaultCallbackUrl = (() => {
-      if (typeof window === 'undefined') return ''
-      const base = apiBaseUrl()
-      const resolvedBase = new URL(base || window.location.origin, window.location.origin).toString().replace(/\/$/, '')
-      return `${resolvedBase}/api/webhooks/github-packages`
-    })()
-    const callbackUrl = gh.callbackUrl || defaultCallbackUrl
-    const nextGhcr = { ...gh, callbackUrl }
-    const nextPat = gh.patMasked ?? ''
-
-    setSettings(nextSettings)
-    setNotifications(nextNotifications)
-    setTelegramBotTokenVisible(false)
-    setTelegramBotTokenTouched(false)
-    setTelegramBotTokenFocused(false)
-    setOctoRillApiKeyTouched(false)
-    setOctoRillApiKeyFocused(false)
-    setGitHubPackages(nextGhcr)
-    setGitHubPackagesPat(nextPat)
-    setNotificationTestStates({})
-    setNotificationTestRunning({})
+    void jobsPromise.then((jobs) => {
+      if (requestId !== trackedReposRefreshRequestIdRef.current) return
+      if (jobs === null) return
+      const liveJob =
+        jobs.find((job) => isGhcrLiveJob(job) && job.status === 'running') ??
+        jobs.find((job) => isGhcrLiveJob(job)) ??
+        null
+      setGhcrLiveJob(liveJob)
+    })
+  }, [])
+  const refresh = useCallback(async (options: {
+    source?: AsyncDataSource
+    trigger?: AsyncDataTrigger
+    domains?: readonly SettingsDataDomain[]
+  } = {}) => {
+    const requestId = ++refreshRequestIdRef.current
+    const source = options.source ?? 'live'
+    const trigger = options.trigger ?? 'background'
+    const domains = new Set<SettingsDataDomain>(options.domains ?? ['settings', 'notifications', 'githubPackages'])
+    setLoadSource(source)
+    setLoadTrigger(trigger)
+    if (domains.has('settings')) {
+      latestSettingsRefreshRequestIdRef.current = requestId
+      setSettingsLoadPhase(settingsRef.current ? 'refreshing' : 'initial-loading')
+      setSettingsLoadError(null)
+    }
+    if (domains.has('notifications')) {
+      latestNotificationsRefreshRequestIdRef.current = requestId
+      setNotificationsLoadPhase(notificationsRef.current ? 'refreshing' : 'initial-loading')
+      setNotificationsLoadError(null)
+    }
+    if (domains.has('githubPackages')) {
+      latestGithubPackagesRefreshRequestIdRef.current = requestId
+      setGithubPackagesLoadPhase(ghcrRef.current ? 'refreshing' : 'initial-loading')
+      setGithubPackagesLoadError(null)
+    }
+    const readSettings = async (): Promise<SettingsResponse | null> => {
+      if (!domains.has('settings')) return null
+      try {
+        const rawSettings = await getSettings()
+        if (requestId !== latestSettingsRefreshRequestIdRef.current) return null
+        const nextSettings: SettingsResponse = {
+          ...rawSettings,
+          instance: rawSettings.instance ?? { publicBaseUrl: null },
+          releaseNotes: {
+            provider: rawSettings.releaseNotes?.provider ?? 'gitHub',
+            octoRill: {
+              enabled: rawSettings.releaseNotes?.octoRill.enabled ?? false,
+              apiBaseUrl: rawSettings.releaseNotes?.octoRill.apiBaseUrl ?? '',
+              apiKeyMasked: rawSettings.releaseNotes?.octoRill.apiKeyMasked ?? null,
+              apiKey: rawSettings.releaseNotes?.octoRill.apiKeyMasked ?? '',
+              defaultView: rawSettings.releaseNotes?.octoRill.defaultView ?? 'smart',
+            },
+          },
+        }
+        setSettings(nextSettings)
+        setOctoRillApiKeyTouched(false)
+        setOctoRillApiKeyFocused(false)
+        setSettingsLoadPhase('ready-data')
+        return nextSettings
+      } catch (reason: unknown) {
+        if (requestId === latestSettingsRefreshRequestIdRef.current) {
+          setSettingsLoadError(errorMessage(reason))
+          setSettingsLoadPhase('error')
+        }
+        return null
+      }
+    }
+    const readNotifications = async (): Promise<NotificationConfig | null> => {
+      if (!domains.has('notifications')) return null
+      try {
+        const response = await getNotifications()
+        if (requestId !== latestNotificationsRefreshRequestIdRef.current) return null
+        const nextNotifications = normalizeNotificationsForUi(response)
+        setNotifications(nextNotifications)
+        setTelegramBotTokenVisible(false)
+        setTelegramBotTokenTouched(false)
+        setTelegramBotTokenFocused(false)
+        setNotificationTestStates({})
+        setNotificationTestRunning({})
+        setNotificationsLoadPhase('ready-data')
+        return nextNotifications
+      } catch (reason: unknown) {
+        if (requestId === latestNotificationsRefreshRequestIdRef.current) {
+          setNotificationsLoadError(errorMessage(reason))
+          setNotificationsLoadPhase('error')
+        }
+        return null
+      }
+    }
+    const readGithubPackages = async (): Promise<{ ghcr: GitHubPackagesSettingsResponse; pat: string } | null> => {
+      if (!domains.has('githubPackages')) return null
+      try {
+        const gh = await getGitHubPackagesSettings()
+        if (requestId !== latestGithubPackagesRefreshRequestIdRef.current) return null
+        const defaultCallbackUrl = (() => {
+          if (typeof window === 'undefined') return ''
+          const base = apiBaseUrl()
+          const resolvedBase = new URL(base || window.location.origin, window.location.origin).toString().replace(/\/$/, '')
+          return `${resolvedBase}/api/webhooks/github-packages`
+        })()
+        const nextGhcr = { ...gh, callbackUrl: gh.callbackUrl || defaultCallbackUrl }
+        const nextPat = gh.patMasked ?? ''
+        setGitHubPackages(nextGhcr)
+        setGitHubPackagesPat(nextPat)
+        setGithubPackagesLoadPhase('ready-data')
+        return { ghcr: nextGhcr, pat: nextPat }
+      } catch (reason: unknown) {
+        if (requestId === latestGithubPackagesRefreshRequestIdRef.current) {
+          setGithubPackagesLoadError(errorMessage(reason))
+          setGithubPackagesLoadPhase('error')
+        }
+        return null
+      }
+    }
+    const [nextSettings, nextNotifications, nextGithubPackages] = await Promise.all([
+      readSettings(),
+      readNotifications(),
+      readGithubPackages(),
+    ])
+    if (domains.size !== 3 || !nextSettings || !nextNotifications || !nextGithubPackages) return
     resetAutoSaveBaselines({
       settings: nextSettings,
       notifications: nextNotifications,
       ghcr: {
-        enabled: nextGhcr.enabled,
-        callbackUrl: nextGhcr.callbackUrl,
-        pat: nextPat,
-        hasPersistedPat: Boolean(nextGhcr.patMasked),
+        enabled: nextGithubPackages.ghcr.enabled,
+        callbackUrl: nextGithubPackages.ghcr.callbackUrl,
+        pat: nextGithubPackages.pat,
+        hasPersistedPat: Boolean(nextGithubPackages.ghcr.patMasked),
       },
     })
   }, [resetAutoSaveBaselines])
-
   useEffect(() => {
-    void (async () => {
-      await refresh()
-    })().catch((e: unknown) => setError(errorMessage(e)))
+    void refresh()
   }, [refresh])
-
   useEffect(() => {
-    void refreshTrackedRepos().catch((e: unknown) => setError(errorMessage(e)))
+    void refreshTrackedRepos()
   }, [refreshTrackedRepos])
-
   useManagementEventBatch(({ events, resyncRequired }) => {
     const githubPackagesChanged = resyncRequired || events.some((event) => event.domain === 'github_packages')
     const githubPackagesSettingsChanged = events.some((event) =>
@@ -613,10 +682,9 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     const trackedReposChanged = resyncRequired || githubPackagesChanged || events.some((event) =>
       typeof event.summary.jobType === 'string' && event.summary.jobType.startsWith('github_packages_'),
     )
-    if (settingsChanged) void refresh().catch((error: unknown) => setError(errorMessage(error)))
-    if (trackedReposChanged) void refreshTrackedRepos().catch((error: unknown) => setError(errorMessage(error)))
+    if (settingsChanged) void refresh()
+    if (trackedReposChanged) void refreshTrackedRepos()
   })
-
   useEffect(() => {
     onTopActions(
       <Button
@@ -641,7 +709,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
       </Button>,
     )
   }, [busy, flushAutoSave, githubPackages, notifications, onTopActions, settings])
-
   useEffect(() => {
     if (autoSavePhase !== 'saved') return
     const handle = window.setTimeout(() => {
@@ -649,7 +716,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     }, 1800)
     return () => window.clearTimeout(handle)
   }, [autoSavePhase, autoSaveUpdatedAt])
-
   const updateBackup = useCallback(
     (fieldPath: string, updater: (backup: SettingsResponse['backup']) => SettingsResponse['backup'], isToggle = false) => {
       setSettings((prev) => {
@@ -660,7 +726,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     },
     [markFieldDirty],
   )
-
   const updateResourceMonitor = useCallback(
     (
       fieldPath: string,
@@ -675,7 +740,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     },
     [markFieldDirty],
   )
-
   const updateSchedules = useCallback(
     (
       fieldPath: string,
@@ -690,7 +754,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     },
     [markFieldDirty],
   )
-
   const updateInstance = useCallback(
     (fieldPath: string, updater: (current: SettingsResponse['instance']) => SettingsResponse['instance']) => {
       setSettings((prev) => {
@@ -701,7 +764,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     },
     [markFieldDirty],
   )
-
   const updateReleaseNotes = useCallback(
     (
       fieldPath: string,
@@ -716,11 +778,9 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     },
     [markFieldDirty],
   )
-
   const clearOctoRillApiKeyMaskForEdit = useCallback(() => {
     setOctoRillApiKeyTouched(false)
   }, [])
-
   const restoreOctoRillApiKeyMaskIfNeeded = useCallback(() => {
     if (octoRillApiKeyTouched) return
     setSettings((prev) => {
@@ -740,7 +800,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
       }
     })
   }, [octoRillApiKeyTouched])
-
   const updateNotifications = useCallback(
     (fieldPath: string, updater: (current: NotificationConfig) => NotificationConfig, isToggle = false) => {
       setNotifications((prev) => {
@@ -751,7 +810,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     },
     [markFieldDirty],
   )
-
   const clearTelegramBotTokenMaskForEdit = useCallback(() => {
     setNotifications((prev) => {
       if (!prev) return prev
@@ -766,7 +824,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
       }
     })
   }, [])
-
   const restoreTelegramBotTokenMaskIfNeeded = useCallback(() => {
     setNotifications((prev) => {
       if (!prev) return prev
@@ -782,7 +839,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
       }
     })
   }, [])
-
   const updateGhcr = useCallback(
     (
       fieldPath: string,
@@ -805,7 +861,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     },
     [githubPackages, githubPackagesPat, markFieldDirty],
   )
-
   const openGhcrRegistry = useCallback(() => {
     if (busy) return
     void (async () => {
@@ -842,7 +897,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
       if (shouldNavigate) navigate({ name: 'ghcr-webhook-registry' })
     })()
   }, [busy, confirm, flushAutoSave])
-
   useEffect(() => {
     const timers = timersRef.current
     return () => {
@@ -854,7 +908,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
       waitersRef.current = []
     }
   }, [])
-
   const canWebPush = useMemo(() => {
     return (
       isPwaRuntimeEnabled() &&
@@ -863,7 +916,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
       'PushManager' in window
     )
   }, [])
-
   const runNotificationChannelTest = useCallback((channel: NotificationTestChannel) => {
     void (async () => {
       setNotificationTestRunning((prev) => ({ ...prev, [channel]: true }))
@@ -898,11 +950,9 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
       }
     })()
   }, [])
-
   async function ensureSubscription() {
     if (!notifications?.webPush.vapidPublicKey) throw new Error('请先在右侧配置 VAPID Public Key')
     if (!canWebPush) throw new Error('当前环境不支持 Web Push / Service Worker')
-
     const reg = await navigator.serviceWorker.ready
     const keyBytes = base64UrlToUint8Array(notifications.webPush.vapidPublicKey)
     const appServerKey = keyBytes.buffer.slice(
@@ -915,13 +965,11 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
         userVisibleOnly: true,
         applicationServerKey: appServerKey,
       }))
-
     const json = sub.toJSON()
     if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) throw new Error('Push subscription 缺少字段')
     await createWebPushSubscription({ endpoint: json.endpoint, keys: { p256dh: json.keys.p256dh, auth: json.keys.auth } })
     setWebPushEndpoint(json.endpoint)
   }
-
   async function removeSubscription() {
     if (!canWebPush) throw new Error('当前环境不支持 Web Push / Service Worker')
     const reg = await navigator.serviceWorker.ready
@@ -932,7 +980,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     await deleteWebPushSubscription(endpoint)
     setWebPushEndpoint(null)
   }
-
   const instancePublicBaseUrlValue = settings?.instance.publicBaseUrl ?? ''
   const suggestedPublicBaseUrl =
     typeof window === 'undefined'
@@ -965,21 +1012,17 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     },
     [instancePublicBaseUrlSuggestRefs],
   )
-
   useEffect(() => {
     if (!settings || !notifications || !githubPackages) return
     if (peekRequestedSettingsFocus() !== 'ghcr-webhook') return
-
     const frame = window.requestAnimationFrame(() => {
       const target = document.getElementById(SETTINGS_GHCR_WEBHOOK_ID)
       if (!target) return
       clearRequestedSettingsFocus()
       target.scrollIntoView({ behavior: 'smooth', block: 'start' })
     })
-
     return () => window.cancelAnimationFrame(frame)
   }, [settings, notifications, githubPackages])
-
   const fillInstancePublicBaseUrlFromCurrentOrigin = () => {
     if (!settings || !notifications || !githubPackages) return
     if (!suggestedPublicBaseUrl) return
@@ -988,12 +1031,10 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
       publicBaseUrl: suggestedPublicBaseUrl,
     }))
   }
-
   const dismissInstancePublicBaseUrlSuggestBubble = () => {
     setInstancePublicBaseUrlSuggestDismissed(true)
     writeInstancePublicBaseUrlSuggestDismissedToStorage()
   }
-
   const autoSaveStatusText =
     autoSavePhase === 'saving'
       ? `自动保存中：${mapScopeLabel(autoSaveSavingScope ?? 'backup')}`
@@ -1008,7 +1049,6 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
           : autoSavePhase === 'error'
             ? '自动保存失败'
             : '自动保存已就绪'
-
   const ghcrPatIssue = autoSaveIssue?.scope === 'ghcr' && autoSaveIssue.fieldPath.includes('pat') ? autoSaveIssue : null
   const telegramBotTokenIssue =
     autoSaveIssue?.scope === 'notifications' && autoSaveIssue.fieldPath === 'notifications.telegram.botToken'
@@ -1047,14 +1087,12 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     }
     return parts.join(' · ')
   })()
-
   const autoSaveToastClassName =
     autoSavePhase === 'error'
       ? 'autoSaveToast autoSaveToastBad'
       : autoSavePhase === 'saving' || autoSavePhase === 'queued'
         ? 'autoSaveToast autoSaveToastWarn'
         : 'autoSaveToast autoSaveToastOk'
-
   const showAutoSaveToast = autoSavePhase !== 'idle'
   return {
     autoSaveIssue,
@@ -1068,6 +1106,8 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     confirm,
     dismissInstancePublicBaseUrlSuggestBubble,
     error,
+    githubPackagesLoadError,
+    githubPackagesLoadPhase,
     fillInstancePublicBaseUrlFromCurrentOrigin,
     flushAutoSave,
     ghcrLiveProgressText,
@@ -1083,6 +1123,8 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     instancePublicBaseUrlValue,
     notificationTestRunning,
     notificationTestStates,
+    notificationsLoadError,
+    notificationsLoadPhase,
     notifications,
     octoRillApiKeyFocused,
     octoRillApiKeyTouched,
@@ -1108,10 +1150,16 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     setTelegramBotTokenTouched,
     setTelegramBotTokenVisible,
     settings,
+    settingsLoadError,
+    settingsLoadPhase,
     showAutoSaveToast,
     showInstancePublicBaseUrlSuggestBubble,
     showTelegramBotTokenEye,
     suggestedPublicBaseUrl,
+    trackedReposLoadError,
+    trackedReposLoadPhase,
+    trackedReposLoadSource,
+    trackedReposLoadTrigger,
     supervisor,
     telegramBotTokenInputClassName,
     telegramBotTokenVisible,
@@ -1124,5 +1172,7 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     updateResourceMonitor,
     updateSchedules,
     webPushEndpoint,
+    loadSource,
+    loadTrigger,
   }
 }

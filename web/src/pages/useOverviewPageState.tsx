@@ -43,6 +43,7 @@ import { useManagementEventBatch } from '../managementEvents'
 import { usePwaStatus } from '../pwaStatus'
 import { buildReadonlySnapshotKey, readReadonlySnapshot, writeReadonlySnapshot } from '../readonlySnapshotCache'
 import { useSupervisorHealth } from '../useSupervisorHealth'
+import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
 import { buildAllAggregateScope } from './aggregateUpdateScope'
 import { selectOverviewJobsForCard,toOverviewJobCardItem } from './overviewJobsCard'
 
@@ -62,10 +63,31 @@ const SERVICES_OVERVIEW_SNAPSHOT_KEY = buildReadonlySnapshotKey('services', 'ope
 const SERVICES_OVERVIEW_SNAPSHOT_STALE_MS = 60_000
 
 type ServicesOverviewSnapshotPayload = {
+  version: 2
+  readiness: {
+    stacks: boolean
+    jobs: boolean
+    discovery: boolean
+  }
+  committedQueryKey: string
   stacks: StackListItem[]
   details: Record<string, StackDetail | undefined>
   jobs: CompactJobListItem[]
   discoveredProjects: DiscoveredProject[]
+}
+
+type OverviewDataDomain = 'stacks' | 'jobs' | 'discovery'
+
+function isServicesOverviewSnapshotPayload(value: unknown, expectedQueryKey: string): value is ServicesOverviewSnapshotPayload {
+  if (!value || typeof value !== 'object') return false
+  const payload = value as Record<string, unknown>
+  if (payload.version !== 2 || payload.committedQueryKey !== expectedQueryKey || !payload.readiness || typeof payload.readiness !== 'object') return false
+  const readiness = payload.readiness as Record<string, unknown>
+  return Array.isArray(payload.stacks) &&
+    payload.details !== null && typeof payload.details === 'object' && !Array.isArray(payload.details) &&
+    Array.isArray(payload.jobs) &&
+    Array.isArray(payload.discoveredProjects) &&
+    readiness.stacks === true && readiness.jobs === true && readiness.discovery === true
 }
 
 export function useOverviewPageState(props: {
@@ -86,8 +108,20 @@ export function useOverviewPageState(props: {
   })
   const [jobs, setJobs] = useState<CompactJobListItem[]>([])
   const [discoveredProjects, setDiscoveredProjects] = useState<DiscoveredProject[]>([])
+  const [stacksLoaded, setStacksLoaded] = useState(false)
+  const [stackDetailsLoaded, setStackDetailsLoaded] = useState(false)
+  const [jobsLoaded, setJobsLoaded] = useState(false)
+  const [discoveryLoaded, setDiscoveryLoaded] = useState(false)
   const [activeDiscoveryIssue, setActiveDiscoveryIssue] = useState<DiscoveryIssueItem | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [stacksPhase, setStacksPhase] = useState<AsyncDataPhase>('initial-loading')
+  const [jobsPhase, setJobsPhase] = useState<AsyncDataPhase>('initial-loading')
+  const [discoveryPhase, setDiscoveryPhase] = useState<AsyncDataPhase>('initial-loading')
+  const [stacksLoadError, setStacksLoadError] = useState<string | null>(null)
+  const [jobsLoadError, setJobsLoadError] = useState<string | null>(null)
+  const [discoveryLoadError, setDiscoveryLoadError] = useState<string | null>(null)
+  const [loadSource, setLoadSource] = useState<AsyncDataSource>('none')
+  const [loadTrigger, setLoadTrigger] = useState<AsyncDataTrigger>('background')
   const [noticeJobId, setNoticeJobId] = useState<string | null>(null)
   const [noticeDiscoveryJobId, setNoticeDiscoveryJobId] = useState<string | null>(null)
   const [noticeCheckJobId, setNoticeCheckJobId] = useState<string | null>(null)
@@ -96,10 +130,19 @@ export function useOverviewPageState(props: {
   const [snapshotFetchedAt, setSnapshotFetchedAt] = useState<string | null>(null)
   const [snapshotAnchorFetchedAt, setSnapshotAnchorFetchedAt] = useState<string | null>(null)
   const [snapshotActive, setSnapshotActive] = useState(false)
+  const [snapshotHydrated, setSnapshotHydrated] = useState(false)
   const refreshRequestIdRef = useRef(0)
   const latestAppliedStacksRequestIdRef = useRef(0)
   const latestAppliedJobsRequestIdRef = useRef(0)
   const latestAppliedProjectsRequestIdRef = useRef(0)
+  const stacksLoadedRef = useRef(false)
+  const jobsLoadedRef = useRef(false)
+  const discoveryLoadedRef = useRef(false)
+  const detailsRef = useRef<Record<string, StackDetail | undefined>>({})
+  stacksLoadedRef.current = stacksLoaded
+  jobsLoadedRef.current = jobsLoaded
+  discoveryLoadedRef.current = discoveryLoaded
+  detailsRef.current = details
   const { beginSubmitting, endSubmitting, trackJob, isTargetBusy, getActiveJobByTarget, isTargetSubmitting } =
     useUpdateActionTracker()
   const supervisor = useSupervisorHealth()
@@ -112,24 +155,37 @@ export function useOverviewPageState(props: {
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const snapshot = await readReadonlySnapshot<ServicesOverviewSnapshotPayload>(SERVICES_OVERVIEW_SNAPSHOT_KEY)
-      if (cancelled) return
-      setSnapshotStatus(snapshot.status)
-      setSnapshotFetchedAt(snapshot.record?.fetchedAt ?? null)
-      setSnapshotAnchorFetchedAt(snapshot.record?.fetchedAt ?? null)
-      if (snapshot.status !== 'fresh') return
-      setStacks(snapshot.record.payload.stacks)
-      setDetails(snapshot.record.payload.details)
-      setJobs(snapshot.record.payload.jobs)
-      setDiscoveredProjects(snapshot.record.payload.discoveredProjects)
-      const maxLastScan = snapshot.record.payload.stacks.map((item) => item.lastCheckAt).sort().at(-1)
-      onLastScanHint(maxLastScan)
-      setSnapshotActive(true)
+      try {
+        const snapshot = await readReadonlySnapshot<ServicesOverviewSnapshotPayload>(SERVICES_OVERVIEW_SNAPSHOT_KEY)
+        if (cancelled) return
+        setSnapshotStatus(snapshot.status)
+        setSnapshotFetchedAt(snapshot.record?.fetchedAt ?? null)
+        setSnapshotAnchorFetchedAt(snapshot.record?.fetchedAt ?? null)
+        if (snapshot.status !== 'fresh' || !snapshot.record || !isServicesOverviewSnapshotPayload(snapshot.record.payload, filter)) return
+        const payload = snapshot.record.payload
+        setStacks(payload.stacks)
+        setDetails(payload.details)
+        setJobs(payload.jobs)
+        setDiscoveredProjects(payload.discoveredProjects)
+        setStacksLoaded(true)
+        setStackDetailsLoaded(true)
+        setJobsLoaded(true)
+        setDiscoveryLoaded(true)
+        setStacksPhase('ready-data')
+        setJobsPhase('ready-data')
+        setDiscoveryPhase('ready-data')
+        setLoadSource('fresh-snapshot')
+        const maxLastScan = payload.stacks.map((item) => item.lastCheckAt).sort().at(-1)
+        onLastScanHint(maxLastScan)
+        setSnapshotActive(true)
+      } finally {
+        if (!cancelled) setSnapshotHydrated(true)
+      }
     })()
     return () => {
       cancelled = true
     }
-  }, [onLastScanHint])
+  }, [filter, onLastScanHint])
 
   const lastDiscoveryScanAt = useMemo(() => {
     const candidates = jobs
@@ -149,90 +205,128 @@ export function useOverviewPageState(props: {
     return ts || null
   }, [discoveredProjects])
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (options: {
+    source?: AsyncDataSource
+    trigger?: AsyncDataTrigger
+    domains?: readonly OverviewDataDomain[]
+  } = {}) => {
     const requestId = ++refreshRequestIdRef.current
-    const errors: string[] = []
-    setError(null)
-    try {
-      const stacksPromise = listStacks()
-      const jobsPromise = listCompactJobsPage({ limit: 200 })
-      const projectsPromise = listDiscoveryProjects('exclude')
-
-      const [stacksRes, jobsRes, projectsRes] = await Promise.allSettled([stacksPromise, jobsPromise, projectsPromise])
-
-      if (jobsRes.status === 'rejected') errors.push('jobs unavailable')
-      if (projectsRes.status === 'rejected') errors.push('discovery projects unavailable')
-      if (stacksRes.status === 'rejected') throw stacksRes.reason
-
-      const s = stacksRes.value
-      const maxLastScan = s.map((x) => x.lastCheckAt).sort().at(-1)
-
-      if (jobsRes.status === 'fulfilled' && requestId >= latestAppliedJobsRequestIdRef.current) {
-        latestAppliedJobsRequestIdRef.current = requestId
-        setJobs(jobsRes.value.jobs)
-      }
-      if (projectsRes.status === 'fulfilled' && requestId >= latestAppliedProjectsRequestIdRef.current) {
-        latestAppliedProjectsRequestIdRef.current = requestId
-        setDiscoveredProjects(projectsRes.value)
-      }
-      if (requestId < latestAppliedStacksRequestIdRef.current) return
+    const domains = new Set<OverviewDataDomain>(options.domains ?? ['stacks', 'jobs', 'discovery'])
+    setLoadSource(options.source ?? 'live')
+    setLoadTrigger(options.trigger ?? 'background')
+    if (domains.has('stacks')) {
       latestAppliedStacksRequestIdRef.current = requestId
-      setStacks(s)
-      onLastScanHint(maxLastScan)
-      setError(errors.length > 0 ? errors.join(' · ') : null)
+      setStacksPhase(stacksLoadedRef.current ? 'refreshing' : 'initial-loading')
+      setStacksLoadError(null)
+    }
+    if (domains.has('jobs')) {
+      latestAppliedJobsRequestIdRef.current = requestId
+      setJobsPhase(jobsLoadedRef.current ? 'refreshing' : 'initial-loading')
+      setJobsLoadError(null)
+    }
+    if (domains.has('discovery')) {
+      latestAppliedProjectsRequestIdRef.current = requestId
+      setDiscoveryPhase(discoveryLoadedRef.current ? 'refreshing' : 'initial-loading')
+      setDiscoveryLoadError(null)
+    }
 
-      const ids = s.map((x) => x.id)
-      const results = await Promise.all(
-        ids.map(async (id) => {
+    const refreshJobs = async () => {
+      if (!domains.has('jobs')) return true
+      try {
+        const page = await listCompactJobsPage({ limit: 200 })
+        if (requestId !== latestAppliedJobsRequestIdRef.current) return false
+        setJobs(page.jobs)
+        setJobsLoaded(true)
+        setJobsPhase('ready-data')
+        return true
+      } catch (error: unknown) {
+        if (requestId === latestAppliedJobsRequestIdRef.current) {
+          setJobsLoadError(error instanceof Error ? error.message : String(error))
+          setJobsPhase('error')
+        }
+        return false
+      }
+    }
+
+    const refreshDiscovery = async () => {
+      if (!domains.has('discovery')) return true
+      try {
+        const projects = await listDiscoveryProjects('exclude')
+        if (requestId !== latestAppliedProjectsRequestIdRef.current) return false
+        setDiscoveredProjects(projects)
+        setDiscoveryLoaded(true)
+        setDiscoveryPhase('ready-data')
+        return true
+      } catch (error: unknown) {
+        if (requestId === latestAppliedProjectsRequestIdRef.current) {
+          setDiscoveryLoadError(error instanceof Error ? error.message : String(error))
+          setDiscoveryPhase('error')
+        }
+        return false
+      }
+    }
+
+    const refreshStacks = async () => {
+      if (!domains.has('stacks')) return true
+      let nextStacks: StackListItem[]
+      try {
+        nextStacks = await listStacks()
+      } catch (error: unknown) {
+        if (requestId === latestAppliedStacksRequestIdRef.current) {
+          setStacksLoadError(error instanceof Error ? error.message : String(error))
+          setStacksPhase('error')
+        }
+        return false
+      }
+      if (requestId !== latestAppliedStacksRequestIdRef.current) return false
+
+      const maxLastScan = nextStacks.map((item) => item.lastCheckAt).sort().at(-1)
+      setStacks(nextStacks)
+      onLastScanHint(maxLastScan)
+      const details = await Promise.all(
+        nextStacks.map(async (item) => {
           try {
-            return [id, await getStack(id)] as const
+            return { id: item.id, detail: await getStack(item.id) }
           } catch {
-            return [id, undefined] as const
+            return { id: item.id, detail: undefined }
           }
         }),
       )
-      if (requestId < latestAppliedStacksRequestIdRef.current) return
-      setDetails(Object.fromEntries(results))
-      if (errors.length === 0 && results.every(([, detail]) => detail !== undefined)) {
-        setSnapshotActive(false)
-        setSnapshotAnchorFetchedAt(null)
+      if (requestId !== latestAppliedStacksRequestIdRef.current) return false
+      const nextDetails = Object.fromEntries(
+        nextStacks.map((item) => [item.id, details.find((result) => result.id === item.id)?.detail ?? detailsRef.current[item.id]]),
+      )
+      setDetails(nextDetails)
+      const detailsReady = details.every(({ detail }) => detail !== undefined)
+      setStackDetailsLoaded(detailsReady)
+      if (!detailsReady) {
+        setStacksLoadError('部分 Stack 详情暂时不可用，请重试。')
+        setStacksPhase('error')
+        return false
       }
-    } catch (error: unknown) {
-      if (requestId < latestAppliedStacksRequestIdRef.current) return
-      throw error
+      setStacksLoaded(true)
+      setStacksPhase(nextStacks.length === 0 ? 'ready-empty' : 'ready-data')
+      return true
+    }
+
+    const [stacksReady, jobsReady, discoveryReady] = await Promise.all([
+      refreshStacks(),
+      refreshJobs(),
+      refreshDiscovery(),
+    ])
+    if (
+      domains.size === 3 &&
+      stacksReady &&
+      jobsReady &&
+      discoveryReady &&
+      requestId === latestAppliedStacksRequestIdRef.current &&
+      requestId === latestAppliedJobsRequestIdRef.current &&
+      requestId === latestAppliedProjectsRequestIdRef.current
+    ) {
+      setSnapshotActive(false)
+      setSnapshotAnchorFetchedAt(null)
     }
   }, [onLastScanHint])
-
-  const patchStackDetails = useCallback(async (stackIds: string[]) => {
-    const ids = [...new Set(stackIds.map((id) => id.trim()).filter(Boolean))]
-    if (ids.length === 0) return
-
-    const results = await Promise.all(
-      ids.map(async (id) => {
-        try {
-          return [id, await getStack(id)] as const
-        } catch {
-          return [id, undefined] as const
-        }
-      }),
-    )
-
-    setDetails((prev) => ({ ...prev, ...Object.fromEntries(results) }))
-  }, [])
-
-  const patchStackList = useCallback(
-    async (stackIds: string[]) => {
-      const ids = new Set(stackIds.map((id) => id.trim()).filter(Boolean))
-      if (ids.size === 0) return
-
-      const next = await listStacks()
-      const maxLastScan = next.map((item) => item.lastCheckAt).sort().at(-1)
-
-      setStacks(next)
-      onLastScanHint(maxLastScan)
-    },
-    [onLastScanHint],
-  )
 
   const patchServiceInStackDetails = useCallback(
     (stackId: string, serviceId: string, patch: (svc: Service) => Service) => {
@@ -288,14 +382,18 @@ export function useOverviewPageState(props: {
   const requestRefresh = refresh
 
   useEffect(() => {
-    void requestRefresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-  }, [requestRefresh])
+    if (!snapshotHydrated) return
+    void requestRefresh()
+  }, [requestRefresh, snapshotHydrated])
 
   useEffect(() => {
-    if (stacks.length === 0 && jobs.length === 0 && discoveredProjects.length === 0) return
+    if (!stacksLoaded || !stackDetailsLoaded || !jobsLoaded || !discoveryLoaded) return
     void writeReadonlySnapshot(
       SERVICES_OVERVIEW_SNAPSHOT_KEY,
       {
+        version: 2,
+        readiness: { stacks: true, jobs: true, discovery: true },
+        committedQueryKey: filter,
         stacks,
         details,
         jobs,
@@ -306,9 +404,10 @@ export function useOverviewPageState(props: {
         fetchedAt: snapshotAnchorFetchedAt ? Date.parse(snapshotAnchorFetchedAt) || undefined : undefined,
       },
     )
-  }, [details, discoveredProjects, jobs, snapshotAnchorFetchedAt, stacks])
+  }, [details, discoveredProjects, discoveryLoaded, filter, jobs, jobsLoaded, snapshotAnchorFetchedAt, stackDetailsLoaded, stacks, stacksLoaded])
 
   useManagementEventBatch(({ events, resyncRequired }) => {
+    if (!snapshotHydrated) return
     const stackIds = new Set<string>()
     const jobsChanged = resyncRequired || events.some((event) => event.domain === 'jobs')
     const discoveryChanged = resyncRequired || events.some((event) => event.domain === 'discovery')
@@ -347,14 +446,11 @@ export function useOverviewPageState(props: {
     }
     const sync = async () => {
       if (refreshAll) return requestRefresh()
-      const tasks: Promise<unknown>[] = []
-      if (jobsChanged) tasks.push(listCompactJobsPage({ limit: 200 }).then((page) => setJobs(page.jobs)))
-      if (discoveryChanged) tasks.push(listDiscoveryProjects('exclude').then(setDiscoveredProjects))
-      if (stackIds.size > 0) {
-        const ids = [...stackIds]
-        tasks.push(patchStackDetails(ids), patchStackList(ids))
-      }
-      await Promise.all(tasks)
+      const domains: OverviewDataDomain[] = []
+      if (jobsChanged) domains.push('jobs')
+      if (discoveryChanged) domains.push('discovery')
+      if (stackIds.size > 0) domains.push('stacks')
+      if (domains.length > 0) await requestRefresh({ domains })
     }
     void sync().catch((error: unknown) => setError(error instanceof Error ? error.message : String(error)))
   })
@@ -371,7 +467,7 @@ export function useOverviewPageState(props: {
         return
       }
 
-      void Promise.all([patchStackDetails(stackIds), patchStackList(stackIds)])
+      void requestRefresh({ domains: ['stacks'] })
         .catch((error: unknown) => setError(error instanceof Error ? error.message : String(error)))
     }
 
@@ -379,7 +475,7 @@ export function useOverviewPageState(props: {
     return () => {
       window.removeEventListener(UPDATE_JOB_SETTLED_EVENT, onUpdateJobSettled)
     }
-  }, [patchStackDetails, patchStackList, requestRefresh, resolveSettledStackIds])
+  }, [requestRefresh, resolveSettledStackIds])
 
   const applyFilter = useCallback(
     (next: UpdateCandidateFilter, mode: 'push' | 'replace') => {
@@ -646,7 +742,7 @@ export function useOverviewPageState(props: {
             if (guardReason) setError(guardReason)
             else {
               setError('扫描结果已变化，请刷新并重新扫描后再更新')
-              await requestRefresh()
+              await requestRefresh({ source: 'memory', trigger: 'user-action' })
             }
           } else setError(e.message)
         } else {
@@ -673,7 +769,7 @@ export function useOverviewPageState(props: {
               try {
                 const resp = await triggerCheck('all')
                 setNoticeCheckJobId(resp.checkId)
-                await requestRefresh()
+                await requestRefresh({ source: 'memory', trigger: 'user-action' })
               } catch (e: unknown) {
                 if (e instanceof ApiError) {
                   if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
@@ -826,6 +922,7 @@ export function useOverviewPageState(props: {
     collapsed,
     countsAll,
     details,
+    discoveryLoaded,
     discoverySummary,
     effectiveDiscoveryScanAt,
     error,
@@ -834,6 +931,9 @@ export function useOverviewPageState(props: {
     isTargetBusy,
     isTargetSubmitting,
     jobsSummary,
+    jobsLoaded,
+    jobsLoadError,
+    jobsPhase,
     noticeCheckJobId,
     noticeDiscoveryJobId,
     noticeJobId,
@@ -850,9 +950,16 @@ export function useOverviewPageState(props: {
     snapshotFetchedAt,
     snapshotStatus,
     stacks,
+    stacksLoadError,
+    stacksPhase,
+    stacksLoaded: stacksLoaded && stackDetailsLoaded,
     supervisor,
     toggleStackCollapsed,
     totalServicesAll,
     triggerApply,
+    discoveryLoadError,
+    discoveryPhase,
+    loadSource,
+    loadTrigger,
   }
 }

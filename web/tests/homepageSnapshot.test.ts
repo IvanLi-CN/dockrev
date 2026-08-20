@@ -113,9 +113,9 @@ const homepageResponse: HomepageNavResponse = {
 }
 
 describe('homepage snapshot cache', () => {
-  test('retains an unexpired persisted snapshot for live-refresh fallback', () => {
+  test('only restores a fresh persisted snapshot', () => {
     expect(canRestorePersistedHomepageSnapshot('fresh')).toBe(true)
-    expect(canRestorePersistedHomepageSnapshot('stale')).toBe(true)
+    expect(canRestorePersistedHomepageSnapshot('stale')).toBe(false)
     expect(canRestorePersistedHomepageSnapshot('expired')).toBe(false)
     expect(canRestorePersistedHomepageSnapshot('missing')).toBe(false)
     expect(canRestorePersistedHomepageSnapshot('unsupported')).toBe(false)
@@ -141,7 +141,7 @@ describe('homepage snapshot cache', () => {
     expect(readHomepageSnapshot(storage)).toBeNull()
   })
 
-  test('round-trips homepage snapshot v2', () => {
+  test('does not restore localStorage snapshots without readiness metadata', () => {
     const storage = new MemoryStorage()
     const snapshot = homepageSnapshotFromResponse({
       generatedAt: homepageResponse.generatedAt,
@@ -156,9 +156,7 @@ describe('homepage snapshot cache', () => {
     expect(raw.version).toBe(2)
     expect(raw.cards[0].service.image.ref).toBe('ghcr.io/acme/api:5.2.1')
 
-    const parsed = readHomepageSnapshot(storage)
-    expect(parsed?.cards).toEqual([card])
-    expect(parsed?.resourceSummary.services[0].cpuPercent).toBe(12)
+    expect(readHomepageSnapshot(storage)).toBeNull()
   })
 
   test('marks cached resource summary stale while preserving values', () => {
@@ -178,7 +176,7 @@ describe('homepage snapshot cache', () => {
     expect(stale.resourceSummary.services[0].cpuPercent).toBe(12)
   })
 
-  test('migrates legacy v1 nav/resource snapshots into v2 on read', () => {
+  test('ignores legacy v1 nav/resource snapshots instead of migrating them', () => {
     const storage = new MemoryStorage()
     storage.setItem(
       HOMEPAGE_NAV_SNAPSHOT_KEY,
@@ -213,12 +211,8 @@ describe('homepage snapshot cache', () => {
       }),
     )
 
-    const snapshot = readHomepageSnapshot(storage)
-    expect(snapshot?.version).toBe(2)
-    expect(snapshot?.cards[0]?.title).toBe('Acme API')
-    expect(snapshot?.cards[0]?.status).toBe('hint')
-    expect(snapshot?.cards[0]?.service.candidate).toBeNull()
-    expect(storage.getItem(HOMEPAGE_SNAPSHOT_KEY)).not.toBeNull()
+    expect(readHomepageSnapshot(storage)).toBeNull()
+    expect(storage.getItem(HOMEPAGE_SNAPSHOT_KEY)).toBeNull()
   })
 
   test('drops corrupt legacy nav snapshots instead of migrating blank cards', () => {
