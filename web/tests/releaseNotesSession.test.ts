@@ -143,3 +143,22 @@ describe('release notes session stale snapshots', () => {
     expect(stale?.response.items.map((item) => item.tagName)).toEqual(['v1.2.3'])
   })
 })
+
+describe('release notes refresh retry policy', () => {
+  test('uses the server retry interval for active refreshes and caps backoff at one minute', () => {
+    const queued = makeReadyResponse('octoRill', 'smart')
+    queued.refresh = { state: 'queued', retryAfterSeconds: 2 }
+    expect(__releaseNotesSessionTestUtils.releaseNotesRefreshRetryDelayMs(queued)).toBe(2_000)
+
+    const backoff = makeReadyResponse('octoRill', 'smart')
+    backoff.refresh = { state: 'backoff', retryAfterSeconds: 120 }
+    expect(__releaseNotesSessionTestUtils.releaseNotesRefreshRetryDelayMs(backoff)).toBe(60_000)
+  })
+
+  test('does not schedule retries when refresh is fresh or absent', () => {
+    const fresh = makeReadyResponse('octoRill', 'smart')
+    fresh.refresh = { state: 'fresh' }
+    expect(__releaseNotesSessionTestUtils.releaseNotesRefreshRetryDelayMs(fresh)).toBeNull()
+    expect(__releaseNotesSessionTestUtils.releaseNotesRefreshRetryDelayMs(makeReadyResponse('gitHub', 'original'))).toBeNull()
+  })
+})

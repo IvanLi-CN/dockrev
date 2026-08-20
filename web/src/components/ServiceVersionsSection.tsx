@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer, type VirtualItem } from '@tanstack/react-virtual'
 import {
   type JobListItem,
@@ -15,6 +15,7 @@ import { describeServiceOperationProgress } from '../serviceOperationProgress'
 import {
   findReleaseNoteIndex,
   releaseNotesBodyForView,
+  releaseNotesRefreshAlert,
   releaseNotesShouldOfferSettingsAction,
   releaseNotesSourceLabel,
   releaseNotesTagMatchesVersion,
@@ -124,6 +125,8 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
   const indexScrollRef = useRef<HTMLDivElement | null>(null)
   const centerRequestIdRef = useRef(0)
   const centeringIndexRef = useRef<number | null>(null)
+  const selectedReleaseIdRef = useRef<string | null>(null)
+  const visibleReleaseAnchorRef = useRef<{ id: string; offset: number } | null>(null)
   const cancelCenterRequestRef = useRef<(() => void) | null>(null)
   const sessionKey = useMemo(() => {
     const anchorVersion = (props.service.image.resolvedTag ?? '').trim() || props.service.image.tag.trim()
@@ -202,6 +205,8 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
   useEffect(() => {
     cancelCenterRequestRef.current?.()
     initialCenterKeyRef.current = null
+    selectedReleaseIdRef.current = null
+    visibleReleaseAnchorRef.current = null
     if (listScrollRef.current) listScrollRef.current.scrollTop = 0
     if (indexScrollRef.current) indexScrollRef.current.scrollTop = 0
     setExpandedIds(new Set())
@@ -232,6 +237,32 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     },
     measureElement: (element) => element.getBoundingClientRect().height,
   })
+
+  useLayoutEffect(() => {
+    const scrollElement = listScrollRef.current
+    const previousAnchor = visibleReleaseAnchorRef.current
+    if (scrollElement && previousAnchor) {
+      const nextAnchor = Array.from(scrollElement.querySelectorAll<HTMLElement>('[data-release-id]'))
+        .find((element) => element.dataset.releaseId === previousAnchor.id)
+      if (nextAnchor) {
+        const nextOffset = nextAnchor.getBoundingClientRect().top - scrollElement.getBoundingClientRect().top
+        scrollElement.scrollTop += nextOffset - previousAnchor.offset
+      }
+    }
+
+    return () => {
+      if (!scrollElement) return
+      const viewport = scrollElement.getBoundingClientRect()
+      const visible = Array.from(scrollElement.querySelectorAll<HTMLElement>('[data-release-id]'))
+        .find((row) => {
+          const rect = row.getBoundingClientRect()
+          return rect.bottom > viewport.top && rect.top < viewport.bottom
+        })
+      visibleReleaseAnchorRef.current = visible
+        ? { id: visible.dataset.releaseId ?? '', offset: visible.getBoundingClientRect().top - viewport.top }
+        : null
+    }
+  }, [items])
   const indexVirtualizer = useVirtualizer({
     count: rowCount,
     getScrollElement: () => indexScrollRef.current,
@@ -287,7 +318,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
   }, [listVirtualizer])
 
   const centerVersionCard = useCallback(
-    (absoluteIndex: number, tagName: string, mode: 'initial' | 'interactive') => {
+    (absoluteIndex: number, releaseId: string, tagName: string, mode: 'initial' | 'interactive') => {
       const scrollElement = listScrollRef.current
       if (!scrollElement || !tagName) return
       cancelCenterRequestRef.current?.()
@@ -299,7 +330,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
       let retryTimer = 0
       let cancelled = false
       let stableMeasurements = 0
-      const key = `${sessionKey}:${absoluteIndex}`
+      const key = `${sessionKey}:${releaseId}`
 
       const finishCentering = () => {
         if (centerRequestIdRef.current !== requestId) return
@@ -397,12 +428,16 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     if (anchorIndex < 0 || items.length <= anchorIndex) return
     const scrollElement = listScrollRef.current
     if (!scrollElement) return
-    const key = `${sessionKey}:${anchorIndex}`
+    const anchorItem = items[anchorIndex]
+    if (!anchorItem) return
+    const key = `${sessionKey}:${anchorItem.id}`
     if (initialCenterKeyRef.current === key && scrollElement.scrollTop > 0) return
+    selectedReleaseIdRef.current = anchorItem.id
     setSelectedIndex(anchorIndex)
     return centerVersionCardRef.current(
       anchorIndex,
-      items[anchorIndex]?.tagName ?? '',
+      anchorItem.id,
+      anchorItem.tagName,
       'initial',
     )
   }, [anchorState, currentVersion, items, loadState, sessionKey])
@@ -486,8 +521,16 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
         nearestIndex = itemIndex
       }
     }
+    selectedReleaseIdRef.current = items[nearestIndex]?.id ?? null
     setSelectedIndex((prev) => (prev === nearestIndex ? prev : nearestIndex))
-  }, [items.length, listVirtualItems, topLoaderOffset])
+  }, [items, listVirtualItems, topLoaderOffset])
+
+  useEffect(() => {
+    const selectedReleaseId = selectedReleaseIdRef.current
+    if (!selectedReleaseId) return
+    const index = items.findIndex((item) => item.id === selectedReleaseId)
+    if (index >= 0) setSelectedIndex((previous) => previous === index ? previous : index)
+  }, [items])
 
   useEffect(() => {
     if (!showDesktopIndex) return
@@ -529,9 +572,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
   )
 
   const showSettingsAction = releaseNotesShouldOfferSettingsAction(listResponse)
-  const staleBanner = listResponse?.stale
-    ? { tone: 'warning' as const, message: listResponse.stale.message }
-    : null
+  const staleBanner = releaseNotesRefreshAlert(listResponse)
   const anchorBanner =
     anchorState?.status === 'notFound' || anchorState?.status === 'outsideWindow' || anchorState?.status === 'unavailable'
       ? { tone: 'warning' as const, message: anchorState?.message ?? '' }
@@ -885,7 +926,8 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
                               data-release-tag={item.tagName}
                               data-service-versions-index-selected={selected ? 'true' : 'false'}
                               onClick={() => {
-                                void centerVersionCard(itemIndex, item.tagName, 'interactive')
+                                selectedReleaseIdRef.current = item.id
+                                void centerVersionCard(itemIndex, item.id, item.tagName, 'interactive')
                                 setSelectedIndex(itemIndex)
                               }}
                             >
@@ -1016,6 +1058,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
                 <ReleaseNotesStaleAlert
                   className="releaseNotesStaleAlertFloating"
                   dataAttribute="data-service-versions-banner"
+                  title={staleBanner.title}
                   message={staleBanner.message}
                 />
               ) : null}

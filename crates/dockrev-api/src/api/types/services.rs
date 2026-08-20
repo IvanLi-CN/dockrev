@@ -314,6 +314,25 @@ pub enum ServiceReleaseNotesStaleReason {
     RequestFailed,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ServiceReleaseNotesRefreshState {
+    Fresh,
+    Queued,
+    Running,
+    Backoff,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceReleaseNotesRefresh {
+    pub state: ServiceReleaseNotesRefreshState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_success_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after_seconds: Option<i64>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceReleaseNotesStale {
@@ -396,6 +415,8 @@ pub struct ServiceReleaseNotesResponse {
     pub message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stale: Option<ServiceReleaseNotesStale>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refresh: Option<ServiceReleaseNotesRefresh>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anchor: Option<ServiceReleaseNotesAnchor>,
 }

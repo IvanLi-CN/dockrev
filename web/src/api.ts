@@ -342,7 +342,13 @@ export async function getServiceGitHubReleases(
 
 export async function getServiceReleaseNotes(
   serviceId: string,
-  input: { cursor?: string | null; direction?: ServiceReleaseNotesDirection; limit?: number } = {},
+  input: {
+    cursor?: string | null
+    direction?: ServiceReleaseNotesDirection
+    limit?: number
+    refresh?: 'if_stale'
+  } = {},
+  init?: Pick<RequestInit, 'signal'>,
 ): Promise<ServiceReleaseNotesResponse> {
   const sp = new URLSearchParams()
   const cursor = input.cursor?.trim()
@@ -351,16 +357,19 @@ export async function getServiceReleaseNotes(
   if (typeof input.limit === 'number' && Number.isFinite(input.limit)) {
     sp.set('limit', String(Math.max(1, Math.round(input.limit))))
   }
+  if (!cursor && input.refresh === 'if_stale') sp.set('refresh', 'if_stale')
   const query = sp.toString()
   const resp = await apiFetch(
     `/api/services/${encodeURIComponent(serviceId)}/release-notes${query ? `?${query}` : ''}`,
+    init,
   )
   return (await resp.json()) as ServiceReleaseNotesResponse
 }
 
 export async function locateServiceReleaseNotes(
   serviceId: string,
-  input: { version: string; limit?: number },
+  input: { version: string; limit?: number; refresh?: 'if_stale' },
+  init?: Pick<RequestInit, 'signal'>,
 ): Promise<ServiceReleaseNotesResponse> {
   const sp = new URLSearchParams()
   const version = input.version.trim()
@@ -368,9 +377,11 @@ export async function locateServiceReleaseNotes(
   if (typeof input.limit === 'number' && Number.isFinite(input.limit)) {
     sp.set('limit', String(Math.max(1, Math.round(input.limit))))
   }
+  if (input.refresh === 'if_stale') sp.set('refresh', 'if_stale')
   const query = sp.toString()
   const resp = await apiFetch(
     `/api/services/${encodeURIComponent(serviceId)}/release-notes/locate${query ? `?${query}` : ''}`,
+    init,
   )
   return (await resp.json()) as ServiceReleaseNotesResponse
 }

@@ -411,6 +411,14 @@ export type ServiceReleaseNotesStale = {
   message: string
 }
 
+export type ServiceReleaseNotesRefreshState = 'fresh' | 'queued' | 'running' | 'backoff'
+
+export type ServiceReleaseNotesRefresh = {
+  state: ServiceReleaseNotesRefreshState
+  lastSuccessAt?: string | null
+  retryAfterSeconds?: number | null
+}
+
 export type ServiceReleaseNoteItem = {
   id: string
   tagName: string
@@ -455,6 +463,7 @@ export type ServiceReleaseNotesResponse = {
   items: ServiceReleaseNoteItem[]
   message?: string | null
   stale?: ServiceReleaseNotesStale | null
+  refresh?: ServiceReleaseNotesRefresh | null
   anchor?: ServiceReleaseNotesAnchor | null
 }
 

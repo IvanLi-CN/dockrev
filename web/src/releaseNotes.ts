@@ -51,6 +51,22 @@ export function releaseNotesShouldOfferSettingsAction(
   return message.includes('GitHub PAT') || message.includes('token 权限') || message.includes('OctoRill')
 }
 
+export function releaseNotesRefreshAlert(
+  response: ServiceReleaseNotesResponse | null | undefined,
+): { title: string; message: string } | null {
+  if (response?.stale) {
+    return { title: '发布记录暂未更新', message: response.stale.message }
+  }
+  if (response?.source !== 'octoRill' || !response.refresh) return null
+  if (response.refresh.state === 'queued' || response.refresh.state === 'running') {
+    return { title: '正在同步发布记录', message: '正在获取最新发布记录。' }
+  }
+  if (response.refresh.state === 'backoff') {
+    return { title: '发布记录暂未更新', message: '正在显示最近一次成功结果。' }
+  }
+  return null
+}
+
 export function fallbackReleaseNotesErrorMessage(error: unknown): string {
   if (error instanceof ApiError && error.status === 404) {
     return '该服务不存在或已被删除，无法读取发布记录。'

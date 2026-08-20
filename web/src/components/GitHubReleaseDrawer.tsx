@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type FocusEvent } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FocusEvent } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 
 import {
@@ -8,6 +8,7 @@ import {
 import {
   releaseNotesBodyForView,
   findReleaseNoteIndex,
+  releaseNotesRefreshAlert,
   releaseNotesShouldOfferSettingsAction,
   releaseNotesSourceLabel,
   releaseNotesTagMatchesVersion,
@@ -112,6 +113,7 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
   const sessionKey = props.open && serviceId ? `${serviceId}::${targetVersion ?? ''}` : null
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const targetScrollKeyRef = useRef<string | null>(null)
+  const visibleReleaseAnchorRef = useRef<{ id: string; offset: number } | null>(null)
   const highlightTimerRef = useRef<number | null>(null)
   const infoCloseTimerRef = useRef<number | null>(null)
 
@@ -153,6 +155,7 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
 
   useEffect(() => {
     targetScrollKeyRef.current = null
+    visibleReleaseAnchorRef.current = null
     setHighlightedId(null)
     setInfoPanelOpen(false)
     setExpandedIds(new Set())
@@ -179,6 +182,32 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
     },
     measureElement: (element) => element.getBoundingClientRect().height,
   })
+
+  useLayoutEffect(() => {
+    const scrollElement = scrollRef.current
+    const previousAnchor = visibleReleaseAnchorRef.current
+    if (scrollElement && previousAnchor) {
+      const nextAnchor = Array.from(scrollElement.querySelectorAll<HTMLElement>('[data-release-id]'))
+        .find((element) => element.dataset.releaseId === previousAnchor.id)
+      if (nextAnchor) {
+        const nextOffset = nextAnchor.getBoundingClientRect().top - scrollElement.getBoundingClientRect().top
+        scrollElement.scrollTop += nextOffset - previousAnchor.offset
+      }
+    }
+
+    return () => {
+      if (!scrollElement) return
+      const viewport = scrollElement.getBoundingClientRect()
+      const visible = Array.from(scrollElement.querySelectorAll<HTMLElement>('[data-release-id]'))
+        .find((row) => {
+          const rect = row.getBoundingClientRect()
+          return rect.bottom > viewport.top && rect.top < viewport.bottom
+        })
+      visibleReleaseAnchorRef.current = visible
+        ? { id: visible.dataset.releaseId ?? '', offset: visible.getBoundingClientRect().top - viewport.top }
+        : null
+    }
+  }, [items])
 
   useEffect(() => {
     virtualizer.measure()
@@ -214,12 +243,11 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
     const absoluteIndex = findReleaseNoteIndex(items, targetVersion)
     if (absoluteIndex < 0 || items.length <= absoluteIndex) return
 
-    const key = `${sessionKey}:${absoluteIndex}`
-    if (targetScrollKeyRef.current === key) return
-    targetScrollKeyRef.current = key
-
     const targetItem = items[absoluteIndex]
     if (!targetItem) return
+    const key = `${sessionKey}:${targetItem.id}`
+    if (targetScrollKeyRef.current === key) return
+    targetScrollKeyRef.current = key
 
     const frame = window.requestAnimationFrame(() => {
       virtualizer.scrollToIndex(absoluteIndex, { align: 'center', behavior: 'smooth' })
@@ -261,9 +289,7 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
   }, [listResponse])
 
   const surfaceBanner = isReady ? locateBanner : listBanner ?? locateBanner
-  const staleBanner = listResponse?.stale
-    ? { tone: 'warning' as const, message: listResponse.stale.message }
-    : null
+  const staleBanner = releaseNotesRefreshAlert(listResponse)
   const loaderVisible = loadState === 'loading' && items.length === 0
   const unsupportedOrErrored = loadState === 'ready' && listResponse && listResponse.status !== 'ready'
   const emptyReady = isReady && items.length === 0
@@ -545,6 +571,7 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
                         <article
                           key={virtualRow.key}
                           data-index={itemIndex}
+                          data-release-id={item.id}
                           data-release-tag={item.tagName}
                           data-release-highlighted={matched ? 'true' : 'false'}
                           ref={virtualizer.measureElement}
@@ -615,6 +642,7 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
                 <ReleaseNotesStaleAlert
                   className="releaseNotesStaleAlertFloating"
                   dataAttribute="data-release-drawer-banner"
+                  title={staleBanner.title}
                   message={staleBanner.message}
                 />
               ) : null}

@@ -24,6 +24,7 @@ pub(crate) struct ServiceReleaseNotesQuery {
     cursor: Option<String>,
     direction: Option<ServiceReleaseNotesDirection>,
     limit: Option<u32>,
+    refresh: Option<ServiceReleaseNotesRefreshRequest>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -31,6 +32,13 @@ pub(crate) struct ServiceReleaseNotesQuery {
 pub(crate) struct ServiceReleaseNotesLocateQuery {
     version: Option<String>,
     limit: Option<u32>,
+    refresh: Option<ServiceReleaseNotesRefreshRequest>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum ServiceReleaseNotesRefreshRequest {
+    IfStale,
 }
 
 #[derive(Debug)]
@@ -40,6 +48,7 @@ pub(super) struct OctoRillPublicReleaseNotesSuccess {
     pub(super) previous_cursor: Option<String>,
     pub(super) matched_tag: Option<String>,
     pub(super) index_within_window: Option<u32>,
+    pub(super) refresh: Option<ServiceReleaseNotesRefresh>,
 }
 
 #[derive(Debug)]
@@ -75,6 +84,27 @@ struct OctoRillPublicReleaseContentResponse {
     items: Vec<Value>,
     #[serde(default)]
     highlight: Option<OctoRillPublicHighlight>,
+    #[serde(default)]
+    refresh: Option<OctoRillPublicReleaseRefresh>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct OctoRillPublicReleaseRefresh {
+    state: OctoRillPublicReleaseRefreshState,
+    #[serde(default)]
+    last_success_at: Option<String>,
+    #[serde(default)]
+    retry_after_seconds: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum OctoRillPublicReleaseRefreshState {
+    Fresh,
+    Queued,
+    Running,
+    Backoff,
 }
 
 const DEFAULT_RELEASE_NOTES_LIMIT: u32 = 20;
@@ -99,6 +129,22 @@ fn normalize_release_notes_direction(
     value: Option<ServiceReleaseNotesDirection>,
 ) -> ServiceReleaseNotesDirection {
     value.unwrap_or_default()
+}
+
+fn release_notes_refresh_from_octo_rill(
+    refresh: OctoRillPublicReleaseRefresh,
+) -> ServiceReleaseNotesRefresh {
+    let state = match refresh.state {
+        OctoRillPublicReleaseRefreshState::Fresh => ServiceReleaseNotesRefreshState::Fresh,
+        OctoRillPublicReleaseRefreshState::Queued => ServiceReleaseNotesRefreshState::Queued,
+        OctoRillPublicReleaseRefreshState::Running => ServiceReleaseNotesRefreshState::Running,
+        OctoRillPublicReleaseRefreshState::Backoff => ServiceReleaseNotesRefreshState::Backoff,
+    };
+    ServiceReleaseNotesRefresh {
+        state,
+        last_success_at: refresh.last_success_at,
+        retry_after_seconds: refresh.retry_after_seconds,
+    }
 }
 
 fn failure_message(reason: ServiceReleaseNotesFailureReason) -> String {
@@ -173,6 +219,7 @@ fn octo_rill_page_failure_response(
         items: Vec::new(),
         message: Some(page_failure_message(reason)),
         stale: None,
+        refresh: None,
         anchor: None,
     }
 }
@@ -349,6 +396,7 @@ fn github_release_notes_response_from_list(
             .collect(),
         message: response.message,
         stale: None,
+        refresh: None,
         anchor: options.anchor,
     }
 }
@@ -371,6 +419,7 @@ fn unsupported_github_release_notes_response(
         items: Vec::new(),
         message: Some("未能解析该服务的 GitHub 仓库。".to_string()),
         stale: None,
+        refresh: None,
         anchor: options.anchor,
     }
 }
@@ -540,6 +589,7 @@ pub(super) async fn fetch_octo_rill_public_release_notes(
     direction: ServiceReleaseNotesDirection,
     limit: u32,
     highlight_version: Option<&str>,
+    refresh_if_stale: bool,
 ) -> Result<OctoRillPublicReleaseNotesSuccess, OctoRillPublicReleaseNotesFailure> {
     let base_url = settings
         .api_base_url
@@ -599,6 +649,9 @@ pub(super) async fn fetch_octo_rill_public_release_notes(
                 .next()
                 .unwrap_or_else(|| version.to_string());
             qp.append_pair("highlight_active", &format!("tag:{active_selector}"));
+        }
+        if refresh_if_stale && cursor.is_none() {
+            qp.append_pair("refresh", "if_stale");
         }
     }
 
@@ -706,6 +759,7 @@ pub(super) async fn fetch_octo_rill_public_release_notes(
         previous_cursor: parsed.previous_cursor,
         matched_tag,
         index_within_window,
+        refresh: parsed.refresh.map(release_notes_refresh_from_octo_rill),
     })
 }
 
@@ -718,6 +772,7 @@ fn octorill_ready_response(
     response: OctoRillPublicReleaseNotesSuccess,
     anchor: Option<ServiceReleaseNotesAnchor>,
 ) -> ServiceReleaseNotesResponse {
+    let refresh = response.refresh;
     ServiceReleaseNotesResponse {
         status: ServiceReleaseNotesStatus::Ready,
         source: ServiceReleaseNotesSource::OctoRill,
@@ -738,6 +793,7 @@ fn octorill_ready_response(
         items: response.items,
         message: None,
         stale: None,
+        refresh,
         anchor,
     }
 }
@@ -793,6 +849,7 @@ async fn locate_octo_rill_release_window_from_feed(
             ServiceReleaseNotesDirection::Older,
             limit,
             None,
+            false,
         )
         .await?;
         if let Some(index) = response
@@ -923,6 +980,7 @@ async fn github_locate_release_notes_response(
             items: Vec::new(),
             message: locate.message.clone(),
             stale: None,
+            refresh: None,
             anchor: Some(ServiceReleaseNotesAnchor {
                 status: ServiceReleaseNotesAnchorStatus::Unavailable,
                 version: version.to_string(),
@@ -988,6 +1046,8 @@ pub(crate) async fn list_service_release_notes(
         let upstream_cursor = cursor
             .as_deref()
             .and_then(upstream_cursor_from_octo_rill_cursor);
+        let refresh_if_stale = query.refresh == Some(ServiceReleaseNotesRefreshRequest::IfStale)
+            && upstream_cursor.is_none();
         return Ok(Json(
             match fetch_octo_rill_public_release_notes(
                 &release_notes_settings.octo_rill,
@@ -996,6 +1056,7 @@ pub(crate) async fn list_service_release_notes(
                 direction,
                 limit,
                 None,
+                refresh_if_stale,
             )
             .await
             {
@@ -1107,6 +1168,7 @@ pub(crate) async fn locate_service_release_notes(
                 ServiceReleaseNotesDirection::Older,
                 limit,
                 Some(trimmed_version),
+                query.refresh == Some(ServiceReleaseNotesRefreshRequest::IfStale),
             )
             .await
             {
@@ -1309,6 +1371,104 @@ mod tests {
     struct OctoRillReleasesQuery {
         limit: Option<u32>,
         cursor: Option<String>,
+        refresh: Option<String>,
+    }
+
+    #[tokio::test]
+    async fn octo_rill_refresh_is_forwarded_only_for_the_first_window() {
+        async fn releases(Query(query): Query<OctoRillReleasesQuery>) -> impl IntoResponse {
+            assert_eq!(query.limit, Some(2));
+            match query.cursor.as_deref() {
+                None => {
+                    assert_eq!(query.refresh.as_deref(), Some("if_stale"));
+                    Json(json!({
+                        "status": "ready",
+                        "next_cursor": "cursor-2",
+                        "refresh": {
+                            "state": "queued",
+                            "last_success_at": "2026-08-21T00:00:00Z",
+                            "retry_after_seconds": 2
+                        },
+                        "items": [{
+                            "release_id": "125",
+                            "tag_name": "v1.2.5",
+                            "body": "Body",
+                            "html_url": "https://github.com/acme/app/releases/tag/v1.2.5"
+                        }]
+                    }))
+                }
+                Some("cursor-2") => {
+                    assert!(query.refresh.is_none());
+                    Json(json!({
+                        "status": "ready",
+                        "items": [{
+                            "release_id": "124",
+                            "tag_name": "v1.2.4",
+                            "body": "Body",
+                            "html_url": "https://github.com/acme/app/releases/tag/v1.2.4"
+                        }]
+                    }))
+                }
+                other => panic!("unexpected cursor: {other:?}"),
+            }
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route("/api/public/repos/acme/app/releases", get(releases)),
+            )
+            .await
+            .unwrap();
+        });
+        let settings = OctoRillReleaseNotesSettings {
+            enabled: true,
+            api_base_url: Some(format!("http://{addr}/")),
+            api_key: Some("orill_ak_test".to_string()),
+            default_view: ReleaseNotesView::Smart,
+        };
+        let repo = ServiceGitHubRepoRef {
+            full_name: "acme/app".to_string(),
+            html_url: "https://github.com/acme/app".to_string(),
+        };
+
+        let first = fetch_octo_rill_public_release_notes(
+            &settings,
+            &repo,
+            None,
+            ServiceReleaseNotesDirection::Older,
+            2,
+            None,
+            true,
+        )
+        .await
+        .expect("first window should be readable");
+        assert_eq!(
+            first.refresh.as_ref().map(|refresh| refresh.state),
+            Some(ServiceReleaseNotesRefreshState::Queued)
+        );
+        assert_eq!(
+            first
+                .refresh
+                .as_ref()
+                .and_then(|refresh| refresh.retry_after_seconds),
+            Some(2)
+        );
+
+        let page = fetch_octo_rill_public_release_notes(
+            &settings,
+            &repo,
+            Some("cursor-2"),
+            ServiceReleaseNotesDirection::Older,
+            2,
+            None,
+            true,
+        )
+        .await
+        .expect("page should be readable");
+        assert!(page.refresh.is_none());
     }
 
     #[test]
@@ -1331,6 +1491,7 @@ mod tests {
             previous_cursor: None,
             matched_tag: Some("v1.2.3".to_string()),
             index_within_window: Some(0),
+            refresh: None,
         };
 
         assert!(octo_rill_locate_needs_window_scan(&response));
