@@ -4,7 +4,7 @@
 
 - Status: 已完成（5/5）
 - Created: 2026-04-07
-- Last: 2026-04-10
+- Last: 2026-08-21
 
 ## 背景 / 问题陈述
 
@@ -163,21 +163,10 @@
 - source_type=storybook_canvas · story_id_or_title=`Pages/ServiceDetailPage/UpdateHistoryReleaseNotes` · state=`history record target version -> drawer` · evidence_note=`验证更新记录的目标版本入口打开同一右侧抽屉，保留 URL target，并在虚拟列表中高亮定位版本。`
   ![服务更新记录联动发布抽屉](./assets/release-drawer-service-history-target.png)
 
-## Visual Evidence (PR)
+- source_type=storybook_canvas · story_id_or_title=`Components/GitHubReleaseDrawer/Cached Release Notes Alert` · state=`dark theme · cached release notes` · evidence_note=`验证 Alert 使用组件库语义并悬浮于可滚动内容上方；右上角与列表内的外链图标继承暗色主题前景色，不再回退为默认黑色。`
 
-- final_set: `release-notes-locate`
-  story_id_or_title: `Components/GitHubReleaseDrawer/Anonymous Located`
-  state: `locate-first hit · anchor window`
-  evidence_note: `最终 PR 采用的抽屉命中证据。抽屉首屏直接使用后端 locate 返回的锚点窗口，顶部 success banner 明确告知已定位到目标版本，前端不再为了找目标版本继续扫页。`
-
-![PR 证据：统一 locate 命中的发布抽屉锚点窗口](../../screenshots/release-notes-locate/drawer-locate-found.png)
-
-- final_set: `release-notes-locate`
-  story_id_or_title: `Components/GitHubReleaseDrawer/Outside Window`
-  state: `outside window`
-  evidence_note: `最终 PR 采用的 outside-window 证据。目标版本存在但不在当前锚点窗口内时，抽屉顶部显示 warning banner，首屏回到最新窗口而不是继续自动翻页。`
-
-![PR 证据：目标版本位于当前锚点窗口之外时的提示](../../screenshots/release-notes-locate/drawer-outside-window.png)
+PR: include
+![暗色发布记录抽屉的缓存 Alert 与外链图标](./assets/release-drawer-alert-external-link-dark.png)
 
 ## 里程碑（Milestones / checklist）
 
