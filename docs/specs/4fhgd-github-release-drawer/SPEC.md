@@ -166,7 +166,7 @@
 - source_type=storybook_canvas · story_id_or_title=`Components/GitHubReleaseDrawer/Cached Release Notes Alert` · state=`dark theme · cached release notes` · evidence_note=`验证 Alert 使用组件库语义并悬浮于可滚动内容上方；右上角与列表内的外链图标继承暗色主题前景色，不再回退为默认黑色。`
 
 PR: include
-![暗色发布记录抽屉的缓存 Alert 与外链图标](./assets/release-drawer-alert-external-link-dark.png)
+![暗色发布记录抽屉的缓存 Alert 与外链图标](docs/specs/4fhgd-github-release-drawer/assets/release-drawer-alert-external-link-dark.png)
 
 ## 里程碑（Milestones / checklist）
 
