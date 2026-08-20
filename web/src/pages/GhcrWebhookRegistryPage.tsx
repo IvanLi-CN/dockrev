@@ -548,6 +548,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
           <SelectField
             ariaLabel="每页仓库数量"
             className="select"
+            disabled={busy || phase === 'initial-loading' || phase === 'refreshing'}
             onChange={(value) => {
               const nextPerPage = Number.parseInt(value, 10)
               void refresh({

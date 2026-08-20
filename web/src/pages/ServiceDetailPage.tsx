@@ -358,8 +358,8 @@ export function ServiceDetailPage(props: {
   const effectiveStack = stack ?? snapshotPayload?.stack ?? null;
   const effectiveService = service ?? snapshotService;
   const effectiveJobs = jobs;
-  const effectiveBackupTargets = snapshotPayload && backupPhase !== "ready-data" && backupPhase !== "ready-empty" ? (snapshotPayload.backupTargets ?? backupTargets) : backupTargets;
-  const effectiveBackupRecords = snapshotPayload && backupPhase !== "ready-data" && backupPhase !== "ready-empty" ? (snapshotPayload.backupRecords ?? backupRecords) : backupRecords;
+  const effectiveBackupTargets = snapshotPayload && !backupLoaded && backupPhase !== "ready-data" && backupPhase !== "ready-empty" ? (snapshotPayload.backupTargets ?? backupTargets) : backupTargets;
+  const effectiveBackupRecords = snapshotPayload && !backupLoaded && backupPhase !== "ready-data" && backupPhase !== "ready-empty" ? (snapshotPayload.backupRecords ?? backupRecords) : backupRecords;
   const effectiveMonitoringSnapshot = monitoringSnapshot ?? snapshotPayload?.monitoring ?? null;
   const readonlyUi = !isOnline;
   const backupDataReady = backupPhase === "ready-data" || backupPhase === "ready-empty";

@@ -273,6 +273,7 @@ export function StackDetailPage(props: {
   const activeLifecycleJobAction = activeLifecycleJob?.action ?? null
   const stackArchived = Boolean(stack?.archived)
   const lifecycleStatusLoading = lifecycleStatus === null
+  const dataRefreshing = loadPhase === 'initial-loading' || loadPhase === 'refreshing'
 
   const requestLifecycleAction = useCallback((action: ServiceLifecycleAction) => {
     void (async () => {
@@ -472,7 +473,7 @@ export function StackDetailPage(props: {
             primary={lifecyclePrimary}
           />
           <Button disabled={busy} onClick={() => navigate({ name: 'services' })}>返回服务</Button>
-          <Button disabled={busy || !isOnline} onClick={() => void refreshAll('user-action')}>刷新</Button>
+          <Button disabled={busy || dataRefreshing || !isOnline} onClick={() => void refreshAll('user-action')}>刷新</Button>
         </div>
         <ServiceMobileActionMenu
           ariaLabel="Stack 操作"
@@ -480,14 +481,14 @@ export function StackDetailPage(props: {
             { id: 'lifecycle', items: lifecycleItems },
             { id: 'navigation', items: [
               { id: 'return-services', label: '返回服务', icon: ArrowLeft, disabled: busy, onSelect: () => navigate({ name: 'services' }) },
-              { id: 'refresh', label: '刷新', icon: RefreshCw, disabled: busy || !isOnline, description: !isOnline ? '离线时无法刷新' : undefined, onSelect: () => void refreshAll('user-action') },
+              { id: 'refresh', label: '刷新', icon: RefreshCw, disabled: busy || dataRefreshing || !isOnline, description: !isOnline ? '离线时无法刷新' : undefined, onSelect: () => void refreshAll('user-action') },
             ] },
           ]}
         />
       </>,
     )
     return () => onTopActions(null)
-  }, [activeLifecycleJobAction, activeLifecycleJobId, activeLifecycleJobStatus, activeLifecycleJobType, busy, isOnline, lifecycleStatus?.state, lifecycleStatus?.unavailableReason, lifecycleStatusLoading, lifecycleSubmitting, onTopActions, refresh, refreshAll, requestLifecycleAction, stackArchived])
+  }, [activeLifecycleJobAction, activeLifecycleJobId, activeLifecycleJobStatus, activeLifecycleJobType, busy, dataRefreshing, isOnline, lifecycleStatus?.state, lifecycleStatus?.unavailableReason, lifecycleStatusLoading, lifecycleSubmitting, onTopActions, refresh, refreshAll, requestLifecycleAction, stackArchived])
 
   if (!stack) {
     if (!isOnline) {
