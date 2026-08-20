@@ -572,6 +572,7 @@ export default function App() {
         ) : null}
         {route.name === "stack" ? (
           <StackDetailPage
+            key={route.stackId}
             stackId={route.stackId}
             onLastScanHint={setLastScanHint}
             onTopActions={setPageActions}

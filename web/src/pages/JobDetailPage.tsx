@@ -8,6 +8,7 @@ import { TaskResultReason } from '../components/TaskResultReason'
 import { navigate } from '../routes'
 import { Button, Chip, IconButton, Mono, OverlayScrollArea, Pill, Switch } from '../ui'
 import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
+import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
 
 function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' | 'info' {
   if (status === 'success') return 'ok'
@@ -207,6 +208,10 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
   const [logs, setLogs] = useState<DisplayLogLine[]>([])
   const [progress, setProgress] = useState<JobProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [loadPhase, setLoadPhase] = useState<AsyncDataPhase>('initial-loading')
+  const [loadSource, setLoadSource] = useState<AsyncDataSource>('none')
+  const [loadTrigger, setLoadTrigger] = useState<AsyncDataTrigger>('background')
   const [busy, setBusy] = useState(false)
   const [stopRequesting, setStopRequesting] = useState(false)
   const [logTz, setLogTz] = useState<LogTimeZone>('local')
@@ -217,20 +222,44 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
   const [manualRefreshVersion, setManualRefreshVersion] = useState(0)
   const liveCommandOutputSeqsRef = useRef(new Set<number>())
   const pendingCommandSummarySeqsRef = useRef(new Set<number>())
+  const jobRef = useRef(job)
+  const refreshRequestIdRef = useRef(0)
+  jobRef.current = job
   const visibleLogs = useMemo(
     () => logs.filter((log) => showEvents || log.level.trim().toLowerCase() !== 'event'),
     [logs, showEvents],
   )
 
-  const refresh = useCallback(async () => {
-    setError(null)
-    const j = await getJob(jobId)
-    setJob(j)
-    setLogs(j.logs)
-    setProgress(normalizeProgress(j.progress))
-    liveCommandOutputSeqsRef.current.clear()
-    pendingCommandSummarySeqsRef.current.clear()
-    return j
+  const refresh = useCallback(async (options: {
+    silent?: boolean
+    source?: AsyncDataSource
+    trigger?: AsyncDataTrigger
+  } = {}) => {
+    const requestId = ++refreshRequestIdRef.current
+    const silent = options.silent === true
+    if (!silent) {
+      setLoadSource(options.source ?? 'live')
+      setLoadTrigger(options.trigger ?? 'background')
+      setLoadPhase(jobRef.current ? 'refreshing' : 'initial-loading')
+      setLoadError(null)
+    }
+    try {
+      const j = await getJob(jobId)
+      if (requestId !== refreshRequestIdRef.current) return null
+      setJob(j)
+      setLogs(j.logs)
+      setProgress(normalizeProgress(j.progress))
+      liveCommandOutputSeqsRef.current.clear()
+      pendingCommandSummarySeqsRef.current.clear()
+      if (!silent) setLoadPhase('ready-data')
+      return j
+    } catch (reason: unknown) {
+      if (!silent && requestId === refreshRequestIdRef.current) {
+        setLoadError(errorMessage(reason))
+        setLoadPhase('error')
+      }
+      throw reason
+    }
   }, [jobId])
 
   const requestStop = useCallback(async () => {
@@ -239,10 +268,10 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
     setError(null)
     try {
       await stopJob(jobId)
-      await refresh()
+      await refresh({ source: 'memory', trigger: 'user-action' })
     } catch (error: unknown) {
       setError(errorMessage(error))
-      await refresh().catch(() => undefined)
+      await refresh({ silent: true }).catch(() => undefined)
     } finally {
       setStopRequesting(false)
       setBusy(false)
@@ -267,7 +296,8 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
         refreshTimer = null
         void (async () => {
           try {
-            const j = await refresh()
+            const j = await refresh({ silent: true })
+            if (!j) return
             if (closed) return
             if (j.status !== 'running' && j.status !== 'queued') {
               es?.close()
@@ -282,7 +312,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
     const start = async () => {
       try {
         const j = await refresh()
-        if (closed) return
+        if (closed || !j) return
 
         // Nothing to stream for terminal jobs.
         if (j.status !== 'running' && j.status !== 'queued') return
@@ -493,7 +523,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
       event.summary.jobId === jobId || event.entities.some((entity) => entity.entityType === 'job' && entity.id === jobId),
     )
     if (!relevant) return
-    void refresh().catch(() => {})
+    void refresh({ silent: true }).catch(() => {})
   })
 
   useEffect(() => {
@@ -536,10 +566,10 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
             void (async () => {
               setBusy(true)
               try {
-                await refresh()
+                await refresh({ source: 'memory', trigger: 'user-action' })
                 setManualRefreshVersion((version) => version + 1)
-              } catch (e: unknown) {
-                setError(errorMessage(e))
+              } catch {
+                // AsyncDataRegion presents a recoverable request failure in place.
               } finally {
                 setBusy(false)
               }
@@ -556,12 +586,14 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
     return (
       <div className="page jobDetailPage">
         <AsyncDataRegion
-          error={error}
+          error={loadError}
           hasData={false}
           label="正在加载任务详情"
-          onRetry={() => void refresh().catch((reason: unknown) => setError(errorMessage(reason)))}
-          phase={error ? 'error' : 'initial-loading'}
+          onRetry={() => void refresh({ source: 'memory', trigger: 'user-action' }).catch(() => undefined)}
+          phase={loadPhase}
           skeleton={<AsyncDataSkeleton className="jobDetailLoadingSkeleton" lines={9} />}
+          source={loadSource}
+          trigger={loadTrigger}
         />
       </div>
     )
@@ -603,6 +635,16 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
 
   return (
     <div className="page jobDetailPage">
+      <AsyncDataRegion
+        className="jobDetailDataRegion"
+        error={loadError}
+        hasData
+        label="正在刷新任务详情"
+        onRetry={() => void refresh({ source: 'memory', trigger: 'user-action' }).catch(() => undefined)}
+        phase={loadPhase}
+        source={loadSource}
+        trigger={loadTrigger}
+      >
       <div className="card">
         <div className="jobDetailHeader">
           <div>
@@ -843,6 +885,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
           {visibleLogs.length === 0 ? <div className="muted">无日志</div> : null}
         </OverlayScrollArea>
       </div>
+      </AsyncDataRegion>
     </div>
   )
 }

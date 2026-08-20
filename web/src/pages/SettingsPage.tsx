@@ -51,6 +51,8 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
     ghcrResolvePending,
     ghcrWebhookAuditCronInputClassName,
     githubPackages,
+    githubPackagesLoadError,
+    githubPackagesLoadPhase,
     githubPackagesNewRepo,
     githubPackagesPat,
     githubPackagesTrackedRepos,
@@ -60,6 +62,8 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
     notificationTestRunning,
     notificationTestStates,
     notifications,
+    notificationsLoadError,
+    notificationsLoadPhase,
     openGhcrRegistry,
     octoRillApiBaseUrlInputClassName,
     octoRillApiKeyFocused,
@@ -84,10 +88,16 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
     setTelegramBotTokenTouched,
     setTelegramBotTokenVisible,
     settings,
+    settingsLoadError,
+    settingsLoadPhase,
     showAutoSaveToast,
     showInstancePublicBaseUrlSuggestBubble,
     showTelegramBotTokenEye,
     suggestedPublicBaseUrl,
+    trackedReposLoadError,
+    trackedReposLoadPhase,
+    trackedReposLoadSource,
+    trackedReposLoadTrigger,
     supervisor,
     telegramBotTokenInputClassName,
     telegramBotTokenVisible,
@@ -100,17 +110,21 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
     updateResourceMonitor,
     updateSchedules,
     webPushEndpoint,
+    loadSource,
+    loadTrigger,
   } = useSettingsPageState(props)
-  if (!settings || !notifications || !githubPackages) {
+  if (!settings) {
     return (
       <div className="page settingsPage" data-mobile-settings-section={props.section ?? 'index'}>
         <AsyncDataRegion
-          error={error}
+          error={settingsLoadError}
           hasData={false}
           label="正在加载系统设置"
-          onRetry={() => void refresh().catch((reason: unknown) => setError(errorMessage(reason)))}
-          phase={error ? 'error' : 'initial-loading'}
+          onRetry={() => void refresh({ source: 'memory', trigger: 'user-action' })}
+          phase={settingsLoadPhase}
           skeleton={<AsyncDataSkeleton className="settingsLoadingSkeleton" lines={10} />}
+          source={loadSource}
+          trigger={loadTrigger}
         />
       </div>
     )
@@ -121,6 +135,16 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
       <SettingsMobileNavigation section={props.section} />
       <div className="twoCol settingsContentGrid">
         <div className="settingsCol">
+          <AsyncDataRegion
+            className="settingsCoreRegion"
+            error={settingsLoadError}
+            hasData
+            label="正在刷新基础设置"
+            onRetry={() => void refresh({ source: 'memory', trigger: 'user-action', domains: ['settings'] })}
+            phase={settingsLoadPhase}
+            source={loadSource}
+            trigger={loadTrigger}
+          >
           <div className="card settingsSectionCard" data-settings-section="account" data-mobile-active={props.section === 'account' || undefined}>
             <div className="title">鉴权（Forward Auth）</div>
             <div className="muted">认证由入口代理负责；Dockrev 按用户/组执行项目侧鉴权（运行时只读）</div>
@@ -633,6 +657,19 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
             </div>
           </div>
 
+          </AsyncDataRegion>
+
+          {notifications ? (
+          <AsyncDataRegion
+            className="settingsNotificationsRegion"
+            error={notificationsLoadError}
+            hasData
+            label="正在刷新通知设置"
+            onRetry={() => void refresh({ source: 'memory', trigger: 'user-action', domains: ['notifications'] })}
+            phase={notificationsLoadPhase}
+            source={loadSource}
+            trigger={loadTrigger}
+          >
           <div className="card settingsSectionCard" data-settings-section="notifications" data-mobile-active={props.section === 'notifications' || undefined}>
             <div className="title">通知</div>
             <div className="muted">先选择通知事件，再为每个渠道配置发送方式。</div>
@@ -950,10 +987,35 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
             {error ? <div className="error">{error}</div> : null}
           </div>
 
-          {error ? <div className="error">{error}</div> : null}
+          </AsyncDataRegion>
+          ) : (
+            <AsyncDataRegion
+              className="settingsNotificationsRegion"
+              error={notificationsLoadError}
+              hasData={false}
+              label="正在加载通知设置"
+              onRetry={() => void refresh({ source: 'memory', trigger: 'user-action', domains: ['notifications'] })}
+              phase={notificationsLoadPhase}
+              skeleton={<AsyncDataSkeleton className="settingsLoadingSkeleton" lines={5} />}
+              source={loadSource}
+              trigger={loadTrigger}
+            />
+          )}
+
         </div>
 
         <div className="settingsCol">
+          {githubPackages ? (
+          <AsyncDataRegion
+            className="settingsGhcrRegion"
+            error={githubPackagesLoadError}
+            hasData
+            label="正在刷新 GHCR 设置"
+            onRetry={() => void refresh({ source: 'memory', trigger: 'user-action', domains: ['githubPackages'] })}
+            phase={githubPackagesLoadPhase}
+            source={loadSource}
+            trigger={loadTrigger}
+          >
           <div className="card settingsSectionCard" data-settings-section="integrations" data-mobile-active={props.section === 'integrations' || undefined} id={SETTINGS_GHCR_WEBHOOK_ID}>
           <div className="title">GitHub Packages（GHCR）Webhook</div>
           <div className="muted">在 GHCR 发布新版本时自动触发 Dockrev 扫描（事件：package.published）</div>
@@ -1042,8 +1104,8 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                             if (!fullName) throw new Error('resolve returned empty repo')
                             await setGitHubPackagesRepoSelected({ fullName, selected: true })
                             setGitHubPackagesNewRepo('')
-                            await refresh()
-                            await refreshTrackedRepos()
+                            await refresh({ source: 'memory', trigger: 'user-action' })
+                            await refreshTrackedRepos({ source: 'memory', trigger: 'user-action' })
                             return
                           }
                           if (resolved.kind === 'owner') {
@@ -1077,8 +1139,8 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                               await setGitHubPackagesRepoSelected({ fullName: r.fullName, selected: r.selected })
                             }
                             setGitHubPackagesNewRepo('')
-                            await refresh()
-                            await refreshTrackedRepos()
+                            await refresh({ source: 'memory', trigger: 'user-action' })
+                            await refreshTrackedRepos({ source: 'memory', trigger: 'user-action' })
                             return
                           }
                           throw new Error(`unsupported resolve kind: ${resolved.kind}`)
@@ -1104,6 +1166,17 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
               </div>
             </div>
 
+            <AsyncDataRegion
+              className="settingsGhcrPreviewRegion"
+              error={trackedReposLoadError}
+              hasData={githubPackagesTrackedRepos !== null}
+              label="正在刷新已跟踪仓库"
+              onRetry={() => void refreshTrackedRepos({ source: 'memory', trigger: 'user-action' })}
+              phase={trackedReposLoadPhase}
+              skeleton={<AsyncDataSkeleton className="settingsGhcrPreviewSkeleton" lines={2} />}
+              source={trackedReposLoadSource}
+              trigger={trackedReposLoadTrigger}
+            >
             {githubPackagesTrackedRepos ? (
               <div style={{ marginTop: 10 }}>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
@@ -1188,12 +1261,28 @@ export function SettingsPage(props: { section?: SettingsSection; onTopActions: (
                 ) : null}
               </div>
             ) : (
-              <AsyncDataSkeleton className="settingsGhcrPreviewSkeleton" lines={2} />
+              <div className="muted" style={{ marginTop: 10 }}>
+                暂无已跟踪仓库
+              </div>
             )}
+            </AsyncDataRegion>
+          </div>
           </div>
 
-          {error ? <div className="error">{error}</div> : null}
-          </div>
+          </AsyncDataRegion>
+          ) : (
+            <AsyncDataRegion
+              className="settingsGhcrRegion"
+              error={githubPackagesLoadError}
+              hasData={false}
+              label="正在加载 GHCR 设置"
+              onRetry={() => void refresh({ source: 'memory', trigger: 'user-action', domains: ['githubPackages'] })}
+              phase={githubPackagesLoadPhase}
+              skeleton={<AsyncDataSkeleton className="settingsLoadingSkeleton" lines={5} />}
+              source={loadSource}
+              trigger={loadTrigger}
+            />
+          )}
         </div>
       </div>
       {showAutoSaveToast ? (

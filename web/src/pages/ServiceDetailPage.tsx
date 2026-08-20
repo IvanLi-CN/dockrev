@@ -106,6 +106,8 @@ export function ServiceDetailPage(props: {
     bannerDetail,
     bannerTitle,
     backupPhase,
+    backupLoaded,
+    backupLoadError,
     backupRecords,
     busy,
     composeEnvFile,
@@ -592,11 +594,11 @@ export function ServiceDetailPage(props: {
   const renderBackupSection = () => (
     <div className="svcDetailSectionStack">
       <AsyncDataRegion
-        error={backupPhase === "error" ? error : null}
-        hasData={effectiveBackupTargets !== null || effectiveBackupRecords.length > 0}
+        error={backupPhase === "error" ? backupLoadError ?? error : null}
+        hasData={snapshotActive || backupLoaded}
         label="正在刷新服务备份信息"
         onRetry={() => void requestRefresh()}
-        phase={snapshotActive ? (effectiveBackupRecords.length === 0 ? "ready-empty" : "ready-data") : backupPhase}
+        phase={backupPhase === "error" ? "error" : snapshotActive && backupPhase === "initial-loading" ? (effectiveBackupRecords.length === 0 ? "ready-empty" : "ready-data") : backupPhase}
         skeleton={<AsyncDataSkeleton className="serviceBackupLoadingSkeleton" lines={6} />}
         source={snapshotActive ? "fresh-snapshot" : "live"}
       >

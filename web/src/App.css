@@ -1420,7 +1420,7 @@ html[data-theme="light"] .brandLogoForLight {
   z-index: 1100;
   background: var(--panel);
   border: 1px solid var(--borderColor);
-  border-radius: 14px;
+  border-radius: 16px;
   box-shadow: 0 24px 90px rgba(0, 0, 0, 0.42);
   padding: 12px 12px 10px;
   min-width: 260px;
@@ -2572,6 +2572,11 @@ html[data-theme="light"] .releaseDrawerContent {
 .asyncDataRegion {
   position: relative;
   min-width: 0;
+  border-radius: 16px;
+}
+
+.queueSummaryRegion {
+  border-radius: 12px;
 }
 
 .asyncDataSkeleton {
@@ -2634,7 +2639,12 @@ html[data-theme="light"] .releaseDrawerContent {
   text-align: center;
   backdrop-filter: blur(6px) saturate(115%);
   -webkit-backdrop-filter: blur(6px) saturate(115%);
-  animation: asyncDataOverlayIn 160ms ease-out both;
+  transition: opacity 160ms ease-out;
+}
+
+.asyncDataOverlayLeaving {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .asyncDataLoadingOverlay {
@@ -2684,6 +2694,7 @@ html[data-theme="light"] .releaseDrawerContent {
   .asyncDataSpinner,
   .skeleton {
     animation: none;
+    transition: none;
   }
 
   .ghcrSyncAllBtnIconSpinning {

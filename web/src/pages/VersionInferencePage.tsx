@@ -32,13 +32,31 @@ type VersionInferenceSnapshotPayload = {
   version: 2
   readiness: { overview: boolean }
   committedQueryKey: string
+  query: VersionInferenceQuery
   overview: VersionInferenceOverviewResponse
+}
+
+function versionInferenceQueryKey(query: VersionInferenceQuery): string {
+  return `${query.statusFilter}:${query.query}:${query.page}:${query.perPage}`
+}
+
+function isVersionInferenceQuery(value: unknown): value is VersionInferenceQuery {
+  if (!value || typeof value !== 'object') return false
+  const query = value as Record<string, unknown>
+  return STATUS_FILTERS.includes(query.statusFilter as StatusFilter) &&
+    typeof query.query === 'string' &&
+    typeof query.page === 'number' && Number.isFinite(query.page) && query.page >= 1 &&
+    typeof query.perPage === 'number' && PER_PAGE_OPTIONS.includes(query.perPage as typeof PER_PAGE_OPTIONS[number])
 }
 
 function isVersionInferenceSnapshotPayload(value: unknown): value is VersionInferenceSnapshotPayload {
   if (!value || typeof value !== 'object') return false
   const payload = value as Record<string, unknown>
-  return payload.version === 2 && typeof payload.committedQueryKey === 'string' && payload.readiness instanceof Object && (payload.readiness as Record<string, unknown>).overview === true && Boolean(payload.overview)
+  return payload.version === 2 && payload.readiness instanceof Object &&
+    (payload.readiness as Record<string, unknown>).overview === true &&
+    isVersionInferenceQuery(payload.query) &&
+    payload.committedQueryKey === versionInferenceQueryKey(payload.query) &&
+    Boolean(payload.overview)
 }
 
 function errorMessage(e: unknown): string {
@@ -215,7 +233,15 @@ export function VersionInferencePage(props: {
         setSnapshotHydrated(true)
         return
       }
-      setOverview(snapshot.record.payload.overview)
+      const payload = snapshot.record.payload
+      setOverview(payload.overview)
+      setStatusFilter(payload.query.statusFilter)
+      setQueryInput(payload.query.query)
+      setQuery(payload.query.query)
+      setPage(payload.query.page)
+      setPerPage(payload.query.perPage)
+      committedQueryRef.current = payload.query
+      retryQueryRef.current = payload.query
       setLoading(false)
       setSnapshotActive(true)
       snapshotActiveRef.current = true
@@ -318,7 +344,8 @@ export function VersionInferencePage(props: {
     void writeReadonlySnapshot(VERSION_INFERENCE_SNAPSHOT_KEY, {
       version: 2,
       readiness: { overview: true },
-      committedQueryKey: `${statusFilter}:${query}:${page}:${perPage}`,
+      committedQueryKey: versionInferenceQueryKey({ statusFilter, query, page, perPage }),
+      query: { statusFilter, query, page, perPage },
       overview,
     }, {
       staleAfterMs: VERSION_INFERENCE_SNAPSHOT_STALE_MS,

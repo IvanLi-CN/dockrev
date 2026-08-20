@@ -287,10 +287,16 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
   const [versionInferenceLoaded, setVersionInferenceLoaded] = useState(false)
   const [versionInferenceLiveLoaded, setVersionInferenceLiveLoaded] = useState(false)
   const [versionInferenceError, setVersionInferenceError] = useState<string | null>(null)
+  const [versionInferencePhase, setVersionInferencePhase] = useState<AsyncDataPhase>('initial-loading')
+  const [versionInferenceSource, setVersionInferenceSource] = useState<AsyncDataSource>('none')
+  const [versionInferenceTrigger, setVersionInferenceTrigger] = useState<AsyncDataTrigger>('background')
   const [ghcrSummary, setGhcrSummary] = useState<GhcrWebhookSummary>(DEFAULT_GHCR_SUMMARY)
   const [ghcrLoaded, setGhcrLoaded] = useState(false)
   const [ghcrLiveLoaded, setGhcrLiveLoaded] = useState(false)
   const [ghcrError, setGhcrError] = useState<string | null>(null)
+  const [ghcrPhase, setGhcrPhase] = useState<AsyncDataPhase>('initial-loading')
+  const [ghcrSource, setGhcrSource] = useState<AsyncDataSource>('none')
+  const [ghcrTrigger, setGhcrTrigger] = useState<AsyncDataTrigger>('background')
   const [busy, setBusy] = useState(false)
   const [, setSnapshotStatus] = useState<'missing' | 'fresh' | 'stale' | 'expired' | 'unsupported'>(
     'missing',
@@ -306,6 +312,10 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
   const filterRef = useRef<Filter>('all')
   const inferenceRequestIdRef = useRef(0)
   const ghcrRequestIdRef = useRef(0)
+  const versionInferenceLoadedRef = useRef(false)
+  const ghcrLoadedRef = useRef(false)
+  versionInferenceLoadedRef.current = versionInferenceLoaded
+  ghcrLoadedRef.current = ghcrLoaded
 
   useEffect(() => {
     let cancelled = false
@@ -315,6 +325,10 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
       setSnapshotStatus(snapshot.status)
       setSnapshotFetchedAt(snapshot.record?.fetchedAt ?? null)
       setSnapshotAnchorFetchedAt(snapshot.record?.fetchedAt ?? null)
+      if (refreshRequestIdRef.current > 0 || inferenceRequestIdRef.current > 0 || ghcrRequestIdRef.current > 0) {
+        setSnapshotHydrated(true)
+        return
+      }
       if (snapshot.status !== 'fresh' || !isQueueSnapshotPayload(snapshot.record.payload)) {
         setSnapshotHydrated(true)
         return
@@ -333,8 +347,12 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
       setCursorStack(payload.cursorStack ?? [])
       setVersionInferenceSummary(payload.versionInferenceSummary)
       setVersionInferenceLoaded(payload.readiness.versionInference)
+      setVersionInferencePhase('ready-data')
+      setVersionInferenceSource('fresh-snapshot')
       setGhcrSummary(payload.ghcrSummary)
       setGhcrLoaded(payload.readiness.ghcr)
+      setGhcrPhase('ready-data')
+      setGhcrSource('fresh-snapshot')
       setJobsSource('fresh-snapshot')
       setJobsPhase(payload.jobs.length === 0 ? 'ready-empty' : 'ready-data')
       setSnapshotActive(true)
@@ -400,8 +418,14 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
     void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
   }, [refresh, snapshotHydrated])
 
-  const refreshVersionInferenceSummary = useCallback(async () => {
+  const refreshVersionInferenceSummary = useCallback(async (
+    options: Pick<QueueRefreshOptions, 'source' | 'trigger'> = {},
+  ) => {
     const requestId = ++inferenceRequestIdRef.current
+    setVersionInferenceSource(snapshotActiveRef.current ? 'fresh-snapshot' : (options.source ?? 'live'))
+    setVersionInferenceTrigger(options.trigger ?? 'background')
+    setVersionInferencePhase(versionInferenceLoadedRef.current ? 'refreshing' : 'initial-loading')
+    setVersionInferenceError(null)
     try {
       const payload = await getVersionInferenceOverview({
         page: 1,
@@ -412,14 +436,22 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
       setVersionInferenceError(null)
       setVersionInferenceLoaded(true)
       setVersionInferenceLiveLoaded(true)
+      setVersionInferencePhase('ready-data')
     } catch (e: unknown) {
       if (requestId !== inferenceRequestIdRef.current) return
       setVersionInferenceError(e instanceof Error ? e.message : String(e))
+      setVersionInferencePhase('error')
     }
   }, [])
 
-  const refreshGhcrSummary = useCallback(async () => {
+  const refreshGhcrSummary = useCallback(async (
+    options: Pick<QueueRefreshOptions, 'source' | 'trigger'> = {},
+  ) => {
     const requestId = ++ghcrRequestIdRef.current
+    setGhcrSource(snapshotActiveRef.current ? 'fresh-snapshot' : (options.source ?? 'live'))
+    setGhcrTrigger(options.trigger ?? 'background')
+    setGhcrPhase(ghcrLoadedRef.current ? 'refreshing' : 'initial-loading')
+    setGhcrError(null)
     try {
       const payload = await getGitHubPackagesWebhookOverview()
       if (requestId !== ghcrRequestIdRef.current) return
@@ -427,21 +459,26 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
       setGhcrError(null)
       setGhcrLoaded(true)
       setGhcrLiveLoaded(true)
+      setGhcrPhase('ready-data')
     } catch (e: unknown) {
       if (requestId !== ghcrRequestIdRef.current) return
       setGhcrError(e instanceof Error ? e.message : String(e))
+      setGhcrPhase('error')
     }
   }, [])
 
   useEffect(() => {
+    if (!snapshotHydrated) return
     void refreshVersionInferenceSummary()
-  }, [refreshVersionInferenceSummary])
+  }, [refreshVersionInferenceSummary, snapshotHydrated])
 
   useEffect(() => {
+    if (!snapshotHydrated) return
     void refreshGhcrSummary()
-  }, [refreshGhcrSummary])
+  }, [refreshGhcrSummary, snapshotHydrated])
 
   useManagementEventBatch(({ events, resyncRequired }) => {
+    if (!snapshotHydrated) return
     const jobChanged = resyncRequired || events.some((event) => event.domain === 'jobs')
     const inferenceChanged = resyncRequired || events.some((event) =>
       event.domain === 'version_inference' || event.summary.jobType === 'version_inference',
@@ -463,7 +500,11 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
           void (async () => {
             setBusy(true)
             try {
-              await Promise.all([refresh(currentCursorRef.current, filterRef.current, { source: 'memory', trigger: 'user-action' }), refreshVersionInferenceSummary(), refreshGhcrSummary()])
+              await Promise.all([
+                refresh(currentCursorRef.current, filterRef.current, { source: 'memory', trigger: 'user-action' }),
+                refreshVersionInferenceSummary({ source: 'memory', trigger: 'user-action' }),
+                refreshGhcrSummary({ source: 'memory', trigger: 'user-action' }),
+              ])
             } catch (e: unknown) {
               setError(e instanceof Error ? e.message : String(e))
             } finally {
@@ -538,7 +579,11 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
             void (async () => {
               setBusy(true)
               try {
-                await Promise.all([refresh(currentCursorRef.current, filterRef.current, { source: 'memory', trigger: 'user-action' }), refreshVersionInferenceSummary(), refreshGhcrSummary()])
+                await Promise.all([
+                  refresh(currentCursorRef.current, filterRef.current, { source: 'memory', trigger: 'user-action' }),
+                  refreshVersionInferenceSummary({ source: 'memory', trigger: 'user-action' }),
+                  refreshGhcrSummary({ source: 'memory', trigger: 'user-action' }),
+                ])
               } catch (e: unknown) {
                 setError(e instanceof Error ? e.message : String(e))
               } finally {
@@ -582,12 +627,23 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
           点击任务查看详情与日志
         </div>
 
-        <button
-          type="button"
-          className="queueSummaryItem"
-          style={{ marginTop: 12 }}
-          onClick={() => navigate({ name: 'version-inference' })}
+        <AsyncDataRegion
+          className="queueSummaryRegion"
+          error={versionInferenceError}
+          hasData={versionInferenceLoaded}
+          label="正在刷新版本推测摘要"
+          onRetry={() => void refreshVersionInferenceSummary({ source: 'memory', trigger: 'user-action' })}
+          phase={versionInferencePhase}
+          skeleton={<AsyncDataSkeleton className="queueLoadingSkeleton" lines={2} />}
+          source={versionInferenceSource}
+          trigger={versionInferenceTrigger}
         >
+          <button
+            type="button"
+            className="queueSummaryItem"
+            style={{ marginTop: 12 }}
+            onClick={() => navigate({ name: 'version-inference' })}
+          >
           <div className="queueMain">
             <div className="queueTitle">
               <Mono>版本推测状态</Mono>
@@ -609,11 +665,6 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
             <div className="muted" style={{ marginTop: 8 }}>
               查看版本推测任务与缓存状态
             </div>
-            {versionInferenceError ? (
-              <div className="error" style={{ marginTop: 8 }}>
-                {versionInferenceError}
-              </div>
-            ) : null}
           </div>
           <div className="queueStatus">
             <Pill
@@ -623,14 +674,26 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
               {versionInferenceLoaded ? versionInferenceLabel(versionInferenceSummary) : 'loading'}
             </Pill>
           </div>
-        </button>
+          </button>
+        </AsyncDataRegion>
 
-        <button
-          type="button"
-          className="queueSummaryItem"
-          style={{ marginTop: 12 }}
-          onClick={() => navigate({ name: 'ghcr-webhooks' })}
+        <AsyncDataRegion
+          className="queueSummaryRegion"
+          error={ghcrError}
+          hasData={ghcrLoaded}
+          label="正在刷新 GHCR Webhook 摘要"
+          onRetry={() => void refreshGhcrSummary({ source: 'memory', trigger: 'user-action' })}
+          phase={ghcrPhase}
+          skeleton={<AsyncDataSkeleton className="queueLoadingSkeleton" lines={2} />}
+          source={ghcrSource}
+          trigger={ghcrTrigger}
         >
+          <button
+            type="button"
+            className="queueSummaryItem"
+            style={{ marginTop: 12 }}
+            onClick={() => navigate({ name: 'ghcr-webhooks' })}
+          >
           <div className="queueMain">
             <div className="queueTitle">
               <Mono>GHCR Webhook 状态</Mono>
@@ -661,16 +724,12 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
             <div className="muted" style={{ marginTop: 8 }}>
               查看 GHCR webhook 任务队列、仓库状态与巡检结果
             </div>
-            {ghcrError ? (
-              <div className="error" style={{ marginTop: 8 }}>
-                {ghcrError}
-              </div>
-            ) : null}
           </div>
           <div className="queueStatus">
             <Pill tone={ghcrTone(ghcrSummary)}>{ghcrLoaded ? ghcrLabel(ghcrSummary) : 'loading'}</Pill>
           </div>
-        </button>
+          </button>
+        </AsyncDataRegion>
 
         <AsyncDataRegion
           className="queueList"

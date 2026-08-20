@@ -38,6 +38,7 @@ import { Button,Mono } from '../ui'
 import { isPwaRuntimeEnabled } from '../pwaStatus'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { useManagementEventBatch } from '../managementEvents'
+import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
 import {
 GHCR_PREVIEW_LIMIT,
 PAT_MASK,
@@ -71,6 +72,8 @@ type GhcrDraft,
 type SaveScope
 } from './settings/helpers'
 
+type SettingsDataDomain = 'settings' | 'notifications' | 'githubPackages'
+
 export function useSettingsPageState(props: { onTopActions: (node: React.ReactNode) => void }) {
   const { onTopActions } = props
   const confirm = useConfirm()
@@ -89,6 +92,18 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
   const [ghcrResolvePending, setGhcrResolvePending] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [settingsLoadPhase, setSettingsLoadPhase] = useState<AsyncDataPhase>('initial-loading')
+  const [notificationsLoadPhase, setNotificationsLoadPhase] = useState<AsyncDataPhase>('initial-loading')
+  const [githubPackagesLoadPhase, setGithubPackagesLoadPhase] = useState<AsyncDataPhase>('initial-loading')
+  const [settingsLoadError, setSettingsLoadError] = useState<string | null>(null)
+  const [notificationsLoadError, setNotificationsLoadError] = useState<string | null>(null)
+  const [githubPackagesLoadError, setGithubPackagesLoadError] = useState<string | null>(null)
+  const [trackedReposLoadPhase, setTrackedReposLoadPhase] = useState<AsyncDataPhase>('initial-loading')
+  const [trackedReposLoadError, setTrackedReposLoadError] = useState<string | null>(null)
+  const [trackedReposLoadSource, setTrackedReposLoadSource] = useState<AsyncDataSource>('none')
+  const [trackedReposLoadTrigger, setTrackedReposLoadTrigger] = useState<AsyncDataTrigger>('background')
+  const [loadSource, setLoadSource] = useState<AsyncDataSource>('none')
+  const [loadTrigger, setLoadTrigger] = useState<AsyncDataTrigger>('background')
   const [webPushEndpoint, setWebPushEndpoint] = useState<string | null>(null)
   const [autoSavePhase, setAutoSavePhase] = useState<AutoSavePhase>('idle')
   const [autoSaveIssue, setAutoSaveIssue] = useState<AutoSaveIssue | null>(null)
@@ -123,6 +138,13 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
       reject: (error: Error) => void
     }>
   >([])
+  const refreshRequestIdRef = useRef(0)
+  const latestSettingsRefreshRequestIdRef = useRef(0)
+  const latestNotificationsRefreshRequestIdRef = useRef(0)
+  const latestGithubPackagesRefreshRequestIdRef = useRef(0)
+  const trackedReposRefreshRequestIdRef = useRef(0)
+  const trackedReposRef = useRef<ListGitHubPackagesReposResponse | null>(null)
+  trackedReposRef.current = githubPackagesTrackedRepos
 
   const supervisor = useSupervisorHealth()
   const selfUpgradeUrl = useMemo(() => selfUpgradeBaseUrl(), [])
@@ -517,83 +539,174 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     [syncQueuedScopesState],
   )
 
-  const refreshTrackedRepos = useCallback(async () => {
-    const [resp, jobs] = await Promise.all([
-      listGitHubPackagesRepos({
+  const refreshTrackedRepos = useCallback(async (options: {
+    source?: AsyncDataSource
+    trigger?: AsyncDataTrigger
+  } = {}) => {
+    const requestId = ++trackedReposRefreshRequestIdRef.current
+    setTrackedReposLoadSource(options.source ?? 'live')
+    setTrackedReposLoadTrigger(options.trigger ?? 'background')
+    setTrackedReposLoadPhase(trackedReposRef.current ? 'refreshing' : 'initial-loading')
+    setTrackedReposLoadError(null)
+    const jobsPromise = listJobs().catch(() => null)
+    try {
+      const resp = await listGitHubPackagesRepos({
         page: 1,
         perPage: GHCR_PREVIEW_LIMIT,
         selectedFilter: 'selected',
-      }),
-      listJobs(),
-    ])
-    setGitHubPackagesTrackedRepos(resp)
-    const liveJob =
-      jobs.find((job) => isGhcrLiveJob(job) && job.status === 'running') ??
-      jobs.find((job) => isGhcrLiveJob(job)) ??
-      null
-    setGhcrLiveJob(liveJob)
+      })
+      if (requestId !== trackedReposRefreshRequestIdRef.current) return
+      setGitHubPackagesTrackedRepos(resp)
+      setTrackedReposLoadPhase(resp.repos.length === 0 ? 'ready-empty' : 'ready-data')
+    } catch (reason: unknown) {
+      if (requestId !== trackedReposRefreshRequestIdRef.current) return
+      setTrackedReposLoadError(errorMessage(reason))
+      setTrackedReposLoadPhase('error')
+    }
+    void jobsPromise.then((jobs) => {
+      if (requestId !== trackedReposRefreshRequestIdRef.current) return
+      if (jobs === null) return
+      const liveJob =
+        jobs.find((job) => isGhcrLiveJob(job) && job.status === 'running') ??
+        jobs.find((job) => isGhcrLiveJob(job)) ??
+        null
+      setGhcrLiveJob(liveJob)
+    })
   }, [])
 
-  const refresh = useCallback(async () => {
-    setError(null)
-    const rawSettings = await getSettings()
-    const nextSettings: SettingsResponse = {
-      ...rawSettings,
-      instance: rawSettings.instance ?? { publicBaseUrl: null },
-      releaseNotes: {
-        provider: rawSettings.releaseNotes?.provider ?? 'gitHub',
-        octoRill: {
-          enabled: rawSettings.releaseNotes?.octoRill.enabled ?? false,
-          apiBaseUrl: rawSettings.releaseNotes?.octoRill.apiBaseUrl ?? '',
-          apiKeyMasked: rawSettings.releaseNotes?.octoRill.apiKeyMasked ?? null,
-          apiKey: rawSettings.releaseNotes?.octoRill.apiKeyMasked ?? '',
-          defaultView: rawSettings.releaseNotes?.octoRill.defaultView ?? 'smart',
-        },
-      },
+  const refresh = useCallback(async (options: {
+    source?: AsyncDataSource
+    trigger?: AsyncDataTrigger
+    domains?: readonly SettingsDataDomain[]
+  } = {}) => {
+    const requestId = ++refreshRequestIdRef.current
+    const source = options.source ?? 'live'
+    const trigger = options.trigger ?? 'background'
+    const domains = new Set<SettingsDataDomain>(options.domains ?? ['settings', 'notifications', 'githubPackages'])
+    setLoadSource(source)
+    setLoadTrigger(trigger)
+    if (domains.has('settings')) {
+      latestSettingsRefreshRequestIdRef.current = requestId
+      setSettingsLoadPhase(settingsRef.current ? 'refreshing' : 'initial-loading')
+      setSettingsLoadError(null)
     }
-    const nextNotifications = normalizeNotificationsForUi(await getNotifications())
-    const gh = await getGitHubPackagesSettings()
-    const defaultCallbackUrl = (() => {
-      if (typeof window === 'undefined') return ''
-      const base = apiBaseUrl()
-      const resolvedBase = new URL(base || window.location.origin, window.location.origin).toString().replace(/\/$/, '')
-      return `${resolvedBase}/api/webhooks/github-packages`
-    })()
-    const callbackUrl = gh.callbackUrl || defaultCallbackUrl
-    const nextGhcr = { ...gh, callbackUrl }
-    const nextPat = gh.patMasked ?? ''
+    if (domains.has('notifications')) {
+      latestNotificationsRefreshRequestIdRef.current = requestId
+      setNotificationsLoadPhase(notificationsRef.current ? 'refreshing' : 'initial-loading')
+      setNotificationsLoadError(null)
+    }
+    if (domains.has('githubPackages')) {
+      latestGithubPackagesRefreshRequestIdRef.current = requestId
+      setGithubPackagesLoadPhase(ghcrRef.current ? 'refreshing' : 'initial-loading')
+      setGithubPackagesLoadError(null)
+    }
 
-    setSettings(nextSettings)
-    setNotifications(nextNotifications)
-    setTelegramBotTokenVisible(false)
-    setTelegramBotTokenTouched(false)
-    setTelegramBotTokenFocused(false)
-    setOctoRillApiKeyTouched(false)
-    setOctoRillApiKeyFocused(false)
-    setGitHubPackages(nextGhcr)
-    setGitHubPackagesPat(nextPat)
-    setNotificationTestStates({})
-    setNotificationTestRunning({})
+    const readSettings = async (): Promise<SettingsResponse | null> => {
+      if (!domains.has('settings')) return null
+      try {
+        const rawSettings = await getSettings()
+        if (requestId !== latestSettingsRefreshRequestIdRef.current) return null
+        const nextSettings: SettingsResponse = {
+          ...rawSettings,
+          instance: rawSettings.instance ?? { publicBaseUrl: null },
+          releaseNotes: {
+            provider: rawSettings.releaseNotes?.provider ?? 'gitHub',
+            octoRill: {
+              enabled: rawSettings.releaseNotes?.octoRill.enabled ?? false,
+              apiBaseUrl: rawSettings.releaseNotes?.octoRill.apiBaseUrl ?? '',
+              apiKeyMasked: rawSettings.releaseNotes?.octoRill.apiKeyMasked ?? null,
+              apiKey: rawSettings.releaseNotes?.octoRill.apiKeyMasked ?? '',
+              defaultView: rawSettings.releaseNotes?.octoRill.defaultView ?? 'smart',
+            },
+          },
+        }
+        setSettings(nextSettings)
+        setOctoRillApiKeyTouched(false)
+        setOctoRillApiKeyFocused(false)
+        setSettingsLoadPhase('ready-data')
+        return nextSettings
+      } catch (reason: unknown) {
+        if (requestId === latestSettingsRefreshRequestIdRef.current) {
+          setSettingsLoadError(errorMessage(reason))
+          setSettingsLoadPhase('error')
+        }
+        return null
+      }
+    }
+    const readNotifications = async (): Promise<NotificationConfig | null> => {
+      if (!domains.has('notifications')) return null
+      try {
+        const response = await getNotifications()
+        if (requestId !== latestNotificationsRefreshRequestIdRef.current) return null
+        const nextNotifications = normalizeNotificationsForUi(response)
+        setNotifications(nextNotifications)
+        setTelegramBotTokenVisible(false)
+        setTelegramBotTokenTouched(false)
+        setTelegramBotTokenFocused(false)
+        setNotificationTestStates({})
+        setNotificationTestRunning({})
+        setNotificationsLoadPhase('ready-data')
+        return nextNotifications
+      } catch (reason: unknown) {
+        if (requestId === latestNotificationsRefreshRequestIdRef.current) {
+          setNotificationsLoadError(errorMessage(reason))
+          setNotificationsLoadPhase('error')
+        }
+        return null
+      }
+    }
+    const readGithubPackages = async (): Promise<{ ghcr: GitHubPackagesSettingsResponse; pat: string } | null> => {
+      if (!domains.has('githubPackages')) return null
+      try {
+        const gh = await getGitHubPackagesSettings()
+        if (requestId !== latestGithubPackagesRefreshRequestIdRef.current) return null
+        const defaultCallbackUrl = (() => {
+          if (typeof window === 'undefined') return ''
+          const base = apiBaseUrl()
+          const resolvedBase = new URL(base || window.location.origin, window.location.origin).toString().replace(/\/$/, '')
+          return `${resolvedBase}/api/webhooks/github-packages`
+        })()
+        const nextGhcr = { ...gh, callbackUrl: gh.callbackUrl || defaultCallbackUrl }
+        const nextPat = gh.patMasked ?? ''
+        setGitHubPackages(nextGhcr)
+        setGitHubPackagesPat(nextPat)
+        setGithubPackagesLoadPhase('ready-data')
+        return { ghcr: nextGhcr, pat: nextPat }
+      } catch (reason: unknown) {
+        if (requestId === latestGithubPackagesRefreshRequestIdRef.current) {
+          setGithubPackagesLoadError(errorMessage(reason))
+          setGithubPackagesLoadPhase('error')
+        }
+        return null
+      }
+    }
+
+    const [nextSettings, nextNotifications, nextGithubPackages] = await Promise.all([
+      readSettings(),
+      readNotifications(),
+      readGithubPackages(),
+    ])
+
+    if (domains.size !== 3 || !nextSettings || !nextNotifications || !nextGithubPackages) return
+
     resetAutoSaveBaselines({
       settings: nextSettings,
       notifications: nextNotifications,
       ghcr: {
-        enabled: nextGhcr.enabled,
-        callbackUrl: nextGhcr.callbackUrl,
-        pat: nextPat,
-        hasPersistedPat: Boolean(nextGhcr.patMasked),
+        enabled: nextGithubPackages.ghcr.enabled,
+        callbackUrl: nextGithubPackages.ghcr.callbackUrl,
+        pat: nextGithubPackages.pat,
+        hasPersistedPat: Boolean(nextGithubPackages.ghcr.patMasked),
       },
     })
   }, [resetAutoSaveBaselines])
 
   useEffect(() => {
-    void (async () => {
-      await refresh()
-    })().catch((e: unknown) => setError(errorMessage(e)))
+    void refresh()
   }, [refresh])
 
   useEffect(() => {
-    void refreshTrackedRepos().catch((e: unknown) => setError(errorMessage(e)))
+    void refreshTrackedRepos()
   }, [refreshTrackedRepos])
 
   useManagementEventBatch(({ events, resyncRequired }) => {
@@ -613,8 +726,8 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     const trackedReposChanged = resyncRequired || githubPackagesChanged || events.some((event) =>
       typeof event.summary.jobType === 'string' && event.summary.jobType.startsWith('github_packages_'),
     )
-    if (settingsChanged) void refresh().catch((error: unknown) => setError(errorMessage(error)))
-    if (trackedReposChanged) void refreshTrackedRepos().catch((error: unknown) => setError(errorMessage(error)))
+    if (settingsChanged) void refresh()
+    if (trackedReposChanged) void refreshTrackedRepos()
   })
 
   useEffect(() => {
@@ -1068,6 +1181,8 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     confirm,
     dismissInstancePublicBaseUrlSuggestBubble,
     error,
+    githubPackagesLoadError,
+    githubPackagesLoadPhase,
     fillInstancePublicBaseUrlFromCurrentOrigin,
     flushAutoSave,
     ghcrLiveProgressText,
@@ -1083,6 +1198,8 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     instancePublicBaseUrlValue,
     notificationTestRunning,
     notificationTestStates,
+    notificationsLoadError,
+    notificationsLoadPhase,
     notifications,
     octoRillApiKeyFocused,
     octoRillApiKeyTouched,
@@ -1108,10 +1225,16 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     setTelegramBotTokenTouched,
     setTelegramBotTokenVisible,
     settings,
+    settingsLoadError,
+    settingsLoadPhase,
     showAutoSaveToast,
     showInstancePublicBaseUrlSuggestBubble,
     showTelegramBotTokenEye,
     suggestedPublicBaseUrl,
+    trackedReposLoadError,
+    trackedReposLoadPhase,
+    trackedReposLoadSource,
+    trackedReposLoadTrigger,
     supervisor,
     telegramBotTokenInputClassName,
     telegramBotTokenVisible,
@@ -1124,5 +1247,7 @@ export function useSettingsPageState(props: { onTopActions: (node: React.ReactNo
     updateResourceMonitor,
     updateSchedules,
     webPushEndpoint,
+    loadSource,
+    loadTrigger,
   }
 }

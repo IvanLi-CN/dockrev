@@ -38,10 +38,7 @@ import { isDockrevAppDemoRuntime } from "../demo/runtime";
 import {
   canRestorePersistedHomepageSnapshot,
   homepageSnapshotFromResponse,
-  markHomepageSnapshotResourceStale,
   normalizeHomepageHref,
-  readHomepageSnapshot,
-  writeHomepageSnapshot,
   type HomepageSnapshotCard,
 } from "./homepageSnapshot";
 import { isCurrentHomepageRefresh } from "./homepageRefreshState";
@@ -416,26 +413,12 @@ export function OverviewPage(props: {
   const [resourceError, setResourceError] = useState<string | null>(null);
   const [noticeCheckJobId, setNoticeCheckJobId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(true);
-  const [cachedCards, setCachedCards] = useState<HomepageNavCard[]>(() => {
-    const snapshot = readHomepageSnapshot();
-    if (!snapshot) return [];
-    return snapshotCardsToNavCards(snapshot.cards);
-  });
-  const [hasCachedNavSnapshot, setHasCachedNavSnapshot] = useState(
-    () => readHomepageSnapshot() !== null,
-  );
-  const [resourceFromCache, setResourceFromCache] = useState(() => readHomepageSnapshot() !== null);
+  const [cachedCards, setCachedCards] = useState<HomepageNavCard[]>([]);
+  const [hasCachedNavSnapshot, setHasCachedNavSnapshot] = useState(false);
+  const [resourceFromCache, setResourceFromCache] = useState(false);
   const [resourceOverview, setResourceOverview] =
-    useState<ServiceResourceOverviewResponse | null>(() => {
-      const snapshot = readHomepageSnapshot();
-      if (!snapshot) return null;
-      return snapshot.resourceSummary;
-    });
-  const [cards, setCards] = useState<HomepageNavCard[]>(() => {
-    const snapshot = readHomepageSnapshot();
-    if (!snapshot) return [];
-    return snapshotCardsToNavCards(snapshot.cards);
-  });
+    useState<ServiceResourceOverviewResponse | null>(null);
+  const [cards, setCards] = useState<HomepageNavCard[]>([]);
   const [liveLoaded, setLiveLoaded] = useState(false);
   const liveLoadedRef = useRef(false);
   const refreshRequestIdRef = useRef(0);
@@ -472,27 +455,6 @@ export function OverviewPage(props: {
       setPersistedSnapshotStatus(persisted.status);
       setPersistedSnapshotFetchedAt(persisted.record?.fetchedAt ?? null);
 
-      const legacy = readHomepageSnapshot();
-      if (legacy) {
-        void writeReadonlySnapshot(
-          HOMEPAGE_PERSISTED_SNAPSHOT_KEY,
-          {
-            version: 2,
-            readiness: { navigation: true, resources: true },
-            committedQueryKey: "homepage-nav",
-            generatedAt: legacy.generatedAt,
-            lastCheckAt: legacy.lastCheckAt,
-            resourceSummary: legacy.resourceSummary,
-            cards: legacy.cards,
-          },
-          {
-            staleAfterMs: HOMEPAGE_PERSISTED_SNAPSHOT_STALE_MS,
-            fetchedAt: Date.parse(legacy.generatedAt) || Date.now(),
-          },
-        );
-        return;
-      }
-
       if (
         !canRestorePersistedHomepageSnapshot(persisted.status) ||
         persisted.record === null ||
@@ -501,16 +463,7 @@ export function OverviewPage(props: {
         return;
       }
       const payload = persisted.record.payload;
-      const resourceSummary =
-        persisted.status === "stale"
-          ? markHomepageSnapshotResourceStale({
-              version: 2,
-              generatedAt: payload.generatedAt,
-              lastCheckAt: payload.lastCheckAt,
-              resourceSummary: payload.resourceSummary,
-              cards: payload.cards,
-            }).resourceSummary
-          : payload.resourceSummary;
+      const resourceSummary = payload.resourceSummary;
       setHasCachedNavSnapshot(true);
       setCachedCards(snapshotCardsToNavCards(payload.cards));
       setCards((current) =>
@@ -547,7 +500,6 @@ export function OverviewPage(props: {
         resourceSummary: payload.resourceSummary,
         cards: snapshotCards,
       });
-      writeHomepageSnapshot(snapshot);
       void writeReadonlySnapshot(
         HOMEPAGE_PERSISTED_SNAPSHOT_KEY,
         {

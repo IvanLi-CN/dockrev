@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getStack,
   listStacksArchived,
@@ -17,27 +17,25 @@ export function useArchivedStacksState() {
   const [loaded, setLoaded] = useState(false);
   const [trigger, setTrigger] = useState<AsyncDataTrigger>("background");
   const [error, setError] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
+  const hasCommittedDataRef = useRef(false);
 
   const requestRefresh = useCallback(async (nextTrigger: AsyncDataTrigger = "background") => {
+    const requestId = ++requestIdRef.current;
     setTrigger(nextTrigger);
-    setPhase((current) => current === "initial-loading" ? "initial-loading" : "refreshing");
+    setPhase(hasCommittedDataRef.current ? "refreshing" : "initial-loading");
     setError(null);
     try {
       const stacks = await listStacksArchived("only");
-      const results = await Promise.all(
-        stacks.map(async (stack) => {
-          try {
-            return [stack.id, await getStack(stack.id)] as const;
-          } catch {
-            return [stack.id, undefined] as const;
-          }
-        }),
-      );
+      const results = await Promise.all(stacks.map(async (stack) => [stack.id, await getStack(stack.id)] as const));
+      if (requestId !== requestIdRef.current) return;
       setArchivedStacks(stacks);
       setArchivedDetails(Object.fromEntries(results));
       setLoaded(true);
+      hasCommittedDataRef.current = true;
       setPhase(stacks.length === 0 ? "ready-empty" : "ready-data");
     } catch (reason: unknown) {
+      if (requestId !== requestIdRef.current) return;
       const message = reason instanceof Error ? reason.message : String(reason);
       setError(message);
       setPhase("error");

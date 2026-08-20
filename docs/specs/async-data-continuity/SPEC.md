@@ -100,6 +100,16 @@
 - Storybook: `AsyncDataRegion` 状态 gallery 与关键交互（延迟阈值、错误重试）。
 - Visual evidence: mock-only `ui_demo` 冷启动、cache-refresh、error-recovery，桌面 `1440x900` 与移动 `393x852`，再由主人确认。
 
+## Visual Evidence
+
+主人已确认以下 mock-only `ui_demo` 证据准确反映当前实现。页面级证据采用 `trim_only`，移动端使用 `393x852` CSS px。
+
+- 冷启动骨架（桌面）：`assets/queue-cold-desktop.png`
+- 缓存刷新磨砂遮罩（桌面）：`assets/queue-cache-refresh-desktop.png`
+- 错误遮罩与重试（桌面）：`assets/queue-error-desktop.png`
+- 冷启动骨架（移动）：`assets/queue-cold-mobile.png`
+- 缓存刷新磨砂遮罩（移动）：`assets/queue-cache-refresh-mobile.png`
+
 ## 风险 / 假设
 
 - 假设：现有 60 秒 fresh 决策继续有效，且 snapshot 仅承载既有只读 read model。

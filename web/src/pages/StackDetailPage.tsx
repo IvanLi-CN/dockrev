@@ -92,10 +92,10 @@ type StackDetailSnapshotPayload = {
   policy: StackSettings['autoUpdatePolicy'] | null
 }
 
-function isStackDetailSnapshotPayload(value: unknown): value is StackDetailSnapshotPayload {
+function isStackDetailSnapshotPayload(value: unknown, expectedStackId: string): value is StackDetailSnapshotPayload {
   if (!value || typeof value !== 'object') return false
   const payload = value as Record<string, unknown>
-  if (payload.version !== 2 || typeof payload.committedQueryKey !== 'string') return false
+  if (payload.version !== 2 || payload.committedQueryKey !== expectedStackId) return false
   if (!payload.readiness || typeof payload.readiness !== 'object') return false
   const readiness = payload.readiness as Record<string, unknown>
   return Boolean(payload.stack) && Array.isArray(payload.jobs) && readiness.stack === true && readiness.jobs === true
@@ -132,45 +132,118 @@ export function StackDetailPage(props: {
   const [snapshotAnchorFetchedAt, setSnapshotAnchorFetchedAt] = useState<string | null>(null)
   const [snapshotActive, setSnapshotActive] = useState(false)
   const [snapshotHydrated, setSnapshotHydrated] = useState(false)
+  const [liveDataCommitted, setLiveDataCommitted] = useState(false)
   const [loadPhase, setLoadPhase] = useState<AsyncDataPhase>('initial-loading')
   const [loadSource, setLoadSource] = useState<AsyncDataSource>('none')
   const [loadTrigger, setLoadTrigger] = useState<AsyncDataTrigger>('background')
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [settingsPhase, setSettingsPhase] = useState<AsyncDataPhase>('initial-loading')
+  const [settingsLoadError, setSettingsLoadError] = useState<string | null>(null)
+  const [jobsPhase, setJobsPhase] = useState<AsyncDataPhase>('initial-loading')
+  const [jobsLoadError, setJobsLoadError] = useState<string | null>(null)
+  const [jobsLoaded, setJobsLoaded] = useState(false)
   const stackRef = useRef(stack)
+  const settingsRef = useRef(settings)
+  const cachedPolicyRef = useRef(cachedPolicy)
+  const jobsLoadedRef = useRef(jobsLoaded)
+  const coreRefreshRequestIdRef = useRef(0)
+  const settingsRefreshRequestIdRef = useRef(0)
+  const jobsRefreshRequestIdRef = useRef(0)
   const snapshotActiveRef = useRef(snapshotActive)
   stackRef.current = stack
+  settingsRef.current = settings
+  cachedPolicyRef.current = cachedPolicy
+  jobsLoadedRef.current = jobsLoaded
   snapshotActiveRef.current = snapshotActive
 
-  const refresh = useCallback(async (source: AsyncDataSource = 'live', trigger: AsyncDataTrigger = 'background') => {
+  const refresh = useCallback(async (
+    source: AsyncDataSource = 'live',
+    trigger: AsyncDataTrigger = 'background',
+    domains: readonly ('stack' | 'settings' | 'jobs')[] = ['stack', 'settings', 'jobs'],
+  ) => {
     const requestedStackId = stackId
     if (stackIdRef.current !== requestedStackId) return
     const requestId = ++refreshRequestIdRef.current
+    const requestedDomains = new Set(domains)
+    const coreRequestId = requestedDomains.has('stack') ? ++coreRefreshRequestIdRef.current : null
+    const settingsRequestId = requestedDomains.has('settings') ? ++settingsRefreshRequestIdRef.current : null
+    const jobsRequestId = requestedDomains.has('jobs') ? ++jobsRefreshRequestIdRef.current : null
     setLoadSource(snapshotActiveRef.current ? 'fresh-snapshot' : source)
     setLoadTrigger(trigger)
-    setLoadPhase(stackRef.current ? 'refreshing' : 'initial-loading')
-    setLoadError(null)
+    if (coreRequestId !== null) {
+      setLoadPhase(stackRef.current?.id === requestedStackId ? 'refreshing' : 'initial-loading')
+      setLoadError(null)
+    }
+    if (settingsRequestId !== null) {
+      setSettingsPhase(settingsRef.current || cachedPolicyRef.current ? 'refreshing' : 'initial-loading')
+      setSettingsLoadError(null)
+    }
+    if (jobsRequestId !== null) {
+      setJobsPhase(jobsLoadedRef.current ? 'refreshing' : 'initial-loading')
+      setJobsLoadError(null)
+    }
     setError(null)
-    onLastScanHint(undefined)
-    try {
-      const [stackRes, settingsRes, jobsRes] = await Promise.all([
-        getStack(requestedStackId),
-        getStackSettings(requestedStackId),
-        listJobs().catch(() => []),
-      ])
-      if (stackIdRef.current !== requestedStackId || requestId !== refreshRequestIdRef.current) return
-      setStack(stackRes)
-      setSettings(settingsRes)
-      setCachedPolicy(settingsRes.autoUpdatePolicy ?? null)
-      setJobs(jobsRes)
-      setLoadPhase('ready-data')
-      setSnapshotActive(false)
-      snapshotActiveRef.current = false
-      setSnapshotAnchorFetchedAt(null)
-    } catch (reason: unknown) {
-      if (stackIdRef.current !== requestedStackId || requestId !== refreshRequestIdRef.current) return
-      setLoadError(errorMessage(reason))
-      setLoadPhase('error')
-      throw reason
+    if (coreRequestId !== null) onLastScanHint(undefined)
+    const readStack = async (): Promise<boolean> => {
+      if (coreRequestId === null) return true
+      try {
+        const nextStack = await getStack(requestedStackId)
+        if (stackIdRef.current !== requestedStackId || coreRequestId !== coreRefreshRequestIdRef.current) return false
+        setStack(nextStack)
+        setLoadPhase('ready-data')
+        setSnapshotActive(false)
+        snapshotActiveRef.current = false
+        setSnapshotAnchorFetchedAt(null)
+        return true
+      } catch (reason: unknown) {
+        if (stackIdRef.current === requestedStackId && coreRequestId === coreRefreshRequestIdRef.current) {
+          setLoadError(errorMessage(reason))
+          setLoadPhase('error')
+        }
+        return false
+      }
+    }
+    const readSettings = async (): Promise<boolean> => {
+      if (settingsRequestId === null) return true
+      try {
+        const nextSettings = await getStackSettings(requestedStackId)
+        if (stackIdRef.current !== requestedStackId || settingsRequestId !== settingsRefreshRequestIdRef.current) return false
+        setSettings(nextSettings)
+        setCachedPolicy(nextSettings.autoUpdatePolicy ?? null)
+        setSettingsPhase('ready-data')
+        return true
+      } catch (reason: unknown) {
+        if (stackIdRef.current === requestedStackId && settingsRequestId === settingsRefreshRequestIdRef.current) {
+          setSettingsLoadError(errorMessage(reason))
+          setSettingsPhase('error')
+        }
+        return false
+      }
+    }
+    const readJobs = async (): Promise<boolean> => {
+      if (jobsRequestId === null) return true
+      try {
+        const nextJobs = await listJobs()
+        if (stackIdRef.current !== requestedStackId || jobsRequestId !== jobsRefreshRequestIdRef.current) return false
+        setJobs(nextJobs)
+        setJobsLoaded(true)
+        setJobsPhase(nextJobs.length === 0 ? 'ready-empty' : 'ready-data')
+        return true
+      } catch (reason: unknown) {
+        if (stackIdRef.current === requestedStackId && jobsRequestId === jobsRefreshRequestIdRef.current) {
+          setJobsLoadError(errorMessage(reason))
+          setJobsPhase('error')
+        }
+        return false
+      }
+    }
+    const [coreSucceeded, settingsSucceeded, jobsSucceeded] = await Promise.all([
+      readStack(),
+      readSettings(),
+      readJobs(),
+    ])
+    if (requestedDomains.size === 3 && coreSucceeded && settingsSucceeded && jobsSucceeded && requestId === refreshRequestIdRef.current) {
+      setLiveDataCommitted(true)
     }
   }, [onLastScanHint, stackId])
 
@@ -260,14 +333,17 @@ export function StackDetailPage(props: {
       setSnapshotStatus(snapshot.status)
       setSnapshotFetchedAt(snapshot.record?.fetchedAt ?? null)
       setSnapshotAnchorFetchedAt(snapshot.record?.fetchedAt ?? null)
-      if (snapshot.status !== 'fresh' || !isStackDetailSnapshotPayload(snapshot.record.payload)) {
+      if (snapshot.status !== 'fresh' || !isStackDetailSnapshotPayload(snapshot.record.payload, stackId)) {
         setSnapshotHydrated(true)
         return
       }
       const payload = snapshot.record.payload
       setStack(payload.stack)
       setJobs(payload.jobs)
+      setJobsLoaded(true)
+      setJobsPhase(payload.jobs.length === 0 ? 'ready-empty' : 'ready-data')
       setCachedPolicy(payload.policy ?? null)
+      setSettingsPhase('ready-data')
       setLoadSource('fresh-snapshot')
       setLoadPhase('ready-data')
       setSnapshotActive(true)
@@ -277,7 +353,7 @@ export function StackDetailPage(props: {
     return () => {
       cancelled = true
     }
-  }, [snapshotKey])
+  }, [snapshotKey, stackId])
 
   useEffect(() => {
     if (!snapshotHydrated) return
@@ -290,6 +366,12 @@ export function StackDetailPage(props: {
     setStack(null)
     setSettings(null)
     setJobs([])
+    setJobsLoaded(false)
+    setSettingsPhase('initial-loading')
+    setJobsPhase('initial-loading')
+    setSettingsLoadError(null)
+    setJobsLoadError(null)
+    setLiveDataCommitted(false)
   }, [stackId])
 
   useEffect(() => {
@@ -314,7 +396,7 @@ export function StackDetailPage(props: {
   })
 
   useEffect(() => {
-    if (!stack) return
+    if (!stack || !liveDataCommitted) return
     void writeReadonlySnapshot(
       snapshotKey,
       {
@@ -330,7 +412,7 @@ export function StackDetailPage(props: {
         fetchedAt: snapshotAnchorFetchedAt ? Date.parse(snapshotAnchorFetchedAt) || undefined : undefined,
       },
     )
-  }, [cachedPolicy, jobs, settings?.autoUpdatePolicy, snapshotAnchorFetchedAt, snapshotKey, stack, stackId])
+  }, [cachedPolicy, jobs, liveDataCommitted, settings?.autoUpdatePolicy, snapshotAnchorFetchedAt, snapshotKey, stack, stackId])
 
   useEffect(() => {
     const lifecycleJob = activeLifecycleJobType === 'stack_lifecycle' && activeLifecycleJobId && activeLifecycleJobStatus
@@ -523,17 +605,41 @@ export function StackDetailPage(props: {
       </section>
 
       <div className="settingsSummaryGrid">
-        <AutoUpdatePolicyResultCard
-          busy={busy}
-          onOpenSettings={() => {
-            if (!settings || !isOnline) return
-            setAutoPolicyDraft(policy)
-            setSettingsDrawerOpen(true)
-          }}
-          policy={policy}
-          scope="stack"
-        />
-        <RecentUpdateRecords jobs={recentUpdateJobs} />
+        <AsyncDataRegion
+          className="stackDetailPolicyRegion"
+          error={settingsLoadError}
+          hasData={settings !== null || cachedPolicy !== null}
+          label="正在刷新自动更新策略"
+          onRetry={() => void refresh('memory', 'user-action', ['settings'])}
+          phase={settingsPhase}
+          skeleton={<AsyncDataSkeleton lines={3} />}
+          source={loadSource}
+          trigger={loadTrigger}
+        >
+          <AutoUpdatePolicyResultCard
+            busy={busy}
+            onOpenSettings={() => {
+              if (!settings || !isOnline) return
+              setAutoPolicyDraft(policy)
+              setSettingsDrawerOpen(true)
+            }}
+            policy={policy}
+            scope="stack"
+          />
+        </AsyncDataRegion>
+        <AsyncDataRegion
+          className="stackDetailJobsRegion"
+          error={jobsLoadError}
+          hasData={jobsLoaded}
+          label="正在刷新最近更新记录"
+          onRetry={() => void refresh('memory', 'user-action', ['jobs'])}
+          phase={jobsPhase}
+          skeleton={<AsyncDataSkeleton lines={3} />}
+          source={loadSource}
+          trigger={loadTrigger}
+        >
+          <RecentUpdateRecords jobs={recentUpdateJobs} />
+        </AsyncDataRegion>
       </div>
 
       <div className="card" style={{ marginTop: 16 }}>

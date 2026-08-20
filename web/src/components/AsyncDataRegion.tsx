@@ -58,6 +58,8 @@ export function AsyncDataRegion(props: {
     children,
   } = props
   const [showDelayedOverlay, setShowDelayedOverlay] = useState(false)
+  const [loadingOverlayMounted, setLoadingOverlayMounted] = useState(false)
+  const [loadingOverlayLeaving, setLoadingOverlayLeaving] = useState(false)
   const busy = isAsyncDataBusy(phase)
   const initialSkeleton = phase === 'initial-loading' || (phase === 'error' && !hasData)
 
@@ -73,6 +75,26 @@ export function AsyncDataRegion(props: {
   const showLoadingOverlay = phase === 'refreshing' && showDelayedOverlay
   const showErrorOverlay = phase === 'error'
 
+  useEffect(() => {
+    if (showErrorOverlay) {
+      setLoadingOverlayMounted(false)
+      setLoadingOverlayLeaving(false)
+      return
+    }
+    if (showLoadingOverlay) {
+      setLoadingOverlayMounted(true)
+      setLoadingOverlayLeaving(false)
+      return
+    }
+    if (!loadingOverlayMounted) return
+    setLoadingOverlayLeaving(true)
+    const timer = window.setTimeout(() => {
+      setLoadingOverlayMounted(false)
+      setLoadingOverlayLeaving(false)
+    }, 160)
+    return () => window.clearTimeout(timer)
+  }, [loadingOverlayMounted, showErrorOverlay, showLoadingOverlay])
+
   return (
     <section
       aria-busy={busy || undefined}
@@ -82,8 +104,12 @@ export function AsyncDataRegion(props: {
       data-async-data-trigger={trigger}
     >
       {initialSkeleton ? skeleton : children}
-      {showLoadingOverlay ? (
-        <div className="asyncDataOverlay asyncDataLoadingOverlay" role="status" aria-live="polite">
+      {loadingOverlayMounted && !showErrorOverlay ? (
+        <div
+          className={`asyncDataOverlay asyncDataLoadingOverlay ${loadingOverlayLeaving ? 'asyncDataOverlayLeaving' : ''}`}
+          role="status"
+          aria-live="polite"
+        >
           <LoaderCircle aria-hidden="true" className="asyncDataSpinner" size={18} strokeWidth={2} />
           <span>{label}</span>
         </div>

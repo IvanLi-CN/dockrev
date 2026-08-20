@@ -57,9 +57,9 @@ function queueSummarySnapshot(fixture: Fixture) {
 
 function asyncBehavior(state: ReturnType<typeof readPublicDemoAsyncState>) {
   const delayedQueueRead = {
-    'GET /api/jobs': { delayMs: 1_600 },
-    'GET /api/version-inference/overview': { delayMs: 1_600 },
-    'GET /api/github-packages/webhook/overview': { delayMs: 1_600 },
+    'GET /api/jobs': { delayMs: 3_000 },
+    'GET /api/version-inference/overview': { delayMs: 3_000 },
+    'GET /api/github-packages/webhook/overview': { delayMs: 3_000 },
   }
   if (state === 'cold' || state === 'cache-refresh') return delayedQueueRead
   if (state === 'error') {
