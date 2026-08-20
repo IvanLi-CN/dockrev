@@ -1,0 +1,52 @@
+.releaseNotesAlertHost {
+  position: relative;
+}
+
+.releaseNotesStaleAlert {
+  align-items: center;
+  box-shadow: 0 12px 28px color-mix(in srgb, var(--background) 52%, transparent);
+}
+
+.releaseNotesStaleAlertCopy {
+  min-width: 0;
+}
+
+.releaseNotesStaleAlertTitle {
+  min-height: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.releaseNotesStaleAlertDescription {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.releaseNotesStaleAlertIcon {
+  animation: releaseNotesStaleAlertSpin 1.2s linear infinite;
+}
+
+.releaseNotesStaleAlertFloating {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  width: min(336px, calc(100% - 32px));
+  pointer-events: none;
+}
+
+@keyframes releaseNotesStaleAlertSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .releaseNotesStaleAlertIcon {
+    animation: none;
+  }
+}

@@ -80,6 +80,7 @@ export function buildMockGitHubReleasesDataset(
       repo: explicit.repo ?? null,
       listStatus: explicit.listStatus ?? 'ready',
       listMessage: explicit.listMessage ?? null,
+      stale: explicit.stale ?? null,
       items: explicit.items?.map((item) => ({ ...item })) ?? [],
       locateByVersion: explicit.locateByVersion,
     }

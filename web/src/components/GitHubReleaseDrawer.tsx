@@ -17,6 +17,7 @@ import { navigate } from '../routes'
 import { closeGitHubReleaseDrawer } from '../releaseDrawer'
 import { useServiceReleaseNotesSession } from '../useServiceReleaseNotesSession'
 import './GitHubReleaseDrawer.css'
+import { ReleaseNotesStaleAlert } from './ReleaseNotesStaleAlert'
 import {
   Button,
   Drawer,
@@ -425,14 +426,6 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
               ) : null}
             </div>
           ) : null}
-          {staleBanner ? (
-            <div className="releaseDrawerBanner releaseDrawerBanner-warning" data-release-drawer-banner="stale">
-              <span>{staleBanner.message}</span>
-              {showSettingsAction ? (
-                <Button variant="ghost" onClick={openSettings}>打开设置</Button>
-              ) : null}
-            </div>
-          ) : null}
           {surfaceBanner ? (
             <div className={cn('releaseDrawerBanner', `releaseDrawerBanner-${surfaceBanner.tone}`)} data-release-drawer-banner={surfaceBanner.tone}>
               <span>{surfaceBanner.message}</span>
@@ -471,7 +464,7 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
           ) : null}
 
           {isReady && items.length > 0 ? (
-            <div className="releaseDrawerScrollShell">
+            <div className="releaseDrawerScrollShell releaseNotesAlertHost">
               <ScrollArea
                 className="releaseDrawerScrollArea"
                 type="always"
@@ -618,6 +611,13 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
                   </div>
                 </div>
               </ScrollArea>
+              {staleBanner ? (
+                <ReleaseNotesStaleAlert
+                  className="releaseNotesStaleAlertFloating"
+                  dataAttribute="data-release-drawer-banner"
+                  message={staleBanner.message}
+                />
+              ) : null}
             </div>
           ) : null}
         </div>

@@ -40,6 +40,7 @@ import {
   shortDigest,
 } from '../pages/serviceDetailUtils'
 import { Button, GitHubIcon, IconLink, Mono, OctoRillIcon } from '../ui'
+import { ReleaseNotesStaleAlert } from './ReleaseNotesStaleAlert'
 import { ServiceVersionCard } from './ServiceVersionCard'
 import {
   formatVersionDirectoryTimeLabel,
@@ -770,17 +771,6 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
             ) : null}
           </div>
         </div>
-        {staleBanner ? (
-          <div className="releaseDrawerBanner releaseDrawerBanner-warning" data-service-versions-banner="stale">
-            <span>{staleBanner.message}</span>
-            {showSettingsAction ? (
-              <Button variant="ghost" onClick={openSettings}>
-                打开设置
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
-
         {listBanner ? (
           <div
             className={cn('releaseDrawerBanner', `releaseDrawerBanner-${listBanner.tone}`)}
@@ -924,7 +914,7 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
               </aside>
             ) : null}
 
-            <div className="serviceVersionsScrollShell">
+            <div className="serviceVersionsScrollShell releaseNotesAlertHost">
               <div
                 className="serviceVersionsScrollViewport"
                 ref={listScrollRef}
@@ -1022,6 +1012,13 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
                   </div>
                 </div>
               </div>
+              {staleBanner ? (
+                <ReleaseNotesStaleAlert
+                  className="releaseNotesStaleAlertFloating"
+                  dataAttribute="data-service-versions-banner"
+                  message={staleBanner.message}
+                />
+              ) : null}
             </div>
           </div>
         ) : null}

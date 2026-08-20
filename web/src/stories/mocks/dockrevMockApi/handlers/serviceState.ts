@@ -407,6 +407,7 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     const version = (url?.searchParams.get('version') ?? '').trim()
     const limit = clampReleaseNotesLimit(url?.searchParams.get('limit'), { fallback: 20, max: 30 })
     const githubAll = buildMockGitHubReleasesResponse(serviceId, 1, 10_000)
+    const stale = buildMockGitHubReleasesDataset(serviceId).stale ?? null
     const provider = f.settings.releaseNotes.provider
     const octoRill = f.settings.releaseNotes.octoRill
     const configured = Boolean(octoRill.apiBaseUrl?.trim() && octoRill.apiKeyMasked)
@@ -447,7 +448,7 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
         externalLinks,
         items: buildMockReleaseNotesItems(windowItems, source),
         message: githubAll.message,
-        stale: null,
+        stale,
         anchor,
       })
     }
@@ -621,6 +622,7 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     const limit = clampReleaseNotesLimit(url?.searchParams.get('limit'), { fallback: 20, max: 100 })
     const start = parseReleaseNotesCursor(url?.searchParams.get('cursor'))
     const githubAll = buildMockGitHubReleasesResponse(serviceId, 1, 10_000)
+    const stale = buildMockGitHubReleasesDataset(serviceId).stale ?? null
     const provider = f.settings.releaseNotes.provider
     const octoRill = f.settings.releaseNotes.octoRill
     const configured = Boolean(octoRill.apiBaseUrl?.trim() && octoRill.apiKeyMasked)
@@ -694,7 +696,7 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
       externalLinks,
       items: buildMockReleaseNotesItems(windowItems, source),
       message: githubAll.message,
-      stale: null,
+      stale,
       anchor: null,
     })
   }

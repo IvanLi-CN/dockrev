@@ -310,6 +310,14 @@ const compactDataset: DockrevMockGitHubReleasesDataset = {
   items: buildReleaseItems([...compactReleaseTags], true),
 }
 
+const staleCacheDataset: DockrevMockGitHubReleasesDataset = {
+  ...compactDataset,
+  stale: {
+    reason: 'requestFailed',
+    message: '暂时无法读取最新发布记录，正在显示最近一次成功结果。',
+  },
+}
+
 const gitHubProviderFixture = (() => {
   const fixture = buildFixture('default')
   fixture.settings.releaseNotes.provider = 'gitHub'
@@ -488,6 +496,43 @@ export const GitHubOriginalOnly: Story = {
     const chips = Array.from(document.querySelectorAll('.releaseDrawerChip')).map((node) => node.textContent?.trim() ?? '')
     if (!chips.includes('GitHub Releases')) {
       throw new Error('expected GitHub provider source chip')
+    }
+  },
+}
+
+export const CachedReleaseNotesAlert: Story = {
+  args: {
+    open: true,
+    serviceId: 'svc-release-drawer-stale',
+    onOpenChange: () => {},
+  },
+  parameters: {
+    dockrevApiScenario: 'default',
+    dockrevGitHubReleasesByServiceId: {
+      'svc-release-drawer-stale': staleCacheDataset,
+    },
+  },
+  play: async () => {
+    await new Promise((resolve) => setTimeout(resolve, 360))
+    const drawer = document.querySelector('[data-release-drawer="true"]')
+    const alert = document.querySelector('[data-release-drawer-banner="stale"]')
+    const scrollViewport = document.querySelector('.releaseDrawerScrollViewport')
+    if (!(drawer instanceof HTMLElement) || !(alert instanceof HTMLElement) || !(scrollViewport instanceof HTMLElement)) {
+      throw new Error('expected cached release notes to render with a status alert')
+    }
+    if (alert.dataset.slot !== 'alert' || alert.getAttribute('role') !== 'status' || alert.getAttribute('aria-live') !== 'polite') {
+      throw new Error('expected cached release notes feedback to use the polite Alert primitive')
+    }
+    if (!alert.textContent?.includes('发布记录暂未更新')) {
+      throw new Error('expected cached release notes Alert title')
+    }
+    if (getComputedStyle(alert).position !== 'absolute') {
+      throw new Error('expected cached release notes Alert to stay outside the static document flow')
+    }
+    const alertRect = alert.getBoundingClientRect()
+    const viewportRect = scrollViewport.getBoundingClientRect()
+    if (alertRect.bottom > viewportRect.bottom - 8 || alertRect.top < viewportRect.top + 8) {
+      throw new Error('expected cached release notes Alert to stay within the scroll shell')
     }
   },
 }
