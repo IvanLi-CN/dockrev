@@ -463,6 +463,17 @@ export const OctoRillSmartDefault: Story = {
     if (!drawer.textContent?.includes('润色摘要')) {
       throw new Error('expected smart release notes to be visible by default')
     }
+    const repositoryLink = document.querySelector('.releaseDrawerIconLink')
+    const repositoryLinkIcon = repositoryLink?.querySelector('svg')
+    if (!(repositoryLink instanceof HTMLElement) || !(repositoryLinkIcon instanceof SVGElement)) {
+      throw new Error('expected repository external link icon')
+    }
+    if (
+      repositoryLinkIcon.getAttribute('fill') !== 'none'
+      || repositoryLinkIcon.getAttribute('stroke') !== 'currentColor'
+    ) {
+      throw new Error('expected repository external link icon to inherit its themed foreground color')
+    }
     const activeView = document.querySelector('.releaseDrawerViewTabActive')
     if (!activeView?.textContent?.includes('润色')) {
       throw new Error('expected smart view tab to be active by default')
