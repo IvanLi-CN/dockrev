@@ -16,6 +16,7 @@ import {
 import { navigate } from '../routes'
 import { closeGitHubReleaseDrawer } from '../releaseDrawer'
 import { useServiceReleaseNotesSession } from '../useServiceReleaseNotesSession'
+import './GitHubReleaseDrawer.css'
 import {
   Button,
   Drawer,
@@ -397,27 +398,31 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
               </DrawerClose>
             </div>
           </div>
-          {repo ? (
-            <div className="releaseDrawerHeaderMeta">
-              <span className="releaseDrawerChip"><Mono>{repo.fullName}</Mono></span>
-              {listResponse?.source ? (
-                <span className="releaseDrawerChip">{releaseNotesSourceLabel(listResponse)}</span>
+          {repo || (isReady && listResponse?.source === 'octoRill') ? (
+            <div className="releaseDrawerHeaderControls">
+              {repo ? (
+                <div className="releaseDrawerHeaderMeta">
+                  <span className="releaseDrawerChip"><Mono>{repo.fullName}</Mono></span>
+                  {listResponse?.source ? (
+                    <span className="releaseDrawerChip">{releaseNotesSourceLabel(listResponse)}</span>
+                  ) : null}
+                </div>
               ) : null}
-            </div>
-          ) : null}
-          {isReady && listResponse?.source === 'octoRill' ? (
-            <div className="releaseDrawerViewTabs" aria-label="发布说明视图">
-              {(['smart', 'translated', 'original'] as const).map((view) => (
-                <button
-                  key={view}
-                  type="button"
-                  className={cn('releaseDrawerViewTab', viewMode === view && 'releaseDrawerViewTabActive')}
-                  aria-pressed={viewMode === view}
-                  onClick={() => setViewMode(view)}
-                >
-                  {releaseNotesViewLabel(view)}
-                </button>
-              ))}
+              {isReady && listResponse?.source === 'octoRill' ? (
+                <div className="releaseDrawerViewTabs" aria-label="发布说明视图">
+                  {(['smart', 'translated', 'original'] as const).map((view) => (
+                    <button
+                      key={view}
+                      type="button"
+                      className={cn('releaseDrawerViewTab', viewMode === view && 'releaseDrawerViewTabActive')}
+                      aria-pressed={viewMode === view}
+                      onClick={() => setViewMode(view)}
+                    >
+                      {releaseNotesViewLabel(view)}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
           ) : null}
           {staleBanner ? (

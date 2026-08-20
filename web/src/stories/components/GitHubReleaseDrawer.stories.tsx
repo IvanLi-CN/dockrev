@@ -437,6 +437,21 @@ export const OctoRillSmartDefault: Story = {
     if (drawer.textContent?.includes('查看该服务对应仓库的发布记录')) {
       throw new Error('expected the release drawer to omit implementation-oriented header copy')
     }
+    const controls = document.querySelector('.releaseDrawerHeaderControls')
+    const meta = document.querySelector('.releaseDrawerHeaderMeta')
+    const tabs = document.querySelector('.releaseDrawerViewTabs')
+    if (!(controls instanceof HTMLElement) || !(meta instanceof HTMLElement) || !(tabs instanceof HTMLElement)) {
+      throw new Error('expected repository metadata and release-note views to share the header controls row')
+    }
+    const controlsStyle = getComputedStyle(controls)
+    if (controlsStyle.display !== 'grid' || controlsStyle.gridTemplateColumns.split(' ').length !== 2) {
+      throw new Error('expected desktop header controls to use a two-column end-aligned layout')
+    }
+    const controlsRect = controls.getBoundingClientRect()
+    const tabsRect = tabs.getBoundingClientRect()
+    if (Math.abs(meta.getBoundingClientRect().top - tabsRect.top) > 2 || Math.abs(tabsRect.right - controlsRect.right) > 2) {
+      throw new Error('expected repository metadata and view controls to align on one row at opposite ends')
+    }
     if (!drawer.textContent?.includes('润色摘要')) {
       throw new Error('expected smart release notes to be visible by default')
     }
