@@ -129,6 +129,7 @@ export function ServiceDetailPage(props: {
     setNewRuleValue,
     setRepoInferBusy,
     settings,
+    settingsError,
     settingsPhase,
     settingsBusy,
     stack,
@@ -321,10 +322,10 @@ export function ServiceDetailPage(props: {
     };
   }, [isOnline, props.serviceId]);
   useEffect(() => {
-    if (!lastSuccessfulRefreshAt) return;
+    if (!lastSuccessfulRefreshAt || !["ready-data", "ready-empty"].includes(backupPhase)) return;
     setSnapshotActive(false);
     setSnapshotAnchorFetchedAt(null);
-  }, [lastSuccessfulRefreshAt]);
+  }, [backupPhase, lastSuccessfulRefreshAt]);
   useEffect(() => {
     if (!stack || !service || !["ready-data", "ready-empty"].includes(historyPhase) || !["ready-data", "ready-empty"].includes(backupPhase) || !monitoringSnapshot) return;
     void writeReadonlySnapshot(
@@ -361,6 +362,9 @@ export function ServiceDetailPage(props: {
   const effectiveBackupRecords = snapshotPayload && backupPhase !== "ready-data" && backupPhase !== "ready-empty" ? (snapshotPayload.backupRecords ?? backupRecords) : backupRecords;
   const effectiveMonitoringSnapshot = monitoringSnapshot ?? snapshotPayload?.monitoring ?? null;
   const readonlyUi = !isOnline;
+  const backupDataReady = backupPhase === "ready-data" || backupPhase === "ready-empty";
+  const backupSettingsBusy = settingsBusy || snapshotActive || !backupDataReady;
+  const backupHasData = effectiveBackupTargets !== null || effectiveBackupRecords.length > 0;
   const topbarMonitorSummary = useMemo(() => {
     if (!effectiveStack || !effectiveService) return null;
     return <ServiceTopbarMonitorSummary snapshot={effectiveMonitoringSnapshot} />;
@@ -535,13 +539,13 @@ export function ServiceDetailPage(props: {
     <div className="svcDetailSectionStack">
       <AsyncDataRegion
         error={backupPhase === "error" ? backupLoadError ?? error : null}
-        hasData={snapshotActive || backupLoaded}
+        hasData={backupHasData || backupLoaded}
         label="正在刷新服务备份信息"
         onRetry={() => void requestRefresh("user-action")}
         trigger={refreshTrigger}
-        phase={snapshotActive && backupPhase === "initial-loading" ? "refreshing" : backupPhase}
+        phase={backupHasData && backupPhase === "initial-loading" ? "refreshing" : backupPhase}
         skeleton={<AsyncDataSkeleton className="serviceBackupLoadingSkeleton" lines={6} />}
-        source={snapshotActive ? "fresh-snapshot" : "live"}
+        source={snapshotPayload && !backupDataReady ? "fresh-snapshot" : "live"}
       >
       <div className="card serviceBackupSummaryCard" data-service-detail-section-card="backup-summary">
         <div className="serviceBackupSummaryHead">
@@ -551,7 +555,7 @@ export function ServiceDetailPage(props: {
           </div>
           <div data-service-detail-action="open-backup-settings">
             <Button
-              disabled={settingsBusy || readonlyUi}
+              disabled={backupSettingsBusy || readonlyUi}
               onClick={() => {
                 setServiceBackupTargetsDraft(createBackupTargetsDraft(effectiveBackupTargets));
                 setBackupSettingsDrawerOpen(true);
@@ -607,7 +611,7 @@ export function ServiceDetailPage(props: {
       {!isOnline ? <ServiceDetailReadonlyBlocked detail="设置页包含敏感配置与写操作，不会持久化到本地；恢复联网后才可编辑。" title="当前离线，设置页需要联网。" /> : null}
       {isOnline ? (
         <AsyncDataRegion
-          error={settingsPhase === "error" ? error : null}
+          error={settingsPhase === "error" ? settingsError ?? error : null}
           hasData={settings !== null}
           label="正在加载服务设置"
           onRetry={() => void requestRefresh("user-action")}
@@ -1105,7 +1109,7 @@ export function ServiceDetailPage(props: {
                       <div className="serviceBackupRowControls">
                         <div className="muted">{backupPolicyHint(item)}</div>
                         <BackupPolicySegmentedControl
-                          disabled={settingsBusy}
+                          disabled={backupSettingsBusy}
                           itemLabel={item.key}
                           onChange={(value) => {
                             setServiceBackupTargetsDraft((prev) => ({
@@ -1134,7 +1138,7 @@ export function ServiceDetailPage(props: {
                       <div className="serviceBackupRowControls">
                         <div className="muted">{backupPolicyHint(item)}</div>
                         <BackupPolicySegmentedControl
-                          disabled={settingsBusy}
+                          disabled={backupSettingsBusy}
                           itemLabel={item.key}
                           onChange={(value) => {
                             setServiceBackupTargetsDraft((prev) => ({
@@ -1153,7 +1157,7 @@ export function ServiceDetailPage(props: {
             <div className="formActions">
               <Button
                 variant="primary"
-                disabled={settingsBusy}
+                disabled={backupSettingsBusy}
                 onClick={() => {
                   void (async () => {
                     setBusy(true);

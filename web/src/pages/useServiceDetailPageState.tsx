@@ -37,7 +37,7 @@ export function useServiceDetailPageState(props: {
   const [stack, setStack] = useState<StackDetail | null>(null)
   const [service, setService] = useState<Service | null>(null)
   const [corePhase, setCorePhase] = useState<AsyncDataPhase>('initial-loading'); const [coreError, setCoreError] = useState<string | null>(null)
-  const [settings, setSettings] = useState<ServiceSettings | null>(null); const [settingsPhase, setSettingsPhase] = useState<AsyncDataPhase>('initial-loading')
+  const [settings, setSettings] = useState<ServiceSettings | null>(null); const [settingsPhase, setSettingsPhase] = useState<AsyncDataPhase>('initial-loading'); const [settingsError, setSettingsError] = useState<string | null>(null)
   const [backupTargets, setBackupTargets] = useState<ServiceBackupTargetsResponse | null>(null)
   const [backupRecords, setBackupRecords] = useState<ServiceBackupRecordItem[]>([])
   const [backupPhase, setBackupPhase] = useState<AsyncDataPhase>('initial-loading'); const [backupLoaded, setBackupLoaded] = useState(false); const [backupLoadError, setBackupLoadError] = useState<string | null>(null)
@@ -199,95 +199,17 @@ export function useServiceDetailPageState(props: {
   const refresh = useCallback(async () => {
     const fullRefreshRequestId = ++fullRefreshRequestIdRef.current
     const stackRequestId = ++stackRefreshRequestIdRef.current
-    let appliedFullRefreshRoot = false
     setError(null); setCorePhase(stackRef.current ? 'refreshing' : 'initial-loading'); setCoreError(null)
-    setSettingsPhase(settingsRef.current ? 'refreshing' : 'initial-loading'); setBackupPhase(backupHasCommittedDataRef.current ? 'refreshing' : 'initial-loading'); setBackupLoadError(null)
+    setSettingsPhase(settingsRef.current ? 'refreshing' : 'initial-loading'); setSettingsError(null); setBackupPhase(backupHasCommittedDataRef.current ? 'refreshing' : 'initial-loading'); setBackupLoadError(null)
     setRollbackTargetRefreshing(true)
     onLastScanHint?.(undefined)
+    let st: StackDetail
     try {
-      const st = await getStack(stackId)
-      const svc = st.services.find((s) => s.id === serviceId) ?? null
-      if (stackRequestId === stackRefreshRequestIdRef.current && stackRequestId >= latestAppliedStackRefreshRequestIdRef.current) {
-        latestAppliedStackRefreshRequestIdRef.current = stackRequestId
-        latestAppliedFullRefreshRequestIdRef.current = fullRefreshRequestId
-        appliedFullRefreshRoot = true
-        setStack(st)
-        setService(svc)
-        setCorePhase('ready-data')
-        primeRollbackTargetRefresh(svc)
-      }
-      void Promise.allSettled([
-        getServiceBackupTargets(serviceId),
-        getServiceBackupRecords(serviceId),
-      ]).then(([backupTargetsRes, backupRecordsRes]) => {
-        if (
-          stackRequestId !== stackRefreshRequestIdRef.current ||
-          stackRequestId < latestAppliedStackRefreshRequestIdRef.current ||
-          fullRefreshRequestId < latestAppliedFullRefreshRequestIdRef.current
-        ) return false
-        if (backupTargetsRes.status === 'fulfilled') setBackupTargets(backupTargetsRes.value)
-        if (backupRecordsRes.status === 'fulfilled') setBackupRecords(backupRecordsRes.value.records)
-        if (backupTargetsRes.status === 'fulfilled' && backupRecordsRes.status === 'fulfilled') {
-          backupHasCommittedDataRef.current = true
-          setBackupLoaded(true)
-          setBackupPhase(backupRecordsRes.value.records.length === 0 ? 'ready-empty' : 'ready-data')
-          return true
-        }
-        const reason = backupTargetsRes.status === 'rejected'
-          ? backupTargetsRes.reason
-          : backupRecordsRes.status === 'rejected'
-            ? backupRecordsRes.reason
-            : '服务备份信息暂时不可用，请重试。'
-        setBackupLoadError(errorMessage(reason))
-        setBackupPhase('error')
-        return false
-      })
-      const [settingsRes, rulesRes, rollbackRes] = await Promise.allSettled([
-        getServiceSettings(serviceId),
-        listIgnores(),
-        svc && !isDockrevService(svc) ? getServiceRollbackTarget(serviceId) : Promise.resolve(null),
-      ])
-      const stackSettingsRes = await getStackSettings(stackId).then(
-        (value) => ({ status: 'fulfilled' as const, value }),
-        (reason: unknown) => ({ status: 'rejected' as const, reason }),
-      )
-      const errors: string[] = []
-      if (settingsRes.status === 'rejected') errors.push(errorMessage(settingsRes.reason))
-      if (stackSettingsRes.status === 'rejected') errors.push(errorMessage(stackSettingsRes.reason))
-      if (rulesRes.status === 'rejected') errors.push(errorMessage(rulesRes.reason))
-      if (rollbackRes.status === 'rejected') errors.push(errorMessage(rollbackRes.reason))
-      if (
-        stackRequestId !== stackRefreshRequestIdRef.current ||
-        stackRequestId < latestAppliedStackRefreshRequestIdRef.current ||
-        fullRefreshRequestId < latestAppliedFullRefreshRequestIdRef.current
-      ) return
-      if (settingsRes.status === 'fulfilled') {
-        setSettings(settingsRes.value)
-        setSettingsPhase('ready-data')
-      } else {
-        setSettingsPhase('error')
-      }
-      if (stackSettingsRes.status === 'fulfilled') setStackSettings(stackSettingsRes.value)
-      if (rulesRes.status === 'fulfilled') {
-        setRules(rulesRes.value.filter((r) => r.scope.serviceId === serviceId))
-      }
-      if (!svc || isDockrevService(svc)) {
-        setRollbackTarget(null); setRollbackActiveTarget(null)
-        setRollbackTargetRefreshing(false)
-      } else if (rollbackRes.status === 'fulfilled') {
-        const rollbackResult = await settleRollbackTargetSnapshot(stackRequestId, svc, rollbackRes.value)
-        if (rollbackResult === 'outdated') return
-        if (rollbackResult === 'digest_mismatch') throw new Error('回滚信息刷新失败，请稍后重试')
-      } else {
-        setRollbackTarget(null); setRollbackActiveTarget(null); setRollbackTargetRefreshing(false)
-      }
-      if (errors.length > 0) throw new Error(errors.join(' · '))
-      if (settingsRes.status === 'fulfilled') setLastSuccessfulRefreshAt(new Date().toISOString())
+      st = await getStack(stackId)
     } catch (error: unknown) {
       if (
         stackRequestId !== stackRefreshRequestIdRef.current ||
-        stackRequestId < latestAppliedStackRefreshRequestIdRef.current ||
-        (appliedFullRefreshRoot && fullRefreshRequestId < latestAppliedFullRefreshRequestIdRef.current)
+        stackRequestId < latestAppliedStackRefreshRequestIdRef.current
       ) return
       setRollbackTarget(null)
       setRollbackActiveTarget(null)
@@ -296,6 +218,49 @@ export function useServiceDetailPageState(props: {
       setCorePhase('error')
       throw error
     }
+    const svc = st.services.find((s) => s.id === serviceId) ?? null
+    if (stackRequestId !== stackRefreshRequestIdRef.current || stackRequestId < latestAppliedStackRefreshRequestIdRef.current) return
+    latestAppliedStackRefreshRequestIdRef.current = stackRequestId
+    latestAppliedFullRefreshRequestIdRef.current = fullRefreshRequestId
+    setStack(st); setService(svc); setCorePhase('ready-data'); primeRollbackTargetRefresh(svc)
+    void Promise.allSettled([getServiceBackupTargets(serviceId), getServiceBackupRecords(serviceId)]).then(([backupTargetsRes, backupRecordsRes]) => {
+      if (stackRequestId !== stackRefreshRequestIdRef.current || stackRequestId < latestAppliedStackRefreshRequestIdRef.current || fullRefreshRequestId < latestAppliedFullRefreshRequestIdRef.current) return
+      if (backupTargetsRes.status === 'fulfilled') setBackupTargets(backupTargetsRes.value)
+      if (backupRecordsRes.status === 'fulfilled') setBackupRecords(backupRecordsRes.value.records)
+      if (backupTargetsRes.status === 'fulfilled' && backupRecordsRes.status === 'fulfilled') {
+        backupHasCommittedDataRef.current = true; setBackupLoaded(true); setBackupPhase(backupRecordsRes.value.records.length === 0 ? 'ready-empty' : 'ready-data'); return
+      }
+      const reason = backupTargetsRes.status === 'rejected' ? backupTargetsRes.reason : backupRecordsRes.status === 'rejected' ? backupRecordsRes.reason : '服务备份信息暂时不可用，请重试。'
+      setBackupLoadError(errorMessage(reason)); setBackupPhase('error')
+    })
+    const [settingsRes, rulesRes, rollbackRes] = await Promise.allSettled([
+      getServiceSettings(serviceId), listIgnores(), svc && !isDockrevService(svc) ? getServiceRollbackTarget(serviceId) : Promise.resolve(null),
+    ])
+    const stackSettingsRes = await getStackSettings(stackId).then((value) => ({ status: 'fulfilled' as const, value }), (reason: unknown) => ({ status: 'rejected' as const, reason }))
+    if (stackRequestId !== stackRefreshRequestIdRef.current || stackRequestId < latestAppliedStackRefreshRequestIdRef.current || fullRefreshRequestId < latestAppliedFullRefreshRequestIdRef.current) return
+    const settingsErrors: string[] = []
+    if (settingsRes.status === 'rejected') settingsErrors.push(errorMessage(settingsRes.reason))
+    if (stackSettingsRes.status === 'rejected') settingsErrors.push(errorMessage(stackSettingsRes.reason))
+    if (rulesRes.status === 'rejected') settingsErrors.push(errorMessage(rulesRes.reason))
+    if (rollbackRes.status === 'rejected') settingsErrors.push(errorMessage(rollbackRes.reason))
+    if (settingsRes.status === 'fulfilled') setSettings(settingsRes.value)
+    if (stackSettingsRes.status === 'fulfilled') setStackSettings(stackSettingsRes.value)
+    if (rulesRes.status === 'fulfilled') setRules(rulesRes.value.filter((r) => r.scope.serviceId === serviceId))
+    if (!svc || isDockrevService(svc)) {
+      setRollbackTarget(null); setRollbackActiveTarget(null); setRollbackTargetRefreshing(false)
+    } else if (rollbackRes.status === 'fulfilled') {
+      try {
+        const rollbackResult = await settleRollbackTargetSnapshot(stackRequestId, svc, rollbackRes.value)
+        if (rollbackResult === 'outdated') return
+        if (rollbackResult === 'digest_mismatch') settingsErrors.push('回滚信息刷新失败，请稍后重试')
+      } catch (error: unknown) {
+        settingsErrors.push(errorMessage(error)); setRollbackTarget(null); setRollbackActiveTarget(null); setRollbackTargetRefreshing(false)
+      }
+    } else {
+      setRollbackTarget(null); setRollbackActiveTarget(null); setRollbackTargetRefreshing(false)
+    }
+    if (settingsErrors.length > 0) { setSettingsError(settingsErrors.join(' · ')); setSettingsPhase('error') } else { setSettingsError(null); setSettingsPhase('ready-data') }
+    if (settingsRes.status === 'fulfilled') setLastSuccessfulRefreshAt(new Date().toISOString())
   }, [onLastScanHint, primeRollbackTargetRefresh, serviceId, settleRollbackTargetSnapshot, stackId])
   const refreshStackOnly = useCallback(async (expectedPageGeneration = pageGenerationRef.current) => {
     if (expectedPageGeneration !== pageGenerationRef.current) return
@@ -317,9 +282,18 @@ export function useServiceDetailPageState(props: {
         setRollbackTargetRefreshing(false)
         return
       }
-      const target = await getServiceRollbackTarget(serviceId)
-      const rollbackResult = await settleRollbackTargetSnapshot(requestId, svc, target)
-      if (rollbackResult === 'digest_mismatch') throw new Error('回滚信息刷新失败，请稍后重试')
+      try {
+        const target = await getServiceRollbackTarget(serviceId)
+        const rollbackResult = await settleRollbackTargetSnapshot(requestId, svc, target)
+        if (rollbackResult === 'digest_mismatch') {
+          setSettingsError('回滚信息刷新失败，请稍后重试')
+          setSettingsPhase('error')
+        }
+      } catch (error: unknown) {
+        if (expectedPageGeneration !== pageGenerationRef.current || requestId !== stackRefreshRequestIdRef.current) return
+        setSettingsError(errorMessage(error))
+        setSettingsPhase('error')
+      }
     } catch (error: unknown) {
       if (expectedPageGeneration !== pageGenerationRef.current || requestId !== stackRefreshRequestIdRef.current || requestId < latestAppliedStackRefreshRequestIdRef.current) return
       setRollbackTarget(null)
@@ -350,13 +324,15 @@ export function useServiceDetailPageState(props: {
     },
     [serviceId],
   )
-  const [refreshTrigger, setRefreshTrigger] = useState<AsyncDataTrigger>('background')
+  const [refreshTrigger, setRefreshTrigger] = useState<AsyncDataTrigger>('background'); const refreshTriggerRef = useRef<AsyncDataTrigger>('background')
   const backgroundRefresh = useCallback(async () => {
-    setRefreshTrigger('background')
+    if (refreshTriggerRef.current !== 'user-action') { refreshTriggerRef.current = 'background'; setRefreshTrigger('background') }
     await refresh()
+    refreshTriggerRef.current = 'background'
   }, [refresh])
   const pageResumeRefresh = usePageResumeRefresh(backgroundRefresh, { onError: (error: unknown) => { if (pageGeneration === pageGenerationRef.current) setError(errorMessage(error)) } })
   const requestRefresh = useCallback((trigger: AsyncDataTrigger = 'background') => {
+    refreshTriggerRef.current = trigger
     setRefreshTrigger(trigger)
     return pageResumeRefresh()
   }, [pageResumeRefresh])
@@ -412,7 +388,7 @@ export function useServiceDetailPageState(props: {
     fullRefreshRequestIdRef.current += 1
     stackRefreshRequestIdRef.current += 1
     backupHasCommittedDataRef.current = false
-    setStack(null); setService(null); setSettings(null); setSettingsPhase('initial-loading'); setBackupTargets(null); setBackupRecords([]); setBackupLoaded(false); setBackupLoadError(null); setBackupPhase('initial-loading'); setStackSettings(null); setRules([]); setLifecycleStatus(null); setLastSuccessfulRefreshAt(null)
+    setStack(null); setService(null); setSettings(null); setSettingsPhase('initial-loading'); setSettingsError(null); setBackupTargets(null); setBackupRecords([]); setBackupLoaded(false); setBackupLoadError(null); setBackupPhase('initial-loading'); setStackSettings(null); setRules([]); setLifecycleStatus(null); setLastSuccessfulRefreshAt(null)
     setRollbackTarget(null); setRollbackActiveTarget(null); setRollbackTargetRefreshing(false)
     setError(null); setNotice(null); setBusy(false); setRepoInferBusy(false)
     return clearSubmittingTokens
@@ -1186,6 +1162,7 @@ export function useServiceDetailPageState(props: {
     setSettings,
     settings,
     settingsPhase,
+    settingsError,
     stackSettings,
     settingsBusy,
     stack,
