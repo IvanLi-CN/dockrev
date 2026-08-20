@@ -146,22 +146,22 @@
 ## Visual Evidence
 
 - source_type=storybook_canvas · story_id_or_title=`Pages/ServicesPage/Git Hub Release Drawer Target Version From Timeline` · state=`timeline version -> drawer` · evidence_note=`验证 badge 仍先进入版本时间线，而点击时间线里的具体版本后仍会联动打开 GitHub Releases 抽屉，并保留 releaseDrawer/releaseServiceId/releaseVersion 状态。`
-  ![Services 时间线联动 GitHub Releases 抽屉](./assets/release-drawer-services-timeline-link.png)
+  ![Services 时间线联动 GitHub Releases 抽屉](docs/specs/4fhgd-github-release-drawer/assets/release-drawer-services-timeline-link.png)
 
 - source_type=storybook_canvas · story_id_or_title=`Components/GitHubReleaseDrawer/Anonymous Located` · state=`locate-first hit · anchor window` · evidence_note=`验证抽屉首屏直接落在后端返回的锚点窗口内，顶部 success banner 明确告知已定位到目标版本，且不会再为了找目标版本继续线性扫页。`
-  ![统一 locate 命中后的发布抽屉锚点窗口](../../screenshots/release-notes-locate/drawer-locate-found.png)
+  ![统一 locate 命中后的发布抽屉锚点窗口](docs/screenshots/release-notes-locate/drawer-locate-found.png)
 
 - source_type=storybook_canvas · story_id_or_title=`Components/GitHubReleaseDrawer/Pat Authenticated Short List` · state=`pat authenticated · short list` · evidence_note=`验证已保存 GitHub PAT 时，抽屉在较少 release 数据下仍保持正确的右侧 Drawer 形态；若内容略超出高度，则只允许抽屉内容区自身滚动，并通过信息 icon 的悬浮气泡承载 PAT 身份。`
-  ![PAT 身份下的短列表 GitHub Releases 抽屉](./assets/release-drawer-short-list.png)
+  ![PAT 身份下的短列表 GitHub Releases 抽屉](docs/specs/4fhgd-github-release-drawer/assets/release-drawer-short-list.png)
 
 - source_type=storybook_canvas · story_id_or_title=`Components/GitHubReleaseDrawer/Permission Denied` · state=`permission denied` · evidence_note=`验证匿名访问私有仓库失败时，抽屉内给出权限提示并提供跳转到设置页的入口。`
-  ![权限不足时的 GitHub Releases 抽屉提示](./assets/release-drawer-permission-denied.png)
+  ![权限不足时的 GitHub Releases 抽屉提示](docs/specs/4fhgd-github-release-drawer/assets/release-drawer-permission-denied.png)
 
 - source_type=storybook_canvas · story_id_or_title=`Components/GitHubReleaseDrawer/Outside Window` · state=`outside window` · evidence_note=`验证目标版本存在但不在当前锚点窗口内时，抽屉顶部显示 outside-window banner，同时首屏回到最新窗口而不是继续自动翻页。`
-  ![目标版本位于当前锚点窗口之外时的提示](../../screenshots/release-notes-locate/drawer-outside-window.png)
+  ![目标版本位于当前锚点窗口之外时的提示](docs/screenshots/release-notes-locate/drawer-outside-window.png)
 
 - source_type=storybook_canvas · story_id_or_title=`Pages/ServiceDetailPage/UpdateHistoryReleaseNotes` · state=`history record target version -> drawer` · evidence_note=`验证更新记录的目标版本入口打开同一右侧抽屉，保留 URL target，并在虚拟列表中高亮定位版本。`
-  ![服务更新记录联动发布抽屉](./assets/release-drawer-service-history-target.png)
+  ![服务更新记录联动发布抽屉](docs/specs/4fhgd-github-release-drawer/assets/release-drawer-service-history-target.png)
 
 - source_type=storybook_canvas · story_id_or_title=`Components/GitHubReleaseDrawer/Cached Release Notes Alert` · state=`dark theme · cached release notes` · evidence_note=`验证 Alert 使用组件库语义并悬浮于可滚动内容上方；右上角与列表内的外链图标继承暗色主题前景色，不再回退为默认黑色。`
 
