@@ -172,4 +172,13 @@ describe('release notes refresh retry policy', () => {
 
     expect(__releaseNotesSessionTestUtils.releaseNotesRefreshRetryDelayMs(fresh)).toBe(60_000)
   })
+
+  test('ignores a refresh request that was replaced by visibility recovery', () => {
+    const first = new AbortController()
+    const replacement = new AbortController()
+    first.abort()
+
+    expect(__releaseNotesSessionTestUtils.isCurrentReleaseNotesRefreshRequest(replacement, first)).toBe(false)
+    expect(__releaseNotesSessionTestUtils.isCurrentReleaseNotesRefreshRequest(replacement, replacement)).toBe(true)
+  })
 })

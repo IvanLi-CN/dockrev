@@ -35,6 +35,13 @@ export function releaseNotesRefreshRetryDelayMs(
   return Math.min(MAX_REFRESH_RETRY_SECONDS, Math.max(1, retryAfterSeconds)) * 1000
 }
 
+export function isCurrentReleaseNotesRefreshRequest(
+  activeRequest: AbortController | null,
+  candidate: AbortController,
+): boolean {
+  return activeRequest === candidate && !candidate.signal.aborted
+}
+
 function snapshotCacheKey(serviceId: string, source: ServiceReleaseNotesResponse['source']): string {
   return `${serviceId}::${source}`
 }
@@ -96,6 +103,7 @@ function resetReleaseNotesSnapshotCache() {
 export const __releaseNotesSessionTestUtils = {
   cacheReleaseNotesSnapshot,
   buildStaleSnapshotResponse,
+  isCurrentReleaseNotesRefreshRequest,
   releaseNotesRefreshRetryDelayMs,
   resetReleaseNotesSnapshotCache,
 }
@@ -314,18 +322,31 @@ export function useServiceReleaseNotesSession(
     let timer: number | null = null
     let controller: AbortController | null = null
 
+    const clearScheduledRefresh = () => {
+      if (timer == null) return
+      window.clearTimeout(timer)
+      timer = null
+    }
+
     const revalidate = () => {
       if (cancelled || document.visibilityState === 'hidden') return
-      controller = new AbortController()
+      clearScheduledRefresh()
+      const requestController = new AbortController()
       refreshAbortRef.current?.abort()
-      refreshAbortRef.current = controller
+      controller = requestController
+      refreshAbortRef.current = requestController
+      const requestIsCurrent = () =>
+        !cancelled
+        && activeSessionRef.current === sessionKey
+        && document.visibilityState !== 'hidden'
+        && isCurrentReleaseNotesRefreshRequest(controller, requestController)
 
       void (async () => {
         let nextResponse: ServiceReleaseNotesResponse
         try {
-          nextResponse = await fetchInitialWindow(controller!.signal)
+          nextResponse = await fetchInitialWindow(requestController.signal)
         } catch (error) {
-          if (cancelled || activeSessionRef.current !== sessionKey) return
+          if (!requestIsCurrent()) return
           const message = buildReleaseNotesFailureResponse(error, null, input.limit).message
           setResponse((previous) => previous ? {
             ...previous,
@@ -338,7 +359,7 @@ export function useServiceReleaseNotesSession(
           return
         }
 
-        if (cancelled || activeSessionRef.current !== sessionKey) return
+        if (!requestIsCurrent()) return
         if (nextResponse.status !== 'ready') {
           setResponse((previous) => previous ? {
             ...previous,
@@ -378,14 +399,20 @@ export function useServiceReleaseNotesSession(
       }, delay)
     }
     const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') revalidate()
+      if (document.visibilityState === 'visible') {
+        revalidate()
+        return
+      }
+      clearScheduledRefresh()
+      controller?.abort()
+      if (refreshAbortRef.current === controller) refreshAbortRef.current = null
     }
 
     schedule(refreshRetryDelayMs)
     document.addEventListener('visibilitychange', onVisibilityChange)
     return () => {
       cancelled = true
-      if (timer != null) window.clearTimeout(timer)
+      clearScheduledRefresh()
       controller?.abort()
       if (refreshAbortRef.current === controller) refreshAbortRef.current = null
       document.removeEventListener('visibilitychange', onVisibilityChange)
