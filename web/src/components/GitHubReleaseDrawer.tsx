@@ -21,7 +21,6 @@ import {
   Drawer,
   DrawerClose,
   DrawerContent,
-  DrawerDescription,
   DrawerHeader,
   DrawerTitle,
   ExternalLinkIcon,
@@ -315,7 +314,7 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
       open={props.open && Boolean(serviceId)}
       onOpenChange={props.onOpenChange}
     >
-      <DrawerContent className="releaseDrawerContent" aria-describedby="github-release-drawer-description">
+      <DrawerContent className="releaseDrawerContent">
         <DrawerHeader className="releaseDrawerHeader">
           <div className="releaseDrawerHeaderTop">
             <div className="releaseDrawerHeaderText">
@@ -372,11 +371,6 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
                   </div>
                 ) : null}
               </div>
-              <DrawerDescription asChild>
-                <div className="releaseDrawerDescription" id="github-release-drawer-description">
-                  查看该服务对应仓库的发布记录，并可按版本号快速定位。
-                </div>
-              </DrawerDescription>
             </div>
             <div className="releaseDrawerHeaderActions">
               {repoUrl ? (

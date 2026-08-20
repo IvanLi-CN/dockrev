@@ -389,22 +389,18 @@ function assertVisibleReleaseRowsDoNotOverlap() {
 
 function readReleaseDrawerLayoutSnapshot() {
   const header = document.querySelector('.releaseDrawerHeader')
-  const description = document.querySelector('.releaseDrawerDescription')
   const banner = document.querySelector('[data-release-drawer-banner]')
   const scrollRegion = document.querySelector('.releaseDrawerScrollViewport')
   if (!(header instanceof HTMLElement)) throw new Error('expected release drawer header')
-  if (!(description instanceof HTMLElement)) throw new Error('expected release drawer description')
   if (!(banner instanceof HTMLElement)) throw new Error('expected release drawer banner')
   if (!(scrollRegion instanceof HTMLElement)) throw new Error('expected release drawer scroll region')
 
   const headerRect = header.getBoundingClientRect()
-  const descriptionRect = description.getBoundingClientRect()
   const bannerRect = banner.getBoundingClientRect()
   const scrollRect = scrollRegion.getBoundingClientRect()
 
   return {
     headerBottom: headerRect.bottom,
-    descriptionTop: descriptionRect.top,
     bannerTop: bannerRect.top,
     scrollTop: scrollRect.top,
   }
@@ -414,7 +410,6 @@ function assertTooltipDoesNotChangeDocumentFlow(before: ReturnType<typeof readRe
   const after = readReleaseDrawerLayoutSnapshot()
   const changed =
     Math.abs(after.headerBottom - before.headerBottom) > 1 ||
-    Math.abs(after.descriptionTop - before.descriptionTop) > 1 ||
     Math.abs(after.bannerTop - before.bannerTop) > 1 ||
     Math.abs(after.scrollTop - before.scrollTop) > 1
 
@@ -439,6 +434,9 @@ export const OctoRillSmartDefault: Story = {
     await new Promise((resolve) => setTimeout(resolve, 360))
     const drawer = document.querySelector('[data-release-drawer="true"]')
     if (!(drawer instanceof HTMLElement)) throw new Error('expected release drawer content to render')
+    if (drawer.textContent?.includes('查看该服务对应仓库的发布记录')) {
+      throw new Error('expected the release drawer to omit implementation-oriented header copy')
+    }
     if (!drawer.textContent?.includes('润色摘要')) {
       throw new Error('expected smart release notes to be visible by default')
     }
