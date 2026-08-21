@@ -770,6 +770,7 @@ export type {
   ServiceResourceOverviewResponse,
   ServiceResourcePeak,
   ServiceResourceSample,
+  ServiceResourceSnapshot,
   ServiceResourceUsageWindow
 } from './serviceResourceTypes'
 

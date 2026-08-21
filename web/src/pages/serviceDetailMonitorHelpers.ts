@@ -1,4 +1,4 @@
-import type { ServiceResourceSnapshot } from '../components/ServiceResourcePanel'
+import type { ServiceResourceSnapshot } from '../api'
 
 type ServiceDetailMonitorSample = ServiceResourceSnapshot['samples'][number]
 

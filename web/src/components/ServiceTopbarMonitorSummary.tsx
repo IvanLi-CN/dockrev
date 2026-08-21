@@ -1,6 +1,6 @@
 import { Cpu, Download, HardDriveDownload, HardDriveUpload, MemoryStick, Upload } from "lucide-react";
 import type { ReactNode } from "react";
-import type { ServiceResourceSnapshot } from "./ServiceResourcePanel";
+import type { ServiceResourceSnapshot } from "../api";
 import { computeMonitorTerminalRate, formatMonitorBytes, formatMonitorPercent, formatMonitorRate } from "../pages/serviceDetailMonitorHelpers";
 
 type MonitorMetric = {

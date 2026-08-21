@@ -17,6 +17,13 @@ export type ServiceResourceSample = {
   containerCount: number
 }
 
+export type ServiceResourceSnapshot = {
+  fetchedAt?: string | null
+  windowKey: ServiceResourceUsageWindow
+  samples: ServiceResourceSample[]
+  monitorDisabled?: boolean
+}
+
 export type ServiceResourceHistoryResponse = {
   serviceId: string
   window: ServiceResourceUsageWindow | string

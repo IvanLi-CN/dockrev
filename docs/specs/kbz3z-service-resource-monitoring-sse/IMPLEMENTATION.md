@@ -8,6 +8,12 @@
 - Lifecycle: active
 - Rollout: 本次不包含 101 Docker 恢复或生产部署。
 
+## Service detail live-state ownership
+
+- `useServiceDetailResourceMonitor` 是服务详情页唯一的资源状态所有者：统一加载窗口历史、合并晚到 REST 与较新的 SSE 样本、管理可见性/离线/禁用态，并为每个可见页只创建一条资源 SSE。
+- 顶部摘要在概览、监控和其它详情子页共享 controller 的 1 小时实时快照；受控 `ServiceResourcePanel` 使用同一快照，短窗口显示实时点，`7d`/`30d` 保留聚合历史。
+- Storybook mock 覆盖历史末点与 SSE tick 分离、顶部/面板同步、长窗口隔离、隐藏页暂停与前台 snapshot 恢复，以及离线/禁用态不建连接。
+
 ## Coverage / rollout summary
 
 - 普通命令 runner 在超时 future 被丢弃时终止子进程，避免 `docker ps` 等阻塞命令残留。

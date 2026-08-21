@@ -3,7 +3,6 @@ import { Layers3, LoaderCircle, RotateCw } from "lucide-react";
 import {
   createIgnore,
   deleteIgnore,
-  getServiceResourceUsageHistory,
   inferServiceRepoLink,
   listJobs,
   listJobsPage,
@@ -12,11 +11,9 @@ import {
   type JobListItem,
   type ServiceBackupRecordItem,
   type ServiceBackupTargetsResponse,
-  type ServiceResourceUsageWindow,
   type ServiceSettings,
   type StackDetail,
 } from "../api";
-import { isMonitorDisabledError } from "./serviceDetailMonitorHelpers";
 import { BackupPolicySegmentedControl } from "../components/BackupPolicySegmentedControl";
 import { BackupRecordList } from "../components/ServiceBackupRecords";
 import { ReadonlySnapshotNotice } from "../components/ReadonlySnapshotNotice";
@@ -26,7 +23,9 @@ import { Button, IconButton, Input, Mono, OverlayScrollArea, RefreshIcon, Select
 import { usePwaStatus } from "../pwaStatus";
 import { buildReadonlySnapshotKey, readReadonlySnapshot, writeReadonlySnapshot } from "../readonlySnapshotCache";
 import { serviceRowStatus } from "../updateStatus";
-import { ServiceResourcePanel, type ServiceResourceSnapshot } from "../components/ServiceResourcePanel";
+import { ServiceResourcePanel } from "../components/ServiceResourcePanel";
+import { useServiceDetailResourceMonitor } from "./useServiceDetailResourceMonitor";
+import type { ServiceResourceSnapshot } from "../api";
 import { ServiceTopbarMonitorSummary } from "../components/ServiceTopbarMonitorSummary";
 import { ServiceLogsPanel } from "../components/ServiceLogsPanel";
 import { createDefaultAutoUpdatePolicy } from "../components/AutoUpdatePolicyEditor";
@@ -60,7 +59,6 @@ function errorMessage(e: unknown): string {
   return String(e);
 }
 const SERVICE_DETAIL_SNAPSHOT_STALE_MS = 60_000;
-const SERVICE_DETAIL_MONITORING_WINDOW: ServiceResourceUsageWindow = "1h";
 type ServiceDetailSnapshotPayload = {
   version: 2;
   readiness: {
@@ -157,7 +155,6 @@ export function ServiceDetailPage(props: {
   const historyHasCommittedDataRef = useRef(false);
   const versionJobsRequestIdRef = useRef(0);
   currentServiceIdRef.current = props.serviceId;
-  const [monitoringSnapshot, setMonitoringSnapshot] = useState<ServiceResourceSnapshot | null>(null);
   const [snapshotPayload, setSnapshotPayload] = useState<ServiceDetailSnapshotPayload | null>(null);
   const [, setSnapshotStatus] = useState<"missing" | "fresh" | "stale" | "expired" | "unsupported">("missing");
   const [snapshotFetchedAt, setSnapshotFetchedAt] = useState<string | null>(null);
@@ -173,6 +170,14 @@ export function ServiceDetailPage(props: {
   const [autoPolicyDraft, setAutoPolicyDraft] = useState(() => createDefaultAutoUpdatePolicy("inherit"));
   const [serviceSettingsDraft, setServiceSettingsDraft] = useState<ServiceSettings | null>(null);
   const [serviceBackupTargetsDraft, setServiceBackupTargetsDraft] = useState<BackupTargetsDraft>(() => createBackupTargetsDraft(null));
+  const readonlyUi = !isOnline;
+  const resourceMonitor = useServiceDetailResourceMonitor({
+    serviceId: props.serviceId,
+    readonly: readonlyUi,
+    initialSnapshot: readonlyUi ? (snapshotPayload?.monitoring ?? null) : null,
+    isOnline,
+  });
+  const monitoringSnapshot = resourceMonitor.summarySnapshot;
   const refreshRecentJobs = useCallback(async (activateLive = false, cursor: string | null = historyCursorRef.current, nextCursorStack?: (string | null)[], trigger: AsyncDataTrigger = "background") => {
     const requestedServiceId = props.serviceId;
     const requestId = ++historyRequestIdRef.current;
@@ -232,7 +237,6 @@ export function ServiceDetailPage(props: {
       setHistoryCursor(snapshotHistoryCursor);
       setHistoryNextCursor(payload.historyNextCursor ?? null);
       setHistoryCursorStack(payload.historyCursorStack ?? []);
-      setMonitoringSnapshot(payload.monitoring ?? null);
       setJobs(payload.jobs);
       historyHasCommittedDataRef.current = true;
       setHistoryPhase(payload.jobs.length === 0 ? "ready-empty" : "ready-data");
@@ -293,35 +297,6 @@ export function ServiceDetailPage(props: {
     void refreshVersionJobs().catch(() => undefined);
   });
   useEffect(() => {
-    let cancelled = false;
-    if (!isOnline) return undefined;
-    void (async () => {
-      try {
-        const response = await getServiceResourceUsageHistory(props.serviceId, SERVICE_DETAIL_MONITORING_WINDOW);
-        if (cancelled) return;
-        setMonitoringSnapshot({
-          fetchedAt: response.samples.length > 0 ? (response.samples[response.samples.length - 1]?.sampledAt ?? new Date().toISOString()) : new Date().toISOString(),
-          windowKey: SERVICE_DETAIL_MONITORING_WINDOW,
-          samples: response.samples,
-          monitorDisabled: false,
-        });
-      } catch (error: unknown) {
-        if (cancelled) return;
-        if (isMonitorDisabledError(error)) {
-          setMonitoringSnapshot({
-            fetchedAt: new Date().toISOString(),
-            windowKey: SERVICE_DETAIL_MONITORING_WINDOW,
-            samples: [],
-            monitorDisabled: true,
-          });
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [isOnline, props.serviceId]);
-  useEffect(() => {
     if (!lastSuccessfulRefreshAt || !["ready-data", "ready-empty"].includes(backupPhase)) return;
     setSnapshotActive(false);
     setSnapshotAnchorFetchedAt(null);
@@ -361,7 +336,6 @@ export function ServiceDetailPage(props: {
   const effectiveBackupTargets = snapshotPayload && !backupLoaded && backupPhase !== "ready-data" && backupPhase !== "ready-empty" ? (snapshotPayload.backupTargets ?? backupTargets) : backupTargets;
   const effectiveBackupRecords = snapshotPayload && !backupLoaded && backupPhase !== "ready-data" && backupPhase !== "ready-empty" ? (snapshotPayload.backupRecords ?? backupRecords) : backupRecords;
   const effectiveMonitoringSnapshot = monitoringSnapshot ?? snapshotPayload?.monitoring ?? null;
-  const readonlyUi = !isOnline;
   const backupDataReady = backupPhase === "ready-data" || backupPhase === "ready-empty";
   const backupSettingsBusy = settingsBusy || snapshotActive || !backupDataReady;
   const backupHasData = effectiveBackupTargets !== null || effectiveBackupRecords.length > 0;
@@ -532,7 +506,7 @@ export function ServiceDetailPage(props: {
   );
   const renderMonitoringSection = () => (
     <div className="svcDetailSectionStack">
-      <ServiceResourcePanel initialSnapshot={readonlyUi ? (monitoringSnapshot ?? snapshotPayload?.monitoring ?? null) : undefined} isOnline={isOnline} readonly={readonlyUi} serviceId={effectiveService.id} />
+      <ServiceResourcePanel monitor={resourceMonitor.panel} />
     </div>
   );
   const renderBackupSection = () => (

@@ -1,11 +1,24 @@
 import type { Meta, StoryObj } from '@storybook/react'
-import type { ServiceResourceSample } from '../../api'
+import type { ServiceResourceSample, ServiceResourceSnapshot } from '../../api'
 import { ServiceResourcePanel } from '../../components/ServiceResourcePanel'
+import { useServiceDetailResourceMonitor } from '../../pages/useServiceDetailResourceMonitor'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
+import { waitForCondition } from '../pages/storyAssertions'
 
-const meta: Meta<typeof ServiceResourcePanel> = {
+type ResourcePanelStoryProps = {
+  serviceId?: string
+  readonly?: boolean
+  initialSnapshot?: ServiceResourceSnapshot | null
+}
+
+function ResourcePanelStory({ serviceId = 'svc-prod-api', readonly = false, initialSnapshot = null }: ResourcePanelStoryProps) {
+  const monitor = useServiceDetailResourceMonitor({ serviceId, readonly, initialSnapshot, isOnline: true })
+  return <ServiceResourcePanel monitor={monitor.panel} />
+}
+
+const meta: Meta<ResourcePanelStoryProps> = {
   title: 'Components/ServiceResourcePanel',
-  component: ServiceResourcePanel,
+  component: ResourcePanelStory,
   decorators: [withDockrevMockApi],
   args: {
     serviceId: 'svc-prod-api',
@@ -14,7 +27,7 @@ const meta: Meta<typeof ServiceResourcePanel> = {
 
 export default meta
 
-type Story = StoryObj<typeof ServiceResourcePanel>
+type Story = StoryObj<ResourcePanelStoryProps>
 
 function withEvidenceFrame(StoryComponent: React.ComponentType) {
   return (
@@ -121,6 +134,11 @@ export const InitialHistoryErrorAndRetry: Story = {
 
 export const MonitorDisabled: Story = {
   parameters: { dockrevApiScenario: 'service-detail-resource-monitor-disabled' },
+  play: async ({ canvasElement }) => {
+    await sleep(100)
+    expectStory(canvasElement.textContent?.includes('资源监控已关闭'), 'disabled monitor should render its explicit disabled state')
+    expectStory(Number(globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageEventSourceCalls ?? 0) === 0, 'disabled monitor should not create SSE')
+  },
 }
 
 export const StreamError: Story = {
@@ -173,6 +191,11 @@ export const OfflineSnapshot: Story = {
         },
       ],
     },
+  },
+  play: async ({ canvasElement }) => {
+    await sleep(40)
+    expectStory(canvasElement.textContent?.includes('离线缓存'), 'offline snapshot should stay read-only')
+    expectStory(Number(globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageEventSourceCalls ?? 0) === 0, 'offline snapshot should not create SSE')
   },
 }
 
@@ -258,5 +281,23 @@ export const WindowSwitchContract: Story = {
       canvasElement.querySelector('.svcResourcePoint title')?.textContent?.includes('此桶峰值 CPU'),
       'the latest aggregated point should expose its CPU peak tooltip',
     )
+  },
+}
+
+export const VisibilityPauseResume: Story = {
+  parameters: { dockrevApiScenario: 'default' },
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageEventSourceCalls ?? 0) === 1)
+    const previousVisibility = document.visibilityState
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+    document.dispatchEvent(new Event('visibilitychange'))
+    await waitForCondition(() => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageEventSourceCloseCalls ?? 0) >= 1)
+    expectStory(canvasElement.textContent?.includes('页面不可见，实时连接已暂停'), 'hidden page should pause its resource stream')
+
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    document.dispatchEvent(new Event('visibilitychange'))
+    await waitForCondition(() => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageEventSourceCalls ?? 0) === 2)
+    expectStory(Number(globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageEventSourceCalls ?? 0) === 2, 'foreground page should resume with a fresh resource stream')
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: previousVisibility })
   },
 }

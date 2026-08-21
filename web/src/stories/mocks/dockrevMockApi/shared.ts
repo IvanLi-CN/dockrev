@@ -226,6 +226,7 @@ export class MockEventSource extends EventTarget {
   onerror: ((this: EventSource, ev: Event) => unknown) | null = null
 
   private closed = false
+  private closeReported = false
   private polling = false
   private lastEventId = ''
   private pollTimer: number | null = null
@@ -234,6 +235,10 @@ export class MockEventSource extends EventTarget {
     super()
     this.url = String(url)
     this.withCredentials = eventSourceInitDict?.withCredentials === true
+    if (this.url.includes('/resource-usage/events')) {
+      const debug = globalThis.__DOCKREV_MOCK_DEBUG__
+      if (debug) debug.resourceUsageEventSourceCalls += 1
+    }
     this.connect()
     this.pollTimer = window.setInterval(() => {
       this.connect()
@@ -241,8 +246,14 @@ export class MockEventSource extends EventTarget {
   }
 
   close() {
+    if (this.closed) return
     this.closed = true
     this.readyState = MockEventSource.CLOSED
+    if (!this.closeReported && this.url.includes('/resource-usage/events')) {
+      const debug = globalThis.__DOCKREV_MOCK_DEBUG__
+      if (debug) debug.resourceUsageEventSourceCloseCalls += 1
+      this.closeReported = true
+    }
     if (this.pollTimer != null) {
       window.clearInterval(this.pollTimer)
       this.pollTimer = null
@@ -325,6 +336,10 @@ export type MockDebug = {
   serviceTagSuggestionCalls: number
   lastServiceTagSuggestionUrl: string | null
   lastComposeTagRequest: unknown | null
+  resourceUsageEventSourceCalls: number
+  resourceUsageEventSourceCloseCalls: number
+  resourceUsageLastSnapshot: ServiceResourceSample | null
+  resourceUsageLastTick: ServiceResourceSample | null
 }
 
 export type VersionInferenceTaskProgressMock = {
@@ -690,6 +705,12 @@ export function buildResourceSsePayload(
     pids: (snapshot.pids ?? 0) + 1,
   }
 
+  const debug = globalThis.__DOCKREV_MOCK_DEBUG__
+  if (debug) {
+    debug.resourceUsageLastSnapshot = snapshot
+    debug.resourceUsageLastTick = tick
+  }
+
   const events: string[] = []
   events.push(`id: 1\nevent: resource_usage_snapshot\ndata: ${JSON.stringify({ serviceId, sample: snapshot })}\n\n`)
 
@@ -730,6 +751,10 @@ export function makeMockDebug(): MockDebug {
     serviceTagSuggestionCalls: 0,
     lastServiceTagSuggestionUrl: null,
     lastComposeTagRequest: null,
+    resourceUsageEventSourceCalls: 0,
+    resourceUsageEventSourceCloseCalls: 0,
+    resourceUsageLastSnapshot: null,
+    resourceUsageLastTick: null,
   }
 }
 
