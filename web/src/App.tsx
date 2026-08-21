@@ -580,6 +580,7 @@ export default function App() {
         ) : null}
         {route.name === "service" ? (
           <ServiceDetailPage
+            key={`${route.stackId}:${route.serviceId}`}
             stackId={route.stackId}
             serviceId={route.serviceId}
             section={route.section}
