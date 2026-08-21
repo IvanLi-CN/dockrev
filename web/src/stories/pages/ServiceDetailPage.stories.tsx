@@ -8,18 +8,11 @@ import { expectLightServiceLogsContrast } from "./serviceLogsLightContrastStory"
 import { expectDesktopLogTimestampLayout } from "./serviceDetailLogsStories";
 import { buildLongLogsSnapshot, buildMultilineLogsSnapshot, historyReleaseNotes, paginatedHistoryJobs, partialHistoryBackupRecords } from "./serviceDetailPageStoryFixtures";
 import { assertRecentUpdateKeyboardNavigation, assertRecentUpdateReasonPopoverStaysOnRoute } from "./recentUpdateStoryAssertions";
+import { assertMonitoringResourceSync, assertOverviewMonitorSummary } from "./serviceDetailMonitorAssertions";
 import { drawerText, findActionButton, findHistoryRowByJobId, findLogRowContaining, findSectionCard, findTab, render, tabLabels, type ServiceDetailStory } from "./serviceDetailStoryShared";
 export { ActiveUpdateWithoutCandidate, DockrevVersionsSelfUpgrade, DockrevVersionsSelfUpgradeVisual, DockrevVersionsSelfUpgradeOffline, MobileVersionsSection, VersionsSection, VersionsSectionActionGuard, VersionsSectionIntermediateWidth, VersionsSectionIntermediateWideActions } from "./serviceDetailVersionsStories";
 export { DesktopLogsTimestampLayout, LogsSectionDateBoundaries, MobileLogsTimestampLayout } from "./serviceDetailLogsStories";
 import { expectNearlyEqual, expectStory, findButton, findButtons, findLink, normalizeText, waitForCondition } from "./storyAssertions";
-
-function monitorTickCpuLabel(value: number): string {
-  return value < 10 ? `${value.toFixed(1)}%` : `${value.toFixed(0)}%`;
-}
-
-function monitorPanelCpuLabel(value: number): string {
-  return `${value.toFixed(1)}%`;
-}
 
 const meta: Meta<typeof ServiceDetailPage> = {
   title: "Pages/ServiceDetailPage",
@@ -31,7 +24,6 @@ const meta: Meta<typeof ServiceDetailPage> = {
 
 export default meta;
 type Story = ServiceDetailStory;
-
 export const OverviewDefault: Story = {
   parameters: { dockrevApiScenario: "dashboard-demo" },
   render: render("stack-prod", "svc-prod-api", "overview", "旧链接默认落到概览；保留共享顶部动作与最近更新记录"),
@@ -55,17 +47,7 @@ export const OverviewDefault: Story = {
     expectStory(Boolean(statusRail), "shared status rail missing");
     expectStory(Boolean(statusSummary), "shared status summary card detail missing");
     expectTopbarMonitorSummary({ monitorSummary, expectStory });
-    await waitForCondition(() => Boolean(globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageLastTick));
-    const monitorDebug = globalThis.__DOCKREV_MOCK_DEBUG__;
-    const historyEndCpu = monitorDebug?.resourceUsageLastSnapshot?.cpuPercent;
-    const liveTickCpu = monitorDebug?.resourceUsageLastTick?.cpuPercent;
-    expectStory(historyEndCpu != null && liveTickCpu != null && historyEndCpu !== liveTickCpu, "mock history end and SSE tick should differ");
-    await waitForCondition(() => {
-      const value = monitorSummary?.querySelector<HTMLElement>('[data-monitor-metric="CPU"]')?.getAttribute("aria-label") ?? "";
-      return liveTickCpu != null && value.includes(monitorTickCpuLabel(liveTickCpu));
-    });
-    expectStory(Number(monitorDebug?.resourceUsageEventSourceCalls ?? 0) === 1, "overview should create one page-level resource SSE");
-    await waitForCondition(() => normalizeText(canvasElement.ownerDocument.querySelector(".topbarRouteTitle")?.textContent) === "api");
+    await assertOverviewMonitorSummary({ canvasElement, monitorSummary });
     expectStory(!canvasElement.ownerDocument.querySelector(".pageHead .h1"), "service detail must not repeat the service name in the body");
     expectStory(!normalizeText(monitorSummary?.textContent).includes("api"), "topbar monitor summary should not repeat the service name");
     expectStory(
@@ -135,18 +117,6 @@ export const MonitoringSection: Story = {
   render: render("stack-prod", "svc-prod-api", "monitoring", "监控子页只承载资源监控面板"),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => normalizeText(canvasElement.textContent).includes("资源监控"));
-    const monitorDebug = globalThis.__DOCKREV_MOCK_DEBUG__;
-    await waitForCondition(() => Boolean(monitorDebug?.resourceUsageLastTick));
-    const liveTick = monitorDebug?.resourceUsageLastTick;
-    const historyEnd = monitorDebug?.resourceUsageLastSnapshot;
-    expectStory(liveTick && historyEnd && liveTick.cpuPercent !== historyEnd.cpuPercent, "monitoring mock should separate history end from live tick");
-    await waitForCondition(() => {
-      const summaryValue = canvasElement.ownerDocument.querySelector<HTMLElement>('[data-monitor-metric="CPU"]')?.getAttribute("aria-label") ?? "";
-      const panelValue = canvasElement.querySelector<HTMLElement>(".svcResourceStatValue")?.textContent ?? "";
-      const chartValue = canvasElement.querySelector<HTMLElement>(".svcResourceChartCurrentValue")?.textContent ?? "";
-      return liveTick != null && summaryValue.includes(monitorTickCpuLabel(liveTick.cpuPercent)) && panelValue.includes(monitorPanelCpuLabel(liveTick.cpuPercent)) && chartValue.includes(monitorPanelCpuLabel(liveTick.cpuPercent));
-    });
-    expectStory(Number(monitorDebug?.resourceUsageEventSourceCalls ?? 0) === 1, "monitoring page should create one resource SSE");
     const monitorSummary = canvasElement.ownerDocument.querySelector<HTMLElement>('[data-service-detail-context="monitor-summary"]');
     expectStory(currentRoutePathname() === "/services/stack-prod/svc-prod-api/monitoring", "monitoring deep link missing");
     expectStory(findTab(canvasElement, "monitoring")?.getAttribute("data-state") === "active", "monitoring tab should be active");
@@ -155,13 +125,7 @@ export const MonitoringSection: Story = {
     expectStory(Boolean(monitorSummary), "monitoring section should retain the topbar monitor summary");
     const panel = canvasElement.querySelector<HTMLElement>(".svcResourceCard");
     expectStory(Boolean(panel), "monitoring section should render the resource panel");
-    const shortWindowSampleAt = panel?.getAttribute("data-resource-current-sampled-at");
-    expectStory(shortWindowSampleAt === liveTick?.sampledAt, "short-window panel should expose the same live sample as the topbar");
-    const longWindow = canvasElement.querySelector<HTMLButtonElement>('button[value="7d"]');
-    longWindow?.click();
-    await waitForCondition(() => panel?.getAttribute("data-resource-window") === "7d" && panel.getAttribute("data-resource-current-sampled-at") !== liveTick?.sampledAt);
-    expectStory(panel?.getAttribute("data-resource-current-sampled-at") !== liveTick?.sampledAt, "7d chart should keep aggregated history separate from raw SSE");
-    expectStory(!normalizeText(monitorSummary?.textContent).includes("服务监控摘要"), "monitoring section should keep the compact topbar monitor summary without the subtitle");
+    await assertMonitoringResourceSync({ canvasElement, monitorSummary, panel: panel as HTMLElement });
     expectNoLegacyServiceDetailHero({ canvasElement, expectStory, context: "service detail deep links" });
     expectStory(!findSectionCard(canvasElement, "service-identifiers"), "monitoring should not render the overview-only identifiers card");
   },
