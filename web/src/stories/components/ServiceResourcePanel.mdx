@@ -4,7 +4,7 @@ import * as ServiceResourcePanelStories from './ServiceResourcePanel.stories'
 <Meta of={ServiceResourcePanelStories} />
 <Title />
 <Description>
-`ServiceResourcePanel` 把实时状态提升到头部 badge，并把指标切换与时间窗口整理成同一工具栏，同时保留 SSE 实时状态与历史趋势图逻辑；离线时则退化为本地缓存只读态。
+`ServiceResourcePanel` 是受控展示组件：页面级资源监控 controller 统一提供历史、SSE、可见性和离线状态，面板只负责指标切换、时间窗口和趋势图；离线时退化为本地缓存只读态，长窗口继续保持聚合历史语义。
 </Description>
 
 ## 关注点

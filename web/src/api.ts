@@ -148,7 +148,7 @@ export function asAuthRequiredDetails(details: unknown): AuthRequiredDetails | n
 }
 
 function dispatchAuthRequired(error: ApiError) {
-  if (typeof window === 'undefined') return
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return
   if (error.status !== 401 || error.code !== 'auth_required') return
   window.dispatchEvent(
     new CustomEvent(AUTH_REQUIRED_EVENT, {
@@ -163,7 +163,7 @@ function dispatchAuthRequired(error: ApiError) {
 }
 
 function dispatchAuthRecovered() {
-  if (typeof window === 'undefined') return
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return
   window.dispatchEvent(new CustomEvent(AUTH_RECOVERED_EVENT))
 }
 

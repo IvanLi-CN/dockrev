@@ -9744,6 +9744,25 @@ html[data-theme="light"] .serviceLogsTerminal {
     color-mix(in srgb, var(--color-warning) 54%, rgba(148, 163, 184, 0.18));
   color: color-mix(in srgb, var(--color-warning) 88%, var(--text) 12%);
   background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.svcResourceNoticeAction {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 48%, var(--borderColor) 52%);
+  border-radius: 8px;
+  padding: 5px 10px;
+  color: inherit;
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.svcResourceNoticeAction:hover {
+  background: color-mix(in srgb, var(--color-warning) 20%, transparent);
 }
 
 .svcResourceStatGrid {

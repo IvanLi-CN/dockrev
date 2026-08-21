@@ -8,6 +8,7 @@ import { expectLightServiceLogsContrast } from "./serviceLogsLightContrastStory"
 import { expectDesktopLogTimestampLayout } from "./serviceDetailLogsStories";
 import { buildLongLogsSnapshot, buildMultilineLogsSnapshot, historyReleaseNotes, paginatedHistoryJobs, partialHistoryBackupRecords } from "./serviceDetailPageStoryFixtures";
 import { assertRecentUpdateKeyboardNavigation, assertRecentUpdateReasonPopoverStaysOnRoute } from "./recentUpdateStoryAssertions";
+import { assertMonitoringResourceSync, assertOverviewMonitorSummary } from "./serviceDetailMonitorAssertions";
 import { drawerText, findActionButton, findHistoryRowByJobId, findLogRowContaining, findSectionCard, findTab, render, tabLabels, type ServiceDetailStory } from "./serviceDetailStoryShared";
 export { ActiveUpdateWithoutCandidate, DockrevVersionsSelfUpgrade, DockrevVersionsSelfUpgradeVisual, DockrevVersionsSelfUpgradeOffline, MobileVersionsSection, VersionsSection, VersionsSectionActionGuard, VersionsSectionIntermediateWidth, VersionsSectionIntermediateWideActions } from "./serviceDetailVersionsStories";
 export { DesktopLogsTimestampLayout, LogsSectionDateBoundaries, MobileLogsTimestampLayout } from "./serviceDetailLogsStories";
@@ -23,7 +24,6 @@ const meta: Meta<typeof ServiceDetailPage> = {
 
 export default meta;
 type Story = ServiceDetailStory;
-
 export const OverviewDefault: Story = {
   parameters: { dockrevApiScenario: "dashboard-demo" },
   render: render("stack-prod", "svc-prod-api", "overview", "旧链接默认落到概览；保留共享顶部动作与最近更新记录"),
@@ -47,7 +47,7 @@ export const OverviewDefault: Story = {
     expectStory(Boolean(statusRail), "shared status rail missing");
     expectStory(Boolean(statusSummary), "shared status summary card detail missing");
     expectTopbarMonitorSummary({ monitorSummary, expectStory });
-    await waitForCondition(() => normalizeText(canvasElement.ownerDocument.querySelector(".topbarRouteTitle")?.textContent) === "api");
+    await assertOverviewMonitorSummary({ canvasElement, monitorSummary });
     expectStory(!canvasElement.ownerDocument.querySelector(".pageHead .h1"), "service detail must not repeat the service name in the body");
     expectStory(!normalizeText(monitorSummary?.textContent).includes("api"), "topbar monitor summary should not repeat the service name");
     expectStory(
@@ -123,7 +123,9 @@ export const MonitoringSection: Story = {
     expectStory(!normalizeText(canvasElement.textContent).includes("最近更新记录"), "monitoring should not render recent updates");
     expectStory(!findSectionCard(canvasElement, "auto-policy"), "monitoring should not render settings cards");
     expectStory(Boolean(monitorSummary), "monitoring section should retain the topbar monitor summary");
-    expectStory(!normalizeText(monitorSummary?.textContent).includes("服务监控摘要"), "monitoring section should keep the compact topbar monitor summary without the subtitle");
+    const panel = canvasElement.querySelector<HTMLElement>(".svcResourceCard");
+    expectStory(Boolean(panel), "monitoring section should render the resource panel");
+    await assertMonitoringResourceSync({ canvasElement, monitorSummary, panel: panel as HTMLElement });
     expectNoLegacyServiceDetailHero({ canvasElement, expectStory, context: "service detail deep links" });
     expectStory(!findSectionCard(canvasElement, "service-identifiers"), "monitoring should not render the overview-only identifiers card");
   },
