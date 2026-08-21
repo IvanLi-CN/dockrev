@@ -143,6 +143,7 @@ export function useServiceDetailResourceMonitor(props: {
     ? trimSamplesToWindow(initialSnapshot.samples, RESOURCE_WINDOW_SECONDS[SUMMARY_WINDOW])
     : []
   const initialHasData = initialPanelSamples.length > 0 || initialSnapshot?.monitorDisabled === true
+  const initialSummaryHasData = initialSummarySamples.length > 0 || initialSnapshot?.monitorDisabled === true
 
   const [windowKey, setWindowKey] = useState<ServiceResourceUsageWindow>(initialWindow)
   const [panelSamples, setPanelSamples] = useState<ServiceResourceSample[]>(initialPanelSamples)
@@ -150,6 +151,7 @@ export function useServiceDetailResourceMonitor(props: {
   const [peaks, setPeaks] = useState<ServiceResourcePeak[]>([])
   const [historyLoading, setHistoryLoading] = useState(!readonly && isOnline)
   const [historyLoaded, setHistoryLoaded] = useState(initialHasData)
+  const [summaryLoaded, setSummaryLoaded] = useState(initialSummaryHasData)
   const [historyTrigger, setHistoryTrigger] = useState<AsyncDataTrigger>('background')
   const [historyReloadTick, setHistoryReloadTick] = useState(0)
   const [historyError, setHistoryError] = useState<string | null>(null)
@@ -168,6 +170,23 @@ export function useServiceDetailResourceMonitor(props: {
   windowKeyRef.current = windowKey
 
   useEffect(() => {
+    liveSamplesRef.current = []
+    panelHistoryRequestIdRef.current += 1
+    summaryHistoryRequestIdRef.current += 1
+    setWindowKey(initialWindow)
+    setPanelSamples([])
+    setSummarySamples([])
+    setSummaryLoaded(false)
+    setPeaks([])
+    setMonitorDisabled(false)
+    setHistoryLoading(!readonly && isOnline)
+    setHistoryLoaded(false)
+    setHistoryError(null)
+    setStreamError(null)
+    setStreamState('idle')
+  }, [initialWindow, isOnline, readonly, serviceId])
+
+  useEffect(() => {
     if (readonly && initialSnapshot) {
       const nextPanelSamples = trimSamplesToWindow(initialSnapshot.samples, RESOURCE_WINDOW_SECONDS[initialSnapshot.windowKey])
       const nextSummarySamples = trimSamplesToWindow(initialSnapshot.samples, RESOURCE_WINDOW_SECONDS[SUMMARY_WINDOW])
@@ -175,6 +194,7 @@ export function useServiceDetailResourceMonitor(props: {
       setWindowKey(initialSnapshot.windowKey)
       setPanelSamples(nextPanelSamples)
       setSummarySamples(nextSummarySamples)
+      setSummaryLoaded(nextSummarySamples.length > 0 || initialSnapshot.monitorDisabled === true)
       setPeaks([])
       setMonitorDisabled(initialSnapshot.monitorDisabled === true)
       setHistoryError(null)
@@ -188,6 +208,7 @@ export function useServiceDetailResourceMonitor(props: {
       liveSamplesRef.current = []
       setPanelSamples([])
       setSummarySamples([])
+      setSummaryLoaded(false)
       setPeaks([])
       setMonitorDisabled(false)
       setHistoryLoading(false)
@@ -229,6 +250,7 @@ export function useServiceDetailResourceMonitor(props: {
         setHistoryLoaded(true)
         if (windowKey === SUMMARY_WINDOW) {
           setSummarySamples(mergeSamples(response.samples, liveSamplesRef.current, RESOURCE_WINDOW_SECONDS[SUMMARY_WINDOW]))
+          setSummaryLoaded(true)
         }
       } catch (error: unknown) {
         if (cancelled || requestId !== panelHistoryRequestIdRef.current) return
@@ -237,6 +259,7 @@ export function useServiceDetailResourceMonitor(props: {
           setPanelSamples([])
           setPeaks([])
           setSummarySamples([])
+          setSummaryLoaded(true)
           setHistoryError(null)
           setStreamError(null)
           setHistoryLoaded(false)
@@ -263,7 +286,19 @@ export function useServiceDetailResourceMonitor(props: {
         if (cancelled || requestId !== summaryHistoryRequestIdRef.current) return
         setSummarySamples(mergeSamples(response.samples, liveSamplesRef.current, RESOURCE_WINDOW_SECONDS[SUMMARY_WINDOW]))
       } catch (error: unknown) {
-        if (cancelled || requestId !== summaryHistoryRequestIdRef.current || isMonitorDisabledError(error)) return
+        if (cancelled || requestId !== summaryHistoryRequestIdRef.current) return
+        if (isMonitorDisabledError(error)) {
+          liveSamplesRef.current = []
+          setPanelSamples([])
+          setSummarySamples([])
+          setPeaks([])
+          setMonitorDisabled(true)
+          setSummaryLoaded(true)
+          setHistoryLoaded(false)
+          setHistoryError(null)
+          setStreamError(null)
+          return
+        }
         setStreamError(errorMessage(error))
       }
     })()
@@ -302,6 +337,7 @@ export function useServiceDetailResourceMonitor(props: {
         RESOURCE_WINDOW_SECONDS[SUMMARY_WINDOW],
       )
       setSummarySamples((previous) => trimSamplesToWindow(appendSampleToSorted(previous, sample), RESOURCE_WINDOW_SECONDS[SUMMARY_WINDOW]))
+      setSummaryLoaded(true)
       if (windowKeyRef.current === '7d' || windowKeyRef.current === '30d') return
       setPanelSamples((previous) =>
         trimSamplesToWindow(
@@ -330,7 +366,14 @@ export function useServiceDetailResourceMonitor(props: {
       try {
         const parsed = JSON.parse(data) as { error?: unknown }
         if (parsed.error === 'resource_monitor_disabled') {
+          liveSamplesRef.current = []
+          setPanelSamples([])
+          setSummarySamples([])
+          setPeaks([])
           setMonitorDisabled(true)
+          setSummaryLoaded(true)
+          setHistoryLoaded(false)
+          setHistoryError(null)
           setStreamError('资源监控已关闭，请在系统设置中启用后重试。')
           closeSource()
           setStreamState('idle')
@@ -397,18 +440,21 @@ export function useServiceDetailResourceMonitor(props: {
 
   const onRetry = useCallback(() => {
     setHistoryTrigger('user-action')
+    setMonitorDisabled(false)
+    setSummaryLoaded(false)
+    setHistoryLoaded(false)
     setHistoryReloadTick((current) => current + 1)
   }, [])
 
   const summarySnapshot = useMemo<ServiceResourceSnapshot | null>(() => {
-    if (readonly && summarySamples.length === 0 && !monitorDisabled) return null
+    if (!summaryLoaded && !monitorDisabled) return null
     return {
       fetchedAt: summarySamples.at(-1)?.sampledAt ?? null,
       windowKey: SUMMARY_WINDOW,
       samples: summarySamples,
       monitorDisabled,
     }
-  }, [monitorDisabled, readonly, summarySamples])
+  }, [monitorDisabled, summaryLoaded, summarySamples])
 
   const panel = useMemo<ServiceDetailResourceMonitorPanelState>(
     () => ({

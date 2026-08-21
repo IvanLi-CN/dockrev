@@ -590,7 +590,14 @@ export function ServiceResourcePanel(props: { monitor: ServiceDetailResourceMoni
       </div>
 
       {monitorDisabled ? (
-        <div className="svcResourceNotice">资源监控已关闭，请在“系统设置 → 资源监控”中启用。</div>
+        <div className="svcResourceNotice">
+          <span>资源监控已关闭，请在“系统设置 → 资源监控”中启用。</span>
+          {!effectiveReadonly && isOnline ? (
+            <button type="button" className="svcResourceNoticeAction" onClick={onRetry}>
+              重试
+            </button>
+          ) : null}
+        </div>
       ) : (
         <>
           <div className="svcResourceStatGrid">

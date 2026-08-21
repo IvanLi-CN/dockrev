@@ -171,10 +171,13 @@ export function ServiceDetailPage(props: {
   const [serviceSettingsDraft, setServiceSettingsDraft] = useState<ServiceSettings | null>(null);
   const [serviceBackupTargetsDraft, setServiceBackupTargetsDraft] = useState<BackupTargetsDraft>(() => createBackupTargetsDraft(null));
   const readonlyUi = !isOnline;
+  const readonlyMonitorSnapshot = readonlyUi && snapshotPayload?.committedQueryKey.startsWith(`${props.stackId}:${props.serviceId}:`)
+    ? (snapshotPayload.monitoring ?? null)
+    : null;
   const resourceMonitor = useServiceDetailResourceMonitor({
     serviceId: props.serviceId,
     readonly: readonlyUi,
-    initialSnapshot: readonlyUi ? (snapshotPayload?.monitoring ?? null) : null,
+    initialSnapshot: readonlyMonitorSnapshot,
     isOnline,
   });
   const monitoringSnapshot = resourceMonitor.summarySnapshot;

@@ -10,8 +10,8 @@ type MonitorMetric = {
 };
 
 export function ServiceTopbarMonitorSummary(props: { snapshot: ServiceResourceSnapshot | null }) {
-  const latestSample = props.snapshot?.samples.at(-1) ?? null;
-  const previousSample = props.snapshot?.samples.at(-2) ?? null;
+  const latestSample = props.snapshot?.monitorDisabled ? null : props.snapshot?.samples.at(-1) ?? null;
+  const previousSample = props.snapshot?.monitorDisabled ? null : props.snapshot?.samples.at(-2) ?? null;
   const diskReadRate = computeMonitorTerminalRate(previousSample, latestSample, (sample) => sample.blockReadBytes);
   const diskWriteRate = computeMonitorTerminalRate(previousSample, latestSample, (sample) => sample.blockWriteBytes);
   const rxRate = computeMonitorTerminalRate(previousSample, latestSample, (sample) => sample.netRxBytes);
