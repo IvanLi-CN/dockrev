@@ -521,10 +521,10 @@ async function assertServiceLogsFollowAfterNewLog({
       null,
       { timeout: 10_000 },
     );
-    await viewport.evaluate((element) => {
-      element.scrollTop = 0;
-      element.dispatchEvent(new Event("scroll"));
-    });
+    const viewportBox = await viewport.boundingBox();
+    if (!viewportBox) throw new Error("Service logs viewport is missing a bounding box.");
+    await page.mouse.move(viewportBox.x + viewportBox.width / 2, viewportBox.y + viewportBox.height / 2);
+    await page.mouse.wheel(0, -1000);
     await page.waitForFunction(
       () => {
         const button = Array.from(document.querySelectorAll(".serviceLogsJumpWrap button")).find(
