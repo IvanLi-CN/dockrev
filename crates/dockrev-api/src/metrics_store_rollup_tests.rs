@@ -242,6 +242,114 @@ async fn metrics_store_five_minute_rollup_preserves_average_peak_and_terminal_co
 }
 
 #[tokio::test]
+async fn metrics_store_long_window_history_uses_bucket_start_range() {
+    let metrics = MetricsStore::open(&temp_path("metrics-rollup-index-plan"))
+        .await
+        .unwrap();
+    metrics
+        .insert_samples(&[
+            sample("svc-a", "2026-08-16T13:00:30Z", 10.0, 1_000),
+            sample("svc-a", "2026-08-16T13:01:30Z", 20.0, 2_000),
+            sample("svc-a", "2026-08-16T13:02:30Z", 30.0, 3_000),
+        ])
+        .await
+        .unwrap();
+
+    let exact_cutoff = metrics
+        .history_since(
+            "svc-a",
+            "2026-08-16T13:01:00Z",
+            Some(MINUTE_RESOLUTION_SECONDS),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        exact_cutoff
+            .samples
+            .iter()
+            .map(|sample| sample.sampled_at.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "2026-08-16T13:01:00Z",
+            "2026-08-16T13:02:00Z",
+            "2026-08-16T13:03:00Z"
+        ]
+    );
+    assert_eq!(exact_cutoff.peaks.len(), exact_cutoff.samples.len());
+    assert_eq!(
+        exact_cutoff.peaks[0].sampled_at,
+        exact_cutoff.samples[0].sampled_at
+    );
+
+    let fractional_cutoff = metrics
+        .history_since(
+            "svc-a",
+            "2026-08-16T13:01:00.500Z",
+            Some(MINUTE_RESOLUTION_SECONDS),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        fractional_cutoff
+            .samples
+            .iter()
+            .map(|sample| sample.sampled_at.as_str())
+            .collect::<Vec<_>>(),
+        ["2026-08-16T13:02:00Z", "2026-08-16T13:03:00Z"]
+    );
+    assert_eq!(
+        fractional_cutoff.peaks.len(),
+        fractional_cutoff.samples.len()
+    );
+    assert_eq!(
+        fractional_cutoff.peaks[0].sampled_at,
+        fractional_cutoff.samples[0].sampled_at
+    );
+
+    let five_minute_metrics = MetricsStore::open(&temp_path("metrics-five-minute-index-plan"))
+        .await
+        .unwrap();
+    five_minute_metrics
+        .insert_samples(&[
+            sample("svc-a", "2026-08-16T13:00:30Z", 10.0, 1_000),
+            sample("svc-a", "2026-08-16T13:05:30Z", 20.0, 2_000),
+        ])
+        .await
+        .unwrap();
+    let five_minute_cutoff = five_minute_metrics
+        .history_since(
+            "svc-a",
+            "2026-08-16T13:05:00.500Z",
+            Some(FIVE_MINUTE_RESOLUTION_SECONDS),
+        )
+        .await
+        .unwrap();
+    assert_eq!(five_minute_cutoff.samples.len(), 1);
+    assert_eq!(
+        five_minute_cutoff.samples[0].sampled_at,
+        "2026-08-16T13:10:00Z"
+    );
+
+    let plan = metrics
+        .reader_call(|conn| {
+            let explain_query = format!("EXPLAIN QUERY PLAN {ROLLUP_HISTORY_QUERY}");
+            let mut stmt = conn.prepare(&explain_query)?;
+            let rows = stmt.query_map(
+                params!["svc-a", MINUTE_RESOLUTION_SECONDS, "2026-08-16T13:00:00Z"],
+                |row| row.get::<_, String>(3),
+            )?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .unwrap();
+    let plan = plan.join(" ");
+    assert!(plan.contains("service_id=?"));
+    assert!(plan.contains("resolution_seconds=?"));
+    assert!(plan.contains("bucket_start>?"));
+    assert!(!plan.contains("TEMP B-TREE"));
+}
+
+#[tokio::test]
 async fn metrics_store_gc_keeps_five_minute_rollups_after_raw_and_minute_expiry() {
     let metrics = MetricsStore::open(&temp_path("metrics-five-minute-retention"))
         .await

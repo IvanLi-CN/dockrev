@@ -26,6 +26,7 @@
 - 迁移 manifest 同时记录 legacy raw 与 latest 的源计数/哈希、raw 最大 id 及源变更 revision。主库的 source revision 仅在旧指标表变更时递增，所以健康重启避免 raw、rollup 和墓碑全表扫描；指标库 target revision 只有在与受信 revision 不一致时才触发深度恢复。GC 墓碑另有活动 count/双校验和与受信快照，运行时 raw/latest 另以增量行数受信快照保护；未受信 native 数据不得猜测修复。深度恢复先比对快照再交叉验证墓碑仍对应主库源行；source latest 变化保留已验证墓碑，source raw 在已裁剪 legacy raw 后变化则阻断启动。任何已裁剪 native 或 legacy raw 后无法证明完整的长窗口桶同样阻断启动而非标记为可信。旧 manifest 缺少新字段时按未完成迁移处理。
 - 全局更新跟踪和概览的 compact jobs 路径经 SQLite JSON 投影只读取派生字段，不把完整 `summary_json` 选入 Rust；兼容的默认 jobs 路径仍读取原始 summary。
 - 资源历史短窗口保持原始样本契约，`7d` 与 `30d` 从 1 分钟或 5 分钟读模型返回均值主线及对齐峰值。首页和资源概览并行读取指标库与主库的 query-only 读模型，在 Rust 内按 service id 合并并过滤孤儿指标；镜像快照由启动预热、30 分钟后台协调器与显式操作刷新，GET 不排队工作。
+- 长窗口 rollup 查询按 `(service_id, resolution_seconds, bucket_start)` 复合索引读取并按桶起点排序。为保持既有“`bucket_end >= cutoff`”边界，Rust 将 cutoff 转为 `bucket_start >= ceil(cutoff - resolution)`；整秒 cutoff 保留恰好结束于 cutoff 的前导桶，带小数秒 cutoff 排除已经结束的桶，避免过期索引路径和临时排序。
 - 监控的 SSE、数据库 schema 与设置 wire shape 保持兼容；REST 资源历史和 Overview 聚合新增 `7d`/`30d` 窗口，前端资源面板提供相应控制项。控制面退化时允许当前样本缺失并由后续 cadence 自动恢复。
 
 ## Remaining Gaps

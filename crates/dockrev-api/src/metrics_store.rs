@@ -271,6 +271,15 @@ CREATE TRIGGER IF NOT EXISTS metrics_pruned_legacy_integrity_update
     WHERE id = 1; END;
 "#;
 
+const ROLLUP_HISTORY_QUERY: &str = r#"SELECT bucket_end, cpu_avg, mem_used_avg, mem_limit_avg, net_rx_last,
+    net_tx_last, block_read_last, block_write_last, pids_avg, container_count_avg,
+    net_rx_rate_avg, net_tx_rate_avg, block_read_rate_avg, block_write_rate_avg,
+    cpu_peak, mem_used_peak, mem_limit_peak, pids_peak, container_count_peak,
+    net_rx_rate_peak, net_tx_rate_peak, block_read_rate_peak, block_write_rate_peak
+FROM service_resource_rollups
+WHERE service_id = ?1 AND resolution_seconds = ?2 AND bucket_start >= ?3
+ORDER BY bucket_start ASC"#;
+
 #[derive(Clone)]
 pub struct MetricsStore {
     writer: Connection,
@@ -709,19 +718,15 @@ impl MetricsStore {
     ) -> anyhow::Result<MetricsHistory> {
         let service_id = service_id.to_string();
         let since = since.to_string();
+        let bucket_start_since = resolution_seconds
+            .map(|resolution_seconds| rollup_bucket_start_cutoff(&since, resolution_seconds))
+            .transpose()?;
         self.reader_call(move |conn| {
             if let Some(resolution_seconds) = resolution_seconds {
-                let mut stmt = conn.prepare(
-                    r#"SELECT bucket_end, cpu_avg, mem_used_avg, mem_limit_avg, net_rx_last,
-                        net_tx_last, block_read_last, block_write_last, pids_avg, container_count_avg,
-                        net_rx_rate_avg, net_tx_rate_avg, block_read_rate_avg, block_write_rate_avg,
-                        cpu_peak, mem_used_peak, mem_limit_peak, pids_peak, container_count_peak,
-                        net_rx_rate_peak, net_tx_rate_peak, block_read_rate_peak, block_write_rate_peak
-                    FROM service_resource_rollups
-                    WHERE service_id = ?1 AND resolution_seconds = ?2 AND bucket_end >= ?3
-                    ORDER BY bucket_start ASC"#,
-                )?;
-                let rows = stmt.query_map(params![service_id, resolution_seconds, since], |row| {
+                let mut stmt = conn.prepare(ROLLUP_HISTORY_QUERY)?;
+                let rows = stmt.query_map(
+                    params![service_id, resolution_seconds, bucket_start_since],
+                    |row| {
                     let sampled_at: String = row.get(0)?;
                     Ok((
                         ServiceResourceSample {
@@ -753,7 +758,8 @@ impl MetricsStore {
                             block_write_rate_bps: row.get(22)?,
                         },
                     ))
-                })?;
+                    },
+                )?;
                 let rows = rows.collect::<Result<Vec<_>, _>>()?;
                 Ok(MetricsHistory {
                     resolution_seconds: Some(resolution_seconds),
@@ -986,6 +992,13 @@ fn parse_epoch(value: &str) -> anyhow::Result<i64> {
         time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339)?
             .unix_timestamp(),
     )
+}
+fn rollup_bucket_start_cutoff(since: &str, resolution_seconds: u32) -> anyhow::Result<String> {
+    let cutoff =
+        time::OffsetDateTime::parse(since, &time::format_description::well_known::Rfc3339)?
+            - time::Duration::seconds(resolution_seconds as i64);
+    let bucket_start = cutoff.unix_timestamp() + i64::from(cutoff.nanosecond() > 0);
+    format_epoch(bucket_start)
 }
 fn format_epoch(value: i64) -> anyhow::Result<String> {
     format_time(time::OffsetDateTime::from_unix_timestamp(value)?)
