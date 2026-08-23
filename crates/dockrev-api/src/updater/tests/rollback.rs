@@ -33,6 +33,7 @@ fn managed_override_prepare_and_apply_share_one_rollback_snapshot() {
         &[&stack.services[0]],
         &HashMap::from([("svc_1".to_string(), targets[0].clone())]),
         Some(&root),
+        false,
     )
     .unwrap()
     .unwrap();
@@ -42,13 +43,32 @@ fn managed_override_prepare_and_apply_share_one_rollback_snapshot() {
         &[&stack.services[0]],
         &HashMap::from([("svc_1".to_string(), targets[0].clone())]),
         Some(&root),
+        true,
     )
     .unwrap()
     .unwrap();
     assert_eq!(previous, old);
 
+    let _new_operation = build_override_file(
+        &stack,
+        &[&stack.services[0]],
+        &HashMap::from([("svc_1".to_string(), targets[0].clone())]),
+        Some(&root),
+        false,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(format!("{}.previous", first.display())).unwrap(),
+        std::fs::read_to_string(&first).unwrap()
+    );
+
     restore_managed_override_snapshot(&first).unwrap();
-    assert_eq!(std::fs::read_to_string(&first).unwrap(), old);
+    assert!(
+        std::fs::read_to_string(&first)
+            .unwrap()
+            .contains("@sha256:aaaaaaaa")
+    );
     std::fs::remove_dir_all(root).unwrap();
 }
 

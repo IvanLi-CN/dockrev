@@ -461,6 +461,10 @@ fn reconcile_managed_override_requires_matching_repo_digest() {
         "ghcr.io/acme/web"
     ));
     assert!(!repo_digest_matches(
+        "ghcr.io/acme/web@sha256:GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
+        "ghcr.io/acme/web"
+    ));
+    assert!(!repo_digest_matches(
         "ghcr.io/other/web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "web"
     ));

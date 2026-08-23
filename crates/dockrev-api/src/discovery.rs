@@ -1371,7 +1371,12 @@ fn repo_digest_matches(repo_digest: &str, base_repo: &str) -> bool {
     let Some((repo, digest)) = repo_digest.split_once('@') else {
         return false;
     };
-    if !digest.starts_with("sha256:") || digest.len() != 71 {
+    if !digest.starts_with("sha256:")
+        || digest.len() != 71
+        || !digest["sha256:".len()..]
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    {
         return false;
     }
     repo == base_repo

@@ -268,6 +268,7 @@ pub(crate) async fn pre_pull_update_images_using_root_unlocked(
         &services,
         &explicit_targets_by_service,
         managed_override_root,
+        false,
     )?;
     let override_stack = override_path.as_ref().map(|path| ComposeStack {
         project_name: compose_stack.project_name.clone(),
@@ -614,6 +615,7 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
         &services,
         &explicit_targets_by_service,
         managed_override_root,
+        images_pre_pulled,
     )?;
     let override_stack = override_path.as_ref().map(|p| ComposeStack {
         project_name: compose_stack.project_name.clone(),
@@ -1285,6 +1287,7 @@ fn build_override_file(
     services: &[&crate::api::types::Service],
     explicit_targets: &HashMap<String, UpdateServiceTarget>,
     managed_override_root: Option<&Path>,
+    preserve_snapshot: bool,
 ) -> anyhow::Result<Option<std::path::PathBuf>> {
     if services.is_empty() {
         return Ok(None);
@@ -1352,7 +1355,10 @@ fn build_override_file(
     let contents = managed_override::render_image_only_override(&entries)?;
     let current_contents = std::fs::read_to_string(&path).ok();
     let snapshot_path = std::path::PathBuf::from(format!("{}.previous", path.display()));
-    if current_contents.as_deref() != Some(contents.as_str()) || !snapshot_path.is_file() {
+    if !preserve_snapshot
+        || current_contents.as_deref() != Some(contents.as_str())
+        || !snapshot_path.is_file()
+    {
         managed_override::commit_with_snapshot(&path, &contents)?;
     }
     Ok(Some(path))
