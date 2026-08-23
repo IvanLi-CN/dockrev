@@ -958,6 +958,13 @@ pub(crate) async fn restore_services_after_failed_apply_unlocked(
         crate::managed_override::managed_override_path(managed_override_dir, &stack.id);
     let pending_override_snapshot =
         crate::managed_override::has_pending_snapshot(&managed_override_path);
+    if pending_override_snapshot
+        && crate::managed_override::pending_snapshot_is_applied(&managed_override_path)?
+    {
+        crate::managed_override::discard_snapshot(&managed_override_path)
+            .context("discard applied managed override snapshot during recovery")?;
+        return Ok(());
+    }
     if pending_override_snapshot {
         let _override_guard = crate::managed_override::lock();
         let snapshot = format!("{}.previous", managed_override_path.display());
@@ -1555,6 +1562,34 @@ mod tests {
             &missing_active_path
         ));
         std::fs::remove_dir_all(root_without_active).unwrap();
+
+        let root_with_applied = std::env::temp_dir().join(format!(
+            "dockrev-backup-recovery-applied-{}",
+            ulid::Ulid::new()
+        ));
+        std::fs::create_dir_all(&root_with_applied).unwrap();
+        let applied_path =
+            crate::managed_override::managed_override_path(&root_with_applied, "stk_test");
+        crate::managed_override::commit_with_snapshot(&applied_path, old).unwrap();
+        crate::managed_override::commit_with_snapshot(&applied_path, next).unwrap();
+        crate::managed_override::mark_snapshot_applied(&applied_path).unwrap();
+        let applied_runner = FakeRunner::default();
+        restore_services_after_failed_apply(
+            &applied_runner,
+            "docker-compose",
+            None,
+            &test_stack(Vec::new()),
+            &root_with_applied,
+            &["web".to_string()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&applied_path).unwrap(), next);
+        assert!(!crate::managed_override::has_pending_snapshot(
+            &applied_path
+        ));
+        assert!(applied_runner.calls.lock().unwrap().is_empty());
+        std::fs::remove_dir_all(root_with_applied).unwrap();
     }
 
     #[tokio::test]
