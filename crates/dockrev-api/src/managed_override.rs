@@ -10,6 +10,8 @@ use anyhow::Context as _;
 use ring::digest::{SHA256, digest};
 
 static MANAGED_OVERRIDE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+static MANAGED_OVERRIDE_OPERATION_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 pub const STALE_TEMP_WARNING: &str = "warning:config_files_stale_dockrev_temp_override";
 
@@ -17,6 +19,14 @@ pub fn lock() -> MutexGuard<'static, ()> {
     MANAGED_OVERRIDE_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+pub fn try_operation_lock() -> Option<tokio::sync::MutexGuard<'static, ()>> {
+    MANAGED_OVERRIDE_OPERATION_LOCK.try_lock().ok()
+}
+
+pub async fn operation_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    MANAGED_OVERRIDE_OPERATION_LOCK.lock().await
 }
 
 pub fn managed_override_path(root: &Path, stack_id: &str) -> PathBuf {

@@ -146,6 +146,7 @@ pub struct UpdateProgressEvent {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 pub async fn pre_pull_update_images(
     runner: &dyn CommandRunner,
     compose_bin: &str,
@@ -160,6 +161,40 @@ pub async fn pre_pull_update_images(
     dockrev_image_repo: Option<&str>,
     progress_events: Option<UnboundedSender<UpdateProgressEvent>>,
 ) -> anyhow::Result<()> {
+    pre_pull_update_images_using_root(
+        runner,
+        compose_bin,
+        docker_config_path,
+        idempotent_retry_policy,
+        stack,
+        scope,
+        service_id,
+        explicit_targets,
+        allow_arch_mismatch,
+        update_reason,
+        dockrev_image_repo,
+        progress_events,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn pre_pull_update_images_using_root(
+    runner: &dyn CommandRunner,
+    compose_bin: &str,
+    docker_config_path: Option<&Path>,
+    idempotent_retry_policy: IdempotentRetryPolicy,
+    stack: &StackRecord,
+    scope: &JobScope,
+    service_id: Option<&str>,
+    explicit_targets: Option<&[UpdateServiceTarget]>,
+    allow_arch_mismatch: bool,
+    update_reason: &str,
+    dockrev_image_repo: Option<&str>,
+    progress_events: Option<UnboundedSender<UpdateProgressEvent>>,
+    managed_override_root: Option<&Path>,
+) -> anyhow::Result<()> {
     let services = select_update_services(
         stack,
         scope,
@@ -172,6 +207,8 @@ pub async fn pre_pull_update_images(
     if services.is_empty() {
         return Ok(());
     }
+
+    let _managed_override_operation_guard = managed_override::operation_lock().await;
 
     let explicit_targets_by_service = explicit_targets
         .unwrap_or(&[])
@@ -193,7 +230,12 @@ pub async fn pre_pull_update_images(
         project_name: sanitize_project_name(&stack.name),
         compose: stack.compose.clone(),
     };
-    let override_path = build_override_file(stack, &services, &explicit_targets_by_service)?;
+    let override_path = build_override_file(
+        stack,
+        &services,
+        &explicit_targets_by_service,
+        managed_override_root,
+    )?;
     let override_stack = override_path.as_ref().map(|path| ComposeStack {
         project_name: compose_stack.project_name.clone(),
         compose: {
@@ -361,6 +403,48 @@ pub async fn run_update_job_with_gate(
     services_stopped_for_backup: &[String],
     apply_gate: Option<&dyn UpdateApplyGate>,
 ) -> anyhow::Result<UpdateOutcome> {
+    run_update_job_with_gate_using_root(
+        runner,
+        compose_bin,
+        docker_config_path,
+        idempotent_retry_policy,
+        stack,
+        scope,
+        service_id,
+        mode,
+        explicit_targets,
+        allow_arch_mismatch,
+        update_reason,
+        dockrev_image_repo,
+        progress_events,
+        images_pre_pulled,
+        services_stopped_for_backup,
+        apply_gate,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn run_update_job_with_gate_using_root(
+    runner: &dyn CommandRunner,
+    compose_bin: &str,
+    docker_config_path: Option<&Path>,
+    idempotent_retry_policy: IdempotentRetryPolicy,
+    stack: &StackRecord,
+    scope: &JobScope,
+    service_id: Option<&str>,
+    mode: &str,
+    explicit_targets: Option<&[UpdateServiceTarget]>,
+    allow_arch_mismatch: bool,
+    update_reason: &str,
+    dockrev_image_repo: Option<&str>,
+    progress_events: Option<UnboundedSender<UpdateProgressEvent>>,
+    images_pre_pulled: bool,
+    services_stopped_for_backup: &[String],
+    apply_gate: Option<&dyn UpdateApplyGate>,
+    managed_override_root: Option<&Path>,
+) -> anyhow::Result<UpdateOutcome> {
     let selection = select_update_services(
         stack,
         scope,
@@ -404,6 +488,8 @@ pub async fn run_update_job_with_gate(
         });
     }
 
+    let _managed_override_operation_guard = managed_override::operation_lock().await;
+
     let explicit_targets_by_service = explicit_targets
         .unwrap_or(&[])
         .iter()
@@ -439,7 +525,12 @@ pub async fn run_update_job_with_gate(
         compose: stack.compose.clone(),
     };
 
-    let override_path = build_override_file(stack, &services, &explicit_targets_by_service)?;
+    let override_path = build_override_file(
+        stack,
+        &services,
+        &explicit_targets_by_service,
+        managed_override_root,
+    )?;
     let override_stack = override_path.as_ref().map(|p| ComposeStack {
         project_name: compose_stack.project_name.clone(),
         compose: {
@@ -1109,16 +1200,20 @@ fn build_override_file(
     stack: &StackRecord,
     services: &[&crate::api::types::Service],
     explicit_targets: &HashMap<String, UpdateServiceTarget>,
+    managed_override_root: Option<&Path>,
 ) -> anyhow::Result<Option<std::path::PathBuf>> {
     if services.is_empty() {
         return Ok(None);
     }
 
-    let root = managed_override::configured_root(
-        &std::env::var_os("DOCKREV_DB_PATH")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| std::path::PathBuf::from("./data/dockrev.sqlite3")),
-    )?;
+    let root = match managed_override_root {
+        Some(root) => root.to_path_buf(),
+        None => managed_override::configured_root(
+            &std::env::var_os("DOCKREV_DB_PATH")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from("./data/dockrev.sqlite3")),
+        )?,
+    };
     let path = managed_override::managed_override_path(&root, &stack.id);
     let _guard = managed_override::lock();
     managed_override::recover_interrupted(&path)?;

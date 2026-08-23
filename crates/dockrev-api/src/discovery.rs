@@ -22,11 +22,8 @@ use crate::{
 
 static DISCOVERY_SCAN_LOCK: LazyLock<tokio::sync::Mutex<()>> =
     LazyLock::new(|| tokio::sync::Mutex::new(()));
-static MANAGED_RECONCILE_LOCK: LazyLock<tokio::sync::Mutex<()>> =
-    LazyLock::new(|| tokio::sync::Mutex::new(()));
-
 pub fn try_managed_reconcile_lock() -> Option<tokio::sync::MutexGuard<'static, ()>> {
-    MANAGED_RECONCILE_LOCK.try_lock().ok()
+    managed_override::try_operation_lock()
 }
 
 fn now_rfc3339() -> anyhow::Result<String> {

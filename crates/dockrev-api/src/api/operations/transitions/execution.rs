@@ -280,7 +280,7 @@ pub(crate) async fn run_update_job(
                         .await;
                     }
                 });
-                let pre_pull_result = updater::pre_pull_update_images(
+                let pre_pull_result = updater::pre_pull_update_images_using_root(
                     &logging_runner,
                     &state.config.compose_bin,
                     state.config.docker_config_path.as_deref(),
@@ -297,6 +297,7 @@ pub(crate) async fn run_update_job(
                     req.reason.as_str(),
                     Some(state.config.dockrev_image_repo.as_str()),
                     Some(pull_progress_tx),
+                    Some(&state.config.managed_override_dir),
                 )
                 .await;
                 let _ = pull_progress_task.await;
@@ -497,7 +498,7 @@ pub(crate) async fn run_update_job(
                             .await;
                         }
                     });
-                    let pull_future = updater::pre_pull_update_images(
+                    let pull_future = updater::pre_pull_update_images_using_root(
                         &logging_runner,
                         &state.config.compose_bin,
                         state.config.docker_config_path.as_deref(),
@@ -514,6 +515,7 @@ pub(crate) async fn run_update_job(
                         req.reason.as_str(),
                         Some(state.config.dockrev_image_repo.as_str()),
                         Some(pull_progress_tx),
+                        Some(&state.config.managed_override_dir),
                     );
                     let (backup_result, pull_result) = tokio::join!(backup_future, pull_future);
                     let _ = pull_progress_task.await;
@@ -802,7 +804,7 @@ pub(crate) async fn run_update_job(
                 db: state.db.clone(),
                 job_id: job_id.clone(),
             };
-            let update_outcome = updater::run_update_job_with_gate(
+            let update_outcome = updater::run_update_job_with_gate_using_root(
                 &logging_runner,
                 &state.config.compose_bin,
                 state.config.docker_config_path.as_deref(),
@@ -820,6 +822,7 @@ pub(crate) async fn run_update_job(
                 &services_kept_stopped_for_apply,
                 (job_kind == TransitionJobKind::Update && req.mode.as_str() == "apply")
                     .then_some(&apply_gate as &dyn updater::UpdateApplyGate),
+                Some(&state.config.managed_override_dir),
             )
             .await;
             let _ = progress_task.await;
