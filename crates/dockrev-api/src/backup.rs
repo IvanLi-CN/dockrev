@@ -958,12 +958,17 @@ pub(crate) async fn restore_services_after_failed_apply_unlocked(
         crate::managed_override::managed_override_path(managed_override_dir, &stack.id);
     let pending_override_snapshot =
         crate::managed_override::has_pending_snapshot(&managed_override_path);
-    if pending_override_snapshot && managed_override_path.is_file() {
+    if pending_override_snapshot {
         let _override_guard = crate::managed_override::lock();
         let snapshot = format!("{}.previous", managed_override_path.display());
         if Path::new(&snapshot).is_file() {
             crate::managed_override::restore_snapshot(&managed_override_path, Some(&snapshot))
                 .context("restore managed override before service recovery")?;
+        } else {
+            anyhow::bail!(
+                "managed override pending marker has no previous snapshot: {}",
+                managed_override_path.display()
+            );
         }
     }
     let mut compose = stack.compose.clone();
@@ -977,6 +982,10 @@ pub(crate) async fn restore_services_after_failed_apply_unlocked(
         compose,
     };
     if services.is_empty() {
+        if pending_override_snapshot {
+            crate::managed_override::discard_snapshot(&managed_override_path)
+                .context("discard managed override snapshot after empty service recovery")?;
+        }
         return Ok(());
     }
     let out = runner
@@ -1520,6 +1529,32 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&stale_path).unwrap(), next);
         std::fs::remove_dir_all(root).unwrap();
         std::fs::remove_dir_all(root_without_pending).unwrap();
+
+        let root_without_active = std::env::temp_dir().join(format!(
+            "dockrev-backup-recovery-missing-active-{}",
+            ulid::Ulid::new()
+        ));
+        std::fs::create_dir_all(&root_without_active).unwrap();
+        let missing_active_path =
+            crate::managed_override::managed_override_path(&root_without_active, "stk_test");
+        crate::managed_override::commit_with_snapshot(&missing_active_path, old).unwrap();
+        crate::managed_override::commit_with_snapshot(&missing_active_path, next).unwrap();
+        std::fs::remove_file(&missing_active_path).unwrap();
+        restore_services_after_failed_apply(
+            &runner,
+            "docker-compose",
+            None,
+            &test_stack(Vec::new()),
+            &root_without_active,
+            &["web".to_string()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&missing_active_path).unwrap(), old);
+        assert!(!crate::managed_override::has_pending_snapshot(
+            &missing_active_path
+        ));
+        std::fs::remove_dir_all(root_without_active).unwrap();
     }
 
     #[tokio::test]

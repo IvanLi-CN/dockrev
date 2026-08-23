@@ -167,13 +167,45 @@ async fn main() -> anyhow::Result<()> {
     }
     // Recover managed override transactions even when the interrupted update had no persisted
     // backup checkpoint. This clears candidate pins left between atomic commit and service apply.
-    for stack in state.db.list_stacks(db::ArchivedFilter::Include).await? {
-        let path =
-            managed_override::managed_override_path(&state.config.managed_override_dir, &stack.id);
-        if managed_override::has_pending_snapshot(&path) {
-            if let Err(error) = managed_override::recover_pending_snapshot(&path) {
+    for stack_item in state.db.list_stacks(db::ArchivedFilter::Include).await? {
+        let path = managed_override::managed_override_path(
+            &state.config.managed_override_dir,
+            &stack_item.id,
+        );
+        if managed_override::pending_snapshot_is_applied(&path)? {
+            if let Err(error) = managed_override::discard_snapshot(&path) {
                 tracing::error!(
-                    stack_id = %stack.id,
+                    stack_id = %stack_item.id,
+                    path = %path.display(),
+                    error = %error,
+                    "failed to finalize managed override transaction"
+                );
+            }
+            continue;
+        }
+        if managed_override::has_pending_snapshot(&path) {
+            let Some(stack) = state.db.get_stack(&stack_item.id).await? else {
+                tracing::error!(stack_id = %stack_item.id, "pending managed override stack not found");
+                continue;
+            };
+            let services = stack
+                .services
+                .iter()
+                .filter(|service| !service.archived.unwrap_or(false))
+                .map(|service| service.name.clone())
+                .collect::<Vec<_>>();
+            if let Err(error) = backup::restore_services_after_failed_apply(
+                &*state.runner,
+                &state.config.compose_bin,
+                state.config.docker_config_path.as_deref(),
+                &stack,
+                &state.config.managed_override_dir,
+                &services,
+            )
+            .await
+            {
+                tracing::error!(
+                    stack_id = %stack_item.id,
                     path = %path.display(),
                     error = %error,
                     "failed to recover managed override transaction"

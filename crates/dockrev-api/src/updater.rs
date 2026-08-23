@@ -1266,6 +1266,7 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
     }
 
     if let Some(path) = override_path.as_deref() {
+        managed_override::mark_snapshot_applied(path)?;
         managed_override::discard_snapshot(path)?;
     }
     Ok(UpdateOutcome {
@@ -1371,9 +1372,17 @@ fn build_override_file(
 
 pub(crate) fn restore_managed_override_snapshot(path: &Path) -> anyhow::Result<()> {
     let _guard = managed_override::lock();
+    if !managed_override::has_pending_snapshot(path) {
+        return Ok(());
+    }
     let snapshot = format!("{}.previous", path.display());
     if Path::new(&snapshot).is_file() {
         managed_override::restore_snapshot(path, Some(&snapshot))?;
+    } else {
+        anyhow::bail!(
+            "managed override pending marker has no previous snapshot: {}",
+            path.display()
+        );
     }
     managed_override::discard_snapshot(path)
 }
@@ -1392,9 +1401,21 @@ fn normalize_digest(input: &str) -> String {
     {
         if let Some((algorithm, value)) = digest.split_once(':')
             && algorithm == "sha256"
-            && value.len() < 64
         {
-            return format!("sha256:{value}{}", "0".repeat(64 - value.len()));
+            let mut value = if value.chars().all(|character| character.is_ascii_hexdigit()) {
+                value.to_string()
+            } else {
+                value
+                    .as_bytes()
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            };
+            value.truncate(64);
+            if value.len() < 64 {
+                value.push_str(&"0".repeat(64 - value.len()));
+            }
+            return format!("sha256:{value}");
         }
     }
     digest

@@ -204,6 +204,25 @@ pub fn has_pending_snapshot(path: &Path) -> bool {
     Path::new(&format!("{}.pending", path.display())).is_file()
 }
 
+pub fn pending_snapshot_is_applied(path: &Path) -> anyhow::Result<bool> {
+    if !has_pending_snapshot(path) {
+        return Ok(false);
+    }
+    Ok(fs::read_to_string(format!("{}.pending", path.display()))?
+        .trim()
+        .eq_ignore_ascii_case("applied"))
+}
+
+pub fn mark_snapshot_applied(path: &Path) -> anyhow::Result<()> {
+    if has_pending_snapshot(path) {
+        atomic_commit(
+            &PathBuf::from(format!("{}.pending", path.display())),
+            "applied\n",
+        )?;
+    }
+    Ok(())
+}
+
 pub fn recover_pending_snapshot(path: &Path) -> anyhow::Result<bool> {
     let _guard = lock();
     recover_pending_snapshot_unlocked(path)
@@ -211,6 +230,10 @@ pub fn recover_pending_snapshot(path: &Path) -> anyhow::Result<bool> {
 
 fn recover_pending_snapshot_unlocked(path: &Path) -> anyhow::Result<bool> {
     if !has_pending_snapshot(path) {
+        return Ok(false);
+    }
+    if pending_snapshot_is_applied(path)? {
+        discard_snapshot(path)?;
         return Ok(false);
     }
     let snapshot = PathBuf::from(format!("{}.previous", path.display()));
@@ -380,6 +403,29 @@ mod tests {
         );
         assert!(!has_pending_snapshot(&path));
         assert!(!Path::new(&format!("{}.previous", path.display())).exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn applied_snapshot_recovery_keeps_active_override_and_only_clears_sidecars() {
+        let root = std::env::temp_dir().join(format!(
+            "dockrev-managed-applied-recovery-{}",
+            ulid::Ulid::new()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("stack.yml");
+        commit_with_snapshot(&path, "services:\n  web:\n    image: old@sha256:1\n").unwrap();
+        commit_with_snapshot(&path, "services:\n  web:\n    image: new@sha256:2\n").unwrap();
+        mark_snapshot_applied(&path).unwrap();
+
+        assert!(pending_snapshot_is_applied(&path).unwrap());
+        assert!(!recover_pending_snapshot(&path).unwrap());
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("new@sha256:2")
+        );
+        assert!(!has_pending_snapshot(&path));
         std::fs::remove_dir_all(root).unwrap();
     }
 }

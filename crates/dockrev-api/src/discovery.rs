@@ -1264,6 +1264,7 @@ async fn reconcile_managed_override(
         }
     }
 
+    managed_override::mark_snapshot_applied(&path)?;
     managed_override::discard_snapshot(&path)?;
     let scan = run_scan(state).await?;
     Ok(serde_json::json!({
