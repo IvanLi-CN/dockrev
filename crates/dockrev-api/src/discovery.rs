@@ -1281,7 +1281,7 @@ fn merge_managed_override_images(
 ) -> anyhow::Result<String> {
     let mut images = BTreeMap::<String, String>::new();
     if let Some(contents) = existing_contents {
-        managed_override::validate_image_only_yaml_relaxed(contents, allowed_services)
+        managed_override::validate_image_only_yaml(contents, allowed_services)
             .context("validate existing managed override")?;
         let parsed: serde_yaml_ng::Value = serde_yaml_ng::from_str(contents)?;
         if let Some(services) = parsed

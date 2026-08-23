@@ -3,6 +3,7 @@ use std::{
     time::Duration,
 };
 
+use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -955,6 +956,14 @@ pub(crate) async fn restore_services_after_failed_apply_unlocked(
     let compose_cfg = compose_runner_config(docker_config_path, compose_bin)?;
     let managed_override_path =
         crate::managed_override::managed_override_path(managed_override_dir, &stack.id);
+    if managed_override_path.is_file() {
+        let _override_guard = crate::managed_override::lock();
+        let snapshot = format!("{}.previous", managed_override_path.display());
+        if Path::new(&snapshot).is_file() {
+            crate::managed_override::restore_snapshot(&managed_override_path, Some(&snapshot))
+                .context("restore managed override before service recovery")?;
+        }
+    }
     let mut compose = stack.compose.clone();
     if managed_override_path.is_file() {
         compose
@@ -1443,6 +1452,41 @@ mod tests {
                 archived: None,
             }],
         }
+    }
+
+    #[tokio::test]
+    async fn failed_apply_recovery_restores_managed_override_before_up() {
+        let root =
+            std::env::temp_dir().join(format!("dockrev-backup-recovery-{}", ulid::Ulid::new()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = crate::managed_override::managed_override_path(&root, "stk_test");
+        let old = "services:\n  web:\n    image: ghcr.io/acme/web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n";
+        let next = "services:\n  web:\n    image: ghcr.io/acme/web@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n";
+        crate::managed_override::commit_with_snapshot(&path, old).unwrap();
+        crate::managed_override::commit_with_snapshot(&path, next).unwrap();
+
+        let runner = FakeRunner::default();
+        restore_services_after_failed_apply(
+            &runner,
+            "docker-compose",
+            None,
+            &test_stack(Vec::new()),
+            &root,
+            &["web".to_string()],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), old);
+        assert!(
+            runner
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|spec| spec.args.iter().any(|arg| arg == "up"))
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]

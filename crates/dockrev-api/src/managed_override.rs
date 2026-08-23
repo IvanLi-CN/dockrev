@@ -102,21 +102,6 @@ pub fn validate_image_only_yaml(
     contents: &str,
     allowed_services: &BTreeSet<String>,
 ) -> anyhow::Result<()> {
-    validate_image_only_yaml_with_digest_policy(contents, allowed_services, true)
-}
-
-pub fn validate_image_only_yaml_relaxed(
-    contents: &str,
-    allowed_services: &BTreeSet<String>,
-) -> anyhow::Result<()> {
-    validate_image_only_yaml_with_digest_policy(contents, allowed_services, false)
-}
-
-fn validate_image_only_yaml_with_digest_policy(
-    contents: &str,
-    allowed_services: &BTreeSet<String>,
-    strict_digest: bool,
-) -> anyhow::Result<()> {
     use serde_yaml_ng::Value;
 
     let root: Value = serde_yaml_ng::from_str(contents).context("parse managed override yaml")?;
@@ -153,8 +138,8 @@ fn validate_image_only_yaml_with_digest_policy(
         if !image.contains("@sha256:")
             || image.split_once("@sha256:").is_none_or(|(_, digest)| {
                 digest.is_empty()
-                    || (strict_digest
-                        && (digest.len() != 64 || !digest.chars().all(|c| c.is_ascii_hexdigit())))
+                    || digest.len() != 64
+                    || !digest.chars().all(|c| c.is_ascii_hexdigit())
             })
         {
             anyhow::bail!("managed override image must use a sha256 digest: {service}");
