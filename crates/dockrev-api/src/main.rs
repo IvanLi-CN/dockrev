@@ -188,7 +188,19 @@ async fn main() -> anyhow::Result<()> {
                 tracing::error!(stack_id = %stack_item.id, "pending managed override stack not found");
                 continue;
             };
-            let services = managed_override::pending_snapshot_services(&path)?;
+            let mut services = managed_override::pending_snapshot_services(&path)?;
+            if managed_override::pending_snapshot_is_legacy(&path)? {
+                // Legacy markers predate runtime-state tracking. Never start a service that is
+                // currently stopped; preserving that state is safer than guessing its history.
+                services = backup::retain_running_services(
+                    &*state.runner,
+                    &state.config.compose_bin,
+                    state.config.docker_config_path.as_deref(),
+                    &stack,
+                    &services,
+                )
+                .await?;
+            }
             if let Err(error) = backup::restore_services_after_failed_apply(
                 &*state.runner,
                 &state.config.compose_bin,

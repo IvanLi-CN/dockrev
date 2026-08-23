@@ -276,6 +276,10 @@ fn legacy_pending_marker(path: &Path) -> anyhow::Result<bool> {
     Ok(trimmed.eq_ignore_ascii_case("pending"))
 }
 
+pub fn pending_snapshot_is_legacy(path: &Path) -> anyhow::Result<bool> {
+    legacy_pending_marker(path)
+}
+
 fn infer_legacy_pending_services(path: &Path) -> anyhow::Result<Vec<String>> {
     let active = read_override_images(path)?;
     let previous = read_override_images(&PathBuf::from(format!("{}.previous", path.display())))?;

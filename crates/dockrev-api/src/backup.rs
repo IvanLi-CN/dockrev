@@ -945,6 +945,33 @@ pub async fn restore_services_after_failed_apply(
     .await
 }
 
+pub(crate) async fn retain_running_services(
+    runner: &dyn CommandRunner,
+    compose_bin: &str,
+    docker_config_path: Option<&Path>,
+    stack: &StackRecord,
+    services: &[String],
+) -> anyhow::Result<Vec<String>> {
+    let compose_cfg = compose_runner_config(docker_config_path, compose_bin)?;
+    let compose_stack = ComposeStack {
+        project_name: sanitize_project_name(&stack.name),
+        compose: stack.compose.clone(),
+    };
+    let mut running = Vec::new();
+    for service in services {
+        let container_id = run_to_string(
+            runner,
+            compose_stack.ps_q_service(&compose_cfg, service),
+            Duration::from_secs(30),
+        )
+        .await?;
+        if !container_id.trim().is_empty() {
+            running.push(service.clone());
+        }
+    }
+    Ok(running)
+}
+
 pub(crate) async fn restore_services_after_failed_apply_unlocked(
     runner: &dyn CommandRunner,
     compose_bin: &str,
