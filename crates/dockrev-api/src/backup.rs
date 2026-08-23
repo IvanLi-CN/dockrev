@@ -156,6 +156,8 @@ pub async fn run_pre_update_backup(
         });
     }
 
+    let _managed_override_operation_guard = crate::managed_override::operation_lock().await;
+
     let services = match scope {
         JobScope::All => stack.services.iter().collect::<Vec<_>>(),
         JobScope::Stack => stack.services.iter().collect::<Vec<_>>(),
@@ -884,6 +886,7 @@ pub async fn restore_services_after_failed_apply(
     stack: &StackRecord,
     services: &[String],
 ) -> anyhow::Result<()> {
+    let _managed_override_operation_guard = crate::managed_override::operation_lock().await;
     let compose_cfg = compose_runner_config(docker_config_path, compose_bin)?;
     let compose_stack = ComposeStack {
         project_name: sanitize_project_name(&stack.name),

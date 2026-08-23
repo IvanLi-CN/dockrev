@@ -2,16 +2,25 @@ use super::*;
 
 use crate::{
     compose_runner::{ComposeRunnerConfig, ComposeStack},
+    managed_override,
     runner::CommandRunner as _,
 };
 
 const LIFECYCLE_STATUS_TIMEOUT_SECONDS: u64 = 30;
 const LIFECYCLE_ACTION_TIMEOUT_SECONDS: u64 = 300;
 
-fn lifecycle_compose_stack(stack: &StackRecord) -> ComposeStack {
+fn lifecycle_compose_stack(state: &AppState, stack: &StackRecord) -> ComposeStack {
+    let mut compose = stack.compose.clone();
+    let managed_override =
+        managed_override::managed_override_path(&state.config.managed_override_dir, &stack.id);
+    if managed_override.is_file() {
+        compose
+            .compose_files
+            .push(managed_override.to_string_lossy().to_string());
+    }
     ComposeStack {
         project_name: updater::sanitize_project_name(&stack.name),
-        compose: stack.compose.clone(),
+        compose,
     }
 }
 
@@ -344,7 +353,7 @@ async fn run_stack_lifecycle_job(
         job_id.clone(),
     );
     let _managed_override_operation_guard = crate::managed_override::operation_lock().await;
-    let compose = lifecycle_compose_stack(&stack);
+    let compose = lifecycle_compose_stack(state.as_ref(), &stack);
     let outcome = match lifecycle_compose_config(state.as_ref()) {
         Ok((config, _auth_bridge)) => {
             if let Err(error) =
@@ -428,7 +437,7 @@ async fn read_lifecycle_state(
     stack: &StackRecord,
     service: &Service,
 ) -> (ServiceLifecycleState, Option<String>) {
-    let compose = lifecycle_compose_stack(stack);
+    let compose = lifecycle_compose_stack(state.as_ref(), stack);
     let Ok((config, _auth_bridge)) = lifecycle_compose_config(state.as_ref()) else {
         return (
             ServiceLifecycleState::Unknown,
@@ -658,7 +667,7 @@ async fn run_service_lifecycle_job(
         job_id.clone(),
     );
     let _managed_override_operation_guard = crate::managed_override::operation_lock().await;
-    let compose = lifecycle_compose_stack(&stack);
+    let compose = lifecycle_compose_stack(state.as_ref(), &stack);
     let outcome = match lifecycle_compose_config(state.as_ref()) {
         Ok((config, _auth_bridge)) => {
             if let Err(error) =
