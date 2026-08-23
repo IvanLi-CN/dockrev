@@ -1,5 +1,6 @@
 use super::*;
 use crate::backup::BackupRecoveryStore;
+use crate::managed_override;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 pub(crate) type UpdateStackSummaries = Vec<serde_json::Value>;
@@ -164,6 +165,9 @@ pub(crate) async fn run_update_job(
                 }
                 continue;
             };
+            // Keep one operation lock across backup, apply, and any recovery so stopped
+            // services cannot be mutated by another lifecycle or reconciliation job.
+            let _managed_override_operation_guard = managed_override::operation_lock().await;
             latest_progress = make_job_progress_with_percent(
                 "backup",
                 job_kind.processing_stack_message(stack_id),
@@ -280,7 +284,7 @@ pub(crate) async fn run_update_job(
                         .await;
                     }
                 });
-                let pre_pull_result = updater::pre_pull_update_images_using_root(
+                let pre_pull_result = updater::pre_pull_update_images_using_root_unlocked(
                     &logging_runner,
                     &state.config.compose_bin,
                     state.config.docker_config_path.as_deref(),
@@ -428,7 +432,7 @@ pub(crate) async fn run_update_job(
                     .iter()
                     .map(|service| service.name.clone())
                     .collect::<Vec<_>>();
-                let backup_future = backup::run_pre_update_backup(
+                let backup_future = backup::run_pre_update_backup_unlocked(
                     &logging_runner,
                     &*state.runner,
                     &recovery_runner,
@@ -498,7 +502,7 @@ pub(crate) async fn run_update_job(
                             .await;
                         }
                     });
-                    let pull_future = updater::pre_pull_update_images_using_root(
+                    let pull_future = updater::pre_pull_update_images_using_root_unlocked(
                         &logging_runner,
                         &state.config.compose_bin,
                         state.config.docker_config_path.as_deref(),
@@ -634,11 +638,12 @@ pub(crate) async fn run_update_job(
                     let restored = if services_kept_stopped_for_apply.is_empty() {
                         Ok(())
                     } else {
-                        backup::restore_services_after_failed_apply(
+                        backup::restore_services_after_failed_apply_unlocked(
                             &*state.runner,
                             &state.config.compose_bin,
                             state.config.docker_config_path.as_deref(),
                             &stack,
+                            &state.config.managed_override_dir,
                             &services_kept_stopped_for_apply,
                         )
                         .await
@@ -804,7 +809,7 @@ pub(crate) async fn run_update_job(
                 db: state.db.clone(),
                 job_id: job_id.clone(),
             };
-            let update_outcome = updater::run_update_job_with_gate_using_root(
+            let update_outcome = updater::run_update_job_with_gate_using_root_unlocked(
                 &logging_runner,
                 &state.config.compose_bin,
                 state.config.docker_config_path.as_deref(),
@@ -833,11 +838,12 @@ pub(crate) async fn run_update_job(
                         let restored = if services_kept_stopped_for_apply.is_empty() {
                             Ok(())
                         } else {
-                            backup::restore_services_after_failed_apply(
+                            backup::restore_services_after_failed_apply_unlocked(
                                 &*state.runner,
                                 &state.config.compose_bin,
                                 state.config.docker_config_path.as_deref(),
                                 &stack,
+                                &state.config.managed_override_dir,
                                 &services_kept_stopped_for_apply,
                             )
                             .await
@@ -999,11 +1005,12 @@ pub(crate) async fn run_update_job(
                     let restored = if services_kept_stopped_for_apply.is_empty() {
                         Ok(())
                     } else {
-                        backup::restore_services_after_failed_apply(
+                        backup::restore_services_after_failed_apply_unlocked(
                             &*state.runner,
                             &state.config.compose_bin,
                             state.config.docker_config_path.as_deref(),
                             &stack,
+                            &state.config.managed_override_dir,
                             &services_kept_stopped_for_apply,
                         )
                         .await

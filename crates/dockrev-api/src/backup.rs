@@ -125,7 +125,53 @@ pub fn spawn_cleanup_task(state: std::sync::Arc<crate::state::AppState>) {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 pub async fn run_pre_update_backup(
+    runner: &dyn CommandRunner,
+    helper_runner: &dyn CommandRunner,
+    recovery_runner: &dyn CommandRunner,
+    recovery_store: &dyn BackupRecoveryStore,
+    settings: &BackupSettings,
+    db_path: &Path,
+    helper_image_fallback: &str,
+    backup_id: &str,
+    job_id: &str,
+    compose_bin: &str,
+    docker_config_path: Option<&std::path::Path>,
+    stack: &StackRecord,
+    scope: &JobScope,
+    service_id: Option<&str>,
+    keep_stopped_services: &[String],
+    now_rfc3339: &str,
+    recovery_db: Option<&crate::db::Db>,
+    progress_tx: Option<tokio::sync::mpsc::UnboundedSender<BackupProgressEvent>>,
+) -> anyhow::Result<BackupRunResult> {
+    let _managed_override_operation_guard = crate::managed_override::operation_lock().await;
+    run_pre_update_backup_unlocked(
+        runner,
+        helper_runner,
+        recovery_runner,
+        recovery_store,
+        settings,
+        db_path,
+        helper_image_fallback,
+        backup_id,
+        job_id,
+        compose_bin,
+        docker_config_path,
+        stack,
+        scope,
+        service_id,
+        keep_stopped_services,
+        now_rfc3339,
+        recovery_db,
+        progress_tx,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_pre_update_backup_unlocked(
     runner: &dyn CommandRunner,
     helper_runner: &dyn CommandRunner,
     recovery_runner: &dyn CommandRunner,
@@ -155,8 +201,6 @@ pub async fn run_pre_update_backup(
             services_kept_stopped: Vec::new(),
         });
     }
-
-    let _managed_override_operation_guard = crate::managed_override::operation_lock().await;
 
     let services = match scope {
         JobScope::All => stack.services.iter().collect::<Vec<_>>(),
@@ -456,6 +500,7 @@ pub async fn recover_interrupted_backups(
             &state.config.compose_bin,
             state.config.docker_config_path.as_deref(),
             &stack,
+            &state.config.managed_override_dir,
             &checkpoint.services,
         )
         .await?;
@@ -884,15 +929,59 @@ pub async fn restore_services_after_failed_apply(
     compose_bin: &str,
     docker_config_path: Option<&Path>,
     stack: &StackRecord,
+    managed_override_dir: &Path,
     services: &[String],
 ) -> anyhow::Result<()> {
     let _managed_override_operation_guard = crate::managed_override::operation_lock().await;
+    restore_services_after_failed_apply_unlocked(
+        runner,
+        compose_bin,
+        docker_config_path,
+        stack,
+        managed_override_dir,
+        services,
+    )
+    .await
+}
+
+pub(crate) async fn restore_services_after_failed_apply_unlocked(
+    runner: &dyn CommandRunner,
+    compose_bin: &str,
+    docker_config_path: Option<&Path>,
+    stack: &StackRecord,
+    managed_override_dir: &Path,
+    services: &[String],
+) -> anyhow::Result<()> {
     let compose_cfg = compose_runner_config(docker_config_path, compose_bin)?;
+    let managed_override_path =
+        crate::managed_override::managed_override_path(managed_override_dir, &stack.id);
+    let mut compose = stack.compose.clone();
+    if managed_override_path.is_file() {
+        compose
+            .compose_files
+            .push(managed_override_path.to_string_lossy().to_string());
+    }
     let compose_stack = ComposeStack {
         project_name: sanitize_project_name(&stack.name),
-        compose: stack.compose.clone(),
+        compose,
     };
-    restart_related_services_after_backup(runner, &compose_stack, &compose_cfg, services).await
+    if services.is_empty() {
+        return Ok(());
+    }
+    let out = runner
+        .run(
+            compose_stack.up_services_no_pull_no_deps_force_recreate(&compose_cfg, services),
+            Duration::from_secs(180),
+        )
+        .await?;
+    if out.status != 0 {
+        anyhow::bail!(
+            "restart services failed: status={} stderr={}",
+            out.status,
+            out.stderr
+        );
+    }
+    Ok(())
 }
 
 pub async fn restore_backup_recovery_snapshot(
@@ -900,6 +989,27 @@ pub async fn restore_backup_recovery_snapshot(
     compose_bin: &str,
     docker_config_path: Option<&Path>,
     stack: &StackRecord,
+    managed_override_dir: &Path,
+    snapshot: &BackupRecoverySnapshot,
+) -> anyhow::Result<()> {
+    let _managed_override_operation_guard = crate::managed_override::operation_lock().await;
+    restore_backup_recovery_snapshot_unlocked(
+        runner,
+        compose_bin,
+        docker_config_path,
+        stack,
+        managed_override_dir,
+        snapshot,
+    )
+    .await
+}
+
+pub(crate) async fn restore_backup_recovery_snapshot_unlocked(
+    runner: &dyn CommandRunner,
+    compose_bin: &str,
+    docker_config_path: Option<&Path>,
+    stack: &StackRecord,
+    managed_override_dir: &Path,
     snapshot: &BackupRecoverySnapshot,
 ) -> anyhow::Result<()> {
     if snapshot.stack_id != stack.id {
@@ -907,11 +1017,12 @@ pub async fn restore_backup_recovery_snapshot(
             "backup recovery snapshot belongs to another stack"
         ));
     }
-    restore_services_after_failed_apply(
+    restore_services_after_failed_apply_unlocked(
         runner,
         compose_bin,
         docker_config_path,
         stack,
+        managed_override_dir,
         &snapshot.services,
     )
     .await

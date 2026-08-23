@@ -472,6 +472,29 @@ fn reconcile_managed_override_requires_matching_repo_digest() {
     );
 }
 
+#[test]
+fn reconcile_managed_override_preserves_unaffected_managed_images() {
+    let allowed = BTreeSet::from(["web".to_string(), "worker".to_string()]);
+    let existing = "services:\n  web:\n    image: ghcr.io/acme/web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n  worker:\n    image: ghcr.io/acme/worker@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n";
+    let rendered = merge_managed_override_images(
+        Some(existing),
+        &allowed,
+        &[ (
+            "web".to_string(),
+            "ghcr.io/acme/web@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_string(),
+        )],
+    )
+    .unwrap();
+    assert!(
+        rendered.contains(
+            "web@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        )
+    );
+    assert!(rendered.contains(
+        "worker@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    ));
+}
+
 #[tokio::test]
 async fn resolve_project_compose_files_superset_unsafe_extra_falls_back_to_common() {
     let dir = make_temp_dir();

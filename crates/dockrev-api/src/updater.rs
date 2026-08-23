@@ -195,6 +195,41 @@ pub async fn pre_pull_update_images_using_root(
     progress_events: Option<UnboundedSender<UpdateProgressEvent>>,
     managed_override_root: Option<&Path>,
 ) -> anyhow::Result<()> {
+    let _managed_override_operation_guard = managed_override::operation_lock().await;
+    pre_pull_update_images_using_root_unlocked(
+        runner,
+        compose_bin,
+        docker_config_path,
+        idempotent_retry_policy,
+        stack,
+        scope,
+        service_id,
+        explicit_targets,
+        allow_arch_mismatch,
+        update_reason,
+        dockrev_image_repo,
+        progress_events,
+        managed_override_root,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn pre_pull_update_images_using_root_unlocked(
+    runner: &dyn CommandRunner,
+    compose_bin: &str,
+    docker_config_path: Option<&Path>,
+    idempotent_retry_policy: IdempotentRetryPolicy,
+    stack: &StackRecord,
+    scope: &JobScope,
+    service_id: Option<&str>,
+    explicit_targets: Option<&[UpdateServiceTarget]>,
+    allow_arch_mismatch: bool,
+    update_reason: &str,
+    dockrev_image_repo: Option<&str>,
+    progress_events: Option<UnboundedSender<UpdateProgressEvent>>,
+    managed_override_root: Option<&Path>,
+) -> anyhow::Result<()> {
     let services = select_update_services(
         stack,
         scope,
@@ -207,8 +242,6 @@ pub async fn pre_pull_update_images_using_root(
     if services.is_empty() {
         return Ok(());
     }
-
-    let _managed_override_operation_guard = managed_override::operation_lock().await;
 
     let explicit_targets_by_service = explicit_targets
         .unwrap_or(&[])
@@ -445,6 +478,49 @@ pub async fn run_update_job_with_gate_using_root(
     apply_gate: Option<&dyn UpdateApplyGate>,
     managed_override_root: Option<&Path>,
 ) -> anyhow::Result<UpdateOutcome> {
+    let _managed_override_operation_guard = managed_override::operation_lock().await;
+    run_update_job_with_gate_using_root_unlocked(
+        runner,
+        compose_bin,
+        docker_config_path,
+        idempotent_retry_policy,
+        stack,
+        scope,
+        service_id,
+        mode,
+        explicit_targets,
+        allow_arch_mismatch,
+        update_reason,
+        dockrev_image_repo,
+        progress_events,
+        images_pre_pulled,
+        services_stopped_for_backup,
+        apply_gate,
+        managed_override_root,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
+    runner: &dyn CommandRunner,
+    compose_bin: &str,
+    docker_config_path: Option<&Path>,
+    idempotent_retry_policy: IdempotentRetryPolicy,
+    stack: &StackRecord,
+    scope: &JobScope,
+    service_id: Option<&str>,
+    mode: &str,
+    explicit_targets: Option<&[UpdateServiceTarget]>,
+    allow_arch_mismatch: bool,
+    update_reason: &str,
+    dockrev_image_repo: Option<&str>,
+    progress_events: Option<UnboundedSender<UpdateProgressEvent>>,
+    images_pre_pulled: bool,
+    services_stopped_for_backup: &[String],
+    apply_gate: Option<&dyn UpdateApplyGate>,
+    managed_override_root: Option<&Path>,
+) -> anyhow::Result<UpdateOutcome> {
     let selection = select_update_services(
         stack,
         scope,
@@ -487,8 +563,6 @@ pub async fn run_update_job_with_gate_using_root(
             })),
         });
     }
-
-    let _managed_override_operation_guard = managed_override::operation_lock().await;
 
     let explicit_targets_by_service = explicit_targets
         .unwrap_or(&[])

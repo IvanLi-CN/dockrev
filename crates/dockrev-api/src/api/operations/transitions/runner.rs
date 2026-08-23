@@ -59,6 +59,7 @@ pub(crate) async fn recover_interrupted_update_backups(state: Arc<AppState>) {
                 &state.config.compose_bin,
                 state.config.docker_config_path.as_deref(),
                 &stack,
+                &state.config.managed_override_dir,
                 &snapshot,
             )
             .await

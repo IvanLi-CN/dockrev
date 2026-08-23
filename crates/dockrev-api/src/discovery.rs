@@ -1166,9 +1166,16 @@ async fn reconcile_managed_override(
 
     let path =
         managed_override::managed_override_path(&state.config.managed_override_dir, stack_id);
-    let contents = managed_override::render_image_only_override(&images)?;
     let _override_guard = managed_override::lock();
     managed_override::recover_interrupted(&path)?;
+    let allowed_services = stack
+        .services
+        .iter()
+        .map(|service| service.name.clone())
+        .collect::<BTreeSet<_>>();
+    let existing_contents = std::fs::read_to_string(&path).ok();
+    let contents =
+        merge_managed_override_images(existing_contents.as_deref(), &allowed_services, &images)?;
     managed_override::commit_with_snapshot(&path, &contents)?;
     drop(_override_guard);
 
@@ -1265,6 +1272,34 @@ async fn reconcile_managed_override(
         "recreate": "--no-deps --force-recreate",
         "rescan": scan.summary,
     }))
+}
+
+fn merge_managed_override_images(
+    existing_contents: Option<&str>,
+    allowed_services: &BTreeSet<String>,
+    replacements: &[(String, String)],
+) -> anyhow::Result<String> {
+    let mut images = BTreeMap::<String, String>::new();
+    if let Some(contents) = existing_contents {
+        managed_override::validate_image_only_yaml_relaxed(contents, allowed_services)
+            .context("validate existing managed override")?;
+        let parsed: serde_yaml_ng::Value = serde_yaml_ng::from_str(contents)?;
+        if let Some(services) = parsed
+            .get("services")
+            .and_then(serde_yaml_ng::Value::as_mapping)
+        {
+            for (service, config) in services {
+                if let (Some(service), Some(image)) = (
+                    service.as_str(),
+                    config.get("image").and_then(serde_yaml_ng::Value::as_str),
+                ) {
+                    images.insert(service.to_string(), image.to_string());
+                }
+            }
+        }
+    }
+    images.extend(replacements.iter().cloned());
+    managed_override::render_image_only_override(&images.into_iter().collect::<Vec<_>>())
 }
 
 async fn command_text(state: &AppState, command: CommandSpec) -> anyhow::Result<String> {
