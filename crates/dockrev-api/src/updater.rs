@@ -831,7 +831,7 @@ pub async fn run_update_job_with_gate_using_root(
                 match rollback_service_after_failed_update(
                     runner,
                     &compose_cfg,
-                    &compose_stack,
+                    compose_for_update,
                     &docker_cfg,
                     &svc.name,
                     &svc.image.reference,
@@ -916,7 +916,7 @@ pub async fn run_update_job_with_gate_using_root(
                 match rollback_service_after_failed_update(
                     runner,
                     &compose_cfg,
-                    &compose_stack,
+                    compose_for_update,
                     &docker_cfg,
                     &svc.name,
                     &svc.image.reference,
@@ -1000,7 +1000,7 @@ pub async fn run_update_job_with_gate_using_root(
                 match rollback_service_after_failed_update(
                     runner,
                     &compose_cfg,
-                    &compose_stack,
+                    compose_for_update,
                     &docker_cfg,
                     &svc.name,
                     &svc.image.reference,

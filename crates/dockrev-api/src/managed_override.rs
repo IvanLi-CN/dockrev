@@ -262,6 +262,18 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn operation_lock_serializes_competing_lifecycle_work() {
+        let first = operation_lock().await;
+        assert!(try_operation_lock().is_none());
+        drop(first);
+
+        let second = try_operation_lock().expect("released operation lock should be available");
+        drop(second);
+        assert!(try_operation_lock().is_some());
+        drop(try_operation_lock());
+    }
+
     #[test]
     fn rendered_override_is_image_only_and_rejects_unsafe_yaml() {
         let yaml = render_image_only_override(&[(

@@ -3,11 +3,23 @@ use super::*;
 #[derive(Default)]
 struct HealthRollbackRunner {
     step: Mutex<usize>,
+    expected_managed_override: Option<String>,
 }
 
 #[async_trait::async_trait]
 impl CommandRunner for HealthRollbackRunner {
     async fn run(&self, spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+        if let Some(path) = &self.expected_managed_override
+            && spec.program == "docker-compose"
+        {
+            assert!(
+                spec.args
+                    .windows(2)
+                    .any(|window| { window[0] == "-f" && window[1] == *path }),
+                "compose command did not use managed override: {:?}",
+                spec.args
+            );
+        }
         let mut step = self.step.lock().unwrap();
         let out = match *step {
             0 => {
@@ -267,6 +279,58 @@ async fn healthcheck_failure_rolls_back_with_attempted_and_final_digests() {
             .any(|msg| msg.contains("rolled back after healthcheck failure"))
     );
     assert_eq!(*runner.step.lock().unwrap(), 13);
+}
+
+#[tokio::test]
+async fn managed_root_is_used_for_update_and_rollback_compose_commands() {
+    let root = std::env::temp_dir().join(format!("dockrev-managed-{}", ulid::Ulid::new()));
+    std::fs::create_dir_all(&root).unwrap();
+    let _cleanup = TempDirCleanup(root.clone());
+    let stack = single_service_stack(
+        "ghcr.io/org/web:1.0",
+        Some(Candidate {
+            tag: "1.0".to_string(),
+            resolved_tag: Some("1.0".to_string()),
+            digest: "sha256:new".to_string(),
+            arch_match: ArchMatch::Match,
+            arch: vec!["linux/amd64".to_string()],
+        }),
+    );
+    let managed_path = crate::managed_override::managed_override_path(&root, &stack.id);
+    let runner = HealthRollbackRunner {
+        expected_managed_override: Some(managed_path.to_string_lossy().to_string()),
+        ..Default::default()
+    };
+
+    let outcome = run_update_job_with_gate_using_root(
+        &runner,
+        "docker-compose",
+        None,
+        IdempotentRetryPolicy {
+            max_attempts: 1,
+            base_ms: 1,
+            max_ms: 2,
+        },
+        &stack,
+        &JobScope::Service,
+        Some("svc_1"),
+        "live",
+        None,
+        false,
+        "ui",
+        None,
+        None,
+        false,
+        &[],
+        None,
+        Some(root.as_path()),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome.status, "rolled_back");
+    assert!(managed_path.is_file());
+    assert!(managed_path.with_extension("yml.previous").is_file());
 }
 
 #[derive(Default)]

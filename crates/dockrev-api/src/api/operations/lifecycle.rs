@@ -343,6 +343,7 @@ async fn run_stack_lifecycle_job(
         state.job_live_log_hub.clone(),
         job_id.clone(),
     );
+    let _managed_override_operation_guard = crate::managed_override::operation_lock().await;
     let compose = lifecycle_compose_stack(&stack);
     let outcome = match lifecycle_compose_config(state.as_ref()) {
         Ok((config, _auth_bridge)) => {
@@ -656,6 +657,7 @@ async fn run_service_lifecycle_job(
         state.job_live_log_hub.clone(),
         job_id.clone(),
     );
+    let _managed_override_operation_guard = crate::managed_override::operation_lock().await;
     let compose = lifecycle_compose_stack(&stack);
     let outcome = match lifecycle_compose_config(state.as_ref()) {
         Ok((config, _auth_bridge)) => {
