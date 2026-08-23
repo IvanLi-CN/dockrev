@@ -1264,6 +1264,7 @@ async fn reconcile_managed_override(
         }
     }
 
+    managed_override::discard_snapshot(&path)?;
     let scan = run_scan(state).await?;
     Ok(serde_json::json!({
         "managedOverridePath": path,
@@ -1353,6 +1354,11 @@ async fn rollback_reconciliation(
     {
         return original_error.context(format!(
             "failed to restore running services: {compose_error}"
+        ));
+    }
+    if let Err(discard_error) = managed_override::discard_snapshot(path) {
+        return original_error.context(format!(
+            "failed to discard managed override snapshot after rollback: {discard_error}"
         ));
     }
     original_error

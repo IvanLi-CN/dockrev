@@ -708,6 +708,9 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
     }
 
     if prepared_services.is_empty() {
+        if let Some(path) = override_path.as_deref() {
+            restore_managed_override_snapshot(path)?;
+        }
         return Ok(UpdateOutcome {
             status: "success".to_string(),
             summary_json: serde_json::Value::Object(build_update_summary(UpdateSummaryInput {
@@ -1262,6 +1265,9 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
         );
     }
 
+    if let Some(path) = override_path.as_deref() {
+        managed_override::discard_snapshot(path)?;
+    }
     Ok(UpdateOutcome {
         status: if rolled_back_any {
             "rolled_back".to_string()
@@ -1367,7 +1373,10 @@ fn build_override_file(
 fn restore_managed_override_snapshot(path: &Path) -> anyhow::Result<()> {
     let _guard = managed_override::lock();
     let snapshot = format!("{}.previous", path.display());
-    managed_override::restore_snapshot(path, Some(&snapshot))
+    if Path::new(&snapshot).is_file() {
+        managed_override::restore_snapshot(path, Some(&snapshot))?;
+    }
+    managed_override::discard_snapshot(path)
 }
 
 fn normalize_digest(input: &str) -> String {

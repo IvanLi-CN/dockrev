@@ -185,7 +185,31 @@ pub fn commit_with_snapshot(path: &Path, contents: &str) -> anyhow::Result<Optio
         Some(snapshot)
     };
     atomic_commit(path, contents)?;
+    atomic_commit(
+        &PathBuf::from(format!("{}.pending", path.display())),
+        "pending\n",
+    )?;
     Ok(previous)
+}
+
+pub fn has_pending_snapshot(path: &Path) -> bool {
+    Path::new(&format!("{}.pending", path.display())).is_file()
+}
+
+pub fn discard_snapshot(path: &Path) -> anyhow::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("managed override path has no parent"))?;
+    for sidecar in [
+        PathBuf::from(format!("{}.previous", path.display())),
+        PathBuf::from(format!("{}.pending", path.display())),
+    ] {
+        if sidecar.exists() {
+            fs::remove_file(sidecar)?;
+        }
+    }
+    sync_directory(parent);
+    Ok(())
 }
 
 pub fn restore_snapshot(path: &Path, snapshot: Option<&str>) -> anyhow::Result<()> {

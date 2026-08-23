@@ -956,7 +956,9 @@ pub(crate) async fn restore_services_after_failed_apply_unlocked(
     let compose_cfg = compose_runner_config(docker_config_path, compose_bin)?;
     let managed_override_path =
         crate::managed_override::managed_override_path(managed_override_dir, &stack.id);
-    if managed_override_path.is_file() {
+    let pending_override_snapshot =
+        crate::managed_override::has_pending_snapshot(&managed_override_path);
+    if pending_override_snapshot && managed_override_path.is_file() {
         let _override_guard = crate::managed_override::lock();
         let snapshot = format!("{}.previous", managed_override_path.display());
         if Path::new(&snapshot).is_file() {
@@ -989,6 +991,10 @@ pub(crate) async fn restore_services_after_failed_apply_unlocked(
             out.status,
             out.stderr
         );
+    }
+    if pending_override_snapshot {
+        crate::managed_override::discard_snapshot(&managed_override_path)
+            .context("discard managed override snapshot after service recovery")?;
     }
     Ok(())
 }
@@ -1486,7 +1492,34 @@ mod tests {
                 .iter()
                 .any(|spec| spec.args.iter().any(|arg| arg == "up"))
         );
+        assert!(!crate::managed_override::has_pending_snapshot(&path));
+
+        let root_without_pending = std::env::temp_dir().join(format!(
+            "dockrev-backup-recovery-no-pending-{}",
+            ulid::Ulid::new()
+        ));
+        std::fs::create_dir_all(&root_without_pending).unwrap();
+        let stale_path =
+            crate::managed_override::managed_override_path(&root_without_pending, "stk_test");
+        crate::managed_override::atomic_commit(&stale_path, next).unwrap();
+        crate::managed_override::atomic_commit(
+            &PathBuf::from(format!("{}.previous", stale_path.display())),
+            old,
+        )
+        .unwrap();
+        restore_services_after_failed_apply(
+            &runner,
+            "docker-compose",
+            None,
+            &test_stack(Vec::new()),
+            &root_without_pending,
+            &["web".to_string()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&stale_path).unwrap(), next);
         std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(root_without_pending).unwrap();
     }
 
     #[tokio::test]
