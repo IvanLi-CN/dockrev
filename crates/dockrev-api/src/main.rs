@@ -192,14 +192,26 @@ async fn main() -> anyhow::Result<()> {
             if managed_override::pending_snapshot_is_legacy(&path)? {
                 // Legacy markers predate runtime-state tracking. Never start a service that is
                 // currently stopped; preserving that state is safer than guessing its history.
-                services = backup::retain_running_services(
+                let running_services = backup::retain_running_services(
                     &*state.runner,
                     &state.config.compose_bin,
                     state.config.docker_config_path.as_deref(),
                     &stack,
                     &services,
                 )
-                .await?;
+                .await;
+                match running_services {
+                    Ok(running_services) => services = running_services,
+                    Err(error) => {
+                        tracing::error!(
+                            stack_id = %stack.id,
+                            path = %path.display(),
+                            error = %error,
+                            "failed to inspect legacy managed override services; deferring recovery"
+                        );
+                        continue;
+                    }
+                }
             }
             if let Err(error) = backup::restore_services_after_failed_apply(
                 &*state.runner,
