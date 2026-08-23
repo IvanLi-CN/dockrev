@@ -1120,6 +1120,7 @@ fn build_override_file(
             .unwrap_or_else(|| std::path::PathBuf::from("./data/dockrev.sqlite3")),
     )?;
     let path = managed_override::managed_override_path(&root, &stack.id);
+    let _guard = managed_override::lock();
     managed_override::recover_interrupted(&path)?;
 
     let mut images = BTreeMap::<String, String>::new();
@@ -1170,7 +1171,6 @@ fn build_override_file(
     }
     let entries = images.into_iter().collect::<Vec<_>>();
     let contents = managed_override::render_image_only_override(&entries)?;
-    let _guard = managed_override::lock();
     managed_override::commit_with_snapshot(&path, &contents)?;
     Ok(Some(path))
 }

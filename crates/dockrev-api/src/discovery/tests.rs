@@ -460,6 +460,10 @@ fn reconcile_managed_override_requires_matching_repo_digest() {
         "ghcr.io/acme/web:latest",
         "ghcr.io/acme/web"
     ));
+    assert!(!repo_digest_matches(
+        "ghcr.io/other/web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "web"
+    ));
     assert_eq!(
         parse_affected_services(
             "warning:config_files_stale_dockrev_temp_override services=[web, worker]"

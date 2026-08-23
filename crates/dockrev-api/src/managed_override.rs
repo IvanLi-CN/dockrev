@@ -27,6 +27,13 @@ pub fn managed_override_path(root: &Path, stack_id: &str) -> PathBuf {
 pub fn configured_root(db_path: &Path) -> anyhow::Result<PathBuf> {
     #[cfg(test)]
     {
+        if let Some(value) = std::env::var_os("DOCKREV_MANAGED_OVERRIDE_DIR") {
+            let path = PathBuf::from(value);
+            if !path.is_absolute() {
+                anyhow::bail!("DOCKREV_MANAGED_OVERRIDE_DIR must be absolute");
+            }
+            return Ok(path);
+        }
         let _ = db_path;
         let thread_name = std::thread::current()
             .name()

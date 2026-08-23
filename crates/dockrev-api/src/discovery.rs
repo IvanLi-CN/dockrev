@@ -25,8 +25,8 @@ static DISCOVERY_SCAN_LOCK: LazyLock<tokio::sync::Mutex<()>> =
 static MANAGED_RECONCILE_LOCK: LazyLock<tokio::sync::Mutex<()>> =
     LazyLock::new(|| tokio::sync::Mutex::new(()));
 
-pub fn managed_reconcile_available() -> bool {
-    MANAGED_RECONCILE_LOCK.try_lock().is_ok()
+pub fn try_managed_reconcile_lock() -> Option<tokio::sync::MutexGuard<'static, ()>> {
+    MANAGED_RECONCILE_LOCK.try_lock().ok()
 }
 
 fn now_rfc3339() -> anyhow::Result<String> {
@@ -1034,8 +1034,13 @@ async fn classify_persisted_compose_files(
     PersistedComposeFilesState::Stopped { compose_files }
 }
 
-pub async fn run_managed_override_reconcile(state: &AppState, job_id: &str, stack_id: &str) {
-    let result = reconcile_managed_override(state, stack_id).await;
+pub async fn run_managed_override_reconcile(
+    state: &AppState,
+    job_id: &str,
+    stack_id: &str,
+    reconcile_guard: tokio::sync::MutexGuard<'static, ()>,
+) {
+    let result = reconcile_managed_override(state, stack_id, reconcile_guard).await;
     let finished_at = now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
     match result {
         Ok(summary) => {
@@ -1072,8 +1077,8 @@ pub async fn run_managed_override_reconcile(state: &AppState, job_id: &str, stac
 async fn reconcile_managed_override(
     state: &AppState,
     stack_id: &str,
+    _reconcile_guard: tokio::sync::MutexGuard<'static, ()>,
 ) -> anyhow::Result<serde_json::Value> {
-    let _reconcile_guard = MANAGED_RECONCILE_LOCK.lock().await;
     let discovered = state
         .db
         .list_discovered_compose_projects(crate::db::ArchivedFilter::Include)
@@ -1185,8 +1190,15 @@ async fn reconcile_managed_override(
     )
     .await
     {
-        restore_managed_override(&path)?;
-        return Err(error);
+        return Err(rollback_reconciliation(
+            state,
+            &managed_stack,
+            &compose_cfg,
+            &service_names,
+            &path,
+            error,
+        )
+        .await);
     }
 
     for service in &selected_services {
@@ -1232,11 +1244,19 @@ async fn reconcile_managed_override(
         }
         .await;
         if let Err(error) = verification {
-            restore_managed_override(&path)?;
-            return Err(anyhow::anyhow!(
-                "service verification failed after reconciliation for {}: {error}",
-                service.name
-            ));
+            let rollback_error = rollback_reconciliation(
+                state,
+                &managed_stack,
+                &compose_cfg,
+                &service_names,
+                &path,
+                anyhow::anyhow!(
+                    "service verification failed after reconciliation for {}: {error}",
+                    service.name
+                ),
+            )
+            .await;
+            return Err(rollback_error);
         }
     }
 
@@ -1280,6 +1300,32 @@ fn restore_managed_override(path: &Path) -> anyhow::Result<()> {
     managed_override::restore_snapshot(path, Some(&snapshot))
 }
 
+async fn rollback_reconciliation(
+    state: &AppState,
+    managed_stack: &ComposeStack,
+    compose_cfg: &ComposeRunnerConfig,
+    service_names: &[String],
+    path: &Path,
+    original_error: anyhow::Error,
+) -> anyhow::Error {
+    if let Err(restore_error) = restore_managed_override(path) {
+        return original_error.context(format!(
+            "failed to restore managed override: {restore_error}"
+        ));
+    }
+    if let Err(compose_error) = run_checked_command(
+        state,
+        managed_stack.up_services_no_pull_no_deps_force_recreate(compose_cfg, service_names),
+    )
+    .await
+    {
+        return original_error.context(format!(
+            "failed to restore running services: {compose_error}"
+        ));
+    }
+    original_error
+}
+
 fn base_repository(image: &str) -> String {
     let without_digest = image.split_once('@').map_or(image, |(repo, _)| repo);
     without_digest
@@ -1297,8 +1343,6 @@ fn repo_digest_matches(repo_digest: &str, base_repo: &str) -> bool {
         return false;
     }
     repo == base_repo
-        || (base_repo == repo.rsplit_once('/').map_or(repo, |(_, tail)| tail)
-            && !base_repo.contains('/'))
 }
 
 fn parse_affected_services(warning: &str) -> Option<Vec<String>> {

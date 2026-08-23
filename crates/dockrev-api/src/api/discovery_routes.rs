@@ -53,11 +53,11 @@ pub(super) async fn trigger_managed_override_reconcile(
         }
     }
 
-    if !discovery::managed_reconcile_available() {
+    let Some(reconcile_guard) = discovery::try_managed_reconcile_lock() else {
         return Err(ApiError::conflict(
             "managed override reconciliation is already running",
         ));
-    }
+    };
     let running = state
         .db
         .list_jobs_page(crate::db::JobListFilters {
@@ -96,7 +96,13 @@ pub(super) async fn trigger_managed_override_reconcile(
     let run_stack_id = stack_id.clone();
     let run_job_id = job_id.clone();
     tokio::spawn(async move {
-        discovery::run_managed_override_reconcile(&run_state, &run_job_id, &run_stack_id).await;
+        discovery::run_managed_override_reconcile(
+            &run_state,
+            &run_job_id,
+            &run_stack_id,
+            reconcile_guard,
+        )
+        .await;
     });
 
     Ok(Json(TriggerManagedOverrideReconcileResponse { job_id }))
