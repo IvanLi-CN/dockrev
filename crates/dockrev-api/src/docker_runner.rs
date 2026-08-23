@@ -54,6 +54,20 @@ pub fn inspect_image_id(cfg: &DockerRunnerConfig, container_id: &str) -> Command
     }
 }
 
+pub fn inspect_repo_digests(cfg: &DockerRunnerConfig, image_id: &str) -> CommandSpec {
+    CommandSpec {
+        program: cfg.docker_bin.clone(),
+        args: vec![
+            "image".to_string(),
+            "inspect".to_string(),
+            "--format".to_string(),
+            "{{join .RepoDigests \",\"}}".to_string(),
+            image_id.to_string(),
+        ],
+        env: cfg.env.clone(),
+    }
+}
+
 #[allow(dead_code)]
 pub fn inspect_is_running(cfg: &DockerRunnerConfig, container_id: &str) -> CommandSpec {
     CommandSpec {

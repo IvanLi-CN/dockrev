@@ -279,6 +279,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(version_inference_events),
         )
         .route("/api/discovery/scan", post(trigger_discovery_scan))
+        .route(
+            "/api/stacks/{stack_id}/managed-override/reconcile",
+            post(trigger_managed_override_reconcile),
+        )
         .route("/api/cleanups/scan", post(scan_cleanups))
         .route("/api/cleanups/scan-runs", post(start_cleanup_scan_run))
         .route(

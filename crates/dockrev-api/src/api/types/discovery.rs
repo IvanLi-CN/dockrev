@@ -94,3 +94,9 @@ pub struct TriggerDiscoveryScanResponse {
 pub struct TriggerDiscoveryScanJobResponse {
     pub job_id: String,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriggerManagedOverrideReconcileResponse {
+    pub job_id: String,
+}

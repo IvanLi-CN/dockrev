@@ -45,8 +45,8 @@ Notes:
 
 - The Dockrev UI probes `GET /supervisor/self-upgrade` (same origin) before enabling the “升级 Dockrev” entry (a `401` means Dockrev authorization denied the request or no trusted identity reached Supervisor).
 - Self-upgrade uses Docker + Compose on the host via the mounted Docker socket. The target compose files must be readable inside the supervisor container too (same absolute path requirement).
-- Self-upgrade applies an extra Compose override file (image-only) and may cause containers in the same project to report different `com.docker.compose.project.config_files` label values. Dockrev will surface this as a warning (not invalid) and pick a stable canonical compose file list.
-  - To let Dockrev read the override file (so discovery can reflect the self-upgraded image), set `DOCKREV_SUPERVISOR_STATE_PATH` to the same mounted absolute path in both `dockrev` and `supervisor` (for example `/data/self-upgrade.json`) and mount that directory into Dockrev read-only.
+- Self-upgrade writes its state and `self-upgrade.override.yml` below the shared `/supervisor-state` mount. The API receives that path read-only and the supervisor receives it read-write; the deployment smoke test verifies supervisor write/API read.
+- Automatic updates use the durable image-only managed override directory and never pass a `/tmp/dockrev-override-*.yml` path to `compose up`. Historical deleted temporary overrides remain visible until an administrator explicitly reconciles them.
 
 ## Traefik + Authelia example
 

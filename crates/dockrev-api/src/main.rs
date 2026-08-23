@@ -25,6 +25,7 @@ mod github;
 mod ids;
 mod ignore;
 mod job_live_logs;
+mod managed_override;
 mod management_events;
 mod metrics_store;
 mod models;

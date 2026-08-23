@@ -13,14 +13,21 @@ use crate::{
         TriggerDiscoveryScanResponse,
     },
     compose,
+    compose_runner::{ComposeRunnerConfig, ComposeStack},
     db::{ComposeServiceSpec, DiscoveredComposeProjectUpsert},
-    ids,
+    docker_runner, ids, managed_override,
     runner::CommandSpec,
     state::AppState,
 };
 
 static DISCOVERY_SCAN_LOCK: LazyLock<tokio::sync::Mutex<()>> =
     LazyLock::new(|| tokio::sync::Mutex::new(()));
+static MANAGED_RECONCILE_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+pub fn managed_reconcile_available() -> bool {
+    MANAGED_RECONCILE_LOCK.try_lock().is_ok()
+}
 
 fn now_rfc3339() -> anyhow::Result<String> {
     Ok(time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)?)
@@ -373,9 +380,8 @@ fn is_dockrev_generated_override_path(
         return false;
     };
 
-    // Dockrev currently generates overrides in two places:
-    // - updater temp files under the host temp dir: dockrev-override-<project>-<ulid>.yml
-    // - supervisor self-upgrade overrides next to the configured state path
+    // Historical updater temp files remain recognizable so Discovery can keep their warning
+    // actionable. Current updates use the durable managed-overrides directory instead.
     if file_name == "self-upgrade.override.yml" && expected_self_upgrade_override == Some(path) {
         return true;
     }
@@ -420,6 +426,7 @@ fn sanitize_project_name(name: &str) -> String {
     }
 }
 
+#[cfg(test)]
 fn configured_self_upgrade_override_path() -> Option<PathBuf> {
     let state_path = std::env::var_os("DOCKREV_SUPERVISOR_STATE_PATH")?;
     if state_path.is_empty() {
@@ -427,6 +434,21 @@ fn configured_self_upgrade_override_path() -> Option<PathBuf> {
     }
 
     expected_self_upgrade_override_path(Path::new(&state_path))
+}
+
+#[cfg(test)]
+fn configured_managed_override_root() -> Option<PathBuf> {
+    let db_path = std::env::var_os("DOCKREV_DB_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("./data/dockrev.sqlite3"));
+    managed_override::configured_root(&db_path).ok()
+}
+
+fn is_managed_override_path(path: &str, root: Option<&Path>, stack_id: Option<&str>) -> bool {
+    let (Some(root), Some(stack_id)) = (root, stack_id) else {
+        return false;
+    };
+    Path::new(path) == managed_override::managed_override_path(root, stack_id)
 }
 
 fn expected_self_upgrade_override_path(state_path: &Path) -> Option<PathBuf> {
@@ -506,6 +528,7 @@ fn validate_image_only_override(
     Ok(())
 }
 
+#[cfg(test)]
 async fn resolve_project_compose_files(
     project: &str,
     observed: &[ObservedComposeContainer],
@@ -519,10 +542,28 @@ async fn resolve_project_compose_files(
     .await
 }
 
+#[cfg(test)]
 async fn resolve_project_compose_files_with_expected_override(
     project: &str,
     observed: &[ObservedComposeContainer],
     expected_self_upgrade_override: Option<&Path>,
+) -> Result<ResolvedProjectComposeFiles, InvalidProjectComposeFiles> {
+    resolve_project_compose_files_with_context(
+        project,
+        observed,
+        expected_self_upgrade_override,
+        configured_managed_override_root().as_deref(),
+        None,
+    )
+    .await
+}
+
+async fn resolve_project_compose_files_with_context(
+    project: &str,
+    observed: &[ObservedComposeContainer],
+    expected_self_upgrade_override: Option<&Path>,
+    managed_override_root: Option<&Path>,
+    stack_id: Option<&str>,
 ) -> Result<ResolvedProjectComposeFiles, InvalidProjectComposeFiles> {
     // Group by the normalized config_files (paths + order) and collect services that reported it.
     let mut variants = BTreeMap::<Vec<String>, BTreeSet<String>>::new();
@@ -603,18 +644,37 @@ async fn resolve_project_compose_files_with_expected_override(
             && !unreadable_dockrev_generated.is_empty()
             && !readable_files.is_empty()
         {
+            let stale_temp = unreadable_dockrev_generated.iter().all(|entry| {
+                entry
+                    .get("path")
+                    .and_then(|value| value.as_str())
+                    .and_then(|path| {
+                        let path = Path::new(path);
+                        let name = path.file_name()?.to_str()?;
+                        Some(is_expected_dockrev_temp_override_path(path, name, project))
+                    })
+                    .unwrap_or(false)
+            });
             let selected = serde_json::json!({
                 "mode": "single_variant_dockrev_generated_override_fallback",
                 "configFiles": readable_files.clone(),
                 "services": services.iter().cloned().collect::<Vec<_>>(),
                 "ignoredExtra": unreadable_dockrev_generated,
+                "reconcileEligible": stale_temp,
+                "affectedServices": services.iter().cloned().collect::<Vec<_>>(),
             });
             let details = variants_details_json(&variants, Some(selected));
             return Ok(ResolvedProjectComposeFiles {
                 compose_files: readable_files,
-                warning: Some(
-                    "warning:config_files_single_variant_dockrev_generated_override_fallback: unreadable dockrev-generated override ignored; using readable compose files. Hint: mount the override path into dockrev (same absolute path, read-only), and set DOCKREV_SUPERVISOR_STATE_PATH to the same mounted absolute path in both dockrev and supervisor".to_string(),
-                ),
+                warning: Some(if stale_temp {
+                    format!(
+                        "{}: unreadable Dockrev temporary override remains referenced; reconciliation is available; services=[{}]",
+                        managed_override::STALE_TEMP_WARNING,
+                        services.iter().cloned().collect::<Vec<_>>().join(",")
+                    )
+                } else {
+                    "warning:config_files_single_variant_dockrev_generated_override_fallback: unreadable dockrev-generated override ignored; using readable compose files. Hint: mount the override path into dockrev (same absolute path, read-only), and set DOCKREV_SUPERVISOR_STATE_PATH to the same mounted absolute path in both dockrev and supervisor".to_string()
+                }),
                 details: Some(details),
             });
         }
@@ -702,18 +762,41 @@ async fn resolve_project_compose_files_with_expected_override(
         }
 
         if readable.is_empty() {
+            let stale_temp = extra_files.iter().all(|path| {
+                let path_ref = Path::new(path);
+                path_ref
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        is_expected_dockrev_temp_override_path(path_ref, name, project)
+                    })
+            });
             let selected = serde_json::json!({
                 "mode": "common_fallback_no_superset_all_unreadable",
                 "configFiles": common_files.clone(),
                 "extraFiles": extra_files.clone(),
                 "unreadableExtra": unreadable,
+                "reconcileEligible": stale_temp,
+                "affectedServices": variants.values().flat_map(|items| items.iter().cloned()).collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>(),
             });
             let details = variants_details_json(&variants, Some(selected));
             return Ok(ResolvedProjectComposeFiles {
                 compose_files: common_files.clone(),
-                warning: Some(
-                    "warning:config_files_conflict_fallback_common: no canonical superset found; all extra files unreadable; using common compose files. Hint: mount the override path into dockrev (same absolute path, read-only), and set DOCKREV_SUPERVISOR_STATE_PATH to the same mounted absolute path in both dockrev and supervisor".to_string(),
-                ),
+                warning: Some(if stale_temp {
+                    format!(
+                        "{}: no canonical superset found; Dockrev temporary overrides are unreadable; reconciliation is available; services=[{}]",
+                        managed_override::STALE_TEMP_WARNING,
+                        variants
+                            .values()
+                            .flat_map(|items| items.iter().cloned())
+                            .collect::<BTreeSet<_>>()
+                            .into_iter()
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    )
+                } else {
+                    "warning:config_files_conflict_fallback_common: no canonical superset found; all extra files unreadable; using common compose files. Hint: mount the override path into dockrev (same absolute path, read-only), and set DOCKREV_SUPERVISOR_STATE_PATH to the same mounted absolute path in both dockrev and supervisor".to_string()
+                }),
                 details: Some(details),
             });
         }
@@ -784,7 +867,13 @@ async fn resolve_project_compose_files_with_expected_override(
             }
         };
 
-        if let Err(err) = validate_image_only_override(path, &contents, &superset_services) {
+        let validation = if is_managed_override_path(path, managed_override_root, stack_id) {
+            managed_override::validate_image_only_yaml(&contents, &superset_services)
+                .map_err(|error| error.to_string())
+        } else {
+            validate_image_only_override(path, &contents, &superset_services)
+        };
+        if let Err(err) = validation {
             let err_msg = err.clone();
             if err.contains("not in allowed services for this variant") {
                 // The file is image-only, but it touches services outside the variant that
@@ -833,17 +922,25 @@ async fn resolve_project_compose_files_with_expected_override(
     });
     let details = variants_details_json(&variants, Some(selected));
 
+    let managed_canonical = !extra_files.is_empty()
+        && extra_files
+            .iter()
+            .all(|path| is_managed_override_path(path, managed_override_root, stack_id));
     Ok(ResolvedProjectComposeFiles {
         compose_files: superset.clone(),
-        warning: Some(format!(
-            "warning:config_files_superset_selected: selected superset config_files; extra_files=[{}]; services=[{}]",
-            extra_files.join(","),
-            superset_services
-                .iter()
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(",")
-        )),
+        warning: if managed_canonical {
+            None
+        } else {
+            Some(format!(
+                "warning:config_files_superset_selected: selected superset config_files; extra_files=[{}]; services=[{}]",
+                extra_files.join(","),
+                superset_services
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ))
+        },
         details: Some(details),
     })
 }
@@ -937,6 +1034,284 @@ async fn classify_persisted_compose_files(
     PersistedComposeFilesState::Stopped { compose_files }
 }
 
+pub async fn run_managed_override_reconcile(state: &AppState, job_id: &str, stack_id: &str) {
+    let result = reconcile_managed_override(state, stack_id).await;
+    let finished_at = now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
+    match result {
+        Ok(summary) => {
+            let _ = state
+                .db
+                .finish_job(job_id, "success", &finished_at, &summary)
+                .await;
+        }
+        Err(error) => {
+            let _ = state
+                .db
+                .insert_job_log(
+                    job_id,
+                    &JobLogLine {
+                        ts: finished_at.clone(),
+                        level: "error".to_string(),
+                        msg: format!("managed override reconciliation failed: {error}"),
+                    },
+                )
+                .await;
+            let _ = state
+                .db
+                .finish_job(
+                    job_id,
+                    "failed",
+                    &finished_at,
+                    &serde_json::json!({"error": error.to_string()}),
+                )
+                .await;
+        }
+    }
+}
+
+async fn reconcile_managed_override(
+    state: &AppState,
+    stack_id: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let _reconcile_guard = MANAGED_RECONCILE_LOCK.lock().await;
+    let discovered = state
+        .db
+        .list_discovered_compose_projects(crate::db::ArchivedFilter::Include)
+        .await?
+        .into_iter()
+        .find(|project| project.stack_id.as_deref() == Some(stack_id))
+        .ok_or_else(|| anyhow::anyhow!("discovery project is not associated with stack"))?;
+    if !discovered
+        .last_error
+        .as_deref()
+        .is_some_and(|error| error.starts_with(managed_override::STALE_TEMP_WARNING))
+    {
+        anyhow::bail!(
+            "managed override reconciliation requires a stale Dockrev temporary override warning"
+        );
+    }
+
+    let stack = state
+        .db
+        .get_stack(stack_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("stack not found"))?;
+    let affected_services = discovered
+        .last_error
+        .as_deref()
+        .and_then(parse_affected_services)
+        .unwrap_or_else(|| {
+            stack
+                .services
+                .iter()
+                .map(|service| service.name.clone())
+                .collect()
+        });
+    let selected_services = stack
+        .services
+        .iter()
+        .filter(|service| affected_services.iter().any(|name| name == &service.name))
+        .collect::<Vec<_>>();
+    if selected_services.is_empty() {
+        anyhow::bail!("stale warning did not identify any services in the stack");
+    }
+    let compose_cfg = ComposeRunnerConfig {
+        compose_bin: state.config.compose_bin.clone(),
+        env: Vec::new(),
+    };
+    let base_stack = ComposeStack {
+        project_name: sanitize_project_name(&stack.name),
+        compose: stack.compose.clone(),
+    };
+    let docker_cfg = docker_runner::DockerRunnerConfig::default();
+    let mut old_image_ids = BTreeMap::new();
+    let mut images = Vec::new();
+    for service in &selected_services {
+        let container_id =
+            command_text(state, base_stack.ps_q_service(&compose_cfg, &service.name)).await?;
+        let container_id = container_id.trim();
+        if container_id.is_empty() {
+            anyhow::bail!("service container is not running: {}", service.name);
+        }
+        let image_id = command_text(
+            state,
+            docker_runner::inspect_image_id(&docker_cfg, container_id),
+        )
+        .await?;
+        let image_id = image_id.trim().to_string();
+        if image_id.is_empty() {
+            anyhow::bail!("running image id is empty: {}", service.name);
+        }
+        let repo = base_repository(&service.image.reference);
+        let repo_digest = command_text(
+            state,
+            docker_runner::inspect_repo_digests(&docker_cfg, &image_id),
+        )
+        .await?
+        .split(',')
+        .map(str::trim)
+        .find(|digest| repo_digest_matches(digest, &repo))
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no RepoDigest matching base repository for {}",
+                service.name
+            )
+        })?;
+        old_image_ids.insert(service.name.clone(), image_id);
+        images.push((service.name.clone(), repo_digest));
+    }
+
+    let path =
+        managed_override::managed_override_path(&state.config.managed_override_dir, stack_id);
+    let contents = managed_override::render_image_only_override(&images)?;
+    let _override_guard = managed_override::lock();
+    managed_override::recover_interrupted(&path)?;
+    managed_override::commit_with_snapshot(&path, &contents)?;
+    drop(_override_guard);
+
+    let mut managed_stack = base_stack.clone();
+    managed_stack
+        .compose
+        .compose_files
+        .push(path.to_string_lossy().to_string());
+    let service_names = selected_services
+        .iter()
+        .map(|service| service.name.clone())
+        .collect::<Vec<_>>();
+    if let Err(error) = run_checked_command(
+        state,
+        managed_stack.up_services_no_pull_no_deps_force_recreate(&compose_cfg, &service_names),
+    )
+    .await
+    {
+        restore_managed_override(&path)?;
+        return Err(error);
+    }
+
+    for service in &selected_services {
+        let verification = async {
+            let container_id = command_text(
+                state,
+                managed_stack.ps_q_service(&compose_cfg, &service.name),
+            )
+            .await?;
+            let container_id = container_id.trim().to_string();
+            if container_id.is_empty() {
+                anyhow::bail!("service container missing after reconciliation");
+            }
+            let running = command_text(
+                state,
+                docker_runner::inspect_is_running(&docker_cfg, &container_id),
+            )
+            .await?;
+            let image_id = command_text(
+                state,
+                docker_runner::inspect_image_id(&docker_cfg, &container_id),
+            )
+            .await?;
+            if running.trim() != "1" || image_id.trim() != old_image_ids[&service.name] {
+                anyhow::bail!("service image or running-state verification failed");
+            }
+            let has_health = command_text(
+                state,
+                docker_runner::inspect_has_healthcheck(&docker_cfg, &container_id),
+            )
+            .await?;
+            if has_health.trim() == "1" {
+                let health = command_text(
+                    state,
+                    docker_runner::inspect_health_status(&docker_cfg, &container_id),
+                )
+                .await?;
+                if health.trim() != "healthy" {
+                    anyhow::bail!("service health verification failed");
+                }
+            }
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+        if let Err(error) = verification {
+            restore_managed_override(&path)?;
+            return Err(anyhow::anyhow!(
+                "service verification failed after reconciliation for {}: {error}",
+                service.name
+            ));
+        }
+    }
+
+    let scan = run_scan(state).await?;
+    Ok(serde_json::json!({
+        "managedOverridePath": path,
+        "services": service_names,
+        "pull": "never",
+        "recreate": "--no-deps --force-recreate",
+        "rescan": scan.summary,
+    }))
+}
+
+async fn command_text(state: &AppState, command: CommandSpec) -> anyhow::Result<String> {
+    let output = state.runner.run(command, Duration::from_secs(60)).await?;
+    if output.status != 0 {
+        anyhow::bail!(
+            "command failed status={} stderr={}",
+            output.status,
+            output.stderr.trim()
+        );
+    }
+    Ok(output.stdout)
+}
+
+async fn run_checked_command(state: &AppState, command: CommandSpec) -> anyhow::Result<()> {
+    let output = state.runner.run(command, Duration::from_secs(300)).await?;
+    if output.status != 0 {
+        anyhow::bail!(
+            "compose reconciliation failed status={} stderr={}",
+            output.status,
+            output.stderr.trim()
+        );
+    }
+    Ok(())
+}
+
+fn restore_managed_override(path: &Path) -> anyhow::Result<()> {
+    let _guard = managed_override::lock();
+    let snapshot = format!("{}.previous", path.display());
+    managed_override::restore_snapshot(path, Some(&snapshot))
+}
+
+fn base_repository(image: &str) -> String {
+    let without_digest = image.split_once('@').map_or(image, |(repo, _)| repo);
+    without_digest
+        .rsplit_once(':')
+        .filter(|(_, tag)| !tag.contains('/') && !tag.is_empty())
+        .map_or(without_digest, |(repo, _)| repo)
+        .to_string()
+}
+
+fn repo_digest_matches(repo_digest: &str, base_repo: &str) -> bool {
+    let Some((repo, digest)) = repo_digest.split_once('@') else {
+        return false;
+    };
+    if !digest.starts_with("sha256:") || digest.len() != 71 {
+        return false;
+    }
+    repo == base_repo
+        || (base_repo == repo.rsplit_once('/').map_or(repo, |(_, tail)| tail)
+            && !base_repo.contains('/'))
+}
+
+fn parse_affected_services(warning: &str) -> Option<Vec<String>> {
+    let raw = warning.split_once("services=[")?.1.split_once(']')?.0;
+    let services = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|service| !service.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    (!services.is_empty()).then_some(services)
+}
+
 pub async fn run_scan(state: &AppState) -> anyhow::Result<TriggerDiscoveryScanResponse> {
     run_scan_inner(state, None).await
 }
@@ -1012,7 +1387,25 @@ async fn run_scan_inner(
         )
         .await;
 
-        let resolved = match resolve_project_compose_files(project, observed).await {
+        let existing_stack_id = state
+            .db
+            .get_discovered_compose_project(project)
+            .await?
+            .and_then(|record| record.stack_id);
+        let expected_self_upgrade_override = state
+            .config
+            .supervisor_state_path
+            .as_deref()
+            .and_then(expected_self_upgrade_override_path);
+        let resolved = match resolve_project_compose_files_with_context(
+            project,
+            observed,
+            expected_self_upgrade_override.as_deref(),
+            Some(state.config.managed_override_dir.as_path()),
+            existing_stack_id.as_deref(),
+        )
+        .await
+        {
             Ok(v) => v,
             Err(e) => {
                 summary.stacks_failed += 1;

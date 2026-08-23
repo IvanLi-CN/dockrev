@@ -252,6 +252,16 @@ async function main() {
 
   const shots = [
     {
+      id: 'components-discoveryissuereconcileaction--eligible-warning',
+      file: 'discovery-issue-reconcile-action.png',
+      setup: async (page) => {
+        await page.locator('[data-reconcile-action-state="eligible"]').waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        await page.locator('[data-reconcile-action-state="eligible"]').screenshot({ path: filePath })
+      },
+    },
+    {
       id: 'layouts-appshell--overview',
       file: 'app-shell-sidebar.png',
       setup: async (page) => {

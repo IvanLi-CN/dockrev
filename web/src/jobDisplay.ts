@@ -26,6 +26,7 @@ export function formatJobTypeLabel(type: string, summary?: unknown): string {
   if (raw === 'check') return '检查任务'
   if (raw === 'cleanup_apply') return '清理任务'
   if (raw === 'discovery') return '发现扫描'
+  if (raw === 'managed_override_reconcile') return 'Compose provenance 修复'
   if (raw === 'runtime_scan') return '运行时扫描'
   if (raw === 'github_packages_webhook') return 'GHCR Webhook'
   if (raw === 'github_packages_webhook_sync_all') return 'GHCR 全量同步'

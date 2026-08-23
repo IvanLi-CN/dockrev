@@ -47,7 +47,7 @@ fn blocks_targets(
         "rollback" | "service_lifecycle" => {
             job.service_id.as_deref() == Some(target.service_id.as_str())
         }
-        "update" | "stack_lifecycle" => match job.scope {
+        "update" | "stack_lifecycle" | "managed_override_reconcile" => match job.scope {
             JobScope::All => true,
             JobScope::Stack => job.stack_id.as_deref() == Some(target.stack_id.as_str()),
             JobScope::Service => job.service_id.as_deref() == Some(target.service_id.as_str()),
@@ -88,7 +88,7 @@ impl Db {
 SELECT id, type, scope, stack_id, service_id, status, created_by, reason, created_at,
   started_at, finished_at, allow_arch_mismatch, backup_mode, summary_json
 FROM jobs
-WHERE type IN ('update', 'rollback', 'service_lifecycle', 'stack_lifecycle') AND status IN ('queued', 'running')
+WHERE type IN ('update', 'rollback', 'service_lifecycle', 'stack_lifecycle', 'managed_override_reconcile') AND status IN ('queued', 'running')
 ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END, created_at DESC, id DESC
 "#,
                 )?;

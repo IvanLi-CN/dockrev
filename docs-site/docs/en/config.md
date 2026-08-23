@@ -31,6 +31,7 @@ description: Runtime configuration reference for Dockrev API and Supervisor.
 | `DOCKREV_SELF_UPGRADE_URL` | `/supervisor/` | Self-upgrade UI URL |
 | `DOCKREV_IMAGE_REPO` | `ghcr.io/ivanli-cn/dockrev` | Dockrev service image repo matcher |
 | `DOCKREV_SUPERVISOR_STATE_PATH` | empty | Optional for `dockrev-api`; set the same absolute path used by `dockrev-supervisor` so discovery can recognize the generated `self-upgrade.override.yml` |
+| `DOCKREV_MANAGED_OVERRIDE_DIR` | beside the DB | Absolute durable directory for Stack-ID-derived image-only Compose provenance |
 | `DOCKREV_WEBHOOK_SECRET` | empty | Shared secret for `/api/webhooks/trigger` |
 | `DOCKREV_HOST_PLATFORM` | empty | Host platform override |
 | `DOCKREV_DISCOVERY_INTERVAL_SECONDS` | `60` | Discovery interval |
@@ -43,6 +44,7 @@ Notes:
 - The anonymous public surface is intentionally fixed to `GET /api/health`, `GET /api/version`, and `/api/webhooks/*`. Every other API/UI/supervisor route is still authorized inside Dockrev.
 - A wrong `DOCKREV_IMAGE_REPO` breaks Dockrev self-upgrade detection in the UI.
 - If you want discovery to classify the self-upgrade override as Dockrev-generated, `dockrev-api` and `dockrev-supervisor` must share the same absolute `DOCKREV_SUPERVISOR_STATE_PATH`, and that directory must be mounted into the Dockrev container at the same absolute path.
+- This supervisor state contract is separate from update provenance. Updates use the durable managed override directory; old deleted `/tmp/dockrev-override-*.yml` files remain actionable discovery warnings.
 
 ## Check and retry controls
 
@@ -77,7 +79,7 @@ When a runtime digest is already known, Docker Hub manifest checks use `HEAD` fi
 | `DOCKREV_SUPERVISOR_TARGET_CONTAINER_ID` | empty | Override auto-matched container |
 | `DOCKREV_SUPERVISOR_DOCKER_HOST` | empty | Docker endpoint override |
 | `DOCKREV_SUPERVISOR_COMPOSE_BIN` | `docker-compose` | Compose command selector |
-| `DOCKREV_SUPERVISOR_STATE_PATH` | `./data/supervisor/self-upgrade.json` | Persisted operation state |
+| `DOCKREV_SUPERVISOR_STATE_PATH` | `/supervisor-state/self-upgrade.json` in the official Compose | Persisted operation state; when set it must be absolute and its parent must be readable |
 
 ## Production baseline
 

@@ -12,6 +12,7 @@ listCompactJobsPage,
 listStacks,
 triggerCheck,
 triggerDiscoveryScan,
+triggerManagedOverrideReconcile,
 triggerUpdate,
 type DiscoveredProject,
 type CompactJobListItem,
@@ -124,6 +125,7 @@ export function useOverviewPageState(props: {
   const [loadTrigger, setLoadTrigger] = useState<AsyncDataTrigger>('background')
   const [noticeJobId, setNoticeJobId] = useState<string | null>(null)
   const [noticeDiscoveryJobId, setNoticeDiscoveryJobId] = useState<string | null>(null)
+  const [noticeReconcileJobId, setNoticeReconcileJobId] = useState<string | null>(null)
   const [noticeCheckJobId, setNoticeCheckJobId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [snapshotStatus, setSnapshotStatus] = useState<'missing' | 'fresh' | 'stale' | 'expired' | 'unsupported'>('missing')
@@ -676,6 +678,41 @@ export function useOverviewPageState(props: {
     }
   }, [confirm])
 
+  const runManagedOverrideReconcile = useCallback(async (issue: DiscoveryIssueItem) => {
+    if (!issue.reconcileEligible || !issue.stackId) return
+    const ok = await confirm({
+      title: '确认修复 Compose provenance？',
+      body: (
+        <>
+          <div className="modalLead">这会仅重建该告警关联的服务，并保留当前运行镜像。</div>
+          <div className="modalKvGrid">
+            <div className="modalKvLabel">影响</div>
+            <div className="modalKvValue">重建 Stack <Mono>{issue.project}</Mono> 的受影响服务</div>
+            <div className="modalKvLabel">镜像策略</div>
+            <div className="modalKvValue"><Mono>--pull never</Mono>，不拉取、不猜测标签</div>
+          </div>
+        </>
+      ),
+      confirmText: '确认修复',
+      cancelText: '取消',
+      confirmVariant: 'danger',
+      badgeText: '需要重启服务',
+      badgeTone: 'warn',
+    })
+    if (!ok) return
+    setBusy(true)
+    setError(null)
+    try {
+      const response = await triggerManagedOverrideReconcile(issue.stackId)
+      setNoticeReconcileJobId(response.jobId)
+      setActiveDiscoveryIssue(null)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }, [confirm])
+
   const triggerApply = useCallback(
     async (input: {
       scope: 'all' | 'stack' | 'service'
@@ -936,6 +973,7 @@ export function useOverviewPageState(props: {
     jobsPhase,
     noticeCheckJobId,
     noticeDiscoveryJobId,
+    noticeReconcileJobId,
     noticeJobId,
     readonlyOffline,
     onChangeFilter,
@@ -943,6 +981,7 @@ export function useOverviewPageState(props: {
     patchServiceInStackDetails,
     requestRefresh,
     runDiscoveryScan,
+    runManagedOverrideReconcile,
     selfUpgradeUrl,
     setCandidateSearch,
     setActiveDiscoveryIssue,

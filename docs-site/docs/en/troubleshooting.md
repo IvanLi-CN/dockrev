@@ -19,7 +19,8 @@ Check:
 
 - Compose labels are present on running containers
 - `config_files` absolute paths are readable inside dockrev container
-- Any Dockrev-generated override path is mounted consistently, such as `self-upgrade.override.yml` next to the configured absolute `DOCKREV_SUPERVISOR_STATE_PATH`, or `/tmp/dockrev-override-<project>-<ulid>.yml`
+- The supervisor state path is mounted consistently: `self-upgrade.override.yml` is next to the configured absolute `DOCKREV_SUPERVISOR_STATE_PATH`, with API read-only and supervisor read-write access.
+- Durable update provenance is mounted at `DOCKREV_MANAGED_OVERRIDE_DIR`. A historical `/tmp/dockrev-override-<project>-<ulid>.yml` is disposable history, not a current managed file.
 - Any user-managed extra compose / override file still exists and is mounted
 
 If a service is stopped but every saved Compose file is readable and valid, discovery reports `stopped` instead of archiving it. Open the linked Stack and use the existing start action. Dockrev auto-archives only when every saved Compose file is absent. A partial absence, permission/I-O failure, or parse error stays visible as `invalid`; repair the file or mount and rerun discovery. A user archive is never removed by discovery.
@@ -44,7 +45,7 @@ Check:
 
 Immediate actions:
 
-1. If the only unreadable file is a Dockrev-generated override file, such as `self-upgrade.override.yml` next to the absolute `DOCKREV_SUPERVISOR_STATE_PATH` shared by `dockrev` and `supervisor`, or `/tmp/dockrev-override-<project>-<ulid>.yml`, rerun discovery and let Dockrev fall back to the remaining readable compose files.
+1. If the warning is `warning:config_files_stale_dockrev_temp_override`, keep it visible and use the administrator-only reconciliation action. It requires a matching running-image RepoDigest and performs no pull; a rescan alone must not hide it.
 2. If the unreadable file is a user-managed compose/override file, fix the same-absolute-path mount first; discovery will keep the project invalid until that file is readable.
 3. If webhook deliveries already return `200` but candidates stay stale, inspect the matched `check.service` job logs; digest-only image refs should now be accepted instead of failing as `invalid image ref`.
 

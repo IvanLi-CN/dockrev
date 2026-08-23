@@ -31,6 +31,7 @@ description: Dockrev API 与 Supervisor 运行参数说明。
 | `DOCKREV_SELF_UPGRADE_URL` | `/supervisor/` | UI 中“升级 Dockrev”跳转地址 |
 | `DOCKREV_IMAGE_REPO` | `ghcr.io/ivanli-cn/dockrev` | 用于识别 Dockrev 自身服务 |
 | `DOCKREV_SUPERVISOR_STATE_PATH` | 空 | 可选；若要让 discovery 识别 Dockrev 自生成的 `self-upgrade.override.yml`，这里必须与 supervisor 使用同一个绝对路径 |
+| `DOCKREV_MANAGED_OVERRIDE_DIR` | DB 同级目录 | 受管、持久化的 image-only Compose provenance 目录；必须是容器内绝对路径 |
 | `DOCKREV_WEBHOOK_SECRET` | 空 | `/api/webhooks/trigger` 共享密钥 |
 | `DOCKREV_HOST_PLATFORM` | 空 | 覆盖主机平台（如 `linux/amd64`） |
 | `DOCKREV_DISCOVERY_INTERVAL_SECONDS` | `60` | 自动发现周期 |
@@ -43,6 +44,7 @@ description: Dockrev API 与 Supervisor 运行参数说明。
 - 生产匿名公共面固定为 `GET /api/health`、`GET /api/version`、`/api/webhooks/*`；其余 API/UI/`/supervisor/*` 即使走透明透传，也仍由 Dockrev 自己鉴权。
 - `DOCKREV_IMAGE_REPO` 配错会导致“升级 Dockrev”入口识别异常。
 - 若启用 self-upgrade discovery 回退，`dockrev-api` 与 `dockrev-supervisor` 必须共享同一个绝对 `DOCKREV_SUPERVISOR_STATE_PATH`，并把对应目录以相同绝对路径挂载进 `dockrev` 容器。
+- Supervisor state 挂载契约与更新 provenance 是两类问题：更新使用持久化受管 override，历史删除的 `/tmp/dockrev-override-*.yml` 会保留为可操作告警，不能靠重扫隐藏。
 
 ## 检查与重试参数
 
@@ -80,7 +82,7 @@ description: Dockrev API 与 Supervisor 运行参数说明。
 | `DOCKREV_SUPERVISOR_TARGET_CONTAINER_ID` | 空 | 覆盖自动匹配容器 |
 | `DOCKREV_SUPERVISOR_DOCKER_HOST` | 空 | Docker endpoint |
 | `DOCKREV_SUPERVISOR_COMPOSE_BIN` | `docker-compose` | Compose 命令选择 |
-| `DOCKREV_SUPERVISOR_STATE_PATH` | `./data/supervisor/self-upgrade.json` | 状态文件路径 |
+| `DOCKREV_SUPERVISOR_STATE_PATH` | 官方 Compose 为 `/supervisor-state/self-upgrade.json` | 状态文件路径；设置时必须是绝对路径且父目录可读 |
 
 ## 生产基线建议
 

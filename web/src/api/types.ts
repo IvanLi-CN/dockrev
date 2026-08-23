@@ -338,6 +338,10 @@ export type TriggerDiscoveryScanJobResponse = {
   jobId: string
 }
 
+export type TriggerManagedOverrideReconcileResponse = {
+  jobId: string
+}
+
 export type TriggerVersionInferenceRefreshResponse = {
   status: 'pending' | string
   serviceId: string

@@ -230,6 +230,8 @@ mod tests {
             app_effective_version: "0.1.0".to_string(),
             http_addr: "127.0.0.1:0".to_string(),
             db_path: PathBuf::from(":memory:"),
+            managed_override_dir: PathBuf::from("/tmp/dockrev-managed-overrides"),
+            supervisor_state_path: None,
             metrics_db_path: PathBuf::from("/tmp/dockrev-authz-test-metrics.sqlite3"),
             docker_config_path: None,
             compose_bin: "docker-compose".to_string(),

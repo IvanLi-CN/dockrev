@@ -1,5 +1,107 @@
 use super::*;
 
+pub(super) async fn trigger_managed_override_reconcile(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(stack_id): Path<String>,
+) -> Result<Json<TriggerManagedOverrideReconcileResponse>, ApiError> {
+    let user = require_user(&state, &headers).await?;
+    let stack = state
+        .db
+        .get_stack(&stack_id)
+        .await
+        .map_err(map_internal)?
+        .ok_or_else(|| ApiError::not_found("stack not found"))?;
+    let project = state
+        .db
+        .list_discovered_compose_projects(crate::db::ArchivedFilter::Include)
+        .await
+        .map_err(map_internal)?
+        .into_iter()
+        .find(|project| project.stack_id.as_deref() == Some(stack_id.as_str()))
+        .ok_or_else(|| ApiError::not_found("discovery project not found"))?;
+    let eligible = project
+        .last_error
+        .as_deref()
+        .is_some_and(|error| error.starts_with(crate::managed_override::STALE_TEMP_WARNING));
+    if !eligible {
+        return Err(ApiError::conflict(
+            "stack does not have a stale Dockrev temporary override warning",
+        ));
+    }
+
+    for service in &stack.services {
+        if let Some(job) = state
+            .db
+            .find_latest_pending_update_blocking_service(&stack_id, &service.id)
+            .await
+            .map_err(map_internal)?
+        {
+            return Err(ApiError::conflict("stack update is already running")
+                .with_details(json!({"existingJobId": job.id})));
+        }
+        if let Some(job) = state
+            .db
+            .find_latest_pending_stack_lifecycle_blocking_service(&stack_id, &service.id)
+            .await
+            .map_err(map_internal)?
+        {
+            return Err(
+                ApiError::conflict("stack lifecycle operation is already running")
+                    .with_details(json!({"existingJobId": job.id})),
+            );
+        }
+    }
+
+    if !discovery::managed_reconcile_available() {
+        return Err(ApiError::conflict(
+            "managed override reconciliation is already running",
+        ));
+    }
+    let running = state
+        .db
+        .list_jobs_page(crate::db::JobListFilters {
+            types: vec!["managed_override_reconcile".to_string()],
+            status: Some("running".to_string()),
+            stack_id: Some(stack_id.clone()),
+            service_id: None,
+            cursor: None,
+            limit: 1,
+        })
+        .await
+        .map_err(map_internal)?;
+    if let Some(job) = running.jobs.first() {
+        return Err(
+            ApiError::conflict("managed override reconciliation is already running")
+                .with_details(json!({"existingJobId": job.id})),
+        );
+    }
+
+    let now = now_rfc3339().map_err(map_internal)?;
+    let job_id = ids::new_job_id();
+    let job = JobRecord::new_running(
+        job_id.clone(),
+        JobType::ManagedOverrideReconcile,
+        JobScope::Stack,
+        Some(stack_id.clone()),
+        None,
+        &now,
+    );
+    let mut job_db = job.to_db();
+    job_db.created_by = user.principal;
+    job_db.reason = "ui".to_string();
+    state.db.insert_job(job_db).await.map_err(map_internal)?;
+
+    let run_state = state.clone();
+    let run_stack_id = stack_id.clone();
+    let run_job_id = job_id.clone();
+    tokio::spawn(async move {
+        discovery::run_managed_override_reconcile(&run_state, &run_job_id, &run_stack_id).await;
+    });
+
+    Ok(Json(TriggerManagedOverrideReconcileResponse { job_id }))
+}
+
 pub(super) async fn trigger_discovery_scan(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,

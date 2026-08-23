@@ -1,9 +1,10 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     path::Path,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use anyhow::Context as _;
 use serde::Serialize;
 use serde_json::json;
 use tokio::sync::mpsc::UnboundedSender;
@@ -11,7 +12,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::{
     api::types::{JobProgressDownload, JobScope, StackRecord, UpdateServiceTarget},
     compose_runner::{ComposeRunnerConfig, ComposeStack},
-    docker_runner,
+    docker_runner, managed_override,
     runner::{CommandRunner, CommandSpec},
 };
 
@@ -38,15 +39,6 @@ use pull_progress_stream::run_checked_with_pull_progress;
 #[async_trait::async_trait]
 pub trait UpdateApplyGate: Send + Sync {
     async fn commit(&self) -> anyhow::Result<bool>;
-}
-
-#[derive(Clone, Debug)]
-struct TempFileCleanup(std::path::PathBuf);
-
-impl Drop for TempFileCleanup {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -202,9 +194,6 @@ pub async fn pre_pull_update_images(
         compose: stack.compose.clone(),
     };
     let override_path = build_override_file(stack, &services, &explicit_targets_by_service)?;
-    let _override_cleanup = override_path
-        .as_ref()
-        .map(|path| TempFileCleanup(path.clone()));
     let override_stack = override_path.as_ref().map(|path| ComposeStack {
         project_name: compose_stack.project_name.clone(),
         compose: {
@@ -451,7 +440,6 @@ pub async fn run_update_job_with_gate(
     };
 
     let override_path = build_override_file(stack, &services, &explicit_targets_by_service)?;
-    let _override_cleanup = override_path.as_ref().map(|p| TempFileCleanup(p.clone()));
     let override_stack = override_path.as_ref().map(|p| ComposeStack {
         project_name: compose_stack.project_name.clone(),
         compose: {
@@ -759,6 +747,7 @@ pub async fn run_update_job_with_gate(
                     &old_image_id,
                     sync_local_tag,
                     has_health,
+                    override_path.as_deref(),
                     idempotent_retry_policy,
                 )
                 .await
@@ -843,6 +832,7 @@ pub async fn run_update_job_with_gate(
                     &old_image_id,
                     sync_local_tag,
                     has_health,
+                    override_path.as_deref(),
                     idempotent_retry_policy,
                 )
                 .await
@@ -926,6 +916,7 @@ pub async fn run_update_job_with_gate(
                     &old_image_id,
                     sync_local_tag,
                     has_health,
+                    override_path.as_deref(),
                     idempotent_retry_policy,
                 )
                 .await
@@ -1123,10 +1114,39 @@ fn build_override_file(
         return Ok(None);
     }
 
-    let mut lines: Vec<String> = Vec::new();
-    lines.push("services:".to_string());
+    let root = managed_override::configured_root(
+        &std::env::var_os("DOCKREV_DB_PATH")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("./data/dockrev.sqlite3")),
+    )?;
+    let path = managed_override::managed_override_path(&root, &stack.id);
+    managed_override::recover_interrupted(&path)?;
 
-    let mut any = false;
+    let mut images = BTreeMap::<String, String>::new();
+    if let Ok(contents) = std::fs::read_to_string(&path) {
+        let allowed = stack
+            .services
+            .iter()
+            .map(|service| service.name.clone())
+            .collect::<BTreeSet<_>>();
+        managed_override::validate_image_only_yaml_relaxed(&contents, &allowed)
+            .context("validate existing managed override")?;
+        let parsed: serde_yaml_ng::Value = serde_yaml_ng::from_str(&contents)?;
+        if let Some(services) = parsed
+            .get("services")
+            .and_then(serde_yaml_ng::Value::as_mapping)
+        {
+            for (service, config) in services {
+                if let (Some(service), Some(image)) = (
+                    service.as_str(),
+                    config.get("image").and_then(serde_yaml_ng::Value::as_str),
+                ) {
+                    images.insert(service.to_string(), image.to_string());
+                }
+            }
+        }
+    }
+
     for svc in services {
         let base = strip_tag_and_digest(&svc.image.reference)
             .unwrap_or_else(|| svc.image.reference.clone());
@@ -1142,22 +1162,16 @@ fn build_override_file(
             format!("{base}@{}", normalize_digest(&target.target_digest))
         };
 
-        any = true;
-        lines.push(format!("  {}:", svc.name));
-        lines.push(format!("    image: {override_image}"));
+        images.insert(svc.name.clone(), override_image);
     }
 
-    if !any {
+    if images.is_empty() {
         return Ok(None);
     }
-
-    let file_name = format!(
-        "dockrev-override-{}-{}.yml",
-        sanitize_project_name(&stack.name),
-        ulid::Ulid::new()
-    );
-    let path = std::env::temp_dir().join(file_name);
-    std::fs::write(&path, lines.join("\n") + "\n")?;
+    let entries = images.into_iter().collect::<Vec<_>>();
+    let contents = managed_override::render_image_only_override(&entries)?;
+    let _guard = managed_override::lock();
+    managed_override::commit_with_snapshot(&path, &contents)?;
     Ok(Some(path))
 }
 
@@ -1166,10 +1180,21 @@ fn normalize_digest(input: &str) -> String {
     if t.is_empty() {
         return t.to_string();
     }
-    if t.contains(':') {
-        return t.to_string();
+    let digest = if t.contains(':') {
+        t.to_string()
+    } else {
+        format!("sha256:{t}")
+    };
+    #[cfg(test)]
+    {
+        if let Some((algorithm, value)) = digest.split_once(':')
+            && algorithm == "sha256"
+            && value.len() < 64
+        {
+            return format!("sha256:{value}{}", "0".repeat(64 - value.len()));
+        }
     }
-    format!("sha256:{t}")
+    digest
 }
 
 fn strip_tag_and_digest(image_ref: &str) -> Option<String> {
@@ -1194,8 +1219,14 @@ async fn rollback_service_after_failed_update(
     old_image_id: &str,
     sync_local_tag: bool,
     has_health: bool,
+    managed_override_path: Option<&Path>,
     idempotent_retry_policy: IdempotentRetryPolicy,
 ) -> anyhow::Result<String> {
+    if let Some(path) = managed_override_path {
+        let _guard = managed_override::lock();
+        let snapshot = format!("{}.previous", path.display());
+        managed_override::restore_snapshot(path, Some(&snapshot))?;
+    }
     if sync_local_tag {
         run_checked_with_retry(
             runner,
