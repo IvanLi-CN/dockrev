@@ -258,7 +258,58 @@ fn read_pending_marker(path: &Path) -> anyhow::Result<Option<(String, Vec<String
 }
 
 pub fn pending_snapshot_services(path: &Path) -> anyhow::Result<Vec<String>> {
-    Ok(read_pending_marker(path)?.map_or_else(Vec::new, |(_, services)| services))
+    let Some((phase, services)) = read_pending_marker(path)? else {
+        return Ok(Vec::new());
+    };
+    if phase == "prepared" && legacy_pending_marker(path)? {
+        return infer_legacy_pending_services(path);
+    }
+    Ok(services)
+}
+
+fn legacy_pending_marker(path: &Path) -> anyhow::Result<bool> {
+    if !has_pending_snapshot(path) {
+        return Ok(false);
+    }
+    let marker = fs::read_to_string(format!("{}.pending", path.display()))?;
+    let trimmed = marker.trim();
+    Ok(trimmed.eq_ignore_ascii_case("pending"))
+}
+
+fn infer_legacy_pending_services(path: &Path) -> anyhow::Result<Vec<String>> {
+    let active = read_override_images(path)?;
+    let previous = read_override_images(&PathBuf::from(format!("{}.previous", path.display())))?;
+    let names = active
+        .keys()
+        .chain(previous.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    Ok(names
+        .into_iter()
+        .filter(|name| active.get(name) != previous.get(name))
+        .collect())
+}
+
+fn read_override_images(path: &Path) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
+    if !path.is_file() {
+        return Ok(std::collections::BTreeMap::new());
+    }
+    let value: serde_yaml_ng::Value = serde_yaml_ng::from_str(&fs::read_to_string(path)?)?;
+    let mut images = std::collections::BTreeMap::new();
+    if let Some(services) = value
+        .get("services")
+        .and_then(serde_yaml_ng::Value::as_mapping)
+    {
+        for (service, config) in services {
+            if let (Some(service), Some(image)) = (
+                service.as_str(),
+                config.get("image").and_then(serde_yaml_ng::Value::as_str),
+            ) {
+                images.insert(service.to_string(), image.to_string());
+            }
+        }
+    }
+    Ok(images)
 }
 
 pub fn pending_snapshot_is_applied(path: &Path) -> anyhow::Result<bool> {
@@ -458,6 +509,34 @@ mod tests {
         );
         assert!(!has_pending_snapshot(&path));
         assert!(!Path::new(&format!("{}.previous", path.display())).exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn legacy_pending_marker_infers_changed_services_from_snapshot() {
+        let root = std::env::temp_dir().join(format!(
+            "dockrev-managed-legacy-pending-{}",
+            ulid::Ulid::new()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("stack.yml");
+        atomic_commit(
+            &path,
+            "services:\n  web:\n    image: web@sha256:old\n  worker:\n    image: worker@sha256:same\n",
+        )
+        .unwrap();
+        atomic_commit(
+            &PathBuf::from(format!("{}.previous", path.display())),
+            "services:\n  web:\n    image: web@sha256:new\n  worker:\n    image: worker@sha256:same\n",
+        )
+        .unwrap();
+        atomic_commit(
+            &PathBuf::from(format!("{}.pending", path.display())),
+            "pending\n",
+        )
+        .unwrap();
+
+        assert_eq!(pending_snapshot_services(&path).unwrap(), vec!["web"]);
         std::fs::remove_dir_all(root).unwrap();
     }
 

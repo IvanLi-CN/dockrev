@@ -35,6 +35,7 @@ fn managed_override_prepare_and_apply_share_one_rollback_snapshot() {
         &HashMap::from([("svc_1".to_string(), targets[0].clone())]),
         Some(&root),
         false,
+        &["web".to_string()],
     )
     .unwrap()
     .unwrap();
@@ -45,6 +46,7 @@ fn managed_override_prepare_and_apply_share_one_rollback_snapshot() {
         &HashMap::from([("svc_1".to_string(), targets[0].clone())]),
         Some(&root),
         true,
+        &["web".to_string()],
     )
     .unwrap()
     .unwrap();
@@ -56,6 +58,7 @@ fn managed_override_prepare_and_apply_share_one_rollback_snapshot() {
         &HashMap::from([("svc_1".to_string(), targets[0].clone())]),
         Some(&root),
         false,
+        &["web".to_string()],
     )
     .unwrap()
     .unwrap();
@@ -82,7 +85,9 @@ struct HealthRollbackRunner {
 #[async_trait::async_trait]
 impl CommandRunner for HealthRollbackRunner {
     async fn run(&self, spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+        let mut step = self.step.lock().unwrap();
         if let Some(path) = &self.expected_managed_override
+            && *step > 0
             && spec.program == "docker-compose"
         {
             assert!(
@@ -93,7 +98,6 @@ impl CommandRunner for HealthRollbackRunner {
                 spec.args
             );
         }
-        let mut step = self.step.lock().unwrap();
         let out = match *step {
             0 => {
                 assert_eq!(spec.program, "docker-compose");

@@ -263,12 +263,25 @@ pub(crate) async fn pre_pull_update_images_using_root_unlocked(
         project_name: sanitize_project_name(&stack.name),
         compose: stack.compose.clone(),
     };
+    let mut recovery_services = Vec::new();
+    for service in &services {
+        let container_id = run_to_string(
+            runner,
+            compose_stack.ps_q_service(&compose_cfg, &service.name),
+            Duration::from_secs(30),
+        )
+        .await?;
+        if !container_id.trim().is_empty() {
+            recovery_services.push(service.name.clone());
+        }
+    }
     let override_path = build_override_file(
         stack,
         &services,
         &explicit_targets_by_service,
         managed_override_root,
         false,
+        &recovery_services,
     )?;
     let override_stack = override_path.as_ref().map(|path| ComposeStack {
         project_name: compose_stack.project_name.clone(),
@@ -610,22 +623,6 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
         compose: stack.compose.clone(),
     };
 
-    let override_path = build_override_file(
-        stack,
-        &services,
-        &explicit_targets_by_service,
-        managed_override_root,
-        images_pre_pulled,
-    )?;
-    let override_stack = override_path.as_ref().map(|p| ComposeStack {
-        project_name: compose_stack.project_name.clone(),
-        compose: {
-            let mut c = stack.compose.clone();
-            c.compose_files.push(p.to_string_lossy().to_string());
-            c
-        },
-    });
-
     let docker_cfg = docker_runner::DockerRunnerConfig {
         docker_bin: "docker".to_string(),
         env: command_env,
@@ -642,12 +639,12 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
     let mut pull_tag_warnings: Vec<serde_json::Value> = Vec::new();
     let mut successful_tag_refs: HashSet<String> = HashSet::new();
 
-    let compose_for_update = override_stack.as_ref().unwrap_or(&compose_stack);
-
     let service_total = services.len() as u32;
     let mut prepared_services = Vec::new();
 
-    for (service_index, svc) in services.into_iter().enumerate() {
+    // Inspect the runtime before publishing the managed override so recovery only
+    // targets services that this operation would actually recreate.
+    for (service_index, svc) in services.iter().enumerate() {
         let service_index = service_index as u32;
 
         emit_update_progress(
@@ -665,9 +662,9 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
 
         let container_lookup =
             if images_pre_pulled && services_stopped_for_backup.contains(&svc.name) {
-                compose_for_update.ps_all_q_service(&compose_cfg, &svc.name)
+                compose_stack.ps_all_q_service(&compose_cfg, &svc.name)
             } else {
-                compose_for_update.ps_q_service(&compose_cfg, &svc.name)
+                compose_stack.ps_q_service(&compose_cfg, &svc.name)
             };
         let pre_update_container_id =
             run_to_string(runner, container_lookup, Duration::from_secs(30)).await?;
@@ -700,7 +697,7 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
         old_images.insert(svc.id.clone(), json!(&old_image_id));
 
         prepared_services.push((
-            svc,
+            (*svc).clone(),
             service_index,
             old_image_id,
             should_sync_local_tag(&svc.image.reference),
@@ -708,9 +705,6 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
     }
 
     if prepared_services.is_empty() {
-        if let Some(path) = override_path.as_deref() {
-            restore_managed_override_snapshot(path)?;
-        }
         return Ok(UpdateOutcome {
             status: "success".to_string(),
             summary_json: serde_json::Value::Object(build_update_summary(UpdateSummaryInput {
@@ -726,6 +720,27 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
             })),
         });
     }
+
+    let override_path = build_override_file(
+        stack,
+        &services,
+        &explicit_targets_by_service,
+        managed_override_root,
+        images_pre_pulled,
+        &prepared_services
+            .iter()
+            .map(|(svc, _, _, _)| svc.name.clone())
+            .collect::<Vec<_>>(),
+    )?;
+    let override_stack = override_path.as_ref().map(|p| ComposeStack {
+        project_name: compose_stack.project_name.clone(),
+        compose: {
+            let mut c = stack.compose.clone();
+            c.compose_files.push(p.to_string_lossy().to_string());
+            c
+        },
+    });
+    let compose_for_update = override_stack.as_ref().unwrap_or(&compose_stack);
 
     let prepared_service_names = prepared_services
         .iter()
@@ -1295,6 +1310,7 @@ fn build_override_file(
     explicit_targets: &HashMap<String, UpdateServiceTarget>,
     managed_override_root: Option<&Path>,
     preserve_snapshot: bool,
+    recovery_services: &[String],
 ) -> anyhow::Result<Option<std::path::PathBuf>> {
     if services.is_empty() {
         return Ok(None);
@@ -1365,11 +1381,7 @@ fn build_override_file(
         || current_contents.as_deref() != Some(contents.as_str())
         || !snapshot_path.is_file()
     {
-        let affected_services = services
-            .iter()
-            .map(|service| service.name.clone())
-            .collect::<Vec<_>>();
-        managed_override::commit_with_snapshot_for_services(&path, &contents, &affected_services)?;
+        managed_override::commit_with_snapshot_for_services(&path, &contents, recovery_services)?;
     }
     Ok(Some(path))
 }
