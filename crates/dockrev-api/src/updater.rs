@@ -299,7 +299,7 @@ pub(crate) async fn pre_pull_update_images_using_root_unlocked(
             },
         );
     }
-    run_checked_with_pull_progress(
+    let pull_result = run_checked_with_pull_progress(
         runner,
         compose_for_update.pull_services_with_progress(&compose_cfg, &service_names),
         Duration::from_secs(300),
@@ -322,7 +322,17 @@ pub(crate) async fn pre_pull_update_images_using_root_unlocked(
             }
         },
     )
-    .await?;
+    .await;
+    if let Err(error) = pull_result {
+        if let Some(path) = override_path.as_deref()
+            && let Err(restore_error) = restore_managed_override_snapshot(path)
+        {
+            return Err(error.context(format!(
+                "image prepare failed and managed override restore failed: {restore_error}"
+            )));
+        }
+        return Err(error);
+    }
     for (index, service) in services.iter().enumerate() {
         emit_update_progress(
             progress_events.as_ref(),
@@ -1299,7 +1309,7 @@ fn build_override_file(
             .iter()
             .map(|service| service.name.clone())
             .collect::<BTreeSet<_>>();
-        managed_override::validate_image_only_yaml_relaxed(&contents, &allowed)
+        managed_override::validate_image_only_yaml(&contents, &allowed)
             .context("validate existing managed override")?;
         let parsed: serde_yaml_ng::Value = serde_yaml_ng::from_str(&contents)?;
         if let Some(services) = parsed
@@ -1340,8 +1350,18 @@ fn build_override_file(
     }
     let entries = images.into_iter().collect::<Vec<_>>();
     let contents = managed_override::render_image_only_override(&entries)?;
-    managed_override::commit_with_snapshot(&path, &contents)?;
+    let current_contents = std::fs::read_to_string(&path).ok();
+    let snapshot_path = std::path::PathBuf::from(format!("{}.previous", path.display()));
+    if current_contents.as_deref() != Some(contents.as_str()) || !snapshot_path.is_file() {
+        managed_override::commit_with_snapshot(&path, &contents)?;
+    }
     Ok(Some(path))
+}
+
+fn restore_managed_override_snapshot(path: &Path) -> anyhow::Result<()> {
+    let _guard = managed_override::lock();
+    let snapshot = format!("{}.previous", path.display());
+    managed_override::restore_snapshot(path, Some(&snapshot))
 }
 
 fn normalize_digest(input: &str) -> String {

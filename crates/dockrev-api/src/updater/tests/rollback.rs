@@ -1,5 +1,57 @@
 use super::*;
 
+#[test]
+fn managed_override_prepare_and_apply_share_one_rollback_snapshot() {
+    let root = std::env::temp_dir().join(format!(
+        "dockrev-override-transaction-{}",
+        ulid::Ulid::new()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let stack = single_service_stack(
+        "ghcr.io/acme/web:1.0",
+        Some(crate::api::types::Candidate {
+            tag: "1.1".to_string(),
+            resolved_tag: None,
+            digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                .to_string(),
+            arch_match: crate::api::types::ArchMatch::Match,
+            arch: Vec::new(),
+        }),
+    );
+    let old = "services:\n  web:\n    image: ghcr.io/acme/web@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n";
+    let path = crate::managed_override::managed_override_path(&root, &stack.id);
+    crate::managed_override::commit_with_snapshot(&path, old).unwrap();
+
+    let targets = explicit_targets(
+        "svc_1",
+        "1.1",
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        &[],
+    );
+    let first = build_override_file(
+        &stack,
+        &[&stack.services[0]],
+        &HashMap::from([("svc_1".to_string(), targets[0].clone())]),
+        Some(&root),
+    )
+    .unwrap()
+    .unwrap();
+    let previous = std::fs::read_to_string(format!("{}.previous", first.display())).unwrap();
+    let _second = build_override_file(
+        &stack,
+        &[&stack.services[0]],
+        &HashMap::from([("svc_1".to_string(), targets[0].clone())]),
+        Some(&root),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(previous, old);
+
+    restore_managed_override_snapshot(&first).unwrap();
+    assert_eq!(std::fs::read_to_string(&first).unwrap(), old);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[derive(Default)]
 struct HealthRollbackRunner {
     step: Mutex<usize>,
