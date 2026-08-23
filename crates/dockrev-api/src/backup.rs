@@ -987,6 +987,12 @@ pub(crate) async fn restore_services_after_failed_apply_unlocked(
         crate::managed_override::has_pending_snapshot(&managed_override_path);
     let pending_override_applied = pending_override_snapshot
         && crate::managed_override::pending_snapshot_is_applied(&managed_override_path)?;
+    if pending_override_applied && !managed_override_path.is_file() {
+        anyhow::bail!(
+            "applied managed override transaction has no active override: {}",
+            managed_override_path.display()
+        );
+    }
     if pending_override_snapshot && !pending_override_applied {
         let _override_guard = crate::managed_override::lock();
         let snapshot = format!("{}.previous", managed_override_path.display());
@@ -1641,22 +1647,53 @@ mod tests {
         assert!(!crate::managed_override::has_pending_snapshot(
             &applied_services_path
         ));
-        let calls = applied_services_runner.calls.lock().unwrap();
-        let up_call = calls
-            .iter()
-            .find(|spec| spec.args.iter().any(|arg| arg == "up"))
-            .expect("applied recovery should restart services");
-        assert!(
-            up_call
-                .args
+        {
+            let calls = applied_services_runner.calls.lock().unwrap();
+            let up_call = calls
                 .iter()
-                .any(|arg| arg == &applied_services_path.to_string_lossy())
-        );
-        assert!(up_call.args.iter().any(|arg| arg == "--pull"));
-        assert!(up_call.args.iter().any(|arg| arg == "never"));
-        assert!(up_call.args.iter().any(|arg| arg == "--no-deps"));
-        assert!(up_call.args.iter().any(|arg| arg == "--force-recreate"));
+                .find(|spec| spec.args.iter().any(|arg| arg == "up"))
+                .expect("applied recovery should restart services");
+            assert!(
+                up_call
+                    .args
+                    .iter()
+                    .any(|arg| arg == &applied_services_path.to_string_lossy())
+            );
+            assert!(up_call.args.iter().any(|arg| arg == "--pull"));
+            assert!(up_call.args.iter().any(|arg| arg == "never"));
+            assert!(up_call.args.iter().any(|arg| arg == "--no-deps"));
+            assert!(up_call.args.iter().any(|arg| arg == "--force-recreate"));
+        }
         std::fs::remove_dir_all(root_with_applied_services).unwrap();
+
+        let root_with_missing_applied = std::env::temp_dir().join(format!(
+            "dockrev-backup-recovery-missing-applied-{}",
+            ulid::Ulid::new()
+        ));
+        std::fs::create_dir_all(&root_with_missing_applied).unwrap();
+        let missing_applied_path =
+            crate::managed_override::managed_override_path(&root_with_missing_applied, "stk_test");
+        crate::managed_override::commit_with_snapshot(&missing_applied_path, old).unwrap();
+        crate::managed_override::commit_with_snapshot(&missing_applied_path, next).unwrap();
+        crate::managed_override::mark_snapshot_applied(&missing_applied_path).unwrap();
+        std::fs::remove_file(&missing_applied_path).unwrap();
+        let missing_applied_runner = FakeRunner::default();
+        let error = restore_services_after_failed_apply(
+            &missing_applied_runner,
+            "docker-compose",
+            None,
+            &test_stack(Vec::new()),
+            &root_with_missing_applied,
+            &["web".to_string()],
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("no active override"));
+        assert!(crate::managed_override::has_pending_snapshot(
+            &missing_applied_path
+        ));
+        assert!(missing_applied_runner.calls.lock().unwrap().is_empty());
+        std::fs::remove_dir_all(root_with_missing_applied).unwrap();
     }
 
     #[tokio::test]

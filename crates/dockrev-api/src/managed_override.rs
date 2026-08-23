@@ -342,6 +342,12 @@ fn recover_pending_snapshot_unlocked(path: &Path) -> anyhow::Result<bool> {
         return Ok(false);
     }
     if pending_snapshot_is_applied(path)? {
+        if !path.is_file() {
+            anyhow::bail!(
+                "applied managed override transaction has no active override: {}",
+                path.display()
+            );
+        }
         discard_snapshot(path)?;
         return Ok(false);
     }
@@ -564,6 +570,26 @@ mod tests {
                 .contains("new@sha256:2")
         );
         assert!(!has_pending_snapshot(&path));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn applied_snapshot_without_active_override_preserves_transaction_for_recovery() {
+        let root = std::env::temp_dir().join(format!(
+            "dockrev-managed-missing-applied-recovery-{}",
+            ulid::Ulid::new()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("stack.yml");
+        commit_with_snapshot(&path, "services:\n  web:\n    image: old@sha256:1\n").unwrap();
+        commit_with_snapshot(&path, "services:\n  web:\n    image: new@sha256:2\n").unwrap();
+        mark_snapshot_applied(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        let error = recover_pending_snapshot(&path).unwrap_err();
+        assert!(error.to_string().contains("no active override"));
+        assert!(has_pending_snapshot(&path));
+        assert!(Path::new(&format!("{}.previous", path.display())).is_file());
         std::fs::remove_dir_all(root).unwrap();
     }
 }

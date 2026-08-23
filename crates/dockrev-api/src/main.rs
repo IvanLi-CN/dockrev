@@ -75,6 +75,14 @@ async fn recover_managed_override_transactions(state: &std::sync::Arc<state::App
             }
         };
         if pending_is_applied {
+            if !path.is_file() {
+                tracing::error!(
+                    stack_id = %stack_item.id,
+                    path = %path.display(),
+                    "applied managed override transaction has no active override; deferring recovery"
+                );
+                continue;
+            }
             if let Err(error) = managed_override::discard_snapshot(&path) {
                 tracing::error!(
                     stack_id = %stack_item.id,
