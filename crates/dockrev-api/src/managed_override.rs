@@ -113,11 +113,17 @@ pub fn validate_image_only_yaml(
             anyhow::bail!("managed override only permits the services key");
         }
     }
-    let services = root
+    let services_value = root
         .get(Value::String("services".to_string()))
-        .ok_or_else(|| anyhow::anyhow!("managed override must contain services"))?
-        .as_mapping()
-        .ok_or_else(|| anyhow::anyhow!("managed override services must be a mapping"))?;
+        .ok_or_else(|| anyhow::anyhow!("managed override must contain services"))?;
+    let Some(services) = services_value.as_mapping() else {
+        // Older snapshots used `services:` for an empty override. Treat that representation as
+        // an empty, safe image-only document while keeping all populated documents strict.
+        if services_value.is_null() {
+            return Ok(());
+        }
+        anyhow::bail!("managed override services must be a mapping");
+    };
     for (service_key, service_value) in services {
         let service = service_key
             .as_str()
@@ -181,19 +187,42 @@ pub fn commit_with_snapshot(path: &Path, contents: &str) -> anyhow::Result<Optio
         Some(snapshot)
     } else {
         let snapshot = format!("{}.previous", path.display());
-        atomic_commit(Path::new(&snapshot), "services:\n")?;
+        atomic_commit(Path::new(&snapshot), "services: {}\n")?;
         Some(snapshot)
     };
-    atomic_commit(path, contents)?;
     atomic_commit(
         &PathBuf::from(format!("{}.pending", path.display())),
         "pending\n",
     )?;
+    // Publish the recovery marker before replacing the active file. A crash at any point after
+    // this marker is therefore recoverable to the last committed snapshot.
+    atomic_commit(path, contents)?;
     Ok(previous)
 }
 
 pub fn has_pending_snapshot(path: &Path) -> bool {
     Path::new(&format!("{}.pending", path.display())).is_file()
+}
+
+pub fn recover_pending_snapshot(path: &Path) -> anyhow::Result<bool> {
+    let _guard = lock();
+    recover_pending_snapshot_unlocked(path)
+}
+
+fn recover_pending_snapshot_unlocked(path: &Path) -> anyhow::Result<bool> {
+    if !has_pending_snapshot(path) {
+        return Ok(false);
+    }
+    let snapshot = PathBuf::from(format!("{}.previous", path.display()));
+    if !snapshot.is_file() {
+        anyhow::bail!(
+            "managed override pending marker has no previous snapshot: {}",
+            path.display()
+        );
+    }
+    restore_snapshot(path, Some(snapshot.to_string_lossy().as_ref()))?;
+    discard_snapshot(path)?;
+    Ok(true)
 }
 
 pub fn discard_snapshot(path: &Path) -> anyhow::Result<()> {
@@ -225,7 +254,9 @@ pub fn recover_interrupted(path: &Path) -> anyhow::Result<()> {
         .parent()
         .ok_or_else(|| anyhow::anyhow!("managed override path has no parent"))?;
     fs::create_dir_all(parent)?;
-    if !path.exists() {
+    if has_pending_snapshot(path) {
+        recover_pending_snapshot_unlocked(path)?;
+    } else if !path.exists() {
         let snapshot = PathBuf::from(format!("{}.previous", path.display()));
         if snapshot.exists() {
             atomic_commit(path, &fs::read_to_string(snapshot)?)?;
@@ -326,6 +357,29 @@ mod tests {
                 .unwrap()
                 .contains("old@sha256:1")
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pending_snapshot_recovery_restores_and_clears_transaction_state() {
+        let root = std::env::temp_dir().join(format!(
+            "dockrev-managed-pending-recovery-{}",
+            ulid::Ulid::new()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("stack.yml");
+        commit_with_snapshot(&path, "services:\n  web:\n    image: old@sha256:1\n").unwrap();
+        commit_with_snapshot(&path, "services:\n  web:\n    image: new@sha256:2\n").unwrap();
+
+        assert!(has_pending_snapshot(&path));
+        assert!(recover_pending_snapshot(&path).unwrap());
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("old@sha256:1")
+        );
+        assert!(!has_pending_snapshot(&path));
+        assert!(!Path::new(&format!("{}.previous", path.display())).exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 }

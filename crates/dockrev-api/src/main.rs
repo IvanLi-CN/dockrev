@@ -165,6 +165,22 @@ async fn main() -> anyhow::Result<()> {
         );
         backup::recover_interrupted_backups(state.as_ref(), &recovered).await?;
     }
+    // Recover managed override transactions even when the interrupted update had no persisted
+    // backup checkpoint. This clears candidate pins left between atomic commit and service apply.
+    for stack in state.db.list_stacks(db::ArchivedFilter::Include).await? {
+        let path =
+            managed_override::managed_override_path(&state.config.managed_override_dir, &stack.id);
+        if managed_override::has_pending_snapshot(&path) {
+            if let Err(error) = managed_override::recover_pending_snapshot(&path) {
+                tracing::error!(
+                    stack_id = %stack.id,
+                    path = %path.display(),
+                    error = %error,
+                    "failed to recover managed override transaction"
+                );
+            }
+        }
+    }
     let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
         .unwrap_or_else(|| "linux/amd64".to_string());
     state.snapshot_worker.spawn_startup_warmup(&host_platform);

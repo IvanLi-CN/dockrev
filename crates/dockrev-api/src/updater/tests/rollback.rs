@@ -21,6 +21,7 @@ fn managed_override_prepare_and_apply_share_one_rollback_snapshot() {
     let old = "services:\n  web:\n    image: ghcr.io/acme/web@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n";
     let path = crate::managed_override::managed_override_path(&root, &stack.id);
     crate::managed_override::commit_with_snapshot(&path, old).unwrap();
+    crate::managed_override::discard_snapshot(&path).unwrap();
 
     let targets = explicit_targets(
         "svc_1",
@@ -402,7 +403,10 @@ async fn managed_root_is_used_for_update_and_rollback_compose_commands() {
 
     assert_eq!(outcome.status, "rolled_back");
     assert!(managed_path.is_file());
-    assert!(managed_path.with_extension("yml.previous").is_file());
+    assert!(!managed_path.with_extension("yml.previous").is_file());
+    assert!(!crate::managed_override::has_pending_snapshot(
+        &managed_path
+    ));
 }
 
 #[derive(Default)]

@@ -1309,7 +1309,6 @@ fn build_override_file(
     };
     let path = managed_override::managed_override_path(&root, &stack.id);
     let _guard = managed_override::lock();
-    managed_override::recover_interrupted(&path)?;
 
     let mut images = BTreeMap::<String, String>::new();
     if let Ok(contents) = std::fs::read_to_string(&path) {
@@ -1370,7 +1369,7 @@ fn build_override_file(
     Ok(Some(path))
 }
 
-fn restore_managed_override_snapshot(path: &Path) -> anyhow::Result<()> {
+pub(crate) fn restore_managed_override_snapshot(path: &Path) -> anyhow::Result<()> {
     let _guard = managed_override::lock();
     let snapshot = format!("{}.previous", path.display());
     if Path::new(&snapshot).is_file() {
