@@ -1365,7 +1365,11 @@ fn build_override_file(
         || current_contents.as_deref() != Some(contents.as_str())
         || !snapshot_path.is_file()
     {
-        managed_override::commit_with_snapshot(&path, &contents)?;
+        let affected_services = services
+            .iter()
+            .map(|service| service.name.clone())
+            .collect::<Vec<_>>();
+        managed_override::commit_with_snapshot_for_services(&path, &contents, &affected_services)?;
     }
     Ok(Some(path))
 }

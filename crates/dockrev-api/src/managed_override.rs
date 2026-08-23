@@ -180,7 +180,31 @@ pub fn atomic_commit(path: &Path, contents: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 pub fn commit_with_snapshot(path: &Path, contents: &str) -> anyhow::Result<Option<String>> {
+    let services = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(contents)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("services")
+                .and_then(serde_yaml_ng::Value::as_mapping)
+                .map(|services| {
+                    services
+                        .keys()
+                        .filter_map(serde_yaml_ng::Value::as_str)
+                        .map(ToOwned::to_owned)
+                        .collect::<Vec<_>>()
+                })
+        })
+        .unwrap_or_default();
+    commit_with_snapshot_for_services(path, contents, &services)
+}
+
+pub fn commit_with_snapshot_for_services(
+    path: &Path,
+    contents: &str,
+    services: &[String],
+) -> anyhow::Result<Option<String>> {
     let previous = if path.exists() {
         let snapshot = format!("{}.previous", path.display());
         atomic_commit(Path::new(&snapshot), &fs::read_to_string(path)?)?;
@@ -192,7 +216,7 @@ pub fn commit_with_snapshot(path: &Path, contents: &str) -> anyhow::Result<Optio
     };
     atomic_commit(
         &PathBuf::from(format!("{}.pending", path.display())),
-        "pending\n",
+        &serde_json::json!({"phase": "prepared", "services": services}).to_string(),
     )?;
     // Publish the recovery marker before replacing the active file. A crash at any point after
     // this marker is therefore recoverable to the last committed snapshot.
@@ -204,25 +228,55 @@ pub fn has_pending_snapshot(path: &Path) -> bool {
     Path::new(&format!("{}.pending", path.display())).is_file()
 }
 
-pub fn pending_snapshot_is_applied(path: &Path) -> anyhow::Result<bool> {
+fn read_pending_marker(path: &Path) -> anyhow::Result<Option<(String, Vec<String>)>> {
     if !has_pending_snapshot(path) {
-        return Ok(false);
+        return Ok(None);
     }
-    Ok(fs::read_to_string(format!("{}.pending", path.display()))?
-        .trim()
-        .eq_ignore_ascii_case("applied"))
+    let marker = fs::read_to_string(format!("{}.pending", path.display()))?;
+    let trimmed = marker.trim();
+    if trimmed.eq_ignore_ascii_case("pending") {
+        return Ok(Some(("prepared".to_string(), Vec::new())));
+    }
+    if trimmed.eq_ignore_ascii_case("applied") {
+        return Ok(Some(("applied".to_string(), Vec::new())));
+    }
+    let value: serde_json::Value =
+        serde_json::from_str(trimmed).context("parse managed override pending marker")?;
+    let phase = value
+        .get("phase")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("managed override pending marker has no phase"))?;
+    let services = value
+        .get("services")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("managed override pending marker has no services"))?
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .map(ToOwned::to_owned)
+        .collect();
+    Ok(Some((phase.to_string(), services)))
+}
+
+pub fn pending_snapshot_services(path: &Path) -> anyhow::Result<Vec<String>> {
+    Ok(read_pending_marker(path)?.map_or_else(Vec::new, |(_, services)| services))
+}
+
+pub fn pending_snapshot_is_applied(path: &Path) -> anyhow::Result<bool> {
+    Ok(read_pending_marker(path)?.is_some_and(|(phase, _)| phase == "applied"))
 }
 
 pub fn mark_snapshot_applied(path: &Path) -> anyhow::Result<()> {
     if has_pending_snapshot(path) {
+        let services = read_pending_marker(path)?.map_or_else(Vec::new, |(_, services)| services);
         atomic_commit(
             &PathBuf::from(format!("{}.pending", path.display())),
-            "applied\n",
+            &serde_json::json!({"phase": "applied", "services": services}).to_string(),
         )?;
     }
     Ok(())
 }
 
+#[cfg(test)]
 pub fn recover_pending_snapshot(path: &Path) -> anyhow::Result<bool> {
     let _guard = lock();
     recover_pending_snapshot_unlocked(path)
@@ -395,6 +449,7 @@ mod tests {
         commit_with_snapshot(&path, "services:\n  web:\n    image: new@sha256:2\n").unwrap();
 
         assert!(has_pending_snapshot(&path));
+        assert_eq!(pending_snapshot_services(&path).unwrap(), vec!["web"]);
         assert!(recover_pending_snapshot(&path).unwrap());
         assert!(
             std::fs::read_to_string(&path)

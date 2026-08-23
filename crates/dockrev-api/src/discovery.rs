@@ -1176,7 +1176,11 @@ async fn reconcile_managed_override(
     let existing_contents = std::fs::read_to_string(&path).ok();
     let contents =
         merge_managed_override_images(existing_contents.as_deref(), &allowed_services, &images)?;
-    managed_override::commit_with_snapshot(&path, &contents)?;
+    let service_names = selected_services
+        .iter()
+        .map(|service| service.name.clone())
+        .collect::<Vec<_>>();
+    managed_override::commit_with_snapshot_for_services(&path, &contents, &service_names)?;
     drop(_override_guard);
 
     let mut managed_stack = base_stack.clone();
@@ -1184,10 +1188,6 @@ async fn reconcile_managed_override(
         .compose
         .compose_files
         .push(path.to_string_lossy().to_string());
-    let service_names = selected_services
-        .iter()
-        .map(|service| service.name.clone())
-        .collect::<Vec<_>>();
     if let Err(error) = run_checked_command(
         state,
         managed_stack.up_services_no_pull_no_deps_force_recreate(&compose_cfg, &service_names),

@@ -188,12 +188,7 @@ async fn main() -> anyhow::Result<()> {
                 tracing::error!(stack_id = %stack_item.id, "pending managed override stack not found");
                 continue;
             };
-            let services = stack
-                .services
-                .iter()
-                .filter(|service| !service.archived.unwrap_or(false))
-                .map(|service| service.name.clone())
-                .collect::<Vec<_>>();
+            let services = managed_override::pending_snapshot_services(&path)?;
             if let Err(error) = backup::restore_services_after_failed_apply(
                 &*state.runner,
                 &state.config.compose_bin,
