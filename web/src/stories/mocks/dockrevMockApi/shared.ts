@@ -90,6 +90,7 @@ export type DockrevApiScenario =
   | 'archived-stack-detail-navigation'
   | 'multi-stack-mixed'
   | 'overview-discovery-readable'
+  | 'overview-discovery-stale-temp-reconcile'
   | 'overview-resource-monitor-error'
   | 'overview-homepage-slow-refresh'
   | 'overview-resource-monitor-stale'

@@ -359,6 +359,27 @@ export function buildOverviewDiscoveryReadable(): Fixture {
   return f
 }
 
+export function buildOverviewDiscoveryStaleTempReconcile(): Fixture {
+  const f = buildDashboardDemo()
+  f.discoveredProjects = [
+    {
+      project: 'file-storage',
+      status: 'active',
+      stackId: 'stack-prod',
+      configFiles: [
+        '/srv/file-storage/docker-compose.yml',
+        '/tmp/dockrev-override-file-storage.yml',
+      ],
+      lastSeenAt: nowIso(-45_000),
+      lastScanAt: nowIso(-25_000),
+      lastError:
+        'warning:config_files_stale_dockrev_temp_override services=[file-storage-notes-webdav,file-storage-syncthing-webdav] temporary Dockrev override was deleted; reconcile is available',
+      archived: false,
+    },
+  ]
+  return f
+}
+
 export function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'empty') return baseEmpty()
   if (isCleanupMockScenario(scenario)) return baseEmpty()
@@ -615,6 +636,7 @@ export function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fi
   if (scenario === 'settings-notification-channel-errors') return buildSettingsNotificationChannelErrors()
   if (scenario === 'multi-stack-mixed') return buildMultiStackMixed()
   if (scenario === 'overview-discovery-readable') return buildOverviewDiscoveryReadable()
+  if (scenario === 'overview-discovery-stale-temp-reconcile') return buildOverviewDiscoveryStaleTempReconcile()
   if (scenario === 'aggregate-dockrev-guard') return buildAggregateDockrevGuard()
   if (scenario === 'aggregate-dockrev-only') return buildAggregateDockrevOnly()
   return buildDashboardDemo()
