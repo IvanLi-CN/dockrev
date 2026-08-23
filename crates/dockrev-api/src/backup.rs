@@ -985,14 +985,9 @@ pub(crate) async fn restore_services_after_failed_apply_unlocked(
         crate::managed_override::managed_override_path(managed_override_dir, &stack.id);
     let pending_override_snapshot =
         crate::managed_override::has_pending_snapshot(&managed_override_path);
-    if pending_override_snapshot
-        && crate::managed_override::pending_snapshot_is_applied(&managed_override_path)?
-    {
-        crate::managed_override::discard_snapshot(&managed_override_path)
-            .context("discard applied managed override snapshot during recovery")?;
-        return Ok(());
-    }
-    if pending_override_snapshot {
+    let pending_override_applied = pending_override_snapshot
+        && crate::managed_override::pending_snapshot_is_applied(&managed_override_path)?;
+    if pending_override_snapshot && !pending_override_applied {
         let _override_guard = crate::managed_override::lock();
         let snapshot = format!("{}.previous", managed_override_path.display());
         if Path::new(&snapshot).is_file() {
@@ -1607,7 +1602,7 @@ mod tests {
             None,
             &test_stack(Vec::new()),
             &root_with_applied,
-            &["web".to_string()],
+            &[],
         )
         .await
         .unwrap();
@@ -1617,6 +1612,51 @@ mod tests {
         ));
         assert!(applied_runner.calls.lock().unwrap().is_empty());
         std::fs::remove_dir_all(root_with_applied).unwrap();
+
+        let root_with_applied_services = std::env::temp_dir().join(format!(
+            "dockrev-backup-recovery-applied-services-{}",
+            ulid::Ulid::new()
+        ));
+        std::fs::create_dir_all(&root_with_applied_services).unwrap();
+        let applied_services_path =
+            crate::managed_override::managed_override_path(&root_with_applied_services, "stk_test");
+        crate::managed_override::commit_with_snapshot(&applied_services_path, old).unwrap();
+        crate::managed_override::commit_with_snapshot(&applied_services_path, next).unwrap();
+        crate::managed_override::mark_snapshot_applied(&applied_services_path).unwrap();
+        let applied_services_runner = FakeRunner::default();
+        restore_services_after_failed_apply(
+            &applied_services_runner,
+            "docker-compose",
+            None,
+            &test_stack(Vec::new()),
+            &root_with_applied_services,
+            &["web".to_string()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&applied_services_path).unwrap(),
+            next
+        );
+        assert!(!crate::managed_override::has_pending_snapshot(
+            &applied_services_path
+        ));
+        let calls = applied_services_runner.calls.lock().unwrap();
+        let up_call = calls
+            .iter()
+            .find(|spec| spec.args.iter().any(|arg| arg == "up"))
+            .expect("applied recovery should restart services");
+        assert!(
+            up_call
+                .args
+                .iter()
+                .any(|arg| arg == &applied_services_path.to_string_lossy())
+        );
+        assert!(up_call.args.iter().any(|arg| arg == "--pull"));
+        assert!(up_call.args.iter().any(|arg| arg == "never"));
+        assert!(up_call.args.iter().any(|arg| arg == "--no-deps"));
+        assert!(up_call.args.iter().any(|arg| arg == "--force-recreate"));
+        std::fs::remove_dir_all(root_with_applied_services).unwrap();
     }
 
     #[tokio::test]
