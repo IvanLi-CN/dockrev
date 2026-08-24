@@ -594,6 +594,7 @@ export function CleanupPage(props: {
       if (pageScanRequestVersionRef.current !== requestVersion) return
       if (response.status !== 'ready' || response.refreshing) return
       setPageScan(response)
+      setPageError(null)
       setStaleResourceKeys(new Set())
       setLoading(false)
       setRefreshing(false)
@@ -688,6 +689,7 @@ export function CleanupPage(props: {
   }, [onLastScanHint, refreshPageScan])
 
   useManagementEventBatch(({ events, resyncRequired }) => {
+    if (refreshing || activeScanEventsRef.current) return
     if (resyncRequired) {
       void loadCompletedPageScan().catch((error: unknown) => {
         setPageError(error instanceof ApiError && error.status >= 500 ? CLEANUP_REFRESH_ERROR : toErrorMessage(error))

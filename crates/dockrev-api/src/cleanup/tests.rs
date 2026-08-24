@@ -490,7 +490,7 @@ fn fingerprint_changes_when_reusable_volume_instance_changes() {
         stack_name: "alpha".to_string(),
     };
     let first = vec![CleanupInventoryCandidate {
-        key: "volume:data:2026-03-29T00:00:00Z".to_string(),
+        key: "volume:data".to_string(),
         resource_id: "data".to_string(),
         kind: CleanupResourceKind::Volume,
         label: "data".to_string(),
@@ -502,7 +502,7 @@ fn fingerprint_changes_when_reusable_volume_instance_changes() {
         category: CleanupInventoryCategory::ManagedUnusedVolume,
     }];
     let second = vec![CleanupInventoryCandidate {
-        key: "volume:data:2026-03-29T00:10:00Z".to_string(),
+        key: "volume:data".to_string(),
         resource_id: "data".to_string(),
         kind: CleanupResourceKind::Volume,
         label: "data".to_string(),
