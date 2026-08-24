@@ -37,3 +37,9 @@ PR 收口验证补充：ui_demo 的 terminal mock 保持单命令快照替换与
 后续使用真实 Compose V1 容器再次复现：即使设置相同环境，非 TTY 管道仍只输出普通换行文本；相同命令置于 PTY 后观测到 47 个光标上移序列。standalone `docker-compose` 因而改由 runner 内部 `script` 包装获得 PTY，内部环境标记在 spawn 前剥离，并在发布镜像安装 `util-linux` 提供该程序。超时回归覆盖包装后的子进程不会继续执行延迟副作用。
 
 收口审查继续修正 PTY 包装语义：`script -e` 传播子命令退出码，防止失败 pull 被误报为成功；PTY 合并到 stdout 的进度和失败文本与 stderr 按回调到达顺序共同解析。共享测试机确认 util-linux `script -e -c "exit 7"` 返回退出码 7；回归覆盖 CR 分隔的 stdout 进度帧与 stdout 限流失败不重试。
+
+## 2026-08-24
+
+线上任务详情复现显示摘要卡与日志卡直接相接，长日志会把整个主内容视口撑高，日志区域因此没有可用的内部滚动范围。根因是 `AsyncDataRegion` 作为中间包装层未加入任务详情的 flex 高度链，且应用壳的主网格轨道允许内容按 intrinsic height 扩张。
+
+任务详情数据区补齐纵向 flex 和 `16px` 间距；桌面端限制日志卡填充剩余高度并保留日志视口独立滚动，移动端解除局部高度与 overscroll 捕获，让主内容连续滚动。Storybook 与 `ui_demo` 回归覆盖两种 viewport 的卡片间距、滚轮归属和键盘聚焦行为。

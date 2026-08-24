@@ -37,13 +37,15 @@
 - 实时终端输出没有日志等级：等级列保留固定宽度但为空，不把 stderr 映射为 WARN；ANSI 样式通过受限 React/CSS spans 渲染。
 - `level=event` 记录只有在“显示 EVEN”打开时渲染；开关默认关闭，读取或写入 `localStorage` 失败时安全回退为关闭。
 - 开关跨任务详情复用同一浏览器偏好。
+- 任务详情数据区在桌面端保持摘要卡与日志卡之间 `16px` 间距；宽度大于 `760px` 时日志卡填充剩余高度并由任务日志视口独立滚动，主内容视口不随长日志扩张。
+- 宽度不大于 `760px` 时任务日志随内容展开，由主内容视口连续滚动；任务日志局部不得捕获滚轮形成独立滚动陷阱，日志视口仍保持键盘可聚焦。
 
 ## 验收标准
 
 - 运行服务操作时，原始 stdout/stderr 经 VT100 终端模拟按屏幕快照即时到达任务详情，Docker layer 的回车进度不重复堆叠，结束后不在数据库生成额外逐行记录。
 - 同一未刷新连接不重复显示实时输出和命令摘要；刷新/重连后命令与结果摘要完整可见，成功 pull 的下载进度不重复出现。
 - EVEN 默认不可见，开关立即生效并跨任务、刷新保留；存储不可用时不影响日志页面。
-- Rust runner/hub 生命周期、跨块控制序列、无持久化、Web 快照替换/冻结/筛选、Storybook play 和 ui_demo 逐行增长/开关/跟随行为均有验证。
+- Rust runner/hub 生命周期、跨块控制序列、无持久化、Web 快照替换/冻结/筛选、任务详情响应式滚动、Storybook play 和 ui_demo 逐行增长/开关/跟随行为均有验证。
 
 ## 参考
 
@@ -69,3 +71,9 @@
   ![standalone Compose terminal overwrite mobile](./assets/standalone-compose-terminal-overwrite-mobile.png)
 - 本次图片经 `trim_whitespace.py --margin-policy trim_only --evidence-surface page` 处理，结果均为 `unchanged`；桌面使用默认 `1280x720` 视口，移动端使用 `393x852` 视口。
 - 本次主人验收使用的不可变快照：`/Users/ivan/.codex/user-inline-assets/dockrev__f83adb76/2026/08/08/20260808T090819Z-standalone-compose-terminal-overwrite-desktop-8ed3c690.png`、`/Users/ivan/.codex/user-inline-assets/dockrev__f83adb76/2026/08/08/20260808T090819Z-standalone-compose-terminal-overwrite-mobile-c2276477.png`。
+- 本次任务详情布局修复使用 mock-only `ui_demo` 的 `1280x720` 与 `393x852` 证据：桌面摘要/日志卡间距为 `16px` 且日志视口独立滚动，移动端日志随主内容连续滚动。
+  PR: include
+  ![job detail long logs desktop](./assets/job-detail-long-logs-desktop.png)
+  PR: include
+  ![job detail long logs mobile](./assets/job-detail-long-logs-mobile.png)
+- 本次主人验收使用的不可变快照：`/Users/ivan/.codex/user-inline-assets/dockrev__55297491/2026/08/24/20260824T045921Z-dockrev-job-detail-desktop-trimmed-24c6f28b.png`、`/Users/ivan/.codex/user-inline-assets/dockrev__55297491/2026/08/24/20260824T045921Z-dockrev-job-detail-mobile-trimmed-ee2d1c27.png`。
