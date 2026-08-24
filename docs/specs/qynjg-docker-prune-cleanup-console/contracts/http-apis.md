@@ -90,8 +90,9 @@
 - `minPreset` 表示该资源最早在哪个 preset 开始出现，前端据此决定 tabs 是否显示该资源。
 - `estimatedReclaimableBytes` 对资源项来说允许为 `null`；这时 `estimateUnknown=true`，group/response 级 `hasUnknownSize=true`。
 - `serverDiskUsage` 表示 Dockrev 运行环境看到的服务器根文件系统用量；字段可省略，省略时前端必须展示“未获取”而不是把它混入可回收候选估算。
-- `reason=confirm` 只有在最新 cleanup snapshot 年龄 `<=30s` 且无 refresh in-flight 时才返回 ready；否则返回 pending，前端必须 poll 到 ready 后再允许确认。
+- `reason=confirm` 只有在最新 cleanup snapshot 年龄 `<=300s`（5 分钟）且无 refresh in-flight 时才返回 ready；否则返回 pending，前端必须 poll 到 ready 后再允许确认。
 - cleanup confirm/page 的首次请求可以使用 `refresh=true` 触发后台刷新；后续 poll 必须改用 `refresh=false`，避免重复 re-enqueue 同一轮扫描。
+- confirm worker 已停止且记录失败终态时，接口返回明确的 5xx API 错误；客户端应展示可重试状态，不得把该错误继续包装为 pending。
 - `unownedGroup` 仅允许在 `scope=all` 时出现。
 - `service` 作用域的 payload 仍沿用 `stackGroups[] -> services[]` 结构，只是只包含目标 service 所属 stack 与该 service。
 
@@ -118,7 +119,7 @@ Request body:
   - `scope` 固定为 `all`
   - 不接受 `stackId` / `serviceId`
 - `reason=confirm`：
-  - `refresh=true` 表示“必要时触发/续接一次后台 refresh”
+  - `refresh=true` 表示“必要时触发/续接一次后台 refresh”；confirm 流程的首个请求固定使用此值
   - `refresh=false` 表示“只读当前 snapshot / in-flight 状态，不重复 enqueue”
   - 必须带 `scope`
   - `scope=stack` 时必须带 `stackId`
@@ -310,6 +311,8 @@ Response: `200 OK`
 ```
 
 前端必须使用 `latest` 刷新当前确认弹窗，并要求用户再次确认；不得自动重试 apply。
+
+confirm snapshot 的 freshness 边界由服务端固定为 300 秒，apply 使用同一边界。过期只会返回 pending/stale 并触发或等待新快照，不会自动创建 cleanup job；fingerprint 变化仍要求用户再次确认。
 
 当命中 stale 分支时，服务端还应记录最小诊断日志（principal、preset、scope、stack/service 维度、submitted/latest fingerprint、target_count、estimate 摘要），用于线上排查。
 

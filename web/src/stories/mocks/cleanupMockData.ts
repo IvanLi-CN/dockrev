@@ -15,6 +15,8 @@ export type CleanupMockScenario =
   | 'cleanup-console-empty'
   | 'cleanup-console-aggressive-unowned'
   | 'cleanup-console-stale'
+  | 'cleanup-console-confirm-pending'
+  | 'cleanup-console-confirm-failed'
   | 'cleanup-console-scan-pending'
   | 'cleanup-console-scan-slow'
   | 'cleanup-console-apply-slow'
@@ -23,6 +25,8 @@ export type CleanupMockScenario =
 export type CleanupMockRuntimeState = {
   nextJobSeq: number
   staleApplyConsumed: boolean
+  confirmPendingConsumed: boolean
+  confirmFailureConsumed: boolean
   nextScanRunSeq: number
   scanRuns: Map<string, Array<{ id: number; event: string; data: unknown }>>
 }
@@ -66,6 +70,8 @@ export function isCleanupMockScenario(value: string): value is CleanupMockScenar
     value === 'cleanup-console-empty' ||
     value === 'cleanup-console-aggressive-unowned' ||
     value === 'cleanup-console-stale' ||
+    value === 'cleanup-console-confirm-pending' ||
+    value === 'cleanup-console-confirm-failed' ||
     value === 'cleanup-console-scan-pending' ||
     value === 'cleanup-console-scan-slow' ||
     value === 'cleanup-console-apply-slow' ||

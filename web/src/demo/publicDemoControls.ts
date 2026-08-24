@@ -22,6 +22,12 @@ export const PUBLIC_DEMO_SCENARIOS = [
 export type PublicDemoScenario = (typeof PUBLIC_DEMO_SCENARIOS)[number]
 export const PUBLIC_DEMO_SCENARIO: PublicDemoScenario = 'settings-configured'
 export const PUBLIC_DEMO_CLEANUP_SCENARIO = 'cleanup-console-storage-normal'
+export const PUBLIC_DEMO_CLEANUP_SCENARIOS = [
+  'cleanup-console-storage-normal',
+  'cleanup-console-confirm-pending',
+  'cleanup-console-confirm-failed',
+] as const
+export type PublicDemoCleanupScenario = (typeof PUBLIC_DEMO_CLEANUP_SCENARIOS)[number]
 export const PUBLIC_DEMO_ASYNC_STATES = ['default', 'cold', 'cache-refresh', 'error'] as const
 export type PublicDemoAsyncState = (typeof PUBLIC_DEMO_ASYNC_STATES)[number]
 const PUBLIC_DEMO_VERSION_SERVICE_ID = 'svc-prod-api'
@@ -45,7 +51,7 @@ type StoredDemoFixture = {
 }
 
 export type PublicDemoSessionSummary = {
-  cleanupScenario: typeof PUBLIC_DEMO_CLEANUP_SCENARIO
+  cleanupScenario: PublicDemoCleanupScenario
   fixtureBytes: number
   fixtureState: 'seeded' | 'modified'
   hasStoredFixture: boolean
@@ -80,6 +86,12 @@ function parsePublicDemoAsyncState(value: string | null | undefined): PublicDemo
     : 'default'
 }
 
+function parsePublicDemoCleanupScenario(value: string | null | undefined): PublicDemoCleanupScenario {
+  return value != null && PUBLIC_DEMO_CLEANUP_SCENARIOS.includes(value as PublicDemoCleanupScenario)
+    ? (value as PublicDemoCleanupScenario)
+    : PUBLIC_DEMO_CLEANUP_SCENARIO
+}
+
 export function readPublicDemoScenario(): PublicDemoScenario {
   if (typeof window === 'undefined') return PUBLIC_DEMO_SCENARIO
   try {
@@ -95,6 +107,15 @@ export function readPublicDemoAsyncState(): PublicDemoAsyncState {
     return parsePublicDemoAsyncState(new URL(window.location.href).searchParams.get('demoAsyncState'))
   } catch {
     return 'default'
+  }
+}
+
+export function readPublicDemoCleanupScenario(): PublicDemoCleanupScenario {
+  if (typeof window === 'undefined') return PUBLIC_DEMO_CLEANUP_SCENARIO
+  try {
+    return parsePublicDemoCleanupScenario(new URL(window.location.href).searchParams.get('demoCleanupScenario'))
+  } catch {
+    return PUBLIC_DEMO_CLEANUP_SCENARIO
   }
 }
 
@@ -225,7 +246,7 @@ export function readPublicDemoSessionSummary(
   )
 
   return {
-    cleanupScenario: PUBLIC_DEMO_CLEANUP_SCENARIO,
+    cleanupScenario: readPublicDemoCleanupScenario(),
     fixtureBytes: rawStoredFixture?.length ?? 0,
     fixtureState:
       storedFixture && JSON.stringify(storedFixture) !== JSON.stringify(seedFixture)

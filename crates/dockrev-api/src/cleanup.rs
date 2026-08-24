@@ -118,6 +118,7 @@ struct CleanupCommandAction {
     kind: CleanupResourceKind,
     resource_id: String,
     label: String,
+    instance_id: Option<String>,
     ownership: CleanupOwnership,
 }
 
@@ -222,6 +223,47 @@ struct DockerVolumeInspect {
     created_at: Option<String>,
     #[serde(default)]
     usage_data: Option<DockerVolumeUsageData>,
+}
+
+fn volume_instance_identity(volume: &DockerVolumeInspect) -> Option<String> {
+    volume
+        .created_at
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+async fn volume_instance_identity_with_runner(
+    runner: &std::sync::Arc<dyn crate::runner::CommandRunner>,
+    volume: &DockerVolumeInspect,
+) -> Option<String> {
+    if let Some(identity) = volume_instance_identity(volume) {
+        return Some(identity);
+    }
+    let mountpoint = volume
+        .mountpoint
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let output = runner
+        .run(
+            CommandSpec {
+                program: "stat".to_string(),
+                args: vec![
+                    "-c".to_string(),
+                    "%d:%i:%W:%Y:%Z".to_string(),
+                    mountpoint.to_string(),
+                ],
+                env: Vec::new(),
+            },
+            DOCKER_TIMEOUT,
+        )
+        .await
+        .ok()?;
+    ensure_success("stat volume mountpoint", &output).ok()?;
+    let metadata = output.stdout.trim().to_string();
+    (!metadata.is_empty()).then(|| format!("mountpoint:{metadata}"))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -337,6 +379,7 @@ pub fn build_execution_plan_from_snapshot(
             kind: candidate.kind,
             resource_id: candidate.resource_id,
             label: candidate.label,
+            instance_id: candidate.instance_id,
             ownership: execution_ownership_from_snapshot(&candidate.ownership),
         })
         .collect::<Vec<_>>();
@@ -352,6 +395,48 @@ pub fn build_execution_plan_from_snapshot(
         confirmation_fingerprint,
         commands,
     })
+}
+
+impl CleanupExecutionPlan {
+    pub async fn validate_volume_identities(
+        &self,
+        runner: &std::sync::Arc<dyn crate::runner::CommandRunner>,
+    ) -> bool {
+        for action in &self.commands {
+            if action.kind != CleanupResourceKind::Volume {
+                continue;
+            }
+            if !validate_volume_action_identity(action, runner).await {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+async fn validate_volume_action_identity(
+    action: &CleanupCommandAction,
+    runner: &std::sync::Arc<dyn crate::runner::CommandRunner>,
+) -> bool {
+    let Some(expected) = action.instance_id.as_deref() else {
+        return false;
+    };
+    let Ok(volume) = docker_inspect_json::<DockerVolumeInspect>(
+        runner,
+        vec![
+            "volume".to_string(),
+            "inspect".to_string(),
+            "--format".to_string(),
+            "{{json .}}".to_string(),
+            action.resource_id.clone(),
+        ],
+    )
+    .await
+    else {
+        return false;
+    };
+    let current = volume_instance_identity_with_runner(runner, &volume).await;
+    current.as_deref() == Some(expected)
 }
 
 pub async fn run_cleanup_job(
@@ -394,6 +479,41 @@ pub async fn run_cleanup_job(
             updated_at.clone(),
         );
         persist_cleanup_job_progress(state.as_ref(), job_id, &progress).await?;
+
+        if action.kind == CleanupResourceKind::Volume
+            && !validate_volume_action_identity(action, &state.runner).await
+        {
+            skipped_in_use.push(json!({
+                "kind": action.kind.as_str(),
+                "label": action.label,
+                "reason": "snapshot_changed",
+            }));
+            state
+                .db
+                .insert_job_log(
+                    job_id,
+                    &JobLogLine {
+                        ts: updated_at.clone(),
+                        level: "warn".to_string(),
+                        msg: format!(
+                            "skipped changed volume {}: snapshot identity no longer matches",
+                            action.label
+                        ),
+                    },
+                )
+                .await?;
+            let updated_at = now_rfc3339()?;
+            let progress = make_cleanup_job_progress(
+                "apply",
+                format!("processed {}", action.label),
+                current,
+                total,
+                Some(action.label.clone()),
+                updated_at,
+            );
+            persist_cleanup_job_progress(state.as_ref(), job_id, &progress).await?;
+            continue;
+        }
 
         let spec = command_spec_for_action(action);
         let out = state.runner.run(spec.clone(), DOCKER_TIMEOUT).await?;
@@ -617,6 +737,7 @@ async fn scan_candidates_with_progress(
             resource_id: container.id.clone(),
             kind: CleanupResourceKind::Container,
             label,
+            instance_id: None,
             estimated_reclaimable_bytes: container
                 .size_rw
                 .and_then(|size| u64::try_from(size).ok()),
@@ -664,6 +785,7 @@ async fn scan_candidates_with_progress(
             resource_id: inspect.id,
             kind: CleanupResourceKind::Image,
             label,
+            instance_id: None,
             estimated_reclaimable_bytes: inspect.size,
             estimate_unknown: inspect.size.is_none(),
             requires_ephemeral_confirmation: false,
@@ -720,11 +842,17 @@ async fn scan_candidates_with_progress(
             estimated_reclaimable_bytes =
                 scan_volume_size_from_mountpoint_with_runner(runner, mountpoint).await;
         }
+        let Some(instance_id) = volume_instance_identity_with_runner(runner, &inspect).await else {
+            continue;
+        };
         candidates.push(CleanupInventoryCandidate {
-            key: volume_fingerprint.unwrap_or_else(|| format!("volume:{}", inspect.name)),
+            key: volume_fingerprint
+                .clone()
+                .unwrap_or_else(|| format!("volume:{}", inspect.name)),
             resource_id: inspect.name.clone(),
             kind: CleanupResourceKind::Volume,
             label: inspect.name.clone(),
+            instance_id: Some(instance_id),
             estimated_reclaimable_bytes,
             estimate_unknown: estimated_reclaimable_bytes.is_none(),
             requires_ephemeral_confirmation: false,
@@ -759,6 +887,7 @@ async fn scan_candidates_with_progress(
             resource_id: inspect.id.clone(),
             kind: CleanupResourceKind::Network,
             label: inspect.name.clone(),
+            instance_id: None,
             estimated_reclaimable_bytes: Some(0),
             estimate_unknown: false,
             requires_ephemeral_confirmation: false,
@@ -789,6 +918,7 @@ async fn scan_builder_cache_candidate(
         resource_id: "global-builder-cache".to_string(),
         kind: CleanupResourceKind::BuilderCache,
         label: "global builder cache".to_string(),
+        instance_id: None,
         estimated_reclaimable_bytes: estimate.reclaimable_bytes,
         estimate_unknown: estimate.estimate_unknown,
         requires_ephemeral_confirmation: false,

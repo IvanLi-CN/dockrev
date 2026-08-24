@@ -3,6 +3,7 @@ import { Box, HardDrive, Layers3, Package } from 'lucide-react'
 import {
   ApiError,
   applyCleanups,
+  cleanupScanRunEventsUrl,
   scanCleanups,
   startCleanupScanRun,
   type CleanupApplyRequest,
@@ -12,6 +13,7 @@ import {
   type CleanupResourceKind,
   type CleanupScanRequest,
   type CleanupScanResponse,
+  type CleanupScanRunEvent,
   type CleanupScope,
   type CleanupStackGroup,
 } from '../api'
@@ -27,6 +29,7 @@ import {
   cleanupResourceKeys,
   countUnknownResources,
   countVisibleResources,
+  countRenderableResources,
   flattenAllResources,
   formatBytes,
   formatDiskUsage,
@@ -34,6 +37,7 @@ import {
   formatPercent,
   formatUnknownCount,
   itemHasUnknownSize,
+  mergeCleanupResponses,
   kindSummary,
   projectResponseForPreset,
   staleBucketsForResponse,
@@ -68,6 +72,10 @@ const PRESET_META: Array<{
     description: '连全局未归属镜像与卷也纳入候选，只建议明确核对后执行。',
   },
 ]
+
+const CLEANUP_CONFIRM_POLL_FALLBACK_MS = 800
+const CLEANUP_REFRESH_ERROR = '刷新失败，请重试。'
+const CLEANUP_APPLY_ERROR = '清理失败，请重试。'
 
 const CLEANUP_USAGE_CARD_META: Array<{
   key: CleanupUsageBucket
@@ -291,10 +299,11 @@ function CleanupResponseView(props: {
   compact?: boolean
   busyActionKey?: string | null
   staleResourceKeys?: Set<string>
+  scanBusy?: boolean
   onStackAction?: (stack: CleanupStackGroup) => void
   onServiceAction?: (stack: CleanupStackGroup, serviceId: string, serviceName: string) => void
 }) {
-  if (countVisibleResources(props.response) === 0) {
+  if (countRenderableResources(props.response) === 0) {
     return <div className="cleanupEmptyState">当前规则下没有可清理资源。</div>
   }
 
@@ -338,7 +347,7 @@ function CleanupResponseView(props: {
                 onKeyDown={(event) => event.stopPropagation()}
               >
                 <Button
-                  disabled={stack.estimatedReclaimableBytes <= 0 && stack.hasUnknownSize !== true}
+                  disabled={props.scanBusy || stack.estimatedReclaimableBytes <= 0 && stack.hasUnknownSize !== true}
                   hint={actionHint('stack')}
                   loading={props.busyActionKey === `stack:${stack.stackId}`}
                   onClick={() => props.onStackAction?.(stack)}
@@ -381,7 +390,7 @@ function CleanupResponseView(props: {
               {row.actionScope === 'stack' && props.onStackAction ? (
                 <div className="actionCell">
                   <Button
-                    disabled={stack.estimatedReclaimableBytes <= 0 && stack.hasUnknownSize !== true}
+                    disabled={props.scanBusy || stack.estimatedReclaimableBytes <= 0 && stack.hasUnknownSize !== true}
                     hint={actionHint('stack')}
                   loading={props.busyActionKey === `stack:${stack.stackId}`}
                   onClick={() => props.onStackAction?.(stack)}
@@ -393,7 +402,7 @@ function CleanupResponseView(props: {
               ) : row.actionScope === 'service' && props.onServiceAction && row.serviceId && row.serviceName ? (
                 <div className="actionCell">
                   <Button
-                    disabled={false}
+                    disabled={props.scanBusy}
                     hint={actionHint('service')}
                     loading={props.busyActionKey === `service:${stack.stackId}:${row.serviceId}`}
                     onClick={() => props.onServiceAction?.(stack, row.serviceId!, row.serviceName!)}
@@ -492,11 +501,12 @@ function CleanupConfirmBody(props: { response: CleanupScanResponse; targetLabel:
         </div>
       </div>
 
-      {props.stale ? (
-        <div className="cleanupAlert cleanupAlertWarn">候选已变化，已替换为最新扫描结果，请再次确认。</div>
-      ) : null}
-
-      <div className="cleanupAlert cleanupAlertInfo">{confirmSafetyNote(props.response.scope)}</div>
+      <div className={`cleanupAlert ${props.stale ? 'cleanupAlertWarn' : 'cleanupAlertInfo'}`}>
+        {props.stale ? <div>候选已变化，已替换为最新扫描结果，请再次确认。</div> : null}
+        <div className={props.stale ? 'cleanupConfirmSafetyNote' : undefined}>
+          {confirmSafetyNote(props.response.scope)}
+        </div>
+      </div>
 
       <CleanupResponseView compact response={props.response} />
     </div>
@@ -510,6 +520,7 @@ export function CleanupPage(props: {
   const { onLastScanHint, onTopActions } = props
   const confirm = useConfirm()
   const activeScanIdRef = useRef<string | null>(null)
+  const activeScanEventsRef = useRef<EventSource | null>(null)
   const [activePreset, setActivePreset] = useState<CleanupPreset>('balanced')
   const [pageScan, setPageScan] = useState<CleanupScanResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -518,6 +529,10 @@ export function CleanupPage(props: {
   const [pageError, setPageError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [busyActionKey, setBusyActionKey] = useState<string | null>(null)
+  const [confirmPhase, setConfirmPhase] = useState<'idle' | 'refreshing' | 'applying'>('idle')
+  const confirmRequestVersionRef = useRef(0)
+  const pageScanRequestVersionRef = useRef(0)
+  const retryTargetRef = useRef<CleanupActionTarget | null>(null)
 
   const projected = useMemo(
     () => (pageScan ? projectResponseForPreset(pageScan, activePreset) : null),
@@ -540,24 +555,63 @@ export function CleanupPage(props: {
 
   const fetchCleanupScan = useCallback(async (input: CleanupScanRequest) => scanCleanups(input), [])
 
+  useEffect(() => () => {
+    confirmRequestVersionRef.current += 1
+    activeScanEventsRef.current?.close()
+    activeScanEventsRef.current = null
+  }, [])
+
+  const waitForConfirmSnapshot = useCallback(
+    async (request: Omit<CleanupScanRequest, 'refresh'>, requestVersion: number) => {
+      let refresh = true
+      while (confirmRequestVersionRef.current === requestVersion) {
+        const response = await fetchCleanupScan({ ...request, refresh })
+        if (confirmRequestVersionRef.current !== requestVersion) return null
+        if (response.status === 'ready' && !response.refreshing) return response
+        setConfirmPhase('refreshing')
+        const retryAfterMs = Math.max(
+          100,
+          response.retryAfterMs ?? CLEANUP_CONFIRM_POLL_FALLBACK_MS,
+        )
+        await new Promise<void>((resolve) => window.setTimeout(resolve, retryAfterMs))
+        refresh = false
+      }
+      return null
+    },
+    [fetchCleanupScan],
+  )
+
   const loadCompletedPageScan = useCallback(async () => {
-    const response = await scanCleanups({
-      reason: 'page',
-      refresh: false,
-      preset: 'aggressive',
-      scope: 'all',
-    })
-    if (response.status !== 'ready' || response.refreshing) return
-    setPageScan(response)
-    setStaleResourceKeys(new Set())
-    setLoading(false)
-    setRefreshing(false)
-    onLastScanHint?.(response.scannedAt ?? undefined)
+    const requestVersion = pageScanRequestVersionRef.current + 1
+    pageScanRequestVersionRef.current = requestVersion
+    try {
+      const response = await scanCleanups({
+        reason: 'page',
+        refresh: false,
+        preset: 'aggressive',
+        scope: 'all',
+      })
+      if (pageScanRequestVersionRef.current !== requestVersion) return
+      if (response.status !== 'ready' || response.refreshing) return
+      setPageScan(response)
+      setPageError(null)
+      setStaleResourceKeys(new Set())
+      setLoading(false)
+      setRefreshing(false)
+      onLastScanHint?.(response.scannedAt ?? undefined)
+    } catch (error) {
+      if (pageScanRequestVersionRef.current !== requestVersion) return
+      throw error
+    }
   }, [onLastScanHint])
 
   const refreshPageScan = useCallback(async () => {
+    pageScanRequestVersionRef.current += 1
     setRefreshing(true)
     setPageError(null)
+    setActionError(null)
+    activeScanEventsRef.current?.close()
+    activeScanEventsRef.current = null
     try {
       const request: CleanupScanRequest = {
         reason: 'page',
@@ -567,6 +621,50 @@ export function CleanupPage(props: {
       }
       const started = await startCleanupScanRun(request)
       activeScanIdRef.current = started.scanId
+      const source = new EventSource(cleanupScanRunEventsUrl(started.scanId), { withCredentials: true })
+      activeScanEventsRef.current = source
+      const onScanEvent = (event: Event) => {
+        if (!(event instanceof MessageEvent) || typeof event.data !== 'string') return
+        let payload: CleanupScanRunEvent
+        try {
+          payload = JSON.parse(event.data) as CleanupScanRunEvent
+        } catch {
+          return
+        }
+        if (
+          activeScanEventsRef.current !== source ||
+          activeScanIdRef.current !== started.scanId ||
+          payload.scanId !== started.scanId
+        ) return
+        if (payload.phase === 'scan_partial' && payload.response) {
+          setPageScan((previous) => {
+            if (!previous) return { ...payload.response!, status: 'ready', refreshing: true, confirmationFingerprint: null }
+            const merged = mergeCleanupResponses(previous, payload.response!)
+            setStaleResourceKeys(merged.staleKeys)
+            return merged.response
+          })
+          setLoading(false)
+        } else if (payload.phase === 'scan_ready' && payload.response) {
+          setPageScan(payload.response)
+          setStaleResourceKeys(new Set())
+          setLoading(false)
+          setRefreshing(false)
+          onLastScanHint?.(payload.response.scannedAt ?? undefined)
+          source.close()
+          if (activeScanEventsRef.current === source) activeScanEventsRef.current = null
+        } else if (payload.phase === 'scan_failed') {
+          if (!started.previousSnapshot) setPageScan(null)
+          setPageError(CLEANUP_REFRESH_ERROR)
+          setStaleResourceKeys(new Set())
+          setRefreshing(false)
+          setLoading(false)
+          source.close()
+          if (activeScanEventsRef.current === source) activeScanEventsRef.current = null
+        }
+      }
+      source.addEventListener('scan_ready', onScanEvent)
+      source.addEventListener('scan_partial', onScanEvent)
+      source.addEventListener('scan_failed', onScanEvent)
       if (started.previousSnapshot) {
         setPageScan(started.previousSnapshot)
         setStaleResourceKeys(cleanupResourceKeys(started.previousSnapshot))
@@ -576,7 +674,7 @@ export function CleanupPage(props: {
         setStaleResourceKeys(new Set())
       }
     } catch (error) {
-      const message = toErrorMessage(error)
+      const message = error instanceof ApiError && error.status >= 500 ? CLEANUP_REFRESH_ERROR : toErrorMessage(error)
       setPageError(message)
       setStaleResourceKeys(new Set())
       onLastScanHint?.(undefined)
@@ -591,23 +689,32 @@ export function CleanupPage(props: {
   }, [onLastScanHint, refreshPageScan])
 
   useManagementEventBatch(({ events, resyncRequired }) => {
+    if (refreshing || activeScanEventsRef.current) return
     if (resyncRequired) {
-      void loadCompletedPageScan().catch((error: unknown) => setPageError(toErrorMessage(error)))
+      void loadCompletedPageScan().catch((error: unknown) => {
+        setPageError(error instanceof ApiError && error.status >= 500 ? CLEANUP_REFRESH_ERROR : toErrorMessage(error))
+        setRefreshing(false)
+        setLoading(false)
+      })
     }
     const event = events.find((candidate) =>
       candidate.domain === 'cleanup' && candidate.entities.some((entity) => entity.entityType === 'scan' && entity.id === 'active'),
     )
     if (!event) return
+    if (
+      typeof event.summary.scanId === 'string' &&
+      event.summary.scanId !== activeScanIdRef.current
+    ) return
     if (event.summary.phase === 'ready') {
       void loadCompletedPageScan().catch((error: unknown) => {
-        setPageError(toErrorMessage(error))
+        setPageError(error instanceof ApiError && error.status >= 500 ? CLEANUP_REFRESH_ERROR : toErrorMessage(error))
         setRefreshing(false)
         setLoading(false)
       })
       return
     }
     if (event.summary.phase === 'failed') {
-      setPageError(typeof event.summary.message === 'string' ? event.summary.message : 'cleanup scan failed')
+      setPageError(CLEANUP_REFRESH_ERROR)
       setStaleResourceKeys(new Set())
       setRefreshing(false)
       setLoading(false)
@@ -616,8 +723,12 @@ export function CleanupPage(props: {
 
   const runCleanupFlow = useCallback(
     async (target: CleanupActionTarget) => {
+      const requestVersion = confirmRequestVersionRef.current + 1
+      confirmRequestVersionRef.current = requestVersion
+      retryTargetRef.current = target
       setActionError(null)
       setBusyActionKey(target.actionKey)
+      setConfirmPhase('refreshing')
       try {
         const confirmRequest: CleanupApplyRequest = {
           reason: 'ui',
@@ -628,18 +739,16 @@ export function CleanupPage(props: {
           confirmationFingerprint: '',
         }
 
-        let latest = await fetchCleanupScan({
+        let latest = await waitForConfirmSnapshot({
           reason: 'confirm',
-          refresh: true,
           preset: activePreset,
           scope: target.scope,
           stackId: confirmRequest.stackId,
           serviceId: confirmRequest.serviceId,
-        })
+        }, requestVersion)
 
-        if (latest.status !== 'ready') {
-          throw new Error('cleanup snapshot is not ready')
-        }
+        if (!latest) return
+        setConfirmPhase('idle')
 
         if (countVisibleResources(latest) === 0) {
           await confirm({
@@ -672,6 +781,7 @@ export function CleanupPage(props: {
           if (!approved) return
 
           try {
+            setConfirmPhase('applying')
             const result = await applyCleanups({
               ...confirmRequest,
               confirmationFingerprint: latest.confirmationFingerprint ?? '',
@@ -684,27 +794,21 @@ export function CleanupPage(props: {
             if (error instanceof ApiError && error.status === 409 && error.code === 'cleanup_snapshot_stale') {
               const mismatch = parseFingerprintMismatch(error.details)
               if (mismatch?.latest) {
-                latest = mismatch.latest
-                if (latest.status !== 'ready') {
-                  latest = await fetchCleanupScan({
-                    reason: 'confirm',
-                    refresh: true,
-                    preset: activePreset,
-                    scope: target.scope,
-                    stackId: confirmRequest.stackId,
-                    serviceId: confirmRequest.serviceId,
-                  })
-                }
                 stale = true
-                if (latest.status !== 'ready' || countVisibleResources(latest) === 0) {
+                setConfirmPhase('refreshing')
+                latest = await waitForConfirmSnapshot({
+                  reason: 'confirm',
+                  preset: activePreset,
+                  scope: target.scope,
+                  stackId: confirmRequest.stackId,
+                  serviceId: confirmRequest.serviceId,
+                }, requestVersion)
+                if (!latest) return
+                setConfirmPhase('idle')
+                if (countVisibleResources(latest) === 0) {
                   await confirm({
                     title: '候选已变化',
-                    body:
-                      latest.status === 'ready' ? (
-                        <CleanupConfirmBody response={latest} stale targetLabel={target.targetLabel} />
-                      ) : (
-                        '最新 cleanup snapshot 仍在刷新，请稍后重试。'
-                      ),
+                    body: <CleanupConfirmBody response={latest} stale targetLabel={target.targetLabel} />,
                     badgeText: '无需执行',
                     badgeTone: 'muted',
                     bodyClassName: 'cleanupConfirmDialogBody',
@@ -718,24 +822,26 @@ export function CleanupPage(props: {
                 continue
               }
             }
-            throw error
+            setActionError(error instanceof ApiError && error.status >= 500 ? CLEANUP_APPLY_ERROR : toErrorMessage(error))
+            return
           }
         }
       } catch (error) {
-        setActionError(toErrorMessage(error))
+        setActionError(error instanceof ApiError && error.status >= 500 ? CLEANUP_REFRESH_ERROR : toErrorMessage(error))
       } finally {
         setBusyActionKey(null)
+        setConfirmPhase('idle')
       }
     },
-    [activePreset, confirm, fetchCleanupScan],
+    [activePreset, confirm, waitForConfirmSnapshot],
   )
 
   const topActions = useMemo(() => {
     const hasTargets = projected ? countVisibleResources(projected) > 0 : false
     const scanBusy = initialScanPending || refreshing
     const allActionBusy = busyActionKey === 'all'
-    const allButtonLabel = allActionBusy ? '清理中…' : scanBusy ? '等待扫描' : '全部'
-    const rescanButtonLabel = initialScanPending ? '扫描中…' : refreshing ? '重扫中…' : '重扫'
+    const allButtonLabel = '全部'
+    const rescanButtonLabel = '重扫'
     return (
       <>
         <Button
@@ -749,7 +855,7 @@ export function CleanupPage(props: {
                   ? actionHint('all')
                   : '当前规则下没有可清理项'
           }
-          loading={allActionBusy}
+          loading={allActionBusy || scanBusy}
           onClick={() =>
             void runCleanupFlow({
               actionKey: 'all',
@@ -795,6 +901,17 @@ export function CleanupPage(props: {
       onTopActions(null)
     }
   }, [onTopActions, topActions])
+
+  const statusRailBusy = refreshing || confirmPhase === 'refreshing'
+  const statusRailError = actionError === CLEANUP_REFRESH_ERROR || actionError === CLEANUP_APPLY_ERROR
+  const statusRailErrorLabel = actionError === CLEANUP_APPLY_ERROR ? '清理失败' : '刷新失败'
+  const retryStatusRail = () => {
+    if (actionError && retryTargetRef.current) {
+      void runCleanupFlow(retryTargetRef.current)
+      return
+    }
+    void refreshPageScan()
+  }
 
   if (loading && !pageScan) {
     return (
@@ -922,12 +1039,35 @@ export function CleanupPage(props: {
         </div>
       </section>
 
+      {statusRailBusy || statusRailError ? (
+        <div
+          aria-atomic="true"
+          aria-busy={statusRailBusy}
+          className={`cleanupStatusRail${statusRailError ? ' cleanupStatusRailError' : ''}`}
+          role="status"
+        >
+          <span aria-hidden="true" className={`cleanupStatusRailIndicator${statusRailBusy ? ' cleanupStatusRailIndicatorBusy' : ''}`} />
+          <span className="cleanupStatusRailLabel">{statusRailError ? statusRailErrorLabel : '更新中'}</span>
+          {statusRailError ? (
+            <Button
+              className="cleanupStatusRailRetry"
+              disabled={busyActionKey !== null}
+              onClick={retryStatusRail}
+              variant="ghost"
+            >
+              重试
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+
       {pageError ? <div className="cleanupAlert cleanupAlertError">{pageError}</div> : null}
-      {actionError ? <div className="cleanupAlert cleanupAlertError">{actionError}</div> : null}
+      {actionError && !statusRailError ? <div className="cleanupAlert cleanupAlertError">{actionError}</div> : null}
 
       {response ? (
         <CleanupResponseView
           busyActionKey={busyActionKey}
+          scanBusy={initialScanPending || refreshing}
           onServiceAction={(stack, serviceId, serviceName) =>
             void runCleanupFlow({
               actionKey: `service:${stack.stackId}:${serviceId}`,

@@ -12,7 +12,7 @@ use crate::{cleanup, db::Db, now_rfc3339, runner::CommandRunner};
 
 pub const CLEANUP_SNAPSHOT_KEY: &str = "aggressive_all";
 pub const CLEANUP_SNAPSHOT_PENDING_RETRY_AFTER_MS: u64 = 800;
-pub const CLEANUP_CONFIRM_MAX_AGE_SECONDS: i64 = 30;
+pub const CLEANUP_CONFIRM_MAX_AGE_SECONDS: i64 = 300;
 
 #[derive(Clone)]
 pub struct CleanupSnapshotWorker {
