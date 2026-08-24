@@ -14293,6 +14293,11 @@ html[data-theme="light"] .btnPrimary {
   color: color-mix(in srgb, var(--color-error) 76%, var(--text) 24%);
 }
 
+.cleanupConfirmSafetyNote {
+  margin-top: 6px;
+  opacity: 0.86;
+}
+
 .cleanupStatusRail {
   display: flex;
   align-items: center;

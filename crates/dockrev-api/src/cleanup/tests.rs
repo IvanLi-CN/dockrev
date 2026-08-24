@@ -51,6 +51,7 @@ fn sample_candidate(
         resource_id: key.to_string(),
         kind,
         label: key.to_string(),
+        instance_id: None,
         estimated_reclaimable_bytes,
         estimate_unknown: estimated_reclaimable_bytes.is_none(),
         requires_ephemeral_confirmation: false,
@@ -247,6 +248,7 @@ fn fingerprint_ignores_candidate_iteration_order() {
             resource_id: "data".to_string(),
             kind: CleanupResourceKind::Volume,
             label: "data".to_string(),
+            instance_id: Some("2026-03-29T00:00:00Z".to_string()),
             estimated_reclaimable_bytes: Some(2048),
             estimate_unknown: false,
             requires_ephemeral_confirmation: false,
@@ -258,6 +260,7 @@ fn fingerprint_ignores_candidate_iteration_order() {
             resource_id: "sha256:abc".to_string(),
             kind: CleanupResourceKind::Image,
             label: "web".to_string(),
+            instance_id: None,
             estimated_reclaimable_bytes: Some(1024),
             estimate_unknown: false,
             requires_ephemeral_confirmation: false,
@@ -360,18 +363,21 @@ fn command_spec_synthesizes_targeted_delete_commands() {
         kind: CleanupResourceKind::Image,
         resource_id: "sha256:abc".to_string(),
         label: "demo".to_string(),
+        instance_id: None,
         ownership: CleanupOwnership::Unowned,
     };
     let volume = CleanupCommandAction {
         kind: CleanupResourceKind::Volume,
         resource_id: "data".to_string(),
         label: "data".to_string(),
+        instance_id: None,
         ownership: CleanupOwnership::Unowned,
     };
     let builder = CleanupCommandAction {
         kind: CleanupResourceKind::BuilderCache,
         resource_id: "global-builder-cache".to_string(),
         label: "builder".to_string(),
+        instance_id: None,
         ownership: CleanupOwnership::Unowned,
     };
     assert_eq!(
@@ -488,6 +494,7 @@ fn fingerprint_changes_when_reusable_volume_instance_changes() {
         resource_id: "data".to_string(),
         kind: CleanupResourceKind::Volume,
         label: "data".to_string(),
+        instance_id: Some("2026-03-29T00:00:00Z".to_string()),
         estimated_reclaimable_bytes: Some(8192),
         estimate_unknown: false,
         requires_ephemeral_confirmation: false,
@@ -499,6 +506,7 @@ fn fingerprint_changes_when_reusable_volume_instance_changes() {
         resource_id: "data".to_string(),
         kind: CleanupResourceKind::Volume,
         label: "data".to_string(),
+        instance_id: Some("2026-03-29T00:10:00Z".to_string()),
         estimated_reclaimable_bytes: Some(8192),
         estimate_unknown: false,
         requires_ephemeral_confirmation: false,

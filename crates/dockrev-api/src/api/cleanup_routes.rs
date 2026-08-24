@@ -2,6 +2,14 @@ use super::*;
 
 use crate::{cleanup, cleanup_snapshot_worker, ids, models::JobRecord};
 
+const CLEANUP_SNAPSHOT_REFRESH_FAILED_MESSAGE: &str = "cleanup snapshot refresh failed";
+const CLEANUP_SCAN_FAILED_MESSAGE: &str = "cleanup scan failed";
+
+fn cleanup_snapshot_refresh_failed(last_error: String) -> ApiError {
+    tracing::error!(error = %last_error, "cleanup snapshot refresh failed");
+    ApiError::internal(CLEANUP_SNAPSHOT_REFRESH_FAILED_MESSAGE)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct CleanupScanRunEventsQuery {
@@ -192,18 +200,14 @@ pub(super) async fn scan_cleanups(
                         && !is_fresh
                         && let Some(last_error) = last_error.clone()
                     {
-                        return Err(ApiError::internal(format!(
-                            "cleanup snapshot refresh failed: {last_error}"
-                        )));
+                        return Err(cleanup_snapshot_refresh_failed(last_error));
                     }
                     refreshing = state.cleanup_snapshot_worker.enqueue().await
                         || state.cleanup_snapshot_worker.is_running();
                     if !refreshing
                         && let Some(last_error) = state.cleanup_snapshot_worker.last_error().await
                     {
-                        return Err(ApiError::internal(format!(
-                            "cleanup snapshot refresh failed: {last_error}"
-                        )));
+                        return Err(cleanup_snapshot_refresh_failed(last_error));
                     }
                 }
                 let plan = cleanup::build_execution_plan_from_snapshot(
@@ -225,14 +229,10 @@ pub(super) async fn scan_cleanups(
                 if !refreshing
                     && let Some(last_error) = state.cleanup_snapshot_worker.last_error().await
                 {
-                    return Err(ApiError::internal(format!(
-                        "cleanup snapshot refresh failed: {last_error}"
-                    )));
+                    return Err(cleanup_snapshot_refresh_failed(last_error));
                 }
             } else if let Some(last_error) = state.cleanup_snapshot_worker.last_error().await {
-                return Err(ApiError::internal(format!(
-                    "cleanup snapshot refresh failed: {last_error}"
-                )));
+                return Err(cleanup_snapshot_refresh_failed(last_error));
             }
             Ok(Json(CleanupScanResponse {
                 status: CleanupScanStatus::Pending,
@@ -258,7 +258,11 @@ pub(super) async fn scan_cleanups(
                     .map_err(|err| map_internal(err.into()))?;
                 let is_fresh =
                     cleanup_snapshot_worker::cleanup_snapshot_is_fresh(&row.checked_at, now);
+                let last_error = state.cleanup_snapshot_worker.last_error().await;
                 if is_fresh && !is_running {
+                    if let Some(last_error) = last_error {
+                        return Err(cleanup_snapshot_refresh_failed(last_error));
+                    }
                     let plan = cleanup::build_execution_plan_from_snapshot(
                         &snapshot,
                         &req,
@@ -273,23 +277,17 @@ pub(super) async fn scan_cleanups(
                 if !state.cleanup_snapshot_worker.is_running()
                     && let Some(last_error) = state.cleanup_snapshot_worker.last_error().await
                 {
-                    return Err(ApiError::internal(format!(
-                        "cleanup snapshot refresh failed: {last_error}"
-                    )));
+                    return Err(cleanup_snapshot_refresh_failed(last_error));
                 }
             } else if req.refresh {
                 let _ = state.cleanup_snapshot_worker.enqueue().await;
                 if !state.cleanup_snapshot_worker.is_running()
                     && let Some(last_error) = state.cleanup_snapshot_worker.last_error().await
                 {
-                    return Err(ApiError::internal(format!(
-                        "cleanup snapshot refresh failed: {last_error}"
-                    )));
+                    return Err(cleanup_snapshot_refresh_failed(last_error));
                 }
             } else if let Some(last_error) = state.cleanup_snapshot_worker.last_error().await {
-                return Err(ApiError::internal(format!(
-                    "cleanup snapshot refresh failed: {last_error}"
-                )));
+                return Err(cleanup_snapshot_refresh_failed(last_error));
             }
 
             Ok(Json(CleanupScanResponse {
@@ -445,13 +443,14 @@ async fn run_cleanup_scan_stream(state: Arc<AppState>, req: CleanupScanRequest, 
 }
 
 async fn finish_cleanup_scan_failed(state: &Arc<AppState>, scan_id: &str, message: String) {
+    tracing::error!(scan_id = %scan_id, error = %message, "cleanup scan failed");
     state
         .cleanup_scan_runs
         .append_to_active(
             scan_id,
             CleanupScanRunPhase::Failed,
             None,
-            Some(message.clone()),
+            Some(CLEANUP_SCAN_FAILED_MESSAGE.to_string()),
         )
         .await;
     state
@@ -462,7 +461,7 @@ async fn finish_cleanup_scan_failed(state: &Arc<AppState>, scan_id: &str, messag
                 entity_type: "scan".to_string(),
                 id: "active".to_string(),
             }],
-            json!({ "scanId": scan_id, "phase": "failed", "message": message }),
+            json!({ "scanId": scan_id, "phase": "failed", "message": CLEANUP_SCAN_FAILED_MESSAGE }),
         )
         .await;
 }
@@ -492,9 +491,7 @@ pub(super) async fn apply_cleanups(
         if !state.cleanup_snapshot_worker.is_running()
             && let Some(last_error) = state.cleanup_snapshot_worker.last_error().await
         {
-            return Err(ApiError::internal(format!(
-                "cleanup snapshot refresh failed: {last_error}"
-            )));
+            return Err(cleanup_snapshot_refresh_failed(last_error));
         }
         return Err(ApiError::cleanup_snapshot_stale(cleanup_pending_response(
             &scan_req,
@@ -506,20 +503,22 @@ pub(super) async fn apply_cleanups(
     let is_fresh =
         cleanup_snapshot_worker::cleanup_snapshot_is_fresh(&snapshot_row.checked_at, now);
     let is_running = state.cleanup_snapshot_worker.is_running();
+    let last_error = state.cleanup_snapshot_worker.last_error().await;
     if !is_fresh || is_running {
         if !is_running {
             let _ = state.cleanup_snapshot_worker.enqueue().await;
             if !state.cleanup_snapshot_worker.is_running()
                 && let Some(last_error) = state.cleanup_snapshot_worker.last_error().await
             {
-                return Err(ApiError::internal(format!(
-                    "cleanup snapshot refresh failed: {last_error}"
-                )));
+                return Err(cleanup_snapshot_refresh_failed(last_error));
             }
         }
         return Err(ApiError::cleanup_snapshot_stale(cleanup_pending_response(
             &scan_req,
         )));
+    }
+    if let Some(last_error) = last_error {
+        return Err(cleanup_snapshot_refresh_failed(last_error));
     }
     let plan =
         cleanup::build_execution_plan_from_snapshot(&snapshot, &scan_req, &snapshot.scanned_at)
@@ -539,6 +538,17 @@ pub(super) async fn apply_cleanups(
             estimated_reclaimable_bytes = plan.estimated_reclaimable_bytes(),
             has_unknown_size = plan.has_unknown_size(),
             "cleanup apply rejected because confirmation snapshot is stale"
+        );
+        return Err(ApiError::cleanup_snapshot_stale(
+            plan.to_response(CleanupScanReason::Confirm),
+        ));
+    }
+
+    if !plan.validate_volume_identities(&state.runner).await {
+        tracing::warn!(
+            principal = %user.principal,
+            request_reason = %req.reason.as_str(),
+            "cleanup apply rejected because a volume instance changed"
         );
         return Err(ApiError::cleanup_snapshot_stale(
             plan.to_response(CleanupScanReason::Confirm),

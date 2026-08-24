@@ -36,6 +36,7 @@ import {
   formatPercent,
   formatUnknownCount,
   itemHasUnknownSize,
+  mergeCleanupResponses,
   kindSummary,
   projectResponseForPreset,
   staleBucketsForResponse,
@@ -72,6 +73,8 @@ const PRESET_META: Array<{
 ]
 
 const CLEANUP_CONFIRM_POLL_FALLBACK_MS = 800
+const CLEANUP_REFRESH_ERROR = '刷新失败，请重试。'
+const CLEANUP_APPLY_ERROR = '清理失败，请重试。'
 
 const CLEANUP_USAGE_CARD_META: Array<{
   key: CleanupUsageBucket
@@ -496,11 +499,12 @@ function CleanupConfirmBody(props: { response: CleanupScanResponse; targetLabel:
         </div>
       </div>
 
-      {props.stale ? (
-        <div className="cleanupAlert cleanupAlertWarn">候选已变化，已替换为最新扫描结果，请再次确认。</div>
-      ) : null}
-
-      <div className="cleanupAlert cleanupAlertInfo">{confirmSafetyNote(props.response.scope)}</div>
+      <div className={`cleanupAlert ${props.stale ? 'cleanupAlertWarn' : 'cleanupAlertInfo'}`}>
+        {props.stale ? <div>候选已变化，已替换为最新扫描结果，请再次确认。</div> : null}
+        <div className={props.stale ? 'cleanupConfirmSafetyNote' : undefined}>
+          {confirmSafetyNote(props.response.scope)}
+        </div>
+      </div>
 
       <CleanupResponseView compact response={props.response} />
     </div>
@@ -592,6 +596,7 @@ export function CleanupPage(props: {
   const refreshPageScan = useCallback(async () => {
     setRefreshing(true)
     setPageError(null)
+    setActionError(null)
     activeScanEventsRef.current?.close()
     activeScanEventsRef.current = null
     try {
@@ -613,7 +618,20 @@ export function CleanupPage(props: {
         } catch {
           return
         }
-        if (payload.phase === 'scan_ready' && payload.response) {
+        if (
+          activeScanEventsRef.current !== source ||
+          activeScanIdRef.current !== started.scanId ||
+          payload.scanId !== started.scanId
+        ) return
+        if (payload.phase === 'scan_partial' && payload.response) {
+          setPageScan((previous) => {
+            if (!previous) return payload.response ?? null
+            const merged = mergeCleanupResponses(previous, payload.response!)
+            setStaleResourceKeys(merged.staleKeys)
+            return merged.response
+          })
+          setLoading(false)
+        } else if (payload.phase === 'scan_ready' && payload.response) {
           setPageScan(payload.response)
           setStaleResourceKeys(new Set())
           setLoading(false)
@@ -622,7 +640,7 @@ export function CleanupPage(props: {
           source.close()
           if (activeScanEventsRef.current === source) activeScanEventsRef.current = null
         } else if (payload.phase === 'scan_failed') {
-          setPageError(payload.message ?? 'cleanup scan failed')
+          setPageError(CLEANUP_REFRESH_ERROR)
           setStaleResourceKeys(new Set())
           setRefreshing(false)
           setLoading(false)
@@ -631,6 +649,7 @@ export function CleanupPage(props: {
         }
       }
       source.addEventListener('scan_ready', onScanEvent)
+      source.addEventListener('scan_partial', onScanEvent)
       source.addEventListener('scan_failed', onScanEvent)
       if (started.previousSnapshot) {
         setPageScan(started.previousSnapshot)
@@ -641,7 +660,7 @@ export function CleanupPage(props: {
         setStaleResourceKeys(new Set())
       }
     } catch (error) {
-      const message = toErrorMessage(error)
+      const message = error instanceof ApiError && error.status >= 500 ? CLEANUP_REFRESH_ERROR : toErrorMessage(error)
       setPageError(message)
       setStaleResourceKeys(new Set())
       onLastScanHint?.(undefined)
@@ -663,6 +682,10 @@ export function CleanupPage(props: {
       candidate.domain === 'cleanup' && candidate.entities.some((entity) => entity.entityType === 'scan' && entity.id === 'active'),
     )
     if (!event) return
+    if (
+      typeof event.summary.scanId === 'string' &&
+      event.summary.scanId !== activeScanIdRef.current
+    ) return
     if (event.summary.phase === 'ready') {
       void loadCompletedPageScan().catch((error: unknown) => {
         setPageError(toErrorMessage(error))
@@ -672,7 +695,7 @@ export function CleanupPage(props: {
       return
     }
     if (event.summary.phase === 'failed') {
-      setPageError(typeof event.summary.message === 'string' ? event.summary.message : 'cleanup scan failed')
+      setPageError(CLEANUP_REFRESH_ERROR)
       setStaleResourceKeys(new Set())
       setRefreshing(false)
       setLoading(false)
@@ -780,11 +803,12 @@ export function CleanupPage(props: {
                 continue
               }
             }
-            throw error
+            setActionError(error instanceof ApiError && error.status >= 500 ? CLEANUP_APPLY_ERROR : toErrorMessage(error))
+            return
           }
         }
       } catch (error) {
-        setActionError(error instanceof ApiError && error.status >= 500 ? '刷新失败，请重试。' : toErrorMessage(error))
+        setActionError(error instanceof ApiError && error.status >= 500 ? CLEANUP_REFRESH_ERROR : toErrorMessage(error))
       } finally {
         setBusyActionKey(null)
         setConfirmPhase('idle')
@@ -860,8 +884,8 @@ export function CleanupPage(props: {
   }, [onTopActions, topActions])
 
   const statusRailBusy = refreshing || confirmPhase === 'refreshing'
-  const genericRefreshError = actionError === '刷新失败，请重试。'
-  const statusRailError = genericRefreshError
+  const statusRailError = actionError === CLEANUP_REFRESH_ERROR || actionError === CLEANUP_APPLY_ERROR
+  const statusRailErrorLabel = actionError === CLEANUP_APPLY_ERROR ? '清理失败' : '刷新失败'
   const retryStatusRail = () => {
     if (actionError && retryTargetRef.current) {
       void runCleanupFlow(retryTargetRef.current)
@@ -1004,7 +1028,7 @@ export function CleanupPage(props: {
           role="status"
         >
           <span aria-hidden="true" className={`cleanupStatusRailIndicator${statusRailBusy ? ' cleanupStatusRailIndicatorBusy' : ''}`} />
-          <span className="cleanupStatusRailLabel">{statusRailError ? '刷新失败' : '更新中'}</span>
+          <span className="cleanupStatusRailLabel">{statusRailError ? statusRailErrorLabel : '更新中'}</span>
           {statusRailError ? (
             <Button
               className="cleanupStatusRailRetry"
@@ -1019,7 +1043,7 @@ export function CleanupPage(props: {
       ) : null}
 
       {pageError ? <div className="cleanupAlert cleanupAlertError">{pageError}</div> : null}
-      {actionError && !genericRefreshError ? <div className="cleanupAlert cleanupAlertError">{actionError}</div> : null}
+      {actionError && !statusRailError ? <div className="cleanupAlert cleanupAlertError">{actionError}</div> : null}
 
       {response ? (
         <CleanupResponseView

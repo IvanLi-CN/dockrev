@@ -195,6 +195,16 @@ async fn cleanup_confirm_snapshot_freshness_uses_five_minute_boundary() {
         .await
         .unwrap()
         .unwrap();
+    let exact_now = time::OffsetDateTime::now_utc();
+    let exact_boundary = exact_now - time::Duration::seconds(300);
+    let exact_boundary_text = exact_boundary
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    assert!(crate::cleanup_snapshot_worker::cleanup_snapshot_is_fresh(
+        &exact_boundary_text,
+        exact_now,
+    ));
+
     for (age_seconds, expected_status) in [(299, "ready"), (301, "pending")] {
         let checked_at = test_offset_from_now_rfc3339(time::Duration::seconds(-age_seconds));
         state
@@ -294,7 +304,93 @@ async fn cleanup_confirm_returns_error_after_worker_failure() {
     assert_eq!(response.status(), 500);
     let body = response_json(response).await;
     assert_eq!(body["error"]["code"], "internal");
-    assert_eq!(body["error"]["message"].as_str(), Some("cleanup snapshot refresh failed: boom"));
+    assert_eq!(body["error"]["message"].as_str(), Some("cleanup snapshot refresh failed"));
+    assert!(!body.to_string().contains("boom"));
+}
+
+#[tokio::test]
+async fn cleanup_confirm_and_apply_reject_fresh_snapshot_after_worker_failure() {
+    let db_path = format!(
+        "/tmp/dockrev-cleanup-fresh-failure-{}.sqlite3",
+        ulid::Ulid::new()
+    );
+    let runner = Arc::new(CleanupRunner::volume_in_use());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner).await;
+    let app = api::router(state.clone());
+    let initial = wait_for_cleanup_scan_ready(
+        &app,
+        serde_json::json!({
+            "reason": "confirm",
+            "preset": "balanced",
+            "scope": "all",
+        }),
+    )
+    .await;
+    let fingerprint = initial["confirmationFingerprint"]
+        .as_str()
+        .expect("ready confirmation includes fingerprint")
+        .to_string();
+    state
+        .cleanup_snapshot_worker
+        .set_last_error_for_test(Some("boom".to_string()))
+        .await;
+
+    let confirm_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "confirm",
+                        "refresh": false,
+                        "preset": "balanced",
+                        "scope": "all",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(confirm_response.status(), 500);
+    let confirm_body = response_json(confirm_response).await;
+    assert_eq!(
+        confirm_body["error"]["message"].as_str(),
+        Some("cleanup snapshot refresh failed")
+    );
+    assert!(!confirm_body.to_string().contains("boom"));
+
+    let apply_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/apply")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "ui",
+                        "preset": "balanced",
+                        "scope": "all",
+                        "confirmationFingerprint": fingerprint,
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(apply_response.status(), 500);
+    let apply_body = response_json(apply_response).await;
+    assert_eq!(
+        apply_body["error"]["message"].as_str(),
+        Some("cleanup snapshot refresh failed")
+    );
+    assert!(!apply_body.to_string().contains("boom"));
 }
 
 #[tokio::test]
@@ -538,8 +634,9 @@ async fn cleanup_page_returns_error_after_initial_refresh_failure_until_explicit
     assert_eq!(failing_body["error"]["code"], "internal");
     assert_eq!(
         failing_body["error"]["message"].as_str(),
-        Some("cleanup snapshot refresh failed: boom")
+        Some("cleanup snapshot refresh failed")
     );
+    assert!(!failing_body.to_string().contains("boom"));
     assert!(!state.cleanup_snapshot_worker.is_running());
 
     let refresh_resp = app
@@ -638,8 +735,9 @@ async fn cleanup_page_returns_error_for_stale_cached_snapshot_after_refresh_fail
     assert_eq!(body["error"]["code"], "internal");
     assert_eq!(
         body["error"]["message"].as_str(),
-        Some("cleanup snapshot refresh failed: boom")
+        Some("cleanup snapshot refresh failed")
     );
+    assert!(!body.to_string().contains("boom"));
     assert!(!state.cleanup_snapshot_worker.is_running());
 }
 

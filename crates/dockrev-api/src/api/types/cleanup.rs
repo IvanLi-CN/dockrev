@@ -279,6 +279,8 @@ pub struct CleanupInventoryCandidate {
     pub resource_id: String,
     pub kind: CleanupResourceKind,
     pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub estimated_reclaimable_bytes: Option<u64>,
     #[serde(default)]

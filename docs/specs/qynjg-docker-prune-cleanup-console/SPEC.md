@@ -212,7 +212,7 @@
 - source_type: `ui_demo`
   target_program: `mock-only`
   capture_scope: `browser-viewport`
-  requested_viewport: `1956x1189`
+  requested_viewport: `1956x1245`
   sensitive_exclusion: `N/A`
   submission_gate: `approved`
   story_id_or_title: `cleanup-console-confirm-failed`
@@ -229,7 +229,7 @@ PR: include
   requested_viewport: `393x852`
   sensitive_exclusion: `N/A`
   submission_gate: `approved`
-  story_id_or_title: `cleanup-console-confirm-pending`
+  story_id_or_title: `cleanup-console-storage-normal`
   state: `ready confirmation on mobile`
   evidence_note: 验证移动端确认弹窗在 ready 后打开，确认与取消按钮均可见，底部导航不会遮挡弹窗操作区。
 
