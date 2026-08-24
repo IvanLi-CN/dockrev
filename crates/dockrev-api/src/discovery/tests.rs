@@ -1,5 +1,49 @@
 use super::*;
 
+fn configured_self_upgrade_override_path() -> Option<std::path::PathBuf> {
+    let state_path = std::env::var_os("DOCKREV_SUPERVISOR_STATE_PATH")?;
+    if state_path.is_empty() {
+        return None;
+    }
+
+    expected_self_upgrade_override_path(std::path::Path::new(&state_path))
+}
+
+fn configured_managed_override_root() -> Option<std::path::PathBuf> {
+    let db_path = std::env::var_os("DOCKREV_DB_PATH")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("./data/dockrev.sqlite3"));
+    managed_override::configured_root(&db_path).ok()
+}
+
+async fn resolve_project_compose_files(
+    project: &str,
+    observed: &[ObservedComposeContainer],
+) -> Result<ResolvedProjectComposeFiles, InvalidProjectComposeFiles> {
+    let expected_self_upgrade_override = configured_self_upgrade_override_path();
+    resolve_project_compose_files_with_expected_override(
+        project,
+        observed,
+        expected_self_upgrade_override.as_deref(),
+    )
+    .await
+}
+
+async fn resolve_project_compose_files_with_expected_override(
+    project: &str,
+    observed: &[ObservedComposeContainer],
+    expected_self_upgrade_override: Option<&std::path::Path>,
+) -> Result<ResolvedProjectComposeFiles, InvalidProjectComposeFiles> {
+    super::resolve_project_compose_files_with_context(
+        project,
+        observed,
+        expected_self_upgrade_override,
+        configured_managed_override_root().as_deref(),
+        None,
+    )
+    .await
+}
+
 fn make_temp_dir() -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("dockrev-discovery-test-{}", ulid::Ulid::new()));
     std::fs::create_dir_all(&dir).unwrap();

@@ -158,7 +158,7 @@ services:
 
     let job = {
         let mut out = None;
-        for _ in 0..50 {
+        for _ in 0..500 {
             let resp = app
                 .clone()
                 .oneshot(
@@ -304,7 +304,7 @@ services:
 
     let job = {
         let mut out = None;
-        for _ in 0..50 {
+        for _ in 0..500 {
             let resp = app
                 .clone()
                 .oneshot(
@@ -411,7 +411,7 @@ services:
 
     let job = {
         let mut out = None;
-        for _ in 0..50 {
+        for _ in 0..500 {
             let resp = app
                 .clone()
                 .oneshot(
@@ -547,7 +547,7 @@ services:
 
     let job = {
         let mut out = None;
-        for _ in 0..50 {
+        for _ in 0..500 {
             let resp = app
                 .clone()
                 .oneshot(
