@@ -444,12 +444,17 @@ mod tests {
     async fn operation_lock_serializes_competing_lifecycle_work() {
         let first = operation_lock().await;
         assert!(try_operation_lock().is_none());
+
+        let waiter = tokio::spawn(async {
+            let _guard = operation_lock().await;
+        });
+        tokio::task::yield_now().await;
         drop(first);
 
-        let second = try_operation_lock().expect("released operation lock should be available");
-        drop(second);
-        assert!(try_operation_lock().is_some());
-        drop(try_operation_lock());
+        tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+            .await
+            .expect("released operation lock should wake a queued waiter")
+            .expect("operation lock waiter should complete");
     }
 
     #[test]

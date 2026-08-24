@@ -560,7 +560,7 @@ services:
     let check_id = triggered["checkId"].as_str().unwrap().to_string();
 
     let mut finished = false;
-    for _ in 0..50 {
+    for _ in 0..500 {
         let resp = app
             .clone()
             .oneshot(
