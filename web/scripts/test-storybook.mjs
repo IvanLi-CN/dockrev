@@ -1341,6 +1341,154 @@ async function runInteractive({ baseUrl, browser }) {
         .getByText(digest, { exact: true })
         .waitFor({ timeout: 10_000 });
 
+      await page.setViewportSize({ width: 1280, height: 720 });
+      await page.evaluate(() => {
+        // Storybook's root is content-sized, while the production #root fills the viewport.
+        document.querySelector("#storybook-root")?.style.setProperty("height", "100vh");
+      });
+      await page.waitForFunction(() => {
+        const region = document.querySelector(".jobDetailDataRegion");
+        const cards = region ? Array.from(region.querySelectorAll(".card")) : [];
+        const main = document.querySelector('[aria-label="主内容"]');
+        const logs = document.querySelector('[aria-label="任务日志"]');
+        return cards.length === 2 && main && logs;
+      }, null, { timeout: 10_000 });
+
+      const desktopLayout = await page.evaluate(() => {
+        const region = document.querySelector(".jobDetailDataRegion");
+        const cards = region ? Array.from(region.querySelectorAll(".card")) : [];
+        const main = document.querySelector('[aria-label="主内容"]');
+        const logs = document.querySelector('[aria-label="任务日志"]');
+        return {
+          gap: cards[1] && cards[0] ? cards[1].getBoundingClientRect().top - cards[0].getBoundingClientRect().bottom : null,
+          mainScrollHeight: main?.scrollHeight ?? null,
+          mainClientHeight: main?.clientHeight ?? null,
+          logScrollHeight: logs?.scrollHeight ?? null,
+          logClientHeight: logs?.clientHeight ?? null,
+        };
+      });
+      if (desktopLayout.gap === null || Math.abs(desktopLayout.gap - 16) > 1) {
+        throw new Error(`Expected a 16px gap between job detail cards, got ${desktopLayout.gap}.`);
+      }
+      if (
+        desktopLayout.mainScrollHeight === null ||
+        desktopLayout.mainClientHeight === null ||
+        desktopLayout.mainScrollHeight > desktopLayout.mainClientHeight + 2
+      ) {
+        throw new Error(
+          `Expected desktop job detail content to fit its viewport, got ${desktopLayout.mainScrollHeight}/${desktopLayout.mainClientHeight}.`,
+        );
+      }
+      if (
+        desktopLayout.logScrollHeight === null ||
+        desktopLayout.logClientHeight === null ||
+        desktopLayout.logScrollHeight <= desktopLayout.logClientHeight
+      ) {
+        throw new Error(
+          `Expected desktop task logs to scroll independently, got ${desktopLayout.logScrollHeight}/${desktopLayout.logClientHeight}; layout=${JSON.stringify(desktopLayout)}.`,
+        );
+      }
+      const desktopBeforeWheel = await page.evaluate(() => ({
+        main: document.querySelector('[aria-label="主内容"]')?.scrollTop ?? null,
+        logs: (() => {
+          const element = document.querySelector('[aria-label="任务日志"]');
+          if (element) element.scrollTop = 0;
+          return element?.scrollTop ?? null;
+        })(),
+      }));
+      const desktopLogBox = await page.locator('[aria-label="任务日志"]').boundingBox();
+      if (!desktopLogBox) throw new Error("Expected desktop task logs viewport bounds.");
+      await page.mouse.move(
+        desktopLogBox.x + desktopLogBox.width / 2,
+        desktopLogBox.y + desktopLogBox.height / 2,
+      );
+      await page.mouse.wheel(0, 600);
+      await page.waitForTimeout(100);
+      const desktopAfterWheel = await page.evaluate(() => ({
+        main: document.querySelector('[aria-label="主内容"]')?.scrollTop ?? null,
+        logs: document.querySelector('[aria-label="任务日志"]')?.scrollTop ?? null,
+      }));
+      if (
+        desktopBeforeWheel.main !== 0 ||
+        desktopAfterWheel.main !== 0 ||
+        desktopBeforeWheel.logs === null ||
+        desktopAfterWheel.logs === null ||
+        desktopAfterWheel.logs <= desktopBeforeWheel.logs
+      ) {
+        throw new Error(
+          `Expected desktop wheel to move only the task logs, got ${JSON.stringify({ desktopBeforeWheel, desktopAfterWheel })}.`,
+        );
+      }
+
+      await page.setViewportSize({ width: 393, height: 852 });
+      await page.waitForFunction(() => {
+        const main = document.querySelector('[aria-label="主内容"]');
+        const logs = document.querySelector('[aria-label="任务日志"]');
+        return main && logs && logs.scrollHeight <= logs.clientHeight + 2;
+      }, null, { timeout: 10_000 });
+      const mobileLayout = await page.evaluate(() => {
+        const region = document.querySelector(".jobDetailDataRegion");
+        const cards = region ? Array.from(region.querySelectorAll(".card")) : [];
+        const main = document.querySelector('[aria-label="主内容"]');
+        const logs = document.querySelector('[aria-label="任务日志"]');
+        return {
+          gap: cards[1] && cards[0] ? cards[1].getBoundingClientRect().top - cards[0].getBoundingClientRect().bottom : null,
+          mainScrollHeight: main?.scrollHeight ?? null,
+          mainClientHeight: main?.clientHeight ?? null,
+          logScrollHeight: logs?.scrollHeight ?? null,
+          logClientHeight: logs?.clientHeight ?? null,
+        };
+      });
+      if (mobileLayout.gap === null || Math.abs(mobileLayout.gap - 16) > 1) {
+        throw new Error(`Expected a 16px mobile gap between job detail cards, got ${mobileLayout.gap}.`);
+      }
+      if (
+        mobileLayout.mainScrollHeight === null ||
+        mobileLayout.mainClientHeight === null ||
+        mobileLayout.mainScrollHeight <= mobileLayout.mainClientHeight + 2 ||
+        mobileLayout.logScrollHeight === null ||
+        mobileLayout.logClientHeight === null ||
+        mobileLayout.logScrollHeight > mobileLayout.logClientHeight + 2
+      ) {
+        throw new Error(`Expected mobile logs to use page scrolling, got ${JSON.stringify(mobileLayout)}.`);
+      }
+      await page.evaluate(() => {
+        const main = document.querySelector('[aria-label="主内容"]');
+        if (main) main.scrollTop = 0;
+      });
+      const mobileLogs = page.locator('[aria-label="任务日志"]');
+      await mobileLogs.focus();
+      if (!(await mobileLogs.evaluate((element) => document.activeElement === element))) {
+        throw new Error("Expected mobile task logs viewport to remain keyboard focusable.");
+      }
+      const mobileBeforeWheel = await page.evaluate(() => ({
+        main: document.querySelector('[aria-label="主内容"]')?.scrollTop ?? null,
+        logs: document.querySelector('[aria-label="任务日志"]')?.scrollTop ?? null,
+      }));
+      const mobileLogBox = await mobileLogs.boundingBox();
+      if (!mobileLogBox) throw new Error("Expected mobile task logs viewport bounds.");
+      await page.mouse.move(
+        mobileLogBox.x + mobileLogBox.width / 2,
+        mobileLogBox.y + Math.min(80, mobileLogBox.height / 2),
+      );
+      await page.mouse.wheel(0, 600);
+      await page.waitForTimeout(100);
+      const mobileAfterWheel = await page.evaluate(() => ({
+        main: document.querySelector('[aria-label="主内容"]')?.scrollTop ?? null,
+        logs: document.querySelector('[aria-label="任务日志"]')?.scrollTop ?? null,
+      }));
+      if (
+        mobileBeforeWheel.main === null ||
+        mobileAfterWheel.main === null ||
+        mobileAfterWheel.main <= mobileBeforeWheel.main ||
+        mobileBeforeWheel.logs !== 0 ||
+        mobileAfterWheel.logs !== 0
+      ) {
+        throw new Error(
+          `Expected mobile wheel to move only the main content, got ${JSON.stringify({ mobileBeforeWheel, mobileAfterWheel })}.`,
+        );
+      }
+
       const back2 = page.getByRole("button", { name: "返回列表" });
       await back2.waitFor({ timeout: 10_000 });
       await back2.click();

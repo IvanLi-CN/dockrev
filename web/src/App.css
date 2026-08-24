@@ -3,7 +3,7 @@
   min-height: 100vh;
   min-height: 100dvh;
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
   grid-template-columns: 256px 1fr;
   grid-template-areas:
     "top top"
@@ -992,6 +992,14 @@ html[data-theme="light"] .brandLogoForLight {
 .jobDetailPage {
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.jobDetailDataRegion {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .jobDetailLogsCard {
@@ -2660,6 +2668,21 @@ html[data-theme="light"] .releaseDrawerContent {
 }
 
 @media (max-width: 760px) {
+  .jobDetailPage,
+  .jobDetailDataRegion,
+  .jobDetailLogsCard {
+    flex: 0 0 auto;
+    min-height: auto;
+  }
+
+  .jobDetailLogsCard .logs {
+    flex: 0 0 auto;
+  }
+
+  .jobDetailLogsCard .logs [data-overlayscrollbars-viewport] {
+    overscroll-behavior: auto;
+  }
+
   .jobDetailHeader {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -11190,7 +11213,7 @@ html[data-theme="light"] .serviceLogsTerminal {
   --app-shell-primary-nav-width: 292px;
   --app-shell-detail-nav-width: 0px;
   --app-shell-header-left-width: var(--app-shell-primary-nav-width);
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
   grid-template-columns: var(--app-shell-primary-nav-width) minmax(0, 1fr);
   background:
     radial-gradient(

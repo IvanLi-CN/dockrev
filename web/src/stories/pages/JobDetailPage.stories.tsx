@@ -26,6 +26,10 @@ function getLogCount(root: ParentNode): number {
   return Number(getLogsSurface(root)?.getAttribute('data-job-detail-log-count') ?? '0')
 }
 
+function getJobDetailCards(root: ParentNode): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>('.jobDetailDataRegion > .card'))
+}
+
 function isNearBottom(element: HTMLElement): boolean {
   return element.scrollHeight - element.scrollTop - element.clientHeight < 48
 }
@@ -67,6 +71,14 @@ export const LongLogs: Story = {
     const viewport = getLogsViewport(canvasElement)
     expectStory(mainViewport, 'job detail main viewport missing')
     expectStory(viewport, 'job detail logs viewport missing')
+    const cards = getJobDetailCards(canvasElement)
+    expectStory(cards.length === 2, 'job detail should render summary and logs cards in the data region')
+    expectNearlyEqual(
+      cards[1]!.getBoundingClientRect().top - cards[0]!.getBoundingClientRect().bottom,
+      16,
+      1,
+      'job detail cards should keep a 16px vertical gap',
+    )
     expectStory(
       mainViewport.scrollHeight <= mainViewport.clientHeight + 2,
       'job detail page should fit the main viewport without introducing page-level scroll in the common long-logs case',
