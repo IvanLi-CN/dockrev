@@ -120,6 +120,39 @@ export const DiscoveryStopped: Story = {
   },
 };
 
+export const StaleTempOverrideReconciliation: Story = {
+  parameters: {
+    dockrevApiScenario: "overview-discovery-stale-temp-reconcile",
+    viewport: { defaultViewport: "dockrevWide" },
+  },
+  render: renderServices("历史临时 Compose override 保留告警，并提供显式修复"),
+};
+
+export const StaleTempOverrideConfirmation: Story = {
+  parameters: {
+    dockrevApiScenario: "overview-discovery-stale-temp-reconcile",
+    viewport: { defaultViewport: "dockrevWide" },
+  },
+  render: renderServices("确认后仅重建受影响服务，不拉取镜像"),
+  play: async ({ canvasElement }) => {
+    await sleep(260);
+    expectStory(canvasElement.textContent?.includes("扫描与发现异常"), "expected the discovery card");
+    expectStory(canvasElement.textContent?.includes("file-storage"), "expected the affected project name");
+    expectStory(canvasElement.textContent?.includes("config_files_stale_dockrev_temp_override"), "expected stale provenance warning details");
+    const action = Array.from(canvasElement.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent?.trim() === "修复标签");
+    expectStory(action, "expected an explicit reconciliation action");
+    action.click();
+    await sleep(180);
+    const dialog = document.querySelector<HTMLElement>('[role="alertdialog"], [role="dialog"]');
+    expectStory(dialog, "expected reconciliation confirmation dialog");
+    expectStory(dialog.textContent?.includes("仅重建该告警关联的服务"), "confirmation should disclose affected services");
+    expectStory(dialog.textContent?.includes("--pull never"), "confirmation should disclose the no-pull policy");
+    expectStory(dialog.textContent?.includes("不拉取、不猜测标签"), "confirmation should disclose the image safety rule");
+    const cancel = Array.from(dialog.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent?.includes("取消"));
+    cancel?.click();
+  },
+};
+
 export const AllActionableServicesVisible: Story = {
   parameters: { dockrevApiScenario: "dashboard-demo" },
   render: renderServices("回归：默认列表必须完整显示全部 actionable 服务"),

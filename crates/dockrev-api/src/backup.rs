@@ -3,6 +3,7 @@ use std::{
     time::Duration,
 };
 
+use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -125,7 +126,53 @@ pub fn spawn_cleanup_task(state: std::sync::Arc<crate::state::AppState>) {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 pub async fn run_pre_update_backup(
+    runner: &dyn CommandRunner,
+    helper_runner: &dyn CommandRunner,
+    recovery_runner: &dyn CommandRunner,
+    recovery_store: &dyn BackupRecoveryStore,
+    settings: &BackupSettings,
+    db_path: &Path,
+    helper_image_fallback: &str,
+    backup_id: &str,
+    job_id: &str,
+    compose_bin: &str,
+    docker_config_path: Option<&std::path::Path>,
+    stack: &StackRecord,
+    scope: &JobScope,
+    service_id: Option<&str>,
+    keep_stopped_services: &[String],
+    now_rfc3339: &str,
+    recovery_db: Option<&crate::db::Db>,
+    progress_tx: Option<tokio::sync::mpsc::UnboundedSender<BackupProgressEvent>>,
+) -> anyhow::Result<BackupRunResult> {
+    let _managed_override_operation_guard = crate::managed_override::operation_lock().await;
+    run_pre_update_backup_unlocked(
+        runner,
+        helper_runner,
+        recovery_runner,
+        recovery_store,
+        settings,
+        db_path,
+        helper_image_fallback,
+        backup_id,
+        job_id,
+        compose_bin,
+        docker_config_path,
+        stack,
+        scope,
+        service_id,
+        keep_stopped_services,
+        now_rfc3339,
+        recovery_db,
+        progress_tx,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_pre_update_backup_unlocked(
     runner: &dyn CommandRunner,
     helper_runner: &dyn CommandRunner,
     recovery_runner: &dyn CommandRunner,
@@ -454,6 +501,7 @@ pub async fn recover_interrupted_backups(
             &state.config.compose_bin,
             state.config.docker_config_path.as_deref(),
             &stack,
+            &state.config.managed_override_dir,
             &checkpoint.services,
         )
         .await?;
@@ -882,14 +930,117 @@ pub async fn restore_services_after_failed_apply(
     compose_bin: &str,
     docker_config_path: Option<&Path>,
     stack: &StackRecord,
+    managed_override_dir: &Path,
     services: &[String],
 ) -> anyhow::Result<()> {
+    let _managed_override_operation_guard = crate::managed_override::operation_lock().await;
+    restore_services_after_failed_apply_unlocked(
+        runner,
+        compose_bin,
+        docker_config_path,
+        stack,
+        managed_override_dir,
+        services,
+    )
+    .await
+}
+
+pub(crate) async fn retain_running_services(
+    runner: &dyn CommandRunner,
+    compose_bin: &str,
+    docker_config_path: Option<&Path>,
+    stack: &StackRecord,
+    services: &[String],
+) -> anyhow::Result<Vec<String>> {
     let compose_cfg = compose_runner_config(docker_config_path, compose_bin)?;
     let compose_stack = ComposeStack {
         project_name: sanitize_project_name(&stack.name),
         compose: stack.compose.clone(),
     };
-    restart_related_services_after_backup(runner, &compose_stack, &compose_cfg, services).await
+    let mut running = Vec::new();
+    for service in services {
+        let container_id = run_to_string(
+            runner,
+            compose_stack.ps_q_service(&compose_cfg, service),
+            Duration::from_secs(30),
+        )
+        .await?;
+        if !container_id.trim().is_empty() {
+            running.push(service.clone());
+        }
+    }
+    Ok(running)
+}
+
+pub(crate) async fn restore_services_after_failed_apply_unlocked(
+    runner: &dyn CommandRunner,
+    compose_bin: &str,
+    docker_config_path: Option<&Path>,
+    stack: &StackRecord,
+    managed_override_dir: &Path,
+    services: &[String],
+) -> anyhow::Result<()> {
+    let compose_cfg = compose_runner_config(docker_config_path, compose_bin)?;
+    let managed_override_path =
+        crate::managed_override::managed_override_path(managed_override_dir, &stack.id);
+    let pending_override_snapshot =
+        crate::managed_override::has_pending_snapshot(&managed_override_path);
+    let pending_override_applied = pending_override_snapshot
+        && crate::managed_override::pending_snapshot_is_applied(&managed_override_path)?;
+    if pending_override_applied && !managed_override_path.is_file() {
+        anyhow::bail!(
+            "applied managed override transaction has no active override: {}",
+            managed_override_path.display()
+        );
+    }
+    if pending_override_snapshot && !pending_override_applied {
+        let _override_guard = crate::managed_override::lock();
+        let snapshot = format!("{}.previous", managed_override_path.display());
+        if Path::new(&snapshot).is_file() {
+            crate::managed_override::restore_snapshot(&managed_override_path, Some(&snapshot))
+                .context("restore managed override before service recovery")?;
+        } else {
+            anyhow::bail!(
+                "managed override pending marker has no previous snapshot: {}",
+                managed_override_path.display()
+            );
+        }
+    }
+    let mut compose = stack.compose.clone();
+    if managed_override_path.is_file() {
+        compose
+            .compose_files
+            .push(managed_override_path.to_string_lossy().to_string());
+    }
+    let compose_stack = ComposeStack {
+        project_name: sanitize_project_name(&stack.name),
+        compose,
+    };
+    if services.is_empty() {
+        if pending_override_snapshot {
+            crate::managed_override::discard_snapshot(&managed_override_path)
+                .context("discard managed override snapshot after empty service recovery")?;
+        }
+        return Ok(());
+    }
+    let out = runner
+        .run(
+            compose_stack.up_services_no_pull_no_deps_force_recreate(&compose_cfg, services),
+            Duration::from_secs(180),
+        )
+        .await?;
+    if out.status != 0 {
+        anyhow::bail!(
+            "restart services failed: status={} stderr={}",
+            out.status,
+            out.stderr
+        );
+    }
+    if pending_override_snapshot {
+        crate::managed_override::discard_snapshot(&managed_override_path)
+            .context("discard managed override snapshot after service recovery")?;
+    }
+    Ok(())
 }
 
 pub async fn restore_backup_recovery_snapshot(
@@ -897,6 +1048,27 @@ pub async fn restore_backup_recovery_snapshot(
     compose_bin: &str,
     docker_config_path: Option<&Path>,
     stack: &StackRecord,
+    managed_override_dir: &Path,
+    snapshot: &BackupRecoverySnapshot,
+) -> anyhow::Result<()> {
+    let _managed_override_operation_guard = crate::managed_override::operation_lock().await;
+    restore_backup_recovery_snapshot_unlocked(
+        runner,
+        compose_bin,
+        docker_config_path,
+        stack,
+        managed_override_dir,
+        snapshot,
+    )
+    .await
+}
+
+pub(crate) async fn restore_backup_recovery_snapshot_unlocked(
+    runner: &dyn CommandRunner,
+    compose_bin: &str,
+    docker_config_path: Option<&Path>,
+    stack: &StackRecord,
+    managed_override_dir: &Path,
     snapshot: &BackupRecoverySnapshot,
 ) -> anyhow::Result<()> {
     if snapshot.stack_id != stack.id {
@@ -904,11 +1076,12 @@ pub async fn restore_backup_recovery_snapshot(
             "backup recovery snapshot belongs to another stack"
         ));
     }
-    restore_services_after_failed_apply(
+    restore_services_after_failed_apply_unlocked(
         runner,
         compose_bin,
         docker_config_path,
         stack,
+        managed_override_dir,
         &snapshot.services,
     )
     .await
@@ -1193,298 +1366,5 @@ async fn delete_artifact_if_present(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::BTreeMap;
-    use std::sync::{Arc, Mutex};
-
-    #[derive(Default)]
-    struct FakeRecoveryStore;
-
-    #[async_trait::async_trait]
-    impl BackupRecoveryStore for FakeRecoveryStore {
-        async fn save(&self, _snapshot: &BackupRecoverySnapshot) -> anyhow::Result<()> {
-            Ok(())
-        }
-
-        async fn clear(&self) -> anyhow::Result<()> {
-            Ok(())
-        }
-    }
-
-    #[derive(Clone, Default)]
-    struct FakeRunner {
-        sizes: BTreeMap<String, u64>,
-        calls: Arc<Mutex<Vec<CommandSpec>>>,
-    }
-
-    #[async_trait::async_trait]
-    impl CommandRunner for FakeRunner {
-        async fn run(
-            &self,
-            spec: CommandSpec,
-            _timeout: Duration,
-        ) -> anyhow::Result<crate::runner::CommandOutput> {
-            self.calls.lock().unwrap().push(spec.clone());
-            if (spec.program == "docker-compose" || spec.program == "docker")
-                && spec
-                    .args
-                    .iter()
-                    .any(|arg| arg == "stop" || arg == "up" || arg == "ps")
-            {
-                return Ok(crate::runner::CommandOutput {
-                    status: 0,
-                    stdout: "container-id\n".to_string(),
-                    stderr: String::new(),
-                });
-            }
-            if spec.program == "docker" && spec.args.first().is_some_and(|a| a == "run") {
-                if spec.args.iter().any(|a| a.contains("du -sb /data")) {
-                    let mount = spec
-                        .args
-                        .windows(2)
-                        .find(|w| w[0] == "-v")
-                        .map(|w| w[1].clone())
-                        .unwrap_or_default();
-                    let key = mount.split(':').next().unwrap_or_default().to_string();
-                    let bytes = self.sizes.get(&key).copied().unwrap_or(0);
-                    return Ok(crate::runner::CommandOutput {
-                        status: 0,
-                        stdout: format!("{bytes}\n"),
-                        stderr: String::new(),
-                    });
-                }
-
-                if spec.args.iter().any(|arg| arg == "backup-helper")
-                    && let Some(out_mount) = spec
-                        .args
-                        .windows(2)
-                        .find(|w| w[0] == "-v" && w[1].ends_with(":/out-root"))
-                        .map(|w| w[1].clone())
-                {
-                    let host_dir = out_mount.split(':').next().unwrap_or_default();
-                    let output_final = spec
-                        .args
-                        .windows(2)
-                        .find(|w| w[0] == "--output-final")
-                        .map(|w| w[1].trim_start_matches("/out-root/"))
-                        .unwrap();
-                    let path = PathBuf::from(host_dir).join(output_final);
-                    tokio::fs::create_dir_all(path.parent().unwrap()).await?;
-                    tokio::fs::write(&path, vec![0u8; 10]).await?;
-                    return Ok(crate::runner::CommandOutput {
-                        status: 0,
-                        stdout: String::new(),
-                        stderr: String::new(),
-                    });
-                }
-            }
-
-            Ok(crate::runner::CommandOutput {
-                status: 0,
-                stdout: String::new(),
-                stderr: String::new(),
-            })
-        }
-    }
-
-    fn test_stack(targets: Vec<BackupTarget>) -> StackRecord {
-        StackRecord {
-            id: "stk_test".to_string(),
-            name: "demo".to_string(),
-            archived: false,
-            compose: crate::api::types::ComposeConfig {
-                kind: "path".to_string(),
-                compose_files: vec!["/tmp/compose.yml".to_string()],
-                env_file: None,
-            },
-            backup: crate::api::types::StackBackupConfig {
-                targets,
-                retention: Default::default(),
-            },
-            services: vec![crate::api::types::Service {
-                id: "svc_test".to_string(),
-                name: "web".to_string(),
-                image: crate::api::types::ComposeRef {
-                    reference: "ghcr.io/acme/web:5.2".to_string(),
-                    tag: "5.2".to_string(),
-                    digest: None,
-                    resolved_tag: None,
-                    resolved_tags: None,
-                },
-                homepage: None,
-                update_guard: None,
-                candidate: None,
-                ignore: None,
-                version_inference: None,
-                new_version_discovery_count: None,
-                settings: crate::api::types::ServiceSettings {
-                    auto_rollback: true,
-                    backup_targets: crate::api::types::BackupTargetOverrides {
-                        bind_paths: BTreeMap::new(),
-                        volume_names: BTreeMap::new(),
-                    },
-                    repo_url: None,
-                },
-                archived: None,
-            }],
-        }
-    }
-
-    #[tokio::test]
-    async fn backup_skips_over_threshold_for_inherit() {
-        let tmp = std::env::temp_dir()
-            .join(format!("dockrev-backup-test-{}", ulid::Ulid::new()))
-            .to_string_lossy()
-            .to_string();
-        let settings = BackupSettings {
-            enabled: true,
-            require_success: true,
-            base_dir: tmp.clone(),
-            skip_targets_over_bytes: 100,
-        };
-
-        let runner = FakeRunner {
-            sizes: BTreeMap::from([("big".to_string(), 1000)]),
-            ..Default::default()
-        };
-
-        let stack = test_stack(vec![BackupTarget::DockerVolume {
-            name: "big".to_string(),
-        }]);
-
-        let out = run_pre_update_backup(
-            &runner,
-            &runner,
-            &runner,
-            &FakeRecoveryStore,
-            &settings,
-            Path::new(&tmp).join("dockrev.sqlite").as_path(),
-            "ghcr.io/ivanli-cn/dockrev:latest",
-            "backup-test",
-            "job-test",
-            "docker-compose",
-            None,
-            &stack,
-            &JobScope::Stack,
-            None,
-            &[],
-            "2026-01-19T00:00:00Z",
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-        assert_eq!(out.status, "skipped");
-    }
-
-    #[tokio::test]
-    async fn backup_includes_force_over_threshold() {
-        let tmp = std::env::temp_dir()
-            .join(format!("dockrev-backup-test-{}", ulid::Ulid::new()))
-            .to_string_lossy()
-            .to_string();
-        let settings = BackupSettings {
-            enabled: true,
-            require_success: true,
-            base_dir: tmp.clone(),
-            skip_targets_over_bytes: 100,
-        };
-
-        let runner = FakeRunner {
-            sizes: BTreeMap::from([("big".to_string(), 1000)]),
-            ..Default::default()
-        };
-
-        let mut stack = test_stack(vec![BackupTarget::DockerVolume {
-            name: "big".to_string(),
-        }]);
-        stack.services[0]
-            .settings
-            .backup_targets
-            .volume_names
-            .insert("big".to_string(), crate::api::types::TernaryChoice::Force);
-
-        let out = run_pre_update_backup(
-            &runner,
-            &runner,
-            &runner,
-            &FakeRecoveryStore,
-            &settings,
-            Path::new(&tmp).join("dockrev.sqlite").as_path(),
-            "ghcr.io/ivanli-cn/dockrev:latest",
-            "backup-test",
-            "job-test",
-            "docker-compose",
-            None,
-            &stack,
-            &JobScope::Stack,
-            None,
-            &["web".to_string()],
-            "2026-01-19T00:00:00Z",
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-        assert_eq!(out.status, "success");
-        assert!(out.artifact_path.as_deref().unwrap().ends_with(".tar.zst"));
-        assert_eq!(out.services_kept_stopped, ["web"]);
-        let calls = runner.calls.lock().unwrap();
-        assert!(
-            calls
-                .iter()
-                .any(|spec| spec.args.iter().any(|arg| arg == "stop"))
-        );
-        assert!(
-            !calls
-                .iter()
-                .any(|spec| spec.args.iter().any(|arg| arg == "up"))
-        );
-        assert_eq!(out.size_bytes, Some(10));
-    }
-
-    #[test]
-    fn legacy_artifact_key_rejects_parent_traversal() {
-        let storage = crate::backup_storage::BackupStorage::Local {
-            logical_root: PathBuf::from("/data/backups"),
-        };
-        assert_eq!(
-            legacy_artifact_key(&storage, "/data/backups/stack/archive.tar.gz"),
-            Some(PathBuf::from("stack/archive.tar.gz"))
-        );
-        assert_eq!(
-            legacy_artifact_key(&storage, "/data/backups/../important/file"),
-            None
-        );
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn local_delete_rejects_symlink_escape() {
-        let root = std::env::temp_dir().join(format!("dockrev-cleanup-test-{}", ulid::Ulid::new()));
-        let managed = root.join("backups");
-        let outside = root.join("outside");
-        tokio::fs::create_dir_all(&managed).await.unwrap();
-        tokio::fs::create_dir_all(&outside).await.unwrap();
-        tokio::fs::write(outside.join("keep.tar.gz"), b"keep")
-            .await
-            .unwrap();
-        std::os::unix::fs::symlink(&outside, managed.join("escaped")).unwrap();
-
-        let storage = crate::backup_storage::BackupStorage::Local {
-            logical_root: managed,
-        };
-        let error = delete_artifact(
-            &FakeRunner::default(),
-            &storage,
-            "unused",
-            Path::new("escaped/keep.tar.gz"),
-        )
-        .await
-        .unwrap_err();
-        assert!(error.to_string().contains("outside managed storage"));
-        assert!(outside.join("keep.tar.gz").exists());
-        std::fs::remove_dir_all(root).unwrap();
-    }
-}
+#[path = "backup/tests.rs"]
+mod tests;

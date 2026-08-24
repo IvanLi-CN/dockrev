@@ -10,6 +10,8 @@ pub struct Config {
     pub app_effective_version: String,
     pub http_addr: String,
     pub db_path: PathBuf,
+    pub managed_override_dir: PathBuf,
+    pub supervisor_state_path: Option<PathBuf>,
     pub metrics_db_path: PathBuf,
     pub docker_config_path: Option<PathBuf>,
     pub compose_bin: String,
@@ -62,6 +64,27 @@ impl Config {
                 "DOCKREV_METRICS_DB_PATH must not point to the same file as DOCKREV_DB_PATH"
             ));
         }
+
+        let managed_override_dir = match std::env::var_os("DOCKREV_MANAGED_OVERRIDE_DIR") {
+            Some(value) => {
+                let path = PathBuf::from(value);
+                if !path.is_absolute() {
+                    return Err(anyhow::anyhow!(
+                        "DOCKREV_MANAGED_OVERRIDE_DIR must be absolute"
+                    ));
+                }
+                path
+            }
+            None => absolute_path(
+                &db_path
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new("."))
+                    .join("managed-overrides"),
+            )?,
+        };
+
+        let supervisor_state_path =
+            supervisor_state_path_from_env(std::env::var_os("DOCKREV_SUPERVISOR_STATE_PATH"))?;
 
         let docker_config_path = std::env::var("DOCKREV_DOCKER_CONFIG")
             .ok()
@@ -233,6 +256,8 @@ impl Config {
             app_effective_version,
             http_addr,
             db_path,
+            managed_override_dir,
+            supervisor_state_path,
             metrics_db_path,
             docker_config_path,
             compose_bin,
@@ -259,6 +284,47 @@ impl Config {
             update_idempotent_retry_max_ms,
         })
     }
+}
+
+fn absolute_path(path: &std::path::Path) -> anyhow::Result<PathBuf> {
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    Ok(std::env::current_dir()?.join(path))
+}
+
+fn supervisor_state_path_from_env(
+    value: Option<std::ffi::OsString>,
+) -> anyhow::Result<Option<PathBuf>> {
+    let Some(value) = value.filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let path = PathBuf::from(value);
+    if !path.is_absolute() {
+        anyhow::bail!("DOCKREV_SUPERVISOR_STATE_PATH must be absolute");
+    }
+    let parent = path.parent().ok_or_else(|| {
+        anyhow::anyhow!("DOCKREV_SUPERVISOR_STATE_PATH must have a parent directory")
+    })?;
+    let metadata = std::fs::metadata(parent).map_err(|error| {
+        anyhow::anyhow!(
+            "DOCKREV_SUPERVISOR_STATE_PATH parent is not readable: {} ({error})",
+            parent.display()
+        )
+    })?;
+    if !metadata.is_dir() {
+        anyhow::bail!(
+            "DOCKREV_SUPERVISOR_STATE_PATH parent is not a directory: {}",
+            parent.display()
+        );
+    }
+    std::fs::read_dir(parent).map_err(|error| {
+        anyhow::anyhow!(
+            "DOCKREV_SUPERVISOR_STATE_PATH parent is not readable: {} ({error})",
+            parent.display()
+        )
+    })?;
+    Ok(Some(path))
 }
 
 fn database_paths_match(left: &std::path::Path, right: &std::path::Path) -> bool {
@@ -488,5 +554,18 @@ mod tests {
     #[test]
     fn parse_legacy_fixed_value_rejects_invalid_value() {
         assert_eq!(super::parse_legacy_fixed_value("abc"), Err(()));
+    }
+
+    #[test]
+    fn supervisor_state_path_requires_absolute_readable_parent() {
+        assert!(super::supervisor_state_path_from_env(Some("relative/state.json".into())).is_err());
+        let root = std::env::temp_dir().join(format!("dockrev-state-config-{}", ulid::Ulid::new()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("self-upgrade.json");
+        assert_eq!(
+            super::supervisor_state_path_from_env(Some(path.clone().into())).unwrap(),
+            Some(path)
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

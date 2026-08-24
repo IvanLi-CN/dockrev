@@ -59,6 +59,36 @@ export async function handleJobStateRoutes(ctx: MockRouteContext): Promise<Respo
     return json({ jobId })
   }
 
+  if (method === 'POST' && /^\/api\/stacks\/[^/]+\/managed-override\/reconcile$/.test(urlPath)) {
+    const stackId = decodeURIComponent(urlPath.split('/')[3] ?? '')
+    jobSeqRef.value += 1
+    const jobId = `job-reconcile-${jobSeqRef.value}`
+    const startedAt = nowIso(-300)
+    const job = {
+      id: jobId,
+      type: 'managed_override_reconcile',
+      scope: 'stack',
+      stackId,
+      serviceId: null,
+      status: 'running',
+      createdBy: 'ivan',
+      reason: 'ui',
+      createdAt: startedAt,
+      startedAt,
+      finishedAt: null,
+      allowArchMismatch: false,
+      backupMode: 'inherit',
+      summary: { services: ['file-storage-notes-webdav', 'file-storage-syncthing-webdav'], pull: 'never', rescan: 'queued' },
+    }
+    f.jobs = [job, ...f.jobs]
+    f.jobById[jobId] = {
+      ...job,
+      logs: [{ ts: startedAt, level: 'info', msg: 'Reconciliation queued without pulling images.' }],
+      logsLastId: 1,
+    }
+    return json({ jobId })
+  }
+
   if (method === 'GET' && urlPath === '/api/jobs') {
     const debug = globalThis.__DOCKREV_MOCK_DEBUG__ ?? (globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug())
     debug.jobsListCalls += 1

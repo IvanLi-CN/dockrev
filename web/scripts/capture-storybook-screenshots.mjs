@@ -252,6 +252,16 @@ async function main() {
 
   const shots = [
     {
+      id: 'components-discoveryissuereconcileaction--eligible-warning',
+      file: 'discovery-issue-reconcile-action.png',
+      setup: async (page) => {
+        await page.locator('[data-reconcile-action-state="eligible"]').waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        await page.locator('[data-reconcile-action-state="eligible"]').screenshot({ path: filePath })
+      },
+    },
+    {
       id: 'layouts-appshell--overview',
       file: 'app-shell-sidebar.png',
       setup: async (page) => {
@@ -631,6 +641,30 @@ async function main() {
       id: 'pages-servicespage--dashboard-demo',
       file: 'services-dashboard.png',
       setup: async () => {},
+    },
+    {
+      id: 'pages-servicespage--stale-temp-override-reconciliation',
+      file: 'services-stale-temp-override-reconciliation.png',
+      viewport: { width: 1800, height: 960 },
+      setup: async (page) => {
+        await page.locator('.discoveryIssueRow').filter({ hasText: 'file-storage' }).waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.getByRole('button', { name: '修复标签' }).waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.evaluate(() => window.scrollTo(0, 0))
+      },
+      screenshot: async (page, filePath) => {
+        await page.screenshot({ path: filePath, fullPage: false })
+      },
+    },
+    {
+      id: 'pages-servicespage--stale-temp-override-confirmation',
+      file: 'services-stale-temp-override-confirmation.png',
+      viewport: { width: 1800, height: 960 },
+      setup: async (page) => {
+        await page.getByRole('button', { name: '确认修复' }).waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        await page.screenshot({ path: filePath, fullPage: false })
+      },
     },
     {
       id: 'pages-servicespage--global-task-readable-label',

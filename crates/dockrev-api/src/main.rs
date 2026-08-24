@@ -25,6 +25,7 @@ mod github;
 mod ids;
 mod ignore;
 mod job_live_logs;
+mod managed_override;
 mod management_events;
 mod metrics_store;
 mod models;
@@ -46,6 +47,133 @@ mod update_stop;
 mod updater;
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+async fn recover_managed_override_transactions(state: &std::sync::Arc<state::AppState>) {
+    let _operation_guard = managed_override::operation_lock().await;
+    let stack_items = match state.db.list_stacks(db::ArchivedFilter::Include).await {
+        Ok(stack_items) => stack_items,
+        Err(error) => {
+            tracing::error!(error = %error, "failed to list stacks for managed override recovery");
+            return;
+        }
+    };
+    for stack_item in stack_items {
+        let path = managed_override::managed_override_path(
+            &state.config.managed_override_dir,
+            &stack_item.id,
+        );
+        let pending_is_applied = match managed_override::pending_snapshot_is_applied(&path) {
+            Ok(pending_is_applied) => pending_is_applied,
+            Err(error) => {
+                tracing::error!(
+                    stack_id = %stack_item.id,
+                    path = %path.display(),
+                    error = %error,
+                    "failed to inspect managed override transaction"
+                );
+                continue;
+            }
+        };
+        if pending_is_applied {
+            if !path.is_file() {
+                tracing::error!(
+                    stack_id = %stack_item.id,
+                    path = %path.display(),
+                    "applied managed override transaction has no active override; deferring recovery"
+                );
+                continue;
+            }
+            if let Err(error) = managed_override::discard_snapshot(&path) {
+                tracing::error!(
+                    stack_id = %stack_item.id,
+                    path = %path.display(),
+                    error = %error,
+                    "failed to finalize managed override transaction"
+                );
+            }
+            continue;
+        }
+        if !managed_override::has_pending_snapshot(&path) {
+            continue;
+        }
+        let Some(stack) = (match state.db.get_stack(&stack_item.id).await {
+            Ok(stack) => stack,
+            Err(error) => {
+                tracing::error!(
+                    stack_id = %stack_item.id,
+                    error = %error,
+                    "failed to load stack for managed override recovery"
+                );
+                continue;
+            }
+        }) else {
+            tracing::error!(stack_id = %stack_item.id, "pending managed override stack not found");
+            continue;
+        };
+        let mut services = match managed_override::pending_snapshot_services(&path) {
+            Ok(services) => services,
+            Err(error) => {
+                tracing::error!(
+                    stack_id = %stack_item.id,
+                    path = %path.display(),
+                    error = %error,
+                    "failed to read managed override recovery services"
+                );
+                continue;
+            }
+        };
+        if managed_override::pending_snapshot_is_legacy(&path).unwrap_or(false) {
+            match backup::retain_running_services(
+                &*state.runner,
+                &state.config.compose_bin,
+                state.config.docker_config_path.as_deref(),
+                &stack,
+                &services,
+            )
+            .await
+            {
+                Ok(running_services) => services = running_services,
+                Err(error) => {
+                    tracing::error!(
+                        stack_id = %stack.id,
+                        path = %path.display(),
+                        error = %error,
+                        "failed to inspect legacy managed override services; deferring recovery"
+                    );
+                    continue;
+                }
+            }
+        }
+        if let Err(error) = backup::restore_services_after_failed_apply_unlocked(
+            &*state.runner,
+            &state.config.compose_bin,
+            state.config.docker_config_path.as_deref(),
+            &stack,
+            &state.config.managed_override_dir,
+            &services,
+        )
+        .await
+        {
+            tracing::error!(
+                stack_id = %stack_item.id,
+                path = %path.display(),
+                error = %error,
+                "failed to recover managed override transaction"
+            );
+        }
+    }
+}
+
+fn spawn_managed_override_recovery(state: std::sync::Arc<state::AppState>) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            recover_managed_override_transactions(&state).await;
+        }
+    });
+}
 
 fn now_rfc3339() -> anyhow::Result<String> {
     Ok(time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)?)
@@ -164,6 +292,9 @@ async fn main() -> anyhow::Result<()> {
         );
         backup::recover_interrupted_backups(state.as_ref(), &recovered).await?;
     }
+    // Recover managed override transactions even when the interrupted update had no persisted
+    // backup checkpoint. This clears candidate pins left between atomic commit and service apply.
+    recover_managed_override_transactions(&state).await;
     let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
         .unwrap_or_else(|| "linux/amd64".to_string());
     state.snapshot_worker.spawn_startup_warmup(&host_platform);
@@ -199,6 +330,7 @@ async fn main() -> anyhow::Result<()> {
     // Recovery owns only the services recorded before a pre-apply backup stopped them. It is
     // deliberately detached from startup so a failed restore cannot prevent Dockrev serving.
     tokio::spawn(api::recover_interrupted_update_backups(state.clone()));
+    spawn_managed_override_recovery(state.clone());
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())

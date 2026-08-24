@@ -27,14 +27,15 @@ description: Dockrev 常见问题的定位路径与修复建议。
 
 - 容器是否包含 `com.docker.compose.project` 与 `config_files` 标签
 - `config_files` 绝对路径是否在 dockrev 容器内同路径可读
-- 是否存在 Dockrev 自生成的 override 文件未挂载，例如位于绝对 `DOCKREV_SUPERVISOR_STATE_PATH` 同目录的 `self-upgrade.override.yml`，或 `/tmp/dockrev-override-<project>-<ulid>.yml`
+- Supervisor state 是否以相同绝对路径挂载：`self-upgrade.override.yml` 位于 `DOCKREV_SUPERVISOR_STATE_PATH` 同目录，API 只读、supervisor 可写。
+- 更新 provenance 是否挂载了 `DOCKREV_MANAGED_OVERRIDE_DIR`；历史 `/tmp/dockrev-override-<project>-<ulid>.yml` 不是当前受管文件。
 - 用户自己维护的额外 compose / override 文件是否仍然存在且已挂载
 
 立即处理：
 
 1. 在宿主机检查容器标签是否存在 compose 信息。
 2. 确认 `config_files` 路径已“同绝对路径只读挂载”到 Dockrev 容器。
-3. 若唯一缺失文件是 Dockrev 自生成的 override 文件（如位于 `dockrev` 与 `supervisor` 共享的绝对 `DOCKREV_SUPERVISOR_STATE_PATH` 同目录下的 `self-upgrade.override.yml`，或 `/tmp/dockrev-override-<project>-<ulid>.yml`），重跑 discovery scan，Dockrev 会回退到仍可读的稳定 compose 文件。
+3. 若告警是 `warning:config_files_stale_dockrev_temp_override`，不要靠重扫消除；由管理员执行修复操作。系统必须先从运行镜像解析匹配的 RepoDigest，再以不拉取的方式重建并验证，失败时保留告警。
 4. 若服务已停止但保存的全部 Compose 文件仍可读且可解析，discovery 会显示 `stopped` 而非归档；从对应 Stack 详情使用现有“启动”操作即可。
 5. 只有全部保存文件均不存在时才会自动归档。若只有部分缺失、权限/I-O 错误或解析错误，项目会保持 `invalid`；先恢复文件或修复同绝对路径挂载，再重跑 discovery。人工归档不会被扫描解除。
 

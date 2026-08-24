@@ -1,9 +1,10 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     path::Path,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use anyhow::Context as _;
 use serde::Serialize;
 use serde_json::json;
 use tokio::sync::mpsc::UnboundedSender;
@@ -11,14 +12,23 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::{
     api::types::{JobProgressDownload, JobScope, StackRecord, UpdateServiceTarget},
     compose_runner::{ComposeRunnerConfig, ComposeStack},
-    docker_runner,
+    docker_runner, managed_override,
     runner::{CommandRunner, CommandSpec},
 };
 
 mod auth_bridge;
+#[path = "updater/managed_override.rs"]
+mod override_flow;
 mod planning;
 mod pull_progress;
 mod pull_progress_stream;
+
+pub(crate) use override_flow::{
+    build_override_file, pre_pull_update_images_using_root_unlocked,
+    restore_managed_override_snapshot, rollback_service_after_failed_update, strip_tag_and_digest,
+};
+#[allow(unused_imports)]
+pub use override_flow::{pre_pull_update_images, pre_pull_update_images_using_root};
 
 #[allow(unused_imports)]
 pub use planning::UpdateServiceSelection;
@@ -38,15 +48,6 @@ use pull_progress_stream::run_checked_with_pull_progress;
 #[async_trait::async_trait]
 pub trait UpdateApplyGate: Send + Sync {
     async fn commit(&self) -> anyhow::Result<bool>;
-}
-
-#[derive(Clone, Debug)]
-struct TempFileCleanup(std::path::PathBuf);
-
-impl Drop for TempFileCleanup {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -154,129 +155,6 @@ pub struct UpdateProgressEvent {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn pre_pull_update_images(
-    runner: &dyn CommandRunner,
-    compose_bin: &str,
-    docker_config_path: Option<&Path>,
-    idempotent_retry_policy: IdempotentRetryPolicy,
-    stack: &StackRecord,
-    scope: &JobScope,
-    service_id: Option<&str>,
-    explicit_targets: Option<&[UpdateServiceTarget]>,
-    allow_arch_mismatch: bool,
-    update_reason: &str,
-    dockrev_image_repo: Option<&str>,
-    progress_events: Option<UnboundedSender<UpdateProgressEvent>>,
-) -> anyhow::Result<()> {
-    let services = select_update_services(
-        stack,
-        scope,
-        service_id,
-        allow_arch_mismatch,
-        update_reason,
-        dockrev_image_repo,
-    )
-    .services;
-    if services.is_empty() {
-        return Ok(());
-    }
-
-    let explicit_targets_by_service = explicit_targets
-        .unwrap_or(&[])
-        .iter()
-        .map(|target| (target.service_id.clone(), target.clone()))
-        .collect::<HashMap<_, _>>();
-    let auth_bridge = docker_config_path
-        .map(DockerCliAuthBridge::stage)
-        .transpose()?;
-    let command_env = auth_bridge
-        .as_ref()
-        .map(DockerCliAuthBridge::env)
-        .unwrap_or_default();
-    let compose_cfg = ComposeRunnerConfig {
-        compose_bin: compose_bin.to_string(),
-        env: command_env,
-    };
-    let compose_stack = ComposeStack {
-        project_name: sanitize_project_name(&stack.name),
-        compose: stack.compose.clone(),
-    };
-    let override_path = build_override_file(stack, &services, &explicit_targets_by_service)?;
-    let _override_cleanup = override_path
-        .as_ref()
-        .map(|path| TempFileCleanup(path.clone()));
-    let override_stack = override_path.as_ref().map(|path| ComposeStack {
-        project_name: compose_stack.project_name.clone(),
-        compose: {
-            let mut compose = stack.compose.clone();
-            compose
-                .compose_files
-                .push(path.to_string_lossy().to_string());
-            compose
-        },
-    });
-    let compose_for_update = override_stack.as_ref().unwrap_or(&compose_stack);
-    let service_names = services
-        .iter()
-        .map(|service| service.name.clone())
-        .collect::<Vec<_>>();
-    let service_total = services.len() as u32;
-    for (index, service) in services.iter().enumerate() {
-        emit_update_progress(
-            progress_events.as_ref(),
-            UpdateProgressEvent {
-                step: UpdateProgressStep::PullStart,
-                service_name: service.name.clone(),
-                service_index: index as u32,
-                service_total,
-                pull_fraction: None,
-                download: None,
-                message: format!("pulling image for {}", service.name),
-            },
-        );
-    }
-    run_checked_with_pull_progress(
-        runner,
-        compose_for_update.pull_services_with_progress(&compose_cfg, &service_names),
-        Duration::from_secs(300),
-        "pull_services",
-        idempotent_retry_policy,
-        |snapshot| {
-            for (index, service) in services.iter().enumerate() {
-                emit_update_progress(
-                    progress_events.as_ref(),
-                    UpdateProgressEvent {
-                        step: UpdateProgressStep::PullProgress,
-                        service_name: service.name.clone(),
-                        service_index: index as u32,
-                        service_total,
-                        pull_fraction: snapshot.fraction,
-                        download: snapshot.download.clone(),
-                        message: pull_progress_message(&service.name, &snapshot),
-                    },
-                );
-            }
-        },
-    )
-    .await?;
-    for (index, service) in services.iter().enumerate() {
-        emit_update_progress(
-            progress_events.as_ref(),
-            UpdateProgressEvent {
-                step: UpdateProgressStep::PullDone,
-                service_name: service.name.clone(),
-                service_index: index as u32,
-                service_total,
-                pull_fraction: Some(1.0),
-                download: None,
-                message: format!("pull completed for {}", service.name),
-            },
-        );
-    }
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
 #[allow(dead_code)]
 pub async fn run_update_job(
     runner: &dyn CommandRunner,
@@ -372,6 +250,91 @@ pub async fn run_update_job_with_gate(
     services_stopped_for_backup: &[String],
     apply_gate: Option<&dyn UpdateApplyGate>,
 ) -> anyhow::Result<UpdateOutcome> {
+    run_update_job_with_gate_using_root(
+        runner,
+        compose_bin,
+        docker_config_path,
+        idempotent_retry_policy,
+        stack,
+        scope,
+        service_id,
+        mode,
+        explicit_targets,
+        allow_arch_mismatch,
+        update_reason,
+        dockrev_image_repo,
+        progress_events,
+        images_pre_pulled,
+        services_stopped_for_backup,
+        apply_gate,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn run_update_job_with_gate_using_root(
+    runner: &dyn CommandRunner,
+    compose_bin: &str,
+    docker_config_path: Option<&Path>,
+    idempotent_retry_policy: IdempotentRetryPolicy,
+    stack: &StackRecord,
+    scope: &JobScope,
+    service_id: Option<&str>,
+    mode: &str,
+    explicit_targets: Option<&[UpdateServiceTarget]>,
+    allow_arch_mismatch: bool,
+    update_reason: &str,
+    dockrev_image_repo: Option<&str>,
+    progress_events: Option<UnboundedSender<UpdateProgressEvent>>,
+    images_pre_pulled: bool,
+    services_stopped_for_backup: &[String],
+    apply_gate: Option<&dyn UpdateApplyGate>,
+    managed_override_root: Option<&Path>,
+) -> anyhow::Result<UpdateOutcome> {
+    let _managed_override_operation_guard = managed_override::operation_lock().await;
+    run_update_job_with_gate_using_root_unlocked(
+        runner,
+        compose_bin,
+        docker_config_path,
+        idempotent_retry_policy,
+        stack,
+        scope,
+        service_id,
+        mode,
+        explicit_targets,
+        allow_arch_mismatch,
+        update_reason,
+        dockrev_image_repo,
+        progress_events,
+        images_pre_pulled,
+        services_stopped_for_backup,
+        apply_gate,
+        managed_override_root,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
+    runner: &dyn CommandRunner,
+    compose_bin: &str,
+    docker_config_path: Option<&Path>,
+    idempotent_retry_policy: IdempotentRetryPolicy,
+    stack: &StackRecord,
+    scope: &JobScope,
+    service_id: Option<&str>,
+    mode: &str,
+    explicit_targets: Option<&[UpdateServiceTarget]>,
+    allow_arch_mismatch: bool,
+    update_reason: &str,
+    dockrev_image_repo: Option<&str>,
+    progress_events: Option<UnboundedSender<UpdateProgressEvent>>,
+    images_pre_pulled: bool,
+    services_stopped_for_backup: &[String],
+    apply_gate: Option<&dyn UpdateApplyGate>,
+    managed_override_root: Option<&Path>,
+) -> anyhow::Result<UpdateOutcome> {
     let selection = select_update_services(
         stack,
         scope,
@@ -450,17 +413,6 @@ pub async fn run_update_job_with_gate(
         compose: stack.compose.clone(),
     };
 
-    let override_path = build_override_file(stack, &services, &explicit_targets_by_service)?;
-    let _override_cleanup = override_path.as_ref().map(|p| TempFileCleanup(p.clone()));
-    let override_stack = override_path.as_ref().map(|p| ComposeStack {
-        project_name: compose_stack.project_name.clone(),
-        compose: {
-            let mut c = stack.compose.clone();
-            c.compose_files.push(p.to_string_lossy().to_string());
-            c
-        },
-    });
-
     let docker_cfg = docker_runner::DockerRunnerConfig {
         docker_bin: "docker".to_string(),
         env: command_env,
@@ -477,12 +429,12 @@ pub async fn run_update_job_with_gate(
     let mut pull_tag_warnings: Vec<serde_json::Value> = Vec::new();
     let mut successful_tag_refs: HashSet<String> = HashSet::new();
 
-    let compose_for_update = override_stack.as_ref().unwrap_or(&compose_stack);
-
     let service_total = services.len() as u32;
     let mut prepared_services = Vec::new();
 
-    for (service_index, svc) in services.into_iter().enumerate() {
+    // Inspect the runtime before publishing the managed override so recovery only
+    // targets services that this operation would actually recreate.
+    for (service_index, svc) in services.iter().enumerate() {
         let service_index = service_index as u32;
 
         emit_update_progress(
@@ -500,9 +452,9 @@ pub async fn run_update_job_with_gate(
 
         let container_lookup =
             if images_pre_pulled && services_stopped_for_backup.contains(&svc.name) {
-                compose_for_update.ps_all_q_service(&compose_cfg, &svc.name)
+                compose_stack.ps_all_q_service(&compose_cfg, &svc.name)
             } else {
-                compose_for_update.ps_q_service(&compose_cfg, &svc.name)
+                compose_stack.ps_q_service(&compose_cfg, &svc.name)
             };
         let pre_update_container_id =
             run_to_string(runner, container_lookup, Duration::from_secs(30)).await?;
@@ -535,7 +487,7 @@ pub async fn run_update_job_with_gate(
         old_images.insert(svc.id.clone(), json!(&old_image_id));
 
         prepared_services.push((
-            svc,
+            (*svc).clone(),
             service_index,
             old_image_id,
             should_sync_local_tag(&svc.image.reference),
@@ -558,6 +510,27 @@ pub async fn run_update_job_with_gate(
             })),
         });
     }
+
+    let override_path = build_override_file(
+        stack,
+        &services,
+        &explicit_targets_by_service,
+        managed_override_root,
+        images_pre_pulled,
+        &prepared_services
+            .iter()
+            .map(|(svc, _, _, _)| svc.name.clone())
+            .collect::<Vec<_>>(),
+    )?;
+    let override_stack = override_path.as_ref().map(|p| ComposeStack {
+        project_name: compose_stack.project_name.clone(),
+        compose: {
+            let mut c = stack.compose.clone();
+            c.compose_files.push(p.to_string_lossy().to_string());
+            c
+        },
+    });
+    let compose_for_update = override_stack.as_ref().unwrap_or(&compose_stack);
 
     let prepared_service_names = prepared_services
         .iter()
@@ -752,13 +725,14 @@ pub async fn run_update_job_with_gate(
                 match rollback_service_after_failed_update(
                     runner,
                     &compose_cfg,
-                    &compose_stack,
+                    compose_for_update,
                     &docker_cfg,
                     &svc.name,
                     &svc.image.reference,
                     &old_image_id,
                     sync_local_tag,
                     has_health,
+                    override_path.as_deref(),
                     idempotent_retry_policy,
                 )
                 .await
@@ -836,13 +810,14 @@ pub async fn run_update_job_with_gate(
                 match rollback_service_after_failed_update(
                     runner,
                     &compose_cfg,
-                    &compose_stack,
+                    compose_for_update,
                     &docker_cfg,
                     &svc.name,
                     &svc.image.reference,
                     &old_image_id,
                     sync_local_tag,
                     has_health,
+                    override_path.as_deref(),
                     idempotent_retry_policy,
                 )
                 .await
@@ -919,13 +894,14 @@ pub async fn run_update_job_with_gate(
                 match rollback_service_after_failed_update(
                     runner,
                     &compose_cfg,
-                    &compose_stack,
+                    compose_for_update,
                     &docker_cfg,
                     &svc.name,
                     &svc.image.reference,
                     &old_image_id,
                     sync_local_tag,
                     has_health,
+                    override_path.as_deref(),
                     idempotent_retry_policy,
                 )
                 .await
@@ -1094,6 +1070,10 @@ pub async fn run_update_job_with_gate(
         );
     }
 
+    if let Some(path) = override_path.as_deref() {
+        managed_override::mark_snapshot_applied(path)?;
+        managed_override::discard_snapshot(path)?;
+    }
     Ok(UpdateOutcome {
         status: if rolled_back_any {
             "rolled_back".to_string()
@@ -1112,134 +1092,6 @@ pub async fn run_update_job_with_gate(
             skipped_version_anomaly: &skipped_version_anomaly,
         })),
     })
-}
-
-fn build_override_file(
-    stack: &StackRecord,
-    services: &[&crate::api::types::Service],
-    explicit_targets: &HashMap<String, UpdateServiceTarget>,
-) -> anyhow::Result<Option<std::path::PathBuf>> {
-    if services.is_empty() {
-        return Ok(None);
-    }
-
-    let mut lines: Vec<String> = Vec::new();
-    lines.push("services:".to_string());
-
-    let mut any = false;
-    for svc in services {
-        let base = strip_tag_and_digest(&svc.image.reference)
-            .unwrap_or_else(|| svc.image.reference.clone());
-        let override_image = if explicit_targets.is_empty() {
-            let Some(candidate) = svc.candidate.as_ref() else {
-                continue;
-            };
-            format!("{base}@{}", normalize_digest(&candidate.digest))
-        } else {
-            let target = explicit_targets.get(svc.id.as_str()).ok_or_else(|| {
-                anyhow::anyhow!("missing explicit update target for service {}", svc.id)
-            })?;
-            format!("{base}@{}", normalize_digest(&target.target_digest))
-        };
-
-        any = true;
-        lines.push(format!("  {}:", svc.name));
-        lines.push(format!("    image: {override_image}"));
-    }
-
-    if !any {
-        return Ok(None);
-    }
-
-    let file_name = format!(
-        "dockrev-override-{}-{}.yml",
-        sanitize_project_name(&stack.name),
-        ulid::Ulid::new()
-    );
-    let path = std::env::temp_dir().join(file_name);
-    std::fs::write(&path, lines.join("\n") + "\n")?;
-    Ok(Some(path))
-}
-
-fn normalize_digest(input: &str) -> String {
-    let t = input.trim();
-    if t.is_empty() {
-        return t.to_string();
-    }
-    if t.contains(':') {
-        return t.to_string();
-    }
-    format!("sha256:{t}")
-}
-
-fn strip_tag_and_digest(image_ref: &str) -> Option<String> {
-    let (without_digest, _) = image_ref.split_once('@').unwrap_or((image_ref, ""));
-    let Some((left, right)) = without_digest.rsplit_once(':') else {
-        return Some(without_digest.to_string());
-    };
-    if right.is_empty() || right.contains('/') || left.is_empty() {
-        return Some(without_digest.to_string());
-    }
-    Some(left.to_string())
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn rollback_service_after_failed_update(
-    runner: &dyn CommandRunner,
-    compose_cfg: &ComposeRunnerConfig,
-    compose_stack: &ComposeStack,
-    docker_cfg: &docker_runner::DockerRunnerConfig,
-    service_name: &str,
-    configured_image_ref: &str,
-    old_image_id: &str,
-    sync_local_tag: bool,
-    has_health: bool,
-    idempotent_retry_policy: IdempotentRetryPolicy,
-) -> anyhow::Result<String> {
-    if sync_local_tag {
-        run_checked_with_retry(
-            runner,
-            docker_runner::tag_image(docker_cfg, old_image_id, configured_image_ref),
-            Duration::from_secs(30),
-            "tag_image",
-            idempotent_retry_policy,
-        )
-        .await?;
-    }
-
-    run_checked(
-        runner,
-        compose_stack.up_service_no_pull(compose_cfg, service_name),
-        Duration::from_secs(300),
-    )
-    .await?;
-
-    let rollback_container_id = run_to_string(
-        runner,
-        compose_stack.ps_q_service(compose_cfg, service_name),
-        Duration::from_secs(30),
-    )
-    .await?;
-    let rollback_container_id = rollback_container_id.trim().to_string();
-    if rollback_container_id.is_empty() {
-        return Err(anyhow::anyhow!("container_missing_after_rollback"));
-    }
-
-    if has_health {
-        let ok = wait_healthy(
-            runner,
-            docker_cfg,
-            &rollback_container_id,
-            Duration::from_secs(90),
-            idempotent_retry_policy,
-        )
-        .await?;
-        if !ok {
-            return Err(anyhow::anyhow!("rollback_failed"));
-        }
-    }
-
-    Ok(rollback_container_id)
 }
 
 async fn has_healthcheck(

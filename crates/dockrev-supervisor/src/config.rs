@@ -83,9 +83,33 @@ impl Config {
         let compose_bin = std::env::var("DOCKREV_SUPERVISOR_COMPOSE_BIN")
             .unwrap_or_else(|_| "docker-compose".to_string());
 
-        let state_path = std::env::var("DOCKREV_SUPERVISOR_STATE_PATH")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("./data/supervisor/self-upgrade.json"));
+        let state_path = match std::env::var("DOCKREV_SUPERVISOR_STATE_PATH") {
+            Ok(value) => {
+                let path = PathBuf::from(value);
+                if !path.is_absolute() {
+                    return Err(anyhow::anyhow!(
+                        "DOCKREV_SUPERVISOR_STATE_PATH must be absolute"
+                    ));
+                }
+                let parent = path.parent().ok_or_else(|| {
+                    anyhow::anyhow!("DOCKREV_SUPERVISOR_STATE_PATH must have a parent")
+                })?;
+                if !parent.is_dir() {
+                    return Err(anyhow::anyhow!(
+                        "DOCKREV_SUPERVISOR_STATE_PATH parent must be a directory: {}",
+                        parent.display()
+                    ));
+                }
+                std::fs::read_dir(parent).map_err(|error| {
+                    anyhow::anyhow!(
+                        "DOCKREV_SUPERVISOR_STATE_PATH parent is not readable: {} ({error})",
+                        parent.display()
+                    )
+                })?;
+                path
+            }
+            Err(_) => PathBuf::from("./data/supervisor/self-upgrade.json"),
+        };
 
         Ok(Self {
             http_addr,

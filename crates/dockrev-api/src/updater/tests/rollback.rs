@@ -1,14 +1,103 @@
 use super::*;
 
+#[test]
+fn managed_override_prepare_and_apply_share_one_rollback_snapshot() {
+    let root = std::env::temp_dir().join(format!(
+        "dockrev-override-transaction-{}",
+        ulid::Ulid::new()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let stack = single_service_stack(
+        "ghcr.io/acme/web:1.0",
+        Some(crate::api::types::Candidate {
+            tag: "1.1".to_string(),
+            resolved_tag: None,
+            digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                .to_string(),
+            arch_match: crate::api::types::ArchMatch::Match,
+            arch: Vec::new(),
+        }),
+    );
+    let old = "services:\n  web:\n    image: ghcr.io/acme/web@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n";
+    let path = crate::managed_override::managed_override_path(&root, &stack.id);
+    crate::managed_override::commit_with_snapshot(&path, old).unwrap();
+    crate::managed_override::discard_snapshot(&path).unwrap();
+
+    let targets = explicit_targets(
+        "svc_1",
+        "1.1",
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        &[],
+    );
+    let first = build_override_file(
+        &stack,
+        &[&stack.services[0]],
+        &HashMap::from([("svc_1".to_string(), targets[0].clone())]),
+        Some(&root),
+        false,
+        &["web".to_string()],
+    )
+    .unwrap()
+    .unwrap();
+    let previous = std::fs::read_to_string(format!("{}.previous", first.display())).unwrap();
+    let _second = build_override_file(
+        &stack,
+        &[&stack.services[0]],
+        &HashMap::from([("svc_1".to_string(), targets[0].clone())]),
+        Some(&root),
+        true,
+        &["web".to_string()],
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(previous, old);
+
+    let _new_operation = build_override_file(
+        &stack,
+        &[&stack.services[0]],
+        &HashMap::from([("svc_1".to_string(), targets[0].clone())]),
+        Some(&root),
+        false,
+        &["web".to_string()],
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(format!("{}.previous", first.display())).unwrap(),
+        std::fs::read_to_string(&first).unwrap()
+    );
+
+    restore_managed_override_snapshot(&first).unwrap();
+    assert!(
+        std::fs::read_to_string(&first)
+            .unwrap()
+            .contains("@sha256:aaaaaaaa")
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[derive(Default)]
 struct HealthRollbackRunner {
     step: Mutex<usize>,
+    expected_managed_override: Option<String>,
 }
 
 #[async_trait::async_trait]
 impl CommandRunner for HealthRollbackRunner {
     async fn run(&self, spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
         let mut step = self.step.lock().unwrap();
+        if let Some(path) = &self.expected_managed_override
+            && *step > 0
+            && spec.program == "docker-compose"
+        {
+            assert!(
+                spec.args
+                    .windows(2)
+                    .any(|window| { window[0] == "-f" && window[1] == *path }),
+                "compose command did not use managed override: {:?}",
+                spec.args
+            );
+        }
         let out = match *step {
             0 => {
                 assert_eq!(spec.program, "docker-compose");
@@ -267,6 +356,61 @@ async fn healthcheck_failure_rolls_back_with_attempted_and_final_digests() {
             .any(|msg| msg.contains("rolled back after healthcheck failure"))
     );
     assert_eq!(*runner.step.lock().unwrap(), 13);
+}
+
+#[tokio::test]
+async fn managed_root_is_used_for_update_and_rollback_compose_commands() {
+    let root = std::env::temp_dir().join(format!("dockrev-managed-{}", ulid::Ulid::new()));
+    std::fs::create_dir_all(&root).unwrap();
+    let _cleanup = TempDirCleanup(root.clone());
+    let stack = single_service_stack(
+        "ghcr.io/org/web:1.0",
+        Some(Candidate {
+            tag: "1.0".to_string(),
+            resolved_tag: Some("1.0".to_string()),
+            digest: "sha256:new".to_string(),
+            arch_match: ArchMatch::Match,
+            arch: vec!["linux/amd64".to_string()],
+        }),
+    );
+    let managed_path = crate::managed_override::managed_override_path(&root, &stack.id);
+    let runner = HealthRollbackRunner {
+        expected_managed_override: Some(managed_path.to_string_lossy().to_string()),
+        ..Default::default()
+    };
+
+    let outcome = run_update_job_with_gate_using_root(
+        &runner,
+        "docker-compose",
+        None,
+        IdempotentRetryPolicy {
+            max_attempts: 1,
+            base_ms: 1,
+            max_ms: 2,
+        },
+        &stack,
+        &JobScope::Service,
+        Some("svc_1"),
+        "live",
+        None,
+        false,
+        "ui",
+        None,
+        None,
+        false,
+        &[],
+        None,
+        Some(root.as_path()),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome.status, "rolled_back");
+    assert!(managed_path.is_file());
+    assert!(!managed_path.with_extension("yml.previous").is_file());
+    assert!(!crate::managed_override::has_pending_snapshot(
+        &managed_path
+    ));
 }
 
 #[derive(Default)]

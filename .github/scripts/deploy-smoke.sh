@@ -101,6 +101,7 @@ echo "- gateway_bind: $DOCKREV_GATEWAY_BIND" | tee -a "$summary_file"
 echo >> "$summary_file"
 
 echo "[deploy-smoke] building runtime images"
+mkdir -p deploy/data/supervisor
 docker compose -p "$project" -f "$compose_file" build dockrev supervisor
 
 echo "[deploy-smoke] starting deployment topology"
@@ -134,5 +135,12 @@ if ! grep -qi '<!doctype html' <<<"$supervisor_html"; then
 fi
 
 echo "- /supervisor/: html" >> "$summary_file"
+
+echo "[deploy-smoke] verifying shared supervisor state mount"
+docker compose -p "$project" -f "$compose_file" exec -T supervisor \
+  sh -c 'printf "%s\n" "services: {}" > /supervisor-state/self-upgrade.override.yml'
+docker compose -p "$project" -f "$compose_file" exec -T dockrev \
+  sh -c 'test -r /supervisor-state/self-upgrade.override.yml'
+echo "- shared supervisor state: supervisor write and dockrev read" >> "$summary_file"
 echo >> "$summary_file"
 echo "PASS" | tee -a "$summary_file"

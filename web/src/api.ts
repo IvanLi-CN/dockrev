@@ -16,6 +16,7 @@ import type {
   PutServiceComposeTagResponse,
   DiscoveredProject,
   TriggerDiscoveryScanJobResponse,
+  TriggerManagedOverrideReconcileResponse,
   TriggerVersionInferenceRefreshResponse,
   NewVersionDiscoveryTimelineResponse,
   ServiceGitHubReleasesResponse,
@@ -256,6 +257,14 @@ export async function putStackSettings(stackId: string, settings: StackSettings)
 export async function triggerDiscoveryScan(): Promise<TriggerDiscoveryScanJobResponse> {
   const resp = await apiFetch('/api/discovery/scan', { method: 'POST', body: '{}' })
   return (await resp.json()) as TriggerDiscoveryScanJobResponse
+}
+
+export async function triggerManagedOverrideReconcile(stackId: string): Promise<TriggerManagedOverrideReconcileResponse> {
+  const resp = await apiFetch(`/api/stacks/${encodeURIComponent(stackId)}/managed-override/reconcile`, {
+    method: 'POST',
+    body: '{}',
+  })
+  return (await resp.json()) as TriggerManagedOverrideReconcileResponse
 }
 
 export async function listDiscoveryProjects(filter: 'exclude' | 'include' | 'only' = 'exclude'): Promise<DiscoveredProject[]> {

@@ -1,5 +1,6 @@
 use super::*;
 use crate::backup::BackupRecoveryStore;
+use crate::managed_override;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 pub(crate) type UpdateStackSummaries = Vec<serde_json::Value>;
@@ -164,6 +165,9 @@ pub(crate) async fn run_update_job(
                 }
                 continue;
             };
+            // Keep one operation lock across backup, apply, and any recovery so stopped
+            // services cannot be mutated by another lifecycle or reconciliation job.
+            let _managed_override_operation_guard = managed_override::operation_lock().await;
             latest_progress = make_job_progress_with_percent(
                 "backup",
                 job_kind.processing_stack_message(stack_id),
@@ -231,6 +235,10 @@ pub(crate) async fn run_update_job(
             let mut services_kept_stopped_for_apply = Vec::<String>::new();
             let mut prepare_error: Option<anyhow::Error> = None;
             let mut prepare_stop_requested = false;
+            let managed_override_path = managed_override::managed_override_path(
+                &state.config.managed_override_dir,
+                &stack.id,
+            );
 
             if backup_requested && backup_requires_stop {
                 let (pull_progress_tx, mut pull_progress_rx) =
@@ -280,7 +288,7 @@ pub(crate) async fn run_update_job(
                         .await;
                     }
                 });
-                let pre_pull_result = updater::pre_pull_update_images(
+                let pre_pull_result = updater::pre_pull_update_images_using_root_unlocked(
                     &logging_runner,
                     &state.config.compose_bin,
                     state.config.docker_config_path.as_deref(),
@@ -297,6 +305,7 @@ pub(crate) async fn run_update_job(
                     req.reason.as_str(),
                     Some(state.config.dockrev_image_repo.as_str()),
                     Some(pull_progress_tx),
+                    Some(&state.config.managed_override_dir),
                 )
                 .await;
                 let _ = pull_progress_task.await;
@@ -427,7 +436,7 @@ pub(crate) async fn run_update_job(
                     .iter()
                     .map(|service| service.name.clone())
                     .collect::<Vec<_>>();
-                let backup_future = backup::run_pre_update_backup(
+                let backup_future = backup::run_pre_update_backup_unlocked(
                     &logging_runner,
                     &*state.runner,
                     &recovery_runner,
@@ -497,7 +506,7 @@ pub(crate) async fn run_update_job(
                             .await;
                         }
                     });
-                    let pull_future = updater::pre_pull_update_images(
+                    let pull_future = updater::pre_pull_update_images_using_root_unlocked(
                         &logging_runner,
                         &state.config.compose_bin,
                         state.config.docker_config_path.as_deref(),
@@ -514,6 +523,7 @@ pub(crate) async fn run_update_job(
                         req.reason.as_str(),
                         Some(state.config.dockrev_image_repo.as_str()),
                         Some(pull_progress_tx),
+                        Some(&state.config.managed_override_dir),
                     );
                     let (backup_result, pull_result) = tokio::join!(backup_future, pull_future);
                     let _ = pull_progress_task.await;
@@ -587,11 +597,21 @@ pub(crate) async fn run_update_job(
                             .insert("backup".to_string(), json!({"status":"failed","error":err}));
 
                         if crate::update_stop::is_requested(&e) {
-                            final_status = if recovery_store.clear().await.is_ok() {
+                            let override_recovery =
+                                updater::restore_managed_override_snapshot(&managed_override_path);
+                            final_status = if override_recovery.is_ok()
+                                && recovery_store.clear().await.is_ok()
+                            {
                                 "cancelled".to_string()
                             } else {
                                 "failed".to_string()
                             };
+                            if let Err(error) = override_recovery {
+                                stack_summary.insert(
+                                    "managedOverrideRecoveryError".to_string(),
+                                    json!(error.to_string()),
+                                );
+                            }
                             stack_summary.insert(
                                 job_kind.summary_key().to_string(),
                                 json!({"stopRequested": true}),
@@ -602,7 +622,15 @@ pub(crate) async fn run_update_job(
                         }
 
                         if backup_settings.require_success || backup::is_safety_failure(&e) {
+                            let override_recovery =
+                                updater::restore_managed_override_snapshot(&managed_override_path);
                             final_status = "failed".to_string();
+                            if let Err(error) = override_recovery {
+                                stack_summary.insert(
+                                    "managedOverrideRecoveryError".to_string(),
+                                    json!(error.to_string()),
+                                );
+                            }
                             stack_summaries.push(serde_json::Value::Object(stack_summary));
                             processed_stacks = processed_stacks.saturating_add(1);
                             latest_progress = make_job_progress(
@@ -629,17 +657,22 @@ pub(crate) async fn run_update_job(
                     }
                 }
                 if let Some(error) = prepare_error.take() {
-                    let restored = if services_kept_stopped_for_apply.is_empty() {
-                        Ok(())
-                    } else {
-                        backup::restore_services_after_failed_apply(
-                            &*state.runner,
-                            &state.config.compose_bin,
-                            state.config.docker_config_path.as_deref(),
-                            &stack,
-                            &services_kept_stopped_for_apply,
-                        )
-                        .await
+                    let restored = match updater::restore_managed_override_snapshot(
+                        &managed_override_path,
+                    ) {
+                        Err(error) => Err(error),
+                        Ok(()) if services_kept_stopped_for_apply.is_empty() => Ok(()),
+                        Ok(()) => {
+                            backup::restore_services_after_failed_apply_unlocked(
+                                &*state.runner,
+                                &state.config.compose_bin,
+                                state.config.docker_config_path.as_deref(),
+                                &stack,
+                                &state.config.managed_override_dir,
+                                &services_kept_stopped_for_apply,
+                            )
+                            .await
+                        }
                     };
                     let cleanup = recovery_store.clear().await;
                     final_status = if prepare_stop_requested && restored.is_ok() && cleanup.is_ok() {
@@ -802,7 +835,7 @@ pub(crate) async fn run_update_job(
                 db: state.db.clone(),
                 job_id: job_id.clone(),
             };
-            let update_outcome = updater::run_update_job_with_gate(
+            let update_outcome = updater::run_update_job_with_gate_using_root_unlocked(
                 &logging_runner,
                 &state.config.compose_bin,
                 state.config.docker_config_path.as_deref(),
@@ -820,6 +853,7 @@ pub(crate) async fn run_update_job(
                 &services_kept_stopped_for_apply,
                 (job_kind == TransitionJobKind::Update && req.mode.as_str() == "apply")
                     .then_some(&apply_gate as &dyn updater::UpdateApplyGate),
+                Some(&state.config.managed_override_dir),
             )
             .await;
             let _ = progress_task.await;
@@ -830,11 +864,12 @@ pub(crate) async fn run_update_job(
                         let restored = if services_kept_stopped_for_apply.is_empty() {
                             Ok(())
                         } else {
-                            backup::restore_services_after_failed_apply(
+                            backup::restore_services_after_failed_apply_unlocked(
                                 &*state.runner,
                                 &state.config.compose_bin,
                                 state.config.docker_config_path.as_deref(),
                                 &stack,
+                                &state.config.managed_override_dir,
                                 &services_kept_stopped_for_apply,
                             )
                             .await
@@ -996,11 +1031,12 @@ pub(crate) async fn run_update_job(
                     let restored = if services_kept_stopped_for_apply.is_empty() {
                         Ok(())
                     } else {
-                        backup::restore_services_after_failed_apply(
+                        backup::restore_services_after_failed_apply_unlocked(
                             &*state.runner,
                             &state.config.compose_bin,
                             state.config.docker_config_path.as_deref(),
                             &stack,
+                            &state.config.managed_override_dir,
                             &services_kept_stopped_for_apply,
                         )
                         .await

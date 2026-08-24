@@ -77,6 +77,24 @@ impl ComposeStack {
         cmd
     }
 
+    pub fn up_services_no_pull_no_deps_force_recreate(
+        &self,
+        cfg: &ComposeRunnerConfig,
+        services: &[String],
+    ) -> CommandSpec {
+        let mut cmd = self.base_command(cfg);
+        cmd.args.extend([
+            "up".to_string(),
+            "-d".to_string(),
+            "--pull".to_string(),
+            "never".to_string(),
+            "--no-deps".to_string(),
+            "--force-recreate".to_string(),
+        ]);
+        cmd.args.extend(services.iter().cloned());
+        cmd
+    }
+
     pub fn stop_services(&self, cfg: &ComposeRunnerConfig, services: &[String]) -> CommandSpec {
         let mut cmd = self.base_command(cfg);
         cmd.args.push("stop".to_string());
@@ -216,6 +234,26 @@ mod tests {
         let cmd = stack.ps_q_service(&cfg, "web");
         assert_eq!(cmd.program, "docker-compose");
         assert_ne!(cmd.args[0], "compose");
+    }
+
+    #[test]
+    fn managed_reconcile_up_never_pulls_or_recreates_dependencies() {
+        let stack = ComposeStack {
+            project_name: "myproj".to_string(),
+            compose: ComposeConfig {
+                kind: "path".to_string(),
+                compose_files: vec!["/srv/app/docker-compose.yml".to_string()],
+                env_file: None,
+            },
+        };
+        let cfg = ComposeRunnerConfig {
+            compose_bin: "docker-compose".to_string(),
+            env: Vec::new(),
+        };
+        let cmd = stack.up_services_no_pull_no_deps_force_recreate(&cfg, &["web".to_string()]);
+        assert!(cmd.args.windows(2).any(|pair| pair == ["--pull", "never"]));
+        assert!(cmd.args.iter().any(|arg| arg == "--no-deps"));
+        assert!(cmd.args.iter().any(|arg| arg == "--force-recreate"));
     }
 
     #[test]

@@ -31,6 +31,7 @@ import {
 } from "../updateTargets";
 import {
   DiscoveryIssueDetailDialog,
+  DiscoveryIssueReconcileAction,
   buildDiscoveryIssueMetaParts,
 } from "./overviewHelpers";
 import {
@@ -80,12 +81,14 @@ export function OperationsDashboardSectionView(props: {
     jobsPhase,
     noticeCheckJobId,
     noticeDiscoveryJobId,
+    noticeReconcileJobId,
     noticeJobId,
     onChangeFilter,
     overviewCardJobs,
     patchServiceInStackDetails,
     readonlyOffline,
     runDiscoveryScan,
+    runManagedOverrideReconcile,
     requestRefresh,
     selfUpgradeUrl,
     setCandidateSearch,
@@ -351,6 +354,12 @@ export function OperationsDashboardSectionView(props: {
                             详情
                           </button>
                         ) : null}
+                        <DiscoveryIssueReconcileAction
+                          eligible={issue.reconcileEligible}
+                          stackId={issue.stackId}
+                          busy={busy}
+                          onReconcile={() => void runManagedOverrideReconcile(issue)}
+                        />
                       </div>
                     </div>
                     {metaParts.length > 0 ? (
@@ -1123,6 +1132,18 @@ export function OperationsDashboardSectionView(props: {
             onClick={() => navigate({ name: "queue" })}
           >
             查看队列
+          </Button>
+        </div>
+      ) : null}
+      {noticeReconcileJobId ? (
+        <div className="success">
+          已创建 provenance 修复任务 <Mono>{noticeReconcileJobId}</Mono> ·{" "}
+          <Button
+            variant="ghost"
+            disabled={busy}
+            onClick={() => navigate({ name: "job", jobId: noticeReconcileJobId })}
+          >
+            查看任务
           </Button>
         </div>
       ) : null}

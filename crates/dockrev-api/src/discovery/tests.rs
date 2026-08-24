@@ -1,5 +1,49 @@
 use super::*;
 
+fn configured_self_upgrade_override_path() -> Option<std::path::PathBuf> {
+    let state_path = std::env::var_os("DOCKREV_SUPERVISOR_STATE_PATH")?;
+    if state_path.is_empty() {
+        return None;
+    }
+
+    expected_self_upgrade_override_path(std::path::Path::new(&state_path))
+}
+
+fn configured_managed_override_root() -> Option<std::path::PathBuf> {
+    let db_path = std::env::var_os("DOCKREV_DB_PATH")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("./data/dockrev.sqlite3"));
+    managed_override::configured_root(&db_path).ok()
+}
+
+async fn resolve_project_compose_files(
+    project: &str,
+    observed: &[ObservedComposeContainer],
+) -> Result<ResolvedProjectComposeFiles, InvalidProjectComposeFiles> {
+    let expected_self_upgrade_override = configured_self_upgrade_override_path();
+    resolve_project_compose_files_with_expected_override(
+        project,
+        observed,
+        expected_self_upgrade_override.as_deref(),
+    )
+    .await
+}
+
+async fn resolve_project_compose_files_with_expected_override(
+    project: &str,
+    observed: &[ObservedComposeContainer],
+    expected_self_upgrade_override: Option<&std::path::Path>,
+) -> Result<ResolvedProjectComposeFiles, InvalidProjectComposeFiles> {
+    super::resolve_project_compose_files_with_context(
+        project,
+        observed,
+        expected_self_upgrade_override,
+        configured_managed_override_root().as_deref(),
+        None,
+    )
+    .await
+}
+
 fn make_temp_dir() -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("dockrev-discovery-test-{}", ulid::Ulid::new()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -249,6 +293,46 @@ async fn resolve_project_compose_files_superset_is_warning_and_selects_superset(
 }
 
 #[tokio::test]
+async fn resolve_project_compose_files_accepts_matching_managed_override_as_canonical() {
+    let dir = make_temp_dir();
+    let base = dir.join("docker-compose.yml");
+    let managed_root = dir.join("managed-overrides");
+    std::fs::create_dir_all(&managed_root).unwrap();
+    std::fs::write(
+        &base,
+        "services:\n  web:\n    image: ghcr.io/acme/web:latest\n",
+    )
+    .unwrap();
+    let stack_id = "stk_01KMANAGED";
+    let managed = crate::managed_override::managed_override_path(&managed_root, stack_id);
+    std::fs::write(
+        &managed,
+        format!(
+            "services:\n  web:\n    image: ghcr.io/acme/web@sha256:{}\n",
+            "a".repeat(64)
+        ),
+    )
+    .unwrap();
+    let base_s = base.display().to_string();
+    let managed_s = managed.display().to_string();
+    let observed = vec![ObservedComposeContainer {
+        service: "web".to_string(),
+        config_files_raw: Some(format!("{base_s},{managed_s}")),
+    }];
+    let resolved = resolve_project_compose_files_with_context(
+        "managed",
+        &observed,
+        None,
+        Some(&managed_root),
+        Some(stack_id),
+    )
+    .await
+    .unwrap();
+    assert_eq!(resolved.compose_files, vec![base_s, managed_s]);
+    assert!(resolved.warning.is_none());
+}
+
+#[tokio::test]
 async fn resolve_project_compose_files_dedupes_duplicate_paths_in_labels() {
     let dir = make_temp_dir();
     let base = dir.join("docker-compose.yml");
@@ -362,6 +446,101 @@ async fn resolve_project_compose_files_no_superset_all_extras_unreadable_falls_b
             .is_some_and(|w| { w.contains("warning:config_files_conflict_fallback_common") })
     );
     assert!(resolved.details.is_some());
+}
+
+#[tokio::test]
+async fn resolve_project_compose_files_stale_temp_no_superset_is_reconcile_eligible() {
+    let dir = make_temp_dir();
+    let base = dir.join("docker-compose.yml");
+    std::fs::write(
+        &base,
+        "services:\n  svc-a:\n    image: alpine:3.20\n  svc-b:\n    image: alpine:3.20\n",
+    )
+    .unwrap();
+    let a = std::env::temp_dir().join(format!("dockrev-override-stale-{}.yml", ulid::Ulid::new()));
+    let b = std::env::temp_dir().join(format!("dockrev-override-stale-{}.yml", ulid::Ulid::new()));
+    let base_s = base.display().to_string();
+    let observed = vec![
+        ObservedComposeContainer {
+            service: "svc-a".to_string(),
+            config_files_raw: Some(format!("{base_s},{}", a.display())),
+        },
+        ObservedComposeContainer {
+            service: "svc-b".to_string(),
+            config_files_raw: Some(format!("{base_s},{}", b.display())),
+        },
+    ];
+    let resolved = resolve_project_compose_files("stale", &observed)
+        .await
+        .unwrap();
+    assert!(resolved.warning.as_deref().is_some_and(|warning| {
+        warning.starts_with("warning:config_files_stale_dockrev_temp_override")
+    }));
+    assert_eq!(
+        resolved.details.as_ref().unwrap()["selected"]["reconcileEligible"],
+        true
+    );
+    assert_eq!(
+        resolved.details.as_ref().unwrap()["selected"]["affectedServices"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn reconcile_managed_override_requires_matching_repo_digest() {
+    assert!(repo_digest_matches(
+        "ghcr.io/acme/web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ghcr.io/acme/web"
+    ));
+    assert!(!repo_digest_matches(
+        "ghcr.io/other/web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ghcr.io/acme/web"
+    ));
+    assert!(!repo_digest_matches(
+        "ghcr.io/acme/web:latest",
+        "ghcr.io/acme/web"
+    ));
+    assert!(!repo_digest_matches(
+        "ghcr.io/acme/web@sha256:GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
+        "ghcr.io/acme/web"
+    ));
+    assert!(!repo_digest_matches(
+        "ghcr.io/other/web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "web"
+    ));
+    assert_eq!(
+        parse_affected_services(
+            "warning:config_files_stale_dockrev_temp_override services=[web, worker]"
+        ),
+        Some(vec!["web".to_string(), "worker".to_string()])
+    );
+}
+
+#[test]
+fn reconcile_managed_override_preserves_unaffected_managed_images() {
+    let allowed = BTreeSet::from(["web".to_string(), "worker".to_string()]);
+    let existing = "services:\n  web:\n    image: ghcr.io/acme/web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n  worker:\n    image: ghcr.io/acme/worker@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n";
+    let rendered = merge_managed_override_images(
+        Some(existing),
+        &allowed,
+        &[ (
+            "web".to_string(),
+            "ghcr.io/acme/web@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_string(),
+        )],
+    )
+    .unwrap();
+    assert!(
+        rendered.contains(
+            "web@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        )
+    );
+    assert!(rendered.contains(
+        "worker@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    ));
 }
 
 #[tokio::test]
@@ -502,9 +681,11 @@ async fn resolve_project_compose_files_single_variant_unreadable_dockrev_temp_ov
         .unwrap();
     assert_eq!(resolved.compose_files, vec![base_s]);
     assert!(resolved.warning.as_deref().is_some_and(|warning| {
-        warning.contains("warning:config_files_single_variant_dockrev_generated_override_fallback")
+        warning.contains("warning:config_files_stale_dockrev_temp_override")
     }));
-    assert!(resolved.details.is_some());
+    let details = resolved.details.expect("stale temp details");
+    assert_eq!(details["selected"]["reconcileEligible"], true);
+    assert_eq!(details["selected"]["affectedServices"][0], "web");
 }
 
 #[tokio::test]

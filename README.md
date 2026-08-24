@@ -137,6 +137,7 @@ Environment variables (API):
 - `DOCKREV_SELF_UPGRADE_URL` (default `/supervisor/`) UI jump target for “升级 Dockrev”
 - `DOCKREV_IMAGE_REPO` (default `ghcr.io/ivanli-cn/dockrev`) image repo used by the UI to detect which service is “Dockrev” for showing “升级 Dockrev” (example: set to `dockrev` for local images like `dockrev:local`)
 - `DOCKREV_SUPERVISOR_STATE_PATH` (optional for `dockrev-api`; set the same absolute path used by `dockrev-supervisor` so discovery can recognize the generated `self-upgrade.override.yml`)
+- `DOCKREV_MANAGED_OVERRIDE_DIR` (optional absolute directory for durable image-only Compose provenance; defaults to `managed-overrides` beside `DOCKREV_DB_PATH`)
 - `DOCKREV_WEBHOOK_SECRET` (optional) shared secret for `/api/webhooks/trigger`
 - `DOCKREV_HOST_PLATFORM` (optional) override host platform (example `linux/amd64`)
 - `DOCKREV_DISCOVERY_INTERVAL_SECONDS` (default `60`; must be `>= 10`)
@@ -190,9 +191,9 @@ Notes:
 - Auto-discovery is always enabled (no enable/disable switch).
 - Manual stack registration (`POST /api/stacks`) is disabled.
 - The `config_files` paths are **container-visible absolute paths**. If Dockrev runs in a container, you must bind-mount the host directories into Dockrev **read-only at the same absolute path**, otherwise discovery will surface an actionable error (mount missing/unreadable).
-- If the same Compose project reports multiple distinct `config_files` variants (common after self-upgrade or when a one-off compose override file was used):
-  - Dockrev will try to pick a deterministic canonical list (prefer a safe superset that only adds an image-only override file).
-  - If an extra override file path is not readable in the Dockrev container, Dockrev falls back to the common compose files and surfaces a warning with a mounting hint.
+- Automatic updates write a durable image-only override below `DOCKREV_MANAGED_OVERRIDE_DIR`, named from the immutable Stack ID. The file is committed atomically and retained across restarts; `/tmp/dockrev-override-*.yml` is no longer used for `compose up`.
+- A deleted historical `/tmp/dockrev-override-*.yml` remains a visible `warning:config_files_stale_dockrev_temp_override`. An administrator can explicitly reconcile it from the UI; reconciliation resolves the running image RepoDigest, uses `--pull never --no-deps --force-recreate`, verifies image IDs/health, and rescans discovery. It never guesses a tag or pulls an image.
+- A readable, strictly image-only managed override is the canonical Compose superset. User overrides, unreadable managed files, unsafe content, and self-upgrade state mount failures remain visible warnings or invalid projects.
 - A discovered project that is absent from the running Docker container list is reconciled from its saved Compose files. Readable, valid files produce `stopped`, which keeps the Stack visible and startable through its existing lifecycle action.
 - Dockrev automatically archives only when every saved Compose file is absent (`ENOENT`), using `auto_archive_compose_files_missing`. Partial absence, permission or I/O failures, and parse failures remain visible as `invalid` and are never auto-archived.
 - A later healthy scan can restore only system archives created by `auto_archive_compose_files_missing` or the legacy `auto_archive_on_restart` reason. A user archive is never changed by discovery.

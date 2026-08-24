@@ -16,7 +16,8 @@ DialogContent,
 DialogDescription,
 DialogFooter,
 DialogHeader,
-DialogTitle,
+  DialogTitle,
+Button,
 Pill
 } from '../ui'
 import { serviceRowStatus, type RowStatus } from '../updateStatus'
@@ -127,6 +128,7 @@ export type DiscoveryIssueItem = {
   lastScanAt: string | null
   configSummary: string | null
   stackId: string | null
+  reconcileEligible: boolean
 }
 
 export const DISCOVERY_ISSUE_ORDER: Record<DiscoveryIssueTone, number> = {
@@ -193,6 +195,7 @@ export function buildDiscoveryIssue(project: DiscoveredProject, tone: DiscoveryI
     lastScanAt: project.lastScanAt ?? null,
     configSummary: formatDiscoveryConfigSummary(project.configFiles),
     stackId: project.stackId ?? null,
+    reconcileEligible: (project.lastError ?? '').startsWith('warning:config_files_stale_dockrev_temp_override'),
   }
 }
 
@@ -317,6 +320,20 @@ export function DiscoveryIssueDetailDialog(props: {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+export function DiscoveryIssueReconcileAction(props: {
+  eligible: boolean
+  stackId: string | null
+  busy?: boolean
+  onReconcile: () => void
+}) {
+  if (!props.eligible || !props.stackId) return null
+  return (
+    <Button variant="ghost" disabled={props.busy} onClick={props.onReconcile}>
+      修复标签
+    </Button>
   )
 }
 
