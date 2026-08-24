@@ -135,8 +135,7 @@ export function installDockrevMockApi(
   const cleanupRuntime: CleanupMockRuntimeState = {
     nextJobSeq: 0,
     staleApplyConsumed: false,
-    confirmPendingConsumed: false,
-    confirmFailureConsumed: false,
+    confirmPendingConsumed: false, confirmFailureConsumed: false,
     nextScanRunSeq: 0,
     scanRuns: new Map(),
   }
@@ -147,17 +146,7 @@ export function installDockrevMockApi(
   }
   const publishMockCleanupManagementEvent = (summary: Record<string, unknown>) => {
     const id = ++managementEventsSeqRef.value
-    managementEvents.push({
-      id,
-      cursor: formatMockManagementCursor(managementEventsGeneration, id),
-      data: {
-        type: 'entities_changed',
-        domain: 'cleanup',
-        entities: [{ entityType: 'scan', id: 'active' }],
-        version: id,
-        summary,
-      },
-    })
+    managementEvents.push({ id, cursor: formatMockManagementCursor(managementEventsGeneration, id), data: { type: 'entities_changed', domain: 'cleanup', entities: [{ entityType: 'scan', id: 'active' }], version: id, summary } })
     if (managementEvents.length > 1_024) managementEvents.shift()
   }
   let deployCheckReportSequenceIndex = 0
