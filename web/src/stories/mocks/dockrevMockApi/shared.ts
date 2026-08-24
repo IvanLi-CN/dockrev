@@ -40,6 +40,8 @@ export type DockrevApiScenario =
   | 'cleanup-console-empty'
   | 'cleanup-console-aggressive-unowned'
   | 'cleanup-console-stale'
+  | 'cleanup-console-confirm-pending'
+  | 'cleanup-console-confirm-failed'
   | 'cleanup-console-scan-pending'
   | 'cleanup-console-scan-slow'
   | 'cleanup-console-apply-slow'

@@ -108,15 +108,17 @@ export const ScanningState: Story = {
     const doc = canvasElement.ownerDocument
     await waitForCondition(() => canvasElement.textContent?.includes('正在扫描可清理资源…') ?? false)
 
-    const allButton = findButton(doc, '等待扫描')
-    const refreshButton = findButton(doc, '扫描中…')
-    assertStory(allButton, 'topbar cleanup action should show waiting copy while scanning')
-    assertStory(refreshButton, 'topbar rescan action should show scanning copy while scanning')
+    const allButton = findButton(doc, '全部')
+    const refreshButton = findButton(doc, '重扫')
+    assertStory(allButton, 'topbar cleanup action should keep its short label while scanning')
+    assertStory(refreshButton, 'topbar rescan action should keep its short label while scanning')
     assertStory(allButton.disabled, 'cleanup action should be disabled during initial scan')
     assertStory(refreshButton.disabled, 'rescan action should be disabled during initial scan')
+    assertStory(allButton.getAttribute('aria-busy') === 'true', 'cleanup action should expose busy state during initial scan')
     assertStory(refreshButton.getAttribute('aria-busy') === 'true', 'rescan action should expose busy state during initial scan')
-    assertButtonHasNoIcon(doc, '等待扫描')
-    assertButtonHasNoIcon(doc, '扫描中…')
+    assertStory(canvasElement.querySelector('[role="status"]') === null, 'initial page loading should not duplicate a status rail')
+    assertButtonHasNoIcon(doc, '全部')
+    assertButtonHasNoIcon(doc, '重扫')
   },
 }
 
@@ -131,9 +133,10 @@ export const RescanningState: Story = {
     assertStory(refreshButton, 'rescan action missing')
     refreshButton.click()
 
-    await waitForCondition(() => findButton(doc, '重扫中…')?.getAttribute('aria-busy') === 'true')
-    assertStory(findButton(doc, '等待扫描')?.disabled === true, 'cleanup action should switch to waiting copy while rescanning')
-    assertStory(findButton(doc, '重扫中…')?.disabled === true, 'rescan action should be disabled while rescanning')
+    await waitForCondition(() => findButton(doc, '重扫')?.getAttribute('aria-busy') === 'true')
+    assertStory(findButton(doc, '全部')?.disabled === true, 'cleanup action should stay disabled while rescanning')
+    assertStory(findButton(doc, '重扫')?.disabled === true, 'rescan action should be disabled while rescanning')
+    assertStory(canvasElement.querySelector('[role="status"]')?.textContent?.includes('更新中'), 'rescan status rail should be visible')
     assertStory(!(canvasElement.textContent?.includes('旧数据正在更新') ?? false), 'rescan should not render the old stale-data prompt copy')
     assertStory(!canvasElement.querySelector('.cleanupAlert.cleanupAlertInfo'), 'rescan should not render a full-width info alert')
     assertStory(
@@ -141,8 +144,8 @@ export const RescanningState: Story = {
       'partial rescan should preserve cached server disk usage until ready',
     )
     assertStory(canvasElement.querySelector('.cleanupStaleLoading'), 'stale cached cleanup cards or rows should show weak loading motion')
-    assertButtonHasNoIcon(doc, '等待扫描')
-    assertButtonHasNoIcon(doc, '重扫中…')
+    assertButtonHasNoIcon(doc, '全部')
+    assertButtonHasNoIcon(doc, '重扫')
   },
 }
 
@@ -157,9 +160,9 @@ export const ApplyingAllState: Story = {
     await waitForCondition(() => doc.body.textContent?.includes('确认清理全部') ?? false)
     findButton(doc, '确认清理')?.click()
 
-    await waitForCondition(() => findButton(doc, '清理中…')?.getAttribute('aria-busy') === 'true')
-    assertStory(findButton(doc, '清理中…')?.disabled === true, 'cleanup all action should stay disabled while apply request is in flight')
-    assertButtonHasNoIcon(doc, '清理中…')
+    await waitForCondition(() => findButton(doc, '全部')?.getAttribute('aria-busy') === 'true')
+    assertStory(findButton(doc, '全部')?.disabled === true, 'cleanup all action should stay disabled while apply request is in flight')
+    assertButtonHasNoIcon(doc, '全部')
   },
 }
 
@@ -193,6 +196,37 @@ export const ConfirmDialogLatestScan: Story = {
     await waitForCondition(() => doc.body.textContent?.includes('确认清理全部') ?? false)
     assertStory(doc.body.textContent?.includes('最新扫描'), 'confirm dialog should show latest scan timestamp')
     assertStory(doc.body.textContent?.includes('预计释放'), 'confirm dialog should show reclaim estimate')
+  },
+}
+
+export const ConfirmPendingState: Story = {
+  parameters: { dockrevApiScenario: 'cleanup-console-confirm-pending' },
+  render: renderPage,
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => findButton(doc, '全部') != null)
+    findButton(doc, '全部')?.click()
+
+    await waitForCondition(() => canvasElement.querySelector('[role="status"]')?.textContent?.includes('更新中') ?? false)
+    assertStory(canvasElement.textContent?.includes('全部'), 'cleanup action should keep the stable short label while confirming')
+    await waitForCondition(() => doc.body.textContent?.includes('确认清理全部') ?? false)
+  },
+}
+
+export const ConfirmFailedState: Story = {
+  parameters: { dockrevApiScenario: 'cleanup-console-confirm-failed' },
+  render: renderPage,
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => findButton(doc, '全部') != null)
+    findButton(doc, '全部')?.click()
+
+    await waitForCondition(() => canvasElement.querySelector('[role="status"]')?.textContent?.includes('刷新失败') ?? false)
+    assertStory(canvasElement.querySelectorAll('.cleanupStatusRail').length === 1, 'confirm failure should expose one status rail')
+    assertStory(canvasElement.querySelectorAll('.cleanupAlert').length === 0, 'confirm failure should not duplicate the status rail with an alert')
+    assertStory(!(canvasElement.textContent?.includes('cleanup snapshot refresh failed') ?? false), 'confirm failure should hide internal worker text')
+    findButton(doc, '重试')?.click()
+    await waitForCondition(() => doc.body.textContent?.includes('确认清理全部') ?? false)
   },
 }
 

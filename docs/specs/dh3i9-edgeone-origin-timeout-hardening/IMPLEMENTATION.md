@@ -16,6 +16,7 @@
 - Added `cleanup_inventory_snapshots` and `deploy_check_report_snapshots` persistence paths plus worker orchestration.
 - Reworked `POST /api/cleanups/scan` to serve cached snapshot payloads or `pending` envelopes instead of blocking on live Docker scans.
 - Reworked cleanup confirm/apply so confirm waits for a fresh snapshot and apply validates the latest fingerprint without re-scanning Docker inline.
+- Extended cleanup confirm/apply freshness to a fixed five-minute boundary, added explicit confirm-worker failure responses, and made CleanupPage polling visible, retryable, and stable-label based.
 - Added `POST /api/deploy-check/report/refresh` and converted `GET /api/deploy-check/report` to cached-read envelopes.
 - Changed the app-level deploy-check gate to immediately accept a cached PASS, request a background recheck, and only block after a newly confirmed failure. No cached report or an existing non-PASS remains blocking.
 - Added authenticated `GET /api/events` and `GET /api/events/status`. The event hub uses a per-process generation, `Last-Event-ID` replay, `resync_required`, 100ms entity coalescing, and a 60-second/1024-event in-memory ring without a database event table.
@@ -36,6 +37,7 @@
 ## Verification
 
 - `cargo test -p dockrev-api cleanup -- --nocapture`
+- `cargo test -p dockrev-api cleanup_confirm_`
 - `cargo test -p dockrev-api deploy_check -- --nocapture`
 - `cargo test -p dockrev-api discovery -- --nocapture`
 - `scripts/verify_shared_testbox_compose_v2.sh --json-out <evidence-path>` (shared testbox; requires a unique isolated run)

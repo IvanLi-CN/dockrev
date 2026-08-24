@@ -173,6 +173,131 @@ services:
 }
 
 #[tokio::test]
+async fn cleanup_confirm_snapshot_freshness_uses_five_minute_boundary() {
+    let db_path = format!("/tmp/dockrev-cleanup-confirm-boundary-{}.sqlite3", ulid::Ulid::new());
+    let runner = Arc::new(CleanupRunner::volume_in_use());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner).await;
+    let app = api::router(state.clone());
+    let initial = wait_for_cleanup_scan_ready(
+        &app,
+        serde_json::json!({
+            "reason": "confirm",
+            "preset": "balanced",
+            "scope": "all",
+        }),
+    )
+    .await;
+    assert_eq!(initial["status"].as_str(), Some("ready"));
+
+    let row = state
+        .db
+        .get_cleanup_inventory_snapshot(crate::cleanup_snapshot_worker::CLEANUP_SNAPSHOT_KEY)
+        .await
+        .unwrap()
+        .unwrap();
+    for (age_seconds, expected_status) in [(299, "ready"), (301, "pending")] {
+        let checked_at = test_offset_from_now_rfc3339(time::Duration::seconds(-age_seconds));
+        state
+            .db
+            .upsert_cleanup_inventory_snapshot(
+                crate::cleanup_snapshot_worker::CLEANUP_SNAPSHOT_KEY,
+                &row.snapshot_json,
+                &checked_at,
+                &test_now_rfc3339(),
+            )
+            .await
+            .unwrap();
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/cleanups/scan")
+                    .header("X-Forwarded-User", "ops")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "reason": "confirm",
+                            "refresh": false,
+                            "preset": "balanced",
+                            "scope": "all",
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = response_json(response).await;
+        assert_eq!(body["status"].as_str(), Some(expected_status));
+    }
+}
+
+#[tokio::test]
+async fn cleanup_confirm_returns_error_after_worker_failure() {
+    let db_path = format!("/tmp/dockrev-cleanup-confirm-failure-{}.sqlite3", ulid::Ulid::new());
+    let runner = Arc::new(CleanupRunner::volume_in_use());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner).await;
+    let app = api::router(state.clone());
+    let initial = wait_for_cleanup_scan_ready(
+        &app,
+        serde_json::json!({
+            "reason": "confirm",
+            "preset": "balanced",
+            "scope": "all",
+        }),
+    )
+    .await;
+    assert_eq!(initial["status"].as_str(), Some("ready"));
+    let row = state
+        .db
+        .get_cleanup_inventory_snapshot(crate::cleanup_snapshot_worker::CLEANUP_SNAPSHOT_KEY)
+        .await
+        .unwrap()
+        .unwrap();
+    state
+        .db
+        .upsert_cleanup_inventory_snapshot(
+            crate::cleanup_snapshot_worker::CLEANUP_SNAPSHOT_KEY,
+            &row.snapshot_json,
+            &test_offset_from_now_rfc3339(time::Duration::seconds(-301)),
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+    state
+        .cleanup_snapshot_worker
+        .set_last_error_for_test(Some("boom".to_string()))
+        .await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "confirm",
+                        "refresh": false,
+                        "preset": "balanced",
+                        "scope": "all",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 500);
+    let body = response_json(response).await;
+    assert_eq!(body["error"]["code"], "internal");
+    assert_eq!(body["error"]["message"].as_str(), Some("cleanup snapshot refresh failed: boom"));
+}
+
+#[tokio::test]
 async fn cleanup_page_refresh_forces_background_refresh_even_with_fresh_cache() {
     let db_path = format!("/tmp/dockrev-cleanup-page-refresh-{}.sqlite3", ulid::Ulid::new());
     let runner = Arc::new(CleanupRunner::stale_on_second_scan());

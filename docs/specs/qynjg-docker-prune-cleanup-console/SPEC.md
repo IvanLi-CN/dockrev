@@ -79,13 +79,16 @@
 - 每个 stack 分组头部显示 stack 名称、预计释放空间、stack orphan 资源摘要与 `清理此 stack` 按钮。
 - 每个 service 行显示 service 名称、可清理 image/container/volume 等资源摘要、预计释放空间与 `清理此服务` 按钮。
 - 顶部主按钮 `全部` 对应 `scope=all`；当点击任一动作时，前端发起 `reason=confirm` scoped scan，拿到最新候选后再打开确认对话框。
+- confirm-scan 首次请求使用 `refresh=true`，后续严格按响应中的 `retryAfterMs` 以 `refresh=false` 轮询；pending 期间页面在候选列表上方显示可访问的“更新中”状态栏，按钮只保留稳定短标签 `全部`、`重扫`，不把等待说明塞进按钮。
 - 用户在确认对话框点击确认后，前端调用 `POST /api/cleanups/apply` 创建 `cleanup_apply` job，并跳转/关联任务队列状态。
 
 ### Edge cases / errors
 
 - 若 page scan 为空，页面展示对应 preset 的空态，但仍允许手动重扫。
 - 若 confirm-scan 结果为空，则确认弹窗展示“当前已无可清理项”，且不继续发起 apply。
+- 若 confirm worker 已停止且记录了失败终态，confirm-scan 返回明确的可重试 API 错误；页面显示“刷新失败”与短标签“重试”，不得无限停留在 pending，也不得展示内部错误原文。
 - 若 apply 返回 `409 cleanup_snapshot_stale`，前端必须用响应内最新 confirm payload 刷新弹窗内容，并要求用户重新确认。
+- confirm snapshot 与 apply 共用固定 5 分钟 freshness 边界；过期只触发/等待新快照，绝不自动创建 cleanup job。
 - 若资源无法确定 service 归属但属于 compose project，则降级为 stack orphan；若无法归属任何 managed stack，则仅在 `all` 中显示为 `未归属资源`。
 
 ## 接口契约（Interfaces & Contracts）
@@ -110,7 +113,10 @@
 - Given 某个 stack 下同时存在 service 级候选与 project orphan，When 页面渲染列表，Then stack 头部展示 orphan 摘要，service 行仅展示该 service 可确定归属的候选。
 - Given `aggressive` 预设存在无法归属任何 stack 的全局候选，When 用户查看 `全部` 视角，Then 页面展示 `未归属资源` 伪分组；When 用户查看 `stack/service` 视角，Then 这些候选不会出现。
 - Given 用户点击 `全部`、`清理此 stack` 或 `清理此服务`，When confirm-scan 返回结果，Then 二次确认对话框展示最新候选、最新预计释放空间、最新扫描时间。
+- Given confirm-scan 返回 pending，When 页面等待服务端 `retryAfterMs`，Then 首次请求为 `refresh=true`、后续请求为 `refresh=false`，候选列表上方显示“更新中”，按钮文案仍为 `全部` / `重扫`。
+- Given confirm worker 已失败且不再运行，When 页面轮询 confirm-scan，Then API 返回明确失败，页面显示“刷新失败”与可重试的 `重试`，不显示内部 worker 错误且不循环 pending。
 - Given 用户基于旧 fingerprint 提交 apply，When 服务器检测到候选已变化，Then 返回 `409 cleanup_snapshot_stale` 与最新 confirm payload，前端刷新弹窗并要求再次确认。
+- Given confirm snapshot 年龄为 299 秒或 301 秒，When 用户分别执行 confirm/apply，Then 前者可 ready/apply，后者只能 pending/stale 并等待新快照。
 - Given cleanup apply job 完成，When 用户查看任务摘要或日志，Then 可看到 `preset`、`scope`、`reclaimedBytesEstimated`、`deletedCountsByKind`、`skippedInUse` 与 `groupedTargets`。
 
 ## 实现前置条件（Definition of Ready / Preconditions）
@@ -203,6 +209,30 @@
 
 ![Cleanup streaming rescan stale state](./assets/cleanup-streaming-rescan-stale.png)
 
+- source_type: `ui_demo`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `1956x1189`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `cleanup-console-confirm-failed`
+  state: `confirm refresh worker failure`
+  evidence_note: 验证确认刷新失败只显示一个可访问的“刷新失败”状态栏和“重试”按钮，不重复渲染旧的 Alert，也不泄漏 worker 内部错误。
+
+![Cleanup confirm failed single status](./assets/cleanup-confirm-failed-single.png)
+
+- source_type: `ui_demo`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  requested_viewport: `393x852`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `cleanup-console-confirm-pending`
+  state: `ready confirmation on mobile`
+  evidence_note: 验证移动端确认弹窗在 ready 后打开，确认与取消按钮均可见，底部导航不会遮挡弹窗操作区。
+
+![Cleanup confirm mobile ready](./assets/cleanup-confirm-mobile-ready.png)
+
 ## 资产晋升（Asset promotion）
 
 None
@@ -234,6 +264,7 @@ None
 - 2026-04-04：将清理页“服务器状态”摘要区压缩为更紧凑的信息密度，并把 preset tabs 内联进清理规则标题区，减少首屏纵向空白。
 - 2026-04-28：补充服务器磁盘已使用/总容量展示，明确候选百分比语义，并修正未知大小资源的空轨道展示。
 - 2026-07-07：新增 cleanup scan-runs SSE 流式重扫契约，页面重扫期间使用旧 snapshot 弱加载态并按 partial 事件渐进替换。
+- Cleanup confirm/apply 使用固定 300 秒 freshness；confirm 轮询提供可见、可重试的状态栏与稳定短按钮标签，worker 失败终态不再无限 pending。
 
 ## 参考（References）
 

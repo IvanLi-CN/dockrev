@@ -135,12 +135,29 @@ export function installDockrevMockApi(
   const cleanupRuntime: CleanupMockRuntimeState = {
     nextJobSeq: 0,
     staleApplyConsumed: false,
+    confirmPendingConsumed: false,
+    confirmFailureConsumed: false,
     nextScanRunSeq: 0,
     scanRuns: new Map(),
   }
   const rollbackTargetRaceByServiceId = new Map<string, RollbackTargetRaceState>(); const publishMockManagementEvent = (entities: Array<{ entityType: string; id: string }>, summary: Record<string, unknown>) => {
     const id = ++managementEventsSeqRef.value
     managementEvents.push({ id, cursor: formatMockManagementCursor(managementEventsGeneration, id), data: { type: 'entities_changed', domain: 'jobs', entities, version: id, summary } })
+    if (managementEvents.length > 1_024) managementEvents.shift()
+  }
+  const publishMockCleanupManagementEvent = (summary: Record<string, unknown>) => {
+    const id = ++managementEventsSeqRef.value
+    managementEvents.push({
+      id,
+      cursor: formatMockManagementCursor(managementEventsGeneration, id),
+      data: {
+        type: 'entities_changed',
+        domain: 'cleanup',
+        entities: [{ entityType: 'scan', id: 'active' }],
+        version: id,
+        summary,
+      },
+    })
     if (managementEvents.length > 1_024) managementEvents.shift()
   }
   let deployCheckReportSequenceIndex = 0
@@ -692,6 +709,9 @@ export function installDockrevMockApi(
         }
       }
       cleanupRuntime.scanRuns.set(scanId, events)
+      if (cleanupScenario !== 'cleanup-console-scan-pending' && !holdPartial) {
+        publishMockCleanupManagementEvent({ phase: 'ready', scanId })
+      }
       return json({ scanId, previousSnapshot, retryAfterMs: 450 })
     }
     if (cleanupScenario && method === 'GET' && urlPath.match(/^\/api\/cleanups\/scan-runs\/[^/]+\/events$/)) {
@@ -711,8 +731,40 @@ export function installDockrevMockApi(
       })
     }
     if (cleanupScenario && method === 'POST' && urlPath === '/api/cleanups/scan') {
+      const request = parseCleanupScanRequest(init?.body)
+      if (request.reason === 'confirm' && cleanupScenario === 'cleanup-console-confirm-pending') {
+        const ready = buildCleanupMockScanResponse(cleanupScenario, request)
+        if (request.refresh && !cleanupRuntime.confirmPendingConsumed) {
+          cleanupRuntime.confirmPendingConsumed = true
+          return json(
+            {
+              ...ready,
+              status: 'pending',
+              refreshing: true,
+              retryAfterMs: 450,
+              scannedAt: null,
+              estimatedReclaimableBytes: null,
+              hasUnknownSize: false,
+              serverDiskUsage: null,
+              stackGroups: [],
+              unownedGroup: null,
+              confirmationFingerprint: null,
+            },
+          )
+        }
+        return json(ready)
+      }
+      if (request.reason === 'confirm' && cleanupScenario === 'cleanup-console-confirm-failed') {
+        if (request.refresh && !cleanupRuntime.confirmFailureConsumed) {
+          cleanupRuntime.confirmFailureConsumed = true
+          return json(
+            { error: { code: 'internal_error', message: 'cleanup snapshot refresh failed' } },
+            { status: 503 },
+          )
+        }
+        return json(buildCleanupMockScanResponse(cleanupScenario, request))
+      }
       if (cleanupScenario === 'cleanup-console-scan-pending') {
-        const request = parseCleanupScanRequest(init?.body)
         const ready = buildCleanupMockScanResponse('cleanup-console', request)
         if (request.reason === 'page') {
           return json(
@@ -746,7 +798,6 @@ export function installDockrevMockApi(
           globalThis.setTimeout(() => resolve(), 1600)
         })
       }
-      const request = parseCleanupScanRequest(init?.body)
       return json(buildCleanupMockScanResponse(cleanupScenario, request))
     }
     if (cleanupScenario && method === 'POST' && urlPath === '/api/cleanups/apply') {

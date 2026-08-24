@@ -270,8 +270,26 @@ pub(super) async fn scan_cleanups(
                 if req.refresh {
                     let _ = state.cleanup_snapshot_worker.enqueue().await;
                 }
+                if !state.cleanup_snapshot_worker.is_running()
+                    && let Some(last_error) = state.cleanup_snapshot_worker.last_error().await
+                {
+                    return Err(ApiError::internal(format!(
+                        "cleanup snapshot refresh failed: {last_error}"
+                    )));
+                }
             } else if req.refresh {
                 let _ = state.cleanup_snapshot_worker.enqueue().await;
+                if !state.cleanup_snapshot_worker.is_running()
+                    && let Some(last_error) = state.cleanup_snapshot_worker.last_error().await
+                {
+                    return Err(ApiError::internal(format!(
+                        "cleanup snapshot refresh failed: {last_error}"
+                    )));
+                }
+            } else if let Some(last_error) = state.cleanup_snapshot_worker.last_error().await {
+                return Err(ApiError::internal(format!(
+                    "cleanup snapshot refresh failed: {last_error}"
+                )));
             }
 
             Ok(Json(CleanupScanResponse {
@@ -471,6 +489,13 @@ pub(super) async fn apply_cleanups(
         .map_err(map_internal)?
     else {
         let _ = state.cleanup_snapshot_worker.enqueue().await;
+        if !state.cleanup_snapshot_worker.is_running()
+            && let Some(last_error) = state.cleanup_snapshot_worker.last_error().await
+        {
+            return Err(ApiError::internal(format!(
+                "cleanup snapshot refresh failed: {last_error}"
+            )));
+        }
         return Err(ApiError::cleanup_snapshot_stale(cleanup_pending_response(
             &scan_req,
         )));
@@ -484,6 +509,13 @@ pub(super) async fn apply_cleanups(
     if !is_fresh || is_running {
         if !is_running {
             let _ = state.cleanup_snapshot_worker.enqueue().await;
+            if !state.cleanup_snapshot_worker.is_running()
+                && let Some(last_error) = state.cleanup_snapshot_worker.last_error().await
+            {
+                return Err(ApiError::internal(format!(
+                    "cleanup snapshot refresh failed: {last_error}"
+                )));
+            }
         }
         return Err(ApiError::cleanup_snapshot_stale(cleanup_pending_response(
             &scan_req,

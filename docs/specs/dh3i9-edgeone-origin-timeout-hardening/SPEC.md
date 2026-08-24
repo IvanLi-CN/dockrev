@@ -44,8 +44,9 @@
   - 有 cached snapshot 时立即返回 ready payload，并标记 `refreshing=true`。
   - 无 cached snapshot 时返回 pending，并给出 `retryAfterMs`。
 - cleanup confirm request:
-  - 只有当 latest snapshot 年龄 `<=30s` 且无 refresh in-flight 时，才返回 ready confirm payload。
-  - 否则返回 pending；前端等待应用级 SSE 的确定终态后只读取一次 REST 快照，再允许确认。
+  - 只有当 latest snapshot 年龄 `<=300s`（5 分钟）且无 refresh in-flight 时，才返回 ready confirm payload。
+  - 否则返回 pending；前端首个 confirm 请求使用 `refresh=true`，后续按 `retryAfterMs` 以 `refresh=false` 轮询，ready 后才允许确认。
+  - confirm worker 已失败且不再运行时返回明确 API 错误，前端显示可重试状态，不得无限 pending。
 - cleanup apply:
   - 禁止内联全量重扫。
   - 若 fingerprint 失效，继续返回 `409 cleanup_snapshot_stale + latest payload`。
@@ -80,7 +81,7 @@
 ## 验收标准
 
 - 访问 `/cleanup` 时，不再因为首屏同步 Docker scan 触发 524。
-- cleanup confirm 在 snapshot stale 或 refresh in-flight 时只返回 pending，不直接给旧 confirm payload。
+- cleanup confirm 在 snapshot stale 或 refresh in-flight 时只返回 pending，不直接给旧 confirm payload；过期只触发/等待新快照，绝不自动创建 cleanup job。
 - `/deploy-check` 有 cached report 时可立即展示，refresh 不阻塞首屏。
 - Given 一个未运行但保存 Compose 文件均健康的 discovery 项，When Dockrev 完成有效扫描，Then 项目与关联 Stack 必须保持未归档并显示 `stopped`，现有生命周期启动任务可执行。
 - Given 一个保存 Compose 文件全部为 `ENOENT` 的 discovery 项，When Dockrev 完成有效扫描，Then 项目与关联 Stack 必须以 `auto_archive_compose_files_missing` 自动归档，失效路径不得阻断 deploy-check。
@@ -120,7 +121,7 @@ PR: include
   submission_gate: `pending-owner-approval`
   story_id_or_title: `Pages/CleanupPage/ScanningState`
   state: `snapshot pending on first page load`
-  evidence_note: 验证 `/cleanup` 首屏无 ready snapshot 时只显示 pending shell，顶部动作进入 `等待扫描 / 扫描中…` 禁用态，不再阻塞在同步全量扫描上。
+  evidence_note: 验证 `/cleanup` 首屏无 ready snapshot 时只显示 pending shell，顶部动作保留 `全部 / 重扫` 短标签并以状态栏表达更新中，不再阻塞在同步全量扫描上。
 
 ![Cleanup scanning state](./assets/cleanup-scanning-state.png)
 
