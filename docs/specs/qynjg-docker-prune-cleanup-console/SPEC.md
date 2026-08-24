@@ -219,6 +219,8 @@
   state: `confirm refresh worker failure`
   evidence_note: 验证确认刷新失败只显示一个可访问的“刷新失败”状态栏和“重试”按钮，不重复渲染旧的 Alert，也不泄漏 worker 内部错误。
 
+PR: include
+
 ![Cleanup confirm failed single status](./assets/cleanup-confirm-failed-single.png)
 
 - source_type: `ui_demo`
@@ -230,6 +232,8 @@
   story_id_or_title: `cleanup-console-confirm-pending`
   state: `ready confirmation on mobile`
   evidence_note: 验证移动端确认弹窗在 ready 后打开，确认与取消按钮均可见，底部导航不会遮挡弹窗操作区。
+
+PR: include
 
 ![Cleanup confirm mobile ready](./assets/cleanup-confirm-mobile-ready.png)
 
