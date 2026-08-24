@@ -29,6 +29,7 @@ import {
   cleanupResourceKeys,
   countUnknownResources,
   countVisibleResources,
+  countRenderableResources,
   flattenAllResources,
   formatBytes,
   formatDiskUsage,
@@ -298,10 +299,11 @@ function CleanupResponseView(props: {
   compact?: boolean
   busyActionKey?: string | null
   staleResourceKeys?: Set<string>
+  scanBusy?: boolean
   onStackAction?: (stack: CleanupStackGroup) => void
   onServiceAction?: (stack: CleanupStackGroup, serviceId: string, serviceName: string) => void
 }) {
-  if (countVisibleResources(props.response) === 0) {
+  if (countRenderableResources(props.response) === 0) {
     return <div className="cleanupEmptyState">当前规则下没有可清理资源。</div>
   }
 
@@ -345,7 +347,7 @@ function CleanupResponseView(props: {
                 onKeyDown={(event) => event.stopPropagation()}
               >
                 <Button
-                  disabled={stack.estimatedReclaimableBytes <= 0 && stack.hasUnknownSize !== true}
+                  disabled={props.scanBusy || stack.estimatedReclaimableBytes <= 0 && stack.hasUnknownSize !== true}
                   hint={actionHint('stack')}
                   loading={props.busyActionKey === `stack:${stack.stackId}`}
                   onClick={() => props.onStackAction?.(stack)}
@@ -388,7 +390,7 @@ function CleanupResponseView(props: {
               {row.actionScope === 'stack' && props.onStackAction ? (
                 <div className="actionCell">
                   <Button
-                    disabled={stack.estimatedReclaimableBytes <= 0 && stack.hasUnknownSize !== true}
+                    disabled={props.scanBusy || stack.estimatedReclaimableBytes <= 0 && stack.hasUnknownSize !== true}
                     hint={actionHint('stack')}
                   loading={props.busyActionKey === `stack:${stack.stackId}`}
                   onClick={() => props.onStackAction?.(stack)}
@@ -400,7 +402,7 @@ function CleanupResponseView(props: {
               ) : row.actionScope === 'service' && props.onServiceAction && row.serviceId && row.serviceName ? (
                 <div className="actionCell">
                   <Button
-                    disabled={false}
+                    disabled={props.scanBusy}
                     hint={actionHint('service')}
                     loading={props.busyActionKey === `service:${stack.stackId}:${row.serviceId}`}
                     onClick={() => props.onServiceAction?.(stack, row.serviceId!, row.serviceName!)}
@@ -625,7 +627,7 @@ export function CleanupPage(props: {
         ) return
         if (payload.phase === 'scan_partial' && payload.response) {
           setPageScan((previous) => {
-            if (!previous) return payload.response ?? null
+            if (!previous) return { ...payload.response!, status: 'ready', refreshing: true, confirmationFingerprint: null }
             const merged = mergeCleanupResponses(previous, payload.response!)
             setStaleResourceKeys(merged.staleKeys)
             return merged.response
@@ -676,7 +678,11 @@ export function CleanupPage(props: {
 
   useManagementEventBatch(({ events, resyncRequired }) => {
     if (resyncRequired) {
-      void loadCompletedPageScan().catch((error: unknown) => setPageError(toErrorMessage(error)))
+      void loadCompletedPageScan().catch((error: unknown) => {
+        setPageError(error instanceof ApiError && error.status >= 500 ? CLEANUP_REFRESH_ERROR : toErrorMessage(error))
+        setRefreshing(false)
+        setLoading(false)
+      })
     }
     const event = events.find((candidate) =>
       candidate.domain === 'cleanup' && candidate.entities.some((entity) => entity.entityType === 'scan' && entity.id === 'active'),
@@ -1048,6 +1054,7 @@ export function CleanupPage(props: {
       {response ? (
         <CleanupResponseView
           busyActionKey={busyActionKey}
+          scanBusy={initialScanPending || refreshing}
           onServiceAction={(stack, serviceId, serviceName) =>
             void runCleanupFlow({
               actionKey: `service:${stack.stackId}:${serviceId}`,

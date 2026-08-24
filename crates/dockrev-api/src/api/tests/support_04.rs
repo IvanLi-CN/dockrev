@@ -343,6 +343,12 @@ NAME                LINKS               SIZE
                         stdout: "2049:987654:1711670400:1711670400:1711670400\n".to_string(),
                         stderr: String::new(),
                     }
+                } else if args == vec!["volume", "rm", "demo_named"] {
+                    CommandOutput {
+                        status: 0,
+                        stdout: "demo_named\n".to_string(),
+                        stderr: String::new(),
+                    }
                 } else if args == vec!["buildx", "du", "--format=json"] {
                     CommandOutput {
                         status: 0,

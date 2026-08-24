@@ -260,6 +260,13 @@ pub(super) async fn scan_cleanups(
                     cleanup_snapshot_worker::cleanup_snapshot_is_fresh(&row.checked_at, now);
                 let last_error = state.cleanup_snapshot_worker.last_error().await;
                 if is_fresh && !is_running {
+                    if req.refresh {
+                        let refreshing = state.cleanup_snapshot_worker.enqueue().await
+                            || state.cleanup_snapshot_worker.is_running();
+                        if refreshing {
+                            return Ok(Json(cleanup_pending_response(&req)));
+                        }
+                    }
                     if let Some(last_error) = last_error {
                         return Err(cleanup_snapshot_refresh_failed(last_error));
                     }
@@ -550,9 +557,15 @@ pub(super) async fn apply_cleanups(
             request_reason = %req.reason.as_str(),
             "cleanup apply rejected because a volume instance changed"
         );
-        return Err(ApiError::cleanup_snapshot_stale(
-            plan.to_response(CleanupScanReason::Confirm),
-        ));
+        let _ = state.cleanup_snapshot_worker.enqueue().await;
+        if !state.cleanup_snapshot_worker.is_running()
+            && let Some(last_error) = state.cleanup_snapshot_worker.last_error().await
+        {
+            return Err(cleanup_snapshot_refresh_failed(last_error));
+        }
+        return Err(ApiError::cleanup_snapshot_stale(cleanup_pending_response(
+            &scan_req,
+        )));
     }
 
     let now = now_rfc3339().map_err(map_internal)?;

@@ -364,6 +364,46 @@ async fn cleanup_confirm_and_apply_reject_fresh_snapshot_after_worker_failure() 
     );
     assert!(!confirm_body.to_string().contains("boom"));
 
+    let retry_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "confirm",
+                        "refresh": true,
+                        "preset": "balanced",
+                        "scope": "all",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(retry_response.status(), 200);
+    let retry_body = response_json(retry_response).await;
+    assert_eq!(retry_body["status"].as_str(), Some("pending"));
+    assert_eq!(retry_body["refreshing"].as_bool(), Some(true));
+    let retry_ready = wait_for_cleanup_scan_ready(
+        &app,
+        serde_json::json!({
+            "reason": "confirm",
+            "preset": "balanced",
+            "scope": "all",
+        }),
+    )
+    .await;
+    assert_eq!(retry_ready["status"].as_str(), Some("ready"));
+    state
+        .cleanup_snapshot_worker
+        .set_last_error_for_test(Some("boom".to_string()))
+        .await;
+
     let apply_response = app
         .oneshot(
             Request::builder()
@@ -1054,7 +1094,7 @@ services:
 "#,
     )
     .await;
-    let app = api::router(state);
+    let app = api::router(state.clone());
 
     let body = wait_for_cleanup_scan_ready(
         &app,
@@ -1074,6 +1114,38 @@ services:
         body["stackGroups"][0]["services"][0]["hasUnknownSize"].as_bool(),
         Some(false)
     );
+
+    let fingerprint = body["confirmationFingerprint"]
+        .as_str()
+        .expect("mountpoint fallback candidate includes fingerprint")
+        .to_string();
+    let apply_resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/apply")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "ui",
+                        "preset": "project_deep_clean",
+                        "scope": "stack",
+                        "stackId": stack_id,
+                        "confirmationFingerprint": fingerprint,
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let apply_status = apply_resp.status();
+    let apply_body = response_json(apply_resp).await;
+    assert_eq!(apply_status, 200, "mountpoint fallback apply body: {apply_body}");
+    let job_id = apply_body["jobId"].as_str().unwrap();
+    let finished = wait_for_job_terminal(&state, job_id).await;
+    assert_eq!(finished.status, "success");
 }
 
 #[tokio::test]

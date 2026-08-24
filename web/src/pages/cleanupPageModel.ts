@@ -102,8 +102,17 @@ export function countVisibleResources(response: CleanupScanResponse): number {
   return total
 }
 
+export function countRenderableResources(response: CleanupScanResponse): number {
+  let total = 0
+  for (const stack of response.stackGroups) {
+    total += stack.stackOrphans.length
+    for (const service of stack.services) total += service.resources.length
+  }
+  total += response.unownedGroup?.resources.length ?? 0
+  return total
+}
+
 export function flattenAllResources(response: CleanupScanResponse): CleanupResourceItem[] {
-  if (response.status !== 'ready') return []
   return [
     ...response.stackGroups.flatMap((stack) => [
       ...stack.stackOrphans,
@@ -129,7 +138,6 @@ function usageBucketForKind(kind: CleanupResourceKind): CleanupUsageBucket {
 }
 
 export function buildUsageCards(response: CleanupScanResponse): CleanupUsageCard[] {
-  if (response.status !== 'ready') return []
   const resources = flattenAllResources(response)
   const totals = new Map<CleanupUsageBucket, { bytes: number; count: number; unknownCount: number }>()
   for (const key of USAGE_BUCKETS) totals.set(key, { bytes: 0, count: 0, unknownCount: 0 })
@@ -321,7 +329,6 @@ export function mergeCleanupResponses(
 }
 
 export function projectResponseForPreset(pageScan: CleanupScanResponse, preset: CleanupPreset): CleanupScanResponse {
-  if (pageScan.status !== 'ready') return { ...pageScan, preset }
   const stackGroups: CleanupStackGroup[] = []
   let totalBytes = 0
   let totalUnknown = false

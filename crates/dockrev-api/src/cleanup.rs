@@ -389,7 +389,7 @@ async fn validate_volume_action_identity(
     let Some(expected) = action.instance_id.as_deref() else {
         return false;
     };
-    let current = docker_inspect_json::<DockerVolumeInspect>(
+    let Ok(volume) = docker_inspect_json::<DockerVolumeInspect>(
         runner,
         vec![
             "volume".to_string(),
@@ -400,8 +400,13 @@ async fn validate_volume_action_identity(
         ],
     )
     .await
-    .ok()
-    .and_then(|volume| volume_instance_identity(&volume));
+    else {
+        return false;
+    };
+    let current = match volume_instance_identity(&volume) {
+        Some(identity) => Some(identity),
+        None => resolve_volume_fingerprint_with_runner(runner, &volume).await,
+    };
     current.as_deref() == Some(expected)
 }
 
@@ -809,11 +814,15 @@ async fn scan_candidates_with_progress(
                 scan_volume_size_from_mountpoint_with_runner(runner, mountpoint).await;
         }
         candidates.push(CleanupInventoryCandidate {
-            key: volume_fingerprint.unwrap_or_else(|| format!("volume:{}", inspect.name)),
+            key: volume_fingerprint
+                .clone()
+                .unwrap_or_else(|| format!("volume:{}", inspect.name)),
             resource_id: inspect.name.clone(),
             kind: CleanupResourceKind::Volume,
             label: inspect.name.clone(),
-            instance_id: volume_instance_identity(&inspect),
+            // Docker versions that omit CreatedAt still get the same identity
+            // used to discover the candidate, so they remain actionable.
+            instance_id: volume_instance_identity(&inspect).or_else(|| volume_fingerprint.clone()),
             estimated_reclaimable_bytes,
             estimate_unknown: estimated_reclaimable_bytes.is_none(),
             requires_ephemeral_confirmation: false,
