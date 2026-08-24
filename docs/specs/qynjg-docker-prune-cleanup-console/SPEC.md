@@ -89,6 +89,9 @@
 - 若 confirm worker 已停止且记录了失败终态，confirm-scan 返回明确的可重试 API 错误；页面显示“刷新失败”与短标签“重试”，不得无限停留在 pending，也不得展示内部错误原文。
 - 若 apply 返回 `409 cleanup_snapshot_stale`，前端必须用响应内最新 confirm payload 刷新弹窗内容，并要求用户重新确认。
 - confirm snapshot 与 apply 共用固定 5 分钟 freshness 边界；过期只触发/等待新快照，绝不自动创建 cleanup job。
+- volume 若缺少 `CreatedAt`，仅在可取得 mountpoint 文件系统实例元数据时进入可执行候选；无法取得实例身份时保持跳过，避免把 Compose 逻辑标签当作实例身份。
+- 初始 page scan 的 partial 候选只在扫描仍进行时展示且保持动作锁定；若后续扫描失败，临时 partial 投影会被丢弃并显示稳定的刷新失败状态。
+- management resync/ready 重载使用请求世代校验；旧重载响应不得覆盖更新中的显式重扫，5xx 只显示稳定的用户可见错误。
 - 若资源无法确定 service 归属但属于 compose project，则降级为 stack orphan；若无法归属任何 managed stack，则仅在 `all` 中显示为 `未归属资源`。
 
 ## 接口契约（Interfaces & Contracts）

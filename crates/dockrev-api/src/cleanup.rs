@@ -234,6 +234,38 @@ fn volume_instance_identity(volume: &DockerVolumeInspect) -> Option<String> {
         .map(str::to_string)
 }
 
+async fn volume_instance_identity_with_runner(
+    runner: &std::sync::Arc<dyn crate::runner::CommandRunner>,
+    volume: &DockerVolumeInspect,
+) -> Option<String> {
+    if let Some(identity) = volume_instance_identity(volume) {
+        return Some(identity);
+    }
+    let mountpoint = volume
+        .mountpoint
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let output = runner
+        .run(
+            CommandSpec {
+                program: "stat".to_string(),
+                args: vec![
+                    "-c".to_string(),
+                    "%d:%i:%W:%Y:%Z".to_string(),
+                    mountpoint.to_string(),
+                ],
+                env: Vec::new(),
+            },
+            DOCKER_TIMEOUT,
+        )
+        .await
+        .ok()?;
+    ensure_success("stat volume mountpoint", &output).ok()?;
+    let metadata = output.stdout.trim().to_string();
+    (!metadata.is_empty()).then(|| format!("mountpoint:{metadata}"))
+}
+
 #[derive(Debug, Deserialize, Default)]
 #[serde(rename_all = "PascalCase")]
 struct DockerNetworkInspect {
@@ -403,10 +435,7 @@ async fn validate_volume_action_identity(
     else {
         return false;
     };
-    let current = match volume_instance_identity(&volume) {
-        Some(identity) => Some(identity),
-        None => resolve_volume_fingerprint_with_runner(runner, &volume).await,
-    };
+    let current = volume_instance_identity_with_runner(runner, &volume).await;
     current.as_deref() == Some(expected)
 }
 
@@ -813,6 +842,9 @@ async fn scan_candidates_with_progress(
             estimated_reclaimable_bytes =
                 scan_volume_size_from_mountpoint_with_runner(runner, mountpoint).await;
         }
+        let Some(instance_id) = volume_instance_identity_with_runner(runner, &inspect).await else {
+            continue;
+        };
         candidates.push(CleanupInventoryCandidate {
             key: volume_fingerprint
                 .clone()
@@ -820,9 +852,7 @@ async fn scan_candidates_with_progress(
             resource_id: inspect.name.clone(),
             kind: CleanupResourceKind::Volume,
             label: inspect.name.clone(),
-            // Docker versions that omit CreatedAt still get the same identity
-            // used to discover the candidate, so they remain actionable.
-            instance_id: volume_instance_identity(&inspect).or_else(|| volume_fingerprint.clone()),
+            instance_id: Some(instance_id),
             estimated_reclaimable_bytes,
             estimate_unknown: estimated_reclaimable_bytes.is_none(),
             requires_ephemeral_confirmation: false,

@@ -50,6 +50,8 @@
 - cleanup apply:
   - 禁止内联全量重扫。
   - 若 fingerprint 失效，继续返回 `409 cleanup_snapshot_stale + latest payload`。
+  - volume 缺少 `CreatedAt` 时只有 mountpoint 文件系统实例元数据可用才允许执行；无法确认实例身份的候选必须跳过。
+  - 初始扫描 partial 失败不得解锁清理动作；管理重载的 5xx 使用稳定错误文案，旧请求不得覆盖更新中的重扫。
 - deploy-check:
   - GET `/api/deploy-check/report` 必须支持 cached report ready 返回与 pending 返回。
   - POST `/api/deploy-check/report/refresh` 只 enqueue，不同步构建 report。

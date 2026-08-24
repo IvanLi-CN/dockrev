@@ -531,6 +531,7 @@ export function CleanupPage(props: {
   const [busyActionKey, setBusyActionKey] = useState<string | null>(null)
   const [confirmPhase, setConfirmPhase] = useState<'idle' | 'refreshing' | 'applying'>('idle')
   const confirmRequestVersionRef = useRef(0)
+  const pageScanRequestVersionRef = useRef(0)
   const retryTargetRef = useRef<CleanupActionTarget | null>(null)
 
   const projected = useMemo(
@@ -581,21 +582,30 @@ export function CleanupPage(props: {
   )
 
   const loadCompletedPageScan = useCallback(async () => {
-    const response = await scanCleanups({
-      reason: 'page',
-      refresh: false,
-      preset: 'aggressive',
-      scope: 'all',
-    })
-    if (response.status !== 'ready' || response.refreshing) return
-    setPageScan(response)
-    setStaleResourceKeys(new Set())
-    setLoading(false)
-    setRefreshing(false)
-    onLastScanHint?.(response.scannedAt ?? undefined)
+    const requestVersion = pageScanRequestVersionRef.current + 1
+    pageScanRequestVersionRef.current = requestVersion
+    try {
+      const response = await scanCleanups({
+        reason: 'page',
+        refresh: false,
+        preset: 'aggressive',
+        scope: 'all',
+      })
+      if (pageScanRequestVersionRef.current !== requestVersion) return
+      if (response.status !== 'ready' || response.refreshing) return
+      setPageScan(response)
+      setStaleResourceKeys(new Set())
+      setLoading(false)
+      setRefreshing(false)
+      onLastScanHint?.(response.scannedAt ?? undefined)
+    } catch (error) {
+      if (pageScanRequestVersionRef.current !== requestVersion) return
+      throw error
+    }
   }, [onLastScanHint])
 
   const refreshPageScan = useCallback(async () => {
+    pageScanRequestVersionRef.current += 1
     setRefreshing(true)
     setPageError(null)
     setActionError(null)
@@ -642,6 +652,7 @@ export function CleanupPage(props: {
           source.close()
           if (activeScanEventsRef.current === source) activeScanEventsRef.current = null
         } else if (payload.phase === 'scan_failed') {
+          if (!started.previousSnapshot) setPageScan(null)
           setPageError(CLEANUP_REFRESH_ERROR)
           setStaleResourceKeys(new Set())
           setRefreshing(false)
@@ -694,7 +705,7 @@ export function CleanupPage(props: {
     ) return
     if (event.summary.phase === 'ready') {
       void loadCompletedPageScan().catch((error: unknown) => {
-        setPageError(toErrorMessage(error))
+        setPageError(error instanceof ApiError && error.status >= 500 ? CLEANUP_REFRESH_ERROR : toErrorMessage(error))
         setRefreshing(false)
         setLoading(false)
       })

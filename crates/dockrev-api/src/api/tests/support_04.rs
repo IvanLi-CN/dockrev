@@ -191,6 +191,18 @@ impl CommandRunner for CleanupRunner {
                             .to_string(),
                         stderr: String::new(),
                     }
+                } else if args
+                    == vec![
+                        "-c",
+                        "%d:%i:%Y:%Z",
+                        "/var/lib/docker/volumes/demo_named/_data",
+                    ]
+                {
+                    CommandOutput {
+                        status: 0,
+                        stdout: "1:100:1711670400:1711670400\n".to_string(),
+                        stderr: String::new(),
+                    }
                 } else if args == vec!["system", "df", "-v"] {
                     CommandOutput {
                         status: 0,
