@@ -269,6 +269,7 @@ None
 - 2026-04-28：补充服务器磁盘已使用/总容量展示，明确候选百分比语义，并修正未知大小资源的空轨道展示。
 - 2026-07-07：新增 cleanup scan-runs SSE 流式重扫契约，页面重扫期间使用旧 snapshot 弱加载态并按 partial 事件渐进替换。
 - Cleanup confirm/apply 使用固定 300 秒 freshness；confirm 轮询提供可见、可重试的状态栏与稳定短按钮标签，worker 失败终态不再无限 pending。
+- Mock-only cleanup pending/failed scenarios retain the 1200-line installer budget without changing the API or confirmation flow.
 
 ## 参考（References）
 

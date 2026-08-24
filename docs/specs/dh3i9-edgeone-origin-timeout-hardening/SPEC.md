@@ -217,3 +217,4 @@ PR: include
 
 - 2026-06-26: 新建 spec，冻结 EdgeOne 15 秒约束、cleanup async snapshot、deploy-check cached-read、release drawer fallback 与 SSE heartbeat 口径。
 - discovery 的停止、缺失与异常状态必须由保存 Compose 文件的有效扫描决定；系统归档可恢复，人工归档不可变更。
+- cleanup mock pending/failed fixtures remain within the repository file budget while preserving the shared async snapshot contract.
