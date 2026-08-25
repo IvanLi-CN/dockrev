@@ -120,11 +120,10 @@ describe('deploy-check cached gate', () => {
   test('revalidates the cached gate when the tab returns to the foreground', () => {
     const source = readFileSync(resolve(import.meta.dir, '..', 'src/App.tsx'), 'utf8')
 
-    expect(source).toContain('document.addEventListener("visibilitychange", refreshOnForeground)')
-    expect(source).toContain('document.removeEventListener("visibilitychange", refreshOnForeground)')
-    expect(source).toMatch(
-      /const refreshOnForeground = \(\) => \{\s*if \(document\.visibilityState !== "visible"\) return;\s*void refreshDeployCheckGate\(true\)/,
-    )
+    expect(source).not.toContain('document.addEventListener("visibilitychange", refreshOnForeground)')
+    expect(source).toContain('useManagementEventBatch(({ events, resyncRequired }) => {')
+    expect(source).toContain('if (\n      resyncRequired ||')
+    expect(source).toContain('void refreshDeployCheckGate().catch(() => {})')
     expect(source).toContain('deployCheckBackgroundRefreshInFlightRef.current = true')
     expect(source).toContain('deployCheckBackgroundRefreshInFlightRef.current = false')
     expect(source).not.toContain('deployCheckBackgroundRefreshRequestedRef')
