@@ -21,3 +21,4 @@
 - 2026-08-25: Deploy-check gate reads now ignore out-of-order responses, preventing stale initial requests from resetting a newer result.
 - 2026-08-25: Foreground-resume browser coverage now triggers one visibility transition per test owner, keeping the replacement-source assertion deterministic.
 - 2026-08-25: Stale deploy-check failures no longer reset a newer gate, and foreground replacement sessions remain visibly reconnecting until open.
+- 2026-08-25: Foreground recovery diagnostics now use recovery wording for a zero-attempt replacement instead of first-connection wording.

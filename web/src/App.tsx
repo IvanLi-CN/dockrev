@@ -138,8 +138,10 @@ function ManagementEventsStatusBanner() {
         : managementEvents.lastError === "protocol_invalid"
           ? "协议数据异常"
           : "等待连接"
-  const attemptLabel = managementEvents.reconnectAttempt > 0
-    ? `第 ${managementEvents.reconnectAttempt} 次重试`
+  const attemptLabel = managementEvents.connection === "reconnecting"
+    ? managementEvents.reconnectAttempt > 0
+      ? `第 ${managementEvents.reconnectAttempt} 次重试`
+      : "恢复连接"
     : "首次连接"
   const lastActivityLabel = managementEvents.lastActivityAt
     ? `最近活动：${new Date(managementEvents.lastActivityAt).toLocaleTimeString()}。`

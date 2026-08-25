@@ -33,6 +33,7 @@
 - The InteractiveApp foreground-resume browser regression owns the visibility transition so the Story play hook cannot trigger a duplicate replacement session.
 - Deploy-check gate failures are also sequence-checked, so an older rejected request cannot reset a newer successful gate to loading.
 - Foreground replacement sessions publish `reconnecting` until they open, keeping the scoped retry diagnostic visible during recovery.
+- The reconnect diagnostic distinguishes a zero-attempt foreground recovery from the initial connection instead of labeling both as first connect.
 - Management transport recovery is separate from page synchronization: open and foreground resume enqueue one REST resync, protocol-invalid management/heartbeat payloads keep the transport connected while requesting one resync, and service logs/resource streams retain their independent ownership.
 - Foreground management resync is provider-owned: page-level resume refreshes do not duplicate the same visibility synchronization, later visibility transitions re-arm recovery after failed opens, and malformed payloads refresh the activity deadline before protocol classification.
 - Updated the deploy-check source guard to assert Provider-owned foreground invalidation and to prevent the removed page-level visibility listener from returning.
