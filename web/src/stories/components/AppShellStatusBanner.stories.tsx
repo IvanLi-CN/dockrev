@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { AppShellStatusBanner } from '../../components/AppShellStatusBanner'
-import { Button } from '../../ui'
+import { Button, IconButton } from '../../ui'
 import { RefreshCw } from 'lucide-react'
 
 const meta: Meta<typeof AppShellStatusBanner> = {
@@ -37,9 +37,9 @@ export const ManagementReconnect: Story = {
     title: '管理事件流重连中',
     detail: '心跳超时，第 2 次重试。最近活动：09:10:47。',
     actions: (
-      <Button type="button" variant="ghost" size="icon" aria-label="立即重试管理事件流" title="立即重试管理事件流">
+      <IconButton title="立即重试管理事件流">
         <RefreshCw size={16} aria-hidden="true" />
-      </Button>
+      </IconButton>
     ),
   },
 }

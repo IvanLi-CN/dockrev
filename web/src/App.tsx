@@ -32,7 +32,7 @@ import { useRoute } from "./useRoute";
 import { usePwaStatus } from "./pwaStatus";
 import { useManagementEventBatch, useManagementEvents } from "./managementEvents";
 import { AppShellStatusBanner } from "./components/AppShellStatusBanner";
-import { Button, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui";
+import { IconButton } from "./ui";
 import { RefreshCw } from "lucide-react";
 import { shouldApplyUpdateOnPathnameNavigation } from "./pwaUpdateLifecycle";
 import {
@@ -151,23 +151,9 @@ function ManagementEventsStatusBanner() {
       title="管理事件流重连中"
       detail={`${errorLabel}，${attemptLabel}。${lastActivityLabel}`}
       actions={
-        <TooltipProvider delayDuration={160}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label="立即重试管理事件流"
-                title="立即重试管理事件流"
-                onClick={managementEvents.retryNow}
-              >
-                <RefreshCw size={16} aria-hidden="true" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>立即重试管理事件流</TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        <IconButton title="立即重试管理事件流" onClick={managementEvents.retryNow}>
+          <RefreshCw size={16} aria-hidden="true" />
+        </IconButton>
       }
     />
   )

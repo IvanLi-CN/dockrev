@@ -90,14 +90,14 @@ function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' | 'info' {
   return 'muted'
 }
 
-function sseStatusLabel(status: 'connecting' | 'live' | 'stale'): string {
-  if (status === 'live') return 'SSE 已连接'
-  if (status === 'stale') return 'SSE 重连中'
+function sseStatusLabel(status: 'connecting' | 'connected' | 'reconnecting'): string {
+  if (status === 'connected') return 'SSE 已连接'
+  if (status === 'reconnecting') return 'SSE 重连中'
   return 'SSE 连接中'
 }
 
-function sseStatusTone(status: 'connecting' | 'live' | 'stale'): 'ok' | 'warn' {
-  if (status === 'live') return 'ok'
+function sseStatusTone(status: 'connecting' | 'connected' | 'reconnecting'): 'ok' | 'warn' {
+  if (status === 'connected') return 'ok'
   return 'warn'
 }
 
