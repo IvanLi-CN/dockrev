@@ -220,4 +220,22 @@ describe('createManagementEventTransport', () => {
     expect(sourceUrls).toEqual(['/api/events', '/api/events?afterId=generation-a%3A7'])
     transport.dispose()
   })
+
+  test('does not advance the replay cursor from a heartbeat id', () => {
+    const { sources, sourceUrls, transport, syncReasons } = createHarness()
+    transport.start()
+    sources[0].emit('open')
+    sources[0].emit('management', validManagementEvent(), 'generation-a:7')
+    sources[0].emit(
+      'management_heartbeat',
+      validHeartbeat(),
+      'generation-a:99',
+    )
+
+    expect(syncReasons.at(-1)).toBe('protocol_invalid')
+    transport.retryNow()
+
+    expect(sourceUrls).toEqual(['/api/events', '/api/events?afterId=generation-a%3A7'])
+    transport.dispose()
+  })
 })
