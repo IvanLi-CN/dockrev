@@ -36,11 +36,12 @@ class FakeEventSource {
 
 class FakeScheduler {
   private nextId = 1
-  private tasks = new Map<number, { callback: () => void; delay: number }>()
+  private currentTime = 0
+  private tasks = new Map<number, { callback: () => void; dueAt: number; delay: number }>()
 
   setTimeout = (callback: () => void, delay: number) => {
     const id = this.nextId++
-    this.tasks.set(id, { callback, delay })
+    this.tasks.set(id, { callback, dueAt: this.currentTime + delay, delay })
     return id
   }
 
@@ -49,23 +50,32 @@ class FakeScheduler {
   }
 
   pendingDelays() {
-    return Array.from(this.tasks.values()).map((task) => task.delay)
+    return Array.from(this.tasks.values()).map((task) => task.dueAt - this.currentTime)
+  }
+
+  advance(delay: number) {
+    this.currentTime += delay
+    const due = Array.from(this.tasks.entries()).filter(([, task]) => task.dueAt <= this.currentTime)
+    for (const [id, task] of due) {
+      this.tasks.delete(id)
+      task.callback()
+    }
+    return due.length
   }
 
   run(delay: number) {
-    const entry = Array.from(this.tasks.entries()).find(([, task]) => task.delay === delay)
-    if (!entry) throw new Error(`No timer with delay ${delay}`)
-    const [id, task] = entry
-    this.tasks.delete(id)
-    task.callback()
+    if (this.advance(delay) === 0) throw new Error(`No timer due after ${delay}ms`)
   }
 
   runAll() {
     while (this.tasks.size > 0) {
-      const [id, task] = this.tasks.entries().next().value as [number, { callback: () => void; delay: number }]
-      this.tasks.delete(id)
-      task.callback()
+      const nextDueAt = Math.min(...Array.from(this.tasks.values()).map((task) => task.dueAt))
+      this.run(nextDueAt - this.currentTime)
     }
+  }
+
+  now() {
+    return this.currentTime
   }
 }
 
@@ -82,7 +92,7 @@ function createHarness() {
       return source
     },
     scheduler,
-    now: () => 10_000,
+    now: () => scheduler.now(),
     onSnapshot: (snapshot) => snapshots.push(snapshot),
     onOpen: () => syncReasons.push('open'),
     onManagement: () => syncReasons.push('management'),
@@ -157,6 +167,23 @@ describe('createManagementEventTransport', () => {
     expect(sources).toHaveLength(1)
     expect(syncReasons).toEqual(['open', 'management', 'heartbeat', 'protocol_invalid', 'protocol_invalid'])
     expect(scheduler.pendingDelays()).toHaveLength(1)
+    transport.dispose()
+  })
+
+  test('treats malformed payloads as activity before applying the deadline', () => {
+    const { scheduler, sources, transport } = createHarness()
+    transport.start()
+    sources[0].emit('open')
+    scheduler.advance(MANAGEMENT_TRANSPORT_DEADLINE_MS - 2)
+
+    sources[0].emit('management_heartbeat', JSON.stringify({ type: 'wrong' }))
+    scheduler.advance(1)
+
+    expect(sources[0].closed).toBe(false)
+    scheduler.advance(MANAGEMENT_TRANSPORT_DEADLINE_MS - 2)
+    expect(sources[0].closed).toBe(false)
+    scheduler.run(1)
+    expect(sources[0].closed).toBe(true)
     transport.dispose()
   })
 

@@ -202,33 +202,33 @@ export function createManagementEventTransport(options: ManagementTransportOptio
   const handleManagement = (token: number, event: unknown) => {
     if (disposed || token !== session || !source) return
     const payload = parseData(event)
+    markActivity(token)
     if (!isManagementEvent(payload)) {
       protocolInvalid()
       return
     }
-    markActivity(token)
     options.onManagement(payload)
   }
 
   const handleHeartbeat = (token: number, event: unknown) => {
     if (disposed || token !== session || !source) return
     const payload = parseData(event)
+    markActivity(token)
     if (!isHeartbeat(payload)) {
       protocolInvalid()
       return
     }
-    markActivity(token)
     options.onHeartbeat()
   }
 
   const handleResyncRequired = (token: number, event: unknown) => {
     if (disposed || token !== session || !source) return
     const payload = parseData(event)
+    markActivity(token)
     if (!isResyncRequired(payload)) {
       protocolInvalid()
       return
     }
-    markActivity(token)
     options.onResyncRequired()
   }
 

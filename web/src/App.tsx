@@ -276,19 +276,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    const refreshOnForeground = () => {
-      if (document.visibilityState !== "visible") return;
-      void refreshDeployCheckGate(true).catch(() => {});
-    };
     void refreshDeployCheckGate(true).catch(() => {
-      if (!cancelled) setDeployCheckGate("loading");
+      setDeployCheckGate("loading");
     });
-    document.addEventListener("visibilitychange", refreshOnForeground);
-    return () => {
-      cancelled = true;
-      document.removeEventListener("visibilitychange", refreshOnForeground);
-    };
   }, [refreshDeployCheckGate]);
 
   useManagementEventBatch(({ events, resyncRequired }) => {

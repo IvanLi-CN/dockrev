@@ -166,6 +166,9 @@ async fn management_events_emit_named_heartbeat_without_cursor_mutation() {
     assert_eq!(first_payload["type"], "management_heartbeat");
     assert_eq!(first_payload["generation"], generation);
 
+    let duplicate = tokio::time::timeout(Duration::from_secs(1), body.frame()).await;
+    assert!(duplicate.is_err(), "heartbeat cadence emitted a duplicate immediate tick");
+
     let second = wait_for_sse_event(
         &mut body,
         "management_heartbeat",

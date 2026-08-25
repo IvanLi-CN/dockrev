@@ -116,6 +116,7 @@ export const ManagementSseRecovery: Story = {
     expectStory(Boolean(canvasElement.querySelector('[aria-label="立即重试管理事件流"]')), 'management retry must remain accessible')
     await waitForCondition(() => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.managementEventSourceCalls ?? 0) === 2)
     await waitForCondition(() => !canvasElement.querySelector('.shellStatusBanner-warning'))
+    await sleep(16_000)
     expectStory(Number(globalThis.__DOCKREV_MOCK_DEBUG__?.managementEventSourceCalls ?? 0) === 2, 'protocol-invalid payload must not create a third management source')
   },
 }

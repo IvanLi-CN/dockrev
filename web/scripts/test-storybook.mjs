@@ -963,6 +963,7 @@ async function runInteractive({ baseUrl, browser }) {
         { timeout: 10_000 },
       );
       await page.locator(".shellStatusBanner-warning").waitFor({ state: "detached", timeout: 10_000 });
+      await page.waitForTimeout(16_000);
       const sourceCalls = await page.evaluate(() => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.managementEventSourceCalls ?? 0));
       if (sourceCalls !== 2) {
         throw new Error(`Expected exactly two management EventSource instances, got ${sourceCalls}.`);

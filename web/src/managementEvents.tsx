@@ -100,21 +100,21 @@ export function ManagementEventsProvider({ children }: { children: ReactNode }) 
       createEventSource: (url) => new EventSource(url, { withCredentials: true }),
       onSnapshot: setTransportSnapshot,
       onOpen: () => {
-      // A snapshot after each connect closes the REST-to-SSE subscription gap.
-      if (resumeSyncPendingRef.current) {
-        resumeSyncPendingRef.current = false
-        return
-      }
-      resyncRequiredRef.current = true
-      requestFlush()
+        // A snapshot after each connect closes the REST-to-SSE subscription gap.
+        if (resumeSyncPendingRef.current) {
+          resumeSyncPendingRef.current = false
+          return
+        }
+        resyncRequiredRef.current = true
+        requestFlush()
       },
       onManagement: (event) => {
         mergeEvent(pendingRef.current, event)
         requestFlush()
       },
       onResyncRequired: () => {
-      resyncRequiredRef.current = true
-      requestFlush()
+        resyncRequiredRef.current = true
+        requestFlush()
       },
       onHeartbeat: () => {},
       onProtocolInvalid: () => {
@@ -125,11 +125,9 @@ export function ManagementEventsProvider({ children }: { children: ReactNode }) 
     transportRef.current = transport
     const onVisibility = () => {
       if (document.visibilityState !== 'visible') return
-      if (!resumeSyncPendingRef.current) {
-        resumeSyncPendingRef.current = true
-        resyncRequiredRef.current = true
-        requestFlush()
-      }
+      resumeSyncPendingRef.current = true
+      resyncRequiredRef.current = true
+      requestFlush()
       transport.resume()
     }
 
