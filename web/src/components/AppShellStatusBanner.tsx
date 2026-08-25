@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
 export function AppShellStatusBanner(props: {
-  tone: 'update' | 'offline' | 'ready'
+  tone: 'update' | 'offline' | 'ready' | 'warning'
   title: string
   detail: string
   actions?: ReactNode

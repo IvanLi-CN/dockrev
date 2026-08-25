@@ -330,7 +330,7 @@ export function useServiceDetailPageState(props: {
     await refresh()
     refreshTriggerRef.current = 'background'
   }, [refresh])
-  const pageResumeRefresh = usePageResumeRefresh(backgroundRefresh, { onError: (error: unknown) => { if (pageGeneration === pageGenerationRef.current) setError(errorMessage(error)) } })
+  const pageResumeRefresh = usePageResumeRefresh(backgroundRefresh, { enabled: false, onError: (error: unknown) => { if (pageGeneration === pageGenerationRef.current) setError(errorMessage(error)) } })
   const requestRefresh = useCallback((trigger: AsyncDataTrigger = 'background') => {
     refreshTriggerRef.current = trigger
     setRefreshTrigger(trigger)

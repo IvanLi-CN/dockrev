@@ -26,6 +26,20 @@
 - Removed the Web UI dependency on live `/api/services/{id}/digest-tags`; owner-facing reads now use snapshot semantics.
 - Removed Web dependency on `/github-releases/locate`; the drawer now uses unified `release-notes/locate` anchor windows and `direction=older|newer` cursors instead of client-side progressive scans.
 - Replaced `15s` SSE keepalive intervals with `5s` heartbeat + immediate keepalive comment on connect.
+- Management SSE now emits a named, cursor-free heartbeat immediately and every five seconds. A per-tab application transport controller owns the single EventSource, closes stale sessions, rebuilds with bounded `1/2/5/10/15s` backoff, expires silent sessions after 15 seconds, and exposes connection diagnostics and manual retry.
+- Controlled replacement sessions carry the latest received SSE cursor through the endpoint's `afterId` query parameter, preserving bounded replay and `resync_required` behavior after the old EventSource is closed.
+- Cursor-free heartbeat frames are accepted with the browser-inherited `MessageEvent.lastEventId`; only management and resync events advance the replacement cursor.
+- Deploy-check gate reads are sequenced per App instance so a slower initial or stale refresh response cannot overwrite a newer gate result.
+- The InteractiveApp foreground-resume browser regression owns the visibility transition so the Story play hook cannot trigger a duplicate replacement session.
+- Deploy-check gate failures are also sequence-checked, so an older rejected request cannot reset a newer successful gate to loading.
+- Foreground replacement sessions publish `reconnecting` until they open, keeping the scoped retry diagnostic visible during recovery.
+- The reconnect diagnostic distinguishes a zero-attempt foreground recovery from the initial connection instead of labeling both as first connect.
+- Provider-owned `resyncRequired` batches trigger a background deploy-check refresh while ordinary deploy-check invalidations read the updated REST report without duplicate enqueueing.
+- Management transport recovery is separate from page synchronization: open and foreground resume enqueue one REST resync, protocol-invalid management/heartbeat payloads keep the transport connected while requesting one resync, and service logs/resource streams retain their independent ownership.
+- Foreground management resync is provider-owned: page-level resume refreshes do not duplicate the same visibility synchronization, later visibility transitions re-arm recovery after failed opens, and malformed payloads refresh the activity deadline before protocol classification.
+- Updated the deploy-check source guard to assert Provider-owned foreground invalidation and to prevent the removed page-level visibility listener from returning.
+- Management transport lifecycle coverage is deterministic: injectable EventSource/scheduler tests cover replacement, fixed backoff, deadlines, late callbacks, protocol-invalid payloads, foreground resume, and disposal; the mock-only recovery story verifies scoped diagnostics and accessible manual retry.
+- Owner-approved mock-only visual evidence covers the reconnecting management Alert at desktop and `393x852` mobile viewports; mobile actions use a two-column Alert layout with the retry control anchored to the lower-right edge.
 - Added Storybook coverage for cleanup pending state and deploy-check cached-refreshing / initial-pending states.
 - Added the application-level deploy-check gate: startup and foreground resume await a fresh report, required core failures force `/deploy-check`, and the failure page disables Dashboard entry regardless of `neverAutoOpen`.
 - Added deterministic mock-only Storybook pass/fail coverage for desktop and `393x852` mobile views; final smoke validation passes all 321 stories.

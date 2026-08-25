@@ -535,6 +535,7 @@ export function installDockrevMockApi(
       })
     }
     if (urlPath === '/api/events' && method === 'GET') {
+      if (options.managementEventsPayload != null) return new Response(options.managementEventsPayload, { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'x-accel-buffering': 'no' } })
       const headers = init?.headers
       const headerCursor = headers instanceof Headers
         ? headers.get('Last-Event-ID')
@@ -562,7 +563,7 @@ export function installDockrevMockApi(
       }
       const events = managementEvents.filter((event) => event.id > afterId).slice(0, 200)
       const body = events.map((event) => `id: ${event.cursor}\nevent: management\ndata: ${JSON.stringify(event.data)}\n\n`).join('')
-      return new Response(body || ': keep-alive\n\n', { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'x-accel-buffering': 'no', 'x-dockrev-management-cursor': formatMockManagementCursor(managementEventsGeneration, latestId) } })
+      return new Response(`${body || ': keep-alive\n\n'}event: management_heartbeat\ndata: ${JSON.stringify({ type: 'management_heartbeat', generation: managementEventsGeneration })}\n\n`, { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'x-accel-buffering': 'no', 'x-dockrev-management-cursor': formatMockManagementCursor(managementEventsGeneration, latestId) } })
     }
     if (urlPath === '/api/jobs/events' && method === 'GET' && options.jobsEventsPayload != null) {
       const debug = globalThis.__DOCKREV_MOCK_DEBUG__ ?? (globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug())

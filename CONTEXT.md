@@ -17,3 +17,13 @@
 - `neutral refresh state` is the visible `回滚信息刷新中…` state shown while the service digest and rollback target are being reconciled. It must not expose an older unavailable reason.
 - `update settled event` is the management SSE `jobs` event with `summary.terminal=true`. It triggers the current service detail refresh after the update job leaves `queued` or `running`.
 - A successful target response exits neutral refresh and clears the transient refresh error. Retry exhaustion or a failed target request clears stale target and active rollback snapshots and leaves a retryable error.
+
+## Management Event Transport
+
+- `management event transport` is the one per-tab stream that carries management invalidations. Its health describes only that stream, never the health or freshness of independent service-log, resource-monitoring, or job-log streams.
+- `transport connected` means the management event transport has an established stream. `transport reconnecting` means that stream is being replaced after a transport failure. These states do not claim that every page snapshot has finished refreshing.
+- `page synchronization` is a page-owned REST refresh caused by a management invalidation or a transport reconnection. A page can be synchronizing while the management event transport is connected.
+- `protocol-invalid management event` is an event whose payload cannot satisfy the management-event contract. It is a data-correctness condition, not evidence that the transport itself is disconnected.
+- `observable management heartbeat` is a management event that proves a browser received the management event transport. It is distinct from a proxy keepalive comment, which can keep an HTTP connection alive without proving client delivery.
+- `management transport session` is one owned, replaceable per-tab management stream. A foreground resume or recovery starts a fresh session before page synchronization resumes.
+- `recovery synchronization` is the one-time page synchronization triggered after a transport session is connected, resumed, or found to have received a protocol-invalid event.

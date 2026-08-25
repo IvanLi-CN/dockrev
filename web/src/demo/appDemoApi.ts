@@ -6,6 +6,7 @@ import {
   PUBLIC_DEMO_GITHUB_RELEASES_BY_SERVICE_ID,
   readPublicDemoAsyncState,
   readPublicDemoCleanupScenario,
+  readPublicDemoManagementEvents,
   readPublicDemoScenario,
   savePublicDemoFixture,
 } from './publicDemoControls'
@@ -82,6 +83,7 @@ export async function installAppDemoApi(): Promise<DemoInstallResult> {
 
   const scenario = readPublicDemoScenario()
   const asyncState = readPublicDemoAsyncState()
+  const managementEvents = readPublicDemoManagementEvents()
   const initialFixture = loadPublicDemoFixture()
   savePublicDemoFixture(initialFixture)
   if (asyncState === 'cold') {
@@ -98,7 +100,12 @@ export async function installAppDemoApi(): Promise<DemoInstallResult> {
     githubReleasesByServiceId: PUBLIC_DEMO_GITHUB_RELEASES_BY_SERVICE_ID,
     initialFixture,
     onStateChange: savePublicDemoFixture,
-    dockrevApiBehaviorByRoute: asyncBehavior(asyncState),
+    dockrevApiBehaviorByRoute: {
+      ...(asyncBehavior(asyncState) ?? {}),
+      ...(managementEvents === 'reconnecting'
+        ? { 'GET /api/events': { failTimes: 100, failureStatus: 503 } }
+        : {}),
+    },
   })
   installed = true
   return { enabled: true, mode: 'app' }

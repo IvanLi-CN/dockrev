@@ -16138,6 +16138,11 @@ html[data-theme="light"] .homepageHeaderSearchPopover {
   background: color-mix(in srgb, var(--color-info) 10%, var(--panel2) 90%);
 }
 
+.shellStatusBanner-warning {
+  border-color: color-mix(in srgb, var(--color-warning) 44%, var(--surface-border-strong) 56%);
+  background: color-mix(in srgb, var(--color-warning) 12%, var(--panel2) 88%);
+}
+
 .readonlySnapshotNotice {
   display: flex;
   align-items: flex-start;
@@ -16209,8 +16214,21 @@ html[data-theme="light"] .homepageHeaderSearchPopover {
     align-items: stretch;
   }
 
+  .shellStatusBanner {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+  }
+
+  .shellStatusBannerText {
+    grid-column: 1;
+    min-width: 0;
+  }
+
   .shellStatusBannerActions {
-    justify-content: flex-start;
+    grid-column: 2;
+    align-self: end;
+    justify-content: flex-end;
   }
 
   .pwaUpdateBubble {

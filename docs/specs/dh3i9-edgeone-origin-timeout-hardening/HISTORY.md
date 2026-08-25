@@ -11,3 +11,15 @@
 - 管理页面改用应用级 SSE：缓存 deploy-check PASS 立即放行并后台复核；事件仅保存在 60 秒或 1024 条的进程内环形缓冲，断线通过游标补发或 REST 重同步恢复，且不保留轮询降级。
 - 管理事件发布覆盖任务进度与摘要更新、Discovery 人工归档/恢复、GHCR 配置/目标/仓库选择以及 webhook 状态变更，确保管理页面无需轮询仍能同步跨标签写入。
 - 2026-08-24: Cleanup confirm/apply freshness is fixed at 300 seconds. Confirm polling now uses a visible retryable status rail with stable short labels, and failed workers exit pending with an explicit API error.
+- 2026-08-25: Management SSE recovery is application-owned per tab: named cursor-free heartbeats make silent sessions observable, failed or stale sessions are replaced with bounded backoff, foreground resume rebuilds the session, and protocol-invalid payloads remain connected while triggering one REST resync. The transport warning is scoped to management events and does not affect independent logs or resource streams.
+- 2026-08-25: Added deterministic management transport lifecycle tests and a mock-only reconnecting UI demonstration covering scoped diagnostics, fixed retry backoff, accessible manual retry, and recovery without management polling.
+- 2026-08-25: Owner-approved reconnecting-state evidence records the desktop page and the `393x852` mobile Alert layout, including the lower-right retry action placement.
+- 2026-08-25: Foreground recovery now has one Provider-owned REST sync per visibility transition, failed replacement opens cannot suppress a later resume, and malformed payloads count as activity before remaining connected as `protocol_invalid`.
+- 2026-08-25: The deploy-check regression guard now proves foreground invalidation comes from the management event batch and rejects duplicate page-level visibility listeners.
+- 2026-08-25: Controlled management EventSource replacement now carries the latest received cursor through `afterId`, preserving replay and resync semantics across application-owned session rebuilds.
+- 2026-08-25: Initial management connection is quiet until it fails; browser-inherited cursors on id-less heartbeats are accepted without advancing replay state.
+- 2026-08-25: Deploy-check gate reads now ignore out-of-order responses, preventing stale initial requests from resetting a newer result.
+- 2026-08-25: Foreground-resume browser coverage now triggers one visibility transition per test owner, keeping the replacement-source assertion deterministic.
+- 2026-08-25: Stale deploy-check failures no longer reset a newer gate, and foreground replacement sessions remain visibly reconnecting until open.
+- 2026-08-25: Foreground recovery diagnostics now use recovery wording for a zero-attempt replacement instead of first-connection wording.
+- 2026-08-25: Foreground management resyncs now revalidate deploy-check in the background while ordinary deploy-check events avoid duplicate refresh jobs.

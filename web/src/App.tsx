@@ -31,6 +31,9 @@ import { UnauthorizedPage } from "./pages/UnauthorizedPage";
 import { useRoute } from "./useRoute";
 import { usePwaStatus } from "./pwaStatus";
 import { useManagementEventBatch, useManagementEvents } from "./managementEvents";
+import { AppShellStatusBanner } from "./components/AppShellStatusBanner";
+import { IconButton } from "./ui";
+import { RefreshCw } from "lucide-react";
 import { shouldApplyUpdateOnPathnameNavigation } from "./pwaUpdateLifecycle";
 import {
   AUTH_RECOVERED_EVENT,
@@ -122,10 +125,45 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string } {
   }
 }
 
+function ManagementEventsStatusBanner() {
+  const managementEvents = useManagementEvents()
+  if (managementEvents.connection !== "reconnecting") return null
+
+  const errorLabel = managementEvents.lastError === "eventsource_error"
+    ? "连接错误"
+    : managementEvents.lastError === "open_timeout"
+      ? "连接打开超时"
+      : managementEvents.lastError === "heartbeat_timeout"
+        ? "心跳超时"
+        : managementEvents.lastError === "protocol_invalid"
+          ? "协议数据异常"
+          : "等待连接"
+  const attemptLabel = managementEvents.connection === "reconnecting"
+    ? managementEvents.reconnectAttempt > 0
+      ? `第 ${managementEvents.reconnectAttempt} 次重试`
+      : "恢复连接"
+    : "首次连接"
+  const lastActivityLabel = managementEvents.lastActivityAt
+    ? `最近活动：${new Date(managementEvents.lastActivityAt).toLocaleTimeString()}。`
+    : "尚未收到管理事件。"
+
+  return (
+    <AppShellStatusBanner
+      tone="warning"
+      title="管理事件流重连中"
+      detail={`${errorLabel}，${attemptLabel}。${lastActivityLabel}`}
+      actions={
+        <IconButton title="立即重试管理事件流" onClick={managementEvents.retryNow}>
+          <RefreshCw size={16} aria-hidden="true" />
+        </IconButton>
+      }
+    />
+  )
+}
+
 export default function App() {
   const route = useRoute();
   const { applyUpdateOnNavigation } = usePwaStatus();
-  const managementEvents = useManagementEvents();
   const [releaseDrawerState, setReleaseDrawerState] = useState(() =>
     readGitHubReleaseDrawerState(),
   );
@@ -158,6 +196,7 @@ export default function App() {
   const authIdentityRefreshInFlightRef = useRef(false);
   const suppressNextAuthRecoveredRef = useRef(false);
   const deployCheckBackgroundRefreshInFlightRef = useRef(false);
+  const deployCheckGateRequestIdRef = useRef(0);
   const previousRoutePathRef = useRef<string | null>(null);
   const previousUpdateNavigationPathRef = useRef<string | null>(null);
 
@@ -219,7 +258,9 @@ export default function App() {
     }
   }, []);
   const refreshDeployCheckGate = useCallback(async (requestBackgroundRefresh = false) => {
+    const requestId = ++deployCheckGateRequestIdRef.current;
     const envelope = await loadDeployCheckReport();
+    if (requestId !== deployCheckGateRequestIdRef.current) return;
     const report = envelope.report;
     if (!report) return;
     const blocked = hasBlockingDeployCheckFailure(report);
@@ -240,19 +281,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    const refreshOnForeground = () => {
-      if (document.visibilityState !== "visible") return;
-      void refreshDeployCheckGate(true).catch(() => {});
-    };
+    const requestId = deployCheckGateRequestIdRef.current + 1;
     void refreshDeployCheckGate(true).catch(() => {
-      if (!cancelled) setDeployCheckGate("loading");
+      if (requestId === deployCheckGateRequestIdRef.current) {
+        setDeployCheckGate("loading");
+      }
     });
-    document.addEventListener("visibilitychange", refreshOnForeground);
-    return () => {
-      cancelled = true;
-      document.removeEventListener("visibilitychange", refreshOnForeground);
-    };
   }, [refreshDeployCheckGate]);
 
   useManagementEventBatch(({ events, resyncRequired }) => {
@@ -260,7 +294,7 @@ export default function App() {
       resyncRequired ||
       events.some((event) => event.domain === "deploy_check")
     ) {
-      void refreshDeployCheckGate().catch(() => {});
+      void refreshDeployCheckGate(resyncRequired).catch(() => {});
     }
   });
 
@@ -463,14 +497,7 @@ export default function App() {
         authIdentity={authIdentity}
         lastScanHint={lastScanHint}
       >
-        {managementEvents.connection !== "live" ? (
-          <div className="error" role="status" aria-live="polite">
-            实时连接已中断，正在重连；当前数据可能不是最新。
-            {managementEvents.lastSynchronizedAt
-              ? ` 上次同步：${new Date(managementEvents.lastSynchronizedAt).toLocaleString()}。`
-              : ""}
-          </div>
-        ) : null}
+        <ManagementEventsStatusBanner />
         <UnauthorizedPage authDetails={authFailure} />
       </AppShell>
     );
@@ -517,14 +544,7 @@ export default function App() {
         authIdentity={authIdentity}
         lastScanHint={lastScanHint}
       >
-        {managementEvents.connection !== "live" ? (
-          <div className="error" role="status" aria-live="polite">
-            实时连接已中断，正在重连；当前数据可能不是最新。
-            {managementEvents.lastSynchronizedAt
-              ? ` 上次同步：${new Date(managementEvents.lastSynchronizedAt).toLocaleString()}。`
-              : ""}
-          </div>
-        ) : null}
+        <ManagementEventsStatusBanner />
         {route.name === "overview" ? (
           <OverviewPage
             onLastScanHint={setLastScanHint}

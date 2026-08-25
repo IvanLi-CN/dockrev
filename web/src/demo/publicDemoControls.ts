@@ -30,6 +30,8 @@ export const PUBLIC_DEMO_CLEANUP_SCENARIOS = [
 export type PublicDemoCleanupScenario = (typeof PUBLIC_DEMO_CLEANUP_SCENARIOS)[number]
 export const PUBLIC_DEMO_ASYNC_STATES = ['default', 'cold', 'cache-refresh', 'error'] as const
 export type PublicDemoAsyncState = (typeof PUBLIC_DEMO_ASYNC_STATES)[number]
+export const PUBLIC_DEMO_MANAGEMENT_EVENTS = ['default', 'reconnecting'] as const
+export type PublicDemoManagementEvents = (typeof PUBLIC_DEMO_MANAGEMENT_EVENTS)[number]
 const PUBLIC_DEMO_VERSION_SERVICE_ID = 'svc-prod-api'
 const PUBLIC_DEMO_VERSION_REPO_URL = 'https://github.com/acme/api'
 
@@ -86,6 +88,12 @@ function parsePublicDemoAsyncState(value: string | null | undefined): PublicDemo
     : 'default'
 }
 
+function parsePublicDemoManagementEvents(value: string | null | undefined): PublicDemoManagementEvents {
+  return value != null && PUBLIC_DEMO_MANAGEMENT_EVENTS.includes(value as PublicDemoManagementEvents)
+    ? value as PublicDemoManagementEvents
+    : 'default'
+}
+
 function parsePublicDemoCleanupScenario(value: string | null | undefined): PublicDemoCleanupScenario {
   return value != null && PUBLIC_DEMO_CLEANUP_SCENARIOS.includes(value as PublicDemoCleanupScenario)
     ? (value as PublicDemoCleanupScenario)
@@ -105,6 +113,15 @@ export function readPublicDemoAsyncState(): PublicDemoAsyncState {
   if (typeof window === 'undefined') return 'default'
   try {
     return parsePublicDemoAsyncState(new URL(window.location.href).searchParams.get('demoAsyncState'))
+  } catch {
+    return 'default'
+  }
+}
+
+export function readPublicDemoManagementEvents(): PublicDemoManagementEvents {
+  if (typeof window === 'undefined') return 'default'
+  try {
+    return parsePublicDemoManagementEvents(new URL(window.location.href).searchParams.get('demoManagementEvents'))
   } catch {
     return 'default'
   }

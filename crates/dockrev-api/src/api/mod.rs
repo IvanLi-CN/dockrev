@@ -107,6 +107,14 @@ async fn management_events(
     let stream = async_stream::stream! {
         let _connection = connection;
         yield Ok::<_, std::convert::Infallible>(Event::default().comment("keep-alive"));
+        yield Ok::<_, std::convert::Infallible>(Event::default()
+            .event("management_heartbeat")
+            .data(serde_json::json!({
+                "type": "management_heartbeat",
+                "generation": hub.generation(),
+            }).to_string()));
+        let mut heartbeat = tokio::time::interval(Duration::from_secs(EDGE_PROXY_SAFE_SSE_HEARTBEAT_SECONDS));
+        heartbeat.tick().await;
         let mut cursor = last_event_id;
         loop {
             let notified = hub.notified();
@@ -139,7 +147,17 @@ async fn management_events(
                         }).to_string()));
                 }
             }
-            notified.await;
+            tokio::select! {
+                _ = notified => {}
+                _ = heartbeat.tick() => {
+                    yield Ok::<_, std::convert::Infallible>(Event::default()
+                        .event("management_heartbeat")
+                        .data(serde_json::json!({
+                            "type": "management_heartbeat",
+                            "generation": hub.generation(),
+                        }).to_string()));
+                }
+            }
         }
     };
     let mut response_headers = HeaderMap::new();

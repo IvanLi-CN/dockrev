@@ -9,6 +9,13 @@ import {
   type ReactNode,
 } from 'react'
 import { apiBaseUrl } from './api'
+import {
+  createManagementEventTransport,
+  type ManagementEventTransport,
+  type ManagementEventPayload,
+  type ManagementTransportError,
+  type ManagementTransportSnapshot,
+} from './managementEventTransport'
 
 export const MANAGEMENT_EVENTS_BATCH_EVENT = 'dockrev:management-events'
 
@@ -17,13 +24,7 @@ export type ManagementEventEntity = {
   id: string
 }
 
-export type ManagementEvent = {
-  type: 'entities_changed'
-  domain: string
-  entities: ManagementEventEntity[]
-  version: number
-  summary: Record<string, unknown>
-}
+export type ManagementEvent = ManagementEventPayload
 
 export type ManagementEventBatch = {
   events: ManagementEvent[]
@@ -31,8 +32,13 @@ export type ManagementEventBatch = {
 }
 
 type ManagementEventsState = {
-  connection: 'connecting' | 'live' | 'stale'
+  connection: 'connecting' | 'connected' | 'reconnecting'
   lastSynchronizedAt: number | null
+  reconnectAttempt: number
+  lastConnectedAt: number | null
+  lastActivityAt: number | null
+  lastError: ManagementTransportError
+  retryNow: () => void
 }
 
 const ManagementEventsContext = createContext<ManagementEventsState | null>(null)
@@ -52,10 +58,18 @@ function mergeEvent(batch: Map<string, ManagementEvent>, event: ManagementEvent)
 }
 
 export function ManagementEventsProvider({ children }: { children: ReactNode }) {
-  const [connection, setConnection] = useState<ManagementEventsState['connection']>('connecting')
+  const [transportSnapshot, setTransportSnapshot] = useState<ManagementTransportSnapshot>({
+    connection: 'connecting',
+    reconnectAttempt: 0,
+    lastConnectedAt: null,
+    lastActivityAt: null,
+    lastError: null,
+  })
   const [lastSynchronizedAt, setLastSynchronizedAt] = useState<number | null>(null)
   const pendingRef = useRef(new Map<string, ManagementEvent>())
+  const transportRef = useRef<ManagementEventTransport | null>(null)
   const resyncRequiredRef = useRef(false)
+  const resumeSyncPendingRef = useRef(false)
   const flushQueuedRef = useRef(false)
 
   const flush = useCallback(() => {
@@ -81,47 +95,62 @@ export function ManagementEventsProvider({ children }: { children: ReactNode }) 
   }, [flush])
 
   useEffect(() => {
-    const source = new EventSource(managementEventsUrl(), { withCredentials: true })
-    const onOpen = () => {
-      setConnection('live')
-      // A snapshot after each connect closes the REST-to-SSE subscription gap.
-      resyncRequiredRef.current = true
-      requestFlush()
-    }
-    const onManagement = (raw: Event) => {
-      if (!(raw instanceof MessageEvent) || typeof raw.data !== 'string') return
-      try {
-        const event = JSON.parse(raw.data) as ManagementEvent
-        if (!event || event.type !== 'entities_changed' || !Array.isArray(event.entities)) return
+    const transport = createManagementEventTransport({
+      url: managementEventsUrl(),
+      createEventSource: (url) => new EventSource(url, { withCredentials: true }),
+      onSnapshot: setTransportSnapshot,
+      onOpen: () => {
+        // A snapshot after each connect closes the REST-to-SSE subscription gap.
+        if (resumeSyncPendingRef.current) {
+          resumeSyncPendingRef.current = false
+          return
+        }
+        resyncRequiredRef.current = true
+        requestFlush()
+      },
+      onManagement: (event) => {
         mergeEvent(pendingRef.current, event)
         requestFlush()
-      } catch {
-        setConnection('stale')
-      }
-    }
-    const onResync = () => {
+      },
+      onResyncRequired: () => {
+        resyncRequiredRef.current = true
+        requestFlush()
+      },
+      onHeartbeat: () => {},
+      onProtocolInvalid: () => {
+        resyncRequiredRef.current = true
+        requestFlush()
+      },
+    })
+    transportRef.current = transport
+    const onVisibility = () => {
+      if (document.visibilityState !== 'visible') return
+      resumeSyncPendingRef.current = true
       resyncRequiredRef.current = true
       requestFlush()
-    }
-    const onError = () => setConnection('stale')
-    const onVisibility = () => {
-      if (document.visibilityState === 'visible') requestFlush()
+      transport.resume()
     }
 
-    source.addEventListener('open', onOpen)
-    source.addEventListener('management', onManagement)
-    source.addEventListener('resync_required', onResync)
-    source.addEventListener('error', onError)
+    transport.start()
     document.addEventListener('visibilitychange', onVisibility)
     return () => {
       document.removeEventListener('visibilitychange', onVisibility)
-      source.close()
+      transport.dispose()
+      transportRef.current = null
     }
   }, [requestFlush])
 
+  const retryNow = useCallback(() => {
+    transportRef.current?.retryNow()
+  }, [])
+
   const value = useMemo(
-    () => ({ connection, lastSynchronizedAt }),
-    [connection, lastSynchronizedAt],
+    () => ({
+      ...transportSnapshot,
+      lastSynchronizedAt,
+      retryNow,
+    }),
+    [lastSynchronizedAt, retryNow, transportSnapshot],
   )
   return <ManagementEventsContext.Provider value={value}>{children}</ManagementEventsContext.Provider>
 }
