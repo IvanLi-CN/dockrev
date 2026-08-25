@@ -129,6 +129,7 @@ export type DockrevMockApiOptions = {
   onStateChange?: (fixture: Fixture) => void
   jobsOverride?: JobListItem[]
   jobsEventsPayload?: string
+  managementEventsPayload?: string
   discoveryTimelineByServiceId?: Record<string, NewVersionDiscoveryTimelineResponse>
   discoveryTimelineErrorServiceIds?: string[]
   githubReleasesByServiceId?: Record<string, DockrevMockGitHubReleasesDataset>
@@ -242,6 +243,10 @@ export class MockEventSource extends EventTarget {
       const debug = globalThis.__DOCKREV_MOCK_DEBUG__
       if (debug) debug.resourceUsageEventSourceCalls += 1
     }
+    if (this.url.includes('/api/events')) {
+      const debug = globalThis.__DOCKREV_MOCK_DEBUG__
+      if (debug) debug.managementEventSourceCalls += 1
+    }
     this.connect()
     this.pollTimer = window.setInterval(() => {
       this.connect()
@@ -255,6 +260,11 @@ export class MockEventSource extends EventTarget {
     if (!this.closeReported && this.url.includes('/resource-usage/events')) {
       const debug = globalThis.__DOCKREV_MOCK_DEBUG__
       if (debug) debug.resourceUsageEventSourceCloseCalls += 1
+      this.closeReported = true
+    }
+    if (!this.closeReported && this.url.includes('/api/events')) {
+      const debug = globalThis.__DOCKREV_MOCK_DEBUG__
+      if (debug) debug.managementEventSourceCloseCalls += 1
       this.closeReported = true
     }
     if (this.pollTimer != null) {
@@ -341,6 +351,8 @@ export type MockDebug = {
   lastComposeTagRequest: unknown | null
   resourceUsageEventSourceCalls: number
   resourceUsageEventSourceCloseCalls: number
+  managementEventSourceCalls: number
+  managementEventSourceCloseCalls: number
   resourceUsageLastSnapshot: ServiceResourceSample | null
   resourceUsageLastTick: ServiceResourceSample | null
 }
@@ -756,6 +768,8 @@ export function makeMockDebug(): MockDebug {
     lastComposeTagRequest: null,
     resourceUsageEventSourceCalls: 0,
     resourceUsageEventSourceCloseCalls: 0,
+    managementEventSourceCalls: 0,
+    managementEventSourceCloseCalls: 0,
     resourceUsageLastSnapshot: null,
     resourceUsageLastTick: null,
   }

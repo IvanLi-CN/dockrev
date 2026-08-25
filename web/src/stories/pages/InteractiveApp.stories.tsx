@@ -95,6 +95,31 @@ export const Dashboard: Story = {
   },
 }
 
+export const ManagementSseRecovery: Story = {
+  parameters: {
+    dockrevApiScenario: 'dashboard-demo',
+    dockrevApiBehaviorByRoute: {
+      'GET /api/events': { failTimes: 1, failureStatus: 503 },
+    },
+    dockrevManagementEventsPayload: 'event: management\ndata: {\n\n',
+  },
+  render: () => {
+    return (
+      <>
+        <LocationReset pathname="/" />
+        <App />
+      </>
+    )
+  },
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(canvasElement.querySelector('.shellStatusBanner-warning')))
+    expectStory(Boolean(canvasElement.querySelector('[aria-label="立即重试管理事件流"]')), 'management retry must remain accessible')
+    await waitForCondition(() => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.managementEventSourceCalls ?? 0) === 2)
+    await waitForCondition(() => !canvasElement.querySelector('.shellStatusBanner-warning'))
+    expectStory(Number(globalThis.__DOCKREV_MOCK_DEBUG__?.managementEventSourceCalls ?? 0) === 2, 'protocol-invalid payload must not create a third management source')
+  },
+}
+
 
 export const DashboardSlowUpdate: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo-slow-update' },

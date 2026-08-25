@@ -951,6 +951,27 @@ async function runInteractive({ baseUrl, browser }) {
     return page;
   };
 
+  // Management SSE recovery must replace a failed source and keep protocol-invalid data connected.
+  {
+    const page = await openStory("pages-interactiveapp--management-sse-recovery");
+    try {
+      await page.locator(".shellStatusBanner-warning").waitFor({ timeout: 10_000 });
+      await page.getByRole("button", { name: "立即重试管理事件流" }).waitFor({ timeout: 10_000 });
+      await page.waitForFunction(
+        () => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.managementEventSourceCalls ?? 0) === 2,
+        null,
+        { timeout: 10_000 },
+      );
+      await page.locator(".shellStatusBanner-warning").waitFor({ state: "detached", timeout: 10_000 });
+      const sourceCalls = await page.evaluate(() => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.managementEventSourceCalls ?? 0));
+      if (sourceCalls !== 2) {
+        throw new Error(`Expected exactly two management EventSource instances, got ${sourceCalls}.`);
+      }
+    } finally {
+      await page.close().catch(() => {});
+    }
+  }
+
   // Keep the rollback refresh race in the CI interaction suite, not only in the story play callback.
   await runRollbackRefreshRace({ baseUrl, browser });
 

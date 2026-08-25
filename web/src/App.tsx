@@ -31,6 +31,9 @@ import { UnauthorizedPage } from "./pages/UnauthorizedPage";
 import { useRoute } from "./useRoute";
 import { usePwaStatus } from "./pwaStatus";
 import { useManagementEventBatch, useManagementEvents } from "./managementEvents";
+import { AppShellStatusBanner } from "./components/AppShellStatusBanner";
+import { Button, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui";
+import { RefreshCw } from "lucide-react";
 import { shouldApplyUpdateOnPathnameNavigation } from "./pwaUpdateLifecycle";
 import {
   AUTH_RECOVERED_EVENT,
@@ -122,10 +125,57 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string } {
   }
 }
 
+function ManagementEventsStatusBanner() {
+  const managementEvents = useManagementEvents()
+  if (managementEvents.connection === "connected") return null
+
+  const errorLabel = managementEvents.lastError === "eventsource_error"
+    ? "连接错误"
+    : managementEvents.lastError === "open_timeout"
+      ? "连接打开超时"
+      : managementEvents.lastError === "heartbeat_timeout"
+        ? "心跳超时"
+        : managementEvents.lastError === "protocol_invalid"
+          ? "协议数据异常"
+          : "等待连接"
+  const attemptLabel = managementEvents.reconnectAttempt > 0
+    ? `第 ${managementEvents.reconnectAttempt} 次重试`
+    : "首次连接"
+  const lastActivityLabel = managementEvents.lastActivityAt
+    ? `最近活动：${new Date(managementEvents.lastActivityAt).toLocaleTimeString()}。`
+    : "尚未收到管理事件。"
+
+  return (
+    <AppShellStatusBanner
+      tone="warning"
+      title="管理事件流重连中"
+      detail={`${errorLabel}，${attemptLabel}。${lastActivityLabel}`}
+      actions={
+        <TooltipProvider delayDuration={160}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="立即重试管理事件流"
+                title="立即重试管理事件流"
+                onClick={managementEvents.retryNow}
+              >
+                <RefreshCw size={16} aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>立即重试管理事件流</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      }
+    />
+  )
+}
+
 export default function App() {
   const route = useRoute();
   const { applyUpdateOnNavigation } = usePwaStatus();
-  const managementEvents = useManagementEvents();
   const [releaseDrawerState, setReleaseDrawerState] = useState(() =>
     readGitHubReleaseDrawerState(),
   );
@@ -463,14 +513,7 @@ export default function App() {
         authIdentity={authIdentity}
         lastScanHint={lastScanHint}
       >
-        {managementEvents.connection !== "live" ? (
-          <div className="error" role="status" aria-live="polite">
-            实时连接已中断，正在重连；当前数据可能不是最新。
-            {managementEvents.lastSynchronizedAt
-              ? ` 上次同步：${new Date(managementEvents.lastSynchronizedAt).toLocaleString()}。`
-              : ""}
-          </div>
-        ) : null}
+        <ManagementEventsStatusBanner />
         <UnauthorizedPage authDetails={authFailure} />
       </AppShell>
     );
@@ -517,14 +560,7 @@ export default function App() {
         authIdentity={authIdentity}
         lastScanHint={lastScanHint}
       >
-        {managementEvents.connection !== "live" ? (
-          <div className="error" role="status" aria-live="polite">
-            实时连接已中断，正在重连；当前数据可能不是最新。
-            {managementEvents.lastSynchronizedAt
-              ? ` 上次同步：${new Date(managementEvents.lastSynchronizedAt).toLocaleString()}。`
-              : ""}
-          </div>
-        ) : null}
+        <ManagementEventsStatusBanner />
         {route.name === "overview" ? (
           <OverviewPage
             onLastScanHint={setLastScanHint}

@@ -16138,6 +16138,11 @@ html[data-theme="light"] .homepageHeaderSearchPopover {
   background: color-mix(in srgb, var(--color-info) 10%, var(--panel2) 90%);
 }
 
+.shellStatusBanner-warning {
+  border-color: color-mix(in srgb, var(--color-warning) 44%, var(--surface-border-strong) 56%);
+  background: color-mix(in srgb, var(--color-warning) 12%, var(--panel2) 88%);
+}
+
 .readonlySnapshotNotice {
   display: flex;
   align-items: flex-start;
