@@ -206,6 +206,7 @@ jobs:
         run: |
           set -euo pipefail
           cd web
+          bun test
           bun run lint
           bun run build
           DOCKREV_WEB_BASE=/demo/ bun run build:demo:pages

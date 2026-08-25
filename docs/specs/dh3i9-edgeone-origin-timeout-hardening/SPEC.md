@@ -232,7 +232,7 @@ PR: include
   submission_gate: `owner-approved`
   story_id_or_title: `demoManagementEvents=reconnecting`
   state: `management transport reconnecting`
-  evidence_binding_sha: `8d0c5b0e`
+  evidence_binding_sha: `2a30ae8093159c7e5af9a6d0b381403fa55d23b5`
   evidence_note: 验证桌面端管理事件流重连状态显示 scoped 诊断、重试入口和既有服务摘要；证据使用本地 mock-only ui_demo，不访问生产服务。
 
 PR: include
@@ -250,7 +250,7 @@ PR: include
   submission_gate: `owner-approved`
   story_id_or_title: `demoManagementEvents=reconnecting`
   state: `management transport reconnecting`
-  evidence_binding_sha: `8d0c5b0e`
+  evidence_binding_sha: `2a30ae8093159c7e5af9a6d0b381403fa55d23b5`
   evidence_note: 验证移动端重试按钮位于 Alert 整体右下角，与诊断文字同属一块 Alert 且无横向溢出；证据使用本地 mock-only ui_demo，不访问生产服务。
 
 PR: include
