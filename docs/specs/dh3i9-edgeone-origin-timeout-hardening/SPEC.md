@@ -219,6 +219,40 @@ PR: include
 
 ![Deploy check blocked mobile](./assets/deploy-check-blocked-mobile.png)
 
+- source_type: `ui_demo`
+  target_program: `mock-only`
+  capture_scope: `page`
+  requested_viewport: `1440x1200 CSS px`
+  viewport_strategy: `devtools-emulate`
+  margin_policy: `trim_only`
+  evidence_surface: `page`
+  sensitive_exclusion: `N/A`
+  submission_gate: `owner-approved`
+  story_id_or_title: `demoManagementEvents=reconnecting`
+  state: `management transport reconnecting`
+  evidence_note: 验证桌面端管理事件流重连状态显示 scoped 诊断、重试入口和既有服务摘要；证据使用本地 mock-only ui_demo，不访问生产服务。
+
+PR: include
+
+![Management SSE reconnecting desktop](./assets/management-sse-reconnecting-desktop.png)
+
+- source_type: `ui_demo`
+  target_program: `mock-only`
+  capture_scope: `page`
+  requested_viewport: `393x852 CSS px`
+  viewport_strategy: `devtools-emulate`
+  margin_policy: `trim_only`
+  evidence_surface: `page`
+  sensitive_exclusion: `N/A`
+  submission_gate: `owner-approved`
+  story_id_or_title: `demoManagementEvents=reconnecting`
+  state: `management transport reconnecting`
+  evidence_note: 验证移动端重试按钮位于 Alert 整体右下角，与诊断文字同属一块 Alert 且无横向溢出；证据使用本地 mock-only ui_demo，不访问生产服务。
+
+PR: include
+
+![Management SSE reconnecting mobile](./assets/management-sse-reconnecting-mobile.png)
+
 ## 变更记录
 
 - 2026-06-26: 新建 spec，冻结 EdgeOne 15 秒约束、cleanup async snapshot、deploy-check cached-read、release drawer fallback 与 SSE heartbeat 口径。
