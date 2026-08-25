@@ -194,6 +194,7 @@ export default function App() {
   const authIdentityRefreshInFlightRef = useRef(false);
   const suppressNextAuthRecoveredRef = useRef(false);
   const deployCheckBackgroundRefreshInFlightRef = useRef(false);
+  const deployCheckGateRequestIdRef = useRef(0);
   const previousRoutePathRef = useRef<string | null>(null);
   const previousUpdateNavigationPathRef = useRef<string | null>(null);
 
@@ -255,7 +256,9 @@ export default function App() {
     }
   }, []);
   const refreshDeployCheckGate = useCallback(async (requestBackgroundRefresh = false) => {
+    const requestId = ++deployCheckGateRequestIdRef.current;
     const envelope = await loadDeployCheckReport();
+    if (requestId !== deployCheckGateRequestIdRef.current) return;
     const report = envelope.report;
     if (!report) return;
     const blocked = hasBlockingDeployCheckFailure(report);
