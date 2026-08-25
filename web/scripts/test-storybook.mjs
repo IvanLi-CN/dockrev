@@ -973,6 +973,43 @@ async function runInteractive({ baseUrl, browser }) {
     }
   }
 
+  // Foreground recovery must rebuild the provider-owned source and emit one batch.
+  {
+    const page = await openStory("pages-interactiveapp--management-sse-foreground-resume");
+    try {
+      await page.waitForFunction(
+        () => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.managementEventSourceCalls ?? 0) === 1,
+        null,
+        { timeout: 10_000 },
+      );
+      await page.waitForTimeout(100);
+      await page.evaluate(() => {
+        globalThis.__DOCKREV_FOREGROUND_BATCHES__ = 0;
+        window.addEventListener("dockrev:management-events", () => {
+          globalThis.__DOCKREV_FOREGROUND_BATCHES__ += 1;
+        });
+      });
+      const baselineBatchCount = await page.evaluate(() => globalThis.__DOCKREV_FOREGROUND_BATCHES__);
+      await page.evaluate(() => {
+        Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+        document.dispatchEvent(new Event("visibilitychange"));
+        Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      await page.waitForFunction(
+        () => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.managementEventSourceCalls ?? 0) === 2,
+        null,
+        { timeout: 10_000 },
+      );
+      const batchCount = await page.evaluate(() => globalThis.__DOCKREV_FOREGROUND_BATCHES__);
+      if (batchCount !== baselineBatchCount + 1) {
+        throw new Error(`Expected one foreground management batch, baseline ${baselineBatchCount}, got ${batchCount}.`);
+      }
+    } finally {
+      await page.close().catch(() => {});
+    }
+  }
+
   // Keep the rollback refresh race in the CI interaction suite, not only in the story play callback.
   await runRollbackRefreshRace({ baseUrl, browser });
 

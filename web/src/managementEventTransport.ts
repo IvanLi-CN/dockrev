@@ -31,6 +31,25 @@ type EventSourceLike = {
   close: () => void
 }
 
+function eventLastEventId(event: unknown): string | null {
+  if (!event || typeof event !== 'object' || !('lastEventId' in event)) return null
+  const value = (event as { lastEventId?: unknown }).lastEventId
+  return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+function urlWithAfterId(url: string, afterId: string | null): string {
+  if (!afterId) return url
+  try {
+    const parsed = new URL(url, 'http://localhost')
+    parsed.searchParams.set('afterId', afterId)
+    if (/^[a-z][a-z\d+.-]*:/i.test(url)) return parsed.toString()
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`
+  } catch {
+    const separator = url.includes('?') ? '&' : '?'
+    return `${url}${separator}afterId=${encodeURIComponent(afterId)}`
+  }
+}
+
 type Scheduler = {
   setTimeout: (callback: () => void, delayMs: number) => unknown
   clearTimeout: (handle: unknown) => void
@@ -114,6 +133,7 @@ export function createManagementEventTransport(options: ManagementTransportOptio
   let activityTimer: unknown = null
   let retryTimer: unknown = null
   let disposed = false
+  let lastEventId: string | null = null
 
   const publish = (next: Partial<ManagementTransportSnapshot>) => {
     snapshot = { ...snapshot, ...next }
@@ -201,6 +221,7 @@ export function createManagementEventTransport(options: ManagementTransportOptio
 
   const handleManagement = (token: number, event: unknown) => {
     if (disposed || token !== session || !source) return
+    lastEventId = eventLastEventId(event) ?? lastEventId
     const payload = parseData(event)
     markActivity(token)
     if (!isManagementEvent(payload)) {
@@ -212,6 +233,7 @@ export function createManagementEventTransport(options: ManagementTransportOptio
 
   const handleHeartbeat = (token: number, event: unknown) => {
     if (disposed || token !== session || !source) return
+    lastEventId = eventLastEventId(event) ?? lastEventId
     const payload = parseData(event)
     markActivity(token)
     if (!isHeartbeat(payload)) {
@@ -223,6 +245,7 @@ export function createManagementEventTransport(options: ManagementTransportOptio
 
   const handleResyncRequired = (token: number, event: unknown) => {
     if (disposed || token !== session || !source) return
+    lastEventId = eventLastEventId(event) ?? lastEventId
     const payload = parseData(event)
     markActivity(token)
     if (!isResyncRequired(payload)) {
@@ -237,7 +260,7 @@ export function createManagementEventTransport(options: ManagementTransportOptio
     clearTimer('retry')
     closeSource()
     const token = session
-    const next = options.createEventSource(options.url)
+    const next = options.createEventSource(urlWithAfterId(options.url, lastEventId))
     source = next
     publish({ connection: snapshot.reconnectAttempt > 0 ? 'reconnecting' : 'connecting' })
     next.addEventListener('open', () => handleOpen(token))

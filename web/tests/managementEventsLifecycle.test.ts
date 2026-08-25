@@ -27,9 +27,9 @@ class FakeEventSource {
     this.closed = true
   }
 
-  emit(type: string, data?: unknown) {
+  emit(type: string, data?: unknown, lastEventId = '') {
     for (const listener of this.listeners.get(type) ?? []) {
-      listener(data === undefined ? {} : { data })
+      listener(data === undefined ? { lastEventId } : { data, lastEventId })
     }
   }
 }
@@ -82,13 +82,15 @@ class FakeScheduler {
 function createHarness() {
   const scheduler = new FakeScheduler()
   const sources: FakeEventSource[] = []
+  const sourceUrls: string[] = []
   const snapshots: ManagementTransportSnapshot[] = []
   const syncReasons: string[] = []
   const transport = createManagementEventTransport({
     url: '/api/events',
-    createEventSource: () => {
+    createEventSource: (url) => {
       const source = new FakeEventSource()
       sources.push(source)
+      sourceUrls.push(url)
       return source
     },
     scheduler,
@@ -100,7 +102,7 @@ function createHarness() {
     onHeartbeat: () => syncReasons.push('heartbeat'),
     onProtocolInvalid: () => syncReasons.push('protocol_invalid'),
   })
-  return { scheduler, sources, snapshots, syncReasons, transport }
+  return { scheduler, sources, sourceUrls, snapshots, syncReasons, transport }
 }
 
 function validManagementEvent() {
@@ -205,5 +207,17 @@ describe('createManagementEventTransport', () => {
     expect(scheduler.pendingDelays()).toEqual([])
     sources[1].emit('error')
     expect(sources).toHaveLength(2)
+  })
+
+  test('carries the latest SSE cursor into replacement sessions', () => {
+    const { sources, sourceUrls, transport } = createHarness()
+    transport.start()
+    sources[0].emit('open')
+    sources[0].emit('management', validManagementEvent(), 'generation-a:7')
+
+    transport.retryNow()
+
+    expect(sourceUrls).toEqual(['/api/events', '/api/events?afterId=generation-a%3A7'])
+    transport.dispose()
   })
 })
