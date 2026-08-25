@@ -69,6 +69,7 @@ export function ManagementEventsProvider({ children }: { children: ReactNode }) 
   const pendingRef = useRef(new Map<string, ManagementEvent>())
   const transportRef = useRef<ManagementEventTransport | null>(null)
   const resyncRequiredRef = useRef(false)
+  const resumeSyncPendingRef = useRef(false)
   const flushQueuedRef = useRef(false)
 
   const flush = useCallback(() => {
@@ -100,6 +101,10 @@ export function ManagementEventsProvider({ children }: { children: ReactNode }) 
       onSnapshot: setTransportSnapshot,
       onOpen: () => {
       // A snapshot after each connect closes the REST-to-SSE subscription gap.
+      if (resumeSyncPendingRef.current) {
+        resumeSyncPendingRef.current = false
+        return
+      }
       resyncRequiredRef.current = true
       requestFlush()
       },
@@ -120,9 +125,12 @@ export function ManagementEventsProvider({ children }: { children: ReactNode }) 
     transportRef.current = transport
     const onVisibility = () => {
       if (document.visibilityState !== 'visible') return
+      if (!resumeSyncPendingRef.current) {
+        resumeSyncPendingRef.current = true
+        resyncRequiredRef.current = true
+        requestFlush()
+      }
       transport.resume()
-      resyncRequiredRef.current = true
-      requestFlush()
     }
 
     transport.start()
