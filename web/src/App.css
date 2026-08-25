@@ -16215,7 +16215,8 @@ html[data-theme="light"] .homepageHeaderSearchPopover {
   }
 
   .shellStatusBannerActions {
-    justify-content: flex-start;
+    align-self: flex-end;
+    justify-content: flex-end;
   }
 
   .pwaUpdateBubble {
