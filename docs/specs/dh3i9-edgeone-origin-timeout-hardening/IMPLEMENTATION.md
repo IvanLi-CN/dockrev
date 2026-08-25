@@ -30,6 +30,7 @@
 - Controlled replacement sessions carry the latest received SSE cursor through the endpoint's `afterId` query parameter, preserving bounded replay and `resync_required` behavior after the old EventSource is closed.
 - Cursor-free heartbeat frames are accepted with the browser-inherited `MessageEvent.lastEventId`; only management and resync events advance the replacement cursor.
 - Deploy-check gate reads are sequenced per App instance so a slower initial or stale refresh response cannot overwrite a newer gate result.
+- The InteractiveApp foreground-resume browser regression owns the visibility transition so the Story play hook cannot trigger a duplicate replacement session.
 - Management transport recovery is separate from page synchronization: open and foreground resume enqueue one REST resync, protocol-invalid management/heartbeat payloads keep the transport connected while requesting one resync, and service logs/resource streams retain their independent ownership.
 - Foreground management resync is provider-owned: page-level resume refreshes do not duplicate the same visibility synchronization, later visibility transitions re-arm recovery after failed opens, and malformed payloads refresh the activity deadline before protocol classification.
 - Updated the deploy-check source guard to assert Provider-owned foreground invalidation and to prevent the removed page-level visibility listener from returning.

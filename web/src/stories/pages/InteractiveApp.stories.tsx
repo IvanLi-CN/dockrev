@@ -129,28 +129,6 @@ export const ManagementSseForegroundResume: Story = {
       <App />
     </>
   ),
-  play: async () => {
-    await waitForCondition(() => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.managementEventSourceCalls ?? 0) === 1)
-    let batchCount = 0
-    const onBatch = () => { batchCount += 1 }
-    window.addEventListener('dockrev:management-events', onBatch)
-    const originalVisibility = Object.getOwnPropertyDescriptor(Document.prototype, 'visibilityState')
-    try {
-      await sleep(100)
-      const baselineBatchCount = batchCount
-      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
-      document.dispatchEvent(new Event('visibilitychange'))
-      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
-      document.dispatchEvent(new Event('visibilitychange'))
-      await waitForCondition(() => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.managementEventSourceCalls ?? 0) === 2)
-      await waitForCondition(() => batchCount === baselineBatchCount + 1)
-      expectStory(batchCount === baselineBatchCount + 1, 'foreground resume must emit one management batch')
-    } finally {
-      window.removeEventListener('dockrev:management-events', onBatch)
-      Reflect.deleteProperty(document, 'visibilityState')
-      if (originalVisibility) Object.defineProperty(Document.prototype, 'visibilityState', originalVisibility)
-    }
-  },
 }
 
 
