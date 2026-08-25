@@ -73,6 +73,7 @@
   - 作业进度写入、有效 discovery 扫描完成、Discovery 人工归档/恢复、GHCR 配置/目标/仓库选择及 webhook 状态写入都必须发布领域失效摘要；页面据此读取 REST 快照，不在 SSE 内复制详情。
   - 历史仅保留进程内 `60s` 或 `1024` 条，以先到者为准；不写 SQLite。`Last-Event-ID` 仅能补发当前实例缓冲，实例世代变化、游标淘汰或无效游标必须发送 `resync_required`。
   - 管理传输错误必须立即关闭旧会话，并按 `1s, 2s, 5s, 10s, 15s` 退避重建；连接打开或可观察活动超过 15 秒未发生时必须替换会话。`open`、合法管理事件和合法 `management_heartbeat` 更新最近活动时间；替代会话必须携带最近收到的 SSE 游标（`Last-Event-ID` 或等价的 `afterId`），不得丢失回放语义。
+  - 浏览器 `MessageEvent.lastEventId` 表示 EventSource 当前持有的最近游标，可能被无 `id` 的 heartbeat 继承；客户端不得据此把 heartbeat 判为带游标，也不得让 heartbeat 推进管理回放游标。
   - EventSource 重连或前台恢复后，页面先读取 REST 快照；`open` 与 `visibilitychange=visible` 各只排入一次同步。后台标签页只累计失效实体，恢复前台再批量同步一次。不得使用定时轮询或轮询降级。
   - 前台恢复同步由管理事件 Provider 统一调度；页面级 resume refresh 不得为同一 `visibilitychange=visible` 再注册重复同步。每次新的可见性恢复都必须重新排入同步，即使上一次替换会话尚未打开。
   - 管理事件或心跳坏包先计入可观察活动，再记录 `protocol_invalid` 并只请求一次 REST 同步，保持传输 `connected`，不得把协议错误误报为断线。

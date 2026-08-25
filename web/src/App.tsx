@@ -127,7 +127,7 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string } {
 
 function ManagementEventsStatusBanner() {
   const managementEvents = useManagementEvents()
-  if (managementEvents.connection === "connected") return null
+  if (managementEvents.connection !== "reconnecting") return null
 
   const errorLabel = managementEvents.lastError === "eventsource_error"
     ? "连接错误"
