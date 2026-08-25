@@ -26,6 +26,8 @@
 - Removed the Web UI dependency on live `/api/services/{id}/digest-tags`; owner-facing reads now use snapshot semantics.
 - Removed Web dependency on `/github-releases/locate`; the drawer now uses unified `release-notes/locate` anchor windows and `direction=older|newer` cursors instead of client-side progressive scans.
 - Replaced `15s` SSE keepalive intervals with `5s` heartbeat + immediate keepalive comment on connect.
+- Management SSE now emits a named, cursor-free heartbeat immediately and every five seconds. A per-tab application transport controller owns the single EventSource, closes stale sessions, rebuilds with bounded `1/2/5/10/15s` backoff, expires silent sessions after 15 seconds, and exposes connection diagnostics and manual retry.
+- Management transport recovery is separate from page synchronization: open and foreground resume enqueue one REST resync, protocol-invalid management/heartbeat payloads keep the transport connected while requesting one resync, and service logs/resource streams retain their independent ownership.
 - Added Storybook coverage for cleanup pending state and deploy-check cached-refreshing / initial-pending states.
 - Added the application-level deploy-check gate: startup and foreground resume await a fresh report, required core failures force `/deploy-check`, and the failure page disables Dashboard entry regardless of `neverAutoOpen`.
 - Added deterministic mock-only Storybook pass/fail coverage for desktop and `393x852` mobile views; final smoke validation passes all 321 stories.

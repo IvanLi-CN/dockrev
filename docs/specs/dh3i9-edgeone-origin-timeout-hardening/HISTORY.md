@@ -11,3 +11,4 @@
 - 管理页面改用应用级 SSE：缓存 deploy-check PASS 立即放行并后台复核；事件仅保存在 60 秒或 1024 条的进程内环形缓冲，断线通过游标补发或 REST 重同步恢复，且不保留轮询降级。
 - 管理事件发布覆盖任务进度与摘要更新、Discovery 人工归档/恢复、GHCR 配置/目标/仓库选择以及 webhook 状态变更，确保管理页面无需轮询仍能同步跨标签写入。
 - 2026-08-24: Cleanup confirm/apply freshness is fixed at 300 seconds. Confirm polling now uses a visible retryable status rail with stable short labels, and failed workers exit pending with an explicit API error.
+- 2026-08-25: Management SSE recovery is application-owned per tab: named cursor-free heartbeats make silent sessions observable, failed or stale sessions are replaced with bounded backoff, foreground resume rebuilds the session, and protocol-invalid payloads remain connected while triggering one REST resync. The transport warning is scoped to management events and does not affect independent logs or resource streams.

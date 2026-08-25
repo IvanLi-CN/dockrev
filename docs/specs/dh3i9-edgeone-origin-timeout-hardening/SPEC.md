@@ -64,14 +64,17 @@
   - 打开时只请求 page 1。
   - 若指定 targetVersion，则以前端分页渐进加载定位并高亮，不依赖 `/locate`。
 - SSE:
-  - heartbeat 常量统一为 5 秒。
-  - 连接建立时立即发一条 keepalive/comment。
-  - `GET /api/events` 是管理页面唯一的通用 SSE 连接，沿用 Forward Auth 与同源凭据；未授权返回 `401`。
-  - 每浏览器标签页最多一条通用连接。事件只包含 `domain`、实体类型/ID、版本和必要摘要；REST 仍是详情真相源。
+- heartbeat 常量统一为 5 秒。
+- 连接建立时立即发一条 keepalive/comment。
+- `GET /api/events` 连接建立时还必须立即发送一个无 `id` 的 `management_heartbeat`，随后每 5 秒发送 `{"type":"management_heartbeat","generation":"<generation>"}`；命名心跳不推进或改变 Last-Event-ID 游标。
+- `GET /api/events` 是管理页面唯一的通用 SSE 连接，沿用 Forward Auth 与同源凭据；未授权返回 `401`。
+- 每浏览器标签页最多一条通用连接，由应用拥有的传输控制器创建、关闭和替换；浏览器适配层只保留一个 `new EventSource(...)`。事件只包含 `domain`、实体类型/ID、版本和必要摘要；REST 仍是详情真相源。
   - 服务端在 `100ms` 窗口内按 `domain + entity type + entity id` 合并普通变化；任务终态、deploy-check 确定失败、cleanup 确定终态和 `resync_required` 立即发送。
   - 作业进度写入、有效 discovery 扫描完成、Discovery 人工归档/恢复、GHCR 配置/目标/仓库选择及 webhook 状态写入都必须发布领域失效摘要；页面据此读取 REST 快照，不在 SSE 内复制详情。
   - 历史仅保留进程内 `60s` 或 `1024` 条，以先到者为准；不写 SQLite。`Last-Event-ID` 仅能补发当前实例缓冲，实例世代变化、游标淘汰或无效游标必须发送 `resync_required`。
-  - EventSource 自动重连后，页面先读取 REST 快照；后台标签页只累计失效实体，恢复前台再批量同步一次。不得使用定时轮询或轮询降级。
+- 管理传输错误必须立即关闭旧会话，并按 `1s, 2s, 5s, 10s, 15s` 退避重建；连接打开或可观察活动超过 15 秒未发生时必须替换会话。`open`、合法管理事件和合法 `management_heartbeat` 更新最近活动时间。
+- EventSource 重连或前台恢复后，页面先读取 REST 快照；`open` 与 `visibilitychange=visible` 各只排入一次同步。后台标签页只累计失效实体，恢复前台再批量同步一次。不得使用定时轮询或轮询降级。
+- 管理事件或心跳坏包记录 `protocol_invalid` 并只请求一次 REST 同步，保持传输 `connected`，不得把协议错误误报为断线。
   - `GET /api/events/status` 提供连接数、重连、重同步、缓冲淘汰、事件合并与发布失败计数，供资源边界观测。
 
 ### SHOULD
@@ -89,7 +92,8 @@
 - Given 一个保存 Compose 文件全部为 `ENOENT` 的 discovery 项，When Dockrev 完成有效扫描，Then 项目与关联 Stack 必须以 `auto_archive_compose_files_missing` 自动归档，失效路径不得阻断 deploy-check。
 - Given 部分缺失、权限/I-O 或解析错误，When Dockrev 完成有效扫描，Then 项目必须显示 `invalid` 且保持未归档；人工归档在任何扫描结果下都不得解除。
 - Given 有上次通过的 deploy-check report 且后台复核中，When 应用首次加载或恢复前台，Then 必须立即显示管理页面；只有复核得到新的 required core FAIL 才强制进入 `/deploy-check`，`neverAutoOpen` 不得绕过该失败门禁。
-- Given `/api/events` 短暂断线，When EventSource 重连，Then 页面保留既有数据并提示陈旧，使用 `Last-Event-ID` 补发或 `resync_required` 后一次 REST 同步恢复；不得启动轮询。
+- Given `/api/events` 短暂断线，When 应用传输控制器关闭旧会话并按固定退避重建，Then 页面保留既有数据并显示 scoped 管理事件流重连诊断，使用 `Last-Event-ID` 补发或 `resync_required` 后一次 REST 同步恢复；不得启动轮询。
+- Given 一个管理事件或心跳 payload 无法通过协议校验，When 客户端收到该 payload，Then 记录 `protocol_invalid`、保持 `connected`、只请求一次 REST 同步，并且不创建替代 EventSource。
 - Given 服务或 Stack 变更，When 服务页在前台，Then 只读取事件涉及的 Stack/Service；后台标签页不得读详情，恢复时只执行一次批量同步。
 - release drawer 在不调用 `/github-releases/locate` 的前提下仍可定位目标版本。
 - 任一 SSE 连接在 EdgeOne 前方空闲超过 20 秒时，不会因 15 秒 idle window 被断开。
