@@ -76,6 +76,7 @@
   - EventSource 重连或前台恢复后，页面先读取 REST 快照；`open` 与 `visibilitychange=visible` 各只排入一次同步。后台标签页只累计失效实体，恢复前台再批量同步一次。不得使用定时轮询或轮询降级。
   - 前台恢复同步由管理事件 Provider 统一调度；页面级 resume refresh 不得为同一 `visibilitychange=visible` 再注册重复同步。每次新的可见性恢复都必须重新排入同步，即使上一次替换会话尚未打开。
   - 管理事件或心跳坏包先计入可观察活动，再记录 `protocol_invalid` 并只请求一次 REST 同步，保持传输 `connected`，不得把协议错误误报为断线。
+  - 回归测试必须验证 deploy-check 前台同步通过管理事件批次触发，而不是恢复页面级重复的 `visibilitychange` 监听。
   - `GET /api/events/status` 提供连接数、重连、重同步、缓冲淘汰、事件合并与发布失败计数，供资源边界观测。
 
 ### SHOULD

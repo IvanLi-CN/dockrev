@@ -15,3 +15,4 @@
 - 2026-08-25: Added deterministic management transport lifecycle tests and a mock-only reconnecting UI demonstration covering scoped diagnostics, fixed retry backoff, accessible manual retry, and recovery without management polling.
 - 2026-08-25: Owner-approved reconnecting-state evidence records the desktop page and the `393x852` mobile Alert layout, including the lower-right retry action placement.
 - 2026-08-25: Foreground recovery now has one Provider-owned REST sync per visibility transition, failed replacement opens cannot suppress a later resume, and malformed payloads count as activity before remaining connected as `protocol_invalid`.
+- 2026-08-25: The deploy-check regression guard now proves foreground invalidation comes from the management event batch and rejects duplicate page-level visibility listeners.
