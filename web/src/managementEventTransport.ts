@@ -254,14 +254,14 @@ export function createManagementEventTransport(options: ManagementTransportOptio
     options.onResyncRequired()
   }
 
-  function openSource() {
+  function openSource(connection: ManagementTransportConnection = snapshot.reconnectAttempt > 0 ? 'reconnecting' : 'connecting') {
     if (disposed) return
     clearTimer('retry')
     closeSource()
     const token = session
     const next = options.createEventSource(urlWithAfterId(options.url, lastEventId))
     source = next
-    publish({ connection: snapshot.reconnectAttempt > 0 ? 'reconnecting' : 'connecting' })
+    publish({ connection })
     next.addEventListener('open', () => handleOpen(token))
     next.addEventListener('management', (event) => handleManagement(token, event))
     next.addEventListener('management_heartbeat', (event) => handleHeartbeat(token, event))
@@ -281,14 +281,14 @@ export function createManagementEventTransport(options: ManagementTransportOptio
       if (disposed) return
       closeSource()
       publish({ connection: 'reconnecting', lastError: null })
-      openSource()
+      openSource('reconnecting')
     },
     retryNow() {
       if (disposed) return
       clearTimer('retry')
       closeSource()
       publish({ connection: 'reconnecting' })
-      openSource()
+      openSource('reconnecting')
     },
     dispose() {
       if (disposed) return

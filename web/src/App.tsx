@@ -279,8 +279,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const requestId = deployCheckGateRequestIdRef.current + 1;
     void refreshDeployCheckGate(true).catch(() => {
-      setDeployCheckGate("loading");
+      if (requestId === deployCheckGateRequestIdRef.current) {
+        setDeployCheckGate("loading");
+      }
     });
   }, [refreshDeployCheckGate]);
 

@@ -197,6 +197,7 @@ describe('createManagementEventTransport', () => {
     transport.resume()
     expect(oldSource.closed).toBe(true)
     expect(sources).toHaveLength(2)
+    expect(transport.getSnapshot().connection).toBe('reconnecting')
     oldSource.emit('open')
     oldSource.emit('management', validManagementEvent())
     expect(syncReasons).toEqual(['open'])
