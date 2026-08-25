@@ -123,7 +123,7 @@ describe('deploy-check cached gate', () => {
     expect(source).not.toContain('document.addEventListener("visibilitychange", refreshOnForeground)')
     expect(source).toContain('useManagementEventBatch(({ events, resyncRequired }) => {')
     expect(source).toContain('if (\n      resyncRequired ||')
-    expect(source).toContain('void refreshDeployCheckGate().catch(() => {})')
+    expect(source).toContain('void refreshDeployCheckGate(resyncRequired).catch(() => {})')
     expect(source).toContain('deployCheckBackgroundRefreshInFlightRef.current = true')
     expect(source).toContain('deployCheckBackgroundRefreshInFlightRef.current = false')
     expect(source).not.toContain('deployCheckBackgroundRefreshRequestedRef')

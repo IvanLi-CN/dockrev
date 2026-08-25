@@ -294,7 +294,7 @@ export default function App() {
       resyncRequired ||
       events.some((event) => event.domain === "deploy_check")
     ) {
-      void refreshDeployCheckGate().catch(() => {});
+      void refreshDeployCheckGate(resyncRequired).catch(() => {});
     }
   });
 

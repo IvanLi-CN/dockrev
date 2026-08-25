@@ -22,3 +22,4 @@
 - 2026-08-25: Foreground-resume browser coverage now triggers one visibility transition per test owner, keeping the replacement-source assertion deterministic.
 - 2026-08-25: Stale deploy-check failures no longer reset a newer gate, and foreground replacement sessions remain visibly reconnecting until open.
 - 2026-08-25: Foreground recovery diagnostics now use recovery wording for a zero-attempt replacement instead of first-connection wording.
+- 2026-08-25: Foreground management resyncs now revalidate deploy-check in the background while ordinary deploy-check events avoid duplicate refresh jobs.
