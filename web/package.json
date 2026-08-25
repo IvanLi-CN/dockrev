@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "bun --bun ./node_modules/.bin/vite",
     "demo:app": "DOCKREV_WEB_BASE=/demo/ DOCKREV_PWA=off VITE_DOCKREV_PWA=off VITE_DOCKREV_DEMO=app bun --bun ./node_modules/.bin/vite --host 127.0.0.1",
-    "build": "bun --bun ./node_modules/.bin/tsc -b && bun --bun ./node_modules/.bin/vite build",
+    "build": "bun test && bun --bun ./node_modules/.bin/tsc -b && bun --bun ./node_modules/.bin/vite build",
     "postbuild": "if command -v python3 >/dev/null 2>&1; then bun run test:pwa-assets; else echo 'PWA asset contract skipped: python3 is unavailable'; fi",
     "build:demo:pages": "bun --bun ./node_modules/.bin/tsc -b && DOCKREV_PWA=off VITE_DOCKREV_PWA=off VITE_DOCKREV_DEMO=app bun --bun ./node_modules/.bin/vite build",
     "test": "bun test",
