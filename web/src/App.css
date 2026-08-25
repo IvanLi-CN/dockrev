@@ -16214,8 +16214,20 @@ html[data-theme="light"] .homepageHeaderSearchPopover {
     align-items: stretch;
   }
 
+  .shellStatusBanner {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+  }
+
+  .shellStatusBannerText {
+    grid-column: 1;
+    min-width: 0;
+  }
+
   .shellStatusBannerActions {
-    align-self: flex-end;
+    grid-column: 2;
+    align-self: end;
     justify-content: flex-end;
   }
 
