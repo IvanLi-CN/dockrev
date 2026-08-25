@@ -235,7 +235,7 @@ export function createManagementEventTransport(options: ManagementTransportOptio
     if (disposed || token !== session || !source) return
     const payload = parseData(event)
     markActivity(token)
-    if (eventLastEventId(event) !== null || !isHeartbeat(payload)) {
+    if (!isHeartbeat(payload)) {
       protocolInvalid()
       return
     }
