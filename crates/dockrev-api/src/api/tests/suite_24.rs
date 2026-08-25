@@ -139,6 +139,46 @@ async fn management_events_replay_memory_buffer_and_expose_metrics_without_sql_e
 }
 
 #[tokio::test]
+async fn management_events_emit_named_heartbeat_without_cursor_mutation() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let generation = state.management_events.generation().to_string();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let mut body = response.into_body();
+
+    let first = wait_for_sse_event(
+        &mut body,
+        "management_heartbeat",
+        Duration::from_secs(2),
+    )
+    .await;
+    assert!(first.id.is_none());
+    let first_payload: serde_json::Value = serde_json::from_str(&first.data).unwrap();
+    assert_eq!(first_payload["type"], "management_heartbeat");
+    assert_eq!(first_payload["generation"], generation);
+
+    let second = wait_for_sse_event(
+        &mut body,
+        "management_heartbeat",
+        Duration::from_secs(7),
+    )
+    .await;
+    assert!(second.id.is_none());
+    let second_payload: serde_json::Value = serde_json::from_str(&second.data).unwrap();
+    assert_eq!(second_payload["type"], "management_heartbeat");
+    assert_eq!(second_payload["generation"], generation);
+}
+
+#[tokio::test]
 async fn management_events_generation_mismatch_requires_resync() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());
