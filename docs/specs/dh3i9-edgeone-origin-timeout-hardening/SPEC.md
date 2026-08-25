@@ -74,7 +74,8 @@
   - 历史仅保留进程内 `60s` 或 `1024` 条，以先到者为准；不写 SQLite。`Last-Event-ID` 仅能补发当前实例缓冲，实例世代变化、游标淘汰或无效游标必须发送 `resync_required`。
   - 管理传输错误必须立即关闭旧会话，并按 `1s, 2s, 5s, 10s, 15s` 退避重建；连接打开或可观察活动超过 15 秒未发生时必须替换会话。`open`、合法管理事件和合法 `management_heartbeat` 更新最近活动时间。
   - EventSource 重连或前台恢复后，页面先读取 REST 快照；`open` 与 `visibilitychange=visible` 各只排入一次同步。后台标签页只累计失效实体，恢复前台再批量同步一次。不得使用定时轮询或轮询降级。
-  - 管理事件或心跳坏包记录 `protocol_invalid` 并只请求一次 REST 同步，保持传输 `connected`，不得把协议错误误报为断线。
+  - 前台恢复同步由管理事件 Provider 统一调度；页面级 resume refresh 不得为同一 `visibilitychange=visible` 再注册重复同步。每次新的可见性恢复都必须重新排入同步，即使上一次替换会话尚未打开。
+  - 管理事件或心跳坏包先计入可观察活动，再记录 `protocol_invalid` 并只请求一次 REST 同步，保持传输 `connected`，不得把协议错误误报为断线。
   - `GET /api/events/status` 提供连接数、重连、重同步、缓冲淘汰、事件合并与发布失败计数，供资源边界观测。
 
 ### SHOULD
