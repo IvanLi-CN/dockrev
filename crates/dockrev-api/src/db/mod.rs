@@ -82,6 +82,9 @@ pub struct ServiceBackupRecordRow {
     pub size_bytes: Option<u64>,
     pub cleanup_after: Option<String>,
     pub deleted_at: Option<String>,
+    pub last_cleanup_attempt_at: Option<String>,
+    pub last_cleanup_error: Option<String>,
+    pub missing_at: Option<String>,
     pub error: Option<String>,
     pub job_summary_json: serde_json::Value,
 }

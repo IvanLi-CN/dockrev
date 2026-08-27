@@ -95,13 +95,69 @@ WHERE id = ?1
         let deleted_at = deleted_at.to_string();
         self.call(move |conn| {
             conn.execute(
-                "UPDATE backups SET deleted_at = ?2 WHERE id = ?1",
+                "UPDATE backups SET deleted_at = ?2, last_cleanup_attempt_at = ?2, last_cleanup_error = NULL WHERE id = ?1",
                 params![backup_id, deleted_at],
             )?;
             Ok(())
         })
         .await
         .context("mark backup deleted")
+    }
+
+    pub async fn mark_backup_cleanup_attempt(
+        &self,
+        backup_id: &str,
+        attempted_at: &str,
+    ) -> anyhow::Result<()> {
+        let backup_id = backup_id.to_string();
+        let attempted_at = attempted_at.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                "UPDATE backups SET last_cleanup_attempt_at = ?2 WHERE id = ?1",
+                params![backup_id, attempted_at],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("mark backup cleanup attempt")
+    }
+
+    pub async fn mark_backup_missing(
+        &self,
+        backup_id: &str,
+        missing_at: &str,
+    ) -> anyhow::Result<()> {
+        let backup_id = backup_id.to_string();
+        let missing_at = missing_at.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                "UPDATE backups SET missing_at = ?2, last_cleanup_attempt_at = ?2, last_cleanup_error = NULL WHERE id = ?1",
+                params![backup_id, missing_at],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("mark backup missing")
+    }
+
+    pub async fn mark_backup_cleanup_failed(
+        &self,
+        backup_id: &str,
+        attempted_at: &str,
+        error: &str,
+    ) -> anyhow::Result<()> {
+        let backup_id = backup_id.to_string();
+        let attempted_at = attempted_at.to_string();
+        let error = error.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                "UPDATE backups SET last_cleanup_attempt_at = ?2, last_cleanup_error = ?3 WHERE id = ?1",
+                params![backup_id, attempted_at, error],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("mark backup cleanup failed")
     }
 
     pub async fn list_due_backup_cleanups(
@@ -117,6 +173,7 @@ FROM backups
 WHERE
   status = 'success'
   AND deleted_at IS NULL
+  AND missing_at IS NULL
   AND artifact_path IS NOT NULL
   AND cleanup_after IS NOT NULL
   AND cleanup_after <= ?1
@@ -148,7 +205,7 @@ LIMIT 50
                 r#"
 SELECT id
 FROM backups
-WHERE stack_id = ?1 AND status = 'success' AND deleted_at IS NULL
+WHERE stack_id = ?1 AND status = 'success' AND deleted_at IS NULL AND missing_at IS NULL
 ORDER BY created_at DESC
 "#,
             )?;
@@ -180,6 +237,9 @@ SELECT
   b.size_bytes,
   b.cleanup_after,
   b.deleted_at,
+  b.last_cleanup_attempt_at,
+  b.last_cleanup_error,
+  b.missing_at,
   b.error,
   COALESCE(j.summary_json, '{}')
 FROM backups b
@@ -212,10 +272,10 @@ ORDER BY b.created_at DESC, b.id DESC
 "#,
             )?;
             let rows = stmt.query_map(params![stack_id, service_id], |row| {
-                let summary_json: String = row.get(11)?;
+                let summary_json: String = row.get(14)?;
                 let job_summary_json = serde_json::from_str(&summary_json).map_err(|e| {
                     rusqlite::Error::FromSqlConversionFailure(
-                        11,
+                        14,
                         rusqlite::types::Type::Text,
                         Box::new(e),
                     )
@@ -233,7 +293,10 @@ ORDER BY b.created_at DESC, b.id DESC
                         .map(|value| value.max(0) as u64),
                     cleanup_after: row.get(8)?,
                     deleted_at: row.get(9)?,
-                    error: row.get(10)?,
+                    last_cleanup_attempt_at: row.get(10)?,
+                    last_cleanup_error: row.get(11)?,
+                    missing_at: row.get(12)?,
+                    error: row.get(13)?,
                     job_summary_json,
                 })
             })?;
@@ -317,5 +380,84 @@ INSERT INTO backups (
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn cleanup_state_is_persisted_and_missing_records_leave_candidates() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        db.call(|conn| {
+            conn.execute_batch(
+                r#"
+INSERT INTO stacks (
+  id, name, compose_type, compose_files_json, backup_targets_json,
+  backup_retention_keep_last, backup_retention_delete_after_stable_seconds,
+  created_at, updated_at, last_check_at
+) VALUES ('stack_1', 'Stack', 'compose', '[]', '[]', 0, 0,
+  '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+INSERT INTO backups (id, stack_id, status, created_at, artifact_path, cleanup_after)
+VALUES
+  ('backup_due', 'stack_1', 'success', '2026-01-01T00:00:00Z', '/backups/due.tar.zst', '2026-01-02T00:00:00Z'),
+  ('backup_missing', 'stack_1', 'success', '2025-12-01T00:00:00Z', '/backups/missing.tar.zst', '2025-12-02T00:00:00Z');
+"#,
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        db.mark_backup_cleanup_attempt("backup_due", "2026-01-03T00:00:00Z")
+            .await
+            .unwrap();
+        db.mark_backup_cleanup_failed("backup_due", "2026-01-03T00:00:00Z", "storage unavailable")
+            .await
+            .unwrap();
+        db.mark_backup_missing("backup_missing", "2026-01-03T00:00:00Z")
+            .await
+            .unwrap();
+
+        let due = db
+            .list_due_backup_cleanups("2026-01-04T00:00:00Z")
+            .await
+            .unwrap();
+        assert_eq!(
+            due.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(),
+            ["backup_due"]
+        );
+
+        let state = db
+            .call(|conn| {
+                Ok(conn.query_row(
+                    "SELECT last_cleanup_attempt_at, last_cleanup_error FROM backups WHERE id = 'backup_due'",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, Option<String>>(0)?,
+                            row.get::<_, Option<String>>(1)?,
+                        ))
+                    },
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(state.0.as_deref(), Some("2026-01-03T00:00:00Z"));
+        assert_eq!(state.1.as_deref(), Some("storage unavailable"));
+
+        let missing = db
+            .call(|conn| {
+                Ok(conn.query_row(
+                    "SELECT missing_at, last_cleanup_error FROM backups WHERE id = 'backup_missing'",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, Option<String>>(0)?,
+                            row.get::<_, Option<String>>(1)?,
+                        ))
+                    },
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(missing.0.as_deref(), Some("2026-01-03T00:00:00Z"));
+        assert_eq!(missing.1, None);
     }
 }

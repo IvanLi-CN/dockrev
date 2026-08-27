@@ -77,6 +77,9 @@ fn map_backup_record_row(
         size_bytes: row.size_bytes,
         cleanup_after: row.cleanup_after,
         deleted_at: row.deleted_at,
+        last_cleanup_attempt_at: row.last_cleanup_attempt_at,
+        last_cleanup_error: row.last_cleanup_error,
+        missing_at: row.missing_at,
         error: row.error,
         assets: extract_backup_assets(&row.job_summary_json, stack_id),
     }

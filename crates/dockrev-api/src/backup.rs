@@ -9,7 +9,6 @@ use serde_json::json;
 
 use crate::api::types::{BackupSettings, BackupTarget, BackupTargetPolicy, JobScope, StackRecord};
 use crate::compose_runner::{ComposeRunnerConfig, ComposeStack};
-use crate::docker_runner;
 use crate::runner::{CommandRunner, CommandSpec};
 
 #[derive(Clone, Debug)]
@@ -584,6 +583,10 @@ async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Result<()> {
 
     for item in due {
         let Some(stack) = state.db.get_stack(&item.stack_id).await? else {
+            let _ = state
+                .db
+                .mark_backup_cleanup_failed(&item.id, &now, "stack not found")
+                .await;
             continue;
         };
 
@@ -598,10 +601,8 @@ async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Result<()> {
             }
         }
 
-        let healthy = stack_is_healthy_now(&*state.runner, &state.config.compose_bin, &stack)
-            .await
-            .unwrap_or(false);
-        if !healthy {
+        if let Err(error) = state.db.mark_backup_cleanup_attempt(&item.id, &now).await {
+            tracing::warn!(backup_id = %item.id, error = %error, "backup cleanup attempt state update failed");
             continue;
         }
 
@@ -613,15 +614,27 @@ async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Result<()> {
         {
             Ok(storage) => storage,
             Err(error) => {
+                state
+                    .db
+                    .mark_backup_cleanup_failed(&item.id, &now, &error.to_string())
+                    .await?;
                 tracing::warn!(backup_id = %item.id, error = %error, "backup cleanup storage unresolved");
                 continue;
             }
         };
         let Some(key) = legacy_artifact_key(&storage, &item.artifact_path) else {
+            let error = format!(
+                "backup cleanup path is outside managed storage: {}",
+                item.artifact_path
+            );
+            state
+                .db
+                .mark_backup_cleanup_failed(&item.id, &now, &error)
+                .await?;
             tracing::warn!(backup_id = %item.id, path = %item.artifact_path, "backup cleanup path is outside managed storage");
             continue;
         };
-        if let Err(error) = delete_artifact(
+        match reconcile_artifact(
             &*state.runner,
             &storage,
             &state.config.dockrev_image_repo,
@@ -629,10 +642,35 @@ async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Result<()> {
         )
         .await
         {
-            tracing::warn!(backup_id = %item.id, error = %error, "backup cleanup delete failed");
-            continue;
+            Ok(ArtifactCleanupOutcome::Deleted) => {
+                state.db.mark_backup_deleted(&item.id, &now).await?;
+            }
+            Ok(ArtifactCleanupOutcome::Missing) => {
+                state.db.mark_backup_missing(&item.id, &now).await?;
+                if let Some(job_id) = item.job_id.as_deref() {
+                    let _ = state
+                        .db
+                        .insert_job_log(
+                            job_id,
+                            &crate::api::types::JobLogLine {
+                                ts: now.clone(),
+                                level: "info".to_string(),
+                                msg: format!("backup missing (verified): {}", item.artifact_path),
+                            },
+                        )
+                        .await;
+                }
+                continue;
+            }
+            Err(error) => {
+                state
+                    .db
+                    .mark_backup_cleanup_failed(&item.id, &now, &error.to_string())
+                    .await?;
+                tracing::warn!(backup_id = %item.id, error = %error, "backup cleanup delete failed");
+                continue;
+            }
         }
-        state.db.mark_backup_deleted(&item.id, &now).await?;
         if let Some(job_id) = item.job_id.as_deref() {
             let _ = state
                 .db
@@ -649,59 +687,6 @@ async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-async fn stack_is_healthy_now(
-    runner: &dyn CommandRunner,
-    compose_bin: &str,
-    stack: &StackRecord,
-) -> anyhow::Result<bool> {
-    let compose_cfg = ComposeRunnerConfig {
-        compose_bin: compose_bin.to_string(),
-        env: Vec::new(),
-    };
-    let compose_stack = ComposeStack {
-        project_name: sanitize_project_name(&stack.name),
-        compose: stack.compose.clone(),
-    };
-
-    let docker_cfg = docker_runner::DockerRunnerConfig::default();
-
-    for svc in &stack.services {
-        let container_id = run_to_string(
-            runner,
-            compose_stack.ps_q_service(&compose_cfg, &svc.name),
-            Duration::from_secs(20),
-        )
-        .await?;
-        let container_id = container_id.trim().to_string();
-        if container_id.is_empty() {
-            return Ok(false);
-        }
-
-        let has_health = run_to_string(
-            runner,
-            docker_runner::inspect_has_healthcheck(&docker_cfg, &container_id),
-            Duration::from_secs(10),
-        )
-        .await?;
-        let has_health = has_health.trim() == "1";
-        if !has_health {
-            continue;
-        }
-
-        let status = run_to_string(
-            runner,
-            docker_runner::inspect_health_status(&docker_cfg, &container_id),
-            Duration::from_secs(10),
-        )
-        .await?;
-        if status.trim() != "healthy" {
-            return Ok(false);
-        }
-    }
-
-    Ok(true)
 }
 
 fn compose_runner_config(
@@ -1294,6 +1279,93 @@ fn legacy_artifact_key(
         .then(|| key.to_path_buf())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ArtifactCleanupOutcome {
+    Deleted,
+    Missing,
+}
+
+async fn reconcile_artifact(
+    runner: &dyn CommandRunner,
+    storage: &crate::backup_storage::BackupStorage,
+    helper_image_fallback: &str,
+    artifact_key: &Path,
+) -> anyhow::Result<ArtifactCleanupOutcome> {
+    if !artifact_exists(runner, storage, helper_image_fallback, artifact_key).await? {
+        return Ok(ArtifactCleanupOutcome::Missing);
+    }
+
+    match delete_artifact(runner, storage, helper_image_fallback, artifact_key).await {
+        Ok(()) => Ok(ArtifactCleanupOutcome::Deleted),
+        Err(error) => {
+            // A concurrent actor may have removed the file after the existence check.
+            if !artifact_exists(runner, storage, helper_image_fallback, artifact_key).await? {
+                Ok(ArtifactCleanupOutcome::Missing)
+            } else {
+                Err(error)
+            }
+        }
+    }
+}
+
+async fn artifact_exists(
+    runner: &dyn CommandRunner,
+    storage: &crate::backup_storage::BackupStorage,
+    helper_image_fallback: &str,
+    artifact_key: &Path,
+) -> anyhow::Result<bool> {
+    match storage {
+        crate::backup_storage::BackupStorage::Local { logical_root } => {
+            let root = tokio::fs::canonicalize(logical_root).await?;
+            let artifact_path = logical_root.join(artifact_key);
+            let resolved_artifact = match tokio::fs::canonicalize(&artifact_path).await {
+                Ok(path) => path,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+                Err(error) => return Err(error.into()),
+            };
+            if !resolved_artifact.starts_with(&root) {
+                return Err(anyhow::anyhow!(
+                    "backup artifact resolves outside managed storage: {}",
+                    artifact_path.display()
+                ));
+            }
+            Ok(true)
+        }
+        _ => {
+            let (source, relative) = storage.helper_output_mount();
+            let path = relative.join(artifact_key);
+            let out = runner
+                .run(
+                    CommandSpec {
+                        program: "docker".to_string(),
+                        args: vec![
+                            "run".to_string(),
+                            "--rm".to_string(),
+                            "-v".to_string(),
+                            format!("{source}:/out-root:ro"),
+                            storage.helper_image(helper_image_fallback).to_string(),
+                            "test".to_string(),
+                            "-e".to_string(),
+                            format!("/out-root/{}", path.to_string_lossy()),
+                        ],
+                        env: Vec::new(),
+                    },
+                    Duration::from_secs(20),
+                )
+                .await?;
+            match out.status {
+                0 => Ok(true),
+                1 => Ok(false),
+                status => Err(anyhow::anyhow!(
+                    "backup artifact existence check failed: status={} stderr={}",
+                    status,
+                    out.stderr.trim()
+                )),
+            }
+        }
+    }
+}
+
 async fn delete_artifact(
     runner: &dyn CommandRunner,
     storage: &crate::backup_storage::BackupStorage,
@@ -1327,7 +1399,6 @@ async fn delete_artifact(
                             format!("{source}:/out-root"),
                             storage.helper_image(helper_image_fallback).to_string(),
                             "rm".to_string(),
-                            "-f".to_string(),
                             format!("/out-root/{}", path.to_string_lossy()),
                         ],
                         env: Vec::new(),
@@ -1352,17 +1423,10 @@ async fn delete_artifact_if_present(
     helper_image_fallback: &str,
     artifact_key: &Path,
 ) -> anyhow::Result<()> {
-    match delete_artifact(runner, storage, helper_image_fallback, artifact_key).await {
-        Ok(()) => Ok(()),
-        Err(error)
-            if error
-                .downcast_ref::<std::io::Error>()
-                .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) =>
-        {
-            Ok(())
-        }
-        Err(error) => Err(error),
+    if !artifact_exists(runner, storage, helper_image_fallback, artifact_key).await? {
+        return Ok(());
     }
+    delete_artifact(runner, storage, helper_image_fallback, artifact_key).await
 }
 
 #[cfg(test)]
