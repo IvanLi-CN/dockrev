@@ -261,7 +261,10 @@ WHERE b.stack_id = ?1
       EXISTS (
         SELECT 1
         FROM json_each(COALESCE(json_extract(j.summary_json, '$.targets'), '[]')) AS t
-        WHERE json_extract(t.value, '$.serviceId') = ?2
+        JOIN services target_service
+          ON target_service.id = json_extract(t.value, '$.serviceId')
+        WHERE target_service.id = ?2
+          AND target_service.stack_id = ?1
       )
     )
     OR (
@@ -490,12 +493,19 @@ INSERT INTO stacks (
   created_at, updated_at, last_check_at
 ) VALUES ('stack_1', 'Stack', 'compose', '[]', '[]', 0, 0,
   '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+INSERT INTO stacks (
+  id, name, compose_type, compose_files_json, backup_targets_json,
+  backup_retention_keep_last, backup_retention_delete_after_stable_seconds,
+  created_at, updated_at, last_check_at
+) VALUES ('stack_2', 'Other Stack', 'compose', '[]', '[]', 0, 0,
+  '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
 INSERT INTO services (
   id, stack_id, name, image_ref, image_tag, auto_rollback,
   backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at
 ) VALUES
   ('service_a', 'stack_1', 'a', 'example/a', 'latest', 1, '{}', '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
-  ('service_b', 'stack_1', 'b', 'example/b', 'latest', 1, '{}', '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+  ('service_b', 'stack_1', 'b', 'example/b', 'latest', 1, '{}', '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+  ('service_c', 'stack_2', 'c', 'example/c', 'latest', 1, '{}', '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
 INSERT INTO jobs (
   id, type, scope, stack_id, service_id, status, allow_arch_mismatch, backup_mode,
   created_by, reason, created_at, finished_at, summary_json
@@ -507,7 +517,10 @@ INSERT INTO jobs (
    '{"targets":[{"serviceId":"service_a"}]}'),
   ('job_other', 'update', 'stack', 'stack_1', NULL, 'success', 0, 'inherit',
    'test', 'test', '2026-01-01T00:00:00Z', '2026-01-01T00:01:00Z',
-   '{"targets":[{"serviceId":"service_b"}]}');
+   '{"targets":[{"serviceId":"service_b"}]}'),
+  ('job_cross_stack', 'update', 'stack', 'stack_2', NULL, 'success', 0, 'inherit',
+   'test', 'test', '2025-12-31T00:00:00Z', '2025-12-31T00:01:00Z',
+   '{"targets":[{"serviceId":"service_a"},{"serviceId":"service_c"}]}');
 INSERT INTO job_service_targets (job_id, service_id)
 VALUES ('job_relation', 'service_a');
 INSERT INTO backups (
@@ -518,7 +531,9 @@ INSERT INTO backups (
   ('backup_summary', 'stack_1', 'job_summary', 'success', '2026-01-02T00:00:00Z',
    '2026-01-02T00:01:00Z', '/backups/summary.tar', 42),
   ('backup_other', 'stack_1', 'job_other', 'success', '2026-01-01T00:00:00Z',
-   '2026-01-01T00:01:00Z', '/backups/other.tar', 42);
+   '2026-01-01T00:01:00Z', '/backups/other.tar', 42),
+  ('backup_cross_stack', 'stack_2', 'job_cross_stack', 'success', '2025-12-31T00:00:00Z',
+   '2025-12-31T00:01:00Z', '/backups/cross-stack.tar', 42);
 "#,
             )?;
             Ok(())
@@ -548,6 +563,25 @@ INSERT INTO backups (
                 .map(|record| record.backup_id.as_str())
                 .collect::<Vec<_>>(),
             ["backup_other"]
+        );
+
+        let service_c = db
+            .list_service_backup_records("stack_2", "service_c")
+            .await
+            .unwrap();
+        assert_eq!(
+            service_c
+                .iter()
+                .map(|record| record.backup_id.as_str())
+                .collect::<Vec<_>>(),
+            ["backup_cross_stack"]
+        );
+
+        assert!(
+            db.list_service_backup_records("stack_2", "service_a")
+                .await
+                .unwrap()
+                .is_empty()
         );
     }
 }
