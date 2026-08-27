@@ -250,6 +250,23 @@ WHERE b.stack_id = ?1
     OR (
       EXISTS (
         SELECT 1
+        FROM job_service_targets jst
+        JOIN services target_service ON target_service.id = jst.service_id
+        WHERE jst.job_id = j.id
+          AND jst.service_id = ?2
+          AND target_service.stack_id = ?1
+      )
+    )
+    OR (
+      EXISTS (
+        SELECT 1
+        FROM json_each(COALESCE(json_extract(j.summary_json, '$.targets'), '[]')) AS t
+        WHERE json_extract(t.value, '$.serviceId') = ?2
+      )
+    )
+    OR (
+      EXISTS (
+        SELECT 1
         FROM json_each(COALESCE(json_extract(j.summary_json, '$.stacks'), '[]')) AS s
         WHERE json_extract(s.value, '$.stackId') = ?1
           AND EXISTS (
@@ -459,5 +476,78 @@ VALUES
             .unwrap();
         assert_eq!(missing.0.as_deref(), Some("2026-01-03T00:00:00Z"));
         assert_eq!(missing.1, None);
+    }
+
+    #[tokio::test]
+    async fn service_backup_records_use_target_relations_and_legacy_summary_targets() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        db.call(|conn| {
+            conn.execute_batch(
+                r#"
+INSERT INTO stacks (
+  id, name, compose_type, compose_files_json, backup_targets_json,
+  backup_retention_keep_last, backup_retention_delete_after_stable_seconds,
+  created_at, updated_at, last_check_at
+) VALUES ('stack_1', 'Stack', 'compose', '[]', '[]', 0, 0,
+  '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+INSERT INTO services (
+  id, stack_id, name, image_ref, image_tag, auto_rollback,
+  backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at
+) VALUES
+  ('service_a', 'stack_1', 'a', 'example/a', 'latest', 1, '{}', '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+  ('service_b', 'stack_1', 'b', 'example/b', 'latest', 1, '{}', '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+INSERT INTO jobs (
+  id, type, scope, stack_id, service_id, status, allow_arch_mismatch, backup_mode,
+  created_by, reason, created_at, finished_at, summary_json
+) VALUES
+  ('job_relation', 'update', 'stack', 'stack_1', NULL, 'success', 0, 'inherit',
+   'test', 'test', '2026-01-03T00:00:00Z', '2026-01-03T00:01:00Z', '{}'),
+  ('job_summary', 'update', 'stack', 'stack_1', NULL, 'success', 0, 'inherit',
+   'test', 'test', '2026-01-02T00:00:00Z', '2026-01-02T00:01:00Z',
+   '{"targets":[{"serviceId":"service_a"}]}'),
+  ('job_other', 'update', 'stack', 'stack_1', NULL, 'success', 0, 'inherit',
+   'test', 'test', '2026-01-01T00:00:00Z', '2026-01-01T00:01:00Z',
+   '{"targets":[{"serviceId":"service_b"}]}');
+INSERT INTO job_service_targets (job_id, service_id)
+VALUES ('job_relation', 'service_a');
+INSERT INTO backups (
+  id, stack_id, job_id, status, created_at, finished_at, artifact_path, size_bytes
+) VALUES
+  ('backup_relation', 'stack_1', 'job_relation', 'success', '2026-01-03T00:00:00Z',
+   '2026-01-03T00:01:00Z', '/backups/relation.tar', 42),
+  ('backup_summary', 'stack_1', 'job_summary', 'success', '2026-01-02T00:00:00Z',
+   '2026-01-02T00:01:00Z', '/backups/summary.tar', 42),
+  ('backup_other', 'stack_1', 'job_other', 'success', '2026-01-01T00:00:00Z',
+   '2026-01-01T00:01:00Z', '/backups/other.tar', 42);
+"#,
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let service_a = db
+            .list_service_backup_records("stack_1", "service_a")
+            .await
+            .unwrap();
+        assert_eq!(
+            service_a
+                .iter()
+                .map(|record| record.backup_id.as_str())
+                .collect::<Vec<_>>(),
+            ["backup_relation", "backup_summary"]
+        );
+
+        let service_b = db
+            .list_service_backup_records("stack_1", "service_b")
+            .await
+            .unwrap();
+        assert_eq!(
+            service_b
+                .iter()
+                .map(|record| record.backup_id.as_str())
+                .collect::<Vec<_>>(),
+            ["backup_other"]
+        );
     }
 }
