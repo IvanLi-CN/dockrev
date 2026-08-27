@@ -572,7 +572,7 @@ async fn stop_interrupted_helper(runner: &dyn CommandRunner, job_id: &str) -> an
     Ok(())
 }
 
-async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Result<()> {
+pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Result<()> {
     let now_dt = time::OffsetDateTime::now_utc();
     let now = now_dt.format(&time::format_description::well_known::Rfc3339)?;
 
