@@ -48,6 +48,7 @@ services:
         Some(&stack_id),
         Some(&api_id),
         json!({
+            "targets": [{"serviceId": api_id}],
             "stacks": [{
                 "stackId": stack_id,
                 "backup": {
@@ -95,6 +96,11 @@ services:
         None,
     )
     .await;
+    state
+        .db
+        .mark_backup_cleanup_failed("bkp-api", &now, "cleanup is waiting for next retry")
+        .await
+        .unwrap();
 
     insert_update_job_with_summary(
         &state,
@@ -103,6 +109,7 @@ services:
         Some(&stack_id),
         None,
         json!({
+            "targets": [{"serviceId": api_id}, {"serviceId": web_id}],
             "stacks": [{
                 "stackId": stack_id,
                 "backup": {
@@ -157,6 +164,7 @@ services:
         None,
         None,
         json!({
+            "targets": [{"serviceId": api_id}, {"serviceId": other_id}],
             "stacks": [{
                 "stackId": stack_id,
                 "backup": {
@@ -259,6 +267,8 @@ services:
     assert_eq!(records[0]["scope"].as_str(), Some("service"));
     assert_eq!(records[0]["sizeBytes"].as_u64(), Some(1500));
     assert_eq!(records[0]["cleanupAfter"].as_str(), Some(cleanup_after.as_str()));
+    assert_eq!(records[0]["lastCleanupAttemptAt"].as_str(), Some(now.as_str()));
+    assert_eq!(records[0]["lastCleanupError"].as_str(), Some("cleanup is waiting for next retry"));
     assert_eq!(records[0]["status"].as_str(), Some("success"));
     assert_eq!(records[0]["assets"].as_array().unwrap().len(), 1);
     assert_eq!(records[0]["assets"][0]["policy"].as_str(), Some("live_backup"));
@@ -294,6 +304,7 @@ services:
         Some(&stack_id),
         Some(&api_id),
         json!({
+            "targets": [{"serviceId": api_id}],
             "stacks": [{
                 "stackId": stack_id,
                 "backup": {
@@ -379,6 +390,7 @@ services:
         Some(&stack_id),
         Some(&api_id),
         json!({
+            "targets": [{"serviceId": api_id}],
             "stacks": [{
                 "stackId": stack_id,
                 "backup": {
@@ -461,6 +473,7 @@ services:
         Some(&stack_id),
         None,
         json!({
+            "targets": [{"serviceId": api_id}],
             "stacks": [{
                 "stackId": stack_id,
                 "backup": {
@@ -558,6 +571,7 @@ services:
         None,
         None,
         json!({
+            "targets": [{"serviceId": api_id}, {"serviceId": worker_id}],
             "stacks": [
                 {
                     "stackId": stack_a_id,

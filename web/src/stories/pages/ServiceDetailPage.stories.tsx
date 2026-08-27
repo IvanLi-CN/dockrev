@@ -1019,6 +1019,7 @@ export const BackupRecordsLegacyMissingAssets: Story = {
   },
 };
 
+
 export const AutoPolicyDisabled: Story = {
   parameters: {
     dockrevApiScenario: "dashboard-demo",
@@ -1189,7 +1190,6 @@ export const RollbackRefreshRaceAfterUpdate: Story = {
     const refreshingRollback = doc.querySelector<HTMLButtonElement>('[data-service-split-item="rollback"]');
     expectStory(refreshingRollback, "rollback refresh state missing during update settlement"); expectStory(refreshingRollback.disabled, "rollback refresh state should stay disabled");
     expectStory(normalizeText(refreshingRollback.textContent).includes("回滚信息刷新中…"), "rollback refresh hint should hide stale unavailable reason");
-
     await waitForCondition(() => { const rollback = findButton(doc, "回滚"); return Boolean(rollback && !rollback.disabled && rollback.getAttribute("aria-busy") !== "true"); }, 8_000);
 
     const rollback = findButton(doc, "回滚");

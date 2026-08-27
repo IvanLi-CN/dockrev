@@ -9,8 +9,24 @@ use serde_json::json;
 
 use crate::api::types::{BackupSettings, BackupTarget, BackupTargetPolicy, JobScope, StackRecord};
 use crate::compose_runner::{ComposeRunnerConfig, ComposeStack};
-use crate::docker_runner;
 use crate::runner::{CommandRunner, CommandSpec};
+
+#[path = "backup_artifact.rs"]
+mod backup_artifact;
+#[path = "backup_cleanup.rs"]
+mod backup_cleanup;
+use backup_artifact::{
+    ArtifactCleanupOutcome, artifact_exists, delete_artifact_if_present, find_artifact_tombstone,
+    legacy_artifact_key, move_artifact_to_tombstone,
+};
+#[cfg(test)]
+use backup_artifact::{delete_artifact, reconcile_artifact};
+use backup_cleanup::{
+    cleanup_delete_completed_marker, cleanup_delete_intent_marker, cleanup_tombstone_key,
+    has_cleanup_delete_completed, has_cleanup_delete_intent, is_legacy_cleanup_delete_intent,
+    mark_cleanup_delete_completed, record_cleanup_completed_error, record_cleanup_intent_error,
+    record_cleanup_state_error, run_to_string, stop_interrupted_helper, timestamp_slug,
+};
 
 #[derive(Clone, Debug)]
 pub struct BackupRunResult {
@@ -524,87 +540,30 @@ pub async fn recover_interrupted_backups(
     Ok(())
 }
 
-async fn stop_interrupted_helper(runner: &dyn CommandRunner, job_id: &str) -> anyhow::Result<()> {
-    let out = runner
-        .run(
-            CommandSpec {
-                program: "docker".to_string(),
-                args: vec![
-                    "ps".to_string(),
-                    "-q".to_string(),
-                    "--filter".to_string(),
-                    format!("label=cc.ivanli.dockrev.job-id={job_id}"),
-                    "--filter".to_string(),
-                    "label=cc.ivanli.dockrev.stop-mode=stop".to_string(),
-                ],
-                env: Vec::new(),
-            },
-            Duration::from_secs(20),
-        )
-        .await?;
-    if out.status != 0 {
-        return Err(anyhow::anyhow!(
-            "list interrupted backup helper failed: {}",
-            out.stderr
-        ));
-    }
-    let ids = out.stdout.split_whitespace().collect::<Vec<_>>();
-    if ids.is_empty() {
-        return Ok(());
-    }
-    let mut args = vec!["stop".to_string(), "--time".to_string(), "2".to_string()];
-    args.extend(ids.into_iter().map(str::to_string));
-    let stopped = runner
-        .run(
-            CommandSpec {
-                program: "docker".to_string(),
-                args,
-                env: Vec::new(),
-            },
-            Duration::from_secs(20),
-        )
-        .await?;
-    if stopped.status != 0 {
-        return Err(anyhow::anyhow!(
-            "stop interrupted backup helper failed: {}",
-            stopped.stderr
-        ));
-    }
-    Ok(())
-}
-
-async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Result<()> {
+pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Result<()> {
     let now_dt = time::OffsetDateTime::now_utc();
     let now = now_dt.format(&time::format_description::well_known::Rfc3339)?;
-
+    let stale_before = (now_dt - time::Duration::minutes(5))
+        .format(&time::format_description::well_known::Rfc3339)?;
     let due = state.db.list_due_backup_cleanups(&now).await?;
     if due.is_empty() {
         return Ok(());
     }
-
     for item in due {
         let Some(stack) = state.db.get_stack(&item.stack_id).await? else {
+            let _ = record_cleanup_state_error(
+                &state.db,
+                &item.id,
+                &now,
+                item.last_cleanup_error.as_deref(),
+                "stack not found",
+            )
+            .await;
             continue;
         };
-
+        let recovery_pending = has_cleanup_delete_intent(item.last_cleanup_error.as_deref())
+            || has_cleanup_delete_completed(item.last_cleanup_error.as_deref());
         let keep_last = stack.backup.retention.keep_last as usize;
-        if keep_last > 0 {
-            let ids = state
-                .db
-                .list_success_backup_ids_for_stack(&item.stack_id)
-                .await?;
-            if ids.iter().take(keep_last).any(|id| id == &item.id) {
-                continue;
-            }
-        }
-
-        let healthy = stack_is_healthy_now(&*state.runner, &state.config.compose_bin, &stack)
-            .await
-            .unwrap_or(false);
-        if !healthy {
-            continue;
-        }
-
         let storage = match crate::backup_storage::resolve_backup_storage(
             &*state.runner,
             &state.config.db_path,
@@ -613,15 +572,38 @@ async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Result<()> {
         {
             Ok(storage) => storage,
             Err(error) => {
+                record_cleanup_state_error(
+                    &state.db,
+                    &item.id,
+                    &now,
+                    item.last_cleanup_error.as_deref(),
+                    &error.to_string(),
+                )
+                .await?;
                 tracing::warn!(backup_id = %item.id, error = %error, "backup cleanup storage unresolved");
                 continue;
             }
         };
         let Some(key) = legacy_artifact_key(&storage, &item.artifact_path) else {
+            let error = format!(
+                "backup cleanup path is outside managed storage: {}",
+                item.artifact_path
+            );
+            record_cleanup_state_error(
+                &state.db,
+                &item.id,
+                &now,
+                item.last_cleanup_error.as_deref(),
+                &error,
+            )
+            .await?;
             tracing::warn!(backup_id = %item.id, path = %item.artifact_path, "backup cleanup path is outside managed storage");
             continue;
         };
-        if let Err(error) = delete_artifact(
+        let mut tombstone_key = None;
+        let mut completed_marker = None;
+        let mut owned_intent = None;
+        let artifact_present = match artifact_exists(
             &*state.runner,
             &storage,
             &state.config.dockrev_image_repo,
@@ -629,10 +611,318 @@ async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Result<()> {
         )
         .await
         {
-            tracing::warn!(backup_id = %item.id, error = %error, "backup cleanup delete failed");
-            continue;
+            Ok(present) => present,
+            Err(error) => {
+                record_cleanup_state_error(
+                    &state.db,
+                    &item.id,
+                    &now,
+                    item.last_cleanup_error.as_deref(),
+                    &error.to_string(),
+                )
+                .await?;
+                tracing::warn!(backup_id = %item.id, error = %error, "backup cleanup existence check failed");
+                continue;
+            }
+        };
+        if keep_last > 0 && !recovery_pending && artifact_present {
+            let ids = state
+                .db
+                .list_success_backup_ids_for_stack(&item.stack_id)
+                .await?;
+            if ids.iter().take(keep_last).any(|id| id == &item.id) {
+                continue;
+            }
         }
-        state.db.mark_backup_deleted(&item.id, &now).await?;
+        let outcome = if !artifact_present {
+            if has_cleanup_delete_completed(item.last_cleanup_error.as_deref()) {
+                completed_marker = item
+                    .last_cleanup_error
+                    .as_deref()
+                    .map(cleanup_delete_completed_marker);
+                tombstone_key = Some(cleanup_tombstone_key(
+                    &key,
+                    item.last_cleanup_error.as_deref().unwrap(),
+                ));
+                ArtifactCleanupOutcome::Deleted
+            } else if is_legacy_cleanup_delete_intent(item.last_cleanup_error.as_deref()) {
+                ArtifactCleanupOutcome::Deleted
+            } else if has_cleanup_delete_intent(item.last_cleanup_error.as_deref()) {
+                let marker = item.last_cleanup_error.as_deref().unwrap();
+                let tombstone = cleanup_tombstone_key(&key, marker);
+                let tombstone_present = match artifact_exists(
+                    &*state.runner,
+                    &storage,
+                    &state.config.dockrev_image_repo,
+                    &tombstone,
+                )
+                .await
+                {
+                    Ok(present) => present,
+                    Err(error) => {
+                        let intent = cleanup_delete_intent_marker(marker);
+                        record_cleanup_intent_error(
+                            &state.db,
+                            &item.id,
+                            &now,
+                            &intent,
+                            &error.to_string(),
+                        )
+                        .await?;
+                        tracing::warn!(backup_id = %item.id, error = %error, "backup tombstone existence check failed");
+                        continue;
+                    }
+                };
+                if tombstone_present {
+                    let completed = cleanup_delete_completed_marker(marker);
+                    let claimed =
+                        mark_cleanup_delete_completed(&state.db, &item.id, marker, &completed)
+                            .await?;
+                    if !claimed {
+                        continue;
+                    }
+                    completed_marker = Some(completed);
+                    tombstone_key = Some(tombstone);
+                    ArtifactCleanupOutcome::Deleted
+                } else {
+                    ArtifactCleanupOutcome::Missing
+                }
+            } else {
+                state
+                    .db
+                    .mark_backup_cleanup_attempt(&item.id, &now, &stale_before)
+                    .await?;
+                ArtifactCleanupOutcome::Missing
+            }
+        } else {
+            let legacy_intent = is_legacy_cleanup_delete_intent(item.last_cleanup_error.as_deref());
+            let intent = if legacy_intent {
+                format!(
+                    "{}{}",
+                    crate::db::BACKUP_CLEANUP_DELETE_INTENT_PREFIX,
+                    ulid::Ulid::new()
+                )
+            } else {
+                item.last_cleanup_error
+                    .as_deref()
+                    .filter(|marker| has_cleanup_delete_intent(Some(marker)))
+                    .map(cleanup_delete_intent_marker)
+                    .unwrap_or_else(|| {
+                        format!(
+                            "{}{}",
+                            crate::db::BACKUP_CLEANUP_DELETE_INTENT_PREFIX,
+                            ulid::Ulid::new()
+                        )
+                    })
+            };
+            let claimed = if has_cleanup_delete_intent(item.last_cleanup_error.as_deref())
+                && !legacy_intent
+            {
+                state
+                    .db
+                    .reclaim_backup_cleanup_delete_intent(&item.id, &now, &intent, &stale_before)
+                    .await?
+            } else {
+                state
+                    .db
+                    .mark_backup_cleanup_delete_started(&item.id, &now, &intent, &stale_before)
+                    .await?
+            };
+            if !claimed {
+                continue;
+            }
+            owned_intent = Some(intent.clone());
+            let tombstone = cleanup_tombstone_key(&key, &intent);
+            tombstone_key = Some(tombstone.clone());
+            let completed = cleanup_delete_completed_marker(&intent);
+            match move_artifact_to_tombstone(
+                &*state.runner,
+                &storage,
+                &state.config.dockrev_image_repo,
+                &key,
+                &tombstone,
+            )
+            .await
+            {
+                Ok(()) => {
+                    let claimed =
+                        mark_cleanup_delete_completed(&state.db, &item.id, &intent, &completed)
+                            .await?;
+                    if !claimed {
+                        continue;
+                    }
+                    completed_marker = Some(completed);
+                    ArtifactCleanupOutcome::Deleted
+                }
+                Err(error) => {
+                    let tombstone_present = match artifact_exists(
+                        &*state.runner,
+                        &storage,
+                        &state.config.dockrev_image_repo,
+                        &tombstone,
+                    )
+                    .await
+                    {
+                        Ok(present) => present,
+                        Err(check_error) => {
+                            record_cleanup_intent_error(
+                                &state.db,
+                                &item.id,
+                                &now,
+                                &intent,
+                                &format!("{}; move error: {}", check_error, error),
+                            )
+                            .await?;
+                            tracing::warn!(backup_id = %item.id, error = %check_error, "backup cleanup tombstone existence check failed");
+                            continue;
+                        }
+                    };
+                    if tombstone_present {
+                        let claimed =
+                            mark_cleanup_delete_completed(&state.db, &item.id, &intent, &completed)
+                                .await?;
+                        if !claimed {
+                            continue;
+                        }
+                        completed_marker = Some(completed);
+                        ArtifactCleanupOutcome::Deleted
+                    } else {
+                        let artifact_present = match artifact_exists(
+                            &*state.runner,
+                            &storage,
+                            &state.config.dockrev_image_repo,
+                            &key,
+                        )
+                        .await
+                        {
+                            Ok(present) => present,
+                            Err(check_error) => {
+                                record_cleanup_intent_error(
+                                    &state.db,
+                                    &item.id,
+                                    &now,
+                                    &intent,
+                                    &format!("{}; move error: {}", check_error, error),
+                                )
+                                .await?;
+                                tracing::warn!(backup_id = %item.id, error = %check_error, "backup cleanup post-move existence check failed");
+                                continue;
+                            }
+                        };
+                        if !artifact_present {
+                            let orphan_tombstone = match find_artifact_tombstone(
+                                &*state.runner,
+                                &storage,
+                                &state.config.dockrev_image_repo,
+                                &key,
+                            )
+                            .await
+                            {
+                                Ok(tombstone) => tombstone,
+                                Err(check_error) => {
+                                    record_cleanup_intent_error(
+                                        &state.db,
+                                        &item.id,
+                                        &now,
+                                        &intent,
+                                        &format!("{}; move error: {}", check_error, error),
+                                    )
+                                    .await?;
+                                    tracing::warn!(backup_id = %item.id, error = %check_error, "backup cleanup orphan tombstone discovery failed");
+                                    continue;
+                                }
+                            };
+                            if let Some(orphan_tombstone) = orphan_tombstone {
+                                let claimed = mark_cleanup_delete_completed(
+                                    &state.db, &item.id, &intent, &completed,
+                                )
+                                .await?;
+                                if !claimed {
+                                    continue;
+                                }
+                                completed_marker = Some(completed);
+                                tombstone_key = Some(orphan_tombstone);
+                                ArtifactCleanupOutcome::Deleted
+                            } else {
+                                ArtifactCleanupOutcome::Missing
+                            }
+                        } else {
+                            record_cleanup_intent_error(
+                                &state.db,
+                                &item.id,
+                                &now,
+                                &intent,
+                                &error.to_string(),
+                            )
+                            .await?;
+                            tracing::warn!(backup_id = %item.id, error = %error, "backup cleanup delete failed");
+                            continue;
+                        }
+                    }
+                }
+            }
+        };
+        match outcome {
+            ArtifactCleanupOutcome::Deleted => {
+                if let Some(tombstone) = tombstone_key.as_ref()
+                    && let Err(error) = delete_artifact_if_present(
+                        &*state.runner,
+                        &storage,
+                        &state.config.dockrev_image_repo,
+                        tombstone,
+                    )
+                    .await
+                {
+                    if let Some(completed) = completed_marker.as_deref() {
+                        record_cleanup_completed_error(
+                            &state.db,
+                            &item.id,
+                            &now,
+                            completed,
+                            &error.to_string(),
+                        )
+                        .await?;
+                    }
+                    tracing::warn!(backup_id = %item.id, error = %error, "backup tombstone cleanup failed");
+                    continue;
+                }
+                if !state.db.mark_backup_deleted(&item.id, &now).await? {
+                    continue;
+                }
+            }
+            ArtifactCleanupOutcome::Missing => {
+                let transitioned = if let Some(intent) = owned_intent.as_deref() {
+                    state
+                        .db
+                        .mark_backup_missing_for_intent(&item.id, &now, intent)
+                        .await?
+                } else if has_cleanup_delete_completed(item.last_cleanup_error.as_deref()) {
+                    state.db.mark_backup_deleted(&item.id, &now).await?
+                } else {
+                    state
+                        .db
+                        .mark_backup_missing_after_cleanup(&item.id, &now, &stale_before)
+                        .await?
+                };
+                if !transitioned {
+                    continue;
+                }
+                if let Some(job_id) = item.job_id.as_deref() {
+                    let _ = state
+                        .db
+                        .insert_job_log(
+                            job_id,
+                            &crate::api::types::JobLogLine {
+                                ts: now.clone(),
+                                level: "info".to_string(),
+                                msg: format!("backup missing (verified): {}", item.artifact_path),
+                            },
+                        )
+                        .await;
+                }
+                continue;
+            }
+        }
         if let Some(job_id) = item.job_id.as_deref() {
             let _ = state
                 .db
@@ -647,63 +937,8 @@ async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Result<()> {
                 .await;
         }
     }
-
     Ok(())
 }
-
-async fn stack_is_healthy_now(
-    runner: &dyn CommandRunner,
-    compose_bin: &str,
-    stack: &StackRecord,
-) -> anyhow::Result<bool> {
-    let compose_cfg = ComposeRunnerConfig {
-        compose_bin: compose_bin.to_string(),
-        env: Vec::new(),
-    };
-    let compose_stack = ComposeStack {
-        project_name: sanitize_project_name(&stack.name),
-        compose: stack.compose.clone(),
-    };
-
-    let docker_cfg = docker_runner::DockerRunnerConfig::default();
-
-    for svc in &stack.services {
-        let container_id = run_to_string(
-            runner,
-            compose_stack.ps_q_service(&compose_cfg, &svc.name),
-            Duration::from_secs(20),
-        )
-        .await?;
-        let container_id = container_id.trim().to_string();
-        if container_id.is_empty() {
-            return Ok(false);
-        }
-
-        let has_health = run_to_string(
-            runner,
-            docker_runner::inspect_has_healthcheck(&docker_cfg, &container_id),
-            Duration::from_secs(10),
-        )
-        .await?;
-        let has_health = has_health.trim() == "1";
-        if !has_health {
-            continue;
-        }
-
-        let status = run_to_string(
-            runner,
-            docker_runner::inspect_health_status(&docker_cfg, &container_id),
-            Duration::from_secs(10),
-        )
-        .await?;
-        if status.trim() != "healthy" {
-            return Ok(false);
-        }
-    }
-
-    Ok(true)
-}
-
 fn compose_runner_config(
     docker_config_path: Option<&std::path::Path>,
     compose_bin: &str,
@@ -723,22 +958,6 @@ fn compose_runner_config(
     })
 }
 
-async fn run_to_string(
-    runner: &dyn CommandRunner,
-    spec: CommandSpec,
-    timeout: Duration,
-) -> anyhow::Result<String> {
-    let out = runner.run(spec, timeout).await?;
-    if out.status != 0 {
-        return Err(anyhow::anyhow!(
-            "command failed: status={} stderr={}",
-            out.status,
-            out.stderr
-        ));
-    }
-    Ok(out.stdout)
-}
-
 fn sanitize_project_name(name: &str) -> String {
     let mut out = String::new();
     for ch in name.chars() {
@@ -755,19 +974,6 @@ fn sanitize_project_name(name: &str) -> String {
     } else {
         out
     }
-}
-
-fn timestamp_slug(now_rfc3339: &str) -> String {
-    // Expect RFC3339; best-effort fallback.
-    // Example: 2026-01-19T06:15:54Z -> 20260119-061554Z
-    let cleaned = now_rfc3339.replace(['-', ':'], "");
-    // 20260119T061554Z
-    if let Some((date, rest)) = cleaned.split_once('T') {
-        let time = rest.trim_end_matches('Z');
-        let time = if time.len() >= 6 { &time[..6] } else { time };
-        return format!("{}-{}Z", &date[..8.min(date.len())], time);
-    }
-    "backup".to_string()
 }
 
 fn effective_policy_for_target(
@@ -1278,90 +1484,6 @@ async fn artifact_size_bytes(
             }
             Ok(out.stdout.trim().parse::<u64>()?)
         }
-    }
-}
-
-fn legacy_artifact_key(
-    storage: &crate::backup_storage::BackupStorage,
-    artifact_path: &str,
-) -> Option<PathBuf> {
-    let key = Path::new(artifact_path)
-        .strip_prefix(storage.logical_root())
-        .ok()
-        .filter(|key| !key.as_os_str().is_empty())?;
-    key.components()
-        .all(|component| matches!(component, std::path::Component::Normal(_)))
-        .then(|| key.to_path_buf())
-}
-
-async fn delete_artifact(
-    runner: &dyn CommandRunner,
-    storage: &crate::backup_storage::BackupStorage,
-    helper_image_fallback: &str,
-    artifact_key: &Path,
-) -> anyhow::Result<()> {
-    match storage {
-        crate::backup_storage::BackupStorage::Local { logical_root } => {
-            let root = tokio::fs::canonicalize(logical_root).await?;
-            let artifact_path = logical_root.join(artifact_key);
-            let resolved_artifact = tokio::fs::canonicalize(&artifact_path).await?;
-            if !resolved_artifact.starts_with(&root) {
-                return Err(anyhow::anyhow!(
-                    "backup artifact resolves outside managed storage: {}",
-                    artifact_path.display()
-                ));
-            }
-            tokio::fs::remove_file(artifact_path).await?;
-        }
-        _ => {
-            let (source, relative) = storage.helper_output_mount();
-            let path = relative.join(artifact_key);
-            let out = runner
-                .run(
-                    CommandSpec {
-                        program: "docker".to_string(),
-                        args: vec![
-                            "run".to_string(),
-                            "--rm".to_string(),
-                            "-v".to_string(),
-                            format!("{source}:/out-root"),
-                            storage.helper_image(helper_image_fallback).to_string(),
-                            "rm".to_string(),
-                            "-f".to_string(),
-                            format!("/out-root/{}", path.to_string_lossy()),
-                        ],
-                        env: Vec::new(),
-                    },
-                    Duration::from_secs(20),
-                )
-                .await?;
-            if out.status != 0 {
-                return Err(anyhow::anyhow!(
-                    "backup artifact delete failed: {}",
-                    out.stderr
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-async fn delete_artifact_if_present(
-    runner: &dyn CommandRunner,
-    storage: &crate::backup_storage::BackupStorage,
-    helper_image_fallback: &str,
-    artifact_key: &Path,
-) -> anyhow::Result<()> {
-    match delete_artifact(runner, storage, helper_image_fallback, artifact_key).await {
-        Ok(()) => Ok(()),
-        Err(error)
-            if error
-                .downcast_ref::<std::io::Error>()
-                .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) =>
-        {
-            Ok(())
-        }
-        Err(error) => Err(error),
     }
 }
 

@@ -44,6 +44,7 @@ import { ServiceDetailIdentifiersCard } from "./ServiceDetailIdentifiersCard";
 import {
   backupPolicyHint,
   backupRelationshipLabel,
+  backupTargetOverridesFromDraft,
   backupTargetRequestFromDraft,
   createBackupTargetsDraft,
   formatBackupRetentionSummary,
@@ -524,6 +525,7 @@ export function ServiceDetailPage(props: {
         skeleton={<AsyncDataSkeleton className="serviceBackupLoadingSkeleton" lines={6} />}
         source={snapshotPayload && !backupDataReady ? "fresh-snapshot" : "live"}
       >
+      <div className="serviceBackupSectionCards">
       <div className="card serviceBackupSummaryCard" data-service-detail-section-card="backup-summary">
         <div className="serviceBackupSummaryHead">
           <div>
@@ -573,7 +575,8 @@ export function ServiceDetailPage(props: {
             <div className="muted">这里只显示当前服务实际产生过备份产物的记录。</div>
           </div>
         </div>
-        <BackupRecordList records={effectiveBackupRecords} />
+        <BackupRecordList records={effectiveBackupRecords} keepLast={effectiveBackupTargets?.storage.keepLast} />
+      </div>
       </div>
       </AsyncDataRegion>
     </div>
@@ -1140,7 +1143,13 @@ export function ServiceDetailPage(props: {
                     setBusy(true);
                     setError(null);
                     try {
-                      await putServiceBackupTargets(props.serviceId, backupTargetRequestFromDraft(serviceBackupTargetsDraft));
+                      const backupTargetRequest = backupTargetRequestFromDraft(serviceBackupTargetsDraft);
+                      await putServiceBackupTargets(props.serviceId, backupTargetRequest);
+                      setServiceSettingsDraft((previous) =>
+                        previous
+                          ? { ...previous, backupTargets: backupTargetOverridesFromDraft(serviceBackupTargetsDraft) }
+                          : previous,
+                      );
                       await requestRefresh();
                     } catch (e: unknown) {
                       setError(errorMessage(e));

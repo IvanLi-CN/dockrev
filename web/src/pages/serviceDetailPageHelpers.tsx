@@ -1,4 +1,5 @@
 import type {
+  BackupTargetOverrides,
   BackupTargetPolicy,
   Service,
   ServiceBackupTargetItem,
@@ -77,6 +78,20 @@ export function backupTargetRequestFromDraft(draft: BackupTargetsDraft) {
   return {
     bindPaths: backupTargetRequestItems(draft.bindPaths),
     volumeNames: backupTargetRequestItems(draft.volumeNames),
+  };
+}
+
+export function backupTargetOverridesFromDraft(draft: BackupTargetsDraft): BackupTargetOverrides {
+  const toChoice = (policy: BackupTargetPolicy) => {
+    if (policy === "disabled") return "skip" as const;
+    if (policy === "stop_related_services") return "force" as const;
+    return "inherit" as const;
+  };
+  const toRecord = (items: BackupTargetDraftItem[]) =>
+    Object.fromEntries(items.map((item) => [item.key, toChoice(item.policy)]));
+  return {
+    bindPaths: toRecord(draft.bindPaths),
+    volumeNames: toRecord(draft.volumeNames),
   };
 }
 

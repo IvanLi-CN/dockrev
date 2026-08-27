@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashSet;
 
 pub(super) async fn get_service_backup_records(
     state: &Arc<AppState>,
@@ -25,11 +26,26 @@ pub(super) async fn get_service_backup_records(
         .list_service_backup_records(&stack_id, service_id)
         .await
         .map_err(map_internal)?;
+    let retained_ids = if stack.backup.retention.keep_last == 0 {
+        HashSet::new()
+    } else {
+        state
+            .db
+            .list_success_backup_ids_for_stack(&stack_id)
+            .await
+            .map_err(map_internal)?
+            .into_iter()
+            .take(stack.backup.retention.keep_last as usize)
+            .collect()
+    };
     Ok(ServiceBackupRecordsResponse {
         records: rows
             .into_iter()
             .filter(|row| is_actual_backup_record(row, &stack_id))
-            .map(|row| map_backup_record_row(row, &stack_id))
+            .map(|row| {
+                let retained = retained_ids.contains(&row.backup_id);
+                map_backup_record_row(row, &stack_id, retained)
+            })
             .collect(),
     })
 }
@@ -52,6 +68,7 @@ fn is_actual_backup_record(row: &crate::db::ServiceBackupRecordRow, stack_id: &s
 fn map_backup_record_row(
     row: crate::db::ServiceBackupRecordRow,
     stack_id: &str,
+    retained: bool,
 ) -> ServiceBackupRecordItem {
     let backup_summary = current_stack_backup_summary(&row.job_summary_json, stack_id);
     ServiceBackupRecordItem {
@@ -76,7 +93,11 @@ fn map_backup_record_row(
             .map(ToOwned::to_owned),
         size_bytes: row.size_bytes,
         cleanup_after: row.cleanup_after,
+        retained: Some(retained),
         deleted_at: row.deleted_at,
+        last_cleanup_attempt_at: row.last_cleanup_attempt_at,
+        last_cleanup_error: row.last_cleanup_error,
+        missing_at: row.missing_at,
         error: row.error,
         assets: extract_backup_assets(&row.job_summary_json, stack_id),
     }

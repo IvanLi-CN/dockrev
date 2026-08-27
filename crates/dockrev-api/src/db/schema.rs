@@ -7,6 +7,8 @@ use anyhow::Context as _;
 use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 
 use super::*;
+#[path = "schema_backup_cleanup_state.rs"]
+mod schema_backup_cleanup_state;
 #[path = "schema_job_history_retention.rs"]
 mod schema_job_history_retention;
 #[path = "schema_lifecycle_events.rs"]
@@ -696,6 +698,7 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     apply_migration_0013_add_update_job_stop_controls(conn)?;
     schema_lifecycle_events::apply(conn)?;
     schema_job_history_retention::apply(conn)?;
+    schema_backup_cleanup_state::apply(conn)?;
     Ok(())
 }
 
@@ -1447,14 +1450,12 @@ CREATE TABLE IF NOT EXISTS cleanup_inventory_snapshots (
   checked_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
-
 CREATE TABLE IF NOT EXISTS deploy_check_report_snapshots (
   snapshot_key TEXT PRIMARY KEY,
   report_json TEXT NOT NULL,
   checked_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
-
 CREATE TABLE IF NOT EXISTS service_resource_samples (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,

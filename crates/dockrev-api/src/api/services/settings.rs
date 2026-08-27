@@ -47,11 +47,6 @@ pub(in crate::api) async fn put_service_settings(
             current_settings.repo_url_auto_disabled,
         ),
     };
-    let settings = ServiceSettings {
-        auto_rollback: req.auto_rollback,
-        backup_targets: req.backup_targets,
-        repo_url,
-    };
     let auto_update_policy = req
         .auto_update_policy
         .clone()
@@ -59,9 +54,10 @@ pub(in crate::api) async fn put_service_settings(
     crate::auto_update::validate_policy_for_scope(&auto_update_policy, "service")?;
     let updated = state
         .db
-        .put_service_settings_with_repo_auto_disabled(
+        .put_service_protection_settings_with_repo_auto_disabled(
             &service_id,
-            &settings,
+            req.auto_rollback,
+            repo_url.as_deref(),
             repo_url_auto_disabled,
             &now,
         )

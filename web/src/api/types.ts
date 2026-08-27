@@ -90,7 +90,11 @@ export type ServiceBackupRecordItem = {
   compression?: string | null
   sizeBytes?: number | null
   cleanupAfter?: string | null
+  retained?: boolean | null
   deletedAt?: string | null
+  lastCleanupAttemptAt?: string | null
+  lastCleanupError?: string | null
+  missingAt?: string | null
   error?: string | null
   assets: ServiceBackupRecordAsset[]
 }

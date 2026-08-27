@@ -482,3 +482,97 @@ async fn local_delete_rejects_symlink_escape() {
     assert!(outside.join("keep.tar.gz").exists());
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn reconcile_local_artifact_marks_missing_without_delete() {
+    let root = std::env::temp_dir().join(format!("dockrev-cleanup-missing-{}", ulid::Ulid::new()));
+    tokio::fs::create_dir_all(&root).await.unwrap();
+    let storage = crate::backup_storage::BackupStorage::Local {
+        logical_root: root.clone(),
+    };
+
+    let outcome = reconcile_artifact(
+        &FakeRunner::default(),
+        &storage,
+        "unused",
+        Path::new("missing.tar.zst"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome, ArtifactCleanupOutcome::Missing);
+
+    tokio::fs::write(root.join("present.tar.zst"), b"backup")
+        .await
+        .unwrap();
+    let outcome = reconcile_artifact(
+        &FakeRunner::default(),
+        &storage,
+        "unused",
+        Path::new("present.tar.zst"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome, ArtifactCleanupOutcome::Deleted);
+    assert!(!root.join("present.tar.zst").exists());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn local_cleanup_moves_artifact_to_managed_tombstone() {
+    let root =
+        std::env::temp_dir().join(format!("dockrev-cleanup-tombstone-{}", ulid::Ulid::new()));
+    tokio::fs::create_dir_all(root.join("stack")).await.unwrap();
+    tokio::fs::write(root.join("stack/backup.tar.zst"), b"backup")
+        .await
+        .unwrap();
+    let storage = crate::backup_storage::BackupStorage::Local {
+        logical_root: root.clone(),
+    };
+    move_artifact_to_tombstone(
+        &FakeRunner::default(),
+        &storage,
+        "unused",
+        Path::new("stack/backup.tar.zst"),
+        Path::new("stack/.dockrev-delete-test"),
+    )
+    .await
+    .unwrap();
+    assert!(!root.join("stack/backup.tar.zst").exists());
+    assert!(root.join("stack/.dockrev-delete-test").exists());
+    delete_artifact(
+        &FakeRunner::default(),
+        &storage,
+        "unused",
+        Path::new("stack/.dockrev-delete-test"),
+    )
+    .await
+    .unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn docker_delete_does_not_use_force_remove() {
+    let runner = FakeRunner::default();
+    let storage = crate::backup_storage::BackupStorage::Docker {
+        logical_root: PathBuf::from("/data/backups"),
+        mount_source: "/host/backups".to_string(),
+        mount_relative: PathBuf::new(),
+        mount_type: "bind".to_string(),
+        helper_image: "dockrev-helper".to_string(),
+    };
+    delete_artifact(&runner, &storage, "unused", Path::new("old.tar.zst"))
+        .await
+        .unwrap();
+    let calls = runner.calls.lock().unwrap();
+    let delete_call = calls
+        .iter()
+        .find(|spec| spec.args.iter().any(|arg| arg.contains("rm --")))
+        .expect("delete helper invocation");
+    assert!(!delete_call.args.iter().any(|arg| arg == "-f"));
+    assert!(
+        delete_call
+            .args
+            .iter()
+            .any(|arg| arg.contains("readlink -f"))
+    );
+}

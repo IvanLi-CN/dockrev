@@ -1084,6 +1084,7 @@ volumes:
     let service_id = service_id_by_name(&state, &stack_id, "api").await;
 
     let resp = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri(format!("/api/services/{service_id}/backup-targets"))
@@ -1313,6 +1314,7 @@ volumes:
         .unwrap();
 
     let resp = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("PUT")
@@ -1340,6 +1342,25 @@ volumes:
         .map(|target| target.key().to_string())
         .collect::<Vec<_>>();
     assert_eq!(stack_target_keys, vec![shared_path.clone()]);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/services/{api_id}/settings"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "autoRollback": true,
+                        "backupTargets": { "bindPaths": {}, "volumeNames": {} }
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
 
     let api_settings = state.db.get_service_settings(&api_id).await.unwrap().unwrap();
     assert!(matches!(

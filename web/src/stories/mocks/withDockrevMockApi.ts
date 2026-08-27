@@ -26,6 +26,7 @@ export const withDockrevMockApi: Decorator = (Story, context) => {
     discoveryTimelineErrorServiceIds: context.parameters?.dockrevDiscoveryTimelineErrorServiceIds,
     githubReleasesByServiceId: context.parameters?.dockrevGitHubReleasesByServiceId,
     serviceOverridesById: context.parameters?.dockrevServiceOverridesById,
+    serviceBackupTargetsById: context.parameters?.dockrevServiceBackupTargetsById,
     serviceBackupRecordsById: context.parameters?.dockrevServiceBackupRecordsById,
     serviceLogsByServiceId: context.parameters?.dockrevServiceLogsByServiceId,
     serviceTagSuggestionsById: context.parameters?.dockrevServiceTagSuggestionsById,
