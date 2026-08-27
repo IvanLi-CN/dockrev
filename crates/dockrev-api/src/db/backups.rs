@@ -413,7 +413,8 @@ FROM backups b
 LEFT JOIN jobs j ON j.id = b.job_id
 WHERE b.stack_id = ?1 AND b.status = 'success' AND b.deleted_at IS NULL AND b.missing_at IS NULL
   AND (b.last_cleanup_error IS NULL OR (
-    b.last_cleanup_error NOT GLOB '__dockrev_cleanup_delete_intent__:*'
+    b.last_cleanup_error <> '__dockrev_cleanup_delete_intent__'
+    AND b.last_cleanup_error NOT GLOB '__dockrev_cleanup_delete_intent__:*'
     AND b.last_cleanup_error NOT GLOB '__dockrev_cleanup_delete_completed__:*'
   ))
 ORDER BY b.created_at DESC, b.id DESC
@@ -711,6 +712,15 @@ VALUES
         .await
         .unwrap();
 
+        db.call(|conn| {
+            conn.execute(
+                "UPDATE backups SET last_cleanup_attempt_at = '2026-01-02T00:00:00Z', last_cleanup_error = '__dockrev_cleanup_delete_intent__' WHERE id = 'backup_state'",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
         assert!(
             db.mark_backup_cleanup_delete_started(
                 "backup_state",

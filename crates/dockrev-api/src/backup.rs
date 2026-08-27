@@ -25,7 +25,7 @@ use backup_cleanup::{
     cleanup_delete_completed_marker, cleanup_delete_intent_marker, cleanup_tombstone_key,
     has_cleanup_delete_completed, has_cleanup_delete_intent, mark_cleanup_delete_completed,
     record_cleanup_completed_error, record_cleanup_intent_error, record_cleanup_state_error,
-    run_to_string, stop_interrupted_helper,
+    run_to_string, stop_interrupted_helper, timestamp_slug,
 };
 
 #[derive(Clone, Debug)]
@@ -697,19 +697,30 @@ pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Resu
                 ArtifactCleanupOutcome::Missing
             }
         } else {
-            let intent = item
-                .last_cleanup_error
-                .as_deref()
-                .filter(|marker| has_cleanup_delete_intent(Some(marker)))
-                .map(cleanup_delete_intent_marker)
-                .unwrap_or_else(|| {
-                    format!(
-                        "{}{}",
-                        crate::db::BACKUP_CLEANUP_DELETE_INTENT_PREFIX,
-                        ulid::Ulid::new()
-                    )
-                });
-            let claimed = if has_cleanup_delete_intent(item.last_cleanup_error.as_deref()) {
+            let legacy_intent = item.last_cleanup_error.as_deref()
+                == Some(crate::db::BACKUP_CLEANUP_DELETE_INTENT_LEGACY);
+            let intent = if legacy_intent {
+                format!(
+                    "{}{}",
+                    crate::db::BACKUP_CLEANUP_DELETE_INTENT_PREFIX,
+                    ulid::Ulid::new()
+                )
+            } else {
+                item.last_cleanup_error
+                    .as_deref()
+                    .filter(|marker| has_cleanup_delete_intent(Some(marker)))
+                    .map(cleanup_delete_intent_marker)
+                    .unwrap_or_else(|| {
+                        format!(
+                            "{}{}",
+                            crate::db::BACKUP_CLEANUP_DELETE_INTENT_PREFIX,
+                            ulid::Ulid::new()
+                        )
+                    })
+            };
+            let claimed = if has_cleanup_delete_intent(item.last_cleanup_error.as_deref())
+                && !legacy_intent
+            {
                 state
                     .db
                     .reclaim_backup_cleanup_delete_intent(&item.id, &now, &intent, &stale_before)
@@ -966,16 +977,6 @@ fn sanitize_project_name(name: &str) -> String {
     } else {
         out
     }
-}
-
-fn timestamp_slug(now_rfc3339: &str) -> String {
-    let cleaned = now_rfc3339.replace(['-', ':'], "");
-    if let Some((date, rest)) = cleaned.split_once('T') {
-        let time = rest.trim_end_matches('Z');
-        let time = if time.len() >= 6 { &time[..6] } else { time };
-        return format!("{}-{}Z", &date[..8.min(date.len())], time);
-    }
-    "backup".to_string()
 }
 
 fn effective_policy_for_target(

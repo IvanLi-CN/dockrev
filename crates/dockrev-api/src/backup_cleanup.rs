@@ -73,6 +73,16 @@ pub(crate) async fn run_to_string(
     Ok(out.stdout)
 }
 
+pub(crate) fn timestamp_slug(now_rfc3339: &str) -> String {
+    let cleaned = now_rfc3339.replace(['-', ':'], "");
+    if let Some((date, rest)) = cleaned.split_once('T') {
+        let time = rest.trim_end_matches('Z');
+        let time = if time.len() >= 6 { &time[..6] } else { time };
+        return format!("{}-{}Z", &date[..8.min(date.len())], time);
+    }
+    "backup".to_string()
+}
+
 pub(crate) async fn record_cleanup_error(
     db: &crate::db::Db,
     backup_id: &str,
