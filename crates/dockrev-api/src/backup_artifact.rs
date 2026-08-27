@@ -497,7 +497,11 @@ pub(crate) async fn find_artifact_tombstone(
     match storage {
         crate::backup_storage::BackupStorage::Local { logical_root } => {
             let parent = artifact_key.parent().unwrap_or_else(|| Path::new(""));
-            let mut entries = tokio::fs::read_dir(logical_root.join(parent)).await?;
+            let mut entries = match tokio::fs::read_dir(logical_root.join(parent)).await {
+                Ok(entries) => entries,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(error) => return Err(error.into()),
+            };
             while let Some(entry) = entries.next_entry().await? {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if !name.starts_with(".dockrev-delete-")

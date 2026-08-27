@@ -23,9 +23,9 @@ use backup_artifact::{
 use backup_artifact::{delete_artifact, reconcile_artifact};
 use backup_cleanup::{
     cleanup_delete_completed_marker, cleanup_delete_intent_marker, cleanup_tombstone_key,
-    has_cleanup_delete_completed, has_cleanup_delete_intent, mark_cleanup_delete_completed,
-    record_cleanup_completed_error, record_cleanup_intent_error, record_cleanup_state_error,
-    run_to_string, stop_interrupted_helper, timestamp_slug,
+    has_cleanup_delete_completed, has_cleanup_delete_intent, is_legacy_cleanup_delete_intent,
+    mark_cleanup_delete_completed, record_cleanup_completed_error, record_cleanup_intent_error,
+    record_cleanup_state_error, run_to_string, stop_interrupted_helper, timestamp_slug,
 };
 
 #[derive(Clone, Debug)]
@@ -645,9 +645,7 @@ pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Resu
                     item.last_cleanup_error.as_deref().unwrap(),
                 ));
                 ArtifactCleanupOutcome::Deleted
-            } else if item.last_cleanup_error.as_deref()
-                == Some(crate::db::BACKUP_CLEANUP_DELETE_INTENT_LEGACY)
-            {
+            } else if is_legacy_cleanup_delete_intent(item.last_cleanup_error.as_deref()) {
                 ArtifactCleanupOutcome::Deleted
             } else if has_cleanup_delete_intent(item.last_cleanup_error.as_deref()) {
                 let marker = item.last_cleanup_error.as_deref().unwrap();
@@ -697,8 +695,7 @@ pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Resu
                 ArtifactCleanupOutcome::Missing
             }
         } else {
-            let legacy_intent = item.last_cleanup_error.as_deref()
-                == Some(crate::db::BACKUP_CLEANUP_DELETE_INTENT_LEGACY);
+            let legacy_intent = is_legacy_cleanup_delete_intent(item.last_cleanup_error.as_deref());
             let intent = if legacy_intent {
                 format!(
                     "{}{}",

@@ -146,7 +146,7 @@ pub(crate) async fn record_cleanup_state_error(
             db,
             backup_id,
             attempted_at,
-            &cleanup_delete_intent_marker(recovery_marker.unwrap()),
+            recovery_marker.unwrap_or_default(),
             error,
         )
         .await
@@ -159,6 +159,16 @@ pub(crate) fn has_cleanup_delete_intent(value: Option<&str>) -> bool {
     value.is_some_and(|value| {
         value == crate::db::BACKUP_CLEANUP_DELETE_INTENT_LEGACY
             || value.starts_with(crate::db::BACKUP_CLEANUP_DELETE_INTENT_PREFIX)
+    })
+}
+
+pub(crate) fn is_legacy_cleanup_delete_intent(value: Option<&str>) -> bool {
+    value.is_some_and(|value| {
+        value == crate::db::BACKUP_CLEANUP_DELETE_INTENT_LEGACY
+            || value.starts_with(&format!(
+                "{}\n",
+                crate::db::BACKUP_CLEANUP_DELETE_INTENT_LEGACY
+            ))
     })
 }
 

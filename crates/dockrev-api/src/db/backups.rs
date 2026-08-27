@@ -275,7 +275,7 @@ WHERE id = ?1
         let error = error.to_string();
         self.call(move |conn| {
             conn.execute(
-                "UPDATE backups SET last_cleanup_attempt_at = ?2, last_cleanup_error = ?3 || char(10) || ?4 WHERE id = ?1 AND deleted_at IS NULL AND missing_at IS NULL AND last_cleanup_error = ?3",
+                "UPDATE backups SET last_cleanup_attempt_at = ?2, last_cleanup_error = ?3 || char(10) || ?4 WHERE id = ?1 AND deleted_at IS NULL AND missing_at IS NULL AND (last_cleanup_error = ?3 OR last_cleanup_error GLOB ?3 || char(10) || '*')",
                 params![backup_id, attempted_at, intent, error],
             )?;
             Ok(())
