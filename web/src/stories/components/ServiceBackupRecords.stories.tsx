@@ -94,3 +94,11 @@ export const RetainedDueBackup: Story = {
     if (canvasElement.querySelector('[data-slot="alert"]')) throw new Error('retained backup should not show cleanup delay')
   },
 }
+
+export const StackWideRetentionMetadata: Story = {
+  args: { keepLast: 1, records: [{ ...records[0], retained: false }] },
+  play: async ({ canvasElement }) => {
+    if (!canvasElement.textContent?.includes('清理延迟')) throw new Error('backend retention metadata should win')
+    if (!canvasElement.querySelector('[data-slot="alert"] svg')) throw new Error('cleanup Alert icon missing')
+  },
+}

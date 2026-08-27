@@ -82,3 +82,32 @@ async fn cleanup_once_keeps_latest_and_removes_due_backup_without_stack_health_g
 
     tokio::fs::remove_dir_all(storage_root).await.unwrap();
 }
+
+#[tokio::test]
+async fn service_backup_records_report_stack_wide_retention_metadata() {
+    let state = test_state(":memory:").await;
+    let compose_path = format!("/tmp/dockrev-backup-retention-{}.yml", ulid::Ulid::new());
+    tokio::fs::write(&compose_path, "services:\n  api:\n    image: example/api\n  web:\n    image: example/web\n")
+        .await
+        .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "retention", &compose_path).await;
+    let stack = state.db.get_stack(&stack_id).await.unwrap().unwrap();
+    let api_id = stack.services.iter().find(|svc| svc.name == "api").unwrap().id.clone();
+    let web_id = stack.services.iter().find(|svc| svc.name == "web").unwrap().id.clone();
+    let now = test_now_rfc3339();
+    let newer = test_offset_rfc3339(&now, time::Duration::seconds(1));
+    insert_update_job_with_summary(&state, "job-retention-api", crate::api::types::JobScope::Service, Some(&stack_id), Some(&api_id), json!({"targets": [{"serviceId": api_id}]}), &now).await;
+    insert_update_job_with_summary(&state, "job-retention-web", crate::api::types::JobScope::Service, Some(&stack_id), Some(&web_id), json!({"targets": [{"serviceId": web_id}]}), &newer).await;
+    insert_backup_record(&state, "bkp-retention-api", &stack_id, "job-retention-api", &now, "success", Some("/tmp/retention-api.tar.gz"), Some(1), None, None, None).await;
+    insert_backup_record(&state, "bkp-retention-web", &stack_id, "job-retention-web", &newer, "success", Some("/tmp/retention-web.tar.gz"), Some(1), None, None, None).await;
+
+    let response = api::router(state)
+        .oneshot(Request::builder().uri(format!("/api/services/{api_id}/backup-records")).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let records = response_json(response).await["records"].clone();
+    assert_eq!(records.as_array().unwrap().len(), 1);
+    assert_eq!(records[0]["backupId"].as_str(), Some("bkp-retention-api"));
+    assert_eq!(records[0]["retained"].as_bool(), Some(false));
+    tokio::fs::remove_file(compose_path).await.unwrap();
+}

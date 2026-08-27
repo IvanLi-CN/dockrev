@@ -90,15 +90,15 @@ WHERE id = ?1
         &self,
         backup_id: &str,
         deleted_at: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         let backup_id = backup_id.to_string();
         let deleted_at = deleted_at.to_string();
         self.call(move |conn| {
-            conn.execute(
+            let changed = conn.execute(
                 "UPDATE backups SET deleted_at = ?2, missing_at = NULL, last_cleanup_attempt_at = ?2, last_cleanup_error = NULL WHERE id = ?1 AND deleted_at IS NULL AND missing_at IS NULL",
                 params![backup_id, deleted_at],
             )?;
-            Ok(())
+            Ok(changed == 1)
         })
         .await
         .context("mark backup deleted")
@@ -108,15 +108,17 @@ WHERE id = ?1
         &self,
         backup_id: &str,
         attempted_at: &str,
-    ) -> anyhow::Result<()> {
+        stale_before: &str,
+    ) -> anyhow::Result<bool> {
         let backup_id = backup_id.to_string();
         let attempted_at = attempted_at.to_string();
+        let stale_before = stale_before.to_string();
         self.call(move |conn| {
-            conn.execute(
-                "UPDATE backups SET last_cleanup_attempt_at = ?2 WHERE id = ?1 AND deleted_at IS NULL AND missing_at IS NULL",
-                params![backup_id, attempted_at],
+            let changed = conn.execute(
+                "UPDATE backups SET last_cleanup_attempt_at = ?2 WHERE id = ?1 AND deleted_at IS NULL AND missing_at IS NULL AND (last_cleanup_error IS NULL OR last_cleanup_error NOT GLOB '__dockrev_cleanup_delete_intent__:*' OR last_cleanup_attempt_at IS NULL OR last_cleanup_attempt_at < ?3)",
+                params![backup_id, attempted_at, stale_before],
             )?;
-            Ok(())
+            Ok(changed == 1)
         })
         .await
         .context("mark backup cleanup attempt")
@@ -140,14 +142,63 @@ WHERE id = ?1
         .context("mark backup missing")
     }
 
-    pub async fn mark_backup_cleanup_delete_started(&self, backup_id: &str) -> anyhow::Result<()> {
+    pub async fn mark_backup_missing_after_cleanup(
+        &self,
+        backup_id: &str,
+        missing_at: &str,
+        stale_before: &str,
+    ) -> anyhow::Result<bool> {
         let backup_id = backup_id.to_string();
+        let missing_at = missing_at.to_string();
+        let stale_before = stale_before.to_string();
         self.call(move |conn| {
-            conn.execute(
-                "UPDATE backups SET last_cleanup_error = ?2 WHERE id = ?1 AND deleted_at IS NULL AND missing_at IS NULL",
-                params![backup_id, super::BACKUP_CLEANUP_DELETE_INTENT],
+            let changed = conn.execute(
+                "UPDATE backups SET missing_at = ?2, deleted_at = NULL, last_cleanup_attempt_at = ?2, last_cleanup_error = NULL WHERE id = ?1 AND deleted_at IS NULL AND missing_at IS NULL AND (last_cleanup_error IS NULL OR last_cleanup_error NOT GLOB '__dockrev_cleanup_delete_completed__:*') AND (last_cleanup_error IS NULL OR last_cleanup_error NOT GLOB '__dockrev_cleanup_delete_intent__:*' OR last_cleanup_attempt_at IS NULL OR last_cleanup_attempt_at < ?3)",
+                params![backup_id, missing_at, stale_before],
             )?;
-            Ok(())
+            Ok(changed == 1)
+        })
+        .await
+        .context("mark backup missing after cleanup")
+    }
+
+    pub async fn mark_backup_missing_for_intent(
+        &self,
+        backup_id: &str,
+        missing_at: &str,
+        intent: &str,
+    ) -> anyhow::Result<bool> {
+        let backup_id = backup_id.to_string();
+        let missing_at = missing_at.to_string();
+        let intent = intent.to_string();
+        self.call(move |conn| {
+            let changed = conn.execute(
+                "UPDATE backups SET missing_at = ?2, deleted_at = NULL, last_cleanup_attempt_at = ?2, last_cleanup_error = NULL WHERE id = ?1 AND deleted_at IS NULL AND missing_at IS NULL AND last_cleanup_error = ?3",
+                params![backup_id, missing_at, intent],
+            )?;
+            Ok(changed == 1)
+        })
+        .await
+        .context("mark backup missing for intent")
+    }
+
+    pub async fn mark_backup_cleanup_delete_started(
+        &self,
+        backup_id: &str,
+        attempted_at: &str,
+        intent: &str,
+        stale_before: &str,
+    ) -> anyhow::Result<bool> {
+        let backup_id = backup_id.to_string();
+        let attempted_at = attempted_at.to_string();
+        let intent = intent.to_string();
+        let stale_before = stale_before.to_string();
+        self.call(move |conn| {
+            let changed = conn.execute(
+                "UPDATE backups SET last_cleanup_attempt_at = ?2, last_cleanup_error = ?3 WHERE id = ?1 AND deleted_at IS NULL AND missing_at IS NULL AND (last_cleanup_error IS NULL OR last_cleanup_error NOT GLOB '__dockrev_cleanup_delete_completed__:*') AND (last_cleanup_error IS NULL OR last_cleanup_error NOT GLOB '__dockrev_cleanup_delete_intent__:*' OR last_cleanup_attempt_at IS NULL OR last_cleanup_attempt_at < ?4)",
+                params![backup_id, attempted_at, intent, stale_before],
+            )?;
+            Ok(changed == 1)
         })
         .await
         .context("mark backup cleanup delete started")
@@ -164,13 +215,75 @@ WHERE id = ?1
         let error = error.to_string();
         self.call(move |conn| {
             conn.execute(
-                "UPDATE backups SET last_cleanup_attempt_at = ?2, last_cleanup_error = ?3 WHERE id = ?1",
+                "UPDATE backups SET last_cleanup_attempt_at = ?2, last_cleanup_error = ?3 WHERE id = ?1 AND deleted_at IS NULL AND missing_at IS NULL AND (last_cleanup_error IS NULL OR (last_cleanup_error <> '__dockrev_cleanup_delete_intent__' AND last_cleanup_error NOT GLOB '__dockrev_cleanup_delete_intent__:*' AND last_cleanup_error NOT GLOB '__dockrev_cleanup_delete_completed__:*'))",
                 params![backup_id, attempted_at, error],
             )?;
             Ok(())
         })
         .await
         .context("mark backup cleanup failed")
+    }
+
+    pub async fn mark_backup_cleanup_failed_retriable(
+        &self,
+        backup_id: &str,
+        attempted_at: &str,
+        error: &str,
+    ) -> anyhow::Result<()> {
+        let backup_id = backup_id.to_string();
+        let attempted_at = attempted_at.to_string();
+        let error = error.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                "UPDATE backups SET last_cleanup_attempt_at = ?2, last_cleanup_error = ?3 WHERE id = ?1 AND deleted_at IS NULL AND missing_at IS NULL AND (last_cleanup_error IS NULL OR (last_cleanup_error <> '__dockrev_cleanup_delete_intent__' AND last_cleanup_error NOT GLOB '__dockrev_cleanup_delete_completed__:*' AND last_cleanup_error NOT GLOB '__dockrev_cleanup_delete_intent__:*'))",
+                params![backup_id, attempted_at, error],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("mark retriable backup cleanup failure")
+    }
+
+    pub async fn mark_backup_cleanup_failed_for_intent(
+        &self,
+        backup_id: &str,
+        attempted_at: &str,
+        intent: &str,
+        error: &str,
+    ) -> anyhow::Result<()> {
+        let backup_id = backup_id.to_string();
+        let attempted_at = attempted_at.to_string();
+        let intent = intent.to_string();
+        let error = error.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                "UPDATE backups SET last_cleanup_attempt_at = ?2, last_cleanup_error = ?4 WHERE id = ?1 AND deleted_at IS NULL AND missing_at IS NULL AND last_cleanup_error = ?3",
+                params![backup_id, attempted_at, intent, error],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("mark backup cleanup failure for intent")
+    }
+
+    pub async fn mark_backup_cleanup_delete_completed(
+        &self,
+        backup_id: &str,
+        intent: &str,
+        completed: &str,
+    ) -> anyhow::Result<bool> {
+        let backup_id = backup_id.to_string();
+        let intent = intent.to_string();
+        let completed = completed.to_string();
+        self.call(move |conn| {
+            let changed = conn.execute(
+                "UPDATE backups SET last_cleanup_error = ?3 WHERE id = ?1 AND deleted_at IS NULL AND missing_at IS NULL AND last_cleanup_error = ?2",
+                params![backup_id, intent, completed],
+            )?;
+            Ok(changed == 1)
+        })
+        .await
+        .context("mark backup cleanup delete completed")
     }
 
     pub async fn list_due_backup_cleanups(
@@ -220,7 +333,8 @@ LIMIT 50
 SELECT id
 FROM backups
 WHERE stack_id = ?1 AND status = 'success' AND deleted_at IS NULL AND missing_at IS NULL
-ORDER BY created_at DESC
+  AND artifact_path IS NOT NULL AND TRIM(artifact_path) <> ''
+ORDER BY created_at DESC, id DESC
 "#,
             )?;
             let rows = stmt.query_map(params![stack_id], |row| row.get::<_, String>(0))?;
@@ -252,7 +366,12 @@ SELECT
   b.cleanup_after,
   b.deleted_at,
   b.last_cleanup_attempt_at,
-  NULLIF(b.last_cleanup_error, '__dockrev_cleanup_delete_intent__'),
+  CASE
+    WHEN b.last_cleanup_error = '__dockrev_cleanup_delete_intent__'
+      OR b.last_cleanup_error GLOB '__dockrev_cleanup_delete_intent__:*'
+      OR b.last_cleanup_error GLOB '__dockrev_cleanup_delete_completed__:*' THEN NULL
+    ELSE b.last_cleanup_error
+  END,
   b.missing_at,
   b.error,
   COALESCE(j.summary_json, '{}')
@@ -404,9 +523,13 @@ VALUES
         .await
         .unwrap();
 
-        db.mark_backup_cleanup_attempt("backup_due", "2026-01-03T00:00:00Z")
-            .await
-            .unwrap();
+        db.mark_backup_cleanup_attempt(
+            "backup_due",
+            "2026-01-03T00:00:00Z",
+            "2026-01-02T23:00:00Z",
+        )
+        .await
+        .unwrap();
         db.mark_backup_cleanup_failed("backup_due", "2026-01-03T00:00:00Z", "storage unavailable")
             .await
             .unwrap();
@@ -461,7 +584,7 @@ VALUES
     }
 
     #[tokio::test]
-    async fn cleanup_terminal_states_are_exclusive_and_delete_intent_is_recoverable() {
+    async fn cleanup_terminal_states_are_exclusive_and_delete_intent_is_claimed() {
         let db = Db::open(Path::new(":memory:")).await.unwrap();
         db.call(|conn| {
             conn.execute(
@@ -477,16 +600,33 @@ VALUES
         .await
         .unwrap();
 
-        db.mark_backup_cleanup_delete_started("backup_state")
+        assert!(
+            db.mark_backup_cleanup_delete_started(
+                "backup_state",
+                "2026-01-02T00:00:00Z",
+                "__dockrev_cleanup_delete_intent__:test",
+                "2026-01-01T23:00:00Z",
+            )
             .await
-            .unwrap();
+            .unwrap()
+        );
+        assert!(
+            !db.mark_backup_cleanup_delete_started(
+                "backup_state",
+                "2026-01-02T00:01:00Z",
+                "__dockrev_cleanup_delete_intent__:other",
+                "2026-01-01T23:00:00Z",
+            )
+            .await
+            .unwrap()
+        );
         let due = db
             .list_due_backup_cleanups("2026-01-03T00:00:00Z")
             .await
             .unwrap();
         assert_eq!(
             due[0].last_cleanup_error.as_deref(),
-            Some(super::super::BACKUP_CLEANUP_DELETE_INTENT)
+            Some("__dockrev_cleanup_delete_intent__:test")
         );
 
         db.mark_backup_missing("backup_state", "2026-01-03T00:00:00Z")
@@ -512,6 +652,47 @@ VALUES
             .unwrap();
         assert_eq!(state.0, None);
         assert_eq!(state.1.as_deref(), Some("2026-01-03T00:00:00Z"));
+    }
+
+    #[tokio::test]
+    async fn cleanup_delete_completion_marker_is_persisted_before_terminal_write() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        db.call(|conn| {
+            conn.execute(
+                "INSERT INTO stacks (id, name, compose_type, compose_files_json, backup_targets_json, backup_retention_keep_last, backup_retention_delete_after_stable_seconds, created_at, updated_at, last_check_at) VALUES ('stack_1', 'Stack', 'compose', '[]', '[]', 0, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO backups (id, stack_id, status, created_at, artifact_path, cleanup_after) VALUES ('backup_state', 'stack_1', 'success', '2026-01-01T00:00:00Z', '/backups/state.tar.zst', '2026-01-02T00:00:00Z')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let intent = "__dockrev_cleanup_delete_intent__:test";
+        let completed = "__dockrev_cleanup_delete_completed__:test";
+        assert!(
+            db.mark_backup_cleanup_delete_started(
+                "backup_state",
+                "2026-01-02T00:00:00Z",
+                intent,
+                "2026-01-01T23:00:00Z",
+            )
+            .await
+            .unwrap()
+        );
+        db.mark_backup_cleanup_delete_completed("backup_state", intent, completed)
+            .await
+            .unwrap();
+        let due = db
+            .list_due_backup_cleanups("2026-01-03T00:00:00Z")
+            .await
+            .unwrap();
+        assert_eq!(due[0].last_cleanup_error.as_deref(), Some(completed));
+        db.mark_backup_deleted("backup_state", "2026-01-03T00:00:00Z")
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

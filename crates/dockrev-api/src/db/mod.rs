@@ -35,7 +35,10 @@ pub(crate) use lifecycle_events::{ServiceLifecycleEventInput, ServiceLifecycleEv
 pub(crate) use service_operations::ServiceOperationTarget;
 pub(crate) use update_stops::UpdateStopRequestOutcome;
 
-pub(crate) const BACKUP_CLEANUP_DELETE_INTENT: &str = "__dockrev_cleanup_delete_intent__";
+pub(crate) const BACKUP_CLEANUP_DELETE_INTENT_PREFIX: &str = "__dockrev_cleanup_delete_intent__:";
+pub(crate) const BACKUP_CLEANUP_DELETE_INTENT_LEGACY: &str = "__dockrev_cleanup_delete_intent__";
+pub(crate) const BACKUP_CLEANUP_DELETE_COMPLETED_PREFIX: &str =
+    "__dockrev_cleanup_delete_completed__:";
 
 pub(crate) use new_version_discoveries::{
     candidate_tag_allows_settled_fallback, canonical_candidate_identity_tag,

@@ -64,7 +64,7 @@ export function BackupRecordList(props: { records: ServiceBackupRecordItem[]; lo
     )
   }
 
-  const retainedIds = new Set(
+  const fallbackRetainedIds = new Set(
     props.keepLast && props.keepLast > 0
       ? props.records
           .filter((record) => record.status === 'success' && !record.deletedAt && !record.missingAt)
@@ -76,7 +76,8 @@ export function BackupRecordList(props: { records: ServiceBackupRecordItem[]; lo
   return (
     <div className="serviceBackupRecordsList" data-service-backup-records-state="ready">
       {props.records.map((record) => {
-        const status = backupRecordStatusMeta(record, retainedIds.has(record.backupId))
+        const retained = record.retained ?? fallbackRetainedIds.has(record.backupId)
+        const status = backupRecordStatusMeta(record, retained)
         const cleanupDelayed = status.label === '清理延迟'
         const assets = Array.isArray(record.assets) ? record.assets : []
         return (

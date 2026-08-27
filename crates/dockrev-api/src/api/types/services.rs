@@ -189,6 +189,8 @@ pub struct ServiceBackupRecordItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cleanup_after: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub retained: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub deleted_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_cleanup_attempt_at: Option<String>,
