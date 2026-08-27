@@ -1,5 +1,21 @@
 use super::*;
 
+fn summary_artifact_path(summary_json: &str, stack_id: &str) -> Option<String> {
+    let summary = serde_json::from_str::<serde_json::Value>(summary_json).ok()?;
+    summary
+        .get("stacks")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|stack| stack.get("stackId").and_then(serde_json::Value::as_str) == Some(stack_id))
+        .and_then(|stack| stack.get("backup"))
+        .and_then(|backup| backup.get("artifactPath"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 impl Db {
     pub async fn insert_backup(
         &self,
@@ -296,29 +312,45 @@ WHERE id = ?1
         self.call(move |conn| {
             let mut stmt = conn.prepare(
                 r#"
-SELECT id, stack_id, job_id, artifact_path, last_cleanup_error
-FROM backups
+SELECT b.id, b.stack_id, b.job_id, b.artifact_path, b.last_cleanup_error,
+       COALESCE(j.summary_json, '{}')
+FROM backups b
+LEFT JOIN jobs j ON j.id = b.job_id
 WHERE
-  status = 'success'
-  AND deleted_at IS NULL
-  AND missing_at IS NULL
-  AND artifact_path IS NOT NULL
-  AND cleanup_after IS NOT NULL
-  AND cleanup_after <= ?1
-ORDER BY cleanup_after ASC
+  b.status = 'success'
+  AND b.deleted_at IS NULL
+  AND b.missing_at IS NULL
+  AND b.cleanup_after IS NOT NULL
+  AND b.cleanup_after <= ?1
+ORDER BY b.cleanup_after ASC
 LIMIT 50
 "#,
             )?;
             let rows = stmt.query_map(params![now], |row| {
-                Ok(BackupCleanupItem {
+                let artifact_path = row
+                    .get::<_, Option<String>>(3)?
+                    .filter(|path| !path.trim().is_empty())
+                    .or_else(|| {
+                        row.get::<_, String>(5).ok().and_then(|summary| {
+                            summary_artifact_path(&summary, &row.get::<_, String>(1).ok()?)
+                        })
+                    });
+                let Some(artifact_path) = artifact_path else {
+                    return Ok(None);
+                };
+                Ok(Some(BackupCleanupItem {
                     id: row.get(0)?,
                     stack_id: row.get(1)?,
                     job_id: row.get(2)?,
-                    artifact_path: row.get(3)?,
+                    artifact_path,
                     last_cleanup_error: row.get(4)?,
-                })
+                }))
             })?;
-            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+            Ok(rows
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .flatten()
+                .collect())
         })
         .await
         .context("list due backup cleanups")
@@ -332,15 +364,29 @@ LIMIT 50
         self.call(move |conn| {
             let mut stmt = conn.prepare(
                 r#"
-SELECT id
-FROM backups
-WHERE stack_id = ?1 AND status = 'success' AND deleted_at IS NULL AND missing_at IS NULL
-  AND artifact_path IS NOT NULL AND TRIM(artifact_path) <> ''
-ORDER BY created_at DESC, id DESC
+SELECT b.id, b.artifact_path, COALESCE(j.summary_json, '{}')
+FROM backups b
+LEFT JOIN jobs j ON j.id = b.job_id
+WHERE b.stack_id = ?1 AND b.status = 'success' AND b.deleted_at IS NULL AND b.missing_at IS NULL
+ORDER BY b.created_at DESC, b.id DESC
 "#,
             )?;
-            let rows = stmt.query_map(params![stack_id], |row| row.get::<_, String>(0))?;
-            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+            let rows = stmt.query_map(params![stack_id.clone()], |row| {
+                let artifact_path = row
+                    .get::<_, Option<String>>(1)?
+                    .filter(|path| !path.trim().is_empty())
+                    .or_else(|| {
+                        row.get::<_, String>(2)
+                            .ok()
+                            .and_then(|summary| summary_artifact_path(&summary, &stack_id))
+                    });
+                artifact_path.map(|_| row.get::<_, String>(0)).transpose()
+            })?;
+            Ok(rows
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .flatten()
+                .collect())
         })
         .await
         .context("list success backups for stack")
