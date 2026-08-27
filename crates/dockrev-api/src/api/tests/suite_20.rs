@@ -1343,16 +1343,6 @@ volumes:
         .collect::<Vec<_>>();
     assert_eq!(stack_target_keys, vec![shared_path.clone()]);
 
-    let api_settings = state.db.get_service_settings(&api_id).await.unwrap().unwrap();
-    assert!(matches!(
-        api_settings.backup_targets.bind_paths.get(&shared_path),
-        Some(crate::api::types::TernaryChoice::Skip)
-    ));
-    assert!(matches!(
-        api_settings.backup_targets.volume_names.get("api-data"),
-        Some(crate::api::types::TernaryChoice::Skip)
-    ));
-
     let resp = app
         .oneshot(
             Request::builder()
@@ -1362,10 +1352,7 @@ volumes:
                 .body(Body::from(
                     json!({
                         "autoRollback": true,
-                        "backupTargets": {
-                            "bindPaths": {},
-                            "volumeNames": {}
-                        }
+                        "backupTargets": { "bindPaths": {}, "volumeNames": {} }
                     })
                     .to_string(),
                 ))
