@@ -1,5 +1,27 @@
 # Dockrev Context
 
+## Backup Retention
+
+**backup cleanup eligibility**:
+A successful backup artifact is eligible for automatic deletion once it is outside the retained set and its configured retention delay has elapsed. Eligibility is independent of the runtime state of unrelated services in the Stack.
+_Avoid_: stack health gate, all-services-running requirement
+
+**retained backup set**:
+The newest successful, undeleted backup artifacts of a Stack, limited by its `keepLast` policy. Membership is the retention rule that protects an otherwise due artifact from automatic deletion.
+_Avoid_: all successful backups, healthy Stack backups
+
+**cleanup delayed**:
+A backup artifact that is eligible for deletion and past its planned deletion time but has not reached a terminal cleanup outcome. It is a retryable cleanup state, not a retention state.
+_Avoid_: retained backup, successful cleanup
+
+**cleanup attempt**:
+One execution that reconciles an eligible backup artifact with its storage path. It records when the attempt occurred and, when incomplete, the reason that the artifact remains present or cannot be verified.
+_Avoid_: backup run, retention check
+
+**verified missing backup**:
+A terminal cleanup outcome in which an eligible artifact is absent from its managed storage path when Dockrev checks it. It is distinct from a backup deleted by Dockrev.
+_Avoid_: deleted backup, cleanup failure
+
 ## Service Digest and Rollback Target
 
 - `service digest` is the digest currently reported by the stack detail snapshot.
