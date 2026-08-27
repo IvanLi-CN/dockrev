@@ -44,6 +44,7 @@ import { ServiceDetailIdentifiersCard } from "./ServiceDetailIdentifiersCard";
 import {
   backupPolicyHint,
   backupRelationshipLabel,
+  backupTargetOverridesFromDraft,
   backupTargetRequestFromDraft,
   createBackupTargetsDraft,
   formatBackupRetentionSummary,
@@ -1142,7 +1143,13 @@ export function ServiceDetailPage(props: {
                     setBusy(true);
                     setError(null);
                     try {
-                      await putServiceBackupTargets(props.serviceId, backupTargetRequestFromDraft(serviceBackupTargetsDraft));
+                      const backupTargetRequest = backupTargetRequestFromDraft(serviceBackupTargetsDraft);
+                      await putServiceBackupTargets(props.serviceId, backupTargetRequest);
+                      setServiceSettingsDraft((previous) =>
+                        previous
+                          ? { ...previous, backupTargets: backupTargetOverridesFromDraft(serviceBackupTargetsDraft) }
+                          : previous,
+                      );
                       await requestRefresh();
                     } catch (e: unknown) {
                       setError(errorMessage(e));

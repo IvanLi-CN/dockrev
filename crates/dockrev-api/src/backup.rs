@@ -604,15 +604,6 @@ pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Resu
         let recovery_pending = has_cleanup_delete_intent(item.last_cleanup_error.as_deref())
             || has_cleanup_delete_completed(item.last_cleanup_error.as_deref());
         let keep_last = stack.backup.retention.keep_last as usize;
-        if keep_last > 0 && !recovery_pending {
-            let ids = state
-                .db
-                .list_success_backup_ids_for_stack(&item.stack_id)
-                .await?;
-            if ids.iter().take(keep_last).any(|id| id == &item.id) {
-                continue;
-            }
-        }
         let storage = match crate::backup_storage::resolve_backup_storage(
             &*state.runner,
             &state.config.db_path,
@@ -652,6 +643,15 @@ pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Resu
                 continue;
             }
         };
+        if keep_last > 0 && !recovery_pending && artifact_present {
+            let ids = state
+                .db
+                .list_success_backup_ids_for_stack(&item.stack_id)
+                .await?;
+            if ids.iter().take(keep_last).any(|id| id == &item.id) {
+                continue;
+            }
+        }
         let outcome = if !artifact_present {
             if has_cleanup_delete_completed(item.last_cleanup_error.as_deref()) {
                 tombstone_key = Some(cleanup_tombstone_key(

@@ -192,7 +192,7 @@ case "$resolved_parent" in
 esac
 if [ -L "$1" ]; then printf 'backup artifact must not be a symlink: %s\n' "$1" >&2; exit 2; fi
 if [ ! -e "$1" ] && [ ! -L "$1" ]; then exit 1; fi
-resolved=$(readlink -f -- "$1") || exit 1
+resolved=$(readlink -f -- "$1") || exit 3
 case "$resolved" in
   "$managed"/*) [ -f "$resolved" ] && exit 0 || exit 1 ;;
   *) printf 'backup artifact resolves outside managed storage: %s\n' "$resolved" >&2; exit 2 ;;
@@ -252,7 +252,7 @@ pub(crate) async fn delete_artifact(
                     artifact_path.display()
                 ));
             }
-            tokio::fs::remove_file(artifact_path).await?;
+            tokio::fs::remove_file(resolved_artifact).await?;
         }
         _ => {
             let (source, relative) = storage.helper_output_mount();
@@ -297,7 +297,7 @@ case "$resolved_parent" in
 esac
 if [ -L "$1" ]; then printf 'backup artifact must not be a symlink: %s\n' "$1" >&2; exit 2; fi
 if [ ! -e "$1" ] && [ ! -L "$1" ]; then exit 1; fi
-resolved=$(readlink -f -- "$1") || exit 1
+resolved=$(readlink -f -- "$1") || exit 3
 case "$resolved" in
   "$managed"/*) rm -- "$resolved" ;;
   *) printf 'backup artifact resolves outside managed storage: %s\n' "$resolved" >&2; exit 2 ;;
@@ -336,8 +336,19 @@ pub(crate) async fn move_artifact_to_tombstone(
             let artifact_path = logical_root.join(artifact_key);
             let tombstone_path = logical_root.join(tombstone_key);
             ensure_local_path_within_root(logical_root, &root, artifact_key).await?;
+            ensure_local_path_within_root(logical_root, &root, tombstone_key).await?;
             let resolved_artifact = tokio::fs::canonicalize(&artifact_path).await?;
-            if !resolved_artifact.starts_with(&root) || !tombstone_path.starts_with(logical_root) {
+            let resolved_tombstone_parent = tokio::fs::canonicalize(
+                tombstone_path
+                    .parent()
+                    .ok_or_else(|| anyhow::anyhow!("backup artifact tombstone has no parent"))?,
+            )
+            .await?;
+            let resolved_tombstone =
+                resolved_tombstone_parent.join(tombstone_path.file_name().ok_or_else(|| {
+                    anyhow::anyhow!("backup artifact tombstone has no file name")
+                })?);
+            if !resolved_artifact.starts_with(&root) || !resolved_tombstone.starts_with(&root) {
                 return Err(anyhow::anyhow!(
                     "backup artifact tombstone is outside managed storage: {}",
                     tombstone_path.display()
@@ -353,7 +364,7 @@ pub(crate) async fn move_artifact_to_tombstone(
                     artifact_path.display()
                 ));
             }
-            tokio::fs::rename(resolved_artifact, tombstone_path).await?;
+            tokio::fs::rename(resolved_artifact, resolved_tombstone).await?;
         }
         _ => {
             let (source, relative) = storage.helper_output_mount();
@@ -399,7 +410,7 @@ case "$resolved_parent" in
 esac
 if [ -L "$1" ]; then printf 'backup artifact must not be a symlink: %s\n' "$1" >&2; exit 2; fi
 if [ ! -e "$1" ] && [ ! -L "$1" ]; then exit 1; fi
-resolved=$(readlink -f -- "$1") || exit 1
+resolved=$(readlink -f -- "$1") || exit 3
 tombstone="$3"
 case "$resolved" in
   "$managed"/*) ;;
