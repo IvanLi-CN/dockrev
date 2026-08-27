@@ -48,6 +48,7 @@ services:
         Some(&stack_id),
         Some(&api_id),
         json!({
+            "targets": [{"serviceId": api_id}],
             "stacks": [{
                 "stackId": stack_id,
                 "backup": {
@@ -108,6 +109,7 @@ services:
         Some(&stack_id),
         None,
         json!({
+            "targets": [{"serviceId": api_id}, {"serviceId": web_id}],
             "stacks": [{
                 "stackId": stack_id,
                 "backup": {
@@ -162,6 +164,7 @@ services:
         None,
         None,
         json!({
+            "targets": [{"serviceId": api_id}, {"serviceId": other_id}],
             "stacks": [{
                 "stackId": stack_id,
                 "backup": {
@@ -301,6 +304,7 @@ services:
         Some(&stack_id),
         Some(&api_id),
         json!({
+            "targets": [{"serviceId": api_id}],
             "stacks": [{
                 "stackId": stack_id,
                 "backup": {
@@ -386,6 +390,7 @@ services:
         Some(&stack_id),
         Some(&api_id),
         json!({
+            "targets": [{"serviceId": api_id}],
             "stacks": [{
                 "stackId": stack_id,
                 "backup": {
@@ -468,6 +473,7 @@ services:
         Some(&stack_id),
         None,
         json!({
+            "targets": [{"serviceId": api_id}],
             "stacks": [{
                 "stackId": stack_id,
                 "backup": {
@@ -565,6 +571,7 @@ services:
         None,
         None,
         json!({
+            "targets": [{"serviceId": api_id}, {"serviceId": worker_id}],
             "stacks": [
                 {
                     "stackId": stack_a_id,

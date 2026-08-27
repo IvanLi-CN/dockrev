@@ -76,3 +76,21 @@ export const CleanupStates: Story = {
     if (cards.length !== 3) throw new Error(`expected 3 cleanup state cards, got ${cards.length}`)
   },
 }
+
+export const RetainedDueBackup: Story = {
+  args: {
+    keepLast: 1,
+    records: [{
+      ...records[0],
+      backupId: 'bkp-retained-due',
+      createdAt: '2026-08-27T08:00:00.000Z',
+      cleanupAfter: '2026-08-01T08:00:00.000Z',
+      lastCleanupAttemptAt: null,
+      lastCleanupError: null,
+    }],
+  },
+  play: async ({ canvasElement }) => {
+    if (!canvasElement.textContent?.includes('成功')) throw new Error('retained backup should remain successful')
+    if (canvasElement.querySelector('[data-slot="alert"]')) throw new Error('retained backup should not show cleanup delay')
+  },
+}

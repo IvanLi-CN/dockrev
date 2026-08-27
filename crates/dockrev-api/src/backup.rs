@@ -634,19 +634,63 @@ pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Resu
             tracing::warn!(backup_id = %item.id, path = %item.artifact_path, "backup cleanup path is outside managed storage");
             continue;
         };
-        match reconcile_artifact(
+        let outcome = if !artifact_exists(
             &*state.runner,
             &storage,
             &state.config.dockrev_image_repo,
             &key,
         )
-        .await
+        .await?
         {
-            Ok(ArtifactCleanupOutcome::Deleted) => {
+            ArtifactCleanupOutcome::Missing
+        } else {
+            state
+                .db
+                .mark_backup_cleanup_delete_started(&item.id)
+                .await?;
+            match delete_artifact(
+                &*state.runner,
+                &storage,
+                &state.config.dockrev_image_repo,
+                &key,
+            )
+            .await
+            {
+                Ok(()) => ArtifactCleanupOutcome::Deleted,
+                Err(error) => {
+                    // A concurrent actor may have removed the file after the existence check.
+                    if !artifact_exists(
+                        &*state.runner,
+                        &storage,
+                        &state.config.dockrev_image_repo,
+                        &key,
+                    )
+                    .await?
+                    {
+                        ArtifactCleanupOutcome::Missing
+                    } else {
+                        state
+                            .db
+                            .mark_backup_cleanup_failed(&item.id, &now, &error.to_string())
+                            .await?;
+                        tracing::warn!(backup_id = %item.id, error = %error, "backup cleanup delete failed");
+                        continue;
+                    }
+                }
+            }
+        };
+        match outcome {
+            ArtifactCleanupOutcome::Deleted => {
                 state.db.mark_backup_deleted(&item.id, &now).await?;
             }
-            Ok(ArtifactCleanupOutcome::Missing) => {
-                state.db.mark_backup_missing(&item.id, &now).await?;
+            ArtifactCleanupOutcome::Missing => {
+                let recovered_delete = item.last_cleanup_error.as_deref()
+                    == Some(crate::db::BACKUP_CLEANUP_DELETE_INTENT);
+                if recovered_delete {
+                    state.db.mark_backup_deleted(&item.id, &now).await?;
+                } else {
+                    state.db.mark_backup_missing(&item.id, &now).await?;
+                }
                 if let Some(job_id) = item.job_id.as_deref() {
                     let _ = state
                         .db
@@ -655,19 +699,15 @@ pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Resu
                             &crate::api::types::JobLogLine {
                                 ts: now.clone(),
                                 level: "info".to_string(),
-                                msg: format!("backup missing (verified): {}", item.artifact_path),
+                                msg: if recovered_delete {
+                                    format!("backup deleted (recovered): {}", item.artifact_path)
+                                } else {
+                                    format!("backup missing (verified): {}", item.artifact_path)
+                                },
                             },
                         )
                         .await;
                 }
-                continue;
-            }
-            Err(error) => {
-                state
-                    .db
-                    .mark_backup_cleanup_failed(&item.id, &now, &error.to_string())
-                    .await?;
-                tracing::warn!(backup_id = %item.id, error = %error, "backup cleanup delete failed");
                 continue;
             }
         }
@@ -1344,8 +1384,15 @@ async fn artifact_exists(
                             "-v".to_string(),
                             format!("{source}:/out-root:ro"),
                             storage.helper_image(helper_image_fallback).to_string(),
-                            "test".to_string(),
-                            "-e".to_string(),
+                            "sh".to_string(),
+                            "-ec".to_string(),
+                            r#"resolved=$(readlink -f -- "$1") || exit 1
+case "$resolved" in
+  /out-root/*) exit 0 ;;
+  *) printf 'backup artifact resolves outside managed storage: %s\n' "$resolved" >&2; exit 2 ;;
+esac"#
+                                .to_string(),
+                            "dockrev-backup-check".to_string(),
                             format!("/out-root/{}", path.to_string_lossy()),
                         ],
                         env: Vec::new(),
@@ -1398,7 +1445,15 @@ async fn delete_artifact(
                             "-v".to_string(),
                             format!("{source}:/out-root"),
                             storage.helper_image(helper_image_fallback).to_string(),
-                            "rm".to_string(),
+                            "sh".to_string(),
+                            "-ec".to_string(),
+                            r#"resolved=$(readlink -f -- "$1") || exit 1
+case "$resolved" in
+  /out-root/*) rm -- "$resolved" ;;
+  *) printf 'backup artifact resolves outside managed storage: %s\n' "$resolved" >&2; exit 2 ;;
+esac"#
+                                .to_string(),
+                            "dockrev-backup-delete".to_string(),
                             format!("/out-root/{}", path.to_string_lossy()),
                         ],
                         env: Vec::new(),

@@ -35,6 +35,8 @@ pub(crate) use lifecycle_events::{ServiceLifecycleEventInput, ServiceLifecycleEv
 pub(crate) use service_operations::ServiceOperationTarget;
 pub(crate) use update_stops::UpdateStopRequestOutcome;
 
+pub(crate) const BACKUP_CLEANUP_DELETE_INTENT: &str = "__dockrev_cleanup_delete_intent__";
+
 pub(crate) use new_version_discoveries::{
     candidate_tag_allows_settled_fallback, canonical_candidate_identity_tag,
     canonical_visible_version_tag, collect_new_version_discovery_candidates_from_rows,
@@ -68,6 +70,7 @@ pub struct BackupCleanupItem {
     pub stack_id: String,
     pub job_id: Option<String>,
     pub artifact_path: String,
+    pub last_cleanup_error: Option<String>,
 }
 
 #[derive(Clone, Debug)]

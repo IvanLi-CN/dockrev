@@ -574,7 +574,7 @@ export function ServiceDetailPage(props: {
             <div className="muted">这里只显示当前服务实际产生过备份产物的记录。</div>
           </div>
         </div>
-        <BackupRecordList records={effectiveBackupRecords} />
+        <BackupRecordList records={effectiveBackupRecords} keepLast={effectiveBackupTargets?.storage.keepLast} />
       </div>
       </div>
       </AsyncDataRegion>

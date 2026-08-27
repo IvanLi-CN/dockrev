@@ -83,10 +83,10 @@ export function installDockrevMockApi(
       }
     }
     if (options.serviceBackupRecordsById) {
-      state.serviceBackupRecordsById = {
-        ...state.serviceBackupRecordsById,
-        ...options.serviceBackupRecordsById,
-      }
+      state.serviceBackupRecordsById = { ...state.serviceBackupRecordsById, ...options.serviceBackupRecordsById }
+    }
+    if (options.serviceBackupTargetsById) {
+      state.serviceBackupTargetsById = { ...state.serviceBackupTargetsById, ...options.serviceBackupTargetsById }
     }
     if (options.serviceLogsByServiceId) {
       state.serviceLogsByServiceId = {

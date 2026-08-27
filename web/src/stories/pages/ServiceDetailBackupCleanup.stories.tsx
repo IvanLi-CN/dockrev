@@ -1,8 +1,8 @@
 import type { Meta } from "@storybook/react";
 import { ServiceDetailPage } from "../../pages/ServiceDetailPage";
 import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
-import { expectStory, findSectionCard, findTab, normalizeText, waitForCondition } from "./storyAssertions";
-import { render, type ServiceDetailStory } from "./serviceDetailStoryShared";
+import { expectStory, normalizeText, waitForCondition } from "./storyAssertions";
+import { findSectionCard, findTab, render, type ServiceDetailStory } from "./serviceDetailStoryShared";
 
 const meta: Meta<typeof ServiceDetailPage> = {
   title: "Pages/ServiceDetailPage",
@@ -18,6 +18,19 @@ type Story = ServiceDetailStory;
 export const BackupRecordsCleanupStates: Story = {
   parameters: {
     dockrevApiScenario: "dashboard-demo",
+    dockrevServiceBackupTargetsById: {
+      "svc-prod-api": {
+        bindPaths: [],
+        volumeNames: [],
+        storage: {
+          baseDir: "/srv/dockrev/backups",
+          artifactPattern: "/srv/dockrev/backups/<stackId>/<timestamp>.tar.zst",
+          compression: "zstd",
+          keepLast: 0,
+          deleteAfterStableSeconds: 3600,
+        },
+      },
+    },
     dockrevServiceBackupRecordsById: {
       "svc-prod-api": {
         records: [

@@ -12,16 +12,16 @@ function formatDateTime(value: string | null | undefined): string {
   return date.toLocaleString()
 }
 
-function isCleanupDue(record: ServiceBackupRecordItem): boolean {
-  if (!record.cleanupAfter || record.deletedAt || record.missingAt) return false
+function isCleanupDue(record: ServiceBackupRecordItem, retained: boolean): boolean {
+  if (!record.cleanupAfter || record.deletedAt || record.missingAt || retained) return false
   const cleanupAt = new Date(record.cleanupAfter)
   return !Number.isNaN(cleanupAt.getTime()) && cleanupAt.getTime() <= Date.now()
 }
 
-function backupRecordStatusMeta(record: ServiceBackupRecordItem): { label: string; tone: 'ok' | 'warn' | 'bad' | 'muted' | 'info' } {
+function backupRecordStatusMeta(record: ServiceBackupRecordItem, retained: boolean): { label: string; tone: 'ok' | 'warn' | 'bad' | 'muted' | 'info' } {
   if (record.deletedAt) return { label: '已删除', tone: 'muted' }
   if (record.missingAt) return { label: '文件已缺失（已核实）', tone: 'info' }
-  if (isCleanupDue(record)) return { label: '清理延迟', tone: 'warn' }
+  if (isCleanupDue(record, retained)) return { label: '清理延迟', tone: 'warn' }
   if (record.status === 'success') return { label: '成功', tone: 'ok' }
   if (record.status === 'failed') return { label: '失败', tone: 'bad' }
   if (record.status === 'running') return { label: '进行中', tone: 'info' }
@@ -52,7 +52,7 @@ function backupAssetStatusLabel(asset: ServiceBackupRecordAsset): string {
   }
 }
 
-export function BackupRecordList(props: { records: ServiceBackupRecordItem[]; loading?: boolean }) {
+export function BackupRecordList(props: { records: ServiceBackupRecordItem[]; loading?: boolean; keepLast?: number }) {
   if (props.loading) {
     return <AsyncDataSkeleton className="serviceBackupRecordsLoading" lines={3} />
   }
@@ -64,10 +64,19 @@ export function BackupRecordList(props: { records: ServiceBackupRecordItem[]; lo
     )
   }
 
+  const retainedIds = new Set(
+    props.keepLast && props.keepLast > 0
+      ? props.records
+          .filter((record) => record.status === 'success' && !record.deletedAt && !record.missingAt)
+          .slice(0, props.keepLast)
+          .map((record) => record.backupId)
+      : [],
+  )
+
   return (
     <div className="serviceBackupRecordsList" data-service-backup-records-state="ready">
       {props.records.map((record) => {
-        const status = backupRecordStatusMeta(record)
+        const status = backupRecordStatusMeta(record, retainedIds.has(record.backupId))
         const cleanupDelayed = status.label === '清理延迟'
         const assets = Array.isArray(record.assets) ? record.assets : []
         return (

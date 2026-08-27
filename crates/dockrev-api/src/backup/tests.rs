@@ -533,7 +533,13 @@ async fn docker_delete_does_not_use_force_remove() {
     let calls = runner.calls.lock().unwrap();
     let delete_call = calls
         .iter()
-        .find(|spec| spec.args.iter().any(|arg| arg == "rm"))
+        .find(|spec| spec.args.iter().any(|arg| arg.contains("rm --")))
         .expect("delete helper invocation");
     assert!(!delete_call.args.iter().any(|arg| arg == "-f"));
+    assert!(
+        delete_call
+            .args
+            .iter()
+            .any(|arg| arg.contains("readlink -f"))
+    );
 }

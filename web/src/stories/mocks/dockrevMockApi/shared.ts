@@ -135,6 +135,7 @@ export type DockrevMockApiOptions = {
   discoveryTimelineErrorServiceIds?: string[]
   githubReleasesByServiceId?: Record<string, DockrevMockGitHubReleasesDataset>
   serviceOverridesById?: Record<string, Partial<StackDetail['services'][number]>>
+  serviceBackupTargetsById?: Record<string, ServiceBackupTargetsResponse>
   serviceBackupRecordsById?: Record<string, ServiceBackupRecordsResponse>
   serviceLogsByServiceId?: Record<string, ServiceLogsMockDataset>
   serviceTagSuggestionsById?: Record<string, ServiceTagSuggestionItem[]>

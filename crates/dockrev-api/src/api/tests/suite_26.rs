@@ -13,7 +13,7 @@ async fn cleanup_once_keeps_latest_and_removes_due_backup_without_stack_health_g
         crate::api::types::JobScope::Service,
         Some(&stack_id),
         Some(&service_id),
-        json!({}),
+        json!({ "targets": [{"serviceId": service_id}] }),
         &latest_created_at,
     )
     .await;
@@ -23,7 +23,7 @@ async fn cleanup_once_keeps_latest_and_removes_due_backup_without_stack_health_g
         crate::api::types::JobScope::Service,
         Some(&stack_id),
         Some(&service_id),
-        json!({}),
+        json!({ "targets": [{"serviceId": service_id}] }),
         &old_created_at,
     )
     .await;

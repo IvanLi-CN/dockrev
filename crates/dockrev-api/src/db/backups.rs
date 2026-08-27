@@ -95,7 +95,7 @@ WHERE id = ?1
         let deleted_at = deleted_at.to_string();
         self.call(move |conn| {
             conn.execute(
-                "UPDATE backups SET deleted_at = ?2, last_cleanup_attempt_at = ?2, last_cleanup_error = NULL WHERE id = ?1",
+                "UPDATE backups SET deleted_at = ?2, missing_at = NULL, last_cleanup_attempt_at = ?2, last_cleanup_error = NULL WHERE id = ?1 AND deleted_at IS NULL AND missing_at IS NULL",
                 params![backup_id, deleted_at],
             )?;
             Ok(())
@@ -113,7 +113,7 @@ WHERE id = ?1
         let attempted_at = attempted_at.to_string();
         self.call(move |conn| {
             conn.execute(
-                "UPDATE backups SET last_cleanup_attempt_at = ?2 WHERE id = ?1",
+                "UPDATE backups SET last_cleanup_attempt_at = ?2 WHERE id = ?1 AND deleted_at IS NULL AND missing_at IS NULL",
                 params![backup_id, attempted_at],
             )?;
             Ok(())
@@ -131,13 +131,26 @@ WHERE id = ?1
         let missing_at = missing_at.to_string();
         self.call(move |conn| {
             conn.execute(
-                "UPDATE backups SET missing_at = ?2, last_cleanup_attempt_at = ?2, last_cleanup_error = NULL WHERE id = ?1",
+                "UPDATE backups SET missing_at = ?2, deleted_at = NULL, last_cleanup_attempt_at = ?2, last_cleanup_error = NULL WHERE id = ?1 AND deleted_at IS NULL AND missing_at IS NULL",
                 params![backup_id, missing_at],
             )?;
             Ok(())
         })
         .await
         .context("mark backup missing")
+    }
+
+    pub async fn mark_backup_cleanup_delete_started(&self, backup_id: &str) -> anyhow::Result<()> {
+        let backup_id = backup_id.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                "UPDATE backups SET last_cleanup_error = ?2 WHERE id = ?1 AND deleted_at IS NULL AND missing_at IS NULL",
+                params![backup_id, super::BACKUP_CLEANUP_DELETE_INTENT],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("mark backup cleanup delete started")
     }
 
     pub async fn mark_backup_cleanup_failed(
@@ -168,7 +181,7 @@ WHERE id = ?1
         self.call(move |conn| {
             let mut stmt = conn.prepare(
                 r#"
-SELECT id, stack_id, job_id, artifact_path
+SELECT id, stack_id, job_id, artifact_path, last_cleanup_error
 FROM backups
 WHERE
   status = 'success'
@@ -187,6 +200,7 @@ LIMIT 50
                     stack_id: row.get(1)?,
                     job_id: row.get(2)?,
                     artifact_path: row.get(3)?,
+                    last_cleanup_error: row.get(4)?,
                 })
             })?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -238,55 +252,20 @@ SELECT
   b.cleanup_after,
   b.deleted_at,
   b.last_cleanup_attempt_at,
-  b.last_cleanup_error,
+  NULLIF(b.last_cleanup_error, '__dockrev_cleanup_delete_intent__'),
   b.missing_at,
   b.error,
   COALESCE(j.summary_json, '{}')
 FROM backups b
 LEFT JOIN jobs j ON j.id = b.job_id
 WHERE b.stack_id = ?1
-  AND (
-    (j.scope = 'service' AND j.service_id = ?2)
-    OR (
-      EXISTS (
-        SELECT 1
-        FROM job_service_targets jst
-        JOIN services target_service ON target_service.id = jst.service_id
-        WHERE jst.job_id = j.id
-          AND jst.service_id = ?2
-          AND target_service.stack_id = ?1
-      )
-    )
-    OR (
-      EXISTS (
-        SELECT 1
-        FROM json_each(COALESCE(json_extract(j.summary_json, '$.targets'), '[]')) AS t
-        JOIN services target_service
-          ON target_service.id = json_extract(t.value, '$.serviceId')
-        WHERE target_service.id = ?2
-          AND target_service.stack_id = ?1
-      )
-    )
-    OR (
-      EXISTS (
-        SELECT 1
-        FROM json_each(COALESCE(json_extract(j.summary_json, '$.stacks'), '[]')) AS s
-        WHERE json_extract(s.value, '$.stackId') = ?1
-          AND EXISTS (
-            SELECT 1
-            FROM json_each(
-              COALESCE(
-                json_extract(s.value, '$.update.newDigests'),
-                json_extract(s.value, '$.update.oldDigests'),
-                json_extract(s.value, '$.rollback.newDigests'),
-                json_extract(s.value, '$.rollback.oldDigests'),
-                '{}'
-              )
-            ) AS d
-            WHERE d.key = ?2
-          )
-      )
-    )
+  AND EXISTS (
+    SELECT 1
+    FROM json_each(COALESCE(json_extract(j.summary_json, '$.targets'), '[]')) AS t
+    JOIN services target_service
+      ON target_service.id = json_extract(t.value, '$.serviceId')
+    WHERE target_service.id = ?2
+      AND target_service.stack_id = ?1
   )
 ORDER BY b.created_at DESC, b.id DESC
 "#,
@@ -482,7 +461,61 @@ VALUES
     }
 
     #[tokio::test]
-    async fn service_backup_records_use_target_relations_and_legacy_summary_targets() {
+    async fn cleanup_terminal_states_are_exclusive_and_delete_intent_is_recoverable() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        db.call(|conn| {
+            conn.execute(
+                "INSERT INTO stacks (id, name, compose_type, compose_files_json, backup_targets_json, backup_retention_keep_last, backup_retention_delete_after_stable_seconds, created_at, updated_at, last_check_at) VALUES ('stack_1', 'Stack', 'compose', '[]', '[]', 0, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO backups (id, stack_id, status, created_at, artifact_path, cleanup_after) VALUES ('backup_state', 'stack_1', 'success', '2026-01-01T00:00:00Z', '/backups/state.tar.zst', '2026-01-02T00:00:00Z')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        db.mark_backup_cleanup_delete_started("backup_state")
+            .await
+            .unwrap();
+        let due = db
+            .list_due_backup_cleanups("2026-01-03T00:00:00Z")
+            .await
+            .unwrap();
+        assert_eq!(
+            due[0].last_cleanup_error.as_deref(),
+            Some(super::super::BACKUP_CLEANUP_DELETE_INTENT)
+        );
+
+        db.mark_backup_missing("backup_state", "2026-01-03T00:00:00Z")
+            .await
+            .unwrap();
+        db.mark_backup_deleted("backup_state", "2026-01-04T00:00:00Z")
+            .await
+            .unwrap();
+        let state = db
+            .call(|conn| {
+                Ok(conn.query_row(
+                    "SELECT deleted_at, missing_at FROM backups WHERE id = 'backup_state'",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, Option<String>>(0)?,
+                            row.get::<_, Option<String>>(1)?,
+                        ))
+                    },
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(state.0, None);
+        assert_eq!(state.1.as_deref(), Some("2026-01-03T00:00:00Z"));
+    }
+
+    #[tokio::test]
+    async fn service_backup_records_require_current_service_summary_targets() {
         let db = Db::open(Path::new(":memory:")).await.unwrap();
         db.call(|conn| {
             conn.execute_batch(
@@ -510,8 +543,9 @@ INSERT INTO jobs (
   id, type, scope, stack_id, service_id, status, allow_arch_mismatch, backup_mode,
   created_by, reason, created_at, finished_at, summary_json
 ) VALUES
-  ('job_relation', 'update', 'stack', 'stack_1', NULL, 'success', 0, 'inherit',
-   'test', 'test', '2026-01-03T00:00:00Z', '2026-01-03T00:01:00Z', '{}'),
+  ('job_relation', 'update', 'stack', 'stack_1', 'service_a', 'success', 0, 'inherit',
+   'test', 'test', '2026-01-03T00:00:00Z', '2026-01-03T00:01:00Z',
+   '{"targets":[{"serviceId":"service_b"}]}'),
   ('job_summary', 'update', 'stack', 'stack_1', NULL, 'success', 0, 'inherit',
    'test', 'test', '2026-01-02T00:00:00Z', '2026-01-02T00:01:00Z',
    '{"targets":[{"serviceId":"service_a"}]}'),
@@ -550,7 +584,7 @@ INSERT INTO backups (
                 .iter()
                 .map(|record| record.backup_id.as_str())
                 .collect::<Vec<_>>(),
-            ["backup_relation", "backup_summary"]
+            ["backup_summary"]
         );
 
         let service_b = db
@@ -562,7 +596,7 @@ INSERT INTO backups (
                 .iter()
                 .map(|record| record.backup_id.as_str())
                 .collect::<Vec<_>>(),
-            ["backup_other"]
+            ["backup_relation", "backup_other"]
         );
 
         let service_c = db
