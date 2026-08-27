@@ -147,7 +147,14 @@ pub(crate) async fn artifact_exists(
                     artifact_path.display()
                 ));
             }
-            Ok(resolved_artifact.is_file())
+            let metadata = match tokio::fs::metadata(&resolved_artifact).await {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    return Ok(false);
+                }
+                Err(error) => return Err(error.into()),
+            };
+            Ok(metadata.is_file())
         }
         _ => {
             let (source, relative) = storage.helper_output_mount();
@@ -191,10 +198,20 @@ case "$resolved_parent" in
   *) printf 'backup artifact parent resolves outside managed storage: %s\n' "$resolved_parent" >&2; exit 2 ;;
 esac
 if [ -L "$1" ]; then printf 'backup artifact must not be a symlink: %s\n' "$1" >&2; exit 2; fi
-if [ ! -e "$1" ] && [ ! -L "$1" ]; then exit 1; fi
+if [ -e "$1" ]; then
+  :
+else
+  probe_status=$?
+  [ "$probe_status" -eq 1 ] || exit 3
+  if [ -L "$1" ]; then :; else symlink_status=$?; [ "$symlink_status" -eq 1 ] && exit 1 || exit 3; fi
+fi
 resolved=$(readlink -f -- "$1") || exit 3
 case "$resolved" in
-  "$managed"/*) [ -f "$resolved" ] && exit 0 || exit 1 ;;
+  "$managed"/*)
+    if [ -f "$resolved" ]; then exit 0; fi
+    probe_status=$?
+    [ "$probe_status" -eq 1 ] && exit 1 || exit 3
+    ;;
   *) printf 'backup artifact resolves outside managed storage: %s\n' "$resolved" >&2; exit 2 ;;
 esac"#
                                 .to_string(),
@@ -296,7 +313,13 @@ case "$resolved_parent" in
   *) printf 'backup artifact parent resolves outside managed storage: %s\n' "$resolved_parent" >&2; exit 2 ;;
 esac
 if [ -L "$1" ]; then printf 'backup artifact must not be a symlink: %s\n' "$1" >&2; exit 2; fi
-if [ ! -e "$1" ] && [ ! -L "$1" ]; then exit 1; fi
+if [ -e "$1" ]; then
+  :
+else
+  probe_status=$?
+  [ "$probe_status" -eq 1 ] || exit 3
+  if [ -L "$1" ]; then :; else symlink_status=$?; [ "$symlink_status" -eq 1 ] && exit 1 || exit 3; fi
+fi
 resolved=$(readlink -f -- "$1") || exit 3
 case "$resolved" in
   "$managed"/*) rm -- "$resolved" ;;
@@ -409,7 +432,13 @@ case "$resolved_parent" in
   *) printf 'backup artifact parent resolves outside managed storage: %s\n' "$resolved_parent" >&2; exit 2 ;;
 esac
 if [ -L "$1" ]; then printf 'backup artifact must not be a symlink: %s\n' "$1" >&2; exit 2; fi
-if [ ! -e "$1" ] && [ ! -L "$1" ]; then exit 1; fi
+if [ -e "$1" ]; then
+  :
+else
+  probe_status=$?
+  [ "$probe_status" -eq 1 ] || exit 3
+  if [ -L "$1" ]; then :; else symlink_status=$?; [ "$symlink_status" -eq 1 ] && exit 1 || exit 3; fi
+fi
 resolved=$(readlink -f -- "$1") || exit 3
 tombstone="$3"
 case "$resolved" in
@@ -511,10 +540,19 @@ case "$resolved_parent" in
 esac
 artifact_name=${1##*/}
 for candidate in "$parent"/.dockrev-delete-*-"$artifact_name"; do
-  if [ -f "$candidate" ] && [ ! -L "$candidate" ]; then
+  if [ -L "$candidate" ]; then
+    probe_status=$?
+    [ "$probe_status" -eq 0 ] || exit 3
+    continue
+  fi
+  probe_status=$?
+  [ "$probe_status" -eq 1 ] || exit 3
+  if [ -f "$candidate" ]; then
     printf '%s\n' "$candidate"
     exit 0
   fi
+  probe_status=$?
+  [ "$probe_status" -eq 1 ] || exit 3
 done
 exit 1"#
                                 .to_string(),
