@@ -3,10 +3,11 @@ use std::sync::Arc;
 use crate::{
     cleanup_scan_runs::CleanupScanRunHub, cleanup_snapshot_worker::CleanupSnapshotWorker,
     config::Config, db::Db, deploy_check_refresh_worker::DeployCheckRefreshWorker,
-    job_live_logs::JobLiveLogHub, management_events::ManagementEventHub,
-    metrics_store::MetricsStore, operational_read_model::OperationalReadModel,
-    registry::RegistryClient, resource_usage::RealtimeSamplerHub, runner::CommandRunner,
-    service_logs::ServiceLogHub, snapshot_worker::SnapshotWorker,
+    job_live_logs::JobLiveLogHub, lifecycle_observer::OperationScopedLifecycleObserver,
+    management_events::ManagementEventHub, metrics_store::MetricsStore,
+    operational_read_model::OperationalReadModel, registry::RegistryClient,
+    resource_usage::RealtimeSamplerHub, runner::CommandRunner, service_logs::ServiceLogHub,
+    snapshot_worker::SnapshotWorker,
 };
 
 #[derive(Clone)]
@@ -26,6 +27,7 @@ pub struct AppState {
     pub job_live_log_hub: Arc<JobLiveLogHub>,
     pub management_events: Arc<ManagementEventHub>,
     pub update_stop_hub: Arc<crate::update_stop::UpdateStopHub>,
+    pub lifecycle_observer: Arc<OperationScopedLifecycleObserver>,
 }
 
 impl AppState {
@@ -45,6 +47,10 @@ impl AppState {
         service_log_hub: Arc<ServiceLogHub>,
     ) -> Arc<Self> {
         let management_events = db.management_events();
+        let lifecycle_observer = Arc::new(
+            OperationScopedLifecycleObserver::from_env(db.clone())
+                .unwrap_or_else(|_| OperationScopedLifecycleObserver::unavailable(db.clone())),
+        );
         Arc::new(Self {
             config,
             db,
@@ -61,6 +67,7 @@ impl AppState {
             job_live_log_hub: Arc::new(JobLiveLogHub::new()),
             management_events,
             update_stop_hub: Arc::new(crate::update_stop::UpdateStopHub::default()),
+            lifecycle_observer,
         })
     }
 }

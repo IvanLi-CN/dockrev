@@ -30,6 +30,45 @@ export type ServiceResourceHistoryResponse = {
   samples: ServiceResourceSample[]
   resolutionSeconds?: number
   peaks?: ServiceResourcePeak[]
+  lifecycle?: ServiceLifecycleProjection
+}
+
+export type ServiceLifecycleEvent = {
+  id: number
+  serviceId: string
+  stackId?: string | null
+  operationGroupId: string
+  jobId?: string | null
+  origin: string
+  transition: string
+  observedAt: string
+  boundaryPrecision: string
+  evidence: Record<string, unknown>
+  details: Record<string, unknown>
+  createdAt: string
+}
+
+export type LifecycleAvailabilityInterval = {
+  operationGroupId: string
+  startedAt: string
+  stoppedAt: string
+  startEventId: number
+  stopEventId: number
+  complete: boolean
+}
+
+export type ServiceLifecycleProjection = {
+  events: ServiceLifecycleEvent[]
+  availabilityIntervals: LifecycleAvailabilityInterval[]
+  nextCursor?: number | null
+  lastEventId?: number | null
+  retentionSince: string
+}
+
+export type ServiceLifecycleSnapshotResponse = ServiceLifecycleProjection & {
+  serviceId: string
+  since: string
+  until: string
 }
 
 export type ServiceResourcePeak = {

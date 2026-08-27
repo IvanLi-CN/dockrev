@@ -66,7 +66,8 @@ import type {
   AddGitHubPackagesTargetResponse,
   RemoveGitHubPackagesTargetRequest,
   RemoveGitHubPackagesTargetResponse,
-  ServiceLifecycleState
+  ServiceLifecycleState,
+  ServiceLifecycleSnapshotResponse,
 } from './api/types'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -144,7 +145,9 @@ export function asAuthRequiredDetails(details: unknown): AuthRequiredDetails | n
         : undefined,
     currentGroups,
     avatarUrl:
-      typeof details.avatarUrl === 'string' || details.avatarUrl === null ? (details.avatarUrl as string | null) : undefined,
+      typeof details.avatarUrl === 'string' || details.avatarUrl === null
+        ? (details.avatarUrl as string | null)
+        : undefined,
   }
 }
 
@@ -187,11 +190,15 @@ async function apiFetch(path: string, init?: RequestInit) {
         const err = isRecord(parsed) && isRecord(parsed.error) ? parsed.error : null
         const code = err && typeof err.code === 'string' ? err.code : undefined
         const message =
-          err && typeof err.message === 'string'
-            ? err.message
-            : text || resp.statusText || `HTTP ${resp.status}`
+          err && typeof err.message === 'string' ? err.message : text || resp.statusText || `HTTP ${resp.status}`
         const details = err ? (err.details as unknown) : undefined
-        const apiError = new ApiError({ status: resp.status, code, message, details, bodyText: text || undefined })
+        const apiError = new ApiError({
+          status: resp.status,
+          code,
+          message,
+          details,
+          bodyText: text || undefined,
+        })
         dispatchAuthRequired(apiError)
         throw apiError
       } catch (e) {
@@ -255,11 +262,16 @@ export async function putStackSettings(stackId: string, settings: StackSettings)
 }
 
 export async function triggerDiscoveryScan(): Promise<TriggerDiscoveryScanJobResponse> {
-  const resp = await apiFetch('/api/discovery/scan', { method: 'POST', body: '{}' })
+  const resp = await apiFetch('/api/discovery/scan', {
+    method: 'POST',
+    body: '{}',
+  })
   return (await resp.json()) as TriggerDiscoveryScanJobResponse
 }
 
-export async function triggerManagedOverrideReconcile(stackId: string): Promise<TriggerManagedOverrideReconcileResponse> {
+export async function triggerManagedOverrideReconcile(
+  stackId: string,
+): Promise<TriggerManagedOverrideReconcileResponse> {
   const resp = await apiFetch(`/api/stacks/${encodeURIComponent(stackId)}/managed-override/reconcile`, {
     method: 'POST',
     body: '{}',
@@ -267,7 +279,9 @@ export async function triggerManagedOverrideReconcile(stackId: string): Promise<
   return (await resp.json()) as TriggerManagedOverrideReconcileResponse
 }
 
-export async function listDiscoveryProjects(filter: 'exclude' | 'include' | 'only' = 'exclude'): Promise<DiscoveredProject[]> {
+export async function listDiscoveryProjects(
+  filter: 'exclude' | 'include' | 'only' = 'exclude',
+): Promise<DiscoveredProject[]> {
   const resp = await apiFetch(`/api/discovery/projects?archived=${encodeURIComponent(filter)}`)
   const data = await resp.json()
   return data.projects as DiscoveredProject[]
@@ -282,29 +296,47 @@ export async function restoreDiscoveredProject(project: string) {
 }
 
 export async function archiveStack(stackId: string) {
-  await apiFetch(`/api/stacks/${encodeURIComponent(stackId)}/archive`, { method: 'POST', body: '{}' })
+  await apiFetch(`/api/stacks/${encodeURIComponent(stackId)}/archive`, {
+    method: 'POST',
+    body: '{}',
+  })
 }
 
 export async function restoreStack(stackId: string) {
-  await apiFetch(`/api/stacks/${encodeURIComponent(stackId)}/restore`, { method: 'POST', body: '{}' })
+  await apiFetch(`/api/stacks/${encodeURIComponent(stackId)}/restore`, {
+    method: 'POST',
+    body: '{}',
+  })
 }
 
 export async function archiveService(serviceId: string) {
-  await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/archive`, { method: 'POST', body: '{}' })
+  await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/archive`, {
+    method: 'POST',
+    body: '{}',
+  })
 }
 
 export async function restoreService(serviceId: string) {
-  await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/restore`, { method: 'POST', body: '{}' })
+  await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/restore`, {
+    method: 'POST',
+    body: '{}',
+  })
 }
 
-export async function listServiceDigestTags(serviceId: string, digest: string): Promise<ServiceDigestTagsSnapshotResult> {
+export async function listServiceDigestTags(
+  serviceId: string,
+  digest: string,
+): Promise<ServiceDigestTagsSnapshotResult> {
   const resp = await apiFetch(
     `/api/services/${encodeURIComponent(serviceId)}/digest-tags?digest=${encodeURIComponent(digest)}`,
   )
   return (await resp.json()) as ServiceDigestTagsSnapshotResult
 }
 
-export async function getServiceDigestTagsSnapshot(serviceId: string, digest: string): Promise<ServiceDigestTagsSnapshotResult> {
+export async function getServiceDigestTagsSnapshot(
+  serviceId: string,
+  digest: string,
+): Promise<ServiceDigestTagsSnapshotResult> {
   const resp = await apiFetch(
     `/api/services/${encodeURIComponent(serviceId)}/digest-tags-snapshot?digest=${encodeURIComponent(digest)}`,
   )
@@ -315,19 +347,17 @@ export async function forceRefreshServiceVersionInference(
   serviceId: string,
   digest: string,
 ): Promise<TriggerVersionInferenceRefreshResponse> {
-  const resp = await apiFetch(
-    `/api/services/${encodeURIComponent(serviceId)}/version-inference/refresh`,
-    { method: 'POST', body: JSON.stringify({ digest }) },
-  )
+  const resp = await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/version-inference/refresh`, {
+    method: 'POST',
+    body: JSON.stringify({ digest }),
+  })
   return (await resp.json()) as TriggerVersionInferenceRefreshResponse
 }
 
 export async function getServiceNewVersionDiscoveryTimeline(
   serviceId: string,
 ): Promise<NewVersionDiscoveryTimelineResponse> {
-  const resp = await apiFetch(
-    `/api/services/${encodeURIComponent(serviceId)}/new-version-discovery-timeline`,
-  )
+  const resp = await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/new-version-discovery-timeline`)
   return (await resp.json()) as NewVersionDiscoveryTimelineResponse
 }
 
@@ -500,7 +530,9 @@ export function githubPackagesWebhookDeliveriesEventsUrl(opts?: { afterId?: numb
 }
 
 export function newGitHubPackagesWebhookDeliveriesEventsSource(opts?: { afterId?: number }): EventSource {
-  return new EventSource(githubPackagesWebhookDeliveriesEventsUrl(opts), { withCredentials: true })
+  return new EventSource(githubPackagesWebhookDeliveriesEventsUrl(opts), {
+    withCredentials: true,
+  })
 }
 
 export function versionInferenceEventsUrl(opts?: { afterId?: number }): string {
@@ -513,7 +545,9 @@ export function versionInferenceEventsUrl(opts?: { afterId?: number }): string {
 }
 
 export function newVersionInferenceEventsSource(opts?: { afterId?: number }): EventSource {
-  return new EventSource(versionInferenceEventsUrl(opts), { withCredentials: true })
+  return new EventSource(versionInferenceEventsUrl(opts), {
+    withCredentials: true,
+  })
 }
 
 export async function getServiceLogs(serviceId: string, tail = 500): Promise<ServiceLogSnapshotResponse> {
@@ -532,7 +566,9 @@ export function serviceLogsEventsUrl(serviceId: string, opts?: { afterId?: numbe
 }
 
 export function newServiceLogsEventsSource(serviceId: string, opts?: { afterId?: number }): EventSource {
-  return new EventSource(serviceLogsEventsUrl(serviceId, opts), { withCredentials: true })
+  return new EventSource(serviceLogsEventsUrl(serviceId, opts), {
+    withCredentials: true,
+  })
 }
 
 export async function getServiceResourceUsageHistory(
@@ -565,7 +601,30 @@ export function serviceResourceUsageEventsUrl(serviceId: string): string {
 }
 
 export function newServiceResourceUsageEventsSource(serviceId: string): EventSource {
-  return new EventSource(serviceResourceUsageEventsUrl(serviceId), { withCredentials: true })
+  return new EventSource(serviceResourceUsageEventsUrl(serviceId), {
+    withCredentials: true,
+  })
+}
+
+export async function getServiceLifecycleSnapshot(
+  serviceId: string,
+  opts?: { since?: string; until?: string },
+): Promise<ServiceLifecycleSnapshotResponse> {
+  const params = new URLSearchParams()
+  if (opts?.since) params.set('since', opts.since)
+  if (opts?.until) params.set('until', opts.until)
+  const suffix = params.toString() ? `?${params.toString()}` : ''
+  const resp = await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/lifecycle-events${suffix}`)
+  return (await resp.json()) as ServiceLifecycleSnapshotResponse
+}
+
+export function newServiceLifecycleEventsSource(serviceId: string, opts?: { afterId?: number }): EventSource {
+  const params = new URLSearchParams()
+  if (opts?.afterId != null) params.set('afterId', String(opts.afterId))
+  const suffix = params.toString() ? `?${params.toString()}` : ''
+  return new EventSource(`${API_BASE}/api/services/${encodeURIComponent(serviceId)}/lifecycle-events/events${suffix}`, {
+    withCredentials: true,
+  })
 }
 
 type TriggerUpdateCommonInput = {
@@ -708,7 +767,11 @@ export async function listJobs(input: ListJobsInput = {}): Promise<JobListItem[]
   // Keep legacy callers bounded at the former API ceiling while specialized
   // surfaces use listJobsPage for explicit cursor navigation.
   while (jobs.length < 2000) {
-    const page = await listJobsPage({ ...input, cursor, limit: Math.min(input.limit ?? 200, 200) })
+    const page = await listJobsPage({
+      ...input,
+      cursor,
+      limit: Math.min(input.limit ?? 200, 200),
+    })
     jobs.push(...page.jobs)
     if (!page.nextCursor) break
     cursor = page.nextCursor
@@ -746,7 +809,9 @@ export async function getJob(jobId: string): Promise<JobDetail> {
 }
 
 export async function stopJob(jobId: string): Promise<{ jobId: string; state: 'requested' }> {
-  const resp = await apiFetch(`/api/jobs/${encodeURIComponent(jobId)}/stop`, { method: 'POST' })
+  const resp = await apiFetch(`/api/jobs/${encodeURIComponent(jobId)}/stop`, {
+    method: 'POST',
+  })
   return (await resp.json()) as { jobId: string; state: 'requested' }
 }
 
@@ -786,7 +851,9 @@ export async function deleteIgnore(ruleId: string) {
 export async function getSettings(): Promise<SettingsResponse> {
   const resp = await apiFetch('/api/settings')
   const data = (await resp.json()) as SettingsResponse & {
-    backup: SettingsResponse['backup'] & { storage?: SettingsResponse['backup']['storage'] }
+    backup: SettingsResponse['backup'] & {
+      storage?: SettingsResponse['backup']['storage']
+    }
   }
   return {
     ...data,
@@ -819,17 +886,19 @@ export async function getSettings(): Promise<SettingsResponse> {
 }
 
 export async function putSettings(input: PutSettingsInput, legacyBackupBaseDir?: string) {
-  const request = (body: unknown) => apiFetch('/api/settings', {
-    method: 'PUT',
-    body: JSON.stringify(body),
-  })
+  const request = (body: unknown) =>
+    apiFetch('/api/settings', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    })
   try {
     const resp = await request(input)
     return (await resp.json()) as { ok: boolean }
   } catch (error) {
-    const missingLegacyBaseDir = error instanceof ApiError
-      && error.status === 400
-      && /base.?dir|missing field/i.test(`${error.message} ${error.bodyText ?? ''}`)
+    const missingLegacyBaseDir =
+      error instanceof ApiError &&
+      error.status === 400 &&
+      /base.?dir|missing field/i.test(`${error.message} ${error.bodyText ?? ''}`)
     if (!missingLegacyBaseDir || !legacyBackupBaseDir) throw error
     const resp = await request({
       ...input,
@@ -857,7 +926,9 @@ export async function getDeployWelcome(): Promise<DeployWelcomeResponse> {
   return (await resp.json()) as DeployWelcomeResponse
 }
 
-export async function putDeployWelcome(input: { neverAutoOpen: boolean }): Promise<DeployWelcomeResponse & { ok: boolean }> {
+export async function putDeployWelcome(input: {
+  neverAutoOpen: boolean
+}): Promise<DeployWelcomeResponse & { ok: boolean }> {
   const resp = await apiFetch('/api/deploy-welcome', {
     method: 'PUT',
     body: JSON.stringify(input),
@@ -1088,10 +1159,7 @@ export async function listServiceTagSuggestions(serviceId: string): Promise<Serv
   return (await resp.json()) as ServiceTagSuggestionsResponse
 }
 
-export async function putServiceComposeTag(
-  serviceId: string,
-  tag: string,
-): Promise<PutServiceComposeTagResponse> {
+export async function putServiceComposeTag(serviceId: string, tag: string): Promise<PutServiceComposeTagResponse> {
   const resp = await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/compose-tag`, {
     method: 'PUT',
     body: JSON.stringify({ tag }),

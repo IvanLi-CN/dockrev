@@ -1,7 +1,4 @@
-import type {
-  ServiceResourceOverviewItem,
-  ServiceResourceOverviewResponse
-} from './serviceResourceTypes'
+import type { ServiceResourceOverviewItem, ServiceResourceOverviewResponse } from './serviceResourceTypes'
 
 export type StackStatus = 'healthy' | 'degraded' | 'unknown'
 
@@ -70,8 +67,7 @@ export type PutServiceBackupTargetsResponse = {
 export type ServiceBackupRecordAssetStatus = 'included' | 'skipped'
 
 export type ServiceBackupRecordAssetTarget =
-  | { kind: 'docker-volume'; name: string }
-  | { kind: 'bind-mount'; path: string }
+  { kind: 'docker-volume'; name: string } | { kind: 'bind-mount'; path: string }
 
 export type ServiceBackupRecordAsset = {
   target: ServiceBackupRecordAssetTarget
@@ -221,8 +217,7 @@ export type ServiceDigestTagsSnapshotPendingResponse = {
 }
 
 export type ServiceDigestTagsSnapshotResult =
-  | ServiceDigestTagsSnapshotResponse
-  | ServiceDigestTagsSnapshotPendingResponse
+  ServiceDigestTagsSnapshotResponse | ServiceDigestTagsSnapshotPendingResponse
 
 export function isServiceDigestTagsSnapshotPending(
   data: ServiceDigestTagsSnapshotResult,
@@ -350,10 +345,7 @@ export type TriggerVersionInferenceRefreshResponse = {
   reason: string
 }
 
-export type NewVersionDiscoveryTimelineItemKind =
-  | 'currentCandidate'
-  | 'historicalCandidate'
-  | 'currentRunning'
+export type NewVersionDiscoveryTimelineItemKind = 'currentCandidate' | 'historicalCandidate' | 'currentRunning'
 
 export type NewVersionDiscoveryTimelineItem = {
   kind: NewVersionDiscoveryTimelineItemKind
@@ -368,11 +360,7 @@ export type NewVersionDiscoveryTimelineResponse = {
 export type GitHubReleaseAuthMode = 'pat' | 'anonymous'
 
 export type ServiceGitHubReleasesStatus =
-  | 'ready'
-  | 'unsupportedRepo'
-  | 'permissionDenied'
-  | 'rateLimited'
-  | 'upstreamError'
+  'ready' | 'unsupportedRepo' | 'permissionDenied' | 'rateLimited' | 'upstreamError'
 
 export type ServiceGitHubRepoRef = {
   fullName: string
@@ -471,13 +459,7 @@ export type ServiceReleaseNotesResponse = {
   anchor?: ServiceReleaseNotesAnchor | null
 }
 
-export type VersionInferenceOverviewStatus =
-  | 'queued'
-  | 'running'
-  | 'ready'
-  | 'stale'
-  | 'all_failed'
-  | string
+export type VersionInferenceOverviewStatus = 'queued' | 'running' | 'ready' | 'stale' | 'all_failed' | string
 
 export type VersionInferenceTaskProgress = {
   phase: string
@@ -775,7 +757,11 @@ export type {
   ServiceResourcePeak,
   ServiceResourceSample,
   ServiceResourceSnapshot,
-  ServiceResourceUsageWindow
+  ServiceResourceUsageWindow,
+  ServiceLifecycleEvent,
+  LifecycleAvailabilityInterval,
+  ServiceLifecycleProjection,
+  ServiceLifecycleSnapshotResponse,
 } from './serviceResourceTypes'
 
 export type HomepageNavItem = {
@@ -956,7 +942,12 @@ export type CleanupFingerprintMismatchError = {
 export type NotificationConfig = {
   email: { enabled: boolean; smtpUrl?: string | null }
   webhook: { enabled: boolean; url?: string | null }
-  telegram: { enabled: boolean; botToken?: string | null; botTokenConfigured?: boolean; chatId?: string | null }
+  telegram: {
+    enabled: boolean
+    botToken?: string | null
+    botTokenConfigured?: boolean
+    chatId?: string | null
+  }
   webPush: {
     enabled: boolean
     vapidPublicKey?: string | null
@@ -1037,13 +1028,22 @@ export type SyncGitHubPackagesWebhookResult = {
   repo: string
   action: 'noop' | 'created' | 'updated' | 'conflict' | 'error' | string
   hookId?: number | null
-  conflictHooks?: Array<{ id: number; url: string; events: string[]; active: boolean }> | null
+  conflictHooks?: Array<{
+    id: number
+    url: string
+    events: string[]
+    active: boolean
+  }> | null
   message?: string | null
 }
 
 export type SyncGitHubPackagesWebhooksRequest = {
   dryRun?: boolean
-  resolveConflicts?: Array<{ repo: string; keepHookId: number; deleteHookIds: number[] }>
+  resolveConflicts?: Array<{
+    repo: string
+    keepHookId: number
+    deleteHookIds: number[]
+  }>
   repos?: string[] | null
 }
 

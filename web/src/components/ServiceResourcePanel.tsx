@@ -1,12 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import type { ServiceResourceSample } from '../api'
-import {
-  buildResourceChartPaths,
-  scaleResourceChartPoint,
-  type ResourceChartInterpolation,
-} from './resourceChartPaths'
+import type { ServiceLifecycleProjection, ServiceResourceSample } from '../api'
+import { buildResourceChartPaths, type ResourceChartInterpolation } from './resourceChartPaths'
+import { deriveResourceGapIntervals, isContinuousResourceGap, type ResourceGapInterval } from './resourceGapIntervals'
 import { AsyncDataRegion, AsyncDataSkeleton } from './AsyncDataRegion'
 import type { AsyncDataPhase } from '../asyncData'
 import {
@@ -36,10 +33,7 @@ const TAB_OPTIONS: Array<{ key: MetricTabKey; label: string }> = [
   { key: 'pids', label: 'PIDs' },
 ]
 
-const METRIC_PANEL_COPY: Record<
-  MetricTabKey,
-  { title: string; description: string; currentLabel: string }
-> = {
+const METRIC_PANEL_COPY: Record<MetricTabKey, { title: string; description: string; currentLabel: string }> = {
   cpu: {
     title: 'CPU 占用趋势',
     description: '关注短时尖峰与持续占用，快速判断是否存在抖动或异常突增。',
@@ -179,14 +173,67 @@ function currentPointValue(points: Array<{ x: number; y: number | null }>): numb
   return value != null && Number.isFinite(value) ? value : null
 }
 
-function currentPointMarker(
+function gapX(gap: ResourceGapInterval, domain: { xMin: number; xMax: number }, box: { left: number; width: number }): number {
+  return box.left + ((gap.start - domain.xMin) / Math.max(1, domain.xMax - domain.xMin)) * box.width
+}
+
+function gapWidth(
+  gap: ResourceGapInterval,
+  domain: { xMin: number; xMax: number },
+  box: { width: number },
+): number {
+  return Math.max(1, ((gap.end - gap.start) / Math.max(1, domain.xMax - domain.xMin)) * box.width)
+}
+
+function addResourceGapBreaks(
   points: Array<{ x: number; y: number | null }>,
-  domain: { xMin: number; xMax: number; yMin: number; yMax: number },
-  box: { left: number; top: number; width: number; height: number },
-): { x: number; y: number } | null {
-  const point = points[points.length - 1]
-  if (!point || point.y == null || !Number.isFinite(point.y)) return null
-  return scaleResourceChartPoint({ x: point.x, y: point.y }, domain, box)
+  gaps: ResourceGapInterval[],
+): Array<{ x: number; y: number | null }> {
+  if (points.length < 2 || gaps.length === 0) return points
+  const nextPoints: Array<{ x: number; y: number | null }> = []
+  for (let index = 0; index < points.length; index += 1) {
+    const point = points[index]!
+    nextPoints.push(point)
+    const next = points[index + 1]
+    if (!next) continue
+    const gap = gaps.find((candidate) => candidate.start < next.x && candidate.end > point.x)
+    if (gap) nextPoints.push({ x: gap.start, y: null })
+  }
+  return nextPoints
+}
+
+type ChartHoverDetails = {
+  kind: 'sample' | 'lifecycle' | 'gap'
+  x: number
+  timestamp: number
+  sampleTimestamp?: number
+  values?: Array<{ label: string; value: number | null }>
+  gap?: ResourceGapInterval
+  lifecycleInterval?: ServiceLifecycleProjection['availabilityIntervals'][number]
+  lifecycleEvent?: ServiceLifecycleProjection['events'][number]
+}
+
+function formatDateTime(ts: number): string {
+  return new Date(ts).toLocaleString([], {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+}
+
+function formatDuration(durationMs: number): string {
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return '--'
+  if (durationMs < 1_000) return `${Math.max(1, Math.round(durationMs))} ms`
+  const seconds = durationMs / 1_000
+  if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)} 秒`
+  const minutes = seconds / 60
+  return `${minutes.toFixed(minutes < 10 ? 1 : 0)} 分钟`
+}
+
+function transitionLabel(transition: ServiceLifecycleProjection['events'][number]['transition']): string {
+  return transition === 'started' ? '服务启动' : '服务停止'
 }
 
 function ResourceLineChart(props: {
@@ -194,8 +241,11 @@ function ResourceLineChart(props: {
   yFormatter: (value: number) => string
   emptyText: string
   latestPeakLabel?: string | null
+  lifecycle?: ServiceLifecycleProjection | null
+  sampleTimes: number[]
 }) {
-  const { series, yFormatter, emptyText, latestPeakLabel } = props
+  const { series, yFormatter, emptyText, latestPeakLabel, lifecycle, sampleTimes } = props
+  const [hover, setHover] = useState<ChartHoverDetails | null>(null)
   const renderedPointCount = Math.max(0, ...series.map((item) => item.points.length))
 
   const allPoints = series
@@ -205,12 +255,14 @@ function ResourceLineChart(props: {
     y: number
   }>
 
-  if (!allPoints.length) {
+  if (!allPoints.length && !lifecycle?.events.length) {
     return <div className="svcResourceChartEmpty">{emptyText}</div>
   }
 
-  const xMin = Math.min(...allPoints.map((point) => point.x))
-  const rawXMax = Math.max(...allPoints.map((point) => point.x))
+  const lifecycleTimes = (lifecycle?.events ?? []).map((event) => Date.parse(event.observedAt)).filter(Number.isFinite)
+  const xValues = [...allPoints.map((point) => point.x), ...lifecycleTimes]
+  const xMin = Math.min(...xValues)
+  const rawXMax = Math.max(...xValues)
   const xMax = rawXMax > xMin ? rawXMax : xMin + 1000
 
   const yMin = 0
@@ -231,6 +283,92 @@ function ResourceLineChart(props: {
 
   const domain = { xMin, xMax, yMin, yMax }
   const singleSeries = series.length === 1
+  const samplingGaps = deriveResourceGapIntervals(
+    sampleTimes.map((sampledAt) => ({ sampledAt: new Date(sampledAt).toISOString() })),
+    lifecycle,
+  )
+  const continuousGaps = samplingGaps.filter(isContinuousResourceGap)
+  const chartSeries = series.map((item) => ({
+    ...item,
+    points: addResourceGapBreaks(item.points, samplingGaps),
+  }))
+  const chartRange = Math.max(1, xMax - xMin)
+  const chartXForTime = (timestamp: number) => box.left + ((timestamp - xMin) / chartRange) * box.width
+  const sampleTimestamps = [...new Set(series.flatMap((item) => item.points.map((point) => point.x)))]
+    .filter((timestamp) => timestamp >= xMin && timestamp <= xMax && Number.isFinite(timestamp))
+    .sort((left, right) => left - right)
+  const hoverPercent = hover ? (hover.x / width) * 100 : 50
+  const hoverEdgeClass = hoverPercent > 78 ? ' edgeRight' : hoverPercent < 22 ? ' edgeLeft' : ''
+
+  const handlePointerMove = (event: ReactPointerEvent<SVGRectElement>) => {
+    const svg = event.currentTarget.ownerSVGElement
+    if (!svg) return
+    const screenPoint = svg.createSVGPoint()
+    screenPoint.x = event.clientX
+    screenPoint.y = event.clientY
+    const screenTransform = svg.getScreenCTM()
+    if (!screenTransform) return
+    const svgX = screenPoint.matrixTransform(screenTransform.inverse()).x
+    const boundedX = Math.max(box.left, Math.min(box.left + box.width, svgX))
+    const timestamp = xMin + ((boundedX - box.left) / box.width) * chartRange
+    const tolerance = Math.max((10 / box.width) * chartRange, 60_000)
+
+    const lifecycleInterval = (lifecycle?.availabilityIntervals ?? []).find((candidate) => {
+      const started = Date.parse(candidate.startedAt)
+      const stopped = Date.parse(candidate.stoppedAt)
+      if (!Number.isFinite(started) || !Number.isFinite(stopped)) return false
+      const start = Math.min(started, stopped)
+      const end = Math.max(started, stopped)
+      return timestamp >= start - tolerance && timestamp <= end + tolerance
+    })
+    if (lifecycleInterval) {
+      setHover({
+        kind: 'lifecycle',
+        x: boundedX,
+        timestamp,
+        lifecycleInterval,
+      })
+      return
+    }
+
+    const lifecycleEvent = (lifecycle?.events ?? [])
+      .map((candidate) => ({ candidate, timestamp: Date.parse(candidate.observedAt) }))
+      .filter((entry) => Number.isFinite(entry.timestamp))
+      .sort((left, right) => Math.abs(left.timestamp - timestamp) - Math.abs(right.timestamp - timestamp))[0]
+    if (lifecycleEvent && Math.abs(lifecycleEvent.timestamp - timestamp) <= tolerance) {
+      setHover({
+        kind: 'lifecycle',
+        x: chartXForTime(lifecycleEvent.timestamp),
+        timestamp: lifecycleEvent.timestamp,
+        lifecycleEvent: lifecycleEvent.candidate,
+      })
+      return
+    }
+
+    const gap = samplingGaps.find((candidate) => timestamp >= candidate.start && timestamp <= candidate.end)
+    if (gap) {
+      setHover({ kind: 'gap', x: boundedX, timestamp, gap })
+      return
+    }
+
+    const sampleTimestamp = sampleTimestamps
+      .map((candidate) => ({ candidate, distance: Math.abs(candidate - timestamp) }))
+      .sort((left, right) => left.distance - right.distance)[0]?.candidate
+    if (sampleTimestamp == null) {
+      setHover(null)
+      return
+    }
+    setHover({
+      kind: 'sample',
+      x: chartXForTime(sampleTimestamp),
+      timestamp: sampleTimestamp,
+      sampleTimestamp,
+      values: series.map((item) => ({
+        label: item.label,
+        value: item.points.find((point) => point.x === sampleTimestamp)?.y ?? null,
+      })),
+    })
+  }
 
   return (
     <div className="svcResourceChart" data-point-count={renderedPointCount}>
@@ -243,6 +381,23 @@ function ResourceLineChart(props: {
           x={box.left}
           y={box.top}
         />
+
+        {continuousGaps
+          .filter((gap) => gap.kind === 'unavailable')
+          .map((gap) => (
+            <rect
+              key={`resource-gap-warning-${gap.start}-${gap.end}`}
+              className="svcResourceGap svcResourceGapWarning"
+              data-gap-kind="unavailable"
+              data-missing-samples={gap.missingSamples}
+              height={box.height}
+              width={gapWidth(gap, domain, box)}
+              x={gapX(gap, domain, box)}
+              y={box.top}
+            >
+              <title>监控采样连续缺失</title>
+            </rect>
+          ))}
 
         {gridTicks.map((tick) => {
           const y = box.top + box.height - tick * box.height
@@ -257,7 +412,61 @@ function ResourceLineChart(props: {
           )
         })}
 
-        {series.map((item) => {
+        {(lifecycle?.availabilityIntervals ?? []).map((interval) => {
+          const start = Date.parse(interval.startedAt)
+          const stop = Date.parse(interval.stoppedAt)
+          if (!Number.isFinite(start) || !Number.isFinite(stop)) return null
+          const leftTime = Math.min(start, stop)
+          const rightTime = Math.max(start, stop)
+          const x = box.left + ((leftTime - xMin) / Math.max(1, xMax - xMin)) * box.width
+          const widthPx = ((rightTime - leftTime) / Math.max(1, xMax - xMin)) * box.width
+          return widthPx < 6 ? (
+            <line
+              key={`lifecycle-${interval.operationGroupId}`}
+              x1={x}
+              x2={x}
+              y1={box.top}
+              y2={box.top + box.height}
+              className="svcResourceLifecycleLine svcResourceGapServiceStopped"
+              data-gap-kind="service-stopped"
+            >
+              <title>服务停止区间</title>
+            </line>
+          ) : (
+            <rect
+              key={`lifecycle-${interval.operationGroupId}`}
+              x={x}
+              y={box.top}
+              width={Math.max(1, widthPx)}
+              height={box.height}
+              className="svcResourceLifecycleBand svcResourceGapServiceStopped"
+              data-gap-kind="service-stopped"
+            >
+              <title>服务停止区间</title>
+            </rect>
+          )
+        })}
+        {(lifecycle?.events ?? [])
+          .filter((event) => event.boundaryPrecision !== 'exact')
+          .map((event) => {
+            const timestamp = Date.parse(event.observedAt)
+            if (!Number.isFinite(timestamp) || timestamp < xMin || timestamp > xMax) return null
+            const x = chartXForTime(timestamp)
+            return (
+              <line
+                key={`lifecycle-diagnostic-${event.id}`}
+                x1={x}
+                x2={x}
+                y1={box.top}
+                y2={box.top + box.height}
+                className="svcResourceLifecycleDiagnosticLine"
+                data-lifecycle-precision={event.boundaryPrecision}
+              >
+                <title>生命周期观察不完整</title>
+              </line>
+            )
+          })}
+        {chartSeries.map((item) => {
           const { linePath, areaPaths } = buildResourceChartPaths({
             points: item.points,
             domain,
@@ -270,12 +479,6 @@ function ResourceLineChart(props: {
             interpolation: item.interpolation,
             includeArea: singleSeries,
           })
-          const point = currentPointMarker(item.points, domain, {
-            left: box.left,
-            top: box.top,
-            width: box.width,
-            height: box.height,
-          })
           if (!linePath) return null
           return (
             <g key={item.id} className={item.colorClass}>
@@ -283,11 +486,6 @@ function ResourceLineChart(props: {
                 <path key={`${item.id}-area-${index}`} d={areaPath} className={`svcResourceArea ${item.colorClass}`} />
               ))}
               <path d={linePath} className={`svcResourceLine ${item.colorClass}`} />
-              {point ? (
-                <circle className={`svcResourcePoint ${item.colorClass}`} cx={point.x} cy={point.y} r={4}>
-                  {latestPeakLabel ? <title>{latestPeakLabel}</title> : null}
-                </circle>
-              ) : null}
             </g>
           )
         })}
@@ -298,7 +496,91 @@ function ResourceLineChart(props: {
         <text x={box.left + box.width} y={height - 10} className="svcResourceAxisLabel" textAnchor="end">
           {formatTime(xMax)}
         </text>
+        {hover ? <line className="svcResourceHoverLine" x1={hover.x} x2={hover.x} y1={box.top} y2={box.top + box.height} /> : null}
+        <rect
+          className="svcResourceHoverSurface"
+          x={box.left}
+          y={box.top}
+          width={box.width}
+          height={box.height}
+          tabIndex={0}
+          aria-label="悬浮查看图表详情"
+          onPointerMove={handlePointerMove}
+          onPointerLeave={() => setHover(null)}
+        />
       </svg>
+
+      {hover ? (
+        <div
+          className={`svcResourceHoverTooltip${hoverEdgeClass}`}
+          data-hover-kind={hover.kind}
+          role="tooltip"
+          style={{ left: `${Math.max(3, Math.min(97, hoverPercent))}%` }}
+        >
+          <div className="svcResourceHoverTitle">
+            {hover.kind === 'sample' ? '采样详情' : hover.kind === 'gap' ? '监控采样缺口' : hover.lifecycleInterval ? '服务停止区间' : '生命周期事件'}
+          </div>
+          <div className="svcResourceHoverTime">{formatDateTime(hover.timestamp)}</div>
+          {hover.kind === 'sample' ? (
+            <div className="svcResourceHoverRows">
+              {hover.values?.map((entry) => (
+                <div key={entry.label} className="svcResourceHoverRow">
+                  <span>{entry.label}</span>
+                  <strong>{entry.value == null ? '无数据' : yFormatter(entry.value)}</strong>
+                </div>
+              ))}
+              {latestPeakLabel && hover.sampleTimestamp === sampleTimestamps[sampleTimestamps.length - 1] ? (
+                <div className="svcResourceHoverNote">{latestPeakLabel}</div>
+              ) : null}
+            </div>
+          ) : hover.kind === 'gap' && hover.gap ? (
+            <div className="svcResourceHoverRows">
+              <div className="svcResourceHoverRow">
+                <span>区间</span>
+                <strong>{formatTime(hover.gap.start)} 至 {formatTime(hover.gap.end)}</strong>
+              </div>
+              <div className="svcResourceHoverRow">
+                <span>缺失样本</span>
+                <strong>{hover.gap.missingSamples} 个</strong>
+              </div>
+              <div className="svcResourceHoverRow">
+                <span>原因</span>
+                <strong>{hover.gap.kind === 'service-stopped' ? '服务未运行' : isContinuousResourceGap(hover.gap) ? '连续采样不可用' : '偶发采样缺失'}</strong>
+              </div>
+            </div>
+          ) : hover.lifecycleInterval ? (
+            <div className="svcResourceHoverRows">
+              <div className="svcResourceHoverRow">
+                <span>停止</span>
+                <strong>{formatDateTime(Date.parse(hover.lifecycleInterval.stoppedAt))}</strong>
+              </div>
+              <div className="svcResourceHoverRow">
+                <span>启动</span>
+                <strong>{formatDateTime(Date.parse(hover.lifecycleInterval.startedAt))}</strong>
+              </div>
+              <div className="svcResourceHoverRow">
+                <span>持续</span>
+                <strong>{formatDuration(Math.abs(Date.parse(hover.lifecycleInterval.startedAt) - Date.parse(hover.lifecycleInterval.stoppedAt)))}</strong>
+              </div>
+            </div>
+          ) : hover.lifecycleEvent ? (
+            <div className="svcResourceHoverRows">
+              <div className="svcResourceHoverRow">
+                <span>事件</span>
+                <strong>{transitionLabel(hover.lifecycleEvent.transition)}</strong>
+              </div>
+              <div className="svcResourceHoverRow">
+                <span>边界</span>
+                <strong>{hover.lifecycleEvent.boundaryPrecision === 'exact' ? '精确' : '不完整'}</strong>
+              </div>
+              <div className="svcResourceHoverRow">
+                <span>来源</span>
+                <strong>{hover.lifecycleEvent.origin}</strong>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="svcResourceLegend">
         {series.map((item) => {
@@ -321,6 +603,7 @@ export function ServiceResourcePanel(props: { monitor: ServiceDetailResourceMoni
     windowKey,
     samples,
     peaks,
+    lifecycle,
     historyLoading,
     historyLoaded,
     historyTrigger,
@@ -337,23 +620,34 @@ export function ServiceResourcePanel(props: { monitor: ServiceDetailResourceMoni
   const [metricTab, setMetricTab] = useState<MetricTabKey>('cpu')
   const isAggregatedWindow = windowKey === '7d' || windowKey === '30d'
 
-  const chartSamples = useMemo(
-    () => chartSamplesForWindow(samples, isAggregatedWindow),
-    [isAggregatedWindow, samples],
-  )
+  const chartSamples = useMemo(() => chartSamplesForWindow(samples, isAggregatedWindow), [isAggregatedWindow, samples])
 
   const networkRates = useMemo(
     () =>
       chartSamples.some((sample) => sample.netRxRateBps != null || sample.netTxRateBps != null)
-        ? chartSamples.map((sample) => ({ rx: sample.netRxRateBps ?? null, tx: sample.netTxRateBps ?? null }))
-        : computeRatePairs(chartSamples, (sample) => sample.netRxBytes, (sample) => sample.netTxBytes),
+        ? chartSamples.map((sample) => ({
+            rx: sample.netRxRateBps ?? null,
+            tx: sample.netTxRateBps ?? null,
+          }))
+        : computeRatePairs(
+            chartSamples,
+            (sample) => sample.netRxBytes,
+            (sample) => sample.netTxBytes,
+          ),
     [chartSamples],
   )
   const diskRates = useMemo(
     () =>
       chartSamples.some((sample) => sample.blockReadRateBps != null || sample.blockWriteRateBps != null)
-        ? chartSamples.map((sample) => ({ rx: sample.blockReadRateBps ?? null, tx: sample.blockWriteRateBps ?? null }))
-        : computeRatePairs(chartSamples, (sample) => sample.blockReadBytes, (sample) => sample.blockWriteBytes),
+        ? chartSamples.map((sample) => ({
+            rx: sample.blockReadRateBps ?? null,
+            tx: sample.blockWriteRateBps ?? null,
+          }))
+        : computeRatePairs(
+            chartSamples,
+            (sample) => sample.blockReadBytes,
+            (sample) => sample.blockWriteBytes,
+          ),
     [chartSamples],
   )
 
@@ -375,7 +669,10 @@ export function ServiceResourcePanel(props: { monitor: ServiceDetailResourceMoni
           label: 'CPU %',
           colorClass: 'svcResourceLineBlue',
           interpolation: 'step-after-rounded',
-          points: basePoints.map((point) => ({ x: point.x, y: point.sample.cpuPercent })),
+          points: basePoints.map((point) => ({
+            x: point.x,
+            y: point.sample.cpuPercent,
+          })),
         },
       ]
     }
@@ -387,7 +684,10 @@ export function ServiceResourcePanel(props: { monitor: ServiceDetailResourceMoni
           label: '内存',
           colorClass: 'svcResourceLineBlue',
           interpolation: 'step-after-rounded',
-          points: basePoints.map((point) => ({ x: point.x, y: point.sample.memUsedBytes ?? null })),
+          points: basePoints.map((point) => ({
+            x: point.x,
+            y: point.sample.memUsedBytes ?? null,
+          })),
         },
       ]
     }
@@ -399,14 +699,20 @@ export function ServiceResourcePanel(props: { monitor: ServiceDetailResourceMoni
           label: 'RX',
           colorClass: 'svcResourceLineBlue',
           interpolation: 'step-after-rounded',
-          points: basePoints.map((point, index) => ({ x: point.x, y: networkRates[index]?.rx ?? null })),
+          points: basePoints.map((point, index) => ({
+            x: point.x,
+            y: networkRates[index]?.rx ?? null,
+          })),
         },
         {
           id: 'net-tx',
           label: 'TX',
           colorClass: 'svcResourceLineOrange',
           interpolation: 'step-after-rounded',
-          points: basePoints.map((point, index) => ({ x: point.x, y: networkRates[index]?.tx ?? null })),
+          points: basePoints.map((point, index) => ({
+            x: point.x,
+            y: networkRates[index]?.tx ?? null,
+          })),
         },
       ]
     }
@@ -418,14 +724,20 @@ export function ServiceResourcePanel(props: { monitor: ServiceDetailResourceMoni
           label: 'Read',
           colorClass: 'svcResourceLineBlue',
           interpolation: 'step-after-rounded',
-          points: basePoints.map((point, index) => ({ x: point.x, y: diskRates[index]?.rx ?? null })),
+          points: basePoints.map((point, index) => ({
+            x: point.x,
+            y: diskRates[index]?.rx ?? null,
+          })),
         },
         {
           id: 'disk-write',
           label: 'Write',
           colorClass: 'svcResourceLineOrange',
           interpolation: 'step-after-rounded',
-          points: basePoints.map((point, index) => ({ x: point.x, y: diskRates[index]?.tx ?? null })),
+          points: basePoints.map((point, index) => ({
+            x: point.x,
+            y: diskRates[index]?.tx ?? null,
+          })),
         },
       ]
     }
@@ -436,7 +748,10 @@ export function ServiceResourcePanel(props: { monitor: ServiceDetailResourceMoni
         label: 'PIDs',
         colorClass: 'svcResourceLineBlue',
         interpolation: 'step-after',
-        points: basePoints.map((point) => ({ x: point.x, y: point.sample.pids ?? null })),
+        points: basePoints.map((point) => ({
+          x: point.x,
+          y: point.sample.pids ?? null,
+        })),
       },
     ]
   }, [chartSamples, diskRates, metricTab, networkRates])
@@ -452,15 +767,15 @@ export function ServiceResourcePanel(props: { monitor: ServiceDetailResourceMoni
     ? '离线缓存（只读）'
     : isAggregatedWindow
       ? '聚合历史（只读）'
-    : streamState === 'live'
-      ? '实时连接中（1s）'
-      : streamState === 'connecting'
-        ? '正在建立实时连接…'
-        : streamState === 'reconnecting'
-          ? '连接中断，正在重连…'
-          : isPageVisible
-            ? '未连接'
-            : '页面不可见，实时连接已暂停'
+      : streamState === 'live'
+        ? '实时连接中（1s）'
+        : streamState === 'connecting'
+          ? '正在建立实时连接…'
+          : streamState === 'reconnecting'
+            ? '连接中断，正在重连…'
+            : isPageVisible
+              ? '未连接'
+              : '页面不可见，实时连接已暂停'
 
   const streamBadge = useMemo(() => {
     if (effectiveReadonly) return { label: '本地缓存', className: 'svcResourceStatusIdle' }
@@ -469,7 +784,10 @@ export function ServiceResourcePanel(props: { monitor: ServiceDetailResourceMoni
     if (streamError) return { label: '实时异常', className: 'svcResourceStatusBad' }
     if (streamState === 'live') return { label: '实时在线', className: 'svcResourceStatusLive' }
     if (streamState === 'connecting' || streamState === 'reconnecting') {
-      return { label: streamState === 'connecting' ? '建立连接' : '正在重连', className: 'svcResourceStatusSync' }
+      return {
+        label: streamState === 'connecting' ? '建立连接' : '正在重连',
+        className: 'svcResourceStatusSync',
+      }
     }
     if (!isPageVisible) return { label: '已暂停', className: 'svcResourceStatusIdle' }
     return { label: '未连接', className: 'svcResourceStatusIdle' }
@@ -501,13 +819,18 @@ export function ServiceResourcePanel(props: { monitor: ServiceDetailResourceMoni
     : null
 
   const sampleUnit = effectiveReadonly ? '已缓存' : isAggregatedWindow ? '聚合桶' : '样本（含实时点）'
-  const historyPhase: AsyncDataPhase = !isOnline && samples.length === 0 && !monitorDisabled
-    ? 'offline'
-    : historyError
-      ? 'error'
-      : historyLoading
-        ? historyLoaded ? 'refreshing' : 'initial-loading'
-        : samples.length === 0 ? 'ready-empty' : 'ready-data'
+  const historyPhase: AsyncDataPhase =
+    !isOnline && samples.length === 0 && !monitorDisabled
+      ? 'offline'
+      : historyError
+        ? 'error'
+        : historyLoading
+          ? historyLoaded
+            ? 'refreshing'
+            : 'initial-loading'
+          : samples.length === 0
+            ? 'ready-empty'
+            : 'ready-data'
   const chartContext = historyLoading
     ? `${RESOURCE_WINDOW_META_LABELS[windowKey]} · 正在加载历史样本`
     : samples.length > 0
@@ -580,13 +903,13 @@ export function ServiceResourcePanel(props: { monitor: ServiceDetailResourceMoni
 
         <div className="svcResourceFacts" aria-label="监控面板概览">
           <div className="svcResourceFact">{RESOURCE_WINDOW_META_LABELS[windowKey]}</div>
-          <div className="svcResourceFact">
-            {historyLoading ? '加载样本中' : `${samples.length} 个${sampleUnit}`}
-          </div>
+          <div className="svcResourceFact">{historyLoading ? '加载样本中' : `${samples.length} 个${sampleUnit}`}</div>
           <div className="svcResourceFact">最近更新 {formatSampleTime(latestSample)}</div>
         </div>
 
-        {streamError && !monitorDisabled && !effectiveReadonly ? <div className="svcResourceSubtleAlert">实时状态：{streamError}</div> : null}
+        {streamError && !monitorDisabled && !effectiveReadonly ? (
+          <div className="svcResourceSubtleAlert">实时状态：{streamError}</div>
+        ) : null}
       </div>
 
       {monitorDisabled ? (
@@ -613,7 +936,11 @@ export function ServiceResourcePanel(props: { monitor: ServiceDetailResourceMoni
             ))}
           </div>
 
-          <Tabs className="svcResourceChartWrap" onValueChange={(value) => setMetricTab(value as MetricTabKey)} value={metricTab}>
+          <Tabs
+            className="svcResourceChartWrap"
+            onValueChange={(value) => setMetricTab(value as MetricTabKey)}
+            value={metricTab}
+          >
             <div className="svcResourceToolbar">
               <div className="svcResourceToolbarGroup">
                 <div className="svcResourceToolbarLabel">监控指标</div>
@@ -692,6 +1019,8 @@ export function ServiceResourcePanel(props: { monitor: ServiceDetailResourceMoni
                 yFormatter={yFormatter}
                 emptyText="当前窗口暂无可展示的监控数据"
                 latestPeakLabel={latestPeakLabel}
+                lifecycle={lifecycle}
+                sampleTimes={chartSamples.map(parseSampleTs).filter((value): value is number => value != null)}
               />
             </AsyncDataRegion>
           </Tabs>

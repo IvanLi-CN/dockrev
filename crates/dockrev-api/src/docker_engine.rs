@@ -378,6 +378,10 @@ impl DockerEngineClient {
         }
     }
 
+    pub(crate) fn event_transport(&self) -> (reqwest::Client, String) {
+        (self.http.clone(), self.base_url.clone())
+    }
+
     #[cfg(test)]
     pub(crate) fn for_test_http_base(raw: &str) -> anyhow::Result<Self> {
         Self::from_http_base(raw)

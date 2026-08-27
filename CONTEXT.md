@@ -27,3 +27,16 @@
 - `observable management heartbeat` is a management event that proves a browser received the management event transport. It is distinct from a proxy keepalive comment, which can keep an HTTP connection alive without proving client delivery.
 - `management transport session` is one owned, replaceable per-tab management stream. A foreground resume or recovery starts a fresh session before page synchronization resumes.
 - `recovery synchronization` is the one-time page synchronization triggered after a transport session is connected, resumed, or found to have received a protocol-invalid event.
+
+## Service Lifecycle Observability
+
+- `service lifecycle event` is a durable record that a Dockrev-managed operation caused a service to stop, start, or restart. It identifies the affected service, origin, outcome, and relevant times.
+- `operation interval` is the lifespan of a Dockrev-managed lifecycle action from acceptance through its terminal result. It is not necessarily the time during which the service was unavailable.
+- `availability interval` is the time from a confirmed non-running state until a confirmed running state. It can remain open when a stopped service has not yet started again.
+- `runtime lifecycle confirmation` is proof that every expected replica is running or that none is running. A partial or unknown replica state does not confirm a lifecycle transition.
+- `operation-scoped lifecycle observer` is the Docker Engine event observer active for one Dockrev-managed operation. It combines observed Engine events with final container inspection to establish lifecycle boundaries without treating unrelated external activity as part of the operation.
+- `lifecycle operation group` is the shared identity that relates service lifecycle events produced by one stack-level operation.
+- `failed lifecycle attempt` is an unsuccessful lifecycle operation that is recorded for diagnosis but does not invent a service-state transition or close an availability interval.
+- `incomplete lifecycle observation` is a lifecycle operation whose observation source did not establish every interval boundary. It preserves confirmed transitions but never fabricates the missing boundary.
+- `system lifecycle log row` is a service-log entry derived from a service lifecycle event rather than emitted by the container. It remains distinct from container output.
+- `lifecycle observability window` is the 30-day period in which lifecycle events remain available to match the longest resource-monitoring view.

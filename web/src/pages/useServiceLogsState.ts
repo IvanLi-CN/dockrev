@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   getServiceLogs,
+  getServiceLifecycleSnapshot,
+  newServiceLifecycleEventsSource,
   newServiceLogsEventsSource,
   type ServiceLogEventEnvelope,
   type ServiceLogLine,
   type ServiceLogMeta,
+  type ServiceLifecycleEvent,
 } from '../api'
 
 export const SERVICE_LOG_INITIAL_TAIL = 500
@@ -47,6 +50,8 @@ export type ServiceLogRecord = {
   inlineLevel: boolean
   multiline: boolean
   segments: ServiceLogRenderSegment[]
+  source: 'docker' | 'lifecycle'
+  lifecycleEvent?: ServiceLifecycleEvent
 }
 
 function stripAnsi(input: string): string {
@@ -110,7 +115,11 @@ function inferLogLevel(raw: string, plain: string): ServiceLogLevel {
     return 'error'
   }
   if (/\bwarn(ing)?\b|slow query|\bretry\b|\bdegraded\b|\bstale\b/.test(lower)) return 'warn'
-  if (/\binfo\b|\bboot\b|\bcomplete\b|\bconnected\b|\bserving\b|\breload\b|\bready\b|\bhealthz\b|\breadiness\b/.test(lower)) {
+  if (
+    /\binfo\b|\bboot\b|\bcomplete\b|\bconnected\b|\bserving\b|\breload\b|\bready\b|\bhealthz\b|\breadiness\b/.test(
+      lower,
+    )
+  ) {
     return 'info'
   }
   return 'unknown'
@@ -171,6 +180,41 @@ function toRecord(line: ServiceLogLine, id: number): ServiceLogRecord {
     inlineLevel: !metaLevel && hasInlineTracingLevel(plain),
     multiline: line.raw.includes('\n'),
     segments: ansiSegments(line.raw),
+    source: 'docker',
+  }
+}
+
+function lifecycleToRecord(event: ServiceLifecycleEvent): ServiceLogRecord {
+  const message =
+    event.transition === 'stopped'
+      ? '服务已停止'
+      : event.transition === 'started'
+        ? '服务已启动'
+        : `服务生命周期：${event.transition}`
+  const raw = `[lifecycle] ${message}`
+  return {
+    id: 1_000_000_000 + event.id,
+    ts: event.observedAt,
+    raw,
+    plain: raw,
+    message,
+    meta: null,
+    searchText: `${message} ${event.origin} ${event.boundaryPrecision}`.toLowerCase(),
+    level: event.boundaryPrecision === 'exact' ? 'info' : 'warn',
+    inlineLevel: false,
+    multiline: false,
+    segments: [{ text: raw }],
+    source: 'lifecycle',
+    lifecycleEvent: event,
+  }
+}
+
+function lifecycleWindowForDockerTail(snapshot: { lines: ServiceLogLine[] }): { since: string; until: string } {
+  const timestamps = snapshot.lines.map((line) => Date.parse(line.ts)).filter(Number.isFinite)
+  const since = timestamps.length > 0 ? Math.min(...timestamps) : Date.now() - 24 * 60 * 60 * 1000
+  return {
+    since: new Date(since).toISOString(),
+    until: new Date().toISOString(),
   }
 }
 
@@ -179,6 +223,7 @@ export function useServiceLogsState(serviceId: string) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+  const [viewMode, setViewMode] = useState<'all' | 'lifecycle'>('all')
   const [resetNonce, setResetNonce] = useState(0)
   const lastEventIdRef = useRef(0)
 
@@ -187,18 +232,22 @@ export function useServiceLogsState(serviceId: string) {
     setError(null)
     try {
       const snapshot = await getServiceLogs(serviceId, SERVICE_LOG_INITIAL_TAIL)
+      const lifecycle = await getServiceLifecycleSnapshot(
+        serviceId,
+        viewMode === 'lifecycle' ? undefined : lifecycleWindowForDockerTail(snapshot),
+      ).catch(() => null)
       lastEventIdRef.current = snapshot.lastEventId
-      setRecords(
-        snapshot.lines.map((line, index) =>
-          toRecord(line, Math.max(1, snapshot.lastEventId - snapshot.lines.length + index + 1)),
-        ),
+      const dockerRecords = snapshot.lines.map((line, index) =>
+        toRecord(line, Math.max(1, snapshot.lastEventId - snapshot.lines.length + index + 1)),
       )
+      const lifecycleRecords = lifecycle?.events.map(lifecycleToRecord) ?? []
+      setRecords([...dockerRecords, ...lifecycleRecords].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts)))
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setLoading(false)
     }
-  }, [serviceId])
+  }, [serviceId, viewMode])
 
   useEffect(() => {
     void refreshSnapshot()
@@ -260,11 +309,24 @@ export function useServiceLogsState(serviceId: string) {
     }
   }, [loading, refreshSnapshot, serviceId])
 
+  useEffect(() => {
+    let closed = false
+    const source = newServiceLifecycleEventsSource(serviceId)
+    source.addEventListener('lifecycle_event', () => {
+      if (!closed) void refreshSnapshot()
+    })
+    return () => {
+      closed = true
+      source.close()
+    }
+  }, [refreshSnapshot, serviceId])
+
   const normalizedQuery = query.trim().toLowerCase()
   const filteredRecords = useMemo(() => {
-    if (!normalizedQuery) return records
-    return records.filter((record) => record.searchText.includes(normalizedQuery))
-  }, [normalizedQuery, records])
+    const scoped = viewMode === 'lifecycle' ? records.filter((record) => record.source === 'lifecycle') : records
+    if (!normalizedQuery) return scoped
+    return scoped.filter((record) => record.searchText.includes(normalizedQuery))
+  }, [normalizedQuery, records, viewMode])
 
   return {
     error,
@@ -274,5 +336,7 @@ export function useServiceLogsState(serviceId: string) {
     records,
     resetNonce,
     setQuery,
+    viewMode,
+    setViewMode,
   }
 }

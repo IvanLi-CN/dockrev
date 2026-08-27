@@ -23,6 +23,7 @@ import type {
   ServiceResourceSample,
   ServiceLogEventEnvelope,
   ServiceLogSnapshotResponse,
+  ServiceLifecycleSnapshotResponse,
   ServiceRollbackTargetResponse,
   ServiceSettings,
   ServiceTagSuggestionItem,
@@ -155,6 +156,7 @@ export type DockrevApiRouteBehavior = {
 
 export type ServiceLogsMockDataset = {
   snapshot: ServiceLogSnapshotResponse
+  lifecycle?: ServiceLifecycleSnapshotResponse
   eventsGate?: string
   eventsPayload?: string
 }
