@@ -124,6 +124,7 @@ WHERE id = ?1
         .context("mark backup cleanup attempt")
     }
 
+    #[cfg(test)]
     pub async fn mark_backup_missing(
         &self,
         backup_id: &str,
@@ -204,6 +205,7 @@ WHERE id = ?1
         .context("mark backup cleanup delete started")
     }
 
+    #[cfg(test)]
     pub async fn mark_backup_cleanup_failed(
         &self,
         backup_id: &str,

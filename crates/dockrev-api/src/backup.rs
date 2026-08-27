@@ -16,9 +16,11 @@ mod backup_artifact;
 #[path = "backup_cleanup.rs"]
 mod backup_cleanup;
 use backup_artifact::{
-    ArtifactCleanupOutcome, artifact_exists, delete_artifact, delete_artifact_if_present,
-    find_artifact_tombstone, legacy_artifact_key, move_artifact_to_tombstone, reconcile_artifact,
+    ArtifactCleanupOutcome, artifact_exists, delete_artifact_if_present, find_artifact_tombstone,
+    legacy_artifact_key, move_artifact_to_tombstone,
 };
+#[cfg(test)]
+use backup_artifact::{delete_artifact, reconcile_artifact};
 use backup_cleanup::{
     cleanup_delete_completed_marker, cleanup_tombstone_key, has_cleanup_delete_completed,
     has_cleanup_delete_intent, mark_cleanup_delete_completed, record_cleanup_error,
@@ -847,18 +849,17 @@ pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Resu
         };
         match outcome {
             ArtifactCleanupOutcome::Deleted => {
-                if let Some(tombstone) = tombstone_key.as_ref() {
-                    if let Err(error) = delete_artifact_if_present(
+                if let Some(tombstone) = tombstone_key.as_ref()
+                    && let Err(error) = delete_artifact_if_present(
                         &*state.runner,
                         &storage,
                         &state.config.dockrev_image_repo,
                         tombstone,
                     )
                     .await
-                    {
-                        tracing::warn!(backup_id = %item.id, error = %error, "backup tombstone cleanup failed");
-                        continue;
-                    }
+                {
+                    tracing::warn!(backup_id = %item.id, error = %error, "backup tombstone cleanup failed");
+                    continue;
                 }
                 if !state.db.mark_backup_deleted(&item.id, &now).await? {
                     continue;

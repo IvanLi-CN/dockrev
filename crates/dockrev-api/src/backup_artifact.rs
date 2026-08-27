@@ -24,6 +24,7 @@ pub(crate) enum ArtifactCleanupOutcome {
     Missing,
 }
 
+#[cfg(test)]
 pub(crate) async fn reconcile_artifact(
     runner: &dyn CommandRunner,
     storage: &crate::backup_storage::BackupStorage,
@@ -60,13 +61,13 @@ async fn ensure_local_path_within_root(
         component_path.push(component.as_os_str());
         match tokio::fs::symlink_metadata(&component_path).await {
             Ok(metadata) if metadata.file_type().is_symlink() => {
-                if let Ok(resolved) = tokio::fs::canonicalize(&component_path).await {
-                    if !resolved.starts_with(root) {
-                        return Err(anyhow::anyhow!(
-                            "backup artifact path resolves outside managed storage: {}",
-                            component_path.display()
-                        ));
-                    }
+                if let Ok(resolved) = tokio::fs::canonicalize(&component_path).await
+                    && !resolved.starts_with(root)
+                {
+                    return Err(anyhow::anyhow!(
+                        "backup artifact path resolves outside managed storage: {}",
+                        component_path.display()
+                    ));
                 }
                 return Err(anyhow::anyhow!(
                     "backup artifact path contains a symlink: {}",
