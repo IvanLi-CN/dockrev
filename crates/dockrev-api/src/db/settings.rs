@@ -220,6 +220,43 @@ INSERT INTO service_backup_target_policies (
         .context("put service settings with repo auto disabled")
     }
 
+    pub async fn put_service_protection_settings_with_repo_auto_disabled(
+        &self,
+        service_id: &str,
+        auto_rollback: bool,
+        repo_url: Option<&str>,
+        repo_url_auto_disabled: bool,
+        now: &str,
+    ) -> anyhow::Result<bool> {
+        let service_id = service_id.to_string();
+        let repo_url = repo_url.map(str::to_string);
+        let repo_url_auto_disabled = repo_url_auto_disabled as i64;
+        let now = now.to_string();
+        self.call(move |conn| {
+            let changed = conn.execute(
+                r#"
+UPDATE services
+SET
+  auto_rollback = ?2,
+  repo_url = ?3,
+  repo_url_auto_disabled = ?4,
+  updated_at = ?5
+WHERE id = ?1
+"#,
+                params![
+                    service_id,
+                    auto_rollback as i64,
+                    repo_url,
+                    repo_url_auto_disabled,
+                    now
+                ],
+            )?;
+            Ok(changed > 0)
+        })
+        .await
+        .context("put service protection settings with repo auto disabled")
+    }
+
     pub async fn list_ignore_rules(&self) -> anyhow::Result<Vec<IgnoreRule>> {
         self.call(|conn| {
             let mut stmt = conn.prepare(
