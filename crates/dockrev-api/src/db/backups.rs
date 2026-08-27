@@ -275,13 +275,35 @@ WHERE id = ?1
         let error = error.to_string();
         self.call(move |conn| {
             conn.execute(
-                "UPDATE backups SET last_cleanup_attempt_at = ?2, last_cleanup_error = ?4 WHERE id = ?1 AND deleted_at IS NULL AND missing_at IS NULL AND last_cleanup_error = ?3",
+                "UPDATE backups SET last_cleanup_attempt_at = ?2, last_cleanup_error = ?3 || char(10) || ?4 WHERE id = ?1 AND deleted_at IS NULL AND missing_at IS NULL AND last_cleanup_error = ?3",
                 params![backup_id, attempted_at, intent, error],
             )?;
             Ok(())
         })
         .await
         .context("mark backup cleanup failure for intent")
+    }
+
+    pub async fn reclaim_backup_cleanup_delete_intent(
+        &self,
+        backup_id: &str,
+        attempted_at: &str,
+        intent: &str,
+        stale_before: &str,
+    ) -> anyhow::Result<bool> {
+        let backup_id = backup_id.to_string();
+        let attempted_at = attempted_at.to_string();
+        let intent = intent.to_string();
+        let stale_before = stale_before.to_string();
+        self.call(move |conn| {
+            let changed = conn.execute(
+                "UPDATE backups SET last_cleanup_attempt_at = ?2, last_cleanup_error = ?3 WHERE id = ?1 AND deleted_at IS NULL AND missing_at IS NULL AND (last_cleanup_error = ?3 OR last_cleanup_error GLOB ?3 || char(10) || '*') AND (last_cleanup_attempt_at IS NULL OR last_cleanup_attempt_at < ?4)",
+                params![backup_id, attempted_at, intent, stale_before],
+            )?;
+            Ok(changed == 1)
+        })
+        .await
+        .context("reclaim backup cleanup delete intent")
     }
 
     pub async fn mark_backup_cleanup_delete_completed(
@@ -295,13 +317,35 @@ WHERE id = ?1
         let completed = completed.to_string();
         self.call(move |conn| {
             let changed = conn.execute(
-                "UPDATE backups SET last_cleanup_error = ?3 WHERE id = ?1 AND deleted_at IS NULL AND missing_at IS NULL AND last_cleanup_error = ?2",
+                "UPDATE backups SET last_cleanup_error = ?3 WHERE id = ?1 AND deleted_at IS NULL AND missing_at IS NULL AND (last_cleanup_error = ?2 OR last_cleanup_error GLOB ?2 || char(10) || '*')",
                 params![backup_id, intent, completed],
             )?;
             Ok(changed == 1)
         })
         .await
         .context("mark backup cleanup delete completed")
+    }
+
+    pub async fn mark_backup_cleanup_failed_for_completed(
+        &self,
+        backup_id: &str,
+        attempted_at: &str,
+        completed: &str,
+        error: &str,
+    ) -> anyhow::Result<()> {
+        let backup_id = backup_id.to_string();
+        let attempted_at = attempted_at.to_string();
+        let completed = completed.to_string();
+        let error = error.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                "UPDATE backups SET last_cleanup_attempt_at = ?2, last_cleanup_error = ?3 || char(10) || ?4 WHERE id = ?1 AND deleted_at IS NULL AND missing_at IS NULL AND (last_cleanup_error = ?3 OR last_cleanup_error GLOB ?3 || char(10) || '*')",
+                params![backup_id, attempted_at, completed, error],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("mark backup cleanup failure for completed tombstone")
     }
 
     pub async fn list_due_backup_cleanups(
@@ -368,6 +412,10 @@ SELECT b.id, b.artifact_path, COALESCE(j.summary_json, '{}')
 FROM backups b
 LEFT JOIN jobs j ON j.id = b.job_id
 WHERE b.stack_id = ?1 AND b.status = 'success' AND b.deleted_at IS NULL AND b.missing_at IS NULL
+  AND (b.last_cleanup_error IS NULL OR (
+    b.last_cleanup_error NOT GLOB '__dockrev_cleanup_delete_intent__:*'
+    AND b.last_cleanup_error NOT GLOB '__dockrev_cleanup_delete_completed__:*'
+  ))
 ORDER BY b.created_at DESC, b.id DESC
 "#,
             )?;
@@ -415,6 +463,10 @@ SELECT
   b.deleted_at,
   b.last_cleanup_attempt_at,
   CASE
+    WHEN (b.last_cleanup_error GLOB '__dockrev_cleanup_delete_intent__:*'
+      OR b.last_cleanup_error GLOB '__dockrev_cleanup_delete_completed__:*')
+      AND instr(b.last_cleanup_error, char(10)) > 0
+      THEN substr(b.last_cleanup_error, instr(b.last_cleanup_error, char(10)) + 1)
     WHEN b.last_cleanup_error = '__dockrev_cleanup_delete_intent__'
       OR b.last_cleanup_error GLOB '__dockrev_cleanup_delete_intent__:*'
       OR b.last_cleanup_error GLOB '__dockrev_cleanup_delete_completed__:*' THEN NULL
@@ -426,13 +478,24 @@ SELECT
 FROM backups b
 LEFT JOIN jobs j ON j.id = b.job_id
 WHERE b.stack_id = ?1
-  AND EXISTS (
-    SELECT 1
-    FROM json_each(COALESCE(json_extract(j.summary_json, '$.targets'), '[]')) AS t
-    JOIN services target_service
-      ON target_service.id = json_extract(t.value, '$.serviceId')
-    WHERE target_service.id = ?2
-      AND target_service.stack_id = ?1
+  AND (
+    EXISTS (
+      SELECT 1
+      FROM job_service_targets target
+      JOIN services target_service ON target_service.id = target.service_id
+      WHERE target.job_id = j.id
+        AND target_service.id = ?2
+        AND target_service.stack_id = ?1
+    )
+    OR (j.scope = 'service' AND j.service_id = ?2)
+    OR EXISTS (
+      SELECT 1
+      FROM json_each(COALESCE(json_extract(j.summary_json, '$.targets'), '[]')) AS t
+      JOIN services target_service
+        ON target_service.id = json_extract(t.value, '$.serviceId')
+      WHERE target_service.id = ?2
+        AND target_service.stack_id = ?1
+    )
   )
 ORDER BY b.created_at DESC, b.id DESC
 "#,
@@ -677,6 +740,54 @@ VALUES
             Some("__dockrev_cleanup_delete_intent__:test")
         );
 
+        db.mark_backup_cleanup_failed_for_intent(
+            "backup_state",
+            "2026-01-02T00:01:00Z",
+            "__dockrev_cleanup_delete_intent__:test",
+            "tombstone probe unavailable",
+        )
+        .await
+        .unwrap();
+        let due = db
+            .list_due_backup_cleanups("2026-01-03T00:00:00Z")
+            .await
+            .unwrap();
+        assert_eq!(
+            due[0].last_cleanup_error.as_deref(),
+            Some("__dockrev_cleanup_delete_intent__:test\ntombstone probe unavailable")
+        );
+        assert!(
+            db.reclaim_backup_cleanup_delete_intent(
+                "backup_state",
+                "2026-01-02T00:10:00Z",
+                "__dockrev_cleanup_delete_intent__:test",
+                "2026-01-02T00:05:00Z",
+            )
+            .await
+            .unwrap()
+        );
+        db.mark_backup_cleanup_delete_completed(
+            "backup_state",
+            "__dockrev_cleanup_delete_intent__:test",
+            "__dockrev_cleanup_delete_completed__:test",
+        )
+        .await
+        .unwrap();
+        db.mark_backup_cleanup_failed_for_completed(
+            "backup_state",
+            "2026-01-02T00:11:00Z",
+            "__dockrev_cleanup_delete_completed__:test",
+            "tombstone removal unavailable",
+        )
+        .await
+        .unwrap();
+        assert!(
+            db.list_success_backup_ids_for_stack("stack_1")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
         db.mark_backup_missing("backup_state", "2026-01-03T00:00:00Z")
             .await
             .unwrap();
@@ -781,6 +892,8 @@ INSERT INTO jobs (
   ('job_other', 'update', 'stack', 'stack_1', NULL, 'success', 0, 'inherit',
    'test', 'test', '2026-01-01T00:00:00Z', '2026-01-01T00:01:00Z',
    '{"targets":[{"serviceId":"service_b"}]}'),
+  ('job_legacy_service', 'update', 'service', 'stack_1', 'service_a', 'success', 0, 'inherit',
+   'test', 'test', '2025-12-30T00:00:00Z', '2025-12-30T00:01:00Z', '{}'),
   ('job_cross_stack', 'update', 'stack', 'stack_2', NULL, 'success', 0, 'inherit',
    'test', 'test', '2025-12-31T00:00:00Z', '2025-12-31T00:01:00Z',
    '{"targets":[{"serviceId":"service_a"},{"serviceId":"service_c"}]}');
@@ -795,6 +908,8 @@ INSERT INTO backups (
    '2026-01-02T00:01:00Z', '/backups/summary.tar', 42),
   ('backup_other', 'stack_1', 'job_other', 'success', '2026-01-01T00:00:00Z',
    '2026-01-01T00:01:00Z', '/backups/other.tar', 42),
+  ('backup_legacy_service', 'stack_1', 'job_legacy_service', 'success', '2025-12-30T00:00:00Z',
+   '2025-12-30T00:01:00Z', '/backups/legacy-service.tar', 42),
   ('backup_cross_stack', 'stack_2', 'job_cross_stack', 'success', '2025-12-31T00:00:00Z',
    '2025-12-31T00:01:00Z', '/backups/cross-stack.tar', 42);
 "#,
@@ -813,7 +928,7 @@ INSERT INTO backups (
                 .iter()
                 .map(|record| record.backup_id.as_str())
                 .collect::<Vec<_>>(),
-            ["backup_summary"]
+            ["backup_relation", "backup_summary", "backup_legacy_service"]
         );
 
         let service_b = db

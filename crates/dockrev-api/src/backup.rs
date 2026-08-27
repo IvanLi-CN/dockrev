@@ -22,8 +22,10 @@ use backup_artifact::{
 #[cfg(test)]
 use backup_artifact::{delete_artifact, reconcile_artifact};
 use backup_cleanup::{
-    cleanup_delete_completed_marker, cleanup_tombstone_key, has_cleanup_delete_completed,
-    has_cleanup_delete_intent, mark_cleanup_delete_completed, record_cleanup_error,
+    cleanup_delete_completed_marker, cleanup_delete_intent_marker, cleanup_tombstone_key,
+    has_cleanup_delete_completed, has_cleanup_delete_intent, mark_cleanup_delete_completed,
+    record_cleanup_completed_error, record_cleanup_intent_error, record_cleanup_state_error,
+    run_to_string, stop_interrupted_helper,
 };
 
 #[derive(Clone, Debug)]
@@ -538,55 +540,6 @@ pub async fn recover_interrupted_backups(
     Ok(())
 }
 
-async fn stop_interrupted_helper(runner: &dyn CommandRunner, job_id: &str) -> anyhow::Result<()> {
-    let out = runner
-        .run(
-            CommandSpec {
-                program: "docker".to_string(),
-                args: vec![
-                    "ps".to_string(),
-                    "-q".to_string(),
-                    "--filter".to_string(),
-                    format!("label=cc.ivanli.dockrev.job-id={job_id}"),
-                    "--filter".to_string(),
-                    "label=cc.ivanli.dockrev.stop-mode=stop".to_string(),
-                ],
-                env: Vec::new(),
-            },
-            Duration::from_secs(20),
-        )
-        .await?;
-    if out.status != 0 {
-        return Err(anyhow::anyhow!(
-            "list interrupted backup helper failed: {}",
-            out.stderr
-        ));
-    }
-    let ids = out.stdout.split_whitespace().collect::<Vec<_>>();
-    if ids.is_empty() {
-        return Ok(());
-    }
-    let mut args = vec!["stop".to_string(), "--time".to_string(), "2".to_string()];
-    args.extend(ids.into_iter().map(str::to_string));
-    let stopped = runner
-        .run(
-            CommandSpec {
-                program: "docker".to_string(),
-                args,
-                env: Vec::new(),
-            },
-            Duration::from_secs(20),
-        )
-        .await?;
-    if stopped.status != 0 {
-        return Err(anyhow::anyhow!(
-            "stop interrupted backup helper failed: {}",
-            stopped.stderr
-        ));
-    }
-    Ok(())
-}
-
 pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Result<()> {
     let now_dt = time::OffsetDateTime::now_utc();
     let now = now_dt.format(&time::format_description::well_known::Rfc3339)?;
@@ -598,7 +551,14 @@ pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Resu
     }
     for item in due {
         let Some(stack) = state.db.get_stack(&item.stack_id).await? else {
-            let _ = record_cleanup_error(&state.db, &item.id, &now, "stack not found").await;
+            let _ = record_cleanup_state_error(
+                &state.db,
+                &item.id,
+                &now,
+                item.last_cleanup_error.as_deref(),
+                "stack not found",
+            )
+            .await;
             continue;
         };
         let recovery_pending = has_cleanup_delete_intent(item.last_cleanup_error.as_deref())
@@ -612,7 +572,14 @@ pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Resu
         {
             Ok(storage) => storage,
             Err(error) => {
-                record_cleanup_error(&state.db, &item.id, &now, &error.to_string()).await?;
+                record_cleanup_state_error(
+                    &state.db,
+                    &item.id,
+                    &now,
+                    item.last_cleanup_error.as_deref(),
+                    &error.to_string(),
+                )
+                .await?;
                 tracing::warn!(backup_id = %item.id, error = %error, "backup cleanup storage unresolved");
                 continue;
             }
@@ -622,11 +589,19 @@ pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Resu
                 "backup cleanup path is outside managed storage: {}",
                 item.artifact_path
             );
-            record_cleanup_error(&state.db, &item.id, &now, &error).await?;
+            record_cleanup_state_error(
+                &state.db,
+                &item.id,
+                &now,
+                item.last_cleanup_error.as_deref(),
+                &error,
+            )
+            .await?;
             tracing::warn!(backup_id = %item.id, path = %item.artifact_path, "backup cleanup path is outside managed storage");
             continue;
         };
         let mut tombstone_key = None;
+        let mut completed_marker = None;
         let mut owned_intent = None;
         let artifact_present = match artifact_exists(
             &*state.runner,
@@ -638,7 +613,14 @@ pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Resu
         {
             Ok(present) => present,
             Err(error) => {
-                record_cleanup_error(&state.db, &item.id, &now, &error.to_string()).await?;
+                record_cleanup_state_error(
+                    &state.db,
+                    &item.id,
+                    &now,
+                    item.last_cleanup_error.as_deref(),
+                    &error.to_string(),
+                )
+                .await?;
                 tracing::warn!(backup_id = %item.id, error = %error, "backup cleanup existence check failed");
                 continue;
             }
@@ -654,6 +636,10 @@ pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Resu
         }
         let outcome = if !artifact_present {
             if has_cleanup_delete_completed(item.last_cleanup_error.as_deref()) {
+                completed_marker = item
+                    .last_cleanup_error
+                    .as_deref()
+                    .map(cleanup_delete_completed_marker);
                 tombstone_key = Some(cleanup_tombstone_key(
                     &key,
                     item.last_cleanup_error.as_deref().unwrap(),
@@ -676,7 +662,15 @@ pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Resu
                 {
                     Ok(present) => present,
                     Err(error) => {
-                        record_cleanup_error(&state.db, &item.id, &now, &error.to_string()).await?;
+                        let intent = cleanup_delete_intent_marker(marker);
+                        record_cleanup_intent_error(
+                            &state.db,
+                            &item.id,
+                            &now,
+                            &intent,
+                            &error.to_string(),
+                        )
+                        .await?;
                         tracing::warn!(backup_id = %item.id, error = %error, "backup tombstone existence check failed");
                         continue;
                     }
@@ -689,6 +683,7 @@ pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Resu
                     if !claimed {
                         continue;
                     }
+                    completed_marker = Some(completed);
                     tombstone_key = Some(tombstone);
                     ArtifactCleanupOutcome::Deleted
                 } else {
@@ -702,16 +697,29 @@ pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Resu
                 ArtifactCleanupOutcome::Missing
             }
         } else {
-            let token = ulid::Ulid::new().to_string();
-            let intent = format!(
-                "{}{}",
-                crate::db::BACKUP_CLEANUP_DELETE_INTENT_PREFIX,
-                token
-            );
-            let claimed = state
-                .db
-                .mark_backup_cleanup_delete_started(&item.id, &now, &intent, &stale_before)
-                .await?;
+            let intent = item
+                .last_cleanup_error
+                .as_deref()
+                .filter(|marker| has_cleanup_delete_intent(Some(marker)))
+                .map(cleanup_delete_intent_marker)
+                .unwrap_or_else(|| {
+                    format!(
+                        "{}{}",
+                        crate::db::BACKUP_CLEANUP_DELETE_INTENT_PREFIX,
+                        ulid::Ulid::new()
+                    )
+                });
+            let claimed = if has_cleanup_delete_intent(item.last_cleanup_error.as_deref()) {
+                state
+                    .db
+                    .reclaim_backup_cleanup_delete_intent(&item.id, &now, &intent, &stale_before)
+                    .await?
+            } else {
+                state
+                    .db
+                    .mark_backup_cleanup_delete_started(&item.id, &now, &intent, &stale_before)
+                    .await?
+            };
             if !claimed {
                 continue;
             }
@@ -735,6 +743,7 @@ pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Resu
                     if !claimed {
                         continue;
                     }
+                    completed_marker = Some(completed);
                     ArtifactCleanupOutcome::Deleted
                 }
                 Err(error) => {
@@ -748,15 +757,14 @@ pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Resu
                     {
                         Ok(present) => present,
                         Err(check_error) => {
-                            state
-                                .db
-                                .mark_backup_cleanup_failed_for_intent(
-                                    &item.id,
-                                    &now,
-                                    &intent,
-                                    &format!("{}; move error: {}", check_error, error),
-                                )
-                                .await?;
+                            record_cleanup_intent_error(
+                                &state.db,
+                                &item.id,
+                                &now,
+                                &intent,
+                                &format!("{}; move error: {}", check_error, error),
+                            )
+                            .await?;
                             tracing::warn!(backup_id = %item.id, error = %check_error, "backup cleanup tombstone existence check failed");
                             continue;
                         }
@@ -768,6 +776,7 @@ pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Resu
                         if !claimed {
                             continue;
                         }
+                        completed_marker = Some(completed);
                         ArtifactCleanupOutcome::Deleted
                     } else {
                         let artifact_present = match artifact_exists(
@@ -780,15 +789,14 @@ pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Resu
                         {
                             Ok(present) => present,
                             Err(check_error) => {
-                                state
-                                    .db
-                                    .mark_backup_cleanup_failed_for_intent(
-                                        &item.id,
-                                        &now,
-                                        &intent,
-                                        &format!("{}; move error: {}", check_error, error),
-                                    )
-                                    .await?;
+                                record_cleanup_intent_error(
+                                    &state.db,
+                                    &item.id,
+                                    &now,
+                                    &intent,
+                                    &format!("{}; move error: {}", check_error, error),
+                                )
+                                .await?;
                                 tracing::warn!(backup_id = %item.id, error = %check_error, "backup cleanup post-move existence check failed");
                                 continue;
                             }
@@ -804,15 +812,14 @@ pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Resu
                             {
                                 Ok(tombstone) => tombstone,
                                 Err(check_error) => {
-                                    state
-                                        .db
-                                        .mark_backup_cleanup_failed_for_intent(
-                                            &item.id,
-                                            &now,
-                                            &intent,
-                                            &format!("{}; move error: {}", check_error, error),
-                                        )
-                                        .await?;
+                                    record_cleanup_intent_error(
+                                        &state.db,
+                                        &item.id,
+                                        &now,
+                                        &intent,
+                                        &format!("{}; move error: {}", check_error, error),
+                                    )
+                                    .await?;
                                     tracing::warn!(backup_id = %item.id, error = %check_error, "backup cleanup orphan tombstone discovery failed");
                                     continue;
                                 }
@@ -825,21 +832,21 @@ pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Resu
                                 if !claimed {
                                     continue;
                                 }
+                                completed_marker = Some(completed);
                                 tombstone_key = Some(orphan_tombstone);
                                 ArtifactCleanupOutcome::Deleted
                             } else {
                                 ArtifactCleanupOutcome::Missing
                             }
                         } else {
-                            state
-                                .db
-                                .mark_backup_cleanup_failed_for_intent(
-                                    &item.id,
-                                    &now,
-                                    &intent,
-                                    &error.to_string(),
-                                )
-                                .await?;
+                            record_cleanup_intent_error(
+                                &state.db,
+                                &item.id,
+                                &now,
+                                &intent,
+                                &error.to_string(),
+                            )
+                            .await?;
                             tracing::warn!(backup_id = %item.id, error = %error, "backup cleanup delete failed");
                             continue;
                         }
@@ -858,6 +865,16 @@ pub(crate) async fn cleanup_once(state: &crate::state::AppState) -> anyhow::Resu
                     )
                     .await
                 {
+                    if let Some(completed) = completed_marker.as_deref() {
+                        record_cleanup_completed_error(
+                            &state.db,
+                            &item.id,
+                            &now,
+                            completed,
+                            &error.to_string(),
+                        )
+                        .await?;
+                    }
                     tracing::warn!(backup_id = %item.id, error = %error, "backup tombstone cleanup failed");
                     continue;
                 }
@@ -931,22 +948,6 @@ fn compose_runner_config(
         compose_bin: compose_bin.to_string(),
         env,
     })
-}
-
-async fn run_to_string(
-    runner: &dyn CommandRunner,
-    spec: CommandSpec,
-    timeout: Duration,
-) -> anyhow::Result<String> {
-    let out = runner.run(spec, timeout).await?;
-    if out.status != 0 {
-        return Err(anyhow::anyhow!(
-            "command failed: status={} stderr={}",
-            out.status,
-            out.stderr
-        ));
-    }
-    Ok(out.stdout)
 }
 
 fn sanitize_project_name(name: &str) -> String {
