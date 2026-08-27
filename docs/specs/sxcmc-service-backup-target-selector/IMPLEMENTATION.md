@@ -12,6 +12,7 @@
 
 - 已新增 `GET/PUT /api/services/{service_id}/backup-targets`，返回服务级 bind path / volume 候选、共享信息与只读备份存储说明。
 - 已新增 `GET /api/services/{service_id}/backup-records`，返回“当前服务相关”的实际备份记录、计划删除时间与资产明细，并收紧为只返回真正产出过备份产物的记录；没有 `artifactPath` 的 `skipped` / `failed` 尝试都会被排除，`assets[]` 也只保留实际纳入备份的 target。
+- 备份清理状态已持久化到 `backups`：清理尝试、失败原因、已删除时间与已核实缺失时间均可审计；到期清理不再依赖 Stack 内所有服务当前运行或健康。
 - 已扩展 compose 解析链路，按 compose 声明提取 named volumes 与 bind mounts，并把相对 bind path 解析为基于 compose 文件目录的绝对路径。
 - 已将服务级备份策略落到独立关系表，并在服务端把它投影回现有 settings 视图，兼容当前其余读取路径。
 - 备份存储由 `dirname(DOCKREV_DB_PATH)/backups` 派生；Docker 模式通过 API 容器 mount inspect 映射实际 bind 或 named volume，无法唯一解析时拒绝执行。
@@ -25,6 +26,8 @@
 - 已把备份相关入口迁移到服务详情 `备份` 子页，设置页仅保留回滚和代码仓库配置。
 - 已更新 Service Detail 的“备份设置”抽屉，支持 `Volumes` / `Bind paths` 直选、三策略按钮组（`不备份 / 停机备份 / 在线备份`）、共享提示、空态文案与只读备份说明区块。
 - 已更新 Storybook mock API 与页面故事，覆盖 backup tab 的有记录/空态、备份设置入口、共享关闭、无候选与只读说明等关键状态。
+- 已扩展备份记录 Storybook 场景，覆盖清理延迟、已删除、已核实缺失与摘要卡/记录卡 16px 分隔。
+- 清理延迟使用现有 Alert primitive 和 TriangleAlert 图标；记录卡将“备份时间”和时间值合并为同一标题行，并覆盖于 mock-only 视觉证据。
 
 ## Related Changes
 

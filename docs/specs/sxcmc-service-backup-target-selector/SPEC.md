@@ -72,6 +72,7 @@
 - `baseDir` 是由 `dirname(DOCKREV_DB_PATH)/backups` 派生的兼容字段，不得由 Web 或 `PUT /api/settings` 修改；提交该字段必须返回 `managed_by_deployment`。
 - Docker 部署必须 inspect Dockrev API 容器的有效 mounts，选择覆盖逻辑目录的最长可写 mount，并映射为 bind source 或 named volume加相对路径。身份、覆盖范围、只读状态或同优先级 mount 存在歧义时必须 fail closed。
 - 备份记录每项至少必须返回：`backupId`、`jobId`、`scope`、`status`、`createdAt`、`sizeBytes?`、`cleanupAfter?`、`deletedAt?`、`artifactPath?`、`error?`、`assets[]`。
+- 备份记录清理状态可选返回：`lastCleanupAttemptAt?`、`lastCleanupError?`、`missingAt?`；这些字段只描述产物清理，不覆盖备份执行的 `error`。
 - 备份记录的 `assets[]` 至少必须返回：`target`、`status`、`policy?`、`sizeBytes?`、`reason?`。
 - “当前服务相关”必须按该次 job 的实际 `summary.targets[].serviceId` 是否包含当前服务来判定，不得仅依赖 `jobs.service_id`。
 
@@ -115,6 +116,8 @@
   - 若某条记录在 `backups.artifact_path` 与当前 stack 对应的 `summary.backup.artifactPath` 上都没有实际产物路径，则视为“没有形成实际备份产物”，不得进入结果；这同样覆盖 `skipped`、无产物 `failed` 与其他尝试态记录。
   - `cleanupAfter` 直接投影自 `backups.cleanup_after`；若为空，前端显示“未计划删除”。
   - `deletedAt` 非空表示该备份包已被 cleanup worker 删除；前端以“已删除”状态文案呈现。
+  - `missingAt` 非空表示清理器已通过受管存储存在性检查核实文件缺失；前端以“文件已缺失（已核实）”呈现，不将其误报为 Dockrev 删除。
+  - 当 `cleanupAfter` 已到期且 `deletedAt`、`missingAt` 均为空时，前端以“清理延迟”呈现，并显示最近尝试时间与 `lastCleanupError`；没有错误时显示“等待下一轮清理尝试”。
   - `assets[]` 优先投影自该次任务的 `summary.backup.targets[]` 中实际 `included` 的 target，不再把 skipped target 混入“实际备份记录”页面，也不额外引入独立资产表。
   - 若任务级 `summary.backup.targets[]` 缺失，则返回空数组，不伪造资产项。
 
@@ -144,6 +147,8 @@
 - 无候选时显示“当前服务在 Compose 中未发现可备份 volume 或 bind path”。
 - 只读说明区块展示目录、产物格式、压缩与保留摘要，不提供编辑控件。
 - 备份记录列表使用列表卡片而不是表格。
+- 备份摘要卡与实际记录卡在局部备份容器内保持 16px 分隔，不改变全局 `.asyncDataRegion` 布局。
+- 每张记录卡的“备份时间”和时间值在同一标题行内展示；窄屏仅在空间不足时允许自然换行。
 - 每张记录卡优先展示备份时间、总大小、计划删除时间与状态，再展示资产小列表。
 - 资产小列表中必须让操作者看见 target 标识、单项状态和体积；缺失体积时明确显示“体积未知”。
 - 空记录时展示明确空态，而不是留白。
@@ -413,6 +418,23 @@ PR: include
   evidence_note: 验证当相关历史里没有任何实际备份产物时，后端过滤掉未产生产物的尝试记录后，服务备份页落成“当前服务暂无实际备份记录。”空态。
 
 ![实际备份记录：无真实产物时为空](./assets/backup-records-noise-filtered.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `component`
+  requested_viewport: `1500x900`
+  viewport_strategy: `devtools-emulate`
+  margin_policy: `require_margin`
+  evidence_surface: `component`
+  sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Components/ServiceBackupRecords Cleanup States`
+  state: `cleanup delayed, deleted, verified missing, and one-line backup timestamp heading`
+  evidence_note: 验证清理延迟使用仓库 Alert primitive 与 TriangleAlert 图标，已删除/已核实缺失显示对应时间，备份时间标题和值保持同一行，记录卡之间维持 16px 局部分隔。
+
+PR: include
+
+![备份记录：清理三态与一行时间标题](./assets/backup-records-cleanup-states.png)
 
 ## Related PRs
 

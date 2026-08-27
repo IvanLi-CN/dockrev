@@ -524,6 +524,7 @@ export function ServiceDetailPage(props: {
         skeleton={<AsyncDataSkeleton className="serviceBackupLoadingSkeleton" lines={6} />}
         source={snapshotPayload && !backupDataReady ? "fresh-snapshot" : "live"}
       >
+      <div className="serviceBackupSectionCards">
       <div className="card serviceBackupSummaryCard" data-service-detail-section-card="backup-summary">
         <div className="serviceBackupSummaryHead">
           <div>
@@ -574,6 +575,7 @@ export function ServiceDetailPage(props: {
           </div>
         </div>
         <BackupRecordList records={effectiveBackupRecords} />
+      </div>
       </div>
       </AsyncDataRegion>
     </div>

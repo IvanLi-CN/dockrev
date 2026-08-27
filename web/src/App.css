@@ -7283,12 +7283,27 @@ html[data-theme="light"] .serviceLogsTerminal {
   gap: 12px;
 }
 
+.serviceBackupSectionCards {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
 .serviceBackupSummaryHead,
 .serviceBackupRecordHead {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+}
+
+.serviceBackupRecordHeading {
+  display: flex;
+  align-items: baseline;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .serviceBackupMetaCard,
@@ -7490,7 +7505,7 @@ html[data-theme="light"] .serviceLogsTerminal {
 }
 
 .serviceBackupRecordPrimary {
-  margin-top: 4px;
+  margin-top: 0;
   color: var(--text);
   font-size: 15px;
   font-weight: 650;
