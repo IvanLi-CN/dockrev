@@ -8,6 +8,7 @@ import type {
 import { imageRepoFromImageRef } from '../../../../imageRepo'
 import type { MockRouteContext } from '../context'
 import { handleJobStateRoutes } from './jobState'
+import { handleLifecycleEventsRoute } from './lifecycleEvents'
 import {
   buildMockReleaseNotesItems,
   buildMockReleaseNotesExternalLinks,
@@ -86,6 +87,8 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
   } = ctx
   const jobStateResponse = await handleJobStateRoutes(ctx)
   if (jobStateResponse) return jobStateResponse
+  const lifecycleEventsResponse = handleLifecycleEventsRoute(ctx)
+  if (lifecycleEventsResponse) return lifecycleEventsResponse
 
   if (method === 'GET' && (urlPathWithQuery === '/api/discovery/projects' || urlPathWithQuery.startsWith('/api/discovery/projects?'))) {
     const query = url?.search
@@ -863,11 +866,13 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
         : buildResourceHistorySamples(serviceId, parsedWindow.seconds, parsedWindow.window)
 
     const peaks = ['7d', '30d'].includes(parsedWindow.window) ? buildResourceHistoryPeaks(samples) : undefined
+    const lifecycle = f.serviceLogsByServiceId[serviceId]?.lifecycle
     return json({
       serviceId,
       window: parsedWindow.window,
       samples,
       ...(peaks ? { resolutionSeconds: parsedWindow.window === '7d' ? 60 : 300, peaks } : {}),
+      ...(lifecycle ? { lifecycle } : {}),
     })
   }
 

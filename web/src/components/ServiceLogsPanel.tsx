@@ -1,11 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { Input, Button, OverlayScrollArea, Pill, SearchIcon } from '../ui'
-import {
-  SERVICE_LOG_BUFFER_LIMIT,
-  useServiceLogsState,
-  type ServiceLogRecord,
-} from '../pages/useServiceLogsState'
+import { SERVICE_LOG_BUFFER_LIMIT, useServiceLogsState, type ServiceLogRecord } from '../pages/useServiceLogsState'
 
 const LOCAL_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local'
 type LogTimeZone = 'local' | 'utc'
@@ -19,10 +15,7 @@ function pad3(n: number): string {
   return String(n).padStart(3, '0')
 }
 
-function formatLogStamp(
-  ts: string,
-  tz: LogTimeZone,
-): { date: string; time: string; title: string; isValid: boolean } {
+function formatLogStamp(ts: string, tz: LogTimeZone): { date: string; time: string; title: string; isValid: boolean } {
   const value = (ts ?? '').trim()
   if (!value) {
     return {
@@ -89,9 +82,8 @@ function metadataEntries(record: ServiceLogRecord): Array<{ key: string; value: 
 }
 
 export function ServiceLogsPanel(props: { serviceId: string }) {
-  const { error, filteredRecords, loading, query, records, resetNonce, setQuery } = useServiceLogsState(
-    props.serviceId,
-  )
+  const { error, filteredRecords, loading, query, records, resetNonce, setQuery, setViewMode, viewMode } =
+    useServiceLogsState(props.serviceId)
   const [scrollViewport, setScrollViewport] = useState<HTMLElement | null>(null)
   const [follow, setFollow] = useState(true)
   const [isAtBottom, setIsAtBottom] = useState(true)
@@ -153,9 +145,7 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
     let alignTailFrame: number | undefined
     const measureTailFrame = window.requestAnimationFrame(() => {
       alignTailFrame = window.requestAnimationFrame(() => {
-        const tail = scrollViewport?.querySelector<HTMLElement>(
-          `.serviceLogRow[data-index="${targetIndex}"]`,
-        )
+        const tail = scrollViewport?.querySelector<HTMLElement>(`.serviceLogRow[data-index="${targetIndex}"]`)
         if (tail) virtualizer.measureElement(tail)
         virtualizer.scrollToIndex(targetIndex, { align: 'end' })
       })
@@ -165,18 +155,28 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
       window.cancelAnimationFrame(measureTailFrame)
       if (alignTailFrame != null) window.cancelAnimationFrame(alignTailFrame)
     }
-  }, [filteredRecords.length, follow, hasQuery, latestRecordId, logView, resetNonce, scrollViewport, virtualizer, wrapLines])
+  }, [
+    filteredRecords.length,
+    follow,
+    hasQuery,
+    latestRecordId,
+    logView,
+    resetNonce,
+    scrollViewport,
+    virtualizer,
+    wrapLines,
+  ])
 
   const items = virtualizer.getVirtualItems()
   const offsetTop = items[0]?.start ?? 0
   const showJump = !follow && records.length > 0
   const renderedCount = Math.min(items.length, filteredRecords.length)
   const errorCount = useMemo(
-    () => filteredRecords.reduce((count, record) => (record.level === 'error' ? count + 1 : count), 0),
+    () => filteredRecords.reduce((count, record) => (record.source === 'docker' && record.level === 'error' ? count + 1 : count), 0),
     [filteredRecords],
   )
   const warnCount = useMemo(
-    () => filteredRecords.reduce((count, record) => (record.level === 'warn' ? count + 1 : count), 0),
+    () => filteredRecords.reduce((count, record) => (record.source === 'docker' && record.level === 'warn' ? count + 1 : count), 0),
     [filteredRecords],
   )
   const resultSummary = useMemo(() => {
@@ -207,7 +207,10 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
           <div className="serviceLogsHeading">
             <div className="serviceLogsTitleRow">
               <div className="title">实时日志</div>
-              <span className={follow && !hasQuery ? 'serviceLogsLiveDot active' : 'serviceLogsLiveDot'} aria-hidden="true" />
+              <span
+                className={follow && !hasQuery ? 'serviceLogsLiveDot active' : 'serviceLogsLiveDot'}
+                aria-hidden="true"
+              />
             </div>
           </div>
         </div>
@@ -236,6 +239,24 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
         </div>
         <div className="serviceLogsStatusSide">
           <div className="serviceLogsControls">
+            <div className="serviceLogsToggleGroup" role="group" aria-label="日志来源">
+              <Button
+                ariaPressed={viewMode === 'all'}
+                className="serviceLogsMiniToggle serviceLogsSourceToggle"
+                onClick={() => setViewMode('all')}
+                variant={viewMode === 'all' ? 'primary' : 'ghost'}
+              >
+                全部
+              </Button>
+              <Button
+                ariaPressed={viewMode === 'lifecycle'}
+                className="serviceLogsMiniToggle serviceLogsSourceToggle"
+                onClick={() => setViewMode('lifecycle')}
+                variant={viewMode === 'lifecycle' ? 'primary' : 'ghost'}
+              >
+                生命周期
+              </Button>
+            </div>
             <div className="serviceLogsToggleGroup" role="group" aria-label="日志显示模式">
               <Button
                 ariaPressed={logView === 'human'}
@@ -339,7 +360,33 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
                     const record = filteredRecords[item.index]
                     if (!record) return null
                     const stamp = formattedStamps[item.index]!
+                    if (record.source === 'lifecycle') {
+                      const lifecycleLabel = record.lifecycleEvent?.transition === 'started' ? '服务已启动' : record.message
+                      const lifecycleTime = stamp.time ? `${stamp.time} · ${stamp.date}` : stamp.date
+                      return (
+                        <div
+                          aria-label={`生命周期事件：${lifecycleLabel}`}
+                          className="serviceLifecycleSeparator"
+                          data-date-divider="false"
+                          data-index={item.index}
+                          data-lifecycle-transition={record.lifecycleEvent?.transition ?? 'unknown'}
+                          data-source="lifecycle"
+                          ref={virtualizer.measureElement}
+                          role="note"
+                          key={record.id}
+                        >
+                          <span aria-hidden="true" className="serviceLifecycleSeparatorLine" />
+                          <span className="serviceLifecycleSeparatorContent">
+                            <span className="serviceLifecycleSeparatorLabel">{lifecycleLabel}</span>
+                            <span className="serviceLifecycleSeparatorTime">{lifecycleTime}</span>
+                          </span>
+                          <span aria-hidden="true" className="serviceLifecycleSeparatorLine" />
+                        </div>
+                      )
+                    }
                     const metaEntries = logView === 'human' ? metadataEntries(record) : []
+                    const levelLabel = formatLogLevel(record.level)
+                    const recordLevel = record.level
                     return (
                       <div
                         className="serviceLogRow"
@@ -350,6 +397,7 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
                         data-level={record.level}
                         data-log-date={stamp.isValid ? stamp.date : undefined}
                         data-multiline={record.multiline ? 'true' : 'false'}
+                        data-source={record.source}
                         data-date-divider={stamp.showDateDivider ? 'true' : 'false'}
                         data-view={logView}
                         data-wrap={wrapLines ? 'true' : 'false'}
@@ -357,22 +405,26 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
                         ref={virtualizer.measureElement}
                       >
                         {stamp.showDateDivider ? <div className="serviceLogDateDivider">{stamp.date}</div> : null}
-                        <span className="mono serviceLogTs" data-valid={stamp.isValid ? 'true' : 'false'} title={stamp.title}>
+                        <span
+                          className="mono serviceLogTs"
+                          data-valid={stamp.isValid ? 'true' : 'false'}
+                          title={stamp.title}
+                        >
                           {stamp.time ? <span className="serviceLogTsTime">{stamp.time}</span> : null}
                           <span className="serviceLogTsDate">{stamp.date}</span>
                         </span>
                         <span
-                          className={`mono logLvl serviceLogLevel logLvl-${record.level}${record.inlineLevel ? ' serviceLogLevelInline' : ''}`}
-                          data-level={record.level}
+                          className={`mono logLvl serviceLogLevel logLvl-${recordLevel}${record.inlineLevel ? ' serviceLogLevelInline' : ''}`}
+                          data-level={recordLevel}
                           title={
                             record.inlineLevel
-                              ? `等级已包含在输出中：${formatLogLevel(record.level)}`
+                              ? `等级已包含在输出中：${levelLabel}`
                               : record.meta?.level
-                                ? `应用日志等级：${formatLogLevel(record.level)}`
-                                : `等级：${formatLogLevel(record.level)}（基于 ANSI 颜色与关键词推断）`
+                                ? `应用日志等级：${levelLabel}`
+                                : `等级：${levelLabel}（基于 ANSI 颜色与关键词推断）`
                           }
                         >
-                          {record.inlineLevel ? '' : formatLogLevel(record.level)}
+                          {record.inlineLevel ? '' : levelLabel}
                         </span>
                         <span className="serviceLogMsg">
                           {logView === 'human' ? (
@@ -414,7 +466,9 @@ export function ServiceLogsPanel(props: { serviceId: string }) {
                 variant="primary"
                 onClick={() => {
                   if (filteredRecords.length > 0) {
-                    virtualizer.scrollToIndex(filteredRecords.length - 1, { align: 'end' })
+                    virtualizer.scrollToIndex(filteredRecords.length - 1, {
+                      align: 'end',
+                    })
                   }
                   setFollow(true)
                 }}

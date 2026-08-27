@@ -27,7 +27,7 @@ Back-end (Rust):
 - Runtime: Tokio
 - HTTP API: Axum
 - Logging: tracing + tracing-subscriber
-- Docker Engine access: resource monitoring reads Engine API over the mounted socket / `DOCKER_HOST`; other operational paths still use the `docker` CLI
+- Docker Engine access: resource monitoring and service lifecycle observation read the Engine API over the mounted socket / `DOCKER_HOST`; other operational paths still use the `docker` CLI. When using `docker-socket-proxy`, enable `EVENTS=1`; without it, operations continue but lifecycle boundaries are recorded as incomplete.
 - Registry auth: reads `DOCKREV_DOCKER_CONFIG` when configured
 - State: SQLite (planned)
 

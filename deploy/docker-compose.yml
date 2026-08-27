@@ -34,6 +34,8 @@ services:
       # DOCKREV_HOST_PLATFORM: "linux/amd64"
       # Option B (docker-socket-proxy):
       # DOCKER_HOST: "tcp://docker-socket-proxy:2375"
+      # When Option B is used, the proxy must expose Docker Engine events:
+      # EVENTS=1 (otherwise lifecycle actions continue with incomplete observations).
     volumes:
       - ./data:/data
       - ./data/supervisor:/supervisor-state:ro

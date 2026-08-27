@@ -6,6 +6,7 @@ use std::convert::Infallible;
 mod backup_records;
 mod backup_targets;
 mod github_releases;
+mod lifecycle;
 mod logs;
 mod release_notes;
 mod repo_links;
@@ -17,6 +18,8 @@ use backup_targets::{
     put_service_backup_targets as save_service_backup_targets_response, read_compose_service_specs,
 };
 
+pub(crate) use lifecycle::load_lifecycle_projection;
+pub(super) use lifecycle::{get_service_lifecycle_snapshot, service_lifecycle_events};
 pub(super) use logs::{get_service_logs_snapshot, service_logs_events};
 pub(super) use repo_links::get_service_new_version_discovery_timeline;
 use repo_links::normalize_repo_url_input;
@@ -751,6 +754,9 @@ pub(super) async fn get_service_resource_usage_history(
     let since = (time::OffsetDateTime::now_utc() - time::Duration::seconds(window_seconds as i64))
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(|err| map_internal(err.into()))?;
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|err| map_internal(err.into()))?;
     let resolution_seconds = match window.as_str() {
         "7d" => Some(crate::metrics_store::MINUTE_RESOLUTION_SECONDS),
         "30d" => Some(crate::metrics_store::FIVE_MINUTE_RESOLUTION_SECONDS),
@@ -761,6 +767,9 @@ pub(super) async fn get_service_resource_usage_history(
         .history_since(&service_id, &since, resolution_seconds)
         .await
         .map_err(map_internal)?;
+    let lifecycle = load_lifecycle_projection(&state, &service_id, &since, &now)
+        .await
+        .ok();
 
     Ok(Json(ServiceResourceHistoryResponse {
         service_id,
@@ -768,6 +777,7 @@ pub(super) async fn get_service_resource_usage_history(
         samples: history.samples,
         resolution_seconds: history.resolution_seconds,
         peaks: resolution_seconds.map(|_| history.peaks),
+        lifecycle,
     }))
 }
 

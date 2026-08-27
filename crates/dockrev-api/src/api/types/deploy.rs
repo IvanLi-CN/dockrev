@@ -40,6 +40,8 @@ pub struct ServiceResourceHistoryResponse {
     pub resolution_seconds: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub peaks: Option<Vec<crate::metrics_store::ServiceResourcePeak>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<ServiceLifecycleProjection>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

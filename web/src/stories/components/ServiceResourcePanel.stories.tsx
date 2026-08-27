@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react'
-import type { ServiceResourceSample, ServiceResourceSnapshot } from '../../api'
+import { fireEvent } from 'storybook/test'
+import type { ServiceLifecycleProjection, ServiceResourceSample, ServiceResourceSnapshot } from '../../api'
 import { ServiceResourcePanel } from '../../components/ServiceResourcePanel'
 import { useServiceDetailResourceMonitor } from '../../pages/useServiceDetailResourceMonitor'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
@@ -9,11 +10,21 @@ type ResourcePanelStoryProps = {
   serviceId?: string
   readonly?: boolean
   initialSnapshot?: ServiceResourceSnapshot | null
+  lifecycle?: ServiceLifecycleProjection | null
 }
 
-function ResourcePanelStory({ serviceId = 'svc-prod-api', readonly = false, initialSnapshot = null }: ResourcePanelStoryProps) {
+function ResourcePanelStory({ serviceId = 'svc-prod-api', readonly = false, initialSnapshot = null, lifecycle = null }: ResourcePanelStoryProps) {
   const monitor = useServiceDetailResourceMonitor({ serviceId, readonly, initialSnapshot, isOnline: true })
-  return <ServiceResourcePanel monitor={monitor.panel} />
+  const panel = lifecycle
+    ? {
+        ...monitor.panel,
+        samples: initialSnapshot?.samples ?? monitor.panel.samples,
+        historyLoaded: true,
+        historyLoading: false,
+        lifecycle,
+      }
+    : monitor.panel
+  return <ServiceResourcePanel monitor={panel} />
 }
 
 const meta: Meta<ResourcePanelStoryProps> = {
@@ -101,6 +112,124 @@ const highVariationSamples = highVariationReadings.reduce<ServiceResourceSample[
   })
   return samples
 }, [])
+
+const lifecycleEvidence: ServiceLifecycleProjection = {
+  retentionSince: '2026-07-08T10:00:00.000Z',
+  lastEventId: 5,
+  nextCursor: 5,
+  events: [
+    {
+      id: 1,
+      serviceId: 'svc-prod-api',
+      stackId: 'stack-prod',
+      operationGroupId: 'op-long',
+      jobId: 'job-restart-long',
+      origin: 'manual_service',
+      transition: 'stopped',
+      observedAt: '2026-07-08T11:08:00.000Z',
+      boundaryPrecision: 'exact',
+      evidence: { engineEvent: 'stop' },
+      details: {},
+      createdAt: '2026-07-08T11:08:01.000Z',
+    },
+    {
+      id: 2,
+      serviceId: 'svc-prod-api',
+      stackId: 'stack-prod',
+      operationGroupId: 'op-long',
+      jobId: 'job-restart-long',
+      origin: 'manual_service',
+      transition: 'started',
+      observedAt: '2026-07-08T11:30:00.000Z',
+      boundaryPrecision: 'exact',
+      evidence: { startedAt: '2026-07-08T11:30:00.000Z' },
+      details: {},
+      createdAt: '2026-07-08T11:30:01.000Z',
+    },
+    {
+      id: 3,
+      serviceId: 'svc-prod-api',
+      stackId: 'stack-prod',
+      operationGroupId: 'op-short',
+      jobId: 'job-restart-short',
+      origin: 'managed_override',
+      transition: 'stopped',
+      observedAt: '2026-07-08T11:40:00.000Z',
+      boundaryPrecision: 'exact',
+      evidence: { engineEvent: 'stop' },
+      details: {},
+      createdAt: '2026-07-08T11:40:01.000Z',
+    },
+    {
+      id: 4,
+      serviceId: 'svc-prod-api',
+      stackId: 'stack-prod',
+      operationGroupId: 'op-short',
+      jobId: 'job-restart-short',
+      origin: 'managed_override',
+      transition: 'started',
+      observedAt: '2026-07-08T11:40:01.000Z',
+      boundaryPrecision: 'exact',
+      evidence: { startedAt: '2026-07-08T11:40:01.000Z' },
+      details: {},
+      createdAt: '2026-07-08T11:40:02.000Z',
+    },
+    {
+      id: 5,
+      serviceId: 'svc-prod-api',
+      stackId: 'stack-prod',
+      operationGroupId: 'op-incomplete',
+      jobId: 'job-restart-incomplete',
+      origin: 'backup',
+      transition: 'stopped',
+      observedAt: '2026-07-08T11:44:00.000Z',
+      boundaryPrecision: 'incomplete',
+      evidence: { reason: 'events_permission_denied' },
+      details: {},
+      createdAt: '2026-07-08T11:44:01.000Z',
+    },
+  ],
+  availabilityIntervals: [
+    {
+      operationGroupId: 'op-long',
+      startedAt: '2026-07-08T11:30:00.000Z',
+      stoppedAt: '2026-07-08T11:08:00.000Z',
+      startEventId: 2,
+      stopEventId: 1,
+      complete: true,
+    },
+    {
+      operationGroupId: 'op-short',
+      startedAt: '2026-07-08T11:40:01.000Z',
+      stoppedAt: '2026-07-08T11:40:00.000Z',
+      startEventId: 4,
+      stopEventId: 3,
+      complete: true,
+    },
+  ],
+}
+
+const lifecycleSampleMinutes = [0, 1, 2, 3, 4, 5, 6, 7, 31, 32, 33, 34, 37, 38, 39, 41, 42, 43, 45]
+
+const lifecycleSamples = lifecycleSampleMinutes.map((minute, index): ServiceResourceSample => ({
+  sampledAt: new Date(Date.UTC(2026, 6, 8, 11, minute)).toISOString(),
+  cpuPercent: 22 + (index % 6) * 1.5,
+  memUsedBytes: 1_100_000_000 + index * 8_000_000,
+  memLimitBytes: 2_147_000_000,
+  netRxBytes: 20_000_000 + index * 1_600_000,
+  netTxBytes: 12_000_000 + index * 1_100_000,
+  blockReadBytes: 4_000_000 + index * 420_000,
+  blockWriteBytes: 1_000_000 + index * 180_000,
+  pids: 18 + (index > 10 ? 1 : 0),
+  containerCount: 1,
+}))
+
+const lifecycleSnapshot: ServiceResourceSnapshot = {
+  fetchedAt: '2026-07-08T11:45:00.000Z',
+  windowKey: '1h',
+  monitorDisabled: false,
+  samples: lifecycleSamples,
+}
 
 export const Default: Story = {
   parameters: { dockrevApiScenario: 'default' },
@@ -242,6 +371,47 @@ export const HighVariationCurves: Story = {
   },
 }
 
+export const LifecycleMarkers: Story = {
+  args: { readonly: true, initialSnapshot: lifecycleSnapshot, lifecycle: lifecycleEvidence },
+  decorators: [withEvidenceFrame],
+  play: async ({ canvasElement }) => {
+    await tick()
+    expectStory(canvasElement.querySelectorAll('.svcResourceLifecycleBand').length === 1, 'long lifecycle interval should render as a band')
+    expectStory(canvasElement.querySelectorAll('.svcResourceLifecycleLine').length === 1, 'sub-6px lifecycle interval should render as a line')
+    expectStory(canvasElement.querySelectorAll('svg circle').length === 0, 'resource charts should not render point markers')
+    expectStory(canvasElement.querySelectorAll('.svcResourceGapServiceStopped').length === 2, 'service downtime markers should use a neutral interval')
+    expectStory(canvasElement.querySelectorAll('.svcResourceGapWarning').length === 1, 'continuous unexplained gap should use a warning interval')
+    expectStory(canvasElement.querySelectorAll('.svcResourceLifecycleDiagnosticLine').length === 1, 'incomplete lifecycle observations should use a diagnostic line')
+    expectStory(canvasElement.querySelectorAll('.svcResourceGapSingle').length === 0, 'single missing sample should not render a gap marker')
+
+    const hoverSurface = canvasElement.querySelector<SVGRectElement>('.svcResourceHoverSurface')
+    expectStory(hoverSurface, 'resource chart should expose a hover surface')
+    const svg = canvasElement.querySelector<SVGSVGElement>('.svcResourceChartSvg')
+    expectStory(svg, 'resource chart svg should be available for hover coordinates')
+    const pointerAtMinute = (minute: number) => {
+      const viewBoxX = 50 + 850 * (minute / 45)
+      const screenTransform = svg.getScreenCTM()
+      if (!screenTransform) return
+      const screenPoint = new DOMPoint(viewBoxX, 140).matrixTransform(screenTransform)
+      fireEvent.pointerMove(hoverSurface, {
+        clientX: screenPoint.x,
+        clientY: screenPoint.y,
+      })
+    }
+    pointerAtMinute(20)
+    await tick()
+    expectStory(canvasElement.querySelector('[role="tooltip"][data-hover-kind="lifecycle"]')?.textContent?.includes('服务停止区间'), 'hovering downtime should expose interval details')
+
+    pointerAtMinute(35)
+    await tick()
+    expectStory(canvasElement.querySelector('[role="tooltip"][data-hover-kind="gap"]')?.textContent?.includes('监控采样缺口'), 'hovering an unexplained gap should expose gap details')
+
+    pointerAtMinute(44)
+    await tick()
+    expectStory(canvasElement.querySelector('[role="tooltip"][data-hover-kind="lifecycle"]')?.textContent?.includes('生命周期事件'), 'hovering an incomplete observation should expose diagnostic details')
+  },
+}
+
 export const WindowSwitchContract: Story = {
   parameters: { dockrevApiScenario: 'default' },
   decorators: [withEvidenceFrame],
@@ -277,10 +447,12 @@ export const WindowSwitchContract: Story = {
       Number(canvasElement.querySelector('.svcResourceChart')?.getAttribute('data-point-count')) <= 480,
       'long windows should downsample chart points to the rendering budget',
     )
-    expectStory(
-      canvasElement.querySelector('.svcResourcePoint title')?.textContent?.includes('此桶峰值 CPU'),
-      'the latest aggregated point should expose its CPU peak tooltip',
-    )
+    const hoverSurface = canvasElement.querySelector<SVGRectElement>('.svcResourceHoverSurface')
+    expectStory(hoverSurface, 'aggregated chart should expose a hover surface')
+    const bounds = hoverSurface.getBoundingClientRect()
+    fireEvent.pointerMove(hoverSurface, { clientX: bounds.right - 4, clientY: bounds.top + bounds.height * 0.5 })
+    await tick()
+    expectStory(canvasElement.querySelector('[role="tooltip"][data-hover-kind="sample"]')?.textContent?.includes('此桶峰值 CPU'), 'the latest aggregated sample should expose its CPU peak in the hover details')
   },
 }
 

@@ -224,6 +224,14 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(service_logs_events),
         )
         .route(
+            "/api/services/{service_id}/lifecycle-events",
+            get(get_service_lifecycle_snapshot),
+        )
+        .route(
+            "/api/services/{service_id}/lifecycle-events/events",
+            get(service_lifecycle_events),
+        )
+        .route(
             "/api/services/resource-usage/overview",
             get(get_service_resource_usage_overview),
         )

@@ -239,6 +239,23 @@ pub(crate) async fn run_update_job(
                 &state.config.managed_override_dir,
                 &stack.id,
             );
+            let lifecycle_service_names = planned_selection
+                .services
+                .iter()
+                .map(|service| service.name.clone())
+                .collect::<Vec<_>>();
+            let lifecycle_project = updater::sanitize_project_name(&stack.name);
+            let lifecycle_observation = if req.mode.as_str() == "apply"
+                && !lifecycle_service_names.is_empty()
+            {
+                Some(
+                    state
+                        .lifecycle_observer
+                        .begin(&lifecycle_project, &lifecycle_service_names),
+                )
+            } else {
+                None
+            };
 
             if backup_requested && backup_requires_stop {
                 let (pull_progress_tx, mut pull_progress_rx) =
@@ -856,6 +873,17 @@ pub(crate) async fn run_update_job(
                 Some(&state.config.managed_override_dir),
             )
             .await;
+            let lifecycle_success = update_outcome.as_ref().map(|outcome| outcome.status == "success").unwrap_or(false);
+            state.lifecycle_observer.record_operation(
+                lifecycle_observation,
+                &job_id,
+                Some(&job_id),
+                &stack.id,
+                &lifecycle_project,
+                &lifecycle_service_names,
+                "restart",
+                lifecycle_success,
+            ).await;
             let _ = progress_task.await;
             match update_outcome {
                 Ok(mut outcome) => {

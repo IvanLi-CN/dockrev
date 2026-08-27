@@ -354,6 +354,15 @@ async fn run_stack_lifecycle_job(
     );
     let _managed_override_operation_guard = crate::managed_override::operation_lock().await;
     let compose = lifecycle_compose_stack(state.as_ref(), &stack);
+    let service_names = stack
+        .services
+        .iter()
+        .map(|service| service.name.clone())
+        .collect::<Vec<_>>();
+    let compose_project = updater::sanitize_project_name(&stack.name);
+    let observation = state
+        .lifecycle_observer
+        .begin(&compose_project, &service_names);
     let outcome = match lifecycle_compose_config(state.as_ref()) {
         Ok((config, _auth_bridge)) => {
             if let Err(error) =
@@ -398,6 +407,19 @@ async fn run_stack_lifecycle_job(
         Ok(()) => ("success", None),
         Err(error) => ("failed", Some(error.to_string())),
     };
+    state
+        .lifecycle_observer
+        .record_operation(
+            Some(observation),
+            &job_id,
+            Some(&job_id),
+            &stack.id,
+            &compose_project,
+            &service_names,
+            action.as_str(),
+            status == "success",
+        )
+        .await;
     let _ = state
         .db
         .insert_job_log(
@@ -668,6 +690,11 @@ async fn run_service_lifecycle_job(
     );
     let _managed_override_operation_guard = crate::managed_override::operation_lock().await;
     let compose = lifecycle_compose_stack(state.as_ref(), &stack);
+    let service_names = vec![service.name.clone()];
+    let compose_project = updater::sanitize_project_name(&stack.name);
+    let observation = state
+        .lifecycle_observer
+        .begin(&compose_project, &service_names);
     let outcome = match lifecycle_compose_config(state.as_ref()) {
         Ok((config, _auth_bridge)) => {
             if let Err(error) =
@@ -726,6 +753,19 @@ async fn run_service_lifecycle_job(
             Some(error.to_string()),
         ),
     };
+    state
+        .lifecycle_observer
+        .record_operation(
+            Some(observation),
+            &job_id,
+            Some(&job_id),
+            &stack.id,
+            &compose_project,
+            &service_names,
+            action.as_str(),
+            status == "success",
+        )
+        .await;
     let _ = state
         .db
         .insert_job_log(

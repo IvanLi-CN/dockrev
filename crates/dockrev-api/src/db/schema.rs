@@ -9,6 +9,8 @@ use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 use super::*;
 #[path = "schema_job_history_retention.rs"]
 mod schema_job_history_retention;
+#[path = "schema_lifecycle_events.rs"]
+mod schema_lifecycle_events;
 mod schema_resource_latest;
 mod schema_settings_release_notes;
 
@@ -692,6 +694,7 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     apply_migration_0011_track_candidate_display_tags_in_new_version_discoveries(conn)?;
     apply_migration_0012_track_image_ref_in_new_version_discoveries(conn)?;
     apply_migration_0013_add_update_job_stop_controls(conn)?;
+    schema_lifecycle_events::apply(conn)?;
     schema_job_history_retention::apply(conn)?;
     Ok(())
 }

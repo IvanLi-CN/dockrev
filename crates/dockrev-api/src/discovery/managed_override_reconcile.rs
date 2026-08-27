@@ -10,7 +10,7 @@ pub async fn run_managed_override_reconcile(
     stack_id: &str,
     reconcile_guard: tokio::sync::MutexGuard<'static, ()>,
 ) {
-    let result = reconcile_managed_override(state, stack_id, reconcile_guard).await;
+    let result = reconcile_managed_override(state, job_id, stack_id, reconcile_guard).await;
     let finished_at = now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
     match result {
         Ok(summary) => {
@@ -46,6 +46,7 @@ pub async fn run_managed_override_reconcile(
 
 async fn reconcile_managed_override(
     state: &AppState,
+    job_id: &str,
     stack_id: &str,
     _reconcile_guard: tokio::sync::MutexGuard<'static, ()>,
 ) -> anyhow::Result<serde_json::Value> {
@@ -161,13 +162,19 @@ async fn reconcile_managed_override(
         .compose
         .compose_files
         .push(path.to_string_lossy().to_string());
+    let lifecycle_project = sanitize_project_name(&stack.name);
+    let mut lifecycle_observation = Some(
+        state
+            .lifecycle_observer
+            .begin(&lifecycle_project, &service_names),
+    );
     if let Err(error) = run_checked_command(
         state,
         managed_stack.up_services_no_pull_no_deps_force_recreate(&compose_cfg, &service_names),
     )
     .await
     {
-        return Err(rollback_reconciliation(
+        let error = rollback_reconciliation(
             state,
             &managed_stack,
             &compose_cfg,
@@ -175,7 +182,21 @@ async fn reconcile_managed_override(
             &path,
             error,
         )
-        .await);
+        .await;
+        state
+            .lifecycle_observer
+            .record_operation(
+                lifecycle_observation.take(),
+                job_id,
+                Some(job_id),
+                stack_id,
+                &lifecycle_project,
+                &service_names,
+                "restart",
+                false,
+            )
+            .await;
+        return Err(error);
     }
 
     for service in &selected_services {
@@ -221,7 +242,7 @@ async fn reconcile_managed_override(
         }
         .await;
         if let Err(error) = verification {
-            return Err(rollback_reconciliation(
+            let error = rollback_reconciliation(
                 state,
                 &managed_stack,
                 &compose_cfg,
@@ -232,10 +253,37 @@ async fn reconcile_managed_override(
                     service.name
                 ),
             )
-            .await);
+            .await;
+            state
+                .lifecycle_observer
+                .record_operation(
+                    lifecycle_observation.take(),
+                    job_id,
+                    Some(job_id),
+                    stack_id,
+                    &lifecycle_project,
+                    &service_names,
+                    "restart",
+                    false,
+                )
+                .await;
+            return Err(error);
         }
     }
 
+    state
+        .lifecycle_observer
+        .record_operation(
+            lifecycle_observation.take(),
+            job_id,
+            Some(job_id),
+            stack_id,
+            &lifecycle_project,
+            &service_names,
+            "restart",
+            true,
+        )
+        .await;
     managed_override::mark_snapshot_applied(&path)?;
     managed_override::discard_snapshot(&path)?;
     let scan = run_scan(state).await?;

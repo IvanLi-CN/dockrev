@@ -11,7 +11,7 @@ import { assertRecentUpdateKeyboardNavigation, assertRecentUpdateReasonPopoverSt
 import { assertMonitoringResourceSync, assertOverviewMonitorSummary } from "./serviceDetailMonitorAssertions";
 import { drawerText, findActionButton, findHistoryRowByJobId, findLogRowContaining, findSectionCard, findTab, render, tabLabels, type ServiceDetailStory } from "./serviceDetailStoryShared";
 export { ActiveUpdateWithoutCandidate, DockrevVersionsSelfUpgrade, DockrevVersionsSelfUpgradeVisual, DockrevVersionsSelfUpgradeOffline, MobileVersionsSection, VersionsSection, VersionsSectionActionGuard, VersionsSectionIntermediateWidth, VersionsSectionIntermediateWideActions } from "./serviceDetailVersionsStories";
-export { DesktopLogsTimestampLayout, LogsSectionDateBoundaries, MobileLogsTimestampLayout } from "./serviceDetailLogsStories";
+export { DesktopLogsTimestampLayout, LogsSectionDateBoundaries, LogsSectionLifecycleUnion, MobileLogsTimestampLayout } from "./serviceDetailLogsStories";
 import { expectNearlyEqual, expectStory, findButton, findButtons, findLink, normalizeText, waitForCondition } from "./storyAssertions";
 
 const meta: Meta<typeof ServiceDetailPage> = {

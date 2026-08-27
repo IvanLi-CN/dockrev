@@ -6113,6 +6113,14 @@ html[data-theme="light"] .modalOverlay {
   gap: 6px;
 }
 
+.serviceLogsSourceToggle.btnGhost {
+  color: var(--text);
+}
+
+.serviceLogsSourceToggle.btnPrimary {
+  color: var(--color-primary-content);
+}
+
 .serviceLogsError {
   margin: 0;
 }
@@ -6159,6 +6167,8 @@ html[data-theme="light"] .modalOverlay {
   --service-log-level-info-text: var(--color-info);
   --service-log-level-muted-background: color-mix(in srgb, var(--muted2) 14%, transparent);
   --service-log-level-muted-text: var(--muted2);
+  --service-log-system-border: color-mix(in srgb, #94a3b8 55%, transparent);
+  --service-log-system-text: #cbd5e1;
   --service-log-meta-format-border: color-mix(in srgb, var(--color-info) 36%, transparent);
   --service-log-meta-format-background: color-mix(in srgb, var(--color-info) 10%, transparent);
   --service-log-meta-format-text: color-mix(in srgb, var(--color-info) 78%, white 22%);
@@ -6206,6 +6216,8 @@ html[data-theme="light"] .serviceLogsTerminal {
   --service-log-level-info-text: #075a8e;
   --service-log-level-muted-background: #edf2f7;
   --service-log-level-muted-text: #495f75;
+  --service-log-system-border: #9aabba;
+  --service-log-system-text: #405466;
   --service-log-meta-format-border: #b7d8ef;
   --service-log-meta-format-background: #e9f4ff;
   --service-log-meta-format-text: #075a8e;
@@ -6327,6 +6339,44 @@ html[data-theme="light"] .serviceLogsTerminal {
 
 .serviceLogRow:hover {
   background: var(--service-log-row-hover);
+}
+
+.serviceLifecycleSeparator {
+  display: grid;
+  grid-template-columns: minmax(24px, 1fr) auto minmax(24px, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 6px var(--service-log-inline-padding);
+  color: var(--service-log-system-text);
+}
+
+.serviceLifecycleSeparatorLine {
+  height: 1px;
+  background: var(--service-log-system-border);
+}
+
+.serviceLifecycleSeparatorContent {
+  display: inline-flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  text-align: center;
+}
+
+.serviceLifecycleSeparatorLabel {
+  color: var(--service-log-system-text);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.serviceLifecycleSeparatorTime {
+  color: var(--service-log-text-subtle);
+  font-size: 10px;
+  white-space: nowrap;
 }
 
 .serviceLogRow[data-multiline="true"] {
@@ -6593,6 +6643,18 @@ html[data-theme="light"] .serviceLogsTerminal {
     row-gap: 4px;
     padding-top: 7px;
     padding-bottom: 7px;
+  }
+
+  .serviceLifecycleSeparator {
+    grid-template-columns: minmax(14px, 1fr) minmax(0, max-content) minmax(14px, 1fr);
+    gap: 8px;
+    padding-inline: 14px;
+  }
+
+  .serviceLifecycleSeparatorContent {
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
   }
 
   .serviceLogRow + .serviceLogRow:not([data-date-divider="true"]) {
@@ -10003,6 +10065,7 @@ html[data-theme="light"] .serviceLogsTerminal {
 }
 
 .svcResourceChart {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -10055,10 +10118,33 @@ html[data-theme="light"] .serviceLogsTerminal {
   stroke-linecap: butt;
 }
 
-.svcResourcePoint {
-  fill: color-mix(in srgb, currentColor 84%, white 16%);
-  stroke: color-mix(in srgb, var(--panel2) 80%, black 20%);
+.svcResourceGap {
+  pointer-events: none;
+}
+
+.svcResourceGapWarning {
+  fill: color-mix(in srgb, #f59e0b 13%, transparent);
+  stroke: color-mix(in srgb, #f59e0b 55%, transparent);
+  stroke-width: 1;
+}
+
+.svcResourceLifecycleBand {
+  fill: color-mix(in srgb, #94a3b8 18%, transparent);
+  stroke: color-mix(in srgb, #94a3b8 58%, transparent);
+  stroke-width: 1;
+}
+
+.svcResourceLifecycleLine {
+  stroke: #94a3b8;
   stroke-width: 2;
+  stroke-dasharray: 3 3;
+}
+
+.svcResourceLifecycleDiagnosticLine {
+  stroke: color-mix(in srgb, #f59e0b 72%, transparent);
+  stroke-width: 1.5;
+  stroke-dasharray: 2 3;
+  pointer-events: none;
 }
 
 .svcResourceLineBlue {
@@ -10095,16 +10181,101 @@ html[data-theme="light"] .serviceLogsTerminal {
 }
 
 .svcResourceLegendDot {
-  width: 9px;
-  height: 9px;
-  border-radius: 999px;
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
   background: currentColor;
-  box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 12%, transparent);
 }
 
 .svcResourceLegendValue {
   font-family: var(--font-mono);
   color: var(--text);
+}
+
+.svcResourceHoverSurface {
+  fill: transparent;
+  cursor: crosshair;
+  outline: none;
+  pointer-events: all;
+}
+
+.svcResourceHoverSurface:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-primary) 76%, transparent);
+  outline-offset: 2px;
+}
+
+.svcResourceHoverLine {
+  stroke: color-mix(in srgb, var(--text) 62%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+  pointer-events: none;
+}
+
+.svcResourceHoverTooltip {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  width: min(250px, calc(100% - 24px));
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel2) 96%, black 4%);
+  color: var(--text);
+  box-shadow: 0 12px 26px rgba(1, 8, 20, 0.28);
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.svcResourceHoverTooltip.edgeLeft {
+  transform: translateX(0);
+}
+
+.svcResourceHoverTooltip.edgeRight {
+  transform: translateX(-100%);
+}
+
+.svcResourceHoverTitle {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.svcResourceHoverTime {
+  margin-top: 3px;
+  color: var(--muted2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.svcResourceHoverRows {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.svcResourceHoverRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+}
+
+.svcResourceHoverRow span {
+  color: var(--muted);
+}
+
+.svcResourceHoverRow strong {
+  max-width: 68%;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 650;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.svcResourceHoverNote {
+  color: var(--muted2);
+  font-size: 10px;
 }
 
 .svcResourceStreamStatus {

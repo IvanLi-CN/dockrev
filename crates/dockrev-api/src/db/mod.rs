@@ -16,6 +16,7 @@ mod github_packages;
 mod job_logs;
 mod job_summaries;
 mod jobs;
+mod lifecycle_events;
 mod new_version_discoveries;
 mod new_version_notifications;
 mod repo_links;
@@ -30,6 +31,7 @@ mod tag_history;
 mod update_stops;
 
 pub(crate) use jobs::JobListFilters;
+pub(crate) use lifecycle_events::{ServiceLifecycleEventInput, ServiceLifecycleEventRow};
 pub(crate) use service_operations::ServiceOperationTarget;
 pub(crate) use update_stops::UpdateStopRequestOutcome;
 
@@ -847,6 +849,10 @@ impl Db {
         };
         db.init().await?;
         db.ensure_defaults().await?;
+        let cutoff = (time::OffsetDateTime::now_utc() - time::Duration::days(30))
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_default();
+        let _ = db.delete_expired_service_lifecycle_events(&cutoff).await?;
         Ok(db)
     }
 
