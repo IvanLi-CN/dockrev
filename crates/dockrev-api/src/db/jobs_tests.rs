@@ -116,6 +116,131 @@ async fn claim_next_queued_job_filters_and_claims_in_fifo_order() {
     );
 }
 
+#[tokio::test]
+async fn rollback_evidence_migration_and_recovery() {
+    let root = std::env::temp_dir().join(format!("dockrev-job-evidence-{}", ulid::Ulid::new()));
+    std::fs::create_dir_all(&root).unwrap();
+    let db_path = root.join("dockrev.sqlite");
+    // Open against a pre-evidence jobs table to exercise the nullable BLOB migration itself.
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            r#"
+CREATE TABLE jobs (
+  id TEXT PRIMARY KEY NOT NULL,
+  type TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  stack_id TEXT,
+  service_id TEXT,
+  status TEXT NOT NULL,
+  allow_arch_mismatch INTEGER NOT NULL,
+  backup_mode TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT,
+  summary_json TEXT NOT NULL
+);
+"#,
+        )
+        .unwrap();
+    }
+    let db = Db::open(&db_path).await.unwrap();
+    let has_archive_column = db
+        .call(|conn| {
+            let mut statement = conn.prepare("PRAGMA table_info(jobs)")?;
+            let names = statement.query_map([], |row| row.get::<_, String>(1))?;
+            Ok(names
+                .collect::<Result<Vec<_>, _>>()?
+                .iter()
+                .any(|name| name == "rollback_evidence_tar_zstd"))
+        })
+        .await
+        .unwrap();
+    assert!(has_archive_column);
+    db.insert_job(job(
+        "job-recover",
+        JobType::Update,
+        "rolled_back",
+        "2026-08-28T00:00:00Z",
+    ))
+    .await
+    .unwrap();
+
+    let spool = crate::rollback_evidence::spool_root(&db_path)
+        .join("job-recover")
+        .join("service-a")
+        .join("candidate-a");
+    tokio::fs::create_dir_all(&spool).await.unwrap();
+    tokio::fs::write(
+        spool.join("state.json"),
+        br#"{"Status":"running","ExitCode":1,"RestartCount":1}"#,
+    )
+    .await
+    .unwrap();
+    tokio::fs::write(spool.join("health.log"), b"[]")
+        .await
+        .unwrap();
+    tokio::fs::write(spool.join("container.log"), b"candidate line\n")
+        .await
+        .unwrap();
+    let manifest = vec![crate::rollback_evidence::EvidenceMetadata {
+        service_id: "service-a".to_string(),
+        candidate_id: "candidate-a".to_string(),
+        health_status: "starting".to_string(),
+        logs_bytes: 15,
+        ..Default::default()
+    }];
+    tokio::fs::write(
+        spool
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("manifest.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .await
+    .unwrap();
+
+    crate::rollback_evidence::recover_orphaned_evidence(&db, &db_path).await;
+
+    let archive = db
+        .get_rollback_evidence_archive("job-recover")
+        .await
+        .unwrap()
+        .expect("recovered archive");
+    assert!(!archive.is_empty());
+    let recovered = db.get_job("job-recover").await.unwrap().unwrap();
+    assert_eq!(
+        recovered.summary_json["rollbackEvidence"]["status"],
+        "available"
+    );
+    assert!(
+        !crate::rollback_evidence::spool_root(&db_path)
+            .join("job-recover")
+            .exists()
+    );
+
+    db.finish_job(
+        "job-recover",
+        "rolled_back",
+        "2026-08-28T00:01:00Z",
+        &serde_json::json!({ "result": "retained" }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        db.get_rollback_evidence_archive("job-recover")
+            .await
+            .unwrap()
+            .unwrap(),
+        archive
+    );
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
 #[test]
 fn slow_job_claim_warning_is_thresholded_and_rate_limited_by_type() {
     let warned_at_by_type = Mutex::new(BTreeMap::new());

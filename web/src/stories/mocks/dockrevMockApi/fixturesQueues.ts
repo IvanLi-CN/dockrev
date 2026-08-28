@@ -1053,7 +1053,16 @@ export function buildQueueHealthRollback(): Fixture {
           },
         },
       ],
-    },
+      rollbackEvidence: {
+        status: 'available',
+        failedCandidates: 1,
+        archiveFormat: 'tar',
+        compression: 'zstd',
+        archiveSizeBytes: 1234,
+        services: [{ serviceId: 'svc-prod-api', logsTruncated: true }],
+        errors: [],
+      },
+    } as Record<string, unknown>,
     progress: {
       phase: 'done',
       message: 'update rolled back after healthcheck failure',

@@ -59,6 +59,21 @@ async fn run(
     result
 }
 
+pub(crate) async fn archive_directory(
+    source: &std::path::Path,
+    output_part: &std::path::Path,
+    output_final: &std::path::Path,
+    total_bytes: u64,
+) -> anyhow::Result<()> {
+    run(
+        source.to_path_buf(),
+        output_part.to_path_buf(),
+        output_final.to_path_buf(),
+        total_bytes,
+    )
+    .await
+}
+
 async fn run_inner(
     source: PathBuf,
     output_part: PathBuf,

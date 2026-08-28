@@ -174,6 +174,26 @@ impl CommandRunner for HealthRollbackRunner {
                 assert_eq!(spec.program, "docker");
                 assert_eq!(
                     spec.args,
+                    vec![
+                        "inspect",
+                        "--format",
+                        "{{json .Config.Healthcheck}}",
+                        "new_container"
+                    ]
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>()
+                );
+                CommandOutput {
+                    status: 0,
+                    stdout: "null\n".to_string(),
+                    stderr: String::new(),
+                }
+            }
+            7 => {
+                assert_eq!(spec.program, "docker");
+                assert_eq!(
+                    spec.args,
                     vec!["inspect", "--format", "{{.Image}}", "new_container"]
                         .into_iter()
                         .map(|s| s.to_string())
@@ -185,7 +205,7 @@ impl CommandRunner for HealthRollbackRunner {
                     stderr: String::new(),
                 }
             }
-            7 => {
+            8 => {
                 assert_eq!(spec.program, "docker");
                 assert_eq!(
                     spec.args,
@@ -205,7 +225,7 @@ impl CommandRunner for HealthRollbackRunner {
                     stderr: String::new(),
                 }
             }
-            8 => {
+            9 => {
                 assert_eq!(spec.program, "docker");
                 assert_eq!(
                     spec.args,
@@ -220,7 +240,7 @@ impl CommandRunner for HealthRollbackRunner {
                     stderr: String::new(),
                 }
             }
-            9 => {
+            10 => {
                 assert_eq!(spec.program, "docker-compose");
                 assert!(args_end_with(
                     &spec.args,
@@ -232,7 +252,7 @@ impl CommandRunner for HealthRollbackRunner {
                     stderr: String::new(),
                 }
             }
-            10 => {
+            11 => {
                 assert_eq!(spec.program, "docker-compose");
                 assert!(args_end_with(&spec.args, &["ps", "-q", "web"]));
                 CommandOutput {
@@ -241,7 +261,7 @@ impl CommandRunner for HealthRollbackRunner {
                     stderr: String::new(),
                 }
             }
-            11 => {
+            12 => {
                 assert_eq!(spec.program, "docker");
                 assert_eq!(
                     spec.args,
@@ -261,7 +281,7 @@ impl CommandRunner for HealthRollbackRunner {
                     stderr: String::new(),
                 }
             }
-            12 => {
+            13 => {
                 assert_eq!(spec.program, "docker");
                 assert_eq!(
                     spec.args,
@@ -355,7 +375,7 @@ async fn healthcheck_failure_rolls_back_with_attempted_and_final_digests() {
             .iter()
             .any(|msg| msg.contains("rolled back after healthcheck failure"))
     );
-    assert_eq!(*runner.step.lock().unwrap(), 13);
+    assert_eq!(*runner.step.lock().unwrap(), 14);
 }
 
 #[tokio::test]

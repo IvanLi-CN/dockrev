@@ -120,6 +120,21 @@ export async function handleJobStateRoutes(ctx: MockRouteContext): Promise<Respo
     return json({ jobId: id, state: 'requested' }, { status: 202 })
   }
 
+  if (method === 'GET' && /^\/api\/jobs\/[^/]+\/rollback-evidence$/.test(urlPath)) {
+    const id = decodeURIComponent(urlPath.split('/').slice(3, -1).join('/'))
+    const job = f.jobById[id]
+    const summary = job?.summary
+    const evidence = isRecord(summary) && isRecord(summary.rollbackEvidence) ? summary.rollbackEvidence : null
+    if (!job || evidence?.status !== 'available') return json({ error: 'not found' }, { status: 404 })
+    return new Response(new Uint8Array([0x28, 0xb5, 0x2f, 0xfd]), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/zstd',
+        'Content-Disposition': 'attachment; filename=rollback-evidence.tar.zst',
+      },
+    })
+  }
+
   if (method === 'GET' && urlPath.startsWith('/api/jobs/')) {
     const id = decodeURIComponent(urlPath.split('/').slice(3).join('/'))
     const job = f.jobById[id]

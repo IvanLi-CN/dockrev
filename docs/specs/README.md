@@ -4,12 +4,18 @@
 
 > Legacy compatibility: historical entries in `docs/plan/**/PLAN.md` are kept as references. New entries must be created under `docs/specs/**/SPEC.md`.
 
+## Canonical Topic Specs
+
+| Topic | Lifecycle | Implementation | Spec | Successor |
+| --- | --- | --- | --- | --- |
+| Update rollback diagnostics | active | not started | `update-rollback-diagnostics/SPEC.md` | - |
+
 ## 快速新增一个规格
 
-1. 生成新的规格 `ID`（推荐 5 个字符 nanoId 风格）。
-2. 新建目录：`docs/specs/<id>-<title>/`。
-3. 在目录下创建 `SPEC.md`。
-4. 在下方 Index 表新增一行，并更新 `Status` 与 `Last`。
+1. 选择稳定、唯一的 kebab-case topic slug。
+2. 新建目录：`docs/specs/<topic>/`。
+3. 在目录下创建 `SPEC.md`、`IMPLEMENTATION.md` 与 `HISTORY.md`。
+4. 在 Canonical Topic Specs 表中新增一行。
 
 ## 状态（Status）说明
 

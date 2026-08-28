@@ -70,9 +70,42 @@ pub struct CommandOutput {
     pub stderr: String,
 }
 
+/// Raw command output for callers that must preserve bytes instead of lossy UTF-8 text.
+#[derive(Clone, Debug)]
+pub struct RawCommandOutput {
+    pub status: i32,
+    pub stdout: Vec<u8>,
+    #[allow(dead_code)]
+    pub stderr: Vec<u8>,
+}
+
 #[async_trait]
 pub trait CommandRunner: Send + Sync {
     async fn run(&self, spec: CommandSpec, timeout: Duration) -> anyhow::Result<CommandOutput>;
+
+    async fn run_raw(
+        &self,
+        spec: CommandSpec,
+        timeout: Duration,
+    ) -> anyhow::Result<RawCommandOutput> {
+        let output = self.run(spec, timeout).await?;
+        Ok(RawCommandOutput {
+            status: output.status,
+            stdout: output.stdout.into_bytes(),
+            stderr: output.stderr.into_bytes(),
+        })
+    }
+
+    async fn run_raw_bounded(
+        &self,
+        spec: CommandSpec,
+        timeout: Duration,
+        max_stdout_bytes: usize,
+    ) -> anyhow::Result<RawCommandOutput> {
+        let mut output = self.run_raw(spec, timeout).await?;
+        output.stdout.truncate(max_stdout_bytes.saturating_add(1));
+        Ok(output)
+    }
 
     async fn run_stream(
         &self,
@@ -108,6 +141,105 @@ impl CommandRunner for TokioCommandRunner {
             status: output.status.code().unwrap_or(-1),
             stdout: String::from_utf8_lossy(&output.stdout).to_string(),
             stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        })
+    }
+
+    async fn run_raw(
+        &self,
+        spec: CommandSpec,
+        timeout: Duration,
+    ) -> anyhow::Result<RawCommandOutput> {
+        let mut cmd = Command::new(&spec.program);
+        cmd.args(&spec.args);
+        apply_command_env(&mut cmd, &spec.env);
+        cmd.kill_on_drop(true);
+
+        let output = tokio::time::timeout(timeout, cmd.output()).await??;
+        Ok(RawCommandOutput {
+            status: output.status.code().unwrap_or(-1),
+            stdout: output.stdout,
+            stderr: output.stderr,
+        })
+    }
+
+    async fn run_raw_bounded(
+        &self,
+        spec: CommandSpec,
+        timeout: Duration,
+        max_stdout_bytes: usize,
+    ) -> anyhow::Result<RawCommandOutput> {
+        let mut cmd = Command::new(&spec.program);
+        cmd.args(&spec.args);
+        apply_command_env(&mut cmd, &spec.env);
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+        cmd.kill_on_drop(true);
+
+        let mut child = cmd.spawn()?;
+        let mut stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("failed to capture stdout"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("failed to capture stderr"))?;
+        let stderr_task = tokio::spawn(async move {
+            let mut reader = stderr;
+            let mut bytes = Vec::new();
+            let mut buffer = [0_u8; 8192];
+            while bytes.len() < 64 * 1024 {
+                let read = reader.read(&mut buffer).await?;
+                if read == 0 {
+                    break;
+                }
+                let remaining = 64 * 1024 - bytes.len();
+                bytes.extend_from_slice(&buffer[..read.min(remaining)]);
+            }
+            anyhow::Ok(bytes)
+        });
+
+        let stdout_limit = max_stdout_bytes.saturating_add(1);
+        let read_stdout = async {
+            let mut bytes = Vec::with_capacity(stdout_limit.min(8192));
+            let mut buffer = [0_u8; 8192];
+            loop {
+                let read = stdout.read(&mut buffer).await?;
+                if read == 0 {
+                    break;
+                }
+                let remaining = stdout_limit.saturating_sub(bytes.len());
+                if remaining > 0 {
+                    bytes.extend_from_slice(&buffer[..read.min(remaining)]);
+                }
+                if bytes.len() >= stdout_limit {
+                    break;
+                }
+            }
+            anyhow::Ok(bytes)
+        };
+        let stdout_result = tokio::time::timeout(timeout, read_stdout).await;
+        let stdout = match stdout_result {
+            Ok(result) => result?,
+            Err(error) => {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                let _ = stderr_task.await;
+                return Err(anyhow::Error::new(error));
+            }
+        };
+        let stopped_early = stdout.len() >= stdout_limit;
+        if stopped_early {
+            let _ = child.kill().await;
+        }
+        let status = child.wait().await?.code().unwrap_or(-1);
+        let stderr = stderr_task.await??;
+        Ok(RawCommandOutput {
+            // A deliberate bounded capture is a successful collection even though the child was
+            // terminated after the retained prefix. The caller records truncation from stdout.
+            status: if stopped_early { 0 } else { status },
+            stdout,
+            stderr,
         })
     }
 
@@ -300,6 +432,28 @@ fn shell_quote(value: &str) -> String {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn bounded_raw_command_stops_after_prefix_limit() {
+        let output = TokioCommandRunner
+            .run_raw_bounded(
+                CommandSpec {
+                    program: "sh".to_string(),
+                    args: vec![
+                        "-c".to_string(),
+                        "printf 'first\\nsecond\\nthird\\n'".to_string(),
+                    ],
+                    env: Vec::new(),
+                },
+                Duration::from_secs(2),
+                6,
+            )
+            .await
+            .expect("bounded command should complete");
+        assert_eq!(output.status, 0);
+        assert_eq!(output.stdout.len(), 7);
+        assert_eq!(output.stdout, b"first\ns");
+    }
 
     #[tokio::test]
     async fn run_kills_timed_out_process_before_it_can_run_delayed_side_effect() {
