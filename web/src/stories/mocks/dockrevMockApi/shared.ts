@@ -352,6 +352,7 @@ export type MockDebug = {
   serviceTagSuggestionCalls: number
   lastServiceTagSuggestionUrl: string | null
   lastComposeTagRequest: unknown | null
+  resourceUsageHistoryCalls: number
   resourceUsageEventSourceCalls: number
   resourceUsageEventSourceCloseCalls: number
   managementEventSourceCalls: number
@@ -769,6 +770,7 @@ export function makeMockDebug(): MockDebug {
     serviceTagSuggestionCalls: 0,
     lastServiceTagSuggestionUrl: null,
     lastComposeTagRequest: null,
+    resourceUsageHistoryCalls: 0,
     resourceUsageEventSourceCalls: 0,
     resourceUsageEventSourceCloseCalls: 0,
     managementEventSourceCalls: 0,
