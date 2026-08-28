@@ -12,7 +12,7 @@
 
 - `useServiceDetailResourceMonitor` 是服务详情页唯一的资源状态所有者：统一加载窗口历史、合并晚到 REST 与较新的 SSE 样本、管理可见性/离线/禁用态，并为每个可见页只创建一条资源 SSE。
 - 顶部摘要在概览、监控和其它详情子页共享 controller 的 1 小时实时快照；受控 `ServiceResourcePanel` 使用同一快照，短窗口显示实时点，`7d`/`30d` 保留聚合历史。
-- Storybook mock 覆盖历史末点与 SSE tick 分离、顶部/面板同步、长窗口隔离、隐藏页暂停与前台 snapshot 恢复，以及离线/禁用态不建连接。
+- Storybook mock 覆盖历史末点与 SSE tick 分离、顶部/面板同步、长窗口隔离、隐藏页暂停与前台 snapshot 恢复，以及离线/禁用态不建连接。前端从 `hidden` 恢复到 `visible` 时会复用 `historyReloadTick` 回补当前窗口历史；非 `1h` 窗口同时回补 `1h` 摘要，随后由既有 SSE 继续实时追加，不改变服务端采样或事件契约。
 
 ## Coverage / rollout summary
 

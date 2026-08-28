@@ -181,6 +181,7 @@ export function useServiceDetailResourceMonitor(props: {
   const windowKeyRef = useRef(windowKey)
   const panelHistoryRequestIdRef = useRef(0)
   const summaryHistoryRequestIdRef = useRef(0)
+  const previousPageVisibilityRef = useRef(isPageVisible)
 
   windowKeyRef.current = windowKey
 
@@ -245,6 +246,14 @@ export function useServiceDetailResourceMonitor(props: {
     document.addEventListener('visibilitychange', onVisibilityChange)
     return () => document.removeEventListener('visibilitychange', onVisibilityChange)
   }, [])
+
+  useEffect(() => {
+    const wasVisible = previousPageVisibilityRef.current
+    previousPageVisibilityRef.current = isPageVisible
+    if (!isPageVisible || wasVisible || readonly || !isOnline || monitorDisabled) return
+    setHistoryTrigger('background')
+    setHistoryReloadTick((current) => current + 1)
+  }, [isOnline, isPageVisible, monitorDisabled, readonly])
 
   useEffect(() => {
     if (readonly || !isOnline || monitorDisabled) {
@@ -333,7 +342,7 @@ export function useServiceDetailResourceMonitor(props: {
     return () => {
       cancelled = true
     }
-  }, [isOnline, monitorDisabled, readonly, serviceId, windowKey])
+  }, [historyReloadTick, isOnline, monitorDisabled, readonly, serviceId, windowKey])
 
   useEffect(() => {
     if (readonly || !isOnline || !isPageVisible || monitorDisabled) {

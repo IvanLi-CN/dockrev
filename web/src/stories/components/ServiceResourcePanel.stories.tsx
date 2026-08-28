@@ -459,16 +459,21 @@ export const WindowSwitchContract: Story = {
 export const VisibilityPauseResume: Story = {
   parameters: { dockrevApiScenario: 'default' },
   play: async ({ canvasElement }) => {
+    await waitForCondition(() => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageHistoryCalls ?? 0) === 1)
     await waitForCondition(() => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageEventSourceCalls ?? 0) === 1)
     const previousVisibility = document.visibilityState
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
     document.dispatchEvent(new Event('visibilitychange'))
     await waitForCondition(() => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageEventSourceCloseCalls ?? 0) >= 1)
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    expectStory(Number(globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageHistoryCalls ?? 0) === 1, 'hidden page should not reload resource history')
     expectStory(canvasElement.textContent?.includes('页面不可见，实时连接已暂停'), 'hidden page should pause its resource stream')
 
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
     document.dispatchEvent(new Event('visibilitychange'))
+    await waitForCondition(() => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageHistoryCalls ?? 0) === 2)
     await waitForCondition(() => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageEventSourceCalls ?? 0) === 2)
+    expectStory(Number(globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageHistoryCalls ?? 0) === 2, 'foreground page should reload resource history once')
     expectStory(Number(globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageEventSourceCalls ?? 0) === 2, 'foreground page should resume with a fresh resource stream')
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: previousVisibility })
   },

@@ -841,6 +841,8 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
   }
 
   if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/resource-usage/history')) {
+    const debug = globalThis.__DOCKREV_MOCK_DEBUG__ ?? (globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug())
+    debug.resourceUsageHistoryCalls += 1
     const parts = urlPath.split('/').filter(Boolean)
     const serviceId = decodeURIComponent(parts[2] ?? '')
     const found = findService(serviceId)

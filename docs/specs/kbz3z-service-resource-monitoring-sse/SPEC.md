@@ -148,7 +148,6 @@
   state: `global coordinator settings`
   evidence_note: 资源监控卡片明确展示全局历史采样周期、每周期一次运行容器发现、历史/SSE 项目采集复用和固定 1 天原始留存。
 
-PR: include
 
 ![资源监控全局协调设置](./assets/settings-resource-monitor-coordinator-final.png)
 
@@ -163,7 +162,6 @@ PR: include
   state: `high variation with a missing memory sample`
   evidence_note: 固定 1280x720 浏览器视口。资源面板是唯一容器；指标摘要、工具栏、`3m / 1h / 24h` 时间窗口、当前值与图表以无框分区呈现。25 个样本等间隔覆盖一小时，连续指标以双侧微圆角的水平保持和垂直跳变呈现稳定基线与少量可解释波动，PIDs 保持直角阶梯。
 
-PR: include
 
 ![服务资源监控单调曲线](./assets/service-resource-monotone-curves.png)
 
@@ -178,7 +176,6 @@ PR: include
   state: `high variation mobile CPU view`
   evidence_note: 固定 375x900 浏览器视口。CPU、网络与 PIDs 切换均无横向溢出；`3m / 1h / 24h` 时间窗口、摘要、指标切换、当前值与趋势图在唯一面板内按单列稳定排列，未形成嵌套卡片。
 
-PR: include
 
 ![服务资源监控单调曲线移动端](./assets/service-resource-monotone-curves-mobile.png)
 
@@ -194,7 +191,6 @@ PR: include
   state: `30d aggregated CPU history`
   evidence_note: 固定 1280x720 浏览器视口。资源监控工具栏展示 `3m / 1h / 24h / 7d / 30d`，其中 `30d` 已选中。8,641 个五分钟聚合桶保留在响应中，图表渲染限为 480 个均值点，最近桶仍保留峰值提示。
 
-PR: include
 
 ![服务资源监控时间窗口 Contract](./assets/service-resource-window-contract.png)
 
@@ -210,7 +206,6 @@ PR: include
   state: `30d aggregate mobile toolbar`
   evidence_note: 固定 375x900 浏览器视口。时间范围控件在移动端换行，`3m / 1h / 24h / 7d / 30d` 均可见，`30d` 选中后标题和聚合历史图表不溢出视口。
 
-PR: include
 
 ![服务资源监控时间窗口 Contract 移动端](./assets/service-resource-window-contract-mobile.png)
 
