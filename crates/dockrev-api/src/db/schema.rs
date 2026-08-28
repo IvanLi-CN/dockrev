@@ -11,11 +11,11 @@ use super::*;
 mod schema_backup_cleanup_state;
 #[path = "schema_job_history_retention.rs"]
 mod schema_job_history_retention;
+mod schema_jobs;
 #[path = "schema_lifecycle_events.rs"]
 mod schema_lifecycle_events;
 mod schema_resource_latest;
 mod schema_settings_release_notes;
-
 pub(super) fn ensure_parent_dir(path: &Path) -> anyhow::Result<PathBuf> {
     let path = path.to_path_buf();
     if let Some(parent) = path.parent()
@@ -113,20 +113,6 @@ fn ensure_service_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
 
     Ok(())
 }
-
-fn ensure_job_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
-    let mut stmt = conn.prepare("PRAGMA table_info(jobs)")?;
-    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-    let existing = rows.collect::<Result<Vec<_>, _>>()?;
-    if !existing
-        .iter()
-        .any(|name| name == "rollback_evidence_tar_zstd")
-    {
-        conn.execute_batch("ALTER TABLE jobs ADD COLUMN rollback_evidence_tar_zstd BLOB")?;
-    }
-    Ok(())
-}
-
 fn ensure_notification_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     #[derive(Clone)]
     struct Col<'a> {
@@ -170,7 +156,6 @@ fn ensure_notification_columns(conn: &rusqlite::Connection) -> anyhow::Result<()
 
     Ok(())
 }
-
 fn ensure_settings_deploy_welcome_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     #[derive(Clone)]
     struct Col<'a> {
@@ -685,7 +670,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 
 pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     ensure_service_columns(conn)?;
-    ensure_job_columns(conn)?;
+    schema_jobs::ensure_columns(conn)?;
     ensure_notification_columns(conn)?;
     ensure_settings_deploy_welcome_columns(conn)?;
     ensure_settings_resource_monitor_columns(conn)?;
