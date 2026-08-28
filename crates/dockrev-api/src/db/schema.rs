@@ -11,6 +11,7 @@ use super::*;
 mod schema_backup_cleanup_state;
 #[path = "schema_job_history_retention.rs"]
 mod schema_job_history_retention;
+#[path = "schema_jobs.rs"]
 mod schema_jobs;
 #[path = "schema_lifecycle_events.rs"]
 mod schema_lifecycle_events;
@@ -25,7 +26,6 @@ pub(super) fn ensure_parent_dir(path: &Path) -> anyhow::Result<PathBuf> {
     }
     Ok(path)
 }
-
 fn ensure_service_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     #[derive(Clone)]
     struct Col<'a> {
