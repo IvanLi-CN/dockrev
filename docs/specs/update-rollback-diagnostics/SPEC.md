@@ -81,6 +81,7 @@ Docker 的 health policy 由镜像的 `HEALTHCHECK` 定义，也可由 Compose `
 
 - Docker healthcheck 不存在时，沿用当前无需健康等待的接受路径，不生成 health rollback evidence。
 - Docker Engine 或 Compose 版本不提供 `startInterval` 时，使用 Docker 默认 `5s`；它只参与 deadline 推导，不要求改写镜像或 Compose 文件。
+- 候选存在 health status 但有效 policy 读取失败时，不套用固定期限；Dockrev 仅等待 Docker 明确报告 `healthy` 或 `unhealthy`，并在失败证据 metadata 中保留缺失的 policy/deadline 状态。
 - 采集命令超时、候选在采集时消失、磁盘写入失败或 archive 持久化失败时，任务仍继续 rollback。若 rollback 成功，job status 仍为 `rolled_back`；`rollbackEvidence.status` 使用 `available`、`incomplete` 或 `absent` 说明归档状态。
 - 若进程在 spool 成功、archive 完成前退出，启动恢复依据 job ID 和 spool 状态尝试归档。恢复不得把未成功归档的 spool 当作可删除文件。
 - 一个批量 update job 可以包含多份失败证据。每个服务都有 `1 MiB` 日志上限；archive 总大小随失败服务数增长，并随 job 的既有保留期删除。

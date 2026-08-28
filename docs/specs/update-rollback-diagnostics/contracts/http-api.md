@@ -39,7 +39,7 @@ Returns the original BLOB without decompression or JSON embedding.
 
 | Response | Meaning |
 | --- | --- |
-| `200 OK` | `Content-Type: application/zstd`; attachment filename ends in `.tar.zst`; body is the job archive. |
+| `200 OK` | `Content-Type: application/zstd`; `Cache-Control: private, no-store`; attachment filename ends in `.tar.zst`; body is the job archive. |
 | `401` or `403` | Existing authorization behavior for a request rejected by `require_user`. |
 | `404` | The job does not exist or has no completed archive. |
 | `500` | Stored archive cannot be read; the response body contains no archive bytes. |
