@@ -149,6 +149,7 @@ Docker 的 health policy 由镜像的 `HEALTHCHECK` 定义，也可由 Compose `
 - `cargo test -p dockrev-api`
 - 相关 Rust formatting and lint checks
 - Web typecheck, Storybook build and targeted interaction tests
+- Rust transition tests and jobs schema migration checks live in sibling modules so the repository file-budget gate remains within its 1500-line limit.
 
 ## 风险 / 开放问题 / 假设（Risks, Open Questions, Assumptions）
 
