@@ -137,6 +137,13 @@ Docker 的 health policy 由镜像的 `HEALTHCHECK` 定义，也可由 Compose `
 - 下载入口的 interaction 覆盖授权 metadata、可用 archive 与不可用提示。
 - 实现阶段按项目视觉证据流程验证 Job Detail 桌面和移动布局。
 
+## Visual Evidence
+
+- Storybook canvas: `pages-jobdetailpage--health-rollback`.
+- Confirmed desktop capture: [`rollback-evidence-desktop.png`](./assets/rollback-evidence-desktop.png), viewport `1440x900`.
+- Confirmed mobile capture: [`rollback-evidence-mobile.png`](./assets/rollback-evidence-mobile.png), viewport `393x852`; evidence metadata and download action remain on one row without horizontal overflow.
+- Captures are mock-only, contain no production data, and were confirmed by the owner before persistence.
+
 ### Quality checks
 
 - `cargo test -p dockrev-api`
