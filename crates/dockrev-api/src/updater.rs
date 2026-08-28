@@ -691,7 +691,7 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
                         service_id = %svc.id,
                         container_id = %active_container_id,
                         error = %error,
-                        "candidate health policy unavailable; using legacy deadline"
+                        "candidate health policy unavailable; waiting for an explicit health result"
                     );
                     None
                 }
@@ -725,12 +725,12 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
                     message: format!("waiting for healthcheck on {}", svc.name),
                 },
             );
-            let health_deadline = health_policy
-                .as_ref()
-                .map(|policy| {
-                    crate::rollback_evidence::derive_deadline(policy, Duration::from_secs(2))
-                })
-                .unwrap_or_else(|| Duration::from_secs(90));
+            // A healthcheck with an unreadable policy has no trustworthy finite deadline. Do not
+            // recreate the old fixed 90-second rollback; wait for Docker to report healthy or
+            // unhealthy and preserve the explicit policy-missing state in evidence metadata.
+            let health_deadline = health_policy.as_ref().map(|policy| {
+                crate::rollback_evidence::derive_deadline(policy, Duration::from_secs(2))
+            });
             let health_result = wait_healthy_with_status(
                 runner,
                 &docker_cfg,
@@ -750,7 +750,7 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
                             &active_container_id,
                             health_result.last_status.trim(),
                             health_policy.clone(),
-                            Some(health_deadline),
+                            health_deadline,
                         )
                         .await;
                 }
@@ -1185,7 +1185,7 @@ async fn wait_healthy(
         runner,
         docker_cfg,
         container_id,
-        timeout,
+        Some(timeout),
         idempotent_retry_policy,
     )
     .await?
@@ -1201,10 +1201,10 @@ async fn wait_healthy_with_status(
     runner: &dyn CommandRunner,
     docker_cfg: &docker_runner::DockerRunnerConfig,
     container_id: &str,
-    timeout: Duration,
+    timeout: Option<Duration>,
     idempotent_retry_policy: IdempotentRetryPolicy,
 ) -> anyhow::Result<HealthWaitResult> {
-    let deadline = tokio::time::Instant::now() + timeout;
+    let deadline = timeout.map(|duration| tokio::time::Instant::now() + duration);
     loop {
         let status = run_to_string_with_retry(
             runner,
@@ -1230,7 +1230,7 @@ async fn wait_healthy_with_status(
             }
             _ => {}
         }
-        if tokio::time::Instant::now() >= deadline {
+        if deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
             return Ok(HealthWaitResult {
                 healthy: false,
                 last_status: status,

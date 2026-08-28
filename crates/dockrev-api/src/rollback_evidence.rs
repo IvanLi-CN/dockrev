@@ -510,7 +510,14 @@ pub fn parse_health_policy(raw: &[u8]) -> Option<HealthPolicy> {
             .and_then(|n| u64::try_from(n).ok())
             // Docker durations are nanoseconds. Round each component upward so the resulting
             // integer policy can only extend, never shorten, the health-policy deadline.
-            .map(|n| n.div_ceil(1_000_000_000))
+            // An explicit zero uses Docker's documented default for duration fields.
+            .map(|n| {
+                if n == 0 {
+                    default
+                } else {
+                    n.div_ceil(1_000_000_000)
+                }
+            })
             .unwrap_or(default)
     };
     Some(HealthPolicy {
@@ -621,6 +628,16 @@ mod tests {
             derive_deadline(&fractional, Duration::from_secs(2)),
             Duration::from_secs(21)
         );
+
+        let zero_values = parse_health_policy(
+            br#"{"Interval":0,"Timeout":0,"StartPeriod":0,"StartInterval":0,"Retries":0}"#,
+        )
+        .expect("zero-valued policy should parse");
+        assert_eq!(zero_values.interval_seconds, 30);
+        assert_eq!(zero_values.timeout_seconds, 30);
+        assert_eq!(zero_values.start_period_seconds, 0);
+        assert_eq!(zero_values.start_interval_seconds, 5);
+        assert_eq!(zero_values.retries, 0);
     }
 
     #[tokio::test]

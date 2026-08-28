@@ -113,7 +113,7 @@ async fn service_backup_records_report_stack_wide_retention_metadata() {
 }
 
 #[tokio::test]
-async fn rollback_evidence_download_requires_user_and_keeps_archive_out_of_job_json() {
+async fn rollback_evidence_api_download_requires_user_and_keeps_archive_out_of_job_json() {
     let state = test_state_with_authz(":memory:", Some("alice"), None, false).await;
     let job_id = ids::new_job_id();
     let job = crate::api::types::JobRecord::new_running(
@@ -176,6 +176,10 @@ async fn rollback_evidence_download_requires_user_and_keeps_archive_out_of_job_j
     assert_eq!(
         response.headers().get("content-type").unwrap(),
         "application/zstd"
+    );
+    assert_eq!(
+        response.headers().get("cache-control").unwrap(),
+        "private, no-store"
     );
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(bytes.as_ref(), &[0x28, 0xb5, 0x2f, 0xfd]);

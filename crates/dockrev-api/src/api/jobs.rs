@@ -300,6 +300,10 @@ pub(super) async fn download_rollback_evidence(
         header::CONTENT_DISPOSITION,
         HeaderValue::from_static("attachment; filename=rollback-evidence.tar.zst"),
     );
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, no-store"),
+    );
     Ok(response)
 }
 
