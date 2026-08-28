@@ -28,6 +28,24 @@ _Avoid_: deleted backup, cleanup failure
 - `rollback target` is the single backend-selected version that can restore the service to the previous successful update state.
 - A rollback target is valid only when its `currentDigest` matches the service digest in the same refresh generation.
 
+## Update Rollback Diagnostics
+
+**candidate container**:
+The post-apply container that runs an update candidate before Dockrev accepts it or begins automatic rollback. It is distinct from the rollback container that restores the prior image.
+_Avoid_: new container, updated container
+
+**rollback evidence**:
+A bounded diagnosis artifact captured from a candidate container before automatic rollback begins. It preserves captured output verbatim, belongs to the update record, and is distinct from normal service logs.
+_Avoid_: rollback logs, service logs
+
+**health status**:
+Docker's candidate-specific health evaluation: `starting`, `healthy`, or `unhealthy`. It does not by itself describe the container process state, restart count, exit error, or health-check output.
+_Avoid_: container status, readiness result
+
+**health-policy deadline**:
+The time boundary after which a continuously `starting` candidate is treated as a health failure. It is derived solely from the candidate's effective health policy.
+_Avoid_: fixed health timeout, Docker unhealthy time
+
 ## Refresh Generation
 
 - `request generation` is the monotonically increasing stack refresh request id.
