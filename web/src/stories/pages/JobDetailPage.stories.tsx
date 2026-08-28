@@ -364,7 +364,10 @@ export const LegacyProgressFallback: Story = {
 }
 
 export const HealthRollback: Story = {
-  parameters: { dockrevApiScenario: 'queue-health-rollback' },
+  parameters: {
+    dockrevApiScenario: 'queue-health-rollback',
+    viewport: { defaultViewport: 'dockrevMobile' },
+  },
   render: () => {
     return renderJobDetailSurface(
       <PageHarness
