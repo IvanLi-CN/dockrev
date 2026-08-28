@@ -1023,11 +1023,12 @@ html[data-theme="light"] .brandLogoForLight {
   margin-top: 4px;
 }
 
-@media (max-width: 640px) {
-  .jobRollbackEvidence {
-    align-items: flex-start;
-    flex-direction: column;
-  }
+.jobRollbackEvidence > :first-child {
+  min-width: 0;
+}
+
+.jobRollbackEvidence > .btn {
+  flex: 0 0 auto;
 }
 
 .jobDetailLogsCard > .sectionRow {
