@@ -4,32 +4,33 @@
 
 ## Current Status
 
-- Implementation: not started
+- Implementation: complete locally; delivery gates remain
 - Lifecycle: active
 - Catalog note: `docs/specs/README.md` records this topic in the canonical catalog.
 
 ## Coverage / Rollout Summary
 
-- No runtime code, migration, production configuration, deployment, or update retry is part of this design handoff.
-- Implementation begins only after the owner authorizes it.
+- Runtime code, migration, API, UI, and recovery paths are implemented on the locked fast-track branch.
+- Production configuration, deployment, and update retry remain explicitly out of scope.
 
 ## Implementation Order
 
-1. Add the nullable jobs BLOB migration and database methods for evidence metadata, archive storage, terminal-job retention, and recovery lookup.
-2. Add the private job spool abstraction and bounded, non-streamed candidate capture path. It must preserve original content in spool files without routing it through `DbLoggingRunner`.
-3. Replace the fixed health wait with candidate effective-policy inspection and the specified deadline calculation.
-4. Persist candidate files before each health-triggered rollback; assemble, persist, and recover the `tar.zst` archive at the job boundary.
-5. Extend job summary and API contracts, then add the authorized archive download endpoint.
-6. Add the Job Detail download affordance and all focused, API, migration, recovery, and shared-testbox validation described in `SPEC.md`.
+1. Completed the nullable jobs BLOB migration and database methods for evidence metadata, archive storage, terminal-job retention, and recovery lookup.
+2. Completed the private job spool and bounded, non-streamed candidate capture path with original bytes preserved.
+3. Completed candidate effective-policy inspection and policy-derived health deadline calculation.
+4. Completed pre-rollback capture, job-boundary `tar.zst` assembly, startup recovery, and terminal cleanup integration.
+5. Completed job summary metadata and the authorized archive download endpoint.
+6. Completed the Job Detail download affordance; focused and environment-dependent validation is tracked by the delivery gate.
 
 ## Remaining Gaps
 
-- All acceptance criteria remain unimplemented.
+- Focused Rust and web validation is complete locally; shared Docker and delivery checks remain environment gates.
 - No production update has been retried, so the root cause of the historical candidate failure remains unproven.
 
 ## Related Changes
 
-- None
+- Runtime: `crates/dockrev-api/src/rollback_evidence.rs`, updater, DB, API, and Job Detail integration.
+- Data/API contracts: `./contracts/db.md`, `./contracts/http-api.md`.
 
 ## References
 

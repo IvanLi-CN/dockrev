@@ -81,7 +81,7 @@ Docker 的 health policy 由镜像的 `HEALTHCHECK` 定义，也可由 Compose `
 
 - Docker healthcheck 不存在时，沿用当前无需健康等待的接受路径，不生成 health rollback evidence。
 - Docker Engine 或 Compose 版本不提供 `startInterval` 时，使用 Docker 默认 `5s`；它只参与 deadline 推导，不要求改写镜像或 Compose 文件。
-- 采集命令超时、候选在采集时消失、磁盘写入失败或 archive 持久化失败时，任务仍继续 rollback。若 rollback 成功，job status 仍为 `rolled_back`；`rollbackEvidence.status` 说明不完整或不可用的原因。
+- 采集命令超时、候选在采集时消失、磁盘写入失败或 archive 持久化失败时，任务仍继续 rollback。若 rollback 成功，job status 仍为 `rolled_back`；`rollbackEvidence.status` 使用 `available`、`incomplete` 或 `absent` 说明归档状态。
 - 若进程在 spool 成功、archive 完成前退出，启动恢复依据 job ID 和 spool 状态尝试归档。恢复不得把未成功归档的 spool 当作可删除文件。
 - 一个批量 update job 可以包含多份失败证据。每个服务都有 `1 MiB` 日志上限；archive 总大小随失败服务数增长，并随 job 的既有保留期删除。
 
@@ -114,12 +114,12 @@ Docker 的 health policy 由镜像的 `HEALTHCHECK` 定义，也可由 Compose `
 
 ## 验收清单（Acceptance Checklist）
 
-- [ ] 健康期限来自 candidate container 的有效 policy。
-- [ ] 健康失败和 deadline 失败均在回滚前保存证据。
-- [ ] 单服务日志首部完整行上限为 `1 MiB`。
-- [ ] 批量更新的服务证据在 archive 中分离。
-- [ ] 失败证据不会改变自动回滚语义。
-- [ ] archive 的授权、下载与保留期边界清晰。
+- [x] 健康期限来自 candidate container 的有效 policy。
+- [x] 健康失败和 deadline 失败均在回滚前保存证据。
+- [x] 单服务日志首部完整行上限为 `1 MiB`。
+- [x] 批量更新的服务证据在 archive 中分离。
+- [x] 失败证据不会改变自动回滚语义。
+- [x] archive 的授权、下载与保留期边界清晰。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
 

@@ -114,6 +114,19 @@ fn ensure_service_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn ensure_job_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(jobs)")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let existing = rows.collect::<Result<Vec<_>, _>>()?;
+    if !existing
+        .iter()
+        .any(|name| name == "rollback_evidence_tar_zstd")
+    {
+        conn.execute_batch("ALTER TABLE jobs ADD COLUMN rollback_evidence_tar_zstd BLOB")?;
+    }
+    Ok(())
+}
+
 fn ensure_notification_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     #[derive(Clone)]
     struct Col<'a> {
@@ -672,6 +685,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 
 pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     ensure_service_columns(conn)?;
+    ensure_job_columns(conn)?;
     ensure_notification_columns(conn)?;
     ensure_settings_deploy_welcome_columns(conn)?;
     ensure_settings_resource_monitor_columns(conn)?;
@@ -1393,7 +1407,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   created_at TEXT NOT NULL,
   started_at TEXT,
   finished_at TEXT,
-  summary_json TEXT NOT NULL
+  summary_json TEXT NOT NULL,
+  rollback_evidence_tar_zstd BLOB
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_stack_id ON jobs(stack_id);

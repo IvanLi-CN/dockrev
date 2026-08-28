@@ -279,6 +279,30 @@ pub(super) async fn get_job(
     }))
 }
 
+pub(super) async fn download_rollback_evidence(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(job_id): Path<String>,
+) -> Result<Response, ApiError> {
+    let _user = require_user(&state, &headers).await?;
+    let archive = state
+        .db
+        .get_rollback_evidence_archive(&job_id)
+        .await
+        .map_err(map_internal)?
+        .ok_or_else(|| ApiError::not_found("rollback evidence not found"))?;
+    let mut response = Bytes::from(archive).into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/zstd"),
+    );
+    response.headers_mut().insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_static("attachment; filename=rollback-evidence.tar.zst"),
+    );
+    Ok(response)
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct StopJobResponse {

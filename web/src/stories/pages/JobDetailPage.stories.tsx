@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react'
 import type { ReactNode } from 'react'
 import { JobDetailPage } from '../../pages/JobDetailPage'
 import { PageHarness } from '../mocks/PageHarness'
-import { RUNNING_JOB_ID } from '../mocks/dockrevMockApi/fixturesQueues'
+import { buildQueueHealthRollback, RUNNING_JOB_ID } from '../mocks/dockrevMockApi/fixturesQueues'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
 import { expectNearlyEqual, expectStory, findButton, waitForCondition } from './storyAssertions'
 
@@ -395,8 +395,76 @@ export const HealthRollback: Story = {
     if (!pageText.includes('健康检查失败，已回滚')) {
       throw new globalThis.Error('friendly rollback reason missing')
     }
+    if (!pageText.includes('归档可用') || !findButton(canvasElement, '下载证据')) {
+      throw new globalThis.Error('rollback evidence download affordance missing')
+    }
     if (pageText.includes('healthcheck passed for api')) {
       throw new globalThis.Error('healthcheck passed log should not appear after rollback')
+    }
+  },
+}
+
+const incompleteEvidenceFixture = buildQueueHealthRollback()
+const incompleteEvidenceJob = incompleteEvidenceFixture.jobById['job-health-rollback']
+if (incompleteEvidenceJob && typeof incompleteEvidenceJob.summary === 'object' && incompleteEvidenceJob.summary !== null) {
+  const existingSummary = incompleteEvidenceJob.summary as Record<string, unknown>
+  incompleteEvidenceJob.summary = {
+    ...existingSummary,
+    rollbackEvidence: {
+      status: 'incomplete',
+      failedCandidates: 1,
+      archiveFormat: 'tar',
+      compression: 'zstd',
+      archiveSizeBytes: null,
+      services: [],
+      errors: ['archive unavailable'],
+    },
+  }
+  incompleteEvidenceFixture.jobs = incompleteEvidenceFixture.jobs.map((job) => job.id === incompleteEvidenceJob.id ? { ...job, summary: incompleteEvidenceJob.summary } : job)
+}
+
+export const HealthRollbackEvidenceIncomplete: Story = {
+  parameters: {
+    dockrevApiScenario: 'queue-health-rollback',
+    dockrevInitialFixture: incompleteEvidenceFixture,
+  },
+  render: () => renderJobDetailSurface(
+    <PageHarness route={{ name: 'job', jobId: 'job-health-rollback' }} title="任务详情" pageSubtitle="证据归档未完成时保留状态，但不提供下载入口">
+      {({ onTopActions }) => <JobDetailPage jobId="job-health-rollback" onTopActions={onTopActions} />}
+    </PageHarness>,
+  ),
+  play: async ({ canvasElement }) => {
+    await sleep(120)
+    const pageText = canvasElement.textContent ?? ''
+    if (!pageText.includes('归档不完整') || findButton(canvasElement, '下载证据')) {
+      throw new globalThis.Error('incomplete rollback evidence state is incorrect')
+    }
+  },
+}
+
+const absentEvidenceFixture = buildQueueHealthRollback()
+const absentEvidenceJob = absentEvidenceFixture.jobById['job-health-rollback']
+if (absentEvidenceJob && typeof absentEvidenceJob.summary === 'object' && absentEvidenceJob.summary !== null) {
+  const summaryWithoutEvidence = { ...(absentEvidenceJob.summary as Record<string, unknown>) }
+  delete summaryWithoutEvidence.rollbackEvidence
+  absentEvidenceJob.summary = summaryWithoutEvidence
+  absentEvidenceFixture.jobs = absentEvidenceFixture.jobs.map((job) => job.id === absentEvidenceJob.id ? { ...job, summary: summaryWithoutEvidence } : job)
+}
+
+export const HealthRollbackEvidenceAbsent: Story = {
+  parameters: {
+    dockrevApiScenario: 'queue-health-rollback',
+    dockrevInitialFixture: absentEvidenceFixture,
+  },
+  render: () => renderJobDetailSurface(
+    <PageHarness route={{ name: 'job', jobId: 'job-health-rollback' }} title="任务详情" pageSubtitle="没有候选证据时不显示空的归档入口">
+      {({ onTopActions }) => <JobDetailPage jobId="job-health-rollback" onTopActions={onTopActions} />}
+    </PageHarness>,
+  ),
+  play: async ({ canvasElement }) => {
+    await sleep(120)
+    if (canvasElement.textContent?.includes('回滚证据') || findButton(canvasElement, '下载证据')) {
+      throw new globalThis.Error('absent rollback evidence should not render an evidence section')
     }
   },
 }

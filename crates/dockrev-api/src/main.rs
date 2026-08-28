@@ -36,6 +36,7 @@ mod preflight;
 mod registry;
 mod repo_link_backfill;
 mod resource_usage;
+mod rollback_evidence;
 mod runner;
 mod runtime_scan;
 mod schedules;
@@ -296,6 +297,11 @@ async fn main() -> anyhow::Result<()> {
     // Recover managed override transactions even when the interrupted update had no persisted
     // backup checkpoint. This clears candidate pins left between atomic commit and service apply.
     recover_managed_override_transactions(&state).await;
+    let evidence_db = state.db.clone();
+    let evidence_db_path = state.config.db_path.clone();
+    tokio::spawn(async move {
+        rollback_evidence::recover_orphaned_evidence(&evidence_db, &evidence_db_path).await;
+    });
     let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
         .unwrap_or_else(|| "linux/amd64".to_string());
     state.snapshot_worker.spawn_startup_warmup(&host_platform);
@@ -319,6 +325,7 @@ async fn main() -> anyhow::Result<()> {
         state.db.clone(),
         state.metrics.clone(),
         resource_sampling,
+        state.config.db_path.clone(),
     );
     if let Err(err) = repo_link_backfill::enqueue_startup_backfill_if_needed(state.as_ref()).await {
         tracing::warn!(error = %err, "failed to enqueue startup repo link backfill");

@@ -12,10 +12,10 @@ The existing `job.summary` may contain `rollbackEvidence` metadata when evidence
 {
   "rollbackEvidence": {
     "status": "available",
-    "format": "tar",
+    "archiveFormat": "tar",
     "compression": "zstd",
     "failedCandidates": 2,
-    "archiveBytes": 4096,
+    "archiveSizeBytes": 4096,
     "services": [
       { "serviceId": "service-a", "logsTruncated": false },
       { "serviceId": "service-b", "logsTruncated": true }
@@ -24,7 +24,8 @@ The existing `job.summary` may contain `rollbackEvidence` metadata when evidence
 }
 ```
 
-- `status` is `available`, `capture_incomplete`, `archive_failed`, or `unavailable`.
+- `status` is `available`, `incomplete`, or `absent`.
+- `absent` omits the archive metadata from jobs that produced no failed candidate evidence.
 - An archive can be `available` even when an individual service capture is incomplete; that service's metadata explains which collection step failed.
 - Jobs without evidence omit `rollbackEvidence`.
 

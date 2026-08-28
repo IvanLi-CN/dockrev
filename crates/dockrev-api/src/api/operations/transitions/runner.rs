@@ -107,6 +107,10 @@ pub(crate) async fn recover_interrupted_update_backups(state: Arc<AppState>) {
             }
         }
     }
+
+    // The controlled recovery path finalizes jobs after the initial startup scan. Retry evidence
+    // recovery now so a spool belonging to one of those jobs is not stranded until next restart.
+    crate::rollback_evidence::recover_orphaned_evidence(&state.db, &state.config.db_path).await;
 }
 
 #[async_trait::async_trait]
@@ -145,6 +149,25 @@ impl crate::runner::CommandRunner for DbLoggingRunner {
         let mut on_stdout = |_chunk: Vec<u8>| {};
         let mut on_stderr = |_chunk: Vec<u8>| {};
         self.run_stream(spec, timeout, &mut on_stdout, &mut on_stderr)
+            .await
+    }
+
+    async fn run_raw(
+        &self,
+        spec: crate::runner::CommandSpec,
+        timeout: std::time::Duration,
+    ) -> anyhow::Result<crate::runner::RawCommandOutput> {
+        self.inner.run_raw(spec, timeout).await
+    }
+
+    async fn run_raw_bounded(
+        &self,
+        spec: crate::runner::CommandSpec,
+        timeout: std::time::Duration,
+        max_stdout_bytes: usize,
+    ) -> anyhow::Result<crate::runner::RawCommandOutput> {
+        self.inner
+            .run_raw_bounded(spec, timeout, max_stdout_bytes)
             .await
     }
 

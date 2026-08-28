@@ -1,6 +1,7 @@
 use super::*;
 use crate::backup::BackupRecoveryStore;
 use crate::managed_override;
+use crate::rollback_evidence::RollbackEvidenceContext;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 pub(crate) type UpdateStackSummaries = Vec<serde_json::Value>;
@@ -115,6 +116,17 @@ pub(crate) async fn run_update_job(
         .unwrap_or(TransitionJobKind::Update);
     let stop_signal = (job_kind == TransitionJobKind::Update && req.mode.as_str() == "apply")
         .then(|| state.update_stop_hub.subscribe(&job_id));
+    let evidence = if job_kind == TransitionJobKind::Update && req.mode.as_str() == "apply" {
+        match RollbackEvidenceContext::new(&job_id, &state.config.db_path) {
+            Ok(context) => Some(context),
+            Err(error) => {
+                tracing::warn!(job_id = %job_id, error = %error, "rollback evidence spool unavailable");
+                None
+            }
+        }
+    } else {
+        None
+    };
     let outcome: anyhow::Result<UpdateJobOutcome> = async {
         if matches!(job_kind, TransitionJobKind::Rollback)
             || matches!(&req.mode, UpdateMode::Apply)
@@ -871,6 +883,7 @@ pub(crate) async fn run_update_job(
                 (job_kind == TransitionJobKind::Update && req.mode.as_str() == "apply")
                     .then_some(&apply_gate as &dyn updater::UpdateApplyGate),
                 Some(&state.config.managed_override_dir),
+                evidence.clone(),
             )
             .await;
             let lifecycle_success = update_outcome.as_ref().map(|outcome| outcome.status == "success").unwrap_or(false);
@@ -1157,7 +1170,7 @@ pub(crate) async fn run_update_job(
     }
     .await;
 
-    let (final_status, stack_summaries, backups_to_cleanup, final_summary, finished_at) =
+    let (final_status, stack_summaries, backups_to_cleanup, mut final_summary, finished_at) =
         match outcome {
             Ok((final_status, stack_summaries, backups_to_cleanup, progress)) => {
                 let progress_json = serde_json::to_value(&progress)?;
@@ -1306,10 +1319,48 @@ pub(crate) async fn run_update_job(
             .await;
     }
 
+    let archive = if let Some(evidence) = evidence.as_ref() {
+        let mut evidence_summary = evidence.finalize().await;
+        let mut archive = None;
+        if evidence_summary.status == "available" {
+            match tokio::fs::read(evidence.archive_path()).await {
+                Ok(bytes) => archive = Some(bytes),
+                Err(error) => {
+                    evidence_summary.status = "incomplete";
+                    evidence_summary.archive_size_bytes = None;
+                    evidence_summary
+                        .errors
+                        .push(format!("archive read: {error}"));
+                }
+            }
+        }
+        if evidence_summary.status != "absent"
+            && let Some(summary) = final_summary.as_object_mut()
+        {
+            summary.insert(
+                "rollbackEvidence".to_string(),
+                serde_json::to_value(&evidence_summary)?,
+            );
+        }
+        archive
+    } else {
+        None
+    };
     state
         .db
-        .finish_job(&job_id, &final_status, &finished_at, &final_summary)
+        .finish_job_with_archive(
+            &job_id,
+            &final_status,
+            &finished_at,
+            &final_summary,
+            archive.clone(),
+        )
         .await?;
+    if archive.is_some()
+        && let Some(evidence) = evidence.as_ref()
+    {
+        evidence.cleanup_after_commit().await;
+    }
 
     if should_record_update_tag_history(&req, &final_status) {
         record_update_tag_history(state.as_ref(), &req, &finished_at).await;

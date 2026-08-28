@@ -331,6 +331,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/jobs", get(list_jobs))
         .route("/api/jobs/events", get(jobs_events))
         .route("/api/jobs/{job_id}", get(get_job))
+        .route(
+            "/api/jobs/{job_id}/rollback-evidence",
+            get(download_rollback_evidence),
+        )
         .route("/api/jobs/{job_id}/stop", post(stop_job))
         .route("/api/jobs/{job_id}/events", get(job_events))
         .route(

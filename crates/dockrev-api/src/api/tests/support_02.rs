@@ -581,14 +581,28 @@ impl CommandRunner for HealthRollbackUpdateRunner {
                     stderr: String::new(),
                 }
             }
-            6 if spec.args == vec!["inspect", "--format", "{{.Image}}", "container_new"] => {
+            6 if spec.args
+                == vec![
+                    "inspect",
+                    "--format",
+                    "{{json .Config.Healthcheck}}",
+                    "container_new",
+                ] =>
+            {
+                CommandOutput {
+                    status: 0,
+                    stdout: "null\n".to_string(),
+                    stderr: String::new(),
+                }
+            }
+            7 if spec.args == vec!["inspect", "--format", "{{.Image}}", "container_new"] => {
                 CommandOutput {
                     status: 0,
                     stdout: "sha256:new\n".to_string(),
                     stderr: String::new(),
                 }
             }
-            7 if spec.args
+            8 if spec.args
                 == vec![
                     "inspect",
                     "--format",
@@ -602,14 +616,14 @@ impl CommandRunner for HealthRollbackUpdateRunner {
                     stderr: String::new(),
                 }
             }
-            8 if spec.args == vec!["image", "tag", "sha256:old", "ghcr.io/acme/web:5.2"] => {
+            9 if spec.args == vec!["image", "tag", "sha256:old", "ghcr.io/acme/web:5.2"] => {
                 CommandOutput {
                     status: 0,
                     stdout: String::new(),
                     stderr: String::new(),
                 }
             }
-            9 if spec.args.ends_with(&[
+            10 if spec.args.ends_with(&[
                 "up".to_string(),
                 "-d".to_string(),
                 "--pull".to_string(),
@@ -623,7 +637,7 @@ impl CommandRunner for HealthRollbackUpdateRunner {
                     stderr: String::new(),
                 }
             }
-            10 if spec
+            11 if spec
                 .args
                 .ends_with(&["ps".to_string(), "-q".to_string(), "web".to_string()]) =>
             {
@@ -633,7 +647,7 @@ impl CommandRunner for HealthRollbackUpdateRunner {
                     stderr: String::new(),
                 }
             }
-            11 if spec.args
+            12 if spec.args
                 == vec![
                     "inspect",
                     "--format",
@@ -647,7 +661,7 @@ impl CommandRunner for HealthRollbackUpdateRunner {
                     stderr: String::new(),
                 }
             }
-            12 if spec.args == vec!["inspect", "--format", "{{.Image}}", "container_rollback"] => {
+            13 if spec.args == vec!["inspect", "--format", "{{.Image}}", "container_rollback"] => {
                 CommandOutput {
                     status: 0,
                     stdout: "sha256:old\n".to_string(),
@@ -661,6 +675,29 @@ impl CommandRunner for HealthRollbackUpdateRunner {
         };
         *step += 1;
         Ok(out)
+    }
+
+    async fn run_raw(
+        &self,
+        spec: CommandSpec,
+        _timeout: Duration,
+    ) -> anyhow::Result<crate::runner::RawCommandOutput> {
+        let stdout = if spec.args.iter().any(|arg| arg == "--timestamps") {
+            b"candidate log line\n".to_vec()
+        } else if spec
+            .args
+            .iter()
+            .any(|arg| arg == "{{json .State}}")
+        {
+            br#"{"Status":"running","Error":"healthcheck failed","ExitCode":1,"RestartCount":1,"Health":{"Log":[]}}"#.to_vec()
+        } else {
+            Vec::new()
+        };
+        Ok(crate::runner::RawCommandOutput {
+            status: 0,
+            stdout,
+            stderr: Vec::new(),
+        })
     }
 }
 

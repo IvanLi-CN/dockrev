@@ -1009,6 +1009,27 @@ html[data-theme="light"] .brandLogoForLight {
   flex-direction: column;
 }
 
+.jobRollbackEvidence {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.jobRollbackEvidence .muted {
+  margin-top: 4px;
+}
+
+@media (max-width: 640px) {
+  .jobRollbackEvidence {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
 .jobDetailLogsCard > .sectionRow {
   align-items: flex-start;
 }
