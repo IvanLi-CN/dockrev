@@ -288,7 +288,8 @@ function ResourceLineChart(props: {
     return <div className="svcResourceChartEmpty">{emptyText}</div>
   }
 
-  const xValues = allPoints.map((point) => point.x)
+  const xValues = sampleTimes.filter(Number.isFinite)
+  if (!xValues.length) xValues.push(...allPoints.map((point) => point.x))
   const xMin = Math.min(...xValues)
   const rawXMax = Math.max(...xValues)
   const xMax = rawXMax > xMin ? rawXMax : xMin + 1000
