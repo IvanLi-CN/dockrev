@@ -236,6 +236,35 @@ function transitionLabel(transition: ServiceLifecycleProjection['events'][number
   return transition === 'started' ? '服务启动' : '服务停止'
 }
 
+function clipLifecycleToDomain(
+  lifecycle: ServiceLifecycleProjection | null | undefined,
+  xMin: number,
+  xMax: number,
+): ServiceLifecycleProjection | null {
+  if (!lifecycle) return null
+  const events = lifecycle.events.filter((event) => {
+    const timestamp = Date.parse(event.observedAt)
+    return Number.isFinite(timestamp) && timestamp >= xMin && timestamp <= xMax
+  })
+  const availabilityIntervals = lifecycle.availabilityIntervals.flatMap((interval) => {
+    const startedAt = Date.parse(interval.startedAt)
+    const stoppedAt = Date.parse(interval.stoppedAt)
+    if (!Number.isFinite(startedAt) || !Number.isFinite(stoppedAt)) return []
+    const leftTime = Math.max(Math.min(startedAt, stoppedAt), xMin)
+    const rightTime = Math.min(Math.max(startedAt, stoppedAt), xMax)
+    if (leftTime > rightTime) return []
+    const startedAtIsLater = startedAt >= stoppedAt
+    return [
+      {
+        ...interval,
+        startedAt: new Date(startedAtIsLater ? rightTime : leftTime).toISOString(),
+        stoppedAt: new Date(startedAtIsLater ? leftTime : rightTime).toISOString(),
+      },
+    ]
+  })
+  return { ...lifecycle, events, availabilityIntervals }
+}
+
 function ResourceLineChart(props: {
   series: ChartSeries[]
   yFormatter: (value: number) => string
@@ -255,15 +284,16 @@ function ResourceLineChart(props: {
     y: number
   }>
 
-  if (!allPoints.length && !lifecycle?.events.length) {
+  if (!allPoints.length) {
     return <div className="svcResourceChartEmpty">{emptyText}</div>
   }
 
-  const lifecycleTimes = (lifecycle?.events ?? []).map((event) => Date.parse(event.observedAt)).filter(Number.isFinite)
-  const xValues = [...allPoints.map((point) => point.x), ...lifecycleTimes]
+  const xValues = sampleTimes.filter(Number.isFinite)
+  if (!xValues.length) xValues.push(...allPoints.map((point) => point.x))
   const xMin = Math.min(...xValues)
   const rawXMax = Math.max(...xValues)
   const xMax = rawXMax > xMin ? rawXMax : xMin + 1000
+  const visibleLifecycle = clipLifecycleToDomain(lifecycle, xMin, xMax)
 
   const yMin = 0
   const yMaxRaw = Math.max(...allPoints.map((point) => point.y))
@@ -285,7 +315,7 @@ function ResourceLineChart(props: {
   const singleSeries = series.length === 1
   const samplingGaps = deriveResourceGapIntervals(
     sampleTimes.map((sampledAt) => ({ sampledAt: new Date(sampledAt).toISOString() })),
-    lifecycle,
+    visibleLifecycle,
   )
   const continuousGaps = samplingGaps.filter(isContinuousResourceGap)
   const chartSeries = series.map((item) => ({
@@ -313,7 +343,7 @@ function ResourceLineChart(props: {
     const timestamp = xMin + ((boundedX - box.left) / box.width) * chartRange
     const tolerance = Math.max((10 / box.width) * chartRange, 60_000)
 
-    const lifecycleInterval = (lifecycle?.availabilityIntervals ?? []).find((candidate) => {
+    const lifecycleInterval = (visibleLifecycle?.availabilityIntervals ?? []).find((candidate) => {
       const started = Date.parse(candidate.startedAt)
       const stopped = Date.parse(candidate.stoppedAt)
       if (!Number.isFinite(started) || !Number.isFinite(stopped)) return false
@@ -331,7 +361,7 @@ function ResourceLineChart(props: {
       return
     }
 
-    const lifecycleEvent = (lifecycle?.events ?? [])
+    const lifecycleEvent = (visibleLifecycle?.events ?? [])
       .map((candidate) => ({ candidate, timestamp: Date.parse(candidate.observedAt) }))
       .filter((entry) => Number.isFinite(entry.timestamp))
       .sort((left, right) => Math.abs(left.timestamp - timestamp) - Math.abs(right.timestamp - timestamp))[0]
@@ -412,7 +442,7 @@ function ResourceLineChart(props: {
           )
         })}
 
-        {(lifecycle?.availabilityIntervals ?? []).map((interval) => {
+        {(visibleLifecycle?.availabilityIntervals ?? []).map((interval) => {
           const start = Date.parse(interval.startedAt)
           const stop = Date.parse(interval.stoppedAt)
           if (!Number.isFinite(start) || !Number.isFinite(stop)) return null
@@ -446,7 +476,7 @@ function ResourceLineChart(props: {
             </rect>
           )
         })}
-        {(lifecycle?.events ?? [])
+        {(visibleLifecycle?.events ?? [])
           .filter((event) => event.boundaryPrecision !== 'exact')
           .map((event) => {
             const timestamp = Date.parse(event.observedAt)

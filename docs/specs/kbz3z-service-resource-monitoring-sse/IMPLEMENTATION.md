@@ -4,13 +4,15 @@
 
 ## Current Status
 
-- Implementation: 已实现，待 PR
+- Implementation: 已实现，待合并
 - Lifecycle: active
 - Rollout: 本次不包含 101 Docker 恢复或生产部署。
 
 ## Service detail live-state ownership
 
 - `useServiceDetailResourceMonitor` 是服务详情页唯一的资源状态所有者：统一加载窗口历史、合并晚到 REST 与较新的 SSE 样本、管理可见性/离线/禁用态，并为每个可见页只创建一条资源 SSE。
+- 生命周期 SSE 与当前 `serviceId`、`windowKey` 及成功的资源历史响应绑定：历史响应提供 `lastEventId` 作为回放游标，生命周期事件必须通过当前服务与 `observedAt` 窗口校验后，才会触发带 `since`/`until` 的生命周期快照读取。服务切换、窗口切换、取消和过期响应均不能写回当前投影；无窗口内游标时允许从 `afterId=0` 回放，但范围外事件会被忽略。
+- 资源图表的横轴只由有效资源样本首末点决定。生命周期事件过滤到该样本域，跨边界的 availability interval 仅保留相交部分并在边界裁剪；渲染、悬浮详情和资源缺口分类共用这个受限投影，因此旧 SSE 回放不会扩展或压缩当前资源曲线。
 - 顶部摘要在概览、监控和其它详情子页共享 controller 的 1 小时实时快照；受控 `ServiceResourcePanel` 使用同一快照，短窗口显示实时点，`7d`/`30d` 保留聚合历史。
 - Storybook mock 覆盖历史末点与 SSE tick 分离、顶部/面板同步、长窗口隔离、隐藏页暂停与前台 snapshot 恢复，以及离线/禁用态不建连接。前端从 `hidden` 恢复到 `visible` 时会复用 `historyReloadTick` 回补当前窗口历史；非 `1h` 窗口同时回补 `1h` 摘要，随后由既有 SSE 继续实时追加，不改变服务端采样或事件契约。
 

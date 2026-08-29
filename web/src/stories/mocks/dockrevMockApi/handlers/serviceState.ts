@@ -8,7 +8,7 @@ import type {
 import { imageRepoFromImageRef } from '../../../../imageRepo'
 import type { MockRouteContext } from '../context'
 import { handleJobStateRoutes } from './jobState'
-import { handleLifecycleEventsRoute } from './lifecycleEvents'
+import { handleLifecycleEventsRoute, projectLifecycleSnapshot } from './lifecycleEvents'
 import {
   buildMockReleaseNotesItems,
   buildMockReleaseNotesExternalLinks,
@@ -868,7 +868,15 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
         : buildResourceHistorySamples(serviceId, parsedWindow.seconds, parsedWindow.window)
 
     const peaks = ['7d', '30d'].includes(parsedWindow.window) ? buildResourceHistoryPeaks(samples) : undefined
-    const lifecycle = f.serviceLogsByServiceId[serviceId]?.lifecycle
+    const lifecycleSnapshot = f.serviceLogsByServiceId[serviceId]?.lifecycle
+    const lifecycle = lifecycleSnapshot
+      ? projectLifecycleSnapshot(
+          lifecycleSnapshot,
+          serviceId,
+          nowIso(-parsedWindow.seconds * 1000),
+          nowIso(),
+        )
+      : null
     return json({
       serviceId,
       window: parsedWindow.window,
