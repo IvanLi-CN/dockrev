@@ -1,10 +1,18 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { fireEvent } from 'storybook/test'
-import type { ServiceLifecycleProjection, ServiceResourceSample, ServiceResourceSnapshot } from '../../api'
+import type {
+  ServiceLifecycleEvent,
+  ServiceLifecycleProjection,
+  ServiceLifecycleSnapshotResponse,
+  ServiceResourceSample,
+  ServiceResourceSnapshot,
+} from '../../api'
 import { ServiceResourcePanel } from '../../components/ServiceResourcePanel'
 import { useServiceDetailResourceMonitor } from '../../pages/useServiceDetailResourceMonitor'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
+import type { ServiceLogsMockDataset } from '../mocks/dockrevMockApi/shared'
 import { waitForCondition } from '../pages/storyAssertions'
+import { useState } from 'react'
 
 type ResourcePanelStoryProps = {
   serviceId?: string
@@ -115,9 +123,23 @@ const highVariationSamples = highVariationReadings.reduce<ServiceResourceSample[
 
 const lifecycleEvidence: ServiceLifecycleProjection = {
   retentionSince: '2026-07-08T10:00:00.000Z',
-  lastEventId: 5,
-  nextCursor: 5,
+  lastEventId: 6,
+  nextCursor: 6,
   events: [
+    {
+      id: 0,
+      serviceId: 'svc-prod-api',
+      stackId: 'stack-prod',
+      operationGroupId: 'op-outside-before',
+      jobId: 'job-outside-before',
+      origin: 'backup',
+      transition: 'stopped',
+      observedAt: '2026-07-08T10:50:00.000Z',
+      boundaryPrecision: 'incomplete',
+      evidence: { reason: 'outside_window' },
+      details: {},
+      createdAt: '2026-07-08T10:50:01.000Z',
+    },
     {
       id: 1,
       serviceId: 'svc-prod-api',
@@ -188,6 +210,20 @@ const lifecycleEvidence: ServiceLifecycleProjection = {
       details: {},
       createdAt: '2026-07-08T11:44:01.000Z',
     },
+    {
+      id: 6,
+      serviceId: 'svc-prod-api',
+      stackId: 'stack-prod',
+      operationGroupId: 'op-cross-boundary',
+      jobId: 'job-cross-boundary',
+      origin: 'backup',
+      transition: 'started',
+      observedAt: '2026-07-08T11:50:00.000Z',
+      boundaryPrecision: 'incomplete',
+      evidence: { reason: 'outside_window' },
+      details: {},
+      createdAt: '2026-07-08T11:50:01.000Z',
+    },
   ],
   availabilityIntervals: [
     {
@@ -206,7 +242,81 @@ const lifecycleEvidence: ServiceLifecycleProjection = {
       stopEventId: 3,
       complete: true,
     },
+    {
+      operationGroupId: 'op-cross-boundary',
+      startedAt: '2026-07-08T11:50:00.000Z',
+      stoppedAt: '2026-07-08T11:43:00.000Z',
+      startEventId: 6,
+      stopEventId: 5,
+      complete: true,
+    },
   ],
+}
+
+function buildLifecycleEvent(
+  serviceId: string,
+  id: number,
+  transition: 'stopped' | 'started',
+  offsetMs: number,
+  operationGroupId = `op-${serviceId}-${id}`,
+): ServiceLifecycleEvent {
+  const observedAt = new Date(Date.now() + offsetMs).toISOString()
+  return {
+    id,
+    serviceId,
+    stackId: 'stack-prod',
+    operationGroupId,
+    jobId: `job-${operationGroupId}`,
+    origin: 'manual_service',
+    transition,
+    observedAt,
+    boundaryPrecision: 'exact',
+    evidence: {},
+    details: {},
+    createdAt: observedAt,
+  }
+}
+
+function buildLifecycleDataset(
+  serviceId: string,
+  events: ServiceLifecycleEvent[],
+  lifecycleSseEvents = events,
+  availabilityIntervals: ServiceLifecycleSnapshotResponse['availabilityIntervals'] = [],
+): ServiceLogsMockDataset {
+  const lastEventId = events.at(-1)?.id ?? null
+  const until = new Date().toISOString()
+  return {
+    snapshot: { serviceId, lines: [], lastEventId: 0, bufferLimit: 2000 },
+    lifecycle: {
+      serviceId,
+      since: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+      until,
+      retentionSince: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+      lastEventId,
+      nextCursor: lastEventId,
+      events,
+      availabilityIntervals,
+    },
+    lifecycleSseEvents,
+  }
+}
+
+const lifecycleSseWindowScopeEvents = [
+  buildLifecycleEvent('svc-prod-api', 40, 'stopped', -2 * 60 * 60 * 1000),
+  buildLifecycleEvent('svc-prod-api', 41, 'started', -5 * 60 * 1000),
+]
+const lifecycleSseWindowScopeNewEvent = buildLifecycleEvent('svc-prod-api', 42, 'stopped', -60 * 1000)
+const lifecycleSseWindowScopeLogs = buildLifecycleDataset(
+  'svc-prod-api',
+  lifecycleSseWindowScopeEvents,
+  [...lifecycleSseWindowScopeEvents, lifecycleSseWindowScopeNewEvent],
+)
+
+const switchOldEvent = buildLifecycleEvent('svc-prod-api', 51, 'stopped', -2 * 60 * 60 * 1000)
+const switchTargetOldEvent = buildLifecycleEvent('svc-prod-web', 61, 'stopped', -2 * 60 * 60 * 1000)
+const serviceSwitchLifecycleLogs = {
+  'svc-prod-api': buildLifecycleDataset('svc-prod-api', [switchOldEvent]),
+  'svc-prod-web': buildLifecycleDataset('svc-prod-web', [switchTargetOldEvent]),
 }
 
 const lifecycleSampleMinutes = [0, 1, 2, 3, 4, 5, 6, 7, 31, 32, 33, 34, 37, 38, 39, 41, 42, 43, 45]
@@ -376,13 +486,15 @@ export const LifecycleMarkers: Story = {
   decorators: [withEvidenceFrame],
   play: async ({ canvasElement }) => {
     await tick()
-    expectStory(canvasElement.querySelectorAll('.svcResourceLifecycleBand').length === 1, 'long lifecycle interval should render as a band')
+    expectStory(canvasElement.querySelectorAll('.svcResourceLifecycleBand').length === 2, 'in-domain and clipped lifecycle intervals should render as bands')
     expectStory(canvasElement.querySelectorAll('.svcResourceLifecycleLine').length === 1, 'sub-6px lifecycle interval should render as a line')
     expectStory(canvasElement.querySelectorAll('svg circle').length === 0, 'resource charts should not render point markers')
     expectStory(canvasElement.querySelectorAll('.svcResourceGapServiceStopped').length === 2, 'service downtime markers should use a neutral interval')
     expectStory(canvasElement.querySelectorAll('.svcResourceGapWarning').length === 1, 'continuous unexplained gap should use a warning interval')
     expectStory(canvasElement.querySelectorAll('.svcResourceLifecycleDiagnosticLine').length === 1, 'incomplete lifecycle observations should use a diagnostic line')
     expectStory(canvasElement.querySelectorAll('.svcResourceGapSingle').length === 0, 'single missing sample should not render a gap marker')
+    const axisLabels = Array.from(canvasElement.querySelectorAll<SVGTextElement>('.svcResourceAxisLabel')).map((label) => label.textContent)
+    expectStory(axisLabels.some((label) => label?.includes('11:00:00')) && axisLabels.some((label) => label?.includes('11:45:00')), 'resource samples should define the chart time domain')
 
     const hoverSurface = canvasElement.querySelector<SVGRectElement>('.svcResourceHoverSurface')
     expectStory(hoverSurface, 'resource chart should expose a hover surface')
@@ -476,5 +588,57 @@ export const VisibilityPauseResume: Story = {
     expectStory(Number(globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageHistoryCalls ?? 0) === 2, 'foreground page should reload resource history once')
     expectStory(Number(globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageEventSourceCalls ?? 0) === 2, 'foreground page should resume with a fresh resource stream')
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: previousVisibility })
+  },
+}
+
+export const LifecycleSseWindowScope: Story = {
+  parameters: {
+    dockrevApiScenario: 'default',
+    dockrevServiceLogsByServiceId: { 'svc-prod-api': lifecycleSseWindowScopeLogs },
+  },
+  play: async () => {
+    await waitForCondition(() => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageHistoryCalls ?? 0) === 1)
+    await waitForCondition(() => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.lifecycleEventSourceCalls ?? 0) === 1)
+    const debug = globalThis.__DOCKREV_MOCK_DEBUG__
+    const sourceUrl = debug?.lifecycleEventSourceUrls[0] ?? ''
+    expectStory(sourceUrl.includes('afterId=41'), 'lifecycle SSE should start after the current window history cursor')
+    await waitForCondition(() => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.lifecycleSnapshotCalls ?? 0) === 1)
+    const snapshotUrl = debug?.lifecycleSnapshotUrls[0] ?? ''
+    expectStory(snapshotUrl.includes('since=') && snapshotUrl.includes('until='), 'new lifecycle events should refresh a bounded snapshot')
+  },
+}
+
+function ServiceSwitchLifecycleStory() {
+  const [serviceId, setServiceId] = useState('svc-prod-api')
+  return (
+    <div>
+      <button type="button" aria-label="切换目标服务" onClick={() => setServiceId('svc-prod-web')}>
+        切换目标服务
+      </button>
+      <ResourcePanelStory serviceId={serviceId} />
+    </div>
+  )
+}
+
+export const ServiceSwitchLifecycleIsolation: Story = {
+  parameters: {
+    dockrevApiScenario: 'default',
+    dockrevServiceLogsByServiceId: serviceSwitchLifecycleLogs,
+  },
+  render: () => <ServiceSwitchLifecycleStory />,
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageHistoryCalls ?? 0) === 1)
+    await waitForCondition(() => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.lifecycleEventSourceCalls ?? 0) === 1)
+    const switchButton = canvasElement.querySelector<HTMLButtonElement>('[aria-label="切换目标服务"]')
+    expectStory(switchButton, 'service switch control should be available')
+    switchButton.click()
+    await waitForCondition(() => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageHistoryCalls ?? 0) === 2)
+    await waitForCondition(() => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.lifecycleEventSourceCalls ?? 0) === 2)
+    await sleep(120)
+    const debug = globalThis.__DOCKREV_MOCK_DEBUG__
+    expectStory(Number(debug?.lifecycleEventSourceCloseCalls ?? 0) >= 1, 'switching service should close the old lifecycle SSE')
+    expectStory(debug?.lifecycleEventSourceUrls[0]?.includes('/svc-prod-api/') === true, 'old lifecycle SSE should belong to the old service')
+    expectStory(debug?.lifecycleEventSourceUrls[1]?.includes('/svc-prod-web/') === true, 'new lifecycle SSE should belong to the target service')
+    expectStory(Number(debug?.lifecycleSnapshotCalls ?? 0) === 0, 'out-of-window replay without a cursor must not refresh the target lifecycle projection')
   },
 }

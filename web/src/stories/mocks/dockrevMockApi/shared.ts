@@ -158,6 +158,7 @@ export type DockrevApiRouteBehavior = {
 export type ServiceLogsMockDataset = {
   snapshot: ServiceLogSnapshotResponse
   lifecycle?: ServiceLifecycleSnapshotResponse
+  lifecycleSseEvents?: ServiceLifecycleSnapshotResponse['events']
   eventsGate?: string
   eventsPayload?: string
 }
@@ -246,6 +247,13 @@ export class MockEventSource extends EventTarget {
       const debug = globalThis.__DOCKREV_MOCK_DEBUG__
       if (debug) debug.resourceUsageEventSourceCalls += 1
     }
+    if (this.url.includes('/lifecycle-events/events')) {
+      const debug = globalThis.__DOCKREV_MOCK_DEBUG__
+      if (debug) {
+        debug.lifecycleEventSourceCalls += 1
+        debug.lifecycleEventSourceUrls.push(this.url)
+      }
+    }
     if (this.url.includes('/api/events')) {
       const debug = globalThis.__DOCKREV_MOCK_DEBUG__
       if (debug) debug.managementEventSourceCalls += 1
@@ -263,6 +271,11 @@ export class MockEventSource extends EventTarget {
     if (!this.closeReported && this.url.includes('/resource-usage/events')) {
       const debug = globalThis.__DOCKREV_MOCK_DEBUG__
       if (debug) debug.resourceUsageEventSourceCloseCalls += 1
+      this.closeReported = true
+    }
+    if (!this.closeReported && this.url.includes('/lifecycle-events/events')) {
+      const debug = globalThis.__DOCKREV_MOCK_DEBUG__
+      if (debug) debug.lifecycleEventSourceCloseCalls += 1
       this.closeReported = true
     }
     if (!this.closeReported && this.url.includes('/api/events')) {
@@ -355,6 +368,11 @@ export type MockDebug = {
   resourceUsageHistoryCalls: number
   resourceUsageEventSourceCalls: number
   resourceUsageEventSourceCloseCalls: number
+  lifecycleSnapshotCalls: number
+  lifecycleSnapshotUrls: string[]
+  lifecycleEventSourceCalls: number
+  lifecycleEventSourceUrls: string[]
+  lifecycleEventSourceCloseCalls: number
   managementEventSourceCalls: number
   managementEventSourceCloseCalls: number
   resourceUsageLastSnapshot: ServiceResourceSample | null
@@ -773,6 +791,11 @@ export function makeMockDebug(): MockDebug {
     resourceUsageHistoryCalls: 0,
     resourceUsageEventSourceCalls: 0,
     resourceUsageEventSourceCloseCalls: 0,
+    lifecycleSnapshotCalls: 0,
+    lifecycleSnapshotUrls: [],
+    lifecycleEventSourceCalls: 0,
+    lifecycleEventSourceUrls: [],
+    lifecycleEventSourceCloseCalls: 0,
     managementEventSourceCalls: 0,
     managementEventSourceCloseCalls: 0,
     resourceUsageLastSnapshot: null,
