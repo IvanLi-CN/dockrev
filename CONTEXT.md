@@ -25,6 +25,11 @@ _Avoid_: deleted backup, cleanup failure
 ## Service Digest and Rollback Target
 
 - `service digest` is the digest currently reported by the stack detail snapshot.
+- `accepted deployment state` is the latest service deployment state accepted outside an in-progress mutating operation or established by that operation's terminal settlement. A candidate container is not part of the accepted deployment state.
+- `transient operation observation` is a runtime or configuration observation made while a mutating operation overlaps the service. It may be used for operation progress and diagnosis, but it is not authoritative service state.
+- `service mutation ownership` is the durable, exclusive right of one operation to replace a service's accepted deployment state. It begins before runtime side effects and ends only through service state settlement.
+- `accepted-state generation` is the monotonic revision of a service's accepted deployment state. An observation can publish only when the generation it read is still current and no service mutation ownership is open.
+- `service state settlement` is the terminal reconciliation that aligns the service snapshot with the final runtime state after a mutating operation.
 - `rollback target` is the single backend-selected version that can restore the service to the previous successful update state.
 - A rollback target is valid only when its `currentDigest` matches the service digest in the same refresh generation.
 

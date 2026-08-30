@@ -503,9 +503,172 @@ impl CommandRunner for UpdateAndRuntimeScanRunner {
     }
 }
 
-#[derive(Default)]
 struct HealthRollbackUpdateRunner {
     step: std::sync::Mutex<usize>,
+    observation_gate: Option<Arc<HealthRollbackObservationGate>>,
+    observing_candidate: AtomicBool,
+    observer_config: std::sync::Mutex<Option<HealthRollbackObserverConfig>>,
+}
+
+#[derive(Default)]
+struct HealthRollbackObservationGate {
+    health_waiting: tokio::sync::Notify,
+    release_health: tokio::sync::Notify,
+}
+
+#[derive(Clone)]
+struct HealthRollbackObserverConfig {
+    project: String,
+    compose_path: String,
+    managed_override_path: String,
+}
+
+impl Default for HealthRollbackUpdateRunner {
+    fn default() -> Self {
+        Self {
+            step: std::sync::Mutex::new(0),
+            observation_gate: None,
+            observing_candidate: AtomicBool::new(false),
+            observer_config: std::sync::Mutex::new(None),
+        }
+    }
+}
+
+impl HealthRollbackUpdateRunner {
+    fn gated() -> Self {
+        Self {
+            observation_gate: Some(Arc::new(HealthRollbackObservationGate::default())),
+            ..Self::default()
+        }
+    }
+
+    fn configure_observers(
+        &self,
+        project: &str,
+        compose_path: &str,
+        managed_override_path: &std::path::Path,
+    ) {
+        *self.observer_config.lock().unwrap() = Some(HealthRollbackObserverConfig {
+            project: project.to_string(),
+            compose_path: compose_path.to_string(),
+            managed_override_path: managed_override_path.display().to_string(),
+        });
+    }
+
+    async fn wait_for_candidate_healthcheck(&self) {
+        let gate = self
+            .observation_gate
+            .as_ref()
+            .expect("healthcheck observation gate must be enabled");
+        tokio::time::timeout(Duration::from_secs(3), gate.health_waiting.notified())
+            .await
+            .expect("timed out waiting for candidate healthcheck");
+    }
+
+    fn release_candidate_healthcheck(&self) {
+        self.observation_gate
+            .as_ref()
+            .expect("healthcheck observation gate must be enabled")
+            .release_health
+            .notify_one();
+    }
+
+    fn concurrent_observer_output(&self, spec: &CommandSpec) -> Option<CommandOutput> {
+        if spec.program != "docker" || !self.observing_candidate.load(Ordering::SeqCst) {
+            return None;
+        }
+        let config = self.observer_config.lock().unwrap().clone()?;
+        let args = spec.args.as_slice();
+
+        if args
+            == [
+                "ps",
+                "--filter",
+                "label=com.docker.compose.project",
+                "-q",
+            ]
+        {
+            return Some(CommandOutput {
+                status: 0,
+                stdout: "container_new\n".to_string(),
+                stderr: String::new(),
+            });
+        }
+
+        if args
+            == [
+                "inspect",
+                "--format",
+                "{{json .Config.Labels}}",
+                "container_new",
+            ]
+        {
+            return Some(CommandOutput {
+                status: 0,
+                stdout: format!(
+                    "{}\n",
+                    serde_json::json!({
+                        "com.docker.compose.project": config.project,
+                        "com.docker.compose.service": "web",
+                        "com.docker.compose.project.config_files": format!(
+                            "{},{}",
+                            config.compose_path, config.managed_override_path
+                        ),
+                    })
+                ),
+                stderr: String::new(),
+            });
+        }
+
+        if args
+            == [
+                "ps",
+                "-q",
+                "--filter",
+                format!("label=com.docker.compose.project={}", config.project).as_str(),
+            ]
+        {
+            return Some(CommandOutput {
+                status: 0,
+                stdout: "container_new\n".to_string(),
+                stderr: String::new(),
+            });
+        }
+
+        if args
+            == [
+                "inspect",
+                "--format",
+                "{{index .Config.Labels \"com.docker.compose.service\"}}\t{{.Image}}\t{{.State.StartedAt}}",
+                "container_new",
+            ]
+        {
+            return Some(CommandOutput {
+                status: 0,
+                stdout: "web\tsha256:new\t2026-08-30T00:01:00Z\n".to_string(),
+                stderr: String::new(),
+            });
+        }
+
+        if args
+            == [
+                "image",
+                "inspect",
+                "sha256:new",
+                "--format",
+                "{{.Id}}\t{{json .RepoDigests}}",
+            ]
+        {
+            return Some(CommandOutput {
+                status: 0,
+                stdout:
+                    "sha256:new\t[\"ghcr.io/acme/web@sha256:new\"]\n".to_string(),
+                stderr: String::new(),
+            });
+        }
+
+        None
+    }
 }
 
 #[async_trait::async_trait]
@@ -518,8 +681,14 @@ impl CommandRunner for HealthRollbackUpdateRunner {
                 stderr: String::new(),
             });
         }
-        let mut step = self.step.lock().unwrap();
-        let out = match *step {
+        if let Some(out) = self.concurrent_observer_output(&spec) {
+            return Ok(out);
+        }
+
+        let mut wait_for_observers = false;
+        let out = {
+            let mut step = self.step.lock().unwrap();
+            let out = match *step {
             0 if spec
                 .args
                 .ends_with(&["ps".to_string(), "-q".to_string(), "web".to_string()]) =>
@@ -610,6 +779,7 @@ impl CommandRunner for HealthRollbackUpdateRunner {
                     "container_new",
                 ] =>
             {
+                wait_for_observers = self.observation_gate.is_some();
                 CommandOutput {
                     status: 0,
                     stdout: "unhealthy\n".to_string(),
@@ -672,8 +842,22 @@ impl CommandRunner for HealthRollbackUpdateRunner {
                 "unexpected command at step {}: program={} args={:?}",
                 *step, spec.program, spec.args
             ),
+            };
+            *step += 1;
+            out
         };
-        *step += 1;
+
+        if wait_for_observers {
+            let gate = self
+                .observation_gate
+                .as_ref()
+                .expect("healthcheck observation gate must be enabled");
+            self.observing_candidate.store(true, Ordering::SeqCst);
+            gate.health_waiting.notify_one();
+            gate.release_health.notified().await;
+            self.observing_candidate.store(false, Ordering::SeqCst);
+        }
+
         Ok(out)
     }
 

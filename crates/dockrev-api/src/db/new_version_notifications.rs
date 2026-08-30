@@ -392,6 +392,7 @@ WHERE id = ?1 AND status IN (?7, ?8)
         .context("finalize new version notification")
     }
 
+    #[allow(dead_code)]
     pub async fn reconcile_service_new_version_notifications(
         &self,
         service_id: &str,
