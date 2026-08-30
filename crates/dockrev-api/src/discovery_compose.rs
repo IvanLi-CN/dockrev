@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, time::Duration};
+use std::{collections::BTreeMap, path::Path, time::Duration};
 
 use crate::{
     compose,
@@ -15,6 +15,79 @@ const HOMEPAGE_LABEL_KEYS: [&str; 5] = [
     "homepage.href",
     "homepage.description",
 ];
+
+pub(crate) enum PersistedComposeFilesState {
+    Stopped {
+        compose_files: Vec<String>,
+    },
+    Missing {
+        compose_files: Vec<String>,
+    },
+    Invalid {
+        compose_files: Option<Vec<String>>,
+        reason: String,
+    },
+}
+
+pub(crate) async fn classify_persisted_compose_files(
+    compose_files: Option<Vec<String>>,
+) -> PersistedComposeFilesState {
+    let Some(compose_files) = compose_files else {
+        return PersistedComposeFilesState::Invalid {
+            compose_files: None,
+            reason: "compose_files_not_recorded".to_string(),
+        };
+    };
+    if compose_files.is_empty() {
+        return PersistedComposeFilesState::Invalid {
+            compose_files: Some(compose_files),
+            reason: "compose_files_not_recorded".to_string(),
+        };
+    }
+
+    let mut missing_files = 0usize;
+
+    for path in &compose_files {
+        if path.trim().is_empty() || !Path::new(path).is_absolute() {
+            return PersistedComposeFilesState::Invalid {
+                compose_files: Some(compose_files.clone()),
+                reason: format!("compose_file_path_invalid: {path}"),
+            };
+        }
+
+        let contents = match tokio::fs::read_to_string(path).await {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                missing_files = missing_files.saturating_add(1);
+                continue;
+            }
+            Err(error) => {
+                return PersistedComposeFilesState::Invalid {
+                    compose_files: Some(compose_files.clone()),
+                    reason: format!("compose_file_unreadable: {path} ({error})"),
+                };
+            }
+        };
+
+        if let Err(error) = compose::parse_services(&contents) {
+            return PersistedComposeFilesState::Invalid {
+                compose_files: Some(compose_files.clone()),
+                reason: format!("compose_file_invalid: {path} ({error})"),
+            };
+        }
+    }
+
+    if missing_files == compose_files.len() {
+        return PersistedComposeFilesState::Missing { compose_files };
+    }
+    if missing_files > 0 {
+        return PersistedComposeFilesState::Invalid {
+            compose_files: Some(compose_files),
+            reason: "compose_files_partially_missing".to_string(),
+        };
+    }
+    PersistedComposeFilesState::Stopped { compose_files }
+}
 
 pub(crate) async fn read_effective_compose_services(
     stack: &ComposeStack,

@@ -12,7 +12,6 @@ use crate::{
         DiscoveryAction, DiscoveryActionKind, DiscoveryScanSummary, JobLogLine, JobProgress,
         TriggerDiscoveryScanResponse,
     },
-    compose,
     compose_runner::{ComposeRunnerConfig, ComposeStack},
     db::{ComposeServiceSpec, DiscoveredComposeProjectUpsert},
     docker_runner, ids, managed_override,
@@ -23,6 +22,9 @@ use crate::{
 static DISCOVERY_SCAN_LOCK: LazyLock<tokio::sync::Mutex<()>> =
     LazyLock::new(|| tokio::sync::Mutex::new(()));
 mod managed_override_reconcile;
+pub(crate) use crate::discovery_compose::{
+    PersistedComposeFilesState, classify_persisted_compose_files,
+};
 #[cfg(test)]
 pub(crate) use managed_override_reconcile::{
     merge_managed_override_images, parse_affected_services, repo_digest_matches,
@@ -911,78 +913,6 @@ pub fn spawn_task(state: std::sync::Arc<AppState>) {
     });
 }
 
-enum PersistedComposeFilesState {
-    Stopped {
-        compose_files: Vec<String>,
-    },
-    Missing {
-        compose_files: Vec<String>,
-    },
-    Invalid {
-        compose_files: Option<Vec<String>>,
-        reason: String,
-    },
-}
-
-async fn classify_persisted_compose_files(
-    compose_files: Option<Vec<String>>,
-) -> PersistedComposeFilesState {
-    let Some(compose_files) = compose_files else {
-        return PersistedComposeFilesState::Invalid {
-            compose_files: None,
-            reason: "compose_files_not_recorded".to_string(),
-        };
-    };
-    if compose_files.is_empty() {
-        return PersistedComposeFilesState::Invalid {
-            compose_files: Some(compose_files),
-            reason: "compose_files_not_recorded".to_string(),
-        };
-    }
-
-    let mut missing_files = 0usize;
-
-    for path in &compose_files {
-        if path.trim().is_empty() || !Path::new(path).is_absolute() {
-            return PersistedComposeFilesState::Invalid {
-                compose_files: Some(compose_files.clone()),
-                reason: format!("compose_file_path_invalid: {path}"),
-            };
-        }
-
-        let contents = match tokio::fs::read_to_string(path).await {
-            Ok(contents) => contents,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                missing_files = missing_files.saturating_add(1);
-                continue;
-            }
-            Err(error) => {
-                return PersistedComposeFilesState::Invalid {
-                    compose_files: Some(compose_files.clone()),
-                    reason: format!("compose_file_unreadable: {path} ({error})"),
-                };
-            }
-        };
-
-        if let Err(error) = compose::parse_services(&contents) {
-            return PersistedComposeFilesState::Invalid {
-                compose_files: Some(compose_files.clone()),
-                reason: format!("compose_file_invalid: {path} ({error})"),
-            };
-        }
-    }
-
-    if missing_files == compose_files.len() {
-        return PersistedComposeFilesState::Missing { compose_files };
-    }
-    if missing_files > 0 {
-        return PersistedComposeFilesState::Invalid {
-            compose_files: Some(compose_files),
-            reason: "compose_files_partially_missing".to_string(),
-        };
-    }
-    PersistedComposeFilesState::Stopped { compose_files }
-}
 pub async fn run_scan(state: &AppState) -> anyhow::Result<TriggerDiscoveryScanResponse> {
     run_scan_inner(state, None).await
 }
