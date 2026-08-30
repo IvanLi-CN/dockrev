@@ -47,6 +47,19 @@ Color palette: deep blue-black, signal cyan, soft ice text, small green/amber/ro
 Text (verbatim): "Dockrev" and "Self-hosted Docker/Compose update manager"
 Constraints: preserve every existing element and label, only move or scale layout groups, keep text exact and readable, no watermark, no official Docker whale, no GitHub logo, no random extra labels beyond tiny abstract UI glyphs
 
+## dockrev-product-poster-light.png
+Use case: ads-marketing
+Asset type: light product poster
+Primary request: Create a polished light-theme companion from the approved Dockrev 4:5 dark product poster while preserving every pixel coordinate, design element, information value, and layout relationship.
+Scene/backdrop: bright cool-white and pale blue-gray operations canvas with clean white product panels and restrained depth
+Subject: Dockrev product UI as the hero, with the same dashboard, update-flow illustration, capability strip, and infrastructure decoration as the dark variant
+Style/medium: controlled light-theme palette transform of the approved poster, crisp UI mockup with controlled blue accents and accessible dark typography
+Composition/framing: strict 4:5 portrait, same complete content map as the dark poster, generous safe margins, no cropped edge decoration
+Lighting/mood: clear daylight-like technical atmosphere, calm, precise, and confident
+Color palette: #f7faff, white, ink navy #102842, project light blue #0d86dd through #086cba, green #16934e through #138347, amber, and rose status accents
+Text (verbatim): "Dockrev" and "Self-hosted Docker/Compose update manager", plus every existing dashboard label and value
+Constraints: preserve all existing elements, exact copy, pixel coordinates, and contour geometry; change palette and luminance only; no redraw, resize, crop, stretch, watermark, official Docker whale, GitHub logo, or extra words
+
 ## dockrev-github-social-preview.png
 Use case: ads-marketing
 Asset type: GitHub Social preview image
@@ -64,9 +77,11 @@ Constraints: spell all text exactly, no watermark, no official Docker whale, no 
 
 - Mode: `$cvm-imagegen` CLI using `CVM_API_KEY` and `gpt-image-2` edit mode, with the previous dark poster as the image input.
 - Final local post-processing: the returned near-4:5 candidate is center-cropped by one pixel on every edge to the exact 1120x1400 delivery source; no content is stretched or composited.
+- An initial light `gpt-image-2` exploration is retained as `dockrev-product-poster-light-imagegen-candidate.png` for provenance only; it is not a delivery source because independent redraw changed logo and illustration geometry.
+- The final light poster is generated deterministically by `recolor_product_poster.py` from the approved dark master, preserving the exact 1120x1400 pixel grid and changing only palette/luminance.
 - `dockrev-github-social-preview.png` was locally typeset after generation to ensure exact readable copy: `Dockrev` and `Self-hosted Docker/Compose update manager`.
 - `dockrev-product-poster-dark-imagegen-candidate.png` retains the direct model response; `dockrev-product-poster-dark.png` is the exact 4:5 delivery source.
-- The brand generation script copies the checked 4:5 dark source without resizing to generated, Web, and docs-public asset paths.
+- The brand generation script regenerates the light source from the checked dark source, validates both strict 4:5 dimensions, and copies both variants without resizing to generated, Web, and docs-public asset paths.
 
 ## Final assets
 
@@ -74,6 +89,8 @@ Constraints: spell all text exactly, no watermark, no official Docker whale, no 
 - `dockrev-logo-candidate.png` — 2048x1024 PNG
 - `dockrev-product-poster-dark-imagegen-candidate.png` — 1122x1402 PNG
 - `dockrev-product-poster-dark.png` — 1120x1400 PNG (4:5)
+- `dockrev-product-poster-light-imagegen-candidate.png` — 1122x1402 PNG (exploratory, not shipped)
+- `dockrev-product-poster-light.png` — 1120x1400 PNG (4:5)
 - `dockrev-product-poster.png` — unqualified dark compatibility copy, 1120x1400 PNG (4:5)
 - `dockrev-github-social-preview.png` — 1280x640 PNG
 

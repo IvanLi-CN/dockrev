@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import shutil
 import subprocess
+import sys
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -24,6 +25,7 @@ LOGO_SOURCE = BRAND_DIR / "dockrev-logo-source.svg"
 WORDMARK_SOURCE = VECTOR_DIR / "dockrev-text-pango.svg"
 SOCIAL_PREVIEW_SOURCE = GENERATED_DIR / "dockrev-github-social-preview-imagegen-candidate.png"
 PRODUCT_POSTER_DARK_SOURCE = GENERATED_DIR / "dockrev-product-poster-dark.png"
+PRODUCT_POSTER_LIGHT_SOURCE = GENERATED_DIR / "dockrev-product-poster-light.png"
 SOCIAL_FONT = REPO_DIR / "crates" / "dockrev-api" / "assets" / "fonts" / "NotoSansCJKsc-Regular.otf"
 PNG_DETERMINISTIC_OPTIONS = ["-strip", "-define", "png:exclude-chunk=tIME"]
 
@@ -171,6 +173,8 @@ def render_svg(svg_path: Path, output_path: Path, width: int, height: int) -> No
 def copy_to(path: Path, destinations: list[Path]) -> None:
     for destination in destinations:
         destination.parent.mkdir(parents=True, exist_ok=True)
+        if path.resolve() == destination.resolve():
+            continue
         shutil.copyfile(path, destination)
 
 
@@ -466,14 +470,36 @@ def generate_social_preview() -> None:
 
 def generate_product_poster() -> None:
     require_aspect_ratio(PRODUCT_POSTER_DARK_SOURCE, 4, 5)
+    subprocess.run(
+        [
+            sys.executable,
+            str(BRAND_DIR / "recolor_product_poster.py"),
+            str(PRODUCT_POSTER_DARK_SOURCE),
+            str(PRODUCT_POSTER_LIGHT_SOURCE),
+        ],
+        check=True,
+    )
+    poster_variants = (
+        ("dark", PRODUCT_POSTER_DARK_SOURCE),
+        ("light", PRODUCT_POSTER_LIGHT_SOURCE),
+    )
+    for theme, source in poster_variants:
+        require_aspect_ratio(source, 4, 5)
+        copy_to(
+            source,
+            [
+                GENERATED_DIR / f"dockrev-product-poster-{theme}.png",
+                WEB_PUBLIC_DIR / f"dockrev-product-poster-{theme}.png",
+                DOCS_PUBLIC_DIR / f"dockrev-product-poster-{theme}.png",
+            ],
+        )
+
+    # Keep existing unqualified consumers on the dark variant until the full
+    # light/dark media matrix has a documented selection policy.
     copy_to(
         PRODUCT_POSTER_DARK_SOURCE,
         [
             GENERATED_DIR / "dockrev-product-poster.png",
-            WEB_PUBLIC_DIR / "dockrev-product-poster-dark.png",
-            DOCS_PUBLIC_DIR / "dockrev-product-poster-dark.png",
-            # Keep existing unqualified consumers on the dark variant until the
-            # full light/dark media matrix has a documented selection policy.
             WEB_PUBLIC_DIR / "dockrev-product-poster.png",
             DOCS_PUBLIC_DIR / "dockrev-product-poster.png",
         ],
