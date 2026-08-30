@@ -10,6 +10,7 @@
 | --- | --- | --- | --- | --- |
 | Update rollback diagnostics | active | not started | `update-rollback-diagnostics/SPEC.md` | - |
 | Service accepted state consistency | active | not started | `service-accepted-state-consistency/SPEC.md` | - |
+| Brand media variants | active | dark poster delivered; light poster in progress | `brand-media-variants/SPEC.md` | - |
 
 ## 快速新增一个规格
 

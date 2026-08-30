@@ -34,18 +34,18 @@ Color palette: dark navy background, soft ice text, signal cyan accents
 Text (verbatim): "Dockrev"
 Constraints: spell Dockrev exactly, no tagline, no watermark, no fake vendor logos, no extra words, keep typography clean and legible
 
-## dockrev-product-poster.png
+## dockrev-product-poster-dark.png
 Use case: ads-marketing
-Asset type: single product poster
-Primary request: A marketing product poster for Dockrev, showing a cinematic self-hosted operations console that manages Docker Compose updates. It should feel like a product launch image for an infrastructure tool, with a realistic dark dashboard scene and clear product identity.
+Asset type: dark product poster
+Primary request: Reflow the existing Dockrev dark product poster into a strict 4:5 portrait without changing its design elements, copy, dashboard detail, product identity, or dark operations-console visual language.
 Scene/backdrop: dim workstation / abstract ops room with a large dark dashboard interface showing service cards, update queues, version diffs, health status, and deployment signals
 Subject: Dockrev product UI as the hero, surrounded by subtle container stack motifs and update-flow lines
 Style/medium: high-end product marketing render, realistic UI mockup plus polished 3D infrastructure accents
-Composition/framing: portrait poster, strong central dashboard, headline area near top, visual depth below, enough margin for text
+Composition/framing: 4:5 portrait poster, headline area near top, central dashboard, update-flow illustration, capability strip, and infrastructure decoration all remain visible with safe margins
 Lighting/mood: dramatic but controlled cyan lighting, confident maintenance-window atmosphere
 Color palette: deep blue-black, signal cyan, soft ice text, small green/amber/rose status accents
 Text (verbatim): "Dockrev" and "Self-hosted Docker/Compose update manager"
-Constraints: spell all text exactly, keep text sparse and readable, no watermark, no official Docker whale, no GitHub logo, no random extra labels beyond tiny abstract UI glyphs
+Constraints: preserve every existing element and label, only move or scale layout groups, keep text exact and readable, no watermark, no official Docker whale, no GitHub logo, no random extra labels beyond tiny abstract UI glyphs
 
 ## dockrev-github-social-preview.png
 Use case: ads-marketing
@@ -62,17 +62,19 @@ Constraints: spell all text exactly, no watermark, no official Docker whale, no 
 
 ## Generation notes
 
-- Mode: `$cvm-imagegen` CLI using `CVM_API_KEY` and `gpt-image-2`.
-- Final local post-processing: Pillow standardization and exact text overlay.
+- Mode: `$cvm-imagegen` CLI using `CVM_API_KEY` and `gpt-image-2` edit mode, with the previous dark poster as the image input.
+- Final local post-processing: the returned near-4:5 candidate is center-cropped by one pixel on every edge to the exact 1120x1400 delivery source; no content is stretched or composited.
 - `dockrev-github-social-preview.png` was locally typeset after generation to ensure exact readable copy: `Dockrev` and `Self-hosted Docker/Compose update manager`.
-- Direct CVM generation for `dockrev-product-poster.png` failed twice with `503 no healthy pool account is available`; the final poster is a deterministic local composition using the generated icon/social visual, with exact local text rendering.
-- Project entry assets are generated from the approved canonical vector source, including the Web favicon family, brand mark, docs logo assets, social preview images, and product poster.
+- `dockrev-product-poster-dark-imagegen-candidate.png` retains the direct model response; `dockrev-product-poster-dark.png` is the exact 4:5 delivery source.
+- The brand generation script copies the checked 4:5 dark source without resizing to generated, Web, and docs-public asset paths.
 
 ## Final assets
 
 - `dockrev-icon-candidate.png` — 2048x2048 PNG
 - `dockrev-logo-candidate.png` — 2048x1024 PNG
-- `dockrev-product-poster.png` — 1440x2070 PNG; Web/Docs delivery copy is 1024x1472 PNG
+- `dockrev-product-poster-dark-imagegen-candidate.png` — 1122x1402 PNG
+- `dockrev-product-poster-dark.png` — 1120x1400 PNG (4:5)
+- `dockrev-product-poster.png` — unqualified dark compatibility copy, 1120x1400 PNG (4:5)
 - `dockrev-github-social-preview.png` — 1280x640 PNG
 
 ## Flat icon revision
