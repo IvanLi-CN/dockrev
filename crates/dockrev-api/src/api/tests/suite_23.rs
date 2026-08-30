@@ -159,6 +159,153 @@ async fn discovery_docker_enumeration_failure_preserves_existing_state() {
     assert!(!state.db.get_stack(&stack_id).await.unwrap().unwrap().archived);
 }
 
+#[derive(Clone)]
+struct ComposeRenderFailureRunner {
+    compose_path: Arc<std::sync::Mutex<String>>,
+}
+
+#[async_trait::async_trait]
+impl CommandRunner for ComposeRenderFailureRunner {
+    async fn run(&self, spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+        if spec.program == "docker"
+            && spec.args.as_slice()
+                == [
+                    "ps",
+                    "--filter",
+                    "label=com.docker.compose.project",
+                    "-q",
+                ]
+        {
+            return Ok(CommandOutput {
+                status: 0,
+                stdout: "container-1\n".to_string(),
+                stderr: String::new(),
+            });
+        }
+
+        if spec.program == "docker"
+            && spec.args.first().map(String::as_str) == Some("inspect")
+        {
+            return Ok(CommandOutput {
+                status: 0,
+                stdout: serde_json::json!({
+                    "com.docker.compose.project": "demo",
+                    "com.docker.compose.service": "web",
+                    "com.docker.compose.project.config_files": self.compose_path.lock().unwrap().clone(),
+                })
+                .to_string()
+                    + "\n",
+                stderr: String::new(),
+            });
+        }
+
+        if spec.program == "docker-compose"
+            && spec
+                .args
+                .ends_with(&["config".to_string(), "--format".to_string(), "json".to_string()])
+        {
+            return Ok(CommandOutput {
+                status: 1,
+                stdout: "rendered secret output".to_string(),
+                stderr: "compose interpolation failed".to_string(),
+            });
+        }
+
+        Ok(CommandOutput {
+            status: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn discovery_compose_render_failure_preserves_existing_stack_state() {
+    let runner = Arc::new(ComposeRenderFailureRunner {
+        compose_path: Arc::new(std::sync::Mutex::new(String::new())),
+    });
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(FakeRegistry),
+        runner.clone(),
+    )
+    .await;
+    let (stack_id, service_id, compose_path) = seed_manual_rollback_service(&state).await;
+    *runner.compose_path.lock().unwrap() = compose_path.clone();
+    let now = test_now_rfc3339();
+    state
+        .db
+        .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
+            project: "demo".to_string(),
+            stack_id: Some(stack_id.clone()),
+            status: "active".to_string(),
+            last_seen_at: Some(now.clone()),
+            last_scan_at: now,
+            last_error: None,
+            last_config_files: Some(vec![compose_path]),
+            unarchive_if_active: false,
+        })
+        .await
+        .unwrap();
+
+    let before = state.db.get_stack(&stack_id).await.unwrap().unwrap();
+    let before_generation = state
+        .db
+        .list_services_for_check(&stack_id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|service| service.id == service_id)
+        .map(|service| service.accepted_state_generation)
+        .unwrap();
+
+    let scan = crate::discovery::run_scan(state.as_ref()).await.unwrap();
+    assert_eq!(scan.summary.stacks_failed, 1);
+    let action = scan
+        .actions
+        .iter()
+        .find(|action| action.project == "demo")
+        .unwrap();
+    assert!(matches!(
+        action.action,
+        crate::api::types::DiscoveryActionKind::Failed
+    ));
+    assert_eq!(action.stack_id.as_deref(), Some(stack_id.as_str()));
+    assert_eq!(action.reason.as_deref(), Some("compose_config_unresolved"));
+
+    let project = state
+        .db
+        .list_discovered_compose_projects(crate::db::ArchivedFilter::Exclude)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|project| project.project == "demo")
+        .unwrap();
+    assert!(matches!(
+        project.status,
+        crate::api::types::DiscoveredProjectStatus::Invalid
+    ));
+    assert_eq!(
+        project.last_error.as_deref(),
+        Some("compose_config_unresolved")
+    );
+    assert_eq!(project.stack_id.as_deref(), Some(stack_id.as_str()));
+
+    let after = state.db.get_stack(&stack_id).await.unwrap().unwrap();
+    assert_eq!(after.services[0].image.reference, before.services[0].image.reference);
+    assert_eq!(after.services[0].image.tag, before.services[0].image.tag);
+    let after_generation = state
+        .db
+        .list_services_for_check(&stack_id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|service| service.id == service_id)
+        .map(|service| service.accepted_state_generation)
+        .unwrap();
+    assert_eq!(after_generation, before_generation);
+}
+
 #[tokio::test]
 async fn stack_lifecycle_claim_blocks_service_lifecycle_and_update() {
     let state = test_state_with_compose_bin(

@@ -1131,48 +1131,72 @@ async fn run_scan_inner(
         let warning = resolved.warning.clone();
         let action_details = resolved.details.clone();
         let config_files = resolved.compose_files;
-
-        let (merged, failure_reason) =
-            match crate::discovery_compose::read_and_merge_compose_files(&config_files).await {
-                Ok(merged) => (merged, None),
-                Err(reason) => (BTreeMap::new(), Some(reason)),
-            };
-
-        if let Some(msg) = failure_reason {
-            summary.stacks_failed += 1;
+        let compose_env_file = if let Some(stack_id) = existing_stack_id.as_deref() {
             state
                 .db
-                .upsert_discovered_compose_project(DiscoveredComposeProjectUpsert {
+                .get_stack(stack_id)
+                .await?
+                .and_then(|stack| stack.compose.env_file)
+        } else {
+            None
+        };
+        let compose_stack = ComposeStack {
+            project_name: project.clone(),
+            compose: crate::api::types::ComposeConfig {
+                kind: "path".to_string(),
+                compose_files: config_files.clone(),
+                env_file: compose_env_file,
+            },
+        };
+        let compose_config = ComposeRunnerConfig {
+            compose_bin: state.config.compose_bin.clone(),
+            env: Vec::new(),
+        };
+        let merged = match crate::discovery_compose::read_effective_compose_services(
+            &compose_stack,
+            state.runner.as_ref(),
+            &compose_config,
+            Duration::from_secs(state.config.deploy_check_local_command_timeout_seconds),
+        )
+        .await
+        {
+            Ok(merged) => merged,
+            Err(msg) => {
+                summary.stacks_failed += 1;
+                state
+                    .db
+                    .upsert_discovered_compose_project(DiscoveredComposeProjectUpsert {
+                        project: project.clone(),
+                        stack_id: existing_stack_id.clone(),
+                        status: "invalid".to_string(),
+                        last_seen_at: Some(now.clone()),
+                        last_scan_at: now.clone(),
+                        last_error: Some(msg.clone()),
+                        last_config_files: Some(config_files.clone()),
+                        unarchive_if_active: true,
+                    })
+                    .await?;
+                actions.push(DiscoveryAction {
                     project: project.clone(),
-                    stack_id: None,
-                    status: "invalid".to_string(),
-                    last_seen_at: Some(now.clone()),
-                    last_scan_at: now.clone(),
-                    last_error: Some(msg.clone()),
-                    last_config_files: Some(config_files.clone()),
-                    unarchive_if_active: true,
-                })
-                .await?;
-            actions.push(DiscoveryAction {
-                project: project.clone(),
-                action: DiscoveryActionKind::Failed,
-                stack_id: None,
-                reason: Some(msg),
-                details: action_details,
-            });
-            projects_processed = projects_processed.saturating_add(1);
-            emit_job_progress_best_effort(
-                state,
-                progress_job_id,
-                "scan",
-                format!("scanned projects ({projects_processed}/{total_projects})"),
-                projects_processed,
-                total_projects,
-                Some(project.clone()),
-            )
-            .await;
-            continue;
-        }
+                    action: DiscoveryActionKind::Failed,
+                    stack_id: existing_stack_id.clone(),
+                    reason: Some(msg),
+                    details: action_details,
+                });
+                projects_processed = projects_processed.saturating_add(1);
+                emit_job_progress_best_effort(
+                    state,
+                    progress_job_id,
+                    "scan",
+                    format!("scanned projects ({projects_processed}/{total_projects})"),
+                    projects_processed,
+                    total_projects,
+                    Some(project.clone()),
+                )
+                .await;
+                continue;
+            }
+        };
 
         let svc_specs: Vec<ComposeServiceSpec> = merged
             .values()
