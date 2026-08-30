@@ -91,7 +91,7 @@
 - Startup recovery now restores managed overrides before generic incomplete-job recovery and skips jobs whose odd ownership is still active. A dedicated retry worker for unresolved runtime facts, and a single DB transaction combining accepted-state writes with the terminal Job summary, remain future work.
 - Discovery uses a pre-I/O generation token and an all-or-nothing guarded compose sync; a structured deferred-result field is not exposed in the HTTP response.
 - Runtime-scan CAS rejection is now treated as deferred and does not increment the update count; notification reconciliation is transactional with authoritative observer CAS.
-- Full workspace/all-features validation and shared-testbox verification remain before PR readiness.
+- Full workspace/all-features validation is blocked in the shared testbox before Cargo starts: two isolated runs fail with `Permission denied (os error 13) at path "/workspace/target..."`; focused/local validation is green and remote required CI remains the independent full-suite gate.
 
 ## Related Changes
 
