@@ -28,7 +28,7 @@ export const PUBLIC_DEMO_CLEANUP_SCENARIOS = [
   'cleanup-console-confirm-failed',
 ] as const
 export type PublicDemoCleanupScenario = (typeof PUBLIC_DEMO_CLEANUP_SCENARIOS)[number]
-export const PUBLIC_DEMO_ASYNC_STATES = ['default', 'cold', 'cache-refresh', 'error'] as const
+export const PUBLIC_DEMO_ASYNC_STATES = ['default', 'cold', 'cache-refresh', 'error', 'job-detail-retry'] as const
 export type PublicDemoAsyncState = (typeof PUBLIC_DEMO_ASYNC_STATES)[number]
 export const PUBLIC_DEMO_MANAGEMENT_EVENTS = ['default', 'reconnecting'] as const
 export type PublicDemoManagementEvents = (typeof PUBLIC_DEMO_MANAGEMENT_EVENTS)[number]
