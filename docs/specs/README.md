@@ -9,6 +9,7 @@
 | Topic | Lifecycle | Implementation | Spec | Successor |
 | --- | --- | --- | --- | --- |
 | Update rollback diagnostics | active | not started | `update-rollback-diagnostics/SPEC.md` | - |
+| Service accepted state consistency | active | not started | `service-accepted-state-consistency/SPEC.md` | - |
 
 ## 快速新增一个规格
 
