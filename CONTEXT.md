@@ -51,6 +51,16 @@ _Avoid_: container status, readiness result
 The time boundary after which a continuously `starting` candidate is treated as a health failure. It is derived solely from the candidate's effective health policy.
 _Avoid_: fixed health timeout, Docker unhealthy time
 
+## Compose Configuration
+
+**source Compose configuration**:
+The authored Compose files and explicit env-file inputs recorded for a Stack. It remains the auditable input to controlled Compose mutations.
+_Avoid_: effective Compose configuration, rendered Compose configuration
+
+**effective Compose configuration**:
+The fully merged and interpolated service configuration emitted by the Stack's configured Compose CLI. It is the authoritative declaration for observing a service's image reference and tag.
+_Avoid_: raw Compose YAML, source Compose configuration
+
 ## Refresh Generation
 
 - `request generation` is the monotonically increasing stack refresh request id.
