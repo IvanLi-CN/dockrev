@@ -25,8 +25,31 @@ _Avoid_: deleted backup, cleanup failure
 ## Service Digest and Rollback Target
 
 - `service digest` is the digest currently reported by the stack detail snapshot.
+- `accepted deployment state` is the latest service deployment state accepted outside an in-progress mutating operation or established by that operation's terminal settlement. A candidate container is not part of the accepted deployment state.
+- `transient operation observation` is a runtime or configuration observation made while a mutating operation overlaps the service. It may be used for operation progress and diagnosis, but it is not authoritative service state.
+- `service mutation ownership` is the durable, exclusive right of one operation to replace a service's accepted deployment state. It begins before runtime side effects and ends only through service state settlement.
+- `accepted-state generation` is the monotonic revision of a service's accepted deployment state. An observation can publish only when the generation it read is still current and no service mutation ownership is open.
+- `service state settlement` is the terminal reconciliation that aligns the service snapshot with the final runtime state after a mutating operation.
 - `rollback target` is the single backend-selected version that can restore the service to the previous successful update state.
 - A rollback target is valid only when its `currentDigest` matches the service digest in the same refresh generation.
+
+## Update Rollback Diagnostics
+
+**candidate container**:
+The post-apply container that runs an update candidate before Dockrev accepts it or begins automatic rollback. It is distinct from the rollback container that restores the prior image.
+_Avoid_: new container, updated container
+
+**rollback evidence**:
+A bounded diagnosis artifact captured from a candidate container before automatic rollback begins. It preserves captured output verbatim, belongs to the update record, and is distinct from normal service logs.
+_Avoid_: rollback logs, service logs
+
+**health status**:
+Docker's candidate-specific health evaluation: `starting`, `healthy`, or `unhealthy`. It does not by itself describe the container process state, restart count, exit error, or health-check output.
+_Avoid_: container status, readiness result
+
+**health-policy deadline**:
+The time boundary after which a continuously `starting` candidate is treated as a health failure. It is derived solely from the candidate's effective health policy.
+_Avoid_: fixed health timeout, Docker unhealthy time
 
 ## Refresh Generation
 

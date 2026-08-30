@@ -51,7 +51,6 @@ fn should_emit_slow_job_claim_warning(
     if elapsed < SLOW_JOB_CLAIM_WARN_THRESHOLD {
         return false;
     }
-
     let mut warned_at_by_type = warned_at_by_type
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -63,7 +62,6 @@ fn should_emit_slow_job_claim_warning(
     {
         return false;
     }
-
     warned_at_by_type.insert(job_type.to_string(), now);
     true
 }
@@ -79,7 +77,6 @@ impl Db {
             .await?
             .jobs)
     }
-
     pub async fn insert_job(&self, job: JobListItem) -> anyhow::Result<()> {
         let event_job_id = job.id.clone();
         let event_scope = job.scope.as_str().to_string();
@@ -425,10 +422,41 @@ WHERE id = ?1 AND status = 'queued'
         finished_at: &str,
         summary_json: &serde_json::Value,
     ) -> anyhow::Result<()> {
+        self.finish_job_with_archive(job_id, status, finished_at, summary_json, None)
+            .await
+    }
+    pub async fn finish_job_with_archive(
+        &self,
+        job_id: &str,
+        status: &str,
+        finished_at: &str,
+        summary_json: &serde_json::Value,
+        archive: Option<Vec<u8>>,
+    ) -> anyhow::Result<()> {
+        self.finish_job_with_archive_and_settlement(
+            job_id,
+            status,
+            finished_at,
+            summary_json,
+            archive,
+            None,
+        )
+        .await
+    }
+    pub async fn finish_job_with_archive_and_settlement(
+        &self,
+        job_id: &str,
+        status: &str,
+        finished_at: &str,
+        summary_json: &serde_json::Value,
+        archive: Option<Vec<u8>>,
+        settlements: Option<&[ServiceAcceptedStateSettlement]>,
+    ) -> anyhow::Result<()> {
         let job_id = job_id.to_string();
         let status = status.to_string();
         let finished_at = finished_at.to_string();
         let mut summary_json = summary_json.clone();
+        let settlements = settlements.map(|items| items.to_vec());
         let completed = self
             .call(move |conn| {
                 let previous = conn
@@ -462,17 +490,51 @@ WHERE id = ?1
 
                 let summary_json_str = serde_json::to_string(&summary_json)?;
                 let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                if let Some(settlements) = settlements.as_deref() {
+                    Db::settle_service_operation_accepted_states_tx(
+                        &tx,
+                        &job_id,
+                        settlements,
+                        &finished_at,
+                    )?;
+                }
                 let updated = tx.execute(
                     r#"
 UPDATE jobs
-SET status = ?2, finished_at = ?3, summary_json = ?4
+SET status = ?2, finished_at = ?3, summary_json = ?4,
+    rollback_evidence_tar_zstd = COALESCE(?5, rollback_evidence_tar_zstd)
 WHERE id = ?1
 "#,
-                    params![job_id, status, finished_at, summary_json_str],
+                    params![job_id, status, finished_at, summary_json_str, archive],
                 )?;
                 if updated == 0 {
                     return Ok(None);
                 }
+                tx.execute(
+                    r#"
+UPDATE services
+SET accepted_state_generation = (
+  SELECT target.opened_generation + 1
+  FROM job_service_targets target
+  WHERE target.job_id = ?1
+    AND target.service_id = services.id
+)
+WHERE id IN (
+  SELECT target.service_id
+  FROM job_service_targets target
+  WHERE target.job_id = ?1
+    AND target.opened_generation IS NOT NULL
+)
+  AND accepted_state_generation % 2 = 1
+  AND accepted_state_generation = (
+    SELECT target.opened_generation
+    FROM job_service_targets target
+    WHERE target.job_id = ?1
+      AND target.service_id = services.id
+  )
+"#,
+                    params![job_id],
+                )?;
                 let (job_type, scope, stack_id, service_id) = tx.query_row(
                     "SELECT type, scope, stack_id, service_id FROM jobs WHERE id = ?1",
                     params![&job_id],
@@ -1034,7 +1096,6 @@ LIMIT 1
                     })
                 })
                 .optional()?;
-
             Ok(row)
         })
         .await
@@ -1136,6 +1197,15 @@ WHERE finished_at IS NULL
       AND controls.recovery_snapshot_json IS NOT NULL
       AND controls.recovery_attempted_at IS NULL
   )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM job_service_targets target
+    JOIN services target_service ON target_service.id = target.service_id
+    WHERE target.job_id = jobs.id
+      AND target.opened_generation IS NOT NULL
+      AND target_service.accepted_state_generation = target.opened_generation
+      AND target_service.accepted_state_generation % 2 = 1
+  )
 ORDER BY created_at DESC
 LIMIT 2000
 "#,
@@ -1161,8 +1231,6 @@ LIMIT 2000
                     // queued jobs are not interrupted work; keep them pending for workers.
                     continue;
                 }
-
-                // Always leave an audit trail so operators can tell why the job ended.
                 tx.execute(
                     r#"
 INSERT INTO job_logs (job_id, ts, level, msg)
@@ -1191,7 +1259,6 @@ WHERE id = ?1
                     recovered.push(job_id);
                     continue;
                 }
-
                 let mut summary: serde_json::Value =
                     serde_json::from_str(&summary_raw).unwrap_or(serde_json::json!({}));
                 if !summary.is_object() {
@@ -1206,7 +1273,6 @@ WHERE id = ?1
                         }),
                     );
                 }
-
                 tx.execute(
                     r#"
 UPDATE jobs
@@ -1217,7 +1283,6 @@ WHERE id = ?1
                 )?;
                 recovered.push(job_id);
             }
-
             tx.commit()?;
             Ok(recovered)
         })
@@ -1253,7 +1318,6 @@ WHERE id = ?1
                 return Ok(false);
             }
 
-            // Always leave an audit trail so operators can tell why the job ended.
             conn.execute(
                 r#"
 INSERT INTO job_logs (job_id, ts, level, msg)
@@ -1369,6 +1433,65 @@ WHERE id = ?1
         })
         .await
         .context("get job")
+    }
+
+    pub async fn get_rollback_evidence_archive(
+        &self,
+        job_id: &str,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        let job_id = job_id.to_string();
+        self.call(move |conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT rollback_evidence_tar_zstd FROM jobs WHERE id = ?1",
+                    params![job_id],
+                    |row| row.get::<_, Option<Vec<u8>>>(0),
+                )
+                .optional()?
+                .flatten())
+        })
+        .await
+        .context("get rollback evidence archive")
+    }
+
+    pub async fn attach_rollback_evidence_archive(
+        &self,
+        job_id: &str,
+        archive: Vec<u8>,
+        metadata: &serde_json::Value,
+    ) -> anyhow::Result<bool> {
+        let job_id = job_id.to_string();
+        let metadata = metadata.clone();
+        self.call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let Some(summary_raw) = tx
+                .query_row(
+                    "SELECT summary_json FROM jobs WHERE id = ?1",
+                    params![&job_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+            else {
+                tx.commit()?;
+                return Ok(false);
+            };
+            let mut summary: serde_json::Value =
+                serde_json::from_str(&summary_raw).unwrap_or_else(|_| serde_json::json!({}));
+            if !summary.is_object() {
+                summary = serde_json::json!({ "result": summary });
+            }
+            if let Some(object) = summary.as_object_mut() {
+                object.insert("rollbackEvidence".to_string(), metadata);
+            }
+            let changed = tx.execute(
+                "UPDATE jobs SET rollback_evidence_tar_zstd = ?2, summary_json = ?3 WHERE id = ?1",
+                params![job_id, archive, serde_json::to_string(&summary)?],
+            )?;
+            tx.commit()?;
+            Ok(changed > 0)
+        })
+        .await
+        .context("attach rollback evidence archive")
     }
 }
 

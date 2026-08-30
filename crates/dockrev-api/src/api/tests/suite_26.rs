@@ -111,3 +111,91 @@ async fn service_backup_records_report_stack_wide_retention_metadata() {
     assert_eq!(records[0]["retained"].as_bool(), Some(false));
     tokio::fs::remove_file(compose_path).await.unwrap();
 }
+
+#[tokio::test]
+async fn rollback_evidence_api_download_requires_user_and_keeps_archive_out_of_job_json() {
+    let state = test_state_with_authz(":memory:", Some("alice"), None, false).await;
+    let job_id = ids::new_job_id();
+    let job = crate::api::types::JobRecord::new_running(
+        job_id.clone(),
+        crate::api::types::JobType::Update,
+        crate::api::types::JobScope::Service,
+        None,
+        None,
+        "2026-08-28T00:00:00Z",
+    )
+    .to_db();
+    state.db.insert_job(job).await.unwrap();
+    let summary = json!({
+        "rollbackEvidence": {
+            "status": "available",
+            "archiveFormat": "tar",
+            "compression": "zstd",
+            "failedCandidates": 1,
+            "archiveSizeBytes": 4,
+            "services": [{"serviceId": "service-a", "logsTruncated": false}]
+        }
+    });
+    state
+        .db
+        .finish_job_with_archive(
+            &job_id,
+            "rolled_back",
+            "2026-08-28T00:01:00Z",
+            &summary,
+            Some(vec![0x28, 0xb5, 0x2f, 0xfd]),
+        )
+        .await
+        .unwrap();
+
+    let app = api::router(state);
+    let unauthorized = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/jobs/{job_id}/rollback-evidence"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unauthorized.status(), 401);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/jobs/{job_id}/rollback-evidence"))
+                .header("X-Forwarded-User", "alice")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        "application/zstd"
+    );
+    assert_eq!(
+        response.headers().get("cache-control").unwrap(),
+        "private, no-store"
+    );
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(bytes.as_ref(), &[0x28, 0xb5, 0x2f, 0xfd]);
+
+    let detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/jobs/{job_id}"))
+                .header("X-Forwarded-User", "alice")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let detail_json = response_json(detail).await;
+    assert_eq!(detail_json["job"]["summary"]["rollbackEvidence"]["status"], "available");
+    assert!(!detail_json.to_string().contains("28b52ffd"));
+}

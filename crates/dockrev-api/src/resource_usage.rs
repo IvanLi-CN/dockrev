@@ -674,8 +674,9 @@ pub fn spawn_history_sampler(
     db: Db,
     metrics: MetricsStore,
     coordinator: ResourceSamplingCoordinator,
+    db_path: std::path::PathBuf,
 ) {
-    spawn_history_gc_task(db.clone(), metrics.clone());
+    spawn_history_gc_task(db.clone(), metrics.clone(), db_path);
     tokio::spawn(async move {
         let mut interval = Duration::from_secs(DEFAULT_SAMPLE_INTERVAL_SECONDS);
         let mut next_run_at = Instant::now();
@@ -734,10 +735,10 @@ pub fn spawn_history_sampler(
     });
 }
 
-fn spawn_history_gc_task(db: Db, metrics: MetricsStore) {
+fn spawn_history_gc_task(db: Db, metrics: MetricsStore, db_path: std::path::PathBuf) {
     tokio::spawn(async move {
         loop {
-            if let Err(e) = gc_history(&db, &metrics).await {
+            if let Err(e) = gc_history(&db, &metrics, &db_path).await {
                 tracing::warn!(error = %e, "resource monitor history gc failed");
             }
             tokio::time::sleep(RESOURCE_HISTORY_GC_INTERVAL).await;
@@ -745,7 +746,11 @@ fn spawn_history_gc_task(db: Db, metrics: MetricsStore) {
     });
 }
 
-async fn gc_history(db: &Db, metrics: &MetricsStore) -> anyhow::Result<()> {
+async fn gc_history(
+    db: &Db,
+    metrics: &MetricsStore,
+    db_path: &std::path::Path,
+) -> anyhow::Result<()> {
     let active_service_ids = db
         .list_active_service_ids_for_metrics()
         .await
@@ -771,6 +776,7 @@ async fn gc_history(db: &Db, metrics: &MetricsStore) -> anyhow::Result<()> {
             "terminal job history gc completed"
         );
     }
+    crate::rollback_evidence::cleanup_orphaned_spools(db, db_path).await;
     Ok(())
 }
 

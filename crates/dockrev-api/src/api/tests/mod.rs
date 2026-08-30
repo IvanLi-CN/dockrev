@@ -53,3 +53,4 @@ include!("suite_23.rs");
 include!("suite_24.rs");
 include!("suite_25.rs");
 include!("suite_26.rs");
+include!("suite_27.rs");

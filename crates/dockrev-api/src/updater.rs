@@ -311,6 +311,7 @@ pub async fn run_update_job_with_gate_using_root(
         services_stopped_for_backup,
         apply_gate,
         managed_override_root,
+        None,
     )
     .await
 }
@@ -334,6 +335,7 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
     services_stopped_for_backup: &[String],
     apply_gate: Option<&dyn UpdateApplyGate>,
     managed_override_root: Option<&Path>,
+    evidence: Option<crate::rollback_evidence::RollbackEvidenceContext>,
 ) -> anyhow::Result<UpdateOutcome> {
     let selection = select_update_services(
         stack,
@@ -674,6 +676,29 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
             idempotent_retry_policy,
         )
         .await?;
+        let health_policy = if has_health {
+            match inspect_health_policy(
+                runner,
+                &docker_cfg,
+                &active_container_id,
+                idempotent_retry_policy,
+            )
+            .await
+            {
+                Ok(policy) => policy,
+                Err(error) => {
+                    tracing::warn!(
+                        service_id = %svc.id,
+                        container_id = %active_container_id,
+                        error = %error,
+                        "candidate health policy unavailable; waiting for an explicit health result"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let attempted_image_id = run_to_string_with_retry(
             runner,
             docker_runner::inspect_image_id(&docker_cfg, &active_container_id),
@@ -700,16 +725,35 @@ pub(crate) async fn run_update_job_with_gate_using_root_unlocked(
                     message: format!("waiting for healthcheck on {}", svc.name),
                 },
             );
-            let healthy = wait_healthy(
+            // A healthcheck with an unreadable policy has no trustworthy finite deadline. Do not
+            // recreate the old fixed 90-second rollback; wait for Docker to report healthy or
+            // unhealthy and preserve the explicit policy-missing state in evidence metadata.
+            let health_deadline = health_policy.as_ref().map(|policy| {
+                crate::rollback_evidence::derive_deadline(policy, Duration::from_secs(2))
+            });
+            let health_result = wait_healthy_with_status(
                 runner,
                 &docker_cfg,
                 &active_container_id,
-                Duration::from_secs(90),
+                health_deadline,
                 idempotent_retry_policy,
             )
             .await?;
-            if !healthy {
+            if !health_result.healthy {
                 rollback_failure_step = Some("healthcheck");
+                if let Some(evidence) = evidence.as_ref() {
+                    let _ = evidence
+                        .capture_failure(
+                            runner,
+                            &docker_cfg,
+                            &svc.id,
+                            &active_container_id,
+                            health_result.last_status.trim(),
+                            health_policy.clone(),
+                            health_deadline,
+                        )
+                        .await;
+                }
                 emit_update_progress(
                     progress_events.as_ref(),
                     UpdateProgressEvent {
@@ -1111,6 +1155,25 @@ async fn has_healthcheck(
     Ok(out.trim() == "1")
 }
 
+async fn inspect_health_policy(
+    runner: &dyn CommandRunner,
+    docker_cfg: &docker_runner::DockerRunnerConfig,
+    container_id: &str,
+    retry_policy: IdempotentRetryPolicy,
+) -> anyhow::Result<Option<crate::rollback_evidence::HealthPolicy>> {
+    let raw = run_to_string_with_retry(
+        runner,
+        docker_runner::inspect_health_policy(docker_cfg, container_id),
+        Duration::from_secs(10),
+        "inspect_health_policy",
+        retry_policy,
+    )
+    .await?;
+    Ok(crate::rollback_evidence::parse_health_policy(
+        raw.as_bytes(),
+    ))
+}
+
 async fn wait_healthy(
     runner: &dyn CommandRunner,
     docker_cfg: &docker_runner::DockerRunnerConfig,
@@ -1118,7 +1181,30 @@ async fn wait_healthy(
     timeout: Duration,
     idempotent_retry_policy: IdempotentRetryPolicy,
 ) -> anyhow::Result<bool> {
-    let deadline = tokio::time::Instant::now() + timeout;
+    Ok(wait_healthy_with_status(
+        runner,
+        docker_cfg,
+        container_id,
+        Some(timeout),
+        idempotent_retry_policy,
+    )
+    .await?
+    .healthy)
+}
+
+struct HealthWaitResult {
+    healthy: bool,
+    last_status: String,
+}
+
+async fn wait_healthy_with_status(
+    runner: &dyn CommandRunner,
+    docker_cfg: &docker_runner::DockerRunnerConfig,
+    container_id: &str,
+    timeout: Option<Duration>,
+    idempotent_retry_policy: IdempotentRetryPolicy,
+) -> anyhow::Result<HealthWaitResult> {
+    let deadline = timeout.map(|duration| tokio::time::Instant::now() + duration);
     loop {
         let status = run_to_string_with_retry(
             runner,
@@ -1130,13 +1216,25 @@ async fn wait_healthy(
         .await?;
 
         match status.trim() {
-            "healthy" => return Ok(true),
-            "unhealthy" => return Ok(false),
+            "healthy" => {
+                return Ok(HealthWaitResult {
+                    healthy: true,
+                    last_status: status,
+                });
+            }
+            "unhealthy" => {
+                return Ok(HealthWaitResult {
+                    healthy: false,
+                    last_status: status,
+                });
+            }
             _ => {}
         }
-
-        if tokio::time::Instant::now() >= deadline {
-            return Ok(false);
+        if deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
+            return Ok(HealthWaitResult {
+                healthy: false,
+                last_status: status,
+            });
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
     }

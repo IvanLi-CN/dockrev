@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     api::types::{JobLogLine, ServiceDigestTagsScanSummary, ServiceDigestTagsSnapshotResponse},
+    db::{AcceptedStateCasOutcome, ServiceAcceptedState},
     ignore, registry,
     state::AppState,
 };
@@ -11,6 +12,7 @@ pub(crate) struct ServiceCheckOutcome {
     pub current_digest: Option<String>,
     pub current_resolved_tag: Option<String>,
     pub current_resolved_tags_json: Option<String>,
+    pub current_runtime_started_at: Option<String>,
     pub current_resolved_tags: Option<Vec<String>>,
     pub candidate_tag: Option<String>,
     pub candidate_resolved_tag: Option<String>,
@@ -22,6 +24,7 @@ pub(crate) struct ServiceCheckOutcome {
     pub candidate_present: bool,
     pub candidate_digest_changed: bool,
     pub current_manifest_is_multi_arch: bool,
+    pub accepted_state_applied: bool,
 }
 
 pub(crate) type ManifestDigestCache =
@@ -106,6 +109,7 @@ pub(crate) async fn check_service_and_persist(
                 current_digest: None,
                 current_resolved_tag: None,
                 current_resolved_tags_json: None,
+                current_runtime_started_at: None,
                 current_resolved_tags: None,
                 candidate_tag: None,
                 candidate_resolved_tag: None,
@@ -117,6 +121,7 @@ pub(crate) async fn check_service_and_persist(
                 candidate_present: false,
                 candidate_digest_changed: false,
                 current_manifest_is_multi_arch: false,
+                accepted_state_applied: false,
             });
         }
     };
@@ -236,13 +241,23 @@ pub(crate) async fn check_service_and_persist(
         candidate_arch_json = None;
     }
 
-    let candidate_present = candidate_tag.is_some();
     let candidate_digest_changed = candidate_digest.as_deref() != svc.candidate_digest.as_deref();
     // Only let an in-memory check supersede active notification records when the candidate state
     // is authoritative. Missing runtime state or transient registry failures can clear the service
     // row temporarily, but they should not reopen the same digest for re-notification.
     let candidate_state_authoritative =
         runtime_digest.is_some() && current_manifest_digest.is_some();
+
+    if !candidate_state_authoritative {
+        candidate_tag = svc
+            .candidate_tag
+            .clone()
+            .or_else(|| svc.candidate_digest.as_ref().map(|_| svc.image_tag.clone()));
+        candidate_digest = svc.candidate_digest.clone();
+        candidate_arch_match = svc.candidate_arch_match.clone();
+        candidate_arch_json = svc.candidate_arch_json.clone();
+    }
+    let candidate_present = candidate_tag.is_some();
 
     let mut ignore_match: Option<(String, String)> =
         if current_manifest.is_none() && candidate_tag.is_some() {
@@ -276,7 +291,9 @@ pub(crate) async fn check_service_and_persist(
             )
         };
 
-    let candidate_resolved_tag = if candidate_digest_changed {
+    let candidate_resolved_tag = if !candidate_state_authoritative {
+        svc.candidate_resolved_tag.clone()
+    } else if candidate_digest_changed {
         None
     } else {
         svc.candidate_resolved_tag.clone()
@@ -298,42 +315,42 @@ pub(crate) async fn check_service_and_persist(
         observed_runtime_started_at.unwrap_or(existing_runtime_started_at)
     };
 
-    state
+    let cas_state = ServiceAcceptedState {
+        image_ref: svc.image_ref.clone(),
+        image_tag: svc.image_tag.clone(),
+        current_digest: current_digest.clone(),
+        current_runtime_started_at: current_runtime_started_at.clone(),
+        current_resolved_tag: current_resolved_tag.clone(),
+        current_resolved_tags_json: current_resolved_tags_json.clone(),
+        candidate_tag: candidate_tag.clone(),
+        candidate_resolved_tag: candidate_resolved_tag.clone(),
+        candidate_digest: candidate_digest.clone(),
+        candidate_arch_match: candidate_arch_match.clone(),
+        candidate_arch_json: candidate_arch_json.clone(),
+        ignore_rule_id: ignore_match.as_ref().map(|(id, _)| id.clone()),
+        ignore_reason: ignore_match.as_ref().map(|(_, r)| r.clone()),
+        checked_at: if candidate_state_authoritative {
+            Some(now.to_string())
+        } else {
+            svc.checked_at.clone()
+        },
+    };
+    let cas = state
         .db
-        .update_service_check_result_with_runtime_started_at(
+        .compare_and_swap_service_accepted_state_observation_with_notification_reconcile(
             &svc.id,
-            current_digest.clone(),
-            current_runtime_started_at,
-            current_resolved_tag.clone(),
-            current_resolved_tags_json.clone(),
-            candidate_tag.clone(),
-            candidate_resolved_tag.clone(),
-            candidate_digest.clone(),
-            candidate_arch_match.clone(),
-            candidate_arch_json.clone(),
-            ignore_match.as_ref().map(|(id, _)| id.clone()),
-            ignore_match.as_ref().map(|(_, r)| r.clone()),
+            svc.accepted_state_generation,
+            &cas_state,
             now,
-            now,
+            candidate_state_authoritative,
         )
         .await?;
-    if candidate_state_authoritative {
-        state
-            .db
-            .reconcile_service_new_version_notifications(
-                &svc.id,
-                &svc.image_ref,
-                &svc.image_tag,
-                candidate_digest.as_deref(),
-                now,
-            )
-            .await?;
-    }
 
     Ok(ServiceCheckOutcome {
         current_digest,
         current_resolved_tag,
         current_resolved_tags_json,
+        current_runtime_started_at,
         current_resolved_tags,
         candidate_tag,
         candidate_resolved_tag,
@@ -345,12 +362,29 @@ pub(crate) async fn check_service_and_persist(
         candidate_present,
         candidate_digest_changed,
         current_manifest_is_multi_arch,
+        accepted_state_applied: matches!(cas, AcceptedStateCasOutcome::Applied { .. }),
     })
 }
 
+#[allow(dead_code)]
 pub(crate) async fn persist_runtime_fallback_result(
     db: &crate::db::Db,
     service_id: &str,
+    _image_ref: &str,
+    _image_tag: &str,
+    runtime: &RuntimeServiceObservation,
+    now: &str,
+) -> anyhow::Result<()> {
+    persist_runtime_fallback_result_with_generation(
+        db, service_id, None, _image_ref, _image_tag, runtime, now,
+    )
+    .await
+}
+
+pub(crate) async fn persist_runtime_fallback_result_with_generation(
+    db: &crate::db::Db,
+    service_id: &str,
+    expected_generation: Option<i64>,
     _image_ref: &str,
     _image_tag: &str,
     runtime: &RuntimeServiceObservation,
@@ -365,23 +399,54 @@ pub(crate) async fn persist_runtime_fallback_result(
                 normalize_runtime_started_at(context.current_runtime_started_at.as_deref())
             })
     };
-    db.update_service_check_result_with_runtime_started_at(
-        service_id,
-        Some(runtime.digest.clone()),
-        current_runtime_started_at,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        now,
-        now,
-    )
-    .await?;
+    if let Some(expected_generation) = expected_generation {
+        let existing = db
+            .get_versioned_service_accepted_state(service_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("service not found: {service_id}"))?;
+        let state = ServiceAcceptedState {
+            image_ref: existing.state.image_ref,
+            image_tag: existing.state.image_tag,
+            current_digest: Some(runtime.digest.clone()),
+            current_runtime_started_at,
+            current_resolved_tag: None,
+            current_resolved_tags_json: None,
+            candidate_tag: None,
+            candidate_resolved_tag: None,
+            candidate_digest: None,
+            candidate_arch_match: None,
+            candidate_arch_json: None,
+            ignore_rule_id: None,
+            ignore_reason: None,
+            checked_at: Some(now.to_string()),
+        };
+        let _ = db
+            .compare_and_swap_service_accepted_state_observation(
+                service_id,
+                expected_generation,
+                &state,
+                now,
+            )
+            .await?;
+    } else {
+        db.update_service_check_result_with_runtime_started_at(
+            service_id,
+            Some(runtime.digest.clone()),
+            current_runtime_started_at,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            now,
+            now,
+        )
+        .await?;
+    }
     // This fallback means registry inference was inconclusive for the current runtime digest, so
     // keep any active notification record until a later authoritative check confirms the candidate
     // changed or truly disappeared.

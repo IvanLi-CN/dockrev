@@ -39,6 +39,8 @@ CREATE INDEX idx_backups_cleanup_after ON backups(cleanup_after);
 CREATE TABLE job_service_targets (
   job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
   service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  opened_generation INTEGER,
+  baseline_snapshot_json TEXT,
   PRIMARY KEY (job_id, service_id)
 );
 CREATE INDEX idx_job_service_targets_service_job ON job_service_targets(service_id, job_id);

@@ -9,6 +9,7 @@ import {
   type ServiceResourceSample,
   type ServiceResourceSnapshot,
   type ServiceResourceUsageWindow,
+  type ServiceLifecycleEvent,
   type ServiceLifecycleProjection,
 } from '../api'
 import type { AsyncDataTrigger } from '../asyncData'
@@ -54,6 +55,12 @@ export const RESOURCE_WINDOW_META_LABELS: Record<ServiceResourceUsageWindow, str
 const SUMMARY_WINDOW: ServiceResourceUsageWindow = '1h'
 const SSE_BACKOFF_MS = [1000, 2000, 5000]
 
+type LifecycleSubscription = {
+  serviceId: string
+  windowKey: ServiceResourceUsageWindow
+  afterId: number
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error)
@@ -72,6 +79,25 @@ function isMonitorDisabledError(error: unknown): boolean {
 function parseSampleTs(sample: ServiceResourceSample): number | null {
   const ts = Date.parse(sample.sampledAt)
   return Number.isFinite(ts) ? ts : null
+}
+
+function parseLifecycleEvent(data: unknown): ServiceLifecycleEvent | null {
+  if (!data || typeof data !== 'object') return null
+  const envelope = data as { type?: unknown; event?: unknown }
+  if (envelope.type !== 'event' || !envelope.event || typeof envelope.event !== 'object') return null
+  const event = envelope.event as Partial<ServiceLifecycleEvent>
+  return typeof event.id === 'number' && Number.isFinite(event.id) &&
+    typeof event.serviceId === 'string' &&
+    typeof event.observedAt === 'string' && Number.isFinite(Date.parse(event.observedAt))
+    ? (event as ServiceLifecycleEvent)
+    : null
+}
+
+function lifecycleWindowBounds(windowKey: ServiceResourceUsageWindow, now = Date.now()): { since: string; until: string } {
+  return {
+    since: new Date(now - RESOURCE_WINDOW_SECONDS[windowKey] * 1000).toISOString(),
+    until: new Date(now).toISOString(),
+  }
 }
 
 function compareSamplesByTime(a: ServiceResourceSample, b: ServiceResourceSample): number {
@@ -167,6 +193,7 @@ export function useServiceDetailResourceMonitor(props: {
   const [historyLoading, setHistoryLoading] = useState(!readonly && isOnline)
   const [historyLoaded, setHistoryLoaded] = useState(initialHasData)
   const [summaryLoaded, setSummaryLoaded] = useState(initialSummaryHasData)
+  const [lifecycleSubscription, setLifecycleSubscription] = useState<LifecycleSubscription | null>(null)
   const [historyTrigger, setHistoryTrigger] = useState<AsyncDataTrigger>('background')
   const [historyReloadTick, setHistoryReloadTick] = useState(0)
   const [historyError, setHistoryError] = useState<string | null>(null)
@@ -181,6 +208,8 @@ export function useServiceDetailResourceMonitor(props: {
   const windowKeyRef = useRef(windowKey)
   const panelHistoryRequestIdRef = useRef(0)
   const summaryHistoryRequestIdRef = useRef(0)
+  const lifecycleRefreshRequestIdRef = useRef(0)
+  const previousPageVisibilityRef = useRef(isPageVisible)
 
   windowKeyRef.current = windowKey
 
@@ -188,12 +217,14 @@ export function useServiceDetailResourceMonitor(props: {
     liveSamplesRef.current = []
     panelHistoryRequestIdRef.current += 1
     summaryHistoryRequestIdRef.current += 1
+    lifecycleRefreshRequestIdRef.current += 1
     setWindowKey(initialWindow)
     setPanelSamples([])
     setSummarySamples([])
     setSummaryLoaded(false)
     setPeaks([])
     setLifecycle(null)
+    setLifecycleSubscription(null)
     setMonitorDisabled(false)
     setHistoryLoading(!readonly && isOnline)
     setHistoryLoaded(false)
@@ -216,6 +247,7 @@ export function useServiceDetailResourceMonitor(props: {
       setSummaryLoaded(nextSummarySamples.length > 0 || initialSnapshot.monitorDisabled === true)
       setPeaks([])
       setLifecycle(null)
+      setLifecycleSubscription(null)
       setMonitorDisabled(initialSnapshot.monitorDisabled === true)
       setHistoryError(null)
       setHistoryLoading(false)
@@ -247,6 +279,14 @@ export function useServiceDetailResourceMonitor(props: {
   }, [])
 
   useEffect(() => {
+    const wasVisible = previousPageVisibilityRef.current
+    previousPageVisibilityRef.current = isPageVisible
+    if (!isPageVisible || wasVisible || readonly || !isOnline || monitorDisabled) return
+    setHistoryTrigger('background')
+    setHistoryReloadTick((current) => current + 1)
+  }, [isOnline, isPageVisible, monitorDisabled, readonly])
+
+  useEffect(() => {
     if (readonly || !isOnline || monitorDisabled) {
       setHistoryLoading(false)
       return undefined
@@ -254,6 +294,8 @@ export function useServiceDetailResourceMonitor(props: {
 
     const requestId = ++panelHistoryRequestIdRef.current
     let cancelled = false
+    lifecycleRefreshRequestIdRef.current += 1
+    setLifecycleSubscription(null)
     setHistoryLoading(true)
     setHistoryError(null)
 
@@ -268,6 +310,11 @@ export function useServiceDetailResourceMonitor(props: {
         setPanelSamples(nextSamples)
         setPeaks(response.peaks ?? [])
         setLifecycle(response.lifecycle ?? null)
+        setLifecycleSubscription({
+          serviceId,
+          windowKey,
+          afterId: response.lifecycle?.lastEventId ?? 0,
+        })
         setMonitorDisabled(false)
         setHistoryLoaded(true)
         if (windowKey === SUMMARY_WINDOW) {
@@ -283,6 +330,7 @@ export function useServiceDetailResourceMonitor(props: {
           setPanelSamples([])
           setPeaks([])
           setLifecycle(null)
+          setLifecycleSubscription(null)
           setSummarySamples([])
           setSummaryLoaded(true)
           setHistoryError(null)
@@ -320,6 +368,7 @@ export function useServiceDetailResourceMonitor(props: {
           setSummarySamples([])
           setPeaks([])
           setLifecycle(null)
+          setLifecycleSubscription(null)
           setMonitorDisabled(true)
           setSummaryLoaded(true)
           setHistoryLoaded(false)
@@ -333,7 +382,7 @@ export function useServiceDetailResourceMonitor(props: {
     return () => {
       cancelled = true
     }
-  }, [isOnline, monitorDisabled, readonly, serviceId, windowKey])
+  }, [historyReloadTick, isOnline, monitorDisabled, readonly, serviceId, windowKey])
 
   useEffect(() => {
     if (readonly || !isOnline || !isPageVisible || monitorDisabled) {
@@ -455,27 +504,60 @@ export function useServiceDetailResourceMonitor(props: {
   }, [isOnline, isPageVisible, monitorDisabled, readonly, serviceId])
 
   useEffect(() => {
-    if (readonly || !isOnline) return undefined
+    if (
+      readonly ||
+      !isOnline ||
+      !isPageVisible ||
+      monitorDisabled ||
+      !lifecycleSubscription ||
+      lifecycleSubscription.serviceId !== serviceId ||
+      lifecycleSubscription.windowKey !== windowKey
+    ) {
+      return undefined
+    }
+
     let closed = false
-    const source = newServiceLifecycleEventsSource(serviceId)
-    const refresh = () => {
-      void getServiceLifecycleSnapshot(serviceId)
+    const source = newServiceLifecycleEventsSource(serviceId, { afterId: lifecycleSubscription.afterId })
+    const onLifecycleEvent = (event: Event) => {
+      const data = (event as MessageEvent).data
+      if (typeof data !== 'string' || !data) return
+      let lifecycleEvent: ServiceLifecycleEvent | null = null
+      try {
+        lifecycleEvent = parseLifecycleEvent(JSON.parse(data))
+      } catch {
+        return
+      }
+      if (!lifecycleEvent) return
+      if (lifecycleEvent.serviceId !== serviceId || lifecycleEvent.id <= lifecycleSubscription.afterId) return
+
+      const now = Date.now()
+      const observedAt = Date.parse(lifecycleEvent.observedAt)
+      const cutoff = now - RESOURCE_WINDOW_SECONDS[windowKey] * 1000
+      if (observedAt < cutoff || observedAt > now) return
+
+      const requestId = ++lifecycleRefreshRequestIdRef.current
+      const bounds = lifecycleWindowBounds(windowKey, now)
+      void getServiceLifecycleSnapshot(serviceId, bounds)
         .then((snapshot) => {
-          if (!closed) setLifecycle(snapshot)
+          if (closed || requestId !== lifecycleRefreshRequestIdRef.current) return
+          setLifecycle(snapshot)
         })
         .catch(() => undefined)
     }
-    source.addEventListener('lifecycle_event', refresh)
+
+    source.addEventListener('lifecycle_event', onLifecycleEvent)
     return () => {
       closed = true
       source.close()
     }
-  }, [isOnline, readonly, serviceId])
+  }, [isOnline, isPageVisible, lifecycleSubscription, monitorDisabled, readonly, serviceId, windowKey])
 
   const onWindowChange = useCallback((nextWindowKey: ServiceResourceUsageWindow) => {
     setHistoryTrigger('user-action')
+    lifecycleRefreshRequestIdRef.current += 1
     setPeaks([])
     setHistoryLoaded(false)
+    setLifecycleSubscription(null)
     setPanelSamples((current) =>
       nextWindowKey === '7d' || nextWindowKey === '30d'
         ? []
@@ -486,9 +568,11 @@ export function useServiceDetailResourceMonitor(props: {
 
   const onRetry = useCallback(() => {
     setHistoryTrigger('user-action')
+    lifecycleRefreshRequestIdRef.current += 1
     setMonitorDisabled(false)
     setSummaryLoaded(false)
     setHistoryLoaded(false)
+    setLifecycleSubscription(null)
     setHistoryReloadTick((current) => current + 1)
   }, [])
 

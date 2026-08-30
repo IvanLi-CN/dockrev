@@ -808,6 +808,10 @@ export async function getJob(jobId: string, init?: RequestInit): Promise<JobDeta
   return data.job as JobDetail
 }
 
+export async function downloadRollbackEvidence(jobId: string): Promise<Response> {
+  return apiFetch(`/api/jobs/${encodeURIComponent(jobId)}/rollback-evidence`)
+}
+
 export async function stopJob(jobId: string): Promise<{ jobId: string; state: 'requested' }> {
   const resp = await apiFetch(`/api/jobs/${encodeURIComponent(jobId)}/stop`, {
     method: 'POST',

@@ -1,6 +1,7 @@
 use super::*;
 use crate::backup::BackupRecoveryStore;
 use crate::managed_override;
+use crate::rollback_evidence::RollbackEvidenceContext;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 pub(crate) type UpdateStackSummaries = Vec<serde_json::Value>;
@@ -10,6 +11,7 @@ pub(crate) type UpdateJobOutcome = (
     UpdateStackSummaries,
     UpdateBackupsToCleanup,
     JobProgress,
+    Vec<crate::db::ServiceAcceptedStateSettlement>,
 );
 
 pub(crate) fn extract_changed_service_ids(update: &serde_json::Value) -> Option<Vec<String>> {
@@ -115,6 +117,17 @@ pub(crate) async fn run_update_job(
         .unwrap_or(TransitionJobKind::Update);
     let stop_signal = (job_kind == TransitionJobKind::Update && req.mode.as_str() == "apply")
         .then(|| state.update_stop_hub.subscribe(&job_id));
+    let evidence = if job_kind == TransitionJobKind::Update && req.mode.as_str() == "apply" {
+        match RollbackEvidenceContext::new(&job_id, &state.config.db_path) {
+            Ok(context) => Some(context),
+            Err(error) => {
+                tracing::warn!(job_id = %job_id, error = %error, "rollback evidence spool unavailable");
+                None
+            }
+        }
+    } else {
+        None
+    };
     let outcome: anyhow::Result<UpdateJobOutcome> = async {
         if matches!(job_kind, TransitionJobKind::Rollback)
             || matches!(&req.mode, UpdateMode::Apply)
@@ -132,6 +145,12 @@ pub(crate) async fn run_update_job(
         let mut final_status = "success".to_string();
         let mut stack_summaries = Vec::new();
         let mut backups_to_cleanup: Vec<(String, u32)> = Vec::new();
+        let mut pending_settlements = Vec::<(
+            crate::db::ServiceAcceptedStateSettlement,
+            crate::db::ServiceForCheck,
+            service_check::RuntimeServiceObservation,
+            bool,
+        )>::new();
         let mut processed_stacks = 0u32;
         let mut latest_progress = make_job_progress(
             "prepare",
@@ -871,6 +890,7 @@ pub(crate) async fn run_update_job(
                 (job_kind == TransitionJobKind::Update && req.mode.as_str() == "apply")
                     .then_some(&apply_gate as &dyn updater::UpdateApplyGate),
                 Some(&state.config.managed_override_dir),
+                evidence.clone(),
             )
             .await;
             let lifecycle_success = update_outcome.as_ref().map(|outcome| outcome.status == "success").unwrap_or(false);
@@ -965,17 +985,18 @@ pub(crate) async fn run_update_job(
                             let mut inference_ok = true;
                             if settle_outcome.current_digest.is_none() {
                                 inference_ok = false;
-                                service_check::persist_runtime_fallback_result(
-                                    &state.db,
-                                    &svc_for_check.id,
-                                    &svc_for_check.image_ref,
-                                    &svc_for_check.image_tag,
-                                    &runtime_observation,
-                                    &settled_at,
-                                )
-                                .await?;
                                 settle_outcome.current_digest =
                                     Some(runtime_observation.digest.clone());
+                                settle_outcome.current_runtime_started_at =
+                                    if runtime_observation.started_at_inferred {
+                                        service_check::normalize_runtime_started_at(
+                                            runtime_observation.started_at.as_deref(),
+                                        )
+                                    } else {
+                                        service_check::normalize_runtime_started_at(
+                                            svc_for_check.current_runtime_started_at.as_deref(),
+                                        )
+                                    };
                                 settle_outcome.current_resolved_tag = None;
                                 settle_outcome.current_resolved_tags_json = None;
                                 settle_outcome.candidate_tag = None;
@@ -987,39 +1008,21 @@ pub(crate) async fn run_update_job(
                                 settle_outcome.ignore_reason = None;
                                 settle_outcome.candidate_present = false;
                             }
-                            let evt = json!({
-                                "type": "update_state_settled",
-                                "jobId": job_id,
-                                "ts": settled_at,
-                                "stackId": stack_id,
-                                "serviceId": svc_for_check.id,
-                                "serviceName": svc_for_check.name,
-                                "runtimeDigest": runtime_observation.digest,
-                                "runtimeStartedAt": runtime_observation.started_at,
-                                "candidatePresent": settle_outcome.candidate_present,
-                                "inferenceOk": inference_ok,
-                            });
-                            state
-                                .db
-                                .insert_job_log(
-                                    &job_id,
-                                    &JobLogLine {
-                                        ts: settled_at.clone(),
-                                        level: "event".to_string(),
-                                        msg: evt.to_string(),
-                                    },
-                                )
-                                .await?;
+                            pending_settlements.push((
+                                crate::db::ServiceAcceptedStateSettlement {
+                                    service_id: svc_for_check.id.clone(),
+                                    opened_generation: svc_for_check.accepted_state_generation,
+                                    state: accepted_state_from_check(
+                                        &svc_for_check,
+                                        &settle_outcome,
+                                        &settled_at,
+                                    ),
+                                },
+                                svc_for_check.clone(),
+                                runtime_observation.clone(),
+                                inference_ok,
+                            ));
                             settled_services += 1;
-
-                            enqueue_snapshot_for_image_ref(
-                                &state,
-                                &svc_for_check.image_ref,
-                                &runtime_observation.digest,
-                                &host_platform,
-                                "update_digest_changed",
-                            )
-                            .await;
                         }
                         if settled_services > 0 {
                             state.db.update_stack_last_check_at(stack_id, &settled_at).await?;
@@ -1135,6 +1138,46 @@ pub(crate) async fn run_update_job(
             }
         }
 
+        let acquired_target_count = req.targets.as_deref().unwrap_or_default().len();
+        if final_status == "success"
+            && acquired_target_count > 0
+            && pending_settlements.len() == acquired_target_count
+        {
+            let settled_at = now_rfc3339()?;
+            for (_, service, runtime, inference_ok) in &pending_settlements {
+                let evt = json!({
+                    "type": "update_state_settled",
+                    "jobId": job_id,
+                    "ts": settled_at,
+                    "serviceId": service.id,
+                    "serviceName": service.name,
+                    "runtimeDigest": runtime.digest,
+                    "runtimeStartedAt": runtime.started_at,
+                    "candidatePresent": service.candidate_digest.is_some(),
+                    "inferenceOk": inference_ok,
+                });
+                state
+                    .db
+                    .insert_job_log(
+                        &job_id,
+                        &JobLogLine {
+                            ts: settled_at.clone(),
+                            level: "event".to_string(),
+                            msg: evt.to_string(),
+                        },
+                    )
+                    .await?;
+                enqueue_snapshot_for_image_ref(
+                    &state,
+                    &service.image_ref,
+                    &runtime.digest,
+                    &host_platform,
+                    "update_digest_changed",
+                )
+                .await;
+            }
+        }
+
         let terminal_status = normalize_transition_outcome_status(job_kind, &final_status);
         latest_progress = make_job_progress(
             "done",
@@ -1153,81 +1196,126 @@ pub(crate) async fn run_update_job(
             stack_summaries,
             backups_to_cleanup,
             latest_progress,
+            pending_settlements
+                .into_iter()
+                .map(|(settlement, _, _, _)| settlement)
+                .collect(),
         ))
     }
     .await;
 
-    let (final_status, stack_summaries, backups_to_cleanup, final_summary, finished_at) =
-        match outcome {
-            Ok((final_status, stack_summaries, backups_to_cleanup, progress)) => {
-                let progress_json = serde_json::to_value(&progress)?;
-                let final_summary = json!({
-                    "mode": job_kind.summary_mode(&req.mode),
-                    "targets": &req.targets,
-                    "stacks": stack_summaries.clone(),
-                    "progress": progress_json,
-                });
-                let finished_at = now_rfc3339()?;
-                (
-                    final_status,
-                    stack_summaries,
-                    backups_to_cleanup,
-                    final_summary,
-                    finished_at,
-                )
-            }
-            Err(err) => {
-                let finished_at = now_rfc3339()?;
-                let stop_requested = crate::update_stop::is_requested(&err);
-                let progress = make_job_progress(
-                    "done",
-                    if stop_requested {
-                        "update cancelled".to_string()
-                    } else {
-                        job_kind.failed_message().to_string()
-                    },
-                    0,
-                    0,
-                    None,
-                    finished_at.clone(),
-                );
-                let progress_json = serde_json::to_value(&progress)?;
-                let _ = persist_job_progress(&state, &job_id, &progress).await;
-                let _ = state
-                    .db
-                    .insert_job_log(
-                        &job_id,
-                        &JobLogLine {
-                            ts: finished_at.clone(),
-                            level: "error".to_string(),
-                            msg: if stop_requested {
-                                format!("update cancelled: {err}")
-                            } else {
-                                format!("{}: {err}", job_kind.failed_message())
-                            },
+    let (
+        final_status,
+        stack_summaries,
+        backups_to_cleanup,
+        mut final_summary,
+        finished_at,
+        settlements,
+    ) = match outcome {
+        Ok((final_status, stack_summaries, backups_to_cleanup, progress, settlements)) => {
+            let progress_json = serde_json::to_value(&progress)?;
+            let final_summary = json!({
+                "mode": job_kind.summary_mode(&req.mode),
+                "targets": &req.targets,
+                "stacks": stack_summaries.clone(),
+                "progress": progress_json,
+            });
+            let finished_at = now_rfc3339()?;
+            (
+                final_status,
+                stack_summaries,
+                backups_to_cleanup,
+                final_summary,
+                finished_at,
+                settlements,
+            )
+        }
+        Err(err) => {
+            let finished_at = now_rfc3339()?;
+            let stop_requested = crate::update_stop::is_requested(&err);
+            let progress = make_job_progress(
+                "done",
+                if stop_requested {
+                    "update cancelled".to_string()
+                } else {
+                    job_kind.failed_message().to_string()
+                },
+                0,
+                0,
+                None,
+                finished_at.clone(),
+            );
+            let progress_json = serde_json::to_value(&progress)?;
+            let _ = persist_job_progress(&state, &job_id, &progress).await;
+            let _ = state
+                .db
+                .insert_job_log(
+                    &job_id,
+                    &JobLogLine {
+                        ts: finished_at.clone(),
+                        level: "error".to_string(),
+                        msg: if stop_requested {
+                            format!("update cancelled: {err}")
+                        } else {
+                            format!("{}: {err}", job_kind.failed_message())
                         },
-                    )
-                    .await;
-                let final_summary = json!({
-                    "mode": job_kind.summary_mode(&req.mode),
-                    "targets": &req.targets,
-                    "error": err.to_string(),
-                    "stopRequested": stop_requested,
-                    "progress": progress_json,
-                });
-                (
-                    if stop_requested {
-                        "cancelled".to_string()
-                    } else {
-                        "failed".to_string()
                     },
-                    Vec::new(),
-                    Vec::new(),
-                    final_summary,
-                    finished_at,
                 )
-            }
+                .await;
+            let final_summary = json!({
+                "mode": job_kind.summary_mode(&req.mode),
+                "targets": &req.targets,
+                "error": err.to_string(),
+                "stopRequested": stop_requested,
+                "progress": progress_json,
+            });
+            (
+                if stop_requested {
+                    "cancelled".to_string()
+                } else {
+                    "failed".to_string()
+                },
+                Vec::new(),
+                Vec::new(),
+                final_summary,
+                finished_at,
+                Vec::new(),
+            )
+        }
+    };
+
+    if let Some(summary) = final_summary.as_object_mut() {
+        let refresh = if final_status == "success" {
+            "fresh"
+        } else {
+            "deferred"
         };
+        let reason = if final_status == "success" {
+            "settled from final runtime observation"
+        } else {
+            "baseline candidate retained until a later authoritative observation"
+        };
+        let services = req
+            .targets
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(|target| {
+                json!({
+                    "serviceId": target.service_id,
+                    "candidateRefresh": refresh,
+                    "reason": reason,
+                })
+            })
+            .collect::<Vec<_>>();
+        summary.insert(
+            "stateSettlement".to_string(),
+            json!({
+                "status": "settled",
+                "services": services,
+            }),
+        );
+    }
 
     let force_notify = final_status != "success";
     let mut should_notify = true;
@@ -1306,10 +1394,49 @@ pub(crate) async fn run_update_job(
             .await;
     }
 
+    let archive = if let Some(evidence) = evidence.as_ref() {
+        let mut evidence_summary = evidence.finalize().await;
+        let mut archive = None;
+        if evidence_summary.status == "available" {
+            match tokio::fs::read(evidence.archive_path()).await {
+                Ok(bytes) => archive = Some(bytes),
+                Err(error) => {
+                    evidence_summary.status = "incomplete";
+                    evidence_summary.archive_size_bytes = None;
+                    evidence_summary
+                        .errors
+                        .push(format!("archive read: {error}"));
+                }
+            }
+        }
+        if evidence_summary.status != "absent"
+            && let Some(summary) = final_summary.as_object_mut()
+        {
+            summary.insert(
+                "rollbackEvidence".to_string(),
+                serde_json::to_value(&evidence_summary)?,
+            );
+        }
+        archive
+    } else {
+        None
+    };
     state
         .db
-        .finish_job(&job_id, &final_status, &finished_at, &final_summary)
+        .finish_job_with_archive_and_settlement(
+            &job_id,
+            &final_status,
+            &finished_at,
+            &final_summary,
+            archive.clone(),
+            (!settlements.is_empty()).then_some(settlements.as_slice()),
+        )
         .await?;
+    if archive.is_some()
+        && let Some(evidence) = evidence.as_ref()
+    {
+        evidence.cleanup_after_commit().await;
+    }
 
     if should_record_update_tag_history(&req, &final_status) {
         record_update_tag_history(state.as_ref(), &req, &finished_at).await;
@@ -1356,129 +1483,10 @@ pub(crate) async fn run_update_job(
     Ok(())
 }
 
-fn combined_backup_pull_percent(
-    processed_stacks: u32,
-    total_stacks: u32,
-    pull_branch_percent: &AtomicU32,
-    backup_branch_percent: &AtomicU32,
-) -> u32 {
-    if total_stacks == 0 {
-        return 0;
-    }
-    let pull = pull_branch_percent.load(Ordering::Relaxed).min(10_000) as f64 / 10_000.0;
-    let backup = backup_branch_percent.load(Ordering::Relaxed).min(10_000) as f64 / 10_000.0;
-    (((processed_stacks as f64 + pull * 0.35 + backup * 0.40) / total_stacks as f64) * 100.0)
-        .floor() as u32
-}
-
-async fn record_update_tag_history(state: &AppState, req: &TriggerUpdateRequest, now: &str) {
-    let Ok(targets) = requested_update_targets(req) else {
-        return;
-    };
-    if targets.is_empty() {
-        return;
-    }
-    let targets_by_service = targets
-        .into_iter()
-        .map(|target| (target.service_id.clone(), target))
-        .collect::<std::collections::BTreeMap<_, _>>();
-    let mut stack_ids = std::collections::BTreeSet::new();
-    for service_id in targets_by_service.keys() {
-        match state.db.get_service_stack_id(service_id).await {
-            Ok(Some(stack_id)) => {
-                stack_ids.insert(stack_id);
-            }
-            Ok(None) => {}
-            Err(err) => {
-                tracing::warn!(
-                    error = %err,
-                    service_id = %service_id,
-                    "failed to resolve service stack for tag history"
-                );
-            }
-        }
-    }
-    for stack_id in stack_ids {
-        let Ok(Some(stack)) = state.db.get_stack(&stack_id).await else {
-            continue;
-        };
-        for service in stack.services {
-            let Some(target) = targets_by_service.get(&service.id) else {
-                continue;
-            };
-            let Some(image_repo) =
-                crate::snapshot_worker::image_repo_from_image_ref(&service.image.reference)
-            else {
-                continue;
-            };
-            let tag = target.target_tag.trim();
-            if tag.is_empty() {
-                continue;
-            }
-            if let Err(err) = state
-                .db
-                .upsert_service_tag_history(&service.id, &image_repo, tag, "update", now)
-                .await
-            {
-                tracing::warn!(
-                    error = %err,
-                    service_id = %service.id,
-                    "failed to record update tag history"
-                );
-            }
-        }
-    }
-}
-
 fn should_record_update_tag_history(req: &TriggerUpdateRequest, final_status: &str) -> bool {
     final_status == "success" && matches!(&req.mode, UpdateMode::Apply)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn update_req(mode: UpdateMode) -> TriggerUpdateRequest {
-        TriggerUpdateRequest {
-            scope: JobScope::Service,
-            stack_id: Some("stack_1".to_string()),
-            service_id: Some("svc_1".to_string()),
-            target_tag: Some("5.2".to_string()),
-            target_digest: Some("sha256:abc".to_string()),
-            pull_tags: Some(Vec::new()),
-            targets: None,
-            mode,
-            allow_arch_mismatch: false,
-            backup_mode: BackupMode::Inherit,
-            reason: UpdateReason::Ui,
-        }
-    }
-
-    #[test]
-    fn tag_history_is_recorded_only_for_successful_apply_updates() {
-        assert!(should_record_update_tag_history(
-            &update_req(UpdateMode::Apply),
-            "success"
-        ));
-        assert!(!should_record_update_tag_history(
-            &update_req(UpdateMode::DryRun),
-            "success"
-        ));
-        assert!(!should_record_update_tag_history(
-            &update_req(UpdateMode::Apply),
-            "failed"
-        ));
-    }
-
-    #[test]
-    fn backup_and_pull_progress_are_weighted_without_terminal_jump() {
-        let pull = AtomicU32::new(5_000);
-        let backup = AtomicU32::new(2_500);
-        assert_eq!(combined_backup_pull_percent(0, 1, &pull, &backup), 27);
-
-        pull.store(10_000, Ordering::Relaxed);
-        backup.store(10_000, Ordering::Relaxed);
-        assert_eq!(combined_backup_pull_percent(0, 1, &pull, &backup), 75);
-        assert_eq!(combined_backup_pull_percent(1, 2, &pull, &backup), 87);
-    }
-}
+#[path = "execution_tests.rs"]
+mod tests;

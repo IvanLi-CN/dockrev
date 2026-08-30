@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { LoaderCircle, Square } from 'lucide-react'
-import { getJob, newJobEventsSource, stopJob, type JobDetail, type JobLogLine, type JobProgress } from '../api'
+import { Download, LoaderCircle, Square } from 'lucide-react'
+import { downloadRollbackEvidence, getJob, newJobEventsSource, stopJob, type JobDetail, type JobLogLine, type JobProgress } from '../api'
 import { useManagementEventBatch } from '../managementEvents'
 import { formatJobMachineName, formatJobReadableDisplay } from '../jobDisplay'
 import { formatJobProgressDownload, parseJobProgressDownload } from '../jobProgressDownload'
@@ -34,6 +34,15 @@ function formatShort(ts?: string | null) {
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
   return String(e)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function rollbackEvidenceFromJob(job: JobDetail | null): Record<string, unknown> | null {
+  if (!job || !isRecord(job.summary) || !isRecord(job.summary.rollbackEvidence)) return null
+  return job.summary.rollbackEvidence
 }
 
 type LogTimeZone = 'local' | 'utc'
@@ -218,6 +227,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
   const [loadSource, setLoadSource] = useState<AsyncDataSource>('none')
   const [loadTrigger, setLoadTrigger] = useState<AsyncDataTrigger>('background')
   const [busy, setBusy] = useState(false)
+  const [evidenceBusy, setEvidenceBusy] = useState(false)
   const [stopRequesting, setStopRequesting] = useState(false)
   const [logTz, setLogTz] = useState<LogTimeZone>('local')
   const [logViewport, setLogViewport] = useState<HTMLElement | null>(null)
@@ -295,6 +305,25 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
       setBusy(false)
     }
   }, [jobId, refresh])
+
+  const downloadEvidence = useCallback(async () => {
+    setEvidenceBusy(true)
+    setError(null)
+    try {
+      const response = await downloadRollbackEvidence(jobId)
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = 'rollback-evidence.tar.zst'
+      anchor.click()
+      URL.revokeObjectURL(url)
+    } catch (reason: unknown) {
+      setError(errorMessage(reason))
+    } finally {
+      setEvidenceBusy(false)
+    }
+  }, [jobId])
 
   useEffect(() => {
     writeShowEventsPreference(showEvents)
@@ -681,6 +710,9 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
   const dualProgressAriaText = `安排 ${plannedProgressAriaText} · 完成 ${completedProgressAriaText}`
   const isDualIndeterminate = isPlannedIndeterminateRunning || isCompletedIndeterminateRunning
   const downloadLabel = formatJobProgressDownload(progress?.download)
+  const rollbackEvidence = rollbackEvidenceFromJob(job)
+  const evidenceStatus = typeof rollbackEvidence?.status === 'string' ? rollbackEvidence.status : null
+  const evidenceCandidateCount = typeof rollbackEvidence?.failedCandidates === 'number' ? rollbackEvidence.failedCandidates : null
 
   return (
     <div className="page jobDetailPage">
@@ -848,6 +880,24 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
 
         {job?.status !== 'running' ? (
           <TaskResultReason reason={job?.resultReason} lines={2} className="jobResultReason" label="结果原因" />
+        ) : null}
+
+        {rollbackEvidence ? (
+          <div className="jobRollbackEvidence" data-job-rollback-evidence-status={evidenceStatus ?? 'unknown'}>
+            <div>
+              <div className="title">回滚证据</div>
+              <div className="muted">
+                {evidenceCandidateCount !== null ? `候选 ${evidenceCandidateCount} 个` : '候选证据'} ·{' '}
+                {evidenceStatus === 'available' ? '归档可用' : evidenceStatus === 'incomplete' ? '归档不完整' : '无归档'}
+              </div>
+            </div>
+            {evidenceStatus === 'available' ? (
+              <Button disabled={evidenceBusy} onClick={() => void downloadEvidence()} variant="ghost">
+                {evidenceBusy ? <LoaderCircle className="jobDetailStopSpinner" size={16} aria-hidden="true" /> : <Download size={16} aria-hidden="true" />}
+                下载证据
+              </Button>
+            ) : null}
+          </div>
         ) : null}
 
         {error ? <div className="error">{error}</div> : null}

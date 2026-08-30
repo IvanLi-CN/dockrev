@@ -107,7 +107,6 @@ ORDER BY s.created_at DESC
         .await
         .context("list stacks")
     }
-
     pub async fn get_stack(&self, stack_id: &str) -> anyhow::Result<Option<StackRecord>> {
         let stack_id = stack_id.to_string();
         self.call(move |conn| {
@@ -771,22 +770,41 @@ WHERE id = ?1
         }
         Ok(changed)
     }
-
-    pub async fn sync_stack_from_compose(
+    pub async fn sync_stack_from_compose_guarded(
         &self,
         stack_id: &str,
         compose_files: &[String],
         services: &[ComposeServiceSpec],
         now: &str,
-    ) -> anyhow::Result<()> {
+        expected_generations: Option<Vec<(String, i64)>>,
+    ) -> anyhow::Result<bool> {
         let stack_id = stack_id.to_string();
         let event_stack_id = stack_id.clone();
         let compose_files = compose_files.to_vec();
         let services = services.to_vec();
         let now = now.to_string();
-        self.call(move |conn| {
+        let expected_generations = expected_generations.clone();
+        let changed = self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-
+            let current_generations = {
+                let mut stmt = tx.prepare(
+                    "SELECT id, accepted_state_generation FROM services WHERE stack_id = ?1 ORDER BY id",
+                )?;
+                stmt.query_map(params![stack_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+            };
+            let blocked = current_generations
+                .iter()
+                .any(|(_, generation)| generation % 2 != 0)
+                || expected_generations
+                    .as_ref()
+                    .is_some_and(|expected| expected != &current_generations);
+            if blocked {
+                tx.commit()?;
+                return Ok(false);
+            }
             tx.execute(
                 r#"
 UPDATE stacks
@@ -795,7 +813,6 @@ WHERE id = ?1
 "#,
                 params![stack_id, serde_json::to_string(&compose_files)?, now],
             )?;
-
             let existing_by_name = {
                 let mut stmt = tx.prepare(
                     "SELECT id, name, image_ref, image_tag, homepage_json, update_guard_json FROM services WHERE stack_id = ?1",
@@ -826,9 +843,7 @@ WHERE id = ?1
                 }
                 m
             };
-
             let mut keep_ids = Vec::<String>::new();
-
             for svc in services {
                 let declared_bind_paths = svc
                     .backup_bind_paths
@@ -882,7 +897,6 @@ WHERE id = ?1
                         keep_ids.push(id.clone());
                         continue;
                     }
-
                     let preserve_repo_url =
                         crate::snapshot_worker::image_repo_from_image_ref(existing_image_ref)
                             .zip(crate::snapshot_worker::image_repo_from_image_ref(
@@ -986,7 +1000,6 @@ INSERT INTO services (
                     keep_ids.push(id);
                 }
             }
-
             if keep_ids.is_empty() {
                 tx.execute(
                     "DELETE FROM services WHERE stack_id = ?1",
@@ -1004,23 +1017,23 @@ INSERT INTO services (
                 }
                 tx.execute(&sql, params.as_slice())?;
             }
-
             tx.commit()?;
-            Ok(())
+            Ok(true)
         })
-        .await
-        .context("sync stack from compose")?;
-        self.management_events
-            .publish_change(
-                "stacks",
-                "stack",
-                event_stack_id,
-                serde_json::json!({ "operation": "compose_synced" }),
-            )
-            .await;
-        Ok(())
+            .await
+            .context("sync stack from compose")?;
+        if changed {
+            self.management_events
+                .publish_change(
+                    "stacks",
+                    "stack",
+                    event_stack_id,
+                    serde_json::json!({ "operation": "compose_synced" }),
+                )
+                .await;
+        }
+        Ok(changed)
     }
-
     pub async fn put_service_backup_targets(
         &self,
         service_id: &str,
@@ -1034,7 +1047,6 @@ INSERT INTO services (
             .await
             .context("put service backup targets")
     }
-
     pub async fn list_services_for_check(
         &self,
         stack_id: &str,
@@ -1052,12 +1064,15 @@ SELECT
   current_runtime_started_at,
   current_resolved_tag,
   current_resolved_tags_json,
+  candidate_tag,
   candidate_digest,
   candidate_resolved_tag,
   candidate_arch_match,
   candidate_arch_json,
   ignore_rule_id,
-  ignore_reason
+  ignore_reason,
+  checked_at,
+  accepted_state_generation
 FROM services
 WHERE stack_id = ?1
 ORDER BY name ASC
@@ -1073,12 +1088,15 @@ ORDER BY name ASC
                     current_runtime_started_at: row.get(5)?,
                     current_resolved_tag: row.get(6)?,
                     current_resolved_tags_json: row.get(7)?,
-                    candidate_digest: row.get(8)?,
-                    candidate_resolved_tag: row.get(9)?,
-                    candidate_arch_match: row.get(10)?,
-                    candidate_arch_json: row.get(11)?,
-                    ignore_rule_id: row.get(12)?,
-                    ignore_reason: row.get(13)?,
+                    candidate_tag: row.get(8)?,
+                    candidate_digest: row.get(9)?,
+                    candidate_resolved_tag: row.get(10)?,
+                    candidate_arch_match: row.get(11)?,
+                    candidate_arch_json: row.get(12)?,
+                    ignore_rule_id: row.get(13)?,
+                    ignore_reason: row.get(14)?,
+                    checked_at: row.get(15)?,
+                    accepted_state_generation: row.get(16)?,
                 })
             })?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -1104,12 +1122,15 @@ SELECT
   current_runtime_started_at,
   current_resolved_tag,
   current_resolved_tags_json,
+  candidate_tag,
   candidate_digest,
   candidate_resolved_tag,
   candidate_arch_match,
   candidate_arch_json,
   ignore_rule_id,
-  ignore_reason
+  ignore_reason,
+  checked_at,
+  accepted_state_generation
 FROM services
 WHERE stack_id = ?1
 ORDER BY name ASC
@@ -1125,12 +1146,15 @@ ORDER BY name ASC
                     current_runtime_started_at: row.get(5)?,
                     current_resolved_tag: row.get(6)?,
                     current_resolved_tags_json: row.get(7)?,
-                    candidate_digest: row.get(8)?,
-                    candidate_resolved_tag: row.get(9)?,
-                    candidate_arch_match: row.get(10)?,
-                    candidate_arch_json: row.get(11)?,
-                    ignore_rule_id: row.get(12)?,
-                    ignore_reason: row.get(13)?,
+                    candidate_tag: row.get(8)?,
+                    candidate_digest: row.get(9)?,
+                    candidate_resolved_tag: row.get(10)?,
+                    candidate_arch_match: row.get(11)?,
+                    candidate_arch_json: row.get(12)?,
+                    ignore_rule_id: row.get(13)?,
+                    ignore_reason: row.get(14)?,
+                    checked_at: row.get(15)?,
+                    accepted_state_generation: row.get(16)?,
                 })
             })?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)

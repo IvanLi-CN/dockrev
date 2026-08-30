@@ -1,118 +1,4 @@
 #[tokio::test]
-async fn resolved_tag_inference_matches_platform_digest_and_clears_noop_candidate() {
-    let runner: Arc<PlatformDigestRunner> = Arc::new(PlatformDigestRunner::default());
-    let state = test_state_with(":memory:", Arc::new(DualDigestRegistry), runner.clone()).await;
-    let app = api::router(state.clone());
-
-    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
-    std::fs::write(
-        &compose_path,
-        r#"
-services:
-  web:
-    image: ghcr.io/acme/web:latest
-"#,
-    )
-    .unwrap();
-
-    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
-    let now = time::OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .unwrap();
-    state
-        .db
-        .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
-            project: "demo".to_string(),
-            stack_id: Some(stack_id.clone()),
-            status: "active".to_string(),
-            last_seen_at: Some(now.clone()),
-            last_scan_at: now,
-            last_error: None,
-            last_config_files: Some(vec![compose_path.clone()]),
-            unarchive_if_active: true,
-        })
-        .await
-        .unwrap();
-
-    let check = serde_json::json!({
-        "scope": "stack",
-        "stackId": stack_id,
-        "reason": "ui"
-    });
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/checks")
-                .header("content-type", "application/json")
-                .body(Body::from(check.to_string()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let triggered = response_json(resp).await;
-    let check_id = triggered["checkId"].as_str().unwrap().to_string();
-
-    let mut finished = false;
-    for _ in 0..80 {
-        let resp = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(format!("/api/jobs/{check_id}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), 200);
-        let job = response_json(resp).await;
-        if job["job"]["status"].as_str().unwrap() != "running" {
-            finished = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    assert!(finished, "check job did not finish in time");
-
-    let mut detail = serde_json::json!({});
-    for _ in 0..120 {
-        let resp = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(format!("/api/stacks/{stack_id}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), 200);
-        detail = response_json(resp).await;
-        let status = detail["stack"]["services"][0]["versionInference"]["status"]
-            .as_str()
-            .unwrap_or("");
-        if status != "pending" {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    let svc = &detail["stack"]["services"][0];
-    let image = &svc["image"];
-
-    let digest = image["digest"].as_str().unwrap_or("<none>");
-    let resolved = image["resolvedTag"].as_str().unwrap_or("<none>");
-    assert_eq!(digest, "sha256:plat", "unexpected stack detail: {detail}");
-    assert_eq!(resolved, "5.3.0", "unexpected stack detail: {detail}");
-    assert!(
-        svc["candidate"].is_null(),
-        "expected candidate to be cleared when digest matches: {detail}"
-    );
-}
-
-#[tokio::test]
 async fn webhook_trigger_update_creates_job() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());
@@ -735,11 +621,12 @@ services:
 }
 
 #[tokio::test]
-async fn update_apply_healthcheck_rollback_exposes_attempted_and_final_digests_via_api() {
+async fn update_apply_healthcheck_rollback_preserves_candidate_across_concurrent_observers() {
+    let runner = Arc::new(HealthRollbackUpdateRunner::gated());
     let state = test_state_with(
         ":memory:",
         Arc::new(FakeRegistry),
-        Arc::new(HealthRollbackUpdateRunner::default()),
+        runner.clone(),
     )
     .await;
     let app = api::router(state.clone());
@@ -759,6 +646,12 @@ services:
     .unwrap();
 
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let managed_override_path = crate::managed_override::managed_override_path(
+        &state.config.managed_override_dir,
+        &stack_id,
+    );
+    runner.configure_observers("demo", &compose_path, &managed_override_path);
+    seed_discovered_project(&state, &stack_id, "demo").await;
     let service = state.db.list_services_for_check(&stack_id).await.unwrap()[0].clone();
     let now = time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
@@ -811,8 +704,72 @@ services:
     let triggered = response_json(resp).await;
     let job_id = triggered["jobId"].as_str().unwrap().to_string();
 
+    runner.wait_for_candidate_healthcheck().await;
+
+    let discovery_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/discovery/scan")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(discovery_resp.status(), 200);
+    let discovery_job_id = response_json(discovery_resp).await["jobId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let discovery_job = wait_for_job_terminal(&state, &discovery_job_id).await;
+    assert_eq!(discovery_job.status, "success");
+
+    let runtime_scan = serde_json::json!({
+        "scope": "service",
+        "stackId": stack_id,
+        "serviceId": service.id,
+        "reason": "ui"
+    });
+    let runtime_scan_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/runtime-scans")
+                .header("content-type", "application/json")
+                .body(Body::from(runtime_scan.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(runtime_scan_resp.status(), 200);
+    let runtime_scan_job_id = response_json(runtime_scan_resp).await["jobId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let runtime_scan_job = wait_for_job_terminal(&state, &runtime_scan_job_id).await;
+    assert_eq!(runtime_scan_job.status, "success");
+
+    runner.release_candidate_healthcheck();
     let job = wait_for_job_terminal(&state, &job_id).await;
     assert_eq!(job.status, "rolled_back");
+
+    let stack = state.db.get_stack(&stack_id).await.unwrap().unwrap();
+    let settled_service = stack
+        .services
+        .iter()
+        .find(|item| item.id == service.id)
+        .unwrap();
+    assert_eq!(settled_service.image.reference, "ghcr.io/acme/web:5.2");
+    assert_eq!(settled_service.image.digest.as_deref(), Some("sha256:old"));
+    assert_eq!(
+        settled_service
+            .candidate
+            .as_ref()
+            .map(|candidate| candidate.digest.as_str()),
+        Some("sha256:new")
+    );
 
     let resp = app
         .clone()
