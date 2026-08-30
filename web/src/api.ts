@@ -802,8 +802,8 @@ export async function listCompactJobs(input: ListJobsInput = {}): Promise<Compac
   return page.jobs
 }
 
-export async function getJob(jobId: string): Promise<JobDetail> {
-  const resp = await apiFetch(`/api/jobs/${encodeURIComponent(jobId)}`)
+export async function getJob(jobId: string, init?: RequestInit): Promise<JobDetail> {
+  const resp = await apiFetch(`/api/jobs/${encodeURIComponent(jobId)}`, init)
   const data = await resp.json()
   return data.job as JobDetail
 }

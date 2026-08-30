@@ -113,6 +113,41 @@ export const LongLogs: Story = {
   },
 }
 
+export const InitialLoadRecovery: Story = {
+  parameters: {
+    dockrevApiScenario: 'queue-long-logs',
+    dockrevApiBehaviorByRoute: {
+      'GET /api/jobs/job-live-long': {
+        failTimes: 2,
+        failureStatus: 503,
+        failureBody: { error: '任务详情暂时不可用，请重试。' },
+      },
+    },
+  },
+  render: () => renderLongLogsPage('首屏读取失败后显示可恢复错误，手动重试后回到任务详情'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(canvasElement.querySelector('[role="alert"]')), 5_000)
+    expectStory(canvasElement.textContent?.includes('任务详情暂时不可用，请重试。') === true, 'job detail retry error missing')
+    expectStory(!canvasElement.querySelector('.jobDetailDataRegion'), 'job detail data region should not render before recovery')
+    expectStory(!canvasElement.querySelector('.jobDetailLoadingSkeleton'), 'initial error should not render a skeleton underneath the error state')
+    const illustration = canvasElement.querySelector<SVGSVGElement>('.asyncDataInitialErrorIllustration')
+    expectStory(
+      Boolean(
+        illustration?.tagName.toLowerCase() === 'svg' &&
+          (illustration?.getBoundingClientRect().width ?? 0) >= 120,
+      ),
+      'job detail initial error illustration should render the selected source SVG at a meaningful size',
+    )
+
+    const retry = findButton(canvasElement, '重试')
+    expectStory(retry, 'job detail retry button missing')
+    retry?.click()
+    await waitForCondition(() => Boolean(canvasElement.querySelector('.jobDetailDataRegion')), 3_000)
+    await waitForCondition(() => getLogCount(canvasElement) > 0)
+    expectStory(canvasElement.textContent?.includes('任务详情') === true, 'job detail content missing after retry')
+  },
+}
+
 export const LongLogsPausedFollowEvidence: Story = {
   parameters: { dockrevApiScenario: 'queue-long-logs' },
   render: () => renderLongLogsPage('视觉证据：用户上滚查看旧日志时暂停跟随，并提供跳到最新入口'),

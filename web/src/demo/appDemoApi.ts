@@ -10,7 +10,7 @@ import {
   readPublicDemoScenario,
   savePublicDemoFixture,
 } from './publicDemoControls'
-import type { Fixture } from '../stories/mocks/dockrevMockApi/shared'
+import type { DockrevApiRouteBehavior, Fixture } from '../stories/mocks/dockrevMockApi/shared'
 
 type DemoInstallResult = {
   enabled: boolean
@@ -56,7 +56,7 @@ function queueSummarySnapshot(fixture: Fixture) {
   }
 }
 
-function asyncBehavior(state: ReturnType<typeof readPublicDemoAsyncState>) {
+function asyncBehavior(state: ReturnType<typeof readPublicDemoAsyncState>): Record<string, DockrevApiRouteBehavior> | undefined {
   const delayedQueueRead = {
     'GET /api/jobs': { delayMs: 3_000 },
     'GET /api/version-inference/overview': { delayMs: 3_000 },
@@ -72,6 +72,15 @@ function asyncBehavior(state: ReturnType<typeof readPublicDemoAsyncState>) {
         failTimes: 5,
         failureStatus: 503,
         failureBody: { error: '任务队列暂时不可用，请重试。' },
+      },
+    }
+  }
+  if (state === 'job-detail-retry') {
+    return {
+      'GET /api/jobs/job-live-long': {
+        failTimes: 2,
+        failureStatus: 503,
+        failureBody: { error: '任务详情暂时不可用，请重试。' },
       },
     }
   }

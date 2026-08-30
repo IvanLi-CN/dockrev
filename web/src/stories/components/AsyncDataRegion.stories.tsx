@@ -109,4 +109,14 @@ export const ErrorWithLastGoodData: Story = {
 
 export const InitialError: Story = {
   render: () => <RegionPreview error="无法连接服务，请重试。" phase="error" />,
+  play: async ({ canvasElement }) => {
+    if (canvasElement.querySelector('.skeleton')) {
+      throw new Error('initial error must not render a skeleton underneath the error state')
+    }
+    const region = canvasElement.querySelector<HTMLElement>('[data-async-data-phase="error"]')
+    const alert = canvasElement.querySelector<HTMLElement>('[role="alert"]')
+    if (!region || !alert || region.getBoundingClientRect().height < 200) {
+      throw new Error('initial error must render a stable, full-size recoverable error region')
+    }
+  },
 }
