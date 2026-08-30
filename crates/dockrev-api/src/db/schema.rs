@@ -1,12 +1,9 @@
+use super::*;
+use rusqlite::{TransactionBehavior, params};
 use std::{
     fs,
     path::{Path, PathBuf},
 };
-
-use anyhow::Context as _;
-use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
-
-use super::*;
 #[path = "schema_accepted_state_generation.rs"]
 mod schema_accepted_state_generation;
 #[path = "schema_backup_cleanup_state.rs"]
@@ -100,12 +97,7 @@ fn ensure_service_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
             name: "repo_url_auto_disabled",
             ddl: "ALTER TABLE services ADD COLUMN repo_url_auto_disabled INTEGER NOT NULL DEFAULT 0",
         },
-        Col {
-            name: "accepted_state_generation",
-            ddl: "ALTER TABLE services ADD COLUMN accepted_state_generation INTEGER NOT NULL DEFAULT 0",
-        },
     ];
-
     let mut stmt = conn.prepare("PRAGMA table_info(services)")?;
     let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
     let existing = rows.collect::<Result<Vec<_>, _>>()?;

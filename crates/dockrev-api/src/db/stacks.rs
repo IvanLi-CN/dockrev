@@ -107,7 +107,6 @@ ORDER BY s.created_at DESC
         .await
         .context("list stacks")
     }
-
     pub async fn get_stack(&self, stack_id: &str) -> anyhow::Result<Option<StackRecord>> {
         let stack_id = stack_id.to_string();
         self.call(move |conn| {
@@ -771,19 +770,6 @@ WHERE id = ?1
         }
         Ok(changed)
     }
-
-    pub async fn sync_stack_from_compose(
-        &self,
-        stack_id: &str,
-        compose_files: &[String],
-        services: &[ComposeServiceSpec],
-        now: &str,
-    ) -> anyhow::Result<()> {
-        self.sync_stack_from_compose_guarded(stack_id, compose_files, services, now, None)
-            .await
-            .map(|_| ())
-    }
-
     pub async fn sync_stack_from_compose_guarded(
         &self,
         stack_id: &str,
@@ -800,9 +786,6 @@ WHERE id = ?1
         let expected_generations = expected_generations.clone();
         let changed = self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-
-            // A compose snapshot read while a mutation owns any service is stale by
-            // construction. Defer the whole stack so it cannot clear accepted state.
             let current_generations = {
                 let mut stmt = tx.prepare(
                     "SELECT id, accepted_state_generation FROM services WHERE stack_id = ?1 ORDER BY id",
@@ -822,7 +805,6 @@ WHERE id = ?1
                 tx.commit()?;
                 return Ok(false);
             }
-
             tx.execute(
                 r#"
 UPDATE stacks
@@ -831,7 +813,6 @@ WHERE id = ?1
 "#,
                 params![stack_id, serde_json::to_string(&compose_files)?, now],
             )?;
-
             let existing_by_name = {
                 let mut stmt = tx.prepare(
                     "SELECT id, name, image_ref, image_tag, homepage_json, update_guard_json FROM services WHERE stack_id = ?1",
@@ -862,9 +843,7 @@ WHERE id = ?1
                 }
                 m
             };
-
             let mut keep_ids = Vec::<String>::new();
-
             for svc in services {
                 let declared_bind_paths = svc
                     .backup_bind_paths
@@ -918,7 +897,6 @@ WHERE id = ?1
                         keep_ids.push(id.clone());
                         continue;
                     }
-
                     let preserve_repo_url =
                         crate::snapshot_worker::image_repo_from_image_ref(existing_image_ref)
                             .zip(crate::snapshot_worker::image_repo_from_image_ref(
@@ -1022,7 +1000,6 @@ INSERT INTO services (
                     keep_ids.push(id);
                 }
             }
-
             if keep_ids.is_empty() {
                 tx.execute(
                     "DELETE FROM services WHERE stack_id = ?1",
@@ -1040,7 +1017,6 @@ INSERT INTO services (
                 }
                 tx.execute(&sql, params.as_slice())?;
             }
-
             tx.commit()?;
             Ok(true)
         })
@@ -1058,7 +1034,6 @@ INSERT INTO services (
         }
         Ok(changed)
     }
-
     pub async fn put_service_backup_targets(
         &self,
         service_id: &str,
@@ -1072,7 +1047,6 @@ INSERT INTO services (
             .await
             .context("put service backup targets")
     }
-
     pub async fn list_services_for_check(
         &self,
         stack_id: &str,
@@ -1090,12 +1064,14 @@ SELECT
   current_runtime_started_at,
   current_resolved_tag,
   current_resolved_tags_json,
+  candidate_tag,
   candidate_digest,
   candidate_resolved_tag,
   candidate_arch_match,
   candidate_arch_json,
   ignore_rule_id,
   ignore_reason,
+  checked_at,
   accepted_state_generation
 FROM services
 WHERE stack_id = ?1
@@ -1112,13 +1088,15 @@ ORDER BY name ASC
                     current_runtime_started_at: row.get(5)?,
                     current_resolved_tag: row.get(6)?,
                     current_resolved_tags_json: row.get(7)?,
-                    candidate_digest: row.get(8)?,
-                    candidate_resolved_tag: row.get(9)?,
-                    candidate_arch_match: row.get(10)?,
-                    candidate_arch_json: row.get(11)?,
-                    ignore_rule_id: row.get(12)?,
-                    ignore_reason: row.get(13)?,
-                    accepted_state_generation: row.get(14)?,
+                    candidate_tag: row.get(8)?,
+                    candidate_digest: row.get(9)?,
+                    candidate_resolved_tag: row.get(10)?,
+                    candidate_arch_match: row.get(11)?,
+                    candidate_arch_json: row.get(12)?,
+                    ignore_rule_id: row.get(13)?,
+                    ignore_reason: row.get(14)?,
+                    checked_at: row.get(15)?,
+                    accepted_state_generation: row.get(16)?,
                 })
             })?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -1144,12 +1122,14 @@ SELECT
   current_runtime_started_at,
   current_resolved_tag,
   current_resolved_tags_json,
+  candidate_tag,
   candidate_digest,
   candidate_resolved_tag,
   candidate_arch_match,
   candidate_arch_json,
   ignore_rule_id,
   ignore_reason,
+  checked_at,
   accepted_state_generation
 FROM services
 WHERE stack_id = ?1
@@ -1166,13 +1146,15 @@ ORDER BY name ASC
                     current_runtime_started_at: row.get(5)?,
                     current_resolved_tag: row.get(6)?,
                     current_resolved_tags_json: row.get(7)?,
-                    candidate_digest: row.get(8)?,
-                    candidate_resolved_tag: row.get(9)?,
-                    candidate_arch_match: row.get(10)?,
-                    candidate_arch_json: row.get(11)?,
-                    ignore_rule_id: row.get(12)?,
-                    ignore_reason: row.get(13)?,
-                    accepted_state_generation: row.get(14)?,
+                    candidate_tag: row.get(8)?,
+                    candidate_digest: row.get(9)?,
+                    candidate_resolved_tag: row.get(10)?,
+                    candidate_arch_match: row.get(11)?,
+                    candidate_arch_json: row.get(12)?,
+                    ignore_rule_id: row.get(13)?,
+                    ignore_reason: row.get(14)?,
+                    checked_at: row.get(15)?,
+                    accepted_state_generation: row.get(16)?,
                 })
             })?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)

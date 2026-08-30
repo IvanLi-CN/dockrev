@@ -24,6 +24,7 @@ pub(crate) struct ServiceCheckOutcome {
     pub candidate_present: bool,
     pub candidate_digest_changed: bool,
     pub current_manifest_is_multi_arch: bool,
+    pub accepted_state_applied: bool,
 }
 
 pub(crate) type ManifestDigestCache =
@@ -120,6 +121,7 @@ pub(crate) async fn check_service_and_persist(
                 candidate_present: false,
                 candidate_digest_changed: false,
                 current_manifest_is_multi_arch: false,
+                accepted_state_applied: false,
             });
         }
     };
@@ -239,13 +241,23 @@ pub(crate) async fn check_service_and_persist(
         candidate_arch_json = None;
     }
 
-    let candidate_present = candidate_tag.is_some();
     let candidate_digest_changed = candidate_digest.as_deref() != svc.candidate_digest.as_deref();
     // Only let an in-memory check supersede active notification records when the candidate state
     // is authoritative. Missing runtime state or transient registry failures can clear the service
     // row temporarily, but they should not reopen the same digest for re-notification.
     let candidate_state_authoritative =
         runtime_digest.is_some() && current_manifest_digest.is_some();
+
+    if !candidate_state_authoritative {
+        candidate_tag = svc
+            .candidate_tag
+            .clone()
+            .or_else(|| svc.candidate_digest.as_ref().map(|_| svc.image_tag.clone()));
+        candidate_digest = svc.candidate_digest.clone();
+        candidate_arch_match = svc.candidate_arch_match.clone();
+        candidate_arch_json = svc.candidate_arch_json.clone();
+    }
+    let candidate_present = candidate_tag.is_some();
 
     let mut ignore_match: Option<(String, String)> =
         if current_manifest.is_none() && candidate_tag.is_some() {
@@ -279,7 +291,9 @@ pub(crate) async fn check_service_and_persist(
             )
         };
 
-    let candidate_resolved_tag = if candidate_digest_changed {
+    let candidate_resolved_tag = if !candidate_state_authoritative {
+        svc.candidate_resolved_tag.clone()
+    } else if candidate_digest_changed {
         None
     } else {
         svc.candidate_resolved_tag.clone()
@@ -315,29 +329,22 @@ pub(crate) async fn check_service_and_persist(
         candidate_arch_json: candidate_arch_json.clone(),
         ignore_rule_id: ignore_match.as_ref().map(|(id, _)| id.clone()),
         ignore_reason: ignore_match.as_ref().map(|(_, r)| r.clone()),
-        checked_at: Some(now.to_string()),
+        checked_at: if candidate_state_authoritative {
+            Some(now.to_string())
+        } else {
+            svc.checked_at.clone()
+        },
     };
     let cas = state
         .db
-        .compare_and_swap_service_accepted_state_observation(
+        .compare_and_swap_service_accepted_state_observation_with_notification_reconcile(
             &svc.id,
             svc.accepted_state_generation,
             &cas_state,
             now,
+            candidate_state_authoritative,
         )
         .await?;
-    if candidate_state_authoritative && matches!(cas, AcceptedStateCasOutcome::Applied { .. }) {
-        state
-            .db
-            .reconcile_service_new_version_notifications(
-                &svc.id,
-                &svc.image_ref,
-                &svc.image_tag,
-                candidate_digest.as_deref(),
-                now,
-            )
-            .await?;
-    }
 
     Ok(ServiceCheckOutcome {
         current_digest,
@@ -355,6 +362,7 @@ pub(crate) async fn check_service_and_persist(
         candidate_present,
         candidate_digest_changed,
         current_manifest_is_multi_arch,
+        accepted_state_applied: matches!(cas, AcceptedStateCasOutcome::Applied { .. }),
     })
 }
 

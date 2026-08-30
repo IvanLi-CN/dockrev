@@ -26,6 +26,7 @@ mod service_operations;
 mod settings;
 mod snapshots;
 mod stacks;
+mod stacks_accepted_state;
 mod stacks_backup_targets;
 mod tag_history;
 mod update_stops;
@@ -166,12 +167,14 @@ pub struct ServiceForCheck {
     pub current_runtime_started_at: Option<String>,
     pub current_resolved_tag: Option<String>,
     pub current_resolved_tags_json: Option<String>,
+    pub candidate_tag: Option<String>,
     pub candidate_digest: Option<String>,
     pub candidate_resolved_tag: Option<String>,
     pub candidate_arch_match: Option<String>,
     pub candidate_arch_json: Option<String>,
     pub ignore_rule_id: Option<String>,
     pub ignore_reason: Option<String>,
+    pub checked_at: Option<String>,
     pub accepted_state_generation: i64,
 }
 
@@ -185,12 +188,14 @@ pub struct ServiceForRuntimeScan {
     pub current_runtime_started_at: Option<String>,
     pub current_resolved_tag: Option<String>,
     pub current_resolved_tags_json: Option<String>,
+    pub candidate_tag: Option<String>,
     pub candidate_digest: Option<String>,
     pub candidate_resolved_tag: Option<String>,
     pub candidate_arch_match: Option<String>,
     pub candidate_arch_json: Option<String>,
     pub ignore_rule_id: Option<String>,
     pub ignore_reason: Option<String>,
+    pub checked_at: Option<String>,
     pub accepted_state_generation: i64,
 }
 

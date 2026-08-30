@@ -15,7 +15,7 @@
 
 ### 1. Establish the red regression (covered)
 
-- Extend the integration seam used by `api::tests::update_apply_healthcheck_rollback_exposes_attempted_and_final_digests_via_api` rather than adding an isolated DB-only test.
+- Extend the integration seam used by `api::tests::update_apply_healthcheck_rollback_exposes_attempted_and_final_digests_via_api`; the new regression lives in `api::tests::suite_27.rs` so the existing suite remains within the repository file budget.
 - Add `health_waiting` and `release_health` notifications to `HealthRollbackUpdateRunner`; signal after the candidate is running and before returning its unhealthy status. Do not retain the runner step mutex across an await.
 - While update waits at that gate, invoke the real `POST /api/discovery/scan` and `POST /api/runtime-scans` routes and wait for both Jobs to finish.
 - Release the unhealthy result, wait for `rolled_back`, and assert declaration unchanged, `current=old`, and `candidate=new`.
@@ -28,7 +28,7 @@
 - Introduce typed, versioned baseline serialization covering every accepted-state column.
 - Implement one `IMMEDIATE` acquisition transaction that performs conflict detection, complete target resolution, baseline capture, generation transition, Job insertion, target insertion, and initial Job log.
 - Implement observation CAS results and make successful observer persistence advance the even generation by `2`.
-- Implement an owner-checked settlement transaction that writes all target snapshots, closes generations, and finishes the Job atomically.
+- Implement an owner-checked multi-target settlement transaction that writes all target snapshots and closes generations before the terminal Job transaction; terminal event publication remains after both commits.
 
 ### 3. Fence observation writers (covered for check/runtime/discovery)
 
@@ -37,9 +37,9 @@
 - Add a Stack observation token and change `sync_stack_from_compose` to all-or-nothing membership/generation validation.
 - Treat CAS rejection as deferred/stale observation with structured logs, not a failed Docker or registry check.
 
-### 4. Unify terminal settlement (covered for update transition)
+### 4. Unify terminal settlement (partially covered for update transition)
 
-- Replace success-only update settlement with one transition used by success, automatic rollback, failure and cancellation.
+- Success updates collect every acquired target and settle them together; automatic rollback, failure and cancellation close odd ownership through the shared terminal Job path while retaining the durable baseline.
 - Build settlement from durable baseline, explicit updater outcome and final runtime inspection. Registry lookup enriches candidate knowledge but cannot erase it on failure.
 - Publish terminal management events only after the settlement/Job transaction commits.
 - Preserve the accepted declaration on rollback and accept the committed managed override declaration on success.
@@ -54,7 +54,7 @@
 ### 6. Recover durable ownership (partially covered)
 
 - Reorder startup so odd-generation ownership is recovered before incomplete Jobs become terminal.
-- Restore or clean managed overrides, inspect final runtime, then use normal settlement.
+- Restore or clean managed overrides before generic recovery. Runtime inspection and retryable settlement for an unresolved odd owner still require a dedicated recovery worker.
 - Keep unresolved Services fenced when Docker facts are unavailable and expose retryable diagnostics.
 - Detect odd generations without a recoverable owning target as invariant violations; never reset them silently.
 
@@ -71,7 +71,7 @@
 - `crates/dockrev-api/src/api/operations/transitions/execution.rs`
 - lifecycle, rollback, backup and managed-override operation adapters
 - `crates/dockrev-api/src/main.rs`
-- `crates/dockrev-api/src/api/tests/suite_09.rs` and test support runners
+- `crates/dockrev-api/src/api/tests/suite_27.rs` and test support runners
 
 ## Verification Matrix
 
@@ -88,8 +88,9 @@
 
 ## Remaining Gaps
 
-- Startup recovery now restores managed overrides before generic incomplete-job recovery and skips jobs whose odd ownership is still active; a dedicated retry worker for unresolved runtime facts remains future work.
+- Startup recovery now restores managed overrides before generic incomplete-job recovery and skips jobs whose odd ownership is still active. A dedicated retry worker for unresolved runtime facts, and a single DB transaction combining accepted-state writes with the terminal Job summary, remain future work.
 - Discovery uses a pre-I/O generation token and an all-or-nothing guarded compose sync; a structured deferred-result field is not exposed in the HTTP response.
+- Runtime-scan CAS rejection is now treated as deferred and does not increment the update count; notification reconciliation is transactional with authoritative observer CAS.
 - Full workspace/all-features validation and shared-testbox verification remain before PR readiness.
 
 ## Related Changes

@@ -378,180 +378,73 @@ ON CONFLICT(job_id, service_id) DO UPDATE SET
         Ok(outcome)
     }
 
-    #[allow(dead_code)]
-    pub(crate) async fn settle_service_operation_accepted_states(
-        &self,
+    pub(super) fn settle_service_operation_accepted_states_tx(
+        tx: &rusqlite::Transaction<'_>,
         job_id: &str,
         settlements: &[ServiceAcceptedStateSettlement],
         now: &str,
     ) -> anyhow::Result<()> {
-        let job_id = job_id.to_string();
-        let settlements = settlements.to_vec();
-        let now = now.to_string();
-        self.call(move |conn| {
-            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let active = tx
-                .query_row(
-                    "SELECT 1 FROM jobs WHERE id = ?1 AND status IN ('queued', 'running')",
-                    [&job_id],
-                    |_row| Ok(()),
-                )
-                .optional()?
-                .is_some();
-            if !active {
-                anyhow::bail!("service operation job is not active: {job_id}");
-            }
-
-            let persisted_targets = {
-                let mut statement = tx.prepare(
-                    r#"
-SELECT service_id, opened_generation, baseline_snapshot_json
-FROM job_service_targets
-WHERE job_id = ?1 AND opened_generation IS NOT NULL
-ORDER BY service_id
-"#,
-                )?;
-                statement
-                    .query_map([&job_id], |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, i64>(1)?,
-                            row.get::<_, Option<String>>(2)?,
-                        ))
-                    })?
-                    .collect::<Result<Vec<_>, _>>()?
-            };
-            let settlement_by_service = settlements
+        let active = tx
+            .query_row(
+                "SELECT 1 FROM jobs WHERE id = ?1 AND status IN ('queued', 'running')",
+                [job_id],
+                |_row| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !active {
+            anyhow::bail!("service operation job is not active: {job_id}");
+        }
+        let persisted_targets = {
+            let mut statement = tx.prepare(
+                "SELECT service_id, opened_generation, baseline_snapshot_json FROM job_service_targets WHERE job_id = ?1 AND opened_generation IS NOT NULL ORDER BY service_id",
+            )?;
+            statement
+                .query_map([job_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let settlement_by_service = settlements
+            .iter()
+            .map(|s| (s.service_id.as_str(), s))
+            .collect::<BTreeMap<_, _>>();
+        if persisted_targets.len() != settlement_by_service.len()
+            || persisted_targets
                 .iter()
-                .map(|settlement| (settlement.service_id.as_str(), settlement))
-                .collect::<BTreeMap<_, _>>();
-            if persisted_targets.len() != settlement_by_service.len()
-                || persisted_targets
-                    .iter()
-                    .any(|(service_id, _, _)| !settlement_by_service.contains_key(service_id.as_str()))
+                .any(|(id, _, _)| !settlement_by_service.contains_key(id.as_str()))
+        {
+            anyhow::bail!("service operation settlement targets do not match acquired targets");
+        }
+        for (service_id, opened_generation, baseline_json) in persisted_targets {
+            let settlement = settlement_by_service[service_id.as_str()];
+            if settlement.opened_generation != opened_generation {
+                anyhow::bail!(
+                    "service operation settlement generation mismatch: service={service_id}"
+                );
+            }
+            let baseline = baseline_json.ok_or_else(|| {
+                anyhow::anyhow!("service operation baseline is missing: {service_id}")
+            })?;
+            if serde_json::from_str::<ServiceAcceptedStateSnapshot>(&baseline)?.schema_version != 1
             {
-                anyhow::bail!("service operation settlement targets do not match acquired targets");
-            }
-
-            for (service_id, opened_generation, baseline_snapshot_json) in persisted_targets {
-                let settlement = settlement_by_service[service_id.as_str()];
-                if settlement.opened_generation != opened_generation {
-                    anyhow::bail!(
-                        "service operation settlement generation mismatch: service={} expected={} actual={}",
-                        service_id,
-                        opened_generation,
-                        settlement.opened_generation
-                    );
-                }
-                let baseline_snapshot_json = baseline_snapshot_json.ok_or_else(|| {
-                    anyhow::anyhow!("service operation baseline is missing: {service_id}")
-                })?;
-                let baseline_snapshot = serde_json::from_str::<ServiceAcceptedStateSnapshot>(
-                    &baseline_snapshot_json,
-                )
-                    .with_context(|| format!("parse service operation baseline: {service_id}"))?;
-                if baseline_snapshot.schema_version != 1 {
-                    anyhow::bail!("unsupported service operation baseline schema: {service_id}");
-                }
-                let state = &settlement.state;
-                let changed = tx.execute(
-                    r#"
-UPDATE services
-SET
-  image_ref = ?3,
-  image_tag = ?4,
-  current_digest = ?5,
-  current_runtime_started_at = ?6,
-  current_resolved_tag = ?7,
-  current_resolved_tags_json = ?8,
-  candidate_tag = ?9,
-  candidate_resolved_tag = ?10,
-  candidate_digest = ?11,
-  candidate_arch_match = ?12,
-  candidate_arch_json = ?13,
-  ignore_rule_id = ?14,
-  ignore_reason = ?15,
-  checked_at = ?16,
-  updated_at = ?17,
-  accepted_state_generation = ?18
-WHERE id = ?1 AND accepted_state_generation = ?2
-"#,
-                    params![
-                        service_id,
-                        opened_generation,
-                        state.image_ref,
-                        state.image_tag,
-                        state.current_digest,
-                        state.current_runtime_started_at,
-                        state.current_resolved_tag,
-                        state.current_resolved_tags_json,
-                        state.candidate_tag,
-                        state.candidate_resolved_tag,
-                        state.candidate_digest,
-                        state.candidate_arch_match,
-                        state.candidate_arch_json,
-                        state.ignore_rule_id,
-                        state.ignore_reason,
-                        state.checked_at,
-                        now,
-                        opened_generation + 1,
-                    ],
-                )?;
-                if changed != 1 {
-                    anyhow::bail!(
-                        "service accepted state changed before settlement: service={} generation={}",
-                        service_id,
-                        opened_generation
-                    );
-                }
-            }
-            tx.commit()?;
-            Ok(())
-        })
-        .await
-        .context("settle service operation accepted states")
-    }
-
-    pub(crate) async fn settle_service_operation_service_state(
-        &self,
-        job_id: &str,
-        settlement: &ServiceAcceptedStateSettlement,
-        now: &str,
-    ) -> anyhow::Result<()> {
-        let job_id = job_id.to_string();
-        let settlement = settlement.clone();
-        let now = now.to_string();
-        self.call(move |conn| {
-            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let expected = tx
-                .query_row(
-                    "SELECT opened_generation FROM job_service_targets WHERE job_id = ?1 AND service_id = ?2",
-                    params![job_id, settlement.service_id],
-                    |row| row.get::<_, i64>(0),
-                )
-                .optional()?
-                .ok_or_else(|| anyhow::anyhow!("service is not an operation target"))?;
-            if expected != settlement.opened_generation {
-                anyhow::bail!("service operation settlement generation mismatch");
+                anyhow::bail!("unsupported service operation baseline schema: {service_id}");
             }
             let state = &settlement.state;
             let changed = tx.execute(
-                r#"
-UPDATE services SET
-  image_ref = ?3, image_tag = ?4, current_digest = ?5,
-  current_runtime_started_at = ?6, current_resolved_tag = ?7,
-  current_resolved_tags_json = ?8, candidate_tag = ?9,
-  candidate_resolved_tag = ?10, candidate_digest = ?11,
-  candidate_arch_match = ?12, candidate_arch_json = ?13,
-  ignore_rule_id = ?14, ignore_reason = ?15, checked_at = ?16,
-  updated_at = ?17, accepted_state_generation = ?18
-WHERE id = ?1 AND accepted_state_generation = ?2
-  AND accepted_state_generation % 2 = 1
-  AND EXISTS (SELECT 1 FROM jobs WHERE id = ?19 AND status IN ('queued', 'running'))
-"#,
+                r#"UPDATE services SET image_ref = ?3, image_tag = ?4, current_digest = ?5,
+current_runtime_started_at = ?6, current_resolved_tag = ?7, current_resolved_tags_json = ?8,
+candidate_tag = ?9, candidate_resolved_tag = ?10, candidate_digest = ?11,
+candidate_arch_match = ?12, candidate_arch_json = ?13, ignore_rule_id = ?14,
+ignore_reason = ?15, checked_at = ?16, updated_at = ?17, accepted_state_generation = ?18
+WHERE id = ?1 AND accepted_state_generation = ?2 AND accepted_state_generation % 2 = 1"#,
                 params![
-                    settlement.service_id,
-                    settlement.opened_generation,
+                    service_id,
+                    opened_generation,
                     state.image_ref,
                     state.image_tag,
                     state.current_digest,
@@ -567,18 +460,36 @@ WHERE id = ?1 AND accepted_state_generation = ?2
                     state.ignore_reason,
                     state.checked_at,
                     now,
-                    settlement.opened_generation + 1,
-                    job_id,
+                    opened_generation + 1
                 ],
             )?;
             if changed != 1 {
-                anyhow::bail!("service accepted state changed before settlement");
+                anyhow::bail!(
+                    "service accepted state changed before settlement: service={service_id}"
+                );
             }
+        }
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) async fn settle_service_operation_accepted_states(
+        &self,
+        job_id: &str,
+        settlements: &[ServiceAcceptedStateSettlement],
+        now: &str,
+    ) -> anyhow::Result<()> {
+        let job_id = job_id.to_string();
+        let settlements = settlements.to_vec();
+        let now = now.to_string();
+        self.call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            Self::settle_service_operation_accepted_states_tx(&tx, &job_id, &settlements, &now)?;
             tx.commit()?;
             Ok(())
         })
         .await
-        .context("settle service operation service state")
+        .context("settle service operation accepted states")
     }
 
     pub async fn insert_service_operation_job_if_unblocked(

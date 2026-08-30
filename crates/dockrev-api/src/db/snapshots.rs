@@ -11,6 +11,24 @@ impl Db {
         state: &ServiceAcceptedState,
         now: &str,
     ) -> anyhow::Result<AcceptedStateCasOutcome> {
+        self.compare_and_swap_service_accepted_state_observation_with_notification_reconcile(
+            service_id,
+            expected_generation,
+            state,
+            now,
+            false,
+        )
+        .await
+    }
+
+    pub(crate) async fn compare_and_swap_service_accepted_state_observation_with_notification_reconcile(
+        &self,
+        service_id: &str,
+        expected_generation: i64,
+        state: &ServiceAcceptedState,
+        now: &str,
+        reconcile_notifications: bool,
+    ) -> anyhow::Result<AcceptedStateCasOutcome> {
         let service_id = service_id.to_string();
         let state = state.clone();
         let now = now.to_string();
@@ -70,6 +88,16 @@ WHERE id = ?1
                 ],
             )?;
             let outcome = if changed == 1 {
+                if reconcile_notifications {
+                    super::new_version_notifications::reconcile_service_new_version_notifications_tx(
+                        &tx,
+                        &service_id,
+                        &state.image_ref,
+                        &state.image_tag,
+                        state.candidate_digest.as_deref(),
+                        &now,
+                    )?;
+                }
                 AcceptedStateCasOutcome::Applied {
                     generation: expected_generation + 2,
                 }

@@ -17,6 +17,7 @@ mod cron_expr;
 mod db;
 mod deploy_check_refresh_worker;
 mod discovery;
+mod discovery_compose;
 mod docker_engine;
 mod docker_runner;
 mod error;

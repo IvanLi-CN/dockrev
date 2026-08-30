@@ -461,12 +461,14 @@ async fn run_runtime_scan_for_job(
                 current_runtime_started_at: svc.current_runtime_started_at.clone(),
                 current_resolved_tag: svc.current_resolved_tag.clone(),
                 current_resolved_tags_json: svc.current_resolved_tags_json.clone(),
+                candidate_tag: svc.candidate_tag.clone(),
                 candidate_digest: svc.candidate_digest.clone(),
                 candidate_resolved_tag: svc.candidate_resolved_tag.clone(),
                 candidate_arch_match: svc.candidate_arch_match.clone(),
                 candidate_arch_json: svc.candidate_arch_json.clone(),
                 ignore_rule_id: svc.ignore_rule_id.clone(),
                 ignore_reason: svc.ignore_reason.clone(),
+                checked_at: svc.checked_at.clone(),
                 accepted_state_generation: svc.accepted_state_generation,
             };
 
@@ -483,6 +485,15 @@ async fn run_runtime_scan_for_job(
             )
             .await?;
 
+            if !outcome.accepted_state_applied {
+                tracing::debug!(
+                    service_id = %svc.id,
+                    generation = svc.accepted_state_generation,
+                    "runtime scan observation deferred after accepted-state CAS rejection"
+                );
+                continue;
+            }
+
             let mut inference_ok = true;
             if outcome.current_digest.is_none() {
                 // For runtime drift recovery, we must not leave the DB stale just because
@@ -495,7 +506,7 @@ async fn run_runtime_scan_for_job(
                 service_check::persist_runtime_fallback_result_with_generation(
                     &state.db,
                     &svc.id,
-                    Some(svc.accepted_state_generation),
+                    Some(svc.accepted_state_generation + 2),
                     &svc.image_ref,
                     &svc.image_tag,
                     &runtime,

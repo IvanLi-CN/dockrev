@@ -1132,34 +1132,11 @@ async fn run_scan_inner(
         let action_details = resolved.details.clone();
         let config_files = resolved.compose_files;
 
-        let mut merged: BTreeMap<String, compose::ServiceFromCompose> = BTreeMap::new();
-        let mut failure_reason: Option<String> = None;
-
-        for path in &config_files {
-            let contents = match tokio::fs::read_to_string(path).await {
-                Ok(v) => v,
-                Err(e) => {
-                    failure_reason = Some(format!(
-                        "compose_file_unreadable: {path} ({e}) (mount missing? ensure host path is mounted read-only at the same absolute path)"
-                    ));
-                    break;
-                }
+        let (merged, failure_reason) =
+            match crate::discovery_compose::read_and_merge_compose_files(&config_files).await {
+                Ok(merged) => (merged, None),
+                Err(reason) => (BTreeMap::new(), Some(reason)),
             };
-
-            match compose::parse_services(&contents) {
-                Ok(parsed) => {
-                    merged = compose::merge_services(merged, parsed);
-                }
-                Err(e) => {
-                    failure_reason = Some(format!("compose_file_invalid: {path} ({e})"));
-                    break;
-                }
-            }
-        }
-
-        if failure_reason.is_none() && merged.is_empty() {
-            failure_reason = Some("compose_no_services".to_string());
-        }
 
         if let Some(msg) = failure_reason {
             summary.stacks_failed += 1;
@@ -1307,7 +1284,6 @@ async fn run_scan_inner(
         let needs_update = stack.compose.compose_files != config_files;
         let needs_service_sync = !stack_services_match_specs(&stack, &svc_specs);
         let needs_sync = needs_update || needs_service_sync;
-
         let sync_applied = if needs_sync {
             state
                 .db
@@ -1322,7 +1298,6 @@ async fn run_scan_inner(
         } else {
             false
         };
-
         if sync_applied {
             if let Err(err) = crate::repo_link_backfill::enqueue_stack_backfill_if_needed(
                 state,
@@ -1359,7 +1334,6 @@ async fn run_scan_inner(
                 details: action_details.clone(),
             });
         }
-
         state
             .db
             .upsert_discovered_compose_project(DiscoveredComposeProjectUpsert {
@@ -1373,7 +1347,6 @@ async fn run_scan_inner(
                 unarchive_if_active: true,
             })
             .await?;
-
         projects_processed = projects_processed.saturating_add(1);
         emit_job_progress_best_effort(
             state,
@@ -1386,7 +1359,6 @@ async fn run_scan_inner(
         )
         .await;
     }
-
     let persisted_projects = state
         .db
         .list_persisted_discovered_compose_projects_except(&seen_projects)
