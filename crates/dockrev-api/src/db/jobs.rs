@@ -486,6 +486,35 @@ WHERE id = ?1
                 if updated == 0 {
                     return Ok(None);
                 }
+                // Terminal settlement owns the same SQLite transaction as the job
+                // status change. A completed owner may already have written an
+                // even generation; failed/cancelled/recovered paths simply close
+                // their odd lease while retaining the accepted snapshot.
+                tx.execute(
+                    r#"
+UPDATE services
+SET accepted_state_generation = (
+  SELECT target.opened_generation + 1
+  FROM job_service_targets target
+  WHERE target.job_id = ?1
+    AND target.service_id = services.id
+)
+WHERE id IN (
+  SELECT target.service_id
+  FROM job_service_targets target
+  WHERE target.job_id = ?1
+    AND target.opened_generation IS NOT NULL
+)
+  AND accepted_state_generation % 2 = 1
+  AND accepted_state_generation = (
+    SELECT target.opened_generation
+    FROM job_service_targets target
+    WHERE target.job_id = ?1
+      AND target.service_id = services.id
+  )
+"#,
+                    params![job_id],
+                )?;
                 let (job_type, scope, stack_id, service_id) = tx.query_row(
                     "SELECT type, scope, stack_id, service_id FROM jobs WHERE id = ?1",
                     params![&job_id],
@@ -1148,6 +1177,15 @@ WHERE finished_at IS NULL
     WHERE controls.job_id = jobs.id
       AND controls.recovery_snapshot_json IS NOT NULL
       AND controls.recovery_attempted_at IS NULL
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM job_service_targets target
+    JOIN services target_service ON target_service.id = target.service_id
+    WHERE target.job_id = jobs.id
+      AND target.opened_generation IS NOT NULL
+      AND target_service.accepted_state_generation = target.opened_generation
+      AND target_service.accepted_state_generation % 2 = 1
   )
 ORDER BY created_at DESC
 LIMIT 2000

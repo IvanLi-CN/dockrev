@@ -7,6 +7,8 @@ use anyhow::Context as _;
 use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 
 use super::*;
+#[path = "schema_accepted_state_generation.rs"]
+mod schema_accepted_state_generation;
 #[path = "schema_backup_cleanup_state.rs"]
 mod schema_backup_cleanup_state;
 #[path = "schema_job_history_retention.rs"]
@@ -97,6 +99,10 @@ fn ensure_service_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
         Col {
             name: "repo_url_auto_disabled",
             ddl: "ALTER TABLE services ADD COLUMN repo_url_auto_disabled INTEGER NOT NULL DEFAULT 0",
+        },
+        Col {
+            name: "accepted_state_generation",
+            ddl: "ALTER TABLE services ADD COLUMN accepted_state_generation INTEGER NOT NULL DEFAULT 0",
         },
     ];
 
@@ -698,6 +704,7 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     schema_lifecycle_events::apply(conn)?;
     schema_job_history_retention::apply(conn)?;
     schema_backup_cleanup_state::apply(conn)?;
+    schema_accepted_state_generation::apply(conn)?;
     Ok(())
 }
 

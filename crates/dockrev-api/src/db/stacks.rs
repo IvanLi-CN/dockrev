@@ -779,13 +779,49 @@ WHERE id = ?1
         services: &[ComposeServiceSpec],
         now: &str,
     ) -> anyhow::Result<()> {
+        self.sync_stack_from_compose_guarded(stack_id, compose_files, services, now, None)
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn sync_stack_from_compose_guarded(
+        &self,
+        stack_id: &str,
+        compose_files: &[String],
+        services: &[ComposeServiceSpec],
+        now: &str,
+        expected_generations: Option<Vec<(String, i64)>>,
+    ) -> anyhow::Result<bool> {
         let stack_id = stack_id.to_string();
         let event_stack_id = stack_id.clone();
         let compose_files = compose_files.to_vec();
         let services = services.to_vec();
         let now = now.to_string();
-        self.call(move |conn| {
+        let expected_generations = expected_generations.clone();
+        let changed = self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+
+            // A compose snapshot read while a mutation owns any service is stale by
+            // construction. Defer the whole stack so it cannot clear accepted state.
+            let current_generations = {
+                let mut stmt = tx.prepare(
+                    "SELECT id, accepted_state_generation FROM services WHERE stack_id = ?1 ORDER BY id",
+                )?;
+                stmt.query_map(params![stack_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+            };
+            let blocked = current_generations
+                .iter()
+                .any(|(_, generation)| generation % 2 != 0)
+                || expected_generations
+                    .as_ref()
+                    .is_some_and(|expected| expected != &current_generations);
+            if blocked {
+                tx.commit()?;
+                return Ok(false);
+            }
 
             tx.execute(
                 r#"
@@ -1006,19 +1042,21 @@ INSERT INTO services (
             }
 
             tx.commit()?;
-            Ok(())
+            Ok(true)
         })
-        .await
-        .context("sync stack from compose")?;
-        self.management_events
-            .publish_change(
-                "stacks",
-                "stack",
-                event_stack_id,
-                serde_json::json!({ "operation": "compose_synced" }),
-            )
-            .await;
-        Ok(())
+            .await
+            .context("sync stack from compose")?;
+        if changed {
+            self.management_events
+                .publish_change(
+                    "stacks",
+                    "stack",
+                    event_stack_id,
+                    serde_json::json!({ "operation": "compose_synced" }),
+                )
+                .await;
+        }
+        Ok(changed)
     }
 
     pub async fn put_service_backup_targets(
@@ -1057,7 +1095,8 @@ SELECT
   candidate_arch_match,
   candidate_arch_json,
   ignore_rule_id,
-  ignore_reason
+  ignore_reason,
+  accepted_state_generation
 FROM services
 WHERE stack_id = ?1
 ORDER BY name ASC
@@ -1079,6 +1118,7 @@ ORDER BY name ASC
                     candidate_arch_json: row.get(11)?,
                     ignore_rule_id: row.get(12)?,
                     ignore_reason: row.get(13)?,
+                    accepted_state_generation: row.get(14)?,
                 })
             })?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -1109,7 +1149,8 @@ SELECT
   candidate_arch_match,
   candidate_arch_json,
   ignore_rule_id,
-  ignore_reason
+  ignore_reason,
+  accepted_state_generation
 FROM services
 WHERE stack_id = ?1
 ORDER BY name ASC
@@ -1131,6 +1172,7 @@ ORDER BY name ASC
                     candidate_arch_json: row.get(11)?,
                     ignore_rule_id: row.get(12)?,
                     ignore_reason: row.get(13)?,
+                    accepted_state_generation: row.get(14)?,
                 })
             })?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)

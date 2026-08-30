@@ -1063,6 +1063,19 @@ async fn run_scan_inner(
             .get_discovered_compose_project(project)
             .await?
             .and_then(|record| record.stack_id);
+        let generation_token = if let Some(stack_id) = existing_stack_id.as_deref() {
+            let mut token = state
+                .db
+                .list_services_for_check(stack_id)
+                .await?
+                .into_iter()
+                .map(|service| (service.id, service.accepted_state_generation))
+                .collect::<Vec<_>>();
+            token.sort_by(|left, right| left.0.cmp(&right.0));
+            Some(token)
+        } else {
+            None
+        };
         let expected_self_upgrade_override = state
             .config
             .supervisor_state_path
@@ -1295,11 +1308,22 @@ async fn run_scan_inner(
         let needs_service_sync = !stack_services_match_specs(&stack, &svc_specs);
         let needs_sync = needs_update || needs_service_sync;
 
-        if needs_sync {
+        let sync_applied = if needs_sync {
             state
                 .db
-                .sync_stack_from_compose(&stack_id, &config_files, &svc_specs, &now)
-                .await?;
+                .sync_stack_from_compose_guarded(
+                    &stack_id,
+                    &config_files,
+                    &svc_specs,
+                    &now,
+                    generation_token,
+                )
+                .await?
+        } else {
+            false
+        };
+
+        if sync_applied {
             if let Err(err) = crate::repo_link_backfill::enqueue_stack_backfill_if_needed(
                 state,
                 &stack_id,
@@ -1327,7 +1351,11 @@ async fn run_scan_inner(
                 project: project.clone(),
                 action: DiscoveryActionKind::Skipped,
                 stack_id: Some(stack_id.clone()),
-                reason: warning.clone(),
+                reason: if needs_sync {
+                    Some("accepted state changed during compose I/O; deferred".to_string())
+                } else {
+                    warning.clone()
+                },
                 details: action_details.clone(),
             });
         }
@@ -1341,7 +1369,7 @@ async fn run_scan_inner(
                 last_seen_at: Some(now.clone()),
                 last_scan_at: now.clone(),
                 last_error: warning,
-                last_config_files: Some(config_files),
+                last_config_files: (sync_applied || !needs_sync).then_some(config_files),
                 unarchive_if_active: true,
             })
             .await?;

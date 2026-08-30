@@ -467,6 +467,7 @@ async fn run_runtime_scan_for_job(
                 candidate_arch_json: svc.candidate_arch_json.clone(),
                 ignore_rule_id: svc.ignore_rule_id.clone(),
                 ignore_reason: svc.ignore_reason.clone(),
+                accepted_state_generation: svc.accepted_state_generation,
             };
 
             let before_digest = svc.current_digest.clone();
@@ -491,9 +492,10 @@ async fn run_runtime_scan_for_job(
                 // it is available; otherwise, we fall back to persisting the runtime digest
                 // and clearing resolved/candidate fields to avoid showing stale data.
                 inference_ok = false;
-                service_check::persist_runtime_fallback_result(
+                service_check::persist_runtime_fallback_result_with_generation(
                     &state.db,
                     &svc.id,
+                    Some(svc.accepted_state_generation),
                     &svc.image_ref,
                     &svc.image_tag,
                     &runtime,

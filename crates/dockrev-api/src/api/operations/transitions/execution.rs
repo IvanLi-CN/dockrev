@@ -978,17 +978,18 @@ pub(crate) async fn run_update_job(
                             let mut inference_ok = true;
                             if settle_outcome.current_digest.is_none() {
                                 inference_ok = false;
-                                service_check::persist_runtime_fallback_result(
-                                    &state.db,
-                                    &svc_for_check.id,
-                                    &svc_for_check.image_ref,
-                                    &svc_for_check.image_tag,
-                                    &runtime_observation,
-                                    &settled_at,
-                                )
-                                .await?;
                                 settle_outcome.current_digest =
                                     Some(runtime_observation.digest.clone());
+                                settle_outcome.current_runtime_started_at =
+                                    if runtime_observation.started_at_inferred {
+                                        service_check::normalize_runtime_started_at(
+                                            runtime_observation.started_at.as_deref(),
+                                        )
+                                    } else {
+                                        service_check::normalize_runtime_started_at(
+                                            svc_for_check.current_runtime_started_at.as_deref(),
+                                        )
+                                    };
                                 settle_outcome.current_resolved_tag = None;
                                 settle_outcome.current_resolved_tags_json = None;
                                 settle_outcome.candidate_tag = None;
@@ -1000,6 +1001,45 @@ pub(crate) async fn run_update_job(
                                 settle_outcome.ignore_reason = None;
                                 settle_outcome.candidate_present = false;
                             }
+                            state
+                                .db
+                                .settle_service_operation_service_state(
+                                    &job_id,
+                                    &crate::db::ServiceAcceptedStateSettlement {
+                                        service_id: svc_for_check.id.clone(),
+                                        opened_generation: svc_for_check.accepted_state_generation,
+                                        state: crate::db::ServiceAcceptedState {
+                                            image_ref: svc_for_check.image_ref.clone(),
+                                            image_tag: svc_for_check.image_tag.clone(),
+                                            current_digest: settle_outcome.current_digest.clone(),
+                                            current_runtime_started_at: settle_outcome
+                                                .current_runtime_started_at
+                                                .clone(),
+                                            current_resolved_tag: settle_outcome
+                                                .current_resolved_tag
+                                                .clone(),
+                                            current_resolved_tags_json: settle_outcome
+                                                .current_resolved_tags_json
+                                                .clone(),
+                                            candidate_tag: settle_outcome.candidate_tag.clone(),
+                                            candidate_resolved_tag: settle_outcome
+                                                .candidate_resolved_tag
+                                                .clone(),
+                                            candidate_digest: settle_outcome.candidate_digest.clone(),
+                                            candidate_arch_match: settle_outcome
+                                                .candidate_arch_match
+                                                .clone(),
+                                            candidate_arch_json: settle_outcome
+                                                .candidate_arch_json
+                                                .clone(),
+                                            ignore_rule_id: settle_outcome.ignore_rule_id.clone(),
+                                            ignore_reason: settle_outcome.ignore_reason.clone(),
+                                            checked_at: Some(settled_at.clone()),
+                                        },
+                                    },
+                                    &settled_at,
+                                )
+                                .await?;
                             let evt = json!({
                                 "type": "update_state_settled",
                                 "jobId": job_id,
@@ -1241,6 +1281,39 @@ pub(crate) async fn run_update_job(
                 )
             }
         };
+
+    if let Some(summary) = final_summary.as_object_mut() {
+        let refresh = if final_status == "success" {
+            "fresh"
+        } else {
+            "deferred"
+        };
+        let reason = if final_status == "success" {
+            "settled from final runtime observation"
+        } else {
+            "baseline candidate retained until a later authoritative observation"
+        };
+        let services = req
+            .targets
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(|target| {
+                json!({
+                    "serviceId": target.service_id,
+                    "candidateRefresh": refresh,
+                    "reason": reason,
+                })
+            })
+            .collect::<Vec<_>>();
+        summary.insert(
+            "stateSettlement".to_string(),
+            json!({
+                "status": "settled",
+                "services": services,
+            }),
+        );
+    }
 
     let force_notify = final_status != "success";
     let mut should_notify = true;

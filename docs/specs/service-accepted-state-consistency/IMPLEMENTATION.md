@@ -4,16 +4,16 @@
 
 ## Current Status
 
-- Implementation: not started
-- Lifecycle: active
+- Implementation: active
+- Lifecycle: implementation candidate
 - Catalog note: `docs/specs/README.md` records this canonical topic.
 - Diagnosis: production race confirmed from Job logs, source write paths, and persisted state history.
-- Existing focused baseline: `cargo test -p dockrev-api update_ --no-fail-fast` passes 55 tests but does not reproduce concurrent discovery/runtime writes during rollback.
-- Red regression: specified but not added or run while this topic remains design-only.
+- Existing focused baseline: `cargo test -p dockrev-api update_ --no-fail-fast` passes 55 tests with the accepted-state guard enabled.
+- Red regression: `api::tests::update_apply_healthcheck_rollback_preserves_candidate_across_concurrent_observers` first reproduced declaration overwrite and candidate loss, then passed after CAS/ownership integration.
 
 ## Implementation Order
 
-### 1. Establish the red regression
+### 1. Establish the red regression (covered)
 
 - Extend the integration seam used by `api::tests::update_apply_healthcheck_rollback_exposes_attempted_and_final_digests_via_api` rather than adding an isolated DB-only test.
 - Add `health_waiting` and `release_health` notifications to `HealthRollbackUpdateRunner`; signal after the candidate is running and before returning its unhealthy status. Do not retain the runner step mutex across an await.
@@ -21,7 +21,7 @@
 - Release the unhealthy result, wait for `rolled_back`, and assert declaration unchanged, `current=old`, and `candidate=new`.
 - Run the exact focused test and retain its pre-fix failure output as implementation evidence.
 
-### 2. Add persistence primitives
+### 2. Add persistence primitives (covered)
 
 - Add `services.accepted_state_generation INTEGER NOT NULL DEFAULT 0`.
 - Add nullable historical-compatible `job_service_targets.opened_generation` and `baseline_snapshot_json`; require both for newly accepted mutating Jobs.
@@ -30,28 +30,28 @@
 - Implement observation CAS results and make successful observer persistence advance the even generation by `2`.
 - Implement an owner-checked settlement transaction that writes all target snapshots, closes generations, and finishes the Job atomically.
 
-### 3. Fence observation writers
+### 3. Fence observation writers (covered for check/runtime/discovery)
 
 - Carry generation through `ServiceForCheck` and `ServiceForRuntimeScan`.
 - Move Service snapshot and candidate-dependent projection writes behind one CAS boundary; remove unconditional candidate clearing from runtime fallback.
 - Add a Stack observation token and change `sync_stack_from_compose` to all-or-nothing membership/generation validation.
 - Treat CAS rejection as deferred/stale observation with structured logs, not a failed Docker or registry check.
 
-### 4. Unify terminal settlement
+### 4. Unify terminal settlement (covered for update transition)
 
 - Replace success-only update settlement with one transition used by success, automatic rollback, failure and cancellation.
 - Build settlement from durable baseline, explicit updater outcome and final runtime inspection. Registry lookup enriches candidate knowledge but cannot erase it on failure.
 - Publish terminal management events only after the settlement/Job transaction commits.
 - Preserve the accepted declaration on rollback and accept the committed managed override declaration on success.
 
-### 5. Enroll every runtime mutation
+### 5. Enroll every runtime mutation (covered for update/rollback/lifecycle/reconcile acquisition)
 
 - Route manual rollback, service/stack lifecycle and managed-override reconcile through the atomic acquisition interface.
 - Route backup modes that stop or restart Services through the same ownership protocol; live backup without runtime mutation remains outside it.
 - Remove check-then-insert TOCTOU behavior from managed-override reconcile.
 - Keep the existing managed-override process lock limited to Compose/override filesystem effects.
 
-### 6. Recover durable ownership
+### 6. Recover durable ownership (partially covered)
 
 - Reorder startup so odd-generation ownership is recovered before incomplete Jobs become terminal.
 - Restore or clean managed overrides, inspect final runtime, then use normal settlement.
@@ -88,13 +88,25 @@
 
 ## Remaining Gaps
 
-- All implementation phases above remain open.
-- The deterministic regression must fail for the diagnosed reason before persistence code changes begin.
-- No production migration, runtime repair, or deployment is authorized by this design-only topic.
+- Startup recovery now restores managed overrides before generic incomplete-job recovery and skips jobs whose odd ownership is still active; a dedicated retry worker for unresolved runtime facts remains future work.
+- Discovery uses a pre-I/O generation token and an all-or-nothing guarded compose sync; a structured deferred-result field is not exposed in the HTTP response.
+- Full workspace/all-features validation and shared-testbox verification remain before PR readiness.
 
 ## Related Changes
 
-- None
+- `crates/dockrev-api/src/db/schema_accepted_state_generation.rs`
+- `crates/dockrev-api/src/db/service_operations.rs`
+- `crates/dockrev-api/src/db/snapshots.rs`
+- `crates/dockrev-api/src/db/jobs.rs`
+- `crates/dockrev-api/src/db/stacks.rs`
+- `crates/dockrev-api/src/discovery.rs`
+- `crates/dockrev-api/src/api/discovery_routes.rs`
+- `crates/dockrev-api/src/api/operations/transitions/execution.rs`
+- `crates/dockrev-api/src/runtime_scan.rs`
+- `crates/dockrev-api/src/service_check.rs`
+- `crates/dockrev-api/src/main.rs`
+- `crates/dockrev-api/src/api/tests/suite_09.rs`
+- `crates/dockrev-api/src/api/tests/support_02.rs`
 
 ## References
 

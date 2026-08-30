@@ -4,7 +4,7 @@
 
 ## Lifecycle / Compatibility
 
-- Lifecycle is active; no runtime or schema implementation is present yet.
+- Lifecycle is active; the additive schema, observer CAS, mutation ownership and terminal fencing are implemented in the current topic branch.
 - The contract is additive to existing HTTP requests and retains historical `job_service_targets` rows with nullable ownership fields.
 
 ## Replacements / Background
