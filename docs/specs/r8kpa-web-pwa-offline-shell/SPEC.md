@@ -100,7 +100,6 @@
 
 ### Application Icon Contract
 
-PR: include
 
 ![Dockrev application icon comparison](./assets/pwa-application-icon-comparison.png)
 
@@ -112,7 +111,6 @@ PR: include
 
 ### PWA Update Bubble Desktop
 
-PR: include
 
 ![PWA update bubble desktop](./assets/pwa-update-bubble-desktop.png)
 
@@ -127,7 +125,6 @@ PR: include
 
 ### PWA Update Bubble Mobile
 
-PR: include
 
 ![PWA update bubble mobile](./assets/pwa-update-bubble-mobile.png)
 
