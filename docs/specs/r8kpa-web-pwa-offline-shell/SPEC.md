@@ -32,6 +32,7 @@
 ### In scope
 
 - `docs/specs/r8kpa-web-pwa-offline-shell/**`
+- `crates/dockrev-api/src/ui.rs`（内嵌前端静态资源的缓存响应头）
 - `web/package.json`
 - `web/vite.config.ts`
 - `web/index.html`
@@ -48,15 +49,17 @@
 
 ### Out of scope
 
-- Rust 服务端、数据库 schema、API contract 变更。
+- Rust 服务端的业务语义、数据库 schema、API contract 变更；仅允许为内嵌前端静态资源补充本合同要求的缓存响应头。
 - 推送通知业务语义与通知事件配置模型。
 - Cleanup、Settings、Deploy Welcome、GHCR Registry 维护等联网必需页的业务数据离线化或离线写。
 
 ## 需求 / 行为合同
 
 - service worker 使用 `vite-plugin-pwa` `injectManifest` 路线统一生成，并在同一个 worker 中同时承载低优先级 precache、SPA navigation fallback、Push、通知点击跳转与 `skipWaiting`。
+- Web App Manifest 的 `id`、`scope`、`start_url` 固定为规范化 base path，三者不得包含内容版本、查询参数或构建时间戳；图标内容更新不得改变该身份。
 - install icon 由 `docs/branding/generate_brand_assets.py` 从锁定的 Dockrev mark 导出：既有 `pwa-192.png` / `pwa-512.png` 继续作为 regular `purpose: "any"`；独立 `pwa-maskable-*.png` 与 180px Apple touch 使用全不透明 `#010E2D` 底图。maskable/Apple 的重要前景最大边为画布 58%-62%，且位于中心半径 40% 的安全圆；不得把平台圆角、阴影或外框烘焙进图源。
-- regular 与 maskable 不得共用资源或写成 `purpose: "any maskable"`。发生字节变化的 Apple/maskable 资源必须以内容派生 URL 同步到 manifest、HTML 与 Workbox precache。
+- regular 与 maskable 不得共用资源或写成 `purpose: "any maskable"`。构建为每个 install metadata asset 生成内容哈希文件名；发生字节变化的 regular、maskable、Apple touch 或 favicon 资源必须以新的内容派生 URL 同步到 manifest、HTML 与 Workbox precache。manifest 由 PWA 插件生成唯一的 manifest link，是 Chromium 安装元数据的权威来源；HTML 只保留带哈希的浏览器 favicon 与 Apple touch 兼容 fallback，不得重复注入 manifest。
+- 内容哈希 install icon 文件使用 `public, max-age=31536000, immutable`；`index.html`、`manifest.webmanifest` 与 `sw.js` 使用 `no-cache` 重新验证。旧固定文件名可以继续被服务以兼容旧客户端，但不得被新 HTML、manifest 或 Workbox precache 选中为安装图标版本。
 - 应用启动即注册 service worker；通知设置页改为复用全局注册结果，不再自行注册单独 worker。
 - 持久快照统一记录 `fetchedAt`、`staleAt`、`expireAt`、`schemaVersion`、`sourceVersion`；只有仍处于 `fresh` 窗口内的快照允许展示，超过新鲜窗口或超过 7 天都必须回退为需联网态。
 - 纳入持久缓存的 read model 固定为：首页 launcher、概览/服务列表、stack detail、service detail 的 overview/history/monitoring/backup 只读摘要、队列列表、版本推测总览。
@@ -71,6 +74,8 @@
 - 更新提示固定为不占主内容文档流的右下浮动气泡。下载态禁用更新按钮且不显示 tooltip；离线且尚未 ready 时，气泡仅在已有 hover/focus 期间保留，二者离开后隐藏；ready 后即使离线也可激活。
 - navigation fallback 覆盖 `routes.ts` 的全部正式前端路由，并继续排除 `/api`、静态资产与 `/supervisor` 控制面。fallback 仅启动 app shell，不缓存管理数据或开放离线写。
 - `/api/version` 仅继续用于展示文本，不作为切换真相源。
+- Service worker 的 precache 必须包含当前构建生成的 manifest 与内容哈希 install metadata，并不得依赖 `?v=` 查询参数匹配来掩盖固定文件名；旧 precache 由 Workbox 清理，manifest、HTML 与 worker 本身通过重新验证发现新版本。
+- Android Chrome 的 WebAPK 与 Chromium desktop 安装均依据稳定 manifest identity 识别应用，并在新 manifest 可用时按平台节流规则更新图标/元数据；现有 iOS/iPadOS Web Clips、浏览器快捷方式及不支持 manifest 迁移的浏览器不能被网站强制更新其已保存的图标或元数据。Dockrev 不把重新安装作为常规更新机制，文档只说明该平台限制与异常恢复边界。
 
 ## 验收标准（Acceptance Criteria）
 
@@ -78,7 +83,10 @@
 - Given 离线进入缓存命中的只读页，When 数据来自本地快照，Then 页面只显示仍处于 `fresh` 窗口内的缓存数据，且所有写操作不会被误导性地保留为可点击。
 - Given 本地快照已经离开 `fresh` 窗口或超过 7 天，When 用户离线进入对应页面，Then 页面不再展示该快照，而是直接回到需联网态。
 - Given Chromium PWA installability 检查，When 页面具备有效 manifest、icons 与 service worker，Then 用户可安装到桌面/主屏。
-- Given 任一 install icon 字节发生变化，When 构建新的 PWA，Then regular、maskable、Apple touch 的 manifest/HTML/precache 引用共同指向当前内容版本，且几何、透明度和 hash 契约测试通过。
+- Given Chromium PWA installability 检查，When 页面具备有效 manifest、icons 与 service worker，Then 用户可安装到桌面/主屏，且 `id`、`scope`、`start_url` 与既有安装保持一致。
+- Given 任一 install metadata 字节发生变化，When 构建新的 PWA，Then regular、maskable、Apple touch 与 favicon 的 manifest/HTML/precache 引用共同指向当前内容哈希文件，缓存策略允许旧客户端重新验证 metadata，且几何、透明度和 hash 契约测试通过。
+- Given 任一旧固定名 install icon 请求，When 服务器提供兼容响应，Then 它不带 immutable 缓存承诺，新的安装入口不会继续引用或 precache 它。
+- Given Android Chrome/WebAPK 或 Chromium desktop 已有安装，When 稳定 identity 下发布新的 manifest 与内容哈希图标，Then 平台可以按自身更新节流策略重新读取并更新安装元数据；Given iOS/iPadOS Web Clip 或不支持迁移的快捷方式，Then 文档明确其既有图标不能由站点强制替换，且不把重新安装作为正常流程。
 - Given 发布了新的前端构建，When `updatefound` 发生，Then 更新状态进入 `downloading` 且“立即更新”不可用；只有 worker 成为 `waiting` 后才进入可更新状态。
 - Given worker 已 `ready`，When 用户点击“立即更新”，Then 当前 URL 被新 worker 接管并重载；When 用户选择“稍后”后进行应用内导航或浏览器前进/后退，Then 目标 pathname 先提交并由新 worker 重载。
 - Given 更新下载或激活失败，When 用户继续使用当前页面，Then 旧版本不中断并保留重新检查或再次激活的入口。
@@ -100,6 +108,7 @@ PR: include
 - target_program: mock-only platform-mask preview
 - capture_scope: Regular/`any`, maskable, 180px Apple touch, 48/128/512px previews, circle/squircle/macOS masks
 - state: owner-confirmed candidate freeze
+- 本次交付只改变资源命名、manifest/HTML 引用与缓存生命周期；锁定的 regular、maskable、Apple touch 图稿必须与当前证据一致。
 
 ### PWA Update Bubble Desktop
 
@@ -175,6 +184,10 @@ PR: include
 - requested_viewport: 1440x1080
 - viewport_strategy: storybook-static
 - PR: include
+
+## Related ADRs
+
+- None
 
 ## Related Contract
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import struct
 import sys
 import zlib
@@ -16,18 +17,44 @@ WEB_DIR = Path(__file__).resolve().parents[1]
 PUBLIC_DIR = WEB_DIR / "public"
 DIST_DIR = WEB_DIR / "dist"
 BACKGROUND = (0x01, 0x0E, 0x2D)
+RAW_BASE_PATH = os.environ.get("DOCKREV_WEB_BASE", "/")
+
+
+def normalize_base_path(base_path: str) -> str:
+    raw = base_path.strip()
+    if not raw or raw == "/":
+        return "/"
+    with_leading_slash = raw if raw.startswith("/") else f"/{raw}"
+    return with_leading_slash if with_leading_slash.endswith("/") else f"{with_leading_slash}/"
+
+
+BASE_PATH = normalize_base_path(RAW_BASE_PATH)
 REGULAR_HASHES = {
     "pwa-192.png": "3d6999d34c2d4dfc64c91e1515729daaabae10a4dddca950f8a3017b8fcd0d8e",
     "pwa-512.png": "a55419e5b9851669099f9e664566ed90061fa9c5b222bac892d3cfbbcff6caf8",
 }
 INSTALL_ICON_ASSETS = (
-    "apple-touch-icon.png",
-    "favicon.ico",
+    "favicon.svg",
     "favicon.png",
+    "favicon.ico",
+    "apple-touch-icon.png",
     "pwa-192.png",
     "pwa-512.png",
     "pwa-maskable-192.png",
     "pwa-maskable-512.png",
+)
+HASH_LENGTH = 12
+MANIFEST_ICON_ASSETS = (
+    "pwa-192.png",
+    "pwa-512.png",
+    "pwa-maskable-192.png",
+    "pwa-maskable-512.png",
+)
+HTML_ICON_ASSETS = (
+    "favicon.svg",
+    "favicon.png",
+    "favicon.ico",
+    "apple-touch-icon.png",
 )
 
 
@@ -122,32 +149,49 @@ def assert_maskable(path: Path, expected_size: int) -> None:
     )
 
 
-def install_icon_version() -> str:
-    digest = hashlib.sha256()
+def content_hashed_file_name(asset: str) -> str:
+    source = PUBLIC_DIR / asset
+    path = Path(asset)
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()[:HASH_LENGTH]
+    return f"{path.stem}-{digest}{path.suffix}"
+
+
+def assert_hashed_assets_exist() -> None:
     for asset in INSTALL_ICON_ASSETS:
-        digest.update((PUBLIC_DIR / asset).read_bytes())
-    return digest.hexdigest()[:12]
+        expected_name = content_hashed_file_name(asset)
+        built = DIST_DIR / expected_name
+        assert built.is_file(), f"build output omits content-hashed {asset}"
+        assert built.read_bytes() == (PUBLIC_DIR / asset).read_bytes(), (
+            f"built {expected_name} does not contain the source bytes for {asset}"
+        )
 
 
-def assert_build_contract(version: str) -> None:
+def assert_build_contract() -> None:
     assert DIST_DIR.is_dir(), "build output is missing; run the PWA build before this checker"
+    assert_hashed_assets_exist()
     manifest = json.loads((DIST_DIR / "manifest.webmanifest").read_text())
-    expected_icons = {
-        f"/pwa-192.png?v={version}",
-        f"/pwa-512.png?v={version}",
-        f"/pwa-maskable-192.png?v={version}",
-        f"/pwa-maskable-512.png?v={version}",
-    }
-    actual_icons = {icon["src"] for icon in manifest["icons"]}
-    assert actual_icons == expected_icons, "built manifest icon URLs do not match the generated assets"
+    assert manifest["id"] == BASE_PATH, "manifest id must remain the stable base identity"
+    assert manifest["scope"] == BASE_PATH, "manifest scope must remain the stable base identity"
+    assert manifest["start_url"] == BASE_PATH, "manifest start_url must remain the stable base identity"
+    expected_icons = [f"{BASE_PATH}{content_hashed_file_name(asset)}" for asset in MANIFEST_ICON_ASSETS]
+    actual_icons = [icon["src"] for icon in manifest["icons"]]
+    assert actual_icons == expected_icons, "built manifest icon URLs do not match content-hashed assets"
+    assert all("?" not in src for src in actual_icons), "manifest icon URLs must not use query versions"
 
     built_html = (DIST_DIR / "index.html").read_text()
-    for asset in ("apple-touch-icon.png", "favicon.ico", "favicon.png"):
-        assert f"{asset}?v={version}" in built_html, f"built {asset} URL is stale"
+    assert built_html.count('rel="manifest"') == 1, "built HTML must contain one manifest link"
+    assert "?v=" not in built_html, "built install metadata must not use query-versioned URLs"
+    for asset in HTML_ICON_ASSETS:
+        expected_name = content_hashed_file_name(asset)
+        assert f"{BASE_PATH}{expected_name}" in built_html, f"built {asset} URL is stale"
     worker = (DIST_DIR / "sw.js").read_text()
-    assert "ignoreURLParametersMatching" in worker, "built service worker does not match versioned icon URLs offline"
+    assert "?v=" not in worker, "service worker must not pin query-versioned install assets"
+    assert "registration.scope" in worker, "service worker must derive its app base from registration scope"
+    assert "index.html" in worker, "service worker must keep an app-shell navigation fallback"
     for asset in INSTALL_ICON_ASSETS:
-        assert asset in worker, f"Workbox precache omits {asset}"
+        hashed_name = content_hashed_file_name(asset)
+        assert hashed_name in worker, f"Workbox precache omits {hashed_name}"
+        assert f'"{asset}"' not in worker, f"Workbox precache pins legacy {asset}"
 
 
 def main() -> None:
@@ -166,15 +210,19 @@ def main() -> None:
     config = (WEB_DIR / "vite.config.ts").read_text()
     assert "purpose: 'any'" in config and "purpose: 'maskable'" in config, "manifest purposes are incomplete"
     assert "purpose: 'any maskable'" not in config, "manifest reuses a combined purpose"
-    assert "versionedPwaAsset('pwa-512.png')" in config, "regular URL is not content-versioned"
-    assert "versionedPwaAsset('pwa-maskable-512.png')" in config, "maskable URL is not content-versioned"
+    assert "contentHashedFileName" in config, "install metadata URLs are not content-hashed"
+    assert "includeManifestIcons: false" in config, "PWA plugin may re-add fixed public icon names"
+    assert "globPatterns" in config, "Workbox install asset patterns are not explicit"
     service_worker = (WEB_DIR / "src" / "sw.ts").read_text()
-    assert "ignoreURLParametersMatching" in service_worker, "service worker does not match versioned icon URLs offline"
+    assert "ignoreURLParametersMatching" not in service_worker, "service worker must not rely on query-version matching"
+    assert "self.registration.scope" in service_worker, "service worker must derive its base path from registration scope"
+    assert "createHandlerBoundToURL('/index.html')" not in service_worker, "service worker shell URL must not be root-hardcoded"
     index = (WEB_DIR / "index.html").read_text()
-    assert "%INSTALL_ICON_VERSION%" in index, "Apple touch URL is not content-versioned"
+    assert "%DOCKREV_APPLE_TOUCH_ICON%" in index, "Apple touch URL is not content-versioned"
+    assert '<link rel="manifest"' not in index, "manifest must be injected by the PWA plugin exactly once"
     docs_config = (WEB_DIR.parent / "docs-site" / "rspress.config.ts").read_text()
     assert "appleTouchIconVersion" in docs_config, "docs-site Apple touch URL is not content-versioned"
-    assert_build_contract(install_icon_version())
+    assert_build_contract()
 
 
 if __name__ == "__main__":

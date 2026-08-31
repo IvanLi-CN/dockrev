@@ -16,6 +16,8 @@ use crate::state::AppState;
 
 static WEB_DIST: Dir<'_> = include_dir!("$OUT_DIR/dockrev-ui-dist");
 const RUNTIME_CONFIG_MARKER: &str = "<!-- DOCKREV_RUNTIME_CONFIG -->";
+const NO_CACHE: &str = "no-cache";
+const IMMUTABLE_INSTALL_ICON_CACHE: &str = "public, max-age=31536000, immutable";
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::<Arc<AppState>>::new()
@@ -204,6 +206,12 @@ fn serve_path(path: &str) -> Option<Response> {
 
     let mut resp = Response::new(Body::from(file.contents()));
     resp.headers_mut().insert(header::CONTENT_TYPE, mime_value);
+    if let Some(cache_control) = cache_control_for_ui_path(path) {
+        resp.headers_mut().insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static(cache_control),
+        );
+    }
     Some(resp)
 }
 
@@ -237,7 +245,64 @@ fn serve_index(state: &AppState) -> Option<Response> {
     let mime_value = HeaderValue::from_str(mime.as_ref()).ok()?;
     let mut resp = Response::new(Body::from(body.into_bytes()));
     resp.headers_mut().insert(header::CONTENT_TYPE, mime_value);
+    resp.headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static(NO_CACHE));
     Some(resp)
+}
+
+fn cache_control_for_ui_path(path: &str) -> Option<&'static str> {
+    let file_name = path.rsplit('/').next().unwrap_or(path);
+    if matches!(
+        file_name,
+        "index.html" | "manifest.webmanifest" | "sw.js" | "registerSW.js"
+    ) {
+        return Some(NO_CACHE);
+    }
+    if is_hashed_install_icon(file_name) {
+        return Some(IMMUTABLE_INSTALL_ICON_CACHE);
+    }
+    if is_legacy_install_asset(file_name) {
+        return Some(NO_CACHE);
+    }
+    None
+}
+
+fn is_hashed_install_icon(file_name: &str) -> bool {
+    let Some((stem, extension)) = file_name.rsplit_once('.') else {
+        return false;
+    };
+    if !matches!(extension, "svg" | "png" | "ico") {
+        return false;
+    }
+    let Some((prefix, digest)) = stem.rsplit_once('-') else {
+        return false;
+    };
+    matches!(
+        prefix,
+        "favicon"
+            | "apple-touch-icon"
+            | "pwa-192"
+            | "pwa-512"
+            | "pwa-maskable-192"
+            | "pwa-maskable-512"
+    ) && digest.len() == 12
+        && digest
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+}
+
+fn is_legacy_install_asset(file_name: &str) -> bool {
+    matches!(
+        file_name,
+        "favicon.svg"
+            | "favicon.png"
+            | "favicon.ico"
+            | "apple-touch-icon.png"
+            | "pwa-192.png"
+            | "pwa-512.png"
+            | "pwa-maskable-192.png"
+            | "pwa-maskable-512.png"
+    )
 }
 
 fn ui_has_runtime_config_marker() -> bool {
@@ -258,7 +323,10 @@ fn escape_json_for_inline_script(json: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ensure_trailing_slash, escape_html, escape_json_for_inline_script};
+    use super::{
+        IMMUTABLE_INSTALL_ICON_CACHE, NO_CACHE, cache_control_for_ui_path, ensure_trailing_slash,
+        escape_html, escape_json_for_inline_script,
+    };
 
     #[test]
     fn escape_json_for_inline_script_prevents_script_breakout() {
@@ -293,5 +361,45 @@ mod tests {
         assert_eq!(ensure_trailing_slash("/supervisor/"), "/supervisor/");
         assert_eq!(ensure_trailing_slash(""), "");
         assert_eq!(ensure_trailing_slash("   "), "");
+    }
+
+    #[test]
+    fn hashed_install_icons_are_immutable() {
+        assert_eq!(
+            cache_control_for_ui_path("pwa-192-3d6999d34c2d.png"),
+            Some(IMMUTABLE_INSTALL_ICON_CACHE)
+        );
+        assert_eq!(
+            cache_control_for_ui_path("apple-touch-icon-e2d62ed6a0ae.png"),
+            Some(IMMUTABLE_INSTALL_ICON_CACHE)
+        );
+        assert_eq!(
+            cache_control_for_ui_path("favicon-0a0e56c2e2df.svg"),
+            Some(IMMUTABLE_INSTALL_ICON_CACHE)
+        );
+    }
+
+    #[test]
+    fn legacy_install_assets_are_revalidated() {
+        assert_eq!(cache_control_for_ui_path("pwa-192.png"), Some(NO_CACHE));
+        assert_eq!(cache_control_for_ui_path("favicon.ico"), Some(NO_CACHE));
+        assert_eq!(
+            cache_control_for_ui_path("apple-touch-icon.png"),
+            Some(NO_CACHE)
+        );
+    }
+
+    #[test]
+    fn app_update_metadata_is_revalidated() {
+        for path in [
+            "index.html",
+            "manifest.webmanifest",
+            "sw.js",
+            "registerSW.js",
+        ] {
+            assert_eq!(cache_control_for_ui_path(path), Some(NO_CACHE));
+        }
+        assert_eq!(cache_control_for_ui_path("assets/app.js"), None);
+        assert_eq!(cache_control_for_ui_path("pwa-192-short.png"), None);
     }
 }
