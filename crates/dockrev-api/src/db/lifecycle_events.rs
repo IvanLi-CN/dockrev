@@ -248,6 +248,17 @@ mod tests {
     #[tokio::test]
     async fn lifecycle_events_are_idempotent_and_retained_for_thirty_days() {
         let (path, db) = fixture().await;
+        let base_time = time::OffsetDateTime::now_utc() - time::Duration::days(1);
+        let format_time = |value: time::OffsetDateTime| {
+            value
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap()
+        };
+        let first_at = format_time(base_time);
+        let second_at = format_time(base_time + time::Duration::minutes(1));
+        let later_at = format_time(base_time + time::Duration::days(1));
+        let range_until =
+            format_time(base_time + time::Duration::days(1) + time::Duration::minutes(1));
         let input = |transition: &str, created_at: &str| ServiceLifecycleEventInput {
             service_id: "svc".to_string(),
             stack_id: Some("stack".to_string()),
@@ -262,33 +273,33 @@ mod tests {
             created_at: created_at.to_string(),
         };
         assert!(
-            db.insert_service_lifecycle_event(input("stopped", "2026-08-01T00:00:00Z"))
+            db.insert_service_lifecycle_event(input("stopped", &first_at))
                 .await
                 .unwrap()
                 .is_some()
         );
         assert!(
-            db.insert_service_lifecycle_event(input("stopped", "2026-08-01T00:00:00Z"))
+            db.insert_service_lifecycle_event(input("stopped", &first_at))
                 .await
                 .unwrap()
                 .is_none()
         );
         assert!(
-            db.insert_service_lifecycle_event(input("started", "2026-08-01T00:01:00Z"))
+            db.insert_service_lifecycle_event(input("started", &second_at))
                 .await
                 .unwrap()
                 .is_some()
         );
         let rows = db
-            .list_service_lifecycle_events("svc", "2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z")
+            .list_service_lifecycle_events("svc", &first_at, &range_until)
             .await
             .unwrap();
         assert_eq!(rows.len(), 2);
-        let mut later = input("stopped", "2026-08-02T00:00:00Z");
+        let mut later = input("stopped", &later_at);
         later.operation_group_id = "op-2".to_string();
         db.insert_service_lifecycle_event(later).await.unwrap();
         assert_eq!(
-            db.list_service_lifecycle_events("svc", "2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z")
+            db.list_service_lifecycle_events("svc", &first_at, &range_until)
                 .await
                 .unwrap()
                 .len(),
