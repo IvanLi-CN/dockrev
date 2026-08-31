@@ -58,7 +58,7 @@
 - service worker 使用 `vite-plugin-pwa` `injectManifest` 路线统一生成，并在同一个 worker 中同时承载低优先级 precache、SPA navigation fallback、Push、通知点击跳转与 `skipWaiting`。
 - Web App Manifest 的 `id`、`scope`、`start_url` 固定为规范化 base path，三者不得包含内容版本、查询参数或构建时间戳；图标内容更新不得改变该身份。
 - install icon 由 `docs/branding/generate_brand_assets.py` 从锁定的 Dockrev mark 导出：既有 `pwa-192.png` / `pwa-512.png` 继续作为 regular `purpose: "any"`；独立 `pwa-maskable-*.png` 与 180px Apple touch 使用全不透明 `#010E2D` 底图。maskable/Apple 的重要前景最大边为画布 58%-62%，且位于中心半径 40% 的安全圆；不得把平台圆角、阴影或外框烘焙进图源。
-- regular 与 maskable 不得共用资源或写成 `purpose: "any maskable"`。构建为每个 install metadata asset 生成内容哈希文件名；发生字节变化的 regular、maskable、Apple touch 或 favicon 资源必须以新的内容派生 URL 同步到 manifest、HTML 与 Workbox precache。manifest 由 PWA 插件生成唯一的 manifest link，是 Chromium 安装元数据的权威来源；HTML 只保留带哈希的浏览器 favicon 与 Apple touch 兼容 fallback，不得重复注入 manifest。
+- regular 与 maskable 不得共用资源或写成 `purpose: "any maskable"`。构建为每个 install metadata asset 生成内容哈希文件名；发生字节变化的 regular、maskable、Apple touch 或 favicon 资源必须以新的内容派生 URL 同步到 manifest、HTML 与 Workbox precache。manifest 由 PWA 插件生成唯一的 manifest link，是 Chromium 安装元数据的权威来源；HTML 只保留带哈希的浏览器 favicon 与 Apple touch 兼容 fallback，不得重复注入 manifest。WebKit 同时发现 manifest 图标与 `apple-touch-icon` 时以后者为准，因此兼容链接必须与 manifest 图标一起更新，不能成为静默的旧图标来源。
 - 内容哈希 install icon 文件使用 `public, max-age=31536000, immutable`；`index.html`、`manifest.webmanifest` 与 `sw.js` 使用 `no-cache` 重新验证。旧固定文件名可以继续被服务以兼容旧客户端，但不得被新 HTML、manifest 或 Workbox precache 选中为安装图标版本。
 - 应用启动即注册 service worker；通知设置页改为复用全局注册结果，不再自行注册单独 worker。
 - 持久快照统一记录 `fetchedAt`、`staleAt`、`expireAt`、`schemaVersion`、`sourceVersion`；只有仍处于 `fresh` 窗口内的快照允许展示，超过新鲜窗口或超过 7 天都必须回退为需联网态。

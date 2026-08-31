@@ -37,7 +37,7 @@ Dockrev keeps the Web App Manifest `id`, `scope`, and `start_url` stable for an 
 
 Android Chrome WebAPKs and Chromium desktop PWA installations follow the manifest update lifecycle and its platform-controlled refresh schedule. A browser shortcut that is not a manifest-backed PWA may keep the icon it captured when it was created.
 
-Safari on iOS/iPadOS and existing Web Clips have a separate limitation: WebKit can use the `apple-touch-icon` compatibility link, and an existing Web Clip's saved icon and metadata cannot be force-migrated by the website. The same applies to browsers without an in-place manifest migration mechanism. This is a platform limitation, not a routine Dockrev update instruction.
+Safari on iOS/iPadOS and existing Web Clips have a separate limitation: when both are present, WebKit gives the `apple-touch-icon` compatibility link precedence over manifest icons. Dockrev updates that link through the same content-hashed release, but an existing Web Clip's saved icon and metadata cannot be force-migrated by the website. The same applies to browsers without an in-place manifest migration mechanism. This is a platform limitation, not a routine Dockrev update instruction.
 
 ## First validation checklist
 
