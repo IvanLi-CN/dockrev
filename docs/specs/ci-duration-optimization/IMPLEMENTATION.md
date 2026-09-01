@@ -2,9 +2,9 @@
 
 ## Current Status
 
-- Implementation: implemented locally; remote timing evidence remains a release acceptance step
+- Implementation: implemented; remote timing evidence remains a release acceptance step
 - Lifecycle: active
-- Catalog note: Fast gate, source gate, and exact-SHA release proof are being implemented together.
+- Catalog note: Fast gate, source gate, and exact-SHA release proof are implemented together.
 
 ## Implementation Coverage
 
@@ -30,7 +30,7 @@
 
 ## Remaining Gaps
 
-- Remote controlled timing samples and the final PR head convergence are pending implementation.
+- Remote controlled timing samples remain pending because GitHub does not register a newly added workflow for `workflow_dispatch` until that workflow exists on the default branch. After registration, run the fixed runner against frozen two-shard and three-shard refs; if dispatch cannot create a run, the runner stops without retry.
 
 ## References
 
