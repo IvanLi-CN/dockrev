@@ -9,9 +9,27 @@ bash -n \
   .github/scripts/label-gate.sh \
   .github/scripts/release-intent.sh \
   .github/scripts/compute-version.sh \
-  .github/scripts/test-release-snapshot.sh
-python3 -m py_compile .github/scripts/check-live-quality-gates.py .github/scripts/release_snapshot.py
-ruby -e 'require "yaml"; YAML.load_file(".github/workflows/label-gate.yml"); YAML.load_file(".github/workflows/review-policy.yml"); YAML.load_file(".github/workflows/ci-pr.yml"); YAML.load_file(".github/workflows/ci-main.yml"); YAML.load_file(".github/workflows/release.yml"); YAML.load_file(".github/workflows/notify-release-failure.yml")'
+  .github/scripts/test-release-snapshot.sh \
+  .github/scripts/deploy-smoke.sh \
+  .github/scripts/storybook-ci-check.sh
+python3 -m py_compile \
+  .github/scripts/check-live-quality-gates.py \
+  .github/scripts/release_snapshot.py \
+  .github/scripts/resolve-ci-scope.py \
+  .github/scripts/resolve-storybook-matrix.py \
+  .github/scripts/release_source_gate.py \
+  .github/scripts/verify_ci_gate_metrics.py \
+  .github/scripts/test_ci_release_gate.py \
+  .github/scripts/run_ci_gate_validation.py
+ruby -e 'require "yaml"; ARGV.each { |path| YAML.load_file(path) }' \
+  .github/workflows/label-gate.yml \
+  .github/workflows/review-policy.yml \
+  .github/workflows/ci-pr.yml \
+  .github/workflows/ci-main.yml \
+  .github/workflows/source-build-release-gate.yml \
+  .github/workflows/ci-gate-verification.yml \
+  .github/workflows/release.yml \
+  .github/workflows/notify-release-failure.yml
 
 has_rg() {
   command -v rg >/dev/null 2>&1
@@ -132,6 +150,13 @@ ruby -ryaml -e '
 workflow = YAML.load_file(".github/workflows/release.yml")
 top_permissions = workflow.fetch("permissions", {})
 publish_permissions = workflow.fetch("jobs").fetch("publish").fetch("permissions", {})
+jobs = workflow.fetch("jobs")
+
+%w[build-web build-binaries-amd64 build-binaries-arm64 publish cleanup-artifacts].each do |job_name|
+  needs = Array(jobs.fetch(job_name).fetch("needs"))
+  abort "[contract-check] #{job_name} must wait for source-gate" unless needs.include?("source-gate")
+end
+abort "[contract-check] source-gate must have actions: read" unless jobs.fetch("source-gate").fetch("permissions")["actions"] == "read"
 
 abort "[contract-check] release workflow top-level permissions must keep issues: write" unless top_permissions["issues"] == "write"
 abort "[contract-check] release workflow top-level permissions must keep pull-requests: write" unless top_permissions["pull-requests"] == "write"
@@ -181,6 +206,59 @@ legacy_reference = ["IvanLi-CN", "github-workflows", ".github", "workflows", "re
 abort "legacy workflow reference remains" if File.read(ARGV.fetch(0)).include?(legacy_reference)
 abort "gateway override must remain omitted" if File.read(ARGV.fetch(0)).match?(/gateway_url:|oidc_audience:/)
 ' "${notify_workflow}"
+
+ruby -ryaml -e '
+workflow = YAML.load_file(".github/workflows/ci-main.yml")
+jobs = workflow.fetch("jobs")
+required = jobs.fetch("frontend-storybook-test-required")
+abort "[contract-check] Storybook required check name changed" unless required.fetch("name") == "Frontend Storybook test (main)"
+abort "[contract-check] Storybook required check must aggregate shards and coverage" unless Array(required.fetch("needs")).sort == %w[changes frontend-storybook-test storybook-coverage-summary].sort
+abort "[contract-check] fast gate must wait for the stable Storybook required check" unless Array(jobs.fetch("fast-gate-verdict").fetch("needs")).include?("frontend-storybook-test-required")
+abort "[contract-check] release snapshot must wait for the stable Storybook required check" unless Array(jobs.fetch("release-snapshot").fetch("needs")).include?("frontend-storybook-test-required")
+'
+
+echo "[contract-check] CI duration optimization invariants"
+search_fixed "source-gate:" .github/workflows/release.yml
+search_fixed "python3 .github/scripts/release_source_gate.py wait \\" .github/workflows/release.yml
+search_fixed "WORKFLOW_FILE = \"source-build-release-gate.yml\"" .github/scripts/release_source_gate.py
+search_fixed "FAST_WORKFLOW_FILE = \"ci-main.yml\"" .github/scripts/release_source_gate.py
+search_fixed "VERIFICATION_WORKFLOW_FILE = \"ci-gate-verification.yml\"" .github/scripts/release_source_gate.py
+search_fixed "validate_push_attestation" .github/scripts/release_source_gate.py
+search_fixed "download_attestation" .github/scripts/release_source_gate.py
+search_fixed "target: runtime" .github/workflows/source-build-release-gate.yml
+search_fixed "target: runtime-supervisor" .github/workflows/source-build-release-gate.yml
+search_fixed "load: true" .github/workflows/source-build-release-gate.yml
+search_fixed "push: false" .github/workflows/source-build-release-gate.yml
+search_fixed "docker/build-push-action@v6" .github/workflows/source-build-release-gate.yml
+search_fixed "crazy-max/ghaction-github-runtime@v4" .github/workflows/source-build-release-gate.yml
+search_fixed 'dockrev-source-runtime-v1${{ env.SOURCE_CACHE_SUFFIX }}' .github/workflows/source-build-release-gate.yml
+search_fixed 'dockrev-source-supervisor-v1${{ env.SOURCE_CACHE_SUFFIX }}' .github/workflows/source-build-release-gate.yml
+search_fixed "DOCKREV_DEPLOY_SMOKE_USE_LOADED_IMAGES: \"1\"" .github/workflows/source-build-release-gate.yml
+search_regex "docker compose .*up -d --no-build" .github/scripts/deploy-smoke.sh
+search_fixed "SOURCE_CACHE_SUFFIX" .github/workflows/source-build-release-gate.yml
+search_fixed '"publish": False' .github/workflows/source-build-release-gate.yml
+search_fixed "target_sha:" .github/workflows/ci-gate-verification.yml
+search_fixed "force_full: true" .github/workflows/ci-gate-verification.yml
+search_fixed "verification_mode: true" .github/workflows/ci-gate-verification.yml
+search_fixed '"publish": False' .github/workflows/ci-gate-verification.yml
+search_fixed "TOTAL_DISPATCHES = 17" .github/scripts/run_ci_gate_validation.py
+search_fixed "--signal=TERM" .github/scripts/run_ci_gate_validation.py
+search_fixed "timeout-seconds=720" .github/scripts/run_ci_gate_validation.py
+search_fixed "interval-seconds=15" .github/scripts/run_ci_gate_validation.py
+search_fixed "capture=True" .github/scripts/run_ci_gate_validation.py
+search_fixed "timeout_seconds=timeout_seconds" .github/scripts/run_ci_gate_validation.py
+search_fixed "17-run validation budget of 204 minutes has elapsed" .github/scripts/run_ci_gate_validation.py
+search_fixed "output-dir must not already exist" .github/scripts/run_ci_gate_validation.py
+search_fixed "final ten warm samples" .github/scripts/run_ci_gate_validation.py
+search_fixed "storybook-coverage-summary" .github/workflows/ci-main.yml
+search_fixed "frontend-storybook-test-required:" .github/workflows/ci-main.yml
+search_fixed "name: Frontend Storybook test (main)" .github/workflows/ci-main.yml
+search_fixed "selectSmokeShard" web/scripts/test-storybook.mjs
+search_fixed "DOCKREV_STORYBOOK_ROLLBACK_RACE_PASSED" web/scripts/test-storybook.mjs
+search_fixed "DOCKREV_STORYBOOK_ROLLBACK_RACE_PASSED=1" .github/scripts/storybook-ci-check.sh
+search_fixed "verify-storybook-coverage.mjs" .github/workflows/ci-main.yml
+search_fixed "resolve-storybook-matrix.py" .github/workflows/ci-main.yml
+search_fixed ".github/storybook-shards.json" .github/scripts/resolve-storybook-matrix.py
 
 echo "[contract-check] quality-gate workflow invariants"
 search_regex "^[[:space:]]*pull_request_target:" .github/workflows/label-gate.yml

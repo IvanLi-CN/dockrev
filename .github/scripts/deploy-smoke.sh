@@ -102,10 +102,24 @@ echo >> "$summary_file"
 
 echo "[deploy-smoke] building runtime images"
 mkdir -p deploy/data/supervisor
-docker compose -p "$project" -f "$compose_file" build dockrev supervisor
+if [[ "${DOCKREV_DEPLOY_SMOKE_USE_LOADED_IMAGES:-0}" == "1" ]]; then
+  for image in dockrev:local dockrev-supervisor:local; do
+    if ! docker image inspect "$image" >/dev/null 2>&1; then
+      echo "[deploy-smoke] required source-built image is missing: $image" >&2
+      exit 1
+    fi
+  done
+  echo "[deploy-smoke] using loaded source-built images (compose --no-build)"
+else
+  docker compose -p "$project" -f "$compose_file" build dockrev supervisor
+fi
 
 echo "[deploy-smoke] starting deployment topology"
-docker compose -p "$project" -f "$compose_file" up -d
+if [[ "${DOCKREV_DEPLOY_SMOKE_USE_LOADED_IMAGES:-0}" == "1" ]]; then
+  docker compose -p "$project" -f "$compose_file" up -d --no-build
+else
+  docker compose -p "$project" -f "$compose_file" up -d
+fi
 
 base_url="http://127.0.0.1:${port}"
 health="$(wait_for_url "$base_url/api/health" "/api/health" 120)"
