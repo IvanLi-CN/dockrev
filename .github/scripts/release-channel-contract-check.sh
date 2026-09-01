@@ -246,6 +246,7 @@ search_fixed "--signal=TERM" .github/scripts/run_ci_gate_validation.py
 search_fixed "timeout-seconds=720" .github/scripts/run_ci_gate_validation.py
 search_fixed "interval-seconds=15" .github/scripts/run_ci_gate_validation.py
 search_fixed "capture=True" .github/scripts/run_ci_gate_validation.py
+search_fixed "timeout_seconds=timeout_seconds" .github/scripts/run_ci_gate_validation.py
 search_fixed "17-run validation budget of 204 minutes has elapsed" .github/scripts/run_ci_gate_validation.py
 search_fixed "output-dir must not already exist" .github/scripts/run_ci_gate_validation.py
 search_fixed "final ten warm samples" .github/scripts/run_ci_gate_validation.py

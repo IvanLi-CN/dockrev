@@ -77,26 +77,25 @@ def dispatch(repository: str, ref: str, target_sha: str) -> int:
 
 def watch(repository: str, run_id: int, timeout_seconds: int, interval_seconds: int) -> None:
     timeout_binary = shutil.which("timeout")
+    watch_command = [
+        "gh",
+        "run",
+        "watch",
+        str(run_id),
+        "--repo",
+        repository,
+        "--interval",
+        str(interval_seconds),
+        "--compact",
+        "--exit-status",
+    ]
     if timeout_binary is None:
-        raise RuntimeError("GNU timeout is required for the bounded validation runner")
-    result = invoke(
-        [
-            timeout_binary,
-            "--signal=TERM",
-            f"{timeout_seconds}s",
-            "gh",
-            "run",
-            "watch",
-            str(run_id),
-            "--repo",
-            repository,
-            "--interval",
-            str(interval_seconds),
-            "--compact",
-            "--exit-status",
-        ],
-        capture=True,
-    )
+        result = invoke(watch_command, capture=True, timeout_seconds=timeout_seconds)
+    else:
+        result = invoke(
+            [timeout_binary, "--signal=TERM", f"{timeout_seconds}s", *watch_command],
+            capture=True,
+        )
     if result.returncode != 0:
         raise RuntimeError(f"run {run_id} did not complete successfully (exit {result.returncode})")
 
