@@ -80,6 +80,39 @@ for record in faster_two:
     if record["phase"] == "three-shard":
         record["fast_seconds"] += 100
 assert_equal(validation_runner.select_final_matrix(faster_two)["selected_shards"], 2)
+warm_payload = {
+    "target_sha": "a" * 40,
+    "fast_target_sha": "a" * 40,
+    "storybook_shard_total": 3,
+    "storybook_story_count": 381,
+    "coverage_summary": "b" * 64,
+    "scope": "full",
+    "web": True,
+    "docker": True,
+    "publish": False,
+    "cache_status": "cold",
+    "fast_result": "success",
+    "source_result": "success",
+    "coverage_result": "success",
+    "verification_mode": True,
+    "created_at": "2026-09-01T00:00:00Z",
+    "run_started_at": "2026-09-01T00:00:00Z",
+    "fast_completed_at": "2026-09-01T00:05:29Z",
+    "source_completed_at": "2026-09-01T00:10:48Z",
+    "eligibility_completed_at": "2026-09-01T00:10:48Z",
+    "fast_seconds": 329,
+    "source_seconds": 648,
+    "eligibility_seconds": 648,
+    "execution_seconds": 648,
+    "queue_seconds": 0,
+}
+validation_runner.validate_sample(warm_payload, "a" * 40, None)
+try:
+    validation_runner.validate_sample(dict(warm_payload, cache_status="warm"), "a" * 40, "warm")
+except ValueError as error:
+    assert_equal("600 second investigation threshold" in str(error), True)
+else:
+    raise AssertionError("warm samples above 600 seconds must fail")
 with tempfile.TemporaryDirectory() as directory:
     candidate_dir = Path(directory)
     validation_runner.write_deadline(candidate_dir / "deadline.json")

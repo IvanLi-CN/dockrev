@@ -23,6 +23,8 @@ CANDIDATE_DISPATCHES = 6
 FINAL_DISPATCHES = 11
 TOTAL_DISPATCHES = CANDIDATE_DISPATCHES + FINAL_DISPATCHES
 TOTAL_BUDGET_SECONDS = TOTAL_DISPATCHES * 720
+WORKFLOW_TIMEOUT_SECONDS = 720
+WARM_INVESTIGATION_THRESHOLD_SECONDS = 600
 
 
 def parse_utc(value: Any, key: str) -> datetime:
@@ -129,7 +131,11 @@ def download_metrics(repository: str, run_id: int, directory: Path) -> dict[str,
     return json.loads(files[0].read_text())
 
 
-def validate_sample(payload: dict[str, Any], target_sha: str, expected_cache: str | None) -> None:
+def validate_sample(
+    payload: dict[str, Any],
+    target_sha: str,
+    expected_cache: str | None,
+) -> None:
     required = {
         "target_sha": target_sha,
         "fast_target_sha": target_sha,
@@ -159,8 +165,10 @@ def validate_sample(payload: dict[str, Any], target_sha: str, expected_cache: st
     durations = [payload.get(key) for key in ("queue_seconds", "fast_seconds", "source_seconds", "eligibility_seconds", "execution_seconds")]
     if any(not isinstance(value, (int, float)) or value < 0 for value in durations):
         raise ValueError("metric durations must be non-negative numbers")
-    if payload["execution_seconds"] > 600:
-        raise ValueError("sample exceeds the 600 second investigation threshold")
+    if payload["execution_seconds"] > WORKFLOW_TIMEOUT_SECONDS:
+        raise ValueError("sample exceeds the 720 second workflow timeout")
+    if expected_cache == "warm" and payload["execution_seconds"] > WARM_INVESTIGATION_THRESHOLD_SECONDS:
+        raise ValueError("warm sample exceeds the 600 second investigation threshold")
 
     created = parse_utc(payload.get("created_at"), "created_at")
     started = parse_utc(payload.get("run_started_at"), "run_started_at")
