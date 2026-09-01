@@ -1,0 +1,300 @@
+name: Source Build Release Gate
+
+on:
+  push:
+    branches: [main]
+  workflow_call:
+    inputs:
+      target_sha:
+        required: false
+        type: string
+        default: ""
+      force_full:
+        required: false
+        type: boolean
+        default: false
+      verification_mode:
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      completed_at:
+        description: UTC completion time of the source-build gate
+        value: ${{ jobs.source-gate-verdict.outputs.completed_at }}
+      gate_result:
+        description: Source-build gate result
+        value: ${{ jobs.source-gate-verdict.outputs.gate_result }}
+      cache_status:
+        description: Source build cache status
+        value: ${{ jobs.source-gate-verdict.outputs.cache_status }}
+
+concurrency:
+  group: source-gate-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+env:
+  CI_TARGET_SHA: ${{ inputs.target_sha || github.sha }}
+  SOURCE_CACHE_SUFFIX: ${{ inputs.verification_mode && format('-verify-{0}', inputs.target_sha) || '' }}
+
+jobs:
+  changes:
+    name: Detect source-gate scope
+    runs-on: ubuntu-latest
+    outputs:
+      web: ${{ steps.scope.outputs.web }}
+      docker: ${{ steps.scope.outputs.docker }}
+    steps:
+      - name: Checkout (for scope diff)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CI_TARGET_SHA }}
+          fetch-depth: 2
+
+      - name: Checkout trusted workflow helpers
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .workflow-src
+          fetch-depth: 1
+
+      - name: Resolve source-gate scope
+        id: scope
+        env:
+          FORCE_FULL: ${{ inputs.force_full || false }}
+          BASE_SHA: ${{ github.event.before }}
+          TARGET_SHA: ${{ env.CI_TARGET_SHA }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(--base-sha "${BASE_SHA:-0000000000000000000000000000000000000000}" --head-sha "${TARGET_SHA}")
+          if [[ "${FORCE_FULL}" == "true" ]]; then
+            args+=(--full)
+          fi
+          python3 .workflow-src/.github/scripts/resolve-ci-scope.py "${args[@]}" >> "$GITHUB_OUTPUT"
+
+  source-build:
+    name: Dockerfile source build and Compose smoke
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: ${{ needs.changes.outputs.docker == 'true' }}
+    timeout-minutes: 12
+    outputs:
+      cache_status: ${{ steps.cache-marker.outputs.cache_status }}
+    env:
+      RUST_TOOLCHAIN: "1.91.0"
+    steps:
+      - name: Checkout target source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CI_TARGET_SHA }}
+
+      - name: Checkout trusted workflow helpers
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .workflow-src
+          fetch-depth: 1
+
+      - name: Assert exact target checkout
+        env:
+          TARGET_SHA: ${{ env.CI_TARGET_SHA }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${TARGET_SHA}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Expose GitHub Actions cache runtime
+        uses: crazy-max/ghaction-github-runtime@v4
+
+      - name: Prepare source build logs
+        shell: bash
+        run: mkdir -p "$RUNNER_TEMP/dockrev-build-logs"
+
+      - name: Build source runtime image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: runtime
+          platforms: linux/amd64
+          tags: dockrev:local
+          load: true
+          push: false
+          cache-from: type=gha,scope=dockrev-source-runtime-v1${{ env.SOURCE_CACHE_SUFFIX }}
+          cache-to: type=gha,scope=dockrev-source-runtime-v1${{ env.SOURCE_CACHE_SUFFIX }},mode=max,ignore-error=true
+          build-args: |
+            APP_EFFECTIVE_VERSION=0.0.0-ci
+          provenance: false
+
+      - name: Capture runtime BuildKit history
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          history_path="$RUNNER_TEMP/dockrev-build-logs/runtime-history.json"
+          if docker buildx history inspect --format json > "$history_path"; then
+            ref="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("Ref", ""))' "$history_path")"
+            if [[ -n "$ref" ]]; then docker buildx history logs "$ref" > "$RUNNER_TEMP/dockrev-build-logs/runtime.log" || true; fi
+          else
+            printf '%s\n' '{"Status":"unavailable"}' > "$history_path"
+          fi
+
+      - name: Build source supervisor image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: runtime-supervisor
+          platforms: linux/amd64
+          tags: dockrev-supervisor:local
+          load: true
+          push: false
+          cache-from: type=gha,scope=dockrev-source-supervisor-v1${{ env.SOURCE_CACHE_SUFFIX }}
+          cache-to: type=gha,scope=dockrev-source-supervisor-v1${{ env.SOURCE_CACHE_SUFFIX }},mode=max,ignore-error=true
+          build-args: |
+            APP_EFFECTIVE_VERSION=0.0.0-ci
+          provenance: false
+
+      - name: Capture supervisor BuildKit history
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          history_path="$RUNNER_TEMP/dockrev-build-logs/supervisor-history.json"
+          if docker buildx history inspect --format json > "$history_path"; then
+            ref="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("Ref", ""))' "$history_path")"
+            if [[ -n "$ref" ]]; then docker buildx history logs "$ref" > "$RUNNER_TEMP/dockrev-build-logs/supervisor.log" || true; fi
+          else
+            printf '%s\n' '{"Status":"unavailable"}' > "$history_path"
+          fi
+
+      - name: Classify source cache result
+        id: cache-marker
+        shell: bash
+        run: |
+          set -euo pipefail
+          cache_status="unknown"
+          if python3 - "$RUNNER_TEMP/dockrev-build-logs/runtime-history.json" "$RUNNER_TEMP/dockrev-build-logs/supervisor-history.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          records = [json.loads(Path(name).read_text()) for name in sys.argv[1:]]
+          cached = [
+              record.get("NumCachedSteps", 0) > 0
+              and record.get("NumTotalSteps", 0) > 0
+              and record.get("Status") == "completed"
+              for record in records
+          ]
+          raise SystemExit(0 if all(cached) else 1)
+          PY
+          then
+            echo "cache_status=warm" >> "$GITHUB_OUTPUT"
+          else
+            if grep -q '"Status":"unavailable"' "$RUNNER_TEMP/dockrev-build-logs/runtime-history.json" "$RUNNER_TEMP/dockrev-build-logs/supervisor-history.json"; then
+              cache_status="unavailable"
+            else
+              cache_status="cold"
+            fi
+            echo "cache_status=${cache_status}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run loaded-image deployment smoke
+        shell: bash
+        env:
+          DOCKREV_DEPLOY_SMOKE_USE_LOADED_IMAGES: "1"
+        run: bash ./.workflow-src/.github/scripts/deploy-smoke.sh
+
+      - name: Upload deploy smoke logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-deploy-smoke-${{ env.CI_TARGET_SHA }}-${{ github.run_id }}
+          path: .artifacts/deploy-smoke
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload source build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-build-logs-${{ env.CI_TARGET_SHA }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/dockrev-build-logs
+          if-no-files-found: warn
+          retention-days: 14
+
+  source-gate-verdict:
+    name: Source gate verdict
+    runs-on: ubuntu-latest
+    needs: [changes, source-build]
+    if: ${{ always() }}
+    outputs:
+      completed_at: ${{ steps.verdict.outputs.completed_at }}
+      gate_result: ${{ steps.verdict.outputs.gate_result }}
+      cache_status: ${{ steps.verdict.outputs.cache_status }}
+    steps:
+      - name: Write source gate attestation
+        id: verdict
+        env:
+          TARGET_SHA: ${{ env.CI_TARGET_SHA }}
+          WEB: ${{ needs.changes.outputs.web }}
+          DOCKER: ${{ needs.changes.outputs.docker }}
+          FORCE_FULL: ${{ inputs.force_full || false }}
+          SOURCE_RESULT: ${{ needs.source-build.result }}
+          CACHE_STATUS: ${{ needs.source-build.outputs.cache_status || 'not-applicable' }}
+          VERIFICATION_MODE: ${{ inputs.verification_mode || false }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          result="success"
+          if [[ "${FORCE_FULL}" == "true" && ( "${WEB}" != "true" || "${DOCKER}" != "true" ) ]]; then
+            result="failure"
+          fi
+          if [[ "${SOURCE_RESULT}" != "success" && "${SOURCE_RESULT}" != "skipped" ]]; then
+            result="failure"
+          fi
+          if [[ "${FORCE_FULL}" == "true" && "${SOURCE_RESULT}" != "success" ]]; then
+            result="failure"
+          fi
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "target_sha": os.environ["TARGET_SHA"],
+              "gate": "source-build-release",
+              "scope": "full" if os.environ["FORCE_FULL"] == "true" else "changed",
+              "web": os.environ["WEB"] == "true",
+              "docker": os.environ["DOCKER"] == "true",
+              "source_result": os.environ["SOURCE_RESULT"],
+              "cache_status": os.environ["CACHE_STATUS"],
+              "verification_mode": os.environ["VERIFICATION_MODE"] == "true",
+              "publish": False,
+          }
+          Path("source-gate-attestation.json").write_text(json.dumps(payload, sort_keys=True) + "\n")
+          PY
+          {
+            echo "completed_at=${completed_at}"
+            echo "gate_result=${result}"
+            echo "cache_status=${CACHE_STATUS}"
+          } >> "$GITHUB_OUTPUT"
+          if [[ "${result}" != "success" ]]; then
+            exit 1
+          fi
+
+      - name: Upload source gate attestation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-gate-attestation-${{ github.run_id }}
+          path: source-gate-attestation.json
+          if-no-files-found: error
+          retention-days: 14

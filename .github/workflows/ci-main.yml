@@ -4,6 +4,33 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      target_sha:
+        required: false
+        type: string
+        default: ""
+      force_full:
+        required: false
+        type: boolean
+        default: false
+      verification_mode:
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      completed_at:
+        description: UTC completion time of the verification fast gate
+        value: ${{ jobs.fast-gate-verdict.outputs.completed_at }}
+      gate_result:
+        description: Verification fast gate result
+        value: ${{ jobs.fast-gate-verdict.outputs.gate_result }}
+      coverage_result:
+        description: Storybook coverage result
+        value: ${{ jobs.fast-gate-verdict.outputs.coverage_result }}
+      target_sha:
+        description: Exact target SHA checked out by the fast gate
+        value: ${{ jobs.fast-gate-verdict.outputs.target_sha }}
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -11,11 +38,13 @@ concurrency:
 
 permissions:
   contents: read
+  actions: write
 
 env:
   REGISTRY: ghcr.io
   RUST_TOOLCHAIN: "1.91.0"
   RELEASE_SNAPSHOT_NOTES_REF: refs/notes/release-snapshots
+  CI_TARGET_SHA: ${{ inputs.target_sha || github.sha }}
 
 jobs:
   changes:
@@ -24,38 +53,52 @@ jobs:
     outputs:
       web: ${{ steps.filter.outputs.web }}
       docker: ${{ steps.filter.outputs.docker }}
+      storybook_matrix: ${{ steps.storybook-matrix.outputs.matrix }}
     steps:
-      - name: Checkout (for push diff)
+      - name: Checkout (for scope diff)
         uses: actions/checkout@v4
         with:
+          ref: ${{ env.CI_TARGET_SHA }}
           fetch-depth: 2
 
-      - name: Paths filter
-        uses: dorny/paths-filter@v3
-        id: filter
+      - name: Checkout trusted workflow helpers
+        uses: actions/checkout@v4
         with:
-          filters: |
-            web:
-              - "web/**"
-            docker:
-              - "Dockerfile"
-              - ".github/**"
-              - "deploy/**"
-              - "Cargo.toml"
-              - "Cargo.lock"
-              - "crates/**"
-              - "src/**"
-              - "web/**"
+          ref: ${{ github.workflow_sha }}
+          path: .workflow-src
+          fetch-depth: 1
+
+      - name: Resolve CI scope
+        id: filter
+        env:
+          FORCE_FULL: ${{ inputs.force_full || github.event_name == 'workflow_dispatch' }}
+          BASE_SHA: ${{ github.event.before }}
+          TARGET_SHA: ${{ env.CI_TARGET_SHA }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(--base-sha "${BASE_SHA:-0000000000000000000000000000000000000000}" --head-sha "${TARGET_SHA}")
+          if [[ "${FORCE_FULL}" == "true" ]]; then
+            args+=(--full)
+          fi
+          python3 .workflow-src/.github/scripts/resolve-ci-scope.py "${args[@]}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve Storybook shard matrix
+        id: storybook-matrix
+        shell: bash
+        run: python3 .workflow-src/.github/scripts/resolve-storybook-matrix.py >> "$GITHUB_OUTPUT"
 
   lint:
     name: Lint & Checks (main)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 12
     env:
       CARGO_TARGET_DIR: target/ci/main/${{ github.job }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CI_TARGET_SHA }}
 
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y pkg-config libsqlite3-dev
@@ -106,12 +149,14 @@ jobs:
   unit-tests:
     name: Backend Tests (main)
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 12
     env:
       CARGO_TARGET_DIR: target/ci/main/${{ github.job }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CI_TARGET_SHA }}
 
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y pkg-config libsqlite3-dev
@@ -135,38 +180,17 @@ jobs:
       - name: Run cargo test
         run: cargo test --workspace --locked --all-features
 
-  deploy-smoke:
-    name: Deploy Smoke (main)
-    runs-on: ubuntu-latest
-    needs: [changes]
-    if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.docker == 'true' }}
-    timeout-minutes: 40
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Run deploy smoke
-        shell: bash
-        run: bash ./.github/scripts/deploy-smoke.sh
-
-      - name: Upload deploy smoke logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: deploy-smoke-${{ github.sha }}-${{ github.run_id }}-${{ github.job }}
-          path: .artifacts/deploy-smoke
-          if-no-files-found: error
-          retention-days: 7
-
   frontend-lint-build:
     name: Frontend lint + build (main)
     runs-on: ubuntu-latest
     needs: [changes]
     if: ${{ needs.changes.outputs.web == 'true' }}
-    timeout-minutes: 15
+    timeout-minutes: 12
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CI_TARGET_SHA }}
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -195,10 +219,12 @@ jobs:
     name: Frontend Storybook build (main)
     runs-on: ubuntu-latest
     needs: [frontend-lint-build]
-    timeout-minutes: 20
+    timeout-minutes: 12
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CI_TARGET_SHA }}
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -224,19 +250,32 @@ jobs:
       - name: Upload Storybook static artifact
         uses: actions/upload-artifact@v4
         with:
-          name: storybook-static-${{ github.sha }}
+          name: storybook-static-${{ env.CI_TARGET_SHA }}
           path: web/storybook-static
           retention-days: 1
           if-no-files-found: error
 
   frontend-storybook-test:
-    name: Frontend Storybook test (main)
+    name: Frontend Storybook shard (main)
     runs-on: ubuntu-latest
-    needs: [frontend-storybook-build]
-    timeout-minutes: 25
+    needs: [changes, frontend-storybook-build]
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.changes.outputs.storybook_matrix) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CI_TARGET_SHA }}
+
+      - name: Checkout trusted workflow helpers
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .workflow-src
+          fetch-depth: 1
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -255,7 +294,7 @@ jobs:
       - name: Download Storybook static artifact
         uses: actions/download-artifact@v4
         with:
-          name: storybook-static-${{ github.sha }}
+          name: storybook-static-${{ env.CI_TARGET_SHA }}
           path: web/storybook-static
 
       - name: Restore Playwright browser cache
@@ -268,7 +307,109 @@ jobs:
 
       - name: Run Storybook Playwright check (timeout + retry)
         shell: bash
-        run: bash ./.github/scripts/storybook-ci-check.sh
+        env:
+          DOCKREV_STORYBOOK_MODE: ${{ matrix.role }}
+          DOCKREV_TEST_STORYBOOK_SHARD: ${{ matrix.shard }}
+          DOCKREV_STORYBOOK_NO_RETRY: ${{ inputs.verification_mode && '1' || '0' }}
+          DOCKREV_STORYBOOK_COVERAGE_FILE: ${{ runner.temp }}/storybook-coverage-${{ matrix.id }}.json
+        run: bash ./.workflow-src/.github/scripts/storybook-ci-check.sh
+
+      - name: Upload Storybook coverage summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: storybook-coverage-summary-${{ matrix.id }}
+          path: ${{ runner.temp }}/storybook-coverage-${{ matrix.id }}.json
+          if-no-files-found: error
+          retention-days: 14
+
+  storybook-coverage-summary:
+    name: Storybook coverage summary (main)
+    runs-on: ubuntu-latest
+    needs: [frontend-storybook-test]
+    if: ${{ always() && needs.frontend-storybook-test.result == 'success' }}
+    steps:
+      - name: Checkout coverage verifier
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+
+      - name: Download Storybook coverage summaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: storybook-coverage-summary-*
+          path: .artifacts/storybook-coverage
+          merge-multiple: true
+
+      - name: Verify Storybook coverage partition
+        run: node web/scripts/verify-storybook-coverage.mjs .artifacts/storybook-coverage
+
+  frontend-storybook-test-required:
+    name: Frontend Storybook test (main)
+    runs-on: ubuntu-latest
+    needs: [changes, frontend-storybook-test, storybook-coverage-summary]
+    if: ${{ always() }}
+    steps:
+      - name: Preserve required Storybook check
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ needs.changes.outputs.web }}" != "true" ]]; then
+            echo "Storybook scope skipped for this non-Web change."
+            exit 0
+          fi
+          if [[ "${{ needs.frontend-storybook-test.result }}" != "success" || "${{ needs.storybook-coverage-summary.result }}" != "success" ]]; then
+            echo "Storybook shard or coverage job failed." >&2
+            exit 1
+          fi
+
+  fast-gate-verdict:
+    name: Fast gate verdict (main)
+    runs-on: ubuntu-latest
+    needs:
+      - lint
+      - unit-tests
+      - frontend-lint-build
+      - frontend-storybook-build
+      - frontend-storybook-test-required
+      - storybook-coverage-summary
+    if: ${{ always() && inputs.verification_mode == true }}
+    outputs:
+      completed_at: ${{ steps.verdict.outputs.completed_at }}
+      gate_result: ${{ steps.verdict.outputs.gate_result }}
+      coverage_result: ${{ steps.verdict.outputs.coverage_result }}
+      target_sha: ${{ steps.verdict.outputs.target_sha }}
+    steps:
+      - name: Assert exact target checkout
+        id: target
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CI_TARGET_SHA }}
+          fetch-depth: 1
+
+      - name: Verify exact target SHA
+        shell: bash
+        env:
+          TARGET_SHA: ${{ env.CI_TARGET_SHA }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${TARGET_SHA}"
+
+      - name: Record fast gate completion
+        id: verdict
+        shell: bash
+        run: |
+          set -euo pipefail
+          completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          {
+            echo "completed_at=${completed_at}"
+            echo "target_sha=${CI_TARGET_SHA}"
+            echo "coverage_result=${{ needs.storybook-coverage-summary.result }}"
+          } >> "$GITHUB_OUTPUT"
+          if [[ "${{ needs.lint.result }}" != "success" || "${{ needs.unit-tests.result }}" != "success" || "${{ needs.frontend-lint-build.result }}" != "success" || "${{ needs.frontend-storybook-build.result }}" != "success" || "${{ needs.frontend-storybook-test-required.result }}" != "success" || "${{ needs.storybook-coverage-summary.result }}" != "success" ]]; then
+            echo "gate_result=failure" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "gate_result=success" >> "$GITHUB_OUTPUT"
 
   release-snapshot:
     name: Release Snapshot
@@ -276,18 +417,19 @@ jobs:
     needs:
       - lint
       - unit-tests
-      - deploy-smoke
       - frontend-lint-build
       - frontend-storybook-build
-      - frontend-storybook-test
+      - frontend-storybook-test-required
+      - storybook-coverage-summary
     if: >-
       always() &&
+      inputs.verification_mode != true &&
       needs.lint.result == 'success' &&
       needs.unit-tests.result == 'success' &&
-      (needs.deploy-smoke.result == 'success' || needs.deploy-smoke.result == 'skipped') &&
       (needs.frontend-lint-build.result == 'success' || needs.frontend-lint-build.result == 'skipped') &&
       (needs.frontend-storybook-build.result == 'success' || needs.frontend-storybook-build.result == 'skipped') &&
-      (needs.frontend-storybook-test.result == 'success' || needs.frontend-storybook-test.result == 'skipped')
+      needs.frontend-storybook-test-required.result == 'success' &&
+      (needs.storybook-coverage-summary.result == 'success' || needs.storybook-coverage-summary.result == 'skipped')
     permissions:
       contents: write
       pull-requests: read

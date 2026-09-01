@@ -1,5 +1,15 @@
 # Dockrev Context
 
+## CI Release Assurance
+
+**fast main gate**:
+The `CI (main)` result that establishes prompt feedback for a main commit. It is not by itself permission to publish a release.
+_Avoid_: complete release gate, source-build smoke
+
+**source-build release gate**:
+The release-blocking verification of a target SHA's Dockerfile source build and Compose deployment topology. It is distinct from the fast main gate and remains required before publication.
+_Avoid_: optional Docker smoke, post-release validation
+
 ## Backup Retention
 
 **backup cleanup eligibility**:
