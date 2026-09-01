@@ -15,6 +15,7 @@
 
 - `.github/scripts/release-channel-contract-check.sh` parses the notification
   workflow and asserts trigger, fixed-reference, permission, summary, and
-  secret/override invariants.
+  secret/override invariants. Its local mock API scenarios execute the embedded
+  resolver for both log-derived target SHA and API-failure fallback paths.
 - Manual smoke verification is limited to static and contract checks. A real
   Telegram notification is outside this implementation.

@@ -69,10 +69,13 @@ SHA.
 - **VER-RESOLVER-SUMMARY:** A local mock GitHub API test covers log-derived SHA
   resolution and API-failure fallback while checking the emitted summary fields;
   covers: REQ-TARGET-SHA, REQ-SUMMARY.
-- **VER-SPEC-CONTRACT:** `python3 /Users/ivan/.codex/bin/spec_contract_check.py
-  --path docs/specs/l2nm4-release-failure-telegram-alerts/SPEC.md` validates
-  canonical Spec structure and traceability; covers: REQ-TRIGGER, REQ-SMOKE,
-  REQ-TARGET-SHA, REQ-OIDRUNE-PIN, REQ-OIDC, REQ-SUMMARY, REQ-SIDE-EFFECTS.
+- **VER-SPEC-CONTRACT:** `ADR_REFS=none bash
+  /Users/ivan/.codex/skills/spec-sync/scripts/spec_drift_check.sh --base-ref
+  origin/main --spec-path
+  docs/specs/l2nm4-release-failure-telegram-alerts/SPEC.md` validates the
+  canonical Spec stream, required companion files, and implementation-to-Spec
+  traceability; covers: REQ-TRIGGER, REQ-SMOKE, REQ-TARGET-SHA,
+  REQ-OIDRUNE-PIN, REQ-OIDC, REQ-SUMMARY, REQ-SIDE-EFFECTS.
 - **VER-LIVE-RELEASE:** The Oidrune `v0.1.14` release and tag ref are checked
   to resolve to `e48822f99c6402a753ed86557ea029754cbab20b`; real Telegram smoke
   execution remains explicitly excluded; covers: REQ-OIDRUNE-PIN.
