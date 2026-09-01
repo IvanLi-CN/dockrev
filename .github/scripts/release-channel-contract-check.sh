@@ -241,7 +241,12 @@ search_fixed "target_sha:" .github/workflows/ci-gate-verification.yml
 search_fixed "force_full: true" .github/workflows/ci-gate-verification.yml
 search_fixed "verification_mode: true" .github/workflows/ci-gate-verification.yml
 search_fixed '"publish": False' .github/workflows/ci-gate-verification.yml
-search_fixed "TOTAL_DISPATCHES = 17" .github/scripts/run_ci_gate_validation.py
+search_fixed "CANDIDATE_DISPATCHES = 6" .github/scripts/run_ci_gate_validation.py
+search_fixed "FINAL_DISPATCHES = 11" .github/scripts/run_ci_gate_validation.py
+search_fixed "TOTAL_DISPATCHES = CANDIDATE_DISPATCHES + FINAL_DISPATCHES" .github/scripts/run_ci_gate_validation.py
+search_fixed 'choices=("all", "candidates", "final")' .github/scripts/run_ci_gate_validation.py
+search_fixed "select_final_matrix" .github/scripts/run_ci_gate_validation.py
+search_fixed "--candidate-dir" .github/scripts/run_ci_gate_validation.py
 search_fixed "--signal=TERM" .github/scripts/run_ci_gate_validation.py
 search_fixed "timeout-seconds=720" .github/scripts/run_ci_gate_validation.py
 search_fixed "interval-seconds=15" .github/scripts/run_ci_gate_validation.py
@@ -250,6 +255,7 @@ search_fixed "timeout_seconds=timeout_seconds" .github/scripts/run_ci_gate_valid
 search_fixed "17-run validation budget of 204 minutes has elapsed" .github/scripts/run_ci_gate_validation.py
 search_fixed "output-dir must not already exist" .github/scripts/run_ci_gate_validation.py
 search_fixed "final ten warm samples" .github/scripts/run_ci_gate_validation.py
+search_fixed "deadline.json" .github/scripts/run_ci_gate_validation.py
 search_fixed "storybook-coverage-summary" .github/workflows/ci-main.yml
 search_fixed "frontend-storybook-test-required:" .github/workflows/ci-main.yml
 search_fixed "name: Frontend Storybook test (main)" .github/workflows/ci-main.yml
