@@ -61,6 +61,22 @@ assert_equal(cases[0][0:4], ("two-shard", "a" * 40, "candidate-two", 2))
 assert_equal(cases[5][0:4], ("three-shard", "b" * 40, "candidate-three", 3))
 assert_equal(cases[6][0:5], ("cold-warmup", "c" * 40, "candidate-final", 3, "cold"))
 assert_equal(cases[-1][0:5], ("warm", "c" * 40, "candidate-final", 3, "warm"))
+original_which = validation_runner.shutil.which
+original_invoke = validation_runner.invoke
+watch_call = {}
+validation_runner.shutil.which = lambda _: None
+
+def fake_invoke(command, *, capture=False, timeout_seconds=None):
+    watch_call.update(command=command, capture=capture, timeout_seconds=timeout_seconds)
+    return validation_runner.subprocess.CompletedProcess(command, 0, "", "")
+
+validation_runner.invoke = fake_invoke
+validation_runner.watch("acme/dockrev", 123, 720, 15)
+assert_equal(watch_call["command"][0:3], ["gh", "run", "watch"])
+assert_equal(watch_call["capture"], True)
+assert_equal(watch_call["timeout_seconds"], 720)
+validation_runner.shutil.which = original_which
+validation_runner.invoke = original_invoke
 
 target_sha = "a" * 40
 valid_attestation = {
