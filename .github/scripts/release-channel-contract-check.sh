@@ -11,7 +11,7 @@ bash -n \
   .github/scripts/compute-version.sh \
   .github/scripts/test-release-snapshot.sh
 python3 -m py_compile .github/scripts/check-live-quality-gates.py .github/scripts/release_snapshot.py
-ruby -e 'require "yaml"; YAML.load_file(".github/workflows/label-gate.yml"); YAML.load_file(".github/workflows/review-policy.yml"); YAML.load_file(".github/workflows/ci-pr.yml"); YAML.load_file(".github/workflows/ci-main.yml"); YAML.load_file(".github/workflows/release.yml")'
+ruby -e 'require "yaml"; YAML.load_file(".github/workflows/label-gate.yml"); YAML.load_file(".github/workflows/review-policy.yml"); YAML.load_file(".github/workflows/ci-pr.yml"); YAML.load_file(".github/workflows/ci-main.yml"); YAML.load_file(".github/workflows/release.yml"); YAML.load_file(".github/workflows/notify-release-failure.yml")'
 
 has_rg() {
   command -v rg >/dev/null 2>&1
@@ -138,6 +138,48 @@ abort "[contract-check] release workflow top-level permissions must keep pull-re
 abort "[contract-check] release publish job permissions must keep issues: write" unless publish_permissions["issues"] == "write"
 abort "[contract-check] release publish job permissions must keep pull-requests: write" unless publish_permissions["pull-requests"] == "write"
 '
+
+echo "[contract-check] failed release notification workflow invariants"
+notify_workflow=".github/workflows/notify-release-failure.yml"
+search_fixed "if: \${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure' }}" "${notify_workflow}"
+search_fixed "if: \${{ github.event_name == 'workflow_dispatch' }}" "${notify_workflow}"
+search_fixed "IvanLi-CN/oidrune/.github/workflows/notify.yml@e48822f99c6402a753ed86557ea029754cbab20b" "${notify_workflow}"
+search_fixed "id-token: write" "${notify_workflow}"
+search_fixed "summary: \${{ needs.resolve_release_context.outputs.summary }}" "${notify_workflow}"
+search_fixed "summary: |" "${notify_workflow}"
+search_fixed "status: failure" "${notify_workflow}"
+search_fixed "f'sha: {short_sha}'" "${notify_workflow}"
+search_fixed "f'url: {os.environ.get(\"RUN_URL\", \"\")}'" "${notify_workflow}"
+search_fixed "url: \${{ format('{0}/{1}/actions/runs/{2}', github.server_url, github.repository, github.run_id) }}" "${notify_workflow}"
+ensure_fixed_absent "IvanLi-CN/github-workflows/.github/workflows/release-failure-telegram.yml@main" "${notify_workflow}"
+ensure_fixed_absent "SHOUTRRR_URL" "${notify_workflow}"
+ensure_fixed_absent "gateway_url:" "${notify_workflow}"
+ensure_fixed_absent "oidc_audience:" "${notify_workflow}"
+ruby -ryaml -e '
+workflow = YAML.load_file(ARGV.fetch(0))
+events = workflow.fetch(workflow.key?("on") ? "on" : true)
+jobs = workflow.fetch("jobs")
+run_event = events.fetch("workflow_run")
+abort "workflow_run filter drifted" unless run_event.fetch("workflows") == ["Release"]
+abort "workflow_run type drifted" unless run_event.fetch("types") == ["completed"]
+abort "workflow_run branch filter drifted" unless run_event.fetch("branches") == ["main"]
+abort "workflow_dispatch trigger missing" unless events.key?("workflow_dispatch")
+
+failure = jobs.fetch("notify_failure")
+smoke = jobs.fetch("smoke_test")
+expected_uses = "IvanLi-CN/oidrune/.github/workflows/notify.yml@e48822f99c6402a753ed86557ea029754cbab20b"
+abort "failure call ref drifted" unless failure.fetch("uses") == expected_uses
+abort "smoke call ref drifted" unless smoke.fetch("uses") == expected_uses
+abort "failure call must mint OIDC token" unless failure.fetch("permissions") == {"id-token" => "write"}
+abort "smoke call must mint OIDC token" unless smoke.fetch("permissions") == {"id-token" => "write"}
+abort "failure outcome drifted" unless failure.fetch("with").fetch("outcome") == "failure"
+abort "smoke outcome drifted" unless smoke.fetch("with").fetch("outcome") == "failure"
+abort "failure summary missing" unless failure.fetch("with").fetch("summary") == "${{ needs.resolve_release_context.outputs.summary }}"
+abort "smoke summary missing" unless smoke.fetch("with").fetch("summary").include?("status: smoke test")
+abort "legacy secrets must not be forwarded" if failure.key?("secrets") || smoke.key?("secrets")
+abort "legacy workflow reference remains" if File.read(ARGV.fetch(0)).include?("IvanLi-CN/github-workflows")
+abort "gateway override must remain omitted" if File.read(ARGV.fetch(0)).match?(/gateway_url:|oidc_audience:/)
+' "${notify_workflow}"
 
 echo "[contract-check] quality-gate workflow invariants"
 search_regex "^[[:space:]]*pull_request_target:" .github/workflows/label-gate.yml
