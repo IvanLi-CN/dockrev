@@ -80,4 +80,4 @@ SHA.
 
 ## Related ADRs
 
-None
+- None
