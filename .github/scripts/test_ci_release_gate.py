@@ -52,15 +52,42 @@ runner_args = type(
         "three_shard_ref": "candidate-three",
         "final_sha": "c" * 40,
         "final_ref": "candidate-final",
-        "final_shards": 3,
     },
 )()
-cases = validation_runner.build_cases(runner_args)
-assert_equal(len(cases), 17)
-assert_equal(cases[0][0:4], ("two-shard", "a" * 40, "candidate-two", 2))
-assert_equal(cases[5][0:4], ("three-shard", "b" * 40, "candidate-three", 3))
-assert_equal(cases[6][0:5], ("cold-warmup", "c" * 40, "candidate-final", 3, "cold"))
-assert_equal(cases[-1][0:5], ("warm", "c" * 40, "candidate-final", 3, "warm"))
+candidate_cases = validation_runner.build_cases(runner_args, "candidates")
+assert_equal(len(candidate_cases), 6)
+assert_equal(candidate_cases[0][0:4], ("two-shard", "a" * 40, "candidate-two", 2))
+assert_equal(candidate_cases[5][0:4], ("three-shard", "b" * 40, "candidate-three", 3))
+final_cases = validation_runner.build_cases(runner_args, "final", 3)
+assert_equal(len(final_cases), 11)
+assert_equal(final_cases[0][0:5], ("cold-warmup", "c" * 40, "candidate-final", 3, "cold"))
+assert_equal(final_cases[-1][0:5], ("warm", "c" * 40, "candidate-final", 3, "warm"))
+all_cases = validation_runner.build_cases(runner_args, "all", 3)
+assert_equal(len(all_cases), 17)
+
+candidate_records = [
+    {"phase": "two-shard", "target_sha": "a" * 40, "ref": "candidate-two", "fast_seconds": value}
+    for value in (300, 305, 310)
+] + [
+    {"phase": "three-shard", "target_sha": "b" * 40, "ref": "candidate-three", "fast_seconds": value}
+    for value in (311, 315, 320)
+]
+selection = validation_runner.select_final_matrix(candidate_records)
+assert_equal(selection["selected_shards"], 3)
+assert_equal(selection["reason"], "fast P90 difference below 30 seconds; preserve three-shard coverage")
+faster_two = [dict(record) for record in candidate_records]
+for record in faster_two:
+    if record["phase"] == "three-shard":
+        record["fast_seconds"] += 100
+assert_equal(validation_runner.select_final_matrix(faster_two)["selected_shards"], 2)
+with tempfile.TemporaryDirectory() as directory:
+    candidate_dir = Path(directory)
+    validation_runner.write_deadline(candidate_dir / "deadline.json")
+    validation_runner.write_matrix(candidate_dir, "candidates", candidate_records, selection)
+    loaded_records, loaded_selection, deadline = validation_runner.read_candidate_matrix(candidate_dir)
+    assert_equal(len(loaded_records), 6)
+    assert_equal(loaded_selection["selected_shards"], 3)
+    assert_equal(deadline > 0, True)
 original_which = validation_runner.shutil.which
 original_invoke = validation_runner.invoke
 watch_call = {}

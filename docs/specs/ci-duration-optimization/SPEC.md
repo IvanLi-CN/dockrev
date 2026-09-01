@@ -59,7 +59,7 @@
 
 ### VER-CI-DURATION-003
 
-- Method: 17 serial verification dispatches on frozen candidate SHAs, followed by metrics aggregation.
+- Method: six serial candidate verification dispatches, deterministic shard selection from candidate P90s, then eleven serial final verification dispatches, followed by metrics aggregation.
 - covers: `REQ-CI-DURATION-001`, `REQ-CI-DURATION-002`, `REQ-CI-DURATION-004`
 - Pass condition: one cold warm-up is excluded; the final ten warm runs prove full scope and cache hits and satisfy the fixed P50/P90 seconds thresholds.
 
