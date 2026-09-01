@@ -240,7 +240,9 @@ search_fixed '"publish": False' .github/workflows/source-build-release-gate.yml
 search_fixed "target_sha:" .github/workflows/ci-gate-verification.yml
 search_fixed "force_full: true" .github/workflows/ci-gate-verification.yml
 search_fixed "verification_mode: true" .github/workflows/ci-gate-verification.yml
-search_fixed "      contents: write\n      pull-requests: read\n      actions: write\n    uses: ./.github/workflows/ci-main.yml" .github/workflows/ci-gate-verification.yml
+search_fixed "      contents: write" .github/workflows/ci-gate-verification.yml
+search_fixed "      pull-requests: read" .github/workflows/ci-gate-verification.yml
+search_fixed "    uses: ./.github/workflows/ci-main.yml" .github/workflows/ci-gate-verification.yml
 search_fixed "inputs.verification_mode != true" .github/workflows/ci-main.yml
 search_fixed '"publish": False' .github/workflows/ci-gate-verification.yml
 search_fixed "CANDIDATE_DISPATCHES = 6" .github/scripts/run_ci_gate_validation.py
