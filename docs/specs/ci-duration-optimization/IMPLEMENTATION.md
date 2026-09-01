@@ -27,7 +27,7 @@
 - Keep the sample order serial: three controlled two-shard candidate runs, three controlled three-shard candidate runs, then one cold cache warm-up and ten consecutive warm full-path runs. Candidate P90 is the third sorted fast duration for each matrix; a difference below 30 seconds selects three shards, otherwise the lower P90 selects the final matrix. The chosen shard matrix must pass the Storybook coverage artifact check before its timing is comparable.
 - The candidate phase writes the single absolute deadline (`204 minutes` from its start) into `deadline.json`; the final phase reuses it, so splitting the command cannot extend the validation budget.
 - Aggregate only the final ten warm artifacts with `python3 .github/scripts/verify_ci_gate_metrics.py <metrics-dir>`. It computes P50 as `(x5+x6)/2` and P90 as `x9`, using absolute UTC `Z` timestamps; queue seconds remain separate from execution seconds.
-- Acceptance is deterministic: fast P50 <= 360s, fast P90 <= 420s, source P50 <= 390s, source P90 <= 480s, eligibility P50 <= 420s, eligibility P90 <= 480s, and no sample over 600s. Any invalid sample requires fresh owner authorization before expanding the fixed 17-run budget.
+- Acceptance is deterministic: every workflow run is bounded by the fixed 720-second timeout; the final ten warm samples must have fast P50 <= 360s, fast P90 <= 420s, source P50 <= 390s, source P90 <= 480s, eligibility P50 <= 420s, eligibility P90 <= 480s, and no warm sample over 600s. Candidate and cold warm-up durations are recorded for comparison but are not part of the warm-sample 600-second threshold. Any invalid sample requires fresh owner authorization before expanding the fixed 17-run budget.
 
 ## Remaining Gaps
 

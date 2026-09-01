@@ -248,6 +248,8 @@ search_fixed '"publish": False' .github/workflows/ci-gate-verification.yml
 search_fixed "CANDIDATE_DISPATCHES = 6" .github/scripts/run_ci_gate_validation.py
 search_fixed "FINAL_DISPATCHES = 11" .github/scripts/run_ci_gate_validation.py
 search_fixed "TOTAL_DISPATCHES = CANDIDATE_DISPATCHES + FINAL_DISPATCHES" .github/scripts/run_ci_gate_validation.py
+search_fixed "WORKFLOW_TIMEOUT_SECONDS = 720" .github/scripts/run_ci_gate_validation.py
+search_fixed "WARM_INVESTIGATION_THRESHOLD_SECONDS = 600" .github/scripts/run_ci_gate_validation.py
 search_fixed 'choices=("all", "candidates", "final")' .github/scripts/run_ci_gate_validation.py
 search_fixed "select_final_matrix" .github/scripts/run_ci_gate_validation.py
 search_fixed "--candidate-dir" .github/scripts/run_ci_gate_validation.py
