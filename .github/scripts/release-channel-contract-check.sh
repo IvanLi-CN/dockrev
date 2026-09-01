@@ -11,7 +11,7 @@ bash -n \
   .github/scripts/compute-version.sh \
   .github/scripts/test-release-snapshot.sh
 python3 -m py_compile .github/scripts/check-live-quality-gates.py .github/scripts/release_snapshot.py
-ruby -e 'require "yaml"; YAML.load_file(".github/workflows/label-gate.yml"); YAML.load_file(".github/workflows/review-policy.yml"); YAML.load_file(".github/workflows/ci-pr.yml"); YAML.load_file(".github/workflows/ci-main.yml"); YAML.load_file(".github/workflows/release.yml")'
+ruby -e 'require "yaml"; YAML.load_file(".github/workflows/label-gate.yml"); YAML.load_file(".github/workflows/review-policy.yml"); YAML.load_file(".github/workflows/ci-pr.yml"); YAML.load_file(".github/workflows/ci-main.yml"); YAML.load_file(".github/workflows/release.yml"); YAML.load_file(".github/workflows/notify-release-failure.yml")'
 
 has_rg() {
   command -v rg >/dev/null 2>&1
@@ -138,6 +138,49 @@ abort "[contract-check] release workflow top-level permissions must keep pull-re
 abort "[contract-check] release publish job permissions must keep issues: write" unless publish_permissions["issues"] == "write"
 abort "[contract-check] release publish job permissions must keep pull-requests: write" unless publish_permissions["pull-requests"] == "write"
 '
+
+echo "[contract-check] failed release notification workflow invariants"
+notify_workflow=".github/workflows/notify-release-failure.yml"
+search_fixed "if: \${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure' }}" "${notify_workflow}"
+search_fixed "if: \${{ github.event_name == 'workflow_dispatch' }}" "${notify_workflow}"
+search_fixed "IvanLi-CN/oidrune/.github/workflows/notify.yml@e48822f99c6402a753ed86557ea029754cbab20b" "${notify_workflow}"
+search_fixed "id-token: write" "${notify_workflow}"
+search_fixed "summary: \${{ needs.resolve_release_context.outputs.summary }}" "${notify_workflow}"
+search_fixed "summary: |" "${notify_workflow}"
+search_fixed "status: failure" "${notify_workflow}"
+search_fixed "f'sha: {short_sha}'" "${notify_workflow}"
+search_fixed "f'url: {os.environ.get(\"RUN_URL\", \"\")}'" "${notify_workflow}"
+search_fixed "url: \${{ format('{0}/{1}/actions/runs/{2}', github.server_url, github.repository, github.run_id) }}" "${notify_workflow}"
+ensure_fixed_absent "release-failure-telegram.yml@main" "${notify_workflow}"
+ensure_fixed_absent "SHOUTRRR_URL" "${notify_workflow}"
+ensure_fixed_absent "gateway_url:" "${notify_workflow}"
+ensure_fixed_absent "oidc_audience:" "${notify_workflow}"
+ruby -ryaml -e '
+workflow = YAML.load_file(ARGV.fetch(0))
+events = workflow.fetch(workflow.key?("on") ? "on" : true)
+jobs = workflow.fetch("jobs")
+run_event = events.fetch("workflow_run")
+abort "workflow_run filter drifted" unless run_event.fetch("workflows") == ["Release"]
+abort "workflow_run type drifted" unless run_event.fetch("types") == ["completed"]
+abort "workflow_run branch filter drifted" unless run_event.fetch("branches") == ["main"]
+abort "workflow_dispatch trigger missing" unless events.key?("workflow_dispatch")
+
+failure = jobs.fetch("notify_failure")
+smoke = jobs.fetch("smoke_test")
+expected_uses = "IvanLi-CN/oidrune/.github/workflows/notify.yml@e48822f99c6402a753ed86557ea029754cbab20b"
+abort "failure call ref drifted" unless failure.fetch("uses") == expected_uses
+abort "smoke call ref drifted" unless smoke.fetch("uses") == expected_uses
+abort "failure call must mint OIDC token" unless failure.fetch("permissions") == {"id-token" => "write"}
+abort "smoke call must mint OIDC token" unless smoke.fetch("permissions") == {"id-token" => "write"}
+abort "failure outcome drifted" unless failure.fetch("with").fetch("outcome") == "failure"
+abort "smoke outcome drifted" unless smoke.fetch("with").fetch("outcome") == "failure"
+abort "failure summary missing" unless failure.fetch("with").fetch("summary") == "${{ needs.resolve_release_context.outputs.summary }}"
+abort "smoke summary missing" unless smoke.fetch("with").fetch("summary").include?("status: smoke test")
+abort "legacy secrets must not be forwarded" if failure.key?("secrets") || smoke.key?("secrets")
+legacy_reference = ["IvanLi-CN", "github-workflows", ".github", "workflows", "release-failure-telegram.yml@main"].join("/")
+abort "legacy workflow reference remains" if File.read(ARGV.fetch(0)).include?(legacy_reference)
+abort "gateway override must remain omitted" if File.read(ARGV.fetch(0)).match?(/gateway_url:|oidc_audience:/)
+' "${notify_workflow}"
 
 echo "[contract-check] quality-gate workflow invariants"
 search_regex "^[[:space:]]*pull_request_target:" .github/workflows/label-gate.yml
@@ -327,10 +370,24 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _text(self, body: str, status: int = 200):
+        encoded = body.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
     def do_GET(self):
         path = urlparse(self.path).path
         if path == "/health":
             return self._json({"ok": True})
+        if path == "/repos/IvanLi-CN/dockrev/actions/runs/9001/attempts/1/jobs":
+            return self._json({"jobs": [{"id": 7001, "name": "Publish"}]})
+        if path == "/repos/IvanLi-CN/dockrev/actions/jobs/7001/logs":
+            return self._text("RELEASE_TARGET_SHA=1111111111111111111111111111111111111111\n")
+        if path == "/repos/IvanLi-CN/dockrev/actions/runs/9002/attempts/1/jobs":
+            return self._json({"error": "temporary failure"}, status=503)
         parts = [part for part in path.split("/") if part]
         if len(parts) >= 6 and parts[0] == "repos" and parts[3] == "commits" and parts[5] == "pulls":
             sha = parts[4]
@@ -398,6 +455,100 @@ if ! start_mock_server; then
   fi
   exit 1
 fi
+
+extract_release_resolver() {
+  local output_path="$1"
+  python3 - "${notify_workflow}" "${output_path}" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text().splitlines(keepends=True)
+start = next(index for index, line in enumerate(source) if line.strip() == "python3 - <<'PYCODE'")
+end = next(index for index in range(start + 1, len(source)) if source[index].strip() == "PYCODE")
+indent = " " * 10
+body = []
+for line in source[start + 1:end]:
+    if line.strip():
+        if not line.startswith(indent):
+            raise SystemExit("resolver body indentation drifted")
+        body.append(line[len(indent):])
+    else:
+        body.append(line)
+Path(sys.argv[2]).write_text("".join(body))
+PY
+}
+
+run_release_resolver_scenarios() {
+  local resolver_script="${tmp_dir}/notify-resolver.py"
+  local actual_output="${tmp_dir}/notify-resolver-actual.out"
+  local fallback_output="${tmp_dir}/notify-resolver-fallback.out"
+  extract_release_resolver "${resolver_script}"
+
+  GITHUB_API_URL="http://127.0.0.1:${api_port}" \
+    GH_TOKEN="x" \
+    REPOSITORY="IvanLi-CN/dockrev" \
+    RUN_ID="9001" \
+    RUN_ATTEMPT="1" \
+    RUN_EVENT="workflow_run" \
+    WORKFLOW_NAME="Release" \
+    RUN_URL="https://github.com/IvanLi-CN/dockrev/actions/runs/9001" \
+    HEAD_BRANCH="main" \
+    HEAD_SHA="2222222222222222222222222222222222222222" \
+    TRIGGERING_ACTOR="release-bot" \
+    GITHUB_OUTPUT="${actual_output}" \
+    python3 "${resolver_script}"
+
+  GITHUB_API_URL="http://127.0.0.1:${api_port}" \
+    GH_TOKEN="x" \
+    REPOSITORY="IvanLi-CN/dockrev" \
+    RUN_ID="9002" \
+    RUN_ATTEMPT="1" \
+    RUN_EVENT="workflow_run" \
+    WORKFLOW_NAME="Release" \
+    RUN_URL="https://github.com/IvanLi-CN/dockrev/actions/runs/9002" \
+    HEAD_BRANCH="main" \
+    HEAD_SHA="2222222222222222222222222222222222222222" \
+    TRIGGERING_ACTOR="release-bot" \
+    GITHUB_OUTPUT="${fallback_output}" \
+    python3 "${resolver_script}"
+
+  python3 - "${actual_output}" "${fallback_output}" <<'PY'
+from pathlib import Path
+import sys
+
+actual = Path(sys.argv[1]).read_text()
+fallback = Path(sys.argv[2]).read_text()
+
+def summary(text: str) -> str:
+    marker = "summary<<SUMMARY_EOF\n"
+    start = text.index(marker) + len(marker)
+    return text[start:text.index("\nSUMMARY_EOF", start)]
+
+actual_summary = summary(actual)
+assert "head_sha=1111111111111111111111111111111111111111" in actual
+for expected in (
+    "Release Failed - IvanLi-CN/dockrev",
+    "status: failure",
+    "workflow: Release",
+    "event: workflow_run",
+    "branch: main",
+    "sha: 111111111111",
+    "attempt: 1",
+    "actor: release-bot",
+    "url: https://github.com/IvanLi-CN/dockrev/actions/runs/9001",
+    "note: resolved release target sha from Publish logs",
+):
+    assert expected in actual_summary, expected
+
+fallback_summary = summary(fallback)
+assert "head_sha=2222222222222222222222222222222222222222" in fallback
+assert "sha: 222222222222" in fallback_summary
+assert "target sha resolution fell back to workflow_run head sha (HTTPError)" in fallback_summary
+PY
+}
+
+echo "[contract-check] failed release notification resolver scenarios"
+run_release_resolver_scenarios
 
 extract_github_script() {
   local workflow_path="$1"
