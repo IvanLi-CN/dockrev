@@ -122,6 +122,10 @@ None
 - Integration tests: `bash ./.github/scripts/release-channel-contract-check.sh`
 - E2E tests (if applicable): GitHub Actions workflow YAML 解析 + local dry-run export
 
+## Related ADRs
+
+- [0005-source-build-release-gate](../../adr/0005-source-build-release-gate.md)
+
 ### UI / Storybook (if applicable)
 
 - None
