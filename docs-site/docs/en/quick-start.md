@@ -31,6 +31,14 @@ Entry points:
 - API health: `http://127.0.0.1:50883/api/health`
 - Supervisor: `http://127.0.0.1:50883/supervisor/`
 
+## Installed app icon updates
+
+Dockrev keeps the Web App Manifest `id`, `scope`, and `start_url` stable for an installation. Each install icon is published at a content-hashed URL, while the HTML, manifest, and service worker are revalidated. This lets a new build deliver new icon bytes without changing the installed app identity or relying on a reinstall as the normal update path.
+
+Android Chrome WebAPKs and Chromium desktop PWA installations follow the manifest update lifecycle and its platform-controlled refresh schedule. A browser shortcut that is not a manifest-backed PWA may keep the icon it captured when it was created.
+
+Safari on iOS/iPadOS and existing Web Clips have a separate limitation: when both are present, WebKit gives the `apple-touch-icon` compatibility link precedence over manifest icons. Dockrev updates that link through the same content-hashed release, but an existing Web Clip's saved icon and metadata cannot be force-migrated by the website. The same applies to browsers without an in-place manifest migration mechanism. This is a platform limitation, not a routine Dockrev update instruction.
+
 ## First validation checklist
 
 1. Open Overview and confirm services are listed.
