@@ -55,7 +55,8 @@ jobs:
     name: Fast main gate
     needs: [validate-target]
     permissions:
-      contents: read
+      contents: write
+      pull-requests: read
       actions: write
     uses: ./.github/workflows/ci-main.yml
     with:
