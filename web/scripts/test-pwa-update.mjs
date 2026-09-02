@@ -93,7 +93,6 @@ function cacheControlFor(pathname) {
   if (/^(?:favicon|pwa-192|pwa-512|pwa-maskable-192|pwa-maskable-512)-[0-9a-f]{12}\.(?:svg|png|ico)$/.test(fileName)) {
     return 'public, max-age=31536000, immutable'
   }
-  if (fileName === 'apple-touch-icon.png') return 'no-cache'
   return null
 }
 
@@ -200,6 +199,10 @@ try {
 
   await page.goto(`${fixtureServer.origin}/`, { waitUntil: 'domcontentloaded' })
   await page.waitForFunction(() => Boolean(navigator.serviceWorker?.controller), undefined, { timeout: 15000 })
+  const legacyAppleTouchIconStatus = await page.evaluate(() =>
+    fetch('/apple-touch-icon.png', { cache: 'no-store' }).then((response) => response.status),
+  )
+  assert(legacyAppleTouchIconStatus === 404, 'product build must not serve a root Apple touch icon fallback')
   const initialMarker = await page.locator('meta[name="dockrev-pwa-fixture"]').getAttribute('content')
   assert(initialMarker === 'v1', 'browser did not start from the V1 shell')
   const initialRegistration = await page.evaluate(async () => {

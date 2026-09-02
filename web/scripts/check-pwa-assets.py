@@ -189,6 +189,9 @@ def assert_hashed_assets_exist() -> None:
 
 def assert_build_contract() -> None:
     assert DIST_DIR.is_dir(), "build output is missing; run the PWA build before this checker"
+    assert not list(DIST_DIR.glob("apple-touch-icon*.png")), (
+        "product build must not publish Apple touch icon fallbacks"
+    )
     assert_hashed_assets_exist()
     manifest = json.loads((DIST_DIR / "manifest.webmanifest").read_text())
     assert manifest["id"] == BASE_PATH, "manifest id must remain the stable base identity"
@@ -227,6 +230,9 @@ def assert_build_contract() -> None:
 
 
 def main() -> None:
+    assert not list(PUBLIC_DIR.glob("apple-touch-icon*.png")), (
+        "product source must not retain Apple touch icon fallbacks"
+    )
     for name, expected_hash in REGULAR_HASHES.items():
         actual_hash = hashlib.sha256((PUBLIC_DIR / name).read_bytes()).hexdigest()
         assert actual_hash == expected_hash, f"{name}: regular baseline bytes changed"
