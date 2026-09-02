@@ -34,6 +34,32 @@ def api_json(url: str, token: str) -> Any:
         return json.load(response)
 
 
+class ArtifactRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Keep GitHub credentials on the API origin only."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is None:
+            return None
+        source = urllib.parse.urlsplit(req.full_url)
+        destination = urllib.parse.urlsplit(redirected.full_url)
+        if (source.scheme, source.netloc) == (destination.scheme, destination.netloc):
+            return redirected
+        return urllib.request.Request(
+            redirected.full_url,
+            headers={"Accept": "application/octet-stream"},
+            method=redirected.get_method(),
+        )
+
+
 def api_bytes(url: str, token: str) -> bytes:
     request = urllib.request.Request(
         url,
@@ -43,7 +69,8 @@ def api_bytes(url: str, token: str) -> bytes:
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
-    with urllib.request.urlopen(request, timeout=30) as response:
+    opener = urllib.request.build_opener(ArtifactRedirectHandler())
+    with opener.open(request, timeout=30) as response:
         return response.read()
 
 

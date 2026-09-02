@@ -7,7 +7,9 @@ import importlib.util
 import json
 import tempfile
 from datetime import datetime, timedelta, timezone
+from email.message import Message
 from pathlib import Path
+from urllib.request import Request
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -294,6 +296,38 @@ assert_equal(
     ),
     (True, "ok"),
 )
+
+artifact_request = Request(
+    "https://api.github.com/repos/acme/dockrev/actions/artifacts/1/zip",
+    headers={
+        "Accept": "application/vnd.github+json",
+        "Authorization": "Bearer redacted",
+        "X-GitHub-Api-Version": "2022-11-28",
+    },
+)
+redirect_handler = gate.ArtifactRedirectHandler()
+artifact_redirect = redirect_handler.redirect_request(
+    artifact_request,
+    None,
+    302,
+    "Found",
+    Message(),
+    "https://pipelines.actions.githubusercontent.com/signed-artifact",
+)
+assert_equal(artifact_redirect is not None, True)
+assert_equal(artifact_redirect.get_header("Authorization"), None)
+assert_equal(artifact_redirect.get_header("X-github-api-version"), None)
+assert_equal(artifact_redirect.get_header("Accept"), "application/octet-stream")
+same_origin_redirect = redirect_handler.redirect_request(
+    artifact_request,
+    None,
+    302,
+    "Found",
+    Message(),
+    "https://api.github.com/repos/acme/dockrev/actions/artifacts/1/zip?retry=1",
+)
+assert_equal(same_origin_redirect is not None, True)
+assert_equal(same_origin_redirect.get_header("Authorization"), "Bearer redacted")
 
 source_run = {
     "event": "push",
