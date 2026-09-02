@@ -25,6 +25,7 @@ TOTAL_DISPATCHES = CANDIDATE_DISPATCHES + FINAL_DISPATCHES
 TOTAL_BUDGET_SECONDS = TOTAL_DISPATCHES * 720
 WORKFLOW_TIMEOUT_SECONDS = 720
 WARM_INVESTIGATION_THRESHOLD_SECONDS = 600
+OBSERVATION_GRACE_SECONDS = 180
 
 
 def parse_utc(value: Any, key: str) -> datetime:
@@ -81,28 +82,51 @@ def dispatch(repository: str, ref: str, target_sha: str) -> int:
 
 
 def watch(repository: str, run_id: int, timeout_seconds: int, interval_seconds: int) -> None:
-    timeout_binary = shutil.which("timeout")
-    watch_command = [
-        "gh",
-        "run",
-        "watch",
-        str(run_id),
-        "--repo",
-        repository,
-        "--interval",
-        str(interval_seconds),
-        "--compact",
-        "--exit-status",
-    ]
-    if timeout_binary is None:
-        result = invoke(watch_command, capture=True, timeout_seconds=timeout_seconds)
-    else:
+    """Poll a run to natural completion without cancelling at the metric deadline.
+
+    The workflow's measured gate execution remains bounded by ``timeout_seconds``
+    in ``validate_sample``. The extra observation grace only covers final reusable
+    workflow/metrics collection and is never used to accept a slower sample.
+    """
+    observation_deadline = time.monotonic() + timeout_seconds + OBSERVATION_GRACE_SECONDS
+    while True:
+        if time.monotonic() >= observation_deadline:
+            raise RuntimeError(
+                f"run {run_id} did not reach a terminal state within "
+                f"{timeout_seconds}s plus {OBSERVATION_GRACE_SECONDS}s observation grace"
+            )
         result = invoke(
-            [timeout_binary, "--signal=TERM", f"{timeout_seconds}s", *watch_command],
+            [
+                "gh",
+                "run",
+                "view",
+                str(run_id),
+                "--repo",
+                repository,
+                "--json",
+                "status,conclusion",
+            ],
             capture=True,
+            timeout_seconds=60,
         )
-    if result.returncode != 0:
-        raise RuntimeError(f"run {run_id} did not complete successfully (exit {result.returncode})")
+        if result.returncode != 0:
+            raise RuntimeError(f"run {run_id} status query failed with exit {result.returncode}")
+        try:
+            status = json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            raise RuntimeError(f"run {run_id} status response was not valid JSON") from error
+        if status.get("status") == "completed":
+            conclusion = status.get("conclusion")
+            if conclusion != "success":
+                raise RuntimeError(f"run {run_id} completed with conclusion {conclusion!r}")
+            return
+        remaining = observation_deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError(
+                f"run {run_id} did not reach a terminal state within "
+                f"{timeout_seconds}s plus {OBSERVATION_GRACE_SECONDS}s observation grace"
+            )
+        time.sleep(min(interval_seconds, remaining))
 
 
 def download_metrics(repository: str, run_id: int, directory: Path) -> dict[str, Any]:

@@ -121,21 +121,57 @@ with tempfile.TemporaryDirectory() as directory:
     assert_equal(len(loaded_records), 6)
     assert_equal(loaded_selection["selected_shards"], 3)
     assert_equal(deadline > 0, True)
-original_which = validation_runner.shutil.which
 original_invoke = validation_runner.invoke
-watch_call = {}
-validation_runner.shutil.which = lambda _: None
+original_sleep = validation_runner.time.sleep
+original_monotonic = validation_runner.time.monotonic
+watch_calls = []
+clock = [0.0]
+responses = iter(
+    [
+        '{"status":"queued","conclusion":null}',
+        '{"status":"in_progress","conclusion":null}',
+        '{"status":"completed","conclusion":"success"}',
+    ]
+)
 
 def fake_invoke(command, *, capture=False, timeout_seconds=None):
-    watch_call.update(command=command, capture=capture, timeout_seconds=timeout_seconds)
-    return validation_runner.subprocess.CompletedProcess(command, 0, "", "")
+    watch_calls.append((command, capture, timeout_seconds))
+    return validation_runner.subprocess.CompletedProcess(command, 0, next(responses), "")
 
+validation_runner.time.monotonic = lambda: clock[0]
+validation_runner.time.sleep = lambda seconds: clock.__setitem__(0, clock[0] + seconds)
 validation_runner.invoke = fake_invoke
 validation_runner.watch("acme/dockrev", 123, 720, 15)
-assert_equal(watch_call["command"][0:3], ["gh", "run", "watch"])
-assert_equal(watch_call["capture"], True)
-assert_equal(watch_call["timeout_seconds"], 720)
-validation_runner.shutil.which = original_which
+assert_equal(len(watch_calls), 3)
+assert_equal(watch_calls[0][0][0:3], ["gh", "run", "view"])
+assert_equal(watch_calls[0][1:], (True, 60))
+assert_equal(clock[0], 30)
+
+deadline_clock = iter((0.0, 901.0))
+validation_runner.time.monotonic = lambda: next(deadline_clock)
+try:
+    validation_runner.watch("acme/dockrev", 124, 720, 15)
+except RuntimeError as error:
+    assert_equal("observation grace" in str(error), True)
+else:
+    raise AssertionError("watch must stop at the fixed observation deadline")
+
+validation_runner.time.sleep = original_sleep
+validation_runner.time.monotonic = original_monotonic
+validation_runner.invoke = original_invoke
+
+failure_responses = iter(['{"status":"completed","conclusion":"failure"}'])
+
+def fake_failed_invoke(command, *, capture=False, timeout_seconds=None):
+    return validation_runner.subprocess.CompletedProcess(command, 0, next(failure_responses), "")
+
+validation_runner.invoke = fake_failed_invoke
+try:
+    validation_runner.watch("acme/dockrev", 125, 720, 15)
+except RuntimeError as error:
+    assert_equal("conclusion 'failure'" in str(error), True)
+else:
+    raise AssertionError("watch must fail closed for a non-success terminal conclusion")
 validation_runner.invoke = original_invoke
 
 target_sha = "a" * 40
