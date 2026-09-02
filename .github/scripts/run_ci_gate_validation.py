@@ -293,6 +293,15 @@ def build_cases(
     return candidates + final if phase == "all" else final
 
 
+def validate_resume_run_ids(run_ids: list[int]) -> None:
+    if len(run_ids) > FINAL_DISPATCHES:
+        raise ValueError(f"at most {FINAL_DISPATCHES} final runs can be resumed")
+    if any(run_id <= 0 for run_id in run_ids):
+        raise ValueError("each resumed GitHub run id must be positive")
+    if len(set(run_ids)) != len(run_ids):
+        raise ValueError("resumed GitHub run ids must be unique")
+
+
 def select_final_matrix(records: list[dict[str, Any]]) -> dict[str, Any]:
     grouped = {
         2: [record for record in records if record.get("phase") == "two-shard"],
@@ -446,6 +455,7 @@ def collect_case(
         "fast_seconds": payload["fast_seconds"],
         "source_seconds": payload["source_seconds"],
         "eligibility_seconds": payload["eligibility_seconds"],
+        "created_at": payload["created_at"],
     }
 
 
@@ -486,7 +496,7 @@ def main() -> int:
     parser.add_argument("--final-sha")
     parser.add_argument("--final-ref")
     parser.add_argument("--candidate-dir", type=Path)
-    parser.add_argument("--resume-run-id", type=int)
+    parser.add_argument("--resume-run-id", type=int, action="append", default=[])
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--timeout-seconds", type=int, default=720)
     parser.add_argument("--interval-seconds", type=int, default=15)
@@ -500,10 +510,12 @@ def main() -> int:
         parser.error("final phase requires --candidate-dir from the completed candidates phase")
     if args.phase != "final" and args.candidate_dir is not None:
         parser.error("--candidate-dir is only valid for the final phase")
-    if args.resume_run_id is not None and args.phase != "final":
+    if args.resume_run_id and args.phase != "final":
         parser.error("--resume-run-id is only valid for the final phase")
-    if args.resume_run_id is not None and args.resume_run_id <= 0:
-        parser.error("--resume-run-id must be a positive GitHub run id")
+    try:
+        validate_resume_run_ids(args.resume_run_id)
+    except ValueError as error:
+        parser.error(str(error))
 
     needs_candidates = args.phase in {"all", "candidates"}
     needs_final = args.phase in {"all", "final"}
@@ -543,7 +555,7 @@ def main() -> int:
 
         final_cases = build_cases(args, "final", selection["selected_shards"])
         final_start = len(records) + 1
-        if args.resume_run_id is not None:
+        for resume_run_id in args.resume_run_id:
             recovered_case = final_cases.pop(0)
             phase, target_sha, ref, expected_shards, expected_cache = recovered_case
             try:
@@ -556,7 +568,7 @@ def main() -> int:
                         ref,
                         expected_shards,
                         expected_cache,
-                        args.resume_run_id,
+                        resume_run_id,
                         deadline,
                     )
                 )
@@ -567,7 +579,7 @@ def main() -> int:
                             "failed_index": final_start,
                             "phase": phase,
                             "target_sha": target_sha,
-                            "run_id": args.resume_run_id,
+                            "run_id": resume_run_id,
                             "error": str(error),
                         },
                         sort_keys=True,
@@ -579,7 +591,12 @@ def main() -> int:
                     file=sys.stderr,
                 )
                 return 1
-        final_start += len(final_records)
+            if len(final_records) > 1:
+                previous_created = parse_utc(final_records[-2]["created_at"], "created_at")
+                current_created = parse_utc(final_records[-1]["created_at"], "created_at")
+                if current_created <= previous_created:
+                    raise ValueError("resumed GitHub runs must be supplied in chronological order")
+            final_start += 1
         if not run_cases(args, final_cases, final_start, deadline, final_records):
             return 1
         records.extend(final_records)

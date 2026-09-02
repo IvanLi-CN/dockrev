@@ -64,6 +64,14 @@ assert_equal(final_cases[0][0:5], ("warm", "c" * 40, "candidate-final", 3, "warm
 assert_equal(final_cases[-1][0:5], ("warm", "c" * 40, "candidate-final", 3, "warm"))
 all_cases = validation_runner.build_cases(runner_args, "all", 3)
 assert_equal(len(all_cases), 16)
+validation_runner.validate_resume_run_ids([1, 2, 3])
+for invalid_resume_ids, expected_error in (([0], "positive"), ([1, 1], "unique"), (list(range(11)), "at most")):
+    try:
+        validation_runner.validate_resume_run_ids(invalid_resume_ids)
+    except ValueError as error:
+        assert_equal(expected_error in str(error), True)
+    else:
+        raise AssertionError("invalid resumed run ids must fail")
 
 candidate_records = [
     {"phase": "two-shard", "target_sha": "a" * 40, "ref": "candidate-two", "fast_seconds": value}

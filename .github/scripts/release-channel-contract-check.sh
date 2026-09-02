@@ -251,7 +251,8 @@ search_fixed "TOTAL_DISPATCHES = CANDIDATE_DISPATCHES + FINAL_DISPATCHES" .githu
 search_fixed "WORKFLOW_TIMEOUT_SECONDS = 720" .github/scripts/run_ci_gate_validation.py
 search_fixed "WARM_INVESTIGATION_THRESHOLD_SECONDS = 600" .github/scripts/run_ci_gate_validation.py
 search_fixed "STATUS_QUERY_ATTEMPTS = 3" .github/scripts/run_ci_gate_validation.py
-search_fixed 'parser.add_argument("--resume-run-id", type=int)' .github/scripts/run_ci_gate_validation.py
+search_fixed 'parser.add_argument("--resume-run-id", type=int, action="append", default=[])' .github/scripts/run_ci_gate_validation.py
+search_fixed "resumed GitHub runs must be supplied in chronological order" .github/scripts/run_ci_gate_validation.py
 search_fixed 'choices=("all", "candidates", "final")' .github/scripts/run_ci_gate_validation.py
 search_fixed "select_final_matrix" .github/scripts/run_ci_gate_validation.py
 search_fixed "collect_case" .github/scripts/run_ci_gate_validation.py
