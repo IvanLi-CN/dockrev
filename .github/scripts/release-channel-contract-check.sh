@@ -246,12 +246,16 @@ search_fixed "    uses: ./.github/workflows/ci-main.yml" .github/workflows/ci-ga
 search_fixed "inputs.verification_mode != true" .github/workflows/ci-main.yml
 search_fixed '"publish": False' .github/workflows/ci-gate-verification.yml
 search_fixed "CANDIDATE_DISPATCHES = 6" .github/scripts/run_ci_gate_validation.py
-search_fixed "FINAL_DISPATCHES = 11" .github/scripts/run_ci_gate_validation.py
+search_fixed "FINAL_DISPATCHES = 10" .github/scripts/run_ci_gate_validation.py
 search_fixed "TOTAL_DISPATCHES = CANDIDATE_DISPATCHES + FINAL_DISPATCHES" .github/scripts/run_ci_gate_validation.py
 search_fixed "WORKFLOW_TIMEOUT_SECONDS = 720" .github/scripts/run_ci_gate_validation.py
 search_fixed "WARM_INVESTIGATION_THRESHOLD_SECONDS = 600" .github/scripts/run_ci_gate_validation.py
+search_fixed "STATUS_QUERY_ATTEMPTS = 3" .github/scripts/run_ci_gate_validation.py
+search_fixed 'parser.add_argument("--resume-run-id", type=int, action="append", default=[])' .github/scripts/run_ci_gate_validation.py
+search_fixed "resumed GitHub runs must be supplied in chronological order" .github/scripts/run_ci_gate_validation.py
 search_fixed 'choices=("all", "candidates", "final")' .github/scripts/run_ci_gate_validation.py
 search_fixed "select_final_matrix" .github/scripts/run_ci_gate_validation.py
+search_fixed "collect_case" .github/scripts/run_ci_gate_validation.py
 search_fixed "--candidate-dir" .github/scripts/run_ci_gate_validation.py
 search_fixed "OBSERVATION_GRACE_SECONDS = 180" .github/scripts/run_ci_gate_validation.py
 search_fixed '"status,conclusion,startedAt"' .github/scripts/run_ci_gate_validation.py
@@ -262,7 +266,7 @@ search_fixed "timeout-seconds=720" .github/scripts/run_ci_gate_validation.py
 search_fixed "interval-seconds=15" .github/scripts/run_ci_gate_validation.py
 search_fixed "capture=True" .github/scripts/run_ci_gate_validation.py
 search_fixed "timeout_seconds=60" .github/scripts/run_ci_gate_validation.py
-search_fixed "17-run validation budget of 204 minutes has elapsed" .github/scripts/run_ci_gate_validation.py
+search_fixed "controlled validation budget of 204 minutes has elapsed" .github/scripts/run_ci_gate_validation.py
 search_fixed "output-dir must not already exist" .github/scripts/run_ci_gate_validation.py
 search_fixed "final ten warm samples" .github/scripts/run_ci_gate_validation.py
 search_fixed "deadline.json" .github/scripts/run_ci_gate_validation.py

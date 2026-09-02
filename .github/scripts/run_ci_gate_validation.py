@@ -20,12 +20,16 @@ RUN_URL_RE = re.compile(r"/actions/runs/(\d+)(?:\D|$)")
 TIMESTAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 WORKFLOW = "ci-gate-verification.yml"
 CANDIDATE_DISPATCHES = 6
-FINAL_DISPATCHES = 11
+FINAL_DISPATCHES = 10
 TOTAL_DISPATCHES = CANDIDATE_DISPATCHES + FINAL_DISPATCHES
-TOTAL_BUDGET_SECONDS = TOTAL_DISPATCHES * 720
+# The acceptance wall-clock budget remains fixed at 204 minutes.  It is a
+# scheduling cap, not a derivation from the count of valid timing samples.
+TOTAL_BUDGET_SECONDS = 204 * 60
 WORKFLOW_TIMEOUT_SECONDS = 720
 WARM_INVESTIGATION_THRESHOLD_SECONDS = 600
 OBSERVATION_GRACE_SECONDS = 180
+STATUS_QUERY_ATTEMPTS = 3
+STATUS_QUERY_RETRY_SECONDS = 5
 
 
 def parse_utc(value: Any, key: str) -> datetime:
@@ -81,31 +85,20 @@ def dispatch(repository: str, ref: str, target_sha: str) -> int:
     return int(match.group(1))
 
 
-def watch(
+def remaining_before_deadline(deadlines: list[float]) -> float:
+    remaining = min(deadlines) - time.time() if deadlines else float("inf")
+    if remaining <= 0:
+        raise RuntimeError("controlled validation budget of 204 minutes has elapsed")
+    return remaining
+
+
+def query_run_status(
     repository: str,
     run_id: int,
-    timeout_seconds: int,
-    interval_seconds: int,
-    matrix_deadline: float | None = None,
-) -> None:
-    """Poll a run to natural completion without cancelling at the metric deadline.
-
-    The workflow's measured gate execution remains bounded by ``timeout_seconds``
-    in ``validate_sample``. Runner queue time is outside that execution budget,
-    so the observation grace starts only after GitHub reports ``startedAt``. The
-    optional matrix deadline still bounds the whole serial acceptance run.
-    """
-    started_at: datetime | None = None
-    observation_deadline: float | None = None
-    while True:
-        now = time.time()
-        if matrix_deadline is not None and now >= matrix_deadline:
-            raise RuntimeError("17-run validation budget of 204 minutes has elapsed")
-        if observation_deadline is not None and now >= observation_deadline:
-            raise RuntimeError(
-                f"run {run_id} did not reach a terminal state within "
-                f"{timeout_seconds}s plus {OBSERVATION_GRACE_SECONDS}s observation grace"
-            )
+    deadlines: list[float],
+) -> dict[str, Any]:
+    """Read one run status with bounded transport retries and no new dispatch."""
+    for attempt in range(STATUS_QUERY_ATTEMPTS):
         result = invoke(
             [
                 "gh",
@@ -120,12 +113,50 @@ def watch(
             capture=True,
             timeout_seconds=60,
         )
-        if result.returncode != 0:
-            raise RuntimeError(f"run {run_id} status query failed with exit {result.returncode}")
-        try:
-            status = json.loads(result.stdout)
-        except json.JSONDecodeError as error:
-            raise RuntimeError(f"run {run_id} status response was not valid JSON") from error
+        if result.returncode == 0:
+            try:
+                return json.loads(result.stdout)
+            except json.JSONDecodeError as error:
+                raise RuntimeError(f"run {run_id} status response was not valid JSON") from error
+        if attempt + 1 < STATUS_QUERY_ATTEMPTS:
+            time.sleep(min(STATUS_QUERY_RETRY_SECONDS, remaining_before_deadline(deadlines)))
+    raise RuntimeError(
+        f"run {run_id} status query failed after {STATUS_QUERY_ATTEMPTS} attempts"
+    )
+
+
+def watch(
+    repository: str,
+    run_id: int,
+    timeout_seconds: int,
+    interval_seconds: int,
+    matrix_deadline: float | None = None,
+    allow_completed_after_deadline: bool = False,
+) -> None:
+    """Poll a run to natural completion without cancelling at the metric deadline.
+
+    The workflow's measured gate execution remains bounded by ``timeout_seconds``
+    in ``validate_sample``. Runner queue time is outside that execution budget,
+    so the observation grace starts only after GitHub reports ``startedAt``. The
+    optional matrix deadline still bounds the whole serial acceptance run.
+    """
+    started_at: datetime | None = None
+    observation_deadline: float | None = None
+    while True:
+        now = time.time()
+        if matrix_deadline is not None and now >= matrix_deadline:
+            raise RuntimeError("controlled validation budget of 204 minutes has elapsed")
+        if observation_deadline is not None and now >= observation_deadline:
+            raise RuntimeError(
+                f"run {run_id} did not reach a terminal state within "
+                f"{timeout_seconds}s plus {OBSERVATION_GRACE_SECONDS}s observation grace"
+            )
+        deadlines = [
+            deadline
+            for deadline in (matrix_deadline, observation_deadline)
+            if deadline is not None
+        ]
+        status = query_run_status(repository, run_id, deadlines)
         reported_started_at = status.get("startedAt")
         if reported_started_at is None:
             if status.get("status") != "queued":
@@ -137,23 +168,32 @@ def watch(
             started_at = parsed_started_at
             observation_deadline = started_at.timestamp() + timeout_seconds + OBSERVATION_GRACE_SECONDS
 
+        if status.get("status") == "completed":
+            conclusion = status.get("conclusion")
+            if conclusion != "success":
+                raise RuntimeError(f"run {run_id} completed with conclusion {conclusion!r}")
+            if not allow_completed_after_deadline and observation_deadline is not None:
+                if time.time() >= observation_deadline:
+                    raise RuntimeError(
+                        f"run {run_id} did not reach a terminal state within "
+                        f"{timeout_seconds}s plus {OBSERVATION_GRACE_SECONDS}s observation grace"
+                    )
+            return
+
         now = time.time()
         if matrix_deadline is not None and now >= matrix_deadline:
-            raise RuntimeError("17-run validation budget of 204 minutes has elapsed")
+            raise RuntimeError("controlled validation budget of 204 minutes has elapsed")
         if observation_deadline is not None and now >= observation_deadline:
             raise RuntimeError(
                 f"run {run_id} did not reach a terminal state within "
                 f"{timeout_seconds}s plus {OBSERVATION_GRACE_SECONDS}s observation grace"
             )
-        if status.get("status") == "completed":
-            conclusion = status.get("conclusion")
-            if conclusion != "success":
-                raise RuntimeError(f"run {run_id} completed with conclusion {conclusion!r}")
-            return
-        deadlines = [deadline for deadline in (matrix_deadline, observation_deadline) if deadline is not None]
-        remaining = min(deadlines) - now if deadlines else interval_seconds
-        if remaining <= 0:
-            raise RuntimeError("17-run validation budget of 204 minutes has elapsed")
+        deadlines = [
+            deadline
+            for deadline in (matrix_deadline, observation_deadline)
+            if deadline is not None
+        ]
+        remaining = remaining_before_deadline(deadlines) if deadlines else interval_seconds
         time.sleep(min(interval_seconds, remaining))
 
 
@@ -254,11 +294,20 @@ def build_cases(
         return candidates
     if final_shards not in (2, 3):
         raise ValueError("final phase requires a selected two- or three-shard matrix")
-    final = [
-        ("cold-warmup", args.final_sha, args.final_ref, final_shards, "cold"),
-        *[("warm", args.final_sha, args.final_ref, final_shards, "warm") for _ in range(10)],
-    ]
+    # Candidate verification and final acceptance use the same exact-SHA
+    # verification cache scope. A separate final "cold" run would therefore
+    # be impossible after the selected candidate has already completed.
+    final = [("warm", args.final_sha, args.final_ref, final_shards, "warm") for _ in range(10)]
     return candidates + final if phase == "all" else final
+
+
+def validate_resume_run_ids(run_ids: list[int]) -> None:
+    if len(run_ids) > FINAL_DISPATCHES:
+        raise ValueError(f"at most {FINAL_DISPATCHES} final runs can be resumed")
+    if any(run_id <= 0 for run_id in run_ids):
+        raise ValueError("each resumed GitHub run id must be positive")
+    if len(set(run_ids)) != len(run_ids):
+        raise ValueError("resumed GitHub run ids must be unique")
 
 
 def select_final_matrix(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -341,43 +390,34 @@ def run_cases(
     for offset, (phase, target_sha, ref, expected_shards, expected_cache) in enumerate(cases):
         index = start_index + offset
         run_dir = args.output_dir / f"{index:02d}-{phase}"
+        run_id: int | None = None
         try:
             if time.time() >= deadline:
-                raise RuntimeError("17-run validation budget of 204 minutes has elapsed")
+                raise RuntimeError("controlled validation budget of 204 minutes has elapsed")
             run_id = dispatch(args.repository, ref, target_sha)
-            watch(
-                args.repository,
-                run_id,
-                args.timeout_seconds,
-                args.interval_seconds,
-                matrix_deadline=deadline,
-            )
-            payload = download_metrics(args.repository, run_id, run_dir)
-            if time.time() >= deadline:
-                raise RuntimeError("17-run validation budget of 204 minutes has elapsed")
-            validate_sample(payload, target_sha, expected_cache)
-            if payload["storybook_shard_total"] != expected_shards:
-                raise ValueError(
-                    f"expected {expected_shards} Storybook shards, got {payload['storybook_shard_total']}"
-                )
             records.append(
-                {
-                    "index": index,
-                    "phase": phase,
-                    "target_sha": target_sha,
-                    "ref": ref,
-                    "run_id": run_id,
-                    "cache_status": payload["cache_status"],
-                    "storybook_shard_total": payload["storybook_shard_total"],
-                    "fast_seconds": payload["fast_seconds"],
-                    "source_seconds": payload["source_seconds"],
-                    "eligibility_seconds": payload["eligibility_seconds"],
-                }
+                collect_case(
+                    args,
+                    index,
+                    phase,
+                    target_sha,
+                    ref,
+                    expected_shards,
+                    expected_cache,
+                    run_id,
+                    deadline,
+                )
             )
         except Exception as error:
             (args.output_dir / "failure.json").write_text(
                 json.dumps(
-                    {"failed_index": index, "phase": phase, "target_sha": target_sha, "error": str(error)},
+                    {
+                        "failed_index": index,
+                        "phase": phase,
+                        "target_sha": target_sha,
+                        "run_id": run_id,
+                        "error": str(error),
+                    },
                     sort_keys=True,
                 )
                 + "\n"
@@ -385,6 +425,48 @@ def run_cases(
             print(f"validation stopped at sample {index}/{TOTAL_DISPATCHES}: {error}", file=sys.stderr)
             return False
     return True
+
+
+def collect_case(
+    args: argparse.Namespace,
+    index: int,
+    phase: str,
+    target_sha: str,
+    ref: str,
+    expected_shards: int,
+    expected_cache: str | None,
+    run_id: int,
+    deadline: float,
+    historical_run: bool = False,
+) -> dict[str, Any]:
+    run_dir = args.output_dir / f"{index:02d}-{phase}"
+    watch(
+        args.repository,
+        run_id,
+        args.timeout_seconds,
+        args.interval_seconds,
+        matrix_deadline=deadline,
+        allow_completed_after_deadline=historical_run,
+    )
+    payload = download_metrics(args.repository, run_id, run_dir)
+    if time.time() >= deadline:
+        raise RuntimeError("controlled validation budget of 204 minutes has elapsed")
+    validate_sample(payload, target_sha, expected_cache)
+    if payload["storybook_shard_total"] != expected_shards:
+        raise ValueError(f"expected {expected_shards} Storybook shards, got {payload['storybook_shard_total']}")
+    return {
+        "index": index,
+        "phase": phase,
+        "target_sha": target_sha,
+        "ref": ref,
+        "run_id": run_id,
+        "cache_status": payload["cache_status"],
+        "storybook_shard_total": payload["storybook_shard_total"],
+        "fast_seconds": payload["fast_seconds"],
+        "source_seconds": payload["source_seconds"],
+        "eligibility_seconds": payload["eligibility_seconds"],
+        "created_at": payload["created_at"],
+    }
 
 
 def write_matrix(
@@ -424,6 +506,7 @@ def main() -> int:
     parser.add_argument("--final-sha")
     parser.add_argument("--final-ref")
     parser.add_argument("--candidate-dir", type=Path)
+    parser.add_argument("--resume-run-id", type=int, action="append", default=[])
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--timeout-seconds", type=int, default=720)
     parser.add_argument("--interval-seconds", type=int, default=15)
@@ -437,6 +520,12 @@ def main() -> int:
         parser.error("final phase requires --candidate-dir from the completed candidates phase")
     if args.phase != "final" and args.candidate_dir is not None:
         parser.error("--candidate-dir is only valid for the final phase")
+    if args.resume_run_id and args.phase != "final":
+        parser.error("--resume-run-id is only valid for the final phase")
+    try:
+        validate_resume_run_ids(args.resume_run_id)
+    except ValueError as error:
+        parser.error(str(error))
 
     needs_candidates = args.phase in {"all", "candidates"}
     needs_final = args.phase in {"all", "final"}
@@ -476,6 +565,49 @@ def main() -> int:
 
         final_cases = build_cases(args, "final", selection["selected_shards"])
         final_start = len(records) + 1
+        for resume_run_id in args.resume_run_id:
+            recovered_case = final_cases.pop(0)
+            phase, target_sha, ref, expected_shards, expected_cache = recovered_case
+            try:
+                final_records.append(
+                    collect_case(
+                        args,
+                        final_start,
+                        phase,
+                        target_sha,
+                        ref,
+                        expected_shards,
+                        expected_cache,
+                        resume_run_id,
+                        deadline,
+                        historical_run=True,
+                    )
+                )
+            except Exception as error:
+                (args.output_dir / "failure.json").write_text(
+                    json.dumps(
+                        {
+                            "failed_index": final_start,
+                            "phase": phase,
+                            "target_sha": target_sha,
+                            "run_id": resume_run_id,
+                            "error": str(error),
+                        },
+                        sort_keys=True,
+                    )
+                    + "\n"
+                )
+                print(
+                    f"validation stopped at resumed sample {final_start}/{TOTAL_DISPATCHES}: {error}",
+                    file=sys.stderr,
+                )
+                return 1
+            if len(final_records) > 1:
+                previous_created = parse_utc(final_records[-2]["created_at"], "created_at")
+                current_created = parse_utc(final_records[-1]["created_at"], "created_at")
+                if current_created <= previous_created:
+                    raise ValueError("resumed GitHub runs must be supplied in chronological order")
+            final_start += 1
         if not run_cases(args, final_cases, final_start, deadline, final_records):
             return 1
         records.extend(final_records)

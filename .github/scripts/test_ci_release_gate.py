@@ -59,11 +59,19 @@ assert_equal(len(candidate_cases), 6)
 assert_equal(candidate_cases[0][0:4], ("two-shard", "a" * 40, "candidate-two", 2))
 assert_equal(candidate_cases[5][0:4], ("three-shard", "b" * 40, "candidate-three", 3))
 final_cases = validation_runner.build_cases(runner_args, "final", 3)
-assert_equal(len(final_cases), 11)
-assert_equal(final_cases[0][0:5], ("cold-warmup", "c" * 40, "candidate-final", 3, "cold"))
+assert_equal(len(final_cases), 10)
+assert_equal(final_cases[0][0:5], ("warm", "c" * 40, "candidate-final", 3, "warm"))
 assert_equal(final_cases[-1][0:5], ("warm", "c" * 40, "candidate-final", 3, "warm"))
 all_cases = validation_runner.build_cases(runner_args, "all", 3)
-assert_equal(len(all_cases), 17)
+assert_equal(len(all_cases), 16)
+validation_runner.validate_resume_run_ids([1, 2, 3])
+for invalid_resume_ids, expected_error in (([0], "positive"), ([1, 1], "unique"), (list(range(11)), "at most")):
+    try:
+        validation_runner.validate_resume_run_ids(invalid_resume_ids)
+    except ValueError as error:
+        assert_equal(expected_error in str(error), True)
+    else:
+        raise AssertionError("invalid resumed run ids must fail")
 
 candidate_records = [
     {"phase": "two-shard", "target_sha": "a" * 40, "ref": "candidate-two", "fast_seconds": value}
@@ -146,6 +154,48 @@ assert_equal(len(watch_calls), 3)
 assert_equal(watch_calls[0][0][0:3], ["gh", "run", "view"])
 assert_equal(watch_calls[0][1:], (True, 60))
 assert_equal(clock[0], 30)
+
+historical_calls = []
+validation_runner.time.time = lambda: 2_000.0
+validation_runner.invoke = lambda command, *, capture=False, timeout_seconds=None: (
+    historical_calls.append((command, capture, timeout_seconds))
+    or validation_runner.subprocess.CompletedProcess(
+        command,
+        0,
+        '{"status":"completed","conclusion":"success","startedAt":"1970-01-01T00:00:00Z"}',
+        "",
+    )
+)
+validation_runner.watch("acme/dockrev", 456, 720, 15, allow_completed_after_deadline=True)
+assert_equal(len(historical_calls), 1)
+
+retry_calls = []
+retry_clock = [0.0]
+retry_responses = iter(
+    [
+        validation_runner.subprocess.CompletedProcess([], 1, "", "redacted"),
+        validation_runner.subprocess.CompletedProcess(
+            [],
+            0,
+            '{"status":"completed","conclusion":"success","startedAt":"1970-01-01T00:00:00Z"}',
+            "",
+        ),
+    ]
+)
+
+
+def fake_retry_invoke(command, *, capture=False, timeout_seconds=None):
+    retry_calls.append((command, capture, timeout_seconds))
+    return next(retry_responses)
+
+
+validation_runner.time.time = lambda: retry_clock[0]
+validation_runner.time.sleep = lambda seconds: retry_clock.__setitem__(0, retry_clock[0] + seconds)
+validation_runner.invoke = fake_retry_invoke
+validation_runner.watch("acme/dockrev", 127, 720, 15)
+assert_equal(len(retry_calls), 2)
+assert_equal(retry_calls[0][1:], (True, 60))
+assert_equal(retry_clock[0], validation_runner.STATUS_QUERY_RETRY_SECONDS)
 
 deadline_clock = [901.0]
 deadline_responses = iter(

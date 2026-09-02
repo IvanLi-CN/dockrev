@@ -469,8 +469,8 @@ pub(super) fn rebuild_rollup_tx(
     resolution: u32,
     bucket_start: i64,
 ) -> anyhow::Result<()> {
-    let start = format_epoch(bucket_start)?;
-    let end = format_epoch(bucket_start + resolution as i64)?;
+    let start = format_epoch_range_bound(bucket_start)?;
+    let end = format_epoch_range_bound(bucket_start + resolution as i64)?;
     let previous = tx
         .query_row(
             r#"SELECT sampled_at, cpu_percent, mem_used_bytes, mem_limit_bytes, net_rx_bytes,

@@ -1003,6 +1003,12 @@ fn rollup_bucket_start_cutoff(since: &str, resolution_seconds: u32) -> anyhow::R
 fn format_epoch(value: i64) -> anyhow::Result<String> {
     format_time(time::OffsetDateTime::from_unix_timestamp(value)?)
 }
+
+fn format_epoch_range_bound(value: i64) -> anyhow::Result<String> {
+    // SQLite compares timestamps as text, so a trailing `Z` sorts after fractional seconds.
+    Ok(format_epoch(value)?.trim_end_matches('Z').to_string())
+}
+
 fn format_time(value: time::OffsetDateTime) -> anyhow::Result<String> {
     Ok(value.format(&time::format_description::well_known::Rfc3339)?)
 }
