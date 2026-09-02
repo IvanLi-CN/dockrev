@@ -131,6 +131,7 @@ def watch(
     timeout_seconds: int,
     interval_seconds: int,
     matrix_deadline: float | None = None,
+    allow_completed_after_deadline: bool = False,
 ) -> None:
     """Poll a run to natural completion without cancelling at the metric deadline.
 
@@ -167,6 +168,18 @@ def watch(
             started_at = parsed_started_at
             observation_deadline = started_at.timestamp() + timeout_seconds + OBSERVATION_GRACE_SECONDS
 
+        if status.get("status") == "completed":
+            conclusion = status.get("conclusion")
+            if conclusion != "success":
+                raise RuntimeError(f"run {run_id} completed with conclusion {conclusion!r}")
+            if not allow_completed_after_deadline and observation_deadline is not None:
+                if time.time() >= observation_deadline:
+                    raise RuntimeError(
+                        f"run {run_id} did not reach a terminal state within "
+                        f"{timeout_seconds}s plus {OBSERVATION_GRACE_SECONDS}s observation grace"
+                    )
+            return
+
         now = time.time()
         if matrix_deadline is not None and now >= matrix_deadline:
             raise RuntimeError("controlled validation budget of 204 minutes has elapsed")
@@ -175,11 +188,6 @@ def watch(
                 f"run {run_id} did not reach a terminal state within "
                 f"{timeout_seconds}s plus {OBSERVATION_GRACE_SECONDS}s observation grace"
             )
-        if status.get("status") == "completed":
-            conclusion = status.get("conclusion")
-            if conclusion != "success":
-                raise RuntimeError(f"run {run_id} completed with conclusion {conclusion!r}")
-            return
         deadlines = [
             deadline
             for deadline in (matrix_deadline, observation_deadline)
@@ -429,6 +437,7 @@ def collect_case(
     expected_cache: str | None,
     run_id: int,
     deadline: float,
+    historical_run: bool = False,
 ) -> dict[str, Any]:
     run_dir = args.output_dir / f"{index:02d}-{phase}"
     watch(
@@ -437,6 +446,7 @@ def collect_case(
         args.timeout_seconds,
         args.interval_seconds,
         matrix_deadline=deadline,
+        allow_completed_after_deadline=historical_run,
     )
     payload = download_metrics(args.repository, run_id, run_dir)
     if time.time() >= deadline:
@@ -570,6 +580,7 @@ def main() -> int:
                         expected_cache,
                         resume_run_id,
                         deadline,
+                        historical_run=True,
                     )
                 )
             except Exception as error:

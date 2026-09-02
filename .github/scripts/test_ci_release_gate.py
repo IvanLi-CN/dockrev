@@ -155,6 +155,20 @@ assert_equal(watch_calls[0][0][0:3], ["gh", "run", "view"])
 assert_equal(watch_calls[0][1:], (True, 60))
 assert_equal(clock[0], 30)
 
+historical_calls = []
+validation_runner.time.time = lambda: 2_000.0
+validation_runner.invoke = lambda command, *, capture=False, timeout_seconds=None: (
+    historical_calls.append((command, capture, timeout_seconds))
+    or validation_runner.subprocess.CompletedProcess(
+        command,
+        0,
+        '{"status":"completed","conclusion":"success","startedAt":"1970-01-01T00:00:00Z"}',
+        "",
+    )
+)
+validation_runner.watch("acme/dockrev", 456, 720, 15, allow_completed_after_deadline=True)
+assert_equal(len(historical_calls), 1)
+
 retry_calls = []
 retry_clock = [0.0]
 retry_responses = iter(
