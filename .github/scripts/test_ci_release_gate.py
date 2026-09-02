@@ -123,14 +123,14 @@ with tempfile.TemporaryDirectory() as directory:
     assert_equal(deadline > 0, True)
 original_invoke = validation_runner.invoke
 original_sleep = validation_runner.time.sleep
-original_monotonic = validation_runner.time.monotonic
+original_time = validation_runner.time.time
 watch_calls = []
 clock = [0.0]
 responses = iter(
     [
-        '{"status":"queued","conclusion":null}',
-        '{"status":"in_progress","conclusion":null}',
-        '{"status":"completed","conclusion":"success"}',
+        '{"status":"queued","conclusion":null,"startedAt":null}',
+        '{"status":"in_progress","conclusion":null,"startedAt":"1970-01-01T00:00:00Z"}',
+        '{"status":"completed","conclusion":"success","startedAt":"1970-01-01T00:00:00Z"}',
     ]
 )
 
@@ -138,7 +138,7 @@ def fake_invoke(command, *, capture=False, timeout_seconds=None):
     watch_calls.append((command, capture, timeout_seconds))
     return validation_runner.subprocess.CompletedProcess(command, 0, next(responses), "")
 
-validation_runner.time.monotonic = lambda: clock[0]
+validation_runner.time.time = lambda: clock[0]
 validation_runner.time.sleep = lambda seconds: clock.__setitem__(0, clock[0] + seconds)
 validation_runner.invoke = fake_invoke
 validation_runner.watch("acme/dockrev", 123, 720, 15)
@@ -147,25 +147,60 @@ assert_equal(watch_calls[0][0][0:3], ["gh", "run", "view"])
 assert_equal(watch_calls[0][1:], (True, 60))
 assert_equal(clock[0], 30)
 
-deadline_clock = iter((0.0, 901.0))
-validation_runner.time.monotonic = lambda: next(deadline_clock)
+deadline_clock = [901.0]
+deadline_responses = iter(
+    ['{"status":"completed","conclusion":"success","startedAt":"1970-01-01T00:00:00Z"}']
+)
+
+def fake_deadline_invoke(command, *, capture=False, timeout_seconds=None):
+    return validation_runner.subprocess.CompletedProcess(command, 0, next(deadline_responses), "")
+
+validation_runner.time.time = lambda: deadline_clock[0]
+validation_runner.invoke = fake_deadline_invoke
 try:
     validation_runner.watch("acme/dockrev", 124, 720, 15)
 except RuntimeError as error:
     assert_equal("observation grace" in str(error), True)
 else:
-    raise AssertionError("watch must stop at the fixed observation deadline")
+    raise AssertionError("watch must reject success observed after the fixed observation deadline")
+
+queue_clock = [0.0]
+queue_calls = []
+queue_responses = iter(
+    [
+        '{"status":"queued","conclusion":null,"startedAt":null}',
+        '{"status":"in_progress","conclusion":null,"startedAt":"1970-01-01T02:46:40Z"}',
+        '{"status":"completed","conclusion":"success","startedAt":"1970-01-01T02:46:40Z"}',
+    ]
+)
+
+def fake_queue_invoke(command, *, capture=False, timeout_seconds=None):
+    queue_calls.append((command, capture, timeout_seconds))
+    if len(queue_calls) == 1:
+        queue_clock[0] = 10_000.0
+    return validation_runner.subprocess.CompletedProcess(command, 0, next(queue_responses), "")
+
+validation_runner.time.time = lambda: queue_clock[0]
+validation_runner.time.sleep = lambda seconds: queue_clock.__setitem__(0, queue_clock[0] + seconds)
+validation_runner.invoke = fake_queue_invoke
+validation_runner.watch("acme/dockrev", 126, 720, 15)
+assert_equal(len(queue_calls), 3)
+assert_equal(queue_calls[0][1:], (True, 60))
+assert_equal(queue_clock[0], 10_030.0)
 
 validation_runner.time.sleep = original_sleep
-validation_runner.time.monotonic = original_monotonic
+validation_runner.time.time = original_time
 validation_runner.invoke = original_invoke
 
-failure_responses = iter(['{"status":"completed","conclusion":"failure"}'])
+failure_responses = iter(
+    ['{"status":"completed","conclusion":"failure","startedAt":"1970-01-01T00:00:00Z"}']
+)
 
 def fake_failed_invoke(command, *, capture=False, timeout_seconds=None):
     return validation_runner.subprocess.CompletedProcess(command, 0, next(failure_responses), "")
 
 validation_runner.invoke = fake_failed_invoke
+validation_runner.time.time = lambda: 0.0
 try:
     validation_runner.watch("acme/dockrev", 125, 720, 15)
 except RuntimeError as error:
@@ -173,6 +208,7 @@ except RuntimeError as error:
 else:
     raise AssertionError("watch must fail closed for a non-success terminal conclusion")
 validation_runner.invoke = original_invoke
+validation_runner.time.time = original_time
 
 target_sha = "a" * 40
 valid_attestation = {
