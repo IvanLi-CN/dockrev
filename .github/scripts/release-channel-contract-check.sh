@@ -250,8 +250,11 @@ search_fixed "FINAL_DISPATCHES = 10" .github/scripts/run_ci_gate_validation.py
 search_fixed "TOTAL_DISPATCHES = CANDIDATE_DISPATCHES + FINAL_DISPATCHES" .github/scripts/run_ci_gate_validation.py
 search_fixed "WORKFLOW_TIMEOUT_SECONDS = 720" .github/scripts/run_ci_gate_validation.py
 search_fixed "WARM_INVESTIGATION_THRESHOLD_SECONDS = 600" .github/scripts/run_ci_gate_validation.py
+search_fixed "STATUS_QUERY_ATTEMPTS = 3" .github/scripts/run_ci_gate_validation.py
+search_fixed 'parser.add_argument("--resume-run-id", type=int)' .github/scripts/run_ci_gate_validation.py
 search_fixed 'choices=("all", "candidates", "final")' .github/scripts/run_ci_gate_validation.py
 search_fixed "select_final_matrix" .github/scripts/run_ci_gate_validation.py
+search_fixed "collect_case" .github/scripts/run_ci_gate_validation.py
 search_fixed "--candidate-dir" .github/scripts/run_ci_gate_validation.py
 search_fixed "OBSERVATION_GRACE_SECONDS = 180" .github/scripts/run_ci_gate_validation.py
 search_fixed '"status,conclusion,startedAt"' .github/scripts/run_ci_gate_validation.py

@@ -28,6 +28,8 @@ TOTAL_BUDGET_SECONDS = 204 * 60
 WORKFLOW_TIMEOUT_SECONDS = 720
 WARM_INVESTIGATION_THRESHOLD_SECONDS = 600
 OBSERVATION_GRACE_SECONDS = 180
+STATUS_QUERY_ATTEMPTS = 3
+STATUS_QUERY_RETRY_SECONDS = 5
 
 
 def parse_utc(value: Any, key: str) -> datetime:
@@ -83,6 +85,46 @@ def dispatch(repository: str, ref: str, target_sha: str) -> int:
     return int(match.group(1))
 
 
+def remaining_before_deadline(deadlines: list[float]) -> float:
+    remaining = min(deadlines) - time.time() if deadlines else float("inf")
+    if remaining <= 0:
+        raise RuntimeError("controlled validation budget of 204 minutes has elapsed")
+    return remaining
+
+
+def query_run_status(
+    repository: str,
+    run_id: int,
+    deadlines: list[float],
+) -> dict[str, Any]:
+    """Read one run status with bounded transport retries and no new dispatch."""
+    for attempt in range(STATUS_QUERY_ATTEMPTS):
+        result = invoke(
+            [
+                "gh",
+                "run",
+                "view",
+                str(run_id),
+                "--repo",
+                repository,
+                "--json",
+                "status,conclusion,startedAt",
+            ],
+            capture=True,
+            timeout_seconds=60,
+        )
+        if result.returncode == 0:
+            try:
+                return json.loads(result.stdout)
+            except json.JSONDecodeError as error:
+                raise RuntimeError(f"run {run_id} status response was not valid JSON") from error
+        if attempt + 1 < STATUS_QUERY_ATTEMPTS:
+            time.sleep(min(STATUS_QUERY_RETRY_SECONDS, remaining_before_deadline(deadlines)))
+    raise RuntimeError(
+        f"run {run_id} status query failed after {STATUS_QUERY_ATTEMPTS} attempts"
+    )
+
+
 def watch(
     repository: str,
     run_id: int,
@@ -108,26 +150,12 @@ def watch(
                 f"run {run_id} did not reach a terminal state within "
                 f"{timeout_seconds}s plus {OBSERVATION_GRACE_SECONDS}s observation grace"
             )
-        result = invoke(
-            [
-                "gh",
-                "run",
-                "view",
-                str(run_id),
-                "--repo",
-                repository,
-                "--json",
-                "status,conclusion,startedAt",
-            ],
-            capture=True,
-            timeout_seconds=60,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"run {run_id} status query failed with exit {result.returncode}")
-        try:
-            status = json.loads(result.stdout)
-        except json.JSONDecodeError as error:
-            raise RuntimeError(f"run {run_id} status response was not valid JSON") from error
+        deadlines = [
+            deadline
+            for deadline in (matrix_deadline, observation_deadline)
+            if deadline is not None
+        ]
+        status = query_run_status(repository, run_id, deadlines)
         reported_started_at = status.get("startedAt")
         if reported_started_at is None:
             if status.get("status") != "queued":
@@ -152,10 +180,12 @@ def watch(
             if conclusion != "success":
                 raise RuntimeError(f"run {run_id} completed with conclusion {conclusion!r}")
             return
-        deadlines = [deadline for deadline in (matrix_deadline, observation_deadline) if deadline is not None]
-        remaining = min(deadlines) - now if deadlines else interval_seconds
-        if remaining <= 0:
-            raise RuntimeError("controlled validation budget of 204 minutes has elapsed")
+        deadlines = [
+            deadline
+            for deadline in (matrix_deadline, observation_deadline)
+            if deadline is not None
+        ]
+        remaining = remaining_before_deadline(deadlines) if deadlines else interval_seconds
         time.sleep(min(interval_seconds, remaining))
 
 
@@ -343,43 +373,34 @@ def run_cases(
     for offset, (phase, target_sha, ref, expected_shards, expected_cache) in enumerate(cases):
         index = start_index + offset
         run_dir = args.output_dir / f"{index:02d}-{phase}"
+        run_id: int | None = None
         try:
             if time.time() >= deadline:
                 raise RuntimeError("controlled validation budget of 204 minutes has elapsed")
             run_id = dispatch(args.repository, ref, target_sha)
-            watch(
-                args.repository,
-                run_id,
-                args.timeout_seconds,
-                args.interval_seconds,
-                matrix_deadline=deadline,
-            )
-            payload = download_metrics(args.repository, run_id, run_dir)
-            if time.time() >= deadline:
-                raise RuntimeError("controlled validation budget of 204 minutes has elapsed")
-            validate_sample(payload, target_sha, expected_cache)
-            if payload["storybook_shard_total"] != expected_shards:
-                raise ValueError(
-                    f"expected {expected_shards} Storybook shards, got {payload['storybook_shard_total']}"
-                )
             records.append(
-                {
-                    "index": index,
-                    "phase": phase,
-                    "target_sha": target_sha,
-                    "ref": ref,
-                    "run_id": run_id,
-                    "cache_status": payload["cache_status"],
-                    "storybook_shard_total": payload["storybook_shard_total"],
-                    "fast_seconds": payload["fast_seconds"],
-                    "source_seconds": payload["source_seconds"],
-                    "eligibility_seconds": payload["eligibility_seconds"],
-                }
+                collect_case(
+                    args,
+                    index,
+                    phase,
+                    target_sha,
+                    ref,
+                    expected_shards,
+                    expected_cache,
+                    run_id,
+                    deadline,
+                )
             )
         except Exception as error:
             (args.output_dir / "failure.json").write_text(
                 json.dumps(
-                    {"failed_index": index, "phase": phase, "target_sha": target_sha, "error": str(error)},
+                    {
+                        "failed_index": index,
+                        "phase": phase,
+                        "target_sha": target_sha,
+                        "run_id": run_id,
+                        "error": str(error),
+                    },
                     sort_keys=True,
                 )
                 + "\n"
@@ -387,6 +408,45 @@ def run_cases(
             print(f"validation stopped at sample {index}/{TOTAL_DISPATCHES}: {error}", file=sys.stderr)
             return False
     return True
+
+
+def collect_case(
+    args: argparse.Namespace,
+    index: int,
+    phase: str,
+    target_sha: str,
+    ref: str,
+    expected_shards: int,
+    expected_cache: str | None,
+    run_id: int,
+    deadline: float,
+) -> dict[str, Any]:
+    run_dir = args.output_dir / f"{index:02d}-{phase}"
+    watch(
+        args.repository,
+        run_id,
+        args.timeout_seconds,
+        args.interval_seconds,
+        matrix_deadline=deadline,
+    )
+    payload = download_metrics(args.repository, run_id, run_dir)
+    if time.time() >= deadline:
+        raise RuntimeError("controlled validation budget of 204 minutes has elapsed")
+    validate_sample(payload, target_sha, expected_cache)
+    if payload["storybook_shard_total"] != expected_shards:
+        raise ValueError(f"expected {expected_shards} Storybook shards, got {payload['storybook_shard_total']}")
+    return {
+        "index": index,
+        "phase": phase,
+        "target_sha": target_sha,
+        "ref": ref,
+        "run_id": run_id,
+        "cache_status": payload["cache_status"],
+        "storybook_shard_total": payload["storybook_shard_total"],
+        "fast_seconds": payload["fast_seconds"],
+        "source_seconds": payload["source_seconds"],
+        "eligibility_seconds": payload["eligibility_seconds"],
+    }
 
 
 def write_matrix(
@@ -426,6 +486,7 @@ def main() -> int:
     parser.add_argument("--final-sha")
     parser.add_argument("--final-ref")
     parser.add_argument("--candidate-dir", type=Path)
+    parser.add_argument("--resume-run-id", type=int)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--timeout-seconds", type=int, default=720)
     parser.add_argument("--interval-seconds", type=int, default=15)
@@ -439,6 +500,10 @@ def main() -> int:
         parser.error("final phase requires --candidate-dir from the completed candidates phase")
     if args.phase != "final" and args.candidate_dir is not None:
         parser.error("--candidate-dir is only valid for the final phase")
+    if args.resume_run_id is not None and args.phase != "final":
+        parser.error("--resume-run-id is only valid for the final phase")
+    if args.resume_run_id is not None and args.resume_run_id <= 0:
+        parser.error("--resume-run-id must be a positive GitHub run id")
 
     needs_candidates = args.phase in {"all", "candidates"}
     needs_final = args.phase in {"all", "final"}
@@ -478,6 +543,43 @@ def main() -> int:
 
         final_cases = build_cases(args, "final", selection["selected_shards"])
         final_start = len(records) + 1
+        if args.resume_run_id is not None:
+            recovered_case = final_cases.pop(0)
+            phase, target_sha, ref, expected_shards, expected_cache = recovered_case
+            try:
+                final_records.append(
+                    collect_case(
+                        args,
+                        final_start,
+                        phase,
+                        target_sha,
+                        ref,
+                        expected_shards,
+                        expected_cache,
+                        args.resume_run_id,
+                        deadline,
+                    )
+                )
+            except Exception as error:
+                (args.output_dir / "failure.json").write_text(
+                    json.dumps(
+                        {
+                            "failed_index": final_start,
+                            "phase": phase,
+                            "target_sha": target_sha,
+                            "run_id": args.resume_run_id,
+                            "error": str(error),
+                        },
+                        sort_keys=True,
+                    )
+                    + "\n"
+                )
+                print(
+                    f"validation stopped at resumed sample {final_start}/{TOTAL_DISPATCHES}: {error}",
+                    file=sys.stderr,
+                )
+                return 1
+        final_start += len(final_records)
         if not run_cases(args, final_cases, final_start, deadline, final_records):
             return 1
         records.extend(final_records)
