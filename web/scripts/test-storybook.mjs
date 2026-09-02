@@ -614,10 +614,12 @@ async function assertServiceLogsFollowAfterNewLog({
     }
 
     if (evictedHeadMarker && expectedHeadMarker) {
-      await viewport.evaluate((element) => {
-        element.scrollTop = 0;
-        element.dispatchEvent(new Event("scroll"));
-      });
+      const viewportBox = await viewport.boundingBox();
+      if (!viewportBox) throw new Error("Service logs viewport is missing a bounding box.");
+      const scrollHeight = await viewport.evaluate((element) => element.scrollHeight);
+      await page.mouse.move(viewportBox.x + viewportBox.width / 2, viewportBox.y + viewportBox.height / 2);
+      await page.mouse.wheel(0, -scrollHeight);
+      await page.getByRole("button", { name: "跳到最新" }).waitFor({ timeout: 10_000 });
       await page.waitForFunction(
         ({ evictedHeadMarker, expectedHeadMarker }) => {
           const head = document.querySelector('.serviceLogRow[data-index="0"]');
