@@ -279,12 +279,7 @@ fn is_hashed_install_icon(file_name: &str) -> bool {
     };
     matches!(
         prefix,
-        "favicon"
-            | "apple-touch-icon"
-            | "pwa-192"
-            | "pwa-512"
-            | "pwa-maskable-192"
-            | "pwa-maskable-512"
+        "favicon" | "pwa-192" | "pwa-512" | "pwa-maskable-192" | "pwa-maskable-512"
     ) && digest.len() == 12
         && digest
             .chars()
@@ -297,7 +292,6 @@ fn is_legacy_install_asset(file_name: &str) -> bool {
         "favicon.svg"
             | "favicon.png"
             | "favicon.ico"
-            | "apple-touch-icon.png"
             | "pwa-192.png"
             | "pwa-512.png"
             | "pwa-maskable-192.png"
@@ -370,10 +364,6 @@ mod tests {
             Some(IMMUTABLE_INSTALL_ICON_CACHE)
         );
         assert_eq!(
-            cache_control_for_ui_path("apple-touch-icon-e2d62ed6a0ae.png"),
-            Some(IMMUTABLE_INSTALL_ICON_CACHE)
-        );
-        assert_eq!(
             cache_control_for_ui_path("favicon-0a0e56c2e2df.svg"),
             Some(IMMUTABLE_INSTALL_ICON_CACHE)
         );
@@ -383,10 +373,7 @@ mod tests {
     fn legacy_install_assets_are_revalidated() {
         assert_eq!(cache_control_for_ui_path("pwa-192.png"), Some(NO_CACHE));
         assert_eq!(cache_control_for_ui_path("favicon.ico"), Some(NO_CACHE));
-        assert_eq!(
-            cache_control_for_ui_path("apple-touch-icon.png"),
-            Some(NO_CACHE)
-        );
+        assert_eq!(cache_control_for_ui_path("apple-touch-icon.png"), None);
     }
 
     #[test]

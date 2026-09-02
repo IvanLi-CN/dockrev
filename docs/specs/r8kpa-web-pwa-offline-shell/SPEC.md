@@ -57,9 +57,9 @@
 
 - service worker 使用 `vite-plugin-pwa` `injectManifest` 路线统一生成，并在同一个 worker 中同时承载低优先级 precache、SPA navigation fallback、Push、通知点击跳转与 `skipWaiting`。
 - Web App Manifest 的 `id`、`scope`、`start_url` 固定为规范化 base path，三者不得包含内容版本、查询参数或构建时间戳；图标内容更新不得改变该身份。
-- install icon 由 `docs/branding/generate_brand_assets.py` 从锁定的 Dockrev mark 导出：既有 `pwa-192.png` / `pwa-512.png` 继续作为 regular `purpose: "any"`；独立 `pwa-maskable-*.png` 使用全不透明 `#010E2D` 底图。maskable 的重要前景最大边为画布 58%-62%，且位于中心半径 40% 的安全圆；不得把平台圆角、阴影或外框烘焙进图源。产品 App 的 Manifest 是安装图标元数据唯一来源，产品 HTML 不声明 `apple-touch-icon`；文档站点的独立 Apple touch 图标不属于本产品入口。
+- install icon 由 `docs/branding/generate_brand_assets.py` 从锁定的 Dockrev mark 导出：既有 `pwa-192.png` / `pwa-512.png` 继续作为 regular `purpose: "any"`；独立 `pwa-maskable-*.png` 使用全不透明 `#010E2D` 底图。maskable 的重要前景最大边为画布 58%-62%，且位于中心半径 40% 的安全圆；不得把平台圆角、阴影或外框烘焙进图源。产品 App 的 Manifest 是安装图标元数据唯一来源：产品 HTML 不声明 `apple-touch-icon`，产品根路径也不得发布 `apple-touch-icon*.png` 自动探测回退；文档站点的独立 Apple touch 图标不属于本产品入口。
 - regular 与 maskable 不得共用资源或写成 `purpose: "any maskable"`。构建为产品 Manifest 图标和 HTML favicon 生成内容哈希文件名；发生字节变化时，当前入口必须同步指向新的内容派生 URL。manifest 由 PWA 插件生成唯一的 manifest link，是 Chromium 安装元数据的权威来源；HTML 只保留带哈希的浏览器 favicon，不得重复注入 manifest 或添加 Apple touch 安装来源。Worker 只预缓存应用壳，不得把 manifest、regular/maskable 图标或 Apple 图标固定进 precache/cache-first 路径。
-- 内容哈希 install icon 文件使用 `public, max-age=31536000, immutable`；`index.html`、`manifest.webmanifest` 与 `sw.js` 使用 `no-cache` 重新验证。旧固定文件名可以继续被服务以兼容旧客户端，但不得被新 HTML、manifest 或 Worker precache 选中为安装图标版本。
+- 内容哈希 install icon 文件使用 `public, max-age=31536000, immutable`；`index.html`、`manifest.webmanifest` 与 `sw.js` 使用 `no-cache` 重新验证。旧固定名 favicon、regular 与 maskable 图标可以继续被服务以兼容旧客户端，但产品根路径不得继续发布 `apple-touch-icon*.png`，也不得被新 HTML、manifest 或 Worker precache 选中为安装图标版本。
 - 应用启动即注册 service worker；通知设置页改为复用全局注册结果，不再自行注册单独 worker。
 - 持久快照统一记录 `fetchedAt`、`staleAt`、`expireAt`、`schemaVersion`、`sourceVersion`；只有仍处于 `fresh` 窗口内的快照允许展示，超过新鲜窗口或超过 7 天都必须回退为需联网态。
 - 纳入持久缓存的 read model 固定为：首页 launcher、概览/服务列表、stack detail、service detail 的 overview/history/monitoring/backup 只读摘要、队列列表、版本推测总览。
@@ -85,7 +85,7 @@
 - Given Chromium PWA installability 检查，When 页面具备有效 manifest、icons 与 service worker，Then 用户可安装到桌面/主屏。
 - Given Chromium PWA installability 检查，When 页面具备有效 manifest、icons 与 service worker，Then 用户可安装到桌面/主屏，且 `id`、`scope`、`start_url` 与既有安装保持一致。
 - Given 任一产品 Manifest 图标或 favicon 字节发生变化，When 构建新的 PWA，Then regular、maskable 与 favicon 的 Manifest/HTML 引用指向当前内容哈希文件，Worker 不预缓存这些安装元数据，缓存策略允许旧客户端重新验证 metadata，且几何、透明度和 hash 契约测试通过。
-- Given 任一旧固定名 install icon 请求，When 服务器提供兼容响应，Then 它不带 immutable 缓存承诺，新的安装入口不会继续引用或 Worker precache 它；产品 HTML 不重新引入 `apple-touch-icon`。
+- Given 任一旧固定名 favicon、regular 或 maskable icon 请求，When 服务器提供兼容响应，Then 它不带 immutable 缓存承诺，新的安装入口不会继续引用或 Worker precache 它；Given 产品根路径请求 `apple-touch-icon.png`，Then 产物不发布该文件并返回 `404`，避免平台自动探测回退。
 - Given Android Chrome/WebAPK 或 Chromium desktop 已有安装，When 稳定 identity 下发布新的 manifest 与内容哈希图标，Then 平台可以按自身更新节流策略重新读取并更新安装元数据；Given iOS/iPadOS Web Clip 或不支持迁移的快捷方式，Then 文档明确其既有图标不能由站点强制替换，且不把重新安装作为正常流程。
 - Given 已安装的 Chromium PWA 从 V1 启动并执行正常 update check，When V2 发布新的 Manifest 与内容哈希图标，Then 同一安装在不卸载/重装的情况下取得 V2 的 Manifest 和图标响应，且 `id`、`scope`、`start_url` 保持不变。
 - Given 发布了新的前端构建，When `updatefound` 发生，Then 更新状态进入 `downloading` 且“立即更新”不可用；只有 worker 成为 `waiting` 后才进入可更新状态。

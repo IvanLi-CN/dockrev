@@ -4,9 +4,9 @@
 
 - `vite-plugin-pwa` 已接入 `injectManifest`，`web/src/sw.ts` 统一承载低优先级 precache、全部正式路由的 app-shell fallback、Push 与通知点击回跳。
 - install metadata 已改为逐资源 SHA-256 内容哈希文件名：构建后的 HTML 和 manifest 只引用当前哈希 favicon/regular/maskable 文件；产品 HTML 不声明 `apple-touch-icon`，manifest link 由 VitePWA 单独注入，避免模板与插件重复声明。
-- `crates/dockrev-api/src/ui.rs` 已为哈希 install icon 返回 `public, max-age=31536000, immutable`，并为 `index.html`、`manifest.webmanifest`、`sw.js` 与旧固定名图标返回 `no-cache`，使入口元数据可重新验证而旧兼容路径不被错误长期缓存。
+- `crates/dockrev-api/src/ui.rs` 已为哈希 install icon 返回 `public, max-age=31536000, immutable`，并为 `index.html`、`manifest.webmanifest`、`sw.js` 与旧固定名 favicon、regular/maskable 图标返回 `no-cache`，使入口元数据可重新验证而旧兼容路径不被错误长期缓存。
 - app bootstrap 已全局注册 service worker；Settings 页的 Web Push 订阅路径改为复用全局 worker，不再自行注册临时 `public/sw.js`。
-- 已新增 installability 所需的 `manifest.webmanifest`、`theme-color`、regular `pwa-192.png` / `pwa-512.png`，以及独立的 maskable 派生物；Vite 为产品 Manifest 图标和 favicon 计算独立的内容哈希文件名，稳定保留 manifest `id`、`scope`、`start_url`。产品生成器不再写入 Apple touch 图标，历史 `web/public/apple-touch-icon.png` 仅作为兼容文件保留；文档站点继续生成自己的独立 Apple touch 图标。Manifest、regular/maskable 图标、favicon 和 Apple 图标均排除在 Worker precache/cache-first 路径之外。
+- 已新增 installability 所需的 `manifest.webmanifest`、`theme-color`、regular `pwa-192.png` / `pwa-512.png`，以及独立的 maskable 派生物；Vite 为产品 Manifest 图标和 favicon 计算独立的内容哈希文件名，稳定保留 manifest `id`、`scope`、`start_url`。产品不生成或发布根路径 Apple touch 图标，文档站点继续生成自己的独立 Apple touch 图标。Manifest、regular/maskable 图标、favicon 和 Apple 图标均排除在 Worker precache/cache-first 路径之外。
 - 已实现全局 PWA 更新状态机：页面激活/focus/visible 时更新检查、可见态每小时轮询、`updatefound -> downloading`、仅以 Workbox `waiting -> ready` 作为完整缓存门禁，以及失败重试。
 - 已实现 single-flight 更新激活：手动“立即更新”和下一次 pathname 导航复用同一 `SKIP_WAITING` 请求，先提交目标 URL 再由 controllerchange 重载；查询参数和内部抽屉状态不会触发。
 - 已落统一只读快照层 `readonlySnapshotCache.ts`，并把首页旧 `localStorage` 快照迁移桥接到 IndexedDB。
