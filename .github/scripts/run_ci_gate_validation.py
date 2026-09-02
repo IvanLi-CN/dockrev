@@ -20,9 +20,11 @@ RUN_URL_RE = re.compile(r"/actions/runs/(\d+)(?:\D|$)")
 TIMESTAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 WORKFLOW = "ci-gate-verification.yml"
 CANDIDATE_DISPATCHES = 6
-FINAL_DISPATCHES = 11
+FINAL_DISPATCHES = 10
 TOTAL_DISPATCHES = CANDIDATE_DISPATCHES + FINAL_DISPATCHES
-TOTAL_BUDGET_SECONDS = TOTAL_DISPATCHES * 720
+# The acceptance wall-clock budget remains fixed at 204 minutes.  It is a
+# scheduling cap, not a derivation from the count of valid timing samples.
+TOTAL_BUDGET_SECONDS = 204 * 60
 WORKFLOW_TIMEOUT_SECONDS = 720
 WARM_INVESTIGATION_THRESHOLD_SECONDS = 600
 OBSERVATION_GRACE_SECONDS = 180
@@ -100,7 +102,7 @@ def watch(
     while True:
         now = time.time()
         if matrix_deadline is not None and now >= matrix_deadline:
-            raise RuntimeError("17-run validation budget of 204 minutes has elapsed")
+            raise RuntimeError("controlled validation budget of 204 minutes has elapsed")
         if observation_deadline is not None and now >= observation_deadline:
             raise RuntimeError(
                 f"run {run_id} did not reach a terminal state within "
@@ -139,7 +141,7 @@ def watch(
 
         now = time.time()
         if matrix_deadline is not None and now >= matrix_deadline:
-            raise RuntimeError("17-run validation budget of 204 minutes has elapsed")
+            raise RuntimeError("controlled validation budget of 204 minutes has elapsed")
         if observation_deadline is not None and now >= observation_deadline:
             raise RuntimeError(
                 f"run {run_id} did not reach a terminal state within "
@@ -153,7 +155,7 @@ def watch(
         deadlines = [deadline for deadline in (matrix_deadline, observation_deadline) if deadline is not None]
         remaining = min(deadlines) - now if deadlines else interval_seconds
         if remaining <= 0:
-            raise RuntimeError("17-run validation budget of 204 minutes has elapsed")
+            raise RuntimeError("controlled validation budget of 204 minutes has elapsed")
         time.sleep(min(interval_seconds, remaining))
 
 
@@ -254,10 +256,10 @@ def build_cases(
         return candidates
     if final_shards not in (2, 3):
         raise ValueError("final phase requires a selected two- or three-shard matrix")
-    final = [
-        ("cold-warmup", args.final_sha, args.final_ref, final_shards, "cold"),
-        *[("warm", args.final_sha, args.final_ref, final_shards, "warm") for _ in range(10)],
-    ]
+    # Candidate verification and final acceptance use the same exact-SHA
+    # verification cache scope. A separate final "cold" run would therefore
+    # be impossible after the selected candidate has already completed.
+    final = [("warm", args.final_sha, args.final_ref, final_shards, "warm") for _ in range(10)]
     return candidates + final if phase == "all" else final
 
 
@@ -343,7 +345,7 @@ def run_cases(
         run_dir = args.output_dir / f"{index:02d}-{phase}"
         try:
             if time.time() >= deadline:
-                raise RuntimeError("17-run validation budget of 204 minutes has elapsed")
+                raise RuntimeError("controlled validation budget of 204 minutes has elapsed")
             run_id = dispatch(args.repository, ref, target_sha)
             watch(
                 args.repository,
@@ -354,7 +356,7 @@ def run_cases(
             )
             payload = download_metrics(args.repository, run_id, run_dir)
             if time.time() >= deadline:
-                raise RuntimeError("17-run validation budget of 204 minutes has elapsed")
+                raise RuntimeError("controlled validation budget of 204 minutes has elapsed")
             validate_sample(payload, target_sha, expected_cache)
             if payload["storybook_shard_total"] != expected_shards:
                 raise ValueError(
