@@ -254,7 +254,9 @@ search_fixed 'choices=("all", "candidates", "final")' .github/scripts/run_ci_gat
 search_fixed "select_final_matrix" .github/scripts/run_ci_gate_validation.py
 search_fixed "--candidate-dir" .github/scripts/run_ci_gate_validation.py
 search_fixed "OBSERVATION_GRACE_SECONDS = 180" .github/scripts/run_ci_gate_validation.py
-search_fixed '"status,conclusion"' .github/scripts/run_ci_gate_validation.py
+search_fixed '"status,conclusion,startedAt"' .github/scripts/run_ci_gate_validation.py
+search_fixed "Runner queue time is outside that execution budget" .github/scripts/run_ci_gate_validation.py
+search_fixed "matrix_deadline=deadline" .github/scripts/run_ci_gate_validation.py
 search_fixed "did not reach a terminal state within" .github/scripts/run_ci_gate_validation.py
 search_fixed "timeout-seconds=720" .github/scripts/run_ci_gate_validation.py
 search_fixed "interval-seconds=15" .github/scripts/run_ci_gate_validation.py

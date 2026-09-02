@@ -61,7 +61,7 @@
 
 - Method: six serial candidate verification dispatches, deterministic shard selection from candidate P90s, then eleven serial final verification dispatches, followed by metrics aggregation.
 - covers: `REQ-CI-DURATION-001`, `REQ-CI-DURATION-002`, `REQ-CI-DURATION-004`
-- Pass condition: one cold warm-up is excluded; the final ten warm runs prove full scope and cache hits and satisfy the fixed P50/P90 seconds thresholds. The measurement runner observes each workflow to a natural terminal state with a fixed 180-second collection grace after the 720-second execution threshold; it never cancels a workflow at that threshold, and metrics still fail closed when measured execution exceeds 720 seconds.
+- Pass condition: one cold warm-up is excluded; the final ten warm runs prove full scope and cache hits and satisfy the fixed P50/P90 seconds thresholds. The measurement runner observes each workflow to a natural terminal state with a fixed 180-second collection grace after GitHub's `startedAt` timestamp, so runner queue time remains separate from repository execution; it never cancels a workflow at that threshold. The fixed 204-minute serial matrix deadline still bounds queueing and execution together, and metrics fail closed when measured execution exceeds 720 seconds.
 
 ## Related ADRs
 

@@ -81,16 +81,27 @@ def dispatch(repository: str, ref: str, target_sha: str) -> int:
     return int(match.group(1))
 
 
-def watch(repository: str, run_id: int, timeout_seconds: int, interval_seconds: int) -> None:
+def watch(
+    repository: str,
+    run_id: int,
+    timeout_seconds: int,
+    interval_seconds: int,
+    matrix_deadline: float | None = None,
+) -> None:
     """Poll a run to natural completion without cancelling at the metric deadline.
 
     The workflow's measured gate execution remains bounded by ``timeout_seconds``
-    in ``validate_sample``. The extra observation grace only covers final reusable
-    workflow/metrics collection and is never used to accept a slower sample.
+    in ``validate_sample``. Runner queue time is outside that execution budget,
+    so the observation grace starts only after GitHub reports ``startedAt``. The
+    optional matrix deadline still bounds the whole serial acceptance run.
     """
-    observation_deadline = time.monotonic() + timeout_seconds + OBSERVATION_GRACE_SECONDS
+    started_at: datetime | None = None
+    observation_deadline: float | None = None
     while True:
-        if time.monotonic() >= observation_deadline:
+        now = time.time()
+        if matrix_deadline is not None and now >= matrix_deadline:
+            raise RuntimeError("17-run validation budget of 204 minutes has elapsed")
+        if observation_deadline is not None and now >= observation_deadline:
             raise RuntimeError(
                 f"run {run_id} did not reach a terminal state within "
                 f"{timeout_seconds}s plus {OBSERVATION_GRACE_SECONDS}s observation grace"
@@ -104,7 +115,7 @@ def watch(repository: str, run_id: int, timeout_seconds: int, interval_seconds: 
                 "--repo",
                 repository,
                 "--json",
-                "status,conclusion",
+                "status,conclusion,startedAt",
             ],
             capture=True,
             timeout_seconds=60,
@@ -115,17 +126,34 @@ def watch(repository: str, run_id: int, timeout_seconds: int, interval_seconds: 
             status = json.loads(result.stdout)
         except json.JSONDecodeError as error:
             raise RuntimeError(f"run {run_id} status response was not valid JSON") from error
+        reported_started_at = status.get("startedAt")
+        if reported_started_at is None:
+            if status.get("status") != "queued":
+                raise RuntimeError(f"run {run_id} did not report startedAt after leaving the queue")
+        else:
+            parsed_started_at = parse_utc(reported_started_at, "startedAt")
+            if started_at is not None and parsed_started_at != started_at:
+                raise RuntimeError(f"run {run_id} reported inconsistent startedAt values")
+            started_at = parsed_started_at
+            observation_deadline = started_at.timestamp() + timeout_seconds + OBSERVATION_GRACE_SECONDS
+
+        now = time.time()
+        if matrix_deadline is not None and now >= matrix_deadline:
+            raise RuntimeError("17-run validation budget of 204 minutes has elapsed")
+        if observation_deadline is not None and now >= observation_deadline:
+            raise RuntimeError(
+                f"run {run_id} did not reach a terminal state within "
+                f"{timeout_seconds}s plus {OBSERVATION_GRACE_SECONDS}s observation grace"
+            )
         if status.get("status") == "completed":
             conclusion = status.get("conclusion")
             if conclusion != "success":
                 raise RuntimeError(f"run {run_id} completed with conclusion {conclusion!r}")
             return
-        remaining = observation_deadline - time.monotonic()
+        deadlines = [deadline for deadline in (matrix_deadline, observation_deadline) if deadline is not None]
+        remaining = min(deadlines) - now if deadlines else interval_seconds
         if remaining <= 0:
-            raise RuntimeError(
-                f"run {run_id} did not reach a terminal state within "
-                f"{timeout_seconds}s plus {OBSERVATION_GRACE_SECONDS}s observation grace"
-            )
+            raise RuntimeError("17-run validation budget of 204 minutes has elapsed")
         time.sleep(min(interval_seconds, remaining))
 
 
@@ -317,7 +345,13 @@ def run_cases(
             if time.time() >= deadline:
                 raise RuntimeError("17-run validation budget of 204 minutes has elapsed")
             run_id = dispatch(args.repository, ref, target_sha)
-            watch(args.repository, run_id, args.timeout_seconds, args.interval_seconds)
+            watch(
+                args.repository,
+                run_id,
+                args.timeout_seconds,
+                args.interval_seconds,
+                matrix_deadline=deadline,
+            )
             payload = download_metrics(args.repository, run_id, run_dir)
             if time.time() >= deadline:
                 raise RuntimeError("17-run validation budget of 204 minutes has elapsed")
