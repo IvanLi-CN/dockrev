@@ -54,6 +54,25 @@ async fn metrics_store_memory_reader_uses_the_writer_connection() {
 }
 
 #[tokio::test]
+async fn metrics_store_rollups_include_fractional_samples_at_bucket_start() {
+    let metrics = MetricsStore::open(&temp_path("metrics-fractional-bucket-start"))
+        .await
+        .unwrap();
+    metrics
+        .insert_samples(&[sample("svc-a", "2026-08-16T13:10:00.001Z", 10.0, 1_000)])
+        .await
+        .unwrap();
+
+    for resolution_seconds in [MINUTE_RESOLUTION_SECONDS, FIVE_MINUTE_RESOLUTION_SECONDS] {
+        let history = metrics
+            .history_since("svc-a", "1970-01-01T00:00:00Z", Some(resolution_seconds))
+            .await
+            .unwrap();
+        assert_eq!(history.samples.len(), 1, "resolution={resolution_seconds}");
+    }
+}
+
+#[tokio::test]
 async fn metrics_store_gc_removes_orphans_when_no_active_services_remain() {
     let metrics = MetricsStore::open(&temp_path("metrics-gc-empty-active"))
         .await
