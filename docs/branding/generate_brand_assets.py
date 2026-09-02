@@ -354,7 +354,8 @@ def generate_raster_assets(icon_dark: Path, icon_square: Path, icon_maskable: Pa
                 DOCS_PUBLIC_DIR / "dockrev-icon.png",
             ],
         )
-        copy_to(maskable_icon_180, [WEB_PUBLIC_DIR / "apple-touch-icon.png", DOCS_PUBLIC_DIR / "apple-touch-icon.png"])
+        # The docs site keeps its own Apple touch icon; the product app uses Manifest metadata only.
+        copy_to(maskable_icon_180, [DOCS_PUBLIC_DIR / "apple-touch-icon.png"])
         copy_to(icon_192, [WEB_PUBLIC_DIR / "pwa-192.png"])
         copy_to(icon_256, [WEB_PUBLIC_DIR / "favicon.png", DOCS_PUBLIC_DIR / "favicon.png"])
         copy_to(icon_512, [WEB_PUBLIC_DIR / "pwa-512.png"])

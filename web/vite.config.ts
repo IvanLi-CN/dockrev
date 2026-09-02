@@ -5,13 +5,12 @@ import { fileURLToPath, URL } from 'node:url'
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
-import { VitePWA } from 'vite-plugin-pwa'
+import { VitePWA, type ExtendManifestEntriesHook, type VitePluginPWAAPI } from 'vite-plugin-pwa'
 
 const INSTALL_ICON_SOURCES = [
   'favicon.svg',
   'favicon.png',
   'favicon.ico',
-  'apple-touch-icon.png',
   'pwa-192.png',
   'pwa-512.png',
   'pwa-maskable-192.png',
@@ -68,7 +67,30 @@ function dockrevAppHtmlPlugin(assets: InstallIconAsset[], base: string, command:
         .replaceAll('%DOCKREV_FAVICON_SVG%', assetUrls.get('favicon.svg') ?? '')
         .replaceAll('%DOCKREV_FAVICON_PNG%', assetUrls.get('favicon.png') ?? '')
         .replaceAll('%DOCKREV_FAVICON_ICO%', assetUrls.get('favicon.ico') ?? '')
-        .replaceAll('%DOCKREV_APPLE_TOUCH_ICON%', assetUrls.get('apple-touch-icon.png') ?? '')
+    },
+  }
+}
+
+type VitePwaPlugin = Plugin & { api?: VitePluginPWAAPI }
+
+function excludeManifestFromPrecache(enabled: boolean): Plugin {
+  return {
+    name: 'dockrev-pwa-precache-contract',
+    enforce: 'post',
+    buildStart() {
+      if (!enabled) return
+      const config = this.environment.config
+      const pwaPlugin = config.plugins.find((plugin) => plugin.name === 'vite-plugin-pwa') as
+        | VitePwaPlugin
+        | undefined
+      if (!pwaPlugin?.api) throw new Error('vite-plugin-pwa API is unavailable')
+
+      const filterManifestEntries: ExtendManifestEntriesHook = (entries) =>
+        entries.filter((entry) => {
+          const url = typeof entry === 'string' ? entry : entry.url
+          return url !== 'manifest.webmanifest'
+        })
+      pwaPlugin.api.extendManifestEntries(filterManifestEntries)
     },
   }
 }
@@ -93,6 +115,38 @@ export default defineConfig(({ command, mode }) => {
     return `${base}${command === 'build' ? asset.fileName : asset.source}`
   }
 
+  const pwaPlugins = VitePWA({
+    disable: !pwaEnabled,
+    base,
+    strategies: 'injectManifest',
+    srcDir: 'src',
+    filename: 'sw.ts',
+    injectRegister: false,
+    registerType: 'prompt',
+    injectManifest: {
+      maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+      globPatterns: ['**/*.{js,css,html}'],
+    },
+    includeManifestIcons: false,
+    manifest: {
+      id: base,
+      name: 'Dockrev',
+      short_name: 'Dockrev',
+      description: 'A calm, exact Docker Compose operations console with offline-first readonly snapshots.',
+      theme_color: '#061227',
+      background_color: '#061227',
+      display: 'standalone',
+      start_url: base,
+      scope: base,
+      icons: [
+        { src: installIconUrl('pwa-192.png'), sizes: '192x192', type: 'image/png', purpose: 'any' },
+        { src: installIconUrl('pwa-512.png'), sizes: '512x512', type: 'image/png', purpose: 'any' },
+        { src: installIconUrl('pwa-maskable-192.png'), sizes: '192x192', type: 'image/png', purpose: 'maskable' },
+        { src: installIconUrl('pwa-maskable-512.png'), sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+      ],
+    },
+  })
+
   return {
     base,
     plugins: [
@@ -100,42 +154,8 @@ export default defineConfig(({ command, mode }) => {
       react(),
       tailwindcss(),
       installIconAssetPlugin(installIconAssets),
-      VitePWA({
-        disable: !pwaEnabled,
-        base,
-        strategies: 'injectManifest',
-        srcDir: 'src',
-        filename: 'sw.ts',
-        injectRegister: false,
-        registerType: 'prompt',
-        injectManifest: {
-          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-          globPatterns: [
-            '**/*.{js,css,html}',
-            'favicon-????????????.{svg,png,ico}',
-            'apple-touch-icon-????????????.png',
-            'pwa-*-????????????.png',
-          ],
-        },
-        includeManifestIcons: false,
-        manifest: {
-          id: base,
-          name: 'Dockrev',
-          short_name: 'Dockrev',
-          description: 'A calm, exact Docker Compose operations console with offline-first readonly snapshots.',
-          theme_color: '#061227',
-          background_color: '#061227',
-          display: 'standalone',
-          start_url: base,
-          scope: base,
-          icons: [
-            { src: installIconUrl('pwa-192.png'), sizes: '192x192', type: 'image/png', purpose: 'any' },
-            { src: installIconUrl('pwa-512.png'), sizes: '512x512', type: 'image/png', purpose: 'any' },
-            { src: installIconUrl('pwa-maskable-192.png'), sizes: '192x192', type: 'image/png', purpose: 'maskable' },
-            { src: installIconUrl('pwa-maskable-512.png'), sizes: '512x512', type: 'image/png', purpose: 'maskable' },
-          ],
-        },
-      }),
+      ...pwaPlugins,
+      excludeManifestFromPrecache(pwaEnabled),
     ],
     resolve: {
       alias: {

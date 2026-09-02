@@ -33,11 +33,13 @@ Entry points:
 
 ## Installed app icon updates
 
-Dockrev keeps the Web App Manifest `id`, `scope`, and `start_url` stable for an installation. Each install icon is published at a content-hashed URL, while the HTML, manifest, and service worker are revalidated. This lets a new build deliver new icon bytes without changing the installed app identity or relying on a reinstall as the normal update path.
+Dockrev keeps the Web App Manifest `id`, `scope`, and `start_url` stable for an installation. Manifest regular/maskable icons and browser favicons are published at content-hashed URLs, while the HTML, manifest, and service worker are revalidated. The product page uses the Manifest as its only install-icon metadata source and does not declare `apple-touch-icon`. A new build can therefore deliver new icon bytes without changing the installed app identity or relying on a reinstall as the normal update path.
 
 Android Chrome WebAPKs and Chromium desktop PWA installations follow the manifest update lifecycle and its platform-controlled refresh schedule. A browser shortcut that is not a manifest-backed PWA may keep the icon it captured when it was created.
 
-Safari on iOS/iPadOS and existing Web Clips have a separate limitation: when both are present, WebKit gives the `apple-touch-icon` compatibility link precedence over manifest icons. Dockrev updates that link through the same content-hashed release, but an existing Web Clip's saved icon and metadata cannot be force-migrated by the website. The same applies to browsers without an in-place manifest migration mechanism. This is a platform limitation, not a routine Dockrev update instruction.
+Safari on iOS/iPadOS and existing Web Clips have a separate limitation: an existing Web Clip keeps the icon and metadata saved by the platform, and a website cannot force-migrate it. Dockrev does not restore an `apple-touch-icon` link on the product page or claim to update an existing Web Clip. The same applies to browsers without an in-place manifest migration mechanism. This is a platform limitation, not a routine Dockrev update instruction.
+
+After a release, verify the deployed product artifact with an HTML parser and the Web App Manifest: confirm one manifest link, no product `apple-touch-icon` link, unchanged `id`/`scope`/`start_url`, current hashed icon bytes, revalidation headers for metadata, immutable headers for hashed icons, and no manifest/icon entries in `sw.js` precache.
 
 ## First validation checklist
 
