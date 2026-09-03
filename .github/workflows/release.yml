@@ -56,6 +56,7 @@ jobs:
       github.event.workflow_run.event == 'push') ||
       github.event_name == 'workflow_dispatch'
     permissions:
+      actions: write
       contents: write
       packages: read
       pull-requests: read
@@ -320,210 +321,71 @@ jobs:
             --timeout-seconds 720 \
             --poll-seconds 15
 
-  build-web:
-    name: Build web dist
+  preparation-gate:
+    name: Verify release preparation artifact
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: [prepare, source-gate]
+    timeout-minutes: 15
+    needs: [prepare]
     if: ${{ needs.prepare.outputs.should_release == 'true' }}
+    permissions:
+      actions: write
+      contents: read
+    outputs:
+      run_id: ${{ steps.ensure.outputs.run_id }}
+      artifact_name: ${{ steps.ensure.outputs.artifact_name }}
+      manifest_sha256: ${{ steps.ensure.outputs.manifest_sha256 }}
+      recovery: ${{ steps.ensure.outputs.recovery }}
     env:
-      APP_EFFECTIVE_VERSION: ${{ needs.prepare.outputs.app_effective_version }}
       TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - name: Checkout
+      - name: Checkout trusted main workflow helpers
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.TARGET_SHA }}
+          ref: main
+          fetch-depth: 1
 
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.6
-          # Avoid GitHub API rate limits (setup-bun fetches tags/releases).
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build web (optional)
+      - name: Locate or recover exact-SHA preparation
+        id: ensure
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -f web/package.json ]]; then
-            cd web
-            bun install --frozen-lockfile
-            bun run build
-          else
-            echo "No web/ package; skipping"
-          fi
+          python3 .github/scripts/release_preparation.py ensure \
+            --repository "${GITHUB_REPOSITORY}" \
+            --target-sha "${TARGET_SHA}" \
+            --token "${GH_TOKEN}" \
+            --timeout-seconds 720 \
+            --poll-seconds 15 \
+            --output "$RUNNER_TEMP/release-preparation.json"
+          python3 - "$RUNNER_TEMP/release-preparation.json" <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import sys
+          from pathlib import Path
 
-      - name: Upload web dist artifact (if present)
-        if: ${{ hashFiles('web/dist/**') != '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-dist-${{ env.TARGET_SHA }}
-          path: web/dist
-          retention-days: 1
+          payload = json.loads(Path(sys.argv[1]).read_text())
+          for key in ("run_id", "artifact_name", "manifest_sha256", "recovery"):
+              print(f"{key}={payload.get(key, '')}")
+          PY
 
-  build-binaries-amd64:
-    name: Build binaries (amd64)
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    needs: [prepare, source-gate, build-web]
-    if: ${{ needs.prepare.outputs.should_release == 'true' }}
-    env:
-      APP_EFFECTIVE_VERSION: ${{ needs.prepare.outputs.app_effective_version }}
-      TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
-      CARGO_TARGET_DIR: target/ci/amd64
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ env.TARGET_SHA }}
-
-      - name: Download web dist artifact (best-effort)
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: web-dist-${{ env.TARGET_SHA }}
-          path: web/dist
-
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y musl-tools pkg-config libsqlite3-dev
-
-      - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@v1
-        with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-
-      - name: Cache cargo directories
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ${{ env.CARGO_TARGET_DIR }}
-          key: ${{ runner.os }}-cargo-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}-${{ github.job }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-${{ env.RUST_TOOLCHAIN }}-
-
-      - name: Add musl target
-        run: rustup target add x86_64-unknown-linux-musl
-
-      - name: Build release binaries (linux/amd64)
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo build -p dockrev-api --bin dockrev --release --locked
-          cargo build -p dockrev-api --bin dockrev --release --locked --target x86_64-unknown-linux-musl
-          cargo build -p dockrev-supervisor --bin dockrev-supervisor --release --locked
-          cargo build -p dockrev-supervisor --bin dockrev-supervisor --release --locked --target x86_64-unknown-linux-musl
-
-      - name: Stage docker artifact (linux/amd64 musl)
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p dist/ci/docker/amd64
-          cp target/ci/amd64/x86_64-unknown-linux-musl/release/dockrev dist/ci/docker/amd64/dockrev
-          cp target/ci/amd64/x86_64-unknown-linux-musl/release/dockrev-supervisor dist/ci/docker/amd64/dockrev-supervisor
-
-      - name: Smoke test (linux/amd64 musl)
-        shell: bash
+      - name: Summarize preparation proof
+        if: always()
         env:
-          DOCKREV_SMOKE_BIN: dist/ci/docker/amd64/dockrev
-          APP_EFFECTIVE_VERSION: ${{ env.APP_EFFECTIVE_VERSION }}
-        run: bash ./.github/scripts/smoke-test.sh
-
-      - name: Upload binaries artifact (amd64)
-        uses: actions/upload-artifact@v4
-        with:
-          name: binaries-amd64-${{ env.TARGET_SHA }}
-          path: |
-            target/ci/amd64/release/dockrev
-            target/ci/amd64/x86_64-unknown-linux-musl/release/dockrev
-            target/ci/amd64/release/dockrev-supervisor
-            target/ci/amd64/x86_64-unknown-linux-musl/release/dockrev-supervisor
-            dist/ci/docker/amd64/dockrev
-            dist/ci/docker/amd64/dockrev-supervisor
-          retention-days: 1
-
-  build-binaries-arm64:
-    name: Build binaries (arm64)
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 45
-    needs: [prepare, source-gate, build-web]
-    if: ${{ needs.prepare.outputs.should_release == 'true' }}
-    env:
-      APP_EFFECTIVE_VERSION: ${{ needs.prepare.outputs.app_effective_version }}
-      TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
-      CARGO_TARGET_DIR: target/ci/arm64
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ env.TARGET_SHA }}
-
-      - name: Download web dist artifact (best-effort)
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: web-dist-${{ env.TARGET_SHA }}
-          path: web/dist
-
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y musl-tools pkg-config libsqlite3-dev
-
-      - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@v1
-        with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-
-      - name: Cache cargo directories
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ${{ env.CARGO_TARGET_DIR }}
-          key: ${{ runner.os }}-cargo-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}-${{ github.job }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-${{ env.RUST_TOOLCHAIN }}-
-
-      - name: Add musl target
-        run: rustup target add aarch64-unknown-linux-musl
-
-      - name: Build release binaries (linux/arm64)
-        shell: bash
+          PREPARATION_RUN_ID: ${{ steps.ensure.outputs.run_id }}
+          PREPARATION_ARTIFACT: ${{ steps.ensure.outputs.artifact_name }}
+          PREPARATION_RECOVERY: ${{ steps.ensure.outputs.recovery }}
         run: |
           set -euo pipefail
-          cargo build -p dockrev-api --bin dockrev --release --locked
-          cargo build -p dockrev-api --bin dockrev --release --locked --target aarch64-unknown-linux-musl
-          cargo build -p dockrev-supervisor --bin dockrev-supervisor --release --locked
-          cargo build -p dockrev-supervisor --bin dockrev-supervisor --release --locked --target aarch64-unknown-linux-musl
-
-      - name: Stage docker artifact (linux/arm64 musl)
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p dist/ci/docker/arm64
-          cp target/ci/arm64/aarch64-unknown-linux-musl/release/dockrev dist/ci/docker/arm64/dockrev
-          cp target/ci/arm64/aarch64-unknown-linux-musl/release/dockrev-supervisor dist/ci/docker/arm64/dockrev-supervisor
-
-      - name: Upload binaries artifact (arm64)
-        uses: actions/upload-artifact@v4
-        with:
-          name: binaries-arm64-${{ env.TARGET_SHA }}
-          path: |
-            target/ci/arm64/release/dockrev
-            target/ci/arm64/aarch64-unknown-linux-musl/release/dockrev
-            target/ci/arm64/release/dockrev-supervisor
-            target/ci/arm64/aarch64-unknown-linux-musl/release/dockrev-supervisor
-            dist/ci/docker/arm64/dockrev
-            dist/ci/docker/arm64/dockrev-supervisor
-          retention-days: 1
+          {
+            echo "- preparation_run_id: ${PREPARATION_RUN_ID}"
+            echo "- preparation_artifact: ${PREPARATION_ARTIFACT}"
+            echo "- recovery_used: ${PREPARATION_RECOVERY:-false}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   publish:
     name: Publish (GHCR + GitHub Release)
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    needs: [prepare, source-gate, build-binaries-amd64, build-binaries-arm64]
+    needs: [prepare, source-gate, preparation-gate]
     if: ${{ needs.prepare.outputs.should_release == 'true' }}
     permissions:
       actions: write
@@ -550,20 +412,26 @@ jobs:
       - name: Checkout workflow helpers
         uses: actions/checkout@v4
         with:
+          ref: main
           path: .workflow-src
           fetch-depth: 1
 
-      - name: Download binaries (amd64)
+      - name: Download exact-SHA preparation artifact
         uses: actions/download-artifact@v4
         with:
-          name: binaries-amd64-${{ env.TARGET_SHA }}
+          name: ${{ needs.preparation-gate.outputs.artifact_name }}
+          run-id: ${{ needs.preparation-gate.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           path: .
 
-      - name: Download binaries (arm64)
-        uses: actions/download-artifact@v4
-        with:
-          name: binaries-arm64-${{ env.TARGET_SHA }}
-          path: .
+      - name: Validate downloaded preparation manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .workflow-src/.github/scripts/release_preparation.py validate \
+            --manifest release-preparation-manifest.json \
+            --target-sha "${TARGET_SHA}" \
+            --allow-recovery
 
       - name: Ensure docker artifacts are executable
         shell: bash
@@ -1035,7 +903,7 @@ jobs:
     name: Cleanup Actions artifacts
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [prepare, source-gate, build-web, build-binaries-amd64, build-binaries-arm64, publish]
+    needs: [prepare, source-gate, preparation-gate, publish]
     if: ${{ always() && needs.prepare.result == 'success' && needs.prepare.outputs.should_release == 'true' }}
     permissions:
       actions: write
@@ -1069,7 +937,7 @@ jobs:
             const needs = JSON.parse(process.env.NEEDS_JSON ?? "{}");
             const workflowSuccess = Object.values(needs).every((n) => n?.result === "success");
 
-            const keepPrefixes = ["web-dist-", "binaries-amd64-", "binaries-arm64-"];
+            const keepPrefixes = [];
             const shouldKeepOnFailure = (name) => keepPrefixes.some((p) => name.startsWith(p));
             const isDockerBuildRecord = (name) => name.endsWith(".dockerbuild");
 

@@ -118,6 +118,7 @@ workflow_source_next_pending = "python3 .workflow-src/.github/scripts/release_sn
 if workflow_source_next_pending not in text:
     raise SystemExit('[contract-check] expected queue continuation to use workflow-source release_snapshot helper')
 prepare_permissions = """    permissions:
+      actions: write
       contents: write
       packages: read
       pull-requests: read"""
@@ -152,11 +153,14 @@ top_permissions = workflow.fetch("permissions", {})
 publish_permissions = workflow.fetch("jobs").fetch("publish").fetch("permissions", {})
 jobs = workflow.fetch("jobs")
 
-%w[build-web build-binaries-amd64 build-binaries-arm64 publish cleanup-artifacts].each do |job_name|
+%w[publish cleanup-artifacts].each do |job_name|
   needs = Array(jobs.fetch(job_name).fetch("needs"))
   abort "[contract-check] #{job_name} must wait for source-gate" unless needs.include?("source-gate")
 end
+abort "[contract-check] preparation-gate must wait for prepare" unless Array(jobs.fetch("preparation-gate").fetch("needs")).include?("prepare")
 abort "[contract-check] source-gate must have actions: read" unless jobs.fetch("source-gate").fetch("permissions")["actions"] == "read"
+abort "[contract-check] preparation-gate must dispatch recovery with actions: write" unless jobs.fetch("preparation-gate").fetch("permissions")["actions"] == "write"
+abort "[contract-check] publish must wait for preparation-gate" unless Array(jobs.fetch("publish").fetch("needs")).include?("preparation-gate")
 
 abort "[contract-check] release workflow top-level permissions must keep issues: write" unless top_permissions["issues"] == "write"
 abort "[contract-check] release workflow top-level permissions must keep pull-requests: write" unless top_permissions["pull-requests"] == "write"
@@ -285,6 +289,27 @@ search_fixed "DOCKREV_STORYBOOK_ROLLBACK_RACE_PASSED=1" .github/scripts/storyboo
 search_fixed "verify-storybook-coverage.mjs" .github/workflows/ci-main.yml
 search_fixed "resolve-storybook-matrix.py" .github/workflows/ci-main.yml
 search_fixed ".github/storybook-shards.json" .github/scripts/resolve-storybook-matrix.py
+
+echo "[contract-check] release preparation invariants"
+search_fixed "name: Release Preparation" .github/workflows/release-preparation.yml
+search_fixed "retention-days: 1" .github/workflows/release-preparation.yml
+search_fixed "release_preparation.py manifest" .github/workflows/release-preparation.yml
+search_fixed "release_preparation.py validate" .github/workflows/release-preparation.yml
+search_fixed '"publish": False' .github/scripts/release_preparation.py
+search_fixed 'release-recovery-${TARGET_INPUT}' .github/workflows/release-preparation.yml
+search_fixed "release-preparation.yml" .github/scripts/release_preparation.py
+search_fixed "recovery preparation request does not match target_sha" .github/scripts/release_preparation.py
+search_fixed "single recovery preparation run already failed" .github/scripts/release_preparation.py
+python3 .github/scripts/test_release_preparation.py
+ruby -ryaml -e '
+workflow = YAML.load_file(".github/workflows/release-preparation.yml")
+events = workflow.fetch(workflow.key?("on") ? "on" : true)
+abort "[contract-check] preparation workflow must run on main push" unless events.fetch("push").fetch("branches") == ["main"]
+abort "[contract-check] preparation workflow must expose target_sha input" unless events.fetch("workflow_dispatch").fetch("inputs").key?("target_sha")
+permissions = workflow.fetch("permissions")
+abort "[contract-check] preparation workflow must be read-only" unless permissions == {"contents" => "read", "actions" => "read", "pull-requests" => "read"}
+abort "[contract-check] preparation workflow must have a package job" unless workflow.fetch("jobs").key?("package")
+'
 
 echo "[contract-check] quality-gate workflow invariants"
 search_regex "^[[:space:]]*pull_request_target:" .github/workflows/label-gate.yml
