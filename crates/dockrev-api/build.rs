@@ -40,7 +40,7 @@ bun run build</code></pre>
 </html>
 "#;
 
-const PLACEHOLDER_ROUTE_CONTRACT: &str = r#"{"version":1,"basePath":"/","dynamicSegmentPattern":"[A-Za-z0-9][A-Za-z0-9_-]{0,127}","staticPagePaths":["/"],"dynamicPageTemplates":[],"reservedPrefixes":["/api","/supervisor","/assets"]}"#;
+const PLACEHOLDER_ROUTE_CONTRACT: &str = r#"{"version":1,"basePath":"/","dynamicSegmentPattern":"[A-Za-z0-9][A-Za-z0-9_-]{0,127}","staticPagePaths":["/","/queue","/queue/version-inference","/queue/ghcr-webhooks","/queue/ghcr-webhook-inbox","/settings/ghcr-webhooks","/services","/cleanup","/version-inference","/deploy-check","/settings","/settings/account","/settings/maintenance","/settings/backup","/settings/monitoring","/settings/schedules","/settings/release-notes","/settings/notifications","/settings/integrations"],"dynamicPageTemplates":["/queue/:jobId","/services/:stackId","/services/:stackId/:serviceId","/services/:stackId/:serviceId/overview","/services/:stackId/:serviceId/versions","/services/:stackId/:serviceId/history","/services/:stackId/:serviceId/monitoring","/services/:stackId/:serviceId/backup","/services/:stackId/:serviceId/logs","/services/:stackId/:serviceId/settings"],"reservedPrefixes":["/api","/supervisor","/assets"]}"#;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");

@@ -7,6 +7,11 @@ type WaitForCondition = (
   timeoutMs?: number,
 ) => Promise<void>;
 
+export function navigateStoryPath(path: string): void {
+  window.history.pushState({}, "", path);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
 export function recentUpdateLinks(root: ParentNode): HTMLButtonElement[] {
   return Array.from(root.querySelectorAll<HTMLButtonElement>(".recentUpdateLink"));
 }
@@ -54,8 +59,7 @@ export async function assertRecentUpdateKeyboardNavigation({
   row.focus();
   await userEvent.keyboard(key);
   await waitForCondition(() => currentRoutePathname() === `/queue/${jobId}`);
-  window.history.pushState({}, "", returnRoutePath);
-  window.dispatchEvent(new PopStateEvent("popstate"));
+  navigateStoryPath(returnRoutePath);
   await waitForCondition(() => currentRoutePathname() === returnRoutePath);
 }
 
