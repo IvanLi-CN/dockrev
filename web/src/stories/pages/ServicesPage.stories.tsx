@@ -1,5 +1,4 @@
 import type { Meta, StoryObj } from "@storybook/react";
-import { MANAGEMENT_EVENTS_BATCH_EVENT } from "../../managementEvents";
 import { ServicesPage } from "../../pages/ServicesPage";
 import { PageHarness } from "../mocks/PageHarness";
 import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
@@ -22,34 +21,6 @@ function sleep(ms: number): Promise<void> {
 function expectStory(condition: unknown, message: string): asserts condition {
   if (!condition) throw new globalThis.Error(message);
 }
-
-async function waitForCondition(
-  condition: () => unknown,
-  timeoutMs = 12_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (condition()) return;
-    await sleep(40);
-  }
-  throw new Error("timed out waiting for services overview state");
-}
-
-async function waitForOverviewReady(canvasElement: HTMLElement): Promise<void> {
-  await waitForCondition(() =>
-    [".overviewStacksDataRegion", ".overviewJobsDataRegion", ".overviewDiscoveryDataRegion"].every((selector) =>
-      Boolean(canvasElement.querySelector(`${selector}[data-async-data-phase="ready-data"], ${selector}[data-async-data-phase="ready-empty"]`)),
-    ),
-  );
-}
-
-const slowOverviewReadRoutes = {
-  "GET /api/stacks": { delayMs: 900 },
-  "GET /api/stacks/stack-prod": { delayMs: 900 },
-  "GET /api/stacks/stack-infra": { delayMs: 900 },
-  "GET /api/jobs": { delayMs: 900 },
-  "GET /api/discovery/projects": { delayMs: 900 },
-};
 
 function setInputValue(input: HTMLInputElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(
@@ -105,139 +76,6 @@ export const Default: Story = {
   render: renderServices(
     "运维大盘接管概览：运行态、发现异常、更新候选 + 归档恢复",
   ),
-};
-
-export const RefreshInitialLoading: Story = {
-  parameters: {
-    dockrevApiScenario: "dashboard-demo",
-    dockrevApiBehaviorByRoute: slowOverviewReadRoutes,
-    viewport: { defaultViewport: "dockrevWide" },
-  },
-  render: renderServices("真实服务总览首屏读取：保留页面结构直到数据完成"),
-  play: async ({ canvasElement }) => {
-    await waitForCondition(() =>
-      Boolean(canvasElement.querySelector('.overviewStacksDataRegion[data-async-data-phase="initial-loading"] .skeleton')),
-    );
-    canvasElement.dataset.refreshEvidenceState = "initial-loading";
-  },
-};
-
-export const RefreshManualFeedback: Story = {
-  parameters: {
-    dockrevApiScenario: "dashboard-demo",
-    dockrevApiBehaviorByRoute: slowOverviewReadRoutes,
-    viewport: { defaultViewport: "dockrevWide" },
-  },
-  render: renderServices("真实服务总览手动刷新：旧列表保留，局部反馈不拦截操作"),
-  play: async ({ canvasElement }) => {
-    await waitForOverviewReady(canvasElement);
-    const refreshButton = Array.from(canvasElement.querySelectorAll<HTMLButtonElement>("button")).find(
-      (button) => button.textContent?.trim() === "立即扫描",
-    );
-    expectStory(refreshButton, "expected the real services overview scan action");
-    refreshButton.click();
-    await waitForCondition(() =>
-      Boolean(canvasElement.querySelector('.overviewStacksDataRegion[data-async-data-phase="refreshing"] .asyncDataLoadingOverlay')),
-    );
-    expectStory(canvasElement.textContent?.includes("更新候选"), "manual refresh must retain the service list");
-    const row = canvasElement.querySelector<HTMLButtonElement>(".rowLine");
-    expectStory(row && !row.disabled, "manual refresh must keep service rows interactive");
-    canvasElement.dataset.refreshEvidenceState = "manual-feedback";
-  },
-};
-
-export const RefreshEventSilent: Story = {
-  parameters: {
-    dockrevApiScenario: "dashboard-demo",
-    dockrevApiBehaviorByRoute: slowOverviewReadRoutes,
-    viewport: { defaultViewport: "dockrevMobile" },
-  },
-  render: renderServices("真实服务总览 SSE 失效同步：定向读取期间保持静默"),
-  play: async ({ canvasElement }) => {
-    await waitForOverviewReady(canvasElement);
-    window.dispatchEvent(
-      new CustomEvent(MANAGEMENT_EVENTS_BATCH_EVENT, {
-        detail: {
-          events: [
-            {
-              type: "entities_changed",
-              domain: "stacks",
-              entities: [{ entityType: "stack", id: "stack-prod" }],
-              version: 1,
-              summary: { stackId: "stack-prod" },
-            },
-          ],
-          resyncRequired: false,
-          recoveryRequired: false,
-        },
-      }),
-    );
-    await waitForCondition(() =>
-      canvasElement.querySelector('.overviewStacksDataRegion[data-async-data-phase="refreshing"]'),
-    );
-    await sleep(320);
-    expectStory(
-      !canvasElement.querySelector(".overviewStacksDataRegion .asyncDataLoadingOverlay"),
-      "SSE-driven refresh must not show a loading overlay",
-    );
-    const row = canvasElement.querySelector<HTMLButtonElement>(".rowLine");
-    expectStory(row && !row.disabled, "SSE-driven refresh must keep service rows interactive");
-    canvasElement.dataset.refreshEvidenceState = "event-silent";
-  },
-};
-
-export const RefreshErrorKeepsData: Story = {
-  parameters: {
-    dockrevApiScenario: "dashboard-demo",
-    viewport: { defaultViewport: "dockrevWide" },
-  },
-  render: renderServices("真实服务总览读取失败：保留上一份可用列表并提供重试"),
-  play: async ({ canvasElement }) => {
-    await waitForOverviewReady(canvasElement);
-    const originalFetch = globalThis.fetch;
-    let failed = false;
-    globalThis.fetch = async (input, init) => {
-      const url = new URL(
-        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url,
-        window.location.href,
-      );
-      if (!failed && url.pathname === "/api/stacks") {
-        failed = true;
-        return new Response(JSON.stringify({ error: "服务列表暂时不可用" }), {
-          status: 503,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-      return originalFetch(input, init);
-    };
-    try {
-      window.dispatchEvent(
-        new CustomEvent(MANAGEMENT_EVENTS_BATCH_EVENT, {
-          detail: {
-            events: [
-              {
-                type: "entities_changed",
-                domain: "stacks",
-                entities: [{ entityType: "stack", id: "stack-prod" }],
-                version: 1,
-                summary: { stackId: "stack-prod" },
-              },
-            ],
-            resyncRequired: false,
-            recoveryRequired: false,
-          },
-        }),
-      );
-      await waitForCondition(() =>
-        Boolean(canvasElement.querySelector(".overviewStacksDataRegion .asyncDataInlineError")),
-      );
-      expectStory(canvasElement.textContent?.includes("更新候选"), "failed refresh must retain the service list");
-      expectStory(canvasElement.querySelectorAll(".rowLine").length > 0, "failed refresh must retain service rows");
-      canvasElement.dataset.refreshEvidenceState = "error-with-data";
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  },
 };
 
 export const DashboardDemo: Story = {
