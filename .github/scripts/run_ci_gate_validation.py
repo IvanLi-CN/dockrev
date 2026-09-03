@@ -96,7 +96,7 @@ def query_run_status(
     repository: str,
     run_id: int,
     deadlines: list[float],
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     """Read one run status with bounded transport retries and no new dispatch."""
     for attempt in range(STATUS_QUERY_ATTEMPTS):
         result = invoke(
@@ -120,9 +120,7 @@ def query_run_status(
                 raise RuntimeError(f"run {run_id} status response was not valid JSON") from error
         if attempt + 1 < STATUS_QUERY_ATTEMPTS:
             time.sleep(min(STATUS_QUERY_RETRY_SECONDS, remaining_before_deadline(deadlines)))
-    raise RuntimeError(
-        f"run {run_id} status query failed after {STATUS_QUERY_ATTEMPTS} attempts"
-    )
+    return None
 
 
 def watch(
@@ -157,6 +155,12 @@ def watch(
             if deadline is not None
         ]
         status = query_run_status(repository, run_id, deadlines)
+        if status is None:
+            # A transient GitHub CLI failure is not a workflow conclusion. Keep
+            # observing this exact dispatched run, subject to the same bounds.
+            remaining = remaining_before_deadline(deadlines) if deadlines else interval_seconds
+            time.sleep(min(interval_seconds, remaining))
+            continue
         reported_started_at = status.get("startedAt")
         if reported_started_at is None:
             if status.get("status") != "queued":

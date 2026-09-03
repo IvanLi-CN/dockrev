@@ -199,6 +199,39 @@ assert_equal(len(retry_calls), 2)
 assert_equal(retry_calls[0][1:], (True, 60))
 assert_equal(retry_clock[0], validation_runner.STATUS_QUERY_RETRY_SECONDS)
 
+transport_calls = []
+transport_clock = [0.0]
+transport_responses = iter(
+    [
+        validation_runner.subprocess.CompletedProcess([], 1, "", "redacted"),
+        validation_runner.subprocess.CompletedProcess([], 1, "", "redacted"),
+        validation_runner.subprocess.CompletedProcess([], 1, "", "redacted"),
+        validation_runner.subprocess.CompletedProcess(
+            [],
+            0,
+            '{"status":"completed","conclusion":"success","startedAt":"1970-01-01T00:00:00Z"}',
+            "",
+        ),
+    ]
+)
+
+
+def fake_transport_invoke(command, *, capture=False, timeout_seconds=None):
+    transport_calls.append((command, capture, timeout_seconds))
+    return next(transport_responses)
+
+
+validation_runner.time.time = lambda: transport_clock[0]
+validation_runner.time.sleep = lambda seconds: transport_clock.__setitem__(
+    0, transport_clock[0] + seconds
+)
+validation_runner.invoke = fake_transport_invoke
+validation_runner.watch("acme/dockrev", 128, 720, 15)
+assert_equal(len(transport_calls), 4)
+assert_equal(
+    transport_clock[0], validation_runner.STATUS_QUERY_RETRY_SECONDS * 2 + 15
+)
+
 deadline_clock = [901.0]
 deadline_responses = iter(
     ['{"status":"completed","conclusion":"success","startedAt":"1970-01-01T00:00:00Z"}']
