@@ -368,9 +368,9 @@ def build_cases(
     return candidates + final if phase == "all" else final
 
 
-def validate_resume_run_ids(run_ids: list[int]) -> None:
-    if len(run_ids) > FINAL_DISPATCHES:
-        raise ValueError(f"at most {FINAL_DISPATCHES} final runs can be resumed")
+def validate_resume_run_ids(run_ids: list[int], max_runs: int = FINAL_DISPATCHES) -> None:
+    if len(run_ids) > max_runs:
+        raise ValueError(f"at most {max_runs} runs can be resumed")
     if any(run_id <= 0 for run_id in run_ids):
         raise ValueError("each resumed GitHub run id must be positive")
     if len(set(run_ids)) != len(run_ids):
@@ -587,10 +587,11 @@ def main() -> int:
         parser.error("final phase requires --candidate-dir from the completed candidates phase")
     if args.phase != "final" and args.candidate_dir is not None:
         parser.error("--candidate-dir is only valid for the final phase")
-    if args.resume_run_id and args.phase != "final":
-        parser.error("--resume-run-id is only valid for the final phase")
+    if args.resume_run_id and args.phase == "all":
+        parser.error("--resume-run-id is valid only for candidates or final phase")
     try:
-        validate_resume_run_ids(args.resume_run_id)
+        max_resume_runs = CANDIDATE_DISPATCHES if args.phase == "candidates" else FINAL_DISPATCHES
+        validate_resume_run_ids(args.resume_run_id, max_resume_runs)
     except ValueError as error:
         parser.error(str(error))
 
@@ -622,7 +623,43 @@ def main() -> int:
         else:
             deadline = write_deadline(args.output_dir / "deadline.json")
             candidate_cases = build_cases(args, "candidates")
-            if not run_cases(args, candidate_cases, 1, deadline, records):
+            for resume_run_id in args.resume_run_id:
+                phase, target_sha, ref, expected_shards, expected_cache = candidate_cases.pop(0)
+                try:
+                    records.append(
+                        collect_case(
+                            args,
+                            len(records) + 1,
+                            phase,
+                            target_sha,
+                            ref,
+                            expected_shards,
+                            expected_cache,
+                            resume_run_id,
+                            deadline,
+                            historical_run=True,
+                        )
+                    )
+                except Exception as error:
+                    (args.output_dir / "failure.json").write_text(
+                        json.dumps(
+                            {
+                                "failed_index": len(records) + 1,
+                                "phase": phase,
+                                "target_sha": target_sha,
+                                "run_id": resume_run_id,
+                                "error": str(error),
+                            },
+                            sort_keys=True,
+                        )
+                        + "\n"
+                    )
+                    print(
+                        f"validation stopped at resumed sample {len(records) + 1}/{TOTAL_DISPATCHES}: {error}",
+                        file=sys.stderr,
+                    )
+                    return 1
+            if not run_cases(args, candidate_cases, len(records) + 1, deadline, records):
                 return 1
             selection = select_final_matrix(records)
             write_matrix(args.output_dir, "candidates", records, selection)

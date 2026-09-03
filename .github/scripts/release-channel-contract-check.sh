@@ -265,6 +265,7 @@ search_fixed "WARM_INVESTIGATION_THRESHOLD_SECONDS = 600" .github/scripts/run_ci
 search_fixed "STATUS_QUERY_ATTEMPTS = 3" .github/scripts/run_ci_gate_validation.py
 search_fixed 'parser.add_argument("--resume-run-id", type=int, action="append", default=[])' .github/scripts/run_ci_gate_validation.py
 search_fixed "resumed GitHub runs must be supplied in chronological order" .github/scripts/run_ci_gate_validation.py
+search_fixed "--resume-run-id is valid only for candidates or final phase" .github/scripts/run_ci_gate_validation.py
 search_fixed 'choices=("all", "candidates", "final")' .github/scripts/run_ci_gate_validation.py
 search_fixed "select_final_matrix" .github/scripts/run_ci_gate_validation.py
 search_fixed "collect_case" .github/scripts/run_ci_gate_validation.py
