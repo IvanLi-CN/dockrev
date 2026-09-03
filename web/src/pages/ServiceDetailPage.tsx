@@ -591,6 +591,7 @@ export function ServiceDetailPage(props: {
       {!isOnline ? <ServiceDetailReadonlyBlocked detail="设置页包含敏感配置与写操作，不会持久化到本地；恢复联网后才可编辑。" title="当前离线，设置页需要联网。" /> : null}
       {isOnline ? (
         <AsyncDataRegion
+          className="serviceDetailSettingsRegion"
           error={settingsPhase === "error" ? settingsError ?? error : null}
           hasData={settings !== null}
           label="正在加载服务设置"
@@ -615,7 +616,7 @@ export function ServiceDetailPage(props: {
               />
             </div>
           </div>
-          <div className="card svcComposeCard">
+          <div className="card">
             <div className="title">Compose 信息</div>
             <div className="kv">
               <div className="kvRow">

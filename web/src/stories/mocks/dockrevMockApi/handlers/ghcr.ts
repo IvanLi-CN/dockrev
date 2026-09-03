@@ -2,8 +2,10 @@ import type {
   AddGitHubPackagesTargetRequest,
   BulkSetGitHubPackagesReposSelectedRequest,
   GitHubPackagesRepo,
+  GitHubPackagesWebhookDelivery,
   JobDetail,
   JobListItem,
+  ListGitHubPackagesWebhookDeliveriesResponse,
   ListGitHubPackagesReposResponse,
   PutGitHubPackagesSettingsRequest,
   RemoveGitHubPackagesTargetRequest,
@@ -12,6 +14,57 @@ import type {
   SyncGitHubPackagesWebhooksResponse,
 } from '../../../../api'
 import type { MockRouteContext } from '../context'
+
+const MOCK_GHCR_DELIVERIES = [
+  {
+    deliveryId: 'delivery-demo-003',
+    receivedAt: '2026-09-03T12:10:00.000Z',
+    firstReceivedAt: '2026-09-03T12:10:00.000Z',
+    owner: 'IvanLi-CN',
+    repo: 'dockrev',
+    fullName: 'IvanLi-CN/dockrev',
+    event: 'package',
+    action: 'published',
+    decision: 'processed',
+    reason: null,
+    responseStatus: 200,
+    jobId: 'job-ghcr-demo-003',
+    jobIds: ['job-ghcr-demo-003'],
+    attemptCount: 1,
+  },
+  {
+    deliveryId: 'delivery-demo-002',
+    receivedAt: '2026-09-03T11:48:00.000Z',
+    firstReceivedAt: '2026-09-03T11:45:00.000Z',
+    owner: 'IvanLi-CN',
+    repo: 'octo-rill',
+    fullName: 'IvanLi-CN/octo-rill',
+    event: 'package',
+    action: 'published',
+    decision: 'ignored',
+    reason: 'repo_not_selected',
+    responseStatus: 200,
+    jobId: null,
+    jobIds: [],
+    attemptCount: 2,
+  },
+  {
+    deliveryId: 'delivery-demo-001',
+    receivedAt: '2026-09-03T11:12:00.000Z',
+    firstReceivedAt: '2026-09-03T11:12:00.000Z',
+    owner: null,
+    repo: null,
+    fullName: null,
+    event: 'package',
+    action: null,
+    decision: 'rejected',
+    reason: 'invalid_signature',
+    responseStatus: 401,
+    jobId: null,
+    jobIds: [],
+    attemptCount: 1,
+  },
+] satisfies GitHubPackagesWebhookDelivery[]
 
 export async function handleGhcrRoutes(ctx: MockRouteContext): Promise<Response | null> {
   const { getBoolean, getString, init, json, makeMockDebug, method, nowIso, parseJsonBody, state: f, url, urlPath, urlPathWithQuery } = ctx
@@ -290,6 +343,49 @@ export async function handleGhcrRoutes(ctx: MockRouteContext): Promise<Response 
 
   if (method === 'GET' && urlPath === '/api/github-packages/webhook/overview') {
     return json(buildGhcrOverview())
+  }
+
+  if (method === 'GET' && urlPath === '/api/github-packages/webhook/deliveries') {
+    const params = url?.searchParams ?? new URLSearchParams()
+    const page = Math.max(1, Number(params.get('page') ?? '1') || 1)
+    const perPage = Math.min(200, Math.max(1, Number(params.get('perPage') ?? '50') || 50))
+    const decision = (params.get('decision') ?? 'all').trim().toLowerCase()
+    const query = (params.get('q') ?? '').trim().toLowerCase()
+    if (!['all', 'processed', 'ignored', 'rejected'].includes(decision)) {
+      return apiError(400, 'invalid_argument', 'unsupported delivery decision')
+    }
+
+    const filtered = MOCK_GHCR_DELIVERIES.filter((delivery) => {
+      if (decision !== 'all' && delivery.decision !== decision) return false
+      if (!query) return true
+      return [
+        delivery.deliveryId,
+        delivery.owner,
+        delivery.repo,
+        delivery.fullName,
+        delivery.event,
+        delivery.action,
+        delivery.decision,
+        delivery.reason,
+        delivery.jobId,
+        ...delivery.jobIds,
+      ].some((value) => value?.toLowerCase().includes(query))
+    })
+    const summary = {
+      processed: MOCK_GHCR_DELIVERIES.filter((delivery) => delivery.decision === 'processed').length,
+      ignored: MOCK_GHCR_DELIVERIES.filter((delivery) => delivery.decision === 'ignored').length,
+      rejected: MOCK_GHCR_DELIVERIES.filter((delivery) => delivery.decision === 'rejected').length,
+    }
+    const offset = (page - 1) * perPage
+    const response: ListGitHubPackagesWebhookDeliveriesResponse = {
+      page,
+      perPage,
+      total: MOCK_GHCR_DELIVERIES.length,
+      filteredTotal: filtered.length,
+      summary,
+      deliveries: filtered.slice(offset, offset + perPage),
+    }
+    return json(response)
   }
 
   if (method === 'POST' && urlPath === '/api/github-packages/repos/selected') {

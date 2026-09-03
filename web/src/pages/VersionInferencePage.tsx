@@ -407,6 +407,7 @@ export function VersionInferencePage(props: {
         />
       ) : null}
       <AsyncDataRegion
+        className="versionInferenceDataRegion"
         error={error}
         hasData={Boolean(overview)}
         label="正在刷新版本推测状态"

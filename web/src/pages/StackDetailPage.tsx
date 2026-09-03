@@ -643,7 +643,7 @@ export function StackDetailPage(props: {
         </AsyncDataRegion>
       </div>
 
-      <div className="card" style={{ marginTop: 16 }}>
+      <div className="card">
         <div className="title">服务</div>
         <div className="stackServiceList">
           {stack.services.map((service) => {

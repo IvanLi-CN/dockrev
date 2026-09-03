@@ -216,6 +216,7 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
   return (
     <div className="page ghcrInboxPage">
       <AsyncDataRegion
+        className="ghcrInboxDataRegion"
         error={error}
         hasData={hasCommittedDataRef.current}
         label="正在刷新 GHCR Webhook 收件箱"
