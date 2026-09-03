@@ -15,7 +15,7 @@
 
 ### Goals
 
-- 把现有 Web 前端升级为真正可安装的 PWA：提供有效 `manifest.webmanifest`、安装图标、app shell precache、SPA navigation fallback，并保留现有 Web Push 行为。
+- 把现有 Web 前端升级为真正可安装的 PWA：提供有效 `manifest.webmanifest`、安装图标、受路由合同约束的 app shell navigation fallback，并保留现有 Web Push 行为。
 - 引入统一的客户端只读快照缓存层：静态资源走 precache，持久只读快照落 IndexedDB，易失上下文仅保留内存态。
 - 所有正式前端路由在已缓存 app shell 后都可离线重载入口；业务数据和写操作仍按各页面原有联网门控执行。
 - 更新检查以 service worker 更新为主：页面激活时检查，页面可见时每 1 小时低频检查；新版本在后台预缓存完成后，用户可立即更新，或在下一次页级导航自动切换。
@@ -73,6 +73,7 @@
 - “稍后”只隐藏更新气泡，不取消 waiting worker；下一次页级导航仍自动切换。激活失败时旧版目标页保留，waiting worker 与重试入口保留。
 - 更新提示固定为不占主内容文档流的右下浮动气泡。下载态禁用更新按钮且不显示 tooltip；离线且尚未 ready 时，气泡仅在已有 hover/focus 期间保留，二者离开后隐藏；ready 后即使离线也可激活。
 - navigation fallback 覆盖 `routes.ts` 的全部正式前端路由，并继续排除 `/api`、静态资产与 `/supervisor` 控制面。fallback 仅启动 app shell，不缓存管理数据或开放离线写。
+- 页面路由合同由 `web/src/routeContract.ts` 声明并在构建时输出内部 JSON；Rust 只为合同中的固定页面和动态模板提供主文档，动态段必须匹配 `[A-Za-z0-9][A-Za-z0-9_-]{0,127}`。未知无扩展名请求返回独立 `404.html`，未知带扩展名资源返回非 HTML 404；页面尾斜杠仅对合同页面 308 到无尾斜杠规范 URL。
 - `/api/version` 仅继续用于展示文本，不作为切换真相源。
 - Service worker 的 precache 只包含当前应用壳所需资源，并不得包含当前构建生成的 manifest、regular/maskable 图标、favicon 或 Apple 图标，也不得依赖 `?v=` 查询参数匹配来掩盖固定文件名；旧 precache 由 Workbox 清理，manifest、HTML、worker 与安装元数据通过网络重新验证发现新版本。
 - Android Chrome 的 WebAPK 与 Chromium desktop 安装均依据稳定 manifest identity 识别应用，并在新 manifest 可用时按平台节流规则更新图标/元数据；现有 iOS/iPadOS Web Clips、浏览器快捷方式及不支持 manifest 迁移的浏览器不能被网站强制更新其已保存的图标或元数据。Dockrev 不把重新安装作为常规更新机制，文档只说明该平台限制与异常恢复边界。
@@ -181,6 +182,19 @@
 - capture_scope: `.page`
 - requested_viewport: 1440x1080
 - viewport_strategy: storybook-static
+- PR: include
+
+### Not Found View
+
+![Not found view](./assets/not-found-view.png)
+
+- source_type: storybook_canvas
+- target_program: mock-only
+- capture_scope: `.notFoundView`
+- requested_viewport: 1440x900
+- viewport_strategy: storybook-static
+- story_id_or_title: `Components/NotFoundView/UnknownDocument`
+- state: unknown document path with reusable 404 actions
 - PR: include
 
 ## Related ADRs

@@ -16610,3 +16610,29 @@ html[data-theme="light"] .homepageHeaderSearchPopover {
     animation-duration: 0.01ms !important;
   }
 }
+.notFoundView {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+}
+
+.notFoundViewCard {
+  width: min(100%, 560px);
+  padding: 32px;
+  border: 1px solid var(--borderColor);
+  border-radius: 12px;
+  background: var(--panel);
+  text-align: center;
+}
+
+.notFoundViewCode {
+  margin: 0;
+  color: var(--color-primary);
+  font: 700 56px/1 var(--font-mono);
+}
+
+.notFoundView h1 { margin: 16px 0 8px; }
+.notFoundViewPath { margin: 0; color: var(--muted2); word-break: break-word; }
+.notFoundViewActions { display: flex; justify-content: center; gap: 12px; margin-top: 24px; }
+.notFoundViewActions button { display: inline-flex; align-items: center; gap: 8px; }

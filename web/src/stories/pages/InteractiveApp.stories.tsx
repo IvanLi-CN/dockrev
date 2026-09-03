@@ -54,7 +54,7 @@ function LocationReset(props: { pathname: string; search?: string }) {
   useEffect(() => {
     const normalized = props.pathname.startsWith('/') ? props.pathname : `/${props.pathname}`
     const url = new URL(window.location.href)
-    url.hash = `#${normalized}`
+    url.pathname = normalized
 
     for (const key of RELEASE_DRAWER_QUERY_KEYS) {
       url.searchParams.delete(key)
@@ -68,8 +68,8 @@ function LocationReset(props: { pathname: string; search?: string }) {
       }
     }
 
-    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
-    window.dispatchEvent(new HashChangeEvent('hashchange'))
+    window.history.replaceState({}, '', `${url.pathname}${url.search}`)
+    window.dispatchEvent(new PopStateEvent('popstate'))
   }, [props.pathname, props.search])
   return null
 }
@@ -267,7 +267,7 @@ export const DeployCheckGateBlocked: Story = {
     )
   },
   play: async ({ canvasElement }) => {
-    await waitForCondition(() => window.location.hash === '#/deploy-check')
+    await waitForCondition(() => window.location.pathname === '/deploy-check')
     await waitForCondition(() => canvasElement.textContent?.includes('BLOCKING') ?? false)
     const dashboardButton = Array.from(canvasElement.querySelectorAll('button')).find((button) => button.textContent?.includes('进入 Dashboard'))
     expectStory(Boolean(dashboardButton?.disabled), 'failed deploy-check must disable Dashboard entry')
@@ -293,7 +293,7 @@ export const DeployCheckGateRefreshFailed: Story = {
   },
   play: async ({ canvasElement }) => {
     await waitForCondition(() => Boolean(canvasElement.querySelector('.appShell')))
-    expectStory(window.location.hash === '#/', 'cached passing report must leave Dashboard accessible after refresh failure')
+    expectStory(window.location.pathname === '/', 'cached passing report must leave Dashboard accessible after refresh failure')
   },
 }
 
@@ -312,7 +312,7 @@ export const DeployCheckGatePassed: Story = {
   },
   play: async ({ canvasElement }) => {
     await waitForCondition(() => Boolean(canvasElement.querySelector('.appShell')))
-    expectStory(window.location.hash === '#/', 'passing deploy-check must leave Dashboard accessible')
+    expectStory(window.location.pathname === '/', 'passing deploy-check must leave Dashboard accessible')
   },
 }
 
@@ -340,7 +340,7 @@ export const DeployCheckGateRefreshBlocked: Story = {
     await waitForCondition(() => Boolean(canvasElement.querySelector('.appShell')))
     await sleep(350)
     window.dispatchEvent(new Event('focus'))
-    await waitForCondition(() => window.location.hash === '#/deploy-check')
+    await waitForCondition(() => window.location.pathname === '/deploy-check')
     const dashboardButton = Array.from(canvasElement.querySelectorAll('button')).find((button) => button.textContent?.includes('进入 Dashboard'))
     expectStory(Boolean(dashboardButton?.disabled), 'foreground deploy-check failure must disable Dashboard entry')
   },
@@ -487,7 +487,7 @@ export const ReleaseDrawerPermissionDeniedOpenSettings: Story = {
       openSettingsButton.click()
       await new Promise((resolve) => setTimeout(resolve, 900))
 
-      if (!window.location.hash.endsWith('#/settings')) {
+      if (!window.location.pathname.endsWith('/settings')) {
         throw new Error('expected CTA to navigate to the settings route')
       }
       if (!document.getElementById('settings-ghcr-webhook')) {

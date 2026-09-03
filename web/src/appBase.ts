@@ -57,7 +57,7 @@ export function isAppBaseEntryPath(basePath: string, pathname: string): boolean 
 }
 
 function runtimeBaseUrl(): string {
-  return import.meta.env.BASE_URL ?? '/'
+  return (import.meta as ImportMeta & { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/'
 }
 
 export function appBasePath(): string {

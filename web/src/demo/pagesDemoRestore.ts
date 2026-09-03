@@ -62,15 +62,15 @@ export function restorePendingPagesDemoPath() {
     }
     const canonicalPath = canonicalPagesDemoEntryPath(currentBasePath, currentPathname)
     if (!canonicalPath) return false
-    window.history.replaceState({}, '', `${canonicalPath}${window.location.search}${window.location.hash}`)
+    window.history.replaceState({}, '', `${canonicalPath}${window.location.search}`)
     return true
   }
   if (!pendingEntry) return false
 
   window.sessionStorage.removeItem(PAGES_DEMO_RESTORE_STORAGE_KEY)
   const nextUrl = new URL(pendingEntry.path, window.location.origin)
-  const next = `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`
-  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`
+  const next = `${nextUrl.pathname}${nextUrl.search}`
+  const current = `${window.location.pathname}${window.location.search}`
   if (next === current) return false
   window.history.replaceState({}, '', next)
   return true

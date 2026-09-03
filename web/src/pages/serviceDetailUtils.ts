@@ -148,7 +148,8 @@ export function openSelfUpgradeUrl(targetUrl: string) {
     const resolved = new URL(targetUrl, window.location.href)
     // Keep Storybook preview navigation inside the iframe while preserving real app behavior.
     if (window.location.pathname.endsWith('/iframe.html') && resolved.origin === window.location.origin) {
-      window.location.hash = `#${resolved.pathname}${resolved.search}${resolved.hash}`
+      window.history.pushState({}, '', `${resolved.pathname}${resolved.search}`)
+      window.dispatchEvent(new PopStateEvent('popstate'))
       return
     }
   } catch {

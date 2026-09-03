@@ -40,6 +40,8 @@ bun run build</code></pre>
 </html>
 "#;
 
+const PLACEHOLDER_ROUTE_CONTRACT: &str = r#"{"version":1,"basePath":"/","dynamicSegmentPattern":"[A-Za-z0-9][A-Za-z0-9_-]{0,127}","staticPagePaths":["/"],"dynamicPageTemplates":[],"reservedPrefixes":["/api","/supervisor","/assets"]}"#;
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
@@ -63,9 +65,18 @@ fn main() {
 
     if dist_src.is_dir() {
         copy_dir(&dist_src, &dist_out).expect("copy web/dist into OUT_DIR");
+        let contract = dist_src.join(".dockrev-route-contract.json");
+        let raw = fs::read_to_string(&contract).expect("web build route contract");
+        let _: serde_json::Value = serde_json::from_str(&raw).expect("valid route contract JSON");
+        fs::write(dist_out.join(".dockrev-route-contract.json"), raw).expect("copy route contract");
     } else {
         fs::write(dist_out.join("index.html"), PLACEHOLDER_INDEX_HTML)
             .expect("write placeholder index.html");
+        fs::write(
+            dist_out.join(".dockrev-route-contract.json"),
+            PLACEHOLDER_ROUTE_CONTRACT,
+        )
+        .expect("write placeholder route contract");
         fs::copy(&favicon_png_src, dist_out.join("favicon.png")).expect("copy favicon.png");
         if favicon_ico_src.is_file() {
             fs::copy(&favicon_ico_src, dist_out.join("favicon.ico")).expect("copy favicon.ico");

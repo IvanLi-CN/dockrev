@@ -163,13 +163,15 @@ export const UpdateHistorySection: Story = {
     rows[4]?.click();
     await waitForCondition(() => currentRoutePathname() === "/queue/job-stack-prod-batch");
 
-    window.location.hash = "#/services/stack-prod/svc-prod-api/history";
+    window.history.pushState({}, "", "/services/stack-prod/svc-prod-api/history");
+    window.dispatchEvent(new PopStateEvent("popstate"));
     await waitForCondition(() => Boolean(findSectionCard(canvasElement, "update-history")));
     const rowsAfterClick = Array.from(canvasElement.querySelectorAll<HTMLElement>(".serviceOperationHistoryRow"));
     rowsAfterClick[0]?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     await waitForCondition(() => currentRoutePathname() === "/queue/job-all-api-5-2-4");
 
-    window.location.hash = "#/services/stack-prod/svc-prod-api/history";
+    window.history.pushState({}, "", "/services/stack-prod/svc-prod-api/history");
+    window.dispatchEvent(new PopStateEvent("popstate"));
     await waitForCondition(() => Boolean(findSectionCard(canvasElement, "update-history")));
     const rowsAfterEnter = Array.from(canvasElement.querySelectorAll<HTMLElement>(".serviceOperationHistoryRow"));
     rowsAfterEnter[1]?.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
@@ -1158,7 +1160,7 @@ export const RollbackActive: Story = {
     expectStory(normalizeText(trigger.textContent).includes("回滚中…"), "active rollback label missing");
     trigger.click();
 
-    await waitForCondition(() => window.location.hash.includes("/queue/job-rollback-service"));
+    await waitForCondition(() => window.location.pathname.includes("/queue/job-rollback-service"));
   },
 };
 

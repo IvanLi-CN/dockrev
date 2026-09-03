@@ -2032,7 +2032,7 @@ async function runInteractive({ baseUrl, browser }) {
           "Expected active api update button to be clickable for job detail navigation.",
         );
       await page.waitForFunction(
-        () => window.location.hash.startsWith("#/queue/job-ui-"),
+        () => window.location.pathname.startsWith("/queue/job-ui-"),
         null,
         { timeout: 10_000 },
       );
@@ -2186,7 +2186,7 @@ async function runInteractive({ baseUrl, browser }) {
           "Expected active service-detail update button to be clickable for job detail navigation.",
         );
       await page.waitForFunction(
-        () => window.location.hash.startsWith("#/queue/job-ui-"),
+        () => window.location.pathname.startsWith("/queue/job-ui-"),
         null,
         { timeout: 10_000 },
       );
@@ -2239,7 +2239,7 @@ async function runInteractive({ baseUrl, browser }) {
           "Expected hydrated services update button to stay clickable for job detail navigation.",
         );
       await page.waitForFunction(
-        () => window.location.hash === "#/queue/job-1",
+        () => window.location.pathname === "/queue/job-1",
         null,
         { timeout: 10_000 },
       );
@@ -2285,7 +2285,7 @@ async function runInteractive({ baseUrl, browser }) {
           "Expected hydrated service-detail update button to stay clickable for job detail navigation.",
         );
       await page.waitForFunction(
-        () => window.location.hash === "#/queue/job-1",
+        () => window.location.pathname === "/queue/job-1",
         null,
         { timeout: 10_000 },
       );

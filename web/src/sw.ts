@@ -3,6 +3,7 @@
 import { clientsClaim } from 'workbox-core'
 import { addPlugins, cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from 'workbox-precaching'
 import { NavigationRoute, registerRoute } from 'workbox-routing'
+import { DYNAMIC_SEGMENT_PATTERN, STATIC_PAGE_PATHS } from './routeContract'
 
 declare let self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: Array<{ url: string; revision: string | null }>
@@ -23,24 +24,19 @@ clientsClaim()
 
 const appBasePath = new URL('./', self.registration.scope).pathname.replace(/\/$/, '')
 const appShellUrl = `${appBasePath || ''}/index.html`
-const appRoute = (pattern: string) =>
-  new RegExp(`^${appBasePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}${pattern}`)
+const escapedBase = appBasePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const escapedPath = (path: string) => path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const appRoute = (pattern: string) => new RegExp(`^${escapedBase}${pattern}`)
+const navigationAllowlist = [
+  ...STATIC_PAGE_PATHS.map((path) => appRoute(path === '/' ? '/?$' : `${escapedPath(path)}\\/?$`)),
+  appRoute(`/queue/${DYNAMIC_SEGMENT_PATTERN}/?$`),
+  appRoute(`/services/${DYNAMIC_SEGMENT_PATTERN}(?:/${DYNAMIC_SEGMENT_PATTERN})?(?:/(?:overview|versions|history|monitoring|backup|logs|settings))?/?$`),
+]
 
 registerRoute(
   new NavigationRoute(createHandlerBoundToURL(appShellUrl), {
     allowlist: [
-      appRoute('/$'),
-      appRoute('/overview$'),
-      appRoute('/queue$'),
-      appRoute('/queue/(?:version-inference|ghcr-webhooks|ghcr-webhook-inbox)$'),
-      appRoute('/queue/[^/]+$'),
-      appRoute('/services$'),
-      appRoute('/services/[^/]+$'),
-      appRoute('/services/[^/]+/[^/]+(?:/(?:overview|versions|history|monitoring|backup|logs|settings))?$'),
-      appRoute('/cleanup$'),
-      appRoute('/version-inference$'),
-      appRoute('/deploy-check$'),
-      appRoute('/settings(?:/(?:account|maintenance|backup|monitoring|schedules|release-notes|notifications|integrations|ghcr-webhooks))?$'),
+      ...navigationAllowlist,
     ],
     denylist: [
       appRoute('/api(?:/|$)'),

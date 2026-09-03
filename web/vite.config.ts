@@ -6,6 +6,7 @@ import { defineConfig, loadEnv, type Plugin } from 'vite'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA, type ExtendManifestEntriesHook, type VitePluginPWAAPI } from 'vite-plugin-pwa'
+import { buildRouteContract } from './src/routeContract'
 
 const INSTALL_ICON_SOURCES = [
   'favicon.svg',
@@ -95,6 +96,36 @@ function excludeManifestFromPrecache(enabled: boolean): Plugin {
   }
 }
 
+function routeContractPlugin(base: string): Plugin {
+  return {
+    name: 'dockrev-route-contract',
+    apply: 'build',
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: '.dockrev-route-contract.json',
+        source: JSON.stringify(buildRouteContract(base), null, 2),
+      })
+    },
+  }
+}
+
+const notFoundHtmlPlugin: Plugin = {
+  name: 'dockrev-not-found-html-contract',
+  enforce: 'post',
+  transformIndexHtml(html, ctx) {
+    if (!ctx.filename.endsWith('/404.html')) return html
+    return html
+      .replace(/\s*<link rel="manifest"[^>]*>/g, '')
+      .replaceAll('<!-- DOCKREV_RUNTIME_CONFIG -->', '')
+  },
+  generateBundle(_options, bundle) {
+    const entry = Object.values(bundle).find((item) => item.type === 'asset' && item.fileName === '404.html')
+    if (!entry || entry.type !== 'asset' || typeof entry.source !== 'string') return
+    entry.source = entry.source.replace(/\s*<link rel="manifest"[^>]*>/g, '')
+  },
+}
+
 // https://vite.dev/config/
 export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
@@ -149,6 +180,7 @@ export default defineConfig(({ command, mode }) => {
 
   return {
     base,
+    appType: 'mpa',
     plugins: [
       dockrevAppHtmlPlugin(installIconAssets, base, command),
       react(),
@@ -156,6 +188,8 @@ export default defineConfig(({ command, mode }) => {
       installIconAssetPlugin(installIconAssets),
       ...pwaPlugins,
       excludeManifestFromPrecache(pwaEnabled),
+      routeContractPlugin(base),
+      notFoundHtmlPlugin,
     ],
     resolve: {
       alias: {
@@ -175,6 +209,14 @@ export default defineConfig(({ command, mode }) => {
     preview: {
       port: previewPort,
       strictPort: true,
+    },
+    build: {
+      rollupOptions: {
+        input: {
+          index: fileURLToPath(new URL('./index.html', import.meta.url)),
+          '404': fileURLToPath(new URL('./404.html', import.meta.url)),
+        },
+      },
     },
   }
 })

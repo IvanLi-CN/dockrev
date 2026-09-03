@@ -54,7 +54,8 @@ export async function assertRecentUpdateKeyboardNavigation({
   row.focus();
   await userEvent.keyboard(key);
   await waitForCondition(() => currentRoutePathname() === `/queue/${jobId}`);
-  window.location.hash = `#${returnRoutePath}`;
+  window.history.pushState({}, "", returnRoutePath);
+  window.dispatchEvent(new PopStateEvent("popstate"));
   await waitForCondition(() => currentRoutePathname() === returnRoutePath);
 }
 

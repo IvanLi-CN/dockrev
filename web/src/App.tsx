@@ -25,6 +25,7 @@ import { GhcrWebhookQueuePage } from "./pages/GhcrWebhookQueuePage";
 import { GhcrWebhookInboxPage } from "./pages/GhcrWebhookInboxPage";
 import { GhcrWebhookRegistryPage } from "./pages/GhcrWebhookRegistryPage";
 import { SupervisorMisroutePage } from "./pages/SupervisorMisroutePage";
+import { NotFoundView } from "./components/NotFoundView";
 import { BrandLogo } from "./BrandLogo";
 import { DeployWelcomePage } from "./pages/DeployWelcomePage";
 import { UnauthorizedPage } from "./pages/UnauthorizedPage";
@@ -122,6 +123,8 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string } {
       return { title: "" };
     case "supervisor-misroute":
       return { title: "部署问题" };
+    case "not-found":
+      return { title: "页面不存在" };
   }
 }
 
@@ -412,14 +415,12 @@ export default function App() {
     const handleLocation = () => sync();
     sync();
     window.addEventListener("popstate", handleLocation);
-    window.addEventListener("hashchange", handleLocation);
     window.addEventListener(
       RELEASE_DRAWER_LOCATION_EVENT,
       handleLocation as EventListener,
     );
     return () => {
       window.removeEventListener("popstate", handleLocation);
-      window.removeEventListener("hashchange", handleLocation);
       window.removeEventListener(
         RELEASE_DRAWER_LOCATION_EVENT,
         handleLocation as EventListener,
@@ -432,10 +433,7 @@ export default function App() {
     const previousPathname = previousRoutePathRef.current;
     previousRoutePathRef.current = nextPathname;
 
-    const hashRouting =
-      typeof window !== "undefined" &&
-      (window.location.hash.startsWith("#/") ||
-        window.location.pathname.endsWith("/iframe.html"));
+    const hashRouting = false;
 
     if (
       shouldResetReleaseDrawerOnRouteChange({
@@ -485,6 +483,10 @@ export default function App() {
         </div>
       </div>
     );
+  }
+
+  if (route.name === "not-found") {
+    return <NotFoundView pathname={route.pathname} />;
   }
 
   if (authFailure) {
