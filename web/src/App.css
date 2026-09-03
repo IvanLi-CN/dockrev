@@ -2835,6 +2835,24 @@ html[data-theme="light"] .releaseDrawerContent {
 .asyncDataLoadingOverlay {
   font-size: 13px;
   font-weight: 650;
+  pointer-events: none;
+}
+
+.asyncDataInlineError {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 14px 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--color-error) 42%, var(--borderColor));
+  border-radius: 8px;
+  color: color-mix(in srgb, var(--color-error) 72%, var(--text));
+  font-size: 12px;
+}
+
+.asyncDataInlineError > span {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .asyncDataErrorOverlay {

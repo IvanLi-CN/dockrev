@@ -6,10 +6,10 @@ use crate::{
     runner::CommandRunner as _,
 };
 
-const LIFECYCLE_STATUS_TIMEOUT_SECONDS: u64 = 30;
+pub(super) const LIFECYCLE_STATUS_TIMEOUT_SECONDS: u64 = 30;
 const LIFECYCLE_ACTION_TIMEOUT_SECONDS: u64 = 300;
 
-fn lifecycle_compose_stack(state: &AppState, stack: &StackRecord) -> ComposeStack {
+pub(super) fn lifecycle_compose_stack(state: &AppState, stack: &StackRecord) -> ComposeStack {
     let mut compose = stack.compose.clone();
     let managed_override =
         managed_override::managed_override_path(&state.config.managed_override_dir, &stack.id);
@@ -24,7 +24,7 @@ fn lifecycle_compose_stack(state: &AppState, stack: &StackRecord) -> ComposeStac
     }
 }
 
-fn lifecycle_compose_config(
+pub(super) fn lifecycle_compose_config(
     state: &AppState,
 ) -> anyhow::Result<(ComposeRunnerConfig, Option<updater::DockerCliAuthBridge>)> {
     let auth_bridge = state
@@ -46,13 +46,6 @@ fn lifecycle_compose_config(
     ))
 }
 
-fn command_ids(output: &str) -> usize {
-    output
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .count()
-}
-
 pub(crate) fn lifecycle_state_from_counts(all: usize, running: usize) -> ServiceLifecycleState {
     if running > all {
         return ServiceLifecycleState::Unknown;
@@ -64,10 +57,6 @@ pub(crate) fn lifecycle_state_from_counts(all: usize, running: usize) -> Service
     } else {
         ServiceLifecycleState::Partial
     }
-}
-
-fn lifecycle_state_for_compose(all: usize, running: usize) -> ServiceLifecycleState {
-    lifecycle_state_from_counts(all, running)
 }
 
 async fn resolve_lifecycle_subject(
@@ -459,55 +448,22 @@ async fn read_lifecycle_state(
     stack: &StackRecord,
     service: &Service,
 ) -> (ServiceLifecycleState, Option<String>) {
-    let compose = lifecycle_compose_stack(state.as_ref(), stack);
-    let Ok((config, _auth_bridge)) = lifecycle_compose_config(state.as_ref()) else {
-        return (
-            ServiceLifecycleState::Unknown,
-            Some("lifecycle_status_unavailable".to_string()),
-        );
-    };
-    let timeout = Duration::from_secs(LIFECYCLE_STATUS_TIMEOUT_SECONDS);
-    let services = state
-        .runner
-        .run(compose.config_services(&config), timeout)
+    let snapshot = state
+        .lifecycle_snapshots
+        .read(state, stack, std::slice::from_ref(service))
         .await;
-    let service_exists = match services {
-        Ok(output) if output.status == 0 => output
-            .stdout
-            .lines()
-            .any(|name| name.trim() == service.name),
-        _ => {
-            return (
-                ServiceLifecycleState::Unknown,
-                Some("lifecycle_status_unavailable".to_string()),
-            );
+    match snapshot.states.get(&service.name).cloned() {
+        Some(lifecycle_state) => {
+            let reason = if matches!(lifecycle_state, ServiceLifecycleState::Unknown) {
+                snapshot.unavailable_reason
+            } else {
+                None
+            };
+            (lifecycle_state, reason)
         }
-    };
-    if !service_exists {
-        return (
+        None => (
             ServiceLifecycleState::Unknown,
             Some("compose_service_not_found".to_string()),
-        );
-    }
-    let all = state
-        .runner
-        .run(compose.ps_all_q_service(&config, &service.name), timeout)
-        .await;
-    let running = state
-        .runner
-        .run(compose.ps_q_service(&config, &service.name), timeout)
-        .await;
-    match (all, running) {
-        (Ok(all), Ok(running)) if all.status == 0 && running.status == 0 => {
-            let all_count = command_ids(&all.stdout);
-            (
-                lifecycle_state_for_compose(all_count, command_ids(&running.stdout)),
-                None,
-            )
-        }
-        _ => (
-            ServiceLifecycleState::Unknown,
-            Some("lifecycle_status_unavailable".to_string()),
         ),
     }
 }
@@ -517,31 +473,17 @@ pub(crate) async fn lifecycle_states_for_stack(
     stack: &StackRecord,
     services: &[Service],
 ) -> Vec<ServiceLifecycleState> {
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(
-        crate::config::FIXED_CHECK_PARALLELISM,
-    ));
-    let mut tasks = tokio::task::JoinSet::new();
-
-    for (index, service) in services.iter().cloned().enumerate() {
-        let state = Arc::clone(state);
-        let stack = stack.clone();
-        let semaphore = Arc::clone(&semaphore);
-        tasks.spawn(async move {
-            let _permit = semaphore.acquire_owned().await.ok();
-            let (lifecycle_state, _) = read_lifecycle_state(&state, &stack, &service).await;
-            (index, lifecycle_state)
-        });
-    }
-
-    let mut states = vec![ServiceLifecycleState::Unknown; services.len()];
-    while let Some(result) = tasks.join_next().await {
-        if let Ok((index, lifecycle_state)) = result
-            && let Some(state) = states.get_mut(index)
-        {
-            *state = lifecycle_state;
-        }
-    }
-    states
+    let snapshot = state.lifecycle_snapshots.read(state, stack, services).await;
+    services
+        .iter()
+        .map(|service| {
+            snapshot
+                .states
+                .get(&service.name)
+                .cloned()
+                .unwrap_or(ServiceLifecycleState::Unknown)
+        })
+        .collect()
 }
 
 pub(crate) async fn get_service_lifecycle_status(
@@ -823,7 +765,7 @@ mod tests {
             ServiceLifecycleState::Unknown
         );
         assert_eq!(
-            lifecycle_state_for_compose(0, 0),
+            lifecycle_state_from_counts(0, 0),
             ServiceLifecycleState::Stopped
         );
     }

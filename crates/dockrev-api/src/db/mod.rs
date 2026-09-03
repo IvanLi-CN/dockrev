@@ -31,6 +31,37 @@ mod stacks_backup_targets;
 mod tag_history;
 mod update_stops;
 
+pub(super) fn summary_stack_ids(summary: &serde_json::Value) -> Vec<String> {
+    summary
+        .get("changedStackIds")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .filter(|id| !id.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+pub(super) fn append_management_entity_if_missing(
+    entities: &mut Vec<crate::management_events::ManagementEventEntity>,
+    entity_type: &str,
+    id: &str,
+) {
+    if entities
+        .iter()
+        .any(|entity| entity.entity_type == entity_type && entity.id == id)
+    {
+        return;
+    }
+    entities.push(crate::management_events::ManagementEventEntity {
+        entity_type: entity_type.to_string(),
+        id: id.to_string(),
+    });
+}
+
 pub(crate) use jobs::JobListFilters;
 pub(crate) use lifecycle_events::{ServiceLifecycleEventInput, ServiceLifecycleEventRow};
 pub(crate) use service_operations::{

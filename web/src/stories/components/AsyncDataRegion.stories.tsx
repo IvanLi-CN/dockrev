@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react'
 import { AsyncDataRegion, AsyncDataSkeleton } from '../../components/AsyncDataRegion'
-import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../../asyncData'
+import type { AsyncDataOrigin, AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../../asyncData'
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -28,6 +28,7 @@ function RegionPreview(props: {
   phase: AsyncDataPhase
   source?: AsyncDataSource
   trigger?: AsyncDataTrigger
+  origin?: AsyncDataOrigin
   hasData?: boolean
   error?: string
 }) {
@@ -38,6 +39,7 @@ function RegionPreview(props: {
       label="正在同步服务运行态"
       onRetry={() => undefined}
       phase={props.phase}
+      origin={props.origin}
       skeleton={<AsyncDataSkeleton lines={5} />}
       source={props.source}
       trigger={props.trigger}
@@ -47,7 +49,7 @@ function RegionPreview(props: {
   )
 }
 
-function TimedRefreshPreview(props: { source: AsyncDataSource; trigger: AsyncDataTrigger }) {
+function TimedRefreshPreview(props: { source: AsyncDataSource; trigger: AsyncDataTrigger; origin?: AsyncDataOrigin }) {
   const [phase, setPhase] = useState<AsyncDataPhase>('ready-data')
 
   useEffect(() => {
@@ -55,7 +57,7 @@ function TimedRefreshPreview(props: { source: AsyncDataSource; trigger: AsyncDat
     return () => window.clearTimeout(timer)
   }, [])
 
-  return <RegionPreview hasData phase={phase} source={props.source} trigger={props.trigger} />
+  return <RegionPreview hasData phase={phase} source={props.source} trigger={props.trigger} origin={props.origin} />
 }
 
 const meta = {
@@ -84,6 +86,31 @@ export const UserActionRefresh: Story = {
     await sleep(250)
     if (!canvasElement.querySelector('[role="status"]')) {
       throw new Error('user refresh should show its delayed overlay after 200ms')
+    }
+  },
+}
+
+export const EventDrivenRefresh: Story = {
+  render: () => <TimedRefreshPreview origin="event" source="live" trigger="background" />,
+  parameters: { viewport: { defaultViewport: 'dockrevMobile' } },
+  play: async ({ canvasElement }) => {
+    await sleep(300)
+    if (canvasElement.querySelector('[role="status"]')) {
+      throw new Error('event refresh must remain silent while retaining the last good data')
+    }
+    if (!canvasElement.textContent?.includes('运行中: 3')) {
+      throw new Error('event refresh must retain the last good data')
+    }
+  },
+}
+
+export const RecoveryRefresh: Story = {
+  render: () => <TimedRefreshPreview origin="recovery" source="live" trigger="background" />,
+  parameters: { viewport: { defaultViewport: 'dockrevMobile' } },
+  play: async ({ canvasElement }) => {
+    await sleep(300)
+    if (canvasElement.querySelector('[role="status"]')) {
+      throw new Error('recovery refresh must remain silent while retaining the last good data')
     }
   },
 }

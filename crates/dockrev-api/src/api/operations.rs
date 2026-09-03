@@ -4,9 +4,11 @@ use std::collections::HashSet;
 
 use crate::service_check;
 mod lifecycle;
+mod lifecycle_snapshot;
 mod progress_persistence;
 mod transitions;
 pub(crate) use lifecycle::*;
+pub(crate) use lifecycle_snapshot::LifecycleSnapshotCoordinator;
 pub(crate) use progress_persistence::*;
 pub(crate) use transitions::*;
 

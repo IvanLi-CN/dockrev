@@ -345,6 +345,7 @@ async fn run_runtime_scan_for_job(
     let mut services_drifted = 0u32;
     let mut services_updated = 0u32;
     let mut stacks_with_errors: u32 = 0;
+    let mut changed_stack_ids = BTreeSet::new();
 
     let manifest_digest_cache = service_check::new_manifest_digest_cache();
     let repo_tags_cache = service_check::new_repo_tags_cache();
@@ -529,6 +530,7 @@ async fn run_runtime_scan_for_job(
             }
 
             services_updated += 1;
+            changed_stack_ids.insert(stack_id.clone());
             if outcome.candidate_digest_changed
                 && outcome.candidate_digest.is_some()
                 && needs_version_inference_for_tags(
@@ -627,6 +629,7 @@ async fn run_runtime_scan_for_job(
         "hostPlatform": host_platform,
         "scope": scope.as_str(),
         "stackIds": stack_ids,
+        "changedStackIds": changed_stack_ids.into_iter().collect::<Vec<_>>(),
         "stacksScanned": stacks_scanned,
         "stacksWithErrors": stacks_with_errors,
         "servicesWithRuntimeDigest": services_with_runtime,

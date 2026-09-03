@@ -47,7 +47,8 @@ describe('management polling guard', () => {
   test('refreshes stack lists from complete REST snapshots with the guarded request path', () => {
     const overview = readFileSync(resolve(import.meta.dir, '..', 'src/pages/useOverviewPageState.tsx'), 'utf8')
     const services = readFileSync(resolve(import.meta.dir, '..', 'src/pages/useServicesPageState.tsx'), 'utf8')
-    expect(overview).toContain('requestRefresh({ domains })')
+    expect(overview).toContain('createOverviewRefreshCoordinator')
+    expect(overview).toContain('OverviewRefreshIntent')
     expect(overview).toContain('setStacks(nextStacks)')
     expect(services).toContain('setStacks(nextStacks)')
     expect(services).toContain('setArchivedStacks(nextArchived)')

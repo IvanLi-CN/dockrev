@@ -44,9 +44,14 @@ import { useManagementEventBatch } from '../managementEvents'
 import { usePwaStatus } from '../pwaStatus'
 import { buildReadonlySnapshotKey, readReadonlySnapshot, writeReadonlySnapshot } from '../readonlySnapshotCache'
 import { useSupervisorHealth } from '../useSupervisorHealth'
-import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
+import type { AsyncDataOrigin, AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
 import { buildAllAggregateScope } from './aggregateUpdateScope'
 import { selectOverviewJobsForCard,toOverviewJobCardItem } from './overviewJobsCard'
+import {
+  createOverviewRefreshCoordinator,
+  type OverviewDataDomain,
+  type OverviewRefreshIntent,
+} from './overviewRefreshCoordinator'
 
 import {
 buildDiscoveryIssue,
@@ -76,8 +81,6 @@ type ServicesOverviewSnapshotPayload = {
   jobs: CompactJobListItem[]
   discoveredProjects: DiscoveredProject[]
 }
-
-type OverviewDataDomain = 'stacks' | 'jobs' | 'discovery'
 
 function isServicesOverviewSnapshotPayload(value: unknown, expectedQueryKey: string): value is ServicesOverviewSnapshotPayload {
   if (!value || typeof value !== 'object') return false
@@ -123,6 +126,7 @@ export function useOverviewPageState(props: {
   const [discoveryLoadError, setDiscoveryLoadError] = useState<string | null>(null)
   const [loadSource, setLoadSource] = useState<AsyncDataSource>('none')
   const [loadTrigger, setLoadTrigger] = useState<AsyncDataTrigger>('background')
+  const [loadOrigin, setLoadOrigin] = useState<AsyncDataOrigin>('initial')
   const [noticeJobId, setNoticeJobId] = useState<string | null>(null)
   const [noticeDiscoveryJobId, setNoticeDiscoveryJobId] = useState<string | null>(null)
   const [noticeReconcileJobId, setNoticeReconcileJobId] = useState<string | null>(null)
@@ -141,10 +145,14 @@ export function useOverviewPageState(props: {
   const jobsLoadedRef = useRef(false)
   const discoveryLoadedRef = useRef(false)
   const detailsRef = useRef<Record<string, StackDetail | undefined>>({})
+  const refreshRunnerRef = useRef<(intent: OverviewRefreshIntent, signal: AbortSignal) => Promise<void>>(() => Promise.resolve())
+  const refreshCoordinatorRef = useRef<ReturnType<typeof createOverviewRefreshCoordinator> | null>(null)
   stacksLoadedRef.current = stacksLoaded
   jobsLoadedRef.current = jobsLoaded
   discoveryLoadedRef.current = discoveryLoaded
   detailsRef.current = details
+  const stacksRef = useRef<StackListItem[]>([])
+  stacksRef.current = stacks
   const { beginSubmitting, endSubmitting, trackJob, isTargetBusy, getActiveJobByTarget, isTargetSubmitting } =
     useUpdateActionTracker()
   const supervisor = useSupervisorHealth()
@@ -210,12 +218,21 @@ export function useOverviewPageState(props: {
   const refresh = useCallback(async (options: {
     source?: AsyncDataSource
     trigger?: AsyncDataTrigger
+    origin?: AsyncDataOrigin
     domains?: readonly OverviewDataDomain[]
+    refreshStackList?: boolean
+    detailStackIds?: readonly string[] | 'all'
+    signal?: AbortSignal
   } = {}) => {
     const requestId = ++refreshRequestIdRef.current
     const domains = new Set<OverviewDataDomain>(options.domains ?? ['stacks', 'jobs', 'discovery'])
+    const origin = options.origin ?? (options.trigger === 'user-action' ? 'manual' : 'event')
+    const refreshStackList = options.refreshStackList ?? domains.has('stacks')
+    const detailStackIds = options.detailStackIds ?? 'all'
+    const signal = options.signal
     setLoadSource(options.source ?? 'live')
-    setLoadTrigger(options.trigger ?? 'background')
+    setLoadTrigger(origin === 'manual' ? 'user-action' : 'background')
+    setLoadOrigin(origin)
     if (domains.has('stacks')) {
       latestAppliedStacksRequestIdRef.current = requestId
       setStacksPhase(stacksLoadedRef.current ? 'refreshing' : 'initial-loading')
@@ -235,13 +252,14 @@ export function useOverviewPageState(props: {
     const refreshJobs = async () => {
       if (!domains.has('jobs')) return true
       try {
-        const page = await listCompactJobsPage({ limit: 200 })
+        const page = await listCompactJobsPage({ limit: 200 }, { signal })
         if (requestId !== latestAppliedJobsRequestIdRef.current) return false
         setJobs(page.jobs)
         setJobsLoaded(true)
         setJobsPhase('ready-data')
         return true
       } catch (error: unknown) {
+        if (signal?.aborted) return false
         if (requestId === latestAppliedJobsRequestIdRef.current) {
           setJobsLoadError(error instanceof Error ? error.message : String(error))
           setJobsPhase('error')
@@ -253,13 +271,14 @@ export function useOverviewPageState(props: {
     const refreshDiscovery = async () => {
       if (!domains.has('discovery')) return true
       try {
-        const projects = await listDiscoveryProjects('exclude')
+        const projects = await listDiscoveryProjects('exclude', { signal })
         if (requestId !== latestAppliedProjectsRequestIdRef.current) return false
         setDiscoveredProjects(projects)
         setDiscoveryLoaded(true)
         setDiscoveryPhase('ready-data')
         return true
       } catch (error: unknown) {
+        if (signal?.aborted) return false
         if (requestId === latestAppliedProjectsRequestIdRef.current) {
           setDiscoveryLoadError(error instanceof Error ? error.message : String(error))
           setDiscoveryPhase('error')
@@ -271,37 +290,67 @@ export function useOverviewPageState(props: {
     const refreshStacks = async () => {
       if (!domains.has('stacks')) return true
       let nextStacks: StackListItem[]
-      try {
-        nextStacks = await listStacks()
-      } catch (error: unknown) {
-        if (requestId === latestAppliedStacksRequestIdRef.current) {
-          setStacksLoadError(error instanceof Error ? error.message : String(error))
-          setStacksPhase('error')
+      if (refreshStackList) {
+        try {
+          nextStacks = await listStacks({ signal })
+        } catch (error: unknown) {
+          if (signal?.aborted) return false
+          if (requestId === latestAppliedStacksRequestIdRef.current) {
+            setStacksLoadError(error instanceof Error ? error.message : String(error))
+            setStacksPhase('error')
+          }
+          return false
         }
-        return false
+        if (requestId !== latestAppliedStacksRequestIdRef.current) return false
+        const maxLastScan = nextStacks.map((item) => item.lastCheckAt).sort().at(-1)
+        setStacks(nextStacks)
+        stacksRef.current = nextStacks
+        onLastScanHint(maxLastScan)
+      } else {
+        nextStacks = stacksRef.current
       }
-      if (requestId !== latestAppliedStacksRequestIdRef.current) return false
 
-      const maxLastScan = nextStacks.map((item) => item.lastCheckAt).sort().at(-1)
-      setStacks(nextStacks)
-      onLastScanHint(maxLastScan)
-      const details = await Promise.all(
-        nextStacks.map(async (item) => {
+      const requestedDetailIds = detailStackIds === 'all'
+        ? nextStacks.map((item) => item.id)
+        : Array.from(new Set(detailStackIds)).filter((id) => nextStacks.some((item) => item.id === id))
+      if (requestedDetailIds.length === 0) {
+        if (refreshStackList) {
+          setDetails((prev) => Object.fromEntries(nextStacks.map((item) => [item.id, prev[item.id]])))
+        }
+        setStacksLoaded(true)
+        setStackDetailsLoaded(true)
+        setStacksPhase(nextStacks.length === 0 ? 'ready-empty' : 'ready-data')
+        return true
+      }
+      let detailFetchFailed = false
+      const refreshedDetails = await Promise.all(
+        requestedDetailIds.map(async (id) => {
           try {
-            return { id: item.id, detail: await getStack(item.id) }
+            return { id, detail: await getStack(id, { signal }) }
           } catch {
-            return { id: item.id, detail: undefined }
+            if (!signal?.aborted) detailFetchFailed = true
+            return { id, detail: undefined }
           }
         }),
       )
+      if (signal?.aborted) return false
       if (requestId !== latestAppliedStacksRequestIdRef.current) return false
-      const nextDetails = Object.fromEntries(
-        nextStacks.map((item) => [item.id, details.find((result) => result.id === item.id)?.detail ?? detailsRef.current[item.id]]),
-      )
+      const refreshedById = new Map(refreshedDetails.map((result) => [result.id, result.detail]))
+      const nextDetails = refreshStackList
+        ? Object.fromEntries(
+            nextStacks.map((item) => [item.id, refreshedById.get(item.id) ?? detailsRef.current[item.id]]),
+          )
+        : {
+            ...detailsRef.current,
+            ...Object.fromEntries(
+              requestedDetailIds.map((id) => [id, refreshedById.get(id) ?? detailsRef.current[id]]),
+            ),
+          }
       setDetails(nextDetails)
-      const detailsReady = details.every(({ detail }) => detail !== undefined)
+      detailsRef.current = nextDetails
+      const detailsReady = requestedDetailIds.every((id) => refreshedById.get(id) !== undefined || nextDetails[id] !== undefined)
       setStackDetailsLoaded(detailsReady)
-      if (!detailsReady) {
+      if (detailFetchFailed || !detailsReady) {
         setStacksLoadError('部分 Stack 详情暂时不可用，请重试。')
         setStacksPhase('error')
         return false
@@ -381,11 +430,55 @@ export function useOverviewPageState(props: {
     [details, stacks],
   )
 
-  const requestRefresh = refresh
+  refreshRunnerRef.current = (intent, signal) =>
+    refresh({
+      origin: intent.origin,
+      domains: Array.from(intent.domains),
+      refreshStackList: intent.refreshStackList,
+      detailStackIds: intent.detailStackIds === 'all' ? 'all' : Array.from(intent.detailStackIds),
+      signal,
+    })
+  if (!refreshCoordinatorRef.current) {
+    refreshCoordinatorRef.current = createOverviewRefreshCoordinator((intent, signal) =>
+      refreshRunnerRef.current(intent, signal),
+    )
+  }
+
+  const requestRefresh = useCallback(
+    (options: {
+      source?: AsyncDataSource
+      trigger?: AsyncDataTrigger
+      origin?: AsyncDataOrigin
+      domains?: readonly OverviewDataDomain[]
+      refreshStackList?: boolean
+      detailStackIds?: readonly string[] | 'all'
+    } = {}) => {
+      const origin = options.origin ?? (options.trigger === 'user-action' ? 'manual' : 'event')
+      const intent: OverviewRefreshIntent = {
+        origin,
+        domains: new Set(options.domains ?? ['stacks', 'jobs', 'discovery']),
+        refreshStackList: options.refreshStackList ?? (options.domains?.includes('stacks') ?? true),
+        detailStackIds: options.detailStackIds ? new Set(options.detailStackIds) : 'all',
+      }
+      refreshRunnerRef.current = (nextIntent, signal) =>
+        refresh({
+          source: options.source,
+          origin: nextIntent.origin,
+          domains: Array.from(nextIntent.domains),
+          refreshStackList: nextIntent.refreshStackList,
+          detailStackIds: nextIntent.detailStackIds === 'all' ? 'all' : Array.from(nextIntent.detailStackIds),
+          signal,
+        })
+      return refreshCoordinatorRef.current!.request(intent)
+    },
+    [refresh],
+  )
+
+  useEffect(() => () => refreshCoordinatorRef.current?.dispose(), [])
 
   useEffect(() => {
     if (!snapshotHydrated) return
-    void requestRefresh()
+    void requestRefresh({ origin: 'initial', source: 'live' })
   }, [requestRefresh, snapshotHydrated])
 
   useEffect(() => {
@@ -408,17 +501,26 @@ export function useOverviewPageState(props: {
     )
   }, [details, discoveredProjects, discoveryLoaded, filter, jobs, jobsLoaded, snapshotAnchorFetchedAt, stackDetailsLoaded, stacks, stacksLoaded])
 
-  useManagementEventBatch(({ events, resyncRequired }) => {
+  useManagementEventBatch(({ events, resyncRequired, recoveryRequired }) => {
     if (!snapshotHydrated) return
     const stackIds = new Set<string>()
     const jobsChanged = resyncRequired || events.some((event) => event.domain === 'jobs')
     const discoveryChanged = resyncRequired || events.some((event) => event.domain === 'discovery')
-    let refreshAll = resyncRequired
+    let refreshStackList = resyncRequired || recoveryRequired
     for (const event of events) {
       if (!['jobs', 'stacks', 'services', 'discovery', 'version_inference'].includes(event.domain)) continue
-      if (event.summary.scope === 'all') refreshAll = true
+      if (event.summary.scope === 'all' && event.summary.terminal === true) refreshStackList = true
+      const changedStackIds = event.summary.changedStackIds
+      if (Array.isArray(changedStackIds)) {
+        for (const stackId of changedStackIds) {
+          if (typeof stackId === 'string' && stackId.trim()) stackIds.add(stackId)
+        }
+      }
       for (const entity of event.entities) {
-        if (entity.entityType === 'stack') stackIds.add(entity.id)
+        if (entity.entityType === 'stack') {
+          stackIds.add(entity.id)
+          refreshStackList = true
+        }
         if (entity.entityType === 'service') {
           for (const [stackId, detail] of Object.entries(details)) {
             if (detail?.services.some((service) => service.id === entity.id)) {
@@ -427,7 +529,10 @@ export function useOverviewPageState(props: {
           }
         }
       }
-      if (typeof event.summary.stackId === 'string') stackIds.add(event.summary.stackId)
+      if (typeof event.summary.stackId === 'string') {
+        stackIds.add(event.summary.stackId)
+        refreshStackList = true
+      }
       if (event.domain === 'version_inference' && event.summary.phase === 'finished') {
         const imageRepo = typeof event.summary.imageRepo === 'string'
           ? event.summary.imageRepo.trim().toLowerCase()
@@ -447,12 +552,25 @@ export function useOverviewPageState(props: {
       }
     }
     const sync = async () => {
-      if (refreshAll) return requestRefresh()
+      if (resyncRequired) {
+        return requestRefresh({
+          origin: 'recovery',
+          refreshStackList: true,
+          detailStackIds: 'all',
+        })
+      }
       const domains: OverviewDataDomain[] = []
       if (jobsChanged) domains.push('jobs')
       if (discoveryChanged) domains.push('discovery')
-      if (stackIds.size > 0) domains.push('stacks')
-      if (domains.length > 0) await requestRefresh({ domains })
+      if (stackIds.size > 0 || refreshStackList || recoveryRequired) domains.push('stacks')
+      if (domains.length > 0) {
+        await requestRefresh({
+          origin: recoveryRequired ? 'recovery' : 'event',
+          domains,
+          refreshStackList,
+          detailStackIds: Array.from(stackIds),
+        })
+      }
     }
     void sync().catch((error: unknown) => setError(error instanceof Error ? error.message : String(error)))
   })
@@ -464,12 +582,12 @@ export function useOverviewPageState(props: {
 
       const isAll = detail.scope === 'all' || detail.target === 'all'
       const stackIds = resolveSettledStackIds(detail)
-      if (isAll || stackIds.length === 0) {
-        void requestRefresh().catch((error: unknown) => setError(error instanceof Error ? error.message : String(error)))
-        return
-      }
-
-      void requestRefresh({ domains: ['stacks'] })
+      void requestRefresh({
+        origin: 'event',
+        domains: ['stacks', 'jobs'],
+        refreshStackList: true,
+        detailStackIds: isAll ? stackIds : stackIds,
+      })
         .catch((error: unknown) => setError(error instanceof Error ? error.message : String(error)))
     }
 
@@ -1000,5 +1118,6 @@ export function useOverviewPageState(props: {
     discoveryPhase,
     loadSource,
     loadTrigger,
+    loadOrigin,
   }
 }

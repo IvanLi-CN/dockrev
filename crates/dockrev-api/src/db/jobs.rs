@@ -569,6 +569,7 @@ WHERE id IN (
                         .query_map(params![&job_id], |row| row.get::<_, String>(0))?
                         .collect::<Result<Vec<_>, _>>()?
                 };
+                let changed_stack_ids = summary_stack_ids(&summary_json);
                 if status == "success"
                     && previous
                         .as_ref()
@@ -590,41 +591,38 @@ WHERE id IN (
                     stack_id,
                     service_id,
                     target_service_ids,
+                    changed_stack_ids,
                 )))
             })
             .await
             .context("finish job")?;
 
-        if let Some((job_id, status, job_type, scope, stack_id, service_id, target_service_ids)) =
-            completed
+        if let Some((
+            job_id,
+            status,
+            job_type,
+            scope,
+            stack_id,
+            service_id,
+            target_service_ids,
+            changed_stack_ids,
+        )) = completed
         {
             let mut entities = vec![crate::management_events::ManagementEventEntity {
                 entity_type: "job".to_string(),
                 id: job_id.clone(),
             }];
             if let Some(stack_id) = stack_id.as_ref() {
-                entities.push(crate::management_events::ManagementEventEntity {
-                    entity_type: "stack".to_string(),
-                    id: stack_id.clone(),
-                });
+                super::append_management_entity_if_missing(&mut entities, "stack", stack_id);
+            }
+            for stack_id in &changed_stack_ids {
+                super::append_management_entity_if_missing(&mut entities, "stack", stack_id);
             }
             if let Some(service_id) = service_id.as_ref() {
-                entities.push(crate::management_events::ManagementEventEntity {
-                    entity_type: "service".to_string(),
-                    id: service_id.clone(),
-                });
+                super::append_management_entity_if_missing(&mut entities, "service", service_id);
             }
             for service_id in &target_service_ids {
-                if entities
-                    .iter()
-                    .any(|entity| entity.entity_type == "service" && entity.id == *service_id)
-                {
-                    continue;
-                }
-                entities.push(crate::management_events::ManagementEventEntity {
-                    entity_type: "service".to_string(),
-                    id: service_id.clone(),
-                });
+                super::append_management_entity_if_missing(&mut entities, "service", service_id);
             }
             self.management_events
                 .publish_immediate(
@@ -638,6 +636,7 @@ WHERE id IN (
                         "stackId": stack_id,
                         "serviceId": service_id,
                         "serviceIds": target_service_ids,
+                        "changedStackIds": changed_stack_ids,
                         "terminal": true,
                     }),
                 )
