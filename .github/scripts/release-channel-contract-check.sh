@@ -281,6 +281,7 @@ search_fixed "capture=True" .github/scripts/run_ci_gate_validation.py
 search_fixed "timeout_seconds=60" .github/scripts/run_ci_gate_validation.py
 search_fixed "authoritative start marker" .github/scripts/run_ci_gate_validation.py
 search_fixed "Older verification workflows emitted only the aggregate durations" .github/scripts/run_ci_gate_validation.py
+search_fixed "rebased_legacy_metrics" .github/scripts/run_ci_gate_validation.py
 search_fixed "controlled validation budget of 204 minutes has elapsed" .github/scripts/run_ci_gate_validation.py
 search_fixed "output-dir must not already exist" .github/scripts/run_ci_gate_validation.py
 search_fixed "final ten warm samples" .github/scripts/run_ci_gate_validation.py

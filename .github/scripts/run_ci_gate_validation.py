@@ -231,7 +231,8 @@ def download_metrics(repository: str, run_id: int, directory: Path) -> dict[str,
         "fast_started_at": "Fast main gate /",
         "source_started_at": "Source-build release gate /",
     }
-    if any(key not in payload for key in missing_start_markers):
+    rebased_legacy_metrics = any(key not in payload for key in missing_start_markers)
+    if rebased_legacy_metrics:
         jobs_result = invoke(
             [
                 "gh",
@@ -292,7 +293,10 @@ def download_metrics(repository: str, run_id: int, directory: Path) -> dict[str,
             "wall_seconds": (eligibility - started).total_seconds(),
         }
         for key, value in derived.items():
-            payload.setdefault(key, value)
+            if rebased_legacy_metrics:
+                payload[key] = value
+            else:
+                payload.setdefault(key, value)
     return payload
 
 
