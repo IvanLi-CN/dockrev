@@ -1,25 +1,40 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-09-03T08:35:00Z",
+  "generatedAt": "2026-09-03T09:32:27Z",
   "title": "Design System: Dockrev",
   "extensions": {
     "colorMeta": {
-      "background": { "role": "neutral", "displayName": "Theme Background", "canonical": "var(--bg)", "tonalRamp": ["#040b1a", "#061227", "#0d2342", "#16385d", "#345b83", "#7295b6", "#bed1e4", "#f6faff"] },
-      "panel": { "role": "neutral", "displayName": "Theme Panel", "canonical": "var(--panel)", "tonalRamp": ["#020916", "#07142a", "#0d2342", "#1f466d", "#4a7196", "#8aacc9", "#c9dceb", "#ffffff"] },
-      "raised-panel": { "role": "neutral", "displayName": "Raised Panel", "canonical": "var(--panel2)", "tonalRamp": ["#020814", "#07142a", "#102b4c", "#315775", "#668aa6", "#9fbdd3", "#d3e3ef", "#fbfdff"] },
-      "primary": { "role": "primary", "displayName": "Signal Primary", "canonical": "var(--color-primary)", "tonalRamp": ["#06213a", "#0c4c78", "#0c79cf", "#1f93dd", "#36bffa", "#78d9ff", "#b9ebff", "#e8f8ff"] },
-      "secondary": { "role": "secondary", "displayName": "Signal Secondary", "canonical": "var(--color-secondary)", "tonalRamp": ["#082339", "#0d4d70", "#1f93dd", "#5ccff9", "#8bdcff", "#b7e9ff", "#d5f3ff", "#effbff"] },
-      "info": { "role": "tertiary", "displayName": "Operational Info", "canonical": "var(--color-info)", "tonalRamp": ["#062039", "#0e547e", "#0e8ed2", "#38bdf8", "#70d3ff", "#a9e6ff", "#d1f3ff", "#effbff"] },
-      "success": { "role": "tertiary", "displayName": "Operational Success", "canonical": "var(--color-success)", "tonalRamp": ["#062314", "#0b5a31", "#138347", "#22c55e", "#5bdb89", "#99edb5", "#c8f7d7", "#effcf3"] },
-      "warning": { "role": "tertiary", "displayName": "Operational Warning", "canonical": "var(--color-warning)", "tonalRamp": ["#2a1602", "#6f3904", "#a55706", "#f59e0b", "#ffc45e", "#ffdc9c", "#ffedc8", "#fff8e9"] },
-      "error": { "role": "tertiary", "displayName": "Operational Error", "canonical": "var(--color-error)", "tonalRamp": ["#300715", "#78102d", "#bf1240", "#ef476f", "#fa809b", "#ffb4c4", "#ffd9e0", "#fff1f4"] },
-      "text": { "role": "neutral", "displayName": "Theme Text", "canonical": "var(--text)", "tonalRamp": ["#102842", "#365675", "#5f7e9b", "#8ba4bb", "#b3c5d4", "#d2e0e9", "#e8f1ff", "#ffffff"] },
-      "muted-text": { "role": "neutral", "displayName": "Muted Text", "canonical": "var(--muted2)", "tonalRamp": ["#243c55", "#3a5676", "#5f7891", "#849aae", "#9eb2cc", "#bfd0df", "#dceafe", "#f4f8fc"] },
-      "border": { "role": "neutral", "displayName": "Structural Border", "canonical": "var(--borderColor)", "tonalRamp": ["rgba(14, 56, 100, 0.08)", "rgba(14, 56, 100, 0.12)", "rgba(156, 192, 232, 0.23)", "rgba(156, 192, 232, 0.35)", "rgba(156, 192, 232, 0.48)", "rgba(184, 215, 242, 0.62)", "rgba(211, 230, 247, 0.76)", "rgba(239, 248, 255, 0.9)"] }
+      "background": { "role": "neutral", "displayName": "Dark Theme Background", "canonical": "#061227", "tonalRamp": ["#040b1a", "#061227", "#0d2342", "#16385d", "#345b83", "#7295b6", "#bed1e4", "#f6faff"] },
+      "light-background": { "role": "neutral", "displayName": "Light Theme Background", "canonical": "#f6faff", "tonalRamp": ["#040b1a", "#061227", "#0d2342", "#16385d", "#345b83", "#7295b6", "#bed1e4", "#f6faff"] },
+      "panel": { "role": "neutral", "displayName": "Dark Theme Panel", "canonical": "#0d2342", "tonalRamp": ["#020916", "#07142a", "#0d2342", "#1f466d", "#4a7196", "#8aacc9", "#c9dceb", "#ffffff"] },
+      "light-panel": { "role": "neutral", "displayName": "Light Theme Panel", "canonical": "#ffffff", "tonalRamp": ["#020916", "#07142a", "#0d2342", "#1f466d", "#4a7196", "#8aacc9", "#c9dceb", "#ffffff"] },
+      "raised-panel": { "role": "neutral", "displayName": "Dark Raised Panel", "canonical": "#07142a", "tonalRamp": ["#020814", "#07142a", "#102b4c", "#315775", "#668aa6", "#9fbdd3", "#d3e3ef", "#fbfdff"] },
+      "light-raised-panel": { "role": "neutral", "displayName": "Light Raised Panel", "canonical": "#fbfdff", "tonalRamp": ["#020814", "#07142a", "#102b4c", "#315775", "#668aa6", "#9fbdd3", "#d3e3ef", "#fbfdff"] },
+      "primary": { "role": "primary", "displayName": "Dark Signal Primary", "canonical": "#36bffa", "tonalRamp": ["#06213a", "#0c4c78", "#0c79cf", "#1f93dd", "#36bffa", "#78d9ff", "#b9ebff", "#e8f8ff"] },
+      "primary-highlight": { "role": "primary", "displayName": "Signal Primary Highlight", "canonical": "#8ee7ff", "tonalRamp": ["#06213a", "#0c4c78", "#0c79cf", "#1f93dd", "#36bffa", "#78d9ff", "#b9ebff", "#e8f8ff"] },
+      "primary-deep": { "role": "primary", "displayName": "Signal Primary Deep", "canonical": "#1767a2", "tonalRamp": ["#06213a", "#0c4c78", "#0c79cf", "#1f93dd", "#36bffa", "#78d9ff", "#b9ebff", "#e8f8ff"] },
+      "light-primary": { "role": "primary", "displayName": "Light Signal Primary", "canonical": "#0c79cf", "tonalRamp": ["#06213a", "#0c4c78", "#0c79cf", "#1f93dd", "#36bffa", "#78d9ff", "#b9ebff", "#e8f8ff"] },
+      "secondary": { "role": "secondary", "displayName": "Dark Signal Secondary", "canonical": "#5ccff9", "tonalRamp": ["#082339", "#0d4d70", "#1f93dd", "#5ccff9", "#8bdcff", "#b7e9ff", "#d5f3ff", "#effbff"] },
+      "light-secondary": { "role": "secondary", "displayName": "Light Signal Secondary", "canonical": "#1f93dd", "tonalRamp": ["#082339", "#0d4d70", "#1f93dd", "#5ccff9", "#8bdcff", "#b7e9ff", "#d5f3ff", "#effbff"] },
+      "info": { "role": "tertiary", "displayName": "Dark Operational Info", "canonical": "#38bdf8", "tonalRamp": ["#062039", "#0e547e", "#0e8ed2", "#38bdf8", "#70d3ff", "#a9e6ff", "#d1f3ff", "#effbff"] },
+      "light-info": { "role": "tertiary", "displayName": "Light Operational Info", "canonical": "#0e8ed2", "tonalRamp": ["#062039", "#0e547e", "#0e8ed2", "#38bdf8", "#70d3ff", "#a9e6ff", "#d1f3ff", "#effbff"] },
+      "success": { "role": "tertiary", "displayName": "Dark Operational Success", "canonical": "#22c55e", "tonalRamp": ["#062314", "#0b5a31", "#138347", "#22c55e", "#5bdb89", "#99edb5", "#c8f7d7", "#effcf3"] },
+      "light-success": { "role": "tertiary", "displayName": "Light Operational Success", "canonical": "#138347", "tonalRamp": ["#062314", "#0b5a31", "#138347", "#22c55e", "#5bdb89", "#99edb5", "#c8f7d7", "#effcf3"] },
+      "warning": { "role": "tertiary", "displayName": "Dark Operational Warning", "canonical": "#f59e0b", "tonalRamp": ["#2a1602", "#6f3904", "#a55706", "#f59e0b", "#ffc45e", "#ffdc9c", "#ffedc8", "#fff8e9"] },
+      "light-warning": { "role": "tertiary", "displayName": "Light Operational Warning", "canonical": "#a55706", "tonalRamp": ["#2a1602", "#6f3904", "#a55706", "#f59e0b", "#ffc45e", "#ffdc9c", "#ffedc8", "#fff8e9"] },
+      "error": { "role": "tertiary", "displayName": "Dark Operational Error", "canonical": "#ef476f", "tonalRamp": ["#300715", "#78102d", "#bf1240", "#ef476f", "#fa809b", "#ffb4c4", "#ffd9e0", "#fff1f4"] },
+      "light-error": { "role": "tertiary", "displayName": "Light Operational Error", "canonical": "#bf1240", "tonalRamp": ["#300715", "#78102d", "#bf1240", "#ef476f", "#fa809b", "#ffb4c4", "#ffd9e0", "#fff1f4"] },
+      "text": { "role": "neutral", "displayName": "Dark Theme Text", "canonical": "rgba(232, 241, 255, 0.96)", "tonalRamp": ["#102842", "#365675", "#5f7e9b", "#8ba4bb", "#b3c5d4", "#d2e0e9", "#e8f1ff", "#ffffff"] },
+      "light-text": { "role": "neutral", "displayName": "Light Theme Text", "canonical": "rgba(16, 40, 66, 0.96)", "tonalRamp": ["#102842", "#365675", "#5f7e9b", "#8ba4bb", "#b3c5d4", "#d2e0e9", "#e8f1ff", "#ffffff"] },
+      "muted-text": { "role": "neutral", "displayName": "Dark Muted Text", "canonical": "rgba(158, 178, 204, 0.88)", "tonalRamp": ["#243c55", "#3a5676", "#5f7891", "#849aae", "#9eb2cc", "#bfd0df", "#dceafe", "#f4f8fc"] },
+      "light-muted-text": { "role": "neutral", "displayName": "Light Muted Text", "canonical": "rgba(58, 86, 118, 0.86)", "tonalRamp": ["#243c55", "#3a5676", "#5f7891", "#849aae", "#9eb2cc", "#bfd0df", "#dceafe", "#f4f8fc"] },
+      "border": { "role": "neutral", "displayName": "Dark Structural Border", "canonical": "rgba(156, 192, 232, 0.23)", "tonalRamp": ["rgba(14, 56, 100, 0.08)", "rgba(14, 56, 100, 0.12)", "rgba(156, 192, 232, 0.23)", "rgba(156, 192, 232, 0.35)", "rgba(156, 192, 232, 0.48)", "rgba(184, 215, 242, 0.62)", "rgba(211, 230, 247, 0.76)", "rgba(239, 248, 255, 0.9)"] },
+      "light-border": { "role": "neutral", "displayName": "Light Structural Border", "canonical": "rgba(14, 56, 100, 0.12)", "tonalRamp": ["rgba(14, 56, 100, 0.08)", "rgba(14, 56, 100, 0.12)", "rgba(156, 192, 232, 0.23)", "rgba(156, 192, 232, 0.35)", "rgba(156, 192, 232, 0.48)", "rgba(184, 215, 242, 0.62)", "rgba(211, 230, 247, 0.76)", "rgba(239, 248, 255, 0.9)"] }
     },
     "typographyMeta": {
       "display": { "displayName": "Display", "purpose": "Page-level headings and the largest route context only." },
       "title": { "displayName": "Title", "purpose": "Service, modal, and content-panel titles." },
+      "navigation": { "displayName": "Navigation", "purpose": "Desktop shell navigation labels." },
       "body": { "displayName": "Body", "purpose": "Dense descriptions, table cells, helper text, and operational explanations." },
       "label": { "displayName": "Label", "purpose": "Compact metadata and section labels." },
       "mono": { "displayName": "Mono", "purpose": "Identifiers, versions, paths, resource values, and technical data." }
@@ -93,7 +108,7 @@
   ],
   "narrative": {
     "northStar": "The Dual-Theme Ops Console",
-    "overview": "Dockrev is an operate-mode interface for people working directly with Docker Compose services. It is a compact control surface: service state, version information, resource signals, actions, and outcomes must stay easy to scan while an operator is making a maintenance decision.\n\nDark is the default working theme, with a calm blue-black shell and restrained cyan signal color. A complete light theme mirrors the same information hierarchy for daylight use and personal preference; changing theme alters the palette, never the meaning of status or action. Both themes avoid a marketing or observability-poster feel in favor of durable admin-tool conventions.",
+    "overview": "Dockrev is an operational interface for people working directly with Docker Compose services. It is a compact control surface: service state, version information, resource signals, actions, and outcomes must stay easy to scan while an operator is making a maintenance decision.\n\nDark is the default working theme, with a calm blue-black shell and restrained cyan signal color. A complete light theme mirrors the same information hierarchy for daylight use and personal preference; changing theme alters the palette, never the meaning of status or action. Both themes avoid a marketing or observability-poster feel in favor of durable admin-tool conventions.",
     "keyCharacteristics": [
       "A responsive app shell with compact navigation, top-bar context, and dense operational content.",
       "Theme-aware semantic tokens for action, information, success, warning, error, text, surface, and border.",
@@ -106,7 +121,8 @@
       { "name": "Theme Parity Rule", "body": "Dark and light themes retain the same semantic roles, hierarchy, and interaction affordances.", "section": "colors" },
       { "name": "Dense Sans Rule", "body": "Keep the primary hierarchy in the shared sans stack; do not introduce decorative display or serif typography into product routes.", "section": "typography" },
       { "name": "Layer Before Shadow Rule", "body": "Establish hierarchy with a surface, border, and spacing before adding shadow.", "section": "elevation" },
-      { "name": "One-Pixel Trace Rule", "body": "Borders remain thin traces; operational status does not use thick colored stripes as decoration.", "section": "elevation" }
+      { "name": "One-Pixel Trace Rule", "body": "Borders remain thin traces; operational status does not use thick colored stripes as decoration.", "section": "elevation" },
+      { "name": "Theme Pair Rule", "body": "Use the matching `light-` primitive when a component is rendered in the light theme. Dark tokens are the default primitives; the runtime's semantic aliases select the equivalent light tokens without changing action or status meaning.", "section": "components" }
     ],
     "dos": [
       "Do keep pages compact, dense, and scannable for repeated maintenance work.",

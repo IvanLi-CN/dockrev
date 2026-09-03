@@ -2,45 +2,65 @@
 name: Dockrev
 description: A compact dual-theme control surface for operating self-hosted Docker Compose services.
 colors:
-  background: "var(--bg)"
-  panel: "var(--panel)"
-  raised-panel: "var(--panel2)"
-  primary: "var(--color-primary)"
-  secondary: "var(--color-secondary)"
-  info: "var(--color-info)"
-  success: "var(--color-success)"
-  warning: "var(--color-warning)"
-  error: "var(--color-error)"
-  text: "var(--text)"
-  muted-text: "var(--muted2)"
-  border: "var(--borderColor)"
+  background: "#061227"
+  light-background: "#f6faff"
+  panel: "#0d2342"
+  light-panel: "#ffffff"
+  raised-panel: "#07142a"
+  light-raised-panel: "#fbfdff"
+  primary: "#36bffa"
+  primary-highlight: "#8ee7ff"
+  primary-deep: "#1767a2"
+  light-primary: "#0c79cf"
+  secondary: "#5ccff9"
+  light-secondary: "#1f93dd"
+  info: "#38bdf8"
+  light-info: "#0e8ed2"
+  success: "#22c55e"
+  light-success: "#138347"
+  warning: "#f59e0b"
+  light-warning: "#a55706"
+  error: "#ef476f"
+  light-error: "#bf1240"
+  text: "rgba(232, 241, 255, 0.96)"
+  light-text: "rgba(16, 40, 66, 0.96)"
+  muted-text: "rgba(158, 178, 204, 0.88)"
+  light-muted-text: "rgba(58, 86, 118, 0.86)"
+  border: "rgba(156, 192, 232, 0.23)"
+  light-border: "rgba(14, 56, 100, 0.12)"
 typography:
   display:
-    fontFamily: "var(--font-sans)"
+    fontFamily: "'Avenir Next', 'Avenir', 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', system-ui, -apple-system, sans-serif"
     fontSize: "30px"
     fontWeight: 740
     lineHeight: 1.2
     letterSpacing: "-0.02em"
   title:
-    fontFamily: "var(--font-sans)"
+    fontFamily: "'Avenir Next', 'Avenir', 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', system-ui, -apple-system, sans-serif"
     fontSize: "16px"
     fontWeight: 670
     lineHeight: 1.25
     letterSpacing: "0"
+  navigation:
+    fontFamily: "'Avenir Next', 'Avenir', 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', system-ui, -apple-system, sans-serif"
+    fontSize: "13px"
+    fontWeight: 590
+    lineHeight: 1.5
+    letterSpacing: "0"
   body:
-    fontFamily: "var(--font-sans)"
+    fontFamily: "'Avenir Next', 'Avenir', 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', system-ui, -apple-system, sans-serif"
     fontSize: "12px"
     fontWeight: 440
     lineHeight: 1.5
     letterSpacing: "0"
   label:
-    fontFamily: "var(--font-sans)"
+    fontFamily: "'Avenir Next', 'Avenir', 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', system-ui, -apple-system, sans-serif"
     fontSize: "11px"
     fontWeight: 700
     lineHeight: 1.2
     letterSpacing: "0.07em"
   mono:
-    fontFamily: "var(--font-mono)"
+    fontFamily: "'JetBrains Mono', 'Fira Code', 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace"
     fontSize: "12px"
     fontWeight: 440
     lineHeight: 1.5
@@ -48,6 +68,8 @@ typography:
 rounded:
   control: "10px"
   input: "6px"
+  theme-control: "12px"
+  theme-thumb: "9px"
   card: "16px"
   pill: "999px"
 spacing:
@@ -59,21 +81,42 @@ spacing:
 components:
   button-primary:
     backgroundColor: "{colors.primary}"
-    textColor: "var(--color-primary-content)"
+    textColor: "#011222"
+    typography: "{typography.body}"
+    rounded: "{rounded.control}"
+    padding: "0 {spacing.control-x}"
+    height: "32px"
+  button-primary-light:
+    backgroundColor: "{colors.light-primary}"
+    textColor: "#ffffff"
     typography: "{typography.body}"
     rounded: "{rounded.control}"
     padding: "0 {spacing.control-x}"
     height: "32px"
   button-ghost:
-    backgroundColor: "var(--dockrev-surface)"
+    backgroundColor: "rgba(255, 255, 255, 0.048)"
     textColor: "{colors.text}"
     typography: "{typography.body}"
     rounded: "{rounded.control}"
     padding: "0 {spacing.control-x}"
     height: "32px"
+  button-ghost-light:
+    backgroundColor: "rgba(12, 121, 207, 0.018)"
+    textColor: "{colors.light-text}"
+    typography: "{typography.body}"
+    rounded: "{rounded.control}"
+    padding: "0 {spacing.control-x}"
+    height: "32px"
   input:
-    backgroundColor: "var(--panel2)"
+    backgroundColor: "{colors.raised-panel}"
     textColor: "{colors.text}"
+    typography: "{typography.body}"
+    rounded: "{rounded.input}"
+    padding: "0 14px"
+    height: "36px"
+  input-light:
+    backgroundColor: "{colors.light-raised-panel}"
+    textColor: "{colors.light-text}"
     typography: "{typography.body}"
     rounded: "{rounded.input}"
     padding: "0 14px"
@@ -83,6 +126,39 @@ components:
     textColor: "{colors.text}"
     rounded: "{rounded.card}"
     padding: "14px"
+  card-light:
+    backgroundColor: "{colors.light-panel}"
+    textColor: "{colors.light-text}"
+    rounded: "{rounded.card}"
+    padding: "14px"
+  navigation:
+    backgroundColor: "{colors.raised-panel}"
+    textColor: "{colors.muted-text}"
+    typography: "{typography.navigation}"
+    rounded: "{rounded.control}"
+    padding: "0 {spacing.control-x}"
+    height: "44px"
+  navigation-light:
+    backgroundColor: "{colors.light-raised-panel}"
+    textColor: "{colors.light-muted-text}"
+    typography: "{typography.navigation}"
+    rounded: "{rounded.control}"
+    padding: "0 {spacing.control-x}"
+    height: "44px"
+  theme-preference:
+    backgroundColor: "rgba(255, 255, 255, 0.048)"
+    textColor: "{colors.text}"
+    typography: "{typography.body}"
+    rounded: "{rounded.theme-control}"
+    padding: "0 {spacing.compact}"
+    height: "42px"
+  theme-preference-light:
+    backgroundColor: "rgba(12, 121, 207, 0.018)"
+    textColor: "{colors.light-text}"
+    typography: "{typography.body}"
+    rounded: "{rounded.theme-control}"
+    padding: "0 {spacing.compact}"
+    height: "42px"
 ---
 
 # Design System: Dockrev
@@ -91,7 +167,7 @@ components:
 
 **Creative North Star: "The Dual-Theme Ops Console"**
 
-Dockrev is an operate-mode interface for people working directly with Docker Compose services. It is a compact control surface: service state, version information, resource signals, actions, and outcomes must stay easy to scan while an operator is making a maintenance decision.
+Dockrev is an operational interface for people working directly with Docker Compose services. It is a compact control surface: service state, version information, resource signals, actions, and outcomes must stay easy to scan while an operator is making a maintenance decision.
 
 Dark is the default working theme, with a calm blue-black shell and restrained cyan signal color. A complete light theme mirrors the same information hierarchy for daylight use and personal preference; changing theme alters the palette, never the meaning of status or action. Both themes avoid a marketing or observability-poster feel in favor of durable admin-tool conventions.
 
@@ -104,7 +180,7 @@ Dark is the default working theme, with a calm blue-black shell and restrained c
 
 ## Colors
 
-The palette is semantic and theme-aware: deep blue-black surfaces and cyan signals in dark mode, clear blue-and-white surfaces in light mode, and the same operational state roles in each.
+The palette is semantic and theme-aware: deep blue-black surfaces and cyan signals in dark mode, clear blue-and-white surfaces in light mode, and the same operational state roles in each. The frontmatter records the dark defaults and paired `light-` overrides as literal values so DESIGN.md consumers do not need to resolve runtime CSS variables.
 
 ### Primary
 
@@ -206,6 +282,8 @@ The form language is gently rounded and compact. Standard buttons and navigation
 
 - **Style:** a compact icon control on constrained navigation and a segmented control where the full setting is visible.
 - **Behavior:** switching themes preserves the semantic meaning of the product and honors reduced-motion preferences.
+
+**The Theme Pair Rule.** Use the matching `light-` primitive when a component is rendered in the light theme. Dark tokens are the default primitives; the runtime's semantic aliases select the equivalent light tokens without changing action or status meaning.
 
 ## Do's and Don'ts
 

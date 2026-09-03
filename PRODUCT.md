@@ -20,7 +20,7 @@ Dockrev is a self-hosted Docker and Docker Compose update manager that combines 
 
 ## Operating Context
 
-The product is used as an authenticated operational console on desktop and mobile web. Typical work includes scanning discovered Compose stacks, reviewing candidate image changes and resource state, previewing or applying updates, starting or stopping services, recovering from failures, and checking the resulting job and lifecycle state. This is an operate-mode context: scanability, explicit status, safe confirmations, and repeatable actions take priority over promotional presentation.
+The product is used as an authenticated operational console on desktop and mobile web. Typical work includes scanning discovered Compose stacks, reviewing candidate image changes and resource state, previewing or applying updates, starting or stopping services, recovering from failures, and checking the resulting job and lifecycle state. These maintenance actions carry operational risk, so confirmations and failures must remain explicit alongside their resulting job and lifecycle state.
 
 ## Capabilities and Constraints
 
