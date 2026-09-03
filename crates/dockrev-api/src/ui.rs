@@ -73,7 +73,7 @@ fn classify_ui_request(state: &AppState, path: &str) -> Response {
     }
 
     if let Some(base_prefix) = self_upgrade_base_prefix(state.config.self_upgrade_url.as_str())
-        && let Some(remaining) = strip_prefix_path(&path, &base_prefix)
+        && let Some(remaining) = strip_prefix_path(path, &base_prefix)
     {
         if remaining.is_empty() {
             return supervisor_fallback_html(&state.config.self_upgrade_url);
@@ -149,6 +149,7 @@ fn path_has_extension(path: &str) -> bool {
         .is_some_and(|segment| segment.contains('.'))
 }
 
+#[cfg(test)]
 fn is_contract_page(path: &str) -> bool {
     is_contract_page_with(route_contract(), path)
 }

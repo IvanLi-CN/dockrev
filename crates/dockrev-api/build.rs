@@ -40,6 +40,22 @@ bun run build</code></pre>
 </html>
 "#;
 
+const PLACEHOLDER_NOT_FOUND_HTML: &str = r#"<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dockrev - 404</title>
+  </head>
+  <body>
+    <main>
+      <h1>页面未找到</h1>
+      <p>Dockrev Web UI 未构建。</p>
+    </main>
+  </body>
+</html>
+"#;
+
 const PLACEHOLDER_ROUTE_CONTRACT: &str = r#"{"version":1,"basePath":"/","dynamicSegmentPattern":"[A-Za-z0-9][A-Za-z0-9_-]{0,127}","staticPagePaths":["/","/queue","/queue/version-inference","/queue/ghcr-webhooks","/queue/ghcr-webhook-inbox","/settings/ghcr-webhooks","/services","/cleanup","/version-inference","/deploy-check","/settings","/settings/account","/settings/maintenance","/settings/backup","/settings/monitoring","/settings/schedules","/settings/release-notes","/settings/notifications","/settings/integrations"],"dynamicPageTemplates":["/queue/:jobId","/services/:stackId","/services/:stackId/:serviceId","/services/:stackId/:serviceId/overview","/services/:stackId/:serviceId/versions","/services/:stackId/:serviceId/history","/services/:stackId/:serviceId/monitoring","/services/:stackId/:serviceId/backup","/services/:stackId/:serviceId/logs","/services/:stackId/:serviceId/settings"],"reservedPrefixes":["/api","/supervisor","/assets"]}"#;
 
 fn main() {
@@ -64,6 +80,10 @@ fn main() {
     fs::create_dir_all(&dist_out).expect("create dockrev-ui-dist");
 
     if dist_src.is_dir() {
+        assert!(
+            dist_src.join("404.html").is_file(),
+            "web build 404 document"
+        );
         copy_dir(&dist_src, &dist_out).expect("copy web/dist into OUT_DIR");
         let contract = dist_src.join(".dockrev-route-contract.json");
         let raw = fs::read_to_string(&contract).expect("web build route contract");
@@ -72,6 +92,8 @@ fn main() {
     } else {
         fs::write(dist_out.join("index.html"), PLACEHOLDER_INDEX_HTML)
             .expect("write placeholder index.html");
+        fs::write(dist_out.join("404.html"), PLACEHOLDER_NOT_FOUND_HTML)
+            .expect("write placeholder 404.html");
         validate_route_contract(PLACEHOLDER_ROUTE_CONTRACT);
         fs::write(
             dist_out.join(".dockrev-route-contract.json"),
