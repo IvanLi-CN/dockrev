@@ -4375,6 +4375,12 @@ html[data-theme="light"] .modalOverlay {
   gap: 14px;
 }
 
+.versionInferenceDataRegion {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
 .versionInferenceMetrics {
   margin-top: 12px;
   display: grid;
@@ -5450,6 +5456,12 @@ html[data-theme="light"] .modalOverlay {
 }
 
 .ghcrInboxPage {
+  gap: 12px;
+}
+
+.ghcrInboxDataRegion {
+  display: flex;
+  flex-direction: column;
   gap: 12px;
 }
 
@@ -7090,10 +7102,6 @@ html[data-theme="light"] .serviceLogsTerminal {
   word-break: break-word;
 }
 
-.svcComposeCard {
-  margin-top: 12px;
-}
-
 .svcDetailTabsShell {
   padding-bottom: 2px;
 }
@@ -7348,6 +7356,18 @@ html[data-theme="light"] .serviceLogsTerminal {
   flex-direction: column;
   gap: 16px;
   margin-top: 16px;
+}
+
+.serviceDetailSettingsRegion {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.stackDetailData {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .serviceDetailIdentifiersCard {
@@ -8004,7 +8024,6 @@ html[data-theme="light"] .serviceLogsTerminal {
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  margin-top: 16px;
 }
 
 .serviceTagCardActions {
@@ -10690,6 +10709,12 @@ html[data-theme="light"] .serviceLogsTerminal {
   gap: 16px;
 }
 
+.settingsCoreRegion {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
 .settingsMobileIdentity {
   display: none;
 }
@@ -10954,6 +10979,12 @@ html[data-theme="light"] .serviceLogsTerminal {
   width: min(1160px, 100%);
   margin: 0 auto;
   display: grid;
+  gap: 18px;
+}
+
+.deployWelcomeAsyncRegion {
+  display: flex;
+  flex-direction: column;
   gap: 18px;
 }
 
