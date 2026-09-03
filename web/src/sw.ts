@@ -3,7 +3,7 @@
 import { clientsClaim } from 'workbox-core'
 import { addPlugins, cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from 'workbox-precaching'
 import { NavigationRoute, registerRoute } from 'workbox-routing'
-import { DYNAMIC_SEGMENT_PATTERN, STATIC_PAGE_PATHS } from './routeContract'
+import { DYNAMIC_PAGE_TEMPLATES, DYNAMIC_SEGMENT_PATTERN, RESERVED_PREFIXES, STATIC_PAGE_PATHS } from './routeContract'
 
 declare let self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: Array<{ url: string; revision: string | null }>
@@ -27,10 +27,17 @@ const appShellUrl = `${appBasePath || ''}/index.html`
 const escapedBase = appBasePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const escapedPath = (path: string) => path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const appRoute = (pattern: string) => new RegExp(`^${escapedBase}${pattern}`)
+const contractTemplateRoute = (template: string) => {
+  const path = template
+    .split('/')
+    .filter(Boolean)
+    .map((part) => (part.startsWith(':') ? DYNAMIC_SEGMENT_PATTERN : escapedPath(part)))
+    .join('/')
+  return appRoute(`/${path}\\/?$`)
+}
 const navigationAllowlist = [
   ...STATIC_PAGE_PATHS.map((path) => appRoute(path === '/' ? '/?$' : `${escapedPath(path)}\\/?$`)),
-  appRoute(`/queue/${DYNAMIC_SEGMENT_PATTERN}/?$`),
-  appRoute(`/services/${DYNAMIC_SEGMENT_PATTERN}(?:/${DYNAMIC_SEGMENT_PATTERN})?(?:/(?:overview|versions|history|monitoring|backup|logs|settings))?/?$`),
+  ...DYNAMIC_PAGE_TEMPLATES.map(contractTemplateRoute),
 ]
 
 registerRoute(
@@ -38,11 +45,7 @@ registerRoute(
     allowlist: [
       ...navigationAllowlist,
     ],
-    denylist: [
-      appRoute('/api(?:/|$)'),
-      appRoute('/assets(?:/|$)'),
-      appRoute('/supervisor(?:/|$)'),
-    ],
+    denylist: RESERVED_PREFIXES.map((prefix) => appRoute(`${escapedPath(prefix)}(?:/|$)`)),
   }),
 )
 

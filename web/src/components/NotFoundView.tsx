@@ -1,8 +1,7 @@
 import { ArrowLeft, Home } from 'lucide-react'
 import { BrandLogo } from '../BrandLogo'
-import { navigate, type Route } from '../routes'
 
-export function NotFoundView({ pathname, onHome }: { pathname: string; onHome?: () => void }) {
+export function NotFoundView({ pathname, onHome }: { pathname: string; onHome: () => void }) {
   return (
     <main className="notFoundView" data-visual-evidence-surface="not-found">
       <header className="notFoundViewHeader">
@@ -44,7 +43,7 @@ export function NotFoundView({ pathname, onHome }: { pathname: string; onHome?: 
             <button className="btn btnGhost" type="button" onClick={() => window.history.back()}>
               <ArrowLeft size={16} aria-hidden="true" /> 返回
             </button>
-            <button className="btn btnPrimary" type="button" onClick={onHome ?? (() => navigate({ name: 'overview' }))}>
+            <button className="btn btnPrimary" type="button" onClick={onHome}>
               <Home size={16} aria-hidden="true" /> 首页
             </button>
           </div>
@@ -53,5 +52,3 @@ export function NotFoundView({ pathname, onHome }: { pathname: string; onHome?: 
     </main>
   )
 }
-
-export const notFoundRoute = (pathname: string): Route => ({ name: 'not-found', pathname })

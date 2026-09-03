@@ -486,7 +486,9 @@ export default function App() {
   }
 
   if (route.name === "not-found") {
-    return <NotFoundView pathname={route.pathname} />;
+    return (
+      <NotFoundView pathname={route.pathname} onHome={() => navigate({ name: "overview" })} />
+    );
   }
 
   if (authFailure) {

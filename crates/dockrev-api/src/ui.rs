@@ -9,6 +9,7 @@ use axum::{
     routing::get,
 };
 use include_dir::{Dir, include_dir};
+use regex::Regex;
 use serde::Deserialize;
 use serde_json::json;
 use url::Url;
@@ -17,7 +18,8 @@ use crate::state::AppState;
 
 static WEB_DIST: Dir<'_> = include_dir!("$OUT_DIR/dockrev-ui-dist");
 const NO_CACHE: &str = "no-cache";
-const IMMUTABLE_INSTALL_ICON_CACHE: &str = "public, max-age=31536000, immutable";
+const NO_STORE: &str = "no-store";
+const IMMUTABLE_ASSET_CACHE: &str = "public, max-age=31536000, immutable";
 
 #[derive(Debug, Deserialize)]
 struct RouteContract {
@@ -28,11 +30,13 @@ struct RouteContract {
     #[serde(rename = "staticPagePaths")]
     static_page_paths: Vec<String>,
     #[serde(rename = "dynamicSegmentPattern")]
-    _dynamic_segment_pattern: String,
+    dynamic_segment_pattern: String,
     #[serde(rename = "dynamicPageTemplates")]
-    _dynamic_page_templates: Vec<String>,
+    dynamic_page_templates: Vec<String>,
     #[serde(rename = "reservedPrefixes")]
-    _reserved_prefixes: Vec<String>,
+    reserved_prefixes: Vec<String>,
+    #[serde(skip)]
+    dynamic_segment_regex: OnceLock<Regex>,
 }
 
 static ROUTE_CONTRACT: OnceLock<RouteContract> = OnceLock::new();
@@ -43,7 +47,7 @@ fn route_contract() -> &'static RouteContract {
             WEB_DIST
                 .get_file(".dockrev-route-contract.json")
                 .and_then(|file| std::str::from_utf8(file.contents()).ok())
-                .unwrap_or(r#"{"version":1,"basePath":"/","staticPagePaths":["/"],"dynamicPageTemplates":[],"reservedPrefixes":["/api","/supervisor","/assets"]}"#),
+                .unwrap_or(r#"{"version":1,"basePath":"/","staticPagePaths":["/"],"dynamicSegmentPattern":"[A-Za-z0-9][A-Za-z0-9_-]{0,127}","dynamicPageTemplates":[],"reservedPrefixes":["/api","/supervisor","/assets"]}"#),
         )
         .expect("validated route contract")
     })
@@ -51,31 +55,21 @@ fn route_contract() -> &'static RouteContract {
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::<Arc<AppState>>::new()
-        .route("/", get(index))
-        .route("/assets/{*path}", get(asset))
+        .route("/", get(root))
         .route("/{*path}", get(fallback))
 }
 
-async fn index(State(state): State<Arc<AppState>>) -> Response {
-    serve_index(state.as_ref()).unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
-}
-
-async fn asset(Path(path): Path<String>) -> Response {
-    if path.split('/').any(|seg| seg == "..") {
-        return StatusCode::BAD_REQUEST.into_response();
-    }
-
-    let path = format!("assets/{path}");
-    serve_path(&path).unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
+async fn root(State(state): State<Arc<AppState>>) -> Response {
+    classify_ui_request(state.as_ref(), "")
 }
 
 async fn fallback(State(state): State<Arc<AppState>>, Path(path): Path<String>) -> Response {
-    if path.split('/').any(|seg| seg == "..") {
-        return StatusCode::BAD_REQUEST.into_response();
-    }
+    classify_ui_request(state.as_ref(), &path)
+}
 
-    if path.is_empty() {
-        return index(State(state)).await;
+fn classify_ui_request(state: &AppState, path: &str) -> Response {
+    if path.split('/').any(|seg| seg == "..") {
+        return no_store_status(StatusCode::BAD_REQUEST);
     }
 
     if let Some(base_prefix) = self_upgrade_base_prefix(state.config.self_upgrade_url.as_str())
@@ -87,37 +81,54 @@ async fn fallback(State(state): State<Arc<AppState>>, Path(path): Path<String>) 
         return supervisor_api_misroute_json(&state.config.self_upgrade_url, remaining);
     }
 
-    if path == "api" || path.starts_with("api/") {
-        return StatusCode::NOT_FOUND.into_response();
-    }
+    let contract = route_contract();
+    let Some(relative_path) = relative_request_path(contract, path) else {
+        return not_found_resource();
+    };
 
-    if path == "404.html" {
+    if relative_path == "404.html" {
         return serve_not_found();
     }
-    if path == ".dockrev-route-contract.json" || path.starts_with(".dockrev-route-contract/") {
-        return StatusCode::NOT_FOUND.into_response();
+    if relative_path == ".dockrev-route-contract.json"
+        || relative_path.starts_with(".dockrev-route-contract/")
+    {
+        return not_found_resource();
     }
 
-    if let Some(resp) = serve_path(&path) {
+    if let Some(resp) = serve_path(relative_path) {
         return resp;
     }
 
-    let canonical = canonical_contract_path(&path);
-    if canonical != path && is_contract_page(&canonical) {
+    if is_reserved_relative_path(contract, relative_path) {
+        return not_found_resource();
+    }
+
+    let canonical = canonical_contract_path(contract, path);
+    if canonical != path && is_contract_page_with(contract, &canonical) {
         return redirect_to(&canonical);
     }
-    if is_contract_page(&canonical) {
-        return serve_index(state.as_ref())
-            .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response());
+    if is_contract_page_with(contract, path) {
+        return serve_index(state).unwrap_or_else(not_found_resource);
     }
-    if path_has_extension(&path) {
-        return StatusCode::NOT_FOUND.into_response();
+    if path_has_extension(relative_path) {
+        return not_found_resource();
     }
     serve_not_found()
 }
 
-fn canonical_contract_path(path: &str) -> String {
-    if path.is_empty() || path == "/" || path.ends_with('.') || !path.ends_with('/') {
+fn relative_request_path<'a>(contract: &RouteContract, path: &'a str) -> Option<&'a str> {
+    let base = contract.base_path.trim_matches('/');
+    if base.is_empty() {
+        return Some(path);
+    }
+    strip_prefix_path(path, base)
+}
+
+fn canonical_contract_path(contract: &RouteContract, path: &str) -> String {
+    let Some(relative_path) = relative_request_path(contract, path) else {
+        return path.to_string();
+    };
+    if relative_path.is_empty() || path.ends_with('.') || !path.ends_with('/') {
         return path.to_string();
     }
     path.trim_end_matches('/').to_string()
@@ -139,17 +150,17 @@ fn path_has_extension(path: &str) -> bool {
 }
 
 fn is_contract_page(path: &str) -> bool {
-    let contract = route_contract();
-    let path = format!("/{path}");
-    let base = contract.base_path.trim_matches('/');
-    let relative = if base.is_empty() {
-        path.as_str().to_string()
-    } else if path == format!("/{base}") {
-        "/".to_string()
-    } else if let Some(rest) = path.strip_prefix(&format!("/{base}/")) {
-        format!("/{rest}")
-    } else {
+    is_contract_page_with(route_contract(), path)
+}
+
+fn is_contract_page_with(contract: &RouteContract, path: &str) -> bool {
+    let Some(relative_path) = relative_request_path(contract, path) else {
         return false;
+    };
+    let relative = if relative_path.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{relative_path}")
     };
     if contract
         .static_page_paths
@@ -160,12 +171,12 @@ fn is_contract_page(path: &str) -> bool {
     }
     let relative = relative.trim_start_matches('/');
     contract
-        ._dynamic_page_templates
+        .dynamic_page_templates
         .iter()
-        .any(|template| matches_template(template, relative))
+        .any(|template| matches_template(contract, template, relative))
 }
 
-fn matches_template(template: &str, relative: &str) -> bool {
+fn matches_template(contract: &RouteContract, template: &str, relative: &str) -> bool {
     let template = template.trim_matches('/');
     let parts: Vec<&str> = relative
         .trim_matches('/')
@@ -176,28 +187,35 @@ fn matches_template(template: &str, relative: &str) -> bool {
     parts.len() == expected.len()
         && parts.iter().zip(expected.iter()).all(|(part, expected)| {
             if expected.starts_with(':') {
-                is_safe_segment(part)
+                dynamic_segment_regex(contract).is_match(part)
             } else {
                 part == expected
             }
         })
 }
 
-fn is_safe_segment(segment: &str) -> bool {
-    let len = segment.len();
-    (1..=128).contains(&len)
-        && segment
-            .as_bytes()
-            .first()
-            .is_some_and(|b| b.is_ascii_alphanumeric())
-        && segment
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+fn dynamic_segment_regex(contract: &RouteContract) -> &Regex {
+    contract.dynamic_segment_regex.get_or_init(|| {
+        Regex::new(&format!("^(?:{})$", contract.dynamic_segment_pattern))
+            .expect("validated dynamic segment pattern")
+    })
+}
+
+fn is_reserved_relative_path(contract: &RouteContract, relative_path: &str) -> bool {
+    let path = if relative_path.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{relative_path}")
+    };
+    contract.reserved_prefixes.iter().any(|prefix| {
+        let prefix = prefix.trim_end_matches('/');
+        path == prefix || path.starts_with(&format!("{prefix}/"))
+    })
 }
 
 fn serve_not_found() -> Response {
     let Some(file) = WEB_DIST.get_file("404.html") else {
-        return StatusCode::NOT_FOUND.into_response();
+        return not_found_resource();
     };
     let mut response = Response::new(Body::from(file.contents()));
     *response.status_mut() = StatusCode::NOT_FOUND;
@@ -207,7 +225,19 @@ fn serve_not_found() -> Response {
     );
     response
         .headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static(NO_STORE));
+    response
+}
+
+fn not_found_resource() -> Response {
+    no_store_status(StatusCode::NOT_FOUND)
+}
+
+fn no_store_status(status: StatusCode) -> Response {
+    let mut response = status.into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static(NO_STORE));
     response
 }
 
@@ -391,17 +421,34 @@ fn cache_control_for_ui_path(path: &str) -> Option<&'static str> {
     let file_name = path.rsplit('/').next().unwrap_or(path);
     if matches!(
         file_name,
-        "index.html" | "manifest.webmanifest" | "sw.js" | "registerSW.js"
+        "index.html" | "manifest.webmanifest" | "sw.js" | "sw.mjs" | "registerSW.js"
     ) {
         return Some(NO_CACHE);
     }
-    if is_hashed_install_icon(file_name) {
-        return Some(IMMUTABLE_INSTALL_ICON_CACHE);
+    if is_hashed_install_icon(file_name) || is_hashed_vite_asset(path) {
+        return Some(IMMUTABLE_ASSET_CACHE);
     }
     if is_legacy_install_asset(file_name) {
         return Some(NO_CACHE);
     }
     None
+}
+
+fn is_hashed_vite_asset(path: &str) -> bool {
+    if !path.starts_with("assets/") {
+        return false;
+    }
+    let file_name = path.rsplit('/').next().unwrap_or(path);
+    let Some((stem, _extension)) = file_name.rsplit_once('.') else {
+        return false;
+    };
+    let Some((_prefix, digest)) = stem.rsplit_once('-') else {
+        return false;
+    };
+    digest.len() == 8
+        && digest.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '_' || character == '-'
+        })
 }
 
 fn is_hashed_install_icon(file_name: &str) -> bool {
@@ -445,10 +492,28 @@ fn escape_json_for_inline_script(json: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        IMMUTABLE_INSTALL_ICON_CACHE, NO_CACHE, cache_control_for_ui_path, ensure_trailing_slash,
-        escape_html, escape_json_for_inline_script, is_contract_page, matches_template,
-        path_has_extension,
+        IMMUTABLE_ASSET_CACHE, NO_CACHE, RouteContract, cache_control_for_ui_path,
+        canonical_contract_path, ensure_trailing_slash, escape_html, escape_json_for_inline_script,
+        is_contract_page, is_contract_page_with, is_reserved_relative_path, matches_template,
+        path_has_extension, relative_request_path,
     };
+    use std::sync::OnceLock;
+
+    fn contract_for_test(base_path: &str, dynamic_segment_pattern: &str) -> RouteContract {
+        RouteContract {
+            _version: 1,
+            base_path: base_path.to_string(),
+            static_page_paths: vec!["/".to_string(), "/queue".to_string()],
+            dynamic_segment_pattern: dynamic_segment_pattern.to_string(),
+            dynamic_page_templates: vec!["/queue/:jobId".to_string()],
+            reserved_prefixes: vec![
+                "/api".to_string(),
+                "/supervisor".to_string(),
+                "/assets".to_string(),
+            ],
+            dynamic_segment_regex: OnceLock::new(),
+        }
+    }
 
     #[test]
     fn escape_json_for_inline_script_prevents_script_breakout() {
@@ -489,11 +554,15 @@ mod tests {
     fn hashed_install_icons_are_immutable() {
         assert_eq!(
             cache_control_for_ui_path("pwa-192-3d6999d34c2d.png"),
-            Some(IMMUTABLE_INSTALL_ICON_CACHE)
+            Some(IMMUTABLE_ASSET_CACHE)
         );
         assert_eq!(
             cache_control_for_ui_path("favicon-0a0e56c2e2df.svg"),
-            Some(IMMUTABLE_INSTALL_ICON_CACHE)
+            Some(IMMUTABLE_ASSET_CACHE)
+        );
+        assert_eq!(
+            cache_control_for_ui_path("assets/NotFoundView-BT84XzpF.js"),
+            Some(IMMUTABLE_ASSET_CACHE)
         );
     }
 
@@ -530,9 +599,44 @@ mod tests {
 
     #[test]
     fn dynamic_template_validation_uses_safe_segment_grammar() {
-        assert!(matches_template("/queue/:jobId", "queue/job_01-safe"));
-        assert!(!matches_template("/queue/:jobId", "queue/ümlaut"));
-        assert!(!matches_template("/queue/:jobId", "queue/../etc"));
+        let contract = contract_for_test("/", "[A-Z]{2}");
+        assert!(matches_template(&contract, "/queue/:jobId", "queue/AB"));
+        assert!(!matches_template(
+            &contract,
+            "/queue/:jobId",
+            "queue/job_01-safe"
+        ));
+        assert!(!matches_template(
+            &contract,
+            "/queue/:jobId",
+            "queue/../etc"
+        ));
+    }
+
+    #[test]
+    fn non_root_base_only_classifies_requests_within_its_mount() {
+        let contract = contract_for_test("/console/", "[A-Za-z0-9][A-Za-z0-9_-]{0,127}");
+
+        assert_eq!(
+            relative_request_path(&contract, "console/assets/NotFoundView-BT84XzpF.js"),
+            Some("assets/NotFoundView-BT84XzpF.js")
+        );
+        assert_eq!(
+            relative_request_path(&contract, "assets/NotFoundView-BT84XzpF.js"),
+            None
+        );
+        assert!(is_contract_page_with(
+            &contract,
+            "console/queue/job_01-safe"
+        ));
+        assert!(!is_contract_page_with(&contract, "queue/job_01-safe"));
+        assert_eq!(
+            canonical_contract_path(&contract, "console/queue/"),
+            "console/queue"
+        );
+        assert_eq!(canonical_contract_path(&contract, "console/"), "console/");
+        assert!(is_reserved_relative_path(&contract, "api/does-not-exist"));
+        assert!(is_reserved_relative_path(&contract, "assets/missing.css"));
     }
 
     #[test]

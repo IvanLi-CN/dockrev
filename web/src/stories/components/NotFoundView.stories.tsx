@@ -11,5 +11,5 @@ export default meta
 type Story = StoryObj<typeof meta>
 
 export const UnknownDocument: Story = {
-  args: { pathname: '/made-up-deep-link' },
+  args: { pathname: '/made-up-deep-link', onHome: () => undefined },
 }

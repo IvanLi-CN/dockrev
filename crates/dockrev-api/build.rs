@@ -67,11 +67,12 @@ fn main() {
         copy_dir(&dist_src, &dist_out).expect("copy web/dist into OUT_DIR");
         let contract = dist_src.join(".dockrev-route-contract.json");
         let raw = fs::read_to_string(&contract).expect("web build route contract");
-        let _: serde_json::Value = serde_json::from_str(&raw).expect("valid route contract JSON");
+        validate_route_contract(&raw);
         fs::write(dist_out.join(".dockrev-route-contract.json"), raw).expect("copy route contract");
     } else {
         fs::write(dist_out.join("index.html"), PLACEHOLDER_INDEX_HTML)
             .expect("write placeholder index.html");
+        validate_route_contract(PLACEHOLDER_ROUTE_CONTRACT);
         fs::write(
             dist_out.join(".dockrev-route-contract.json"),
             PLACEHOLDER_ROUTE_CONTRACT,
@@ -82,6 +83,90 @@ fn main() {
             fs::copy(&favicon_ico_src, dist_out.join("favicon.ico")).expect("copy favicon.ico");
         }
     }
+}
+
+fn validate_route_contract(raw: &str) {
+    let value: serde_json::Value = serde_json::from_str(raw).expect("valid route contract JSON");
+    let object = value.as_object().expect("route contract object");
+
+    assert_eq!(
+        object.get("version").and_then(serde_json::Value::as_u64),
+        Some(1),
+        "route contract version"
+    );
+
+    let base_path = required_contract_string(object, "basePath");
+    assert!(
+        base_path.starts_with('/') && base_path.ends_with('/') && is_contract_path(base_path),
+        "route contract basePath must be an absolute directory path"
+    );
+
+    let dynamic_segment_pattern = required_contract_string(object, "dynamicSegmentPattern");
+    regex::Regex::new(&format!("^(?:{dynamic_segment_pattern})$"))
+        .expect("route contract dynamicSegmentPattern");
+
+    let static_paths = required_contract_paths(object, "staticPagePaths");
+    assert!(
+        static_paths.contains(&"/"),
+        "route contract must include the root page"
+    );
+    assert!(
+        static_paths.iter().all(|path| is_contract_path(path)),
+        "route contract staticPagePaths"
+    );
+
+    let dynamic_templates = required_contract_paths(object, "dynamicPageTemplates");
+    assert!(
+        dynamic_templates.iter().all(|path| {
+            is_contract_path(path)
+                && path
+                    .trim_matches('/')
+                    .split('/')
+                    .all(|segment| !segment.is_empty())
+        }),
+        "route contract dynamicPageTemplates"
+    );
+
+    let reserved_prefixes = required_contract_paths(object, "reservedPrefixes");
+    assert!(
+        reserved_prefixes
+            .iter()
+            .all(|path| is_contract_path(path) && *path != "/"),
+        "route contract reservedPrefixes"
+    );
+}
+
+fn required_contract_string<'a>(
+    object: &'a serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> &'a str {
+    object
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| panic!("route contract {field}"))
+}
+
+fn required_contract_paths<'a>(
+    object: &'a serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Vec<&'a str> {
+    object
+        .get(field)
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("route contract {field}"))
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|path| !path.is_empty())
+                .unwrap_or_else(|| panic!("route contract {field}"))
+        })
+        .collect()
+}
+
+fn is_contract_path(path: &str) -> bool {
+    path.starts_with('/') && !path.contains("//") && !path.split('/').any(|segment| segment == "..")
 }
 
 fn emit_rerun_for_dir(dir: &Path) {

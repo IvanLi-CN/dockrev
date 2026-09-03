@@ -1,7 +1,7 @@
 import { stripAppBase } from './appBase'
 
 export const DYNAMIC_SEGMENT_PATTERN = '[A-Za-z0-9][A-Za-z0-9_-]{0,127}'
-const dynamicSegment = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
+const dynamicSegment = new RegExp(`^(?:${DYNAMIC_SEGMENT_PATTERN})$`)
 
 export const STATIC_PAGE_PATHS = [
   '/',
@@ -73,16 +73,15 @@ export function contractPath(pathname: string): string {
 export function matchesContractPage(pathname: string): boolean {
   const path = contractPath(pathname)
   if ((STATIC_PAGE_PATHS as readonly string[]).includes(path)) return true
-  const parts = path.split('/').filter(Boolean)
-  if (parts.length === 2 && parts[0] === 'queue') return isSafeDynamicSegment(parts[1])
-  if (parts.length === 2 && parts[0] === 'services') return isSafeDynamicSegment(parts[1])
-  if (parts.length === 3 && parts[0] === 'services') {
-    return isSafeDynamicSegment(parts[1]) && isSafeDynamicSegment(parts[2])
-  }
-  if (parts.length === 4 && parts[0] === 'services') {
-    return isSafeDynamicSegment(parts[1]) && isSafeDynamicSegment(parts[2]) && DYNAMIC_PAGE_TEMPLATES.includes(`/services/:stackId/:serviceId/${parts[3]}` as never)
-  }
-  return false
+  return DYNAMIC_PAGE_TEMPLATES.some((template) => matchesTemplate(template, path))
+}
+
+function matchesTemplate(template: string, path: string): boolean {
+  const templateParts = template.split('/').filter(Boolean)
+  const pathParts = path.split('/').filter(Boolean)
+  return templateParts.length === pathParts.length && templateParts.every((part, index) => (
+    part.startsWith(':') ? isSafeDynamicSegment(pathParts[index] ?? '') : part === pathParts[index]
+  ))
 }
 
 export function isReservedPath(pathname: string): boolean {

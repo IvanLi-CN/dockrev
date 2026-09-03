@@ -7,6 +7,8 @@ import hashlib
 import json
 import math
 import os
+import posixpath
+import re
 import struct
 import sys
 import zlib
@@ -77,6 +79,73 @@ def parse_link_tags(html: str) -> list[dict[str, str]]:
 
 def rel_tokens(link: dict[str, str]) -> set[str]:
     return {token.lower() for token in link.get("rel", "").split()}
+
+
+class ModuleTagParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.module_sources: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() != "script":
+            return
+        attributes = {name.lower(): value or "" for name, value in attrs}
+        if attributes.get("type", "").lower() == "module" and attributes.get("src"):
+            self.module_sources.append(attributes["src"])
+
+
+def parse_module_sources(html: str) -> list[str]:
+    parser = ModuleTagParser()
+    parser.feed(html)
+    parser.close()
+    return parser.module_sources
+
+
+def dist_path_for_url(url: str) -> str:
+    pathname = url.split("?", 1)[0].split("#", 1)[0]
+    if pathname.startswith(BASE_PATH):
+        return pathname[len(BASE_PATH) :].lstrip("/")
+    return pathname.lstrip("/")
+
+
+def standalone_not_found_modules() -> dict[str, str]:
+    page = (DIST_DIR / "404.html").read_text()
+    pending = [dist_path_for_url(source) for source in parse_module_sources(page)]
+    modules: dict[str, str] = {}
+    while pending:
+        module_path = pending.pop()
+        if module_path in modules:
+            continue
+        module_file = DIST_DIR / module_path
+        assert module_file.is_file(), f"404 document references missing module {module_path}"
+        source = module_file.read_text()
+        modules[module_path] = source
+        for specifier in re.findall(r"(?:from\s*|import\()(['\"])([^'\"]+)\1", source):
+            import_path = specifier[1]
+            if import_path.startswith(("http:", "https:", "data:")):
+                continue
+            if import_path.startswith("."):
+                imported_module = posixpath.normpath(posixpath.join(posixpath.dirname(module_path), import_path))
+            elif import_path.startswith("/"):
+                imported_module = dist_path_for_url(import_path)
+            else:
+                continue
+            if imported_module.endswith(".js"):
+                pending.append(imported_module)
+    return modules
+
+
+def assert_standalone_not_found_contract() -> None:
+    not_found_html = (DIST_DIR / "404.html").read_text()
+    assert "manifest" not in not_found_html, "404 document must not declare PWA metadata"
+    assert "__DOCKREV_CONFIG__" not in not_found_html, "404 document must not inject runtime config"
+    modules = standalone_not_found_modules()
+    assert modules, "404 document must load its isolated entry module"
+    forbidden = ("__DOCKREV_CONFIG__", "selfUpgradeUrl", "supervisor-misroute", "registerSW")
+    for module_path, source in modules.items():
+        assert not any(token in source for token in forbidden), (
+            f"404 module {module_path} imports main-app runtime behavior"
+        )
 
 
 def read_png(path: Path) -> tuple[int, int, list[tuple[int, int, int, int]]]:
@@ -189,6 +258,18 @@ def assert_hashed_assets_exist() -> None:
 
 def assert_build_contract() -> None:
     assert DIST_DIR.is_dir(), "build output is missing; run the PWA build before this checker"
+    assert_standalone_not_found_contract()
+    route_contract = json.loads((DIST_DIR / ".dockrev-route-contract.json").read_text())
+    assert route_contract["version"] == 1, "route contract version is unsupported"
+    assert route_contract["basePath"] == BASE_PATH, "route contract base path does not match the build"
+    assert route_contract["dynamicSegmentPattern"] == "[A-Za-z0-9][A-Za-z0-9_-]{0,127}", (
+        "route contract dynamic segment grammar drifted"
+    )
+    assert "/" in route_contract["staticPagePaths"], "route contract omits the root page"
+    assert route_contract["dynamicPageTemplates"], "route contract omits dynamic page templates"
+    assert route_contract["reservedPrefixes"] == ["/api", "/supervisor", "/assets"], (
+        "route contract reserved prefixes drifted"
+    )
     assert not list(DIST_DIR.glob("apple-touch-icon*.png")), (
         "product build must not publish Apple touch icon fallbacks"
     )

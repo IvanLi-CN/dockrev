@@ -52,6 +52,97 @@ async fn unknown_api_path_is_not_swallowed_by_ui_fallback() {
         .unwrap();
 
     assert_eq!(resp.status(), 404);
+    assert_eq!(resp.headers().get("cache-control").unwrap(), "no-store");
+    assert!(resp
+        .headers()
+        .get("content-type")
+        .is_none_or(|value| !value.as_bytes().starts_with(b"text/html")));
+}
+
+#[tokio::test]
+async fn ui_route_contract_distinguishes_documents_from_resources() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state);
+
+    let document = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/queue/job_01-safe")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(document.status(), 200);
+    assert_eq!(document.headers().get("cache-control").unwrap(), "no-cache");
+    assert!(document
+        .headers()
+        .get("content-type")
+        .is_some_and(|value| value.as_bytes().starts_with(b"text/html")));
+
+    let canonical_redirect = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/queue/")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(canonical_redirect.status(), 308);
+    assert_eq!(canonical_redirect.headers().get("location").unwrap(), "/queue");
+
+    let unknown_document = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/made-up-deep-link")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unknown_document.status(), 404);
+    assert_eq!(unknown_document.headers().get("cache-control").unwrap(), "no-store");
+    assert!(unknown_document
+        .headers()
+        .get("content-type")
+        .is_some_and(|value| value.as_bytes().starts_with(b"text/html")));
+    let unknown_document_body = unknown_document.into_body().collect().await.unwrap().to_bytes();
+    assert!(String::from_utf8_lossy(&unknown_document_body).contains("Dockrev - 404"));
+
+    for path in ["/apple-touch-icon.png", "/missing.css", "/assets/missing.js"] {
+        let resource = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resource.status(), 404, "{path}");
+        assert_eq!(resource.headers().get("cache-control").unwrap(), "no-store", "{path}");
+        assert!(resource
+            .headers()
+            .get("content-type")
+            .is_none_or(|value| !value.as_bytes().starts_with(b"text/html")), "{path}");
+    }
+
+    let manifest = app
+        .oneshot(
+            Request::builder()
+                .uri("/manifest.webmanifest")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(manifest.status(), 200);
+    assert_eq!(manifest.headers().get("cache-control").unwrap(), "no-cache");
 }
 
 #[tokio::test]
