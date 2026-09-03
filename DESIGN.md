@@ -1,274 +1,224 @@
 ---
 name: Dockrev
-description: A calm, data-dense self-hosted Docker and Compose update manager.
+description: A compact dual-theme control surface for operating self-hosted Docker Compose services.
 colors:
-  deep-ops-bg: "#061227"
-  night-base: "#040b1a"
-  ink-panel: "#0d2342"
-  midnight-panel: "#07142a"
-  deep-ink: "#011222"
-  primary-cyan: "#36bffa"
-  secondary-cyan: "#5ccff9"
-  success-green: "#22c55e"
-  warning-amber: "#f59e0b"
-  error-rose: "#ef476f"
-  text-primary: "#e8f1fff5"
-  text-solid: "#e8f1ff"
-  text-muted: "#dceafed1"
-  text-dim: "#9eb2cce0"
-  border-blue: "#9cc0e83b"
-  surface-wash: "#ffffff0c"
-  surface-strong: "#ffffff15"
-  focus-cyan: "#36bffa70"
+  background: "var(--bg)"
+  panel: "var(--panel)"
+  raised-panel: "var(--panel2)"
+  primary: "var(--color-primary)"
+  secondary: "var(--color-secondary)"
+  info: "var(--color-info)"
+  success: "var(--color-success)"
+  warning: "var(--color-warning)"
+  error: "var(--color-error)"
+  text: "var(--text)"
+  muted-text: "var(--muted2)"
+  border: "var(--borderColor)"
 typography:
   display:
-    fontFamily: "Avenir Next, Avenir, Segoe UI, PingFang SC, Hiragino Sans GB, Microsoft YaHei, Noto Sans SC, system-ui, -apple-system, sans-serif"
-    fontSize: "22px"
-    fontWeight: 750
-    lineHeight: 1.18
-    letterSpacing: "0"
-  headline:
-    fontFamily: "Avenir Next, Avenir, Segoe UI, PingFang SC, Hiragino Sans GB, Microsoft YaHei, Noto Sans SC, system-ui, -apple-system, sans-serif"
-    fontSize: "21px"
-    fontWeight: 650
-    lineHeight: 1.25
-    letterSpacing: "0"
+    fontFamily: "var(--font-sans)"
+    fontSize: "30px"
+    fontWeight: 740
+    lineHeight: 1.2
+    letterSpacing: "-0.02em"
   title:
-    fontFamily: "Avenir Next, Avenir, Segoe UI, PingFang SC, Hiragino Sans GB, Microsoft YaHei, Noto Sans SC, system-ui, -apple-system, sans-serif"
-    fontSize: "15px"
-    fontWeight: 640
+    fontFamily: "var(--font-sans)"
+    fontSize: "16px"
+    fontWeight: 670
     lineHeight: 1.25
     letterSpacing: "0"
   body:
-    fontFamily: "Avenir Next, Avenir, Segoe UI, PingFang SC, Hiragino Sans GB, Microsoft YaHei, Noto Sans SC, system-ui, -apple-system, sans-serif"
+    fontFamily: "var(--font-sans)"
     fontSize: "12px"
     fontWeight: 440
     lineHeight: 1.5
     letterSpacing: "0"
   label:
-    fontFamily: "Avenir Next, Avenir, Segoe UI, PingFang SC, Hiragino Sans GB, Microsoft YaHei, Noto Sans SC, system-ui, -apple-system, sans-serif"
-    fontSize: "11px"
-    fontWeight: 650
-    lineHeight: 1.2
-    letterSpacing: "0"
-  mono:
-    fontFamily: "JetBrains Mono, Fira Code, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace"
+    fontFamily: "var(--font-sans)"
     fontSize: "11px"
     fontWeight: 700
-    lineHeight: 1
+    lineHeight: 1.2
+    letterSpacing: "0.07em"
+  mono:
+    fontFamily: "var(--font-mono)"
+    fontSize: "12px"
+    fontWeight: 440
+    lineHeight: 1.5
     letterSpacing: "0"
 rounded:
-  xs: "3px"
-  sm: "5px"
-  md: "6px"
-  lg: "10px"
-  xl: "14px"
-  popover: "16px"
+  control: "10px"
+  input: "6px"
+  card: "16px"
   pill: "999px"
 spacing:
-  xxs: "4px"
-  xs: "6px"
-  sm: "8px"
-  md: "10px"
-  lg: "14px"
-  xl: "24px"
-  page-x: "28px"
-  page-y: "48px"
+  compact: "8px"
+  control-x: "13px"
+  control-y: "8px"
+  content-x: "30px"
+  content-y: "32px"
 components:
   button-primary:
-    backgroundColor: "{colors.primary-cyan}"
-    textColor: "{colors.deep-ink}"
-    rounded: "{rounded.lg}"
-    padding: "0 13px"
+    backgroundColor: "{colors.primary}"
+    textColor: "var(--color-primary-content)"
+    typography: "{typography.body}"
+    rounded: "{rounded.control}"
+    padding: "0 {spacing.control-x}"
     height: "32px"
   button-ghost:
-    backgroundColor: "{colors.surface-wash}"
-    textColor: "{colors.text-primary}"
-    rounded: "{rounded.lg}"
-    padding: "0 13px"
+    backgroundColor: "var(--dockrev-surface)"
+    textColor: "{colors.text}"
+    typography: "{typography.body}"
+    rounded: "{rounded.control}"
+    padding: "0 {spacing.control-x}"
     height: "32px"
-  button-danger:
-    backgroundColor: "{colors.error-rose}"
-    textColor: "{colors.deep-ink}"
-    rounded: "{rounded.lg}"
-    padding: "0 13px"
-    height: "32px"
-  search-input:
-    backgroundColor: "{colors.midnight-panel}"
-    textColor: "{colors.text-primary}"
-    rounded: "{rounded.md}"
+  input:
+    backgroundColor: "var(--panel2)"
+    textColor: "{colors.text}"
+    typography: "{typography.body}"
+    rounded: "{rounded.input}"
     padding: "0 14px"
     height: "36px"
-  service-card:
-    backgroundColor: "{colors.ink-panel}"
-    textColor: "{colors.text-primary}"
-    rounded: "{rounded.md}"
-    padding: "12px 9px 9px"
-  metric-cell:
-    backgroundColor: "{colors.midnight-panel}"
-    textColor: "{colors.text-muted}"
-    rounded: "{rounded.sm}"
-    padding: "5px 3px"
-    height: "48px"
-  count-badge:
-    backgroundColor: "{colors.midnight-panel}"
-    textColor: "{colors.secondary-cyan}"
-    rounded: "{rounded.pill}"
-    padding: "0 8px"
-    height: "21px"
+  card:
+    backgroundColor: "{colors.panel}"
+    textColor: "{colors.text}"
+    rounded: "{rounded.card}"
+    padding: "14px"
 ---
 
 # Design System: Dockrev
 
-## 1. Overview
+## Overview
 
-**Creative North Star: "The Quiet Ops Console"**
+**Creative North Star: "The Dual-Theme Ops Console"**
 
-Dockrev is a product interface for people operating real Docker Compose services under time pressure. The physical scene is an operator checking update and resource state on a dim desktop monitor during a maintenance window, then returning from a phone later to confirm what changed. The design is dark by default because it reduces glare in that scene, but the darkness is functional: it frames dense state, metrics, paths, and actions without theatrical contrast.
+Dockrev is an operate-mode interface for people working directly with Docker Compose services. It is a compact control surface: service state, version information, resource signals, actions, and outcomes must stay easy to scan while an operator is making a maintenance decision.
 
-The system uses restrained color, compact hierarchy, and small repeated modules. It should feel like a precise control surface, not a landing page, not a generic dark-blue SaaS dashboard, and not a glassy observability poster. Every colored element must carry state, action, identity, or focus.
+Dark is the default working theme, with a calm blue-black shell and restrained cyan signal color. A complete light theme mirrors the same information hierarchy for daylight use and personal preference; changing theme alters the palette, never the meaning of status or action. Both themes avoid a marketing or observability-poster feel in favor of durable admin-tool conventions.
 
 **Key Characteristics:**
-- Compact service navigation, grouped for scanning.
-- Real operational state before decoration.
-- Cool tinted neutrals with rare cyan action color.
-- Small-radius cards and metric cells that stay stable across data changes.
-- Familiar admin patterns: top bar, side nav, search, grouped lists, tables, dialogs only when necessary.
+- A responsive app shell with compact navigation, top-bar context, and dense operational content.
+- Theme-aware semantic tokens for action, information, success, warning, error, text, surface, and border.
+- Small, deliberate controls and stable data layouts for repeated maintenance work.
+- Status and risk are represented with text, icons, and color rather than color alone.
+- Focus, disabled, reduced-motion, and narrow-screen behavior are part of the shared interaction language.
 
-## 2. Colors
+## Colors
 
-The palette is a restrained cold-operations system: deep blue-black structure, quiet cyan action, and semantic status colors only where the state needs it.
+The palette is semantic and theme-aware: deep blue-black surfaces and cyan signals in dark mode, clear blue-and-white surfaces in light mode, and the same operational state roles in each.
 
 ### Primary
 
-- **Signal Cyan**: the primary action, focus, selected navigation, and important link color. It is rare on a screen; its scarcity makes it meaningful.
+- **Signal Primary**: the sole high-intent action, selected navigation, focus, and meaningful-link color.
 
 ### Secondary
 
-- **Cool Cyan Echo**: secondary chart and accent support for metric summaries, count badges, and subtle information emphasis.
+- **Signal Secondary**: supporting information emphasis, chart differentiation, and restrained secondary signal.
 
 ### Tertiary
 
-- **Operational Green**: success, running, healthy, completed, and allowed states.
-- **Maintenance Amber**: warnings, stale data, pending review, and recoverable attention states.
-- **Fault Rose**: destructive actions, failed jobs, blocked service state, and unrecoverable errors.
+- **Operational Info**: active or informational state.
+- **Operational Success**: healthy, completed, or allowed state.
+- **Operational Warning**: stale, pending, recoverable, or attention-needed state.
+- **Operational Error**: destructive, failed, blocked, or unrecoverable state.
 
 ### Neutral
 
-- **Deep Ops Background**: the page and application shell foundation.
-- **Ink Panel**: the default card and modal surface.
-- **Midnight Panel**: nested surface for top bars, search wells, metric cells, and subdued controls.
-- **Soft Ice Text**: primary and muted text, always tinted toward the blue system.
-- **Blue Trace Border**: low-contrast separators and panel outlines.
-- **Surface Wash**: quiet hover, chip, table row, and ghost button fill.
+- **Background, Panel, and Raised Panel**: the theme-specific shell and layered work surfaces.
+- **Text and Muted Text**: readable operational copy and secondary metadata.
+- **Border**: thin structure between dense controls, lists, and panels.
 
-### Named Rules
+**The Semantic Signal Rule.** Primary and status colors communicate action or state. They are not decorative fill.
 
-**The Truthful Color Rule.** Cyan, green, amber, and rose are not decoration. They must map to action, focus, health, warning, or error.
+**The Theme Parity Rule.** Dark and light themes retain the same semantic roles, hierarchy, and interaction affordances.
 
-**The Restrained Console Rule.** Any single screen should read as neutral first. Accent color should remain sparse enough that the operator can locate state immediately.
+## Typography
 
-## 3. Typography
+**Display Font:** Avenir Next with Avenir, Segoe UI, CJK system fonts, and system UI fallbacks.
+**Body Font:** Avenir Next with the same system fallbacks.
+**Label/Mono Font:** JetBrains Mono with platform monospace fallbacks for technical values.
 
-**Display Font:** Avenir Next with system UI and CJK fallbacks.
-**Body Font:** Avenir Next with system UI and CJK fallbacks.
-**Label/Mono Font:** JetBrains Mono with platform monospace fallbacks.
-
-**Character:** The typography is compact and product-native. It uses weight and grouping more than large scale, because this is an operational tool, not a brand surface.
+**Character:** Typography is compact, legible, and native to an expert operational tool. Weight, grouping, and bounded line length establish hierarchy more often than oversized type.
 
 ### Hierarchy
 
-- **Display** (750, 22px, 1.18): page titles and the largest dashboard headings only.
-- **Headline** (650, 21px, 1.25): Homepage-style group headings and major section labels.
-- **Title** (640, 15px, 1.25): service card titles, row names, modal titles.
-- **Body** (440, 12px, 1.5): descriptions, table cells, helper text, and dense UI copy. Prose blocks should stay under 75ch.
-- **Label** (650, 11px, 1.2): metric labels, chips, compact badges, table metadata.
-- **Mono** (700, 11px, 1): counts, identifiers, resource values, and technical tokens.
+- **Display**: page-level headings and the largest route context only.
+- **Title**: service, modal, and content-panel titles.
+- **Body**: dense descriptions, table cells, helper text, and operational explanations.
+- **Label**: compact metadata and section labels; uppercase is reserved for short operational labels.
+- **Mono**: identifiers, versions, paths, resource values, and other technical data.
 
-### Named Rules
+**The Dense Sans Rule.** Keep the primary hierarchy in the shared sans stack; do not introduce decorative display or serif typography into product routes.
 
-**The Dense Sans Rule.** Do not introduce display fonts, decorative serif headings, or fluid type. Dockrev should look native to an expert admin console.
+## Layout
 
-**The No Shouting Rule.** Uppercase is reserved for tiny status badges and metric labels. Larger UI text stays sentence case or title case.
+The app shell uses a fixed desktop navigation column with a persistent top bar and a flexible content region. Detail routes may add a contextual side panel; the primary content still remains the scanning surface. Content uses a compact 30px horizontal and 32px vertical desktop rhythm, while cards, rows, and controls preserve stable dimensions as data changes.
 
-## 4. Elevation
+At 1160px the shell contracts for medium widths. At 960px it becomes a single-column mobile shell with touch-sized controls and mobile navigation. At 640px dense groups and data layouts collapse further instead of overflowing. The body has a 320px minimum width, and narrow-screen state preserves the same routes, actions, and semantic status.
 
-Dockrev uses hybrid depth: tonal layering at rest, soft shadow for true floating surfaces, and tiny motion for hover affordance. Service cards are mostly flat panels. Popovers, drawers, modals, and large cards can use ambient shadows when they must separate from the shell.
+## Elevation & Depth
 
-### Shadow Vocabulary
+Dockrev uses tonal layering first and soft, localized shadow second. The shell, sidebars, and data rows stay structurally quiet; cards, popovers, drawers, and focused surfaces use elevation only when it explains a real stacking relationship. Theme-specific shadows are documented in the sidecar.
 
-- **Soft Panel Shadow** (`0 14px 38px rgba(1, 8, 20, 0.44)`): default elevated cards and quiet content panels.
-- **Deep Card Shadow** (`0 24px 68px rgba(1, 10, 24, 0.54)`): prominent dashboard panels or focused surfaces.
-- **Floating Popover Shadow** (`0 24px 90px rgba(0, 0, 0, 0.42)`): popovers and menus.
-- **Mobile Drawer Shadow** (`28px 0 70px rgba(1, 8, 20, 0.5)`): full-height mobile navigation drawer.
+**The Layer Before Shadow Rule.** Establish hierarchy with a surface, border, and spacing before adding shadow.
 
-### Named Rules
+**The One-Pixel Trace Rule.** Borders remain thin traces; operational status does not use thick colored stripes as decoration.
 
-**The Layer Before Shadow Rule.** Prefer background tone, border, and spacing before adding a shadow. Shadows must explain stacking or focus.
+## Shapes
 
-**The One-Pixel Trace Rule.** Borders are thin traces. Do not use thick colored side stripes as status decoration.
+The form language is gently rounded and compact. Standard buttons and navigation controls use the control radius, inputs use the tighter input radius, panels use the card radius, and counts or compact status chips may use pill shapes. Borders are normally one pixel and low contrast; clipping and card geometry must support dense scanning instead of turning every section into a floating card.
 
-## 5. Components
+## Components
 
 ### Buttons
 
-- **Shape:** compact rounded rectangles (10px radius), 32px high by default.
-- **Primary:** cyan action fill with deep ink text, used for scan, apply, confirm, and other high-intent actions.
-- **Ghost:** washed neutral fill, blue trace border, and primary text for secondary operations.
-- **Danger:** rose fill for destructive or rollback-risk actions.
-- **Hover / Focus:** hover lifts by 1px only. Focus uses a visible cyan ring and never relies on color alone.
+- **Shape:** 32px controls with the control radius, compact horizontal padding, and a stable label or icon slot.
+- **Primary:** a theme-aware primary signal with readable semantic foreground and a restrained depth cue for high-intent operations.
+- **Ghost:** a quiet surface and thin border for secondary commands.
+- **Danger:** the error role is reserved for destructive or rollback-risk actions.
+- **Hover / Focus:** hover moves a control by one pixel at most; keyboard focus is a visible offset ring.
 
 ### Chips
 
-- **Style:** compact pills or soft rounded tags, 26px to 28px high, neutral surface fill, muted text.
-- **State:** active chips may use cyan tint, but inactive chips stay neutral. Count badges use mono numerals.
+- **Style:** compact neutral surfaces with a full pill or soft-radius shape and short labels.
+- **State:** selected chips and navigation states may use a primary tint; inactive chips remain quiet.
 
 ### Cards / Containers
 
-- **Corner Style:** application cards use 14px to 16px radius; Homepage service cards use tighter 6px radius.
-- **Background:** panels use Ink Panel or Midnight Panel with subtle tonal gradients only on larger dashboard cards.
-- **Shadow Strategy:** service cards do not need heavy shadow. Popovers and drawers use the shadow vocabulary in Elevation.
-- **Border:** one-pixel blue trace, low opacity.
-- **Internal Padding:** dense cards use 9px to 12px; large content cards use 14px to 20px.
+- **Corner Style:** cards use the card radius while denser rows and nested controls stay tighter.
+- **Background:** theme-aware panel layers with restrained tonal variation.
+- **Shadow Strategy:** default surfaces stay quiet; floating or focused surfaces use the documented shadow vocabulary.
+- **Border:** one-pixel semantic border.
+- **Internal Padding:** compact panels start from the shared compact rhythm and expand only where the content needs it.
 
 ### Inputs / Fields
 
-- **Style:** 36px search fields, 6px radius, deep panel background, one-pixel blue trace border; Homepage search submits on Enter and does not add a separate search button.
-- **Focus:** cyan border plus soft 3px glow.
-- **Error / Disabled:** rose border and subtle rose glow for error; reduced opacity and no pointer affordance for disabled.
+- **Style:** 36px theme-aware fields with the tighter input radius and a thin border.
+- **Focus:** visible focus ring with primary signal; no focus state relies on color alone.
+- **Error / Disabled:** errors use the semantic error role; disabled controls remain visibly unavailable and do not offer pointer affordance.
 
 ### Navigation
 
-- **Desktop:** fixed side navigation plus sticky top bar. Active items use cyan-tinted fill and stronger weight.
-- **Mobile:** top bar hamburger opens a full-height left drawer. Drawer items are list rows, not cards.
-- **Identity:** user identity is a compact chip on desktop and a circular avatar button on narrow screens.
+- **Desktop:** vertical navigation and a top bar keep route identity, context, and actions close to the work.
+- **Responsive:** the desktop shell contracts at medium widths and becomes a mobile navigation pattern below the mobile breakpoint.
+- **Active State:** an active item uses a primary-tinted surface, stronger label weight, and the primary icon color.
 
-### Homepage Service Launcher
+### Theme Preference
 
-- **Structure:** top resource/search/time strip, then responsive grouped columns. Desktop uses multiple columns; mobile uses one column.
-- **Service Card:** icon, title, description, one status badge, and four stable metric cells: CPU, MEM, RX, TX.
-- **Search:** search filters group, name, description, image, stack, and service metadata, submits on Enter, and keeps hidden metadata out of the visible card.
-- **Metric Cells:** values can show real data, stale state, disabled state, or placeholders. Cell dimensions must not shift when values change.
+- **Style:** a compact icon control on constrained navigation and a segmented control where the full setting is visible.
+- **Behavior:** switching themes preserves the semantic meaning of the product and honors reduced-motion preferences.
 
-## 6. Do's and Don'ts
+## Do's and Don'ts
 
 ### Do:
-
-- **Do** keep Dockrev compact, dense, and scannable.
-- **Do** use real operational data and explicit placeholders for stale, disabled, or missing metrics.
-- **Do** reserve Signal Cyan for action, focus, selected state, and meaningful info.
-- **Do** keep Homepage service cards tight: 6px radius, four metric cells, one status badge.
-- **Do** maintain visible focus rings for every keyboard target.
-- **Do** use familiar product patterns before inventing custom interactions.
+- **Do** keep pages compact, dense, and scannable for repeated maintenance work.
+- **Do** use the semantic state roles consistently in both themes.
+- **Do** keep real, stale, disabled, unknown, and failed states explicit.
+- **Do** maintain visible keyboard focus and usable 320px-to-desktop layouts.
+- **Do** place high-intent actions beside the service or job evidence that supports the decision.
 
 ### Don't:
-
-- **Don't** create a Marketing landing-page hero for authenticated product routes.
-- **Don't** use Oversized decorative cards for operational content.
-- **Don't** drift into a Generic dark-blue SaaS dashboard; every surface must earn its density and state.
-- **Don't** use Glassmorphism as default. Blur is allowed only for overlays that need backdrop separation.
-- **Don't** use Neon cyberpunk styling, purple gradients, or decorative glow as identity.
-- **Don't** show Fake metrics or decorative status.
-- **Don't** use Modal-first flows for routine decisions.
-- **Don't** ship Dense but unstructured admin tables.
-- **Don't** use thick colored side stripes, gradient text, or repeated identical card grids.
+- **Don't** turn authenticated operational routes into marketing landing pages.
+- **Don't** use color or decorative status in place of truthful operational data.
+- **Don't** introduce a generic dashboard card grid where structured rows or grouped service data are clearer.
+- **Don't** add neon, purple-gradient, glass-first, or oversized decorative styling as product identity.
+- **Don't** let dark and light themes diverge in status meaning, interaction affordance, or information hierarchy.
