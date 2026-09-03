@@ -8,3 +8,6 @@
 - 2026-07-08: 将离线展示策略收紧为仅允许 `fresh` 快照；离开新鲜窗口的本地数据不再展示，相关页面文案与 Storybook 场景同步移除“数据过时”提示。
 - 2026-08-08: 更新切换改为后台完整预缓存后的导航切版。以 Workbox `waiting` 作为 ready 门禁，加入下载/失败状态与 single-flight 激活；更新提示迁移为不占文档流的响应式浮动气泡，并将 app-shell fallback 扩展到全部正式前端路由。
 - 2026-08-18: 将 install icon 拆为保持原有外观的 regular，以及独立的不透明 maskable/Apple touch 输出；平台外壳不再由资产模拟，内容版本 URL 与 PWA precache 一起维护。
+- 2026-09-01: 将 install metadata 更新改为逐资源内容哈希文件名，保持 manifest identity 不变；移除 query 版本匹配与重复 manifest link，补充 Workbox 精确 precache、入口重新验证、哈希图标 immutable 缓存及平台更新限制。
+- 2026-09-02: 产品 App 改为仅以 Manifest 提供安装图标元数据，移除 Apple touch HTML/生成/测试入口；Worker 仅预缓存应用壳，并补充已安装 Chromium PWA 的 V1→V2 Manifest/图标更新验收。
+- 2026-09-03: 移除产品根路径 `apple-touch-icon.png` 自动探测回退，避免 WebKit 在没有 HTML link 时仍选中遗留图标；文档站点的独立 Apple touch 资产保持不变。

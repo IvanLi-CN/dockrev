@@ -32,6 +32,16 @@ docker compose up --build
 - API health: `http://127.0.0.1:50883/api/health`
 - Supervisor: `http://127.0.0.1:50883/supervisor/`
 
+## 已安装应用的图标更新
+
+Dockrev 会稳定保持 Web App Manifest 的 `id`、`scope` 和 `start_url`，不会因为图标版本变化而改变已安装应用的身份。Manifest 的 regular/maskable 图标与浏览器 favicon 使用内容哈希文件名发布，HTML、manifest 和 service worker 会重新验证。产品页只以 Manifest 作为安装图标元数据来源：既不声明 `apple-touch-icon`，也不发布根路径 `apple-touch-icon*.png` 自动探测回退；新构建可以因此交付新的图标字节，不需要把重新安装作为常规更新方式。
+
+Android Chrome WebAPK 与 Chromium desktop 的 PWA 安装遵循 manifest 更新生命周期和平台控制的刷新节奏。不由 manifest 驱动的浏览器快捷方式可能继续使用创建时保存的图标。
+
+iOS/iPadOS Safari 与已有 Web Clip 存在平台限制：已有 Web Clip 会继续使用平台保存的图标和元数据，网站不能强制迁移它。Dockrev 产品页不会重新加入 `apple-touch-icon` link 或根路径回退，也不会宣称可以更新已有 Web Clip。不支持原地 manifest 迁移的其他浏览器也相同。这是平台限制，不是 Dockrev 的常规更新步骤。
+
+每次发布后，应使用 HTML 解析器和 Web App Manifest 检查真实产物：确认只有一个 manifest link、产品页没有 `apple-touch-icon`、`id`/`scope`/`start_url` 未变、哈希图标字节正确、metadata 使用重新验证响应头、哈希图标使用 immutable 响应头，并确认 `sw.js` 的 precache 不包含 manifest 或任何安装图标。
+
 ## 5 分钟验收（必须全部通过）
 
 1. `GET /api/health` 返回 `ok`。

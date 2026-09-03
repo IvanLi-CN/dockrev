@@ -17,6 +17,7 @@ mod cron_expr;
 mod db;
 mod deploy_check_refresh_worker;
 mod discovery;
+mod discovery_compose;
 mod docker_engine;
 mod docker_runner;
 mod error;
@@ -280,6 +281,11 @@ async fn main() -> anyhow::Result<()> {
         service_log_hub,
     );
 
+    // Restore managed override transactions before examining incomplete jobs. An
+    // interrupted mutation may still own an odd service generation, and generic
+    // recovery must not terminate it before its filesystem/runtime state is restored.
+    recover_managed_override_transactions(&state).await;
+
     // Recover orphaned/incomplete jobs created by a previous process instance.
     // This covers cases where the container was killed or the process panicked mid-job.
     let now = now_rfc3339()?;
@@ -294,9 +300,6 @@ async fn main() -> anyhow::Result<()> {
         );
         backup::recover_interrupted_backups(state.as_ref(), &recovered).await?;
     }
-    // Recover managed override transactions even when the interrupted update had no persisted
-    // backup checkpoint. This clears candidate pins left between atomic commit and service apply.
-    recover_managed_override_transactions(&state).await;
     let evidence_db = state.db.clone();
     let evidence_db_path = state.config.db_path.clone();
     tokio::spawn(async move {

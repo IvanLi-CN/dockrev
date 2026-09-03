@@ -2756,6 +2756,10 @@ html[data-theme="light"] .releaseDrawerContent {
   border-radius: 16px;
 }
 
+.asyncDataInitialErrorRegion {
+  min-height: 404px;
+}
+
 .queueSummaryRegion {
   border-radius: 12px;
 }
@@ -2831,6 +2835,24 @@ html[data-theme="light"] .releaseDrawerContent {
 .asyncDataLoadingOverlay {
   font-size: 13px;
   font-weight: 650;
+  pointer-events: none;
+}
+
+.asyncDataInlineError {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 14px 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--color-error) 42%, var(--borderColor));
+  border-radius: 8px;
+  color: color-mix(in srgb, var(--color-error) 72%, var(--text));
+  font-size: 12px;
+}
+
+.asyncDataInlineError > span {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .asyncDataErrorOverlay {
@@ -2839,12 +2861,116 @@ html[data-theme="light"] .releaseDrawerContent {
   font-size: 13px;
 }
 
+.asyncDataInitialErrorOverlay {
+  border: 0;
+  flex-direction: column;
+  gap: 14px;
+  padding: 32px;
+}
+
+.jobDetailInitialErrorRegion.asyncDataInitialErrorRegion {
+  display: grid;
+  min-height: clamp(320px, calc(100vh - 260px), 404px);
+  place-items: center;
+}
+
+.jobDetailInitialErrorRegion .asyncDataInitialErrorOverlay {
+  --job-detail-error-visual-gap: 32px;
+  --job-detail-error-recovery-gap: 18px;
+  --job-detail-error-illustration-optical-offset: -6px;
+
+  position: static;
+  width: min(100%, 640px);
+  min-height: 0;
+  gap: var(--job-detail-error-visual-gap);
+  padding: 28px 24px;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.asyncDataInitialErrorVisual {
+  display: grid;
+  width: 100%;
+  place-items: center;
+}
+
+.asyncDataInitialErrorIllustration {
+  --job-detail-error-illustration-primary: color-mix(in srgb, var(--color-primary) 86%, var(--text) 14%);
+  --job-detail-error-illustration-error: color-mix(in srgb, var(--color-error) 86%, var(--text) 14%);
+
+  aspect-ratio: 146.569 / 94;
+  display: block;
+  flex: 0 0 auto;
+  margin: 0;
+  width: min(216px, 100%);
+  height: auto;
+  transform: translateX(var(--job-detail-error-illustration-optical-offset, 0));
+}
+
+.asyncDataInitialErrorActions {
+  display: grid;
+  width: min(100%, 320px);
+  gap: var(--job-detail-error-recovery-gap, 14px);
+  justify-items: center;
+}
+
+.asyncDataInitialErrorOverlay .asyncDataErrorCopy {
+  max-width: 100%;
+  color: color-mix(in srgb, var(--color-error) 74%, var(--text));
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
+.asyncDataInitialErrorOverlay .asyncDataRetry {
+  min-height: 36px;
+  box-shadow: none;
+}
+
 .asyncDataErrorCopy {
   max-width: min(440px, 70%);
 }
 
 .asyncDataRetry {
   flex: 0 0 auto;
+}
+
+@media (max-width: 760px) {
+  .jobDetailInitialErrorRegion.asyncDataInitialErrorRegion {
+    display: block;
+    min-height: 0;
+    margin-top: 2px;
+  }
+
+  .jobDetailInitialErrorRegion .asyncDataInitialErrorOverlay {
+    --job-detail-error-visual-gap: 28px;
+    --job-detail-error-illustration-optical-offset: -5px;
+
+    width: 100%;
+    padding: 28px 20px 24px;
+  }
+
+  .jobDetailInitialErrorRegion .asyncDataInitialErrorIllustration {
+    width: min(212px, 64vw);
+    margin-bottom: 18px;
+  }
+
+  .jobDetailInitialErrorRegion .asyncDataInitialErrorActions {
+    width: min(100%, 312px);
+    gap: 16px;
+  }
+
+  .jobDetailInitialErrorRegion .asyncDataInitialErrorOverlay .asyncDataErrorCopy {
+    font-size: 14px;
+    line-height: 1.55;
+  }
+
+  .jobDetailInitialErrorRegion .asyncDataInitialErrorOverlay .asyncDataRetry {
+    width: 100%;
+    min-height: 44px;
+    justify-content: center;
+  }
 }
 
 .asyncDataSpinner {

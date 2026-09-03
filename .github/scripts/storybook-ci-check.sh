@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MAX_ATTEMPTS=2
+MAX_ATTEMPTS="${DOCKREV_STORYBOOK_MAX_ATTEMPTS:-2}"
 PLAYWRIGHT_INSTALL_TIMEOUT_SEC="${PLAYWRIGHT_INSTALL_TIMEOUT_SEC:-480}"
 STORYBOOK_TEST_TIMEOUT_SEC="${STORYBOOK_TEST_TIMEOUT_SEC:-900}"
 RETRY_SLEEP_SEC="${RETRY_SLEEP_SEC:-5}"
@@ -43,6 +43,11 @@ run_with_retry() {
 
 cd web
 
+mode="${DOCKREV_STORYBOOK_MODE:-full}"
+if [[ "${DOCKREV_STORYBOOK_NO_RETRY:-0}" == "1" ]]; then
+  MAX_ATTEMPTS=1
+fi
+
 # `--with-deps` can hang on GitHub-hosted runners due to apt/dpkg locks.
 # The runner already provides the required shared libraries for Chromium.
 run_with_retry \
@@ -50,12 +55,37 @@ run_with_retry \
   "${PLAYWRIGHT_INSTALL_TIMEOUT_SEC}" \
   bun ./node_modules/.bin/playwright install chromium
 
-run_with_retry \
-  "rollback refresh race interaction test" \
-  "${STORYBOOK_TEST_TIMEOUT_SEC}" \
-  env DOCKREV_TEST_STORYBOOK_ROLLBACK_RACE_ONLY=1 bun run test-storybook
-
-run_with_retry \
-  "storybook interaction tests" \
-  "${STORYBOOK_TEST_TIMEOUT_SEC}" \
-  bun run test-storybook
+case "${mode}" in
+  full)
+    run_with_retry \
+      "rollback refresh race interaction test" \
+      "${STORYBOOK_TEST_TIMEOUT_SEC}" \
+      env DOCKREV_TEST_STORYBOOK_ROLLBACK_RACE_ONLY=1 bun run test-storybook
+    run_with_retry \
+      "storybook interaction tests" \
+      "${STORYBOOK_TEST_TIMEOUT_SEC}" \
+      bun run test-storybook
+    ;;
+  global)
+    run_with_retry \
+      "rollback refresh race interaction test" \
+      "${STORYBOOK_TEST_TIMEOUT_SEC}" \
+      env DOCKREV_TEST_STORYBOOK_ROLLBACK_RACE_ONLY=1 bun run test-storybook
+    run_with_retry \
+      "storybook global interaction tests" \
+      "${STORYBOOK_TEST_TIMEOUT_SEC}" \
+      env DOCKREV_TEST_STORYBOOK_INTERACTIVE_ONLY=1 \
+        DOCKREV_STORYBOOK_ROLLBACK_RACE_PASSED=1 bun run test-storybook
+    ;;
+  shard)
+    : "${DOCKREV_TEST_STORYBOOK_SHARD:?DOCKREV_TEST_STORYBOOK_SHARD is required in shard mode}"
+    run_with_retry \
+      "storybook smoke ${DOCKREV_TEST_STORYBOOK_SHARD}" \
+      "${STORYBOOK_TEST_TIMEOUT_SEC}" \
+      env DOCKREV_TEST_STORYBOOK_SMOKE_ONLY=1 bun run test-storybook
+    ;;
+  *)
+    echo "Unknown DOCKREV_STORYBOOK_MODE=${mode}; expected full, global, or shard" >&2
+    exit 2
+    ;;
+esac

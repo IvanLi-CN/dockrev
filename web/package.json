@@ -11,6 +11,7 @@
     "build:demo:pages": "bun --bun ./node_modules/.bin/tsc -b && DOCKREV_PWA=off VITE_DOCKREV_PWA=off VITE_DOCKREV_DEMO=app bun --bun ./node_modules/.bin/vite build",
     "test": "bun test",
     "test:pwa-assets": "python3 scripts/check-pwa-assets.py",
+    "test:pwa-update": "node ./scripts/test-pwa-update.mjs",
     "lint": "bun --bun ./node_modules/.bin/eslint .",
     "storybook": "bun ./scripts/storybook-dev.mjs",
     "storybook:start": "bun ./scripts/storybook-daemon.mjs start",

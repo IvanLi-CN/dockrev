@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import shutil
 import subprocess
+import sys
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -23,7 +24,8 @@ ICON_SOURCE = BRAND_DIR / "dockrev-icon-source.svg"
 LOGO_SOURCE = BRAND_DIR / "dockrev-logo-source.svg"
 WORDMARK_SOURCE = VECTOR_DIR / "dockrev-text-pango.svg"
 SOCIAL_PREVIEW_SOURCE = GENERATED_DIR / "dockrev-github-social-preview-imagegen-candidate.png"
-PRODUCT_POSTER_SOURCE = GENERATED_DIR / "dockrev-product-poster-imagegen-candidate.png"
+PRODUCT_POSTER_DARK_SOURCE = GENERATED_DIR / "dockrev-product-poster-dark.png"
+PRODUCT_POSTER_LIGHT_SOURCE = GENERATED_DIR / "dockrev-product-poster-light.png"
 SOCIAL_FONT = REPO_DIR / "crates" / "dockrev-api" / "assets" / "fonts" / "NotoSansCJKsc-Regular.otf"
 PNG_DETERMINISTIC_OPTIONS = ["-strip", "-define", "png:exclude-chunk=tIME"]
 
@@ -171,7 +173,32 @@ def render_svg(svg_path: Path, output_path: Path, width: int, height: int) -> No
 def copy_to(path: Path, destinations: list[Path]) -> None:
     for destination in destinations:
         destination.parent.mkdir(parents=True, exist_ok=True)
+        if path.resolve() == destination.resolve():
+            continue
         shutil.copyfile(path, destination)
+
+
+def require_aspect_ratio(path: Path, width_ratio: int, height_ratio: int) -> tuple[int, int]:
+    if not path.exists():
+        raise RuntimeError(f"Missing brand media source: {path}")
+
+    result = subprocess.run(
+        ["magick", "identify", "-format", "%w %h", str(path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    try:
+        width, height = (int(value) for value in result.stdout.split())
+    except ValueError as error:
+        raise RuntimeError(f"Could not read image dimensions from {path}") from error
+
+    if width * height_ratio != height * width_ratio:
+        raise RuntimeError(
+            f"Expected {path} to have a {width_ratio}:{height_ratio} aspect ratio, "
+            f"received {width}x{height}"
+        )
+    return width, height
 
 
 def generate_svg_assets() -> tuple[Path, Path, Path, Path]:
@@ -327,7 +354,8 @@ def generate_raster_assets(icon_dark: Path, icon_square: Path, icon_maskable: Pa
                 DOCS_PUBLIC_DIR / "dockrev-icon.png",
             ],
         )
-        copy_to(maskable_icon_180, [WEB_PUBLIC_DIR / "apple-touch-icon.png", DOCS_PUBLIC_DIR / "apple-touch-icon.png"])
+        # The docs site keeps its own Apple touch icon; the product app uses Manifest metadata only.
+        copy_to(maskable_icon_180, [DOCS_PUBLIC_DIR / "apple-touch-icon.png"])
         copy_to(icon_192, [WEB_PUBLIC_DIR / "pwa-192.png"])
         copy_to(icon_256, [WEB_PUBLIC_DIR / "favicon.png", DOCS_PUBLIC_DIR / "favicon.png"])
         copy_to(icon_512, [WEB_PUBLIC_DIR / "pwa-512.png"])
@@ -442,100 +470,41 @@ def generate_social_preview() -> None:
 
 
 def generate_product_poster() -> None:
-    with tempfile.TemporaryDirectory(prefix="dockrev-poster-") as temp_dir:
-        temp = Path(temp_dir)
-        logo = temp / "logo.png"
-        small_icon = temp / "small-icon.png"
-        hero_icon = temp / "hero-icon.png"
-        poster = temp / "poster-1024.png"
-        poster_large = temp / "poster-1440.png"
-
-        subprocess.run(
-            ["magick", str(WEB_PUBLIC_DIR / "dockrev-logo.png"), "-resize", "700x200", str(logo)],
-            check=True,
-        )
-        subprocess.run(
-            ["magick", str(GENERATED_DIR / "dockrev-icon-transparent.png"), "-resize", "88x88", str(small_icon)],
-            check=True,
-        )
-        subprocess.run(
-            ["magick", str(GENERATED_DIR / "dockrev-icon-transparent.png"), "-resize", "270x270", str(hero_icon)],
-            check=True,
-        )
-        subprocess.run(
-            [
-                "magick",
-                str(PRODUCT_POSTER_SOURCE),
-                "-fill",
-                "#010e2d",
-                "-stroke",
-                "none",
-                "-draw",
-                "rectangle 0,0 1024,318",
-                "-fill",
-                "#03162f",
-                "-draw",
-                "rectangle 59,347 154,438",
-                "-fill",
-                "#000a1b",
-                "-draw",
-                "rectangle 342,920 682,1218",
-                str(logo),
-                "-geometry",
-                "+162+36",
-                "-composite",
-                str(small_icon),
-                "-geometry",
-                "+63+350",
-                "-composite",
-                str(hero_icon),
-                "-geometry",
-                "+377+933",
-                "-composite",
-                "-font",
-                str(SOCIAL_FONT),
-                "-fill",
-                "#dcecff",
-                "-pointsize",
-                "31",
-                "-gravity",
-                "north",
-                "-annotate",
-                "+0+252",
-                "Self-hosted Docker/Compose update manager",
-                "-gravity",
-                "northwest",
-                "-crop",
-                "1024x1472+0+0",
-                "+repage",
-                "-depth",
-                "8",
-                *PNG_DETERMINISTIC_OPTIONS,
-                str(poster),
-            ],
-            check=True,
-        )
-        subprocess.run(
-            [
-                "magick",
-                str(poster),
-                "-resize",
-                "1440x2070!",
-                "-depth",
-                "8",
-                *PNG_DETERMINISTIC_OPTIONS,
-                str(poster_large),
-            ],
-            check=True,
-        )
+    require_aspect_ratio(PRODUCT_POSTER_DARK_SOURCE, 4, 5)
+    subprocess.run(
+        [
+            sys.executable,
+            str(BRAND_DIR / "recolor_product_poster.py"),
+            str(PRODUCT_POSTER_DARK_SOURCE),
+            str(PRODUCT_POSTER_LIGHT_SOURCE),
+        ],
+        check=True,
+    )
+    poster_variants = (
+        ("dark", PRODUCT_POSTER_DARK_SOURCE),
+        ("light", PRODUCT_POSTER_LIGHT_SOURCE),
+    )
+    for theme, source in poster_variants:
+        require_aspect_ratio(source, 4, 5)
         copy_to(
-            poster,
+            source,
             [
-                WEB_PUBLIC_DIR / "dockrev-product-poster.png",
-                DOCS_PUBLIC_DIR / "dockrev-product-poster.png",
+                GENERATED_DIR / f"dockrev-product-poster-{theme}.png",
+                WEB_PUBLIC_DIR / f"dockrev-product-poster-{theme}.png",
+                DOCS_PUBLIC_DIR / f"dockrev-product-poster-{theme}.png",
             ],
         )
-        copy_to(poster_large, [GENERATED_DIR / "dockrev-product-poster.png"])
+
+    # Keep existing unqualified consumers on the dark variant until the full
+    # light/dark media matrix has a documented selection policy.
+    copy_to(
+        PRODUCT_POSTER_DARK_SOURCE,
+        [
+            GENERATED_DIR / "dockrev-product-poster.png",
+            WEB_PUBLIC_DIR / "dockrev-product-poster.png",
+            DOCS_PUBLIC_DIR / "dockrev-product-poster.png",
+        ],
+    )
 
 
 def generate_contact_sheet() -> None:
@@ -553,7 +522,7 @@ def generate_contact_sheet() -> None:
             (WEB_PUBLIC_DIR / "brand-mark.png", brand_mark, "180x180"),
             (WEB_PUBLIC_DIR / "dockrev-logo.png", logo, "560x160"),
             (WEB_PUBLIC_DIR / "dockrev-social-preview.png", social, "720x360"),
-            (WEB_PUBLIC_DIR / "dockrev-product-poster.png", poster, "420x630"),
+            (WEB_PUBLIC_DIR / "dockrev-product-poster-dark.png", poster, "420x525"),
         )
         for source, destination, size in resize_specs:
             subprocess.run(["magick", str(source), "-resize", size, str(destination)], check=True)
@@ -601,7 +570,7 @@ def generate_contact_sheet() -> None:
                 "-composite",
                 str(poster),
                 "-geometry",
-                "+1000+670",
+                "+1000+725",
                 "-composite",
                 "-stroke",
                 "none",
@@ -623,7 +592,7 @@ def generate_contact_sheet() -> None:
                 "Social preview 1280x640",
                 "-annotate",
                 "+896+1375",
-                "Product poster 1024x1472",
+                "Product poster 4:5",
                 "-depth",
                 "8",
                 *PNG_DETERMINISTIC_OPTIONS,

@@ -17,32 +17,35 @@ addPlugins([
   },
 ])
 
-precacheAndRoute(self.__WB_MANIFEST, {
-  ignoreURLParametersMatching: [/^v$/],
-})
+precacheAndRoute(self.__WB_MANIFEST)
 cleanupOutdatedCaches()
 clientsClaim()
 
+const appBasePath = new URL('./', self.registration.scope).pathname.replace(/\/$/, '')
+const appShellUrl = `${appBasePath || ''}/index.html`
+const appRoute = (pattern: string) =>
+  new RegExp(`^${appBasePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}${pattern}`)
+
 registerRoute(
-  new NavigationRoute(createHandlerBoundToURL('/index.html'), {
+  new NavigationRoute(createHandlerBoundToURL(appShellUrl), {
     allowlist: [
-      /^\/$/,
-      /^\/overview$/,
-      /^\/queue$/,
-      /^\/queue\/(?:version-inference|ghcr-webhooks|ghcr-webhook-inbox)$/,
-      /^\/queue\/[^/]+$/,
-      /^\/services$/,
-      /^\/services\/[^/]+$/,
-      /^\/services\/[^/]+\/[^/]+(?:\/(?:overview|versions|history|monitoring|backup|logs|settings))?$/,
-      /^\/cleanup$/,
-      /^\/version-inference$/,
-      /^\/deploy-check$/,
-      /^\/settings(?:\/(?:account|maintenance|backup|monitoring|schedules|release-notes|notifications|integrations|ghcr-webhooks))?$/,
+      appRoute('/$'),
+      appRoute('/overview$'),
+      appRoute('/queue$'),
+      appRoute('/queue/(?:version-inference|ghcr-webhooks|ghcr-webhook-inbox)$'),
+      appRoute('/queue/[^/]+$'),
+      appRoute('/services$'),
+      appRoute('/services/[^/]+$'),
+      appRoute('/services/[^/]+/[^/]+(?:/(?:overview|versions|history|monitoring|backup|logs|settings))?$'),
+      appRoute('/cleanup$'),
+      appRoute('/version-inference$'),
+      appRoute('/deploy-check$'),
+      appRoute('/settings(?:/(?:account|maintenance|backup|monitoring|schedules|release-notes|notifications|integrations|ghcr-webhooks))?$'),
     ],
     denylist: [
-      /^\/api(?:\/|$)/,
-      /^\/assets(?:\/|$)/,
-      /^\/supervisor(?:\/|$)/,
+      appRoute('/api(?:/|$)'),
+      appRoute('/assets(?:/|$)'),
+      appRoute('/supervisor(?:/|$)'),
     ],
   }),
 )
@@ -99,7 +102,7 @@ self.addEventListener('notificationclick', (event) => {
       for (const client of clients) {
         if (client.url && 'focus' in client) return client.focus()
       }
-      if (self.clients.openWindow) return self.clients.openWindow('/')
+      if (self.clients.openWindow) return self.clients.openWindow(appBasePath || '/')
       return undefined
     }),
   )

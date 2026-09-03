@@ -1,8 +1,9 @@
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, writeFile } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { selectSmokeShard } from "./storybook-sharding.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_OUTDIR = path.resolve(SCRIPT_DIR, "../storybook-static");
@@ -58,27 +59,6 @@ function parseArgs(argv) {
     out.passthrough.push(a);
   }
   return out;
-}
-
-function selectSmokeShard(storyIds) {
-  const raw = process.env.DOCKREV_TEST_STORYBOOK_SHARD;
-  if (!raw) return storyIds;
-
-  const match = /^(\d+)\/(\d+)$/.exec(raw);
-  if (!match) {
-    throw new Error(
-      "DOCKREV_TEST_STORYBOOK_SHARD must use the one-based index/total form, for example 1/4.",
-    );
-  }
-  const index = Number(match[1]);
-  const total = Number(match[2]);
-  if (!Number.isInteger(index) || !Number.isInteger(total) || index < 1 || index > total) {
-    throw new Error(
-      "DOCKREV_TEST_STORYBOOK_SHARD must use a one-based index within its total, for example 1/4.",
-    );
-  }
-
-  return storyIds.filter((_, storyIndex) => storyIndex % total === index - 1);
 }
 
 function contentType(filePath) {
@@ -194,7 +174,8 @@ async function getStoryIds(baseUrl) {
         e.type === "story" &&
         typeof e.id === "string",
     )
-    .map((e) => e.id);
+    .map((e) => e.id)
+    .sort();
 }
 
 function normalizeBaseUrl(input) {
@@ -209,6 +190,28 @@ function normalizeBaseUrl(input) {
   }
   if (!url.pathname.endsWith("/")) url.pathname += "/";
   return url.toString();
+}
+
+async function writeSmokeCoverage({ baselineStoryIds, selectedStoryIds, mode }) {
+  const outputPath = process.env.DOCKREV_STORYBOOK_COVERAGE_FILE;
+  if (!outputPath) return;
+  await writeFile(
+    outputPath,
+    `${JSON.stringify(
+      {
+        mode,
+        baseline_story_ids: baselineStoryIds,
+        selected_story_ids: selectedStoryIds,
+        shard: process.env.DOCKREV_TEST_STORYBOOK_SHARD || null,
+        global_checks: mode === "global",
+        rollback_race:
+          mode === "global" &&
+          process.env.DOCKREV_STORYBOOK_ROLLBACK_RACE_PASSED === "1",
+      },
+      null,
+      2,
+    )}\n`,
+  );
 }
 
 function approxEqual(a, b, tolerancePx = 1) {
@@ -611,10 +614,12 @@ async function assertServiceLogsFollowAfterNewLog({
     }
 
     if (evictedHeadMarker && expectedHeadMarker) {
-      await viewport.evaluate((element) => {
-        element.scrollTop = 0;
-        element.dispatchEvent(new Event("scroll"));
-      });
+      const viewportBox = await viewport.boundingBox();
+      if (!viewportBox) throw new Error("Service logs viewport is missing a bounding box.");
+      const scrollHeight = await viewport.evaluate((element) => element.scrollHeight);
+      await page.mouse.move(viewportBox.x + viewportBox.width / 2, viewportBox.y + viewportBox.height / 2);
+      await page.mouse.wheel(0, -scrollHeight);
+      await page.getByRole("button", { name: "跳到最新" }).waitFor({ timeout: 10_000 });
       await page.waitForFunction(
         ({ evictedHeadMarker, expectedHeadMarker }) => {
           const head = document.querySelector('.serviceLogRow[data-index="0"]');
@@ -3047,12 +3052,17 @@ async function main() {
       if (lightLogsOnly) {
         await assertServiceLogsLightContrast({ baseUrl: targetUrl, browser });
       } else {
-        if (!interactiveOnly && !rollbackRaceOnly) {
+        if (smokeOnly || (!interactiveOnly && !rollbackRaceOnly)) {
+          const selectedStoryIds = smokeOnly ? selectSmokeShard(storyIds) : storyIds;
+          await writeSmokeCoverage({ baselineStoryIds: storyIds, selectedStoryIds, mode: smokeOnly ? "shard" : "full" });
           await runSmoke({
             baseUrl: targetUrl,
-            storyIds: selectSmokeShard(storyIds),
+            storyIds: selectedStoryIds,
             browser,
           });
+        }
+        if (interactiveOnly) {
+          await writeSmokeCoverage({ baselineStoryIds: storyIds, selectedStoryIds: [], mode: "global" });
         }
         if (rollbackRaceOnly) await runRollbackRefreshRace({ baseUrl: targetUrl, browser });
         else if (!smokeOnly) await runInteractive({ baseUrl: targetUrl, browser });
@@ -3098,12 +3108,17 @@ async function main() {
       if (lightLogsOnly) {
         await assertServiceLogsLightContrast({ baseUrl: localUrl, browser });
       } else {
-        if (!interactiveOnly && !rollbackRaceOnly) {
+        if (smokeOnly || (!interactiveOnly && !rollbackRaceOnly)) {
+          const selectedStoryIds = smokeOnly ? selectSmokeShard(storyIds) : storyIds;
+          await writeSmokeCoverage({ baselineStoryIds: storyIds, selectedStoryIds, mode: smokeOnly ? "shard" : "full" });
           await runSmoke({
             baseUrl: localUrl,
-            storyIds: selectSmokeShard(storyIds),
+            storyIds: selectedStoryIds,
             browser,
           });
+        }
+        if (interactiveOnly) {
+          await writeSmokeCoverage({ baselineStoryIds: storyIds, selectedStoryIds: [], mode: "global" });
         }
         if (rollbackRaceOnly) await runRollbackRefreshRace({ baseUrl: localUrl, browser });
         else if (!smokeOnly) await runInteractive({ baseUrl: localUrl, browser });

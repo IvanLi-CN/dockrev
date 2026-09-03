@@ -174,10 +174,31 @@ impl ComposeStack {
         cmd
     }
 
+    pub fn ps_all_json(&self, cfg: &ComposeRunnerConfig) -> CommandSpec {
+        let mut cmd = self.base_command(cfg);
+        cmd.args.extend([
+            "ps".to_string(),
+            "-a".to_string(),
+            "--format".to_string(),
+            "json".to_string(),
+        ]);
+        cmd
+    }
+
     pub fn config_services(&self, cfg: &ComposeRunnerConfig) -> CommandSpec {
         let mut cmd = self.base_command(cfg);
         cmd.args
             .extend(["config".to_string(), "--services".to_string()]);
+        cmd
+    }
+
+    pub fn config_json(&self, cfg: &ComposeRunnerConfig) -> CommandSpec {
+        let mut cmd = self.base_command(cfg);
+        cmd.args.extend([
+            "config".to_string(),
+            "--format".to_string(),
+            "json".to_string(),
+        ]);
         cmd
     }
 
@@ -234,6 +255,76 @@ mod tests {
         let cmd = stack.ps_q_service(&cfg, "web");
         assert_eq!(cmd.program, "docker-compose");
         assert_ne!(cmd.args[0], "compose");
+    }
+
+    #[test]
+    fn config_json_preserves_compose_context() {
+        let stack = ComposeStack {
+            project_name: "myproj".to_string(),
+            compose: ComposeConfig {
+                kind: "path".to_string(),
+                compose_files: vec![
+                    "/srv/app/compose.yml".to_string(),
+                    "/srv/app/compose.prod.yml".to_string(),
+                ],
+                env_file: Some("/srv/app/.env".to_string()),
+            },
+        };
+        let cfg = ComposeRunnerConfig {
+            compose_bin: "docker-compose".to_string(),
+            env: vec![("COMPOSE_PROJECT_NAME".to_string(), "ignored".to_string())],
+        };
+
+        let cmd = stack.config_json(&cfg);
+        assert_eq!(
+            cmd.args,
+            vec![
+                "-f",
+                "/srv/app/compose.yml",
+                "-f",
+                "/srv/app/compose.prod.yml",
+                "--env-file",
+                "/srv/app/.env",
+                "--project-name",
+                "myproj",
+                "config",
+                "--format",
+                "json",
+            ]
+        );
+        assert_eq!(cmd.env, cfg.env);
+    }
+
+    #[test]
+    fn ps_all_json_builds_single_stack_snapshot_command() {
+        let stack = ComposeStack {
+            project_name: "myproj".to_string(),
+            compose: ComposeConfig {
+                kind: "path".to_string(),
+                compose_files: vec!["/srv/app/compose.yml".to_string()],
+                env_file: None,
+            },
+        };
+        let cfg = ComposeRunnerConfig {
+            compose_bin: "docker".to_string(),
+            env: Vec::new(),
+        };
+
+        let cmd = stack.ps_all_json(&cfg);
+        assert_eq!(
+            cmd.args,
+            vec![
+                "compose",
+                "-f",
+                "/srv/app/compose.yml",
+                "--project-name",
+                "myproj",
+                "ps",
+                "-a",
+                "--format",
+                "json",
+            ]
+        );
     }
 
     #[test]

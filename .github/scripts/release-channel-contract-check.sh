@@ -9,9 +9,27 @@ bash -n \
   .github/scripts/label-gate.sh \
   .github/scripts/release-intent.sh \
   .github/scripts/compute-version.sh \
-  .github/scripts/test-release-snapshot.sh
-python3 -m py_compile .github/scripts/check-live-quality-gates.py .github/scripts/release_snapshot.py
-ruby -e 'require "yaml"; YAML.load_file(".github/workflows/label-gate.yml"); YAML.load_file(".github/workflows/review-policy.yml"); YAML.load_file(".github/workflows/ci-pr.yml"); YAML.load_file(".github/workflows/ci-main.yml"); YAML.load_file(".github/workflows/release.yml")'
+  .github/scripts/test-release-snapshot.sh \
+  .github/scripts/deploy-smoke.sh \
+  .github/scripts/storybook-ci-check.sh
+python3 -m py_compile \
+  .github/scripts/check-live-quality-gates.py \
+  .github/scripts/release_snapshot.py \
+  .github/scripts/resolve-ci-scope.py \
+  .github/scripts/resolve-storybook-matrix.py \
+  .github/scripts/release_source_gate.py \
+  .github/scripts/verify_ci_gate_metrics.py \
+  .github/scripts/test_ci_release_gate.py \
+  .github/scripts/run_ci_gate_validation.py
+ruby -e 'require "yaml"; ARGV.each { |path| YAML.load_file(path) }' \
+  .github/workflows/label-gate.yml \
+  .github/workflows/review-policy.yml \
+  .github/workflows/ci-pr.yml \
+  .github/workflows/ci-main.yml \
+  .github/workflows/source-build-release-gate.yml \
+  .github/workflows/ci-gate-verification.yml \
+  .github/workflows/release.yml \
+  .github/workflows/notify-release-failure.yml
 
 has_rg() {
   command -v rg >/dev/null 2>&1
@@ -132,12 +150,141 @@ ruby -ryaml -e '
 workflow = YAML.load_file(".github/workflows/release.yml")
 top_permissions = workflow.fetch("permissions", {})
 publish_permissions = workflow.fetch("jobs").fetch("publish").fetch("permissions", {})
+jobs = workflow.fetch("jobs")
+
+%w[build-web build-binaries-amd64 build-binaries-arm64 publish cleanup-artifacts].each do |job_name|
+  needs = Array(jobs.fetch(job_name).fetch("needs"))
+  abort "[contract-check] #{job_name} must wait for source-gate" unless needs.include?("source-gate")
+end
+abort "[contract-check] source-gate must have actions: read" unless jobs.fetch("source-gate").fetch("permissions")["actions"] == "read"
 
 abort "[contract-check] release workflow top-level permissions must keep issues: write" unless top_permissions["issues"] == "write"
 abort "[contract-check] release workflow top-level permissions must keep pull-requests: write" unless top_permissions["pull-requests"] == "write"
 abort "[contract-check] release publish job permissions must keep issues: write" unless publish_permissions["issues"] == "write"
 abort "[contract-check] release publish job permissions must keep pull-requests: write" unless publish_permissions["pull-requests"] == "write"
 '
+
+echo "[contract-check] failed release notification workflow invariants"
+notify_workflow=".github/workflows/notify-release-failure.yml"
+search_fixed "if: \${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure' }}" "${notify_workflow}"
+search_fixed "if: \${{ github.event_name == 'workflow_dispatch' }}" "${notify_workflow}"
+search_fixed "IvanLi-CN/oidrune/.github/workflows/notify.yml@e48822f99c6402a753ed86557ea029754cbab20b" "${notify_workflow}"
+search_fixed "id-token: write" "${notify_workflow}"
+search_fixed "summary: \${{ needs.resolve_release_context.outputs.summary }}" "${notify_workflow}"
+search_fixed "summary: |" "${notify_workflow}"
+search_fixed "status: failure" "${notify_workflow}"
+search_fixed "f'sha: {short_sha}'" "${notify_workflow}"
+search_fixed "f'url: {os.environ.get(\"RUN_URL\", \"\")}'" "${notify_workflow}"
+search_fixed "url: \${{ format('{0}/{1}/actions/runs/{2}', github.server_url, github.repository, github.run_id) }}" "${notify_workflow}"
+ensure_fixed_absent "release-failure-telegram.yml@main" "${notify_workflow}"
+ensure_fixed_absent "SHOUTRRR_URL" "${notify_workflow}"
+ensure_fixed_absent "gateway_url:" "${notify_workflow}"
+ensure_fixed_absent "oidc_audience:" "${notify_workflow}"
+ruby -ryaml -e '
+workflow = YAML.load_file(ARGV.fetch(0))
+events = workflow.fetch(workflow.key?("on") ? "on" : true)
+jobs = workflow.fetch("jobs")
+run_event = events.fetch("workflow_run")
+abort "workflow_run filter drifted" unless run_event.fetch("workflows") == ["Release"]
+abort "workflow_run type drifted" unless run_event.fetch("types") == ["completed"]
+abort "workflow_run branch filter drifted" unless run_event.fetch("branches") == ["main"]
+abort "workflow_dispatch trigger missing" unless events.key?("workflow_dispatch")
+
+failure = jobs.fetch("notify_failure")
+smoke = jobs.fetch("smoke_test")
+expected_uses = "IvanLi-CN/oidrune/.github/workflows/notify.yml@e48822f99c6402a753ed86557ea029754cbab20b"
+abort "failure call ref drifted" unless failure.fetch("uses") == expected_uses
+abort "smoke call ref drifted" unless smoke.fetch("uses") == expected_uses
+abort "failure call must mint OIDC token" unless failure.fetch("permissions") == {"id-token" => "write"}
+abort "smoke call must mint OIDC token" unless smoke.fetch("permissions") == {"id-token" => "write"}
+abort "failure outcome drifted" unless failure.fetch("with").fetch("outcome") == "failure"
+abort "smoke outcome drifted" unless smoke.fetch("with").fetch("outcome") == "failure"
+abort "failure summary missing" unless failure.fetch("with").fetch("summary") == "${{ needs.resolve_release_context.outputs.summary }}"
+abort "smoke summary missing" unless smoke.fetch("with").fetch("summary").include?("status: smoke test")
+abort "legacy secrets must not be forwarded" if failure.key?("secrets") || smoke.key?("secrets")
+legacy_reference = ["IvanLi-CN", "github-workflows", ".github", "workflows", "release-failure-telegram.yml@main"].join("/")
+abort "legacy workflow reference remains" if File.read(ARGV.fetch(0)).include?(legacy_reference)
+abort "gateway override must remain omitted" if File.read(ARGV.fetch(0)).match?(/gateway_url:|oidc_audience:/)
+' "${notify_workflow}"
+
+ruby -ryaml -e '
+workflow = YAML.load_file(".github/workflows/ci-main.yml")
+jobs = workflow.fetch("jobs")
+required = jobs.fetch("frontend-storybook-test-required")
+abort "[contract-check] Storybook required check name changed" unless required.fetch("name") == "Frontend Storybook test (main)"
+abort "[contract-check] Storybook required check must aggregate shards and coverage" unless Array(required.fetch("needs")).sort == %w[changes frontend-storybook-test storybook-coverage-summary].sort
+abort "[contract-check] fast gate must wait for the stable Storybook required check" unless Array(jobs.fetch("fast-gate-verdict").fetch("needs")).include?("frontend-storybook-test-required")
+abort "[contract-check] release snapshot must wait for the stable Storybook required check" unless Array(jobs.fetch("release-snapshot").fetch("needs")).include?("frontend-storybook-test-required")
+'
+
+echo "[contract-check] CI duration optimization invariants"
+search_fixed "source-gate:" .github/workflows/release.yml
+search_fixed "python3 .github/scripts/release_source_gate.py wait \\" .github/workflows/release.yml
+search_fixed "WORKFLOW_FILE = \"source-build-release-gate.yml\"" .github/scripts/release_source_gate.py
+search_fixed "FAST_WORKFLOW_FILE = \"ci-main.yml\"" .github/scripts/release_source_gate.py
+search_fixed "VERIFICATION_WORKFLOW_FILE = \"ci-gate-verification.yml\"" .github/scripts/release_source_gate.py
+search_fixed "validate_push_attestation" .github/scripts/release_source_gate.py
+search_fixed "download_attestation" .github/scripts/release_source_gate.py
+search_fixed "target: runtime" .github/workflows/source-build-release-gate.yml
+search_fixed "target: runtime-supervisor" .github/workflows/source-build-release-gate.yml
+search_fixed "load: true" .github/workflows/source-build-release-gate.yml
+search_fixed "push: false" .github/workflows/source-build-release-gate.yml
+search_fixed "docker/build-push-action@v6" .github/workflows/source-build-release-gate.yml
+search_fixed "crazy-max/ghaction-github-runtime@v4" .github/workflows/source-build-release-gate.yml
+search_fixed 'dockrev-source-runtime-v1${{ env.SOURCE_CACHE_SUFFIX }}' .github/workflows/source-build-release-gate.yml
+search_fixed 'dockrev-source-supervisor-v1${{ env.SOURCE_CACHE_SUFFIX }}' .github/workflows/source-build-release-gate.yml
+search_fixed "DOCKREV_DEPLOY_SMOKE_USE_LOADED_IMAGES: \"1\"" .github/workflows/source-build-release-gate.yml
+search_regex "docker compose .*up -d --no-build" .github/scripts/deploy-smoke.sh
+search_fixed "SOURCE_CACHE_SUFFIX" .github/workflows/source-build-release-gate.yml
+search_fixed '"publish": False' .github/workflows/source-build-release-gate.yml
+search_fixed "target_sha:" .github/workflows/ci-gate-verification.yml
+search_fixed "force_full: true" .github/workflows/ci-gate-verification.yml
+search_fixed "verification_mode: true" .github/workflows/ci-gate-verification.yml
+search_fixed "      contents: write" .github/workflows/ci-gate-verification.yml
+search_fixed "      pull-requests: read" .github/workflows/ci-gate-verification.yml
+search_fixed "    uses: ./.github/workflows/ci-main.yml" .github/workflows/ci-gate-verification.yml
+search_fixed "inputs.verification_mode != true" .github/workflows/ci-main.yml
+search_fixed '"publish": False' .github/workflows/ci-gate-verification.yml
+search_fixed 'actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100' .github/workflows/ci-gate-verification.yml
+search_fixed '"fast_started_at": fast_started' .github/workflows/ci-gate-verification.yml
+search_fixed '"source_started_at": source_started' .github/workflows/ci-gate-verification.yml
+search_fixed '"fast_queue_seconds": (fast_started_dt - run_started_dt).total_seconds()' .github/workflows/ci-gate-verification.yml
+search_fixed '"source_queue_seconds": (source_started_dt - run_started_dt).total_seconds()' .github/workflows/ci-gate-verification.yml
+search_fixed '"wall_seconds": (execution_end - run_started_dt).total_seconds()' .github/workflows/ci-gate-verification.yml
+search_fixed "CANDIDATE_DISPATCHES = 6" .github/scripts/run_ci_gate_validation.py
+search_fixed "FINAL_DISPATCHES = 10" .github/scripts/run_ci_gate_validation.py
+search_fixed "TOTAL_DISPATCHES = CANDIDATE_DISPATCHES + FINAL_DISPATCHES" .github/scripts/run_ci_gate_validation.py
+search_fixed "WORKFLOW_TIMEOUT_SECONDS = 720" .github/scripts/run_ci_gate_validation.py
+search_fixed "WARM_INVESTIGATION_THRESHOLD_SECONDS = 600" .github/scripts/run_ci_gate_validation.py
+search_fixed "STATUS_QUERY_ATTEMPTS = 3" .github/scripts/run_ci_gate_validation.py
+search_fixed 'parser.add_argument("--resume-run-id", type=int, action="append", default=[])' .github/scripts/run_ci_gate_validation.py
+search_fixed "resumed GitHub runs must be supplied in chronological order" .github/scripts/run_ci_gate_validation.py
+search_fixed 'choices=("all", "candidates", "final")' .github/scripts/run_ci_gate_validation.py
+search_fixed "select_final_matrix" .github/scripts/run_ci_gate_validation.py
+search_fixed "collect_case" .github/scripts/run_ci_gate_validation.py
+search_fixed "--candidate-dir" .github/scripts/run_ci_gate_validation.py
+search_fixed "OBSERVATION_GRACE_SECONDS = 180" .github/scripts/run_ci_gate_validation.py
+search_fixed '"status,conclusion,startedAt"' .github/scripts/run_ci_gate_validation.py
+search_fixed "Runner queue time is outside that execution budget" .github/scripts/run_ci_gate_validation.py
+search_fixed "matrix_deadline=deadline" .github/scripts/run_ci_gate_validation.py
+search_fixed "did not reach a terminal state within" .github/scripts/run_ci_gate_validation.py
+search_fixed "timeout-seconds=720" .github/scripts/run_ci_gate_validation.py
+search_fixed "interval-seconds=15" .github/scripts/run_ci_gate_validation.py
+search_fixed "capture=True" .github/scripts/run_ci_gate_validation.py
+search_fixed "timeout_seconds=60" .github/scripts/run_ci_gate_validation.py
+search_fixed "controlled validation budget of 204 minutes has elapsed" .github/scripts/run_ci_gate_validation.py
+search_fixed "output-dir must not already exist" .github/scripts/run_ci_gate_validation.py
+search_fixed "final ten warm samples" .github/scripts/run_ci_gate_validation.py
+search_fixed "deadline.json" .github/scripts/run_ci_gate_validation.py
+search_fixed "storybook-coverage-summary" .github/workflows/ci-main.yml
+search_fixed "frontend-storybook-test-required:" .github/workflows/ci-main.yml
+search_fixed "name: Frontend Storybook test (main)" .github/workflows/ci-main.yml
+search_fixed "selectSmokeShard" web/scripts/test-storybook.mjs
+search_fixed "DOCKREV_STORYBOOK_ROLLBACK_RACE_PASSED" web/scripts/test-storybook.mjs
+search_fixed "DOCKREV_STORYBOOK_ROLLBACK_RACE_PASSED=1" .github/scripts/storybook-ci-check.sh
+search_fixed "verify-storybook-coverage.mjs" .github/workflows/ci-main.yml
+search_fixed "resolve-storybook-matrix.py" .github/workflows/ci-main.yml
+search_fixed ".github/storybook-shards.json" .github/scripts/resolve-storybook-matrix.py
 
 echo "[contract-check] quality-gate workflow invariants"
 search_regex "^[[:space:]]*pull_request_target:" .github/workflows/label-gate.yml
@@ -327,10 +474,24 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _text(self, body: str, status: int = 200):
+        encoded = body.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
     def do_GET(self):
         path = urlparse(self.path).path
         if path == "/health":
             return self._json({"ok": True})
+        if path == "/repos/IvanLi-CN/dockrev/actions/runs/9001/attempts/1/jobs":
+            return self._json({"jobs": [{"id": 7001, "name": "Publish"}]})
+        if path == "/repos/IvanLi-CN/dockrev/actions/jobs/7001/logs":
+            return self._text("RELEASE_TARGET_SHA=1111111111111111111111111111111111111111\n")
+        if path == "/repos/IvanLi-CN/dockrev/actions/runs/9002/attempts/1/jobs":
+            return self._json({"error": "temporary failure"}, status=503)
         parts = [part for part in path.split("/") if part]
         if len(parts) >= 6 and parts[0] == "repos" and parts[3] == "commits" and parts[5] == "pulls":
             sha = parts[4]
@@ -398,6 +559,100 @@ if ! start_mock_server; then
   fi
   exit 1
 fi
+
+extract_release_resolver() {
+  local output_path="$1"
+  python3 - "${notify_workflow}" "${output_path}" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text().splitlines(keepends=True)
+start = next(index for index, line in enumerate(source) if line.strip() == "python3 - <<'PYCODE'")
+end = next(index for index in range(start + 1, len(source)) if source[index].strip() == "PYCODE")
+indent = " " * 10
+body = []
+for line in source[start + 1:end]:
+    if line.strip():
+        if not line.startswith(indent):
+            raise SystemExit("resolver body indentation drifted")
+        body.append(line[len(indent):])
+    else:
+        body.append(line)
+Path(sys.argv[2]).write_text("".join(body))
+PY
+}
+
+run_release_resolver_scenarios() {
+  local resolver_script="${tmp_dir}/notify-resolver.py"
+  local actual_output="${tmp_dir}/notify-resolver-actual.out"
+  local fallback_output="${tmp_dir}/notify-resolver-fallback.out"
+  extract_release_resolver "${resolver_script}"
+
+  GITHUB_API_URL="http://127.0.0.1:${api_port}" \
+    GH_TOKEN="x" \
+    REPOSITORY="IvanLi-CN/dockrev" \
+    RUN_ID="9001" \
+    RUN_ATTEMPT="1" \
+    RUN_EVENT="workflow_run" \
+    WORKFLOW_NAME="Release" \
+    RUN_URL="https://github.com/IvanLi-CN/dockrev/actions/runs/9001" \
+    HEAD_BRANCH="main" \
+    HEAD_SHA="2222222222222222222222222222222222222222" \
+    TRIGGERING_ACTOR="release-bot" \
+    GITHUB_OUTPUT="${actual_output}" \
+    python3 "${resolver_script}"
+
+  GITHUB_API_URL="http://127.0.0.1:${api_port}" \
+    GH_TOKEN="x" \
+    REPOSITORY="IvanLi-CN/dockrev" \
+    RUN_ID="9002" \
+    RUN_ATTEMPT="1" \
+    RUN_EVENT="workflow_run" \
+    WORKFLOW_NAME="Release" \
+    RUN_URL="https://github.com/IvanLi-CN/dockrev/actions/runs/9002" \
+    HEAD_BRANCH="main" \
+    HEAD_SHA="2222222222222222222222222222222222222222" \
+    TRIGGERING_ACTOR="release-bot" \
+    GITHUB_OUTPUT="${fallback_output}" \
+    python3 "${resolver_script}"
+
+  python3 - "${actual_output}" "${fallback_output}" <<'PY'
+from pathlib import Path
+import sys
+
+actual = Path(sys.argv[1]).read_text()
+fallback = Path(sys.argv[2]).read_text()
+
+def summary(text: str) -> str:
+    marker = "summary<<SUMMARY_EOF\n"
+    start = text.index(marker) + len(marker)
+    return text[start:text.index("\nSUMMARY_EOF", start)]
+
+actual_summary = summary(actual)
+assert "head_sha=1111111111111111111111111111111111111111" in actual
+for expected in (
+    "Release Failed - IvanLi-CN/dockrev",
+    "status: failure",
+    "workflow: Release",
+    "event: workflow_run",
+    "branch: main",
+    "sha: 111111111111",
+    "attempt: 1",
+    "actor: release-bot",
+    "url: https://github.com/IvanLi-CN/dockrev/actions/runs/9001",
+    "note: resolved release target sha from Publish logs",
+):
+    assert expected in actual_summary, expected
+
+fallback_summary = summary(fallback)
+assert "head_sha=2222222222222222222222222222222222222222" in fallback
+assert "sha: 222222222222" in fallback_summary
+assert "target sha resolution fell back to workflow_run head sha (HTTPError)" in fallback_summary
+PY
+}
+
+echo "[contract-check] failed release notification resolver scenarios"
+run_release_resolver_scenarios
 
 extract_github_script() {
   local workflow_path="$1"

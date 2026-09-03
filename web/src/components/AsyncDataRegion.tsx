@@ -4,13 +4,15 @@ import {
   asyncOverlayDelay,
   formatAsyncDataError,
   isAsyncDataBusy,
+  shouldShowAsyncLoadingOverlay,
   type AsyncDataPhase,
+  type AsyncDataOrigin,
   type AsyncDataSource,
   type AsyncDataTrigger,
 } from '../asyncData'
 import { Button } from '../ui'
 
-export type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
+export type { AsyncDataOrigin, AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
 
 export function Skeleton(props: {
   className?: string
@@ -35,12 +37,14 @@ export function AsyncDataRegion(props: {
   phase: AsyncDataPhase
   source?: AsyncDataSource
   trigger?: AsyncDataTrigger
+  origin?: AsyncDataOrigin
   hasData?: boolean
   className?: string
   label?: string
   error?: string | null
   onRetry?: () => void
   retryDisabled?: boolean
+  initialErrorVisual?: ReactNode
   skeleton?: ReactNode
   children?: ReactNode
 }) {
@@ -48,12 +52,14 @@ export function AsyncDataRegion(props: {
     phase,
     source = 'none',
     trigger = 'background',
+    origin,
     hasData = false,
     className,
     label = '正在加载数据',
     error,
     onRetry,
     retryDisabled = false,
+    initialErrorVisual,
     skeleton = <AsyncDataSkeleton />,
     children,
   } = props
@@ -61,19 +67,24 @@ export function AsyncDataRegion(props: {
   const [loadingOverlayMounted, setLoadingOverlayMounted] = useState(false)
   const [loadingOverlayLeaving, setLoadingOverlayLeaving] = useState(false)
   const busy = isAsyncDataBusy(phase)
-  const initialSkeleton = phase === 'initial-loading' || (phase === 'error' && !hasData)
+  const initialError = phase === 'error' && !hasData
+  const initialSkeleton = phase === 'initial-loading'
+  const initialErrorWithVisual = initialError && Boolean(initialErrorVisual)
+  const resolvedOrigin = origin ?? (trigger === 'user-action' ? 'manual' : undefined)
+  const silentOrigin = !shouldShowAsyncLoadingOverlay(resolvedOrigin)
 
   useEffect(() => {
-    if (phase !== 'refreshing') {
+    if (phase !== 'refreshing' || silentOrigin) {
       setShowDelayedOverlay(false)
       return
     }
     const timer = window.setTimeout(() => setShowDelayedOverlay(true), asyncOverlayDelay(trigger))
     return () => window.clearTimeout(timer)
-  }, [phase, trigger])
+  }, [phase, silentOrigin, trigger])
 
-  const showLoadingOverlay = phase === 'refreshing' && showDelayedOverlay
-  const showErrorOverlay = phase === 'error'
+  const showLoadingOverlay = phase === 'refreshing' && showDelayedOverlay && !silentOrigin
+  const showErrorOverlay = phase === 'error' && !hasData
+  const showInlineError = phase === 'error' && hasData
 
   useEffect(() => {
     if (showErrorOverlay) {
@@ -98,28 +109,16 @@ export function AsyncDataRegion(props: {
   return (
     <section
       aria-busy={busy || undefined}
-      className={`asyncDataRegion ${className ?? ''}`}
+      className={`asyncDataRegion ${initialError ? 'asyncDataInitialErrorRegion' : ''} ${className ?? ''}`}
       data-async-data-phase={phase}
       data-async-data-source={source}
       data-async-data-trigger={trigger}
     >
       {initialSkeleton ? skeleton : children}
-      {loadingOverlayMounted && !showErrorOverlay ? (
-        <div
-          className={`asyncDataOverlay asyncDataLoadingOverlay ${loadingOverlayLeaving ? 'asyncDataOverlayLeaving' : ''}`}
-          role="status"
-          aria-live="polite"
-        >
-          <LoaderCircle aria-hidden="true" className="asyncDataSpinner" size={18} strokeWidth={2} />
-          <span>{label}</span>
-        </div>
-      ) : null}
-      {showErrorOverlay ? (
-        <div className="asyncDataOverlay asyncDataErrorOverlay" role="alert">
-          <CircleAlert aria-hidden="true" size={18} strokeWidth={2} />
-          <div className="asyncDataErrorCopy">
-            <span>{formatAsyncDataError(error)}</span>
-          </div>
+      {showInlineError ? (
+        <div className="asyncDataInlineError" role="alert">
+          <CircleAlert aria-hidden="true" size={15} strokeWidth={2} />
+          <span>{formatAsyncDataError(error)}</span>
           {onRetry ? (
             <Button
               ariaLabel="重试加载"
@@ -132,6 +131,64 @@ export function AsyncDataRegion(props: {
               重试
             </Button>
           ) : null}
+        </div>
+      ) : null}
+      {loadingOverlayMounted && !showErrorOverlay && !silentOrigin ? (
+        <div
+          className={`asyncDataOverlay asyncDataLoadingOverlay ${loadingOverlayLeaving ? 'asyncDataOverlayLeaving' : ''}`}
+          role="status"
+          aria-live="polite"
+        >
+          <LoaderCircle aria-hidden="true" className="asyncDataSpinner" size={18} strokeWidth={2} />
+          <span>{label}</span>
+        </div>
+      ) : null}
+      {showErrorOverlay ? (
+        <div
+          className={`asyncDataOverlay asyncDataErrorOverlay ${initialError ? 'asyncDataInitialErrorOverlay' : ''}`}
+          role="alert"
+        >
+          {initialErrorWithVisual ? (
+            <>
+              <div className="asyncDataInitialErrorVisual">{initialErrorVisual}</div>
+              <div className="asyncDataInitialErrorActions">
+                <div className="asyncDataErrorCopy">
+                  <span>{formatAsyncDataError(error)}</span>
+                </div>
+                {onRetry ? (
+                  <Button
+                    ariaLabel="重试加载"
+                    className="asyncDataRetry"
+                    disabled={retryDisabled}
+                    onClick={onRetry}
+                    variant="primary"
+                  >
+                    <RotateCw aria-hidden="true" size={14} strokeWidth={2} />
+                    重试
+                  </Button>
+                ) : null}
+              </div>
+            </>
+          ) : (
+            <>
+              <CircleAlert aria-hidden="true" size={18} strokeWidth={2} />
+              <div className="asyncDataErrorCopy">
+                <span>{formatAsyncDataError(error)}</span>
+              </div>
+              {onRetry ? (
+                <Button
+                  ariaLabel="重试加载"
+                  className="asyncDataRetry"
+                  disabled={retryDisabled}
+                  onClick={onRetry}
+                  variant="ghost"
+                >
+                  <RotateCw aria-hidden="true" size={14} strokeWidth={2} />
+                  重试
+                </Button>
+              ) : null}
+            </>
+          )}
         </div>
       ) : null}
     </section>

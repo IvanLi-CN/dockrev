@@ -29,6 +29,7 @@ export type ManagementEvent = ManagementEventPayload
 export type ManagementEventBatch = {
   events: ManagementEvent[]
   resyncRequired: boolean
+  recoveryRequired: boolean
 }
 
 type ManagementEventsState = {
@@ -69,7 +70,9 @@ export function ManagementEventsProvider({ children }: { children: ReactNode }) 
   const pendingRef = useRef(new Map<string, ManagementEvent>())
   const transportRef = useRef<ManagementEventTransport | null>(null)
   const resyncRequiredRef = useRef(false)
+  const recoveryRequiredRef = useRef(false)
   const resumeSyncPendingRef = useRef(false)
+  const connectedOnceRef = useRef(false)
   const flushQueuedRef = useRef(false)
 
   const flush = useCallback(() => {
@@ -77,12 +80,14 @@ export function ManagementEventsProvider({ children }: { children: ReactNode }) 
     if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
     const events = Array.from(pendingRef.current.values())
     const resyncRequired = resyncRequiredRef.current
+    const recoveryRequired = recoveryRequiredRef.current
     pendingRef.current.clear()
     resyncRequiredRef.current = false
-    if (events.length === 0 && !resyncRequired) return
+    recoveryRequiredRef.current = false
+    if (events.length === 0 && !resyncRequired && !recoveryRequired) return
     window.dispatchEvent(
       new CustomEvent<ManagementEventBatch>(MANAGEMENT_EVENTS_BATCH_EVENT, {
-        detail: { events, resyncRequired },
+        detail: { events, resyncRequired, recoveryRequired },
       }),
     )
     setLastSynchronizedAt(Date.now())
@@ -100,12 +105,11 @@ export function ManagementEventsProvider({ children }: { children: ReactNode }) 
       createEventSource: (url) => new EventSource(url, { withCredentials: true }),
       onSnapshot: setTransportSnapshot,
       onOpen: () => {
-        // A snapshot after each connect closes the REST-to-SSE subscription gap.
-        if (resumeSyncPendingRef.current) {
-          resumeSyncPendingRef.current = false
-          return
-        }
-        resyncRequiredRef.current = true
+        const recovering = connectedOnceRef.current || resumeSyncPendingRef.current
+        connectedOnceRef.current = true
+        resumeSyncPendingRef.current = false
+        if (!recovering) return
+        recoveryRequiredRef.current = true
         requestFlush()
       },
       onManagement: (event) => {
@@ -126,8 +130,6 @@ export function ManagementEventsProvider({ children }: { children: ReactNode }) 
     const onVisibility = () => {
       if (document.visibilityState !== 'visible') return
       resumeSyncPendingRef.current = true
-      resyncRequiredRef.current = true
-      requestFlush()
       transport.resume()
     }
 

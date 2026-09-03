@@ -12,7 +12,6 @@ use crate::{
         DiscoveryAction, DiscoveryActionKind, DiscoveryScanSummary, JobLogLine, JobProgress,
         TriggerDiscoveryScanResponse,
     },
-    compose,
     compose_runner::{ComposeRunnerConfig, ComposeStack},
     db::{ComposeServiceSpec, DiscoveredComposeProjectUpsert},
     docker_runner, ids, managed_override,
@@ -23,6 +22,9 @@ use crate::{
 static DISCOVERY_SCAN_LOCK: LazyLock<tokio::sync::Mutex<()>> =
     LazyLock::new(|| tokio::sync::Mutex::new(()));
 mod managed_override_reconcile;
+pub(crate) use crate::discovery_compose::{
+    PersistedComposeFilesState, classify_persisted_compose_files,
+};
 #[cfg(test)]
 pub(crate) use managed_override_reconcile::{
     merge_managed_override_images, parse_affected_services, repo_digest_matches,
@@ -911,78 +913,6 @@ pub fn spawn_task(state: std::sync::Arc<AppState>) {
     });
 }
 
-enum PersistedComposeFilesState {
-    Stopped {
-        compose_files: Vec<String>,
-    },
-    Missing {
-        compose_files: Vec<String>,
-    },
-    Invalid {
-        compose_files: Option<Vec<String>>,
-        reason: String,
-    },
-}
-
-async fn classify_persisted_compose_files(
-    compose_files: Option<Vec<String>>,
-) -> PersistedComposeFilesState {
-    let Some(compose_files) = compose_files else {
-        return PersistedComposeFilesState::Invalid {
-            compose_files: None,
-            reason: "compose_files_not_recorded".to_string(),
-        };
-    };
-    if compose_files.is_empty() {
-        return PersistedComposeFilesState::Invalid {
-            compose_files: Some(compose_files),
-            reason: "compose_files_not_recorded".to_string(),
-        };
-    }
-
-    let mut missing_files = 0usize;
-
-    for path in &compose_files {
-        if path.trim().is_empty() || !Path::new(path).is_absolute() {
-            return PersistedComposeFilesState::Invalid {
-                compose_files: Some(compose_files.clone()),
-                reason: format!("compose_file_path_invalid: {path}"),
-            };
-        }
-
-        let contents = match tokio::fs::read_to_string(path).await {
-            Ok(contents) => contents,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                missing_files = missing_files.saturating_add(1);
-                continue;
-            }
-            Err(error) => {
-                return PersistedComposeFilesState::Invalid {
-                    compose_files: Some(compose_files.clone()),
-                    reason: format!("compose_file_unreadable: {path} ({error})"),
-                };
-            }
-        };
-
-        if let Err(error) = compose::parse_services(&contents) {
-            return PersistedComposeFilesState::Invalid {
-                compose_files: Some(compose_files.clone()),
-                reason: format!("compose_file_invalid: {path} ({error})"),
-            };
-        }
-    }
-
-    if missing_files == compose_files.len() {
-        return PersistedComposeFilesState::Missing { compose_files };
-    }
-    if missing_files > 0 {
-        return PersistedComposeFilesState::Invalid {
-            compose_files: Some(compose_files),
-            reason: "compose_files_partially_missing".to_string(),
-        };
-    }
-    PersistedComposeFilesState::Stopped { compose_files }
-}
 pub async fn run_scan(state: &AppState) -> anyhow::Result<TriggerDiscoveryScanResponse> {
     run_scan_inner(state, None).await
 }
@@ -1063,6 +993,19 @@ async fn run_scan_inner(
             .get_discovered_compose_project(project)
             .await?
             .and_then(|record| record.stack_id);
+        let generation_token = if let Some(stack_id) = existing_stack_id.as_deref() {
+            let mut token = state
+                .db
+                .list_services_for_check(stack_id)
+                .await?
+                .into_iter()
+                .map(|service| (service.id, service.accepted_state_generation))
+                .collect::<Vec<_>>();
+            token.sort_by(|left, right| left.0.cmp(&right.0));
+            Some(token)
+        } else {
+            None
+        };
         let expected_self_upgrade_override = state
             .config
             .supervisor_state_path
@@ -1118,71 +1061,72 @@ async fn run_scan_inner(
         let warning = resolved.warning.clone();
         let action_details = resolved.details.clone();
         let config_files = resolved.compose_files;
-
-        let mut merged: BTreeMap<String, compose::ServiceFromCompose> = BTreeMap::new();
-        let mut failure_reason: Option<String> = None;
-
-        for path in &config_files {
-            let contents = match tokio::fs::read_to_string(path).await {
-                Ok(v) => v,
-                Err(e) => {
-                    failure_reason = Some(format!(
-                        "compose_file_unreadable: {path} ({e}) (mount missing? ensure host path is mounted read-only at the same absolute path)"
-                    ));
-                    break;
-                }
-            };
-
-            match compose::parse_services(&contents) {
-                Ok(parsed) => {
-                    merged = compose::merge_services(merged, parsed);
-                }
-                Err(e) => {
-                    failure_reason = Some(format!("compose_file_invalid: {path} ({e})"));
-                    break;
-                }
-            }
-        }
-
-        if failure_reason.is_none() && merged.is_empty() {
-            failure_reason = Some("compose_no_services".to_string());
-        }
-
-        if let Some(msg) = failure_reason {
-            summary.stacks_failed += 1;
+        let compose_env_file = if let Some(stack_id) = existing_stack_id.as_deref() {
             state
                 .db
-                .upsert_discovered_compose_project(DiscoveredComposeProjectUpsert {
+                .get_stack(stack_id)
+                .await?
+                .and_then(|stack| stack.compose.env_file)
+        } else {
+            None
+        };
+        let compose_stack = ComposeStack {
+            project_name: project.clone(),
+            compose: crate::api::types::ComposeConfig {
+                kind: "path".to_string(),
+                compose_files: config_files.clone(),
+                env_file: compose_env_file,
+            },
+        };
+        let compose_config = ComposeRunnerConfig {
+            compose_bin: state.config.compose_bin.clone(),
+            env: Vec::new(),
+        };
+        let merged = match crate::discovery_compose::read_effective_compose_services(
+            &compose_stack,
+            state.runner.as_ref(),
+            &compose_config,
+            Duration::from_secs(state.config.deploy_check_local_command_timeout_seconds),
+        )
+        .await
+        {
+            Ok(merged) => merged,
+            Err(msg) => {
+                summary.stacks_failed += 1;
+                state
+                    .db
+                    .upsert_discovered_compose_project(DiscoveredComposeProjectUpsert {
+                        project: project.clone(),
+                        stack_id: existing_stack_id.clone(),
+                        status: "invalid".to_string(),
+                        last_seen_at: Some(now.clone()),
+                        last_scan_at: now.clone(),
+                        last_error: Some(msg.clone()),
+                        last_config_files: Some(config_files.clone()),
+                        unarchive_if_active: true,
+                    })
+                    .await?;
+                actions.push(DiscoveryAction {
                     project: project.clone(),
-                    stack_id: None,
-                    status: "invalid".to_string(),
-                    last_seen_at: Some(now.clone()),
-                    last_scan_at: now.clone(),
-                    last_error: Some(msg.clone()),
-                    last_config_files: Some(config_files.clone()),
-                    unarchive_if_active: true,
-                })
-                .await?;
-            actions.push(DiscoveryAction {
-                project: project.clone(),
-                action: DiscoveryActionKind::Failed,
-                stack_id: None,
-                reason: Some(msg),
-                details: action_details,
-            });
-            projects_processed = projects_processed.saturating_add(1);
-            emit_job_progress_best_effort(
-                state,
-                progress_job_id,
-                "scan",
-                format!("scanned projects ({projects_processed}/{total_projects})"),
-                projects_processed,
-                total_projects,
-                Some(project.clone()),
-            )
-            .await;
-            continue;
-        }
+                    action: DiscoveryActionKind::Failed,
+                    stack_id: existing_stack_id.clone(),
+                    reason: Some(msg),
+                    details: action_details,
+                });
+                projects_processed = projects_processed.saturating_add(1);
+                emit_job_progress_best_effort(
+                    state,
+                    progress_job_id,
+                    "scan",
+                    format!("scanned projects ({projects_processed}/{total_projects})"),
+                    projects_processed,
+                    total_projects,
+                    Some(project.clone()),
+                )
+                .await;
+                continue;
+            }
+        };
 
         let svc_specs: Vec<ComposeServiceSpec> = merged
             .values()
@@ -1294,12 +1238,21 @@ async fn run_scan_inner(
         let needs_update = stack.compose.compose_files != config_files;
         let needs_service_sync = !stack_services_match_specs(&stack, &svc_specs);
         let needs_sync = needs_update || needs_service_sync;
-
-        if needs_sync {
+        let sync_applied = if needs_sync {
             state
                 .db
-                .sync_stack_from_compose(&stack_id, &config_files, &svc_specs, &now)
-                .await?;
+                .sync_stack_from_compose_guarded(
+                    &stack_id,
+                    &config_files,
+                    &svc_specs,
+                    &now,
+                    generation_token,
+                )
+                .await?
+        } else {
+            false
+        };
+        if sync_applied {
             if let Err(err) = crate::repo_link_backfill::enqueue_stack_backfill_if_needed(
                 state,
                 &stack_id,
@@ -1327,11 +1280,14 @@ async fn run_scan_inner(
                 project: project.clone(),
                 action: DiscoveryActionKind::Skipped,
                 stack_id: Some(stack_id.clone()),
-                reason: warning.clone(),
+                reason: if needs_sync {
+                    Some("accepted state changed during compose I/O; deferred".to_string())
+                } else {
+                    warning.clone()
+                },
                 details: action_details.clone(),
             });
         }
-
         state
             .db
             .upsert_discovered_compose_project(DiscoveredComposeProjectUpsert {
@@ -1341,11 +1297,10 @@ async fn run_scan_inner(
                 last_seen_at: Some(now.clone()),
                 last_scan_at: now.clone(),
                 last_error: warning,
-                last_config_files: Some(config_files),
+                last_config_files: (sync_applied || !needs_sync).then_some(config_files),
                 unarchive_if_active: true,
             })
             .await?;
-
         projects_processed = projects_processed.saturating_add(1);
         emit_job_progress_best_effort(
             state,
@@ -1358,7 +1313,6 @@ async fn run_scan_inner(
         )
         .await;
     }
-
     let persisted_projects = state
         .db
         .list_persisted_discovered_compose_projects_except(&seen_projects)

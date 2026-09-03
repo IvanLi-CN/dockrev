@@ -345,6 +345,7 @@ async fn run_runtime_scan_for_job(
     let mut services_drifted = 0u32;
     let mut services_updated = 0u32;
     let mut stacks_with_errors: u32 = 0;
+    let mut changed_stack_ids = BTreeSet::new();
 
     let manifest_digest_cache = service_check::new_manifest_digest_cache();
     let repo_tags_cache = service_check::new_repo_tags_cache();
@@ -461,12 +462,15 @@ async fn run_runtime_scan_for_job(
                 current_runtime_started_at: svc.current_runtime_started_at.clone(),
                 current_resolved_tag: svc.current_resolved_tag.clone(),
                 current_resolved_tags_json: svc.current_resolved_tags_json.clone(),
+                candidate_tag: svc.candidate_tag.clone(),
                 candidate_digest: svc.candidate_digest.clone(),
                 candidate_resolved_tag: svc.candidate_resolved_tag.clone(),
                 candidate_arch_match: svc.candidate_arch_match.clone(),
                 candidate_arch_json: svc.candidate_arch_json.clone(),
                 ignore_rule_id: svc.ignore_rule_id.clone(),
                 ignore_reason: svc.ignore_reason.clone(),
+                checked_at: svc.checked_at.clone(),
+                accepted_state_generation: svc.accepted_state_generation,
             };
 
             let before_digest = svc.current_digest.clone();
@@ -482,6 +486,15 @@ async fn run_runtime_scan_for_job(
             )
             .await?;
 
+            if !outcome.accepted_state_applied {
+                tracing::debug!(
+                    service_id = %svc.id,
+                    generation = svc.accepted_state_generation,
+                    "runtime scan observation deferred after accepted-state CAS rejection"
+                );
+                continue;
+            }
+
             let mut inference_ok = true;
             if outcome.current_digest.is_none() {
                 // For runtime drift recovery, we must not leave the DB stale just because
@@ -491,9 +504,10 @@ async fn run_runtime_scan_for_job(
                 // it is available; otherwise, we fall back to persisting the runtime digest
                 // and clearing resolved/candidate fields to avoid showing stale data.
                 inference_ok = false;
-                service_check::persist_runtime_fallback_result(
+                service_check::persist_runtime_fallback_result_with_generation(
                     &state.db,
                     &svc.id,
+                    Some(svc.accepted_state_generation + 2),
                     &svc.image_ref,
                     &svc.image_tag,
                     &runtime,
@@ -516,6 +530,7 @@ async fn run_runtime_scan_for_job(
             }
 
             services_updated += 1;
+            changed_stack_ids.insert(stack_id.clone());
             if outcome.candidate_digest_changed
                 && outcome.candidate_digest.is_some()
                 && needs_version_inference_for_tags(
@@ -614,6 +629,7 @@ async fn run_runtime_scan_for_job(
         "hostPlatform": host_platform,
         "scope": scope.as_str(),
         "stackIds": stack_ids,
+        "changedStackIds": changed_stack_ids.into_iter().collect::<Vec<_>>(),
         "stacksScanned": stacks_scanned,
         "stacksWithErrors": stacks_with_errors,
         "servicesWithRuntimeDigest": services_with_runtime,

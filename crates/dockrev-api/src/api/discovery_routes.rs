@@ -90,7 +90,31 @@ pub(super) async fn trigger_managed_override_reconcile(
     let mut job_db = job.to_db();
     job_db.created_by = user.principal;
     job_db.reason = "ui".to_string();
-    state.db.insert_job(job_db).await.map_err(map_internal)?;
+    let targets = stack
+        .services
+        .iter()
+        .map(|service| crate::db::ServiceOperationTarget {
+            service_id: service.id.clone(),
+            stack_id: stack_id.clone(),
+        })
+        .collect::<Vec<_>>();
+    if let Some(conflict) = state
+        .db
+        .insert_service_operation_job_if_unblocked(
+            job_db,
+            targets,
+            Some(JobLogLine {
+                ts: now.clone(),
+                level: "info".to_string(),
+                msg: "managed override reconciliation started".to_string(),
+            }),
+        )
+        .await
+        .map_err(map_internal)?
+    {
+        return Err(ApiError::conflict("service operation is already running")
+            .with_details(json!({"existingJobId": conflict.id})));
+    }
 
     let run_state = state.clone();
     let run_stack_id = stack_id.clone();

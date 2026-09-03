@@ -266,23 +266,23 @@ jobs:
           {
             echo "## Release target summary"
             echo ""
-            echo "- Event: \`${{ github.event_name }}\`"
-            echo "- Admin action: \`${ADMIN_ACTION}\`"
-            echo "- Requested SHA: \`${REQUESTED_SHA}\`"
+            echo "- Event: ${{ github.event_name }}"
+            echo "- Admin action: ${ADMIN_ACTION}"
+            echo "- Requested SHA: ${REQUESTED_SHA}"
             if [[ -n "${TARGET_SHA}" ]]; then
-              echo "- Selected target SHA: \`${TARGET_SHA}\`"
-              echo "- Target state: \`${RELEASE_STATE}\`"
+              echo "- Selected target SHA: ${TARGET_SHA}"
+              echo "- Target state: ${RELEASE_STATE}"
               if [[ -n "${OVERRIDE_REASON}" ]]; then
                 echo "- Override reason: ${OVERRIDE_REASON}"
               fi
             else
-              echo "- Selected target SHA: `(none)`"
+              echo "- Selected target SHA: (none)"
               if [[ "${{ github.event_name }}" = "workflow_dispatch" ]] && [[ "${ADMIN_ACTION}" = "skip" ]]; then
                 reason="${REQUESTED_OVERRIDE_REASON}"
                 if [[ -z "${reason}" ]]; then
                   reason="release-infra mislabel under no-extra-credential model"
                 fi
-                echo "- Override recorded for requested SHA; release queue is now empty up to \`origin/main\`"
+                echo "- Override recorded for requested SHA; release queue is now empty up to origin/main"
                 echo "- Override reason: ${reason}"
               else
                 echo "- Release queue is empty up to the selected upper bound"
@@ -290,11 +290,41 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+  source-gate:
+    name: Verify source-build release gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [prepare]
+    if: ${{ needs.prepare.outputs.should_release == 'true' }}
+    permissions:
+      actions: read
+      contents: read
+    env:
+      TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout trusted main workflow helpers
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Wait for exact-SHA source gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/release_source_gate.py wait \
+            --repository "${GITHUB_REPOSITORY}" \
+            --target-sha "${TARGET_SHA}" \
+            --token "${GH_TOKEN}" \
+            --timeout-seconds 720 \
+            --poll-seconds 15
+
   build-web:
     name: Build web dist
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [prepare]
+    needs: [prepare, source-gate]
     if: ${{ needs.prepare.outputs.should_release == 'true' }}
     env:
       APP_EFFECTIVE_VERSION: ${{ needs.prepare.outputs.app_effective_version }}
@@ -336,7 +366,7 @@ jobs:
     name: Build binaries (amd64)
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [prepare, build-web]
+    needs: [prepare, source-gate, build-web]
     if: ${{ needs.prepare.outputs.should_release == 'true' }}
     env:
       APP_EFFECTIVE_VERSION: ${{ needs.prepare.outputs.app_effective_version }}
@@ -418,7 +448,7 @@ jobs:
     name: Build binaries (arm64)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
-    needs: [prepare, build-web]
+    needs: [prepare, source-gate, build-web]
     if: ${{ needs.prepare.outputs.should_release == 'true' }}
     env:
       APP_EFFECTIVE_VERSION: ${{ needs.prepare.outputs.app_effective_version }}
@@ -493,7 +523,7 @@ jobs:
     name: Publish (GHCR + GitHub Release)
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    needs: [prepare, build-binaries-amd64, build-binaries-arm64]
+    needs: [prepare, source-gate, build-binaries-amd64, build-binaries-arm64]
     if: ${{ needs.prepare.outputs.should_release == 'true' }}
     permissions:
       actions: write
@@ -1005,7 +1035,7 @@ jobs:
     name: Cleanup Actions artifacts
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [prepare, build-web, build-binaries-amd64, build-binaries-arm64, publish]
+    needs: [prepare, source-gate, build-web, build-binaries-amd64, build-binaries-arm64, publish]
     if: ${{ always() && needs.prepare.result == 'success' && needs.prepare.outputs.should_release == 'true' }}
     permissions:
       actions: write

@@ -1,5 +1,15 @@
 # Dockrev Context
 
+## CI Release Assurance
+
+**fast main gate**:
+The `CI (main)` result that establishes prompt feedback for a main commit. It is not by itself permission to publish a release.
+_Avoid_: complete release gate, source-build smoke
+
+**source-build release gate**:
+The release-blocking verification of a target SHA's Dockerfile source build and Compose deployment topology. It is distinct from the fast main gate and remains required before publication.
+_Avoid_: optional Docker smoke, post-release validation
+
 ## Backup Retention
 
 **backup cleanup eligibility**:
@@ -25,6 +35,11 @@ _Avoid_: deleted backup, cleanup failure
 ## Service Digest and Rollback Target
 
 - `service digest` is the digest currently reported by the stack detail snapshot.
+- `accepted deployment state` is the latest service deployment state accepted outside an in-progress mutating operation or established by that operation's terminal settlement. A candidate container is not part of the accepted deployment state.
+- `transient operation observation` is a runtime or configuration observation made while a mutating operation overlaps the service. It may be used for operation progress and diagnosis, but it is not authoritative service state.
+- `service mutation ownership` is the durable, exclusive right of one operation to replace a service's accepted deployment state. It begins before runtime side effects and ends only through service state settlement.
+- `accepted-state generation` is the monotonic revision of a service's accepted deployment state. An observation can publish only when the generation it read is still current and no service mutation ownership is open.
+- `service state settlement` is the terminal reconciliation that aligns the service snapshot with the final runtime state after a mutating operation.
 - `rollback target` is the single backend-selected version that can restore the service to the previous successful update state.
 - A rollback target is valid only when its `currentDigest` matches the service digest in the same refresh generation.
 
@@ -46,11 +61,28 @@ _Avoid_: container status, readiness result
 The time boundary after which a continuously `starting` candidate is treated as a health failure. It is derived solely from the candidate's effective health policy.
 _Avoid_: fixed health timeout, Docker unhealthy time
 
+## Compose Configuration
+
+**source Compose configuration**:
+The authored Compose files and explicit env-file inputs recorded for a Stack. It remains the auditable input to controlled Compose mutations.
+_Avoid_: effective Compose configuration, rendered Compose configuration
+
+**effective Compose configuration**:
+The fully merged and interpolated service configuration emitted by the Stack's configured Compose CLI. It is the authoritative declaration for observing a service's image reference and tag.
+_Avoid_: raw Compose YAML, source Compose configuration
+
 ## Refresh Generation
 
 - `request generation` is the monotonically increasing stack refresh request id.
 - A response from an older generation must not overwrite the service, rollback target, refreshing flag, or error state of a newer generation.
 - A digest mismatch is a transient ordering condition between the service snapshot and rollback-target response. The frontend retries only within the current generation, at most five times with a 250ms delay.
+
+## Overview Refresh Semantics
+
+- `initial snapshot load` is the first page-owned read before an overview has usable data. It may use an immediate skeleton because there is no prior snapshot to preserve.
+- `manual refresh` is a user-requested authoritative overview read. It preserves the prior snapshot, shows local feedback after the 200ms user-action threshold, and may cover the requested region without disabling the existing list.
+- `event-driven refresh` is a page-owned REST read caused by a management invalidation event. It updates the snapshot silently and never starts a loading mask; the management event is not itself a complete data push.
+- `recovery synchronization` is the one-time page synchronization after a management transport session is connected or resumed. It is silent and targeted when the cursor replay is intact, and becomes a full reconciliation only after a replay gap, `resync_required`, or a protocol-invalid event.
 
 ## Neutral Refresh and Settlement
 

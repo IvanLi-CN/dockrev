@@ -263,6 +263,64 @@ async fn job_progress_publishes_management_event() {
 }
 
 #[tokio::test]
+async fn runtime_scan_terminal_event_exposes_sorted_changed_stack_ids() {
+    let state = test_state(":memory:").await;
+    let job_id = ids::new_check_id();
+    let now = test_now_rfc3339();
+    state
+        .db
+        .insert_job(
+            crate::api::types::JobRecord::new_running(
+                job_id.clone(),
+                crate::api::types::JobType::RuntimeScan,
+                crate::api::types::JobScope::All,
+                None,
+                None,
+                &now,
+            )
+            .to_db(),
+        )
+        .await
+        .unwrap();
+    let cursor = format!("{}:0", state.management_events.generation());
+
+    state
+        .db
+        .finish_job(
+            &job_id,
+            "success",
+            &test_now_rfc3339(),
+            &json!({ "changedStackIds": ["stack-b", "stack-a", "stack-b"] }),
+        )
+        .await
+        .unwrap();
+
+    let crate::management_events::ManagementEventReplay::Events { events, .. } = state
+        .management_events
+        .replay_after(Some(&cursor))
+        .await
+    else {
+        panic!("expected terminal management event replay");
+    };
+    let event = events
+        .iter()
+        .find(|event| event.event.summary["jobId"] == job_id)
+        .expect("runtime scan terminal event");
+    assert_eq!(
+        event.event.summary["changedStackIds"],
+        json!(["stack-a", "stack-b"])
+    );
+    let stack_ids = event
+        .event
+        .entities
+        .iter()
+        .filter(|entity| entity.entity_type == "stack")
+        .map(|entity| entity.id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(stack_ids, vec!["stack-a", "stack-b"]);
+}
+
+#[tokio::test]
 async fn discovery_archive_and_restore_publish_management_events() {
     let state = test_state(":memory:").await;
     let project = "management-events-project";

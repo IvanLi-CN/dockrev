@@ -4,6 +4,120 @@ use super::*;
 const TARGET_BATCH_SIZE: usize = 400;
 
 impl Db {
+    pub(crate) async fn compare_and_swap_service_accepted_state_observation(
+        &self,
+        service_id: &str,
+        expected_generation: i64,
+        state: &ServiceAcceptedState,
+        now: &str,
+    ) -> anyhow::Result<AcceptedStateCasOutcome> {
+        self.compare_and_swap_service_accepted_state_observation_with_notification_reconcile(
+            service_id,
+            expected_generation,
+            state,
+            now,
+            false,
+        )
+        .await
+    }
+
+    pub(crate) async fn compare_and_swap_service_accepted_state_observation_with_notification_reconcile(
+        &self,
+        service_id: &str,
+        expected_generation: i64,
+        state: &ServiceAcceptedState,
+        now: &str,
+        reconcile_notifications: bool,
+    ) -> anyhow::Result<AcceptedStateCasOutcome> {
+        let service_id = service_id.to_string();
+        let state = state.clone();
+        let now = now.to_string();
+        self.call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let changed = tx.execute(
+                r#"
+UPDATE services
+SET
+  current_digest = ?4,
+  current_runtime_started_at = ?5,
+  current_resolved_tag = ?6,
+  current_resolved_tags_json = ?7,
+  candidate_tag = ?8,
+  candidate_resolved_tag = ?9,
+  candidate_digest = ?10,
+  candidate_arch_match = ?11,
+  candidate_arch_json = ?12,
+  ignore_rule_id = ?13,
+  ignore_reason = ?14,
+  checked_at = ?15,
+  updated_at = ?16,
+  accepted_state_generation = ?17
+WHERE id = ?1
+  AND accepted_state_generation = ?2
+  AND accepted_state_generation % 2 = 0
+  AND image_ref = ?3
+  AND image_tag = ?18
+  AND NOT EXISTS (
+    SELECT 1
+    FROM job_service_targets target
+    JOIN jobs job ON job.id = target.job_id
+    WHERE target.service_id = services.id
+      AND target.opened_generation IS NOT NULL
+      AND job.status IN ('queued', 'running')
+  )
+"#,
+                params![
+                    service_id,
+                    expected_generation,
+                    state.image_ref,
+                    state.current_digest,
+                    state.current_runtime_started_at,
+                    state.current_resolved_tag,
+                    state.current_resolved_tags_json,
+                    state.candidate_tag,
+                    state.candidate_resolved_tag,
+                    state.candidate_digest,
+                    state.candidate_arch_match,
+                    state.candidate_arch_json,
+                    state.ignore_rule_id,
+                    state.ignore_reason,
+                    state.checked_at,
+                    now,
+                    expected_generation + 2,
+                    state.image_tag,
+                ],
+            )?;
+            let outcome = if changed == 1 {
+                if reconcile_notifications {
+                    super::new_version_notifications::reconcile_service_new_version_notifications_tx(
+                        &tx,
+                        &service_id,
+                        &state.image_ref,
+                        &state.image_tag,
+                        state.candidate_digest.as_deref(),
+                        &now,
+                    )?;
+                }
+                AcceptedStateCasOutcome::Applied {
+                    generation: expected_generation + 2,
+                }
+            } else {
+                let current_generation = tx
+                    .query_row(
+                        "SELECT accepted_state_generation FROM services WHERE id = ?1",
+                        [&service_id],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .optional()?;
+                AcceptedStateCasOutcome::Rejected { current_generation }
+            };
+            tx.commit()?;
+            Ok(outcome)
+        })
+        .await
+        .context("compare and swap service accepted state observation")
+    }
+
     pub async fn upsert_cleanup_inventory_snapshot(
         &self,
         snapshot_key: &str,
@@ -220,28 +334,19 @@ ORDER BY created_at DESC
         let service_id = service_id.to_string();
         let checked_at = checked_at.to_string();
         let now = now.to_string();
-        self.call(move |conn| {
-            let changed = conn.execute(
-                r#"
-UPDATE services
-SET
-  current_digest = ?2,
-  current_runtime_started_at = ?3,
-  current_resolved_tag = ?4,
-  current_resolved_tags_json = ?5,
-  candidate_tag = ?6,
-  candidate_resolved_tag = ?7,
-  candidate_digest = ?8,
-  candidate_arch_match = ?9,
-  candidate_arch_json = ?10,
-  ignore_rule_id = ?11,
-  ignore_reason = ?12,
-  checked_at = ?13,
-  updated_at = ?14
-WHERE id = ?1
-"#,
-                params![
-                    service_id,
+        let Some(existing) = self
+            .get_versioned_service_accepted_state(&service_id)
+            .await?
+        else {
+            return Ok(false);
+        };
+        let outcome = self
+            .compare_and_swap_service_accepted_state_observation(
+                &service_id,
+                existing.generation,
+                &ServiceAcceptedState {
+                    image_ref: existing.state.image_ref,
+                    image_tag: existing.state.image_tag,
                     current_digest,
                     current_runtime_started_at,
                     current_resolved_tag,
@@ -253,14 +358,12 @@ WHERE id = ?1
                     candidate_arch_json,
                     ignore_rule_id,
                     ignore_reason,
-                    checked_at,
-                    now,
-                ],
-            )?;
-            Ok(changed > 0)
-        })
-        .await
-        .context("update service check result with runtime started at")
+                    checked_at: Some(checked_at),
+                },
+                &now,
+            )
+            .await?;
+        Ok(matches!(outcome, AcceptedStateCasOutcome::Applied { .. }))
     }
 
     pub async fn upsert_service_digest_tags_snapshot(

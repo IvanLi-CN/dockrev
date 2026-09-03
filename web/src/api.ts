@@ -221,6 +221,8 @@ async function apiFetch(path: string, init?: RequestInit) {
   return resp
 }
 
+export type ApiRequestOptions = Pick<RequestInit, 'signal'>
+
 export async function getDockrevVersion(): Promise<string> {
   const resp = await apiFetch('/api/version')
   const data = (await resp.json()) as unknown
@@ -230,8 +232,8 @@ export async function getDockrevVersion(): Promise<string> {
   return data.version
 }
 
-export async function listStacks(): Promise<StackListItem[]> {
-  const resp = await apiFetch('/api/stacks')
+export async function listStacks(options: ApiRequestOptions = {}): Promise<StackListItem[]> {
+  const resp = await apiFetch('/api/stacks', options)
   const data = await resp.json()
   return data.stacks as StackListItem[]
 }
@@ -242,8 +244,8 @@ export async function listStacksArchived(filter: 'exclude' | 'include' | 'only')
   return data.stacks as StackListItem[]
 }
 
-export async function getStack(stackId: string): Promise<StackDetail> {
-  const resp = await apiFetch(`/api/stacks/${encodeURIComponent(stackId)}`)
+export async function getStack(stackId: string, options: ApiRequestOptions = {}): Promise<StackDetail> {
+  const resp = await apiFetch(`/api/stacks/${encodeURIComponent(stackId)}`, options)
   const data = await resp.json()
   return data.stack as StackDetail
 }
@@ -281,8 +283,9 @@ export async function triggerManagedOverrideReconcile(
 
 export async function listDiscoveryProjects(
   filter: 'exclude' | 'include' | 'only' = 'exclude',
+  options: ApiRequestOptions = {},
 ): Promise<DiscoveredProject[]> {
-  const resp = await apiFetch(`/api/discovery/projects?archived=${encodeURIComponent(filter)}`)
+  const resp = await apiFetch(`/api/discovery/projects?archived=${encodeURIComponent(filter)}`, options)
   const data = await resp.json()
   return data.projects as DiscoveredProject[]
 }
@@ -780,7 +783,7 @@ export async function listJobs(input: ListJobsInput = {}): Promise<JobListItem[]
   return jobs.slice(0, 2000)
 }
 
-export async function listCompactJobsPage(input: ListJobsInput = {}): Promise<ListCompactJobsResponse> {
+export async function listCompactJobsPage(input: ListJobsInput = {}, options: ApiRequestOptions = {}): Promise<ListCompactJobsResponse> {
   const params = new URLSearchParams()
   params.set('view', 'compact')
   if (input.cursor) params.set('cursor', input.cursor)
@@ -790,7 +793,7 @@ export async function listCompactJobsPage(input: ListJobsInput = {}): Promise<Li
   if (input.status) params.set('status', input.status)
   if (input.stackId) params.set('stackId', input.stackId)
   if (input.serviceId) params.set('serviceId', input.serviceId)
-  const resp = await apiFetch(`/api/jobs?${params.toString()}`)
+  const resp = await apiFetch(`/api/jobs?${params.toString()}`, options)
   return (await resp.json()) as ListCompactJobsResponse
 }
 
@@ -802,8 +805,8 @@ export async function listCompactJobs(input: ListJobsInput = {}): Promise<Compac
   return page.jobs
 }
 
-export async function getJob(jobId: string): Promise<JobDetail> {
-  const resp = await apiFetch(`/api/jobs/${encodeURIComponent(jobId)}`)
+export async function getJob(jobId: string, init?: RequestInit): Promise<JobDetail> {
+  const resp = await apiFetch(`/api/jobs/${encodeURIComponent(jobId)}`, init)
   const data = await resp.json()
   return data.job as JobDetail
 }

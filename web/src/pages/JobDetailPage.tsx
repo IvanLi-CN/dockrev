@@ -4,11 +4,16 @@ import { downloadRollbackEvidence, getJob, newJobEventsSource, stopJob, type Job
 import { useManagementEventBatch } from '../managementEvents'
 import { formatJobMachineName, formatJobReadableDisplay } from '../jobDisplay'
 import { formatJobProgressDownload, parseJobProgressDownload } from '../jobProgressDownload'
+import { JobDetailErrorIllustrationAsset } from '../components/jobDetailErrorIllustration/JobDetailErrorIllustrationAsset'
 import { TaskResultReason } from '../components/TaskResultReason'
 import { navigate } from '../routes'
 import { Button, Chip, IconButton, Mono, OverlayScrollArea, Pill, Switch } from '../ui'
 import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
 import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
+import {
+  createJobDetailRefreshCoordinator,
+  isJobDetailRefreshCancelled,
+} from '../jobDetailRefreshCoordinator'
 
 function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' | 'info' {
   if (status === 'success') return 'ok'
@@ -229,11 +234,22 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
   const [logFollow, setLogFollow] = useState(true)
   const [logIsAtBottom, setLogIsAtBottom] = useState(true)
   const [showEvents, setShowEvents] = useState(readShowEventsPreference)
-  const [manualRefreshVersion, setManualRefreshVersion] = useState(0)
+  const [streamRestartVersion, setStreamRestartVersion] = useState(0)
   const liveCommandOutputSeqsRef = useRef(new Set<number>())
   const pendingCommandSummarySeqsRef = useRef(new Set<number>())
+  const eventSourceRef = useRef<EventSource | null>(null)
   const jobRef = useRef(job)
-  const refreshRequestIdRef = useRef(0)
+  const refreshCoordinator = useMemo(
+    () => createJobDetailRefreshCoordinator<JobDetail>({
+      load: (signal) => getJob(jobId, { signal }),
+    }),
+    [jobId],
+  )
+  const coordinatorLifecycleRef = useRef<{ coordinator: typeof refreshCoordinator; mounted: boolean }>({
+    coordinator: refreshCoordinator,
+    mounted: false,
+  })
+  coordinatorLifecycleRef.current.coordinator = refreshCoordinator
   jobRef.current = job
   const visibleLogs = useMemo(
     () => logs.filter((log) => showEvents || log.level.trim().toLowerCase() !== 'event'),
@@ -245,8 +261,8 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
     source?: AsyncDataSource
     trigger?: AsyncDataTrigger
   } = {}) => {
-    const requestId = ++refreshRequestIdRef.current
     const silent = options.silent === true
+    const manual = options.trigger === 'user-action'
     if (!silent) {
       setLoadSource(options.source ?? 'live')
       setLoadTrigger(options.trigger ?? 'background')
@@ -254,23 +270,25 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
       setLoadError(null)
     }
     try {
-      const j = await getJob(jobId)
-      if (requestId !== refreshRequestIdRef.current) return null
+      const j = await (manual ? refreshCoordinator.manual() : refreshCoordinator.automatic())
       setJob(j)
       setLogs(j.logs)
       setProgress(normalizeProgress(j.progress))
+      setError(null)
       liveCommandOutputSeqsRef.current.clear()
       pendingCommandSummarySeqsRef.current.clear()
+      if (j.status !== 'running' && j.status !== 'queued') eventSourceRef.current?.close()
       if (!silent) setLoadPhase('ready-data')
       return j
     } catch (reason: unknown) {
-      if (!silent && requestId === refreshRequestIdRef.current) {
+      if (isJobDetailRefreshCancelled(reason)) return null
+      if (!silent) {
         setLoadError(errorMessage(reason))
         setLoadPhase('error')
       }
       throw reason
     }
-  }, [jobId])
+  }, [refreshCoordinator])
 
   const requestStop = useCallback(async () => {
     setBusy(true)
@@ -312,6 +330,25 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
   }, [showEvents])
 
   useEffect(() => {
+    const coordinator = refreshCoordinator
+    const lifecycle = coordinatorLifecycleRef
+    lifecycle.current.mounted = true
+    return () => {
+      lifecycle.current.mounted = false
+      Promise.resolve().then(() => {
+        // React StrictMode replays effects with the same coordinator. Dispose only
+        // after a real unmount or once a different job coordinator is current.
+        if (
+          !lifecycle.current.mounted ||
+          lifecycle.current.coordinator !== coordinator
+        ) {
+          coordinator.dispose()
+        }
+      })
+    }
+  }, [refreshCoordinator])
+
+  useEffect(() => {
     let closed = false
     let es: EventSource | null = null
     let refreshTimer: number | null = null
@@ -338,9 +375,10 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
       }, delayMs)
     }
 
-    const start = async () => {
+    const initialSnapshot = jobRef.current
+    const start = async (snapshot?: JobDetail) => {
       try {
-        const j = await refresh()
+        const j = snapshot ?? initialSnapshot ?? await refresh()
         if (closed || !j) return
 
         // Nothing to stream for terminal jobs.
@@ -348,6 +386,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
 
         try {
           es = newJobEventsSource(jobId, { afterId: j.logsLastId })
+          eventSourceRef.current = es
         } catch {
           setError('无法建立实时日志连接')
           return
@@ -366,9 +405,14 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
           es?.close()
           es = null
           hasOpenedOnce = false
-          void start().finally(() => {
-            restarting = false
-          })
+          void refresh({ silent: true })
+            .then((j) => {
+              if (!closed && j) start(j)
+            })
+            .catch(() => undefined)
+            .finally(() => {
+              restarting = false
+            })
         })
 
         es.addEventListener('job_log', (evt: Event) => {
@@ -544,8 +588,9 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
       closed = true
       if (refreshTimer != null) window.clearTimeout(refreshTimer)
       es?.close()
+      if (eventSourceRef.current === es) eventSourceRef.current = null
     }
-  }, [jobId, manualRefreshVersion, refresh])
+  }, [jobId, refresh, streamRestartVersion])
 
   useManagementEventBatch(({ events, resyncRequired }) => {
     const relevant = resyncRequired || events.some((event) =>
@@ -596,7 +641,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
               setBusy(true)
               try {
                 await refresh({ source: 'memory', trigger: 'user-action' })
-                setManualRefreshVersion((version) => version + 1)
+                setStreamRestartVersion((version) => version + 1)
               } catch {
                 // AsyncDataRegion presents a recoverable request failure in place.
               } finally {
@@ -615,8 +660,12 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
     return (
       <div className="page jobDetailPage">
         <AsyncDataRegion
+          className="jobDetailInitialErrorRegion"
           error={loadError}
           hasData={false}
+          initialErrorVisual={
+            <JobDetailErrorIllustrationAsset className="asyncDataInitialErrorIllustration" />
+          }
           label="正在加载任务详情"
           onRetry={() => void refresh({ source: 'memory', trigger: 'user-action' }).catch(() => undefined)}
           phase={loadPhase}

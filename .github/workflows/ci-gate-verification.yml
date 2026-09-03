@@ -1,0 +1,301 @@
+name: CI Gate Verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact commit SHA to verify
+        required: true
+        type: string
+
+concurrency:
+  group: ci-gate-verification-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  validate-target:
+    name: Validate verification target
+    runs-on: ubuntu-latest
+    outputs:
+      target_sha: ${{ steps.target.outputs.target_sha }}
+    steps:
+      - name: Checkout workflow source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate exact target rules
+        id: target
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+          WORKFLOW_SHA: ${{ github.sha }}
+          REF_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "${TARGET_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "target_sha must be a 40-character lowercase commit SHA" >&2
+            exit 2
+          fi
+          if [[ "${REF_NAME}" == "main" ]]; then
+            git fetch --no-tags origin main
+            git cat-file -e "${TARGET_SHA}^{commit}"
+            git merge-base --is-ancestor "${TARGET_SHA}" origin/main
+          elif [[ "${TARGET_SHA}" != "${WORKFLOW_SHA}" ]]; then
+            echo "non-main verification must target the selected branch HEAD" >&2
+            exit 2
+          fi
+          echo "target_sha=${TARGET_SHA}" >> "$GITHUB_OUTPUT"
+
+  fast:
+    name: Fast main gate
+    needs: [validate-target]
+    permissions:
+      contents: write
+      pull-requests: read
+      actions: write
+    uses: ./.github/workflows/ci-main.yml
+    with:
+      target_sha: ${{ needs.validate-target.outputs.target_sha }}
+      force_full: true
+      verification_mode: true
+    secrets: inherit
+
+  source:
+    name: Source-build release gate
+    needs: [validate-target]
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/source-build-release-gate.yml
+    with:
+      target_sha: ${{ needs.validate-target.outputs.target_sha }}
+      force_full: true
+      verification_mode: true
+    secrets: inherit
+
+  collect:
+    name: Collect gate metrics
+    runs-on: ubuntu-latest
+    needs: [validate-target, fast, source]
+    if: ${{ always() }}
+    env:
+      TARGET_SHA: ${{ needs.validate-target.outputs.target_sha }}
+      FAST_RESULT: ${{ needs.fast.result }}
+      SOURCE_RESULT: ${{ needs.source.result }}
+      FAST_COMPLETED_AT: ${{ needs.fast.outputs.completed_at }}
+      FAST_TARGET_SHA: ${{ needs.fast.outputs.target_sha }}
+      SOURCE_COMPLETED_AT: ${{ needs.source.outputs.completed_at }}
+      COVERAGE_RESULT: ${{ needs.fast.outputs.coverage_result }}
+      SOURCE_CACHE_STATUS: ${{ needs.source.outputs.cache_status }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout metrics helper
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Read run metadata
+        id: run-metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" > run.json
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100" > jobs.json
+          python3 - run.json jobs.json <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import sys
+          from datetime import datetime
+          from pathlib import Path
+
+          def parse(value):
+              return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+          run = json.loads(Path(sys.argv[1]).read_text())
+          jobs = json.loads(Path(sys.argv[2]).read_text()).get("jobs", [])
+
+          def earliest_started(prefix):
+              timestamps = [
+                  job.get("started_at")
+                  for job in jobs
+                  if str(job.get("name", "")).startswith(prefix) and job.get("started_at")
+              ]
+              if not timestamps:
+                  raise SystemExit(f"missing started job for {prefix}")
+              return min(timestamps, key=parse)
+
+          print(f"created_at={run['created_at']}")
+          print(f"run_started_at={run['run_started_at']}")
+          print(f"fast_started_at={earliest_started('Fast main gate /')}")
+          print(f"source_started_at={earliest_started('Source-build release gate /')}")
+          PY
+
+      - name: Download Storybook coverage summaries
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: storybook-coverage-summary-*
+          path: .artifacts/storybook-coverage
+          merge-multiple: true
+
+      - name: Write UTC gate metrics
+        shell: bash
+        env:
+          CREATED_AT: ${{ steps.run-metadata.outputs.created_at }}
+          RUN_STARTED_AT: ${{ steps.run-metadata.outputs.run_started_at }}
+          FAST_STARTED_AT: ${{ steps.run-metadata.outputs.fast_started_at }}
+          SOURCE_STARTED_AT: ${{ steps.run-metadata.outputs.source_started_at }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import hashlib
+          import os
+          from datetime import datetime
+          from pathlib import Path
+
+          def parse(value):
+              return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+          run_started = os.environ.get("RUN_STARTED_AT", "")
+          created = os.environ["CREATED_AT"]
+          fast_started = os.environ.get("FAST_STARTED_AT", "")
+          source_started = os.environ.get("SOURCE_STARTED_AT", "")
+          fast_completed = os.environ.get("FAST_COMPLETED_AT", "")
+          source_completed = os.environ.get("SOURCE_COMPLETED_AT", "")
+          if os.environ.get("FAST_TARGET_SHA") != os.environ["TARGET_SHA"]:
+              raise SystemExit("fast gate target SHA marker does not match verification target")
+          if os.environ.get("FAST_RESULT") != "success" or os.environ.get("SOURCE_RESULT") != "success":
+              raise SystemExit("fast and source gates must both succeed before metrics are written")
+          if os.environ.get("COVERAGE_RESULT") != "success":
+              raise SystemExit("Storybook coverage marker is not successful")
+          if not run_started or not fast_started or not source_started or not fast_completed or not source_completed:
+              raise SystemExit("missing gate completion timestamps")
+          run_started_dt = parse(run_started)
+          fast_started_dt = parse(fast_started)
+          source_started_dt = parse(source_started)
+          fast_dt = parse(fast_completed)
+          source_dt = parse(source_completed)
+          execution_end = max(fast_dt, source_dt)
+          if fast_started_dt < run_started_dt or source_started_dt < run_started_dt:
+              raise SystemExit("child gate started before verification run")
+          if fast_dt < fast_started_dt or source_dt < source_started_dt:
+              raise SystemExit("child gate completed before it started")
+          coverage_dir = Path(".artifacts/storybook-coverage")
+          coverage_files = sorted(coverage_dir.glob("*.json"))
+          if not coverage_files:
+              raise SystemExit("missing Storybook coverage summaries")
+          summaries = [json.loads(path.read_text()) for path in coverage_files]
+          globals_ = [summary for summary in summaries if summary.get("mode") == "global"]
+          shards = [summary for summary in summaries if summary.get("mode") == "shard"]
+          if len(globals_) != 1 or not globals_[0].get("global_checks") or not globals_[0].get("rollback_race"):
+              raise SystemExit("Storybook global coverage marker is incomplete")
+          shard_parts = [str(summary.get("shard", "")).split("/") for summary in shards]
+          totals = {parts[1] for parts in shard_parts if len(parts) == 2 and parts[1].isdigit()}
+          if len(totals) != 1 or len(shards) != int(next(iter(totals), "0")):
+              raise SystemExit("Storybook shard coverage is incomplete")
+          story_counts = {len(summary.get("baseline_story_ids", [])) for summary in summaries}
+          if len(story_counts) != 1 or not next(iter(story_counts), 0):
+              raise SystemExit("Storybook baseline story count is missing")
+          coverage_material = [
+              {"name": path.name, "summary": json.loads(path.read_text())}
+              for path in coverage_files
+          ]
+          coverage_summary = hashlib.sha256(
+              json.dumps(coverage_material, sort_keys=True, separators=(",", ":")).encode()
+          ).hexdigest()
+          payload = {
+              "gate": "ci-gate-verification",
+              "target_sha": os.environ["TARGET_SHA"],
+              "fast_target_sha": os.environ.get("FAST_TARGET_SHA", ""),
+              "storybook_shard_total": int(next(iter(totals))),
+              "storybook_story_count": next(iter(story_counts)),
+              "coverage_summary": coverage_summary,
+              "scope": "full",
+              "web": True,
+              "docker": True,
+              "publish": False,
+              "fast_result": os.environ["FAST_RESULT"],
+              "source_result": os.environ["SOURCE_RESULT"],
+              "coverage_result": os.environ.get("COVERAGE_RESULT", ""),
+              "verification_mode": True,
+              "cache_status": os.environ.get("SOURCE_CACHE_STATUS", ""),
+              "created_at": created,
+              "run_started_at": run_started,
+              "fast_started_at": fast_started,
+              "source_started_at": source_started,
+              "fast_completed_at": fast_completed,
+              "source_completed_at": source_completed,
+              "eligibility_completed_at": execution_end.isoformat().replace("+00:00", "Z"),
+              "queue_seconds": (run_started_dt - parse(created)).total_seconds(),
+              "fast_queue_seconds": (fast_started_dt - run_started_dt).total_seconds(),
+              "source_queue_seconds": (source_started_dt - run_started_dt).total_seconds(),
+              "fast_seconds": (fast_dt - fast_started_dt).total_seconds(),
+              "source_seconds": (source_dt - source_started_dt).total_seconds(),
+              "eligibility_seconds": (execution_end - run_started_dt).total_seconds(),
+              "execution_seconds": max(
+                  (fast_dt - fast_started_dt).total_seconds(),
+                  (source_dt - source_started_dt).total_seconds(),
+              ),
+              "wall_seconds": (execution_end - run_started_dt).total_seconds(),
+          }
+          Path("ci-gate-metrics.json").write_text(json.dumps(payload, sort_keys=True) + "\n")
+          PY
+
+      - name: Download source gate attestation
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: source-gate-attestation-*
+          path: .artifacts/source-attestation
+          merge-multiple: true
+
+      - name: Validate source gate attestation and verification markers
+        shell: bash
+        env:
+          ATTESTATION_PATH: .artifacts/source-attestation/source-gate-attestation.json
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ["ATTESTATION_PATH"])
+          if not path.is_file():
+              raise SystemExit("missing source gate attestation")
+          payload = json.loads(path.read_text())
+          expected = {
+              "target_sha": os.environ["TARGET_SHA"],
+              "gate": "source-build-release",
+              "scope": "full",
+              "web": True,
+              "docker": True,
+              "source_result": "success",
+              "publish": False,
+              "verification_mode": True,
+          }
+          for key, value in expected.items():
+              if payload.get(key) != value:
+                  raise SystemExit(f"invalid source attestation {key}={payload.get(key)!r}")
+          PY
+
+      - name: Upload gate metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-gate-metrics-${{ github.run_id }}
+          path: ci-gate-metrics.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Fail verification when a child gate failed
+        if: ${{ needs.fast.result != 'success' || needs.source.result != 'success' }}
+        shell: bash
+        run: exit 1

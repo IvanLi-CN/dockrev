@@ -26,13 +26,48 @@ mod service_operations;
 mod settings;
 mod snapshots;
 mod stacks;
+mod stacks_accepted_state;
 mod stacks_backup_targets;
 mod tag_history;
 mod update_stops;
 
+pub(super) fn summary_stack_ids(summary: &serde_json::Value) -> Vec<String> {
+    summary
+        .get("changedStackIds")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .filter(|id| !id.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+pub(super) fn append_management_entity_if_missing(
+    entities: &mut Vec<crate::management_events::ManagementEventEntity>,
+    entity_type: &str,
+    id: &str,
+) {
+    if entities
+        .iter()
+        .any(|entity| entity.entity_type == entity_type && entity.id == id)
+    {
+        return;
+    }
+    entities.push(crate::management_events::ManagementEventEntity {
+        entity_type: entity_type.to_string(),
+        id: id.to_string(),
+    });
+}
+
 pub(crate) use jobs::JobListFilters;
 pub(crate) use lifecycle_events::{ServiceLifecycleEventInput, ServiceLifecycleEventRow};
-pub(crate) use service_operations::ServiceOperationTarget;
+pub(crate) use service_operations::{
+    AcceptedStateCasOutcome, ServiceAcceptedState, ServiceAcceptedStateSettlement,
+    ServiceOperationTarget,
+};
 pub(crate) use update_stops::UpdateStopRequestOutcome;
 
 pub(crate) const BACKUP_CLEANUP_DELETE_INTENT_PREFIX: &str = "__dockrev_cleanup_delete_intent__:";
@@ -163,12 +198,15 @@ pub struct ServiceForCheck {
     pub current_runtime_started_at: Option<String>,
     pub current_resolved_tag: Option<String>,
     pub current_resolved_tags_json: Option<String>,
+    pub candidate_tag: Option<String>,
     pub candidate_digest: Option<String>,
     pub candidate_resolved_tag: Option<String>,
     pub candidate_arch_match: Option<String>,
     pub candidate_arch_json: Option<String>,
     pub ignore_rule_id: Option<String>,
     pub ignore_reason: Option<String>,
+    pub checked_at: Option<String>,
+    pub accepted_state_generation: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -181,12 +219,15 @@ pub struct ServiceForRuntimeScan {
     pub current_runtime_started_at: Option<String>,
     pub current_resolved_tag: Option<String>,
     pub current_resolved_tags_json: Option<String>,
+    pub candidate_tag: Option<String>,
     pub candidate_digest: Option<String>,
     pub candidate_resolved_tag: Option<String>,
     pub candidate_arch_match: Option<String>,
     pub candidate_arch_json: Option<String>,
     pub ignore_rule_id: Option<String>,
     pub ignore_reason: Option<String>,
+    pub checked_at: Option<String>,
+    pub accepted_state_generation: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -822,10 +863,20 @@ fn replace_job_service_targets_tx(
         }
     }
 
-    tx.execute(
-        "DELETE FROM job_service_targets WHERE job_id = ?1",
-        params![job_id],
-    )?;
+    let existing_ids = {
+        let mut stmt =
+            tx.prepare("SELECT service_id FROM job_service_targets WHERE job_id = ?1")?;
+        stmt.query_map(params![job_id], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    for service_id in existing_ids {
+        if !service_ids.contains(&service_id) {
+            tx.execute(
+                "DELETE FROM job_service_targets WHERE job_id = ?1 AND service_id = ?2",
+                params![job_id, service_id],
+            )?;
+        }
+    }
     for service_id in service_ids {
         // Historical summaries can mention a service that has since been archived or removed.
         tx.execute(
