@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-03T09:32:27Z",
+  "title": "Design System: Dockrev",
+  "extensions": {
+    "colorMeta": {
+      "background": { "role": "neutral", "displayName": "Dark Theme Background", "canonical": "#061227", "tonalRamp": ["#040b1a", "#061227", "#0d2342", "#16385d", "#345b83", "#7295b6", "#bed1e4", "#f6faff"] },
+      "light-background": { "role": "neutral", "displayName": "Light Theme Background", "canonical": "#f6faff", "tonalRamp": ["#040b1a", "#061227", "#0d2342", "#16385d", "#345b83", "#7295b6", "#bed1e4", "#f6faff"] },
+      "panel": { "role": "neutral", "displayName": "Dark Theme Panel", "canonical": "#0d2342", "tonalRamp": ["#020916", "#07142a", "#0d2342", "#1f466d", "#4a7196", "#8aacc9", "#c9dceb", "#ffffff"] },
+      "light-panel": { "role": "neutral", "displayName": "Light Theme Panel", "canonical": "#ffffff", "tonalRamp": ["#020916", "#07142a", "#0d2342", "#1f466d", "#4a7196", "#8aacc9", "#c9dceb", "#ffffff"] },
+      "raised-panel": { "role": "neutral", "displayName": "Dark Raised Panel", "canonical": "#07142a", "tonalRamp": ["#020814", "#07142a", "#102b4c", "#315775", "#668aa6", "#9fbdd3", "#d3e3ef", "#fbfdff"] },
+      "light-raised-panel": { "role": "neutral", "displayName": "Light Raised Panel", "canonical": "#fbfdff", "tonalRamp": ["#020814", "#07142a", "#102b4c", "#315775", "#668aa6", "#9fbdd3", "#d3e3ef", "#fbfdff"] },
+      "primary": { "role": "primary", "displayName": "Dark Signal Primary", "canonical": "#36bffa", "tonalRamp": ["#06213a", "#0c4c78", "#0c79cf", "#1f93dd", "#36bffa", "#78d9ff", "#b9ebff", "#e8f8ff"] },
+      "primary-highlight": { "role": "primary", "displayName": "Signal Primary Highlight", "canonical": "#8ee7ff", "tonalRamp": ["#06213a", "#0c4c78", "#0c79cf", "#1f93dd", "#36bffa", "#78d9ff", "#b9ebff", "#e8f8ff"] },
+      "primary-deep": { "role": "primary", "displayName": "Signal Primary Deep", "canonical": "#1767a2", "tonalRamp": ["#06213a", "#0c4c78", "#0c79cf", "#1f93dd", "#36bffa", "#78d9ff", "#b9ebff", "#e8f8ff"] },
+      "light-primary": { "role": "primary", "displayName": "Light Signal Primary", "canonical": "#0c79cf", "tonalRamp": ["#06213a", "#0c4c78", "#0c79cf", "#1f93dd", "#36bffa", "#78d9ff", "#b9ebff", "#e8f8ff"] },
+      "secondary": { "role": "secondary", "displayName": "Dark Signal Secondary", "canonical": "#5ccff9", "tonalRamp": ["#082339", "#0d4d70", "#1f93dd", "#5ccff9", "#8bdcff", "#b7e9ff", "#d5f3ff", "#effbff"] },
+      "light-secondary": { "role": "secondary", "displayName": "Light Signal Secondary", "canonical": "#1f93dd", "tonalRamp": ["#082339", "#0d4d70", "#1f93dd", "#5ccff9", "#8bdcff", "#b7e9ff", "#d5f3ff", "#effbff"] },
+      "info": { "role": "tertiary", "displayName": "Dark Operational Info", "canonical": "#38bdf8", "tonalRamp": ["#062039", "#0e547e", "#0e8ed2", "#38bdf8", "#70d3ff", "#a9e6ff", "#d1f3ff", "#effbff"] },
+      "light-info": { "role": "tertiary", "displayName": "Light Operational Info", "canonical": "#0e8ed2", "tonalRamp": ["#062039", "#0e547e", "#0e8ed2", "#38bdf8", "#70d3ff", "#a9e6ff", "#d1f3ff", "#effbff"] },
+      "success": { "role": "tertiary", "displayName": "Dark Operational Success", "canonical": "#22c55e", "tonalRamp": ["#062314", "#0b5a31", "#138347", "#22c55e", "#5bdb89", "#99edb5", "#c8f7d7", "#effcf3"] },
+      "light-success": { "role": "tertiary", "displayName": "Light Operational Success", "canonical": "#138347", "tonalRamp": ["#062314", "#0b5a31", "#138347", "#22c55e", "#5bdb89", "#99edb5", "#c8f7d7", "#effcf3"] },
+      "warning": { "role": "tertiary", "displayName": "Dark Operational Warning", "canonical": "#f59e0b", "tonalRamp": ["#2a1602", "#6f3904", "#a55706", "#f59e0b", "#ffc45e", "#ffdc9c", "#ffedc8", "#fff8e9"] },
+      "light-warning": { "role": "tertiary", "displayName": "Light Operational Warning", "canonical": "#a55706", "tonalRamp": ["#2a1602", "#6f3904", "#a55706", "#f59e0b", "#ffc45e", "#ffdc9c", "#ffedc8", "#fff8e9"] },
+      "error": { "role": "tertiary", "displayName": "Dark Operational Error", "canonical": "#ef476f", "tonalRamp": ["#300715", "#78102d", "#bf1240", "#ef476f", "#fa809b", "#ffb4c4", "#ffd9e0", "#fff1f4"] },
+      "light-error": { "role": "tertiary", "displayName": "Light Operational Error", "canonical": "#bf1240", "tonalRamp": ["#300715", "#78102d", "#bf1240", "#ef476f", "#fa809b", "#ffb4c4", "#ffd9e0", "#fff1f4"] },
+      "text": { "role": "neutral", "displayName": "Dark Theme Text", "canonical": "rgba(232, 241, 255, 0.96)", "tonalRamp": ["#102842", "#365675", "#5f7e9b", "#8ba4bb", "#b3c5d4", "#d2e0e9", "#e8f1ff", "#ffffff"] },
+      "light-text": { "role": "neutral", "displayName": "Light Theme Text", "canonical": "rgba(16, 40, 66, 0.96)", "tonalRamp": ["#102842", "#365675", "#5f7e9b", "#8ba4bb", "#b3c5d4", "#d2e0e9", "#e8f1ff", "#ffffff"] },
+      "muted-text": { "role": "neutral", "displayName": "Dark Muted Text", "canonical": "rgba(158, 178, 204, 0.88)", "tonalRamp": ["#243c55", "#3a5676", "#5f7891", "#849aae", "#9eb2cc", "#bfd0df", "#dceafe", "#f4f8fc"] },
+      "light-muted-text": { "role": "neutral", "displayName": "Light Muted Text", "canonical": "rgba(58, 86, 118, 0.86)", "tonalRamp": ["#243c55", "#3a5676", "#5f7891", "#849aae", "#9eb2cc", "#bfd0df", "#dceafe", "#f4f8fc"] },
+      "border": { "role": "neutral", "displayName": "Dark Structural Border", "canonical": "rgba(156, 192, 232, 0.23)", "tonalRamp": ["rgba(14, 56, 100, 0.08)", "rgba(14, 56, 100, 0.12)", "rgba(156, 192, 232, 0.23)", "rgba(156, 192, 232, 0.35)", "rgba(156, 192, 232, 0.48)", "rgba(184, 215, 242, 0.62)", "rgba(211, 230, 247, 0.76)", "rgba(239, 248, 255, 0.9)"] },
+      "light-border": { "role": "neutral", "displayName": "Light Structural Border", "canonical": "rgba(14, 56, 100, 0.12)", "tonalRamp": ["rgba(14, 56, 100, 0.08)", "rgba(14, 56, 100, 0.12)", "rgba(156, 192, 232, 0.23)", "rgba(156, 192, 232, 0.35)", "rgba(156, 192, 232, 0.48)", "rgba(184, 215, 242, 0.62)", "rgba(211, 230, 247, 0.76)", "rgba(239, 248, 255, 0.9)"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Page-level headings and the largest route context only." },
+      "title": { "displayName": "Title", "purpose": "Service, modal, and content-panel titles." },
+      "navigation": { "displayName": "Navigation", "purpose": "Desktop shell navigation labels." },
+      "body": { "displayName": "Body", "purpose": "Dense descriptions, table cells, helper text, and operational explanations." },
+      "label": { "displayName": "Label", "purpose": "Compact metadata and section labels." },
+      "mono": { "displayName": "Mono", "purpose": "Identifiers, versions, paths, resource values, and technical data." }
+    },
+    "shadows": [
+      { "name": "dark-soft", "value": "0 14px 38px rgba(1, 8, 20, 0.44)", "purpose": "Dark-theme elevated cards and quiet floating panels." },
+      { "name": "dark-card", "value": "0 24px 68px rgba(1, 10, 24, 0.54)", "purpose": "Dark-theme prominent or focused surfaces." },
+      { "name": "light-soft", "value": "0 14px 28px rgba(17, 62, 112, 0.1)", "purpose": "Light-theme elevated cards and quiet floating panels." },
+      { "name": "light-card", "value": "0 22px 50px rgba(17, 62, 112, 0.14)", "purpose": "Light-theme prominent or focused surfaces." }
+    ],
+    "motion": [
+      { "name": "state-standard", "value": "160ms ease", "purpose": "Borders, surfaces, and color changes for operational controls." },
+      { "name": "control-lift", "value": "140ms ease", "purpose": "Small hover lift on enabled action buttons." },
+      { "name": "theme-segment", "value": "180ms cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "Segmented theme-preference thumb movement." }
+    ],
+    "breakpoints": [
+      { "name": "mobile", "value": "640px" },
+      { "name": "app-shell-mobile", "value": "960px" },
+      { "name": "app-shell-medium", "value": "1160px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Compact high-intent command for scan, apply, confirm, and other meaningful operations.",
+      "html": "<button class=\"ds-btn-primary\">Apply update</button>",
+      "css": ".ds-btn-primary { height: 32px; padding: 0 13px; border: 1px solid transparent; border-radius: 10px; background: linear-gradient(150deg, color-mix(in srgb, var(--color-primary) 86%, #8ee7ff 14%), color-mix(in srgb, var(--color-primary) 74%, #1767a2 26%)); color: var(--color-primary-content); font-family: var(--font-sans); font-size: 12px; font-weight: 700; letter-spacing: 0.01em; transition: transform 140ms ease, filter 160ms ease; box-shadow: 0 8px 18px color-mix(in srgb, var(--color-primary) 40%, transparent), inset 0 0 0 1px color-mix(in srgb, #ffffff 34%, transparent); } .ds-btn-primary:hover { transform: translateY(-1px); filter: saturate(105%); } .ds-btn-primary:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Quiet secondary command with a structural border and a primary-aware hover state.",
+      "html": "<button class=\"ds-btn-ghost\">Preview</button>",
+      "css": ".ds-btn-ghost { height: 32px; padding: 0 13px; border: 1px solid var(--borderColor); border-radius: 10px; background: color-mix(in srgb, var(--dockrev-surface) 88%, transparent); color: var(--text); font-family: var(--font-sans); font-size: 12px; font-weight: 700; letter-spacing: 0.01em; transition: transform 140ms ease, border-color 160ms ease, background-color 160ms ease; } .ds-btn-ghost:hover { transform: translateY(-1px); border-color: color-mix(in srgb, var(--color-primary) 42%, var(--borderColor) 58%); background: color-mix(in srgb, var(--dockrev-surface-strong) 88%, transparent); } .ds-btn-ghost:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }"
+    },
+    {
+      "name": "Operational Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Compact theme-aware field for operational filters, settings, and structured inputs.",
+      "html": "<input class=\"ds-input\" value=\"registry.example/service\" aria-label=\"Service reference\" />",
+      "css": ".ds-input { width: 280px; max-width: 100%; height: 36px; padding: 0 14px; border: 1px solid var(--borderColor); border-radius: 6px; background: var(--panel2); color: var(--text); font-family: var(--font-sans); font-size: 12px; outline: none; transition: border-color 160ms ease, box-shadow 160ms ease; } .ds-input:hover { border-color: color-mix(in srgb, var(--color-primary) 30%, var(--borderColor) 70%); } .ds-input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }"
+    },
+    {
+      "name": "Navigation Item",
+      "kind": "nav",
+      "refersTo": "navigation",
+      "description": "Desktop shell navigation row with a distinct primary-tinted active state.",
+      "html": "<nav class=\"ds-nav\"><a href=\"#\">Overview</a><a class=\"ds-nav-active\" href=\"#\">Services</a><a href=\"#\">Settings</a></nav>",
+      "css": ".ds-nav { display: grid; gap: 6px; width: 220px; padding: 14px; background: var(--panel2); font-family: var(--font-sans); } .ds-nav a { display: flex; align-items: center; height: 44px; padding: 0 13px; border: 1px solid transparent; border-radius: 10px; color: var(--muted); font-size: 13px; font-weight: 590; text-decoration: none; transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease; } .ds-nav a:hover { background: color-mix(in srgb, var(--dockrev-surface-strong) 88%, var(--panel2) 12%); border-color: color-mix(in srgb, var(--borderColor) 75%, var(--color-primary) 25%); color: var(--text); } .ds-nav .ds-nav-active { background: linear-gradient(128deg, color-mix(in srgb, var(--color-primary) 22%, var(--panel2) 78%), color-mix(in srgb, var(--color-primary) 12%, var(--panel2) 88%)); border-color: color-mix(in srgb, var(--color-primary) 42%, var(--borderColor) 58%); color: var(--text); font-weight: 640; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 28%, transparent); } .ds-nav a:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }"
+    },
+    {
+      "name": "Operational Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Layered container for dense service, status, and maintenance information.",
+      "html": "<section class=\"ds-card\"><strong>Service status</strong><span>Ready for review</span></section>",
+      "css": ".ds-card { display: grid; gap: 6px; min-width: 220px; padding: 14px; border: 1px solid var(--borderColor); border-radius: 16px; background: linear-gradient(160deg, color-mix(in srgb, var(--panel) 92%, var(--color-primary) 8%), color-mix(in srgb, var(--panel) 96%, var(--panel2) 4%)); color: var(--text); font-family: var(--font-sans); box-shadow: var(--shadow-soft); } .ds-card strong { font-size: 16px; font-weight: 670; } .ds-card span { color: var(--muted2); font-size: 12px; }"
+    },
+    {
+      "name": "Theme Preference",
+      "kind": "custom",
+      "refersTo": "theme-preference",
+      "description": "Segmented preference control for choosing the product's semantic light or dark presentation.",
+      "html": "<div class=\"ds-theme\"><span class=\"ds-theme-thumb\"></span><button>Dark</button><button class=\"ds-theme-active\">System</button><button>Light</button></div>",
+      "css": ".ds-theme { position: relative; display: grid; width: 180px; min-width: 132px; height: 42px; grid-template-columns: repeat(3, 1fr); border: 1px solid color-mix(in srgb, var(--borderColor) 76%, transparent); border-radius: 12px; background: color-mix(in srgb, var(--dockrev-surface) 88%, transparent); overflow: hidden; font-family: var(--font-sans); } .ds-theme-thumb { position: absolute; top: 3px; bottom: 3px; left: calc(33.333% + 1px); width: calc((100% - 6px) / 3); border: 1px solid color-mix(in srgb, var(--color-primary) 46%, var(--borderColor) 54%); border-radius: 9px; background: color-mix(in srgb, var(--color-primary) 16%, var(--panel2) 84%); } .ds-theme button { position: relative; z-index: 1; min-width: 44px; border: 0; background: transparent; color: var(--muted); font: inherit; cursor: pointer; } .ds-theme button:hover, .ds-theme .ds-theme-active { color: var(--color-primary); } .ds-theme button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Dual-Theme Ops Console",
+    "overview": "Dockrev is an operational interface for people working directly with Docker Compose services. It is a compact control surface: service state, version information, resource signals, actions, and outcomes must stay easy to scan while an operator is making a maintenance decision.\n\nDark is the default working theme, with a calm blue-black shell and restrained cyan signal color. A complete light theme mirrors the same information hierarchy for daylight use and personal preference; changing theme alters the palette, never the meaning of status or action. Both themes avoid a marketing or observability-poster feel in favor of durable admin-tool conventions.",
+    "keyCharacteristics": [
+      "A responsive app shell with compact navigation, top-bar context, and dense operational content.",
+      "Theme-aware semantic tokens for action, information, success, warning, error, text, surface, and border.",
+      "Small, deliberate controls and stable data layouts for repeated maintenance work.",
+      "Status and risk are represented with text, icons, and color rather than color alone.",
+      "Focus, disabled, reduced-motion, and narrow-screen behavior are part of the shared interaction language."
+    ],
+    "rules": [
+      { "name": "Semantic Signal Rule", "body": "Primary and status colors communicate action or state. They are not decorative fill.", "section": "colors" },
+      { "name": "Theme Parity Rule", "body": "Dark and light themes retain the same semantic roles, hierarchy, and interaction affordances.", "section": "colors" },
+      { "name": "Dense Sans Rule", "body": "Keep the primary hierarchy in the shared sans stack; do not introduce decorative display or serif typography into product routes.", "section": "typography" },
+      { "name": "Layer Before Shadow Rule", "body": "Establish hierarchy with a surface, border, and spacing before adding shadow.", "section": "elevation" },
+      { "name": "One-Pixel Trace Rule", "body": "Borders remain thin traces; operational status does not use thick colored stripes as decoration.", "section": "elevation" },
+      { "name": "Theme Pair Rule", "body": "Use the matching `light-` primitive when a component is rendered in the light theme. Dark tokens are the default primitives; the runtime's semantic aliases select the equivalent light tokens without changing action or status meaning.", "section": "components" }
+    ],
+    "dos": [
+      "Do keep pages compact, dense, and scannable for repeated maintenance work.",
+      "Do use the semantic state roles consistently in both themes.",
+      "Do keep real, stale, disabled, unknown, and failed states explicit.",
+      "Do maintain visible keyboard focus and usable 320px-to-desktop layouts.",
+      "Do place high-intent actions beside the service or job evidence that supports the decision."
+    ],
+    "donts": [
+      "Don't turn authenticated operational routes into marketing landing pages.",
+      "Don't use color or decorative status in place of truthful operational data.",
+      "Don't introduce a generic dashboard card grid where structured rows or grouped service data are clearer.",
+      "Don't add neon, purple-gradient, glass-first, or oversized decorative styling as product identity.",
+      "Don't let dark and light themes diverge in status meaning, interaction affordance, or information hierarchy."
+    ]
+  }
+}
