@@ -152,7 +152,7 @@ jobs:
             ${{ runner.os }}-cargo-${{ env.RUST_TOOLCHAIN }}-
 
       - name: Run cargo test
-        run: cargo test --workspace --locked --all-features
+        run: cargo test --workspace --locked --all-features -- --test-threads=2
 
   deploy-smoke:
     name: Deploy Smoke

@@ -222,6 +222,8 @@ abort "[contract-check] release snapshot must wait for the stable Storybook requ
 '
 
 echo "[contract-check] CI duration optimization invariants"
+search_fixed "cargo test --workspace --locked --all-features -- --test-threads=2" .github/workflows/ci-main.yml
+search_fixed "cargo test --workspace --locked --all-features -- --test-threads=2" .github/workflows/ci-pr.yml
 search_fixed "source-gate:" .github/workflows/release.yml
 search_fixed "python3 .github/scripts/release_source_gate.py wait \\" .github/workflows/release.yml
 search_fixed "WORKFLOW_FILE = \"source-build-release-gate.yml\"" .github/scripts/release_source_gate.py
