@@ -107,16 +107,27 @@ warm_payload = {
     "verification_mode": True,
     "created_at": "2026-09-01T00:00:00Z",
     "run_started_at": "2026-09-01T00:00:00Z",
+    "fast_started_at": "2026-09-01T00:00:20Z",
+    "source_started_at": "2026-09-01T00:00:30Z",
     "fast_completed_at": "2026-09-01T00:05:29Z",
     "source_completed_at": "2026-09-01T00:10:48Z",
     "eligibility_completed_at": "2026-09-01T00:10:48Z",
-    "fast_seconds": 329,
-    "source_seconds": 648,
+    "fast_queue_seconds": 20,
+    "source_queue_seconds": 30,
+    "fast_seconds": 309,
+    "source_seconds": 618,
     "eligibility_seconds": 648,
-    "execution_seconds": 648,
+    "execution_seconds": 618,
+    "wall_seconds": 648,
     "queue_seconds": 0,
 }
 validation_runner.validate_sample(warm_payload, "a" * 40, None)
+try:
+    validation_runner.validate_sample(dict(warm_payload, execution_seconds=648), "a" * 40, None)
+except ValueError as error:
+    assert_equal("execution_seconds does not match" in str(error), True)
+else:
+    raise AssertionError("child gate queue must not be counted as execution")
 try:
     validation_runner.validate_sample(dict(warm_payload, cache_status="warm"), "a" * 40, "warm")
 except ValueError as error:
@@ -439,6 +450,8 @@ with tempfile.TemporaryDirectory() as directory:
     for index in range(10):
         fast_completed = run_started + timedelta(seconds=300 + index)
         source_completed = run_started + timedelta(seconds=350 + index)
+        fast_started = run_started + timedelta(seconds=2)
+        source_started = run_started + timedelta(seconds=3)
         eligibility_completed = max(fast_completed, source_completed)
         (path / f"{index:02d}.json").write_text(
             json.dumps(
@@ -459,18 +472,23 @@ with tempfile.TemporaryDirectory() as directory:
                     "verification_mode": True,
                     "created_at": created.isoformat().replace("+00:00", "Z"),
                     "run_started_at": run_started.isoformat().replace("+00:00", "Z"),
+                    "fast_started_at": fast_started.isoformat().replace("+00:00", "Z"),
+                    "source_started_at": source_started.isoformat().replace("+00:00", "Z"),
                     "fast_completed_at": fast_completed.isoformat().replace("+00:00", "Z"),
                     "source_completed_at": source_completed.isoformat().replace("+00:00", "Z"),
                     "eligibility_completed_at": eligibility_completed.isoformat().replace("+00:00", "Z"),
-                    "fast_seconds": 300 + index,
-                    "source_seconds": 350 + index,
+                    "fast_queue_seconds": 2,
+                    "source_queue_seconds": 3,
+                    "fast_seconds": 298 + index,
+                    "source_seconds": 347 + index,
                     "eligibility_seconds": 350 + index,
-                    "execution_seconds": 350 + index,
+                    "execution_seconds": 347 + index,
+                    "wall_seconds": 350 + index,
                     "queue_seconds": 1,
                 }
             )
         )
     result = metrics.verify(metrics.load_metrics(path))
-    assert_equal(result["fast_p90"], 308.0)
+    assert_equal(result["fast_p90"], 306.0)
 
 print("PASS: CI release gate contract fixtures")

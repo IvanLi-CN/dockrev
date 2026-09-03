@@ -245,6 +245,12 @@ search_fixed "      pull-requests: read" .github/workflows/ci-gate-verification.
 search_fixed "    uses: ./.github/workflows/ci-main.yml" .github/workflows/ci-gate-verification.yml
 search_fixed "inputs.verification_mode != true" .github/workflows/ci-main.yml
 search_fixed '"publish": False' .github/workflows/ci-gate-verification.yml
+search_fixed 'actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100' .github/workflows/ci-gate-verification.yml
+search_fixed '"fast_started_at": fast_started' .github/workflows/ci-gate-verification.yml
+search_fixed '"source_started_at": source_started' .github/workflows/ci-gate-verification.yml
+search_fixed '"fast_queue_seconds": (fast_started_dt - run_started_dt).total_seconds()' .github/workflows/ci-gate-verification.yml
+search_fixed '"source_queue_seconds": (source_started_dt - run_started_dt).total_seconds()' .github/workflows/ci-gate-verification.yml
+search_fixed '"wall_seconds": (execution_end - run_started_dt).total_seconds()' .github/workflows/ci-gate-verification.yml
 search_fixed "CANDIDATE_DISPATCHES = 6" .github/scripts/run_ci_gate_validation.py
 search_fixed "FINAL_DISPATCHES = 10" .github/scripts/run_ci_gate_validation.py
 search_fixed "TOTAL_DISPATCHES = CANDIDATE_DISPATCHES + FINAL_DISPATCHES" .github/scripts/run_ci_gate_validation.py

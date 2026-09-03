@@ -104,8 +104,35 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            --jq '"created_at=" + .created_at + "\nrun_started_at=" + .run_started_at' >> "$GITHUB_OUTPUT"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" > run.json
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100" > jobs.json
+          python3 - run.json jobs.json <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import sys
+          from datetime import datetime
+          from pathlib import Path
+
+          def parse(value):
+              return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+          run = json.loads(Path(sys.argv[1]).read_text())
+          jobs = json.loads(Path(sys.argv[2]).read_text()).get("jobs", [])
+
+          def earliest_started(prefix):
+              timestamps = [
+                  job.get("started_at")
+                  for job in jobs
+                  if str(job.get("name", "")).startswith(prefix) and job.get("started_at")
+              ]
+              if not timestamps:
+                  raise SystemExit(f"missing started job for {prefix}")
+              return min(timestamps, key=parse)
+
+          print(f"created_at={run['created_at']}")
+          print(f"run_started_at={run['run_started_at']}")
+          print(f"fast_started_at={earliest_started('Fast main gate /')}")
+          print(f"source_started_at={earliest_started('Source-build release gate /')}")
+          PY
 
       - name: Download Storybook coverage summaries
         if: always()
@@ -121,6 +148,8 @@ jobs:
         env:
           CREATED_AT: ${{ steps.run-metadata.outputs.created_at }}
           RUN_STARTED_AT: ${{ steps.run-metadata.outputs.run_started_at }}
+          FAST_STARTED_AT: ${{ steps.run-metadata.outputs.fast_started_at }}
+          SOURCE_STARTED_AT: ${{ steps.run-metadata.outputs.source_started_at }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -135,6 +164,8 @@ jobs:
 
           run_started = os.environ.get("RUN_STARTED_AT", "")
           created = os.environ["CREATED_AT"]
+          fast_started = os.environ.get("FAST_STARTED_AT", "")
+          source_started = os.environ.get("SOURCE_STARTED_AT", "")
           fast_completed = os.environ.get("FAST_COMPLETED_AT", "")
           source_completed = os.environ.get("SOURCE_COMPLETED_AT", "")
           if os.environ.get("FAST_TARGET_SHA") != os.environ["TARGET_SHA"]:
@@ -143,12 +174,18 @@ jobs:
               raise SystemExit("fast and source gates must both succeed before metrics are written")
           if os.environ.get("COVERAGE_RESULT") != "success":
               raise SystemExit("Storybook coverage marker is not successful")
-          if not run_started or not fast_completed or not source_completed:
+          if not run_started or not fast_started or not source_started or not fast_completed or not source_completed:
               raise SystemExit("missing gate completion timestamps")
           run_started_dt = parse(run_started)
+          fast_started_dt = parse(fast_started)
+          source_started_dt = parse(source_started)
           fast_dt = parse(fast_completed)
           source_dt = parse(source_completed)
           execution_end = max(fast_dt, source_dt)
+          if fast_started_dt < run_started_dt or source_started_dt < run_started_dt:
+              raise SystemExit("child gate started before verification run")
+          if fast_dt < fast_started_dt or source_dt < source_started_dt:
+              raise SystemExit("child gate completed before it started")
           coverage_dir = Path(".artifacts/storybook-coverage")
           coverage_files = sorted(coverage_dir.glob("*.json"))
           if not coverage_files:
@@ -190,14 +227,22 @@ jobs:
               "cache_status": os.environ.get("SOURCE_CACHE_STATUS", ""),
               "created_at": created,
               "run_started_at": run_started,
+              "fast_started_at": fast_started,
+              "source_started_at": source_started,
               "fast_completed_at": fast_completed,
               "source_completed_at": source_completed,
               "eligibility_completed_at": execution_end.isoformat().replace("+00:00", "Z"),
               "queue_seconds": (run_started_dt - parse(created)).total_seconds(),
-              "fast_seconds": (fast_dt - run_started_dt).total_seconds(),
-              "source_seconds": (source_dt - run_started_dt).total_seconds(),
+              "fast_queue_seconds": (fast_started_dt - run_started_dt).total_seconds(),
+              "source_queue_seconds": (source_started_dt - run_started_dt).total_seconds(),
+              "fast_seconds": (fast_dt - fast_started_dt).total_seconds(),
+              "source_seconds": (source_dt - source_started_dt).total_seconds(),
               "eligibility_seconds": (execution_end - run_started_dt).total_seconds(),
-              "execution_seconds": (execution_end - run_started_dt).total_seconds(),
+              "execution_seconds": max(
+                  (fast_dt - fast_started_dt).total_seconds(),
+                  (source_dt - source_started_dt).total_seconds(),
+              ),
+              "wall_seconds": (execution_end - run_started_dt).total_seconds(),
           }
           Path("ci-gate-metrics.json").write_text(json.dumps(payload, sort_keys=True) + "\n")
           PY

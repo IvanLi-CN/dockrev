@@ -258,7 +258,19 @@ def validate_sample(
     if not re.fullmatch(r"[0-9a-f]{64}", str(payload.get("coverage_summary", ""))):
         raise ValueError("metric must include a SHA-256 Storybook coverage summary")
 
-    durations = [payload.get(key) for key in ("queue_seconds", "fast_seconds", "source_seconds", "eligibility_seconds", "execution_seconds")]
+    durations = [
+        payload.get(key)
+        for key in (
+            "queue_seconds",
+            "fast_queue_seconds",
+            "source_queue_seconds",
+            "fast_seconds",
+            "source_seconds",
+            "eligibility_seconds",
+            "execution_seconds",
+            "wall_seconds",
+        )
+    ]
     if any(not isinstance(value, (int, float)) or value < 0 for value in durations):
         raise ValueError("metric durations must be non-negative numbers")
     if payload["execution_seconds"] > WORKFLOW_TIMEOUT_SECONDS:
@@ -268,17 +280,32 @@ def validate_sample(
 
     created = parse_utc(payload.get("created_at"), "created_at")
     started = parse_utc(payload.get("run_started_at"), "run_started_at")
+    fast_started = parse_utc(payload.get("fast_started_at"), "fast_started_at")
+    source_started = parse_utc(payload.get("source_started_at"), "source_started_at")
     fast = parse_utc(payload.get("fast_completed_at"), "fast_completed_at")
     source = parse_utc(payload.get("source_completed_at"), "source_completed_at")
     eligibility = parse_utc(payload.get("eligibility_completed_at"), "eligibility_completed_at")
-    if started < created or fast < started or source < started or eligibility != max(fast, source):
+    if (
+        started < created
+        or fast_started < started
+        or source_started < started
+        or fast < fast_started
+        or source < source_started
+        or eligibility != max(fast, source)
+    ):
         raise ValueError("metric timestamps are out of order")
     expected_durations = {
         "queue_seconds": (started - created).total_seconds(),
-        "fast_seconds": (fast - started).total_seconds(),
-        "source_seconds": (source - started).total_seconds(),
+        "fast_queue_seconds": (fast_started - started).total_seconds(),
+        "source_queue_seconds": (source_started - started).total_seconds(),
+        "fast_seconds": (fast - fast_started).total_seconds(),
+        "source_seconds": (source - source_started).total_seconds(),
         "eligibility_seconds": (eligibility - started).total_seconds(),
-        "execution_seconds": (eligibility - started).total_seconds(),
+        "execution_seconds": max(
+            (fast - fast_started).total_seconds(),
+            (source - source_started).total_seconds(),
+        ),
+        "wall_seconds": (eligibility - started).total_seconds(),
     }
     for key, expected in expected_durations.items():
         if abs(float(payload[key]) - expected) > 1e-6:
