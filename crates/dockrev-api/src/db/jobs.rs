@@ -1,25 +1,8 @@
 use super::*;
-use std::{
-    collections::BTreeSet,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 const SLOW_JOB_CLAIM_WARN_THRESHOLD: Duration = Duration::from_millis(25);
 const SLOW_JOB_CLAIM_WARN_INTERVAL: Duration = Duration::from_secs(60);
-
-fn summary_stack_ids(summary: &serde_json::Value) -> Vec<String> {
-    summary
-        .get("changedStackIds")
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(serde_json::Value::as_str)
-        .filter(|id| !id.trim().is_empty())
-        .map(ToOwned::to_owned)
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
-}
 
 #[derive(Clone, Debug, Default)]
 pub struct JobListFilters {
@@ -630,40 +613,16 @@ WHERE id IN (
                 id: job_id.clone(),
             }];
             if let Some(stack_id) = stack_id.as_ref() {
-                entities.push(crate::management_events::ManagementEventEntity {
-                    entity_type: "stack".to_string(),
-                    id: stack_id.clone(),
-                });
+                super::append_management_entity_if_missing(&mut entities, "stack", stack_id);
             }
             for stack_id in &changed_stack_ids {
-                if entities
-                    .iter()
-                    .any(|entity| entity.entity_type == "stack" && entity.id == *stack_id)
-                {
-                    continue;
-                }
-                entities.push(crate::management_events::ManagementEventEntity {
-                    entity_type: "stack".to_string(),
-                    id: stack_id.clone(),
-                });
+                super::append_management_entity_if_missing(&mut entities, "stack", stack_id);
             }
             if let Some(service_id) = service_id.as_ref() {
-                entities.push(crate::management_events::ManagementEventEntity {
-                    entity_type: "service".to_string(),
-                    id: service_id.clone(),
-                });
+                super::append_management_entity_if_missing(&mut entities, "service", service_id);
             }
             for service_id in &target_service_ids {
-                if entities
-                    .iter()
-                    .any(|entity| entity.entity_type == "service" && entity.id == *service_id)
-                {
-                    continue;
-                }
-                entities.push(crate::management_events::ManagementEventEntity {
-                    entity_type: "service".to_string(),
-                    id: service_id.clone(),
-                });
+                super::append_management_entity_if_missing(&mut entities, "service", service_id);
             }
             self.management_events
                 .publish_immediate(
