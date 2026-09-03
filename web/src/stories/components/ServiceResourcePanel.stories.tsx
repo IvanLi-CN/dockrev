@@ -27,6 +27,7 @@ function ResourcePanelStory({ serviceId = 'svc-prod-api', readonly = false, init
     ? {
         ...monitor.panel,
         samples: initialSnapshot?.samples ?? monitor.panel.samples,
+        historySamples: initialSnapshot?.samples ?? monitor.panel.historySamples,
         historyLoaded: true,
         historyLoading: false,
         lifecycle,
@@ -588,6 +589,32 @@ export const VisibilityPauseResume: Story = {
     expectStory(Number(globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageHistoryCalls ?? 0) === 2, 'foreground page should reload resource history once')
     expectStory(Number(globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageEventSourceCalls ?? 0) === 2, 'foreground page should resume with a fresh resource stream')
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: previousVisibility })
+  },
+}
+
+export const MixedCadenceGapIsolation: Story = {
+  parameters: { dockrevApiScenario: 'service-detail-resource-monitor-mixed-cadence' },
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Number(globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageHistoryCalls ?? 0) === 1)
+    await waitForCondition(() => globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageLastTick != null)
+    await waitForCondition(() => Boolean(canvasElement.querySelector('.svcResourceChart')))
+    const debug = globalThis.__DOCKREV_MOCK_DEBUG__
+    const chart = canvasElement.querySelector<HTMLElement>('.svcResourceChart')
+    const latestTick = debug?.resourceUsageLastTick
+    expectStory(chart, 'mixed cadence scenario should render the resource chart')
+    expectStory(latestTick, 'mixed cadence scenario should emit a latest SSE tick')
+    expectStory(
+      Number(chart.getAttribute('data-point-count')) >= 1_200,
+      'resource chart should retain the historical and realtime samples',
+    )
+    expectStory(
+      canvasElement.querySelectorAll('.svcResourceGapWarning').length === 0,
+      'realtime one-second samples must not turn five-second history into false gaps',
+    )
+    expectStory(
+      canvasElement.textContent?.includes(`${latestTick.cpuPercent.toFixed(1)}%`),
+      'the current value should follow the latest SSE sample',
+    )
   },
 }
 

@@ -76,6 +76,7 @@ export type DockrevApiScenario =
   | 'service-detail-resource-monitor-disabled'
   | 'service-detail-resource-monitor-empty'
   | 'service-detail-resource-monitor-stream-error'
+  | 'service-detail-resource-monitor-mixed-cadence'
   | 'service-detail-logs'
   | 'repo-link-editing'
   | 'guide-line-long-names'
@@ -620,8 +621,13 @@ export function offsetMockVersion(input: string | null | undefined, delta: numbe
   return `${major}.${minor}.${Math.max(0, patch + delta)}`
 }
 
-export function buildResourceHistorySamples(serviceId: string, seconds: number, window?: string): ServiceResourceSample[] {
-  const stepSeconds = window === '7d' ? 60 : window === '30d' ? 300 : 30
+export function buildResourceHistorySamples(
+  serviceId: string,
+  seconds: number,
+  window?: string,
+  options: { stepSeconds?: number; endOffsetMs?: number } = {},
+): ServiceResourceSample[] {
+  const stepSeconds = options.stepSeconds ?? (window === '7d' ? 60 : window === '30d' ? 300 : 30)
   const points = Math.max(8, Math.floor(seconds / stepSeconds))
   const seed = hashString(serviceId)
   const baseCpu = 8 + (seed % 28)
@@ -633,7 +639,7 @@ export function buildResourceHistorySamples(serviceId: string, seconds: number, 
   let netTx = (12 + (seed % 36)) * 1024 * 1024
   let blockRead = (40 + (seed % 50)) * 1024 * 1024
   let blockWrite = (28 + (seed % 44)) * 1024 * 1024
-  const now = Date.now()
+  const now = Date.now() + (options.endOffsetMs ?? 0)
   const start = now - points * stepSeconds * 1000
   const out: ServiceResourceSample[] = []
 
@@ -665,6 +671,13 @@ export function buildResourceHistorySamples(serviceId: string, seconds: number, 
   }
 
   return out
+}
+
+export function buildMixedCadenceResourceHistorySamples(serviceId: string): ServiceResourceSample[] {
+  return buildResourceHistorySamples(serviceId, 60 * 60, '1h', {
+    stepSeconds: 5,
+    endOffsetMs: -12 * 60 * 1000,
+  })
 }
 
 export function buildResourceHistoryPeaks(samples: ServiceResourceSample[]): ServiceResourcePeak[] {
@@ -743,6 +756,34 @@ export function buildResourceSsePayload(
   }
 
   const debug = globalThis.__DOCKREV_MOCK_DEBUG__
+
+  if (scenario === 'service-detail-resource-monitor-mixed-cadence') {
+    const events: string[] = []
+    events.push(`id: 1\nevent: resource_usage_snapshot\ndata: ${JSON.stringify({ serviceId, sample: snapshot })}\n\n`)
+    let latest = snapshot
+    const snapshotTime = Date.parse(snapshot.sampledAt)
+    for (let index = 1; index <= 12 * 60; index += 1) {
+      latest = {
+        ...snapshot,
+        sampledAt: new Date(snapshotTime + index * 1_000).toISOString(),
+        cpuPercent: Number((snapshot.cpuPercent + (index % 7) * 0.35).toFixed(2)),
+        netRxBytes: (snapshot.netRxBytes ?? 0) + index * 300_000,
+        netTxBytes: (snapshot.netTxBytes ?? 0) + index * 250_000,
+        blockReadBytes: (snapshot.blockReadBytes ?? 0) + index * 160_000,
+        blockWriteBytes: (snapshot.blockWriteBytes ?? 0) + index * 120_000,
+        pids: (snapshot.pids ?? 0) + (index % 4 === 0 ? 1 : 0),
+      }
+      events.push(
+        `id: ${index + 1}\nevent: resource_usage_tick\ndata: ${JSON.stringify({ serviceId, sample: latest })}\n\n`,
+      )
+    }
+    if (debug) {
+      debug.resourceUsageLastSnapshot = snapshot
+      debug.resourceUsageLastTick = latest
+    }
+    return events.join('')
+  }
+
   if (debug) {
     debug.resourceUsageLastSnapshot = snapshot
     debug.resourceUsageLastTick = tick
