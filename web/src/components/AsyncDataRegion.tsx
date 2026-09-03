@@ -4,13 +4,15 @@ import {
   asyncOverlayDelay,
   formatAsyncDataError,
   isAsyncDataBusy,
+  shouldShowAsyncLoadingOverlay,
   type AsyncDataPhase,
+  type AsyncDataOrigin,
   type AsyncDataSource,
   type AsyncDataTrigger,
 } from '../asyncData'
 import { Button } from '../ui'
 
-export type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
+export type { AsyncDataOrigin, AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
 
 export function Skeleton(props: {
   className?: string
@@ -35,6 +37,7 @@ export function AsyncDataRegion(props: {
   phase: AsyncDataPhase
   source?: AsyncDataSource
   trigger?: AsyncDataTrigger
+  origin?: AsyncDataOrigin
   hasData?: boolean
   className?: string
   label?: string
@@ -49,6 +52,7 @@ export function AsyncDataRegion(props: {
     phase,
     source = 'none',
     trigger = 'background',
+    origin,
     hasData = false,
     className,
     label = '正在加载数据',
@@ -66,18 +70,21 @@ export function AsyncDataRegion(props: {
   const initialError = phase === 'error' && !hasData
   const initialSkeleton = phase === 'initial-loading'
   const initialErrorWithVisual = initialError && Boolean(initialErrorVisual)
+  const resolvedOrigin = origin ?? (trigger === 'user-action' ? 'manual' : undefined)
+  const silentOrigin = !shouldShowAsyncLoadingOverlay(resolvedOrigin)
 
   useEffect(() => {
-    if (phase !== 'refreshing') {
+    if (phase !== 'refreshing' || silentOrigin) {
       setShowDelayedOverlay(false)
       return
     }
     const timer = window.setTimeout(() => setShowDelayedOverlay(true), asyncOverlayDelay(trigger))
     return () => window.clearTimeout(timer)
-  }, [phase, trigger])
+  }, [phase, silentOrigin, trigger])
 
-  const showLoadingOverlay = phase === 'refreshing' && showDelayedOverlay
-  const showErrorOverlay = phase === 'error'
+  const showLoadingOverlay = phase === 'refreshing' && showDelayedOverlay && !silentOrigin
+  const showErrorOverlay = phase === 'error' && !hasData
+  const showInlineError = phase === 'error' && hasData
 
   useEffect(() => {
     if (showErrorOverlay) {
@@ -108,7 +115,25 @@ export function AsyncDataRegion(props: {
       data-async-data-trigger={trigger}
     >
       {initialSkeleton ? skeleton : children}
-      {loadingOverlayMounted && !showErrorOverlay ? (
+      {showInlineError ? (
+        <div className="asyncDataInlineError" role="alert">
+          <CircleAlert aria-hidden="true" size={15} strokeWidth={2} />
+          <span>{formatAsyncDataError(error)}</span>
+          {onRetry ? (
+            <Button
+              ariaLabel="重试加载"
+              className="asyncDataRetry"
+              disabled={retryDisabled}
+              onClick={onRetry}
+              variant="ghost"
+            >
+              <RotateCw aria-hidden="true" size={14} strokeWidth={2} />
+              重试
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      {loadingOverlayMounted && !showErrorOverlay && !silentOrigin ? (
         <div
           className={`asyncDataOverlay asyncDataLoadingOverlay ${loadingOverlayLeaving ? 'asyncDataOverlayLeaving' : ''}`}
           role="status"

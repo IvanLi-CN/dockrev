@@ -77,6 +77,13 @@ _Avoid_: raw Compose YAML, source Compose configuration
 - A response from an older generation must not overwrite the service, rollback target, refreshing flag, or error state of a newer generation.
 - A digest mismatch is a transient ordering condition between the service snapshot and rollback-target response. The frontend retries only within the current generation, at most five times with a 250ms delay.
 
+## Overview Refresh Semantics
+
+- `initial snapshot load` is the first page-owned read before an overview has usable data. It may use an immediate skeleton because there is no prior snapshot to preserve.
+- `manual refresh` is a user-requested authoritative overview read. It preserves the prior snapshot, shows local feedback after the 200ms user-action threshold, and may cover the requested region without disabling the existing list.
+- `event-driven refresh` is a page-owned REST read caused by a management invalidation event. It updates the snapshot silently and never starts a loading mask; the management event is not itself a complete data push.
+- `recovery synchronization` is the one-time page synchronization after a management transport session is connected or resumed. It is silent and targeted when the cursor replay is intact, and becomes a full reconciliation only after a replay gap, `resync_required`, or a protocol-invalid event.
+
 ## Neutral Refresh and Settlement
 
 - `neutral refresh state` is the visible `回滚信息刷新中…` state shown while the service digest and rollback target are being reconciled. It must not expose an older unavailable reason.

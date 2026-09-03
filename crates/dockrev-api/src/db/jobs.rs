@@ -1,8 +1,25 @@
 use super::*;
-use std::time::{Duration, Instant};
+use std::{
+    collections::BTreeSet,
+    time::{Duration, Instant},
+};
 
 const SLOW_JOB_CLAIM_WARN_THRESHOLD: Duration = Duration::from_millis(25);
 const SLOW_JOB_CLAIM_WARN_INTERVAL: Duration = Duration::from_secs(60);
+
+fn summary_stack_ids(summary: &serde_json::Value) -> Vec<String> {
+    summary
+        .get("changedStackIds")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .filter(|id| !id.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct JobListFilters {
@@ -569,6 +586,7 @@ WHERE id IN (
                         .query_map(params![&job_id], |row| row.get::<_, String>(0))?
                         .collect::<Result<Vec<_>, _>>()?
                 };
+                let changed_stack_ids = summary_stack_ids(&summary_json);
                 if status == "success"
                     && previous
                         .as_ref()
@@ -590,19 +608,40 @@ WHERE id IN (
                     stack_id,
                     service_id,
                     target_service_ids,
+                    changed_stack_ids,
                 )))
             })
             .await
             .context("finish job")?;
 
-        if let Some((job_id, status, job_type, scope, stack_id, service_id, target_service_ids)) =
-            completed
+        if let Some((
+            job_id,
+            status,
+            job_type,
+            scope,
+            stack_id,
+            service_id,
+            target_service_ids,
+            changed_stack_ids,
+        )) = completed
         {
             let mut entities = vec![crate::management_events::ManagementEventEntity {
                 entity_type: "job".to_string(),
                 id: job_id.clone(),
             }];
             if let Some(stack_id) = stack_id.as_ref() {
+                entities.push(crate::management_events::ManagementEventEntity {
+                    entity_type: "stack".to_string(),
+                    id: stack_id.clone(),
+                });
+            }
+            for stack_id in &changed_stack_ids {
+                if entities
+                    .iter()
+                    .any(|entity| entity.entity_type == "stack" && entity.id == *stack_id)
+                {
+                    continue;
+                }
                 entities.push(crate::management_events::ManagementEventEntity {
                     entity_type: "stack".to_string(),
                     id: stack_id.clone(),
@@ -638,6 +677,7 @@ WHERE id IN (
                         "stackId": stack_id,
                         "serviceId": service_id,
                         "serviceIds": target_service_ids,
+                        "changedStackIds": changed_stack_ids,
                         "terminal": true,
                     }),
                 )

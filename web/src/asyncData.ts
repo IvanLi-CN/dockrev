@@ -9,12 +9,17 @@ export type AsyncDataPhase =
 export type AsyncDataSource = 'none' | 'live' | 'memory' | 'fresh-snapshot'
 
 export type AsyncDataTrigger = 'user-action' | 'background'
+export type AsyncDataOrigin = 'initial' | 'manual' | 'event' | 'recovery'
 
 export const USER_ACTION_OVERLAY_DELAY_MS = 200
 export const BACKGROUND_OVERLAY_DELAY_MS = 800
 
 export function asyncOverlayDelay(trigger: AsyncDataTrigger): number {
   return trigger === 'background' ? BACKGROUND_OVERLAY_DELAY_MS : USER_ACTION_OVERLAY_DELAY_MS
+}
+
+export function shouldShowAsyncLoadingOverlay(origin: AsyncDataOrigin | undefined): boolean {
+  return origin !== 'event' && origin !== 'recovery'
 }
 
 export function isAsyncDataBusy(phase: AsyncDataPhase): boolean {

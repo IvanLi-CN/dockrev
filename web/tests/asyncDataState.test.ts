@@ -6,6 +6,7 @@ import {
   hasCompleteAsyncReadiness,
   isAsyncDataBusy,
   isAsyncDataOffline,
+  shouldShowAsyncLoadingOverlay,
 } from '../src/asyncData'
 import { trimSamplesToWindow } from '../src/components/ServiceResourcePanel'
 
@@ -24,6 +25,9 @@ describe('async data continuity contract', () => {
   test('uses trigger intent rather than cache source for overlay thresholds', () => {
     expect(asyncOverlayDelay('user-action')).toBe(200)
     expect(asyncOverlayDelay('background')).toBe(800)
+    expect(shouldShowAsyncLoadingOverlay('manual')).toBe(true)
+    expect(shouldShowAsyncLoadingOverlay('event')).toBe(false)
+    expect(shouldShowAsyncLoadingOverlay('recovery')).toBe(false)
   })
 
   test('turns structured failures into concise user-facing messages', () => {

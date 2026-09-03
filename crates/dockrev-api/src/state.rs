@@ -28,6 +28,7 @@ pub struct AppState {
     pub management_events: Arc<ManagementEventHub>,
     pub update_stop_hub: Arc<crate::update_stop::UpdateStopHub>,
     pub lifecycle_observer: Arc<OperationScopedLifecycleObserver>,
+    pub lifecycle_snapshots: Arc<crate::api::LifecycleSnapshotCoordinator>,
 }
 
 impl AppState {
@@ -68,6 +69,7 @@ impl AppState {
             management_events,
             update_stop_hub: Arc::new(crate::update_stop::UpdateStopHub::default()),
             lifecycle_observer,
+            lifecycle_snapshots: Arc::new(crate::api::LifecycleSnapshotCoordinator::default()),
         })
     }
 }

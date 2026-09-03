@@ -103,6 +103,7 @@ export function OperationsDashboardSectionView(props: {
     triggerApply,
     loadSource,
     loadTrigger,
+    loadOrigin,
   } = props.state;
 
   return (
@@ -118,6 +119,7 @@ export function OperationsDashboardSectionView(props: {
           skeleton={<AsyncDataSkeleton className="overviewJobsSkeleton" lines={4} />}
           source={loadSource}
           trigger={loadTrigger}
+          origin={loadOrigin}
         >
         <div className="card">
           <div className="sectionRow">
@@ -242,6 +244,7 @@ export function OperationsDashboardSectionView(props: {
           skeleton={<AsyncDataSkeleton className="overviewDiscoverySkeleton" lines={4} />}
           source={loadSource}
           trigger={loadTrigger}
+          origin={loadOrigin}
         >
         <div className="card">
           <div className="sectionRow">
@@ -444,6 +447,7 @@ export function OperationsDashboardSectionView(props: {
         skeleton={<AsyncDataSkeleton className="overviewStacksSkeleton" lines={10} />}
         source={loadSource}
         trigger={loadTrigger}
+        origin={loadOrigin}
       >
       <div className="overviewIndent">
         <div className="sectionRow">

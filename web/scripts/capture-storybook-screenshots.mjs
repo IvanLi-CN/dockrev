@@ -252,6 +252,52 @@ async function main() {
 
   const shots = [
     {
+      id: 'components-asyncdataregion--initial-loading',
+      file: 'async-data-initial-loading.png',
+      viewport: { width: 1440, height: 900 },
+      setup: async (page) => {
+        await page.locator('[data-async-data-phase="initial-loading"] .skeleton').first().waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        await page.locator('[data-visual-evidence-target]').screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'components-asyncdataregion--user-action-refresh',
+      file: 'async-data-user-action-refresh.png',
+      viewport: { width: 1440, height: 900 },
+      setup: async (page) => {
+        await page.locator('[role="status"]').waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        await page.locator('[data-visual-evidence-target]').screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'components-asyncdataregion--event-driven-refresh',
+      file: 'async-data-event-driven-refresh-mobile.png',
+      viewport: { width: 393, height: 852 },
+      setup: async (page) => {
+        await page.locator('[data-async-data-phase="refreshing"]').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.waitForTimeout(300)
+        if (await page.locator('[role="status"]').count()) throw new Error('event refresh unexpectedly showed a loading overlay')
+      },
+      screenshot: async (page, filePath) => {
+        await page.locator('[data-visual-evidence-target]').screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'components-asyncdataregion--error-with-last-good-data',
+      file: 'async-data-error-with-last-good-data.png',
+      viewport: { width: 1440, height: 900 },
+      setup: async (page) => {
+        await page.locator('[data-async-data-phase="error"] [role="alert"]').waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        await page.locator('[data-visual-evidence-target]').screenshot({ path: filePath })
+      },
+    },
+    {
       id: 'components-discoveryissuereconcileaction--eligible-warning',
       file: 'discovery-issue-reconcile-action.png',
       setup: async (page) => {

@@ -65,6 +65,7 @@ use homepage_icons::*;
 use ignore_rules::*;
 use jobs::*;
 use notifications::*;
+pub(crate) use operations::LifecycleSnapshotCoordinator;
 use operations::*;
 pub(crate) use operations::{
     complete_check_job, enqueue_update_job, normalize_digest_for_compare,
