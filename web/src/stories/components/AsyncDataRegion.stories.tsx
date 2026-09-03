@@ -33,23 +33,19 @@ function RegionPreview(props: {
   error?: string
 }) {
   return (
-    <div data-visual-evidence-surface style={{ background: 'var(--panel2)', padding: 24 }}>
-      <div data-visual-evidence-target>
-        <AsyncDataRegion
-          error={props.error}
-          hasData={props.hasData}
-          label="正在同步服务运行态"
-          onRetry={() => undefined}
-          phase={props.phase}
-          origin={props.origin}
-          skeleton={<AsyncDataSkeleton lines={5} />}
-          source={props.source}
-          trigger={props.trigger}
-        >
-          <RegionContents />
-        </AsyncDataRegion>
-      </div>
-    </div>
+    <AsyncDataRegion
+      error={props.error}
+      hasData={props.hasData}
+      label="正在同步服务运行态"
+      onRetry={() => undefined}
+      phase={props.phase}
+      origin={props.origin}
+      skeleton={<AsyncDataSkeleton lines={5} />}
+      source={props.source}
+      trigger={props.trigger}
+    >
+      <RegionContents />
+    </AsyncDataRegion>
   )
 }
 
