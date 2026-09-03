@@ -20,7 +20,9 @@ RUN_URL_RE = re.compile(r"/actions/runs/(\d+)(?:\D|$)")
 TIMESTAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 WORKFLOW = "ci-gate-verification.yml"
 CANDIDATE_DISPATCHES = 6
-FINAL_DISPATCHES = 10
+FINAL_COLD_DISPATCHES = 1
+FINAL_WARM_DISPATCHES = 10
+FINAL_DISPATCHES = FINAL_COLD_DISPATCHES + FINAL_WARM_DISPATCHES
 TOTAL_DISPATCHES = CANDIDATE_DISPATCHES + FINAL_DISPATCHES
 # The acceptance wall-clock budget remains fixed at 204 minutes.  It is a
 # scheduling cap, not a derivation from the count of valid timing samples.
@@ -325,10 +327,12 @@ def build_cases(
         return candidates
     if final_shards not in (2, 3):
         raise ValueError("final phase requires a selected two- or three-shard matrix")
-    # Candidate verification and final acceptance use the same exact-SHA
-    # verification cache scope. A separate final "cold" run would therefore
-    # be impossible after the selected candidate has already completed.
-    final = [("warm", args.final_sha, args.final_ref, final_shards, "warm") for _ in range(10)]
+    # The selected candidate SHA has already populated its verification cache
+    # scope. Keep one explicit, unscored warm-up dispatch in the fixed matrix
+    # before collecting the ten scored warm samples. The observed cache marker
+    # is retained as evidence; it is never treated as a correctness proof.
+    final = [("cold-warmup", args.final_sha, args.final_ref, final_shards, None)]
+    final += [("warm", args.final_sha, args.final_ref, final_shards, "warm") for _ in range(FINAL_WARM_DISPATCHES)]
     return candidates + final if phase == "all" else final
 
 
@@ -650,7 +654,10 @@ def main() -> int:
 
     warm_dir = args.output_dir / "warm-metrics"
     warm_dir.mkdir()
-    for record in final_records[-10:]:
+    warm_records = [record for record in final_records if record["phase"] == "warm"]
+    if len(warm_records) != FINAL_WARM_DISPATCHES:
+        raise RuntimeError(f"expected exactly {FINAL_WARM_DISPATCHES} scored warm samples")
+    for record in warm_records:
         source = args.output_dir / f"{record['index']:02d}-warm" / "ci-gate-metrics.json"
         if not source.is_file():
             candidates = sorted((args.output_dir / f"{record['index']:02d}-warm").rglob("*.json"))

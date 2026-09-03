@@ -256,7 +256,9 @@ search_fixed '"fast_queue_seconds": (fast_started_dt - run_started_dt).total_sec
 search_fixed '"source_queue_seconds": (source_started_dt - run_started_dt).total_seconds()' .github/workflows/ci-gate-verification.yml
 search_fixed '"wall_seconds": (execution_end - run_started_dt).total_seconds()' .github/workflows/ci-gate-verification.yml
 search_fixed "CANDIDATE_DISPATCHES = 6" .github/scripts/run_ci_gate_validation.py
-search_fixed "FINAL_DISPATCHES = 10" .github/scripts/run_ci_gate_validation.py
+search_fixed "FINAL_COLD_DISPATCHES = 1" .github/scripts/run_ci_gate_validation.py
+search_fixed "FINAL_WARM_DISPATCHES = 10" .github/scripts/run_ci_gate_validation.py
+search_fixed "FINAL_DISPATCHES = FINAL_COLD_DISPATCHES + FINAL_WARM_DISPATCHES" .github/scripts/run_ci_gate_validation.py
 search_fixed "TOTAL_DISPATCHES = CANDIDATE_DISPATCHES + FINAL_DISPATCHES" .github/scripts/run_ci_gate_validation.py
 search_fixed "WORKFLOW_TIMEOUT_SECONDS = 720" .github/scripts/run_ci_gate_validation.py
 search_fixed "WARM_INVESTIGATION_THRESHOLD_SECONDS = 600" .github/scripts/run_ci_gate_validation.py
@@ -279,6 +281,7 @@ search_fixed "timeout_seconds=60" .github/scripts/run_ci_gate_validation.py
 search_fixed "controlled validation budget of 204 minutes has elapsed" .github/scripts/run_ci_gate_validation.py
 search_fixed "output-dir must not already exist" .github/scripts/run_ci_gate_validation.py
 search_fixed "final ten warm samples" .github/scripts/run_ci_gate_validation.py
+search_fixed '("cold-warmup", args.final_sha' .github/scripts/run_ci_gate_validation.py
 search_fixed "deadline.json" .github/scripts/run_ci_gate_validation.py
 search_fixed "storybook-coverage-summary" .github/workflows/ci-main.yml
 search_fixed "frontend-storybook-test-required:" .github/workflows/ci-main.yml
