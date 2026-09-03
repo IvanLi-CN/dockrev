@@ -184,17 +184,28 @@
 - viewport_strategy: storybook-static
 - PR: include
 
-### Not Found View
+### Not Found View Desktop
 
-![Not found view](./assets/not-found-view.png)
+![Not found view desktop](./assets/not-found-view-desktop.jpg)
 
-- source_type: storybook_canvas
+- source_type: local Vite HTTP standalone document preview
 - target_program: mock-only
-- capture_scope: `.notFoundView`
-- requested_viewport: 1440x900
-- viewport_strategy: storybook-static
-- story_id_or_title: `Components/NotFoundView/UnknownDocument`
-- state: unknown document path with reusable 404 actions
+- capture_scope: `browser-viewport`
+- requested_viewport: 1280x720
+- viewport_strategy: controlled browser viewport
+- state: standalone `404.html`, project BrandLogo, unknown-document actions, and a no-store document status
+- PR: include
+
+### Not Found View Mobile
+
+![Not found view mobile](./assets/not-found-view-mobile.jpg)
+
+- source_type: local Vite HTTP standalone document preview
+- target_program: mock-only
+- capture_scope: `browser-viewport`
+- requested_viewport: 393x852
+- viewport_strategy: controlled mobile viewport
+- state: standalone `404.html` with system status in the document flow and full-width actions at the bottom of the viewport
 - PR: include
 
 ## Related ADRs
