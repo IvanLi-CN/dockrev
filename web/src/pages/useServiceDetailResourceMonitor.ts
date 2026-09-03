@@ -147,6 +147,7 @@ function mergeSamples(
 export type ServiceDetailResourceMonitorPanelState = {
   windowKey: ServiceResourceUsageWindow
   samples: ServiceResourceSample[]
+  historySamples: ServiceResourceSample[]
   peaks: ServiceResourcePeak[]
   lifecycle: ServiceLifecycleProjection | null
   historyLoading: boolean
@@ -187,6 +188,7 @@ export function useServiceDetailResourceMonitor(props: {
 
   const [windowKey, setWindowKey] = useState<ServiceResourceUsageWindow>(initialWindow)
   const [panelSamples, setPanelSamples] = useState<ServiceResourceSample[]>(initialPanelSamples)
+  const [historySamples, setHistorySamples] = useState<ServiceResourceSample[]>(initialPanelSamples)
   const [summarySamples, setSummarySamples] = useState<ServiceResourceSample[]>(initialSummarySamples)
   const [peaks, setPeaks] = useState<ServiceResourcePeak[]>([])
   const [lifecycle, setLifecycle] = useState<ServiceLifecycleProjection | null>(null)
@@ -220,6 +222,7 @@ export function useServiceDetailResourceMonitor(props: {
     lifecycleRefreshRequestIdRef.current += 1
     setWindowKey(initialWindow)
     setPanelSamples([])
+    setHistorySamples([])
     setSummarySamples([])
     setSummaryLoaded(false)
     setPeaks([])
@@ -243,6 +246,7 @@ export function useServiceDetailResourceMonitor(props: {
       liveSamplesRef.current = []
       setWindowKey(initialSnapshot.windowKey)
       setPanelSamples(nextPanelSamples)
+      setHistorySamples(nextPanelSamples)
       setSummarySamples(nextSummarySamples)
       setSummaryLoaded(nextSummarySamples.length > 0 || initialSnapshot.monitorDisabled === true)
       setPeaks([])
@@ -259,6 +263,7 @@ export function useServiceDetailResourceMonitor(props: {
     if (readonly && !initialSnapshot && !isOnline) {
       liveSamplesRef.current = []
       setPanelSamples([])
+      setHistorySamples([])
       setSummarySamples([])
       setSummaryLoaded(false)
       setPeaks([])
@@ -304,10 +309,12 @@ export function useServiceDetailResourceMonitor(props: {
         const response = await getServiceResourceUsageHistory(serviceId, windowKey)
         if (cancelled || requestId !== panelHistoryRequestIdRef.current) return
         const isAggregatedWindow = windowKey === '7d' || windowKey === '30d'
+        const nextHistorySamples = trimSamplesToWindow(response.samples, RESOURCE_WINDOW_SECONDS[windowKey])
         const nextSamples = isAggregatedWindow
-          ? trimSamplesToWindow(response.samples, RESOURCE_WINDOW_SECONDS[windowKey])
+          ? nextHistorySamples
           : mergeSamples(response.samples, liveSamplesRef.current, RESOURCE_WINDOW_SECONDS[windowKey])
         setPanelSamples(nextSamples)
+        setHistorySamples(nextHistorySamples)
         setPeaks(response.peaks ?? [])
         setLifecycle(response.lifecycle ?? null)
         setLifecycleSubscription({
@@ -328,6 +335,7 @@ export function useServiceDetailResourceMonitor(props: {
         if (isMonitorDisabledError(error)) {
           setMonitorDisabled(true)
           setPanelSamples([])
+          setHistorySamples([])
           setPeaks([])
           setLifecycle(null)
           setLifecycleSubscription(null)
@@ -365,6 +373,7 @@ export function useServiceDetailResourceMonitor(props: {
         if (isMonitorDisabledError(error)) {
           liveSamplesRef.current = []
           setPanelSamples([])
+          setHistorySamples([])
           setSummarySamples([])
           setPeaks([])
           setLifecycle(null)
@@ -443,6 +452,7 @@ export function useServiceDetailResourceMonitor(props: {
         const parsed = JSON.parse(data) as { error?: unknown }
         if (parsed.error === 'resource_monitor_disabled') {
           liveSamplesRef.current = []
+          setHistorySamples([])
           setPanelSamples([])
           setSummarySamples([])
           setPeaks([])
@@ -558,6 +568,7 @@ export function useServiceDetailResourceMonitor(props: {
     setPeaks([])
     setHistoryLoaded(false)
     setLifecycleSubscription(null)
+    setHistorySamples([])
     setPanelSamples((current) =>
       nextWindowKey === '7d' || nextWindowKey === '30d'
         ? []
@@ -573,6 +584,7 @@ export function useServiceDetailResourceMonitor(props: {
     setSummaryLoaded(false)
     setHistoryLoaded(false)
     setLifecycleSubscription(null)
+    setHistorySamples([])
     setHistoryReloadTick((current) => current + 1)
   }, [])
 
@@ -590,6 +602,7 @@ export function useServiceDetailResourceMonitor(props: {
     () => ({
       windowKey,
       samples: panelSamples,
+      historySamples,
       peaks,
       lifecycle,
       historyLoading,
@@ -610,6 +623,7 @@ export function useServiceDetailResourceMonitor(props: {
       historyLoaded,
       historyLoading,
       historyTrigger,
+      historySamples,
       lifecycle,
       isOnline,
       isPageVisible,

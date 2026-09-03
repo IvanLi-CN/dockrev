@@ -18,6 +18,7 @@ import {
 } from '../releaseNotes'
 import {
   buildResourceHistorySamples,
+  buildMixedCadenceResourceHistorySamples,
   buildResourceHistoryPeaks,
   buildResourceSsePayload,
   isMaskLiteral,
@@ -865,7 +866,9 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     const samples =
       scenario === 'service-detail-resource-monitor-empty'
         ? []
-        : buildResourceHistorySamples(serviceId, parsedWindow.seconds, parsedWindow.window)
+        : scenario === 'service-detail-resource-monitor-mixed-cadence' && parsedWindow.window === '1h'
+          ? buildMixedCadenceResourceHistorySamples(serviceId)
+          : buildResourceHistorySamples(serviceId, parsedWindow.seconds, parsedWindow.window)
 
     const peaks = ['7d', '30d'].includes(parsedWindow.window) ? buildResourceHistoryPeaks(samples) : undefined
     const lifecycleSnapshot = f.serviceLogsByServiceId[serviceId]?.lifecycle
@@ -972,7 +975,10 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
       )
     }
 
-    const samples = buildResourceHistorySamples(serviceId, 60 * 60)
+    const samples =
+      scenario === 'service-detail-resource-monitor-mixed-cadence'
+        ? buildMixedCadenceResourceHistorySamples(serviceId)
+        : buildResourceHistorySamples(serviceId, 60 * 60)
     const body = buildResourceSsePayload(serviceId, samples, scenario)
     return new Response(body || ': keep-alive\n\n', {
       status: 200,

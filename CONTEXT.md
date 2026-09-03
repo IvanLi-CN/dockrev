@@ -80,3 +80,8 @@ _Avoid_: fixed health timeout, Docker unhealthy time
 - `incomplete lifecycle observation` is a lifecycle operation whose observation source did not establish every interval boundary. It preserves confirmed transitions but never fabricates the missing boundary.
 - `system lifecycle log row` is a service-log entry derived from a service lifecycle event rather than emitted by the container. It remains distinct from container output.
 - `lifecycle observability window` is the 30-day period in which lifecycle events remain available to match the longest resource-monitoring view.
+
+## Service Resource Monitoring
+
+- `historical sampling gap` is an interval between consecutive durable REST history samples that exceeds the cadence inferred from the current history window. It describes persisted sampling continuity, not the absence of a live browser observation.
+- `live observation` is a foreground 1-second resource SSE sample used to keep the chart and summary current. It does not establish that the corresponding historical sample was persisted or change the historical gap cadence.

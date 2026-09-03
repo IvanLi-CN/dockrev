@@ -272,8 +272,9 @@ function ResourceLineChart(props: {
   latestPeakLabel?: string | null
   lifecycle?: ServiceLifecycleProjection | null
   sampleTimes: number[]
+  historySampleTimes: number[]
 }) {
-  const { series, yFormatter, emptyText, latestPeakLabel, lifecycle, sampleTimes } = props
+  const { series, yFormatter, emptyText, latestPeakLabel, lifecycle, sampleTimes, historySampleTimes } = props
   const [hover, setHover] = useState<ChartHoverDetails | null>(null)
   const renderedPointCount = Math.max(0, ...series.map((item) => item.points.length))
 
@@ -313,8 +314,11 @@ function ResourceLineChart(props: {
 
   const domain = { xMin, xMax, yMin, yMax }
   const singleSeries = series.length === 1
+  const visibleHistorySampleTimes = historySampleTimes.filter(
+    (sampledAt) => Number.isFinite(sampledAt) && sampledAt >= xMin && sampledAt <= xMax,
+  )
   const samplingGaps = deriveResourceGapIntervals(
-    sampleTimes.map((sampledAt) => ({ sampledAt: new Date(sampledAt).toISOString() })),
+    visibleHistorySampleTimes.map((sampledAt) => ({ sampledAt: new Date(sampledAt).toISOString() })),
     visibleLifecycle,
   )
   const continuousGaps = samplingGaps.filter(isContinuousResourceGap)
@@ -632,6 +636,7 @@ export function ServiceResourcePanel(props: { monitor: ServiceDetailResourceMoni
   const {
     windowKey,
     samples,
+    historySamples,
     peaks,
     lifecycle,
     historyLoading,
@@ -651,6 +656,10 @@ export function ServiceResourcePanel(props: { monitor: ServiceDetailResourceMoni
   const isAggregatedWindow = windowKey === '7d' || windowKey === '30d'
 
   const chartSamples = useMemo(() => chartSamplesForWindow(samples, isAggregatedWindow), [isAggregatedWindow, samples])
+  const chartHistorySamples = useMemo(
+    () => chartSamplesForWindow(historySamples, isAggregatedWindow),
+    [historySamples, isAggregatedWindow],
+  )
 
   const networkRates = useMemo(
     () =>
@@ -1051,6 +1060,7 @@ export function ServiceResourcePanel(props: { monitor: ServiceDetailResourceMoni
                 latestPeakLabel={latestPeakLabel}
                 lifecycle={lifecycle}
                 sampleTimes={chartSamples.map(parseSampleTs).filter((value): value is number => value != null)}
+                historySampleTimes={chartHistorySamples.map(parseSampleTs).filter((value): value is number => value != null)}
               />
             </AsyncDataRegion>
           </Tabs>
