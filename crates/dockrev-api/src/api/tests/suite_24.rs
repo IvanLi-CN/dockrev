@@ -304,7 +304,10 @@ async fn runtime_scan_terminal_event_exposes_sorted_changed_stack_ids() {
     };
     let event = events
         .iter()
-        .find(|event| event.event.summary["jobId"] == job_id)
+        .find(|event| {
+            event.event.summary["jobId"] == job_id
+                && event.event.summary["terminal"].as_bool() == Some(true)
+        })
         .expect("runtime scan terminal event");
     assert_eq!(
         event.event.summary["changedStackIds"],
