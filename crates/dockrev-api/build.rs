@@ -56,6 +56,9 @@ const PLACEHOLDER_NOT_FOUND_HTML: &str = r#"<!doctype html>
 </html>
 "#;
 
+const PLACEHOLDER_MANIFEST: &str =
+    r#"{"name":"Dockrev","short_name":"Dockrev","start_url":"/","display":"standalone"}"#;
+
 const PLACEHOLDER_ROUTE_CONTRACT: &str = r#"{"version":1,"basePath":"/","dynamicSegmentPattern":"[A-Za-z0-9][A-Za-z0-9_-]{0,127}","staticPagePaths":["/","/queue","/queue/version-inference","/queue/ghcr-webhooks","/queue/ghcr-webhook-inbox","/settings/ghcr-webhooks","/services","/cleanup","/version-inference","/deploy-check","/settings","/settings/account","/settings/maintenance","/settings/backup","/settings/monitoring","/settings/schedules","/settings/release-notes","/settings/notifications","/settings/integrations"],"dynamicPageTemplates":["/queue/:jobId","/services/:stackId","/services/:stackId/:serviceId","/services/:stackId/:serviceId/overview","/services/:stackId/:serviceId/versions","/services/:stackId/:serviceId/history","/services/:stackId/:serviceId/monitoring","/services/:stackId/:serviceId/backup","/services/:stackId/:serviceId/logs","/services/:stackId/:serviceId/settings"],"reservedPrefixes":["/api","/supervisor","/assets"]}"#;
 
 fn main() {
@@ -94,6 +97,8 @@ fn main() {
             .expect("write placeholder index.html");
         fs::write(dist_out.join("404.html"), PLACEHOLDER_NOT_FOUND_HTML)
             .expect("write placeholder 404.html");
+        fs::write(dist_out.join("manifest.webmanifest"), PLACEHOLDER_MANIFEST)
+            .expect("write placeholder manifest");
         validate_route_contract(PLACEHOLDER_ROUTE_CONTRACT);
         fs::write(
             dist_out.join(".dockrev-route-contract.json"),
