@@ -258,6 +258,41 @@ def download_metrics(repository: str, run_id: int, directory: Path) -> dict[str,
             payload[marker] = min(timestamps, key=lambda value: parse_utc(value, marker)).replace(
                 "+00:00", "Z"
             )
+    # Older verification workflows emitted only the aggregate durations. Fill
+    # the remaining derived fields from their immutable UTC markers so the
+    # validator can compare, rather than trust, every reported value.
+    timestamp_keys = (
+        "created_at",
+        "run_started_at",
+        "fast_started_at",
+        "source_started_at",
+        "fast_completed_at",
+        "source_completed_at",
+        "eligibility_completed_at",
+    )
+    if all(key in payload for key in timestamp_keys):
+        created = parse_utc(payload["created_at"], "created_at")
+        started = parse_utc(payload["run_started_at"], "run_started_at")
+        fast_started = parse_utc(payload["fast_started_at"], "fast_started_at")
+        source_started = parse_utc(payload["source_started_at"], "source_started_at")
+        fast = parse_utc(payload["fast_completed_at"], "fast_completed_at")
+        source = parse_utc(payload["source_completed_at"], "source_completed_at")
+        eligibility = parse_utc(payload["eligibility_completed_at"], "eligibility_completed_at")
+        derived = {
+            "queue_seconds": (started - created).total_seconds(),
+            "fast_queue_seconds": (fast_started - started).total_seconds(),
+            "source_queue_seconds": (source_started - started).total_seconds(),
+            "fast_seconds": (fast - fast_started).total_seconds(),
+            "source_seconds": (source - source_started).total_seconds(),
+            "eligibility_seconds": (eligibility - started).total_seconds(),
+            "execution_seconds": max(
+                (fast - fast_started).total_seconds(),
+                (source - source_started).total_seconds(),
+            ),
+            "wall_seconds": (eligibility - started).total_seconds(),
+        }
+        for key, value in derived.items():
+            payload.setdefault(key, value)
     return payload
 
 
