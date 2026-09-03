@@ -226,7 +226,39 @@ def download_metrics(repository: str, run_id: int, directory: Path) -> dict[str,
     files = sorted(directory.rglob("*.json"))
     if len(files) != 1:
         raise RuntimeError(f"run {run_id} must contain exactly one metrics JSON artifact")
-    return json.loads(files[0].read_text())
+    payload = json.loads(files[0].read_text())
+    missing_start_markers = {
+        "fast_started_at": "Fast main gate /",
+        "source_started_at": "Source-build release gate /",
+    }
+    if any(key not in payload for key in missing_start_markers):
+        jobs_result = invoke(
+            [
+                "gh",
+                "api",
+                f"repos/{repository}/actions/runs/{run_id}/jobs?per_page=100",
+            ],
+            capture=True,
+            timeout_seconds=60,
+        )
+        if jobs_result.returncode != 0:
+            raise RuntimeError(f"run {run_id} jobs metadata could not be read")
+        try:
+            jobs = json.loads(jobs_result.stdout).get("jobs", [])
+        except json.JSONDecodeError as error:
+            raise RuntimeError(f"run {run_id} jobs metadata was not valid JSON") from error
+        for marker, prefix in missing_start_markers.items():
+            timestamps = [
+                job.get("started_at")
+                for job in jobs
+                if str(job.get("name", "")).startswith(prefix) and job.get("started_at")
+            ]
+            if not timestamps:
+                raise RuntimeError(f"run {run_id} missing authoritative start marker for {prefix}")
+            payload[marker] = min(timestamps, key=lambda value: parse_utc(value, marker)).replace(
+                "+00:00", "Z"
+            )
+    return payload
 
 
 def validate_sample(
