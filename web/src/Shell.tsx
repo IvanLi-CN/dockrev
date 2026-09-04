@@ -264,6 +264,8 @@ export function AppShell(props: {
   const shellClassName = [
     "appShell",
     props.route.name === "settings" ? "appShellSettings" : null,
+    props.route.name === "service" ? "appShellServiceDetail" : null,
+    props.route.name === "stack" ? "appShellStackDetail" : null,
     props.topbarContent ? "appShellWithTopbarContent" : null,
     hasDetailSidebar ? "appShellWithDetailSidebar" : null,
     sidebarCollapsed ? "appShellSidebarCollapsed" : null,

@@ -61,6 +61,7 @@
 - 点击 Stack 标题必须进入对应 Stack 详情；展开按钮只能改变展开状态，不得替代跳转。
 - 点击 Service 节点必须进入目标服务详情，并在当前已打开的 `section` 内保持同一分区语义。
 - 移动端必须改为底部主导航，并通过顶部汉堡按钮打开“服务导航”抽屉；抽屉中的树结构、高亮与跳转语义必须与桌面一致。
+- 移动端详情页必须按路由类型区分品牌头部：`StackDetailPage` 在 320px 至 960px CSS 视口保持完整 124px Dockrev 字标，`ServiceDetailPage` 保持 36px 图标标记；两者均保持单行且不产生横向溢出。
 - Overview 页现有 sidebar/mobile slot 行为不得回归。
 - Storybook 必须至少提供 `ServiceDetailPage` 与 `StackDetailPage` 的稳定桌面 / 移动端入口，并覆盖服务树抽屉、路由高亮与 section 保留行为。
 
@@ -117,6 +118,14 @@
   When 用户点击顶部汉堡按钮
   Then 打开“服务导航”抽屉，抽屉内显示与桌面一致的 `Stack -> Service` 树结构。
 
+- Given `StackDetailPage` 移动端
+  When CSS 视口宽度为 320px 或 960px
+  Then `AppShell` 使用 Stack 详情页面类型，显示完整 124px Dockrev 字标，头部保持单行，且页面与顶栏均无横向溢出。
+
+- Given `ServiceDetailPage` 移动端
+  When CSS 视口宽度为 393px
+  Then `AppShell` 使用服务详情页面类型，品牌区保持不超过 36px 的图标标记，并保留至少 44px 的服务操作触控目标。
+
 - Given Overview 页现有 stories
   When 渲染原有 sidebar/mobile 内容
   Then 旧 slot 行为保持稳定，不因详情页壳层扩展而回归。
@@ -148,6 +157,7 @@
   - 当前 Stack / Service 高亮
   - section 保留跳转
   - Stack 详情移动端导航
+  - Stack / Service 详情移动头部品牌合同
 
 ## Visual Evidence
 
@@ -161,7 +171,6 @@
   story_id_or_title: `Pages/ServiceDetailPage/Overview Default`
   state: `desktop detail workspace`
   evidence_note: 验证服务详情页在桌面端启用三列壳层，当前 Stack / Service 高亮、服务树与 route-backed 分区页并存。
-  PR: include
   PR caption: 服务详情页桌面端采用 `主导航 / 服务树 / 主内容` 三列壳层，并在当前服务节点保持高亮。
 
 ![服务详情页桌面三列壳层](./assets/service-detail-desktop.png)
@@ -173,11 +182,9 @@
   viewport_strategy: `controlled-browser-viewport`
   state: `desktop detail header aligned to service tree`
   evidence_note: 验证详情页品牌区覆盖主导航与服务树，右侧顶部操作与主内容从同一列起始，未新增页头竖分隔线。
-  PR: include
 
 ![服务详情页页头与服务树对齐](./assets/service-detail-header-aligned.png)
 
-PR: include
 
 ![窄桌面详情页操作条保持在主内容工作区](./assets/service-detail-narrow-actions-contained.png)
 
@@ -201,7 +208,6 @@ PR: include
   story_id_or_title: `Pages/StackDetailPage/Policy Disabled`
   state: `narrow desktop stack workspace`
   evidence_note: 验证 Stack 详情页在 `961px - 1160px` 窄桌面断点仍保持 `主导航 / 服务树 / 主内容` 三列壳层，当前 Stack 默认展开，服务树可直接跨服务跳转。
-  PR: include
   PR caption: Stack 详情页在窄桌面断点仍保持三列壳层，并默认展开当前 Stack。
 
 ![Stack 详情页桌面三列壳层](./assets/stack-detail-desktop.png)
@@ -243,7 +249,6 @@ PR: include
   story_id_or_title: `Pages/ServiceDetailPage/Overview Default`
   state: `mobile service drawer`
   evidence_note: 验证移动端通过“服务导航”抽屉复用同一份 `Stack -> Service` 树结构与高亮语义。
-  PR: include
   PR caption: 移动端通过“服务导航”抽屉承载同一份 `Stack -> Service` 树结构。
 
 ![服务详情页移动端服务导航抽屉](./assets/service-detail-mobile-drawer.png)
@@ -275,6 +280,21 @@ PR: include
 - PR: include
 
 ![服务树移动抽屉紧凑布局](./assets/service-tree-runtime-mobile.png)
+
+- source_type: `ui_demo`
+- target_program: `mock-only`
+- capture_scope: `browser-viewport`
+- requested_viewport: `393x852`
+- viewport_strategy: `devtools-emulate`
+- sensitive_exclusion: `N/A`
+- submission_gate: `approved`
+- story_id_or_title: `ui_demo Stack detail / stack-prod`
+- state: `mobile full Dockrev wordmark`
+- evidence_note: 验证 Stack 详情页移动头部按路由类型使用完整 124px Dockrev 字标，Stack 操作入口保持 44px 触控目标，顶栏与文档均无横向溢出。
+- PR: include
+- PR caption: Stack 详情页移动端恢复完整 Dockrev 字标，同时保留服务详情页的紧凑图标合同。
+
+![Stack 详情页移动端完整 Dockrev 字标](./assets/stack-detail-mobile-wordmark.png)
 
 ## Related Contract
 
