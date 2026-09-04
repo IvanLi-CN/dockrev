@@ -11,6 +11,7 @@
 - `fast main gate`: The `CI (main)` result that establishes prompt feedback for a main commit. It is not publication permission.
 - `source-build release gate`: The release-blocking verification of a target SHA's Dockerfile source build and Compose deployment topology.
 - `CI Gate Verification`: A manual, non-publishing workflow with one `target_sha` input and fixed full Docker/Web scope.
+- `release preparation artifact`: An unpublished, exact-SHA Web and binary deliverable with a SHA-256 manifest. It is not source-build proof.
 - Interface: `Source Build Release Gate` and `CI Gate Verification` workflow runs, their exact-SHA attestations, and the Release evaluator.
 
 ## Requirements
@@ -43,6 +44,13 @@
 - Outputs: UTC timing, queue, cache, scope, coverage, and publish markers in a metrics artifact.
 - covers: `G4`, `G5`
 
+### REQ-CI-DURATION-005
+
+- The system MUST prepare release-enabled main commits before publication with Web and amd64/arm64 gnu/musl binary inputs in an immutable artifact retained for one day.
+- The preparation workflow MUST have no package, tag, GitHub Release, or image publication authority and MUST write `publish=false` plus a complete SHA-256 manifest.
+- Release MUST consume only a preparation artifact whose manifest matches the oldest-pending target SHA and trusted workflow provenance. If it is missing or expired, Release MAY dispatch one target-bound recovery preparation and MUST warn; failed or mismatched recovery blocks publication.
+- covers: `G2`, `G3`
+
 ## Verification
 
 ### VER-CI-DURATION-001
@@ -63,9 +71,16 @@
 - covers: `REQ-CI-DURATION-001`, `REQ-CI-DURATION-002`, `REQ-CI-DURATION-004`
 - Pass condition: the final ten warm runs prove full scope and cache hits and satisfy the fixed P50/P90 seconds thresholds. Candidate cache status is recorded for diagnosis but is not a required final cold precondition: candidates and final runs share the same exact-SHA verification cache scope. Metrics record the top-level workflow queue, each reusable child gate queue, and absolute UTC start/completion timestamps. `fast_seconds`, `source_seconds`, and the 720-second `execution_seconds` bound begin when the corresponding child gate first receives a runner; `eligibility_seconds` and `wall_seconds` remain measured from the top-level `run_started_at`. A status read may make at most three read-only transport attempts and never creates a replacement workflow. One or more recorded final runs can be resumed only by their exact IDs in chronological order. The fixed 204-minute serial matrix deadline still bounds queueing and execution together.
 
+### VER-CI-DURATION-004
+
+- Method: Python manifest/evaluator fixtures and a workflow YAML contract check for normal and one-time recovery preparation runs.
+- covers: `REQ-CI-DURATION-005`
+- Pass condition: exact target SHA, trusted main workflow, complete file digests, one-day retention, and `publish=false` are required; a missing artifact produces one warning and one bounded recovery, while a second recovery or any invalid proof is rejected.
+
 ## Related ADRs
 
 - [0005-source-build-release-gate](../../adr/0005-source-build-release-gate.md)
+- [0006-early-release-preparation-artifacts](../../adr/0006-early-release-preparation-artifacts.md)
 
 ## References
 

@@ -11,6 +11,7 @@
 | Update rollback diagnostics | active | not started | `update-rollback-diagnostics/SPEC.md` | - |
 | Service accepted state consistency | active | not started | `service-accepted-state-consistency/SPEC.md` | - |
 | Brand media variants | active | dark/light posters delivered; social variants pending | `brand-media-variants/SPEC.md` | - |
+| CI duration optimization | active | source gate, exact-SHA release proof, and one-day preparation artifacts | `ci-duration-optimization/SPEC.md` | - |
 
 ## 快速新增一个规格
 
@@ -36,6 +37,7 @@
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
 | async-data-continuity | Dockrev：异步数据连续性与加载反馈 | active | `async-data-continuity/SPEC.md` | 2026-08-19 | fast-track（统一骨架、延迟遮罩、错误重试与 fresh snapshot v2 合同） |
+| ci-duration-optimization | Dockrev：CI 时长优化与发布预构建 | active | `ci-duration-optimization/SPEC.md` | 2026-09-03 | fast-track（同 SHA 源码门禁、一天准备产物、缺失恢复） |
 | theme-preference-controls | Dockrev：三态主题偏好与响应式入口 | active | `theme-preference-controls/SPEC.md` | 2026-08-14 | fast-track（system/light/dark、AppShell 桌面侧栏、移动 Settings、Storybook 与 ui_demo 证据） |
 | 5dnjc | Dockrev：任务日志实时输出与事件可见性 | active | `5dnjc-job-live-output-event-visibility/SPEC.md` | 2026-08-03 | fast-track（无持久化 job_live_log SSE、命令摘要去重、EVEN 默认隐藏与浏览器偏好） |
 | 9cq2a | Dockrev：服务详情操作下拉与生命周期任务 | active | `9cq2a-service-lifecycle-actions/SPEC.md` | 2026-07-30 | fast-track（服务级 lifecycle queue、split dropdown、页头服务名与 Storybook evidence） |

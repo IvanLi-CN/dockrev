@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""Unit fixtures for the release preparation manifest and recovery contract."""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import tempfile
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+spec = importlib.util.spec_from_file_location("release_preparation", ROOT / ".github/scripts/release_preparation.py")
+assert spec and spec.loader
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+
+def expect_invalid(payload, target, text):
+    valid, reason = module.validate_manifest(payload, target, allow_recovery=True)
+    assert not valid, payload
+    assert text in reason, reason
+
+
+target = "a" * 40
+with tempfile.TemporaryDirectory() as directory:
+    root = Path(directory)
+    for relative in module.FIXED_FILES:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(relative.encode())
+    web_file = root / "web/dist/assets/index.js"
+    web_file.parent.mkdir(parents=True, exist_ok=True)
+    web_file.write_text("console.log('fixture');\n")
+
+    manifest = module.build_manifest(
+        root,
+        target_sha=target,
+        event="push",
+        workflow_sha="b" * 40,
+        workflow_ref="IvanLi-CN/dockrev/.github/workflows/release-preparation.yml@refs/heads/main",
+        recovery_request="",
+    )
+    valid, reason = module.validate_manifest(manifest, target)
+    assert valid, reason
+    assert manifest["publish"] is False
+    assert manifest["head_branch"] == "main"
+    assert len(manifest["files"]) == len(module.FIXED_FILES) + 1
+    assert module.manifest_digest(manifest) == module.manifest_digest(json.loads(json.dumps(manifest)))
+
+    expect_invalid(dict(manifest, target_sha="c" * 40), target, "target_sha")
+    expect_invalid(dict(manifest, publish=True), target, "publish")
+    expect_invalid(dict(manifest, event="schedule"), target, "event")
+    expect_invalid(dict(manifest, workflow_file="other.yml"), target, "source")
+    expect_invalid(dict(manifest, workflow_sha="invalid"), target, "workflow_sha")
+    expect_invalid(dict(manifest, workflow_ref="refs/heads/feature"), target, "workflow_ref")
+    expect_invalid(dict(manifest, files=[entry for entry in manifest["files"] if not entry["path"].startswith("web/dist/")]), target, "web/dist")
+
+    recovery = dict(manifest, event="workflow_dispatch", recovery_request=f"release-recovery-{target}")
+    valid, reason = module.validate_manifest(recovery, target, allow_recovery=True)
+    assert valid, reason
+    valid, reason = module.validate_manifest(recovery, target, allow_recovery=False)
+    assert not valid and "recovery" in reason
+    expect_invalid(dict(recovery, recovery_request="release-recovery-" + "d" * 40), target, "recovery")
+
+    malformed = dict(manifest, files=[{"path": "../escape", "size": 1, "sha256": "0" * 64}])
+    expect_invalid(malformed, target, "unsafe")
+
+print("PASS: release preparation fixtures")
