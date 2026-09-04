@@ -399,6 +399,7 @@ jobs:
       RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
       RELEASE_CHANNEL: ${{ needs.prepare.outputs.release_channel }}
       TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+      PREPARATION_MANIFEST_SHA256: ${{ needs.preparation-gate.outputs.manifest_sha256 }}
       DOCKREV_TAGS_CSV: ${{ needs.prepare.outputs.tags_csv }}
       SUPERVISOR_TAGS_CSV: ${{ needs.prepare.outputs.supervisor_tags_csv }}
       WORKFLOW_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -432,6 +433,17 @@ jobs:
             --manifest release-preparation-manifest.json \
             --target-sha "${TARGET_SHA}" \
             --allow-recovery
+
+      - name: Verify downloaded preparation files
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .workflow-src/.github/scripts/release_preparation.py verify \
+            --root . \
+            --manifest release-preparation-manifest.json \
+            --target-sha "${TARGET_SHA}" \
+            --allow-recovery \
+            --expected-manifest-sha256 "${PREPARATION_MANIFEST_SHA256}"
 
       - name: Ensure docker artifacts are executable
         shell: bash

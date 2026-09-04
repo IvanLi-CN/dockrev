@@ -304,11 +304,29 @@ search_fixed "name: Release Preparation" .github/workflows/release-preparation.y
 search_fixed "retention-days: 1" .github/workflows/release-preparation.yml
 search_fixed "release_preparation.py manifest" .github/workflows/release-preparation.yml
 search_fixed "release_preparation.py validate" .github/workflows/release-preparation.yml
+search_fixed "release_preparation.py verify" .github/workflows/release-preparation.yml
+search_fixed "include-hidden-files: true" .github/workflows/release-preparation.yml
+if [[ "$(count_fixed_lines 'include-hidden-files: true' .github/workflows/release-preparation.yml)" -ne 2 ]]; then
+  echo "[contract-check] expected hidden files to be retained at both preparation upload boundaries" >&2
+  exit 1
+fi
+search_fixed "Verify web route contract input" .github/workflows/release-preparation.yml
+if [[ "$(count_fixed_lines 'Verify web route contract input' .github/workflows/release-preparation.yml)" -ne 3 ]]; then
+  echo "[contract-check] expected all web artifact consumers to verify the route contract before building" >&2
+  exit 1
+fi
 search_fixed '"publish": False' .github/scripts/release_preparation.py
 search_fixed 'release-recovery-${TARGET_INPUT}' .github/workflows/release-preparation.yml
 search_fixed "release-preparation.yml" .github/scripts/release_preparation.py
 search_fixed "recovery preparation request does not match target_sha" .github/scripts/release_preparation.py
 search_fixed "single recovery preparation run already failed" .github/scripts/release_preparation.py
+search_fixed "def verify_manifest_files" .github/scripts/release_preparation.py
+search_fixed "preparation manifest is missing the web route contract" .github/scripts/release_preparation.py
+search_fixed "release_preparation.py verify" .github/workflows/release.yml
+search_fixed "--expected-manifest-sha256" .github/workflows/release.yml
+search_fixed "expected preparation manifest digest is invalid" .github/scripts/release_preparation.py
+search_fixed "preparation manifest digest does not match expected" .github/scripts/release_preparation.py
+search_fixed "PREPARATION_MANIFEST_SHA256" .github/workflows/release.yml
 python3 .github/scripts/test_release_preparation.py
 ruby -ryaml -e '
 workflow = YAML.load_file(".github/workflows/release-preparation.yml")

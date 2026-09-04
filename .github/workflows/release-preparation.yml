@@ -151,6 +151,7 @@ jobs:
           path: web/dist
           retention-days: 1
           if-no-files-found: error
+          include-hidden-files: true
 
   build-binaries-amd64:
     name: Prepare binaries (amd64)
@@ -172,6 +173,12 @@ jobs:
         with:
           name: release-preparation-web-${{ env.TARGET_SHA }}
           path: web/dist
+
+      - name: Verify web route contract input
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s web/dist/.dockrev-route-contract.json
 
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y musl-tools pkg-config libsqlite3-dev
@@ -243,6 +250,12 @@ jobs:
           name: release-preparation-web-${{ env.TARGET_SHA }}
           path: web/dist
 
+      - name: Verify web route contract input
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s web/dist/.dockrev-route-contract.json
+
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y musl-tools pkg-config libsqlite3-dev
 
@@ -313,6 +326,12 @@ jobs:
           name: release-preparation-web-${{ env.TARGET_SHA }}
           path: web/dist
 
+      - name: Verify web route contract input
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s web/dist/.dockrev-route-contract.json
+
       - name: Download amd64 input
         uses: actions/download-artifact@v4
         with:
@@ -346,6 +365,16 @@ jobs:
             --target-sha "${TARGET_SHA}" \
             --allow-recovery
 
+      - name: Verify preparation files
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/release_preparation.py verify \
+            --root . \
+            --manifest release-preparation-manifest.json \
+            --target-sha "${TARGET_SHA}" \
+            --allow-recovery
+
       - name: Upload immutable preparation artifact
         uses: actions/upload-artifact@v4
         with:
@@ -357,3 +386,4 @@ jobs:
             dist/ci/docker
           retention-days: 1
           if-no-files-found: error
+          include-hidden-files: true
