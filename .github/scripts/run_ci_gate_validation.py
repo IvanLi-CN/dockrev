@@ -20,7 +20,9 @@ RUN_URL_RE = re.compile(r"/actions/runs/(\d+)(?:\D|$)")
 TIMESTAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 WORKFLOW = "ci-gate-verification.yml"
 CANDIDATE_DISPATCHES = 6
-FINAL_DISPATCHES = 10
+FINAL_COLD_DISPATCHES = 1
+FINAL_WARM_DISPATCHES = 10
+FINAL_DISPATCHES = FINAL_COLD_DISPATCHES + FINAL_WARM_DISPATCHES
 TOTAL_DISPATCHES = CANDIDATE_DISPATCHES + FINAL_DISPATCHES
 # The acceptance wall-clock budget remains fixed at 204 minutes.  It is a
 # scheduling cap, not a derivation from the count of valid timing samples.
@@ -224,7 +226,78 @@ def download_metrics(repository: str, run_id: int, directory: Path) -> dict[str,
     files = sorted(directory.rglob("*.json"))
     if len(files) != 1:
         raise RuntimeError(f"run {run_id} must contain exactly one metrics JSON artifact")
-    return json.loads(files[0].read_text())
+    payload = json.loads(files[0].read_text())
+    missing_start_markers = {
+        "fast_started_at": "Fast main gate /",
+        "source_started_at": "Source-build release gate /",
+    }
+    rebased_legacy_metrics = any(key not in payload for key in missing_start_markers)
+    if rebased_legacy_metrics:
+        jobs_result = invoke(
+            [
+                "gh",
+                "api",
+                f"repos/{repository}/actions/runs/{run_id}/jobs?per_page=100",
+            ],
+            capture=True,
+            timeout_seconds=60,
+        )
+        if jobs_result.returncode != 0:
+            raise RuntimeError(f"run {run_id} jobs metadata could not be read")
+        try:
+            jobs = json.loads(jobs_result.stdout).get("jobs", [])
+        except json.JSONDecodeError as error:
+            raise RuntimeError(f"run {run_id} jobs metadata was not valid JSON") from error
+        for marker, prefix in missing_start_markers.items():
+            timestamps = [
+                job.get("started_at")
+                for job in jobs
+                if str(job.get("name", "")).startswith(prefix) and job.get("started_at")
+            ]
+            if not timestamps:
+                raise RuntimeError(f"run {run_id} missing authoritative start marker for {prefix}")
+            payload[marker] = min(timestamps, key=lambda value: parse_utc(value, marker)).replace(
+                "+00:00", "Z"
+            )
+    # Older verification workflows emitted only the aggregate durations. Fill
+    # the remaining derived fields from their immutable UTC markers so the
+    # validator can compare, rather than trust, every reported value.
+    timestamp_keys = (
+        "created_at",
+        "run_started_at",
+        "fast_started_at",
+        "source_started_at",
+        "fast_completed_at",
+        "source_completed_at",
+        "eligibility_completed_at",
+    )
+    if all(key in payload for key in timestamp_keys):
+        created = parse_utc(payload["created_at"], "created_at")
+        started = parse_utc(payload["run_started_at"], "run_started_at")
+        fast_started = parse_utc(payload["fast_started_at"], "fast_started_at")
+        source_started = parse_utc(payload["source_started_at"], "source_started_at")
+        fast = parse_utc(payload["fast_completed_at"], "fast_completed_at")
+        source = parse_utc(payload["source_completed_at"], "source_completed_at")
+        eligibility = parse_utc(payload["eligibility_completed_at"], "eligibility_completed_at")
+        derived = {
+            "queue_seconds": (started - created).total_seconds(),
+            "fast_queue_seconds": (fast_started - started).total_seconds(),
+            "source_queue_seconds": (source_started - started).total_seconds(),
+            "fast_seconds": (fast - fast_started).total_seconds(),
+            "source_seconds": (source - source_started).total_seconds(),
+            "eligibility_seconds": (eligibility - started).total_seconds(),
+            "execution_seconds": max(
+                (fast - fast_started).total_seconds(),
+                (source - source_started).total_seconds(),
+            ),
+            "wall_seconds": (eligibility - started).total_seconds(),
+        }
+        for key, value in derived.items():
+            if rebased_legacy_metrics:
+                payload[key] = value
+            else:
+                payload.setdefault(key, value)
+    return payload
 
 
 def validate_sample(
@@ -325,16 +398,18 @@ def build_cases(
         return candidates
     if final_shards not in (2, 3):
         raise ValueError("final phase requires a selected two- or three-shard matrix")
-    # Candidate verification and final acceptance use the same exact-SHA
-    # verification cache scope. A separate final "cold" run would therefore
-    # be impossible after the selected candidate has already completed.
-    final = [("warm", args.final_sha, args.final_ref, final_shards, "warm") for _ in range(10)]
+    # The selected candidate SHA has already populated its verification cache
+    # scope. Keep one explicit, unscored warm-up dispatch in the fixed matrix
+    # before collecting the ten scored warm samples. The observed cache marker
+    # is retained as evidence; it is never treated as a correctness proof.
+    final = [("cold-warmup", args.final_sha, args.final_ref, final_shards, None)]
+    final += [("warm", args.final_sha, args.final_ref, final_shards, "warm") for _ in range(FINAL_WARM_DISPATCHES)]
     return candidates + final if phase == "all" else final
 
 
-def validate_resume_run_ids(run_ids: list[int]) -> None:
-    if len(run_ids) > FINAL_DISPATCHES:
-        raise ValueError(f"at most {FINAL_DISPATCHES} final runs can be resumed")
+def validate_resume_run_ids(run_ids: list[int], max_runs: int = FINAL_DISPATCHES) -> None:
+    if len(run_ids) > max_runs:
+        raise ValueError(f"at most {max_runs} runs can be resumed")
     if any(run_id <= 0 for run_id in run_ids):
         raise ValueError("each resumed GitHub run id must be positive")
     if len(set(run_ids)) != len(run_ids):
@@ -551,10 +626,11 @@ def main() -> int:
         parser.error("final phase requires --candidate-dir from the completed candidates phase")
     if args.phase != "final" and args.candidate_dir is not None:
         parser.error("--candidate-dir is only valid for the final phase")
-    if args.resume_run_id and args.phase != "final":
-        parser.error("--resume-run-id is only valid for the final phase")
+    if args.resume_run_id and args.phase == "all":
+        parser.error("--resume-run-id is valid only for candidates or final phase")
     try:
-        validate_resume_run_ids(args.resume_run_id)
+        max_resume_runs = CANDIDATE_DISPATCHES if args.phase == "candidates" else FINAL_DISPATCHES
+        validate_resume_run_ids(args.resume_run_id, max_resume_runs)
     except ValueError as error:
         parser.error(str(error))
 
@@ -586,7 +662,43 @@ def main() -> int:
         else:
             deadline = write_deadline(args.output_dir / "deadline.json")
             candidate_cases = build_cases(args, "candidates")
-            if not run_cases(args, candidate_cases, 1, deadline, records):
+            for resume_run_id in args.resume_run_id:
+                phase, target_sha, ref, expected_shards, expected_cache = candidate_cases.pop(0)
+                try:
+                    records.append(
+                        collect_case(
+                            args,
+                            len(records) + 1,
+                            phase,
+                            target_sha,
+                            ref,
+                            expected_shards,
+                            expected_cache,
+                            resume_run_id,
+                            deadline,
+                            historical_run=True,
+                        )
+                    )
+                except Exception as error:
+                    (args.output_dir / "failure.json").write_text(
+                        json.dumps(
+                            {
+                                "failed_index": len(records) + 1,
+                                "phase": phase,
+                                "target_sha": target_sha,
+                                "run_id": resume_run_id,
+                                "error": str(error),
+                            },
+                            sort_keys=True,
+                        )
+                        + "\n"
+                    )
+                    print(
+                        f"validation stopped at resumed sample {len(records) + 1}/{TOTAL_DISPATCHES}: {error}",
+                        file=sys.stderr,
+                    )
+                    return 1
+            if not run_cases(args, candidate_cases, len(records) + 1, deadline, records):
                 return 1
             selection = select_final_matrix(records)
             write_matrix(args.output_dir, "candidates", records, selection)
@@ -650,7 +762,10 @@ def main() -> int:
 
     warm_dir = args.output_dir / "warm-metrics"
     warm_dir.mkdir()
-    for record in final_records[-10:]:
+    warm_records = [record for record in final_records if record["phase"] == "warm"]
+    if len(warm_records) != FINAL_WARM_DISPATCHES:
+        raise RuntimeError(f"expected exactly {FINAL_WARM_DISPATCHES} scored warm samples")
+    for record in warm_records:
         source = args.output_dir / f"{record['index']:02d}-warm" / "ci-gate-metrics.json"
         if not source.is_file():
             candidates = sorted((args.output_dir / f"{record['index']:02d}-warm").rglob("*.json"))

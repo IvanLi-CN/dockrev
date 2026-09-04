@@ -61,13 +61,13 @@ assert_equal(len(candidate_cases), 6)
 assert_equal(candidate_cases[0][0:4], ("two-shard", "a" * 40, "candidate-two", 2))
 assert_equal(candidate_cases[5][0:4], ("three-shard", "b" * 40, "candidate-three", 3))
 final_cases = validation_runner.build_cases(runner_args, "final", 3)
-assert_equal(len(final_cases), 10)
-assert_equal(final_cases[0][0:5], ("warm", "c" * 40, "candidate-final", 3, "warm"))
+assert_equal(len(final_cases), 11)
+assert_equal(final_cases[0][0:5], ("cold-warmup", "c" * 40, "candidate-final", 3, None))
 assert_equal(final_cases[-1][0:5], ("warm", "c" * 40, "candidate-final", 3, "warm"))
 all_cases = validation_runner.build_cases(runner_args, "all", 3)
-assert_equal(len(all_cases), 16)
+assert_equal(len(all_cases), 17)
 validation_runner.validate_resume_run_ids([1, 2, 3])
-for invalid_resume_ids, expected_error in (([0], "positive"), ([1, 1], "unique"), (list(range(11)), "at most")):
+for invalid_resume_ids, expected_error in (([0], "positive"), ([1, 1], "unique"), (list(range(12)), "at most")):
     try:
         validation_runner.validate_resume_run_ids(invalid_resume_ids)
     except ValueError as error:

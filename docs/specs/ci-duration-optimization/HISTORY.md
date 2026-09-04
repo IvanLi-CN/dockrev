@@ -11,6 +11,9 @@
   background only; this slug-only topic owns the current source-gate contract.
 - ADR `0005-source-build-release-gate.md` records why source-built smoke remains
   release-blocking while moving off the fast critical path.
+- ADR `0006-early-release-preparation-artifacts.md` records why exact-SHA
+  preparation artifacts may accelerate Release without becoming source-build
+  proof.
 
 ## References
 

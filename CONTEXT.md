@@ -10,6 +10,10 @@ _Avoid_: complete release gate, source-build smoke
 The release-blocking verification of a target SHA's Dockerfile source build and Compose deployment topology. It is distinct from the fast main gate and remains required before publication.
 _Avoid_: optional Docker smoke, post-release validation
 
+**release preparation artifact**:
+An unpublished, exact-SHA Web and binary deliverable prepared without package, tag, GitHub Release, or image publication authority. Release may consume it only after validating its provenance and the independent source-build release gate; it is not source-build proof.
+_Avoid_: release proof, source-build artifact
+
 ## Backup Retention
 
 **backup cleanup eligibility**:

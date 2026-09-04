@@ -118,6 +118,7 @@ workflow_source_next_pending = "python3 .workflow-src/.github/scripts/release_sn
 if workflow_source_next_pending not in text:
     raise SystemExit('[contract-check] expected queue continuation to use workflow-source release_snapshot helper')
 prepare_permissions = """    permissions:
+      actions: write
       contents: write
       packages: read
       pull-requests: read"""
@@ -152,11 +153,14 @@ top_permissions = workflow.fetch("permissions", {})
 publish_permissions = workflow.fetch("jobs").fetch("publish").fetch("permissions", {})
 jobs = workflow.fetch("jobs")
 
-%w[build-web build-binaries-amd64 build-binaries-arm64 publish cleanup-artifacts].each do |job_name|
+%w[publish cleanup-artifacts].each do |job_name|
   needs = Array(jobs.fetch(job_name).fetch("needs"))
   abort "[contract-check] #{job_name} must wait for source-gate" unless needs.include?("source-gate")
 end
+abort "[contract-check] preparation-gate must wait for prepare" unless Array(jobs.fetch("preparation-gate").fetch("needs")).include?("prepare")
 abort "[contract-check] source-gate must have actions: read" unless jobs.fetch("source-gate").fetch("permissions")["actions"] == "read"
+abort "[contract-check] preparation-gate must dispatch recovery with actions: write" unless jobs.fetch("preparation-gate").fetch("permissions")["actions"] == "write"
+abort "[contract-check] publish must wait for preparation-gate" unless Array(jobs.fetch("publish").fetch("needs")).include?("preparation-gate")
 
 abort "[contract-check] release workflow top-level permissions must keep issues: write" unless top_permissions["issues"] == "write"
 abort "[contract-check] release workflow top-level permissions must keep pull-requests: write" unless top_permissions["pull-requests"] == "write"
@@ -218,6 +222,8 @@ abort "[contract-check] release snapshot must wait for the stable Storybook requ
 '
 
 echo "[contract-check] CI duration optimization invariants"
+search_fixed "cargo test --workspace --locked --all-features -- --test-threads=2" .github/workflows/ci-main.yml
+search_fixed "cargo test --workspace --locked --all-features -- --test-threads=2" .github/workflows/ci-pr.yml
 search_fixed "source-gate:" .github/workflows/release.yml
 search_fixed "python3 .github/scripts/release_source_gate.py wait \\" .github/workflows/release.yml
 search_fixed "WORKFLOW_FILE = \"source-build-release-gate.yml\"" .github/scripts/release_source_gate.py
@@ -252,13 +258,16 @@ search_fixed '"fast_queue_seconds": (fast_started_dt - run_started_dt).total_sec
 search_fixed '"source_queue_seconds": (source_started_dt - run_started_dt).total_seconds()' .github/workflows/ci-gate-verification.yml
 search_fixed '"wall_seconds": (execution_end - run_started_dt).total_seconds()' .github/workflows/ci-gate-verification.yml
 search_fixed "CANDIDATE_DISPATCHES = 6" .github/scripts/run_ci_gate_validation.py
-search_fixed "FINAL_DISPATCHES = 10" .github/scripts/run_ci_gate_validation.py
+search_fixed "FINAL_COLD_DISPATCHES = 1" .github/scripts/run_ci_gate_validation.py
+search_fixed "FINAL_WARM_DISPATCHES = 10" .github/scripts/run_ci_gate_validation.py
+search_fixed "FINAL_DISPATCHES = FINAL_COLD_DISPATCHES + FINAL_WARM_DISPATCHES" .github/scripts/run_ci_gate_validation.py
 search_fixed "TOTAL_DISPATCHES = CANDIDATE_DISPATCHES + FINAL_DISPATCHES" .github/scripts/run_ci_gate_validation.py
 search_fixed "WORKFLOW_TIMEOUT_SECONDS = 720" .github/scripts/run_ci_gate_validation.py
 search_fixed "WARM_INVESTIGATION_THRESHOLD_SECONDS = 600" .github/scripts/run_ci_gate_validation.py
 search_fixed "STATUS_QUERY_ATTEMPTS = 3" .github/scripts/run_ci_gate_validation.py
 search_fixed 'parser.add_argument("--resume-run-id", type=int, action="append", default=[])' .github/scripts/run_ci_gate_validation.py
 search_fixed "resumed GitHub runs must be supplied in chronological order" .github/scripts/run_ci_gate_validation.py
+search_fixed "--resume-run-id is valid only for candidates or final phase" .github/scripts/run_ci_gate_validation.py
 search_fixed 'choices=("all", "candidates", "final")' .github/scripts/run_ci_gate_validation.py
 search_fixed "select_final_matrix" .github/scripts/run_ci_gate_validation.py
 search_fixed "collect_case" .github/scripts/run_ci_gate_validation.py
@@ -272,9 +281,13 @@ search_fixed "timeout-seconds=720" .github/scripts/run_ci_gate_validation.py
 search_fixed "interval-seconds=15" .github/scripts/run_ci_gate_validation.py
 search_fixed "capture=True" .github/scripts/run_ci_gate_validation.py
 search_fixed "timeout_seconds=60" .github/scripts/run_ci_gate_validation.py
+search_fixed "authoritative start marker" .github/scripts/run_ci_gate_validation.py
+search_fixed "Older verification workflows emitted only the aggregate durations" .github/scripts/run_ci_gate_validation.py
+search_fixed "rebased_legacy_metrics" .github/scripts/run_ci_gate_validation.py
 search_fixed "controlled validation budget of 204 minutes has elapsed" .github/scripts/run_ci_gate_validation.py
 search_fixed "output-dir must not already exist" .github/scripts/run_ci_gate_validation.py
 search_fixed "final ten warm samples" .github/scripts/run_ci_gate_validation.py
+search_fixed '("cold-warmup", args.final_sha' .github/scripts/run_ci_gate_validation.py
 search_fixed "deadline.json" .github/scripts/run_ci_gate_validation.py
 search_fixed "storybook-coverage-summary" .github/workflows/ci-main.yml
 search_fixed "frontend-storybook-test-required:" .github/workflows/ci-main.yml
@@ -285,6 +298,27 @@ search_fixed "DOCKREV_STORYBOOK_ROLLBACK_RACE_PASSED=1" .github/scripts/storyboo
 search_fixed "verify-storybook-coverage.mjs" .github/workflows/ci-main.yml
 search_fixed "resolve-storybook-matrix.py" .github/workflows/ci-main.yml
 search_fixed ".github/storybook-shards.json" .github/scripts/resolve-storybook-matrix.py
+
+echo "[contract-check] release preparation invariants"
+search_fixed "name: Release Preparation" .github/workflows/release-preparation.yml
+search_fixed "retention-days: 1" .github/workflows/release-preparation.yml
+search_fixed "release_preparation.py manifest" .github/workflows/release-preparation.yml
+search_fixed "release_preparation.py validate" .github/workflows/release-preparation.yml
+search_fixed '"publish": False' .github/scripts/release_preparation.py
+search_fixed 'release-recovery-${TARGET_INPUT}' .github/workflows/release-preparation.yml
+search_fixed "release-preparation.yml" .github/scripts/release_preparation.py
+search_fixed "recovery preparation request does not match target_sha" .github/scripts/release_preparation.py
+search_fixed "single recovery preparation run already failed" .github/scripts/release_preparation.py
+python3 .github/scripts/test_release_preparation.py
+ruby -ryaml -e '
+workflow = YAML.load_file(".github/workflows/release-preparation.yml")
+events = workflow.fetch(workflow.key?("on") ? "on" : true)
+abort "[contract-check] preparation workflow must run on main push" unless events.fetch("push").fetch("branches") == ["main"]
+abort "[contract-check] preparation workflow must expose target_sha input" unless events.fetch("workflow_dispatch").fetch("inputs").key?("target_sha")
+permissions = workflow.fetch("permissions")
+abort "[contract-check] preparation workflow must be read-only" unless permissions == {"contents" => "read", "actions" => "read", "pull-requests" => "read"}
+abort "[contract-check] preparation workflow must have a package job" unless workflow.fetch("jobs").key?("package")
+'
 
 echo "[contract-check] quality-gate workflow invariants"
 search_regex "^[[:space:]]*pull_request_target:" .github/workflows/label-gate.yml
