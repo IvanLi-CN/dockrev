@@ -1,5 +1,6 @@
 import { selfUpgradeBaseUrl } from './runtimeConfig'
 import { stripAppBase, withAppBase } from './appBase'
+import { isSafeDynamicSegment } from './routeContract'
 
 export type Route =
   | { name: 'overview' }
@@ -21,6 +22,7 @@ export type Route =
       section?: 'overview' | 'versions' | 'history' | 'monitoring' | 'backup' | 'logs' | 'settings'
     }
   | { name: 'supervisor-misroute'; basePath: string; pathname: string }
+  | { name: 'not-found'; pathname: string }
 
 export type SettingsSection =
   | 'account'
@@ -61,7 +63,12 @@ export function parseRoute(pathname: string): Route {
   const sup = parseSupervisorMisroute(pathname)
   if (sup) return sup
 
-  const parts = stripAppBase(pathname).split('/').filter(Boolean).map(decodeURIComponent)
+  let parts: string[]
+  try {
+    parts = stripAppBase(pathname).split('/').filter(Boolean).map(decodeURIComponent)
+  } catch {
+    return { name: 'not-found', pathname }
+  }
   if (parts.length === 0) return { name: 'overview' }
   if (parts.length === 1 && parts[0] === 'queue') return { name: 'queue' }
   if (parts.length === 2 && parts[0] === 'queue' && parts[1] === 'version-inference') {
@@ -76,7 +83,7 @@ export function parseRoute(pathname: string): Route {
   if (parts.length === 2 && parts[0] === 'settings' && parts[1] === 'ghcr-webhooks') {
     return { name: 'ghcr-webhook-registry' }
   }
-  if (parts.length === 2 && parts[0] === 'queue') return { name: 'job', jobId: parts[1] }
+  if (parts.length === 2 && parts[0] === 'queue' && isSafeDynamicSegment(parts[1])) return { name: 'job', jobId: parts[1] }
   if (parts.length === 1 && parts[0] === 'services') return { name: 'services' }
   if (parts.length === 1 && parts[0] === 'cleanup') return { name: 'cleanup' }
   // Legacy compatibility: keep old path readable after route migration.
@@ -87,19 +94,19 @@ export function parseRoute(pathname: string): Route {
     const section = normalizeSettingsSection(parts[1])
     if (section) return { name: 'settings', section }
   }
-  if (parts.length === 2 && parts[0] === 'services') {
+  if (parts.length === 2 && parts[0] === 'services' && isSafeDynamicSegment(parts[1])) {
     return { name: 'stack', stackId: parts[1] }
   }
-  if (parts.length === 3 && parts[0] === 'services') {
+  if (parts.length === 3 && parts[0] === 'services' && isSafeDynamicSegment(parts[1]) && isSafeDynamicSegment(parts[2])) {
     return { name: 'service', stackId: parts[1], serviceId: parts[2], section: 'overview' }
   }
   if (parts.length === 4 && parts[0] === 'services') {
     const section = normalizeServiceSection(parts[3])
-    if (section) {
+    if (section && isSafeDynamicSegment(parts[1]) && isSafeDynamicSegment(parts[2])) {
       return { name: 'service', stackId: parts[1], serviceId: parts[2], section }
     }
   }
-  return { name: 'overview' }
+  return { name: 'not-found', pathname }
 }
 
 export function href(route: Route): string {
@@ -138,10 +145,12 @@ export function href(route: Route): string {
         const p = route.basePath.endsWith('/') ? route.basePath : `${route.basePath}/`
         return p
       }
+      case 'not-found':
+        return route.pathname
     }
   })()
 
-  if (route.name === 'supervisor-misroute') return routePath
+  if (route.name === 'supervisor-misroute' || route.name === 'not-found') return routePath
   return withAppBase(routePath)
 }
 
@@ -163,18 +172,7 @@ function parseSupervisorMisroute(pathname: string): Route | null {
   }
 }
 
-function currentPathname(): string {
-  const hash = window.location.hash
-  if (hash.startsWith('#/')) return hash.slice(1)
-  return stripAppBase(window.location.pathname)
-}
-
-function shouldUseHashRouting(): boolean {
-  if (window.location.hash.startsWith('#/')) return true
-  // Storybook renders stories inside `iframe.html?...`; pushing pathname would break the preview.
-  if (window.location.pathname.endsWith('/iframe.html')) return true
-  return false
-}
+function currentPathname(): string { return stripAppBase(window.location.pathname) }
 
 type NavListener = () => void
 const listeners = new Set<NavListener>()
@@ -185,16 +183,6 @@ function notify() {
 
 export function navigate(route: Route) {
   const url = href(route)
-  if (shouldUseHashRouting()) {
-    const next = `#${url}`
-    if (window.location.hash !== next) {
-      window.location.hash = next
-    } else {
-      notify()
-    }
-    return
-  }
-
   window.history.pushState({}, '', url)
   notify()
 }
@@ -208,7 +196,6 @@ export function subscribeNavigation(listener: NavListener) {
 
 export function installPopStateListener() {
   window.addEventListener('popstate', notify)
-  window.addEventListener('hashchange', notify)
 }
 
 export function currentRoutePathname(): string {
@@ -216,6 +203,5 @@ export function currentRoutePathname(): string {
 }
 
 export function currentHref(route: Route): string {
-  const url = href(route)
-  return shouldUseHashRouting() ? `#${url}` : url
+  return href(route)
 }

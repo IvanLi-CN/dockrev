@@ -252,6 +252,16 @@ async function main() {
 
   const shots = [
     {
+      id: 'components-notfoundview--unknown-document',
+      file: 'not-found-view.png',
+      setup: async (page) => {
+        await page.locator('.notFoundView').waitFor({ timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        await page.locator('.notFoundView').screenshot({ path: filePath })
+      },
+    },
+    {
       id: 'components-discoveryissuereconcileaction--eligible-warning',
       file: 'discovery-issue-reconcile-action.png',
       setup: async (page) => {

@@ -635,10 +635,8 @@ export function useOverviewPageState(props: {
       setCollapsed(withCollapseDefaults(readCollapsedFromStorage(next), stacks, details, next))
     }
     window.addEventListener('popstate', onNav)
-    window.addEventListener('hashchange', onNav)
     return () => {
       window.removeEventListener('popstate', onNav)
-      window.removeEventListener('hashchange', onNav)
     }
   }, [details, filter, stacks])
 

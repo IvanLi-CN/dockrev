@@ -2,7 +2,10 @@
 
 ## Implementation
 
-- `vite-plugin-pwa` 已接入 `injectManifest`，`web/src/sw.ts` 统一承载低优先级 precache、全部正式路由的 app-shell fallback、Push 与通知点击回跳。
+- `vite-plugin-pwa` 已接入 `injectManifest`，`web/src/sw.ts` 统一承载低优先级 precache、路由合同 allowlist 的 app-shell fallback、Push 与通知点击回跳。
+- 已新增 `web/src/routeContract.ts` 作为前端/Rust/Service Worker 的唯一页面路由合同；Vite 输出内部 `.dockrev-route-contract.json`，Rust `build.rs` 校验后嵌入且不对外提供。
+- Vite 使用 `appType: 'mpa'` 生成主 `index.html` 与独立 `404.html`；两者共享 `NotFoundView` 样式，404 入口不加载运行时配置、主路由或 Service Worker 注册。
+- Rust UI 路由已移除宽泛主文档回退：固定/动态合同页返回主文档，页面尾斜杠返回 308，未知文档返回 404 文档，未知带扩展名资源、API、Supervisor 和内部合同文件不会返回应用 HTML。
 - install metadata 已改为逐资源 SHA-256 内容哈希文件名：构建后的 HTML 和 manifest 只引用当前哈希 favicon/regular/maskable 文件；产品 HTML 不声明 `apple-touch-icon`，manifest link 由 VitePWA 单独注入，避免模板与插件重复声明。
 - `crates/dockrev-api/src/ui.rs` 已为哈希 install icon 返回 `public, max-age=31536000, immutable`，并为 `index.html`、`manifest.webmanifest`、`sw.js` 与旧固定名 favicon、regular/maskable 图标返回 `no-cache`，使入口元数据可重新验证而旧兼容路径不被错误长期缓存。
 - app bootstrap 已全局注册 service worker；Settings 页的 Web Push 订阅路径改为复用全局 worker，不再自行注册临时 `public/sw.js`。

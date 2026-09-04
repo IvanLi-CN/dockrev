@@ -209,6 +209,18 @@ try {
     const registration = await navigator.serviceWorker.ready
     return { scope: registration.scope, scriptURL: registration.active?.scriptURL ?? null }
   })
+  const unknownNavigation = await page.goto(`${fixtureServer.origin}/made-up-deep-link`, { waitUntil: 'domcontentloaded' })
+  assert(unknownNavigation?.status() === 404, 'unknown document navigation must not receive the app shell')
+  const unknownAssetNavigation = await page.goto(`${fixtureServer.origin}/assets/missing.js`, { waitUntil: 'domcontentloaded' })
+  assert(unknownAssetNavigation?.status() === 404, 'unknown static resource navigation must not receive the app shell')
+  await page.goto(`${fixtureServer.origin}/`, { waitUntil: 'domcontentloaded' })
+  await context.setOffline(true)
+  const offlineContractNavigation = await page.goto(`${fixtureServer.origin}/queue`, { waitUntil: 'domcontentloaded' })
+  assert(offlineContractNavigation?.status() === 200, 'contract navigation must resolve from the offline app shell')
+  const offlineMarker = await page.locator('meta[name="dockrev-pwa-fixture"]').getAttribute('content')
+  assert(offlineMarker === 'v1', 'offline contract navigation did not resolve the V1 shell')
+  await context.setOffline(false)
+  await page.goto(`${fixtureServer.origin}/`, { waitUntil: 'domcontentloaded' })
   const initial = await fetchManifestAndIcons(page)
   assert(initial.manifestStatus === 200, 'V1 manifest was not fetched successfully')
   assert(initial.manifestCacheControl === 'no-cache', 'V1 manifest must be revalidated')

@@ -3,6 +3,7 @@
 import { clientsClaim } from 'workbox-core'
 import { addPlugins, cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from 'workbox-precaching'
 import { NavigationRoute, registerRoute } from 'workbox-routing'
+import { DYNAMIC_PAGE_TEMPLATES, DYNAMIC_SEGMENT_PATTERN, RESERVED_PREFIXES, STATIC_PAGE_PATHS } from './routeContract'
 
 declare let self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: Array<{ url: string; revision: string | null }>
@@ -23,30 +24,28 @@ clientsClaim()
 
 const appBasePath = new URL('./', self.registration.scope).pathname.replace(/\/$/, '')
 const appShellUrl = `${appBasePath || ''}/index.html`
-const appRoute = (pattern: string) =>
-  new RegExp(`^${appBasePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}${pattern}`)
+const escapedBase = appBasePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const escapedPath = (path: string) => path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const appRoute = (pattern: string) => new RegExp(`^${escapedBase}${pattern}`)
+const contractTemplateRoute = (template: string) => {
+  const path = template
+    .split('/')
+    .filter(Boolean)
+    .map((part) => (part.startsWith(':') ? DYNAMIC_SEGMENT_PATTERN : escapedPath(part)))
+    .join('/')
+  return appRoute(`/${path}\\/?$`)
+}
+const navigationAllowlist = [
+  ...STATIC_PAGE_PATHS.map((path) => appRoute(path === '/' ? '/?$' : `${escapedPath(path)}\\/?$`)),
+  ...DYNAMIC_PAGE_TEMPLATES.map(contractTemplateRoute),
+]
 
 registerRoute(
   new NavigationRoute(createHandlerBoundToURL(appShellUrl), {
     allowlist: [
-      appRoute('/$'),
-      appRoute('/overview$'),
-      appRoute('/queue$'),
-      appRoute('/queue/(?:version-inference|ghcr-webhooks|ghcr-webhook-inbox)$'),
-      appRoute('/queue/[^/]+$'),
-      appRoute('/services$'),
-      appRoute('/services/[^/]+$'),
-      appRoute('/services/[^/]+/[^/]+(?:/(?:overview|versions|history|monitoring|backup|logs|settings))?$'),
-      appRoute('/cleanup$'),
-      appRoute('/version-inference$'),
-      appRoute('/deploy-check$'),
-      appRoute('/settings(?:/(?:account|maintenance|backup|monitoring|schedules|release-notes|notifications|integrations|ghcr-webhooks))?$'),
+      ...navigationAllowlist,
     ],
-    denylist: [
-      appRoute('/api(?:/|$)'),
-      appRoute('/assets(?:/|$)'),
-      appRoute('/supervisor(?:/|$)'),
-    ],
+    denylist: RESERVED_PREFIXES.map((prefix) => appRoute(`${escapedPath(prefix)}(?:/|$)`)),
   }),
 )
 

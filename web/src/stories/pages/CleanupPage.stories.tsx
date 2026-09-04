@@ -251,7 +251,7 @@ export const StaleFingerprintRetry: Story = {
     assertStory(secondConfirm, 'stale confirm action missing')
     secondConfirm.click()
 
-    await waitForCondition(() => window.location.hash.includes('/queue/job-cleanup-1'))
+    await waitForCondition(() => window.location.pathname.includes('/queue/job-cleanup-1'))
   },
 }
 

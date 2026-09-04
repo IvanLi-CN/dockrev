@@ -116,11 +116,6 @@ function PageHarnessInner(props: {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const targetHref = currentHref(props.route);
-    if (targetHref.startsWith("#")) {
-      if (window.location.hash !== targetHref)
-        window.location.hash = targetHref;
-      return;
-    }
     if (window.location.pathname !== targetHref) {
       window.history.replaceState({}, "", targetHref);
     }
@@ -130,11 +125,9 @@ function PageHarnessInner(props: {
     if (typeof window === "undefined") return;
     const sync = () => setRoute(parseRoute(currentRoutePathname()));
     window.addEventListener("popstate", sync);
-    window.addEventListener("hashchange", sync);
     const unsubscribe = subscribeNavigation(sync);
     return () => {
       window.removeEventListener("popstate", sync);
-      window.removeEventListener("hashchange", sync);
       unsubscribe();
     };
   }, []);
@@ -145,14 +138,12 @@ function PageHarnessInner(props: {
     const handleLocation = () => sync();
     sync();
     window.addEventListener("popstate", handleLocation);
-    window.addEventListener("hashchange", handleLocation);
     window.addEventListener(
       RELEASE_DRAWER_LOCATION_EVENT,
       handleLocation as EventListener,
     );
     return () => {
       window.removeEventListener("popstate", handleLocation);
-      window.removeEventListener("hashchange", handleLocation);
       window.removeEventListener(
         RELEASE_DRAWER_LOCATION_EVENT,
         handleLocation as EventListener,
