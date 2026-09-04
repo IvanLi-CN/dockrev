@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Clock3, Cpu, Download, MemoryStick, Search, Upload } from 'lucide-react'
+import { Clock3, Cpu, Download, MemoryStick, Upload } from 'lucide-react'
 import { Input } from '../ui'
 
 export type OverviewMetricsSummary = {
@@ -165,12 +165,6 @@ export function HomepageTopStrip(props: {
 export function HomepageHeaderContent(props: {
   metricsLabel: string
   summary: OverviewMetricsSummary
-  searchDraft: string
-  searchOpen: boolean
-  onSearchDraftChange: (value: string) => void
-  onApplySearch: () => void
-  onToggleSearch: () => void
-  onCloseSearch: () => void
 }) {
   return (
     <div className="homepageHeaderContent">
@@ -179,35 +173,6 @@ export function HomepageHeaderContent(props: {
         metricsLabel={props.metricsLabel}
         summary={props.summary}
       />
-      <div className="homepageHeaderSearch">
-        <div className="homepageHeaderSearchDesktop">
-          <HomepageSearchForm
-            searchDraft={props.searchDraft}
-            onSearchDraftChange={props.onSearchDraftChange}
-            onApplySearch={props.onApplySearch}
-          />
-        </div>
-        <button
-          type="button"
-          className="homepageHeaderSearchToggle"
-          aria-label={props.searchOpen ? '关闭搜索' : '打开搜索'}
-          aria-expanded={props.searchOpen}
-          onClick={props.onToggleSearch}
-        >
-          <Search size={19} strokeWidth={2.3} aria-hidden="true" />
-        </button>
-        {props.searchOpen ? (
-          <div className="homepageHeaderSearchPopover">
-            <HomepageSearchForm
-              autoFocus
-              searchDraft={props.searchDraft}
-              onSearchDraftChange={props.onSearchDraftChange}
-              onApplySearch={props.onApplySearch}
-              onEscape={props.onCloseSearch}
-            />
-          </div>
-        ) : null}
-      </div>
     </div>
   )
 }

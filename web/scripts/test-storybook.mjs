@@ -1341,9 +1341,11 @@ async function runInteractive({ baseUrl, browser }) {
           "Expected mobile resource strip to keep search out of the metric row.",
         );
       }
-      await page.locator(".topbar .homepageHeaderSearchToggle").waitFor({
-        timeout: 10_000,
-      });
+      if ((await page.locator(".topbar .homepageHeaderSearch").count()) > 0) {
+        throw new Error(
+          "Expected mobile overview to keep the page search exclusively in the context drawer.",
+        );
+      }
 
       await page.locator(".mobileBottomNav").waitFor({ timeout: 10_000 });
       await page.locator(".mobileMenuButton").click();
@@ -1354,6 +1356,11 @@ async function runInteractive({ baseUrl, browser }) {
       await drawerSearch.getByRole("searchbox", { name: "搜索服务入口" }).waitFor({
         timeout: 10_000,
       });
+      if ((await page.locator('input[type="search"][aria-label="搜索服务入口"]').count()) !== 1) {
+        throw new Error(
+          "Expected mobile overview to mount exactly one search input in the context drawer.",
+        );
+      }
       await page
         .locator("#mobileDockrevMenu .homepageDrawerBottomSummary")
         .waitFor({

@@ -161,7 +161,6 @@
   story_id_or_title: `Pages/ServiceDetailPage/Overview Default`
   state: `desktop detail workspace`
   evidence_note: 验证服务详情页在桌面端启用三列壳层，当前 Stack / Service 高亮、服务树与 route-backed 分区页并存。
-  PR: include
   PR caption: 服务详情页桌面端采用 `主导航 / 服务树 / 主内容` 三列壳层，并在当前服务节点保持高亮。
 
 ![服务详情页桌面三列壳层](./assets/service-detail-desktop.png)
@@ -173,11 +172,9 @@
   viewport_strategy: `controlled-browser-viewport`
   state: `desktop detail header aligned to service tree`
   evidence_note: 验证详情页品牌区覆盖主导航与服务树，右侧顶部操作与主内容从同一列起始，未新增页头竖分隔线。
-  PR: include
 
 ![服务详情页页头与服务树对齐](./assets/service-detail-header-aligned.png)
 
-PR: include
 
 ![窄桌面详情页操作条保持在主内容工作区](./assets/service-detail-narrow-actions-contained.png)
 
@@ -201,7 +198,6 @@ PR: include
   story_id_or_title: `Pages/StackDetailPage/Policy Disabled`
   state: `narrow desktop stack workspace`
   evidence_note: 验证 Stack 详情页在 `961px - 1160px` 窄桌面断点仍保持 `主导航 / 服务树 / 主内容` 三列壳层，当前 Stack 默认展开，服务树可直接跨服务跳转。
-  PR: include
   PR caption: Stack 详情页在窄桌面断点仍保持三列壳层，并默认展开当前 Stack。
 
 ![Stack 详情页桌面三列壳层](./assets/stack-detail-desktop.png)
@@ -243,7 +239,6 @@ PR: include
   story_id_or_title: `Pages/ServiceDetailPage/Overview Default`
   state: `mobile service drawer`
   evidence_note: 验证移动端通过“服务导航”抽屉复用同一份 `Stack -> Service` 树结构与高亮语义。
-  PR: include
   PR caption: 移动端通过“服务导航”抽屉承载同一份 `Stack -> Service` 树结构。
 
 ![服务详情页移动端服务导航抽屉](./assets/service-detail-mobile-drawer.png)

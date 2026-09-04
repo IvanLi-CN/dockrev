@@ -9,6 +9,7 @@ import {
 import type { CleanupResourceKind } from '../../api'
 import { KIND_LABEL } from '../../pages/cleanupPageModel'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
+import { expectStory } from '../pages/storyAssertions'
 
 const meta: Meta = {
   title: 'Components/PageContextNavigation',
@@ -74,6 +75,12 @@ export const Cleanup: Story = {
 }
 
 export const Settings: Story = {
+  play: async ({ canvasElement }) => {
+    await expectStory(
+      !canvasElement.querySelector('.pageContextLinkMeta'),
+      'settings context navigation should omit long descriptions',
+    )
+  },
   render: () => (
     <ContextStoryFrame>
       <SettingsContextNavigation section="notifications" />

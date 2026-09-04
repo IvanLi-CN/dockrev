@@ -125,7 +125,7 @@ export const Default: Story = {
     );
     expectStory(
       canvasElement.querySelector(".topbar .homepageHeaderContent"),
-      "expected overview search to render in the global shell header",
+      "expected overview resource summary to render in the global shell header",
     );
     expectStory(
       canvasElement.querySelector(".homepageMobileNavModule .homepageTopStrip"),
@@ -137,7 +137,7 @@ export const Default: Story = {
     );
     expectStory(
       canvasElement.querySelector(".mobileMenuEmbeddedContent .homepageDrawerSearchSlot"),
-      "expected hamburger menu to keep overview search near the top of the drawer",
+      "expected page context navigation to own the overview search",
     );
     expectStory(
       canvasElement.querySelector(".mobileMenuEmbeddedContent .homepageDrawerBottomSummary"),
@@ -169,6 +169,10 @@ export const Default: Story = {
       "expected overview search input to expose a stable accessible label",
     );
     expectStory(
+      canvasElement.querySelectorAll('input[type="search"][aria-label="搜索服务入口"]').length === 1,
+      "expected exactly one overview search input",
+    );
+    expectStory(
       canvasElement.querySelector('button[aria-label="刷新服务列表"]'),
       "expected refresh top action to keep an accessible name when labels collapse",
     );
@@ -177,8 +181,8 @@ export const Default: Story = {
       "expected scan top action to keep an accessible name when labels collapse",
     );
     expectStory(
-      canvasElement.querySelector(".topbar .homepageHeaderSearchToggle"),
-      "expected overview header search to provide a mobile collapsed button",
+      !canvasElement.querySelector(".topbar .homepageHeaderSearch"),
+      "expected the global shell header to avoid a duplicate overview search",
     );
     expectStory(
       !canvasElement.querySelector(".topbar .homepageClock"),
@@ -948,12 +952,8 @@ export const MobileStacked: Story = {
       "expected mobile evidence story to render resource controls inside the navigation module",
     );
     expectStory(
-      !canvasElement.querySelector(".homepageMobileNavModule .homepageOverviewSearchShell"),
-      "expected mobile evidence story to keep search collapsed in the header",
-    );
-    expectStory(
-      canvasElement.querySelector(".topbar .homepageHeaderSearchToggle"),
-      "expected mobile evidence story to expose the collapsed header search button",
+      !canvasElement.querySelector(".topbar .homepageHeaderSearch"),
+      "expected mobile evidence story to avoid a duplicate header search",
     );
     expectStory(
       !canvasElement.querySelector(".homepageMobileNavModule .homepageClock"),
@@ -969,7 +969,11 @@ export const MobileStacked: Story = {
     );
     expectStory(
       canvasElement.querySelector(".mobileMenuEmbeddedContent .homepageDrawerSearchSlot"),
-      "expected hamburger menu to own the mobile search control",
+      "expected mobile page context navigation to own the search control",
+    );
+    expectStory(
+      canvasElement.querySelectorAll('input[type="search"][aria-label="搜索服务入口"]').length === 1,
+      "expected mobile overview to mount exactly one search input",
     );
     expectStory(
       canvasElement.querySelector(".mobileMenuEmbeddedContent .homepageDrawerBottomSummary"),

@@ -13735,6 +13735,10 @@ html[data-theme="light"] .btnPrimary {
     padding-bottom: calc(max(16px, env(safe-area-inset-bottom)) + 150px);
   }
 
+  .mobileMenuDrawer:has(.homepageDrawerBottomSummary) .mobileDrawerFooter {
+    margin-bottom: 150px;
+  }
+
   .mobileMenuEmbeddedContent:has(.homepageDrawerNavControls) {
     order: 1;
     margin: 0 0 8px;
@@ -13749,6 +13753,10 @@ html[data-theme="light"] .btnPrimary {
 
   .mobileMenuDrawer:has(.homepageDrawerNavControls) .mobileMeta {
     order: 3;
+  }
+
+  .mobileMenuDrawer:has(.homepageDrawerNavControls) .mobileDrawerFooter {
+    order: 4;
   }
 
   .homepageDrawerNavControls {
@@ -13932,6 +13940,59 @@ html[data-theme="light"] .btnPrimary {
     font-size: 12px;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .mobileDrawerFooter {
+    flex: 0 0 auto;
+    margin-top: auto;
+    border-top: 1px solid var(--borderColor);
+    padding-top: 14px;
+  }
+
+  .mobileDrawerFooter .topbarUserSlotSidebar {
+    width: 100%;
+  }
+
+  .mobileDrawerFooter .topbarUserSlotSidebar .topbarUserTrigger {
+    width: 100%;
+    max-width: none;
+    height: 38px;
+    min-width: 0;
+    min-height: 38px;
+    flex: 1 1 auto;
+    justify-content: flex-start;
+    padding: 0 12px;
+    border-radius: 10px;
+  }
+
+  .mobileDrawerFooter .topbarUserTriggerLabel {
+    display: block;
+  }
+
+  .mobileDrawerThemeControl {
+    margin-top: 10px;
+  }
+
+  .mobileDrawerThemeControl .themePreferenceSegmented {
+    min-width: 0;
+  }
+
+  .mobileDrawerFooterDivider {
+    height: 1px;
+    margin: 14px 0 10px;
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--borderColor) 90%, transparent),
+      color-mix(in srgb, var(--color-primary) 14%, transparent)
+    );
+  }
+
+  .mobileDrawerFooter .sidebarMeta {
+    padding: 0;
+  }
+
+  .mobileDrawerFooter .sidebarAppMetaContent {
+    justify-content: space-between;
   }
 
   .mobileBottomNav {

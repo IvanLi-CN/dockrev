@@ -376,6 +376,18 @@ export function AppShell(props: {
                 </span>
               </div>
             </div>
+            <div className="mobileDrawerFooter" aria-label="应用与用户信息">
+              <TopbarUserIdentity authIdentity={props.authIdentity} placement="sidebar" />
+              <div className="mobileDrawerThemeControl">
+                <ThemePreferenceControl variant="segmented" />
+              </div>
+              <div className="mobileDrawerFooterDivider" aria-hidden="true" />
+              <SidebarAppMeta
+                collapsed={false}
+                versionDisplay={versionDisplay}
+                versionHref={versionHref}
+              />
+            </div>
           </div>
 
           <aside className="sidebar" role="complementary" aria-label="主导航侧栏">

@@ -435,7 +435,6 @@ export function OverviewPage(props: {
   >(null);
   const [search, setSearch] = useState("");
   const [searchDraft, setSearchDraft] = useState("");
-  const [headerSearchOpen, setHeaderSearchOpen] = useState(false);
   const [activeGroupName, setActiveGroupName] = useState<string | null>(null);
   const [updateDialogCard, setUpdateDialogCard] =
     useState<HomepageNavCard | null>(null);
@@ -457,10 +456,6 @@ export function OverviewPage(props: {
   const applySearch = useCallback(() => {
     setSearch(searchDraft);
   }, [searchDraft]);
-  const applyHeaderSearch = useCallback(() => {
-    applySearch();
-    setHeaderSearchOpen(false);
-  }, [applySearch]);
 
   useEffect(() => {
     let cancelled = false;
@@ -694,15 +689,9 @@ export function OverviewPage(props: {
       <HomepageHeaderContent
         metricsLabel="资源摘要"
         summary={summary}
-        searchDraft={searchDraft}
-        searchOpen={headerSearchOpen}
-        onSearchDraftChange={setSearchDraft}
-        onApplySearch={applyHeaderSearch}
-        onToggleSearch={() => setHeaderSearchOpen((value) => !value)}
-        onCloseSearch={() => setHeaderSearchOpen(false)}
       />
     ),
-    [applyHeaderSearch, headerSearchOpen, searchDraft, summary],
+    [summary],
   );
   const contextNavigation = useMemo(
     () => (

@@ -15,6 +15,7 @@
 - `mobile context drawer`: 窄屏顶部临时抽屉；与底部一级导航互补，不合并为一个菜单。
 - `service directory`: 可搜索、多展开的 Stack→Service 树；服务详情 section 仍由 URL 保持。
 - `cleanup view filter`: 只改变清理页展示投影，不进入扫描或 `CleanupApplyRequest`。
+- `page search`: 页面服务筛选的唯一输入；桌面位于②侧栏，窄屏位于②抽屉，不在页头重复渲染。
 
 ## Requirements
 
@@ -24,7 +25,7 @@
 
 ### REQ-UPCN-002
 
-- 窄屏 MUST 保留页头 Logo 和底部一级导航；顶部抽屉 MUST 在顶部额外显示一份 Logo，并只挂载当前页面内导航的一份实例，且不得与一级导航合并或同时挂载桌面侧栏实例。
+- 窄屏 MUST 保留页头 Logo 和底部一级导航；顶部抽屉 MUST 在顶部额外显示一份 Logo，只挂载当前页面内导航的一份实例，并在底部保留③用户身份、主题和版本信息；抽屉不得与一级导航合并或同时挂载桌面侧栏实例。
 
 ### REQ-UPCN-003
 
@@ -46,13 +47,21 @@
 
 - 同一页面的桌面和移动页面内导航 SHOULD 复用同一份数据和交互模型，只更换呈现容器。
 
+### REQ-UPCN-008
+
+- Overview 的服务筛选 MUST 只渲染一个搜索输入；桌面搜索 MUST 位于②侧栏，移动搜索 MUST 位于②抽屉，页头不得再渲染重复搜索控件。
+
+### REQ-UPCN-009
+
+- Settings 的②目录 MUST 只显示简短区块名称和当前态，不得在导航项旁渲染区块描述或长辅助文案；详细说明仅保留在主内容区。
+
 ## Verification
 
 ### VER-UPCN-001
 
 - Method: `Layouts/AppShell` Storybook canvas 与交互测试。
 - covers: `REQ-UPCN-001`, `REQ-UPCN-002`
-- Pass condition: 桌面只有一个侧栏且顺序、独立滚动、固定底部和无折叠入口成立；移动只挂载底部一级导航和当前 context drawer。
+- Pass condition: 桌面只有一个侧栏且顺序、独立滚动、固定底部和无折叠入口成立；移动只挂载底部一级导航、当前 context drawer 及抽屉底部③。
 
 ### VER-UPCN-002
 
@@ -68,9 +77,24 @@
 
 ### VER-UPCN-004
 
-- Method: mock-only `ui_demo` 桌面/移动场景与 Storybook `DetailRouteServiceTree` canvas，配合主人确认的视觉比较。
-- covers: `REQ-UPCN-001`, `REQ-UPCN-002`, `REQ-UPCN-006`
-- Pass condition: 无登录信息、无重叠或溢出，截图差异有明确确认记录。
+- Method: mock-only `ui_demo` 对五个一级页面分别采集桌面侧栏和移动②抽屉场景，配合主人确认的视觉比较。
+- covers: `REQ-UPCN-001`, `REQ-UPCN-002`, `REQ-UPCN-006`, `REQ-UPCN-008`, `REQ-UPCN-009`
+- Pass condition: 无登录信息、每个页面只出现一个服务搜索入口、无重叠或溢出，截图差异有明确确认记录。
+
+## Visual Evidence
+
+- Source: `ui_demo`，mock-only、无需登录；页面级证据使用 `browser-viewport` 捕获。
+- Viewport strategy: 桌面 `1440x1000`，移动 `393x852` CSS px，使用 `devtools-emulate`。
+- Margin policy: `trim_only`；五个页面的桌面侧栏和移动②抽屉各一张，共 10 张。
+- Confirmation: 主人已确认本组截图准确反映最终实现；移动抽屉均包含顶部 Logo、当前②和底部③，Overview 仅保留一个服务搜索，Settings ②不显示长描述。
+
+| Page | Desktop | Mobile |
+| --- | --- | --- |
+| Overview | [`overview-desktop.png`](./assets/overview-desktop.png) | [`overview-mobile.png`](./assets/overview-mobile.png) |
+| Queue | [`queue-desktop.png`](./assets/queue-desktop.png) | [`queue-mobile.png`](./assets/queue-mobile.png) |
+| Services / Stack / Service | [`services-desktop.png`](./assets/services-desktop.png) | [`services-mobile.png`](./assets/services-mobile.png) |
+| Cleanup | [`cleanup-desktop.png`](./assets/cleanup-desktop.png) | [`cleanup-mobile.png`](./assets/cleanup-mobile.png) |
+| Settings | [`settings-desktop.png`](./assets/settings-desktop.png) | [`settings-mobile.png`](./assets/settings-mobile.png) |
 
 ## Related ADRs
 

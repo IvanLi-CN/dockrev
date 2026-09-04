@@ -166,7 +166,7 @@ export function SettingsContextNavigation(props: { section?: SettingsSection }) 
   return (
     <ContextSection title="设置目录" icon={<CircleDot size={15} />}>
       {SETTINGS_DESTINATIONS.map((item) => (
-        <ContextLink key={item.section} label={item.title} meta={item.description} active={props.section === item.section} onClick={() => selectSection(item.section)} />
+        <ContextLink key={item.section} label={item.title} active={props.section === item.section} onClick={() => selectSection(item.section)} />
       ))}
       <ContextLink label="设置首页" active={!props.section} onClick={() => navigate({ name: 'settings' })} />
     </ContextSection>

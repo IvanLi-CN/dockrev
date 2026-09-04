@@ -229,6 +229,9 @@ export const MobileBottomNavAndDrawer: Story = {
     expectStory(drawer?.textContent?.includes('服务导航'), 'Mobile drawer should be dedicated to the service tree')
     expectStory(drawer?.textContent?.includes('prod'), 'Mobile drawer should render stack names')
     expectStory(drawer?.textContent?.includes('api'), 'Mobile drawer should render service names')
+    expectStory(Boolean(drawer?.querySelector('.mobileDrawerFooter .topbarUserTrigger')), 'Mobile drawer should keep the user identity in footer ③')
+    expectStory(Boolean(drawer?.querySelector('.mobileDrawerFooter .themePreferenceSegmented')), 'Mobile drawer should keep the theme control in footer ③')
+    expectStory(Boolean(drawer?.querySelector('.mobileDrawerFooter .sidebarAppMetaContent')), 'Mobile drawer should keep version metadata in footer ③')
 
     expectStory(
       !canvasElement.querySelector('.topbarUserSlotTopbar'),
