@@ -140,6 +140,14 @@ export const RecentUpdateNavigationEvidence: Story = {
   render: render("stack-prod"),
 };
 
+export const MobileHeaderLayout: Story = {
+  parameters: {
+    dockrevApiScenario: "dashboard-demo",
+    viewport: { defaultViewport: "mobile1" },
+  },
+  render: render("stack-prod"),
+};
+
 export const MobileNavigation: Story = {
   parameters: {
     dockrevApiScenario: "dashboard-demo",

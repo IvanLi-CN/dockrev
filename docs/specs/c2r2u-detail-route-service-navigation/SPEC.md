@@ -61,6 +61,7 @@
 - 点击 Stack 标题必须进入对应 Stack 详情；展开按钮只能改变展开状态，不得替代跳转。
 - 点击 Service 节点必须进入目标服务详情，并在当前已打开的 `section` 内保持同一分区语义。
 - 移动端必须改为底部主导航，并通过顶部汉堡按钮打开“服务导航”抽屉；抽屉中的树结构、高亮与跳转语义必须与桌面一致。
+- 移动端详情页必须按路由类型区分品牌头部：`StackDetailPage` 在 320px 至 960px CSS 视口保持完整 124px Dockrev 字标，`ServiceDetailPage` 保持 36px 图标标记；两者均保持单行且不产生横向溢出。
 - Overview 页现有 sidebar/mobile slot 行为不得回归。
 - Storybook 必须至少提供 `ServiceDetailPage` 与 `StackDetailPage` 的稳定桌面 / 移动端入口，并覆盖服务树抽屉、路由高亮与 section 保留行为。
 
@@ -117,6 +118,14 @@
   When 用户点击顶部汉堡按钮
   Then 打开“服务导航”抽屉，抽屉内显示与桌面一致的 `Stack -> Service` 树结构。
 
+- Given `StackDetailPage` 移动端
+  When CSS 视口宽度为 320px 或 960px
+  Then `AppShell` 使用 Stack 详情页面类型，显示完整 124px Dockrev 字标，头部保持单行，且页面与顶栏均无横向溢出。
+
+- Given `ServiceDetailPage` 移动端
+  When CSS 视口宽度为 393px
+  Then `AppShell` 使用服务详情页面类型，品牌区保持不超过 36px 的图标标记，并保留至少 44px 的服务操作触控目标。
+
 - Given Overview 页现有 stories
   When 渲染原有 sidebar/mobile 内容
   Then 旧 slot 行为保持稳定，不因详情页壳层扩展而回归。
@@ -148,6 +157,7 @@
   - 当前 Stack / Service 高亮
   - section 保留跳转
   - Stack 详情移动端导航
+  - Stack / Service 详情移动头部品牌合同
 
 ## Visual Evidence
 

@@ -13218,13 +13218,13 @@ html[data-theme="light"] .btnPrimary {
     min-height: 56px;
   }
 
-  .appShellWithDetailSidebar .topbarLeft .brandLogoThemeSwitch {
+  .appShellServiceDetail .topbarLeft .brandLogoThemeSwitch {
     width: 36px;
     height: 36px;
     overflow: hidden;
   }
 
-  .appShellWithDetailSidebar .topbarLeft .brandLogoThemeSwitch .brandLogo {
+  .appShellServiceDetail .topbarLeft .brandLogoThemeSwitch .brandLogo {
     width: 124px;
     max-width: none;
     height: 36px;
