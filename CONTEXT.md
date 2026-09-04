@@ -117,6 +117,18 @@ _Avoid_: raw Compose YAML, source Compose configuration
 - `system lifecycle log row` is a service-log entry derived from a service lifecycle event rather than emitted by the container. It remains distinct from container output.
 - `lifecycle observability window` is the 30-day period in which lifecycle events remain available to match the longest resource-monitoring view.
 
+## Mobile Detail Headers
+
+**service detail mobile header**:
+The single-row mobile header for one service. It presents the navigation trigger, the Dockrev mark, the current service name, and the service action menu; its constrained identity treatment is not a rule for Stack pages.
+_Avoid_: Stack detail header, generic detail header
+
+**Stack detail mobile header**:
+The mobile header for one Stack. It presents the navigation trigger, the full Dockrev wordmark, and the Stack action menu. It has no service-name or monitoring-summary region to compete for horizontal space.
+_Avoid_: service detail header, icon-only Stack header
+
+The Stack detail mobile-header contract applies from 320px through 960px wide: it remains one row, keeps the full wordmark, and does not introduce horizontal overflow.
+
 ## Service Resource Monitoring
 
 - `historical sampling gap` is an interval between consecutive durable REST history samples that exceeds the cadence inferred from the current history window. It describes persisted sampling continuity, not the absence of a live browser observation.

@@ -130,6 +130,14 @@ export const LifecyclePartial: Story = {
   },
 };
 
+export const MobileHeaderLayout: Story = {
+  parameters: {
+    dockrevApiScenario: "service-detail-lifecycle-running",
+    viewport: { defaultViewport: "mobile1" },
+  },
+  render: render("stack-prod", "svc-prod-api", "overview"),
+};
+
 export const LifecycleUnknown: Story = {
   globals: { viewport: { value: "dockrevMobile", isRotated: false } },
   parameters: { dockrevApiScenario: "service-detail-lifecycle-unknown" },

@@ -475,6 +475,116 @@ async function assertServiceLogsTimestampLayout({ baseUrl, browser, label, story
   }
 }
 
+async function assertMobileDetailHeaderLayout({ baseUrl, browser }) {
+  const base = normalizeBaseUrl(baseUrl);
+  const cases = [
+    {
+      kind: "stack",
+      label: "Stack 320px",
+      storyId: "pages-stackdetailpage--mobile-header-layout",
+      viewport: { width: 320, height: 852 },
+      actionSelector: '[aria-label="Stack 操作"]',
+    },
+    {
+      kind: "stack",
+      label: "Stack 960px",
+      storyId: "pages-stackdetailpage--mobile-header-layout",
+      viewport: { width: 960, height: 852 },
+      actionSelector: '[aria-label="Stack 操作"]',
+    },
+    {
+      kind: "service",
+      label: "Service 393px",
+      storyId: "pages-servicedetailpage--mobile-header-layout",
+      viewport: { width: 393, height: 852 },
+      actionSelector: '[aria-label="服务操作"]',
+    },
+  ];
+
+  for (const testCase of cases) {
+    const page = await browser.newPage();
+    const pageErrors = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    try {
+      await page.setViewportSize(testCase.viewport);
+      const url = new URL("iframe.html", base);
+      url.searchParams.set("id", testCase.storyId);
+      url.searchParams.set("viewMode", "story");
+      await page.goto(url.toString(), { waitUntil: "domcontentloaded" });
+      await page.waitForFunction(
+        () => {
+          const root = document.querySelector("#storybook-root, #root");
+          return Boolean(root && root.childElementCount > 0);
+        },
+        null,
+        { timeout: 15_000 },
+      );
+      await page.locator(".appShellWithDetailSidebar").waitFor({ timeout: 15_000 });
+      await page.locator(".topbarLeft .brandLogoThemeSwitch").waitFor({ timeout: 10_000 });
+      await page.locator(testCase.actionSelector).waitFor({ timeout: 10_000 });
+
+      const layout = await page.evaluate((actionSelector) => {
+        const shell = document.querySelector(".appShell");
+        const topbar = document.querySelector(".topbarMain");
+        const brand = document.querySelector(".topbarLeft .brandLogoThemeSwitch");
+        const action = document.querySelector(actionSelector);
+        if (!(shell instanceof HTMLElement && topbar instanceof HTMLElement && brand instanceof HTMLElement && action instanceof HTMLElement)) {
+          return null;
+        }
+        const brandRect = brand.getBoundingClientRect();
+        const actionRect = action.getBoundingClientRect();
+        const topbarRect = topbar.getBoundingClientRect();
+        return {
+          shellClassName: shell.className,
+          brandWidth: brandRect.width,
+          brandHeight: brandRect.height,
+          brandOverflow: getComputedStyle(brand).overflow,
+          actionWidth: actionRect.width,
+          actionHeight: actionRect.height,
+          topbarHeight: topbarRect.height,
+          topbarOverflow: topbar.scrollWidth - topbar.clientWidth,
+          documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        };
+      }, testCase.actionSelector);
+
+      if (!layout) throw new Error(`${testCase.label} header elements are incomplete.`);
+      if (!layout.shellClassName.includes(`appShell${testCase.kind === "stack" ? "Stack" : "Service"}Detail`)) {
+        throw new Error(`${testCase.label} route-specific AppShell class is missing: ${layout.shellClassName}`);
+      }
+      if (!layout.shellClassName.includes("appShellWithDetailSidebar")) {
+        throw new Error(`${testCase.label} detail shell class is missing: ${layout.shellClassName}`);
+      }
+      if (testCase.kind === "stack") {
+        if (!approxEqual(layout.brandWidth, 124, 1) || !approxEqual(layout.brandHeight, 36, 1)) {
+          throw new Error(`${testCase.label} should render the full 124px wordmark: ${JSON.stringify(layout)}`);
+        }
+        if (layout.brandOverflow === "hidden" || layout.brandOverflow === "clip") {
+          throw new Error(`${testCase.label} must not clip the wordmark: ${JSON.stringify(layout)}`);
+        }
+      } else if (layout.brandWidth > 36) {
+        throw new Error(`${testCase.label} should retain the icon-only brand width: ${JSON.stringify(layout)}`);
+      }
+      if (layout.actionWidth < 44 || layout.actionHeight < 44) {
+        throw new Error(`${testCase.label} action entry lost its 44px touch target: ${JSON.stringify(layout)}`);
+      }
+      if (layout.topbarHeight > 68) {
+        throw new Error(`${testCase.label} header is no longer a single row: ${JSON.stringify(layout)}`);
+      }
+      if (layout.topbarOverflow > 1 || layout.documentOverflow > 1) {
+        throw new Error(`${testCase.label} introduced horizontal overflow: ${JSON.stringify(layout)}`);
+      }
+    } catch (error) {
+      const diagnostics = await page.evaluate(() => ({
+        bodyText: document.body?.innerText?.slice(0, 600) ?? "",
+        rootHtml: document.querySelector("#storybook-root, #root")?.innerHTML?.slice(0, 600) ?? "",
+      })).catch(() => ({ bodyText: "", rootHtml: "" }));
+      throw new Error(`${testCase.label} fixture failed: ${error instanceof Error ? error.message : String(error)}; pageErrors=${JSON.stringify(pageErrors)}; diagnostics=${JSON.stringify(diagnostics)}`);
+    } finally {
+      await page.close().catch(() => {});
+    }
+  }
+}
+
 async function assertServiceLogsFollowAfterNewLog({
   baseUrl,
   browser,
@@ -1016,6 +1126,7 @@ async function runInteractive({ baseUrl, browser }) {
   }
 
   // Keep the rollback refresh race in the CI interaction suite, not only in the story play callback.
+  await assertMobileDetailHeaderLayout({ baseUrl, browser });
   await runRollbackRefreshRace({ baseUrl, browser });
 
   await assertServiceLogsTimestampLayout({
