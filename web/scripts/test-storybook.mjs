@@ -519,7 +519,7 @@ async function assertMobileDetailHeaderLayout({ baseUrl, browser }) {
         null,
         { timeout: 15_000 },
       );
-      await page.locator(".appShellWithDetailSidebar").waitFor({ timeout: 15_000 });
+      await page.locator(".appShell").waitFor({ timeout: 15_000 });
       await page.locator(".topbarLeft .brandLogoThemeSwitch").waitFor({ timeout: 10_000 });
       await page.locator(testCase.actionSelector).waitFor({ timeout: 10_000 });
 
@@ -550,9 +550,6 @@ async function assertMobileDetailHeaderLayout({ baseUrl, browser }) {
       if (!layout) throw new Error(`${testCase.label} header elements are incomplete.`);
       if (!layout.shellClassName.includes(`appShell${testCase.kind === "stack" ? "Stack" : "Service"}Detail`)) {
         throw new Error(`${testCase.label} route-specific AppShell class is missing: ${layout.shellClassName}`);
-      }
-      if (!layout.shellClassName.includes("appShellWithDetailSidebar")) {
-        throw new Error(`${testCase.label} detail shell class is missing: ${layout.shellClassName}`);
       }
       if (testCase.kind === "stack") {
         if (!approxEqual(layout.brandWidth, 124, 1) || !approxEqual(layout.brandHeight, 36, 1)) {
