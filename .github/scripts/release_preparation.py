@@ -24,6 +24,7 @@ SCHEMA_VERSION = 1
 WORKFLOW_FILE = "release-preparation.yml"
 ARTIFACT_PREFIX = "release-preparation-"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 RECOVERY_RE = re.compile(r"^release-recovery-[0-9a-f]{40}$")
 FIXED_FILES = (
     "target/ci/amd64/release/dockrev",
@@ -38,6 +39,9 @@ FIXED_FILES = (
     "dist/ci/docker/amd64/dockrev-supervisor",
     "dist/ci/docker/arm64/dockrev",
     "dist/ci/docker/arm64/dockrev-supervisor",
+)
+REQUIRED_WEB_FILES = (
+    "web/dist/.dockrev-route-contract.json",
 )
 
 
@@ -66,7 +70,7 @@ def expected_files(root: Path) -> list[str]:
             for path in web_root.rglob("*")
             if path.is_file() and not path.is_symlink()
         ]
-    return sorted(set(FIXED_FILES) | set(web_files))
+    return sorted(set(FIXED_FILES) | set(REQUIRED_WEB_FILES) | set(web_files))
 
 
 def build_manifest(
@@ -162,6 +166,42 @@ def validate_manifest(payload: Any, target_sha: str, *, allow_recovery: bool = T
         return False, "preparation manifest is missing a required release file"
     if not any(path.startswith("web/dist/") for path in paths):
         return False, "preparation manifest is missing web/dist files"
+    if not set(REQUIRED_WEB_FILES).issubset(paths):
+        return False, "preparation manifest is missing the web route contract"
+    return True, "ok"
+
+
+def verify_manifest_files(
+    root: Path,
+    payload: Any,
+    target_sha: str,
+    *,
+    allow_recovery: bool = True,
+    expected_manifest_sha256: str | None = None,
+) -> tuple[bool, str]:
+    valid, reason = validate_manifest(payload, target_sha, allow_recovery=allow_recovery)
+    if not valid:
+        return False, reason
+    if expected_manifest_sha256 is not None:
+        if not DIGEST_RE.fullmatch(expected_manifest_sha256):
+            return False, "expected preparation manifest digest is invalid"
+        if manifest_digest(payload) != expected_manifest_sha256:
+            return False, "preparation manifest digest does not match expected"
+
+    root = root.resolve()
+    for entry in payload["files"]:
+        relative = entry["path"]
+        path = root / relative
+        try:
+            path.resolve(strict=False).relative_to(root)
+        except ValueError:
+            return False, f"preparation file is missing or unsafe: {relative}"
+        if path.is_symlink() or not path.is_file():
+            return False, f"preparation file is missing or unsafe: {relative}"
+        if path.stat().st_size != entry["size"]:
+            return False, f"preparation file size does not match: {relative}"
+        if sha256_file(path) != entry["sha256"]:
+            return False, f"preparation file digest does not match: {relative}"
     return True, "ok"
 
 
@@ -383,6 +423,12 @@ def parse_args() -> argparse.Namespace:
     validate.add_argument("--manifest", type=Path, required=True)
     validate.add_argument("--target-sha", required=True)
     validate.add_argument("--allow-recovery", action="store_true")
+    verify = sub.add_parser("verify")
+    verify.add_argument("--root", default=".")
+    verify.add_argument("--manifest", type=Path, required=True)
+    verify.add_argument("--target-sha", required=True)
+    verify.add_argument("--allow-recovery", action="store_true")
+    verify.add_argument("--expected-manifest-sha256")
     ensure = sub.add_parser("ensure")
     ensure.add_argument("--repository", required=True)
     ensure.add_argument("--token", default=os.environ.get("GITHUB_TOKEN", ""))
@@ -417,6 +463,17 @@ def main() -> int:
         if args.command == "validate":
             payload = json.loads(args.manifest.read_text())
             valid, reason = validate_manifest(payload, args.target_sha, allow_recovery=args.allow_recovery)
+            print(reason)
+            return 0 if valid else 1
+        if args.command == "verify":
+            payload = json.loads(args.manifest.read_text())
+            valid, reason = verify_manifest_files(
+                Path(args.root),
+                payload,
+                args.target_sha,
+                allow_recovery=args.allow_recovery,
+                expected_manifest_sha256=args.expected_manifest_sha256,
+            )
             print(reason)
             return 0 if valid else 1
         if not args.token:
