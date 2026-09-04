@@ -39,11 +39,12 @@
 | async-data-continuity | Dockrev：异步数据连续性与加载反馈 | active | `async-data-continuity/SPEC.md` | 2026-08-19 | fast-track（统一骨架、延迟遮罩、错误重试与 fresh snapshot v2 合同） |
 | ci-duration-optimization | Dockrev：CI 时长优化与发布预构建 | active | `ci-duration-optimization/SPEC.md` | 2026-09-03 | fast-track（同 SHA 源码门禁、一天准备产物、缺失恢复） |
 | theme-preference-controls | Dockrev：三态主题偏好与响应式入口 | active | `theme-preference-controls/SPEC.md` | 2026-08-14 | fast-track（system/light/dark、AppShell 桌面侧栏、移动 Settings、Storybook 与 ui_demo 证据） |
+| unified-page-context-navigation | Dockrev：统一页面内导航 | active | `unified-page-context-navigation/SPEC.md` | 2026-09-04 | fast-track（单一 AppShell 侧栏、页面内上下文导航、移动抽屉与服务树） |
 | 5dnjc | Dockrev：任务日志实时输出与事件可见性 | active | `5dnjc-job-live-output-event-visibility/SPEC.md` | 2026-08-03 | fast-track（无持久化 job_live_log SSE、命令摘要去重、EVEN 默认隐藏与浏览器偏好） |
 | 9cq2a | Dockrev：服务详情操作下拉与生命周期任务 | active | `9cq2a-service-lifecycle-actions/SPEC.md` | 2026-07-30 | fast-track（服务级 lifecycle queue、split dropdown、页头服务名与 Storybook evidence） |
 | service-lifecycle-observability | Dockrev：服务生命周期可观测性 | active | `service-lifecycle-observability/SPEC.md` | 2026-08-27 | fast-track（持久生命周期账本、Engine events observer、图表标注与系统日志行） |
 | 8m2dp | Dockrev：GitHub Pages 公共 Web Demo（/demo/）正式化 | 已完成 | `8m2dp-pages-public-demo/SPEC.md` | 2026-07-13 | fast-track（Pages `/demo/` public surface + BASE_URL 路由 + session mock state + docs discoverability） |
-| c2r2u | Dockrev：详情页双侧栏与 Stack→Service 树导航 | active | `c2r2u-detail-route-service-navigation/SPEC.md` | 2026-07-09 | fast-track（detail AppShell + Stack→Service tree + mobile drawer/bottom nav + Storybook evidence） |
+| c2r2u | Dockrev：详情页双侧栏与 Stack→Service 树导航 | superseded | `c2r2u-detail-route-service-navigation/SPEC.md` | 2026-09-04 | successor: `unified-page-context-navigation/SPEC.md`；保留详情树行为与历史证据 |
 | r8kpa | Dockrev：Web PWA 离线壳、更新提示与分级缓存 | 部分完成（5/6） | `r8kpa-web-pwa-offline-shell/SPEC.md` | 2026-07-12 | fast-track（PWA shell + update prompt + readonly snapshot cache 已收口；service history 纳入 fresh snapshot read model） |
 | 8hewd | Dockrev：概览发现异常详情改为点击弹窗并消除双 tooltip | 已完成 | `8hewd-overview-discovery-error-detail-dialog/SPEC.md` | 2026-04-05 | fast-track（shared dialog primitive + overview discovery dialog + storybook evidence） |
 | hb4cp | Dockrev：服务详情页手动回滚到升级前版本 | 已完成 | `hb4cp-service-manual-rollback/SPEC.md` | 2026-04-12 | fast-track（PR #201 merge-ready；2026-04-12 follow-up fixes rollback target stale disable race, adds diagnostics logs, and refresh-race Storybook evidence） |
@@ -148,7 +149,7 @@
 | ttfyf | Dockrev：更新确认弹窗信息收敛 | 已实现 | `ttfyf-update-confirm-information-convergence/SPEC.md` | 2026-05-05 | fast-track（单服务确认与聚合预览组件边界收敛） |
 | r4t8k | Dockrev：服务详情可编辑原始 Compose Tag | active | `r4t8k-service-compose-tag-editor/SPEC.md` | 2026-05-06 | fast-track（Service detail tag editor + compose file patch + lazy suggestions） |
 | sxcmc | Dockrev：服务保护设置补全备份目标直选与备份说明 | 已完成 | `sxcmc-service-backup-target-selector/SPEC.md` | 2026-06-29 | fast-track（service backup-target API + service backup records API + Service detail backup tab + Storybook evidence） |
-| 2jhm2 | Dockrev：AppShell 左侧导航折叠与图标化 | 已实现 | `2jhm2-app-shell-sidebar-collapse-icons/SPEC.md` | 2026-07-04 | fast-track（desktop sidebar collapse + real nav icons + Storybook evidence） |
+| 2jhm2 | Dockrev：AppShell 左侧导航折叠与图标化 | superseded | `2jhm2-app-shell-sidebar-collapse-icons/SPEC.md` | 2026-09-04 | successor: `unified-page-context-navigation/SPEC.md`；折叠偏好合同由单栏壳层替代 |
 | tgc9m | Dockrev：Telegram 内容相关动态卡片通知 | 已实现 | `tgc9m-telegram-dynamic-notification-cards/SPEC.md` | 2026-07-05 | fast-track（dynamic Telegram PNG cards + sendPhoto delivery + disabled text link previews + visual evidence） |
 | 7xt5t | Dockrev：Jobs 队列领取索引与慢告警 | active | `7xt5t-job-queue-claim-performance/SPEC.md` | 2026-07-24 | 已实现，待 PR；fast-track（复合索引 + 限频慢领取 WARN） |
 | 5xeat | Dockrev：任务历史保留期与游标分页 | active | `5xeat-job-history-retention-pagination/SPEC.md` | 2026-07-25 | fast-track（101 SQLite 增长治理 + Docker stats 部分成功 + jobs cursor） |

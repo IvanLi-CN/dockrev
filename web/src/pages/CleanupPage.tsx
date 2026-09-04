@@ -19,6 +19,7 @@ import {
 } from '../api'
 import { useConfirm } from '../confirm'
 import { useManagementEventBatch } from '../managementEvents'
+import { CleanupContextNavigation } from '../components/PageContextNavigation'
 import { navigate } from '../routes'
 import { Button, Mono, Pill, RefreshIcon, SectionTitle, Tabs, TabsList, TabsTrigger, TrashIcon } from '../ui'
 import {
@@ -40,6 +41,7 @@ import {
   mergeCleanupResponses,
   kindSummary,
   projectResponseForPreset,
+  filterCleanupResponseForView,
   staleBucketsForResponse,
   toErrorMessage,
   type CleanupUsageBucket,
@@ -516,8 +518,9 @@ function CleanupConfirmBody(props: { response: CleanupScanResponse; targetLabel:
 export function CleanupPage(props: {
   onLastScanHint?: (lastScan?: string) => void
   onTopActions: (node: ReactNode) => void
+  onContextNavigation?: (node: ReactNode) => void
 }) {
-  const { onLastScanHint, onTopActions } = props
+  const { onLastScanHint, onTopActions, onContextNavigation } = props
   const confirm = useConfirm()
   const activeScanIdRef = useRef<string | null>(null)
   const activeScanEventsRef = useRef<EventSource | null>(null)
@@ -530,6 +533,8 @@ export function CleanupPage(props: {
   const [actionError, setActionError] = useState<string | null>(null)
   const [busyActionKey, setBusyActionKey] = useState<string | null>(null)
   const [confirmPhase, setConfirmPhase] = useState<'idle' | 'refreshing' | 'applying'>('idle')
+  const [viewScope, setViewScope] = useState<CleanupScope>('all')
+  const [viewResourceKinds, setViewResourceKinds] = useState<CleanupResourceKind[]>([])
   const confirmRequestVersionRef = useRef(0)
   const pageScanRequestVersionRef = useRef(0)
   const retryTargetRef = useRef<CleanupActionTarget | null>(null)
@@ -913,6 +918,28 @@ export function CleanupPage(props: {
     void refreshPageScan()
   }
 
+  const response = projected
+  const viewResponse = useMemo(
+    () => (response ? filterCleanupResponseForView(response, viewScope, viewResourceKinds) : null),
+    [response, viewResourceKinds, viewScope],
+  )
+  const contextNavigation = useMemo(
+    () => (
+      <CleanupContextNavigation
+        scope={viewScope}
+        onScopeChange={(scope) => setViewScope(scope as CleanupScope)}
+        resourceKinds={viewResourceKinds}
+        availableResourceKinds={(Object.keys(KIND_LABEL) as CleanupResourceKind[]).map((key) => ({ key, label: KIND_LABEL[key] }))}
+        onResourceKindsChange={setViewResourceKinds}
+      />
+    ),
+    [viewResourceKinds, viewScope],
+  )
+  useEffect(() => {
+    onContextNavigation?.(contextNavigation)
+    return () => onContextNavigation?.(null)
+  }, [contextNavigation, onContextNavigation])
+
   if (loading && !pageScan) {
     return (
       <div className="page cleanupPage">
@@ -935,8 +962,6 @@ export function CleanupPage(props: {
       </div>
     )
   }
-
-  const response = projected
 
   return (
     <div className="page cleanupPage">
@@ -1064,7 +1089,7 @@ export function CleanupPage(props: {
       {pageError ? <div className="cleanupAlert cleanupAlertError">{pageError}</div> : null}
       {actionError && !statusRailError ? <div className="cleanupAlert cleanupAlertError">{actionError}</div> : null}
 
-      {response ? (
+      {viewResponse ? (
         <CleanupResponseView
           busyActionKey={busyActionKey}
           scanBusy={initialScanPending || refreshing}
@@ -1087,7 +1112,7 @@ export function CleanupPage(props: {
               targetLabel: stack.stackName,
             })
           }
-          response={response}
+          response={viewResponse}
           staleResourceKeys={staleResourceKeys}
         />
       ) : null}

@@ -14,15 +14,15 @@ import {
 import { navigate, type SettingsSection } from '../routes'
 import { Button } from '../ui'
 
-type SettingsMobileDestination = {
+export type SettingsMobileDestination = {
   section: SettingsSection
   title: string
   description: string
   icon: LucideIcon
 }
 
-const DESTINATIONS: SettingsMobileDestination[] = [
-  { section: 'account', title: '账户与鉴权', description: '当前身份与 Forward Auth', icon: UserRound },
+export const SETTINGS_DESTINATIONS: SettingsMobileDestination[] = [
+    { section: 'account', title: '账户与鉴权', description: '当前身份与 Forward Auth', icon: UserRound },
   { section: 'maintenance', title: '维护工具', description: '自我升级与部署检查', icon: Wrench },
   { section: 'backup', title: '备份', description: '更新前备份默认策略', icon: ArchiveRestore },
   { section: 'monitoring', title: '资源监控', description: '采样频率与历史保留', icon: Activity },
@@ -33,7 +33,7 @@ const DESTINATIONS: SettingsMobileDestination[] = [
 ]
 
 export function SettingsMobileNavigation(props: { section?: SettingsSection }) {
-  const current = DESTINATIONS.find((item) => item.section === props.section)
+  const current = SETTINGS_DESTINATIONS.find((item) => item.section === props.section)
 
   if (current) {
     return (
@@ -54,7 +54,7 @@ export function SettingsMobileNavigation(props: { section?: SettingsSection }) {
 
   return (
     <nav className="settingsMobileIndex" aria-label="设置分类">
-      {DESTINATIONS.map((item) => {
+      {SETTINGS_DESTINATIONS.map((item) => {
         const ItemIcon = item.icon
         return (
           <Button

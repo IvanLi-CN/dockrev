@@ -396,3 +396,40 @@ export function projectResponseForPreset(pageScan: CleanupScanResponse, preset: 
     unownedGroup,
   }
 }
+
+/** Apply cleanup context filters to the rendered response only. The scan and
+ * apply requests continue to use the original page scope and fingerprint. */
+export function filterCleanupResponseForView(
+  response: CleanupScanResponse,
+  scope: 'all' | 'stack' | 'service',
+  resourceKinds: CleanupResourceKind[],
+): CleanupScanResponse {
+  const kindSet = new Set(resourceKinds)
+  const keep = (resource: CleanupResourceItem) => kindSet.size === 0 || kindSet.has(resource.kind)
+  const stackGroups = response.stackGroups.flatMap((stack) => {
+    const stackOrphans = scope === 'service' ? [] : stack.stackOrphans.filter(keep)
+    const services = scope === 'stack' ? [] : stack.services.map((service) => ({ ...service, resources: service.resources.filter(keep) })).filter((service) => service.resources.length > 0)
+    const resources = [...stackOrphans, ...services.flatMap((service) => service.resources)]
+    if (resources.length === 0) return []
+    return [{
+      ...stack,
+      stackOrphans,
+      services,
+      estimatedReclaimableBytes: resources.reduce((sum, item) => sum + (item.estimatedReclaimableBytes ?? 0), 0),
+      hasUnknownSize: resources.some(itemHasUnknownSize),
+    }]
+  })
+  const unownedResources = scope === 'service' ? [] : (response.unownedGroup?.resources ?? []).filter(keep)
+  const unownedGroup = unownedResources.length > 0 && response.unownedGroup
+    ? { ...response.unownedGroup, resources: unownedResources, estimatedReclaimableBytes: unownedResources.reduce((sum, item) => sum + (item.estimatedReclaimableBytes ?? 0), 0), hasUnknownSize: unownedResources.some(itemHasUnknownSize) }
+    : null
+  const allResources = [...stackGroups.flatMap((stack) => [...stack.stackOrphans, ...stack.services.flatMap((service) => service.resources)]), ...(unownedGroup?.resources ?? [])]
+  return {
+    ...response,
+    scope,
+    stackGroups,
+    unownedGroup,
+    estimatedReclaimableBytes: allResources.reduce((sum, item) => sum + (item.estimatedReclaimableBytes ?? 0), 0),
+    hasUnknownSize: allResources.some(itemHasUnknownSize),
+  }
+}

@@ -62,6 +62,7 @@ function renderOverview(options?: {
     >
       {({
         onLastScanHint,
+        onContextNavigation,
         onMobileNavContent,
         onSidebarNavContent,
         onTopActions,
@@ -69,6 +70,7 @@ function renderOverview(options?: {
       }) => (
         <OverviewPage
           onLastScanHint={onLastScanHint}
+          onContextNavigation={onContextNavigation}
           onMobileNavContent={onMobileNavContent}
           onSidebarNavContent={onSidebarNavContent}
           onTopActions={onTopActions}

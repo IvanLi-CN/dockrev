@@ -1,10 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { writeDockrevRuntimeMode, type DockrevRuntimeMode } from "../../demo/runtime";
-import {
-  APP_SHELL_SIDEBAR_COLLAPSED_STORAGE_KEY,
-  AppShell,
-} from "../../Shell";
+import { AppShell } from "../../Shell";
 import { DetailRouteServiceTree } from "../../components/DetailRouteServiceTree";
+import {
+  QueueContextNavigation,
+  SettingsContextNavigation,
+} from "../../components/PageContextNavigation";
 import { GitHubReleaseDrawer } from "../../components/GitHubReleaseDrawer";
 import {
   CLOSED_GITHUB_RELEASE_DRAWER_STATE,
@@ -36,15 +37,11 @@ export function PageHarness(props: {
     onTopbarContent: (node: ReactNode) => void;
     onSidebarNavContent: (node: ReactNode) => void;
     onMobileNavContent: (node: ReactNode) => void;
+    onContextNavigation: (node: ReactNode) => void;
     onLastScanHint: (lastScan?: string) => void;
   }) => ReactNode;
 }) {
-  if (typeof window !== "undefined" && props.sidebarCollapsed !== undefined) {
-    window.localStorage.setItem(
-      APP_SHELL_SIDEBAR_COLLAPSED_STORAGE_KEY,
-      props.sidebarCollapsed ? "1" : "0",
-    );
-  }
+  void props.sidebarCollapsed;
   return <PageHarnessInner key={currentHref(props.route)} {...props} />;
 }
 
@@ -62,14 +59,14 @@ function PageHarnessInner(props: {
     onTopbarContent: (node: ReactNode) => void;
     onSidebarNavContent: (node: ReactNode) => void;
     onMobileNavContent: (node: ReactNode) => void;
+    onContextNavigation: (node: ReactNode) => void;
     onLastScanHint: (lastScan?: string) => void;
   }) => ReactNode;
 }) {
   const [topActions, setTopActions] = useState<ReactNode>(null);
   const [pageTitle, setPageTitle] = useState(props.title ?? "");
   const [topbarContent, setTopbarContent] = useState<ReactNode>(null);
-  const [sidebarNavContent, setSidebarNavContent] = useState<ReactNode>(null);
-  const [mobileNavContent, setMobileNavContent] = useState<ReactNode>(null);
+  const [contextNavigation, setContextNavigation] = useState<ReactNode>(null);
   const [lastScanHint, setLastScanHint] = useState<string | undefined>(
     undefined,
   );
@@ -77,16 +74,22 @@ function PageHarnessInner(props: {
     CLOSED_GITHUB_RELEASE_DRAWER_STATE,
   );
   const [route, setRoute] = useState<Route>(props.route);
-  const detailSidebarContent =
-    route.name === "stack" || route.name === "service" ? (
+  const detailContextNavigation =
+    route.name === "services" || route.name === "stack" || route.name === "service" ? (
       <DetailRouteServiceTree route={route} variant="desktop" />
     ) : null;
-  const mobileDrawerContent =
-    route.name === "stack" || route.name === "service" ? (
-      <DetailRouteServiceTree route={route} variant="mobile" />
-    ) : (
-      mobileNavContent
-    );
+  const staticContextNavigation =
+    route.name === "queue" ||
+    route.name === "job" ||
+    route.name === "version-inference" ||
+    route.name === "ghcr-webhooks" ||
+    route.name === "ghcr-webhook-inbox" ? (
+      <QueueContextNavigation />
+    ) : route.name === "settings" || route.name === "ghcr-webhook-registry" ? (
+      <SettingsContextNavigation section={route.name === "settings" ? route.section : "integrations"} />
+    ) : null;
+  const resolvedContextNavigation =
+    detailContextNavigation ?? staticContextNavigation ?? contextNavigation;
 
   useEffect(() => {
     const previousMode = props.runtimeMode ?? null
@@ -159,17 +162,8 @@ function PageHarnessInner(props: {
         pageSubtitle={props.pageSubtitle}
         topActions={topActions}
         topbarContent={topbarContent}
-        sidebarNavContent={sidebarNavContent}
-        detailSidebarContent={detailSidebarContent}
-        detailSidebarTitle={undefined}
-        mobileNavContent={mobileDrawerContent}
-        mobileDrawerTitle={
-          detailSidebarContent
-            ? "服务导航"
-            : mobileDrawerContent
-              ? "页面工具"
-              : undefined
-        }
+        contextNavigation={resolvedContextNavigation}
+        contextNavigationTitle={detailContextNavigation ? "服务导航" : "页面内导航"}
         authIdentity={props.authIdentity}
         lastScanHint={lastScanHint}
       >
@@ -178,8 +172,9 @@ function PageHarnessInner(props: {
           onTopActions: setTopActions,
           onPageTitle: setPageTitle,
           onTopbarContent: setTopbarContent,
-          onSidebarNavContent: setSidebarNavContent,
-          onMobileNavContent: setMobileNavContent,
+          onSidebarNavContent: () => undefined,
+          onMobileNavContent: () => undefined,
+          onContextNavigation: setContextNavigation,
           onLastScanHint: setLastScanHint,
         })}
       </AppShell>

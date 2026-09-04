@@ -21,9 +21,11 @@ type Story = StoryObj<typeof DetailRouteServiceTree>
 
 function render(variant: 'desktop' | 'mobile') {
   return () => (
-    <div style={{ maxWidth: variant === 'mobile' ? 390 : 430, padding: 24 }}>
-      <DetailRouteServiceTree route={route} variant={variant} />
-    </div>
+    <aside className="sidebarContextStoryFrame" data-visual-evidence-surface>
+      <div data-visual-evidence-target>
+        <DetailRouteServiceTree route={route} variant={variant} />
+      </div>
+    </aside>
   )
 }
 
