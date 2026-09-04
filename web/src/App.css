@@ -1614,6 +1614,192 @@ html[data-theme="light"] .brandLogoForLight {
   }
 }
 
+/* Unified page-context navigation shell. Keep the primary rail fixed while
+   the page-owned directory receives the only scrollable sidebar viewport. */
+.appShell {
+  --app-shell-primary-nav-width: 292px;
+  --app-shell-detail-nav-width: 0px;
+  grid-template-columns: var(--app-shell-primary-nav-width) minmax(0, 1fr);
+}
+
+.topbar {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.topbarMain {
+  grid-column: 1;
+}
+
+.sidebar {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 18px 14px 16px;
+  background: color-mix(in srgb, var(--panel2) 98%, transparent);
+  border-right: 1px solid var(--borderColor);
+}
+
+.sidebarContextViewport {
+  min-height: 0;
+  flex: 1 1 auto;
+  margin-top: 12px;
+}
+
+.sidebarContextScroll {
+  height: 100%;
+}
+
+.sidebarContextScroll [data-overlayscrollbars-viewport] {
+  min-height: 0;
+  padding: 0 4px 12px;
+}
+
+.sidebarMeta {
+  flex: 0 0 auto;
+}
+
+.pageContextSection {
+  margin: 0 2px 20px;
+}
+
+.pageContextSectionTitle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 8px 8px;
+  color: var(--muted2);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.pageContextSectionIcon {
+  display: inline-flex;
+  color: var(--color-primary);
+}
+
+.pageContextLink {
+  display: flex;
+  width: 100%;
+  min-height: 38px;
+  align-items: center;
+  gap: 7px;
+  margin: 2px 0;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.pageContextLink:hover,
+.pageContextLink:focus-visible {
+  border-color: color-mix(in srgb, var(--color-primary) 24%, var(--borderColor));
+  background: color-mix(in srgb, var(--dockrev-surface-strong) 78%, transparent);
+  color: var(--text);
+}
+
+.pageContextLinkActive {
+  border-color: color-mix(in srgb, var(--color-primary) 42%, var(--borderColor));
+  background: color-mix(in srgb, var(--color-primary) 14%, var(--panel2));
+  color: var(--text);
+}
+
+.pageContextLinkLabel {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pageContextLinkMeta {
+  max-width: 98px;
+  overflow: hidden;
+  color: var(--muted2);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pageContextLinkCount {
+  min-width: 20px;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
+  border-radius: 999px;
+  color: var(--muted2);
+  font-size: 10px;
+  text-align: center;
+}
+
+.pageContextLinkArrow {
+  flex: 0 0 auto;
+  color: var(--muted2);
+}
+
+.pageContextEmpty {
+  padding: 8px 9px;
+  color: var(--muted2);
+  font-size: 11px;
+}
+
+.pageContextReset {
+  width: 100%;
+  justify-content: flex-start;
+  margin-top: 4px;
+  color: var(--muted2);
+  font-size: 11px;
+}
+
+.detailRouteTreeSearch {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 10px 0 4px;
+  color: var(--muted2);
+}
+
+.detailRouteTreeSearch input {
+  min-width: 0;
+  height: 32px;
+  padding-inline: 9px;
+  font-size: 12px;
+}
+
+@media (max-width: 960px) {
+  .appShell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "top" "main";
+  }
+
+  .topbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .mobileMenuEmbeddedContent {
+    overflow-y: auto;
+  }
+
+  .mobileMenuEmbeddedContent .pageContextSection {
+    margin-bottom: 16px;
+  }
+
+  .mobileMenuEmbeddedContent .pageContextLink {
+    min-height: 42px;
+  }
+}
+
 html[data-theme="light"] .versionTagsPopover {
   box-shadow: 0 18px 64px rgba(2, 6, 23, 0.18);
 }
@@ -13549,6 +13735,10 @@ html[data-theme="light"] .btnPrimary {
     padding-bottom: calc(max(16px, env(safe-area-inset-bottom)) + 150px);
   }
 
+  .mobileMenuDrawer:has(.homepageDrawerBottomSummary) .mobileDrawerFooter {
+    margin-bottom: 150px;
+  }
+
   .mobileMenuEmbeddedContent:has(.homepageDrawerNavControls) {
     order: 1;
     margin: 0 0 8px;
@@ -13563,6 +13753,10 @@ html[data-theme="light"] .btnPrimary {
 
   .mobileMenuDrawer:has(.homepageDrawerNavControls) .mobileMeta {
     order: 3;
+  }
+
+  .mobileMenuDrawer:has(.homepageDrawerNavControls) .mobileDrawerFooter {
+    order: 4;
   }
 
   .homepageDrawerNavControls {
@@ -13746,6 +13940,59 @@ html[data-theme="light"] .btnPrimary {
     font-size: 12px;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .mobileDrawerFooter {
+    flex: 0 0 auto;
+    margin-top: auto;
+    border-top: 1px solid var(--borderColor);
+    padding-top: 14px;
+  }
+
+  .mobileDrawerFooter .topbarUserSlotSidebar {
+    width: 100%;
+  }
+
+  .mobileDrawerFooter .topbarUserSlotSidebar .topbarUserTrigger {
+    width: 100%;
+    max-width: none;
+    height: 38px;
+    min-width: 0;
+    min-height: 38px;
+    flex: 1 1 auto;
+    justify-content: flex-start;
+    padding: 0 12px;
+    border-radius: 10px;
+  }
+
+  .mobileDrawerFooter .topbarUserTriggerLabel {
+    display: block;
+  }
+
+  .mobileDrawerThemeControl {
+    margin-top: 10px;
+  }
+
+  .mobileDrawerThemeControl .themePreferenceSegmented {
+    min-width: 0;
+  }
+
+  .mobileDrawerFooterDivider {
+    height: 1px;
+    margin: 14px 0 10px;
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--borderColor) 90%, transparent),
+      color-mix(in srgb, var(--color-primary) 14%, transparent)
+    );
+  }
+
+  .mobileDrawerFooter .sidebarMeta {
+    padding: 0;
+  }
+
+  .mobileDrawerFooter .sidebarAppMetaContent {
+    justify-content: space-between;
   }
 
   .mobileBottomNav {
@@ -16987,5 +17234,186 @@ html[data-theme="light"] .homepageHeaderSearchPopover {
   .notFoundViewActions .btn {
     flex: 1 1 0;
     min-width: 0;
+  }
+}
+
+/* Final unified context-navigation overrides. */
+.appShell {
+  --app-shell-primary-nav-width: 292px;
+  --app-shell-detail-nav-width: 0px;
+  grid-template-columns: var(--app-shell-primary-nav-width) minmax(0, 1fr);
+}
+
+.topbar { grid-template-columns: minmax(0, 1fr); }
+.appShell .topbarMain {
+  display: flex !important;
+  grid-column: 1;
+  grid-template-columns: none !important;
+  grid-template-areas: none !important;
+  justify-content: initial;
+  gap: 18px;
+  padding: 0 22px;
+}
+.appShell .topbarMain .topbarLeft {
+  display: flex !important;
+  flex: 0 0 auto;
+  min-width: max-content;
+}
+.appShell .topbarIdentity {
+  display: flex !important;
+  width: auto;
+  height: auto;
+}
+.appShell .topbarIdentity .brandLogoThemeSwitch {
+  display: flex !important;
+  width: 136px;
+  height: 39px;
+}
+.appShell .topbarIdentity .brandLogo { width: 136px; height: 39px; }
+.appShell .topbarGlobalContent { display: block; flex: 1 1 auto; min-width: 0; }
+.appShell .topbarRight { display: flex !important; flex: 0 0 auto; margin-left: auto; }
+
+.sidebar {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 18px 14px 16px;
+  background: color-mix(in srgb, var(--panel2) 98%, transparent);
+  border-right: 1px solid var(--borderColor);
+}
+
+.sidebar > .nav {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+}
+.sidebar > .nav .navItem {
+  min-width: 0;
+  min-height: 44px;
+  justify-content: center;
+  padding: 8px 4px;
+}
+.sidebar > .nav .navItemLabel { display: none; }
+.sidebar > .nav .navItemIcon { width: 21px; height: 21px; }
+.sidebarContextViewport { min-height: 0; flex: 1 1 auto; margin-top: 12px; }
+.sidebarContextScroll { height: 100%; }
+.sidebarContextScroll [data-overlayscrollbars-viewport] { min-height: 0; padding: 0 4px 12px; }
+.sidebarContextViewport .homepageDrawerBottomSummary { display: none; }
+.sidebarMeta { flex: 0 0 auto; }
+
+.pageContextSection { margin: 0 2px 20px; }
+.pageContextSectionTitle {
+  display: flex; align-items: center; gap: 7px; margin: 0 8px 8px;
+  color: var(--muted2); font-size: 11px; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase;
+}
+.pageContextSectionIcon { display: inline-flex; color: var(--color-primary); }
+.pageContextLink {
+  display: flex; width: 100%; min-height: 38px; align-items: center; gap: 7px; margin: 2px 0; padding: 7px 9px;
+  border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; text-align: left; text-decoration: none; cursor: pointer;
+}
+.pageContextLink:hover, .pageContextLink:focus-visible { border-color: color-mix(in srgb, var(--color-primary) 24%, var(--borderColor)); background: color-mix(in srgb, var(--dockrev-surface-strong) 78%, transparent); color: var(--text); }
+.pageContextLinkActive { border-color: color-mix(in srgb, var(--color-primary) 42%, var(--borderColor)); background: color-mix(in srgb, var(--color-primary) 14%, var(--panel2)); color: var(--text); }
+.pageContextLinkLabel { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pageContextLinkMeta { max-width: 98px; overflow: hidden; color: var(--muted2); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.pageContextLinkCount { min-width: 20px; padding: 1px 5px; border: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent); border-radius: 999px; color: var(--muted2); font-size: 10px; text-align: center; }
+.pageContextLinkArrow { flex: 0 0 auto; color: var(--muted2); }
+.pageContextEmpty { padding: 8px 9px; color: var(--muted2); font-size: 11px; }
+.pageContextReset { width: 100%; justify-content: flex-start; margin-top: 4px; color: var(--muted2); font-size: 11px; }
+.sidebarContextStoryFrame {
+  width: 292px;
+  padding: 18px 16px 16px;
+  background: var(--panel2);
+}
+.detailRouteTreeSearch { display: flex; align-items: center; gap: 7px; margin: 10px 0 4px; color: var(--muted2); }
+.detailRouteTreeSearch input { min-width: 0; height: 32px; padding-inline: 9px; font-size: 12px; }
+
+@media (max-width: 960px) {
+  .appShell { grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "main"; }
+  .topbar { grid-template-columns: minmax(0, 1fr); }
+  .appShell .topbarMain { display: flex !important; padding: 0 14px; gap: 10px; }
+  .topbarGlobalContent { flex: 1 1 auto; }
+  .sidebar { display: none; }
+  .mobileMenuEmbeddedContent { overflow-y: auto; }
+  .mobileMenuEmbeddedContent .pageContextSection { margin-bottom: 16px; }
+  .mobileMenuEmbeddedContent .pageContextLink { min-height: 42px; }
+
+  :is(.appShellStackDetail, .appShellServiceDetail) .topbarMain {
+    display: grid !important;
+    grid-template-columns: auto minmax(0, 1fr) auto !important;
+    grid-template-areas: 'left context actions' !important;
+    min-height: 56px;
+    align-items: center;
+    column-gap: 8px;
+    padding: 0 14px;
+  }
+
+  :is(.appShellStackDetail, .appShellServiceDetail) .topbarLeft {
+    grid-area: left;
+    min-height: 56px;
+  }
+
+  :is(.appShellStackDetail, .appShellServiceDetail) .topbarServiceContext {
+    grid-area: context;
+    align-self: stretch;
+    min-width: 0;
+    min-height: 56px;
+    overflow: hidden;
+  }
+
+  :is(.appShellStackDetail, .appShellServiceDetail) .topbarRight {
+    display: contents !important;
+  }
+
+  :is(.appShellStackDetail, .appShellServiceDetail) .topActions {
+    grid-area: actions;
+    min-width: 44px;
+    min-height: 44px;
+    gap: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  :is(.appShellStackDetail, .appShellServiceDetail) .topActions .serviceDesktopActions {
+    display: none;
+  }
+
+  :is(.appShellStackDetail, .appShellServiceDetail) .topActions .serviceMobileActionMenu {
+    display: block;
+    width: 44px;
+    height: 44px;
+  }
+
+  :is(.appShellStackDetail, .appShellServiceDetail) .topActions .serviceMobileActionMenuTrigger {
+    width: 44px !important;
+    min-width: 44px !important;
+    height: 44px !important;
+    min-height: 44px !important;
+    padding: 0;
+  }
+
+  .appShellStackDetail .topbarIdentity .brandLogoThemeSwitch {
+    width: 124px !important;
+    height: 36px !important;
+  }
+
+  .appShellStackDetail .topbarIdentity .brandLogo {
+    width: 124px !important;
+    height: 36px !important;
+  }
+
+  .appShellServiceDetail .topbarIdentity .brandLogoThemeSwitch {
+    width: 36px !important;
+    height: 36px !important;
+    overflow: hidden;
+  }
+
+  .appShellServiceDetail .topbarIdentity .brandLogo {
+    width: 124px !important;
+    max-width: none;
+    height: 36px !important;
+    object-position: left center;
   }
 }

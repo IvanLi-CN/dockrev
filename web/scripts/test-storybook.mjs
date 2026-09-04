@@ -519,7 +519,7 @@ async function assertMobileDetailHeaderLayout({ baseUrl, browser }) {
         null,
         { timeout: 15_000 },
       );
-      await page.locator(".appShellWithDetailSidebar").waitFor({ timeout: 15_000 });
+      await page.locator(".appShell").waitFor({ timeout: 15_000 });
       await page.locator(".topbarLeft .brandLogoThemeSwitch").waitFor({ timeout: 10_000 });
       await page.locator(testCase.actionSelector).waitFor({ timeout: 10_000 });
 
@@ -550,9 +550,6 @@ async function assertMobileDetailHeaderLayout({ baseUrl, browser }) {
       if (!layout) throw new Error(`${testCase.label} header elements are incomplete.`);
       if (!layout.shellClassName.includes(`appShell${testCase.kind === "stack" ? "Stack" : "Service"}Detail`)) {
         throw new Error(`${testCase.label} route-specific AppShell class is missing: ${layout.shellClassName}`);
-      }
-      if (!layout.shellClassName.includes("appShellWithDetailSidebar")) {
-        throw new Error(`${testCase.label} detail shell class is missing: ${layout.shellClassName}`);
       }
       if (testCase.kind === "stack") {
         if (!approxEqual(layout.brandWidth, 124, 1) || !approxEqual(layout.brandHeight, 36, 1)) {
@@ -1452,9 +1449,11 @@ async function runInteractive({ baseUrl, browser }) {
           "Expected mobile resource strip to keep search out of the metric row.",
         );
       }
-      await page.locator(".topbar .homepageHeaderSearchToggle").waitFor({
-        timeout: 10_000,
-      });
+      if ((await page.locator(".topbar .homepageHeaderSearch").count()) > 0) {
+        throw new Error(
+          "Expected mobile overview to keep the page search exclusively in the context drawer.",
+        );
+      }
 
       await page.locator(".mobileBottomNav").waitFor({ timeout: 10_000 });
       await page.locator(".mobileMenuButton").click();
@@ -1465,6 +1464,11 @@ async function runInteractive({ baseUrl, browser }) {
       await drawerSearch.getByRole("searchbox", { name: "搜索服务入口" }).waitFor({
         timeout: 10_000,
       });
+      if ((await page.locator('input[type="search"][aria-label="搜索服务入口"]').count()) !== 1) {
+        throw new Error(
+          "Expected mobile overview to mount exactly one search input in the context drawer.",
+        );
+      }
       await page
         .locator("#mobileDockrevMenu .homepageDrawerBottomSummary")
         .waitFor({

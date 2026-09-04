@@ -133,3 +133,15 @@ The Stack detail mobile-header contract applies from 320px through 960px wide: i
 
 - `historical sampling gap` is an interval between consecutive durable REST history samples that exceeds the cadence inferred from the current history window. It describes persisted sampling continuity, not the absence of a live browser observation.
 - `live observation` is a foreground 1-second resource SSE sample used to keep the chart and summary current. It does not establish that the corresponding historical sample was persisted or change the historical gap cadence.
+
+## Navigation Model
+
+- `page navigation` is the fixed, icon-led set of Dockrev's primary pages. It changes the operator's work area and is independent of the selected Stack, service, task, or settings section.
+- `context navigation` is the page-owned directory beneath page navigation. It exposes only the groups, work queues, service hierarchy, cleanup scopes, or settings sections relevant to the current primary page.
+- `navigation group` is a named collection of service entries on Navigation Overview. Selecting it locates the matching group within that page; it does not change the active primary page.
+- `active task` is a queued or running task requiring current operational awareness. `recent completed task` is one of the newest terminal tasks retained for immediate review. Neither term implies that a task succeeded.
+- `settings directory` is the context navigation for System Settings. On desktop it locates a section in the settings page; on mobile it opens the matching settings subpage. Both destinations represent the same settings section.
+- `cleanup context` is the pair of independent page-owned filters that select a cleanup scope and one or more resource kinds. Scope communicates the operation's ownership and blast radius; resource kind communicates the candidate class.
+- `mobile context drawer` is the temporary, page-owned presentation of context navigation on narrow screens. It complements the persistent primary bottom navigation and does not combine with it into a single undifferentiated menu.
+- `service directory` is the searchable, multi-expand Stack and service tree for Operations Dashboard. It keeps its expanded branches and selected entry while the operator remains in that work area.
+- `recent completed task` retains exactly five newest terminal tasks in context navigation and links to each task's detailed record. The complete task history remains in the primary content area.

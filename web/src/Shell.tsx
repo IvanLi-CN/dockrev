@@ -1,9 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-  ChevronLeft,
-  ChevronRight,
   Gauge,
-  History,
   LayoutDashboard,
   ListChecks,
   Settings,
@@ -15,7 +12,7 @@ import { getDockrevVersion } from './api'
 import { AppShellStatusBanner } from './components/AppShellStatusBanner'
 import { PwaUpdateBubble } from './components/PwaUpdateBubble'
 import { usePwaStatus } from './pwaStatus'
-import { Button, Mono, OverlayScrollArea, ToggleGroup, ToggleGroupItem } from './ui'
+import { Button, OverlayScrollArea, ToggleGroup, ToggleGroupItem } from './ui'
 import { ConfirmProvider } from './ConfirmProvider'
 import { BrandLogo } from './BrandLogo'
 import { UpdateActionTrackerProvider } from './updateActionTracking'
@@ -27,9 +24,6 @@ import { SidebarAppMeta } from './components/SidebarAppMeta'
 import type { TopbarAuthIdentity } from './topbarAuthIdentity'
 
 const MOBILE_MENU_MEDIA_QUERY = "(max-width: 960px)";
-export const APP_SHELL_SIDEBAR_COLLAPSED_STORAGE_KEY =
-  "dockrev:shell:sidebarCollapsed:v1";
-
 type PrimaryNavItem = {
   key: "overview" | "queue" | "services" | "cleanup" | "settings";
   label: string;
@@ -43,18 +37,6 @@ function readMobileMenuMediaMatches(): boolean {
     typeof window !== "undefined" &&
     window.matchMedia(MOBILE_MENU_MEDIA_QUERY).matches
   );
-}
-
-function readSidebarCollapsed(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    return (
-      window.localStorage.getItem(APP_SHELL_SIDEBAR_COLLAPSED_STORAGE_KEY) ===
-      "1"
-    );
-  } catch {
-    return false;
-  }
 }
 
 function formatShort(ts: string) {
@@ -128,9 +110,14 @@ export function AppShell(props: {
   pageSubtitle?: string;
   topActions?: ReactNode;
   topbarContent?: ReactNode;
+  contextNavigation?: ReactNode;
+  contextNavigationTitle?: string;
+  /** @deprecated use contextNavigation; retained so older page harnesses remain source-compatible. */
   sidebarNavContent?: ReactNode;
+  /** @deprecated use contextNavigation; detail content is now a page context. */
   detailSidebarContent?: ReactNode;
   detailSidebarTitle?: string;
+  /** @deprecated use contextNavigation; desktop and mobile now share one node. */
   mobileNavContent?: ReactNode;
   mobileDrawerTitle?: string;
   authIdentity?: TopbarAuthIdentity | null;
@@ -149,8 +136,6 @@ export function AppShell(props: {
           ? "settings"
           : props.route.name;
   const [appVersion, setAppVersion] = useState<string | null>(null);
-  const [sidebarCollapsed, setSidebarCollapsed] =
-    useState(readSidebarCollapsed);
   const [mobileDrawerOpenFor, setMobileDrawerOpenFor] = useState<string | null>(
     null,
   );
@@ -202,18 +187,6 @@ export function AppShell(props: {
   );
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(
-        APP_SHELL_SIDEBAR_COLLAPSED_STORAGE_KEY,
-        sidebarCollapsed ? "1" : "0",
-      );
-    } catch {
-      // Sidebar width is a local preference; failure to persist should not block navigation.
-    }
-  }, [sidebarCollapsed]);
-
-  useEffect(() => {
     let cancelled = false;
     void getDockrevVersion()
       .then((v) => {
@@ -233,19 +206,18 @@ export function AppShell(props: {
   const versionRef = (appVersion ?? "").trim();
   const versionDisplay = formatVersionDisplay(appVersion);
   const routeHref = currentHref(props.route);
+  const contextNavigation =
+    props.contextNavigation ??
+    props.detailSidebarContent ??
+    props.sidebarNavContent ??
+    props.mobileNavContent;
   const mobileMenuVisible =
     mobileDrawerOpenFor === routeHref &&
     mobileMenuMediaMatches &&
-    Boolean(props.mobileNavContent);
-  const hasDetailSidebar = Boolean(props.detailSidebarContent);
-  const hasMobileDrawerContent = Boolean(props.mobileNavContent);
+    Boolean(contextNavigation);
+  const hasContextNavigation = Boolean(contextNavigation);
   const mobileDrawerTitle =
-    props.mobileDrawerTitle ??
-    (hasDetailSidebar
-      ? "服务导航"
-      : hasMobileDrawerContent
-        ? "页面工具"
-        : "主导航");
+    props.mobileDrawerTitle ?? props.contextNavigationTitle ?? (hasContextNavigation ? "页面内导航" : "主导航");
   const serviceTopbarContext =
     props.route.name === "service" && (props.title || props.topbarContent) ? (
       <div className="topbarServiceContext">
@@ -267,8 +239,6 @@ export function AppShell(props: {
     props.route.name === "service" ? "appShellServiceDetail" : null,
     props.route.name === "stack" ? "appShellStackDetail" : null,
     props.topbarContent ? "appShellWithTopbarContent" : null,
-    hasDetailSidebar ? "appShellWithDetailSidebar" : null,
-    sidebarCollapsed ? "appShellSidebarCollapsed" : null,
   ]
     .filter(Boolean)
     .join(" ");
@@ -308,14 +278,9 @@ export function AppShell(props: {
       <ConfirmProvider>
         <div className={shellClassName}>
           <header className="topbar">
-            <div className="topbarDesktopBrand">
-              <div className="brand">
-                <BrandLogo />
-              </div>
-            </div>
             <div className="topbarMain">
               <div className="topbarLeft">
-                {hasMobileDrawerContent ? (
+                {hasContextNavigation ? (
                   <div
                     className={
                       mobileMenuVisible
@@ -400,9 +365,9 @@ export function AppShell(props: {
                 <X size={18} strokeWidth={2.2} />
               </button>
             </div>
-            {mobileMenuVisible && props.mobileNavContent ? (
+            {mobileMenuVisible && contextNavigation ? (
               <div className="mobileMenuEmbeddedContent">
-                {props.mobileNavContent}
+                {contextNavigation}
               </div>
             ) : null}
             <div className="mobileMeta">
@@ -413,35 +378,23 @@ export function AppShell(props: {
                 </span>
               </div>
             </div>
+            <div className="mobileDrawerFooter" aria-label="应用与用户信息">
+              <TopbarUserIdentity authIdentity={props.authIdentity} placement="sidebar" />
+              <div className="mobileDrawerThemeControl">
+                <ThemePreferenceControl variant="segmented" />
+              </div>
+              <div className="mobileDrawerFooterDivider" aria-hidden="true" />
+              <SidebarAppMeta
+                collapsed={false}
+                versionDisplay={versionDisplay}
+                versionHref={versionHref}
+              />
+            </div>
           </div>
 
-          <OverlayScrollArea
-            className="sidebar"
-            role="complementary"
-            aria-label="主导航侧栏"
-            viewportLabel="主导航侧栏"
-          >
+          <aside className="sidebar" role="complementary" aria-label="主导航侧栏">
             <div className="sidebarNavHeader">
               <span className="sidebarSectionLabel sidebarNavLabel">导航</span>
-              <button
-                type="button"
-                className="sidebarCollapseButton"
-                aria-label={sidebarCollapsed ? "展开左侧导航" : "折叠左侧导航"}
-                aria-controls="appShellPrimaryNav"
-                aria-expanded={!sidebarCollapsed}
-                title={sidebarCollapsed ? "展开左侧导航" : "折叠左侧导航"}
-                onClick={() => setSidebarCollapsed((value) => !value)}
-              >
-                {sidebarCollapsed ? (
-                  <ChevronRight
-                    size={17}
-                    strokeWidth={2.2}
-                    aria-hidden="true"
-                  />
-                ) : (
-                  <ChevronLeft size={17} strokeWidth={2.2} aria-hidden="true" />
-                )}
-              </button>
             </div>
             <nav id="appShellPrimaryNav" className="nav" aria-label="主导航">
               {nav.map((item) => {
@@ -453,8 +406,8 @@ export function AppShell(props: {
                     className={
                       active === item.key ? "navItem navItemActive" : "navItem"
                     }
-                    aria-label={sidebarCollapsed ? item.label : undefined}
-                    title={sidebarCollapsed ? item.label : undefined}
+                    aria-label={item.label}
+                    title={item.label}
                     onClick={(e) => {
                       e.preventDefault();
                       navigate(item.to);
@@ -470,78 +423,26 @@ export function AppShell(props: {
                 );
               })}
             </nav>
-            {!sidebarCollapsed && props.sidebarNavContent ? (
-              <div className="sidebarEmbeddedContent">
-                {props.sidebarNavContent}
-              </div>
-            ) : null}
-
-            {!sidebarCollapsed ? (
-              <div className="sidebarScanBlock">
-                <div className="sidebarSectionLabel" style={{ marginTop: 24 }}>
-                  最近一次扫描
-                </div>
-                {lastScan ? (
-                  <div className="sidebarMono sidebarInfoLine">
-                    <History className="sidebarInfoIcon" aria-hidden="true" />
-                    <Mono>{formatShort(lastScan)}</Mono>
-                  </div>
-                ) : (
-                  <div className="sidebarMuted sidebarInfoLine">
-                    <History className="sidebarInfoIcon" aria-hidden="true" />
-                    <span>-</span>
-                  </div>
-                )}
-              </div>
-            ) : null}
-
+            <div className="sidebarContextViewport">
+              <OverlayScrollArea className="sidebarContextScroll" role="region" aria-label={props.contextNavigationTitle ?? "页面内导航"} viewportLabel={props.contextNavigationTitle ?? "页面内导航"}>
+                {!mobileMenuMediaMatches ? contextNavigation : null}
+              </OverlayScrollArea>
+            </div>
             <div className="sidebarMeta">
-              {!mobileMenuMediaMatches ? (
-                <TopbarUserIdentity authIdentity={props.authIdentity} placement="sidebar" />
-              ) : null}
-              {!mobileMenuMediaMatches ? (
-                <div className="sidebarThemeControl">
-                  <ThemePreferenceControl variant={sidebarCollapsed ? "icon" : "segmented"} />
-                </div>
-              ) : null}
+              {!mobileMenuMediaMatches ? <TopbarUserIdentity authIdentity={props.authIdentity} placement="sidebar" /> : null}
+              {!mobileMenuMediaMatches ? <div className="sidebarThemeControl"><ThemePreferenceControl variant="segmented" /></div> : null}
               <div className="sidebarMetaDivider" aria-hidden="true" />
               <SidebarAppMeta
-                collapsed={sidebarCollapsed}
+                collapsed={false}
                 versionDisplay={versionDisplay}
                 versionHref={versionHref}
               />
             </div>
-          </OverlayScrollArea>
-
-          {props.detailSidebarContent ? (
-            <OverlayScrollArea
-              className="detailSidebar"
-              role="complementary"
-              aria-label={props.detailSidebarTitle ?? "服务导航"}
-              viewportLabel={props.detailSidebarTitle ?? "服务导航"}
-            >
-              {props.detailSidebarTitle ? (
-                <div className="detailSidebarHeader">
-                  <span className="sidebarSectionLabel detailSidebarLabel">
-                    {props.detailSidebarTitle}
-                  </span>
-                </div>
-              ) : null}
-              <div className="detailSidebarBody">
-                {props.detailSidebarContent}
-              </div>
-            </OverlayScrollArea>
-          ) : null}
+          </aside>
 
           <OverlayScrollArea
             className={
-              props.route.name === "job"
-                ? props.detailSidebarContent
-                  ? "content contentWithDetailSidebar contentJobDetail"
-                  : "content contentJobDetail"
-                : props.detailSidebarContent
-                  ? "content contentWithDetailSidebar"
-                  : "content"
+              props.route.name === "job" ? "content contentJobDetail" : "content"
             }
             role="main"
             viewportLabel="主内容"

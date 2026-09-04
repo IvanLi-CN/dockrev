@@ -56,9 +56,7 @@ import { statusLabel } from "../updateStatus";
 import { useManagementEventBatch } from "../managementEvents";
 import {
   CardMetric,
-  HomepageClockBlock,
   HomepageHeaderContent,
-  HomepageResourceMetrics,
   HomepageSearchForm,
   HomepageSidebarClock,
   HomepageTopStrip,
@@ -66,6 +64,7 @@ import {
 import { HomepageFloatingToolPanel } from "./OverviewFloatingToolPanel";
 import { HomepageNavSkeleton } from "./HomepageNavSkeleton";
 import { AsyncDataRegion } from "../components/AsyncDataRegion";
+import { OverviewContextNavigation } from "../components/PageContextNavigation";
 import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from "../asyncData";
 
 const HOMEPAGE_COLUMN_BREAKPOINTS = [
@@ -397,11 +396,13 @@ export function OverviewPage(props: {
   onLastScanHint: (lastScan?: string) => void;
   onTopActions: (node: ReactNode) => void;
   onTopbarContent: (node: ReactNode) => void;
-  onSidebarNavContent: (node: ReactNode) => void;
-  onMobileNavContent: (node: ReactNode) => void;
+  onContextNavigation?: (node: ReactNode) => void;
+  onSidebarNavContent?: (node: ReactNode) => void;
+  onMobileNavContent?: (node: ReactNode) => void;
 }) {
   const {
     onLastScanHint,
+    onContextNavigation,
     onMobileNavContent,
     onSidebarNavContent,
     onTopActions,
@@ -434,19 +435,27 @@ export function OverviewPage(props: {
   >(null);
   const [search, setSearch] = useState("");
   const [searchDraft, setSearchDraft] = useState("");
-  const [headerSearchOpen, setHeaderSearchOpen] = useState(false);
+  const [activeGroupName, setActiveGroupName] = useState<string | null>(null);
   const [updateDialogCard, setUpdateDialogCard] =
     useState<HomepageNavCard | null>(null);
   const [now] = useState(() => new Date());
   const homepageColumnCount = useHomepageColumnCount();
+  const shellSlotCallbacksRef = useRef({
+    onContextNavigation,
+    onMobileNavContent,
+    onSidebarNavContent,
+    onTopbarContent,
+  });
+  shellSlotCallbacksRef.current = {
+    onContextNavigation,
+    onMobileNavContent,
+    onSidebarNavContent,
+    onTopbarContent,
+  };
 
   const applySearch = useCallback(() => {
     setSearch(searchDraft);
   }, [searchDraft]);
-  const applyHeaderSearch = useCallback(() => {
-    applySearch();
-    setHeaderSearchOpen(false);
-  }, [applySearch]);
 
   useEffect(() => {
     let cancelled = false;
@@ -680,38 +689,37 @@ export function OverviewPage(props: {
       <HomepageHeaderContent
         metricsLabel="资源摘要"
         summary={summary}
-        searchDraft={searchDraft}
-        searchOpen={headerSearchOpen}
-        onSearchDraftChange={setSearchDraft}
-        onApplySearch={applyHeaderSearch}
-        onToggleSearch={() => setHeaderSearchOpen((value) => !value)}
-        onCloseSearch={() => setHeaderSearchOpen(false)}
       />
     ),
-    [applyHeaderSearch, headerSearchOpen, searchDraft, summary],
+    [summary],
   );
-  const sidebarNavContent = useMemo(
-    () =>
-      isAppDemoRuntime ? null : <HomepageSidebarClock now={now} />,
-    [isAppDemoRuntime, now],
-  );
-  const mobileNavContent = useMemo(
+  const contextNavigation = useMemo(
     () => (
-      <div className="homepageDrawerNavControls">
-        <div className="homepageDrawerSearchSlot">
-          <HomepageSearchForm
-            searchDraft={searchDraft}
-            onSearchDraftChange={setSearchDraft}
-            onApplySearch={applySearch}
-          />
+      <>
+        <OverviewContextNavigation
+          groups={groupedCards.map((group) => ({ name: group.groupName, count: group.cards.length, active: activeGroupName === group.groupName }))}
+          onSelectGroup={(name) => {
+            setActiveGroupName(name)
+            Array.from(document.querySelectorAll<HTMLElement>('[data-navigation-group]')).find((element) => element.dataset.navigationGroup === name)?.scrollIntoView({ behavior: "smooth", block: "start" })
+          }}
+        />
+        <div className="homepageDrawerNavControls">
+          <div className="homepageDrawerSearchSlot">
+            <HomepageSearchForm searchDraft={searchDraft} onSearchDraftChange={setSearchDraft} onApplySearch={applySearch} />
+          </div>
+          {!isAppDemoRuntime ? <HomepageSidebarClock now={now} /> : null}
         </div>
         <div className="homepageDrawerBottomSummary">
-          <HomepageResourceMetrics metricsLabel="菜单资源摘要" summary={summary} />
-          <HomepageClockBlock clockLabel="菜单当前时间" now={now} />
+          <HomepageTopStrip
+            metricsLabel="抽屉资源摘要"
+            clockLabel="抽屉当前时间"
+            summary={summary}
+            now={now}
+          />
         </div>
-      </div>
+      </>
     ),
-    [applySearch, now, searchDraft, summary],
+    [activeGroupName, applySearch, groupedCards, isAppDemoRuntime, now, searchDraft, summary],
   );
 
   useEffect(() => {
@@ -719,20 +727,34 @@ export function OverviewPage(props: {
   }, [onTopbarContent, topbarContent]);
 
   useEffect(() => {
-    onSidebarNavContent(sidebarNavContent);
-  }, [onSidebarNavContent, sidebarNavContent]);
+    const root = pageRef.current;
+    if (!root || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((left, right) => left.boundingClientRect.top - right.boundingClientRect.top)[0];
+      const group = visible?.target instanceof HTMLElement ? visible.target.dataset.navigationGroup : undefined;
+      if (group) setActiveGroupName(group);
+    }, { root: root.closest('[data-overlayscrollbars-viewport]') ?? null, rootMargin: '-8% 0px -70% 0px', threshold: [0, 0.2] });
+    root.querySelectorAll<HTMLElement>('[data-navigation-group]').forEach((element) => observer.observe(element));
+    return () => observer.disconnect();
+  }, [groupedCards.length]);
 
   useEffect(() => {
-    onMobileNavContent(mobileNavContent);
-  }, [mobileNavContent, onMobileNavContent]);
+    onContextNavigation?.(contextNavigation);
+    onSidebarNavContent?.(null);
+    onMobileNavContent?.(null);
+  }, [contextNavigation, onContextNavigation, onMobileNavContent, onSidebarNavContent]);
 
   useEffect(() => {
     return () => {
-      onTopbarContent(null);
-      onSidebarNavContent(null);
-      onMobileNavContent(null);
+      const callbacks = shellSlotCallbacksRef.current;
+      callbacks.onTopbarContent(null);
+      callbacks.onContextNavigation?.(null);
+      callbacks.onSidebarNavContent?.(null);
+      callbacks.onMobileNavContent?.(null);
     };
-  }, [onMobileNavContent, onSidebarNavContent, onTopbarContent]);
+  }, []);
 
   return (
     <div ref={pageRef} className="page homepageDashboardPage">
@@ -840,7 +862,7 @@ export function OverviewPage(props: {
               className="homepageDashboardColumn"
             >
               {column.map((group) => (
-                <section key={group.groupName} className="homepageDashboardGroup">
+                <section key={group.groupName} className="homepageDashboardGroup" data-navigation-group={group.groupName}>
                   <div className="homepageDashboardGroupHeader">
                     <h2>{group.groupName}</h2>
                     <span>{group.cards.length}</span>

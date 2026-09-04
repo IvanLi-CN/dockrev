@@ -1,17 +1,17 @@
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getStack, listStacks, listStacksArchived, type Service, type ServiceLifecycleState, type StackDetail, type StackListItem, type StackStatus } from '../api'
 import { currentHref, navigate, type Route } from '../routes'
 import { SERVICE_TREE_REFRESH_EVENT, type ServiceTreeRefreshDetail } from '../serviceTreeRefresh'
 import { useManagementEventBatch } from '../managementEvents'
-import { Mono } from '../ui'
+import { Input, Mono } from '../ui'
 import { UPDATE_JOB_SETTLED_EVENT, type UpdateJobSettledDetail } from '../updateActionTracking'
 import { serviceRowStatus, statusLabel } from '../updateStatus'
 import { ServiceTreeContextActions } from './ServiceTreeContextActions'
 import { AsyncDataRegion, AsyncDataSkeleton } from './AsyncDataRegion'
 import type { AsyncDataPhase, AsyncDataTrigger } from '../asyncData'
 
-type DetailRoute = Extract<Route, { name: 'stack' | 'service' }>
+type DetailRoute = Extract<Route, { name: 'services' | 'stack' | 'service' }>
 
 type TreeStack = StackListItem & {
   detail: StackDetail | null
@@ -23,11 +23,11 @@ type TreeStack = StackListItem & {
 }
 
 function isDetailRoute(route: Route): route is DetailRoute {
-  return route.name === 'stack' || route.name === 'service'
+  return route.name === 'services' || route.name === 'stack' || route.name === 'service'
 }
 
-function currentStackId(route: DetailRoute): string {
-  return route.stackId
+function currentStackId(route: DetailRoute): string | null {
+  return route.name === 'services' ? null : route.stackId
 }
 
 function currentServiceSection(route: DetailRoute): Extract<Route, { name: 'service' }>['section'] | undefined {
@@ -97,6 +97,7 @@ export function DetailRouteServiceTree(props: {
   const [treeTrigger, setTreeTrigger] = useState<AsyncDataTrigger>('background')
   const [error, setError] = useState<string | null>(null)
   const [expandedStackIds, setExpandedStackIds] = useState<string[]>([])
+  const [search, setSearch] = useState('')
   const [detailFetchTick, setDetailFetchTick] = useState(0)
   const inFlightStackIdsRef = useRef<Set<string>>(new Set())
   const stacksRef = useRef<TreeStack[]>([])
@@ -299,6 +300,11 @@ export function DetailRouteServiceTree(props: {
     () => stacks.reduce((sum, stack) => sum + (stack.detail?.services.length ?? stack.services), 0),
     [stacks],
   )
+  const visibleStacks = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase()
+    if (!query) return stacks
+    return stacks.filter((stack) => stack.name.toLocaleLowerCase().includes(query) || stack.detail?.services.some((service) => service.name.toLocaleLowerCase().includes(query)))
+  }, [search, stacks])
   const activeStack = useMemo(
     () => (activeStackId ? stacks.find((stack) => stack.id === activeStackId) ?? null : null),
     [activeStackId, stacks],
@@ -371,7 +377,7 @@ export function DetailRouteServiceTree(props: {
           {detailRoute ? (
             <>
               <span className="detailRouteTreePathLabel">当前</span>
-              <span>{activeStack?.name ?? detailRoute.stackId}</span>
+              <span>{activeStack?.name ?? (detailRoute.name === 'services' ? '服务' : detailRoute.stackId)}</span>
               {activeService ? <span className="detailRouteTreePathDivider">/</span> : null}
               {activeService ? <span>{activeService.name}</span> : null}
               {props.route.name === 'service' ? <span className="detailRouteTreePathDivider">/</span> : null}
@@ -381,6 +387,10 @@ export function DetailRouteServiceTree(props: {
             <span>按 Stack 浏览，并直接切换到目标服务。</span>
           )}
         </div>
+        <label className="detailRouteTreeSearch">
+          <Search size={14} aria-hidden="true" />
+          <Input aria-label="搜索 Stack 或服务" placeholder="搜索 Stack 或服务" value={search} onChange={(event) => setSearch(event.target.value)} />
+        </label>
       </div>
 
       <AsyncDataRegion
@@ -397,7 +407,7 @@ export function DetailRouteServiceTree(props: {
         <div className="detailRouteTreeState"><div className="muted">暂无可导航的 Stack</div></div>
       ) : (
         <div className="detailRouteTreeList">
-          {stacks.map((stack) => {
+          {visibleStacks.map((stack) => {
             const expanded = expandedStackIds.includes(stack.id)
             const stackActive = props.route.name === 'stack' && props.route.stackId === stack.id
             const stackCurrent = activeStackId === stack.id

@@ -10,6 +10,10 @@ import {
 import { AppShell } from "./Shell";
 import { PwaUpdateBubble } from "./components/PwaUpdateBubble";
 import { DetailRouteServiceTree } from "./components/DetailRouteServiceTree";
+import {
+  QueueContextNavigation,
+  SettingsContextNavigation,
+} from "./components/PageContextNavigation";
 import type { Route } from "./routes";
 import { currentRoutePathname, navigate } from "./routes";
 import { OverviewPage } from "./pages/OverviewPage";
@@ -173,8 +177,7 @@ export default function App() {
   const [pageActions, setPageActions] = useState<ReactNode>(null);
   const [servicePageTitle, setServicePageTitle] = useState<string>("");
   const [topbarContent, setTopbarContent] = useState<ReactNode>(null);
-  const [sidebarNavContent, setSidebarNavContent] = useState<ReactNode>(null);
-  const [mobileNavContent, setMobileNavContent] = useState<ReactNode>(null);
+  const [contextNavigationContent, setContextNavigationContent] = useState<ReactNode>(null);
   const [lastScanHint, setLastScanHint] = useState<string | undefined>(
     undefined,
   );
@@ -211,26 +214,25 @@ export default function App() {
         : head,
     [head, route.name, servicePageTitle],
   );
-  const detailSidebarContent = useMemo(() => {
-    if (route.name !== "stack" && route.name !== "service") return null;
-    return <DetailRouteServiceTree route={route} variant="desktop" />;
-  }, [route]);
-  const mobileDrawerContent = useMemo(() => {
-    if (route.name === "stack" || route.name === "service") {
-      return <DetailRouteServiceTree route={route} variant="mobile" />;
+  const staticContextNavigation = useMemo(() => {
+    if (route.name === "services" || route.name === "stack" || route.name === "service") {
+      return <DetailRouteServiceTree route={route} variant="desktop" />;
     }
-    return mobileNavContent;
-  }, [mobileNavContent, route]);
+    if (route.name === "queue" || route.name === "job" || route.name === "version-inference" || route.name === "ghcr-webhooks" || route.name === "ghcr-webhook-inbox") {
+      return <QueueContextNavigation />;
+    }
+    if (route.name === "settings") return <SettingsContextNavigation section={route.section} />;
+    if (route.name === "ghcr-webhook-registry") return <SettingsContextNavigation section="integrations" />;
+    return null;
+  }, [route]);
+  const contextNavigation = contextNavigationContent ?? staticContextNavigation;
   const topActions = useMemo(() => {
     return <>{pageActions}</>;
   }, [pageActions]);
 
   useEffect(() => {
-    if (route.name !== "overview" && route.name !== "service") {
-      setTopbarContent(null);
-      setSidebarNavContent(null);
-      setMobileNavContent(null);
-    }
+    setContextNavigationContent(null);
+    if (route.name !== "overview" && route.name !== "service") setTopbarContent(null);
   }, [route.name]);
 
   const serviceRouteKey =
@@ -534,17 +536,8 @@ export default function App() {
         pageSubtitle={resolvedHead.pageSubtitle}
         topActions={topActions}
         topbarContent={topbarContent}
-        sidebarNavContent={sidebarNavContent}
-        detailSidebarContent={detailSidebarContent}
-        detailSidebarTitle={undefined}
-        mobileNavContent={mobileDrawerContent}
-        mobileDrawerTitle={
-          detailSidebarContent
-            ? "服务导航"
-            : mobileDrawerContent
-              ? "页面工具"
-              : undefined
-        }
+        contextNavigation={contextNavigation}
+        contextNavigationTitle={route.name === "services" || route.name === "stack" || route.name === "service" ? "服务导航" : "页面内导航"}
         authIdentity={authIdentity}
         lastScanHint={lastScanHint}
       >
@@ -554,8 +547,7 @@ export default function App() {
             onLastScanHint={setLastScanHint}
             onTopActions={setPageActions}
             onTopbarContent={setTopbarContent}
-            onSidebarNavContent={setSidebarNavContent}
-            onMobileNavContent={setMobileNavContent}
+            onContextNavigation={setContextNavigationContent}
           />
         ) : null}
         {route.name === "queue" ? (
@@ -574,6 +566,7 @@ export default function App() {
           <CleanupPage
             onLastScanHint={setLastScanHint}
             onTopActions={setPageActions}
+            onContextNavigation={setContextNavigationContent}
           />
         ) : null}
         {route.name === "version-inference" ? (

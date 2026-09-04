@@ -1,6 +1,6 @@
 import { useEffect, type ReactNode } from 'react'
 import type { Meta, StoryObj } from '@storybook/react'
-import { APP_SHELL_SIDEBAR_COLLAPSED_STORAGE_KEY, AppShell } from '../../Shell'
+import { AppShell } from '../../Shell'
 import { DetailRouteServiceTree } from '../../components/DetailRouteServiceTree'
 import type { Route } from '../../routes'
 import { Button } from '../../ui'
@@ -44,18 +44,9 @@ function expectDesktopHeaderAlignment(root: ParentNode, detail = false) {
   const contentLeft = content.getBoundingClientRect().left
   expectStory(Math.abs(headerLeft - contentLeft) <= 1, 'Header workspace should start on the main route column boundary')
 
-  if (!detail) return
-  const detailSidebar = root.querySelector<HTMLElement>('.detailSidebar')
-  expectStory(detailSidebar, 'Detail shell should render its service navigation rail')
-  expectStory(
-    Math.abs(detailSidebar.getBoundingClientRect().right - contentLeft) <= 1,
-    'Header workspace should start after the service navigation rail',
-  )
-}
-
-function setSidebarCollapsedPreference(collapsed: boolean) {
-  if (typeof window === 'undefined') return
-  window.localStorage.setItem(APP_SHELL_SIDEBAR_COLLAPSED_STORAGE_KEY, collapsed ? '1' : '0')
+  if (detail) {
+    expectStory(!root.querySelector('.detailSidebar'), 'Detail routes should use the single sidebar context slot')
+  }
 }
 
 const demoAuthIdentity = buildTopbarAuthIdentityFromSettings({
@@ -85,15 +76,11 @@ type Story = StoryObj<typeof AppShell>
 
 function ShellStory(props: {
   route: Route
-  sidebarCollapsed?: boolean
   autoOpenMobileDrawer?: boolean
-  detailSidebarContent?: ReactNode
-  mobileNavContent?: ReactNode
+  contextNavigation?: ReactNode
   mobileDrawerTitle?: string
   children?: ReactNode
 }) {
-  setSidebarCollapsedPreference(props.sidebarCollapsed ?? false)
-
   useEffect(() => {
     if (!props.autoOpenMobileDrawer) return undefined
     const frame = window.requestAnimationFrame(() => {
@@ -108,9 +95,7 @@ function ShellStory(props: {
       title="示例页面"
       pageSubtitle="在 Storybook 中预览 AppShell"
       topActions={<Button variant="primary">Action</Button>}
-      detailSidebarContent={props.detailSidebarContent}
-      detailSidebarTitle={undefined}
-      mobileNavContent={props.mobileNavContent}
+      contextNavigation={props.contextNavigation}
       mobileDrawerTitle={props.mobileDrawerTitle}
       authIdentity={demoAuthIdentity}
       lastScanHint={new Date().toISOString()}
@@ -125,13 +110,12 @@ function ShellStory(props: {
   )
 }
 
-function render(route: Route, options?: { sidebarCollapsed?: boolean; autoOpenMobileDrawer?: boolean }): Story['render'] {
+function render(route: Route, options?: { autoOpenMobileDrawer?: boolean }): Story['render'] {
   return () => {
     return (
       <ShellStory
         route={route}
         autoOpenMobileDrawer={options?.autoOpenMobileDrawer}
-        sidebarCollapsed={options?.sidebarCollapsed}
       />
     )
   }
@@ -145,8 +129,7 @@ function renderDetailShell(
     <ShellStory
       route={route}
       autoOpenMobileDrawer={options?.autoOpenMobileDrawer}
-      detailSidebarContent={<DetailRouteServiceTree route={route} variant="desktop" />}
-      mobileNavContent={<DetailRouteServiceTree route={route} variant="mobile" />}
+      contextNavigation={<DetailRouteServiceTree route={route} variant="desktop" />}
       mobileDrawerTitle="服务导航"
     />
   )
@@ -198,93 +181,35 @@ export const UpdateReadyBubbleMobile: Story = {
     )
   },
 }
-export const CollapsedSidebar: Story = {
-  render: render({ name: 'services' }, { sidebarCollapsed: true }),
+export const SingleSidebarContext: Story = {
+  render: render({ name: 'services' }),
   play: async ({ canvasElement }) => {
     const shell = canvasElement.querySelector<HTMLElement>('.appShell')
-    expectStory(shell?.classList.contains('appShellSidebarCollapsed'), 'AppShell should start collapsed')
-
+    expectStory(shell && !shell.classList.contains('appShellSidebarCollapsed'), 'AppShell should not expose a collapsed state')
     const navIcons = canvasElement.querySelectorAll('.navItemIcon')
-    expectStory(navIcons.length === 5, 'Collapsed sidebar should render one real icon per nav item')
-
-    const label = canvasElement.querySelector<HTMLElement>('.navItemLabel')
-    expectStory(label, 'Collapsed sidebar should keep nav labels in the DOM for accessible names')
-    const labelStyle = label.ownerDocument.defaultView?.getComputedStyle(label)
-    expectStory(labelStyle?.display === 'none', 'Collapsed sidebar should visually hide nav labels')
-
-    const activeLink = canvasElement.querySelector<HTMLAnchorElement>('.navItemActive')
-    expectStory(activeLink?.getAttribute('aria-label') === '运维大盘', 'Collapsed active nav item should keep an aria-label')
-    expectDesktopActiveNavBaseline(canvasElement)
-    expectDesktopHeaderAlignment(canvasElement)
-
-    const desktopBrand = canvasElement.querySelector<HTMLElement>('.topbarDesktopBrand')
-    const headerWorkspace = canvasElement.querySelector<HTMLElement>('.topbarMain')
-    expectStory(desktopBrand && headerWorkspace, 'Collapsed shell should render the desktop brand and workspace')
-    expectStory(
-      desktopBrand.getBoundingClientRect().right <= headerWorkspace.getBoundingClientRect().left + 1,
-      'Collapsed desktop brand should stay inside the primary navigation header track',
-    )
-    expectStory(
-      desktopBrand.querySelector('[role="img"]')?.getAttribute('aria-label') === 'Dockrev',
-      'Desktop brand should retain its accessible name',
-    )
-
-    const identityTrigger = canvasElement.querySelector<HTMLButtonElement>('.sidebarMeta .topbarUserTrigger')
-    expectStory(identityTrigger, 'Collapsed sidebar should keep the user identity trigger available')
-    expectStory(identityTrigger?.getAttribute('aria-label')?.includes('alice'), 'Collapsed identity trigger should retain its accessible name')
-    expectStory(
-      !canvasElement.querySelector('.topbarUserSlotTopbar'),
-      'Desktop AppShell should not mount the mobile identity trigger',
-    )
-    expectStory(
-      Boolean(canvasElement.querySelector('.sidebarMeta .themePreferenceIconButton')),
-      'Collapsed sidebar should expose the compact theme icon control',
-    )
-    const appMetaSlot = canvasElement.querySelector<HTMLElement>('[data-slot="sidebar-app-meta"]')
-    const appMetaTriggers = canvasElement.querySelectorAll('.sidebarAppMetaTrigger')
-    expectStory(appMetaSlot && Math.abs(appMetaSlot.getBoundingClientRect().height - 44) <= 1, 'Collapsed App meta slot should remain 44px high')
-    expectStory(appMetaTriggers.length === 1, 'Collapsed App meta should render one flyout trigger')
+    expectStory(navIcons.length === 5, 'Single sidebar should render one real icon per nav item')
+    expectStory(Boolean(canvasElement.querySelector('.topbarIdentity .brandLogo')), 'Logo should render in the page header')
+    expectStory(!canvasElement.querySelector('.sidebarBrand'), 'Sidebar should not duplicate the page header Logo')
+    const primaryNav = canvasElement.querySelector<HTMLElement>('#appShellPrimaryNav')
+    expectStory(primaryNav && getComputedStyle(primaryNav).gridTemplateColumns.split(' ').length === 5, 'Desktop primary navigation should be a five-icon horizontal row')
+    expectStory(Boolean(canvasElement.querySelector('.sidebarContextViewport')), 'Single sidebar should expose a context viewport')
+    expectStory(!canvasElement.querySelector('.sidebarCollapseButton'), 'Single sidebar should not render a collapse control')
   },
 }
 export const SidebarToggleInteraction: Story = {
   render: render({ name: 'overview' }),
   play: async ({ canvasElement }) => {
-    const toggle = canvasElement.querySelector<HTMLButtonElement>('.sidebarCollapseButton')
-    expectStory(toggle?.getAttribute('aria-expanded') === 'true', 'Sidebar toggle should report expanded state first')
-    const expandedMetaSlot = canvasElement.querySelector<HTMLElement>('[data-slot="sidebar-app-meta"]')
-    expectStory(expandedMetaSlot, 'Expanded sidebar should render the App meta slot')
-    const expandedMetaRect = expandedMetaSlot.getBoundingClientRect()
-    toggle?.click()
-    await new Promise((resolve) => setTimeout(resolve, 80))
-
-    const shell = canvasElement.querySelector<HTMLElement>('.appShell')
-    expectStory(shell?.classList.contains('appShellSidebarCollapsed'), 'Sidebar toggle should collapse the shell')
-    expectStory(toggle?.getAttribute('aria-expanded') === 'false', 'Sidebar toggle should report collapsed state')
-    expectStory(
-      window.localStorage.getItem(APP_SHELL_SIDEBAR_COLLAPSED_STORAGE_KEY) === '1',
-      'Sidebar collapsed state should persist to localStorage',
-    )
-    const collapsedMetaSlot = canvasElement.querySelector<HTMLElement>('[data-slot="sidebar-app-meta"]')
-    expectStory(collapsedMetaSlot, 'Collapsed sidebar should retain the App meta slot')
-    const collapsedMetaRect = collapsedMetaSlot.getBoundingClientRect()
-    expectStory(
-      Math.abs(expandedMetaRect.height - collapsedMetaRect.height) <= 1,
-      'App meta slot height should remain stable across sidebar states',
-    )
-    expectStory(
-      Math.abs(expandedMetaRect.top - collapsedMetaRect.top) <= 1 &&
-        Math.abs(expandedMetaRect.bottom - collapsedMetaRect.bottom) <= 1,
-      'App meta slot should keep its vertical position across sidebar states',
-    )
+    expectStory(!canvasElement.querySelector('.sidebarCollapseButton'), 'The unified shell should have no toggle interaction')
+    expectStory(canvasElement.querySelectorAll('.sidebar').length === 1, 'The unified shell should render one sidebar')
   },
 }
 export const DetailSidebarDesktop: Story = {
   render: renderDetailShell({ name: 'service', stackId: 'stack-prod', serviceId: 'svc-prod-api', section: 'logs' }),
   play: async ({ canvasElement }) => {
-    const detailSidebar = canvasElement.querySelector<HTMLElement>('.detailSidebar')
-    expectStory(detailSidebar?.textContent?.includes('prod'), 'Detail sidebar should render stack names')
-    expectStory(detailSidebar?.textContent?.includes('api'), 'Detail sidebar should render service names')
-    expectStory(detailSidebar?.textContent?.includes('web'), 'Detail sidebar should render sibling services')
+    const context = canvasElement.querySelector<HTMLElement>('.sidebarContextViewport')
+    expectStory(context?.textContent?.includes('prod'), 'Sidebar context should render stack names')
+    expectStory(context?.textContent?.includes('api'), 'Sidebar context should render service names')
+    expectStory(context?.textContent?.includes('web'), 'Sidebar context should render sibling services')
     expectDesktopHeaderAlignment(canvasElement, true)
   },
 }
@@ -304,6 +229,9 @@ export const MobileBottomNavAndDrawer: Story = {
     expectStory(drawer?.textContent?.includes('服务导航'), 'Mobile drawer should be dedicated to the service tree')
     expectStory(drawer?.textContent?.includes('prod'), 'Mobile drawer should render stack names')
     expectStory(drawer?.textContent?.includes('api'), 'Mobile drawer should render service names')
+    expectStory(Boolean(drawer?.querySelector('.mobileDrawerFooter .topbarUserTrigger')), 'Mobile drawer should keep the user identity in footer ③')
+    expectStory(Boolean(drawer?.querySelector('.mobileDrawerFooter .themePreferenceSegmented')), 'Mobile drawer should keep the theme control in footer ③')
+    expectStory(Boolean(drawer?.querySelector('.mobileDrawerFooter .sidebarAppMetaContent')), 'Mobile drawer should keep version metadata in footer ③')
 
     expectStory(
       !canvasElement.querySelector('.topbarUserSlotTopbar'),
