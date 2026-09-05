@@ -26,6 +26,10 @@ ARTIFACT_PREFIX = "release-preparation-"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 RECOVERY_RE = re.compile(r"^release-recovery-[0-9a-f]{40}$")
+# Before this commit, upload-artifact omitted the required hidden route
+# contract. A failed recovery from that workflow cannot count against the
+# current recovery allowance.
+ARTIFACT_UPLOAD_CONTRACT_SHA = "46cb8a59d2d6196136985999f2fea153cd904686"
 FIXED_FILES = (
     "target/ci/amd64/release/dockrev",
     "target/ci/amd64/release/dockrev-supervisor",
@@ -278,6 +282,28 @@ def recovery_runs(api_root: str, repository: str, token: str, recovery_request: 
     ]
 
 
+def recovery_run_uses_current_artifact_contract(
+    api_root: str,
+    repository: str,
+    token: str,
+    run: dict[str, Any],
+) -> bool:
+    head_sha = run.get("head_sha")
+    if not isinstance(head_sha, str) or not SHA_RE.fullmatch(head_sha):
+        raise PreparationError("recovery preparation run has an invalid head SHA")
+    comparison = api_request(
+        api_root,
+        token,
+        f"/repos/{repository}/compare/{ARTIFACT_UPLOAD_CONTRACT_SHA}...{head_sha}",
+    )
+    status = comparison.get("status") if isinstance(comparison, dict) else None
+    if status not in {"ahead", "behind", "identical", "diverged"}:
+        raise PreparationError("recovery preparation contract comparison is invalid")
+    if status == "diverged":
+        raise PreparationError("recovery preparation contract comparison is not a linear ancestry")
+    return status in {"ahead", "identical"}
+
+
 def manifest_from_run(api_root: str, repository: str, token: str, run: dict[str, Any], target_sha: str) -> dict[str, Any] | None:
     run_id = run.get("id")
     if not isinstance(run_id, int):
@@ -318,18 +344,31 @@ def wait_for_manifest(
     recovery_request: str = "",
     timeout_seconds: int,
     poll_seconds: int,
+    ignored_failed_run_ids: set[int] | None = None,
+    wait_for_start: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    ignored_failed_run_ids = ignored_failed_run_ids or set()
     deadline = time.monotonic() + timeout_seconds
     while True:
         runs = recovery_runs(api_root, repository, token, recovery_request) if recovery_request else workflow_runs(api_root, repository, token, target_sha)
         found = successful_manifest(api_root, repository, token, runs, target_sha)
         if found:
             return found
-        failed = [run for run in runs if run.get("status") == "completed" and run.get("conclusion") != "success"]
+        failed = [
+            run
+            for run in runs
+            if run.get("status") == "completed"
+            and run.get("conclusion") != "success"
+            and run.get("id") not in ignored_failed_run_ids
+        ]
         active = [run for run in runs if run.get("status") in {"queued", "in_progress"}]
         if failed:
             raise PreparationError(f"preparation workflow failed for {target_sha}")
         if not active:
+            if wait_for_start and time.monotonic() < deadline:
+                wait_for_start = False
+                time.sleep(poll_seconds)
+                continue
             return None
         if time.monotonic() >= deadline:
             return None
@@ -366,10 +405,37 @@ def ensure_preparation(args: argparse.Namespace) -> dict[str, Any]:
     recovery_request = f"release-recovery-{args.target_sha}"
     print(f"::warning::release preparation artifact is missing or expired for {args.target_sha}; dispatching one recovery build", file=os.sys.stderr)
     existing = recovery_runs(args.api_root, args.repository, args.token, recovery_request)
-    if existing:
-        if any(run.get("status") == "completed" for run in existing):
+    recovered = successful_manifest(args.api_root, args.repository, args.token, existing, args.target_sha)
+    if recovered:
+        run, manifest = recovered
+        return {
+            "target_sha": args.target_sha,
+            "run_id": run["id"],
+            "artifact_name": f"{ARTIFACT_PREFIX}{args.target_sha}",
+            "recovery": True,
+            "recovery_request": recovery_request,
+            "manifest_sha256": manifest_digest(manifest),
+        }
+
+    legacy_failed_run_ids: set[int] = set()
+    completed_runs = [run for run in existing if run.get("status") == "completed"]
+    for run in completed_runs:
+        run_id = run.get("id")
+        if not isinstance(run_id, int):
+            raise PreparationError("recovery preparation run has an invalid id")
+        if run.get("conclusion") == "success" or recovery_run_uses_current_artifact_contract(
+            args.api_root,
+            args.repository,
+            args.token,
+            run,
+        ):
             raise PreparationError("the single recovery preparation run already failed")
-    else:
+
+        legacy_failed_run_ids.add(run_id)
+
+    active = [run for run in existing if run.get("status") in {"queued", "in_progress"}]
+    dispatched_recovery = False
+    if not active:
         api_request(
             args.api_root,
             args.token,
@@ -377,6 +443,7 @@ def ensure_preparation(args: argparse.Namespace) -> dict[str, Any]:
             method="POST",
             body={"ref": "main", "inputs": {"target_sha": args.target_sha, "recovery_request": recovery_request}},
         )
+        dispatched_recovery = True
     remaining = args.timeout_seconds - int(time.monotonic() - started)
     if remaining <= 0:
         raise PreparationError(f"preparation recovery budget of {args.timeout_seconds}s was exhausted")
@@ -388,6 +455,8 @@ def ensure_preparation(args: argparse.Namespace) -> dict[str, Any]:
         recovery_request=recovery_request,
         timeout_seconds=remaining,
         poll_seconds=args.poll_seconds,
+        ignored_failed_run_ids=legacy_failed_run_ids,
+        wait_for_start=dispatched_recovery,
     )
     if not recovered:
         raise PreparationError(f"recovery preparation did not finish within {args.timeout_seconds}s")
