@@ -80,6 +80,7 @@ async function prepareFixtures() {
   await writeFile(path.join(v1Dir, 'manifest.webmanifest'), `${JSON.stringify(v1Manifest, null, 2)}\n`)
 
   const v2Worker = await readFile(path.join(v2Dir, 'sw.js'), 'utf8')
+  assert(!v2Worker.includes('404.html'), 'not-found document must not be included in the precache manifest')
   const indexRevision = /(\{\\?"revision\\?":\\?")[^\"]+(\\?",\\?"url\\?":\\?"index\.html"\\?\})/
   assert(indexRevision.test(v2Worker), 'fixture worker is missing its index revision')
   const v1Worker = v2Worker.replace(indexRevision, '$1dockrev-pwa-fixture-v1$2')
@@ -113,8 +114,17 @@ async function startFixtureServer() {
       return
     }
 
-    const relativePath = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '')
     const root = roots[release]
+    if (pathname === '/404.html') {
+      const body = await readFile(path.join(root, '404.html'))
+      response.statusCode = 404
+      response.setHeader('Content-Type', 'text/html; charset=utf-8')
+      response.setHeader('Cache-Control', 'no-store')
+      response.end(body)
+      return
+    }
+
+    const relativePath = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '')
     const filePath = path.resolve(root, relativePath)
     const rootPrefix = `${path.resolve(root)}${path.sep}`
     if (!filePath.startsWith(rootPrefix)) {
@@ -199,6 +209,14 @@ try {
 
   await page.goto(`${fixtureServer.origin}/`, { waitUntil: 'domcontentloaded' })
   await page.waitForFunction(() => Boolean(navigator.serviceWorker?.controller), undefined, { timeout: 15000 })
+  const directNotFound = await page.evaluate(() =>
+    fetch('/404.html', { cache: 'no-store' }).then((response) => ({
+      cacheControl: response.headers.get('cache-control'),
+      status: response.status,
+    })),
+  )
+  assert(directNotFound.status === 404, 'not-found document must preserve its HTTP 404 status')
+  assert(directNotFound.cacheControl === 'no-store', 'not-found document must not be cached')
   const legacyAppleTouchIconStatus = await page.evaluate(() =>
     fetch('/apple-touch-icon.png', { cache: 'no-store' }).then((response) => response.status),
   )
