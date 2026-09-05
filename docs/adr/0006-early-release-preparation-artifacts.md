@@ -24,8 +24,11 @@ Release consumes the artifact selected by the snapshot queue's actual
 only a successful trusted-main preparation run, an exact target SHA, the
 complete manifest, and the non-publishing marker. If the artifact is missing
 or expired, Release emits a warning and dispatches at most one target-bound
-recovery preparation. A failed, timed-out, malformed, or mismatched recovery
-blocks publication.
+recovery preparation. A failed recovery that ran before the required hidden
+route contract artifact upload is treated as invalid recovery evidence, not as
+that target's one recovery: one replacement may run under the current artifact
+contract. A failed, timed-out, malformed, or mismatched current-contract
+recovery blocks publication.
 
 The preparation artifact is an optimization and provenance input only. It
 never replaces the independent Dockerfile source-build and Compose deployment

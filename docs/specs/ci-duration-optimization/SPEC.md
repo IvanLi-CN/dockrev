@@ -49,7 +49,7 @@
 - The system MUST prepare release-enabled main commits before publication with Web and amd64/arm64 gnu/musl binary inputs in an immutable artifact retained for one day.
 - The preparation workflow MUST have no package, tag, GitHub Release, or image publication authority and MUST write `publish=false` plus a complete SHA-256 manifest.
 - The complete manifest MUST include `web/dist/.dockrev-route-contract.json`; Release MUST bind the downloaded manifest to the preparation gate's SHA-256 and verify every listed file's presence, size, and SHA-256 before consuming the artifact.
-- Release MUST consume only a preparation artifact whose manifest matches the oldest-pending target SHA and trusted workflow provenance. If it is missing or expired, Release MAY dispatch one target-bound recovery preparation and MUST warn; failed or mismatched recovery blocks publication.
+- Release MUST consume only a preparation artifact whose manifest matches the oldest-pending target SHA and trusted workflow provenance. If it is missing or expired, Release MAY dispatch one target-bound recovery preparation and MUST warn. A completed failed recovery whose workflow head predates the required hidden route-contract artifact upload MAY be replaced once; any recovery that ran under the current artifact contract, has an unverifiable workflow head, or produces invalid proof MUST block publication.
 - covers: `G2`, `G3`
 
 ## Verification
@@ -76,7 +76,7 @@
 
 - Method: Python manifest/evaluator fixtures and a workflow YAML contract check for normal and one-time recovery preparation runs.
 - covers: `REQ-CI-DURATION-005`
-- Pass condition: exact target SHA, trusted main workflow, complete file digests, one-day retention, and `publish=false` are required; a missing artifact produces one warning and one bounded recovery, while a second recovery or any invalid proof is rejected.
+- Pass condition: exact target SHA, trusted main workflow, complete file digests, one-day retention, and `publish=false` are required; a missing artifact produces one warning and one bounded recovery. A failed pre-contract recovery is ignored only while waiting for its one current-contract replacement; a second recovery or any unverifiable/current-contract failed recovery is rejected.
 
 ## Related ADRs
 
