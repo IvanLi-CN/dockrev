@@ -207,11 +207,24 @@ export const LifecycleRunning: Story = {
     expectStory(action.textContent?.includes("停止"), "running Stack should default to stop");
     const menuTrigger = doc.querySelector<HTMLButtonElement>('[aria-label="Stack 生命周期菜单"]');
     expectStory(menuTrigger, "Stack lifecycle split menu should be discoverable");
+    const primaryAction = action.querySelector<HTMLButtonElement>(
+      ":scope > :first-child.btn, :scope > :first-child.btnTooltipAnchor > .btn",
+    );
+    expectStory(primaryAction, "Stack lifecycle split primary action should be present");
+    const triggerStyle = getComputedStyle(menuTrigger);
+    expectStory(
+      triggerStyle.flexBasis === "36px" && triggerStyle.width === "36px",
+      "desktop Stack lifecycle menu trigger should keep its fixed 36px width",
+    );
+    expectStory(
+      primaryAction.getBoundingClientRect().width > menuTrigger.getBoundingClientRect().width,
+      "desktop Stack lifecycle primary action should not expand the menu trigger",
+    );
     menuTrigger.click();
     const body = within(doc.body);
-    await waitForCondition(() => Boolean(body.queryByText("启动")));
-    expectStory(Boolean(body.queryByText("停止")), "Stack lifecycle menu should include stop");
-    expectStory(Boolean(body.queryByText("重启")), "Stack lifecycle menu should include restart");
+    await waitForCondition(() => Boolean(body.queryByRole("menuitem", { name: "启动" })));
+    expectStory(Boolean(body.queryByRole("menuitem", { name: "停止" })), "Stack lifecycle menu should include stop");
+    expectStory(Boolean(body.queryByRole("menuitem", { name: "重启" })), "Stack lifecycle menu should include restart");
   },
 };
 

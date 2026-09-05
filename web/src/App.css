@@ -113,7 +113,7 @@
   min-width: 0;
 }
 
-.appShellWithDetailSidebar .topActions .serviceSplitAction[data-slot='button-group'] > .serviceSplitActionMenuTrigger {
+:is(.appShellStackDetail, .appShellServiceDetail) .topActions .serviceSplitAction[data-slot='button-group'] > .serviceSplitActionMenuTrigger {
   flex: 0 0 36px;
   width: 36px;
   min-width: 36px;
@@ -12047,29 +12047,29 @@ html[data-theme="light"] .serviceLogsTerminal {
   filter: none;
 }
 
-.appShellWithDetailSidebar .topbarRight .serviceSplitAction[data-slot='button-group'] > :first-child.btn,
-.appShellWithDetailSidebar .topbarRight .serviceSplitAction[data-slot='button-group'] > :first-child.btnTooltipAnchor > .btn {
+:is(.appShellStackDetail, .appShellServiceDetail) .topbarRight .serviceSplitAction[data-slot='button-group'] > :first-child.btn,
+:is(.appShellStackDetail, .appShellServiceDetail) .topbarRight .serviceSplitAction[data-slot='button-group'] > :first-child.btnTooltipAnchor > .btn {
   flex: 0 0 auto;
   width: max-content;
   min-width: 0;
   border-right-width: 0;
 }
 
-.appShellWithDetailSidebar .topbarRight .serviceSplitAction[data-slot='button-group'] > .serviceSplitActionMenuTrigger {
+:is(.appShellStackDetail, .appShellServiceDetail) .topbarRight .serviceSplitAction[data-slot='button-group'] > .serviceSplitActionMenuTrigger {
   border-left-width: 0;
 }
 
-.appShellWithDetailSidebar .topbarRight .serviceSplitAction[data-slot='button-group'] > :first-child.btn,
-.appShellWithDetailSidebar .topbarRight .serviceSplitAction[data-slot='button-group'] > :first-child.btnTooltipAnchor > .btn,
-.appShellWithDetailSidebar .topbarRight .serviceSplitAction[data-slot='button-group'] > .serviceSplitActionMenuTrigger {
+:is(.appShellStackDetail, .appShellServiceDetail) .topbarRight .serviceSplitAction[data-slot='button-group'] > :first-child.btn,
+:is(.appShellStackDetail, .appShellServiceDetail) .topbarRight .serviceSplitAction[data-slot='button-group'] > :first-child.btnTooltipAnchor > .btn,
+:is(.appShellStackDetail, .appShellServiceDetail) .topbarRight .serviceSplitAction[data-slot='button-group'] > .serviceSplitActionMenuTrigger {
   box-shadow: none !important;
 }
 
-.appShellWithDetailSidebar .topbarRight .serviceSplitAction[data-slot='button-group'] > .serviceSplitActionMenuTrigger {
+:is(.appShellStackDetail, .appShellServiceDetail) .topbarRight .serviceSplitAction[data-slot='button-group'] > .serviceSplitActionMenuTrigger {
   position: relative;
 }
 
-.appShellWithDetailSidebar .topbarRight .serviceSplitAction[data-slot='button-group'] > .serviceSplitActionMenuTrigger::before {
+:is(.appShellStackDetail, .appShellServiceDetail) .topbarRight .serviceSplitAction[data-slot='button-group'] > .serviceSplitActionMenuTrigger::before {
   position: absolute;
   top: 50%;
   left: 0;
