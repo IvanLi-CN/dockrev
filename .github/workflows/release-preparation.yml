@@ -320,6 +320,13 @@ jobs:
         with:
           ref: ${{ env.TARGET_SHA }}
 
+      - name: Checkout trusted workflow helpers
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: .workflow-src
+          fetch-depth: 1
+
       - name: Download web input
         uses: actions/download-artifact@v4
         with:
@@ -369,7 +376,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 .github/scripts/release_preparation.py verify \
+          python3 .workflow-src/.github/scripts/release_preparation.py verify \
             --root . \
             --manifest release-preparation-manifest.json \
             --target-sha "${TARGET_SHA}" \
