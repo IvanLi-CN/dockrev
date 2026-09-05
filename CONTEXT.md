@@ -65,6 +65,20 @@ _Avoid_: container status, readiness result
 The time boundary after which a continuously `starting` candidate is treated as a health failure. It is derived solely from the candidate's effective health policy.
 _Avoid_: fixed health timeout, Docker unhealthy time
 
+## Application Shell Updates
+
+**PWA shell update**:
+A replacement of the browser application's Service Worker and its app-shell cache. It is ready only after the candidate Worker has populated its entire precache and reached `waiting`.
+_Avoid_: service update, container update
+
+**precache-eligible asset**:
+A current app-shell build artifact whose public URL returns a successful HTTP response and can therefore be committed to the candidate Worker's precache.
+_Avoid_: every generated file, not-found document
+
+**not-found document**:
+The generated `404.html` body rendered with HTTP `404` for an unknown Dockrev document URL. It is not part of the app shell and is not precache-eligible.
+_Avoid_: static 404 asset, offline fallback
+
 ## Compose Configuration
 
 **source Compose configuration**:

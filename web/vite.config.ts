@@ -155,6 +155,7 @@ export default defineConfig(({ command, mode }) => {
     injectRegister: false,
     registerType: 'prompt',
     injectManifest: {
+      globIgnores: ['404.html'],
       maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
       globPatterns: ['**/*.{js,css,html}'],
     },
