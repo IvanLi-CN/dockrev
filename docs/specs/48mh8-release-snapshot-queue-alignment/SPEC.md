@@ -52,7 +52,8 @@
 - snapshot 必须记录 `target_sha`、`pr_number`、`type_label`、`channel_label`、`release_enabled`、`release_bump`、`release_channel`、`app_effective_version`、`release_tag`、`tags_csv`。
 - `release_snapshot.py` 的 stable base version 计算必须基于 `main` 一阶父链中“最近已发布 tag / 已存在 snapshot”的前序锚点，不能依赖仓库当前全局最大 tag。
 - `CI (main)` 必须能为自最近发布/快照锚点之后缺失的 release-enabled commits 一次性 materialize snapshot，避免只处理当前 `HEAD`。
-- `Release` workflow 自动路径必须按 oldest pending snapshot 逐个发布，且成功后继续 dispatch 下一个 pending target 直到队列清空。
+- `Release` workflow 自动路径及其由 `github-actions[bot]` 触发的内部 queue-continuation dispatch 必须按 oldest pending snapshot 逐个发布，且成功后继续 dispatch 下一个 pending target 直到队列清空。
+- 手工 `workflow_dispatch(admin_action=release)` 必须只发布指定 target；只有由 `github-actions[bot]` 派发的内部 queue-continuation dispatch 才可继续处理后续 pending target。
 - manual backfill 必须只要求目标 SHA 已在 `origin/main`，不依赖该 commit 当时一定有成功的 `CI (main)` 历史记录。
 - `release-channel-contract-check.sh` 必须只保留离线 contract / self-test / mock API 检查，不得再直接访问真实 GitHub branch-rules API。
 
@@ -72,7 +73,7 @@
 
 - `CI (main)` 成功后，snapshot job 针对当前 `main` commit 拉取/写入 `refs/notes/release-snapshots`；若当前 commit 之前存在未快照的连续 main commits，则按 first-parent 顺序补齐缺失 snapshots。
 - `Release` workflow 被 `workflow_run` 触发时，不再把触发 SHA 直接当作唯一发布目标，而是以该 SHA 作为上界，从 snapshots 中选择 oldest pending release-enabled target 发布。
-- `Release` workflow 被 `workflow_dispatch(head_sha=...)` 触发时，允许对指定 main commit 走 target-only materialization + export，再发布该 target；发布成功后若上界内仍有更老 pending 目标，可继续通过 queue continuation 收敛。
+- `Release` workflow 被 `workflow_dispatch(head_sha=...)` 触发时，允许对指定 main commit 走 target-only materialization + export，再发布该 target；手工 dispatch 不会扩展到其他 pending target。由 `github-actions[bot]` 派发的内部 queue-continuation dispatch 会在每个 target 成功后继续收敛队列。
 - stable snapshot 导出 `<semver>` tag，并仅在该 snapshot 仍是 main 上最新 stable snapshot 时发布 `latest`；rc snapshot 导出 `<semver>-rc.<sha7>`，标记 GitHub prerelease，且不得更新 `latest`。
 - docs/skip snapshot 仍需记录到 notes，便于历史对账，但不得进入发布队列。
 
@@ -92,7 +93,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `refs/notes/release-snapshots` | Git notes JSON payload | internal | New | None | CI maintainers | `CI (main)`, `Release`, operators | immutable release snapshot store |
 | `.github/scripts/release_snapshot.py` | CLI | internal | New | None | CI maintainers | `CI (main)`, `Release` | `ensure/export/next-pending` |
-| `.github/workflows/release.yml` `workflow_dispatch.inputs.head_sha` | workflow input | internal | Modify | None | CI maintainers | operators | 保持 input name，不改调用入口 |
+| `.github/workflows/release.yml` `workflow_dispatch.inputs.head_sha` | workflow input | internal | Modify | None | CI maintainers | operators, queue continuation | `head_sha` 保持兼容；内部续队由 GitHub Actions actor 区分，不暴露可伪造的 workflow input |
 | `.github/scripts/release-channel-contract-check.sh` | shell contract check | internal | Modify | None | CI maintainers | `CI (PR)`, `CI (main)` | 仅保留离线 contract/self-test |
 
 ### 契约文档（按 Kind 拆分）
@@ -103,6 +104,7 @@ None
 
 - Given `type:patch + channel:stable` 或 `type:patch + channel:rc`，When `PR Label Gate` 与 snapshot materialization 运行，Then label 结果与现状一致，未知/缺失/冲突 label 仍按既有契约失败。
 - Given `main` 上连续合并多个 release-enabled PR，When GitHub concurrency 只实际跑了最新的 `CI (main)`，Then snapshot job 会为缺失的一阶父链 commits 补齐 snapshot，`Release` 按 oldest pending 顺序逐个发布，不漏掉中间版本。
+- Given `Release` 内部 dispatch 下一个 pending target，When 后续 run 以 `workflow_dispatch(admin_action=release)` 且 `github.actor=github-actions[bot]` 启动，Then 它继续处理下一个 pending target；任意手工 dispatch 只处理指定 target。
 - Given 较晚时间再手动 backfill 较早的 `main` commit，When `release_snapshot.py ensure/export` 运行，Then 版本号取自该 commit 在一阶父链上的前序发布锚点，而不是仓库当前最新 tag。
 - Given `CI (PR)` / `CI (main)` 执行 live quality-gates，When GitHub API 被调用，Then 使用 `GITHUB_TOKEN` 的 authenticated request；失败时仅反映真实 branch-rules drift。
 - Given `channel:rc` snapshot，When `Release` 发布，Then 只发布 `*-rc.<sha7>` 和 prerelease，且不更新 `latest`。
@@ -126,11 +128,11 @@ None
 
 - [0005-source-build-release-gate](../../adr/0005-source-build-release-gate.md)
 
-### UI / Storybook (if applicable)
+## UI / Storybook (if applicable)
 
 - None
 
-### Quality checks
+## Quality checks
 
 - Lint / typecheck / formatting: `bash -n`、`python3 -m py_compile`、`ruby -e 'require "yaml"; ...'`
 
@@ -147,7 +149,7 @@ None
 - PR visual evidence source: maintain `## Visual Evidence (PR)` in this spec when PR screenshots are needed.
 - If an asset must be used in impl (runtime/test/official docs), list it in `资产晋升（Asset promotion）` and promote it to a stable project path during implementation.
 
-## Visual Evidence (PR)
+## Visual Evidence
 
 - None
 

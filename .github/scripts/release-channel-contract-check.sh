@@ -166,6 +166,19 @@ abort "[contract-check] release workflow top-level permissions must keep issues:
 abort "[contract-check] release workflow top-level permissions must keep pull-requests: write" unless top_permissions["pull-requests"] == "write"
 abort "[contract-check] release publish job permissions must keep issues: write" unless publish_permissions["issues"] == "write"
 abort "[contract-check] release publish job permissions must keep pull-requests: write" unless publish_permissions["pull-requests"] == "write"
+
+events = workflow.fetch(workflow.key?("on") ? "on" : true)
+abort "[contract-check] release workflow must not expose a caller-controlled queue continuation input" if events.fetch("workflow_dispatch").fetch("inputs").key?("continue_queue")
+queue_condition = "github.event_name != \x27workflow_dispatch\x27 || inputs.admin_action == \x27skip\x27 || github.actor == \x27github-actions[bot]\x27"
+continue_condition = "(#{queue_condition}) && steps.next-pending.outputs.target_sha != \x27\x27"
+publish_steps = jobs.fetch("publish").fetch("steps")
+next_pending = publish_steps.find { |step| step["name"] == "Resolve next pending release target" }
+continue_queue = publish_steps.find { |step| step["name"] == "Continue release queue" }
+abort "[contract-check] release workflow must resolve next pending target" unless next_pending
+abort "[contract-check] release workflow must continue queued workflow_dispatch releases" unless next_pending.fetch("if") == queue_condition
+abort "[contract-check] release workflow must retain queue continuation dispatch" unless continue_queue
+abort "[contract-check] release queue dispatch must use the queue continuation condition" unless continue_queue.fetch("if") == continue_condition
+abort "[contract-check] release queue dispatch must preserve the direct-release input contract" unless continue_queue.fetch("with").fetch("script").include?("inputs: { head_sha: nextSha, admin_action: \x27release\x27, override_reason: \x27\x27 }")
 '
 
 echo "[contract-check] failed release notification workflow invariants"
