@@ -393,9 +393,6 @@ export function AppShell(props: {
           </div>
 
           <aside className="sidebar" role="complementary" aria-label="主导航侧栏">
-            <div className="sidebarNavHeader">
-              <span className="sidebarSectionLabel sidebarNavLabel">导航</span>
-            </div>
             <nav id="appShellPrimaryNav" className="nav" aria-label="主导航">
               {nav.map((item) => {
                 const NavIcon = item.icon;

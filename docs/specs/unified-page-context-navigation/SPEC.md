@@ -15,13 +15,15 @@
 - `mobile context drawer`: 窄屏顶部临时抽屉；与底部一级导航互补，不合并为一个菜单。
 - `service directory`: 可搜索、多展开的 Stack→Service 树；服务详情 section 仍由 URL 保持。
 - `cleanup view filter`: 只改变清理页展示投影，不进入扫描或 `CleanupApplyRequest`。
-- `page search`: 页面服务筛选的唯一输入；桌面位于②侧栏，窄屏位于②抽屉，不在页头重复渲染。
+- `Overview header tools`: Overview 宽屏页头依次承载资源摘要、浏览器本地当前时间和服务搜索；它们不是扫描或资源样本状态。
+- `browser-local current time`: 以浏览器本地时区每秒更新的时间，显示 GMT 偏移；它与最近扫描时间和资源样本时间分别表示不同事实。
+- `Overview service search`: Overview 服务筛选的唯一输入。页头宽度足够时显示为输入；受限宽屏时由图标触发弹层输入；窄屏时仅在②抽屉中显示输入。
 
 ## Requirements
 
 ### REQ-UPCN-001
 
-- AppShell MUST 在桌面页头渲染 Logo，并只渲染一个侧栏；侧栏依次包含五个横向一级图标、页面内导航和固定底部元信息，不得重复放置 Logo。页面内导航 MUST 独立滚动；不得提供桌面折叠控件或折叠持久化。
+- AppShell MUST 在桌面页头渲染 Logo，并只渲染一个侧栏；侧栏依次包含五个横向一级图标、页面内导航和固定底部元信息，不得重复放置 Logo 或“导航”文字标题。页面内导航 MUST 独立滚动；不得提供桌面折叠控件或折叠持久化。
 
 ### REQ-UPCN-002
 
@@ -49,7 +51,7 @@
 
 ### REQ-UPCN-008
 
-- Overview 的服务筛选 MUST 只渲染一个搜索输入；桌面搜索 MUST 位于②侧栏，移动搜索 MUST 位于②抽屉，页头不得再渲染重复搜索控件。
+- Overview 的宽屏页头 MUST 按资源摘要、浏览器本地当前时间、服务搜索的顺序呈现工具区。当前时间 MUST 至少每秒更新并显示 GMT 偏移，不得被表达为最近扫描时间或资源样本时间。可用页头宽度不足时，MUST 保留资源摘要、卸载当前时间、以不改变筛选状态的图标按钮触发服务搜索弹层。进入窄屏断点后，资源摘要、当前时间和唯一服务搜索输入 MUST 只存在于②抽屉；正文、侧栏和页头不得保留重复副本。每个实际呈现状态最多挂载一个服务搜索输入，不得仅以 CSS 隐藏额外输入。
 
 ### REQ-UPCN-009
 
@@ -66,8 +68,8 @@
 ### VER-UPCN-002
 
 - Method: `page-context-navigation` 单测及 Overview、Queue、Services、Cleanup、Settings 页面 stories。
-- covers: `REQ-UPCN-003`, `REQ-UPCN-004`, `REQ-UPCN-006`, `REQ-UPCN-007`
-- Pass condition: 五类页面目录行为、队列五条终态上限、服务树搜索/多展开、清理纯视图筛选、设置双端行为和可访问当前态均通过。
+- covers: `REQ-UPCN-003`, `REQ-UPCN-004`, `REQ-UPCN-006`, `REQ-UPCN-007`, `REQ-UPCN-008`
+- Pass condition: 五类页面目录行为、Overview 宽屏/受限宽屏/窄屏抽屉的工具区、队列五条终态上限、服务树搜索/多展开、清理纯视图筛选、设置双端行为和可访问当前态均通过。
 
 ### VER-UPCN-003
 
@@ -77,9 +79,9 @@
 
 ### VER-UPCN-004
 
-- Method: mock-only `ui_demo` 对五个一级页面分别采集桌面侧栏和移动②抽屉场景，配合主人确认的视觉比较。
+- Method: mock-only `ui_demo` 对五个一级页面分别采集桌面侧栏和移动②抽屉场景；Overview 额外采集完整页头与受限页头搜索弹层，配合主人确认的视觉比较。
 - covers: `REQ-UPCN-001`, `REQ-UPCN-002`, `REQ-UPCN-006`, `REQ-UPCN-008`, `REQ-UPCN-009`
-- Pass condition: 无登录信息、每个页面只出现一个服务搜索入口、无重叠或溢出，截图差异有明确确认记录。
+- Pass condition: 无登录信息、Overview 页头工具顺序和窄屏归属正确、每个实际状态只出现一个服务搜索输入、无重叠或溢出，截图差异有明确确认记录。
 
 ## Visual Evidence
 
