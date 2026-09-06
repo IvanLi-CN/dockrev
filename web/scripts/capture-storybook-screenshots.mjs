@@ -612,13 +612,33 @@ async function main() {
       },
     },
     {
+      id: 'pages-overviewpage--constrained-header',
+      file: 'overview-homepage-v2-constrained-desktop.png',
+      viewport: { width: 1440, height: 920 },
+      setup: async (page) => {
+        await page.locator('.topbarGlobalContent').evaluate((element) => {
+          const header = element
+          header.style.flex = '0 0 620px'
+          header.style.width = '620px'
+        })
+        await page
+          .locator('.homepageHeaderContent[data-layout="compact"]')
+          .waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.getByRole('button', { name: '打开服务搜索' }).click()
+        await page.getByRole('searchbox', { name: '搜索服务入口' }).waitFor({
+          state: 'visible',
+          timeout: STORY_TIMEOUT_MS,
+        })
+      },
+      screenshot: async (page, filePath) => {
+        await page.screenshot({ path: filePath, fullPage: false })
+      },
+    },
+    {
       id: 'pages-overviewpage--mobile-stacked',
       file: 'overview-homepage-v2-mobile.png',
       viewport: { width: 390, height: 900 },
       setup: async (page) => {
-        await page
-          .locator('.homepageMobileNavModule .homepageTopStrip')
-          .waitFor({ state: 'visible', timeout: STORY_TIMEOUT_MS })
         await page.locator('.homepageServiceCard').first().waitFor({ timeout: STORY_TIMEOUT_MS })
         await page.evaluate(() => window.scrollTo(0, 0))
       },
@@ -631,16 +651,14 @@ async function main() {
       file: 'overview-homepage-v2-mobile-menu.png',
       viewport: { width: 390, height: 900 },
       setup: async (page) => {
-        await page
-          .locator('.homepageMobileNavModule .homepageTopStrip')
-          .waitFor({ state: 'visible', timeout: STORY_TIMEOUT_MS })
-        await page.getByRole('button', { name: '打开主导航' }).click()
+        await page.getByRole('button', { name: '打开页面内导航' }).click()
         await page
           .locator('#mobileDockrevMenu .mobileMenuEmbeddedContent .homepageDrawerSearchSlot')
           .waitFor({ state: 'visible', timeout: STORY_TIMEOUT_MS })
         await page
           .locator('#mobileDockrevMenu .mobileMenuEmbeddedContent .homepageDrawerBottomSummary')
           .waitFor({ state: 'visible', timeout: STORY_TIMEOUT_MS })
+        await page.waitForTimeout(240)
       },
       screenshot: async (page, filePath) => {
         const el = page.locator('#mobileDockrevMenu')

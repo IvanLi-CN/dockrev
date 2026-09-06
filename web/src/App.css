@@ -558,29 +558,57 @@ html[data-theme="light"] .brandLogoForLight {
 .detailRouteTree {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .detailRouteTreeIntro {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 0 2px 10px;
+  padding: 0 2px 8px;
   border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
 }
 
-.detailRouteTreeTitleRow {
-  display: flex;
+.detailRouteTreeToolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
 }
 
-.detailRouteTreeTitle {
-  font-size: 15px;
-  font-weight: 720;
-  letter-spacing: -0.01em;
-  color: var(--text);
+.detailRouteTreeToolbar .detailRouteTreeSearch {
+  width: 100%;
+}
+
+.detailRouteTreeSummaryRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.detailRouteTreeSummaryRow .detailRouteTreeMeta {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.detailRouteTreeFreshness {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--muted2);
+  font-size: 11px;
+  line-height: 24px;
+  white-space: nowrap;
+}
+
+.detailRouteTreeFreshnessValue {
+  color: var(--muted);
+}
+
+.detailRouteTreeFreshnessStale,
+.detailRouteTreeFreshnessStale .detailRouteTreeFreshnessValue {
+  color: color-mix(in srgb, var(--color-warning) 82%, var(--text) 18%);
 }
 
 .detailRouteTreeMeta {
@@ -598,34 +626,6 @@ html[data-theme="light"] .brandLogoForLight {
 }
 
 .detailRouteTreeMetaDivider {
-  color: var(--muted2);
-}
-
-.detailRouteTreePath {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 7px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.detailRouteTreePathLabel {
-  display: inline-flex;
-  min-height: 20px;
-  align-items: center;
-  padding: 0 7px;
-  border: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--dockrev-surface) 52%, transparent);
-  color: var(--muted2);
-  font-size: 10px;
-  font-weight: 650;
-  letter-spacing: 0.04em;
-}
-
-.detailRouteTreePathDivider {
   color: var(--muted2);
 }
 
@@ -659,7 +659,8 @@ html[data-theme="light"] .brandLogoForLight {
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
+  column-gap: 10px;
+  row-gap: 0;
 }
 
 .detailRouteStackToggle {
@@ -1762,7 +1763,8 @@ html[data-theme="light"] .brandLogoForLight {
   display: flex;
   align-items: center;
   gap: 7px;
-  margin: 10px 0 4px;
+  min-width: 0;
+  margin: 0;
   color: var(--muted2);
 }
 
@@ -12126,24 +12128,12 @@ html[data-theme="light"] .brandLogoThemeSwitch {
   box-shadow: none;
 }
 
-.sidebarNavHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin: 0 0 8px;
-}
-
 .sidebarSectionLabel {
   margin: 9px 12px;
   font-size: 11px;
   font-weight: 650;
   letter-spacing: 0.02em;
   color: var(--muted2);
-}
-
-.sidebarNavHeader .sidebarSectionLabel {
-  margin: 0 12px;
 }
 
 .sidebarCollapseButton {
@@ -12498,13 +12488,6 @@ html[data-theme="light"] .brandLogoThemeSwitch {
   overflow-x: hidden;
 }
 
-.appShellSidebarCollapsed .sidebarNavHeader {
-  justify-content: center;
-  width: 100%;
-  margin-bottom: 10px;
-}
-
-.appShellSidebarCollapsed .sidebarNavLabel,
 .appShellSidebarCollapsed .navItemLabel {
   display: none;
 }
@@ -13751,12 +13734,8 @@ html[data-theme="light"] .btnPrimary {
     order: 2;
   }
 
-  .mobileMenuDrawer:has(.homepageDrawerNavControls) .mobileMeta {
-    order: 3;
-  }
-
   .mobileMenuDrawer:has(.homepageDrawerNavControls) .mobileDrawerFooter {
-    order: 4;
+    order: 3;
   }
 
   .homepageDrawerNavControls {
@@ -13920,28 +13899,6 @@ html[data-theme="light"] .btnPrimary {
     background: var(--color-primary);
   }
 
-  .mobileMeta {
-    margin-top: 8px;
-    border-top: 1px solid var(--borderColor);
-    padding-top: 8px;
-  }
-
-  .mobileMetaRow {
-    display: grid;
-    grid-template-columns: 78px minmax(0, 1fr);
-    align-items: baseline;
-    gap: 8px;
-    min-width: 0;
-  }
-
-  .mobileMetaRow > .mono {
-    overflow: hidden;
-    color: var(--muted);
-    font-size: 12px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
   .mobileDrawerFooter {
     flex: 0 0 auto;
     margin-top: auto;
@@ -13949,8 +13906,16 @@ html[data-theme="light"] .btnPrimary {
     padding-top: 14px;
   }
 
+  .mobileDrawerFooterControls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 38px;
+    align-items: center;
+    gap: 8px;
+  }
+
   .mobileDrawerFooter .topbarUserSlotSidebar {
-    width: 100%;
+    min-width: 0;
+    width: auto;
   }
 
   .mobileDrawerFooter .topbarUserSlotSidebar .topbarUserTrigger {
@@ -13969,12 +13934,29 @@ html[data-theme="light"] .btnPrimary {
     display: block;
   }
 
-  .mobileDrawerThemeControl {
-    margin-top: 10px;
+  .mobileDrawerFooterControls .themePreferenceIconButton {
+    flex: 0 0 38px;
+    width: 38px;
+    min-width: 38px;
+    height: 38px;
+    min-height: 38px;
+    padding: 0;
+    line-height: 0;
+    border-radius: 10px;
   }
 
-  .mobileDrawerThemeControl .themePreferenceSegmented {
-    min-width: 0;
+  .mobileDrawerFooterControls .themePreferenceIconButton::before {
+    inset: 0;
+    border-radius: 10px;
+  }
+
+  .mobileDrawerFooterControls .themePreferenceIconButton > span {
+    display: inline-flex;
+    width: 18px;
+    height: 18px;
+    align-items: center;
+    justify-content: center;
+    line-height: 0;
   }
 
   .mobileDrawerFooterDivider {
@@ -14056,15 +14038,16 @@ html[data-theme="light"] .btnPrimary {
   }
 
   .detailRouteTreeMobile {
-    gap: 14px;
+    gap: 6px;
   }
 
   .detailRouteTreeMobile .detailRouteStackGroup {
-    padding: 14px 0;
+    gap: 2px;
+    padding: 8px 0;
   }
 
   .detailRouteTreeMobile .detailRouteTreeIntro {
-    padding-bottom: 12px;
+    padding-bottom: 8px;
   }
 
   .detailRouteTreeMobile .detailRouteServiceList {
@@ -15234,10 +15217,6 @@ html[data-theme="light"] .btnPrimary {
   gap: 14px;
 }
 
-.homepageMobileNavModule {
-  display: none;
-}
-
 .homepageTopStrip {
   --homepage-line: oklch(0.72 0.045 252 / 0.2);
   --homepage-panel: oklch(0.24 0.036 256 / 0.72);
@@ -15271,10 +15250,15 @@ html[data-theme="light"] .btnPrimary {
   --homepage-text-dim: oklch(0.72 0.028 250 / 0.76);
   position: relative;
   display: grid;
-  grid-template-columns: minmax(300px, max-content) minmax(220px, 1fr);
+  grid-template-columns: minmax(300px, max-content) max-content minmax(220px, 1fr);
   align-items: center;
   gap: 18px;
   min-width: 0;
+}
+
+.homepageHeaderContent[data-layout='compact'] {
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 12px;
 }
 
 .topbarGlobalContent .homepageSystemMetrics,
@@ -15393,7 +15377,28 @@ html[data-theme="light"] .btnPrimary {
 }
 
 .homepageHeaderSearchToggle {
-  display: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--borderColor);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--dockrev-surface) 88%, var(--panel2) 12%);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.homepageHeaderSearchToggle > svg {
+  width: 16px;
+  height: 16px;
+}
+
+.homepageHeaderSearchToggle:hover,
+.homepageHeaderSearchToggle:focus-visible {
+  border-color: color-mix(in srgb, var(--color-primary) 60%, var(--borderColor));
+  outline: none;
 }
 
 .homepageHeaderSearchPopover {
@@ -15433,50 +15438,6 @@ html[data-theme="light"] .btnPrimary {
 .homepageClockZone {
   color: var(--homepage-text-soft);
   font-size: 18px;
-}
-
-.homepageSidebarClockPanel {
-  --homepage-text-soft: oklch(0.82 0.028 250 / 0.86);
-  display: grid;
-  gap: 6px;
-  padding: 0;
-}
-
-.homepageSidebarClockLabel {
-  color: var(--muted2);
-  font-size: 10px;
-  font-weight: 720;
-  letter-spacing: 0.08em;
-  line-height: 1.1;
-  text-transform: uppercase;
-}
-
-.homepageSidebarClock {
-  display: grid;
-  grid-template-columns: 17px minmax(0, 1fr) auto;
-  grid-template-areas: "icon time zone";
-  column-gap: 8px;
-  align-items: center;
-  color: var(--muted);
-  font-size: 14px;
-  line-height: 1.2;
-}
-
-.homepageSidebarClock .homepageClockIcon {
-  grid-area: icon;
-}
-
-.homepageSidebarClock > span:not(.homepageClockZone) {
-  grid-area: time;
-  min-width: 0;
-  font-family: var(--font-mono);
-  font-weight: 700;
-}
-
-.homepageSidebarClock .homepageClockZone {
-  grid-area: zone;
-  color: var(--muted2);
-  font-size: 11px;
 }
 
 .homepageToolFloatWindow {
@@ -16227,12 +16188,8 @@ html[data-theme="light"] .homepageHeaderSearchPopover {
 
 @media (max-width: 1360px) {
   .homepageHeaderContent {
-    grid-template-columns: minmax(260px, max-content) minmax(180px, 1fr);
+    grid-template-columns: minmax(260px, max-content) max-content minmax(180px, 1fr);
     gap: 12px;
-  }
-
-  .homepageHeaderClock {
-    display: none;
   }
 }
 
@@ -16243,7 +16200,7 @@ html[data-theme="light"] .homepageHeaderSearchPopover {
   }
 
   .homepageHeaderContent {
-    grid-template-columns: minmax(240px, max-content) minmax(180px, 1fr);
+    grid-template-columns: minmax(240px, max-content) max-content minmax(180px, 1fr);
     gap: 12px;
   }
 
@@ -16504,92 +16461,6 @@ html[data-theme="light"] .homepageHeaderSearchPopover {
     white-space: nowrap;
   }
 
-  .homepageMobileNavModule {
-    display: block;
-    margin-top: -2px;
-    border-bottom: 1px solid var(--homepage-line);
-    padding: 2px 0 14px;
-  }
-
-  .homepageMobileNavModule .homepageTopStrip {
-    grid-template-columns: 1fr;
-    gap: 12px;
-    padding-bottom: 0;
-    border-bottom: 0;
-  }
-
-  .homepageHeaderContent {
-    display: flex;
-    justify-content: flex-end;
-    min-width: 0;
-  }
-
-  .homepageHeaderMetrics,
-  .homepageHeaderClock,
-  .homepageHeaderSearchDesktop {
-    display: none;
-  }
-
-  .homepageHeaderSearchToggle {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 44px;
-    height: 44px;
-    border: 1px solid var(--borderColor);
-    border-radius: 11px;
-    background: color-mix(
-      in srgb,
-      var(--dockrev-surface) 88%,
-      var(--panel2) 12%
-    );
-    color: var(--text);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-  }
-
-  .homepageHeaderSearchToggle:hover,
-  .homepageHeaderSearchToggle:focus-visible {
-    border-color: color-mix(
-      in srgb,
-      var(--color-primary) 60%,
-      var(--borderColor)
-    );
-    outline: none;
-  }
-
-  .homepageHeaderSearchPopover {
-    position: fixed;
-    top: 74px;
-    right: 12px;
-    left: 12px;
-    width: auto;
-    padding: 9px;
-  }
-
-  .homepageMobileNavModule .homepageOverviewSearchForm {
-    order: -1;
-  }
-
-  .homepageMobileNavModule .homepageSystemMetrics {
-    order: 1;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px 14px;
-  }
-
-  .homepageMobileNavModule .homepageClock {
-    order: 2;
-    font-size: 18px;
-  }
-
-  .homepageMobileNavModule .homepageClockZone {
-    font-size: 16px;
-  }
-}
-
-@media (min-width: 600px) and (max-width: 960px) {
-  .homepageMobileNavModule .homepageSystemMetrics {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 720px) {
@@ -17326,7 +17197,7 @@ html[data-theme="light"] .homepageHeaderSearchPopover {
   padding: 18px 16px 16px;
   background: var(--panel2);
 }
-.detailRouteTreeSearch { display: flex; align-items: center; gap: 7px; margin: 10px 0 4px; color: var(--muted2); }
+.detailRouteTreeSearch { display: flex; align-items: center; gap: 7px; min-width: 0; margin: 0; color: var(--muted2); }
 .detailRouteTreeSearch input { min-width: 0; height: 32px; padding-inline: 9px; font-size: 12px; }
 
 @media (max-width: 960px) {

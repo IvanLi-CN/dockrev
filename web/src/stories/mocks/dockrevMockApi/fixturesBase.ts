@@ -40,7 +40,7 @@ export function baseEmpty(): Fixture {
 
 export function buildDashboardDemo(): Fixture {
   const f = baseEmpty()
-  const lastCheckAt = '2026-01-18T06:10:00.000Z'
+  const lastCheckAt = nowIso(-10 * 60_000)
 
   const prodStackId = 'stack-prod'
   const infraStackId = 'stack-infra'

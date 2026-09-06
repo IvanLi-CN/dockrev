@@ -58,7 +58,6 @@ import {
   CardMetric,
   HomepageHeaderContent,
   HomepageSearchForm,
-  HomepageSidebarClock,
   HomepageTopStrip,
 } from "./OverviewPageChrome";
 import { HomepageFloatingToolPanel } from "./OverviewFloatingToolPanel";
@@ -77,6 +76,14 @@ const HOMEPAGE_PERSISTED_SNAPSHOT_KEY = buildReadonlySnapshotKey(
   "homepage-nav",
 );
 const HOMEPAGE_PERSISTED_SNAPSHOT_STALE_MS = 60_000;
+const OVERVIEW_MOBILE_MEDIA_QUERY = "(max-width: 960px)";
+
+function readOverviewMobileMediaMatches(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    window.matchMedia(OVERVIEW_MOBILE_MEDIA_QUERY).matches
+  );
+}
 
 type PersistedHomepageSnapshotPayload = {
   version: 2;
@@ -438,7 +445,8 @@ export function OverviewPage(props: {
   const [activeGroupName, setActiveGroupName] = useState<string | null>(null);
   const [updateDialogCard, setUpdateDialogCard] =
     useState<HomepageNavCard | null>(null);
-  const [now] = useState(() => new Date());
+  const [now, setNow] = useState(() => new Date());
+  const [isNarrow, setIsNarrow] = useState(readOverviewMobileMediaMatches);
   const homepageColumnCount = useHomepageColumnCount();
   const shellSlotCallbacksRef = useRef({
     onContextNavigation,
@@ -456,6 +464,27 @@ export function OverviewPage(props: {
   const applySearch = useCallback(() => {
     setSearch(searchDraft);
   }, [searchDraft]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const media = window.matchMedia(OVERVIEW_MOBILE_MEDIA_QUERY);
+    const sync = () => setIsNarrow(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
+
+  useEffect(() => {
+    let timeout: number | undefined;
+    const tick = () => {
+      setNow(new Date());
+      timeout = window.setTimeout(tick, 1_000);
+    };
+    timeout = window.setTimeout(tick, 1_000);
+    return () => {
+      if (timeout !== undefined) window.clearTimeout(timeout);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -685,13 +714,18 @@ export function OverviewPage(props: {
   const hasCachedCardsInUse = allCards.some((card) => card.source === "snapshot");
 
   const topbarContent = useMemo(
-    () => (
-      <HomepageHeaderContent
-        metricsLabel="资源摘要"
-        summary={summary}
-      />
-    ),
-    [summary],
+    () =>
+      isNarrow ? null : (
+        <HomepageHeaderContent
+          metricsLabel="资源摘要"
+          now={now}
+          onApplySearch={applySearch}
+          onSearchDraftChange={setSearchDraft}
+          searchDraft={searchDraft}
+          summary={summary}
+        />
+      ),
+    [applySearch, isNarrow, now, searchDraft, summary],
   );
   const contextNavigation = useMemo(
     () => (
@@ -703,23 +737,30 @@ export function OverviewPage(props: {
             Array.from(document.querySelectorAll<HTMLElement>('[data-navigation-group]')).find((element) => element.dataset.navigationGroup === name)?.scrollIntoView({ behavior: "smooth", block: "start" })
           }}
         />
-        <div className="homepageDrawerNavControls">
-          <div className="homepageDrawerSearchSlot">
-            <HomepageSearchForm searchDraft={searchDraft} onSearchDraftChange={setSearchDraft} onApplySearch={applySearch} />
-          </div>
-          {!isAppDemoRuntime ? <HomepageSidebarClock now={now} /> : null}
-        </div>
-        <div className="homepageDrawerBottomSummary">
-          <HomepageTopStrip
-            metricsLabel="抽屉资源摘要"
-            clockLabel="抽屉当前时间"
-            summary={summary}
-            now={now}
-          />
-        </div>
+        {isNarrow ? (
+          <>
+            <div className="homepageDrawerNavControls">
+              <div className="homepageDrawerSearchSlot">
+                <HomepageSearchForm
+                  searchDraft={searchDraft}
+                  onSearchDraftChange={setSearchDraft}
+                  onApplySearch={applySearch}
+                />
+              </div>
+            </div>
+            <div className="homepageDrawerBottomSummary">
+              <HomepageTopStrip
+                metricsLabel="抽屉资源摘要"
+                clockLabel="抽屉浏览器本地当前时间"
+                summary={summary}
+                now={now}
+              />
+            </div>
+          </>
+        ) : null}
       </>
     ),
-    [activeGroupName, applySearch, groupedCards, isAppDemoRuntime, now, searchDraft, summary],
+    [activeGroupName, applySearch, groupedCards, isNarrow, now, searchDraft, summary],
   );
 
   useEffect(() => {
@@ -797,17 +838,6 @@ export function OverviewPage(props: {
           detail="请恢复联网后重新加载应用。"
         />
       ) : null}
-      <div className="homepageMobileNavModule" aria-label="导航页快捷栏">
-        <HomepageTopStrip
-          className="homepageTopStripMobile"
-          metricsLabel="导航页资源摘要"
-          clockLabel="导航页当前时间"
-          summary={summary}
-          now={now}
-          showClock={false}
-        />
-      </div>
-
       <div className="homepageStatusLine">
         <span>
           {hasCachedCardsInUse

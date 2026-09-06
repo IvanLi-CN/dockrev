@@ -76,7 +76,7 @@ function PageHarnessInner(props: {
   const [route, setRoute] = useState<Route>(props.route);
   const detailContextNavigation =
     route.name === "services" || route.name === "stack" || route.name === "service" ? (
-      <DetailRouteServiceTree route={route} variant="desktop" />
+      <DetailRouteServiceTree route={route} variant="responsive" lastScanAt={lastScanHint} />
     ) : null;
   const staticContextNavigation =
     route.name === "queue" ||
@@ -165,7 +165,6 @@ function PageHarnessInner(props: {
         contextNavigation={resolvedContextNavigation}
         contextNavigationTitle={detailContextNavigation ? "服务导航" : "页面内导航"}
         authIdentity={props.authIdentity}
-        lastScanHint={lastScanHint}
       >
         {props.children({
           route,

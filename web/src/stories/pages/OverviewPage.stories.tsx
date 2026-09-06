@@ -8,6 +8,7 @@ import {
   defaultHomepageOverrides,
   denseHomepageOverrides,
 } from "./OverviewPage.storyData";
+export { IconKinds, UnsafeHomepageHrefFallsBack } from "./overviewIconStories";
 
 const meta: Meta<typeof OverviewPage> = {
   title: "Pages/OverviewPage",
@@ -124,54 +125,79 @@ export const Default: Story = {
       "expected app overview story to omit the old page title block",
     );
     expectStory(
-      canvasElement.querySelector(".topbar .homepageHeaderContent"),
-      "expected overview resource summary to render in the global shell header",
-    );
-    expectStory(
-      canvasElement.querySelector(".homepageMobileNavModule .homepageTopStrip"),
-      "expected mobile overview strip to live in the page navigation module",
-    );
-    expectStory(
-      !canvasElement.querySelector(".homepageMobileNavModule .homepageOverviewSearchShell"),
-      "expected mobile navigation module to keep search out of the resource strip",
-    );
-    expectStory(
-      canvasElement.querySelector(".mobileMenuEmbeddedContent .homepageDrawerSearchSlot"),
-      "expected page context navigation to own the overview search",
-    );
-    expectStory(
-      canvasElement.querySelector(".mobileMenuEmbeddedContent .homepageDrawerBottomSummary"),
-      "expected hamburger menu to keep resource summary at the drawer bottom",
-    );
-    expectStory(
-      canvasElement.querySelectorAll(".topbar .homepageTopMetric").length ===
-        4,
-      "expected desktop top strip to expose four resource metrics",
-    );
-    expectStory(
-      canvasElement.querySelectorAll(
-        ".homepageMobileNavModule .homepageTopMetric",
-      ).length === 4,
-      "expected mobile navigation module to expose four resource metrics",
-    );
-    expectStory(
-      canvasElement.querySelector(".homepageOverviewSearchShell"),
-      "expected overview page to render an integrated search shell",
-    );
-    expectStory(
       canvasElement.querySelector('h1.srOnly')?.textContent === "服务导航",
       "expected overview page to expose a hidden page heading",
     );
+    const doc = canvasElement.ownerDocument;
+    const isNarrow = doc.defaultView?.matchMedia("(max-width: 960px)").matches;
     expectStory(
-      canvasElement.querySelector<HTMLInputElement>(
-        'input[type="search"][aria-label="搜索服务入口"]',
-      ),
-      "expected overview search input to expose a stable accessible label",
+      !doc.querySelector(".sidebarNavHeader, .sidebarNavLabel"),
+      "expected the sidebar to remove the redundant navigation heading",
     );
     expectStory(
-      canvasElement.querySelectorAll('input[type="search"][aria-label="搜索服务入口"]').length === 1,
-      "expected exactly one overview search input",
+      !doc.querySelector(".sidebar .homepageSidebarClock"),
+      "expected the sidebar to keep browser time out of page context",
     );
+    expectStory(
+      !canvasElement.querySelector(".homepageMobileNavModule"),
+      "expected overview resource controls to stay out of the page body",
+    );
+    if (isNarrow) {
+      expectStory(
+        !doc.querySelector(".topbar .homepageHeaderContent"),
+        "expected narrow overview to keep page tools out of the header",
+      );
+      const menuButton = doc.querySelector<HTMLButtonElement>(".mobileMenuButton");
+      expectStory(menuButton, "expected narrow overview to expose the context drawer trigger");
+      menuButton?.click();
+      await sleep(80);
+      expectStory(
+        doc.querySelector(".mobileMenuEmbeddedContent .homepageDrawerSearchSlot"),
+        "expected narrow overview search to belong to the context drawer",
+      );
+      expectStory(
+        doc.querySelector(".mobileMenuEmbeddedContent .homepageDrawerBottomSummary"),
+        "expected narrow overview resource summary to belong to the context drawer",
+      );
+      expectStory(
+        doc.querySelector(".mobileMenuEmbeddedContent .homepageClock[aria-label='抽屉浏览器本地当前时间']"),
+        "expected narrow overview clock to belong to the context drawer",
+      );
+      expectStory(
+        doc.querySelectorAll('input[type="search"][aria-label="搜索服务入口"]').length === 1,
+        "expected narrow overview to mount exactly one search input",
+      );
+    } else {
+      const header = doc.querySelector<HTMLElement>(".topbar .homepageHeaderContent");
+      expectStory(header, "expected desktop overview resource summary in the header");
+      expectStory(
+        doc.querySelectorAll(".topbar .homepageTopMetric").length === 4,
+        "expected desktop header to expose four resource metrics",
+      );
+      if (header?.dataset.layout === "compact") {
+        expectStory(
+          !doc.querySelector(".topbar .homepageHeaderClock"),
+          "expected constrained desktop header to hide the clock",
+        );
+        expectStory(
+          doc.querySelector(".topbar .homepageHeaderSearchToggle"),
+          "expected constrained desktop header to expose a search trigger",
+        );
+      } else {
+        expectStory(
+          doc.querySelector(".topbar .homepageHeaderClock[aria-label='浏览器本地当前时间']"),
+          "expected wide desktop header to show browser-local time",
+        );
+        expectStory(
+          doc.querySelector(".topbar .homepageClockZone")?.textContent?.startsWith("GMT"),
+          "expected browser-local time to show its GMT offset",
+        );
+        expectStory(
+          doc.querySelectorAll('input[type="search"][aria-label="搜索服务入口"]').length === 1,
+          "expected wide desktop overview to mount exactly one search input",
+        );
+      }
+    }
     expectStory(
       canvasElement.querySelector('button[aria-label="刷新服务列表"]'),
       "expected refresh top action to keep an accessible name when labels collapse",
@@ -179,18 +205,6 @@ export const Default: Story = {
     expectStory(
       canvasElement.querySelector('button[aria-label="立即扫描更新"]'),
       "expected scan top action to keep an accessible name when labels collapse",
-    );
-    expectStory(
-      !canvasElement.querySelector(".topbar .homepageHeaderSearch"),
-      "expected the global shell header to avoid a duplicate overview search",
-    );
-    expectStory(
-      !canvasElement.querySelector(".topbar .homepageClock"),
-      "expected current time to stay out of the global shell header",
-    );
-    expectStory(
-      canvasElement.ownerDocument.querySelector(".sidebar .homepageSidebarClock"),
-      "expected the production overview shell to keep the current time in the left sidebar",
     );
     expectStory(
       !canvasElement.querySelector(".homepageToolFloatWindow") &&
@@ -928,6 +942,91 @@ export const MetricAggregationTotals: Story = {
   },
 };
 
+export const WideHeader: Story = {
+  parameters: {
+    dockrevApiScenario: "dashboard-demo",
+    dockrevServiceOverridesById: defaultHomepageOverrides(),
+  },
+  render: renderOverview(),
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument;
+    if (doc.defaultView?.matchMedia("(max-width: 960px)").matches) return;
+    await sleep(260);
+
+    const headerSlot = doc.querySelector<HTMLElement>(".topbarGlobalContent");
+    headerSlot?.style.setProperty("flex", "1 1 760px");
+    headerSlot?.style.setProperty("min-width", "760px");
+    await sleep(80);
+
+    const header = doc.querySelector<HTMLElement>(".homepageHeaderContent");
+    expectStory(header?.dataset.layout === "full", "expected wide desktop header layout");
+    expectStory(
+      header?.querySelectorAll(".homepageTopMetric").length === 4,
+      "expected wide desktop header to retain the resource summary",
+    );
+    const clock = header?.querySelector<HTMLElement>(
+      ".homepageHeaderClock[aria-label='浏览器本地当前时间']",
+    );
+    expectStory(clock, "expected wide desktop header to show browser-local time");
+    expectStory(
+      clock?.querySelector(".homepageClockZone")?.textContent?.startsWith("GMT"),
+      "expected browser-local time to display its GMT offset",
+    );
+    expectStory(
+      header?.querySelectorAll('input[type="search"][aria-label="搜索服务入口"]').length === 1,
+      "expected wide desktop header to mount exactly one service search input",
+    );
+  },
+};
+
+export const ConstrainedHeader: Story = {
+  parameters: {
+    dockrevApiScenario: "dashboard-demo",
+    dockrevServiceOverridesById: defaultHomepageOverrides(),
+  },
+  render: renderOverview(),
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument;
+    if (doc.defaultView?.matchMedia("(max-width: 960px)").matches) return;
+    await sleep(260);
+
+    const headerSlot = doc.querySelector<HTMLElement>(".topbarGlobalContent");
+    headerSlot?.style.setProperty("flex", "0 0 620px");
+    headerSlot?.style.setProperty("width", "620px");
+    await sleep(80);
+
+    const header = doc.querySelector<HTMLElement>(".homepageHeaderContent");
+    expectStory(header?.dataset.layout === "compact", "expected constrained desktop header layout");
+    expectStory(
+      header?.querySelectorAll(".homepageTopMetric").length === 4,
+      "expected constrained desktop header to retain the resource summary",
+    );
+    expectStory(
+      !header?.querySelector(".homepageHeaderClock"),
+      "expected constrained desktop header to hide browser-local time",
+    );
+    const trigger = header?.querySelector<HTMLButtonElement>(
+      ".homepageHeaderSearchToggle[aria-label='打开服务搜索']",
+    );
+    expectStory(trigger, "expected constrained desktop header to expose a search trigger");
+    expectStory(
+      doc.querySelectorAll('input[type="search"][aria-label="搜索服务入口"]').length === 0,
+      "expected a closed constrained search popover to mount no hidden input",
+    );
+    const cardsBefore = serviceCards(canvasElement).length;
+    trigger?.click();
+    await sleep(80);
+    expectStory(
+      doc.querySelectorAll('input[type="search"][aria-label="搜索服务入口"]').length === 1,
+      "expected an open constrained search popover to mount exactly one input",
+    );
+    expectStory(
+      serviceCards(canvasElement).length === cardsBefore,
+      "expected opening the search popover not to change the service filter",
+    );
+  },
+};
+
 export const MobileStacked: Story = {
   parameters: {
     dockrevApiScenario: "dashboard-demo",
@@ -942,22 +1041,24 @@ export const MobileStacked: Story = {
   render: renderOverview(),
   play: async ({ canvasElement }) => {
     await sleep(260);
+    const doc = canvasElement.ownerDocument;
+    if (!doc.defaultView?.matchMedia("(max-width: 960px)").matches) return;
 
     expectStory(
       canvasElement.querySelector(".homepageDashboardGrid"),
       "expected mobile evidence story to expose the dashboard grid",
     );
     expectStory(
-      canvasElement.querySelector(".homepageMobileNavModule .homepageTopStrip"),
-      "expected mobile evidence story to render resource controls inside the navigation module",
+      !canvasElement.querySelector(".homepageMobileNavModule"),
+      "expected mobile overview to keep resource controls out of the page body",
     );
     expectStory(
-      !canvasElement.querySelector(".topbar .homepageHeaderSearch"),
-      "expected mobile evidence story to avoid a duplicate header search",
+      !doc.querySelector(".topbar .homepageHeaderContent"),
+      "expected mobile overview to keep search and time out of the header",
     );
     expectStory(
-      !canvasElement.querySelector(".homepageMobileNavModule .homepageClock"),
-      "expected mobile page navigation module to keep time out of the page header area",
+      !doc.querySelector(".sidebar .homepageSidebarClock"),
+      "expected mobile overview to keep time out of the sidebar",
     );
     expectStory(
       !canvasElement.querySelector(".homepageToolFloatWindow"),
@@ -967,161 +1068,29 @@ export const MobileStacked: Story = {
       !canvasElement.querySelector(".homepageToolBubble"),
       "expected mobile evidence story to keep the collapsed desktop bubble out of the narrow viewport",
     );
+    const menuButton = doc.querySelector<HTMLButtonElement>(".mobileMenuButton");
+    expectStory(menuButton, "expected mobile overview to expose the context drawer trigger");
+    menuButton?.click();
+    await sleep(80);
     expectStory(
-      canvasElement.querySelector(".mobileMenuEmbeddedContent .homepageDrawerSearchSlot"),
+      doc.querySelector(".mobileMenuEmbeddedContent .homepageDrawerSearchSlot"),
       "expected mobile page context navigation to own the search control",
     );
     expectStory(
-      canvasElement.querySelectorAll('input[type="search"][aria-label="搜索服务入口"]').length === 1,
+      doc.querySelectorAll('input[type="search"][aria-label="搜索服务入口"]').length === 1,
       "expected mobile overview to mount exactly one search input",
     );
     expectStory(
-      canvasElement.querySelector(".mobileMenuEmbeddedContent .homepageDrawerBottomSummary"),
+      doc.querySelector(".mobileMenuEmbeddedContent .homepageDrawerBottomSummary"),
       "expected hamburger menu to own the mobile resource summary",
+    );
+    expectStory(
+      doc.querySelector(".mobileMenuEmbeddedContent .homepageClock[aria-label='抽屉浏览器本地当前时间']"),
+      "expected mobile context drawer to own browser-local time",
     );
     expectStory(
       serviceCards(canvasElement).length >= 4,
       "expected mobile evidence story to render service cards",
-    );
-  },
-};
-
-export const IconKinds: Story = {
-  parameters: {
-    dockrevApiScenario: "dashboard-demo",
-    dockrevServiceOverridesById: {
-      "svc-prod-api": {
-        homepage: {
-          group: "Developer",
-          name: "Acme API",
-          icon: "si-github",
-          href: "https://api.example.com",
-          description: "Primary API gateway",
-        },
-      },
-      "svc-prod-web": {
-        homepage: {
-          group: "Frontend",
-          name: "Web Console",
-          icon: "mdi-monitor-dashboard",
-          href: "https://web.example.com",
-          description: "User-facing dashboard",
-        },
-      },
-      "svc-infra-loki": {
-        homepage: {
-          group: "Monitoring",
-          name: "Loki",
-          icon: "sh-home-assistant.png",
-          href: "https://logs.example.com",
-          description: "Centralized logs",
-        },
-      },
-      "svc-infra-prom": {
-        homepage: {
-          group: "Monitoring",
-          name: "Prometheus",
-          icon: "prometheus.svg",
-          href: "https://metrics.example.com",
-          description: "Metrics and alerting",
-        },
-      },
-      "svc-infra-postgres": {
-        homepage: {
-          group: "Data",
-          name: "Postgres",
-          icon: "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/postgres.svg",
-          href: "https://db.example.com",
-          description: "Primary relational database",
-        },
-      },
-    },
-  },
-  render: renderOverview(),
-  play: async ({ canvasElement }) => {
-    await sleep(260);
-
-    const findCard = (text: string) =>
-      serviceCards(canvasElement).find((card) =>
-        card.textContent?.includes(text),
-      );
-
-    expectStory(
-      findCard("Acme API")
-        ?.querySelector(".homepageServiceIcon")
-        ?.getAttribute("data-icon-kind") === "si",
-      "expected Acme API card to use simple-icons parsing",
-    );
-    expectStory(
-      findCard("Acme API")
-        ?.querySelector(".homepageServiceIcon")
-        ?.getAttribute("data-icon-src")
-        ?.includes("/api/homepage-icons/iconify/simple-icons/github.svg?color=%23dbeafe") === true,
-      "expected simple-icons monochrome icons to use the local proxy with the default light tint",
-    );
-    expectStory(
-      findCard("Web Console")
-        ?.querySelector(".homepageServiceIcon")
-        ?.getAttribute("data-icon-kind") === "mdi",
-      "expected Web Console card to use mdi parsing",
-    );
-    expectStory(
-      findCard("Web Console")
-        ?.querySelector(".homepageServiceIcon")
-        ?.getAttribute("data-icon-src")
-        ?.includes("/api/homepage-icons/iconify/mdi/monitor-dashboard.svg?color=%23dbeafe") === true,
-      "expected mdi monochrome icons to use the local proxy with the default light tint",
-    );
-    expectStory(
-      findCard("Loki")
-        ?.querySelector(".homepageServiceIcon")
-        ?.getAttribute("data-icon-kind") === "sh",
-      "expected Loki card to use selfh.st parsing",
-    );
-    expectStory(
-      findCard("Prometheus")
-        ?.querySelector(".homepageServiceIcon")
-        ?.getAttribute("data-icon-kind") === "dashboard",
-      "expected Prometheus card to use dashboard-icons parsing",
-    );
-    expectStory(
-      findCard("Postgres")
-        ?.querySelector(".homepageServiceIcon")
-        ?.getAttribute("data-icon-kind") === "url",
-      "expected Postgres card to use absolute URL parsing",
-    );
-  },
-};
-
-export const UnsafeHomepageHrefFallsBack: Story = {
-  parameters: {
-    dockrevApiScenario: "dashboard-demo",
-    dockrevServiceOverridesById: {
-      "svc-prod-api": {
-        homepage: {
-          group: "Developer",
-          name: "Acme API",
-          icon: "si-github",
-          href: "javascript:alert(1)",
-          description: "Primary API gateway",
-        },
-      },
-    },
-  },
-  render: renderOverview(),
-  play: async ({ canvasElement }) => {
-    await sleep(260);
-
-    const apiCard = serviceCards(canvasElement).find((card) =>
-      card.textContent?.includes("Acme API"),
-    );
-    expectStory(
-      !apiCard,
-      "unsafe homepage href should remove the service from the launcher",
-    );
-    expectStory(
-      !canvasElement.textContent?.includes("javascript:alert"),
-      "unsafe homepage href should not leak into visible card text",
     );
   },
 };

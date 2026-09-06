@@ -1,7 +1,8 @@
 import type { ServiceLifecycleSnapshotResponse } from "../../api";
+import { currentRoutePathname } from "../../routes";
 import { buildDateBoundaryLogsSnapshot } from "./serviceDetailPageStoryFixtures";
 import { render, type ServiceDetailStory } from "./serviceDetailStoryShared";
-import { expectStory, findButton, normalizeText, waitForCondition } from "./storyAssertions";
+import { expectStory, findButton, findLink, normalizeText, waitForCondition } from "./storyAssertions";
 
 function buildLifecycleLogSnapshot(serviceId: string): ServiceLifecycleSnapshotResponse {
   const event = (id: number, operationGroupId: string, transition: "stopped" | "started", observedAt: string) => ({
@@ -118,5 +119,47 @@ export const LogsSectionLifecycleUnion: ServiceDetailStory = {
     await waitForCondition(() => Boolean(canvasElement.querySelector('[data-service-logs-total-count="2"]')));
     expectStory(lifecycleButton.getAttribute('aria-pressed') === 'true' && lifecycleButton.classList.contains('btnPrimary'), "lifecycle source filter should show its active state after selection");
     expectStory(canvasElement.querySelectorAll('.serviceLogRow[data-source="docker"]').length === 0, "lifecycle filter should hide Docker rows");
+  },
+};
+
+export const MobileLogsSection: ServiceDetailStory = {
+  parameters: {
+    dockrevApiScenario: "dashboard-demo",
+    viewport: { defaultViewport: "dockrevMobile" },
+  },
+  render: render("stack-prod", "svc-prod-api", "logs", "移动端使用底部主导航，抽屉承载服务树"),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => normalizeText(canvasElement.textContent).includes("实时日志"));
+    const doc = canvasElement.ownerDocument;
+    const bottomNav = doc.querySelectorAll(".mobileBottomNavItem");
+    expectStory(bottomNav.length === 5, "mobile detail page should render bottom primary navigation");
+
+    const menuButton = doc.querySelector<HTMLButtonElement>(".mobileMenuButton");
+    expectStory(menuButton, "mobile detail page should expose the service tree drawer trigger");
+    menuButton?.click();
+    await waitForCondition(() => normalizeText(doc.querySelector("#mobileDockrevMenu")?.textContent).includes("服务导航"));
+
+    const drawer = doc.querySelector<HTMLElement>("#mobileDockrevMenu");
+    expectStory(!drawer?.querySelector(".detailRouteTreeTitle, .detailRouteTreePath"), "mobile service drawer should remove redundant tree title and current-route copy");
+    const toolbar = drawer?.querySelector<HTMLElement>(".detailRouteTreeToolbar");
+    const search = toolbar?.querySelector<HTMLElement>(".detailRouteTreeSearch");
+    const freshness = toolbar?.querySelector<HTMLElement>(".detailRouteTreeFreshness");
+    const meta = toolbar?.querySelector<HTMLElement>(".detailRouteTreeMeta");
+    expectStory(Boolean(search), "mobile service drawer should retain service tree search");
+    expectStory(Boolean(freshness), "mobile service drawer should show recent scan freshness beside the counts");
+    expectStory(Boolean(meta), "mobile service drawer should retain service tree counts below search");
+    const toolbarRect = toolbar!.getBoundingClientRect();
+    const searchRect = search!.getBoundingClientRect();
+    const freshnessRect = freshness!.getBoundingClientRect();
+    const metaRect = meta!.getBoundingClientRect();
+    expectStory(searchRect.width >= toolbarRect.width - 1, "mobile service drawer search should use the full toolbar width");
+    expectStory(freshness!.textContent?.includes("前"), "mobile service drawer recent scan should use relative time");
+    expectStory(freshnessRect.top >= searchRect.bottom + 7, "mobile service drawer recent scan should sit below search");
+    expectStory(Math.abs(metaRect.top - freshnessRect.top) <= 1, "mobile service drawer counts should share the recent-scan row");
+
+    const siblingLink = findLink(doc, "web");
+    expectStory(siblingLink, "mobile service drawer should include sibling services");
+    siblingLink.click();
+    await waitForCondition(() => currentRoutePathname() === "/services/stack-prod/svc-prod-web/logs");
   },
 };

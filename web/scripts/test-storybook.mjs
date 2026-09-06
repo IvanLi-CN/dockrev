@@ -1440,23 +1440,25 @@ async function runInteractive({ baseUrl, browser }) {
           "Expected mobile overview to remove the resource/search/time strip from the shell header.",
         );
       }
-      const mobileModuleStrip = page.locator(
-        ".homepageMobileNavModule .homepageTopStrip",
-      );
-      await mobileModuleStrip.waitFor({ state: "visible", timeout: 10_000 });
-      if ((await mobileModuleStrip.getByRole("searchbox", { name: "搜索服务入口" }).count()) > 0) {
+      if ((await page.locator(".homepageMobileNavModule").count()) > 0) {
         throw new Error(
-          "Expected mobile resource strip to keep search out of the metric row.",
+          "Expected mobile overview to keep resource controls out of the page body.",
         );
       }
-      if ((await page.locator(".topbar .homepageHeaderSearch").count()) > 0) {
+      if ((await page.locator(".topbar .homepageHeaderContent").count()) > 0) {
         throw new Error(
-          "Expected mobile overview to keep the page search exclusively in the context drawer.",
+          "Expected mobile overview to keep resource summary, time, and search in the context drawer.",
         );
+      }
+      if ((await page.locator(".sidebarNavHeader, .sidebarNavLabel").count()) > 0) {
+        throw new Error("Expected sidebar to remove the redundant navigation heading.");
       }
 
       await page.locator(".mobileBottomNav").waitFor({ timeout: 10_000 });
-      await page.locator(".mobileMenuButton").click();
+      const mobileMenuButton = page.locator(".mobileMenuButton");
+      if ((await mobileMenuButton.getAttribute("aria-expanded")) !== "true") {
+        await mobileMenuButton.click();
+      }
       const drawerSearch = page.locator(
         "#mobileDockrevMenu .mobileMenuEmbeddedContent .homepageDrawerSearchSlot",
       );
@@ -1478,6 +1480,9 @@ async function runInteractive({ baseUrl, browser }) {
       await page.locator("#mobileDockrevMenu .homepageDrawerBottomSummary .homepageClock").waitFor({
         timeout: 10_000,
       });
+      await page.waitForFunction(() => document.body.style.overflow === "hidden", null, {
+        timeout: 10_000,
+      });
       const mobileOverflow = await page.evaluate(() => document.body.style.overflow);
       if (mobileOverflow !== "hidden") {
         throw new Error(
@@ -1488,6 +1493,22 @@ async function runInteractive({ baseUrl, browser }) {
       await page.waitForFunction(() => document.body.style.overflow !== "hidden", null, {
         timeout: 10_000,
       });
+      const headerSlot = page.locator(".topbarGlobalContent");
+      await headerSlot.evaluate((element) => {
+        element.style.flex = "0 0 620px";
+        element.style.width = "620px";
+      });
+      await page.locator('.homepageHeaderContent[data-layout="compact"]').waitFor({
+        timeout: 10_000,
+      });
+      if ((await page.locator(".homepageHeaderClock").count()) > 0) {
+        throw new Error("Expected constrained desktop header to hide browser-local time.");
+      }
+      const searchTrigger = page.getByRole("button", { name: "打开服务搜索" });
+      await searchTrigger.click();
+      if ((await page.locator('input[type="search"][aria-label="搜索服务入口"]').count()) !== 1) {
+        throw new Error("Expected constrained desktop search popover to mount exactly one input.");
+      }
     } finally {
       await page.close().catch(() => {});
     }

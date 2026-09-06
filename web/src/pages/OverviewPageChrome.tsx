@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react'
-import { Clock3, Cpu, Download, MemoryStick, Upload } from 'lucide-react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Clock3, Cpu, Download, MemoryStick, Search, Upload } from 'lucide-react'
 import { Input } from '../ui'
 
 export type OverviewMetricsSummary = {
@@ -164,28 +164,94 @@ export function HomepageTopStrip(props: {
 
 export function HomepageHeaderContent(props: {
   metricsLabel: string
+  now: Date
+  onApplySearch: () => void
+  onSearchDraftChange: (value: string) => void
+  searchDraft: string
   summary: OverviewMetricsSummary
 }) {
+  const headerRef = useRef<HTMLDivElement | null>(null)
+  const [isCompact, setIsCompact] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
+
+  useEffect(() => {
+    const header = headerRef.current
+    if (!header) return
+    const sync = () => {
+      const compact = header.clientWidth < 720
+      setIsCompact(compact)
+      if (!compact) setSearchOpen(false)
+    }
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', sync)
+      const frame = window.requestAnimationFrame(sync)
+      return () => {
+        window.cancelAnimationFrame(frame)
+        window.removeEventListener('resize', sync)
+      }
+    }
+
+    const observer = new ResizeObserver(sync)
+    observer.observe(header)
+    return () => observer.disconnect()
+  }, [])
+
   return (
-    <div className="homepageHeaderContent">
+    <div
+      ref={headerRef}
+      className="homepageHeaderContent"
+      data-layout={isCompact ? 'compact' : 'full'}
+    >
       <HomepageResourceMetrics
         className="homepageHeaderMetrics"
         metricsLabel={props.metricsLabel}
         summary={props.summary}
       />
-    </div>
-  )
-}
-
-export function HomepageSidebarClock(props: { now: Date }) {
-  return (
-    <div className="homepageSidebarClockPanel">
-      <div className="homepageSidebarClockLabel">当前时间</div>
-      <HomepageClockBlock
-        className="homepageSidebarClock"
-        clockLabel="侧边栏当前时间"
-        now={props.now}
-      />
+      {!isCompact ? (
+        <HomepageClockBlock
+          className="homepageHeaderClock"
+          clockLabel="浏览器本地当前时间"
+          now={props.now}
+        />
+      ) : null}
+      <div className={isCompact ? 'homepageHeaderSearch homepageHeaderSearchCompact' : 'homepageHeaderSearch homepageHeaderSearchDesktop'}>
+        {isCompact ? (
+          <>
+            <button
+              type="button"
+              className="homepageHeaderSearchToggle"
+              aria-controls="overview-header-search-popover"
+              aria-expanded={searchOpen}
+              aria-label="打开服务搜索"
+              title="搜索服务"
+              onClick={() => setSearchOpen((open) => !open)}
+            >
+              <Search aria-hidden="true" />
+            </button>
+            {searchOpen ? (
+              <div id="overview-header-search-popover" className="homepageHeaderSearchPopover">
+                <HomepageSearchForm
+                  autoFocus
+                  searchDraft={props.searchDraft}
+                  onSearchDraftChange={props.onSearchDraftChange}
+                  onApplySearch={() => {
+                    props.onApplySearch()
+                    setSearchOpen(false)
+                  }}
+                  onEscape={() => setSearchOpen(false)}
+                />
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <HomepageSearchForm
+            searchDraft={props.searchDraft}
+            onSearchDraftChange={props.onSearchDraftChange}
+            onApplySearch={props.onApplySearch}
+          />
+        )}
+      </div>
     </div>
   )
 }

@@ -98,7 +98,6 @@ function ShellStory(props: {
       contextNavigation={props.contextNavigation}
       mobileDrawerTitle={props.mobileDrawerTitle}
       authIdentity={demoAuthIdentity}
-      lastScanHint={new Date().toISOString()}
     >
       {props.children ?? (
         <div className="card">
@@ -129,7 +128,7 @@ function renderDetailShell(
     <ShellStory
       route={route}
       autoOpenMobileDrawer={options?.autoOpenMobileDrawer}
-      contextNavigation={<DetailRouteServiceTree route={route} variant="desktop" />}
+      contextNavigation={<DetailRouteServiceTree route={route} variant="responsive" lastScanAt={new Date(Date.now() - 5 * 60_000).toISOString()} />}
       mobileDrawerTitle="服务导航"
     />
   )
@@ -229,8 +228,27 @@ export const MobileBottomNavAndDrawer: Story = {
     expectStory(drawer?.textContent?.includes('服务导航'), 'Mobile drawer should be dedicated to the service tree')
     expectStory(drawer?.textContent?.includes('prod'), 'Mobile drawer should render stack names')
     expectStory(drawer?.textContent?.includes('api'), 'Mobile drawer should render service names')
-    expectStory(Boolean(drawer?.querySelector('.mobileDrawerFooter .topbarUserTrigger')), 'Mobile drawer should keep the user identity in footer ③')
-    expectStory(Boolean(drawer?.querySelector('.mobileDrawerFooter .themePreferenceSegmented')), 'Mobile drawer should keep the theme control in footer ③')
+    const footerControls = drawer?.querySelector<HTMLElement>('.mobileDrawerFooterControls')
+    const identityTrigger = footerControls?.querySelector<HTMLElement>('.topbarUserTrigger')
+    const themeButton = footerControls?.querySelector<HTMLElement>('.themePreferenceIconButton')
+    const themeGlyph = themeButton?.querySelector<HTMLElement>('.themePreferenceGlyph')
+    expectStory(Boolean(identityTrigger), 'Mobile drawer should keep the user identity in the compact footer row')
+    expectStory(Boolean(themeButton), 'Mobile drawer should keep a single theme button in the compact footer row')
+    expectStory(Boolean(themeGlyph), 'Mobile drawer theme button should render its glyph')
+    expectStory(!footerControls?.querySelector('.themePreferenceSegmented'), 'Mobile drawer should remove the expanded theme control')
+    expectStory(
+      Math.abs((identityTrigger?.getBoundingClientRect().top ?? 0) - (themeButton?.getBoundingClientRect().top ?? 0)) < 2,
+      'Mobile footer identity and theme controls should share one row',
+    )
+    const themeButtonRect = themeButton!.getBoundingClientRect()
+    const themeGlyphRect = themeGlyph!.getBoundingClientRect()
+    expectStory(themeButtonRect.width === 38 && themeButtonRect.height === 38, 'Mobile drawer theme button should keep a stable 38px square target')
+    expectStory(
+      Math.abs(themeGlyphRect.left + themeGlyphRect.width / 2 - (themeButtonRect.left + themeButtonRect.width / 2)) < 1
+        && Math.abs(themeGlyphRect.top + themeGlyphRect.height / 2 - (themeButtonRect.top + themeButtonRect.height / 2)) < 1,
+      'Mobile drawer theme glyph should remain centered within its button',
+    )
+    expectStory(getComputedStyle(themeButton!, '::before').inset === '0px', 'Mobile drawer theme button should use its full 38px visual boundary')
     expectStory(Boolean(drawer?.querySelector('.mobileDrawerFooter .sidebarAppMetaContent')), 'Mobile drawer should keep version metadata in footer ③')
 
     expectStory(
