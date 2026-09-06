@@ -19,11 +19,11 @@ const meta: Meta<typeof DetailRouteServiceTree> = {
 export default meta
 type Story = StoryObj<typeof DetailRouteServiceTree>
 
-function render(variant: 'desktop' | 'mobile') {
+function render(variant: 'desktop' | 'mobile', lastScanAt?: string) {
   return () => (
     <aside className="sidebarContextStoryFrame" data-visual-evidence-surface>
       <div data-visual-evidence-target>
-        <DetailRouteServiceTree route={route} variant={variant} />
+        <DetailRouteServiceTree route={route} variant={variant} lastScanAt={lastScanAt} />
       </div>
     </aside>
   )
@@ -64,6 +64,43 @@ export const RuntimeStateMatrixMobile: Story = {
     const rows = canvasElement.querySelectorAll('.detailRouteServiceLink')
     expectStory(rows.length > 0, 'mobile service tree should render service rows')
     expectStory(Array.from(rows).every((row) => row.getBoundingClientRect().height >= 40), 'mobile service rows should keep the 40px touch target')
+    expectStory(!canvasElement.querySelector('.detailRouteTreeTitle, .detailRouteTreePath'), 'service tree should remove duplicate title and current-route copy')
+    const toolbar = canvasElement.querySelector<HTMLElement>('.detailRouteTreeToolbar')
+    const search = toolbar?.querySelector<HTMLElement>('.detailRouteTreeSearch')
+    const freshness = toolbar?.querySelector<HTMLElement>('.detailRouteTreeFreshness')
+    const meta = toolbar?.querySelector<HTMLElement>('.detailRouteTreeMeta')
+    expectStory(Boolean(search), 'service tree should keep its search control in the compact toolbar')
+    expectStory(Boolean(freshness), 'mobile service tree should show a relative recent-scan hint beside its counts')
+    expectStory(Boolean(meta), 'service tree should retain the Stack and service counts below search')
+    const toolbarRect = toolbar!.getBoundingClientRect()
+    const searchRect = search!.getBoundingClientRect()
+    const freshnessRect = freshness!.getBoundingClientRect()
+    const metaRect = meta!.getBoundingClientRect()
+    expectStory(searchRect.width >= toolbarRect.width - 1, 'mobile search should use the full toolbar width')
+    expectStory(freshness!.textContent?.includes('分钟前'), 'mobile recent-scan hint should use a human-readable relative time')
+    expectStory(freshnessRect.top >= searchRect.bottom + 7, 'mobile recent-scan hint should sit below search')
+    expectStory(Math.abs(metaRect.top - freshnessRect.top) <= 1, 'mobile recent-scan hint and counts should share one summary row')
+    const firstGroup = canvasElement.querySelector<HTMLElement>('.detailRouteStackGroup')
+    const firstStackRow = firstGroup?.querySelector<HTMLElement>('.detailRouteStackRow')
+    const firstServiceList = firstGroup?.querySelector<HTMLElement>('.detailRouteServiceList')
+    const secondGroup = canvasElement.querySelectorAll<HTMLElement>('.detailRouteStackGroup')[1]
+    expectStory(Boolean(firstStackRow && firstServiceList && secondGroup), 'mobile service tree should render compact stack groups')
+    expectStory(firstServiceList!.getBoundingClientRect().top - firstStackRow!.getBoundingClientRect().bottom <= 2.5, 'mobile stack headers and service lists should use a tight 2px rhythm')
+    expectStory(secondGroup!.getBoundingClientRect().top - firstServiceList!.getBoundingClientRect().bottom <= 8.5, 'mobile stack groups should keep an 8px structural separation')
+  },
+}
+
+export const StaleScanMobile: Story = {
+  parameters: {
+    dockrevApiScenario: 'aggregate-dockrev-guard',
+    viewport: { defaultViewport: 'mobile1' },
+  },
+  render: render('mobile'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(canvasElement.querySelector('.detailRouteTreeFreshnessStale')))
+    const freshness = canvasElement.querySelector<HTMLElement>('.detailRouteTreeFreshnessStale')
+    expectStory(freshness?.textContent?.includes('扫描过期'), 'stale scans should be called out instead of looking fresh')
+    expectStory(freshness?.textContent?.includes('前'), 'stale scans should retain a human-readable age')
   },
 }
 

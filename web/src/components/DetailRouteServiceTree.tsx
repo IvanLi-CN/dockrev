@@ -12,6 +12,7 @@ import { AsyncDataRegion, AsyncDataSkeleton } from './AsyncDataRegion'
 import type { AsyncDataPhase, AsyncDataTrigger } from '../asyncData'
 
 type DetailRoute = Extract<Route, { name: 'services' | 'stack' | 'service' }>
+const SCAN_STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000
 
 type TreeStack = StackListItem & {
   detail: StackDetail | null
@@ -32,6 +33,26 @@ function currentStackId(route: DetailRoute): string | null {
 
 function currentServiceSection(route: DetailRoute): Extract<Route, { name: 'service' }>['section'] | undefined {
   return route.name === 'service' ? route.section : undefined
+}
+
+function formatRelativeScanTime(value: string): { label: string; stale: boolean } | null {
+  const scannedAt = new Date(value).valueOf()
+  if (Number.isNaN(scannedAt)) return null
+
+  const elapsedMs = Math.max(0, Date.now() - scannedAt)
+  const units = [
+    { suffix: '年', milliseconds: 365 * 24 * 60 * 60 * 1000 },
+    { suffix: '个月', milliseconds: 30 * 24 * 60 * 60 * 1000 },
+    { suffix: '天', milliseconds: 24 * 60 * 60 * 1000 },
+    { suffix: '小时', milliseconds: 60 * 60 * 1000 },
+    { suffix: '分钟', milliseconds: 60 * 1000 },
+  ]
+
+  for (const unit of units) {
+    const amount = Math.floor(elapsedMs / unit.milliseconds)
+    if (amount > 0) return { label: `${amount} ${unit.suffix}前`, stale: elapsedMs >= SCAN_STALE_AFTER_MS }
+  }
+  return { label: '刚刚', stale: false }
 }
 
 function serviceVersionLabel(service: Service): string {
@@ -89,7 +110,8 @@ function stackStatusClassName(status: StackStatus): string {
 
 export function DetailRouteServiceTree(props: {
   route: Route
-  variant: 'desktop' | 'mobile'
+  variant: 'desktop' | 'mobile' | 'responsive'
+  lastScanAt?: string
 }) {
   const [stacks, setStacks] = useState<TreeStack[]>([])
   const [loading, setLoading] = useState(true)
@@ -290,7 +312,36 @@ export function DetailRouteServiceTree(props: {
     }
   })
 
-  const treeClassName = props.variant === 'mobile' ? 'detailRouteTree detailRouteTreeMobile' : 'detailRouteTree'
+  const [isMobileViewport, setIsMobileViewport] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 960px)').matches,
+  )
+  const treeVariant = props.variant === 'responsive'
+    ? isMobileViewport ? 'mobile' : 'desktop'
+    : props.variant
+  const treeClassName = treeVariant === 'mobile' ? 'detailRouteTree detailRouteTreeMobile' : 'detailRouteTree'
+  const latestScanAt = useMemo(() => {
+    const candidates = [props.lastScanAt, ...stacks.map((stack) => stack.lastCheckAt)]
+      .filter((value): value is string => Boolean(value))
+      .map((value) => ({ value, timestamp: new Date(value).valueOf() }))
+      .filter((candidate) => !Number.isNaN(candidate.timestamp))
+    return candidates.reduce<{ value: string; timestamp: number } | null>(
+      (latest, candidate) => !latest || candidate.timestamp > latest.timestamp ? candidate : latest,
+      null,
+    )?.value ?? null
+  }, [props.lastScanAt, stacks])
+  const relativeScanTime = treeVariant === 'mobile' && latestScanAt
+    ? formatRelativeScanTime(latestScanAt)
+    : null
+
+  useEffect(() => {
+    if (props.variant !== 'responsive' || typeof window === 'undefined') return
+    const media = window.matchMedia('(max-width: 960px)')
+    const sync = () => setIsMobileViewport(media.matches)
+    sync()
+    media.addEventListener('change', sync)
+    return () => media.removeEventListener('change', sync)
+  }, [props.variant])
+
   const treePhase: AsyncDataPhase = error
     ? 'error'
     : loading
@@ -305,15 +356,6 @@ export function DetailRouteServiceTree(props: {
     if (!query) return stacks
     return stacks.filter((stack) => stack.name.toLocaleLowerCase().includes(query) || stack.detail?.services.some((service) => service.name.toLocaleLowerCase().includes(query)))
   }, [search, stacks])
-  const activeStack = useMemo(
-    () => (activeStackId ? stacks.find((stack) => stack.id === activeStackId) ?? null : null),
-    [activeStackId, stacks],
-  )
-  const activeService = useMemo(() => {
-    if (!detailRoute || detailRoute.name !== 'service' || !activeStack?.detail) return null
-    return activeStack.detail.services.find((service) => service.id === detailRoute.serviceId) ?? null
-  }, [activeStack, detailRoute])
-
   const renderServiceLink = (stack: TreeStack, service: Service) => {
     const active = props.route.name === 'service' && props.route.stackId === stack.id && props.route.serviceId === service.id
     const nextRoute: Route = {
@@ -359,38 +401,34 @@ export function DetailRouteServiceTree(props: {
   return (
     <div className={treeClassName}>
       <div className="detailRouteTreeIntro">
-        <div className="detailRouteTreeTitleRow">
-          <div className="detailRouteTreeTitle">服务导航</div>
-          {treePhase === 'ready-data' ? (
-            <div className="detailRouteTreeMeta" aria-label="导航统计">
-              <Mono>{stacks.length}</Mono>
-              <span>个 Stack</span>
-              <span className="detailRouteTreeMetaDivider" aria-hidden="true">
-                ·
-              </span>
-              <Mono>{totalServices}</Mono>
-              <span>个服务</span>
-            </div>
-          ) : null}
+        <div className="detailRouteTreeToolbar">
+          <label className="detailRouteTreeSearch">
+            <Search size={14} aria-hidden="true" />
+            <Input aria-label="搜索 Stack 或服务" placeholder="搜索 Stack 或服务" value={search} onChange={(event) => setSearch(event.target.value)} />
+          </label>
+          <div className="detailRouteTreeSummaryRow">
+            {relativeScanTime ? (
+              <div
+                className={relativeScanTime.stale ? 'detailRouteTreeFreshness detailRouteTreeFreshnessStale' : 'detailRouteTreeFreshness'}
+                aria-label={`${relativeScanTime.stale ? '扫描已过期' : '最近扫描'}：${relativeScanTime.label}`}
+              >
+                <span>{relativeScanTime.stale ? '扫描过期' : '最近扫描'}</span>
+                <span className="detailRouteTreeFreshnessValue">{relativeScanTime.label}</span>
+              </div>
+            ) : null}
+            {treePhase === 'ready-data' ? (
+              <div className="detailRouteTreeMeta" aria-label="导航统计">
+                <Mono>{stacks.length}</Mono>
+                <span>个 Stack</span>
+                <span className="detailRouteTreeMetaDivider" aria-hidden="true">
+                  ·
+                </span>
+                <Mono>{totalServices}</Mono>
+                <span>个服务</span>
+              </div>
+            ) : null}
+          </div>
         </div>
-        <div className="detailRouteTreePath" aria-label="当前导航路径">
-          {detailRoute ? (
-            <>
-              <span className="detailRouteTreePathLabel">当前</span>
-              <span>{activeStack?.name ?? (detailRoute.name === 'services' ? '服务' : detailRoute.stackId)}</span>
-              {activeService ? <span className="detailRouteTreePathDivider">/</span> : null}
-              {activeService ? <span>{activeService.name}</span> : null}
-              {props.route.name === 'service' ? <span className="detailRouteTreePathDivider">/</span> : null}
-              {props.route.name === 'service' ? <span>{serviceSectionLabel(activeServiceSection)}</span> : null}
-            </>
-          ) : (
-            <span>按 Stack 浏览，并直接切换到目标服务。</span>
-          )}
-        </div>
-        <label className="detailRouteTreeSearch">
-          <Search size={14} aria-hidden="true" />
-          <Input aria-label="搜索 Stack 或服务" placeholder="搜索 Stack 或服务" value={search} onChange={(event) => setSearch(event.target.value)} />
-        </label>
       </div>
 
       <AsyncDataRegion

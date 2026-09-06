@@ -1455,7 +1455,10 @@ async function runInteractive({ baseUrl, browser }) {
       }
 
       await page.locator(".mobileBottomNav").waitFor({ timeout: 10_000 });
-      await page.locator(".mobileMenuButton").click();
+      const mobileMenuButton = page.locator(".mobileMenuButton");
+      if ((await mobileMenuButton.getAttribute("aria-expanded")) !== "true") {
+        await mobileMenuButton.click();
+      }
       const drawerSearch = page.locator(
         "#mobileDockrevMenu .mobileMenuEmbeddedContent .homepageDrawerSearchSlot",
       );
@@ -1475,6 +1478,9 @@ async function runInteractive({ baseUrl, browser }) {
           timeout: 10_000,
         });
       await page.locator("#mobileDockrevMenu .homepageDrawerBottomSummary .homepageClock").waitFor({
+        timeout: 10_000,
+      });
+      await page.waitForFunction(() => document.body.style.overflow === "hidden", null, {
         timeout: 10_000,
       });
       const mobileOverflow = await page.evaluate(() => document.body.style.overflow);

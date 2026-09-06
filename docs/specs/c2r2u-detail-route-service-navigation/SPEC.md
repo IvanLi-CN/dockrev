@@ -276,7 +276,7 @@
 - submission_gate: `approved`
 - story_id_or_title: `ui_demo mobile service drawer`
 - state: `mobile compact service tree`
-- evidence_note: 移动抽屉删除抽屉头中重复的“服务导航”标题，保留树内容区域标题；列表占满标题与最近扫描之间的可用高度，服务叶子保持至少 40px 行高，额外树形缩进压缩并保留短连接线。
+- evidence_note: 移动抽屉删除重复的树内容标题和当前路径；搜索独占一行，最近扫描以相对时间显示在下一行左侧，Stack/服务统计位于右侧；超过 7 天的扫描明确标为过期。身份入口与单个主题循环按钮并列，列表占满工具栏与 footer 之间的可用高度，服务叶子保持至少 40px 行高，额外树形缩进压缩并保留短连接线。
 - PR: include
 
 ![服务树移动抽屉紧凑布局](./assets/service-tree-runtime-mobile.png)

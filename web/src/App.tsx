@@ -216,7 +216,7 @@ export default function App() {
   );
   const staticContextNavigation = useMemo(() => {
     if (route.name === "services" || route.name === "stack" || route.name === "service") {
-      return <DetailRouteServiceTree route={route} variant="desktop" />;
+      return <DetailRouteServiceTree route={route} variant="responsive" lastScanAt={lastScanHint} />;
     }
     if (route.name === "queue" || route.name === "job" || route.name === "version-inference" || route.name === "ghcr-webhooks" || route.name === "ghcr-webhook-inbox") {
       return <QueueContextNavigation />;
@@ -224,7 +224,7 @@ export default function App() {
     if (route.name === "settings") return <SettingsContextNavigation section={route.section} />;
     if (route.name === "ghcr-webhook-registry") return <SettingsContextNavigation section="integrations" />;
     return null;
-  }, [route]);
+  }, [lastScanHint, route]);
   const contextNavigation = contextNavigationContent ?? staticContextNavigation;
   const topActions = useMemo(() => {
     return <>{pageActions}</>;
@@ -501,7 +501,6 @@ export default function App() {
         pageSubtitle={resolvedHead.pageSubtitle}
         topActions={null}
         authIdentity={authIdentity}
-        lastScanHint={lastScanHint}
       >
         <ManagementEventsStatusBanner />
         <UnauthorizedPage authDetails={authFailure} />
@@ -539,7 +538,6 @@ export default function App() {
         contextNavigation={contextNavigation}
         contextNavigationTitle={route.name === "services" || route.name === "stack" || route.name === "service" ? "服务导航" : "页面内导航"}
         authIdentity={authIdentity}
-        lastScanHint={lastScanHint}
       >
         <ManagementEventsStatusBanner />
         {route.name === "overview" ? (

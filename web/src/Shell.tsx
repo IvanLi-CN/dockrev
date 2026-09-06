@@ -39,13 +39,6 @@ function readMobileMenuMediaMatches(): boolean {
   );
 }
 
-function formatShort(ts: string) {
-  const d = new Date(ts);
-  if (Number.isNaN(d.valueOf())) return ts;
-  const pad2 = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-}
-
 function formatVersionLabel(version: string | null): string {
   const v = (version ?? "").trim();
   if (!v) return "-";
@@ -121,7 +114,6 @@ export function AppShell(props: {
   mobileNavContent?: ReactNode;
   mobileDrawerTitle?: string;
   authIdentity?: TopbarAuthIdentity | null;
-  lastScanHint?: string;
   children: ReactNode;
 }) {
   const active =
@@ -142,8 +134,6 @@ export function AppShell(props: {
   const [mobileMenuMediaMatches, setMobileMenuMediaMatches] = useState(
     readMobileMenuMediaMatches,
   );
-
-  const lastScan = props.lastScanHint;
 
   const nav = useMemo(
     (): PrimaryNavItem[] => [
@@ -370,18 +360,10 @@ export function AppShell(props: {
                 {contextNavigation}
               </div>
             ) : null}
-            <div className="mobileMeta">
-              <div className="mobileMetaRow">
-                <span className="sectionTitle">最近扫描</span>
-                <span className="mono">
-                  {lastScan ? formatShort(lastScan) : "-"}
-                </span>
-              </div>
-            </div>
             <div className="mobileDrawerFooter" aria-label="应用与用户信息">
-              <TopbarUserIdentity authIdentity={props.authIdentity} placement="sidebar" />
-              <div className="mobileDrawerThemeControl">
-                <ThemePreferenceControl variant="segmented" />
+              <div className="mobileDrawerFooterControls">
+                <TopbarUserIdentity authIdentity={props.authIdentity} placement="sidebar" />
+                <ThemePreferenceControl variant="icon" />
               </div>
               <div className="mobileDrawerFooterDivider" aria-hidden="true" />
               <SidebarAppMeta
