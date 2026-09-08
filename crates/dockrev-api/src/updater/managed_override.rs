@@ -273,16 +273,22 @@ pub(crate) fn build_override_file(
     for svc in services {
         let base = strip_tag_and_digest(&svc.image.reference)
             .unwrap_or_else(|| svc.image.reference.clone());
-        let override_image = if explicit_targets.is_empty() {
+        let (tag, digest) = if explicit_targets.is_empty() {
             let Some(candidate) = svc.candidate.as_ref() else {
                 continue;
             };
-            format!("{base}@{}", normalize_digest(&candidate.digest))
+            (candidate.tag.as_str(), candidate.digest.as_str())
         } else {
             let target = explicit_targets.get(svc.id.as_str()).ok_or_else(|| {
                 anyhow::anyhow!("missing explicit update target for service {}", svc.id)
             })?;
-            format!("{base}@{}", normalize_digest(&target.target_digest))
+            (target.target_tag.as_str(), target.target_digest.as_str())
+        };
+        let digest = normalize_digest(digest);
+        let override_image = if tag.trim().is_empty() {
+            format!("{base}@{digest}")
+        } else {
+            format!("{base}:{}@{digest}", tag.trim())
         };
 
         images.insert(svc.name.clone(), override_image);
