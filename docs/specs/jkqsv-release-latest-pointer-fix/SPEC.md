@@ -10,7 +10,7 @@
 
 - 当前 `Release` workflow 已经用 `refs/notes/release-publications` 正确决定 GHCR `latest` 是否应该随本次 stable 发布前进。
 - 但 GitHub Releases 页面的 “Latest release” 指针仍然停留在旧版本，因为 `ncipollo/release-action` 默认按 GitHub 的 legacy 规则决定 latest，而不是复用 workflow 已经算出的 `publish_latest`。
-- 这会让 backfill 之后的较新 stable release 虽然已经发布成功、PR comment 也已回写，却仍然无法成为 GitHub API / Releases 页面上的 `latest`。
+- 这会让 backfill 之后的较新 stable release 虽然已经发布成功，却仍然无法成为 GitHub API / Releases 页面上的 `latest`。
 
 ## 目标 / 非目标
 
@@ -22,7 +22,7 @@
 
 ### Non-goals
 
-- 不改变 release queue、tag 生成、GHCR 推送或 PR release comment 契约。
+- 不改变 release queue、tag 生成或 GHCR 推送契约。
 - 不新增新的 release notes ref、workflow 输入或管理员操作入口。
 
 ## 范围（Scope）

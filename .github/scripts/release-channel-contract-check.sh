@@ -105,6 +105,10 @@ search_fixed "Create and push tag" .github/workflows/release.yml
 search_fixed 'git push origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"' .github/workflows/release.yml
 search_fixed "makeLatest: \${{ needs.prepare.outputs.publish_latest }}" .github/workflows/release.yml
 ensure_fixed_absent 'commit: ${{ env.TARGET_SHA }}' .github/workflows/release.yml
+ensure_fixed_absent 'issues: write' .github/workflows/release.yml
+ensure_fixed_absent 'pull-requests: write' .github/workflows/release.yml
+ensure_fixed_absent 'release_pr_comment.py' .github/workflows/release.yml
+ensure_fixed_absent 'release-version comment' .github/workflows/release.yml
 python3 - <<'PY'
 from pathlib import Path
 text = Path('.github/workflows/release.yml').read_text()
@@ -130,22 +134,20 @@ select_pending_step = "Select pending release target"
 manual_release_bypass = "if: github.event_name != 'workflow_dispatch' || inputs.admin_action != 'release'"
 tag_step = "Create and push tag"
 release_step = "Create or update GitHub Release + upload assets"
-comment_step = "Upsert and verify release-version comment on source PR"
 ledger_step = "Record release publication ledger"
 reconcile_idx = text.find(reconcile_step)
 select_pending_idx = text.find(select_pending_step)
 tag_idx = text.find(tag_step)
 release_idx = text.find(release_step)
-comment_idx = text.find(comment_step)
 ledger_idx = text.find(ledger_step)
-if min(reconcile_idx, select_pending_idx, tag_idx, release_idx, comment_idx, ledger_idx) == -1:
-    raise SystemExit('[contract-check] expected reconcile/select-pending/tag/release/comment/ledger steps in release workflow')
+if min(reconcile_idx, select_pending_idx, tag_idx, release_idx, ledger_idx) == -1:
+    raise SystemExit('[contract-check] expected reconcile/select-pending/tag/release/ledger steps in release workflow')
 if not (reconcile_idx < select_pending_idx):
     raise SystemExit('[contract-check] release workflow must reconcile historical publications before selecting next pending target')
 if manual_release_bypass not in text:
     raise SystemExit('[contract-check] manual admin_action=release must bypass backlog reconciliation')
-if not (tag_idx < release_idx < comment_idx < ledger_idx):
-    raise SystemExit('[contract-check] release workflow must run tag -> release -> PR comment -> publication ledger in order')
+if not (tag_idx < release_idx < ledger_idx):
+    raise SystemExit('[contract-check] release workflow must run tag -> release -> publication ledger in order')
 PY
 ruby -ryaml -e '
 workflow = YAML.load_file(".github/workflows/release.yml")
@@ -162,10 +164,10 @@ abort "[contract-check] source-gate must have actions: read" unless jobs.fetch("
 abort "[contract-check] preparation-gate must dispatch recovery with actions: write" unless jobs.fetch("preparation-gate").fetch("permissions")["actions"] == "write"
 abort "[contract-check] publish must wait for preparation-gate" unless Array(jobs.fetch("publish").fetch("needs")).include?("preparation-gate")
 
-abort "[contract-check] release workflow top-level permissions must keep issues: write" unless top_permissions["issues"] == "write"
-abort "[contract-check] release workflow top-level permissions must keep pull-requests: write" unless top_permissions["pull-requests"] == "write"
-abort "[contract-check] release publish job permissions must keep issues: write" unless publish_permissions["issues"] == "write"
-abort "[contract-check] release publish job permissions must keep pull-requests: write" unless publish_permissions["pull-requests"] == "write"
+%w[issues pull-requests].each do |permission|
+  abort "[contract-check] release workflow top-level permissions must omit #{permission}" if top_permissions.key?(permission)
+  abort "[contract-check] release publish job permissions must omit #{permission}" if publish_permissions.key?(permission)
+end
 '
 
 echo "[contract-check] failed release notification workflow invariants"

@@ -28,8 +28,6 @@ on:
 permissions:
   contents: write
   packages: write
-  issues: write
-  pull-requests: write
 
 env:
   REGISTRY: ghcr.io
@@ -68,7 +66,6 @@ jobs:
       release_state: ${{ steps.snapshot.outputs.release_state }}
       override_reason: ${{ steps.snapshot.outputs.override_reason }}
       bump_level: ${{ steps.snapshot.outputs.release_bump }}
-      pr_number: ${{ steps.snapshot.outputs.pr_number }}
       pr_title: ${{ steps.snapshot.outputs.pr_title }}
       release_channel: ${{ steps.snapshot.outputs.release_channel }}
       release_prerelease: ${{ steps.snapshot.outputs.release_prerelease }}
@@ -390,19 +387,15 @@ jobs:
     permissions:
       actions: write
       contents: write
-      issues: write
       packages: write
-      pull-requests: write
     env:
       APP_EFFECTIVE_VERSION: ${{ needs.prepare.outputs.app_effective_version }}
-      PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
       RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
       RELEASE_CHANNEL: ${{ needs.prepare.outputs.release_channel }}
       TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
       PREPARATION_MANIFEST_SHA256: ${{ needs.preparation-gate.outputs.manifest_sha256 }}
       DOCKREV_TAGS_CSV: ${{ needs.prepare.outputs.tags_csv }}
       SUPERVISOR_TAGS_CSV: ${{ needs.prepare.outputs.supervisor_tags_csv }}
-      WORKFLOW_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - name: Checkout release target
         uses: actions/checkout@v4
@@ -832,27 +825,6 @@ jobs:
           echo "::error::Cause: see step 'Create or update GitHub Release + upload assets' logs above."
           echo "::error::Retry: Actions → workflow 'Release' → Re-run jobs (tag=${RELEASE_TAG})."
           exit 1
-
-      - name: Upsert and verify release-version comment on source PR
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_URL: ${{ steps.github-release.outputs.html_url }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${PR_NUMBER}" ]]; then
-            echo "Missing snapshot pr_number for ${TARGET_SHA}" >&2
-            exit 1
-          fi
-
-          python3 .workflow-src/.github/scripts/release_pr_comment.py \
-            --github-repository "${GITHUB_REPOSITORY}" \
-            --github-token "${GITHUB_TOKEN}" \
-            --pr-number "${PR_NUMBER}" \
-            --release-tag "${RELEASE_TAG}" \
-            --release-channel "${RELEASE_CHANNEL}" \
-            --release-url "${RELEASE_URL}" \
-            --workflow-run-url "${WORKFLOW_RUN_URL}"
 
       - name: Record release publication ledger
         shell: bash
