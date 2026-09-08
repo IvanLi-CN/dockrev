@@ -39,6 +39,10 @@ fn managed_override_prepare_and_apply_share_one_rollback_snapshot() {
     )
     .unwrap()
     .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&first).unwrap(),
+        "services:\n  web:\n    image: ghcr.io/acme/web:1.1@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+    );
     let previous = std::fs::read_to_string(format!("{}.previous", first.display())).unwrap();
     let _second = build_override_file(
         &stack,
@@ -72,6 +76,40 @@ fn managed_override_prepare_and_apply_share_one_rollback_snapshot() {
         std::fs::read_to_string(&first)
             .unwrap()
             .contains("@sha256:aaaaaaaa")
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn managed_override_keeps_candidate_tag_with_its_digest() {
+    let root = std::env::temp_dir().join(format!("dockrev-override-tag-{}", ulid::Ulid::new()));
+    std::fs::create_dir_all(&root).unwrap();
+    let stack = single_service_stack(
+        "docker.io/valkey/valkey:9.1",
+        Some(crate::api::types::Candidate {
+            tag: "9.1".to_string(),
+            resolved_tag: Some("9.1.2".to_string()),
+            digest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                .to_string(),
+            arch_match: crate::api::types::ArchMatch::Match,
+            arch: Vec::new(),
+        }),
+    );
+
+    let path = build_override_file(
+        &stack,
+        &[&stack.services[0]],
+        &HashMap::new(),
+        Some(&root),
+        false,
+        &[],
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(path).unwrap(),
+        "services:\n  web:\n    image: docker.io/valkey/valkey:9.1@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n"
     );
     std::fs::remove_dir_all(root).unwrap();
 }
