@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-python3 - <<'PY' "$repo_root/.github/scripts/release_snapshot.py" "$repo_root/.github/scripts/release_pr_comment.py"
+python3 - <<'PY' "$repo_root/.github/scripts/release_snapshot.py"
 from __future__ import annotations
 
 import argparse
@@ -25,7 +25,6 @@ def load_module(name: str, script_path: Path):
 
 
 module = load_module("release_snapshot", Path(sys.argv[1]))
-comment_module = load_module("release_pr_comment", Path(sys.argv[2]))
 
 
 def run(*args: str, cwd: Path) -> str:
@@ -1062,135 +1061,5 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-tag-only-state-regress
         module.git = original_git
         os.chdir(original_cwd)
 
-comments: list[dict[str, object]] = []
-requests: list[dict[str, object]] = []
-original_comment_request = comment_module.github_request_json
-
-
-def fake_comment_request(api_root, token, method, path, *, body=None, query=None):
-    requests.append({"method": method, "path": path, "body": body, "query": query})
-    if method == "GET":
-        return [dict(comment) for comment in comments]
-    if method == "POST":
-        created = {
-            "id": 900 + len(comments) + 1,
-            "body": body["body"],
-            "user": {"login": comment_module.BOT_LOGIN},
-        }
-        comments.append(created)
-        return created
-    if method == "PATCH":
-        comment_id = int(path.rsplit("/", 1)[1])
-        for index, comment in enumerate(comments):
-            if comment["id"] == comment_id:
-                updated = dict(comment)
-                updated["body"] = body["body"]
-                comments[index] = updated
-                return updated
-        raise AssertionError(f"missing comment id {comment_id}")
-    if method == "DELETE":
-        comment_id = int(path.rsplit("/", 1)[1])
-        for index, comment in enumerate(comments):
-            if comment["id"] == comment_id:
-                comments.pop(index)
-                return None
-        raise AssertionError(f"missing comment id {comment_id}")
-    raise AssertionError(f"unexpected method {method}")
-
-
-comment_module.github_request_json = fake_comment_request
-try:
-    created = comment_module.upsert_release_comment(
-        api_root="https://api.github.com",
-        repository="IvanLi-CN/dockrev",
-        token="token",
-        pr_number=186,
-        release_tag="0.35.9",
-        release_channel="stable",
-        release_url="https://github.com/IvanLi-CN/dockrev/releases/tag/0.35.9",
-        workflow_run_url="https://github.com/IvanLi-CN/dockrev/actions/runs/179",
-    )
-    assert created["comment_status"] == "create"
-    assert requests[0]["method"] == "GET"
-    assert requests[1]["method"] == "POST"
-    assert comment_module.COMMENT_MARKER in comments[0]["body"]
-    assert "Version: `0.35.9`" in comments[0]["body"]
-    assert "Channel: `stable`" in comments[0]["body"]
-
-    requests.clear()
-    updated = comment_module.upsert_release_comment(
-        api_root="https://api.github.com",
-        repository="IvanLi-CN/dockrev",
-        token="token",
-        pr_number=186,
-        release_tag="0.36.0-rc.abcdef0",
-        release_channel="rc",
-        release_url="https://github.com/IvanLi-CN/dockrev/releases/tag/0.36.0-rc.abcdef0",
-        workflow_run_url="https://github.com/IvanLi-CN/dockrev/actions/runs/180",
-    )
-    assert updated["comment_status"] == "update"
-    assert requests[0]["method"] == "GET"
-    assert requests[1]["method"] == "PATCH"
-    assert "Version: `0.36.0-rc.abcdef0`" in comments[0]["body"]
-    assert "Channel: `rc`" in comments[0]["body"]
-
-    comments[:] = [
-        {
-            "id": 771,
-            "body": f"{comment_module.COMMENT_MARKER}\nold duplicate",
-            "user": {"login": comment_module.BOT_LOGIN},
-        },
-        {
-            "id": 772,
-            "body": f"{comment_module.COMMENT_MARKER}\nnewest duplicate",
-            "user": {"login": comment_module.BOT_LOGIN},
-        },
-    ]
-    requests.clear()
-    deduped = comment_module.upsert_release_comment(
-        api_root="https://api.github.com",
-        repository="IvanLi-CN/dockrev",
-        token="token",
-        pr_number=186,
-        release_tag="0.36.1",
-        release_channel="stable",
-        release_url="https://github.com/IvanLi-CN/dockrev/releases/tag/0.36.1",
-        workflow_run_url="https://github.com/IvanLi-CN/dockrev/actions/runs/181",
-    )
-    assert deduped["comment_status"] == "update"
-    assert [request["method"] for request in requests[:3]] == ["GET", "PATCH", "GET"]
-    assert any(request["method"] == "DELETE" and request["path"].endswith("/771") for request in requests)
-    assert len(comments) == 1
-    assert comments[0]["id"] == 772
-    assert "Version: `0.36.1`" in comments[0]["body"]
-
-    comments[:] = [
-        {
-            "id": 777,
-            "body": f"{comment_module.COMMENT_MARKER}\nforeign marker",
-            "user": {"login": "octocat"},
-        }
-    ]
-    requests.clear()
-    try:
-        comment_module.upsert_release_comment(
-            api_root="https://api.github.com",
-            repository="IvanLi-CN/dockrev",
-            token="token",
-            pr_number=186,
-            release_tag="0.35.9",
-            release_channel="stable",
-            release_url="https://github.com/IvanLi-CN/dockrev/releases/tag/0.35.9",
-            workflow_run_url="https://github.com/IvanLi-CN/dockrev/actions/runs/179",
-        )
-    except comment_module.CommentError as exc:
-        assert "cannot satisfy release comment contract" in str(exc)
-    else:
-        raise AssertionError("expected foreign marker contract failure")
-    assert len(requests) == 1
-    assert requests[0]["method"] == "GET"
-finally:
-    comment_module.github_request_json = original_comment_request
-
-print("release_snapshot.py + release_pr_comment.py self-test: ok")
+print("release_snapshot.py self-test: ok")
 PY

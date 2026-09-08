@@ -60,12 +60,12 @@
 
 - 合并 `#taauj` 后，`main` 上的 `Release` workflow 先扫描 first-parent release queue，对已发布但缺 publication ledger 的历史 target 执行 reconcile。
 - reconcile 成功的历史 target 会被回填 publication ledger，不再阻塞 `next-pending`。
-- queue 随后继续选择真实未发布 target，并按现有 stable 发布路径创建/更新 GitHub Release、PR comment 与 publication ledger。
+- queue 随后继续选择真实未发布 target，并按现有 stable 发布路径创建/更新 GitHub Release 与 publication ledger；successful publication 由 release-owning agent 报告给 owner。
 
 ### Edge cases / errors
 
 - 若历史条目只有 tag，没有 GitHub Release 或镜像 digest 证据，则 queue 必须停在该 target 并暴露明确错误。
-- 若 `0.38.2`、`0.39.0`、`0.39.1` 中任一版本在 publish/comment/ledger 环节失败，必须记录具体 run 与失败位置，而不是笼统描述“没发出来”。
+- 若 `0.38.2`、`0.39.0`、`0.39.1` 中任一版本在 publish/ledger 环节失败，必须记录具体 run 与失败位置，而不是笼统描述“没发出来”。
 
 ## 验收标准（Acceptance Criteria）
 
