@@ -12,7 +12,8 @@
 - `source-build release gate`: The release-blocking verification of a target SHA's Dockerfile source build and Compose deployment topology.
 - `CI Gate Verification`: A manual, non-publishing workflow with one `target_sha` input and fixed full Docker/Web scope.
 - `release preparation artifact`: An unpublished, exact-SHA Web and binary deliverable with a SHA-256 manifest. It is not source-build proof.
-- Interface: `Source Build Release Gate` and `CI Gate Verification` workflow runs, their exact-SHA attestations, and the Release evaluator.
+- `readiness receipt`: An immutable `refs/notes/release-readiness` proof binding one candidate run, source attestation, preparation artifact, target SHA, and `publish=false`.
+- Interface: `Release Candidate Pipeline`, its reusable child workflows and readiness receipt, plus the Release evaluator.
 
 ## Requirements
 
@@ -25,9 +26,9 @@
 
 ### REQ-CI-DURATION-002
 
-- The system MUST make Release publication depend on successful fast and source gates for the same target SHA.
-- Inputs: the pending release snapshot target and GitHub Actions run metadata.
-- Outputs: fail-closed eligibility or a bounded failure before any release build or publish job.
+- The system MUST make Release publication depend on a readiness receipt whose fast, source, and preparation evidence all bind the same target SHA.
+- Inputs: an exact-SHA candidate run and the immutable receipt recorded after its child workflows succeed.
+- Outputs: fail-closed eligibility or a bounded failure before any release build or publish job; Release MUST not poll Actions runs.
 - covers: `G2`, `G3`
 
 ### REQ-CI-DURATION-003
@@ -49,7 +50,8 @@
 - The system MUST prepare release-enabled main commits before publication with Web and amd64/arm64 gnu/musl binary inputs in an immutable artifact retained for one day.
 - The preparation workflow MUST have no package, tag, GitHub Release, or image publication authority and MUST write `publish=false` plus a complete SHA-256 manifest.
 - The complete manifest MUST include `web/dist/.dockrev-route-contract.json`; Release MUST bind the downloaded manifest to the preparation gate's SHA-256 and verify every listed file's presence, size, and SHA-256 before consuming the artifact.
-- Release MUST consume only a preparation artifact whose manifest matches the oldest-pending target SHA and trusted workflow provenance. If it is missing or expired, Release MAY dispatch one target-bound recovery preparation and MUST warn. A completed failed recovery whose workflow head predates the required hidden route-contract artifact upload MAY be replaced once; any recovery that ran under the current artifact contract, has an unverifiable workflow head, or produces invalid proof MUST block publication.
+- The candidate pipeline MUST write a readiness receipt only after the source attestation and preparation manifest have been validated. The receipt MUST include the target SHA, candidate run id, source attestation run/name/digest, preparation run/name/manifest digest, and `publish=false`.
+- Release MUST consume only a receipt whose target and recorded artifacts match the oldest-ready pending snapshot. Missing, expired, or mismatched evidence blocks publication; Release MUST not dispatch recovery or wait for another workflow.
 - covers: `G2`, `G3`
 
 ## Verification
@@ -74,14 +76,15 @@
 
 ### VER-CI-DURATION-004
 
-- Method: Python manifest/evaluator fixtures and a workflow YAML contract check for normal and one-time recovery preparation runs.
+- Method: Python manifest/readiness fixtures and a workflow YAML contract check for reusable candidate children and verification-only dispatch.
 - covers: `REQ-CI-DURATION-005`
-- Pass condition: exact target SHA, trusted main workflow, complete file digests, one-day retention, and `publish=false` are required; a missing artifact produces one warning and one bounded recovery. A failed pre-contract recovery is ignored only while waiting for its one current-contract replacement; a second recovery or any unverifiable/current-contract failed recovery is rejected.
+- Pass condition: exact target SHA, trusted main workflow, complete file digests, one-day retention, and `publish=false` are required; a missing, mismatched, or verification-mode receipt is rejected and no polling/recovery path exists.
 
 ## Related ADRs
 
 - [0005-source-build-release-gate](../../adr/0005-source-build-release-gate.md)
 - [0006-early-release-preparation-artifacts](../../adr/0006-early-release-preparation-artifacts.md)
+- [0007-event-driven-release-readiness](../../adr/0007-event-driven-release-readiness.md)
 
 ## References
 

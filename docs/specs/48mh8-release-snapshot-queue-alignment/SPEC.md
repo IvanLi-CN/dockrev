@@ -33,7 +33,7 @@
 ### In scope
 
 - `refs/notes/release-snapshots` 下的 immutable release snapshot 存储契约。
-- `.github/scripts/release_snapshot.py` 的 `ensure` / `export` / `next-pending`。
+- `.github/scripts/release_snapshot.py` 的 `ensure` / `export` 与 `.github/scripts/release_readiness.py` 的 `next-ready`。
 - `CI (main)` 中的 snapshot materialization job。
 - `Release` workflow 对 oldest-pending snapshot 的消费、backfill 与 queue continuation。
 - `CI (PR)` / `CI (main)` 的 authenticated live quality-gates step。
@@ -52,8 +52,8 @@
 - snapshot 必须记录 `target_sha`、`pr_number`、`type_label`、`channel_label`、`release_enabled`、`release_bump`、`release_channel`、`app_effective_version`、`release_tag`、`tags_csv`。
 - `release_snapshot.py` 的 stable base version 计算必须基于 `main` 一阶父链中“最近已发布 tag / 已存在 snapshot”的前序锚点，不能依赖仓库当前全局最大 tag。
 - `CI (main)` 必须能为自最近发布/快照锚点之后缺失的 release-enabled commits 一次性 materialize snapshot，避免只处理当前 `HEAD`。
-- `Release` workflow 自动路径必须按 oldest pending snapshot 逐个发布，且成功后继续 dispatch 下一个 pending target 直到队列清空。
-- manual backfill 必须只要求目标 SHA 已在 `origin/main`，不依赖该 commit 当时一定有成功的 `CI (main)` 历史记录。
+- `Release` workflow 自动路径必须按 first-parent oldest-ready snapshot 逐个发布；未产生 readiness receipt 的 pending snapshot 不得发布。
+- manual release 必须要求目标 SHA 已在 `origin/main` 且已有候选 readiness receipt；它不再即时补造缺失的候选产物。
 - `release-channel-contract-check.sh` 必须只保留离线 contract / self-test / mock API 检查，不得再直接访问真实 GitHub branch-rules API。
 
 ### SHOULD
@@ -71,14 +71,14 @@
 ### Core flows
 
 - `CI (main)` 成功后，snapshot job 针对当前 `main` commit 拉取/写入 `refs/notes/release-snapshots`；若当前 commit 之前存在未快照的连续 main commits，则按 first-parent 顺序补齐缺失 snapshots。
-- `Release` workflow 被 `workflow_run` 触发时，不再把触发 SHA 直接当作唯一发布目标，而是以该 SHA 作为上界，从 snapshots 中选择 oldest pending release-enabled target 发布。
-- `Release` workflow 被 `workflow_dispatch(head_sha=...)` 触发时，允许对指定 main commit 走 target-only materialization + export，再发布该 target；发布成功后若上界内仍有更老 pending 目标，可继续通过 queue continuation 收敛。
+- `Release Candidate Pipeline` 在同一 exact SHA 的 fast/source/preparation 子工作流全部成功后写入 `refs/notes/release-readiness`；`Release` 被候选流水线触发时，以该 SHA 作为上界，从 snapshots 中选择 oldest-ready release-enabled target 发布。
+- `Release` workflow 被 `workflow_dispatch(head_sha=...)` 触发时，只允许消费指定 main commit 的 ready snapshot；发布成功后若上界内仍有更老 ready 目标，可继续通过 queue continuation 收敛。
 - stable snapshot 导出 `<semver>` tag，并仅在该 snapshot 仍是 main 上最新 stable snapshot 时发布 `latest`；rc snapshot 导出 `<semver>-rc.<sha7>`，标记 GitHub prerelease，且不得更新 `latest`。
 - docs/skip snapshot 仍需记录到 notes，便于历史对账，但不得进入发布队列。
 
 ### Edge cases / errors
 
-- 目标 commit 不在 `origin/main` first-parent 历史上时，snapshot ensure/export 与 Release prepare 必须失败。
+- 目标 commit 不在 `origin/main` first-parent 历史上时，snapshot export、readiness lookup 与 Release prepare 必须失败。
 - commit 关联不到唯一 PR 时，非 target commit 的 catch-up materialization 允许跳过；目标 commit 若无法关联唯一 PR，必须失败。
 - PR labels 缺失、冲突或未知时，snapshot materialization 必须失败；CI gate 继续维持今天的失败口径。
 - 目标 tag 已存在但不指向目标 commit 时，发布必须阻断，避免错 tag 覆盖。
@@ -91,7 +91,9 @@
 | 接口（Name） | 类型（Kind） | 范围（Scope） | 变更（Change） | 契约文档（Contract Doc） | 负责人（Owner） | 使用方（Consumers） | 备注（Notes） |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `refs/notes/release-snapshots` | Git notes JSON payload | internal | New | None | CI maintainers | `CI (main)`, `Release`, operators | immutable release snapshot store |
-| `.github/scripts/release_snapshot.py` | CLI | internal | New | None | CI maintainers | `CI (main)`, `Release` | `ensure/export/next-pending` |
+| `refs/notes/release-readiness` | Git notes JSON payload | internal | New | None | CI maintainers | candidate pipeline, `Release`, operators | immutable exact-SHA readiness proof |
+| `.github/scripts/release_snapshot.py` | CLI | internal | New | None | CI maintainers | `CI (main)`, `Release` | `ensure/export` |
+| `.github/scripts/release_readiness.py` | CLI | internal | New | None | CI maintainers | candidate pipeline, `Release` | `write/require/export/next-ready` |
 | `.github/workflows/release.yml` `workflow_dispatch.inputs.head_sha` | workflow input | internal | Modify | None | CI maintainers | operators | 保持 input name，不改调用入口 |
 | `.github/scripts/release-channel-contract-check.sh` | shell contract check | internal | Modify | None | CI maintainers | `CI (PR)`, `CI (main)` | 仅保留离线 contract/self-test |
 
@@ -102,7 +104,7 @@ None
 ## 验收标准（Acceptance Criteria）
 
 - Given `type:patch + channel:stable` 或 `type:patch + channel:rc`，When `PR Label Gate` 与 snapshot materialization 运行，Then label 结果与现状一致，未知/缺失/冲突 label 仍按既有契约失败。
-- Given `main` 上连续合并多个 release-enabled PR，When GitHub concurrency 只实际跑了最新的 `CI (main)`，Then snapshot job 会为缺失的一阶父链 commits 补齐 snapshot，`Release` 按 oldest pending 顺序逐个发布，不漏掉中间版本。
+- Given `main` 上连续合并多个 release-enabled PR，When candidate workflows complete out of order，Then snapshot job 会为缺失的一阶父链 commits 补齐 snapshot，`Release` 只按 first-parent oldest-ready 顺序发布，不漏掉中间版本且不会等待或恢复未就绪目标。
 - Given 较晚时间再手动 backfill 较早的 `main` commit，When `release_snapshot.py ensure/export` 运行，Then 版本号取自该 commit 在一阶父链上的前序发布锚点，而不是仓库当前最新 tag。
 - Given `CI (PR)` / `CI (main)` 执行 live quality-gates，When GitHub API 被调用，Then 使用 `GITHUB_TOKEN` 的 authenticated request；失败时仅反映真实 branch-rules drift。
 - Given `channel:rc` snapshot，When `Release` 发布，Then 只发布 `*-rc.<sha7>` 和 prerelease，且不更新 `latest`。
@@ -147,7 +149,7 @@ None
 - PR visual evidence source: maintain `## Visual Evidence (PR)` in this spec when PR screenshots are needed.
 - If an asset must be used in impl (runtime/test/official docs), list it in `资产晋升（Asset promotion）` and promote it to a stable project path during implementation.
 
-## Visual Evidence (PR)
+## Visual Evidence
 
 - None
 

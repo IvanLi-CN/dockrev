@@ -1,9 +1,18 @@
 name: CI (main)
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact target commit to validate
+        required: false
+        default: ""
+        type: string
+      verification_mode:
+        description: Run non-publishing verification only
+        required: true
+        default: true
+        type: boolean
   workflow_call:
     inputs:
       target_sha:
@@ -31,6 +40,9 @@ on:
       target_sha:
         description: Exact target SHA checked out by the fast gate
         value: ${{ jobs.fast-gate-verdict.outputs.target_sha }}
+      run_id:
+        description: Actions run that produced this fast-gate result
+        value: ${{ github.run_id }}
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -372,7 +384,7 @@ jobs:
       - frontend-storybook-build
       - frontend-storybook-test-required
       - storybook-coverage-summary
-    if: ${{ always() && inputs.verification_mode == true }}
+    if: ${{ always() }}
     outputs:
       completed_at: ${{ steps.verdict.outputs.completed_at }}
       gate_result: ${{ steps.verdict.outputs.gate_result }}
@@ -405,7 +417,7 @@ jobs:
             echo "target_sha=${CI_TARGET_SHA}"
             echo "coverage_result=${{ needs.storybook-coverage-summary.result }}"
           } >> "$GITHUB_OUTPUT"
-          if [[ "${{ needs.lint.result }}" != "success" || "${{ needs.unit-tests.result }}" != "success" || "${{ needs.frontend-lint-build.result }}" != "success" || "${{ needs.frontend-storybook-build.result }}" != "success" || "${{ needs.frontend-storybook-test-required.result }}" != "success" || "${{ needs.storybook-coverage-summary.result }}" != "success" ]]; then
+          if [[ "${{ needs.lint.result }}" != "success" || "${{ needs.unit-tests.result }}" != "success" || ( "${{ needs.frontend-lint-build.result }}" != "success" && "${{ needs.frontend-lint-build.result }}" != "skipped" ) || ( "${{ needs.frontend-storybook-build.result }}" != "success" && "${{ needs.frontend-storybook-build.result }}" != "skipped" ) || "${{ needs.frontend-storybook-test-required.result }}" != "success" || ( "${{ needs.storybook-coverage-summary.result }}" != "success" && "${{ needs.storybook-coverage-summary.result }}" != "skipped" ) ]]; then
             echo "gate_result=failure" >> "$GITHUB_OUTPUT"
             exit 1
           fi
@@ -423,6 +435,7 @@ jobs:
       - storybook-coverage-summary
     if: >-
       always() &&
+      github.event_name == 'workflow_call' &&
       inputs.verification_mode != true &&
       needs.lint.result == 'success' &&
       needs.unit-tests.result == 'success' &&
@@ -451,7 +464,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 .github/scripts/release_snapshot.py ensure \
-            --target-sha "${GITHUB_SHA}" \
+            --target-sha "${CI_TARGET_SHA}" \
             --github-repository "${GITHUB_REPOSITORY}" \
             --github-token "${GITHUB_TOKEN}" \
             --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted for implementation as part of CI duration optimization.
+Superseded for orchestration by [ADR 0007](0007-event-driven-release-readiness.md); the artifact and manifest contract remains.
 
 ## Context
 
@@ -20,15 +20,9 @@ SHA-256 manifest and `publish=false`, using only read permissions and a one-day
 retention period.
 
 Release consumes the artifact selected by the snapshot queue's actual
-`target_sha`, not the triggering workflow SHA. The Release evaluator accepts
-only a successful trusted-main preparation run, an exact target SHA, the
-complete manifest, and the non-publishing marker. If the artifact is missing
-or expired, Release emits a warning and dispatches at most one target-bound
-recovery preparation. A failed recovery that ran before the required hidden
-route contract artifact upload is treated as invalid recovery evidence, not as
-that target's one recovery: one replacement may run under the current artifact
-contract. A failed, timed-out, malformed, or mismatched current-contract
-recovery blocks publication.
+`target_sha`, not the triggering workflow SHA. The artifact is now recorded in
+the immutable readiness receipt described by ADR 0007; Release validates that
+receipt and never owns preparation recovery.
 
 The preparation artifact is an optimization and provenance input only. It
 never replaces the independent Dockerfile source-build and Compose deployment
@@ -40,7 +34,7 @@ smoke release gate.
   it downloads, verifies, packages, and publishes the prepared inputs.
 - A release-enabled main push uses additional parallel runner time and stores
   temporary artifacts for one day.
-- Expiry or artifact-service loss can add one bounded recovery build, with a
-  visible warning and no publication bypass.
+- Expiry or artifact-service loss blocks publication until an owner explicitly
+  starts a new exact-SHA candidate pipeline.
 - Removing this optimization is reversible by restoring the Release build jobs
   and removing the preparation dependency; source-build gating is unchanged.

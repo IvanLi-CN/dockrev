@@ -208,8 +208,9 @@ See `deploy/README.md` for a minimal Docker Compose deployment.
 - GHCR (Supervisor): `ghcr.io/ivanli-cn/dockrev-supervisor:<semver>`
 - Since `0.3.5`, images ensure shipped binaries are executable (0755); the release workflow validates this before pushing to GHCR.
 - `CI (main)` materializes immutable release snapshots into git notes `refs/notes/release-snapshots`; it backfills missing first-parent snapshots so burst merges on `main` do not skip intermediate releases.
-- The `Release` workflow still auto-starts from `workflow_run` after `CI (main)` succeeds on `main`, but it now releases the oldest pending snapshot up to that `head_sha` instead of re-deriving intent/version directly from the triggering commit.
-- Before selecting that oldest pending snapshot, the `Release` workflow reconciles any older tag-backed targets that already have a GitHub Release plus resolvable GHCR digests, backfilling their missing `refs/notes/release-publications` entries instead of letting historical ledger gaps block newer releases forever.
+- `Release Candidate Pipeline` starts on every `main` push and calls fast CI, the source-build gate, and release preparation in parallel for the exact same SHA. After validating all three results it writes an immutable `refs/notes/release-readiness` receipt containing the recorded Actions runs, artifact names, SHA-256 digests, and `publish=false`.
+- The `Release` workflow starts from a successful candidate pipeline, consumes only readiness receipts, and publishes the first-parent oldest-ready pending snapshot. It never polls another workflow or dispatches automatic recovery; a missing or mismatched receipt fails closed.
+- Before selecting that oldest-ready snapshot, the `Release` workflow reconciles any older tag-backed targets that already have a GitHub Release plus resolvable GHCR digests, backfilling their missing `refs/notes/release-publications` entries instead of letting historical ledger gaps block newer releases forever.
 - `workflow_dispatch(head_sha=<main-commit-sha>)` keeps the same input name and serves as the manual backfill path for a specific `main` commit.
 - That explicit `workflow_dispatch(..., admin_action=release)` path bypasses historical backlog reconciliation so operators can still recover one requested SHA directly; older partial publishes remain visible blockers only on the automatic queue path.
 - The `Release` workflow now creates/verifies the release tag before calling the GitHub Release API; release-enabled PRs are forbidden from touching `.github/workflows/**`, so `git push`ing the selected `TARGET_SHA` tag stays within the default `GITHUB_TOKEN` permission model.
@@ -228,6 +229,7 @@ See `deploy/README.md` for a minimal Docker Compose deployment.
 - A manually requested `workflow_dispatch(..., admin_action=release)` run refuses targets already marked as skipped, so override-ledger decisions cannot be bypassed into a partial artifact publish
 - The release workflow does not write publication results or status comments to source PRs; the release-owning agent reports successful publication to the owner
 - Live quality-gates checks now run explicitly inside `CI (PR)` / `CI (main)` with authenticated `GITHUB_TOKEN`; `release-channel-contract-check.sh` stays offline and only covers contract + mock API self-tests
+- `workflow_dispatch` verification mode runs the candidate gates without writing readiness notes or creating tags, GHCR images, or GitHub Releases.
 - GitHub Releases include Linux binaries for `dockrev` and `dockrev-supervisor` (amd64/arm64 × gnu/musl) as `.tar.gz` + `.sha256`
 - Release assets are validated as executable binaries (the workflow enforces `chmod +x` before packaging to avoid artifacts losing exec bits)
 

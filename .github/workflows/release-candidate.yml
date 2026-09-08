@@ -1,0 +1,190 @@
+name: Release Candidate Pipeline
+
+run-name: Release candidate ${{ inputs.target_sha || github.sha }}${{ inputs.verification_mode && ' (verification)' || '' }}
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact main commit to verify
+        required: false
+        default: ""
+        type: string
+      verification_mode:
+        description: Run non-publishing verification only
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: release-candidate-${{ inputs.target_sha || github.sha }}
+  cancel-in-progress: false
+
+env:
+  TARGET_SHA: ${{ inputs.target_sha || github.sha }}
+  VERIFICATION_MODE: ${{ github.event_name == 'workflow_dispatch' && true || false }}
+
+jobs:
+  fast:
+    name: Fast CI (exact SHA)
+    uses: ./.github/workflows/ci-main.yml
+    with:
+      target_sha: ${{ inputs.target_sha || github.sha }}
+      force_full: false
+      verification_mode: ${{ github.event_name == 'workflow_dispatch' && true || false }}
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: read
+    secrets: inherit
+
+  source:
+    name: Source gate (exact SHA)
+    uses: ./.github/workflows/source-build-release-gate.yml
+    with:
+      target_sha: ${{ inputs.target_sha || github.sha }}
+      force_full: false
+      verification_mode: ${{ github.event_name == 'workflow_dispatch' && true || false }}
+    permissions:
+      actions: write
+      contents: read
+    secrets: inherit
+
+  preparation:
+    name: Release preparation (exact SHA)
+    uses: ./.github/workflows/release-preparation.yml
+    with:
+      target_sha: ${{ inputs.target_sha || github.sha }}
+      verification_mode: ${{ github.event_name == 'workflow_dispatch' && true || false }}
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    secrets: inherit
+
+  readiness:
+    name: Write immutable readiness receipt
+    runs-on: ubuntu-latest
+    needs: [fast, source, preparation]
+    if: >-
+      github.event_name == 'push' &&
+      needs.fast.result == 'success' &&
+      needs.source.result == 'success' &&
+      needs.preparation.result == 'success' &&
+      needs.preparation.outputs.release_enabled == 'true'
+    permissions:
+      actions: read
+      contents: write
+    env:
+      TARGET_SHA: ${{ needs.fast.outputs.target_sha }}
+      FAST_RESULT: ${{ needs.fast.outputs.gate_result }}
+      SOURCE_TARGET_SHA: ${{ needs.source.outputs.target_sha }}
+      SOURCE_RESULT: ${{ needs.source.outputs.gate_result }}
+      SOURCE_RUN_ID: ${{ needs.source.outputs.run_id }}
+      SOURCE_ARTIFACT_NAME: ${{ needs.source.outputs.attestation_artifact_name }}
+      PREPARATION_TARGET_SHA: ${{ needs.preparation.outputs.target_sha }}
+      PREPARATION_RUN_ID: ${{ needs.preparation.outputs.artifact_run_id }}
+      PREPARATION_ARTIFACT_NAME: ${{ needs.preparation.outputs.artifact_name }}
+      PREPARATION_MANIFEST_SHA256: ${{ needs.preparation.outputs.manifest_sha256 }}
+    steps:
+      - name: Checkout target and workflow helpers
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          fetch-depth: 0
+
+      - name: Download source gate attestation
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.SOURCE_ARTIFACT_NAME }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: source-gate
+
+      - name: Download preparation artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.PREPARATION_ARTIFACT_NAME }}
+          run-id: ${{ env.PREPARATION_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: preparation
+
+      - name: Validate exact-SHA candidate evidence
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "${TARGET_SHA}" = "${SOURCE_TARGET_SHA}"
+          test "${TARGET_SHA}" = "${PREPARATION_TARGET_SHA}"
+          test "${FAST_RESULT}" = "success"
+          test "${SOURCE_RESULT}" = "success"
+          python3 .github/scripts/release_source_gate.py validate \
+            --fixture source-gate/source-gate-attestation.json \
+            --target-sha "${TARGET_SHA}" \
+            --kind push
+          python3 .github/scripts/release_preparation.py validate \
+            --manifest preparation/release-preparation-manifest.json \
+            --target-sha "${TARGET_SHA}"
+          test "$(python3 - <<'PY'
+          import json
+          import hashlib
+          from pathlib import Path
+          payload = json.loads(Path("preparation/release-preparation-manifest.json").read_text())
+          print(hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest())
+          PY
+          )" = "${PREPARATION_MANIFEST_SHA256}"
+
+      - name: Configure git identity for readiness notes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Write immutable readiness receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_digest="$(sha256sum source-gate/source-gate-attestation.json | awk '{print $1}')"
+          export SOURCE_DIGEST="${source_digest}"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "schema_version": 1,
+              "target_sha": os.environ["TARGET_SHA"],
+              "candidate_run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "candidate_workflow": "Release Candidate Pipeline",
+              "candidate_event": "push",
+              "verification_mode": False,
+              "publish": False,
+              "source_gate": {
+                  "target_sha": os.environ["SOURCE_TARGET_SHA"],
+                  "run_id": int(os.environ["SOURCE_RUN_ID"]),
+                  "artifact_name": os.environ["SOURCE_ARTIFACT_NAME"],
+                  "attestation_sha256": os.environ["SOURCE_DIGEST"],
+                  "gate_result": os.environ["SOURCE_RESULT"],
+                  "publish": False,
+              },
+              "preparation": {
+                  "target_sha": os.environ["PREPARATION_TARGET_SHA"],
+                  "run_id": int(os.environ["PREPARATION_RUN_ID"]),
+                  "artifact_name": os.environ["PREPARATION_ARTIFACT_NAME"],
+                  "manifest_sha256": os.environ["PREPARATION_MANIFEST_SHA256"],
+                  "publish": False,
+              },
+              "created_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat().replace("+00:00", "Z"),
+          }
+          Path("release-readiness.json").write_text(json.dumps(payload, sort_keys=True) + "\n")
+          PY
+          python3 .github/scripts/release_readiness.py write \
+            --receipt release-readiness.json \
+            --readiness-notes-ref refs/notes/release-readiness
