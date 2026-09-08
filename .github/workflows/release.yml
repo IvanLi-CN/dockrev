@@ -2,7 +2,7 @@ name: Release
 
 on:
   workflow_run:
-    workflows: ["CI (main)"]
+    workflows: ["Release Candidate Pipeline"]
     types: [completed]
     branches: [main]
   workflow_dispatch:
@@ -38,6 +38,7 @@ env:
   RELEASE_SNAPSHOT_NOTES_REF: refs/notes/release-snapshots
   RELEASE_PUBLICATION_NOTES_REF: refs/notes/release-publications
   RELEASE_OVERRIDE_NOTES_REF: refs/notes/release-overrides
+  RELEASE_READINESS_NOTES_REF: refs/notes/release-readiness
 
 concurrency:
   group: release-main
@@ -54,7 +55,7 @@ jobs:
       github.event.workflow_run.event == 'push') ||
       github.event_name == 'workflow_dispatch'
     permissions:
-      actions: write
+      actions: read
       contents: write
       packages: read
       pull-requests: read
@@ -74,6 +75,13 @@ jobs:
       supervisor_image_name_lower: ${{ steps.snapshot.outputs.supervisor_image_name_lower }}
       tags_csv: ${{ steps.snapshot.outputs.tags_csv }}
       supervisor_tags_csv: ${{ steps.snapshot.outputs.supervisor_tags_csv }}
+      readiness_publish: ${{ steps.readiness.outputs.readiness_publish }}
+      source_gate_run_id: ${{ steps.readiness.outputs.source_gate_run_id }}
+      source_gate_artifact_name: ${{ steps.readiness.outputs.source_gate_artifact_name }}
+      source_gate_attestation_sha256: ${{ steps.readiness.outputs.source_gate_attestation_sha256 }}
+      preparation_run_id: ${{ steps.readiness.outputs.preparation_run_id }}
+      preparation_artifact_name: ${{ steps.readiness.outputs.preparation_artifact_name }}
+      preparation_manifest_sha256: ${{ steps.readiness.outputs.preparation_manifest_sha256 }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -115,23 +123,6 @@ jobs:
           fi
 
           echo "target_sha=${target_sha}" >> "$GITHUB_OUTPUT"
-
-      - name: Ensure immutable release snapshot for manual backfill
-        if: github.event_name == 'workflow_dispatch' && inputs.admin_action == 'release'
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TARGET_SHA: ${{ steps.requested-target.outputs.target_sha }}
-        run: |
-          set -euo pipefail
-          python3 .github/scripts/release_snapshot.py ensure \
-            --target-sha "${TARGET_SHA}" \
-            --github-repository "${GITHUB_REPOSITORY}" \
-            --github-token "${GITHUB_TOKEN}" \
-            --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
-            --registry "${REGISTRY}" \
-            --target-only \
-            --output "$RUNNER_TEMP/release-snapshot.json"
 
       - name: Record skip override for frozen target
         if: github.event_name == 'workflow_dispatch' && inputs.admin_action == 'skip'
@@ -181,7 +172,7 @@ jobs:
             --github-actor "${GITHUB_ACTOR}" \
             --github-output "$GITHUB_OUTPUT"
 
-      - name: Select pending release target
+      - name: Select oldest ready release target
         id: pending-target
         shell: bash
         env:
@@ -189,20 +180,30 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.admin_action }}" = "release" ]; then
-            echo "target_sha=${REQUESTED_SHA}" >> "$GITHUB_OUTPUT"
+            git fetch --no-tags origin "+${RELEASE_READINESS_NOTES_REF}:${RELEASE_READINESS_NOTES_REF}" || true
+            python3 .github/scripts/release_readiness.py require \
+              --target-sha "${REQUESTED_SHA}" \
+              --readiness-notes-ref "${RELEASE_READINESS_NOTES_REF}" \
+              --snapshot-notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
+              --publication-notes-ref "${RELEASE_PUBLICATION_NOTES_REF}" \
+              --override-notes-ref "${RELEASE_OVERRIDE_NOTES_REF}" \
+              --main-ref "origin/main" \
+              --github-output "$GITHUB_OUTPUT"
             exit 0
           fi
 
           git fetch --no-tags origin "+${RELEASE_SNAPSHOT_NOTES_REF}:${RELEASE_SNAPSHOT_NOTES_REF}" || true
           git fetch --no-tags origin "+${RELEASE_PUBLICATION_NOTES_REF}:${RELEASE_PUBLICATION_NOTES_REF}" || true
           git fetch --no-tags origin "+${RELEASE_OVERRIDE_NOTES_REF}:${RELEASE_OVERRIDE_NOTES_REF}" || true
+          git fetch --no-tags origin "+${RELEASE_READINESS_NOTES_REF}:${RELEASE_READINESS_NOTES_REF}" || true
           git fetch --tags origin
           upper_bound="${REQUESTED_SHA}"
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.admin_action }}" = "skip" ]; then
             upper_bound="$(git rev-parse origin/main)"
           fi
-          python3 .github/scripts/release_snapshot.py next-pending \
-            --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
+          python3 .github/scripts/release_readiness.py next-ready \
+            --readiness-notes-ref "${RELEASE_READINESS_NOTES_REF}" \
+            --snapshot-notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
             --publication-notes-ref "${RELEASE_PUBLICATION_NOTES_REF}" \
             --override-notes-ref "${RELEASE_OVERRIDE_NOTES_REF}" \
             --main-ref "origin/main" \
@@ -216,6 +217,20 @@ jobs:
           RELEASE_TARGET_SHA: ${{ steps.pending-target.outputs.target_sha }}
         run: |
           echo "RELEASE_TARGET_SHA=${RELEASE_TARGET_SHA}"
+
+      - name: Load immutable readiness receipt
+        if: steps.pending-target.outputs.target_sha != ''
+        id: readiness
+        shell: bash
+        env:
+          TARGET_SHA: ${{ steps.pending-target.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+${RELEASE_READINESS_NOTES_REF}:${RELEASE_READINESS_NOTES_REF}" || true
+          python3 .github/scripts/release_readiness.py export \
+            --target-sha "${TARGET_SHA}" \
+            --readiness-notes-ref "${RELEASE_READINESS_NOTES_REF}" \
+            --github-output "$GITHUB_OUTPUT"
 
       - name: Load immutable release snapshot
         if: steps.pending-target.outputs.target_sha != ''
@@ -288,104 +303,17 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-  source-gate:
-    name: Verify source-build release gate
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: [prepare]
-    if: ${{ needs.prepare.outputs.should_release == 'true' }}
-    permissions:
-      actions: read
-      contents: read
-    env:
-      TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - name: Checkout trusted main workflow helpers
-        uses: actions/checkout@v4
-        with:
-          ref: main
-          fetch-depth: 1
-
-      - name: Wait for exact-SHA source gate
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 .github/scripts/release_source_gate.py wait \
-            --repository "${GITHUB_REPOSITORY}" \
-            --target-sha "${TARGET_SHA}" \
-            --token "${GH_TOKEN}" \
-            --timeout-seconds 720 \
-            --poll-seconds 15
-
-  preparation-gate:
-    name: Verify release preparation artifact
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: [prepare]
-    if: ${{ needs.prepare.outputs.should_release == 'true' }}
-    permissions:
-      actions: write
-      contents: read
-    outputs:
-      run_id: ${{ steps.ensure.outputs.run_id }}
-      artifact_name: ${{ steps.ensure.outputs.artifact_name }}
-      manifest_sha256: ${{ steps.ensure.outputs.manifest_sha256 }}
-      recovery: ${{ steps.ensure.outputs.recovery }}
-    env:
-      TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - name: Checkout trusted main workflow helpers
-        uses: actions/checkout@v4
-        with:
-          ref: main
-          fetch-depth: 1
-
-      - name: Locate or recover exact-SHA preparation
-        id: ensure
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 .github/scripts/release_preparation.py ensure \
-            --repository "${GITHUB_REPOSITORY}" \
-            --target-sha "${TARGET_SHA}" \
-            --token "${GH_TOKEN}" \
-            --timeout-seconds 720 \
-            --poll-seconds 15 \
-            --output "$RUNNER_TEMP/release-preparation.json"
-          python3 - "$RUNNER_TEMP/release-preparation.json" <<'PY' >> "$GITHUB_OUTPUT"
-          import json
-          import sys
-          from pathlib import Path
-
-          payload = json.loads(Path(sys.argv[1]).read_text())
-          for key in ("run_id", "artifact_name", "manifest_sha256", "recovery"):
-              print(f"{key}={payload.get(key, '')}")
-          PY
-
-      - name: Summarize preparation proof
-        if: always()
-        env:
-          PREPARATION_RUN_ID: ${{ steps.ensure.outputs.run_id }}
-          PREPARATION_ARTIFACT: ${{ steps.ensure.outputs.artifact_name }}
-          PREPARATION_RECOVERY: ${{ steps.ensure.outputs.recovery }}
-        run: |
-          set -euo pipefail
-          {
-            echo "- preparation_run_id: ${PREPARATION_RUN_ID}"
-            echo "- preparation_artifact: ${PREPARATION_ARTIFACT}"
-            echo "- recovery_used: ${PREPARATION_RECOVERY:-false}"
-          } >> "$GITHUB_STEP_SUMMARY"
-
   publish:
     name: Publish (GHCR + GitHub Release)
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    needs: [prepare, source-gate, preparation-gate]
-    if: ${{ needs.prepare.outputs.should_release == 'true' }}
+    needs: [prepare]
+    if: >-
+      needs.prepare.outputs.should_release == 'true' &&
+      needs.prepare.outputs.readiness_publish == 'false' &&
+      needs.prepare.outputs.target_sha != ''
     permissions:
-      actions: write
+      actions: read
       contents: write
       packages: write
     env:
@@ -393,7 +321,12 @@ jobs:
       RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
       RELEASE_CHANNEL: ${{ needs.prepare.outputs.release_channel }}
       TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
-      PREPARATION_MANIFEST_SHA256: ${{ needs.preparation-gate.outputs.manifest_sha256 }}
+      SOURCE_GATE_RUN_ID: ${{ needs.prepare.outputs.source_gate_run_id }}
+      SOURCE_GATE_ARTIFACT_NAME: ${{ needs.prepare.outputs.source_gate_artifact_name }}
+      SOURCE_GATE_ATTESTATION_SHA256: ${{ needs.prepare.outputs.source_gate_attestation_sha256 }}
+      PREPARATION_RUN_ID: ${{ needs.prepare.outputs.preparation_run_id }}
+      PREPARATION_ARTIFACT_NAME: ${{ needs.prepare.outputs.preparation_artifact_name }}
+      PREPARATION_MANIFEST_SHA256: ${{ needs.prepare.outputs.preparation_manifest_sha256 }}
       DOCKREV_TAGS_CSV: ${{ needs.prepare.outputs.tags_csv }}
       SUPERVISOR_TAGS_CSV: ${{ needs.prepare.outputs.supervisor_tags_csv }}
     steps:
@@ -410,11 +343,29 @@ jobs:
           path: .workflow-src
           fetch-depth: 1
 
-      - name: Download exact-SHA preparation artifact
+      - name: Download recorded source gate attestation
         uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.preparation-gate.outputs.artifact_name }}
-          run-id: ${{ needs.preparation-gate.outputs.run_id }}
+          name: ${{ env.SOURCE_GATE_ARTIFACT_NAME }}
+          run-id: ${{ env.SOURCE_GATE_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: source-gate
+
+      - name: Validate recorded source gate attestation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .workflow-src/.github/scripts/release_source_gate.py validate \
+            --fixture source-gate/source-gate-attestation.json \
+            --target-sha "${TARGET_SHA}" \
+            --kind push
+          test "$(sha256sum source-gate/source-gate-attestation.json | awk '{print $1}')" = "${SOURCE_GATE_ATTESTATION_SHA256}"
+
+      - name: Download recorded preparation artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.PREPARATION_ARTIFACT_NAME }}
+          run-id: ${{ env.PREPARATION_RUN_ID }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: .
 
@@ -424,8 +375,7 @@ jobs:
           set -euo pipefail
           python3 .workflow-src/.github/scripts/release_preparation.py validate \
             --manifest release-preparation-manifest.json \
-            --target-sha "${TARGET_SHA}" \
-            --allow-recovery
+            --target-sha "${TARGET_SHA}"
 
       - name: Verify downloaded preparation files
         shell: bash
@@ -435,7 +385,6 @@ jobs:
             --root . \
             --manifest release-preparation-manifest.json \
             --target-sha "${TARGET_SHA}" \
-            --allow-recovery \
             --expected-manifest-sha256 "${PREPARATION_MANIFEST_SHA256}"
 
       - name: Ensure docker artifacts are executable
@@ -843,7 +792,7 @@ jobs:
 
       - name: Resolve next pending release target
         if: github.event_name != 'workflow_dispatch' || inputs.admin_action == 'skip'
-        id: next-pending
+        id: next-ready
         shell: bash
         run: |
           set -euo pipefail
@@ -852,8 +801,10 @@ jobs:
           git fetch --no-tags origin "+${RELEASE_SNAPSHOT_NOTES_REF}:${RELEASE_SNAPSHOT_NOTES_REF}" || true
           git fetch --no-tags origin "+${RELEASE_PUBLICATION_NOTES_REF}:${RELEASE_PUBLICATION_NOTES_REF}" || true
           git fetch --no-tags origin "+${RELEASE_OVERRIDE_NOTES_REF}:${RELEASE_OVERRIDE_NOTES_REF}" || true
-          python3 .workflow-src/.github/scripts/release_snapshot.py next-pending \
-            --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
+          git fetch --no-tags origin "+${RELEASE_READINESS_NOTES_REF}:${RELEASE_READINESS_NOTES_REF}" || true
+          python3 .workflow-src/.github/scripts/release_readiness.py next-ready \
+            --readiness-notes-ref "${RELEASE_READINESS_NOTES_REF}" \
+            --snapshot-notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
             --publication-notes-ref "${RELEASE_PUBLICATION_NOTES_REF}" \
             --override-notes-ref "${RELEASE_OVERRIDE_NOTES_REF}" \
             --main-ref "origin/main" \
@@ -861,10 +812,10 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
 
       - name: Continue release queue
-        if: (github.event_name != 'workflow_dispatch' || inputs.admin_action == 'skip') && steps.next-pending.outputs.target_sha != ''
+        if: (github.event_name != 'workflow_dispatch' || inputs.admin_action == 'skip') && steps.next-ready.outputs.target_sha != ''
         uses: actions/github-script@v7
         env:
-          NEXT_TARGET_SHA: ${{ steps.next-pending.outputs.target_sha }}
+          NEXT_TARGET_SHA: ${{ steps.next-ready.outputs.target_sha }}
         with:
           script: |
             const { owner, repo } = context.repo
@@ -887,7 +838,7 @@ jobs:
     name: Cleanup Actions artifacts
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [prepare, source-gate, preparation-gate, publish]
+    needs: [prepare, publish]
     if: ${{ always() && needs.prepare.result == 'success' && needs.prepare.outputs.should_release == 'true' }}
     permissions:
       actions: write

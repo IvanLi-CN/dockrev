@@ -11,7 +11,7 @@
 | Update rollback diagnostics | active | not started | `update-rollback-diagnostics/SPEC.md` | - |
 | Service accepted state consistency | active | not started | `service-accepted-state-consistency/SPEC.md` | - |
 | Brand media variants | active | dark/light posters delivered; social variants pending | `brand-media-variants/SPEC.md` | - |
-| CI duration optimization | active | source gate, exact-SHA release proof, and one-day preparation artifacts | `ci-duration-optimization/SPEC.md` | - |
+| CI duration optimization | active | source gate, exact-SHA candidate readiness, oldest-ready release proof, and one-day preparation artifacts | `ci-duration-optimization/SPEC.md` | - |
 
 ## 快速新增一个规格
 
@@ -37,7 +37,7 @@
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
 | async-data-continuity | Dockrev：异步数据连续性与加载反馈 | active | `async-data-continuity/SPEC.md` | 2026-08-19 | fast-track（统一骨架、延迟遮罩、错误重试与 fresh snapshot v2 合同） |
-| ci-duration-optimization | Dockrev：CI 时长优化与发布预构建 | active | `ci-duration-optimization/SPEC.md` | 2026-09-03 | fast-track（同 SHA 源码门禁、一天准备产物、缺失恢复） |
+| ci-duration-optimization | Dockrev：CI 时长优化与事件驱动发布就绪 | active | `ci-duration-optimization/SPEC.md` | 2026-09-03 | fast-track（同 SHA 候选编排、readiness receipt、oldest-ready 队列） |
 | theme-preference-controls | Dockrev：三态主题偏好与响应式入口 | active | `theme-preference-controls/SPEC.md` | 2026-08-14 | fast-track（system/light/dark、AppShell 桌面侧栏、移动 Settings、Storybook 与 ui_demo 证据） |
 | unified-page-context-navigation | Dockrev：统一页面内导航 | active | `unified-page-context-navigation/SPEC.md` | 2026-09-04 | fast-track（单一 AppShell 侧栏、页面内上下文导航、移动抽屉与服务树） |
 | 5dnjc | Dockrev：任务日志实时输出与事件可见性 | active | `5dnjc-job-live-output-event-visibility/SPEC.md` | 2026-08-03 | fast-track（无持久化 job_live_log SSE、命令摘要去重、EVEN 默认隐藏与浏览器偏好） |

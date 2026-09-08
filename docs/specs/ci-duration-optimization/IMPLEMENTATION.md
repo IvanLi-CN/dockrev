@@ -4,15 +4,15 @@
 
 - Implementation: implemented; remote timing evidence remains a release acceptance step
 - Lifecycle: active
-- Catalog note: Fast gate, source gate, and exact-SHA release proof are implemented together.
+- Catalog note: Fast gate, source gate, exact-SHA candidate readiness, and oldest-ready release consumption are implemented together.
 
 ## Implementation Coverage
 
 - `REQ-CI-DURATION-001`: `.github/workflows/source-build-release-gate.yml`, `.github/scripts/deploy-smoke.sh`, and Buildx cache scopes.
-- `REQ-CI-DURATION-002`: `.github/scripts/release_source_gate.py` and the Release prepare dependency.
+- `REQ-CI-DURATION-002`: `.github/workflows/release-candidate.yml`, `.github/scripts/release_readiness.py`, and the Release receipt consumer.
 - `REQ-CI-DURATION-003`: `web/scripts/storybook-sharding.mjs` and Storybook matrix jobs.
 - `REQ-CI-DURATION-004`: `.github/workflows/ci-gate-verification.yml`, `.github/scripts/verify_ci_gate_metrics.py`, and attestation artifacts.
-- `REQ-CI-DURATION-005`: `.github/workflows/release-preparation.yml`, `.github/scripts/release_preparation.py`, and the Release `preparation-gate`.
+- `REQ-CI-DURATION-005`: `.github/workflows/release-preparation.yml`, `.github/scripts/release_preparation.py`, and the candidate readiness validation.
 - Verification commands and final rollout receipts are recorded only after implementation and controlled GitHub Actions validation.
 
 ## Coverage / rollout summary

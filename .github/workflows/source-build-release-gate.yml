@@ -1,8 +1,6 @@
 name: Source Build Release Gate
 
 on:
-  push:
-    branches: [main]
   workflow_call:
     inputs:
       target_sha:
@@ -27,6 +25,15 @@ on:
       cache_status:
         description: Source build cache status
         value: ${{ jobs.source-gate-verdict.outputs.cache_status }}
+      run_id:
+        description: Actions run that produced this source-gate result
+        value: ${{ github.run_id }}
+      attestation_artifact_name:
+        description: Source gate attestation artifact name
+        value: source-gate-attestation-${{ github.run_id }}
+      target_sha:
+        description: Exact target SHA checked by the source gate
+        value: ${{ jobs.source-gate-verdict.outputs.target_sha }}
 
 concurrency:
   group: source-gate-${{ github.ref }}
@@ -238,6 +245,7 @@ jobs:
       completed_at: ${{ steps.verdict.outputs.completed_at }}
       gate_result: ${{ steps.verdict.outputs.gate_result }}
       cache_status: ${{ steps.verdict.outputs.cache_status }}
+      target_sha: ${{ steps.verdict.outputs.target_sha }}
     steps:
       - name: Write source gate attestation
         id: verdict
@@ -285,6 +293,7 @@ jobs:
             echo "completed_at=${completed_at}"
             echo "gate_result=${result}"
             echo "cache_status=${CACHE_STATUS}"
+            echo "target_sha=${TARGET_SHA}"
           } >> "$GITHUB_OUTPUT"
           if [[ "${result}" != "success" ]]; then
             exit 1

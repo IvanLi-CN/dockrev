@@ -14,6 +14,9 @@
 - ADR `0006-early-release-preparation-artifacts.md` records why exact-SHA
   preparation artifacts may accelerate Release without becoming source-build
   proof.
+- ADR `0007-event-driven-release-readiness.md` records the successor
+  orchestration contract: candidate-owned readiness receipts and an
+  oldest-ready Release queue without polling or automatic recovery.
 
 ## References
 

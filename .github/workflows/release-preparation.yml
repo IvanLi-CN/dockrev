@@ -1,21 +1,49 @@
 name: Release Preparation
 
-run-name: Release preparation ${{ inputs.target_sha || github.sha }} ${{ inputs.recovery_request || 'push' }}
+run-name: Release preparation ${{ inputs.target_sha || github.sha }}
 
 on:
-  push:
-    branches: [main]
+  workflow_call:
+    inputs:
+      target_sha:
+        description: Exact main commit to prepare
+        required: true
+        type: string
+      verification_mode:
+        description: Build and validate without release publication evidence
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      target_sha:
+        description: Exact target SHA prepared
+        value: ${{ jobs.meta.outputs.target_sha }}
+      release_enabled:
+        description: Whether the target carries a release label
+        value: ${{ jobs.meta.outputs.release_enabled }}
+      verification_mode:
+        description: Whether this preparation was verification-only
+        value: ${{ jobs.meta.outputs.verification_mode }}
+      artifact_name:
+        description: Immutable preparation artifact name
+        value: ${{ jobs.package.outputs.artifact_name }}
+      artifact_run_id:
+        description: Actions run containing the preparation artifact
+        value: ${{ github.run_id }}
+      manifest_sha256:
+        description: Canonical SHA-256 of the preparation manifest
+        value: ${{ jobs.package.outputs.manifest_sha256 }}
   workflow_dispatch:
     inputs:
       target_sha:
         description: Exact main commit to prepare
         required: true
         type: string
-      recovery_request:
-        description: Release-owned recovery request for the exact target
-        required: false
-        default: ""
-        type: string
+      verification_mode:
+        description: Verification-only execution; never creates release evidence
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -37,12 +65,12 @@ jobs:
     outputs:
       target_sha: ${{ steps.target.outputs.target_sha }}
       release_enabled: ${{ steps.candidate.outputs.release_enabled }}
-      recovery_request: ${{ steps.target.outputs.recovery_request }}
+      verification_mode: ${{ steps.target.outputs.verification_mode }}
     steps:
       - name: Checkout target source
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
+          ref: ${{ inputs.target_sha }}
           fetch-depth: 0
 
       - name: Checkout trusted workflow helpers
@@ -56,20 +84,16 @@ jobs:
         id: target
         shell: bash
         env:
-          TARGET_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
-          RECOVERY_REQUEST: ${{ inputs.recovery_request || '' }}
+          TARGET_INPUT: ${{ inputs.target_sha }}
+          VERIFICATION_MODE: ${{ inputs.verification_mode || false }}
         run: |
           set -euo pipefail
           if [[ ! "${TARGET_INPUT}" =~ ^[0-9a-f]{40}$ ]]; then
             echo "target_sha must be a 40-character lowercase commit SHA" >&2
             exit 2
           fi
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" && ! "${RECOVERY_REQUEST}" =~ ^release-recovery-${TARGET_INPUT}$ ]]; then
-            echo "workflow_dispatch is reserved for the target-bound release recovery request" >&2
-            exit 2
-          fi
-          if [[ "${{ github.event_name }}" == "push" && -n "${RECOVERY_REQUEST}" ]]; then
-            echo "push preparation must not carry a recovery request" >&2
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${VERIFICATION_MODE}" != "true" ]]; then
+            echo "workflow_dispatch preparation must be verification-only" >&2
             exit 2
           fi
           git fetch --no-tags origin main
@@ -78,7 +102,7 @@ jobs:
             exit 2
           fi
           echo "target_sha=${TARGET_INPUT}" >> "$GITHUB_OUTPUT"
-          echo "recovery_request=${RECOVERY_REQUEST}" >> "$GITHUB_OUTPUT"
+          echo "verification_mode=${VERIFICATION_MODE}" >> "$GITHUB_OUTPUT"
 
       - name: Resolve release candidate labels
         id: candidate
@@ -107,14 +131,14 @@ jobs:
         env:
           TARGET_SHA: ${{ steps.target.outputs.target_sha }}
           RELEASE_ENABLED: ${{ steps.candidate.outputs.release_enabled }}
-          RECOVERY_REQUEST: ${{ steps.target.outputs.recovery_request }}
+          VERIFICATION_MODE: ${{ steps.target.outputs.verification_mode }}
         run: |
           set -euo pipefail
           {
             echo "## Release preparation"
             echo "- target_sha: ${TARGET_SHA}"
             echo "- release_enabled: ${RELEASE_ENABLED}"
-            echo "- recovery: ${RECOVERY_REQUEST:-none}"
+            echo "- verification_mode: ${VERIFICATION_MODE}"
             echo "- publish: false"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -311,9 +335,12 @@ jobs:
     timeout-minutes: 15
     needs: [meta, build-web, build-binaries-amd64, build-binaries-arm64]
     if: ${{ needs.meta.outputs.release_enabled == 'true' }}
+    outputs:
+      artifact_name: ${{ steps.manifest.outputs.artifact_name }}
+      manifest_sha256: ${{ steps.manifest.outputs.manifest_sha256 }}
     env:
       TARGET_SHA: ${{ needs.meta.outputs.target_sha }}
-      RECOVERY_REQUEST: ${{ needs.meta.outputs.recovery_request }}
+      VERIFICATION_MODE: ${{ needs.meta.outputs.verification_mode }}
     steps:
       - name: Checkout target source
         uses: actions/checkout@v4
@@ -352,6 +379,7 @@ jobs:
           path: .
 
       - name: Create exact-SHA manifest
+        id: manifest
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -359,28 +387,55 @@ jobs:
           WORKFLOW_REF: ${{ github.workflow_ref }}
         run: |
           set -euo pipefail
-          python3 .github/scripts/release_preparation.py manifest \
-            --root . \
-            --target-sha "${TARGET_SHA}" \
-            --event "${EVENT_NAME}" \
-            --workflow-sha "${WORKFLOW_SHA}" \
-            --workflow-ref "${WORKFLOW_REF}" \
-            --recovery-request "${RECOVERY_REQUEST}" \
-            --output release-preparation-manifest.json
-          python3 .github/scripts/release_preparation.py validate \
-            --manifest release-preparation-manifest.json \
-            --target-sha "${TARGET_SHA}" \
-            --allow-recovery
+          manifest_args=(
+            manifest
+            --root .
+            --target-sha "${TARGET_SHA}"
+            --event "${EVENT_NAME}"
+            --workflow-sha "${WORKFLOW_SHA}"
+            --workflow-ref "${WORKFLOW_REF}"
+          )
+          if [[ "${VERIFICATION_MODE}" == "true" ]]; then
+            manifest_args+=(--verification-mode)
+          fi
+          manifest_args+=(--output release-preparation-manifest.json)
+          python3 .github/scripts/release_preparation.py "${manifest_args[@]}"
+          validate_args=(
+            validate
+            --manifest release-preparation-manifest.json
+            --target-sha "${TARGET_SHA}"
+          )
+          if [[ "${VERIFICATION_MODE}" == "true" ]]; then
+            validate_args+=(--allow-verification)
+          fi
+          python3 .github/scripts/release_preparation.py "${validate_args[@]}"
+          manifest_sha256="$(python3 - <<'PY'
+          import json
+          import hashlib
+          from pathlib import Path
+          payload = json.loads(Path("release-preparation-manifest.json").read_text())
+          encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+          print(hashlib.sha256(encoded).hexdigest())
+          PY
+          )"
+          echo "artifact_name=release-preparation-${TARGET_SHA}" >> "$GITHUB_OUTPUT"
+          echo "manifest_sha256=${manifest_sha256}" >> "$GITHUB_OUTPUT"
 
       - name: Verify preparation files
         shell: bash
         run: |
           set -euo pipefail
-          python3 .workflow-src/.github/scripts/release_preparation.py verify \
-            --root . \
-            --manifest release-preparation-manifest.json \
-            --target-sha "${TARGET_SHA}" \
-            --allow-recovery
+          verify_args=(
+            verify
+            --root .
+            --manifest release-preparation-manifest.json
+            --target-sha "${TARGET_SHA}"
+            --expected-manifest-sha256 "${{ steps.manifest.outputs.manifest_sha256 }}"
+          )
+          if [[ "${VERIFICATION_MODE}" == "true" ]]; then
+            verify_args+=(--allow-verification)
+          fi
+          python3 .workflow-src/.github/scripts/release_preparation.py "${verify_args[@]}"
 
       - name: Upload immutable preparation artifact
         uses: actions/upload-artifact@v4
