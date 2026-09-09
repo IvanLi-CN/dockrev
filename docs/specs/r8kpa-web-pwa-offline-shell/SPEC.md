@@ -143,6 +143,52 @@
 - state: ready above bottom navigation
 - PR: include
 
+### PWA Install Entry
+
+![PWA install entry desktop](./assets/app-shell-desktop-sidebar-pwa-install.png)
+
+- source_type: storybook_canvas
+- target_program: mock-only
+- capture_scope: `.sidebar`
+- requested_viewport: 1440x900
+- viewport_strategy: storybook-static
+- story_id_or_title: `Layouts/AppShell/OverviewWithSidebarIdentityPopover`
+- state: Chromium browser prompt entry beside the desktop user identity
+- PR: include
+
+![PWA install entry mobile](./assets/app-shell-mobile-drawer-pwa-install.png)
+
+- source_type: storybook_canvas
+- target_program: mock-only
+- capture_scope: `#mobileDockrevMenu`
+- requested_viewport: 393x852
+- viewport_strategy: storybook-viewport
+- story_id_or_title: `Layouts/AppShell/MobileBottomNavAndDrawer`
+- state: mobile drawer identity, install, and theme controls in one stable row
+- PR: include
+
+![PWA Safari install guide](./assets/app-shell-desktop-safari-guide.png)
+
+- source_type: storybook_canvas
+- target_program: mock-only
+- capture_scope: browser-viewport
+- requested_viewport: 1440x900
+- viewport_strategy: storybook-static
+- story_id_or_title: `Layouts/AppShell/OverviewWithSafariInstallGuide`
+- state: Safari/iOS manual install guide opened from the desktop user area
+- PR: include
+
+![PWA browser prompt control](./assets/pwa-install-browser-prompt.png)
+
+- source_type: storybook_canvas
+- target_program: mock-only
+- capture_scope: element
+- requested_viewport: 420x260
+- viewport_strategy: storybook-static
+- story_id_or_title: `Components/PwaInstallControl/BrowserPrompt`
+- state: compact Chromium install icon button with source-managed 48px outer margin
+- PR: include
+
 ### Offline Snapshot Notice
 
 ![Offline snapshot notice](./assets/offline-snapshot-notice.png)
