@@ -79,6 +79,18 @@
 
 ![浅色主题滚动条](./assets/overlay-scrollbar-light.png)
 
+![服务详情页签空闲隐藏](./assets/scrollbar-service-tabs-465-idle.png)
+
+![服务详情页签交互显示](./assets/scrollbar-service-tabs-465-interactive.png)
+
+![桌面服务日志空闲隐藏](./assets/scrollbar-service-logs-desktop-idle.png)
+
+![桌面服务日志交互显示](./assets/scrollbar-service-logs-desktop-interactive.png)
+
+![移动端服务日志交互显示](./assets/scrollbar-service-logs-mobile-interactive.png)
+
+![任务日志暂停跟随后显示](./assets/scrollbar-job-logs-paused-interactive.png)
+
 ## 实现里程碑（Milestones / Delivery checklist）
 
 - [x] M1：创建并落地主题 token（dark/light）与全局字体体系。
