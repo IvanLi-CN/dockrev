@@ -67,6 +67,7 @@ jobs:
         env:
           TARGET_INPUT: ${{ github.event_name == 'push' && github.sha || inputs.target_sha }}
           OPERATION: ${{ env.CANDIDATE_OPERATION }}
+          TARGET_EXPLICIT: ${{ inputs.target_sha }}
           RECOVERY_REASON: ${{ inputs.recovery_reason || '' }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -76,7 +77,7 @@ jobs:
             echo "unsupported candidate operation: ${OPERATION}" >&2
             exit 2
           fi
-          if [[ "${OPERATION}" == "recover" && -z "${{ inputs.target_sha }}" ]]; then
+          if [[ "${OPERATION}" == "recover" && -z "${TARGET_EXPLICIT}" ]]; then
             echo "recover requires an explicitly supplied target_sha" >&2
             exit 2
           fi
@@ -103,6 +104,7 @@ jobs:
               --api-root "${GITHUB_API_URL}" \
               --main-ref origin/main \
               --publication-notes-ref refs/notes/release-publications \
+              --override-notes-ref refs/notes/release-overrides \
               --github-output "$GITHUB_OUTPUT"
             echo "target_only=true" >> "$GITHUB_OUTPUT"
             exit 0

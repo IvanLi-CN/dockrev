@@ -251,12 +251,21 @@ def pending_ready_targets(args: argparse.Namespace) -> list[str]:
     release_snapshot.fetch_notes_ref(args.publication_notes_ref)
     release_snapshot.fetch_notes_ref(args.override_notes_ref)
     release_snapshot.fetch_tags()
+    missing_release_resolver = None
+    if getattr(args, "github_repository", "") and getattr(args, "github_token", ""):
+        missing_release_resolver = lambda commit: release_snapshot.release_enabled_for_commit(
+            args.api_root,
+            args.github_repository,
+            args.github_token,
+            commit,
+        )
     pending = release_snapshot.pending_release_targets(
         args.snapshot_notes_ref,
         upper_bound,
         publication_notes_ref=args.publication_notes_ref,
         override_notes_ref=args.override_notes_ref,
         strict_fifo=True,
+        release_enabled_for_missing=missing_release_resolver,
     )
     if not pending:
         return []
@@ -268,6 +277,9 @@ def recover_preflight(args: argparse.Namespace) -> int:
     target_sha = validate_sha(args.target_sha, "target_sha")
     git("merge-base", "--is-ancestor", target_sha, args.main_ref)
     release_snapshot.fetch_notes_ref(args.publication_notes_ref)
+    release_snapshot.fetch_notes_ref(args.override_notes_ref)
+    release_snapshot.fetch_tags()
+    tagged = release_snapshot.released_commits_from_tags(target_sha)
     main_commits = release_snapshot.first_parent_commits(args.main_ref)
     if target_sha not in main_commits:
         raise ReadinessError(f"recovery target {target_sha} is not on the main first-parent chain")
@@ -277,8 +289,17 @@ def recover_preflight(args: argparse.Namespace) -> int:
         for commit in main_commits[: target_index + 1]
         if release_snapshot.read_publication(args.publication_notes_ref, commit) is not None
     }
+    skipped: set[str] = set()
+    for commit in main_commits[: target_index + 1]:
+        override = release_snapshot.read_override(args.override_notes_ref, commit)
+        if override is not None and override.get("status") == "skip":
+            skipped.add(commit)
     pending: list[str] = []
     for commit in main_commits[: target_index + 1]:
+        if commit in skipped:
+            continue
+        if commit in tagged and commit not in released:
+            raise ReadinessError(f"recovery target prefix contains tag-only publication without complete ledger: {commit}")
         pr = release_snapshot.load_pr_for_commit(
             args.api_root,
             args.repository,
@@ -311,6 +332,9 @@ def parse_args() -> argparse.Namespace:
     common.add_argument("--main-ref", default="origin/main")
     common.add_argument("--upper-bound", default="")
     common.add_argument("--github-output", default="")
+    common.add_argument("--github-repository", default="")
+    common.add_argument("--github-token", default="")
+    common.add_argument("--api-root", default="https://api.github.com")
     next_ready = sub.add_parser("next-ready", parents=[common])
     require = sub.add_parser("require", parents=[common])
     require.add_argument("--target-sha", required=True)
@@ -329,6 +353,7 @@ def parse_args() -> argparse.Namespace:
     preflight.add_argument("--api-root", default="https://api.github.com")
     preflight.add_argument("--main-ref", default="origin/main")
     preflight.add_argument("--publication-notes-ref", default=release_snapshot.DEFAULT_PUBLICATION_NOTES_REF)
+    preflight.add_argument("--override-notes-ref", default=release_snapshot.DEFAULT_OVERRIDE_NOTES_REF)
     preflight.add_argument("--github-output", default="")
     return parser.parse_args()
 

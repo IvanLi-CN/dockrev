@@ -12,7 +12,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib import error, parse, request
 
 SNAPSHOT_SCHEMA_VERSION = 1
@@ -526,6 +526,14 @@ def parse_release_labels(labels: list[str]) -> tuple[str, str]:
     return type_label, channel_label
 
 
+def release_enabled_for_commit(api_root: str, repository: str, token: str, target_sha: str) -> bool:
+    pr = load_pr_for_commit(api_root, repository, token, target_sha, allow_zero=True)
+    if pr is None:
+        return False
+    type_label, _channel_label = parse_release_labels(current_pr_labels(pr))
+    return type_label not in {"type:docs", "type:skip"}
+
+
 def cargo_base_version(target_sha: str) -> StableVersion:
     cargo_toml = git_output("show", f"{target_sha}:Cargo.toml")
     match = re.search(r'^version\s*=\s*"(\d+\.\d+\.\d+)"', cargo_toml, re.MULTILINE)
@@ -731,15 +739,22 @@ def pending_release_targets(
     publication_notes_ref: str,
     override_notes_ref: str,
     strict_fifo: bool = False,
+    release_enabled_for_missing: Callable[[str], bool] | None = None,
 ) -> list[str]:
     pending: list[str] = []
     missing_before_pending: list[str] = []
     roots = set(git_output("rev-list", "--max-parents=0", upper_bound_sha).splitlines()) if strict_fifo else set()
+    snapshot_started = False
     first_pending_found = False
     for commit in first_parent_commits(upper_bound_sha):
         snapshot = read_snapshot(notes_ref, commit)
+        if snapshot is not None:
+            snapshot_started = True
         if not snapshot or not snapshot.get("release_enabled"):
-            if strict_fifo and not first_pending_found and snapshot is None and commit not in roots:
+            if strict_fifo and snapshot_started and not first_pending_found and snapshot is None and commit not in roots:
+                missing_is_release_enabled = release_enabled_for_missing is None or release_enabled_for_missing(commit)
+                if not missing_is_release_enabled:
+                    continue
                 missing_before_pending.append(commit)
             continue
         if (
@@ -1325,6 +1340,12 @@ def reconcile_publications(args: argparse.Namespace) -> int:
                 publication_notes_ref=args.publication_notes_ref,
                 override_notes_ref=args.override_notes_ref,
                 strict_fifo=True,
+                release_enabled_for_missing=lambda commit: release_enabled_for_commit(
+                    args.api_root,
+                    args.github_repository,
+                    args.github_token,
+                    commit,
+                ),
             ):
                 snapshot = read_snapshot(args.notes_ref, target_sha)
                 if snapshot is None:

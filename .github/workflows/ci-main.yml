@@ -475,9 +475,10 @@ jobs:
       - name: Ensure immutable release snapshot
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CALLER_WORKFLOW_REF: ${{ github.workflow_ref }}
         run: |
           set -euo pipefail
-          if [[ "${{ github.workflow }}" != "Release Candidate Pipeline" ]]; then
+          if [[ "${{ github.workflow }}" != "Release Candidate Pipeline" || "${CALLER_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/release-candidate.yml@refs/heads/main" ]]; then
             echo "release snapshot requires Release Candidate Pipeline caller" >&2
             exit 2
           fi

@@ -79,6 +79,7 @@ original_readiness_git = module.git
 original_fetch_tags = module.release_snapshot.fetch_tags
 original_fetch_notes = module.release_snapshot.fetch_notes_ref
 original_read_publication = module.release_snapshot.read_publication
+original_read_override = module.release_snapshot.read_override
 original_released = module.release_snapshot.released_commits_from_tags
 original_first_parent = module.release_snapshot.first_parent_commits
 original_load_pr = module.release_snapshot.load_pr_for_commit
@@ -88,6 +89,7 @@ try:
     module.release_snapshot.fetch_tags = lambda: None
     module.release_snapshot.fetch_notes_ref = lambda *_args: None
     module.release_snapshot.read_publication = lambda *_args: None
+    module.release_snapshot.read_override = lambda *_args: None
     module.release_snapshot.released_commits_from_tags = lambda _target: set()
     module.release_snapshot.first_parent_commits = lambda _target: [old_target, new_target]
     module.release_snapshot.load_pr_for_commit = lambda *args, **kwargs: {"labels": [{"name": "type:patch"}, {"name": "channel:stable"}]}
@@ -101,10 +103,23 @@ try:
             api_root="https://api.github.com",
             main_ref="origin/main",
             publication_notes_ref="refs/notes/release-publications",
+            override_notes_ref="refs/notes/release-overrides",
             github_output=str(output),
         )
         assert module.recover_preflight(args) == 0
         assert "release_enabled=true" in output.read_text()
+        module.release_snapshot.read_override = lambda _ref, target: {"status": "skip"} if target == old_target else None
+        args.target_sha = new_target
+        assert module.recover_preflight(args) == 0
+        module.release_snapshot.read_override = lambda *_args: None
+        module.release_snapshot.released_commits_from_tags = lambda _target: {old_target}
+        try:
+            module.recover_preflight(args)
+        except module.ReadinessError as error:
+            assert "tag-only publication" in str(error)
+        else:
+            raise AssertionError("recovery preflight accepted a tag-only historical target")
+        module.release_snapshot.released_commits_from_tags = lambda _target: set()
         args.target_sha = new_target
         try:
             module.recover_preflight(args)
@@ -125,6 +140,7 @@ finally:
     module.release_snapshot.fetch_tags = original_fetch_tags
     module.release_snapshot.fetch_notes_ref = original_fetch_notes
     module.release_snapshot.read_publication = original_read_publication
+    module.release_snapshot.read_override = original_read_override
     module.release_snapshot.released_commits_from_tags = original_released
     module.release_snapshot.first_parent_commits = original_first_parent
     module.release_snapshot.load_pr_for_commit = original_load_pr
@@ -186,5 +202,39 @@ with tempfile.TemporaryDirectory() as directory:
     assert values["readiness_target_sha"] == old_target
     assert values["readiness_publish"] == "false"
     assert values["preparation_manifest_sha256"] == "c" * 64
+
+legacy_note = json.dumps(receipt(old_target))
+stored_note = {"value": legacy_note}
+original_write_git = module.git
+original_write_fetch = module.fetch_notes
+try:
+    class Result:
+        def __init__(self, returncode: int = 0, stdout: str = "", stderr: str = ""):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def fake_write_git(*args, **kwargs):
+        if args[:2] == ("notes", "--ref=refs/notes/release-readiness") and "show" in args:
+            return Result(stdout=stored_note["value"])
+        if args[:2] == ("notes", "--ref=refs/notes/release-readiness") and "add" in args:
+            path = Path(args[args.index("-F") + 1])
+            stored_note["value"] = path.read_text()
+            return Result()
+        if args[:2] == ("push", "origin"):
+            return Result()
+        return Result(returncode=1)
+
+    module.git = fake_write_git
+    module.fetch_notes = lambda _ref: None
+    module.write_receipt(recovery_receipt(old_target), "refs/notes/release-readiness", 1)
+    ledger_payload = json.loads(stored_note["value"])
+    assert len(ledger_payload["receipt_ledger"]) == 2
+    before = stored_note["value"]
+    module.write_receipt(recovery_receipt(old_target), "refs/notes/release-readiness", 1)
+    assert stored_note["value"] == before
+finally:
+    module.git = original_write_git
+    module.fetch_notes = original_write_fetch
 
 print("PASS: release readiness fixtures")

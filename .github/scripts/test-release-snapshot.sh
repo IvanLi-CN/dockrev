@@ -932,6 +932,7 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-missing-fifo-") as tmp
     (repo / "Cargo.toml").write_text('[package]\nname = "dockrev"\nversion = "0.40.0"\n')
     run("add", "Cargo.toml", cwd=repo)
     run("commit", "-m", "base", cwd=repo)
+    base_sha = run("rev-parse", "HEAD", cwd=repo)
     (repo / "Cargo.toml").write_text('[package]\nname = "dockrev"\nversion = "0.40.1"\n')
     run("add", "Cargo.toml", cwd=repo)
     run("commit", "-m", "old release", cwd=repo)
@@ -949,9 +950,19 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-missing-fifo-") as tmp
     try:
         os.chdir(repo)
         module.load_pr_for_commit = lambda api_root, repository, token, target_sha, **kwargs: {
+            base_sha: make_pr(700, "Base", base_sha, ["type:docs", "channel:stable"]),
             old_sha: make_pr(701, "Old release", old_sha, ["type:patch", "channel:stable"]),
             new_sha: make_pr(702, "New release", new_sha, ["type:patch", "channel:stable"]),
         }[target_sha]
+        base_snapshot = module.build_snapshot(
+            target_sha=base_sha,
+            repository="IvanLi-CN/dockrev",
+            token="token",
+            notes_ref=module.DEFAULT_NOTES_REF,
+            registry="ghcr.io",
+            api_root="https://api.github.com",
+        )
+        run("notes", f"--ref={module.DEFAULT_NOTES_REF}", "add", "-f", "-m", json.dumps(base_snapshot), base_sha, cwd=repo)
         new_snapshot = module.build_snapshot(
             target_sha=new_sha,
             repository="IvanLi-CN/dockrev",
@@ -968,6 +979,7 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-missing-fifo-") as tmp
                 publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
                 override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
                 strict_fifo=True,
+                release_enabled_for_missing=lambda commit: commit != gap_sha,
             )
         except module.SnapshotError as exc:
             assert old_sha in str(exc)
@@ -988,6 +1000,7 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-missing-fifo-") as tmp
             publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
             override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
             strict_fifo=True,
+            release_enabled_for_missing=lambda commit: commit != gap_sha,
         ) == [old_sha, new_sha]
     finally:
         module.load_pr_for_commit = original_loader

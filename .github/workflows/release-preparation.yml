@@ -93,6 +93,7 @@ jobs:
           VERIFICATION_MODE: ${{ inputs.verification_mode || false }}
           CANDIDATE_INVOCATION: ${{ inputs.candidate_invocation || false }}
           CALLER_WORKFLOW: ${{ github.workflow }}
+          CALLER_WORKFLOW_REF: ${{ github.workflow_ref }}
         run: |
           set -euo pipefail
           if [[ ! "${TARGET_INPUT}" =~ ^[0-9a-f]{40}$ ]]; then
@@ -105,6 +106,10 @@ jobs:
           fi
           if [[ "${CANDIDATE_INVOCATION}" == "true" && "${CALLER_WORKFLOW}" != "Release Candidate Pipeline" ]]; then
             echo "candidate_invocation is restricted to Release Candidate Pipeline" >&2
+            exit 2
+          fi
+          if [[ "${CANDIDATE_INVOCATION}" == "true" && "${CALLER_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/release-candidate.yml@refs/heads/main" ]]; then
+            echo "candidate_invocation caller ref is not the protected main workflow" >&2
             exit 2
           fi
           if [[ "${CANDIDATE_INVOCATION}" != "true" && "${VERIFICATION_MODE}" != "true" ]]; then
