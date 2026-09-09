@@ -110,18 +110,6 @@ body {
   background-attachment: fixed;
 }
 
-@media (max-width: 960px) {
-  html,
-  body {
-    scrollbar-width: none;
-  }
-
-  html::-webkit-scrollbar,
-  body::-webkit-scrollbar {
-    display: none;
-  }
-}
-
 a {
   color: inherit;
   text-decoration: none;
@@ -144,9 +132,9 @@ select {
 }
 
 .os-theme-dockrev {
-  --os-size: 12px;
-  --os-padding-axis: 4px;
-  --os-padding-perpendicular: 2px;
+  --os-size: 6px;
+  --os-padding-axis: 2px;
+  --os-padding-perpendicular: 1px;
   --os-track-bg: color-mix(in srgb, var(--panel2) 76%, transparent);
   --os-track-bg-hover: color-mix(in srgb, var(--panel2) 88%, transparent);
   --os-track-border: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
@@ -156,7 +144,7 @@ select {
   --os-handle-bg-active: var(--color-primary);
   --os-handle-border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
   --os-handle-border-radius: 999px;
-  --os-handle-interactive-area-offset: 3px;
+  --os-handle-interactive-area-offset: 5px;
   --os-handle-min-size: 36px;
 }
 
@@ -175,41 +163,106 @@ select {
   padding-bottom: 2px;
 }
 
-* {
+.nativeScrollArea,
+.modalPopover,
+.mobileMenuDrawer,
+.mobileMenuEmbeddedContent,
+.detailRouteTreeList,
+.settingsDrawer,
+.ghcrPickerDialogBody,
+.modalList,
+.discoveryIssueDialogError,
+.serviceVersionsIndexViewport,
+.serviceVersionsScrollViewport,
+.cleanupConfirmDialogBody {
   scrollbar-color: color-mix(in srgb, var(--muted2) 54%, var(--color-primary) 46%) color-mix(in srgb, var(--panel2) 76%, transparent);
   scrollbar-width: thin;
 }
 
-*::-webkit-scrollbar {
-  width: 12px;
-  height: 12px;
+.nativeScrollArea::-webkit-scrollbar,
+.modalPopover::-webkit-scrollbar,
+.mobileMenuDrawer::-webkit-scrollbar,
+.mobileMenuEmbeddedContent::-webkit-scrollbar,
+.detailRouteTreeList::-webkit-scrollbar,
+.settingsDrawer::-webkit-scrollbar,
+.ghcrPickerDialogBody::-webkit-scrollbar,
+.modalList::-webkit-scrollbar,
+.discoveryIssueDialogError::-webkit-scrollbar,
+.serviceVersionsIndexViewport::-webkit-scrollbar,
+.serviceVersionsScrollViewport::-webkit-scrollbar,
+.cleanupConfirmDialogBody::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
 }
 
-*::-webkit-scrollbar-track {
+.nativeScrollArea::-webkit-scrollbar-track,
+.modalPopover::-webkit-scrollbar-track,
+.mobileMenuDrawer::-webkit-scrollbar-track,
+.mobileMenuEmbeddedContent::-webkit-scrollbar-track,
+.detailRouteTreeList::-webkit-scrollbar-track,
+.settingsDrawer::-webkit-scrollbar-track,
+.ghcrPickerDialogBody::-webkit-scrollbar-track,
+.modalList::-webkit-scrollbar-track,
+.discoveryIssueDialogError::-webkit-scrollbar-track,
+.serviceVersionsIndexViewport::-webkit-scrollbar-track,
+.serviceVersionsScrollViewport::-webkit-scrollbar-track,
+.cleanupConfirmDialogBody::-webkit-scrollbar-track {
   background: color-mix(in srgb, var(--panel2) 76%, transparent);
   border: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
   border-radius: 999px;
 }
 
-*::-webkit-scrollbar-thumb {
+.nativeScrollArea::-webkit-scrollbar-thumb,
+.modalPopover::-webkit-scrollbar-thumb,
+.mobileMenuDrawer::-webkit-scrollbar-thumb,
+.mobileMenuEmbeddedContent::-webkit-scrollbar-thumb,
+.detailRouteTreeList::-webkit-scrollbar-thumb,
+.settingsDrawer::-webkit-scrollbar-thumb,
+.ghcrPickerDialogBody::-webkit-scrollbar-thumb,
+.modalList::-webkit-scrollbar-thumb,
+.discoveryIssueDialogError::-webkit-scrollbar-thumb,
+.serviceVersionsIndexViewport::-webkit-scrollbar-thumb,
+.serviceVersionsScrollViewport::-webkit-scrollbar-thumb,
+.cleanupConfirmDialogBody::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--muted2) 54%, var(--color-primary) 46%);
-  border: 3px solid transparent;
+  border: 1px solid transparent;
   background-clip: padding-box;
   border-radius: 999px;
 }
 
-*::-webkit-scrollbar-thumb:hover {
+.nativeScrollArea::-webkit-scrollbar-thumb:hover,
+.modalPopover::-webkit-scrollbar-thumb:hover,
+.mobileMenuDrawer::-webkit-scrollbar-thumb:hover,
+.mobileMenuEmbeddedContent::-webkit-scrollbar-thumb:hover,
+.detailRouteTreeList::-webkit-scrollbar-thumb:hover,
+.settingsDrawer::-webkit-scrollbar-thumb:hover,
+.ghcrPickerDialogBody::-webkit-scrollbar-thumb:hover,
+.modalList::-webkit-scrollbar-thumb:hover,
+.discoveryIssueDialogError::-webkit-scrollbar-thumb:hover,
+.serviceVersionsIndexViewport::-webkit-scrollbar-thumb:hover,
+.serviceVersionsScrollViewport::-webkit-scrollbar-thumb:hover,
+.cleanupConfirmDialogBody::-webkit-scrollbar-thumb:hover {
   background: color-mix(in srgb, var(--color-primary) 78%, white 22%);
-  border: 3px solid transparent;
+  border: 1px solid transparent;
   background-clip: padding-box;
 }
 
 @media (pointer: coarse) {
   .os-theme-dockrev {
-    --os-size: 16px;
-    --os-handle-interactive-area-offset: 8px;
-    --os-padding-perpendicular: 3px;
+    --os-size: 8px;
+    --os-handle-interactive-area-offset: 4px;
+    --os-padding-perpendicular: 1px;
   }
+}
+
+.overlayScrollArea [data-overlayscrollbars-viewport]:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-primary) 72%, transparent);
+  outline-offset: -2px;
+}
+
+.overlayScrollArea[data-scrollbar-focus='true'] .os-scrollbar {
+  opacity: 1;
+  visibility: visible;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -138,6 +138,33 @@ export function ServiceDetailPage(props: {
     supervisorState,
     dangerousActions,
   } = useServiceDetailPageState(props);
+  const [tabsViewport, setTabsViewport] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!tabsViewport) return;
+    const shell = tabsViewport.closest<HTMLElement>(".svcDetailTabsShell");
+    if (!shell) return;
+
+    const updateEdges = () => {
+      const maxScrollLeft = Math.max(0, tabsViewport.scrollWidth - tabsViewport.clientWidth);
+      shell.dataset.tabsOverflow = maxScrollLeft > 1 ? "true" : "false";
+      shell.dataset.tabsEdgeStart = tabsViewport.scrollLeft > 1 ? "true" : "false";
+      shell.dataset.tabsEdgeEnd = tabsViewport.scrollLeft < maxScrollLeft - 1 ? "true" : "false";
+    };
+
+    updateEdges();
+    tabsViewport.addEventListener("scroll", updateEdges, { passive: true });
+    if (typeof ResizeObserver === "undefined") {
+      return () => tabsViewport.removeEventListener("scroll", updateEdges);
+    }
+    const resizeObserver = new ResizeObserver(updateEdges);
+    resizeObserver.observe(tabsViewport);
+    const content = tabsViewport.firstElementChild;
+    if (content) resizeObserver.observe(content);
+    return () => {
+      tabsViewport.removeEventListener("scroll", updateEdges);
+      resizeObserver.disconnect();
+    };
+  }, [tabsViewport]);
   const visibleRollbackTarget = rollbackTargetRefreshing ? null : rollbackTarget
   const [jobs, setJobs] = useState<JobListItem[]>([]);
   const [historyPhase, setHistoryPhase] = useState<AsyncDataPhase>("initial-loading");
@@ -424,6 +451,7 @@ export function ServiceDetailPage(props: {
   const serviceOperationJobs = filterServiceOperationJobs(effectiveJobs, effectiveService.id, effectiveStack.id);
   const versionOperationJobs = selectServiceOperationJobs(versionJobs, effectiveService.id, effectiveStack.id);
   const sectionValue = section;
+
   const effectiveBannerTitle =
     service != null
       ? bannerTitle
@@ -855,7 +883,7 @@ export function ServiceDetailPage(props: {
             <div className="svcBannerDetail svcDetailStatusSummary">{effectiveBannerDetail}</div>
           </div>
         </div>
-        <OverlayScrollArea className="svcDetailTabsShell" data-service-detail-tabs-shell="true" options={{ overflow: { x: "scroll", y: "hidden" } }}>
+        <OverlayScrollArea className="svcDetailTabsShell" data-service-detail-tabs-shell="true" onViewportReady={setTabsViewport} options={{ overflow: { x: "scroll", y: "hidden" } }}>
           <Tabs
             onValueChange={(value) => {
               const nextSection = value as ServiceDetailSection;
