@@ -748,12 +748,14 @@ def pending_release_targets(
     if strict_fifo:
         roots = set(git_output("rev-list", "--max-parents=0", upper_bound_sha).splitlines())
         tagged = released_commits_from_tags(upper_bound_sha)
-        trusted_tagged = {
-            commit
-            for commit in tagged
-            if read_snapshot(notes_ref, commit) is not None
-            or read_publication(publication_notes_ref, commit) is not None
-        }
+        trusted_tagged = set()
+        for commit in tagged:
+            snapshot = read_snapshot(notes_ref, commit)
+            if snapshot is not None and snapshot.get("release_enabled"):
+                trusted_tagged.add(commit)
+                continue
+            if read_publication(publication_notes_ref, commit) is not None:
+                trusted_tagged.add(commit)
         tagged_indices = [commits.index(commit) for commit in trusted_tagged if commit in commits]
         anchor_index = max(tagged_indices, default=-1)
     else:

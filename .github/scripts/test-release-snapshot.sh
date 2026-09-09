@@ -942,6 +942,7 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-missing-fifo-") as tmp
     run("add", "Cargo.toml", cwd=repo)
     run("commit", "-m", "gap infrastructure fix", cwd=repo)
     gap_sha = run("rev-parse", "HEAD", cwd=repo)
+    run("tag", "0.40.2", gap_sha, cwd=repo)
     (repo / "Cargo.toml").write_text('[package]\nname = "dockrev"\nversion = "0.40.3"\n')
     run("add", "Cargo.toml", cwd=repo)
     run("commit", "-m", "new release", cwd=repo)
@@ -953,7 +954,8 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-missing-fifo-") as tmp
         module.load_pr_for_commit = lambda api_root, repository, token, target_sha, **kwargs: {
             base_sha: make_pr(700, "Base", base_sha, ["type:docs", "channel:stable"]),
             old_sha: make_pr(701, "Old release", old_sha, ["type:patch", "channel:stable"]),
-            new_sha: make_pr(702, "New release", new_sha, ["type:patch", "channel:stable"]),
+            gap_sha: make_pr(702, "Infrastructure fix", gap_sha, ["type:skip", "channel:stable"]),
+            new_sha: make_pr(703, "New release", new_sha, ["type:patch", "channel:stable"]),
         }[target_sha]
         base_snapshot = module.build_snapshot(
             target_sha=base_sha,
@@ -964,6 +966,15 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-missing-fifo-") as tmp
             api_root="https://api.github.com",
         )
         run("notes", f"--ref={module.DEFAULT_NOTES_REF}", "add", "-f", "-m", json.dumps(base_snapshot), base_sha, cwd=repo)
+        gap_snapshot = module.build_snapshot(
+            target_sha=gap_sha,
+            repository="IvanLi-CN/dockrev",
+            token="token",
+            notes_ref=module.DEFAULT_NOTES_REF,
+            registry="ghcr.io",
+            api_root="https://api.github.com",
+        )
+        run("notes", f"--ref={module.DEFAULT_NOTES_REF}", "add", "-f", "-m", json.dumps(gap_snapshot), gap_sha, cwd=repo)
         new_snapshot = module.build_snapshot(
             target_sha=new_sha,
             repository="IvanLi-CN/dockrev",
