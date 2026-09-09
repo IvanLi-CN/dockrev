@@ -19,6 +19,8 @@
 - 已将更新提示从壳层状态条拆为固定右下气泡，支持下载禁用、ready 离线激活、失败重试、离线 hover/focus 隐藏和移动底部导航避让；离线壳与只读快照状态条保留在内容区。
 - 已补更新气泡与 AppShell 的 Storybook 状态、交互覆盖和桌面/移动截图脚本入口。
 - 已记录 Android Chrome/WebAPK 与 Chromium desktop 的 manifest 更新边界，以及 iOS/iPadOS Web Clips、浏览器快捷方式等不能由网站强制迁移既有图标的限制。
+- 已新增可测试的 PWA 安装生命周期：捕获 Chromium `beforeinstallprompt`、处理一次性 `prompt()`/`userChoice`、监听 `appinstalled`，并识别独立应用与 Safari/iOS 手动安装引导。
+- 已在 AppShell 桌面侧栏用户区和移动端导航抽屉底部加入独立 `PwaInstallControl`；Chromium 调用原生确认，Safari/iOS 展示平台步骤，其他不可安装状态保持隐藏。
 
 ## Outstanding
 
@@ -36,6 +38,7 @@
 - `bun run storybook:screenshots -- --only layouts-appshell--update-ready-bubble,layouts-appshell--update-ready-bubble-mobile`
 - `bun run storybook:screenshots -- --only components-serviceresourcepanel--offline-snapshot,pages-servicedetailpage--settings-offline-readonly`
 - `bun run test-storybook`
+- `bun test tests/pwaInstallLifecycle.test.ts`
 
 ## Current Coverage
 

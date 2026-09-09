@@ -218,6 +218,9 @@ export const MobileBottomNavAndDrawer: Story = {
     { autoOpenMobileDrawer: true },
   ),
   parameters: {
+    pwaStatus: {
+      installCapability: { kind: 'browser-prompt' },
+    },
     viewport: { defaultViewport: 'mobile1' },
   },
   play: async ({ canvasElement }) => {
@@ -230,9 +233,11 @@ export const MobileBottomNavAndDrawer: Story = {
     expectStory(drawer?.textContent?.includes('api'), 'Mobile drawer should render service names')
     const footerControls = drawer?.querySelector<HTMLElement>('.mobileDrawerFooterControls')
     const identityTrigger = footerControls?.querySelector<HTMLElement>('.topbarUserTrigger')
+    const installButton = footerControls?.querySelector<HTMLElement>('.pwaInstallControlButton')
     const themeButton = footerControls?.querySelector<HTMLElement>('.themePreferenceIconButton')
     const themeGlyph = themeButton?.querySelector<HTMLElement>('.themePreferenceGlyph')
     expectStory(Boolean(identityTrigger), 'Mobile drawer should keep the user identity in the compact footer row')
+    expectStory(Boolean(installButton), 'Mobile drawer should expose the PWA install action in the compact footer row')
     expectStory(Boolean(themeButton), 'Mobile drawer should keep a single theme button in the compact footer row')
     expectStory(Boolean(themeGlyph), 'Mobile drawer theme button should render its glyph')
     expectStory(!footerControls?.querySelector('.themePreferenceSegmented'), 'Mobile drawer should remove the expanded theme control')
@@ -303,9 +308,16 @@ export const MobileDrawerScrollLayout: Story = {
 }
 export const OverviewWithSidebarIdentityPopover: Story = {
   render: render({ name: 'overview' }),
+  parameters: {
+    pwaStatus: {
+      installCapability: { kind: 'browser-prompt' },
+    },
+  },
   play: async ({ canvasElement }) => {
     const trigger = canvasElement.querySelector<HTMLButtonElement>('.sidebarMeta .topbarUserTrigger')
+    const installButton = canvasElement.querySelector<HTMLButtonElement>('.sidebarProfileControls .pwaInstallControlButton')
     expectStory(trigger?.textContent?.includes('alice'), 'AppShell sidebar should show the current user trigger')
+    expectStory(Boolean(installButton), 'AppShell sidebar should expose the PWA install action beside the user trigger')
 
     const topbarIdentity = canvasElement.querySelector<HTMLElement>('.topbarUserSlotTopbar')
     expectStory(
@@ -318,6 +330,22 @@ export const OverviewWithSidebarIdentityPopover: Story = {
     const doc = canvasElement.ownerDocument
     const popover = doc.querySelector<HTMLElement>('.topbarUserPopover')
     expectStory(popover?.textContent?.includes('Forward Auth'), 'AppShell sidebar popover should expose auth source details')
+  },
+}
+export const OverviewWithSafariInstallGuide: Story = {
+  render: render({ name: 'overview' }),
+  parameters: {
+    pwaStatus: {
+      installCapability: { kind: 'safari-guide', platform: 'ios' },
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const installButton = canvasElement.querySelector<HTMLButtonElement>('.sidebarProfileControls .pwaInstallControlButton')
+    expectStory(Boolean(installButton), 'AppShell sidebar should expose the Safari install action beside the user trigger')
+    installButton?.click()
+    await new Promise((resolve) => setTimeout(resolve, 160))
+    const guide = canvasElement.ownerDocument.querySelector<HTMLElement>('.pwaInstallGuide')
+    expectStory(guide?.textContent?.includes('添加 Dockrev 到主屏幕'), 'Safari/iOS sidebar action should open the platform install guide')
   },
 }
 export const Queue: Story = { render: render({ name: 'queue' }) }

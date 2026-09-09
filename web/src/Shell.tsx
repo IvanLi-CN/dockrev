@@ -19,6 +19,7 @@ import { UpdateActionTrackerProvider } from './updateActionTracking'
 import type { Route } from './routes'
 import { currentHref, navigate } from './routes'
 import { TopbarUserIdentity } from './components/TopbarUserIdentity'
+import { PwaInstallControl } from './components/PwaInstallControl'
 import { ThemePreferenceControl } from './components/ThemePreferenceControl'
 import { SidebarAppMeta } from './components/SidebarAppMeta'
 import type { TopbarAuthIdentity } from './topbarAuthIdentity'
@@ -363,6 +364,7 @@ export function AppShell(props: {
             <div className="mobileDrawerFooter" aria-label="应用与用户信息">
               <div className="mobileDrawerFooterControls">
                 <TopbarUserIdentity authIdentity={props.authIdentity} placement="sidebar" />
+                <PwaInstallControl placement="mobile" />
                 <ThemePreferenceControl variant="icon" />
               </div>
               <div className="mobileDrawerFooterDivider" aria-hidden="true" />
@@ -408,7 +410,12 @@ export function AppShell(props: {
               </OverlayScrollArea>
             </div>
             <div className="sidebarMeta">
-              {!mobileMenuMediaMatches ? <TopbarUserIdentity authIdentity={props.authIdentity} placement="sidebar" /> : null}
+              {!mobileMenuMediaMatches ? (
+                <div className="sidebarProfileControls">
+                  <TopbarUserIdentity authIdentity={props.authIdentity} placement="sidebar" />
+                  <PwaInstallControl placement="sidebar" />
+                </div>
+              ) : null}
               {!mobileMenuMediaMatches ? <div className="sidebarThemeControl"><ThemePreferenceControl variant="segmented" /></div> : null}
               <div className="sidebarMetaDivider" aria-hidden="true" />
               <SidebarAppMeta
