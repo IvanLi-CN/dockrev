@@ -77,6 +77,8 @@ assert module.validate_receipt(ledger, expected_sha=old_target)["operation"] == 
 
 original_readiness_git = module.git
 original_fetch_tags = module.release_snapshot.fetch_tags
+original_fetch_notes = module.release_snapshot.fetch_notes_ref
+original_read_publication = module.release_snapshot.read_publication
 original_released = module.release_snapshot.released_commits_from_tags
 original_first_parent = module.release_snapshot.first_parent_commits
 original_load_pr = module.release_snapshot.load_pr_for_commit
@@ -84,6 +86,8 @@ original_labels = module.release_snapshot.current_pr_labels
 try:
     module.git = lambda *args, **kwargs: type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
     module.release_snapshot.fetch_tags = lambda: None
+    module.release_snapshot.fetch_notes_ref = lambda *_args: None
+    module.release_snapshot.read_publication = lambda *_args: None
     module.release_snapshot.released_commits_from_tags = lambda _target: set()
     module.release_snapshot.first_parent_commits = lambda _target: [old_target, new_target]
     module.release_snapshot.load_pr_for_commit = lambda *args, **kwargs: {"labels": [{"name": "type:patch"}, {"name": "channel:stable"}]}
@@ -96,6 +100,7 @@ try:
             token="token",
             api_root="https://api.github.com",
             main_ref="origin/main",
+            publication_notes_ref="refs/notes/release-publications",
             github_output=str(output),
         )
         assert module.recover_preflight(args) == 0
@@ -107,9 +112,19 @@ try:
             assert "oldest unreleased target" in str(error)
         else:
             raise AssertionError("recovery preflight accepted a newer target")
+        module.release_snapshot.first_parent_commits = lambda ref: [old_target] if ref == "origin/main" else [new_target]
+        args.target_sha = new_target
+        try:
+            module.recover_preflight(args)
+        except module.ReadinessError as error:
+            assert "main first-parent chain" in str(error)
+        else:
+            raise AssertionError("recovery preflight accepted a side-branch target")
 finally:
     module.git = original_readiness_git
     module.release_snapshot.fetch_tags = original_fetch_tags
+    module.release_snapshot.fetch_notes_ref = original_fetch_notes
+    module.release_snapshot.read_publication = original_read_publication
     module.release_snapshot.released_commits_from_tags = original_released
     module.release_snapshot.first_parent_commits = original_first_parent
     module.release_snapshot.load_pr_for_commit = original_load_pr
@@ -119,6 +134,7 @@ for payload, expected in (
     (receipt(old_target, publish=True), "publish marker"),
     (dict(receipt(old_target), target_sha=new_target), "target_sha mismatch"),
     (dict(receipt(old_target), verification_mode=True), "verification-mode"),
+    (dict(receipt(old_target), operation=[]), "operation must be a string"),
     (dict(receipt(old_target), preparation=dict(receipt(old_target)["preparation"], artifact_name="wrong")), "artifact"),
 ):
     try:

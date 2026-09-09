@@ -65,14 +65,19 @@ jobs:
         id: resolve
         shell: bash
         env:
-          TARGET_INPUT: ${{ inputs.target_sha || github.sha }}
+          TARGET_INPUT: ${{ github.event_name == 'push' && github.sha || inputs.target_sha }}
           OPERATION: ${{ env.CANDIDATE_OPERATION }}
           RECOVERY_REASON: ${{ inputs.recovery_reason || '' }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          echo "CANDIDATE_OPERATION=${OPERATION}"
           if [[ "${OPERATION}" != "push" && "${OPERATION}" != "verify" && "${OPERATION}" != "recover" ]]; then
             echo "unsupported candidate operation: ${OPERATION}" >&2
+            exit 2
+          fi
+          if [[ "${OPERATION}" == "recover" && -z "${{ inputs.target_sha }}" ]]; then
+            echo "recover requires an explicitly supplied target_sha" >&2
             exit 2
           fi
           if [[ ! "${TARGET_INPUT}" =~ ^[0-9a-f]{40}$ ]]; then
@@ -83,7 +88,6 @@ jobs:
             echo "recovery_reason is required for recover" >&2
             exit 2
           fi
-          echo "CANDIDATE_OPERATION=${OPERATION}"
           {
             echo "operation=${OPERATION}"
             echo "target_sha=${TARGET_INPUT}"
@@ -98,6 +102,7 @@ jobs:
               --token "${GITHUB_TOKEN}" \
               --api-root "${GITHUB_API_URL}" \
               --main-ref origin/main \
+              --publication-notes-ref refs/notes/release-publications \
               --github-output "$GITHUB_OUTPUT"
             echo "target_only=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -194,6 +199,13 @@ jobs:
           ref: ${{ env.TARGET_SHA }}
           fetch-depth: 0
 
+      - name: Checkout trusted workflow helpers
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: .workflow-src
+          fetch-depth: 1
+
       - name: Download source gate attestation
         uses: actions/download-artifact@v4
         with:
@@ -220,11 +232,11 @@ jobs:
           test "${TARGET_SHA}" = "${PREPARATION_TARGET_SHA}"
           test "${FAST_RESULT}" = "success"
           test "${SOURCE_RESULT}" = "success"
-          python3 .github/scripts/release_source_gate.py validate \
+          python3 .workflow-src/.github/scripts/release_source_gate.py validate \
             --fixture source-gate/source-gate-attestation.json \
             --target-sha "${TARGET_SHA}" \
             --kind push
-          python3 .github/scripts/release_preparation.py validate \
+          python3 .workflow-src/.github/scripts/release_preparation.py validate \
             --manifest preparation/release-preparation-manifest.json \
             --target-sha "${TARGET_SHA}"
           test "$(python3 - <<'PY'
@@ -288,6 +300,6 @@ jobs:
               }
           Path("release-readiness.json").write_text(json.dumps(payload, sort_keys=True) + "\n")
           PY
-          python3 .github/scripts/release_readiness.py write \
+          python3 .workflow-src/.github/scripts/release_readiness.py write \
             --receipt release-readiness.json \
             --readiness-notes-ref refs/notes/release-readiness

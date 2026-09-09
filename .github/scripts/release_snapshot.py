@@ -730,11 +730,16 @@ def pending_release_targets(
     *,
     publication_notes_ref: str,
     override_notes_ref: str,
+    strict_fifo: bool = False,
 ) -> list[str]:
     pending: list[str] = []
+    missing_before_pending: list[str] = []
+    roots = set(git_output("rev-list", "--max-parents=0", upper_bound_sha).splitlines()) if strict_fifo else set()
     for commit in first_parent_commits(upper_bound_sha):
         snapshot = read_snapshot(notes_ref, commit)
         if not snapshot or not snapshot.get("release_enabled"):
+            if strict_fifo and snapshot is None and commit not in roots:
+                missing_before_pending.append(commit)
             continue
         if (
             release_state_for_target(
@@ -746,6 +751,11 @@ def pending_release_targets(
         ):
             continue
         pending.append(commit)
+        if strict_fifo and missing_before_pending:
+            raise SnapshotError(
+                "missing release snapshot before oldest pending target; refusing to bypass FIFO: "
+                + ",".join(missing_before_pending)
+            )
     return pending
 
 
@@ -1284,6 +1294,7 @@ def export_next_pending(args: argparse.Namespace) -> int:
         upper_bound,
         publication_notes_ref=args.publication_notes_ref,
         override_notes_ref=args.override_notes_ref,
+        strict_fifo=True,
     )
     export_key_values({"target_sha": pending[0] if pending else ""}, args.github_output)
     return 0
@@ -1310,6 +1321,7 @@ def reconcile_publications(args: argparse.Namespace) -> int:
                 upper_bound,
                 publication_notes_ref=args.publication_notes_ref,
                 override_notes_ref=args.override_notes_ref,
+                strict_fifo=True,
             ):
                 snapshot = read_snapshot(args.notes_ref, target_sha)
                 if snapshot is None:

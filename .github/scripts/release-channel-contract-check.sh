@@ -55,6 +55,7 @@ search_fixed 'uses: ./.github/workflows/release-preparation.yml' .github/workflo
 search_fixed 'operation:' .github/workflows/release-candidate.yml
 search_fixed 'recover-preflight' .github/workflows/release-candidate.yml
 search_fixed 'candidate_invocation: true' .github/workflows/release-candidate.yml
+search_fixed 'recover requires an explicitly supplied target_sha' .github/workflows/release-candidate.yml
 search_fixed 'refs/notes/release-readiness' .github/workflows/release-candidate.yml
 search_fixed 'verification_mode' .github/workflows/release-candidate.yml
 search_fixed 'publish": False' .github/workflows/release-candidate.yml
@@ -85,6 +86,10 @@ search_fixed 'workflow_call:' .github/workflows/release-preparation.yml
 search_fixed 'workflow_dispatch:' .github/workflows/release-preparation.yml
 search_fixed 'verification_mode:' .github/workflows/release-preparation.yml
 search_fixed 'candidate_invocation:' .github/workflows/release-preparation.yml
+search_fixed 'CALLER_WORKFLOW' .github/workflows/release-preparation.yml
+search_fixed "github.workflow == 'Release Candidate Pipeline'" .github/workflows/ci-main.yml
+search_fixed 'strict_fifo=True' .github/scripts/release_readiness.py
+search_fixed 'not on the main first-parent chain' .github/scripts/release_readiness.py
 search_fixed 'candidate-recovery' .github/workflows/release-candidate.yml
 search_fixed 'Release Candidate Pipeline' .github/workflows/notify-release-failure.yml
 search_fixed 'should_notify' .github/workflows/notify-release-failure.yml

@@ -15,8 +15,9 @@
   preparation artifacts may accelerate Release without becoming source-build
   proof.
 - ADR `0007-event-driven-release-readiness.md` records the successor
-  orchestration contract: candidate-owned readiness receipts and an
-  oldest-ready Release queue without polling or automatic recovery.
+  orchestration contract: candidate-owned readiness receipts, append-only
+  recovery audit entries, and a strict oldest-ready Release queue without
+  automatic publication recovery.
 
 ## References
 

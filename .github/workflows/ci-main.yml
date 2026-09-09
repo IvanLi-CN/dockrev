@@ -448,6 +448,7 @@ jobs:
     if: >-
       always() &&
       inputs.candidate_invocation == true &&
+      github.workflow == 'Release Candidate Pipeline' &&
       inputs.verification_mode != true &&
       inputs.snapshot_source != '' &&
       needs.lint.result == 'success' &&
@@ -476,6 +477,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          if [[ "${{ github.workflow }}" != "Release Candidate Pipeline" ]]; then
+            echo "release snapshot requires Release Candidate Pipeline caller" >&2
+            exit 2
+          fi
           snapshot_args=(
             ensure
             --target-sha "${CI_TARGET_SHA}" \

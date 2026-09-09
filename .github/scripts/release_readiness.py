@@ -67,6 +67,8 @@ def _validate_receipt_entry(payload: Any, *, expected_sha: str | None = None) ->
     if payload.get("candidate_workflow") != "Release Candidate Pipeline":
         raise ReadinessError("readiness candidate workflow is not trusted")
     operation = payload.get("operation", "push")
+    if not isinstance(operation, str):
+        raise ReadinessError("readiness operation must be a string")
     if operation not in {"push", "recover"}:
         raise ReadinessError("readiness operation must be push or recover")
     candidate_event = payload.get("candidate_event")
@@ -254,6 +256,7 @@ def pending_ready_targets(args: argparse.Namespace) -> list[str]:
         upper_bound,
         publication_notes_ref=args.publication_notes_ref,
         override_notes_ref=args.override_notes_ref,
+        strict_fifo=True,
     )
     if not pending:
         return []
@@ -264,10 +267,18 @@ def pending_ready_targets(args: argparse.Namespace) -> list[str]:
 def recover_preflight(args: argparse.Namespace) -> int:
     target_sha = validate_sha(args.target_sha, "target_sha")
     git("merge-base", "--is-ancestor", target_sha, args.main_ref)
-    release_snapshot.fetch_tags()
-    released = release_snapshot.released_commits_from_tags(target_sha)
+    release_snapshot.fetch_notes_ref(args.publication_notes_ref)
+    main_commits = release_snapshot.first_parent_commits(args.main_ref)
+    if target_sha not in main_commits:
+        raise ReadinessError(f"recovery target {target_sha} is not on the main first-parent chain")
+    target_index = main_commits.index(target_sha)
+    released = {
+        commit
+        for commit in main_commits[: target_index + 1]
+        if release_snapshot.read_publication(args.publication_notes_ref, commit) is not None
+    }
     pending: list[str] = []
-    for commit in release_snapshot.first_parent_commits(target_sha):
+    for commit in main_commits[: target_index + 1]:
         pr = release_snapshot.load_pr_for_commit(
             args.api_root,
             args.repository,
@@ -317,6 +328,7 @@ def parse_args() -> argparse.Namespace:
     preflight.add_argument("--token", required=True)
     preflight.add_argument("--api-root", default="https://api.github.com")
     preflight.add_argument("--main-ref", default="origin/main")
+    preflight.add_argument("--publication-notes-ref", default=release_snapshot.DEFAULT_PUBLICATION_NOTES_REF)
     preflight.add_argument("--github-output", default="")
     return parser.parse_args()
 

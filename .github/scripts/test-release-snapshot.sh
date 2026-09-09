@@ -923,6 +923,58 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-reconcile-tag-only-blo
         os.chdir(original_cwd)
 
 
+with tempfile.TemporaryDirectory(prefix="release-snapshot-missing-fifo-") as tmp:
+    repo = Path(tmp)
+    run("init", cwd=repo)
+    run("config", "user.name", "Test User", cwd=repo)
+    run("config", "user.email", "test@example.com", cwd=repo)
+    run("checkout", "-b", "main", cwd=repo)
+    (repo / "Cargo.toml").write_text('[package]\nname = "dockrev"\nversion = "0.40.0"\n')
+    run("add", "Cargo.toml", cwd=repo)
+    run("commit", "-m", "base", cwd=repo)
+    old_sha = run("rev-parse", "HEAD", cwd=repo)
+    (repo / "Cargo.toml").write_text('[package]\nname = "dockrev"\nversion = "0.40.1"\n')
+    run("add", "Cargo.toml", cwd=repo)
+    run("commit", "-m", "old release", cwd=repo)
+    missing_sha = run("rev-parse", "HEAD", cwd=repo)
+    (repo / "Cargo.toml").write_text('[package]\nname = "dockrev"\nversion = "0.40.2"\n')
+    run("add", "Cargo.toml", cwd=repo)
+    run("commit", "-m", "new release", cwd=repo)
+    new_sha = run("rev-parse", "HEAD", cwd=repo)
+    original_cwd = Path.cwd()
+    original_loader = module.load_pr_for_commit
+    try:
+        os.chdir(repo)
+        module.load_pr_for_commit = lambda api_root, repository, token, target_sha, **kwargs: {
+            old_sha: make_pr(701, "Old release", old_sha, ["type:patch", "channel:stable"]),
+            new_sha: make_pr(702, "New release", new_sha, ["type:patch", "channel:stable"]),
+        }[target_sha]
+        new_snapshot = module.build_snapshot(
+            target_sha=new_sha,
+            repository="IvanLi-CN/dockrev",
+            token="token",
+            notes_ref=module.DEFAULT_NOTES_REF,
+            registry="ghcr.io",
+            api_root="https://api.github.com",
+        )
+        run("notes", f"--ref={module.DEFAULT_NOTES_REF}", "add", "-f", "-m", json.dumps(new_snapshot), new_sha, cwd=repo)
+        try:
+            module.pending_release_targets(
+                module.DEFAULT_NOTES_REF,
+                new_sha,
+                publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+                override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
+                strict_fifo=True,
+            )
+        except module.SnapshotError as exc:
+            assert missing_sha in str(exc)
+        else:
+            raise AssertionError("strict FIFO accepted a newer snapshot across a missing older snapshot")
+    finally:
+        module.load_pr_for_commit = original_loader
+        os.chdir(original_cwd)
+
+
 with tempfile.TemporaryDirectory(prefix="release-snapshot-tag-only-state-regression-") as tmp:
     repo = Path(tmp)
     run("init", cwd=repo)
