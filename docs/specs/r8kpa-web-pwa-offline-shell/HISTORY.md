@@ -11,3 +11,4 @@
 - 2026-09-01: 将 install metadata 更新改为逐资源内容哈希文件名，保持 manifest identity 不变；移除 query 版本匹配与重复 manifest link，补充 Workbox 精确 precache、入口重新验证、哈希图标 immutable 缓存及平台更新限制。
 - 2026-09-02: 产品 App 改为仅以 Manifest 提供安装图标元数据，移除 Apple touch HTML/生成/测试入口；Worker 仅预缓存应用壳，并补充已安装 Chromium PWA 的 V1→V2 Manifest/图标更新验收。
 - 2026-09-03: 移除产品根路径 `apple-touch-icon.png` 自动探测回退，避免 WebKit 在没有 HTML link 时仍选中遗留图标；文档站点的独立 Apple touch 资产保持不变。
+- 2026-09-09: 在用户信息旁新增能力感知的 PWA 安装入口，支持 Chromium 原生安装确认与 Safari/iOS 平台引导，并补充桌面/移动壳层回归覆盖。

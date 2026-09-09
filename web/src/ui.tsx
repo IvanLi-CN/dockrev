@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from 'react'
+import { forwardRef, useEffect, useRef, useState, type ButtonHTMLAttributes, type ComponentProps, type CSSProperties, type ReactNode } from 'react'
 import mdiDocker from '@iconify-icons/mdi/docker'
 import mdiGithubBox from '@iconify-icons/mdi/github-box'
 import mdiGithubCircle from '@iconify-icons/mdi/github-circle'
@@ -272,35 +272,38 @@ export function Button(props: ButtonProps) {
   return maybeWithTooltip(tooltipAnchor, props.hint)
 }
 
-export function IconButton(props: {
+export const IconButton = forwardRef<HTMLButtonElement, Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children' | 'title' | 'onClick'> & {
   variant?: AppButtonVariant
   className?: string
-  disabled?: boolean
   onClick?: () => void
   title: string
   hint?: string
+  withTooltip?: boolean
   children: ReactNode
-}) {
-  const variant = props.variant ?? 'ghost'
+}>(function IconButton(props, ref) {
+  const { children, className, hint, onClick, title, variant: requestedVariant, withTooltip, ...buttonProps } = props
+  const variant = requestedVariant ?? 'ghost'
   const button = (
     <PrimitiveButton
-      className={cn('btn', 'btnIcon', buttonVariantClass(variant), props.className)}
-      disabled={props.disabled}
-      data-hint={props.title}
-      onClick={props.onClick}
-      title={props.hint ? undefined : props.title}
+      {...buttonProps}
+      ref={ref}
+      className={cn('btn', 'btnIcon', buttonVariantClass(variant), className)}
+      data-hint={title}
+      onClick={onClick}
+      title={hint ? undefined : title}
       variant={mapButtonVariant(variant)}
       size="icon"
       type="button"
-      aria-label={props.title}
+      aria-label={title}
     >
-      {props.children}
+      {children}
     </PrimitiveButton>
   )
 
-  const tooltipAnchor = props.hint && props.disabled ? <span className="btnTooltipAnchor">{button}</span> : button
-  return maybeWithTooltip(tooltipAnchor, props.hint ?? props.title)
-}
+  const tooltipAnchor = hint && buttonProps.disabled ? <span className="btnTooltipAnchor">{button}</span> : button
+  return withTooltip === false ? tooltipAnchor : maybeWithTooltip(tooltipAnchor, hint ?? title)
+})
+IconButton.displayName = 'IconButton'
 
 export function IconLink(props: {
   href: string

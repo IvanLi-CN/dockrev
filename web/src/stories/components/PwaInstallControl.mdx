@@ -1,0 +1,16 @@
+import { Canvas, Meta } from '@storybook/addon-docs/blocks'
+import * as PwaInstallControlStories from './PwaInstallControl.stories'
+
+<Meta of={PwaInstallControlStories} />
+
+# PWA Install Control
+
+The control only appears when Dockrev can provide a truthful installation action. Chromium uses its native prompt, while Safari surfaces the platform-specific manual path.
+
+<Canvas of={PwaInstallControlStories.BrowserPrompt} />
+
+<Canvas of={PwaInstallControlStories.SafariIosGuide} />
+
+<Canvas of={PwaInstallControlStories.SafariMacGuide} />
+
+<Canvas of={PwaInstallControlStories.Unavailable} />

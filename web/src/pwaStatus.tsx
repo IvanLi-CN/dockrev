@@ -6,12 +6,21 @@ import {
   phaseAfterSuccessfulUpdateCheck,
   type PwaUpdatePhase,
 } from './pwaUpdateLifecycle'
+import {
+  createPwaInstallLifecycleController,
+  detectSafariInstallPlatform,
+  isStandaloneDisplayMode,
+  resolvePwaInstallCapability,
+  type PwaInstallCapability,
+  type PwaInstallLifecycleController,
+} from './pwaInstallLifecycle'
 
 const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000
 
 export type PwaStatusContextValue = {
   isOnline: boolean
   offlineReady: boolean
+  installCapability: PwaInstallCapability
   updatePhase: PwaUpdatePhase
   updatePromptVisible: boolean
   updateAvailable: boolean
@@ -20,6 +29,7 @@ export type PwaStatusContextValue = {
   applyUpdate: () => Promise<void>
   applyUpdateOnNavigation: () => Promise<void>
   checkForUpdates: () => Promise<void>
+  requestPwaInstall: () => Promise<void>
 }
 
 const PwaStatusContext = createContext<PwaStatusContextValue | null>(null)
@@ -39,6 +49,7 @@ function buildPwaStatusValue(
   return {
     isOnline: true,
     offlineReady: false,
+    installCapability: null,
     updatePhase: 'idle',
     updatePromptVisible: false,
     updateAvailable: false,
@@ -47,6 +58,7 @@ function buildPwaStatusValue(
     applyUpdate: async () => {},
     applyUpdateOnNavigation: async () => {},
     checkForUpdates: async () => {},
+    requestPwaInstall: async () => {},
     ...overrides,
   }
 }
@@ -56,13 +68,32 @@ function readOnlineStatus(): boolean {
   return navigator.onLine
 }
 
+function readInitialPwaInstallCapability(): PwaInstallCapability {
+  if (typeof window === 'undefined') return null
+  const standalone = isStandaloneDisplayMode({
+    matchMedia: typeof window.matchMedia === 'function' ? window.matchMedia.bind(window) : undefined,
+    navigatorStandalone: (navigator as Navigator & { standalone?: boolean }).standalone,
+  })
+  return resolvePwaInstallCapability({
+    standalone,
+    hasBrowserPrompt: false,
+    safariPlatform: detectSafariInstallPlatform({
+      userAgent: navigator.userAgent,
+      platform: navigator.platform,
+      maxTouchPoints: navigator.maxTouchPoints,
+    }),
+  })
+}
+
 function LivePwaStatusProvider(props: PropsWithChildren) {
   const registrationRef = useRef<ServiceWorkerRegistration | null>(null)
+  const installLifecycleRef = useRef<PwaInstallLifecycleController | null>(null)
   const updateLifecycleRef = useRef<ReturnType<typeof createPwaUpdateLifecycleController> | null>(null)
   const updatePhaseRef = useRef<PwaUpdatePhase>('idle')
   const updateServiceWorkerRef = useRef<(reloadPage?: boolean) => Promise<void>>(async () => {})
   const updateActivatorRef = useRef<ReturnType<typeof createPwaUpdateActivator> | null>(null)
   const [isOnline, setIsOnline] = useState(readOnlineStatus)
+  const [installCapability, setInstallCapability] = useState<PwaInstallCapability>(readInitialPwaInstallCapability)
   const [updatePhase, setUpdatePhase] = useState<PwaUpdatePhase>('idle')
   const [updatePromptVisible, setUpdatePromptVisible] = useState(false)
   const transitionUpdatePhase = useCallback((phase: PwaUpdatePhase) => {
@@ -106,6 +137,33 @@ function LivePwaStatusProvider(props: PropsWithChildren) {
     })
     return () => {
       updateActivatorRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const standalone = isStandaloneDisplayMode({
+      matchMedia: window.matchMedia.bind(window),
+      navigatorStandalone: (navigator as Navigator & { standalone?: boolean }).standalone,
+    })
+    const safariPlatform = detectSafariInstallPlatform({
+      userAgent: navigator.userAgent,
+      platform: navigator.platform,
+      maxTouchPoints: navigator.maxTouchPoints,
+    })
+    const controller = createPwaInstallLifecycleController({
+      eventTarget: window,
+      isStandalone: standalone,
+      safariPlatform,
+      onCapabilityChange: setInstallCapability,
+    })
+    installLifecycleRef.current = controller
+    controller.attach()
+
+    return () => {
+      controller.dispose()
+      installLifecycleRef.current = null
     }
   }, [])
 
@@ -193,10 +251,15 @@ function LivePwaStatusProvider(props: PropsWithChildren) {
     [],
   )
 
+  const requestPwaInstall = useCallback(async () => {
+    await installLifecycleRef.current?.requestInstall()
+  }, [])
+
   const value = useMemo<PwaStatusContextValue>(
     () => ({
       isOnline,
       offlineReady,
+      installCapability,
       updatePhase,
       updatePromptVisible,
       updateAvailable: updatePhase === 'ready' && updatePromptVisible,
@@ -205,8 +268,19 @@ function LivePwaStatusProvider(props: PropsWithChildren) {
       applyUpdate,
       applyUpdateOnNavigation: applyUpdate,
       checkForUpdates,
+      requestPwaInstall,
     }),
-    [applyUpdate, checkForUpdates, isOnline, offlineReady, setOfflineReady, updatePhase, updatePromptVisible],
+    [
+      applyUpdate,
+      checkForUpdates,
+      installCapability,
+      isOnline,
+      offlineReady,
+      requestPwaInstall,
+      setOfflineReady,
+      updatePhase,
+      updatePromptVisible,
+    ],
   )
 
   return <PwaStatusContext.Provider value={value}>{props.children}</PwaStatusContext.Provider>

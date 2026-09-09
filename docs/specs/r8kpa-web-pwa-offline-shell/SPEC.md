@@ -77,6 +77,8 @@
 - `/api/version` 仅继续用于展示文本，不作为切换真相源。
 - Service worker 的 precache 只包含当前应用壳所需资源，并不得包含当前构建生成的 manifest、regular/maskable 图标、favicon 或 Apple 图标，也不得依赖 `?v=` 查询参数匹配来掩盖固定文件名；旧 precache 由 Workbox 清理，manifest、HTML、worker 与安装元数据通过网络重新验证发现新版本。
 - Android Chrome 的 WebAPK 与 Chromium desktop 安装均依据稳定 manifest identity 识别应用，并在新 manifest 可用时按平台节流规则更新图标/元数据；现有 iOS/iPadOS Web Clips、浏览器快捷方式及不支持 manifest 迁移的浏览器不能被网站强制更新其已保存的图标或元数据。Dockrev 不把重新安装作为常规更新机制，文档只说明该平台限制与异常恢复边界。
+- 应用壳在用户信息旁提供能力感知的安装入口：Chromium 捕获 `beforeinstallprompt` 后调用原生安装确认；Safari/iOS 使用平台对应的“添加到主屏幕/添加到 Dock”引导；独立应用、已安装、PWA 运行时关闭或不支持安装的环境不渲染该入口。
+- 安装入口只存在于桌面侧栏用户区和移动端导航抽屉底部控制行，不改变用户身份详情、主题控制、主内容或底部主导航；安装事件为一次性状态，不持久化安装遥测或服务端状态。
 
 ## 验收标准（Acceptance Criteria）
 
@@ -85,6 +87,8 @@
 - Given 本地快照已经离开 `fresh` 窗口或超过 7 天，When 用户离线进入对应页面，Then 页面不再展示该快照，而是直接回到需联网态。
 - Given Chromium PWA installability 检查，When 页面具备有效 manifest、icons 与 service worker，Then 用户可安装到桌面/主屏。
 - Given Chromium PWA installability 检查，When 页面具备有效 manifest、icons 与 service worker，Then 用户可安装到桌面/主屏，且 `id`、`scope`、`start_url` 与既有安装保持一致。
+- Given Chromium 页面收到 `beforeinstallprompt`，When 用户点击用户区旁的安装入口，Then 浏览器显示原生安装确认；安装确认被接受、取消或 `appinstalled` 触发后，当前页面不再重复调用同一个一次性 prompt。
+- Given iOS/iPadOS Safari 或 macOS Safari 尚未安装 Dockrev，When 用户点击用户区旁的安装入口，Then 页面显示对应平台的手动安装步骤；Given 独立应用模式、PWA 已关闭或浏览器不支持安装，Then 页面不渲染安装入口。
 - Given 任一产品 Manifest 图标或 favicon 字节发生变化，When 构建新的 PWA，Then regular、maskable 与 favicon 的 Manifest/HTML 引用指向当前内容哈希文件，Worker 不预缓存这些安装元数据，缓存策略允许旧客户端重新验证 metadata，且几何、透明度和 hash 契约测试通过。
 - Given 任一旧固定名 favicon、regular 或 maskable icon 请求，When 服务器提供兼容响应，Then 它不带 immutable 缓存承诺，新的安装入口不会继续引用或 Worker precache 它；Given 产品根路径请求 `apple-touch-icon.png`，Then 产物不发布该文件并返回 `404`，避免平台自动探测回退。
 - Given Android Chrome/WebAPK 或 Chromium desktop 已有安装，When 稳定 identity 下发布新的 manifest 与内容哈希图标，Then 平台可以按自身更新节流策略重新读取并更新安装元数据；Given iOS/iPadOS Web Clip 或不支持迁移的快捷方式，Then 文档明确其既有图标不能由站点强制替换，且不把重新安装作为正常流程。
@@ -137,6 +141,52 @@
 - viewport_strategy: storybook-viewport
 - story_id_or_title: `Layouts/AppShell/UpdateReadyBubbleMobile`
 - state: ready above bottom navigation
+- PR: include
+
+### PWA Install Entry
+
+![PWA install entry desktop](./assets/app-shell-desktop-sidebar-pwa-install.png)
+
+- source_type: storybook_canvas
+- target_program: mock-only
+- capture_scope: `.sidebar`
+- requested_viewport: 1440x900
+- viewport_strategy: storybook-static
+- story_id_or_title: `Layouts/AppShell/OverviewWithSidebarIdentityPopover`
+- state: Chromium browser prompt entry beside the desktop user identity
+- PR: include
+
+![PWA install entry mobile](./assets/app-shell-mobile-drawer-pwa-install.png)
+
+- source_type: storybook_canvas
+- target_program: mock-only
+- capture_scope: `#mobileDockrevMenu`
+- requested_viewport: 393x852
+- viewport_strategy: storybook-viewport
+- story_id_or_title: `Layouts/AppShell/MobileBottomNavAndDrawer`
+- state: mobile drawer identity, install, and theme controls in one stable row
+- PR: include
+
+![PWA Safari install guide](./assets/app-shell-desktop-safari-guide.png)
+
+- source_type: storybook_canvas
+- target_program: mock-only
+- capture_scope: browser-viewport
+- requested_viewport: 1440x900
+- viewport_strategy: storybook-static
+- story_id_or_title: `Layouts/AppShell/OverviewWithSafariInstallGuide`
+- state: Safari/iOS manual install guide opened from the desktop user area
+- PR: include
+
+![PWA browser prompt control](./assets/pwa-install-browser-prompt.png)
+
+- source_type: storybook_canvas
+- target_program: mock-only
+- capture_scope: element
+- requested_viewport: 420x260
+- viewport_strategy: storybook-static
+- story_id_or_title: `Components/PwaInstallControl/BrowserPrompt`
+- state: compact Chromium install icon button with source-managed 48px outer margin
 - PR: include
 
 ### Offline Snapshot Notice
