@@ -95,6 +95,9 @@ search_fixed 'strict_fifo=True' .github/scripts/release_readiness.py
 search_fixed 'release_enabled_for_missing' .github/scripts/release_readiness.py
 search_fixed 'release_enabled_for_commit' .github/scripts/release_snapshot.py
 search_fixed 'tag-only publication without complete ledger' .github/scripts/release_readiness.py
+search_fixed 'Resolve next pending release target' .github/workflows/release.yml
+search_fixed '--github-token "${GITHUB_TOKEN}"' .github/workflows/release.yml
+ensure_absent 'target_sha="${{ inputs.head_sha }}"' .github/workflows/release.yml
 search_fixed 'refs/notes/release-overrides' .github/workflows/release-candidate.yml
 search_fixed 'not on the main first-parent chain' .github/scripts/release_readiness.py
 search_fixed 'candidate-recovery' .github/workflows/release-candidate.yml
