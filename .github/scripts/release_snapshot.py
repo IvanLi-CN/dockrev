@@ -743,15 +743,23 @@ def pending_release_targets(
 ) -> list[str]:
     pending: list[str] = []
     missing_before_pending: list[str] = []
-    roots = set(git_output("rev-list", "--max-parents=0", upper_bound_sha).splitlines()) if strict_fifo else set()
-    snapshot_started = False
+    commits = first_parent_commits(upper_bound_sha)
+    anchor_index = -1
+    if strict_fifo:
+        roots = set(git_output("rev-list", "--max-parents=0", upper_bound_sha).splitlines())
+        tagged = released_commits_from_tags(upper_bound_sha)
+        tagged_indices = [commits.index(commit) for commit in tagged if commit in commits]
+        anchor_index = max(tagged_indices, default=-1)
+    else:
+        roots = set()
+    snapshot_started = strict_fifo and anchor_index >= 0
     first_pending_found = False
-    for commit in first_parent_commits(upper_bound_sha):
+    for index, commit in enumerate(commits):
         snapshot = read_snapshot(notes_ref, commit)
         if snapshot is not None:
             snapshot_started = True
         if not snapshot or not snapshot.get("release_enabled"):
-            if strict_fifo and snapshot_started and not first_pending_found and snapshot is None and commit not in roots:
+            if strict_fifo and index > anchor_index and snapshot_started and not first_pending_found and snapshot is None and commit not in roots:
                 missing_is_release_enabled = release_enabled_for_missing is None or release_enabled_for_missing(commit)
                 if not missing_is_release_enabled:
                     continue
