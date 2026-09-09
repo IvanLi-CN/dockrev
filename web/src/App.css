@@ -13733,6 +13733,14 @@ html[data-theme="light"] .btnPrimary {
     overflow: hidden;
   }
 
+  .mobileMenuEmbeddedContent:has(.detailRouteTreeMobile) .detailRouteTreeAsync {
+    display: flex;
+    min-height: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
   .mobileMenuEmbeddedContent:has(.detailRouteTreeMobile) .detailRouteTreeList {
     min-height: 0;
     flex: 1 1 auto;

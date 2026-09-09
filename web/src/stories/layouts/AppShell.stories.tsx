@@ -265,6 +265,42 @@ export const MobileBottomNavAndDrawer: Story = {
     )
   },
 }
+export const MobileDrawerScrollLayout: Story = {
+  render: renderDetailShell(
+    { name: 'service', stackId: 'stack-prod', serviceId: 'svc-prod-api', section: 'logs' },
+    { autoOpenMobileDrawer: true },
+  ),
+  parameters: {
+    viewport: { defaultViewport: 'mobile1' },
+  },
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => setTimeout(resolve, 80))
+
+    const drawer = canvasElement.querySelector<HTMLElement>('#mobileDockrevMenu')
+    const asyncRegion = drawer?.querySelector<HTMLElement>('.detailRouteTreeAsync')
+    const list = drawer?.querySelector<HTMLElement>('.detailRouteTreeList')
+    expectStory(
+      Boolean(drawer && asyncRegion && list),
+      'Mobile drawer should render the async tree region and scrollable service list',
+    )
+
+    if (!asyncRegion || !list) return
+
+    const asyncRegionStyle = getComputedStyle(asyncRegion)
+    const listStyle = getComputedStyle(list)
+    expectStory(
+      asyncRegionStyle.display === 'flex' &&
+        asyncRegionStyle.flexDirection === 'column' &&
+        asyncRegionStyle.minHeight === '0px' &&
+        asyncRegionStyle.overflow === 'hidden',
+      'Async tree region should constrain its flex height for mobile scrolling',
+    )
+    expectStory(
+      listStyle.overflowY === 'auto' && list.clientHeight <= asyncRegion.clientHeight,
+      'Mobile service list should remain the scroll container inside the drawer',
+    )
+  },
+}
 export const OverviewWithSidebarIdentityPopover: Story = {
   render: render({ name: 'overview' }),
   play: async ({ canvasElement }) => {
