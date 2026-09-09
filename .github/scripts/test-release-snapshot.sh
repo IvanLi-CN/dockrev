@@ -937,6 +937,7 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-missing-fifo-") as tmp
     run("add", "Cargo.toml", cwd=repo)
     run("commit", "-m", "old release", cwd=repo)
     old_sha = run("rev-parse", "HEAD", cwd=repo)
+    run("tag", "0.40.1", old_sha, cwd=repo)
     (repo / "Cargo.toml").write_text('[package]\nname = "dockrev"\nversion = "0.40.2"\n')
     run("add", "Cargo.toml", cwd=repo)
     run("commit", "-m", "gap infrastructure fix", cwd=repo)

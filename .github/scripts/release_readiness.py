@@ -276,6 +276,8 @@ def pending_ready_targets(args: argparse.Namespace) -> list[str]:
 def recover_preflight(args: argparse.Namespace) -> int:
     target_sha = validate_sha(args.target_sha, "target_sha")
     git("merge-base", "--is-ancestor", target_sha, args.main_ref)
+    snapshot_notes_ref = getattr(args, "snapshot_notes_ref", release_snapshot.DEFAULT_NOTES_REF)
+    release_snapshot.fetch_notes_ref(snapshot_notes_ref)
     release_snapshot.fetch_notes_ref(args.publication_notes_ref)
     release_snapshot.fetch_notes_ref(args.override_notes_ref)
     release_snapshot.fetch_tags()
@@ -286,7 +288,13 @@ def recover_preflight(args: argparse.Namespace) -> int:
     target_index = main_commits.index(target_sha)
     if target_sha in tagged:
         raise ReadinessError(f"recovery target {target_sha} already has a release tag without complete ledger")
-    tagged_indices = [main_commits.index(commit) for commit in tagged if commit in main_commits]
+    trusted_tagged = {
+        commit
+        for commit in tagged
+        if release_snapshot.read_snapshot(snapshot_notes_ref, commit) is not None
+        or release_snapshot.read_publication(args.publication_notes_ref, commit) is not None
+    }
+    tagged_indices = [main_commits.index(commit) for commit in trusted_tagged if commit in main_commits]
     anchor_index = max(tagged_indices, default=-1)
     released = {
         commit
@@ -356,6 +364,7 @@ def parse_args() -> argparse.Namespace:
     preflight.add_argument("--token", required=True)
     preflight.add_argument("--api-root", default="https://api.github.com")
     preflight.add_argument("--main-ref", default="origin/main")
+    preflight.add_argument("--snapshot-notes-ref", default=release_snapshot.DEFAULT_NOTES_REF)
     preflight.add_argument("--publication-notes-ref", default=release_snapshot.DEFAULT_PUBLICATION_NOTES_REF)
     preflight.add_argument("--override-notes-ref", default=release_snapshot.DEFAULT_OVERRIDE_NOTES_REF)
     preflight.add_argument("--github-output", default="")

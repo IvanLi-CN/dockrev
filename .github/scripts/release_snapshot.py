@@ -748,17 +748,38 @@ def pending_release_targets(
     if strict_fifo:
         roots = set(git_output("rev-list", "--max-parents=0", upper_bound_sha).splitlines())
         tagged = released_commits_from_tags(upper_bound_sha)
-        tagged_indices = [commits.index(commit) for commit in tagged if commit in commits]
+        trusted_tagged = {
+            commit
+            for commit in tagged
+            if read_snapshot(notes_ref, commit) is not None
+            or read_publication(publication_notes_ref, commit) is not None
+        }
+        tagged_indices = [commits.index(commit) for commit in trusted_tagged if commit in commits]
         anchor_index = max(tagged_indices, default=-1)
     else:
         roots = set()
+        tagged = set()
+        trusted_tagged = set()
     snapshot_started = strict_fifo and anchor_index >= 0
     first_pending_found = False
+    tagged_missing_before_pending: list[str] = []
     for index, commit in enumerate(commits):
         snapshot = read_snapshot(notes_ref, commit)
         if snapshot is not None:
             snapshot_started = True
         if not snapshot or not snapshot.get("release_enabled"):
+            if (
+                strict_fifo
+                and index > anchor_index
+                and not first_pending_found
+                and snapshot is None
+                and commit not in roots
+                and commit in tagged
+            ):
+                missing_is_release_enabled = release_enabled_for_missing is None or release_enabled_for_missing(commit)
+                if missing_is_release_enabled:
+                    tagged_missing_before_pending.append(commit)
+                continue
             if strict_fifo and index > anchor_index and snapshot_started and not first_pending_found and snapshot is None and commit not in roots:
                 missing_is_release_enabled = release_enabled_for_missing is None or release_enabled_for_missing(commit)
                 if not missing_is_release_enabled:
@@ -775,6 +796,9 @@ def pending_release_targets(
         ):
             continue
         pending.append(commit)
+        if tagged_missing_before_pending:
+            missing_before_pending.extend(tagged_missing_before_pending)
+            tagged_missing_before_pending.clear()
         if strict_fifo and missing_before_pending:
             raise SnapshotError(
                 "missing release snapshot before oldest pending target; refusing to bypass FIFO: "

@@ -109,6 +109,7 @@ jobs:
               --token "${GITHUB_TOKEN}" \
               --api-root "${GITHUB_API_URL}" \
               --main-ref origin/main \
+              --snapshot-notes-ref refs/notes/release-snapshots \
               --publication-notes-ref refs/notes/release-publications \
               --override-notes-ref refs/notes/release-overrides \
               --github-output "$GITHUB_OUTPUT"
