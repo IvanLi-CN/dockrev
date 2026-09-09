@@ -95,6 +95,7 @@ search_fixed "github.workflow == 'Release Candidate Pipeline'" .github/workflows
 search_fixed 'strict_fifo=True' .github/scripts/release_readiness.py
 search_fixed 'release_enabled_for_missing' .github/scripts/release_readiness.py
 search_fixed 'release_enabled_for_commit' .github/scripts/release_snapshot.py
+search_fixed 'python3 .workflow-src/.github/scripts/release_snapshot.py' .github/workflows/ci-main.yml
 search_fixed 'tag-only publication without complete ledger' .github/scripts/release_readiness.py
 search_fixed 'Resolve next pending release target' .github/workflows/release.yml
 search_fixed '--github-token "${GITHUB_TOKEN}"' .github/workflows/release.yml

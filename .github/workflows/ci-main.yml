@@ -467,6 +467,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Checkout trusted workflow helpers
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .workflow-src
+          fetch-depth: 1
+
       - name: Configure git identity for release notes
         run: |
           git config user.name "github-actions[bot]"
@@ -496,7 +503,7 @@ jobs:
             snapshot_args+=(--target-only)
             echo "snapshot mode: target-only"
           fi
-          python3 .github/scripts/release_snapshot.py "${snapshot_args[@]}"
+          python3 .workflow-src/.github/scripts/release_snapshot.py "${snapshot_args[@]}"
 
       - name: Show release snapshot summary
         env:
