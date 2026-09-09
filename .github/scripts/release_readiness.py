@@ -290,10 +290,6 @@ def recover_preflight(args: argparse.Namespace) -> int:
         raise ReadinessError(f"recovery target {target_sha} already has a release tag without complete ledger")
     trusted_tagged = set()
     for commit in tagged:
-        snapshot = release_snapshot.read_snapshot(snapshot_notes_ref, commit)
-        if snapshot is not None and snapshot.get("release_enabled"):
-            trusted_tagged.add(commit)
-            continue
         if release_snapshot.read_publication(args.publication_notes_ref, commit) is not None:
             trusted_tagged.add(commit)
     tagged_indices = [main_commits.index(commit) for commit in trusted_tagged if commit in main_commits]

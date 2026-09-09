@@ -763,8 +763,6 @@ def pending_release_targets(
         tagged = set()
         trusted_tagged = set()
     snapshot_started = strict_fifo and anchor_index >= 0
-    first_pending_found = False
-    tagged_missing_before_pending: list[str] = []
     for index, commit in enumerate(commits):
         snapshot = read_snapshot(notes_ref, commit)
         if snapshot is not None:
@@ -773,16 +771,15 @@ def pending_release_targets(
             if (
                 strict_fifo
                 and index > anchor_index
-                and not first_pending_found
                 and snapshot is None
                 and commit not in roots
                 and commit in tagged
             ):
                 missing_is_release_enabled = release_enabled_for_missing is None or release_enabled_for_missing(commit)
                 if missing_is_release_enabled:
-                    tagged_missing_before_pending.append(commit)
+                    missing_before_pending.append(commit)
                 continue
-            if strict_fifo and index > anchor_index and snapshot_started and not first_pending_found and snapshot is None and commit not in roots:
+            if strict_fifo and index > anchor_index and snapshot_started and snapshot is None and commit not in roots:
                 missing_is_release_enabled = release_enabled_for_missing is None or release_enabled_for_missing(commit)
                 if not missing_is_release_enabled:
                     continue
@@ -797,17 +794,12 @@ def pending_release_targets(
             != "pending"
         ):
             continue
-        pending.append(commit)
-        if tagged_missing_before_pending:
-            missing_before_pending.extend(tagged_missing_before_pending)
-            tagged_missing_before_pending.clear()
         if strict_fifo and missing_before_pending:
             raise SnapshotError(
                 "missing release snapshot before oldest pending target; refusing to bypass FIFO: "
                 + ",".join(missing_before_pending)
             )
-        if strict_fifo:
-            first_pending_found = True
+        pending.append(commit)
     return pending
 
 

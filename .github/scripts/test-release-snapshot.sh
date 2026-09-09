@@ -1158,5 +1158,45 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-tag-only-state-regress
         module.git = original_git
         os.chdir(original_cwd)
 
+
+interior_old = "1" * 40
+interior_gap = "2" * 40
+interior_new = "3" * 40
+original_first_parent = module.first_parent_commits
+original_git_output = module.git_output
+original_read_snapshot = module.read_snapshot
+original_read_publication = module.read_publication
+original_read_override = module.read_override
+original_released_commits = module.released_commits_from_tags
+try:
+    module.first_parent_commits = lambda _target: [interior_old, interior_gap, interior_new]
+    module.git_output = lambda *args: "" if args and args[0] == "rev-list" else original_git_output(*args)
+    module.read_snapshot = lambda _ref, target: (
+        {"target_sha": target, "release_enabled": True} if target in {interior_old, interior_new} else None
+    )
+    module.read_publication = lambda *_args: None
+    module.read_override = lambda *_args: None
+    module.released_commits_from_tags = lambda _target: set()
+    try:
+        module.pending_release_targets(
+            module.DEFAULT_NOTES_REF,
+            interior_new,
+            publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+            override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
+            strict_fifo=True,
+            release_enabled_for_missing=lambda _commit: True,
+        )
+    except module.SnapshotError as exc:
+        assert interior_gap in str(exc)
+    else:
+        raise AssertionError("strict FIFO accepted an interior missing snapshot")
+finally:
+    module.first_parent_commits = original_first_parent
+    module.git_output = original_git_output
+    module.read_snapshot = original_read_snapshot
+    module.read_publication = original_read_publication
+    module.read_override = original_read_override
+    module.released_commits_from_tags = original_released_commits
+
 print("release_snapshot.py self-test: ok")
 PY
