@@ -140,30 +140,21 @@ export function ServiceDetailPage(props: {
   } = useServiceDetailPageState(props);
   const [tabsViewport, setTabsViewport] = useState<HTMLElement | null>(null);
   useEffect(() => {
-    if (!tabsViewport) return;
-    const shell = tabsViewport.closest<HTMLElement>(".svcDetailTabsShell");
-    if (!shell) return;
-
+    if (!tabsViewport) return; const shell = tabsViewport.closest<HTMLElement>(".svcDetailTabsShell"); if (!shell) return;
     const updateEdges = () => {
       const maxScrollLeft = Math.max(0, tabsViewport.scrollWidth - tabsViewport.clientWidth);
       shell.dataset.tabsOverflow = maxScrollLeft > 1 ? "true" : "false";
       shell.dataset.tabsEdgeStart = tabsViewport.scrollLeft > 1 ? "true" : "false";
       shell.dataset.tabsEdgeEnd = tabsViewport.scrollLeft < maxScrollLeft - 1 ? "true" : "false";
     };
-
-    updateEdges();
-    tabsViewport.addEventListener("scroll", updateEdges, { passive: true });
+    updateEdges(); tabsViewport.addEventListener("scroll", updateEdges, { passive: true });
     if (typeof ResizeObserver === "undefined") {
       return () => tabsViewport.removeEventListener("scroll", updateEdges);
     }
-    const resizeObserver = new ResizeObserver(updateEdges);
-    resizeObserver.observe(tabsViewport);
+    const resizeObserver = new ResizeObserver(updateEdges); resizeObserver.observe(tabsViewport);
     const content = tabsViewport.firstElementChild;
     if (content) resizeObserver.observe(content);
-    return () => {
-      tabsViewport.removeEventListener("scroll", updateEdges);
-      resizeObserver.disconnect();
-    };
+    return () => { tabsViewport.removeEventListener("scroll", updateEdges); resizeObserver.disconnect(); };
   }, [tabsViewport]);
   const visibleRollbackTarget = rollbackTargetRefreshing ? null : rollbackTarget
   const [jobs, setJobs] = useState<JobListItem[]>([]);
