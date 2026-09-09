@@ -151,6 +151,8 @@ for payload, expected in (
     (dict(receipt(old_target), target_sha=new_target), "target_sha mismatch"),
     (dict(receipt(old_target), verification_mode=True), "verification-mode"),
     (dict(receipt(old_target), operation=[]), "operation must be a string"),
+    (dict(recovery_receipt(old_target), recovery={"mode": "candidate-recovery", "target_sha": old_target, "actor": "admin", "reason": "  "}), "recovery reason is required"),
+    (dict(recovery_receipt(old_target), recovery={"mode": "candidate-recovery", "target_sha": old_target, "actor": "admin"}), "recovery reason is required"),
     (dict(receipt(old_target), preparation=dict(receipt(old_target)["preparation"], artifact_name="wrong")), "artifact"),
 ):
     try:

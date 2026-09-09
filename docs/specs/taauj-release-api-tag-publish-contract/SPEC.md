@@ -112,7 +112,7 @@
 - [x] M1: 恢复显式 tag 预创建/校验，并移除 release-action 的 `commit/TARGET_SHA` 代建 tag 依赖
 - [x] M2: 将 publication ledger 后移到 GitHub Release 之后
 - [x] M3: 补 contract check 防回归
-- [x] M4: historical backlog reconcile/manual backfill bypass/workflow-source queue continuation 合同、回归测试与 README/spec 同步完成；main 上实际恢复执行转交 `#q3nyf`
+- [x] M4: historical backlog reconcile/strict FIFO/workflow-source queue continuation 合同、回归测试与 README/spec 同步完成；main 上实际恢复执行转交 `#q3nyf`
 
 ## 参考（References）
 

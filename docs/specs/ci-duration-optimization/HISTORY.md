@@ -16,7 +16,7 @@
   proof.
 - ADR `0007-event-driven-release-readiness.md` records the successor
   orchestration contract: candidate-owned readiness receipts, append-only
-  recovery audit entries, and a strict oldest-ready Release queue without
+  recovery audit entries, and a strict oldest-pending Release queue without
   automatic publication recovery.
 
 ## References
