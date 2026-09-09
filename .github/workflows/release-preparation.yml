@@ -14,6 +14,11 @@ on:
         required: false
         default: false
         type: boolean
+      candidate_invocation:
+        description: Trusted invocation from Release Candidate Pipeline
+        required: false
+        default: false
+        type: boolean
     outputs:
       target_sha:
         description: Exact target SHA prepared
@@ -86,13 +91,18 @@ jobs:
         env:
           TARGET_INPUT: ${{ inputs.target_sha }}
           VERIFICATION_MODE: ${{ inputs.verification_mode || false }}
+          CANDIDATE_INVOCATION: ${{ inputs.candidate_invocation || false }}
         run: |
           set -euo pipefail
           if [[ ! "${TARGET_INPUT}" =~ ^[0-9a-f]{40}$ ]]; then
             echo "target_sha must be a 40-character lowercase commit SHA" >&2
             exit 2
           fi
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${VERIFICATION_MODE}" != "true" ]]; then
+          if [[ "${CANDIDATE_INVOCATION}" != "true" && "${{ github.event_name }}" != "workflow_dispatch" ]]; then
+            echo "release preparation requires a trusted candidate invocation or verification dispatch" >&2
+            exit 2
+          fi
+          if [[ "${CANDIDATE_INVOCATION}" != "true" && "${VERIFICATION_MODE}" != "true" ]]; then
             echo "workflow_dispatch preparation must be verification-only" >&2
             exit 2
           fi
@@ -382,7 +392,7 @@ jobs:
         id: manifest
         shell: bash
         env:
-          EVENT_NAME: ${{ github.event_name }}
+          EVENT_NAME: ${{ inputs.candidate_invocation && 'workflow_call' || github.event_name }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
           WORKFLOW_REF: ${{ github.workflow_ref }}
         run: |

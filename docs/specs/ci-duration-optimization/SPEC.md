@@ -12,7 +12,7 @@
 - `source-build release gate`: The release-blocking verification of a target SHA's Dockerfile source build and Compose deployment topology.
 - `CI Gate Verification`: A manual, non-publishing workflow with one `target_sha` input and fixed full Docker/Web scope.
 - `release preparation artifact`: An unpublished, exact-SHA Web and binary deliverable with a SHA-256 manifest. It is not source-build proof.
-- `readiness receipt`: An immutable `refs/notes/release-readiness` proof binding one candidate run, source attestation, preparation artifact, target SHA, and `publish=false`.
+- `readiness receipt`: An immutable `refs/notes/release-readiness` proof binding one candidate run, source attestation, preparation artifact, target SHA, operation/audit metadata, and `publish=false`.
 - Interface: `Release Candidate Pipeline`, its reusable child workflows and readiness receipt, plus the Release evaluator.
 
 ## Requirements
@@ -51,7 +51,8 @@
 - The preparation workflow MUST have no package, tag, GitHub Release, or image publication authority and MUST write `publish=false` plus a complete SHA-256 manifest.
 - The complete manifest MUST include `web/dist/.dockrev-route-contract.json`; Release MUST bind the downloaded manifest to the preparation gate's SHA-256 and verify every listed file's presence, size, and SHA-256 before consuming the artifact.
 - The candidate pipeline MUST write a readiness receipt only after the source attestation and preparation manifest have been validated. The receipt MUST include the target SHA, candidate run id, source attestation run/name/digest, preparation run/name/manifest digest, and `publish=false`.
-- Release MUST consume only a receipt whose target and recorded artifacts match the oldest-ready pending snapshot. Missing, expired, or mismatched evidence blocks publication; Release MUST not dispatch recovery or wait for another workflow.
+- Release MUST consume only a receipt whose target and recorded artifacts match the oldest pending snapshot. Missing, expired, or mismatched evidence blocks both automatic and manual publication; Release MUST not dispatch recovery or wait for another workflow.
+- Candidate MUST expose `operation=verify|recover`; `verify` MUST remain non-publishing, while `recover` MUST require an exact main SHA and non-empty reason, accept only the oldest unreleased first-parent release-enabled target, write a target-only `candidate-recovery` snapshot, and append an auditable readiness entry without publishing.
 - covers: `G2`, `G3`
 
 ## Verification
@@ -76,9 +77,9 @@
 
 ### VER-CI-DURATION-004
 
-- Method: Python manifest/readiness fixtures and a workflow YAML contract check for reusable candidate children and verification-only dispatch.
+- Method: Python manifest/readiness fixtures, recovery/FIFO fixtures, and a workflow YAML contract check for reusable candidate children, explicit recovery preflight, and verification-only dispatch.
 - covers: `REQ-CI-DURATION-005`
-- Pass condition: exact target SHA, trusted main workflow, complete file digests, one-day retention, and `publish=false` are required; a missing, mismatched, or verification-mode receipt is rejected and no polling/recovery path exists.
+- Pass condition: exact target SHA, trusted main workflow, complete file digests, one-day retention, and `publish=false` are required; a missing, mismatched, or verification-mode receipt is rejected, recovery is oldest-first and audited, and no polling/automatic-recovery path exists.
 
 ## Related ADRs
 

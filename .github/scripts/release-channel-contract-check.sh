@@ -52,6 +52,9 @@ search_fixed 'branches: [main]' .github/workflows/release-candidate.yml
 search_fixed 'uses: ./.github/workflows/ci-main.yml' .github/workflows/release-candidate.yml
 search_fixed 'uses: ./.github/workflows/source-build-release-gate.yml' .github/workflows/release-candidate.yml
 search_fixed 'uses: ./.github/workflows/release-preparation.yml' .github/workflows/release-candidate.yml
+search_fixed 'operation:' .github/workflows/release-candidate.yml
+search_fixed 'recover-preflight' .github/workflows/release-candidate.yml
+search_fixed 'candidate_invocation: true' .github/workflows/release-candidate.yml
 search_fixed 'refs/notes/release-readiness' .github/workflows/release-candidate.yml
 search_fixed 'verification_mode' .github/workflows/release-candidate.yml
 search_fixed 'publish": False' .github/workflows/release-candidate.yml
@@ -81,6 +84,10 @@ search_fixed 'workflow_call:' .github/workflows/source-build-release-gate.yml
 search_fixed 'workflow_call:' .github/workflows/release-preparation.yml
 search_fixed 'workflow_dispatch:' .github/workflows/release-preparation.yml
 search_fixed 'verification_mode:' .github/workflows/release-preparation.yml
+search_fixed 'candidate_invocation:' .github/workflows/release-preparation.yml
+search_fixed 'candidate-recovery' .github/workflows/release-candidate.yml
+search_fixed 'Release Candidate Pipeline' .github/workflows/notify-release-failure.yml
+search_fixed 'should_notify' .github/workflows/notify-release-failure.yml
 ensure_absent 'recovery_request' .github/workflows/release-preparation.yml
 ensure_absent 'recovery_request' .github/scripts/release_preparation.py
 ensure_absent 'def wait_for_' .github/scripts/release_source_gate.py
@@ -102,6 +109,7 @@ search_fixed 'name: Frontend Storybook test (main)' .github/workflows/ci-main.ym
 search_fixed 'Create and push tag' .github/workflows/release.yml
 search_fixed 'Create or update GitHub Release + upload assets' .github/workflows/release.yml
 search_fixed 'Record release publication ledger' .github/workflows/release.yml
+search_fixed 'pending_ready_targets(args) == []' .github/scripts/test_release_readiness.py
 search_fixed 'makeLatest: ${{ needs.prepare.outputs.publish_latest }}' .github/workflows/release.yml
 
 ruby -ryaml -e '

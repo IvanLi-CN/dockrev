@@ -27,6 +27,18 @@ on:
         required: false
         type: boolean
         default: false
+      candidate_invocation:
+        required: false
+        type: boolean
+        default: false
+      snapshot_source:
+        required: false
+        type: string
+        default: ""
+      target_only:
+        required: false
+        type: boolean
+        default: false
     outputs:
       completed_at:
         description: UTC completion time of the verification fast gate
@@ -435,8 +447,9 @@ jobs:
       - storybook-coverage-summary
     if: >-
       always() &&
-      github.event_name == 'workflow_call' &&
+      inputs.candidate_invocation == true &&
       inputs.verification_mode != true &&
+      inputs.snapshot_source != '' &&
       needs.lint.result == 'success' &&
       needs.unit-tests.result == 'success' &&
       (needs.frontend-lint-build.result == 'success' || needs.frontend-lint-build.result == 'skipped') &&
@@ -463,13 +476,21 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          python3 .github/scripts/release_snapshot.py ensure \
+          snapshot_args=(
+            ensure
             --target-sha "${CI_TARGET_SHA}" \
             --github-repository "${GITHUB_REPOSITORY}" \
             --github-token "${GITHUB_TOKEN}" \
             --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
             --registry "${REGISTRY}" \
+            --snapshot-source "${{ inputs.snapshot_source }}" \
             --output "$RUNNER_TEMP/release-snapshot.json"
+          )
+          if [[ "${{ inputs.target_only }}" == "true" ]]; then
+            snapshot_args+=(--target-only)
+            echo "snapshot mode: target-only"
+          fi
+          python3 .github/scripts/release_snapshot.py "${snapshot_args[@]}"
 
       - name: Show release snapshot summary
         env:

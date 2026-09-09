@@ -21,7 +21,13 @@ OVERRIDE_SCHEMA_VERSION = 1
 DEFAULT_NOTES_REF = "refs/notes/release-snapshots"
 DEFAULT_PUBLICATION_NOTES_REF = "refs/notes/release-publications"
 DEFAULT_OVERRIDE_NOTES_REF = "refs/notes/release-overrides"
-ALLOWED_SNAPSHOT_SOURCES = {"ci-main", "manual-backfill", "pr-intent-artifact", "legacy-pr-labels"}
+ALLOWED_SNAPSHOT_SOURCES = {
+    "candidate-recovery",
+    "ci-main",
+    "manual-backfill",
+    "pr-intent-artifact",
+    "legacy-pr-labels",
+}
 ALLOWED_OVERRIDE_STATUSES = {"skip"}
 ALLOWED_TYPE_LABELS = {
     "type:patch",
@@ -100,6 +106,12 @@ def parse_args() -> argparse.Namespace:
         "--target-only",
         action="store_true",
         help="Only materialize the requested target commit instead of filling every missing first-parent snapshot on the path.",
+    )
+    ensure.add_argument(
+        "--snapshot-source",
+        choices=sorted(ALLOWED_SNAPSHOT_SOURCES),
+        default="",
+        help="Audit source for the target snapshot; candidate-recovery requires --target-only.",
     )
 
     export_cmd = subparsers.add_parser("export", help="Export a stored release snapshot into GitHub outputs.")
@@ -1080,7 +1092,12 @@ def export_snapshot(
 def ensure_snapshot(args: argparse.Namespace) -> int:
     target_sha = normalize_sha(args.target_sha)
     output_path = Path(args.output)
-    snapshot_source = "manual-backfill" if args.target_only else "ci-main"
+    requested_source = getattr(args, "snapshot_source", "")
+    snapshot_source = requested_source or ("manual-backfill" if args.target_only else "ci-main")
+    if snapshot_source not in ALLOWED_SNAPSHOT_SOURCES:
+        raise SnapshotError(f"Unsupported snapshot source: {snapshot_source}")
+    if snapshot_source == "candidate-recovery" and not args.target_only:
+        raise SnapshotError("candidate-recovery snapshots require --target-only")
 
     for attempt in range(1, args.max_attempts + 1):
         fetch_notes_ref(args.notes_ref)

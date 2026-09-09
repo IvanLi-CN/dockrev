@@ -213,6 +213,7 @@ def parse_args() -> argparse.Namespace:
     manifest.add_argument("--workflow-sha", required=True)
     manifest.add_argument("--workflow-ref", required=True)
     manifest.add_argument("--verification-mode", action="store_true")
+    manifest.add_argument("--output", type=Path, required=True)
     validate = sub.add_parser("validate")
     validate.add_argument("--manifest", type=Path, required=True)
     validate.add_argument("--target-sha", required=True)

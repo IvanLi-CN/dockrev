@@ -4,6 +4,7 @@ on:
   workflow_run:
     workflows:
       - Release
+      - Release Candidate Pipeline
     types:
       - completed
     branches:
@@ -24,6 +25,7 @@ jobs:
       actor: ${{ steps.resolve.outputs.actor }}
       extra_details: ${{ steps.resolve.outputs.extra_details }}
       summary: ${{ steps.resolve.outputs.summary }}
+      should_notify: ${{ steps.resolve.outputs.should_notify }}
     steps:
       - name: Resolve failed release metadata
         id: resolve
@@ -130,6 +132,11 @@ jobs:
 
           resolved_sha = fallback_head_sha
           extra_details = ''
+          operation = 'release' if workflow_name == 'Release' else ''
+          operation_patterns = [
+              re.compile(r'\bCANDIDATE_OPERATION=(push|recover|verify)\b'),
+              re.compile(r'\boperation[=:][ \t]*(push|recover|verify)\b'),
+          ]
 
           try:
               jobs = list_jobs()
@@ -144,6 +151,12 @@ jobs:
                   if not isinstance(job_id, int):
                       continue
                   log_text = load_job_log(job_id)
+                  if not operation:
+                      for pattern in operation_patterns:
+                          match = pattern.search(log_text)
+                          if match:
+                              operation = match.group(1)
+                              break
                   candidate = match_sha(actual_patterns, log_text)
                   if candidate:
                       resolved_sha = candidate
@@ -169,10 +182,14 @@ jobs:
               else:
                   extra_details = f'target sha resolution fell back to workflow_run head sha ({type(exc).__name__})'
 
+          if workflow_name == 'Release Candidate Pipeline' and not operation and run_event == 'push':
+              operation = 'push'
+
           with open(output_path, 'a', encoding='utf-8') as handle:
+              should_notify = workflow_name == 'Release' or operation in {'push', 'recover'}
               short_sha = (resolved_sha or fallback_head_sha)[:12] or 'unknown'
               summary_lines = [
-                  f'Release Failed - {repository}',
+                  f'{workflow_name or "Release"} Failed - {repository}',
                   'status: failure',
                   f'workflow: {workflow_name or "Release"}',
                   f'event: {run_event or "unknown"}',
@@ -187,6 +204,7 @@ jobs:
               handle.write(f'ref_label={pick_ref_label()}\n')
               handle.write(f'head_sha={resolved_sha or fallback_head_sha}\n')
               handle.write(f'actor={actor}\n')
+              handle.write(f'should_notify={"true" if should_notify else "false"}\n')
               handle.write('extra_details<<EOF\n')
               handle.write(extra_details)
               handle.write('\nEOF\n')
@@ -196,7 +214,7 @@ jobs:
           PYCODE
 
   notify_failure:
-    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure' }}
+    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure' && needs.resolve_release_context.outputs.should_notify == 'true' }}
     needs:
       - resolve_release_context
     permissions:

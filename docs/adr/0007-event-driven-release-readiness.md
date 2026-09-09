@@ -23,11 +23,15 @@ then writes one immutable JSON note to `refs/notes/release-readiness`.
 
 The receipt is bound to the target SHA, candidate run, source attestation run
 and digest, preparation artifact run and manifest digest, and `publish=false`.
-Release may publish only after validating the receipt and downloading exactly
-the recorded artifacts. Automatic Release runs select the first-parent
-oldest-ready pending snapshot and retain the `release-main` serialized queue.
+Recovery receipts additionally carry `operation=recover` and an append-only
+audit record containing the target, actor, and reason. Release may publish only
+after validating the receipt and downloading exactly the recorded artifacts.
+Automatic and manual Release runs select only the first-parent oldest pending
+snapshot with a valid receipt and retain the `release-main` serialized queue.
 There is no API polling or automatic recovery in Release. An operator may
-start a new exact-SHA candidate explicitly after this change is merged.
+start an exact-SHA Candidate recovery explicitly, but its preflight must reject
+any target behind an older unreleased release-enabled merge and it writes no
+publication side effect.
 
 `workflow_dispatch` verification mode is non-publishing. It can run the three
 reusable gates and create validation artifacts, but it cannot write a
@@ -42,4 +46,6 @@ readiness note, create a tag, push GHCR, or create a GitHub Release.
 - The Actions run id is part of the receipt, so artifact ownership is explicit
   even when reusable workflows are moved or their artifact retention changes.
 - The existing snapshot, publication ledger, tag, GHCR, and Release naming
-  contracts remain unchanged.
+  contracts remain unchanged; readiness notes remain backward-compatible with
+  ordinary push receipts while recovery entries are appended rather than
+  overwritten.

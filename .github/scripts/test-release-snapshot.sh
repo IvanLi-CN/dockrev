@@ -274,7 +274,7 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-target-only-") as tmp:
             "tags_csv": "ghcr.io/ivanli-cn/dockrev:0.1.1,ghcr.io/ivanli-cn/dockrev:latest",
             "supervisor_tags_csv": "ghcr.io/ivanli-cn/dockrev-supervisor:0.1.1,ghcr.io/ivanli-cn/dockrev-supervisor:latest",
             "notes_ref": module.DEFAULT_NOTES_REF,
-            "snapshot_source": "manual-backfill",
+            "snapshot_source": kwargs.get("snapshot_source", "manual-backfill"),
             "created_at": "2026-03-15T00:00:00Z",
         }
 
@@ -299,6 +299,7 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-target-only-") as tmp:
                 output=str(repo / "target-only.json"),
                 max_attempts=1,
                 target_only=True,
+                snapshot_source="candidate-recovery",
             )
         )
         assert exit_code == 0
@@ -306,7 +307,7 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-target-only-") as tmp:
         assert module.read_snapshot(module.DEFAULT_NOTES_REF, old_sha) is None
         stored = module.read_snapshot(module.DEFAULT_NOTES_REF, target_sha)
         assert stored is not None
-        assert stored["snapshot_source"] == "manual-backfill"
+        assert stored["snapshot_source"] == "candidate-recovery"
     finally:
         module.load_pr_for_commit = original_load_pr
         module.build_snapshot = original_build_snapshot

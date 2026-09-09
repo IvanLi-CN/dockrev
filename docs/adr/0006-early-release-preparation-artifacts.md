@@ -22,7 +22,9 @@ retention period.
 Release consumes the artifact selected by the snapshot queue's actual
 `target_sha`, not the triggering workflow SHA. The artifact is now recorded in
 the immutable readiness receipt described by ADR 0007; Release validates that
-receipt and never owns preparation recovery.
+receipt and never owns preparation recovery. A separately authorized Candidate
+`operation=recover` may create a target-only `candidate-recovery` snapshot for
+the oldest unreleased first-parent target, but it still cannot publish.
 
 The preparation artifact is an optimization and provenance input only. It
 never replaces the independent Dockerfile source-build and Compose deployment
@@ -35,6 +37,7 @@ smoke release gate.
 - A release-enabled main push uses additional parallel runner time and stores
   temporary artifacts for one day.
 - Expiry or artifact-service loss blocks publication until an owner explicitly
-  starts a new exact-SHA candidate pipeline.
+  starts a new exact-SHA candidate pipeline or the restricted Candidate
+  recovery path for the oldest target.
 - Removing this optimization is reversible by restoring the Release build jobs
   and removing the preparation dependency; source-build gating is unchanged.

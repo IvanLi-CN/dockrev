@@ -1,6 +1,6 @@
 name: Release Candidate Pipeline
 
-run-name: Release candidate ${{ inputs.target_sha || github.sha }}${{ inputs.verification_mode && ' (verification)' || '' }}
+run-name: Release candidate ${{ inputs.target_sha || github.sha }} (${{ github.event_name == 'push' && 'push' || inputs.operation }})
 
 on:
   push:
@@ -8,15 +8,23 @@ on:
   workflow_dispatch:
     inputs:
       target_sha:
-        description: Exact main commit to verify
+        description: Exact main commit to verify or recover
         required: false
         default: ""
         type: string
-      verification_mode:
-        description: Run non-publishing verification only
+      operation:
+        description: Candidate operation
         required: true
-        default: true
-        type: boolean
+        default: verify
+        type: choice
+        options:
+          - verify
+          - recover
+      recovery_reason:
+        description: Required audit reason when operation=recover
+        required: false
+        default: ""
+        type: string
 
 permissions:
   actions: write
@@ -29,16 +37,97 @@ concurrency:
 
 env:
   TARGET_SHA: ${{ inputs.target_sha || github.sha }}
-  VERIFICATION_MODE: ${{ github.event_name == 'workflow_dispatch' && true || false }}
+  CANDIDATE_OPERATION: ${{ github.event_name == 'push' && 'push' || inputs.operation }}
+  VERIFICATION_MODE: ${{ github.event_name == 'push' && false || inputs.operation == 'verify' }}
 
 jobs:
+  recovery-preflight:
+    name: Candidate preflight
+    runs-on: ubuntu-latest
+    outputs:
+      target_sha: ${{ steps.resolve.outputs.target_sha }}
+      operation: ${{ steps.resolve.outputs.operation }}
+      verification_mode: ${{ steps.resolve.outputs.verification_mode }}
+      release_enabled: ${{ steps.resolve.outputs.release_enabled }}
+      target_only: ${{ steps.resolve.outputs.target_only }}
+      recovery_reason: ${{ steps.resolve.outputs.recovery_reason }}
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout main for recovery ordering
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Resolve operation and candidate intent
+        id: resolve
+        shell: bash
+        env:
+          TARGET_INPUT: ${{ inputs.target_sha || github.sha }}
+          OPERATION: ${{ env.CANDIDATE_OPERATION }}
+          RECOVERY_REASON: ${{ inputs.recovery_reason || '' }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ "${OPERATION}" != "push" && "${OPERATION}" != "verify" && "${OPERATION}" != "recover" ]]; then
+            echo "unsupported candidate operation: ${OPERATION}" >&2
+            exit 2
+          fi
+          if [[ ! "${TARGET_INPUT}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "target_sha must be a 40-character lowercase commit SHA" >&2
+            exit 2
+          fi
+          if [[ "${OPERATION}" == "recover" && -z "${RECOVERY_REASON//[[:space:]]/}" ]]; then
+            echo "recovery_reason is required for recover" >&2
+            exit 2
+          fi
+          echo "CANDIDATE_OPERATION=${OPERATION}"
+          {
+            echo "operation=${OPERATION}"
+            echo "target_sha=${TARGET_INPUT}"
+            echo "verification_mode=$([[ "${OPERATION}" == "verify" ]] && echo true || echo false)"
+            echo "recovery_reason=${RECOVERY_REASON}"
+          } >> "$GITHUB_OUTPUT"
+
+          if [[ "${OPERATION}" == "recover" ]]; then
+            python3 .github/scripts/release_readiness.py recover-preflight \
+              --target-sha "${TARGET_INPUT}" \
+              --repository "${GITHUB_REPOSITORY}" \
+              --token "${GITHUB_TOKEN}" \
+              --api-root "${GITHUB_API_URL}" \
+              --main-ref origin/main \
+              --github-output "$GITHUB_OUTPUT"
+            echo "target_only=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          python3 .github/scripts/release_preparation.py candidate \
+            --target-sha "${TARGET_INPUT}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --token "${GITHUB_TOKEN}" \
+            --output "$RUNNER_TEMP/release-candidate.json"
+          python3 - "$RUNNER_TEMP/release-candidate.json" <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import sys
+          from pathlib import Path
+
+          payload = json.loads(Path(sys.argv[1]).read_text())
+          print(f"release_enabled={'true' if payload['release_enabled'] else 'false'}")
+          print(f"target_only={'false' if payload['release_enabled'] else 'true'}")
+          PY
   fast:
     name: Fast CI (exact SHA)
+    needs: [recovery-preflight]
     uses: ./.github/workflows/ci-main.yml
     with:
-      target_sha: ${{ inputs.target_sha || github.sha }}
+      target_sha: ${{ needs.recovery-preflight.outputs.target_sha }}
       force_full: false
-      verification_mode: ${{ github.event_name == 'workflow_dispatch' && true || false }}
+      verification_mode: ${{ needs.recovery-preflight.outputs.verification_mode == 'true' }}
+      candidate_invocation: true
+      snapshot_source: ${{ needs.recovery-preflight.outputs.operation == 'recover' && 'candidate-recovery' || 'ci-main' }}
+      target_only: ${{ needs.recovery-preflight.outputs.target_only == 'true' }}
     permissions:
       actions: write
       contents: write
@@ -47,11 +136,12 @@ jobs:
 
   source:
     name: Source gate (exact SHA)
+    needs: [recovery-preflight]
     uses: ./.github/workflows/source-build-release-gate.yml
     with:
-      target_sha: ${{ inputs.target_sha || github.sha }}
+      target_sha: ${{ needs.recovery-preflight.outputs.target_sha }}
       force_full: false
-      verification_mode: ${{ github.event_name == 'workflow_dispatch' && true || false }}
+      verification_mode: ${{ needs.recovery-preflight.outputs.verification_mode == 'true' }}
     permissions:
       actions: write
       contents: read
@@ -59,10 +149,12 @@ jobs:
 
   preparation:
     name: Release preparation (exact SHA)
+    needs: [recovery-preflight]
     uses: ./.github/workflows/release-preparation.yml
     with:
-      target_sha: ${{ inputs.target_sha || github.sha }}
-      verification_mode: ${{ github.event_name == 'workflow_dispatch' && true || false }}
+      target_sha: ${{ needs.recovery-preflight.outputs.target_sha }}
+      verification_mode: ${{ needs.recovery-preflight.outputs.verification_mode == 'true' }}
+      candidate_invocation: true
     permissions:
       actions: read
       contents: read
@@ -72,9 +164,9 @@ jobs:
   readiness:
     name: Write immutable readiness receipt
     runs-on: ubuntu-latest
-    needs: [fast, source, preparation]
+    needs: [recovery-preflight, fast, source, preparation]
     if: >-
-      github.event_name == 'push' &&
+      needs.recovery-preflight.outputs.verification_mode == 'false' &&
       needs.fast.result == 'success' &&
       needs.source.result == 'success' &&
       needs.preparation.result == 'success' &&
@@ -84,6 +176,8 @@ jobs:
       contents: write
     env:
       TARGET_SHA: ${{ needs.fast.outputs.target_sha }}
+      CANDIDATE_OPERATION: ${{ needs.recovery-preflight.outputs.operation }}
+      RECOVERY_REASON: ${{ needs.recovery-preflight.outputs.recovery_reason }}
       FAST_RESULT: ${{ needs.fast.outputs.gate_result }}
       SOURCE_TARGET_SHA: ${{ needs.source.outputs.target_sha }}
       SOURCE_RESULT: ${{ needs.source.outputs.gate_result }}
@@ -141,6 +235,7 @@ jobs:
           print(hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest())
           PY
           )" = "${PREPARATION_MANIFEST_SHA256}"
+          echo "CANDIDATE_OPERATION=${CANDIDATE_OPERATION}"
 
       - name: Configure git identity for readiness notes
         run: |
@@ -163,7 +258,8 @@ jobs:
               "target_sha": os.environ["TARGET_SHA"],
               "candidate_run_id": int(os.environ["GITHUB_RUN_ID"]),
               "candidate_workflow": "Release Candidate Pipeline",
-              "candidate_event": "push",
+              "candidate_event": os.environ.get("GITHUB_EVENT_NAME", "push"),
+              "operation": os.environ["CANDIDATE_OPERATION"],
               "verification_mode": False,
               "publish": False,
               "source_gate": {
@@ -183,6 +279,13 @@ jobs:
               },
               "created_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat().replace("+00:00", "Z"),
           }
+          if payload["operation"] == "recover":
+              payload["recovery"] = {
+                  "mode": "candidate-recovery",
+                  "target_sha": payload["target_sha"],
+                  "actor": os.environ["GITHUB_ACTOR"],
+                  "reason": os.environ["RECOVERY_REASON"],
+              }
           Path("release-readiness.json").write_text(json.dumps(payload, sort_keys=True) + "\n")
           PY
           python3 .github/scripts/release_readiness.py write \
