@@ -932,12 +932,15 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-missing-fifo-") as tmp
     (repo / "Cargo.toml").write_text('[package]\nname = "dockrev"\nversion = "0.40.0"\n')
     run("add", "Cargo.toml", cwd=repo)
     run("commit", "-m", "base", cwd=repo)
-    old_sha = run("rev-parse", "HEAD", cwd=repo)
     (repo / "Cargo.toml").write_text('[package]\nname = "dockrev"\nversion = "0.40.1"\n')
     run("add", "Cargo.toml", cwd=repo)
     run("commit", "-m", "old release", cwd=repo)
-    missing_sha = run("rev-parse", "HEAD", cwd=repo)
+    old_sha = run("rev-parse", "HEAD", cwd=repo)
     (repo / "Cargo.toml").write_text('[package]\nname = "dockrev"\nversion = "0.40.2"\n')
+    run("add", "Cargo.toml", cwd=repo)
+    run("commit", "-m", "gap infrastructure fix", cwd=repo)
+    gap_sha = run("rev-parse", "HEAD", cwd=repo)
+    (repo / "Cargo.toml").write_text('[package]\nname = "dockrev"\nversion = "0.40.3"\n')
     run("add", "Cargo.toml", cwd=repo)
     run("commit", "-m", "new release", cwd=repo)
     new_sha = run("rev-parse", "HEAD", cwd=repo)
@@ -967,9 +970,25 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-missing-fifo-") as tmp
                 strict_fifo=True,
             )
         except module.SnapshotError as exc:
-            assert missing_sha in str(exc)
+            assert old_sha in str(exc)
         else:
             raise AssertionError("strict FIFO accepted a newer snapshot across a missing older snapshot")
+        old_snapshot = module.build_snapshot(
+            target_sha=old_sha,
+            repository="IvanLi-CN/dockrev",
+            token="token",
+            notes_ref=module.DEFAULT_NOTES_REF,
+            registry="ghcr.io",
+            api_root="https://api.github.com",
+        )
+        run("notes", f"--ref={module.DEFAULT_NOTES_REF}", "add", "-f", "-m", json.dumps(old_snapshot), old_sha, cwd=repo)
+        assert module.pending_release_targets(
+            module.DEFAULT_NOTES_REF,
+            new_sha,
+            publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+            override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
+            strict_fifo=True,
+        ) == [old_sha, new_sha]
     finally:
         module.load_pr_for_commit = original_loader
         os.chdir(original_cwd)

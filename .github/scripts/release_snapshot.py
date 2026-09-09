@@ -735,10 +735,11 @@ def pending_release_targets(
     pending: list[str] = []
     missing_before_pending: list[str] = []
     roots = set(git_output("rev-list", "--max-parents=0", upper_bound_sha).splitlines()) if strict_fifo else set()
+    first_pending_found = False
     for commit in first_parent_commits(upper_bound_sha):
         snapshot = read_snapshot(notes_ref, commit)
         if not snapshot or not snapshot.get("release_enabled"):
-            if strict_fifo and snapshot is None and commit not in roots:
+            if strict_fifo and not first_pending_found and snapshot is None and commit not in roots:
                 missing_before_pending.append(commit)
             continue
         if (
@@ -756,6 +757,8 @@ def pending_release_targets(
                 "missing release snapshot before oldest pending target; refusing to bypass FIFO: "
                 + ",".join(missing_before_pending)
             )
+        if strict_fifo:
+            first_pending_found = True
     return pending
 
 
