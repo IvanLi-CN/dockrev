@@ -89,11 +89,17 @@ jobs:
             echo "recovery_reason is required for recover" >&2
             exit 2
           fi
+          if [[ "${OPERATION}" == "recover" && "${RECOVERY_REASON}" == *__RECOVERY_REASON__* ]]; then
+            echo "recovery_reason contains a reserved output delimiter" >&2
+            exit 2
+          fi
           {
             echo "operation=${OPERATION}"
             echo "target_sha=${TARGET_INPUT}"
             echo "verification_mode=$([[ "${OPERATION}" == "verify" ]] && echo true || echo false)"
-            echo "recovery_reason=${RECOVERY_REASON}"
+            echo "recovery_reason<<__RECOVERY_REASON__"
+            printf '%s\n' "${RECOVERY_REASON}"
+            echo "__RECOVERY_REASON__"
           } >> "$GITHUB_OUTPUT"
 
           if [[ "${OPERATION}" == "recover" ]]; then

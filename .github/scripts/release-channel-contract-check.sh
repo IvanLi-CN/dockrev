@@ -56,6 +56,7 @@ search_fixed 'operation:' .github/workflows/release-candidate.yml
 search_fixed 'recover-preflight' .github/workflows/release-candidate.yml
 search_fixed 'candidate_invocation: true' .github/workflows/release-candidate.yml
 search_fixed 'recover requires an explicitly supplied target_sha' .github/workflows/release-candidate.yml
+search_fixed 'recovery_reason<<__RECOVERY_REASON__' .github/workflows/release-candidate.yml
 ensure_absent '-z "${{ inputs.target_sha }}"' .github/workflows/release-candidate.yml
 search_fixed 'refs/notes/release-readiness' .github/workflows/release-candidate.yml
 search_fixed 'verification_mode' .github/workflows/release-candidate.yml

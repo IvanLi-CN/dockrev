@@ -112,11 +112,11 @@ try:
         args.target_sha = new_target
         assert module.recover_preflight(args) == 0
         module.release_snapshot.read_override = lambda *_args: None
-        module.release_snapshot.released_commits_from_tags = lambda _target: {old_target}
+        module.release_snapshot.released_commits_from_tags = lambda _target: {new_target}
         try:
             module.recover_preflight(args)
         except module.ReadinessError as error:
-            assert "tag-only publication" in str(error)
+            assert "already has a release tag" in str(error)
         else:
             raise AssertionError("recovery preflight accepted a tag-only historical target")
         module.release_snapshot.released_commits_from_tags = lambda _target: set()

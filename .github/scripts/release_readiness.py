@@ -284,18 +284,22 @@ def recover_preflight(args: argparse.Namespace) -> int:
     if target_sha not in main_commits:
         raise ReadinessError(f"recovery target {target_sha} is not on the main first-parent chain")
     target_index = main_commits.index(target_sha)
+    if target_sha in tagged:
+        raise ReadinessError(f"recovery target {target_sha} already has a release tag without complete ledger")
+    tagged_indices = [main_commits.index(commit) for commit in tagged if commit in main_commits]
+    anchor_index = max(tagged_indices, default=-1)
     released = {
         commit
-        for commit in main_commits[: target_index + 1]
+        for commit in main_commits[anchor_index + 1 : target_index + 1]
         if release_snapshot.read_publication(args.publication_notes_ref, commit) is not None
     }
     skipped: set[str] = set()
-    for commit in main_commits[: target_index + 1]:
+    for commit in main_commits[anchor_index + 1 : target_index + 1]:
         override = release_snapshot.read_override(args.override_notes_ref, commit)
         if override is not None and override.get("status") == "skip":
             skipped.add(commit)
     pending: list[str] = []
-    for commit in main_commits[: target_index + 1]:
+    for commit in main_commits[anchor_index + 1 : target_index + 1]:
         if commit in skipped:
             continue
         if commit in tagged and commit not in released:
