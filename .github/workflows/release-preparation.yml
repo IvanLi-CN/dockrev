@@ -2,7 +2,7 @@ name: Release Preparation
 
 on:
   workflow_run:
-    workflows: ["CI (PR)"]
+    workflows: ["CI (PR)", "Label Gate"]
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -33,7 +33,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'pull_request')
+      contains(fromJSON('["pull_request", "pull_request_target"]'), github.event.workflow_run.event))
     steps:
       - name: Checkout trusted release helpers
         uses: actions/checkout@v4
@@ -73,5 +73,41 @@ jobs:
         with:
           name: release-intent-pr-${{ steps.pr.outputs.pr_number }}-${{ github.run_id }}
           path: release-intent.json
+          if-no-files-found: error
+          retention-days: 14
+
+  completion:
+    name: Release completion
+    needs: [prepare]
+    if: needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+    steps:
+      - name: Checkout trusted release helpers
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Verify prepared identity
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ inputs.pr_number || github.event.workflow_run.pull_requests[0].number }}
+        run: |
+          set -euo pipefail
+          [[ "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ]] || { echo "A valid PR number is required" >&2; exit 2; }
+          python3 .github/scripts/release_completion.py \
+            --repository "${GITHUB_REPOSITORY}" \
+            --pr-number "${PR_NUMBER}" > release-completion.json
+
+      - name: Upload completion evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-completion-${{ inputs.pr_number || github.event.workflow_run.pull_requests[0].number }}-${{ github.run_id }}
+          path: release-completion.json
           if-no-files-found: error
           retention-days: 14

@@ -7,6 +7,7 @@ import argparse
 import json
 import re
 import sys
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -85,6 +86,19 @@ def next_patch(version: str) -> str:
     if prerelease:
         raise PolicyError("automatic patch cannot derive from a prerelease VERSION")
     return f"{major}.{minor}.{patch + 1}"
+
+
+def validate_preparation_version(source_version: str, version: str, intent: dict[str, Any]) -> None:
+    source = parse_version(source_version)
+    target = parse_version(version)
+    if intent["type"] == "patch":
+        if version != next_patch(source_version):
+            raise PolicyError("patch preparation must advance VERSION by exactly one patch")
+    elif intent["type"] == "minor" and target[:2] <= source[:2]:
+        raise PolicyError("minor preparation must advance the source major/minor")
+    elif intent["type"] == "major" and target[0] <= source[0]:
+        raise PolicyError("major preparation must advance the source major")
+    validate_channel_version(version, intent["channel"])
 
 
 def validate_channel_version(version: str, channel: str) -> None:
@@ -204,11 +218,13 @@ def validate_failure_context(payload: dict[str, Any]) -> dict[str, Any]:
     validate_channel_version(str(payload["version"]), str(payload["channel"]))
     if payload["tag"] != f"v{payload['version']}":
         raise PolicyError("failure context tag does not match VERSION")
-    if not str(payload["run_url"]).startswith("https://"):
+    run_url = str(payload["run_url"])
+    parsed_run_url = urllib.parse.urlparse(run_url)
+    if parsed_run_url.scheme != "https" or not parsed_run_url.netloc or not re.fullmatch(r"/[^/]+/[^/]+/actions/runs/[0-9]+", parsed_run_url.path):
         raise PolicyError("failure context run_url must be an absolute HTTPS URL")
     recovery = str(payload["recovery_instruction"])
-    expected_sha = f"merge_sha={payload['merge_commit_sha']}"
-    if not recovery.startswith("workflow_dispatch") or expected_sha not in recovery:
+    expected_recovery = f"workflow_dispatch merge_sha={payload['merge_commit_sha']} recovery_reason=<required>"
+    if recovery != expected_recovery:
         raise PolicyError("failure context must bind workflow_dispatch recovery to merge SHA")
     if payload.get("identity_resolution_failed") is True and payload["source_sha"] != payload["merge_commit_sha"]:
         raise PolicyError("identity-resolution fallback must use the merge SHA as source evidence")

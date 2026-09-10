@@ -130,19 +130,20 @@ def reserve_tag(api_root: str, token: str, repository: str, version: str, pr_num
     else:
         raise PreparationError(f"release tag v{version} already exists and cannot be reserved: {existing}")
 
-    open_pulls = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/pulls?state=open&base=main&per_page=100")
-    for pull in open_pulls if isinstance(open_pulls, list) else []:
-        if pull.get("number") == pr_number:
-            continue
-        head_sha = pull.get("head", {}).get("sha", "")
-        if not re.fullmatch(r"[0-9a-f]{40}", head_sha):
-            continue
-        head_commit = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{head_sha}")
-        trailers = release_policy.parse_trailers(head_commit.get("commit", {}).get("message", ""))
-        if trailers.get("Release-Mode") == "normal-preparation" and trailers.get("Product-Version") == version:
-            raise PreparationError(
-                f"release version {version} is already reserved by open PR #{pull.get('number')}"
-            )
+    for state in ("open", "closed"):
+        pulls = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/pulls?state={state}&base=main&per_page=100")
+        for pull in pulls if isinstance(pulls, list) else []:
+            if pull.get("number") == pr_number or (state == "closed" and not pull.get("merged_at")):
+                continue
+            head_sha = pull.get("head", {}).get("sha", "")
+            if not re.fullmatch(r"[0-9a-f]{40}", head_sha):
+                continue
+            head_commit = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{head_sha}")
+            trailers = release_policy.parse_trailers(head_commit.get("commit", {}).get("message", ""))
+            if trailers.get("Release-Mode") in {"normal-preparation", "version-only-release-pr"} and trailers.get("Product-Version") == version:
+                raise PreparationError(
+                    f"release version {version} is already reserved by PR #{pull.get('number')}"
+                )
 
 
 def expected_version(intent: dict[str, Any], base_version: str, exact_version: str | None) -> str:

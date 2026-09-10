@@ -81,6 +81,16 @@ def covered_product_boundary(
     return pr, head_sha
 
 
+def intent_from_trailer(value: str) -> dict[str, Any]:
+    labels = value.split()
+    if len(labels) != 2:
+        raise CompletionError("release intent trailer must contain type and channel labels")
+    try:
+        return release_policy.parse_labels(labels)
+    except release_policy.PolicyError as error:
+        raise CompletionError(str(error)) from error
+
+
 def version_at_commit(api_root: str, token: str, repository: str, commit_sha: str) -> str:
     owner, name = repository.split("/", 1)
     payload = api_json(
@@ -118,25 +128,26 @@ def pull_request_changed_files(
         page += 1
 
 
-def tag_is_reserved_by_open_pr(
+def tag_is_reserved_by_other_pr(
     api_root: str, token: str, repository: str, version: str, pr_number: int
 ) -> bool:
     owner, name = repository.split("/", 1)
-    pulls = api_json(
-        api_root,
-        token,
-        f"/repos/{owner}/{name}/pulls?state=open&base=main&per_page=100",
-    )
-    for pull in pulls if isinstance(pulls, list) else []:
-        if pull.get("number") == pr_number:
-            continue
-        head_sha = pull.get("head", {}).get("sha", "")
-        if not head_sha:
-            continue
-        head = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{head_sha}")
-        trailers = release_policy.parse_trailers(head.get("commit", {}).get("message", ""))
-        if trailers.get("Release-Mode") in {"normal-preparation", "version-only-release-pr"} and trailers.get("Product-Version") == version:
-            return False
+    for state in ("open", "closed"):
+        pulls = api_json(
+            api_root,
+            token,
+            f"/repos/{owner}/{name}/pulls?state={state}&base=main&per_page=100",
+        )
+        for pull in pulls if isinstance(pulls, list) else []:
+            if pull.get("number") == pr_number or (state == "closed" and not pull.get("merged_at")):
+                continue
+            head_sha = pull.get("head", {}).get("sha", "")
+            if not head_sha:
+                continue
+            head = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{head_sha}")
+            trailers = release_policy.parse_trailers(head.get("commit", {}).get("message", ""))
+            if trailers.get("Release-Mode") in {"normal-preparation", "version-only-release-pr"} and trailers.get("Product-Version") == version:
+                return False
     return True
 
 
@@ -170,13 +181,23 @@ def validate_completion(payload: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(preparation, dict):
             raise CompletionError("normal preparation evidence is missing")
         release_policy.validate_preparation(preparation, source_sha=source_sha)
-        if preparation.get("intent", {}).get("labels") != intent.get("labels"):
+        preparation_intent = preparation.get("intent", {})
+        if (
+            preparation_intent.get("type_label") != intent.get("type_label")
+            or preparation_intent.get("channel_label") != intent.get("channel_label")
+        ):
             raise CompletionError("preparation release intent does not match current PR labels")
+        if preparation.get("release_intent") != f"{intent['type_label']} {intent['channel_label']}":
+            raise CompletionError("preparation release intent trailer is not frozen")
         if preparation.get("commit_sha") != head_sha:
             raise CompletionError("PR head is not the verified preparation commit")
         if payload.get("base_ref") != "main":
             raise CompletionError("release PR must target main")
         release_policy.validate_channel_version(str(preparation["version"]), intent["channel"])
+        if preparation.get("source_version"):
+            release_policy.validate_preparation_version(
+                str(preparation["source_version"]), str(preparation["version"]), intent
+            )
         if payload.get("tag_reserved") is not True:
             raise CompletionError("derived release tag is not reserved")
     elif mode == "version-only-release-pr":
@@ -229,12 +250,16 @@ def load_github_completion(api_root: str, token: str, repository: str, pr_number
     trailers = release_policy.parse_trailers(commit.get("commit", {}).get("message", ""))
     mode = trailers.get("Release-Mode")
     if mode == "normal-preparation":
+        trailer_intent = intent_from_trailer(trailers.get("Release-Intent", ""))
         source_sha = trailers.get("Source-SHA", "")
+        source_version = version_at_commit(api_root, token, repository, source_sha)
         preparation = {
             "commit_sha": head_sha,
             "source_sha": source_sha,
             "version": trailers.get("Product-Version", ""),
-            "intent": release_policy.parse_labels(labels),
+            "intent": trailer_intent,
+            "source_version": source_version,
+            "release_intent": trailers.get("Release-Intent", ""),
             "release_mode": mode,
             "parents": parents,
             "changed_files": files,
@@ -285,7 +310,7 @@ def load_github_completion(api_root: str, token: str, repository: str, pr_number
         "version_file": version_file,
         "source_checks": {"ci_pr": ci_run or {}, "label_gate": label_gate or {}},
         "tag_reserved": tag_is_available(api_root, token, repository, version_for_tag)
-        and tag_is_reserved_by_open_pr(api_root, token, repository, version_for_tag, pr_number),
+        and tag_is_reserved_by_other_pr(api_root, token, repository, version_for_tag, pr_number),
     }
     return payload
 

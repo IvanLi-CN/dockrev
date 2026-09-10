@@ -17,6 +17,12 @@ def notification_summary(payload: dict[str, Any]) -> str:
     lines = [
         f"Dockrev release failed - {payload['tag']}",
         "status: failure",
+        f"repository: {payload.get('repository', '')}",
+        f"workflow: {payload.get('workflow', 'Release')}",
+        f"event: {payload.get('event', '')}",
+        f"ref: {payload.get('ref', '')}",
+        f"attempt: {payload.get('run_attempt', '')}",
+        f"actor: {payload.get('actor', '')}",
         f"intent: type:{payload['type']} channel:{payload['channel']}",
         f"version: {payload['version']}",
         f"source sha: {payload['source_sha']}",

@@ -55,7 +55,9 @@ preparation = {
     "commit_sha": prep_sha,
     "source_sha": source_sha,
     "version": "0.1.1",
-    "intent": labels,
+    "intent": policy.parse_labels(["type:patch", "channel:stable"]),
+    "source_version": "0.1.0",
+    "release_intent": "type:patch channel:stable",
     "release_mode": "normal-preparation",
     "parents": [source_sha],
     "changed_files": ["VERSION"],
@@ -86,6 +88,13 @@ completion_payload = {
 assert completion.validate_completion(completion_payload)["status"] == "pass"
 expect_error(completion.validate_completion, {**completion_payload, "source_checks": {"ci_pr": source_checks["ci_pr"], "label_gate": {}}})
 expect_error(completion.validate_completion, {**completion_payload, "tag_reserved": False})
+expect_error(
+    completion.validate_completion,
+    {
+        **completion_payload,
+        "preparation": {**preparation, "version": "0.1.2"},
+    },
+)
 
 covered_sha = "c" * 40
 version_only = {
@@ -123,8 +132,8 @@ identity_payload = {
     "version": "0.1.1",
     "version_file": "0.1.1",
     "intent": labels,
-    "artifact_names": ["dockrev_0.1.1_linux_amd64_gnu.tar.gz"],
-    "run_url": "https://github.example/runs/1",
+    "artifact_names": ["dockrev_0.1.1_linux_amd64_gnu.tar.gz", "dockrev_0.1.1_linux_amd64_gnu.tar.gz.sha256"],
+    "run_url": "https://github.example/IvanLi-CN/dockrev/actions/runs/1",
 }
 resolved = identity.resolve_from_payload(identity_payload)
 assert resolved["release_tag"] == "v0.1.1"
@@ -138,8 +147,8 @@ failure = {
     "channel": "stable",
     "version": "0.1.1",
     "tag": "v0.1.1",
-    "artifact_names": ["dockrev_0.1.1_linux_amd64_gnu.tar.gz"],
-    "run_url": "https://github.example/runs/1",
+    "artifact_names": ["dockrev_0.1.1_linux_amd64_gnu.tar.gz", "dockrev_0.1.1_linux_amd64_gnu.tar.gz.sha256"],
+    "run_url": "https://github.example/IvanLi-CN/dockrev/actions/runs/1",
     "recovery_instruction": "workflow_dispatch merge_sha=" + prep_sha + " recovery_reason=<required>",
 }
 assert policy.validate_failure_context(failure) == failure

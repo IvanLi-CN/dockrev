@@ -177,11 +177,15 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
     if version_file != version:
         raise IdentityError("merged commit VERSION does not match Product-Version provenance")
     if mode == "normal-preparation":
+        source_sha = trailers.get("Source-SHA", "")
+        source_version = version_at_commit(api_root, token, repository, source_sha)
         preparation = {
             "commit_sha": head_sha,
-            "source_sha": trailers.get("Source-SHA", ""),
+            "source_sha": source_sha,
             "version": version,
             "intent": intent,
+            "source_version": source_version,
+            "release_intent": release_intent,
             "release_mode": mode,
             "parents": parents,
             "changed_files": changed_files,
@@ -189,6 +193,7 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
         }
         try:
             release_policy.validate_preparation(preparation)
+            release_policy.validate_preparation_version(source_version, version, intent)
         except release_policy.PolicyError as error:
             raise IdentityError(str(error)) from error
     else:
