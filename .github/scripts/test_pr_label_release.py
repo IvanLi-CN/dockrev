@@ -128,6 +128,7 @@ original_preparation_api_request = preparation_script.api_request
 original_source_ci_ready = preparation_script.source_ci_ready
 original_current_version = preparation_script.current_version
 original_reserve_tag = preparation_script.reserve_tag
+original_delete_reservation_ref = preparation_script.delete_reservation_ref
 original_create_commit = preparation_script.create_commit
 original_inspect_commit = preparation_script.inspect_commit
 try:
@@ -156,6 +157,7 @@ try:
     def fake_reserve(*_args):
         calls["reserve"] += 1
         reserved_sources.append(_args[-1])
+        return True
 
     def fake_create_commit(*_args):
         calls["create"] += 1
@@ -185,6 +187,29 @@ try:
         assert result["release_enabled"] is True
         assert result["version"] == "0.1.1"
         assert calls == {"source_ci": 2, "reserve": 1, "create": 1}
+
+        cleanup_calls = []
+        preparation_script.delete_reservation_ref = lambda *_args: cleanup_calls.append(_args)
+        calls = {"source_ci": 0, "reserve": 0, "create": 0}
+
+        def fail_on_final_source_check(*_args, **_kwargs):
+            calls["source_ci"] += 1
+            if calls["source_ci"] == 2:
+                raise preparation_script.PreparationError("source metadata drift")
+            return "2026-01-01T00:00:00Z"
+
+        preparation_script.source_ci_ready = fail_on_final_source_check
+        with tempfile.TemporaryDirectory() as drift_directory:
+            expect_error(preparation_script.create, Namespace(
+                api_root="https://api.github.test",
+                token="token",
+                repository="IvanLi-CN/dockrev",
+                pr_number=42,
+                exact_version=None,
+                output=Path(drift_directory) / "release-intent.json",
+            ))
+        assert len(cleanup_calls) == 1
+        assert calls["create"] == 0
 
         calls = {"source_ci": 0, "reserve": 0, "create": 0}
         preparation_script.pull_request = lambda *_args: {
@@ -262,6 +287,7 @@ finally:
     preparation_script.source_ci_ready = original_source_ci_ready
     preparation_script.current_version = original_current_version
     preparation_script.reserve_tag = original_reserve_tag
+    preparation_script.delete_reservation_ref = original_delete_reservation_ref
     preparation_script.create_commit = original_create_commit
     preparation_script.inspect_commit = original_inspect_commit
 

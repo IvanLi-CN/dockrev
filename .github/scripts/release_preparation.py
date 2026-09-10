@@ -239,7 +239,7 @@ def covered_product_head_sha(api_root: str, token: str, repository: str, merge_s
     return head_sha
 
 
-def reserve_tag(api_root: str, token: str, repository: str, version: str, pr_number: int, source_sha: str) -> None:
+def reserve_tag(api_root: str, token: str, repository: str, version: str, pr_number: int, source_sha: str) -> bool:
     owner, name = repository_parts(repository)
     try:
         existing = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/git/ref/tags/v{version}")
@@ -264,12 +264,12 @@ def reserve_tag(api_root: str, token: str, repository: str, version: str, pr_num
                 raise PreparationError(
                     f"release version {version} is already reserved by PR #{pull.get('number')}"
                 )
-    reserve_version_ref(api_root, token, repository, version, pr_number, source_sha)
+    return reserve_version_ref(api_root, token, repository, version, pr_number, source_sha)
 
 
 def reserve_version_ref(
     api_root: str, token: str, repository: str, version: str, pr_number: int, source_sha: str
-) -> None:
+) -> bool:
     """CAS one version ref to an owner-stamped reservation commit."""
     owner, name = repository_parts(repository)
     ref_name = f"release-reservation/v{version}"
@@ -310,7 +310,7 @@ def reserve_version_ref(
                 f"/repos/{owner}/{name}/git/refs",
                 {"ref": f"refs/heads/{ref_name}", "sha": reservation_sha},
             )
-            return
+            return True
         except PreparationError as create_error:
             if " 422:" not in str(create_error):
                 raise
@@ -323,6 +323,18 @@ def reserve_version_ref(
         release_policy.validate_reservation(reservation_commit, version=version, pr_number=pr_number, source_sha=source_sha)
     except release_policy.PolicyError as error:
         raise PreparationError(str(error)) from error
+    return False
+
+
+def delete_reservation_ref(api_root: str, token: str, repository: str, version: str) -> None:
+    owner, name = repository_parts(repository)
+    ref_name = f"release-reservation/v{version}"
+    path = f"/repos/{owner}/{name}/git/refs/heads/{urllib.parse.quote(ref_name, safe='')}"
+    try:
+        api_request(api_root, token, "DELETE", path)
+    except PreparationError as error:
+        if " 404:" not in str(error):
+            raise
 
 
 def expected_version(intent: dict[str, Any], base_version: str, exact_version: str | None) -> str:
@@ -569,21 +581,27 @@ def create(args: argparse.Namespace) -> int:
     )
     base_version = current_version(args.api_root, args.token, args.repository, source_sha)
     version = expected_version(intent, base_version, args.exact_version)
-    reserve_tag(args.api_root, args.token, args.repository, version, args.pr_number, source_sha)
-    source_ci_ready(
-        args.api_root,
-        args.token,
-        args.repository,
-        args.pr_number,
-        source_sha,
-        expected_pr_updated_at=source_pr_updated_at,
-        expected_intent=intent,
-        require_unchanged_pr=True,
-    )
-    commit_sha = create_commit(
-        args.api_root, args.token, args.repository, pr["head"]["ref"], source_sha, version, intent,
-        source_pr_updated_at,
-    )
+    reservation_created = reserve_tag(args.api_root, args.token, args.repository, version, args.pr_number, source_sha)
+    commit_sha = None
+    try:
+        source_ci_ready(
+            args.api_root,
+            args.token,
+            args.repository,
+            args.pr_number,
+            source_sha,
+            expected_pr_updated_at=source_pr_updated_at,
+            expected_intent=intent,
+            require_unchanged_pr=True,
+        )
+        commit_sha = create_commit(
+            args.api_root, args.token, args.repository, pr["head"]["ref"], source_sha, version, intent,
+            source_pr_updated_at,
+        )
+    except PreparationError:
+        if reservation_created and commit_sha is None:
+            delete_reservation_ref(args.api_root, args.token, args.repository, version)
+        raise
     preparation = inspect_commit(args.api_root, args.token, args.repository, pr["head"]["ref"], commit_sha, source_sha, version, intent)
     payload = {
         "schema_version": 1,
