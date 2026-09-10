@@ -551,6 +551,7 @@ jobs:
             -f "tree=${tree_sha}" -f "parents[]=${MERGE_SHA}" --jq .sha)"
           gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
             -f "ref=refs/heads/${lock_ref_name}" -f "sha=${lock_sha}" >/dev/null
+          trap release_lock EXIT
           while true; do
             refs_json="$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/git/matching-refs/heads/release-latest-lock/")"
             owners="${lock_owner}\n"
@@ -580,7 +581,6 @@ jobs:
             fi
             sleep 5
           done
-          trap release_lock EXIT
           highest="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq '.[] | select(.prerelease == false) | .tag_name' | python3 -c '
           import re, sys
           versions = []
