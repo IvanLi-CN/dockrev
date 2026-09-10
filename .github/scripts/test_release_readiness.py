@@ -79,6 +79,7 @@ original_readiness_git = module.git
 original_fetch_tags = module.release_snapshot.fetch_tags
 original_fetch_notes = module.release_snapshot.fetch_notes_ref
 original_read_publication = module.release_snapshot.read_publication
+original_read_snapshot = module.release_snapshot.read_snapshot
 original_read_override = module.release_snapshot.read_override
 original_released = module.release_snapshot.released_commits_from_tags
 original_first_parent = module.release_snapshot.first_parent_commits
@@ -135,11 +136,25 @@ try:
             assert "main first-parent chain" in str(error)
         else:
             raise AssertionError("recovery preflight accepted a side-branch target")
+        preanchor = "e" * 40
+        trusted_anchor = "f" * 40
+        module.release_snapshot.first_parent_commits = lambda _ref: [preanchor, trusted_anchor, new_target]
+        module.release_snapshot.released_commits_from_tags = lambda _target: {preanchor, trusted_anchor}
+        module.release_snapshot.read_snapshot = lambda *_args: None
+        module.release_snapshot.read_publication = lambda _ref, target: {"target_sha": target} if target == trusted_anchor else None
+        args.target_sha = new_target
+        try:
+            module.recover_preflight(args)
+        except module.ReadinessError as error:
+            assert preanchor in str(error)
+        else:
+            raise AssertionError("recovery preflight bypassed an older untrusted tag")
 finally:
     module.git = original_readiness_git
     module.release_snapshot.fetch_tags = original_fetch_tags
     module.release_snapshot.fetch_notes_ref = original_fetch_notes
     module.release_snapshot.read_publication = original_read_publication
+    module.release_snapshot.read_snapshot = original_read_snapshot
     module.release_snapshot.read_override = original_read_override
     module.release_snapshot.released_commits_from_tags = original_released
     module.release_snapshot.first_parent_commits = original_first_parent

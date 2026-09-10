@@ -294,6 +294,23 @@ def recover_preflight(args: argparse.Namespace) -> int:
             trusted_tagged.add(commit)
     tagged_indices = [main_commits.index(commit) for commit in trusted_tagged if commit in main_commits]
     anchor_index = max(tagged_indices, default=-1)
+    for commit in main_commits[: anchor_index + 1]:
+        if commit not in tagged or commit in trusted_tagged:
+            continue
+        pr = release_snapshot.load_pr_for_commit(
+            args.api_root,
+            args.repository,
+            args.token,
+            commit,
+            allow_zero=True,
+        )
+        if pr is None:
+            continue
+        type_label, _channel_label = release_snapshot.parse_release_labels(release_snapshot.current_pr_labels(pr))
+        if type_label not in {"type:docs", "type:skip"}:
+            raise ReadinessError(
+                f"older tagged release-enabled target {commit} lacks complete publication ledger; refusing to bypass"
+            )
     released = {
         commit
         for commit in main_commits[anchor_index + 1 : target_index + 1]
