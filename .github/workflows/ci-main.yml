@@ -125,7 +125,12 @@ jobs:
           ref: ${{ env.CI_TARGET_SHA }}
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libsqlite3-dev
+        run: |
+          sudo apt-get update \
+            -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources \
+            -o Dir::Etc::sourceparts=- \
+            -o APT::Get::List-Cleanup=0
+          sudo apt-get install -y pkg-config libsqlite3-dev
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@v1
@@ -183,7 +188,12 @@ jobs:
           ref: ${{ env.CI_TARGET_SHA }}
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libsqlite3-dev
+        run: |
+          sudo apt-get update \
+            -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources \
+            -o Dir::Etc::sourceparts=- \
+            -o APT::Get::List-Cleanup=0
+          sudo apt-get install -y pkg-config libsqlite3-dev
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@v1
