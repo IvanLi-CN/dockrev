@@ -24,7 +24,7 @@ release = text(".github/workflows/release.yml")
 notify = text(".github/workflows/notify-release-failure.yml")
 ci_pr = text(".github/workflows/ci-pr.yml")
 
-assert "name: Label Gate" in label_gate and "pull_request_target:" in label_gate
+assert "name: Label Gate" in label_gate and "pull_request:" in label_gate and "pull_request_target:" in label_gate
 assert "ref: ${{ github.event.pull_request.base.sha }}" in label_gate
 assert "ref: ${{ github.event.pull_request.head.sha }}" not in label_gate
 assert not (ROOT / ".github/workflows/release-completion-pr.yml").exists()
