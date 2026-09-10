@@ -606,6 +606,14 @@ try:
     identity.api_json = fake_identity_api
     resolved_api = identity.resolve_github("https://api.github.test", "token", "IvanLi-CN/dockrev", prep_sha)
     assert resolved_api["release_tag"] == "v0.1.1"
+    def fake_mixed_identity_api(_api_root, _token, path):
+        payload = fake_identity_api(_api_root, _token, path)
+        if path.endswith(f"/commits/{prep_sha}"):
+            payload["commit"]["message"] += f"\nCovered-Product-Merge-SHA: {source_sha}"
+        return payload
+
+    identity.api_json = fake_mixed_identity_api
+    expect_error(identity.resolve_github, "https://api.github.test", "token", "IvanLi-CN/dockrev", prep_sha)
 finally:
     identity.api_json = original_identity_api_json
 

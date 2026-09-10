@@ -48,6 +48,8 @@ assert "steps.upload_identity.outcome == 'failure'" in release
 assert "release-publish-${{ needs.identity.outputs.merge_sha }}" in release
 assert "release-latest-lock" in release
 assert "Release-Latest-Lock-Run:" in release
+assert "matching-refs/heads/release-latest-lock/" in release
+assert "HTTP 404|Not Found|404" in release
 assert "tr '[:upper:]' '[:lower:]'" in release
 assert "overwrite: true" in release
 assert "github.run_attempt" in release

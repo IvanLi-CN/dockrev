@@ -537,46 +537,48 @@ jobs:
           GHCR_OWNER: ${{ steps.ghcr-owner.outputs.owner }}
         run: |
           set -euo pipefail
-          lock_ref="repos/${GITHUB_REPOSITORY}/git/ref/heads/release-latest-lock"
+          lock_suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          lock_ref_name="release-latest-lock/${lock_suffix}"
+          lock_ref="repos/${GITHUB_REPOSITORY}/git/ref/heads/${lock_ref_name}"
           lock_owner="${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}"
           release_lock() {
             gh api --method DELETE "${lock_ref}" >/dev/null 2>&1 || true
           }
+          tree_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${MERGE_SHA}" --jq '.commit.tree.sha')"
+          lock_message="$(printf 'Release latest promotion lock\n\nRelease-Latest-Lock-Run: %s\nRelease-Latest-Lock-Attempt: %s\nRelease-Latest-Lock-Merge-SHA: %s' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${MERGE_SHA}")"
+          lock_sha="$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/commits" \
+            -f "message=${lock_message}" \
+            -f "tree=${tree_sha}" -f "parents[]=${MERGE_SHA}" --jq .sha)"
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f "ref=refs/heads/${lock_ref_name}" -f "sha=${lock_sha}" >/dev/null
           while true; do
-            if existing_lock="$(gh api "${lock_ref}" 2>/tmp/release-latest-lock-error)"; then
-              lock_sha="$(jq -r '.object.sha' <<<"${existing_lock}")"
-              lock_message="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${lock_sha}" --jq '.commit.message')"
-              existing_owner="$(sed -n 's/^Release-Latest-Lock-Run: //p' <<<"${lock_message}")"
-              existing_attempt="$(sed -n 's/^Release-Latest-Lock-Attempt: //p' <<<"${lock_message}")"
-              if [[ "${existing_owner}:${existing_attempt}" == "${lock_owner}" ]]; then
-                break
+            refs_json="$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/git/matching-refs/heads/release-latest-lock/")"
+            owners="${lock_owner}\n"
+            while IFS= read -r ref; do
+              suffix="${ref#refs/heads/release-latest-lock/}"
+              if [[ "${suffix}" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+                existing_run="${BASH_REMATCH[1]}"
+                existing_attempt="${BASH_REMATCH[2]}"
+                if [[ "${existing_run}" == "${GITHUB_RUN_ID}" && "${existing_attempt}" != "${GITHUB_RUN_ATTEMPT}" ]]; then
+                  continue
+                fi
+                if run_status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${existing_run}" --jq '.status' 2>/tmp/release-latest-lock-run-error)"; then
+                  if [[ "${run_status}" != "completed" ]]; then
+                    owners+="${existing_run}:${existing_attempt}\n"
+                  fi
+                else
+                  status=$?
+                  if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 404|Not Found|404' /tmp/release-latest-lock-run-error; then
+                    cat /tmp/release-latest-lock-run-error >&2
+                    exit "${status}"
+                  fi
+                fi
               fi
-              lock_status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${existing_owner}" --jq '.status' 2>/dev/null || printf 'missing')"
-              if [[ "${lock_status}" == "completed" || "${lock_status}" == "missing" ]]; then
-                release_lock
-                continue
-              fi
-              sleep 5
-              continue
-            fi
-            status=$?
-            if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 404|Not Found|404' /tmp/release-latest-lock-error; then
-              cat /tmp/release-latest-lock-error >&2
-              exit "${status}"
-            fi
-            tree_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${MERGE_SHA}" --jq '.commit.tree.sha')"
-            lock_message="$(printf 'Release latest promotion lock\n\nRelease-Latest-Lock-Run: %s\nRelease-Latest-Lock-Attempt: %s\nRelease-Latest-Lock-Merge-SHA: %s' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${MERGE_SHA}")"
-            lock_sha="$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/commits" \
-              -f "message=${lock_message}" \
-              -f "tree=${tree_sha}" -f "parents[]=${MERGE_SHA}" --jq .sha)"
-            if gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-              -f ref=refs/heads/release-latest-lock -f "sha=${lock_sha}" >/dev/null 2>/tmp/release-latest-lock-create-error; then
+            done < <(jq -r '.[][]?.ref' <<<"${refs_json}")
+            if [[ "$(printf '%b' "${owners}" | sort -t: -k1,1n -k2,2n | head -1)" == "${lock_owner}" ]]; then
               break
             fi
-            if ! rg -q 'HTTP 422|Reference already exists|422' /tmp/release-latest-lock-create-error; then
-              cat /tmp/release-latest-lock-create-error >&2
-              exit 1
-            fi
+            sleep 5
           done
           trap release_lock EXIT
           highest="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq '.[] | select(.prerelease == false) | .tag_name' | python3 -c '
@@ -626,10 +628,61 @@ jobs:
         env:
           MERGE_SHA: ${{ inputs.merge_sha || github.sha }}
           FAILURE_KIND: ${{ needs.identity.outputs.identity_failure_kind || 'resolver-error' }}
+          RESOLVED_IDENTITY_AVAILABLE: ${{ needs.identity.outputs.release_enabled == 'true' }}
+          RESOLVED_PR: ${{ needs.identity.outputs.pull_request }}
+          RESOLVED_SOURCE: ${{ needs.identity.outputs.source_sha }}
+          RESOLVED_MERGE: ${{ needs.identity.outputs.merge_sha }}
+          RESOLVED_TYPE: ${{ needs.identity.outputs.type }}
+          RESOLVED_CHANNEL: ${{ needs.identity.outputs.channel }}
+          RESOLVED_VERSION: ${{ needs.identity.outputs.version }}
+          RESOLVED_TAG: ${{ needs.identity.outputs.release_tag }}
         run: |
           set -euo pipefail
           if [[ -f identity-failure-context/identity-failure-context.json ]]; then
             cp identity-failure-context/identity-failure-context.json release-failure-context.json
+            exit 0
+          fi
+          if [[ "${RESOLVED_IDENTITY_AVAILABLE}" == "true" ]]; then
+            export RESOLVED_PR RESOLVED_SOURCE RESOLVED_MERGE RESOLVED_TYPE RESOLVED_CHANNEL RESOLVED_VERSION RESOLVED_TAG
+          python3 - <<'PY'
+          import json
+          import os
+          version = os.environ["RESOLVED_VERSION"]
+          merge_sha = os.environ["RESOLVED_MERGE"]
+          expected = [
+              suffix
+              for base in [
+                  f"{binary}_{version}_linux_{arch}_{libc}"
+                  for arch in ("amd64", "arm64")
+                  for libc in ("gnu", "musl")
+                  for binary in ("dockrev", "dockrev-supervisor")
+              ]
+              for suffix in (f"{base}.tar.gz", f"{base}.tar.gz.sha256")
+          ]
+          payload = {
+              "pull_request": int(os.environ["RESOLVED_PR"] or "0"),
+              "source_sha": os.environ["RESOLVED_SOURCE"],
+              "merge_commit_sha": merge_sha,
+              "type": os.environ["RESOLVED_TYPE"],
+              "channel": os.environ["RESOLVED_CHANNEL"],
+              "version": version,
+              "tag": os.environ["RESOLVED_TAG"],
+              "artifact_names": expected,
+              "run_url": f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+              "recovery_instruction": f"workflow_dispatch merge_sha={merge_sha} recovery_reason=<required>",
+              "identity_resolution_failed": False,
+              "identity_failure_kind": "identity-step-failure",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "workflow": "Release",
+              "event": os.environ["GITHUB_EVENT_NAME"],
+              "ref": os.environ["GITHUB_REF"],
+              "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+              "actor": os.environ["GITHUB_ACTOR"],
+          }
+          with open("release-failure-context.json", "w", encoding="utf-8") as handle:
+              json.dump(payload, handle, sort_keys=True)
+              handle.write("\n")
+          PY
             exit 0
           fi
           if ! [[ "${MERGE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then MERGE_SHA="${GITHUB_SHA}"; fi
