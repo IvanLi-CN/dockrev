@@ -50,7 +50,8 @@ assert "steps.resolve.outputs.release_enabled == 'true'" in release
 assert "resolver-error: retry Release workflow" in release
 assert '"identity_failure_kind": "identity-step-failure"' in text(".github/scripts/release_failure_context.py")
 assert "steps.upload_identity.outcome == 'failure'" in release
-assert "release-publish-${{ needs.identity.outputs.merge_sha }}" in release
+assert "release-publish-stable" in release
+assert "format('release-publish-{0}', needs.identity.outputs.merge_sha)" in release
 assert "release-latest-lock" in release
 assert "Release-Latest-Lock-Run:" in release
 assert "matching-refs/heads/release-latest-lock/" in release

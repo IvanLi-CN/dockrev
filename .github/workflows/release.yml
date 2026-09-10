@@ -438,7 +438,7 @@ jobs:
       packages: write
       actions: read
     concurrency:
-      group: release-publish-${{ needs.identity.outputs.merge_sha }}
+      group: ${{ needs.identity.outputs.channel == 'stable' && 'release-publish-stable' || format('release-publish-{0}', needs.identity.outputs.merge_sha) }}
       cancel-in-progress: false
     env:
       VERSION: ${{ needs.identity.outputs.version }}
