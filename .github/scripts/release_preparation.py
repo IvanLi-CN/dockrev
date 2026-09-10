@@ -93,7 +93,11 @@ def workflow_runs_for_pr(
             run for run in runs
             if any(
                 item.get("number") == pr_number
-                and (source_sha is None or run.get("head_sha") == source_sha)
+                and (
+                    source_sha is None
+                    or run.get("head_sha") == source_sha
+                    or item.get("head", {}).get("sha") == source_sha
+                )
                 for item in run.get("pull_requests", [])
             )
         )
