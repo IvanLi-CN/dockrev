@@ -167,22 +167,36 @@ try:
         preparation_script.pull_request = lambda *_args: {
             "state": "open",
             "base": {"ref": "main"},
-            "head": {"sha": source_sha, "ref": "recovery/version-only", "repo": {"full_name": "IvanLi-CN/dockrev"}},
+            "head": {"sha": prep_sha, "ref": "recovery/version-only", "repo": {"full_name": "IvanLi-CN/dockrev"}},
             "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
         }
+        covered_merge_sha = "c" * 40
+        covered_head_sha = "d" * 40
         def fake_version_only_api(_api_root, _token, _method, path, _payload=None):
-            if path.endswith(f"/commits/{source_sha}"):
+            if path.endswith(f"/commits/{prep_sha}"):
                 return {
                     "commit": {
                         "message": (
                             "VERSION-only recovery\n\n"
-                            "Covered-Product-Merge-SHA: " + source_sha + "\n"
+                            "Covered-Product-Merge-SHA: " + covered_merge_sha + "\n"
                             "Product-Version: 0.1.1\n"
                             "Release-Intent: type:patch channel:stable\n"
                             "Release-Mode: version-only-release-pr"
                         )
                     }
                 }
+            if path.endswith(f"/commits/{covered_merge_sha}/pulls"):
+                return [{
+                    "number": 41,
+                    "state": "closed",
+                    "merged_at": "2026-01-01T00:00:00Z",
+                    "merge_commit_sha": covered_merge_sha,
+                    "base": {"ref": "main"},
+                    "head": {"sha": covered_head_sha},
+                    "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
+                }]
+            if path.endswith(f"/commits/{covered_head_sha}"):
+                return {"commit": {"message": "Product change"}}
             raise AssertionError(path)
 
         preparation_script.api_request = fake_version_only_api
@@ -305,9 +319,9 @@ try:
             value = "0.1.0" if source_sha in path else "0.1.1"
             encoded = __import__("base64").b64encode(value.encode()).decode()
             return {"encoding": "base64", "content": encoded}
-        if path.endswith("/actions/workflows/ci-pr.yml/runs?per_page=100"):
+        if "/actions/workflows/ci-pr.yml/runs?per_page=100&page=" in path:
             return {"workflow_runs": [{"head_sha": source_sha, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 42}]}]}
-        if path.endswith("/actions/workflows/label-gate.yml/runs?per_page=100"):
+        if "/actions/workflows/label-gate.yml/runs?per_page=100&page=" in path:
             return {"workflow_runs": [{"head_sha": source_sha, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 42, "head": {"sha": source_sha}}]}]}
         if path.endswith("/git/ref/tags/v0.1.1"):
             if tag_exists:

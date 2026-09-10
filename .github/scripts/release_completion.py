@@ -47,19 +47,25 @@ def workflow_runs_for_pr(
     source_sha: str | None = None,
 ) -> list[dict[str, Any]]:
     owner, name = repository.split("/", 1)
-    runs = api_json(
-        api_root,
-        token,
-        f"/repos/{owner}/{name}/actions/workflows/{workflow_file}/runs?per_page=100",
-    ).get("workflow_runs", [])
-    return [
-        run for run in runs
-        if any(
-            item.get("number") == pr_number
-            and (source_sha is None or item.get("head", {}).get("sha") == source_sha)
-            for item in run.get("pull_requests", [])
+    result: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        runs = api_json(
+            api_root,
+            token,
+            f"/repos/{owner}/{name}/actions/workflows/{workflow_file}/runs?per_page=100&page={page}",
+        ).get("workflow_runs", [])
+        result.extend(
+            run for run in runs
+            if any(
+                item.get("number") == pr_number
+                and (source_sha is None or run.get("head_sha") == source_sha)
+                for item in run.get("pull_requests", [])
+            )
         )
-    ]
+        if len(runs) < 100:
+            return result
+        page += 1
 
 
 def covered_product_boundary(
@@ -72,6 +78,16 @@ def covered_product_boundary(
     pr = pulls[0]
     if pr.get("base", {}).get("ref") != "main" or pr.get("state") != "closed" or not pr.get("merged_at"):
         raise CompletionError("covered product boundary is not a merged main PR")
+    if pr.get("merge_commit_sha") != covered_merge_sha:
+        raise CompletionError("covered product boundary does not match the exact merge SHA")
+    try:
+        covered_intent = release_policy.parse_labels(
+            [item.get("name") for item in pr.get("labels", []) if item.get("name")]
+        )
+    except release_policy.PolicyError as error:
+        raise CompletionError(f"covered product labels are invalid: {error}") from error
+    if not covered_intent["release_enabled"]:
+        raise CompletionError("version-only release PR must cover a release-enabled product PR")
     head_sha = pr.get("head", {}).get("sha", "")
     release_policy.validate_sha(head_sha, "covered_product_head_sha")
     commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{head_sha}")
@@ -331,10 +347,8 @@ def load_github_completion(
     else:
         raise CompletionError("PR head has no accepted release provenance")
     tag_reserved = tag_is_available(api_root, token, repository, version_for_tag)
-    if mode == "normal-preparation":
-        tag_reserved = tag_reserved and version_reservation_is_owned(
-            api_root, token, repository, version_for_tag, source_sha
-        )
+    if mode in {"normal-preparation", "version-only-release-pr"}:
+        tag_reserved = tag_reserved and version_reservation_is_owned(api_root, token, repository, version_for_tag, source_sha)
     tag_reserved = tag_reserved and tag_is_reserved_by_other_pr(
         api_root, token, repository, version_for_tag, pr_number
     )

@@ -53,6 +53,8 @@ def merged_pr(api_root: str, token: str, repository: str, merge_sha: str) -> tup
     pr = pulls[0]
     if pr.get("base", {}).get("ref") != "main" or pr.get("state") != "closed" or not pr.get("merged_at"):
         raise IdentityError("release commit is not one merged main product PR")
+    if pr.get("merge_commit_sha") != merge_sha:
+        raise IdentityError("release commit is not the exact PR merge SHA")
     return pr, {}
 
 
@@ -92,6 +94,14 @@ def covered_product_boundary(
     owner, name = repository_parts(repository)
     head_sha = pr.get("head", {}).get("sha", "")
     release_policy.validate_sha(head_sha, "covered_product_head_sha")
+    try:
+        covered_intent = release_policy.parse_labels(
+            [item.get("name") for item in pr.get("labels", []) if item.get("name")]
+        )
+    except release_policy.PolicyError as error:
+        raise IdentityError(f"covered product labels are invalid: {error}") from error
+    if not covered_intent["release_enabled"]:
+        raise IdentityError("version-only release PR must cover a release-enabled product PR")
     commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{head_sha}")
     trailers = release_policy.parse_trailers(commit.get("commit", {}).get("message", ""))
     if any(trailers.get(key) for key in ("Release-Mode", "Product-Version", "Release-Intent")):
@@ -158,17 +168,22 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
         pr_intent = release_policy.parse_labels(labels)
     except release_policy.PolicyError as error:
         raise IdentityError(f"merged product PR labels are invalid: {error}") from error
+    owner, name = repository_parts(repository)
+    head_sha = pr.get("head", {}).get("sha", "")
+    head_commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{head_sha}")
+    trailers = release_policy.parse_trailers(head_commit.get("commit", {}).get("message", ""))
     if not pr_intent["release_enabled"]:
+        if any(
+            trailers.get(key)
+            for key in ("Release-Mode", "Source-SHA", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")
+        ):
+            raise IdentityError("type:none labels conflict with merged release identity")
         return {
             "release_enabled": False,
             "merge_commit_sha": merge_sha,
             "pull_request": pr.get("number"),
             "reason": "type:none",
         }
-    owner, name = repository_parts(repository)
-    head_sha = pr.get("head", {}).get("sha", "")
-    head_commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{head_sha}")
-    trailers = release_policy.parse_trailers(head_commit.get("commit", {}).get("message", ""))
     mode = trailers.get("Release-Mode")
     if mode not in {"normal-preparation", "version-only-release-pr"}:
         if mode or any(trailers.get(key) for key in ("Source-SHA", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")):
@@ -187,6 +202,11 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
     verified = head_commit.get("commit", {}).get("verification", {}).get("verified") is True
     release_intent = trailers.get("Release-Intent", "")
     intent = intent_from_trailer(release_intent)
+    if (
+        intent["type_label"] != pr_intent["type_label"]
+        or intent["channel_label"] != pr_intent["channel_label"]
+    ):
+        raise IdentityError("merged PR labels do not match frozen release intent")
     version_file = version_at_commit(api_root, token, repository, merge_sha)
     if version_file != version:
         raise IdentityError("merged commit VERSION does not match Product-Version provenance")

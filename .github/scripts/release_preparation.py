@@ -80,20 +80,26 @@ def workflow_runs_for_pr(
     source_sha: str | None = None,
 ) -> list[dict[str, Any]]:
     owner, name = repository_parts(repository)
-    runs = api_request(
-        api_root,
-        token,
-        "GET",
-        f"/repos/{owner}/{name}/actions/workflows/{urllib.parse.quote(workflow_file, safe='')}/runs?per_page=100",
-    ).get("workflow_runs", [])
-    return [
-        run for run in runs
-        if any(
-            item.get("number") == pr_number
-            and (source_sha is None or item.get("head", {}).get("sha") == source_sha)
-            for item in run.get("pull_requests", [])
+    result: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        runs = api_request(
+            api_root,
+            token,
+            "GET",
+            f"/repos/{owner}/{name}/actions/workflows/{urllib.parse.quote(workflow_file, safe='')}/runs?per_page=100&page={page}",
+        ).get("workflow_runs", [])
+        result.extend(
+            run for run in runs
+            if any(
+                item.get("number") == pr_number
+                and (source_sha is None or run.get("head_sha") == source_sha)
+                for item in run.get("pull_requests", [])
+            )
         )
-    ]
+        if len(runs) < 100:
+            return result
+        page += 1
 
 
 def source_ci_ready(api_root: str, token: str, repository: str, pr_number: int, source_sha: str) -> None:
@@ -135,6 +141,33 @@ def pull_requests(api_root: str, token: str, repository: str, state: str) -> lis
         if len(batch) < 100:
             return result
         page += 1
+
+
+def covered_product_head_sha(api_root: str, token: str, repository: str, merge_sha: str) -> str:
+    owner, name = repository_parts(repository)
+    pulls = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{merge_sha}/pulls")
+    if not isinstance(pulls, list) or len(pulls) != 1:
+        raise PreparationError("version-only release PR must cover exactly one merged product PR")
+    product = pulls[0]
+    if product.get("base", {}).get("ref") != "main" or product.get("state") != "closed" or not product.get("merged_at"):
+        raise PreparationError("covered product boundary is not a merged main PR")
+    if product.get("merge_commit_sha") != merge_sha:
+        raise PreparationError("covered product boundary does not match the exact merge SHA")
+    try:
+        product_intent = release_policy.parse_labels(
+            [item.get("name") for item in product.get("labels", []) if item.get("name")]
+        )
+    except release_policy.PolicyError as error:
+        raise PreparationError(f"covered product labels are invalid: {error}") from error
+    if not product_intent["release_enabled"]:
+        raise PreparationError("version-only release PR must cover a release-enabled product PR")
+    head_sha = product.get("head", {}).get("sha", "")
+    release_policy.validate_sha(head_sha, "covered_product_head_sha")
+    commit = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{head_sha}")
+    trailers = release_policy.parse_trailers(commit.get("commit", {}).get("message", ""))
+    if any(trailers.get(key) for key in ("Release-Mode", "Product-Version", "Release-Intent")):
+        raise PreparationError("covered product PR already has release identity")
+    return head_sha
 
 
 def reserve_tag(api_root: str, token: str, repository: str, version: str, pr_number: int, source_sha: str) -> None:
@@ -338,13 +371,17 @@ def create(args: argparse.Namespace) -> int:
             release_policy.validate_channel_version(version, intent["channel"])
         except release_policy.PolicyError as error:
             raise PreparationError(str(error)) from error
+        covered_head_sha = covered_product_head_sha(
+            args.api_root, args.token, args.repository, head_trailers["Covered-Product-Merge-SHA"]
+        )
+        reserve_tag(args.api_root, args.token, args.repository, version, args.pr_number, covered_head_sha)
         write_json(
             args.output,
             {
                 "schema_version": 1,
                 "release_enabled": True,
                 "pr_number": args.pr_number,
-                "source_sha": source_sha,
+                "source_sha": covered_head_sha,
                 "preparation_commit_sha": source_sha,
                 "version": version,
                 "release_tag": f"v{version}",
