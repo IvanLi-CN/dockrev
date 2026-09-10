@@ -328,6 +328,7 @@ def load_github_completion(
     source_sha = head_sha
     preparation = None
     provenance = None
+    covered_pr = None
     commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{head_sha}")
     parents = [parent.get("sha") for parent in commit.get("parents", [])]
     files = sorted({entry.get("filename") for entry in commit.get("files", []) if entry.get("filename")})
@@ -391,6 +392,13 @@ def load_github_completion(
         files = pull_request_changed_files(api_root, token, repository, pr_number)
     else:
         provenance = None
+    source_pr_number = covered_pr.get("number") if mode == "version-only-release-pr" and covered_pr else pr_number
+    try:
+        release_policy.validate_source_boundary(
+            pull_request_changed_files(api_root, token, repository, int(source_pr_number))
+        )
+    except release_policy.PolicyError as error:
+        raise CompletionError(str(error)) from error
     version_file = version_at_commit(api_root, token, repository, head_sha)
     check_sha = source_sha
     check_pr_number = covered_pr.get("number") if mode == "version-only-release-pr" else pr_number

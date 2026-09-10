@@ -9,8 +9,8 @@ on:
     types: [opened, synchronize, reopened, edited, labeled, unlabeled, ready_for_review]
 
 concurrency:
-  group: label-gate-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: label-gate-${{ github.event_name }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -19,6 +19,9 @@ permissions:
 jobs:
   label-gate:
     name: Label Gate
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      github.event.pull_request.base.sha == '759b0cf9c0d5a57be1010e74480cbb5ae713433c'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

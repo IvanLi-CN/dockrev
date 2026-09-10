@@ -9,6 +9,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -106,7 +107,28 @@ def workflow_runs_for_pr(
         page += 1
 
 
+def pull_request_changed_files(api_root: str, token: str, repository: str, number: int) -> list[str]:
+    owner, name = repository_parts(repository)
+    files: list[str] = []
+    page = 1
+    while True:
+        batch = api_request(
+            api_root,
+            token,
+            "GET",
+            f"/repos/{owner}/{name}/pulls/{number}/files?per_page=100&page={page}",
+        )
+        files.extend(str(item.get("filename")) for item in batch if item.get("filename"))
+        if len(batch) < 100:
+            return sorted(set(files))
+        page += 1
+
+
 def source_ci_ready(api_root: str, token: str, repository: str, pr_number: int, source_sha: str) -> None:
+    try:
+        release_policy.validate_source_boundary(pull_request_changed_files(api_root, token, repository, pr_number))
+    except release_policy.PolicyError as error:
+        raise PreparationError(str(error)) from error
     ci_runs = [run for run in workflow_runs_for_pr(api_root, token, repository, "ci-pr.yml", pr_number) if run.get("head_sha") == source_sha]
     if not any(run.get("status") == "completed" and run.get("conclusion") == "success" for run in ci_runs):
         raise PreparationError("source SHA does not have a successful complete CI (PR) run")
@@ -345,7 +367,15 @@ def create_commit(
 
 def inspect_commit(api_root: str, token: str, repository: str, branch: str, commit_sha: str, source_sha: str, version: str, intent: dict[str, Any]) -> dict[str, Any]:
     owner, name = repository_parts(repository)
-    commit = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{commit_sha}")
+    commit = None
+    for attempt in range(5):
+        candidate = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{commit_sha}")
+        commit = candidate
+        verification = candidate.get("commit", {}).get("verification", {})
+        if verification.get("verified") is True or attempt == 4:
+            break
+        time.sleep(2)
+    assert commit is not None
     ref = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(branch, safe='')}")
     head_sha = ref.get("object", {}).get("sha")
     files = sorted({item.get("filename") for item in commit.get("files", []) if item.get("filename")})

@@ -48,6 +48,7 @@ policy.validate_channel_version("0.2.0-dev.3", "dev")
 policy.validate_preparation_version("0.1.0", "0.1.1-beta.1", {"type": "patch", "channel": "beta"})
 expect_error(policy.parse_labels, ["type:patch", "type:minor", "channel:stable"])
 expect_error(policy.parse_labels, ["type:patch", "channel:rc"])
+expect_error(policy.validate_source_boundary, [".github/workflows/ci-pr.yml"])
 expect_error(policy.next_patch, "0.1.0-beta.1")
 expect_error(policy.validate_channel_version, "0.1.1", "beta")
 expect_error(policy.validate_channel_version, "0.1.1-beta.preview", "beta")
@@ -479,6 +480,8 @@ try:
             return {"parents": [], "files": [], "commit": {"message": "Product change"}}
         if path.endswith(f"/pulls/42/files?per_page=100&page=1"):
             return [{"filename": "VERSION"}]
+        if path.endswith(f"/pulls/41/files?per_page=100&page=1"):
+            return []
         if "/contents/VERSION?ref=" in path:
             encoded = __import__("base64").b64encode(b"0.1.1").decode()
             return {"encoding": "base64", "content": encoded}
@@ -584,6 +587,11 @@ version_only = {
 }
 assert completion.validate_completion(version_only)["status"] == "pass"
 expect_error(completion.validate_completion, {**version_only, "changed_files": []})
+expect_error(
+    policy.validate_version_only,
+    version_only["changed_files"],
+    {**version_only["provenance"], "product_version": "0.1.1-beta.1"},
+)
 expect_error(completion.validate_completion, {**version_only, "provenance": {**version_only["provenance"], "covered_product_merge_sha": "bad"}})
 expect_error(
     completion.validate_completion,

@@ -76,6 +76,10 @@ jobs:
         run: |
           set -euo pipefail
           [[ "${MERGE_SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo "merge_sha must be a 40-character lowercase SHA" >&2; exit 2; }
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.ref }}" != "refs/heads/main" ]]; then
+            echo "same-SHA recovery is only allowed from refs/heads/main" >&2
+            exit 2
+          fi
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && -z "${RECOVERY_REASON//[[:space:]]/}" ]]; then
             echo "recovery_reason is required for same-SHA recovery" >&2
             exit 2
@@ -555,6 +559,8 @@ jobs:
         run: |
           set -euo pipefail
           lock_ref_name="release-latest-lock"
+          lock_error_dir="${RUNNER_TEMP:-/tmp}/dockrev-release-latest-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "${lock_error_dir}"
           lock_read_ref="repos/${GITHUB_REPOSITORY}/git/ref/heads/${lock_ref_name}"
           lock_update_ref="repos/${GITHUB_REPOSITORY}/git/refs/heads/${lock_ref_name}"
           lock_head_sha=""
@@ -569,24 +575,24 @@ jobs:
           }
           tree_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${MERGE_SHA}" --jq '.commit.tree.sha')"
           while true; do
-            lock_json="$(gh api "${lock_read_ref}" 2>/tmp/release-latest-lock-ref-error || true)"
+            lock_json="$(gh api "${lock_read_ref}" 2>"${lock_error_dir}/ref-error" || true)"
             if [[ -z "${lock_json}" ]]; then
-              if rg -q 'HTTP 404|Not Found|404' /tmp/release-latest-lock-ref-error; then
+              if rg -q 'HTTP 404|Not Found|404' "${lock_error_dir}/ref-error"; then
                 initial_message="$(printf 'Release latest promotion lock\n\nRelease-Latest-Lock-State: released')"
                 initial_sha="$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/commits" \
                   -f "message=${initial_message}" -f "tree=${tree_sha}" -f "parents[]=${MERGE_SHA}" --jq .sha)"
                 if gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-                  -f "ref=refs/heads/${lock_ref_name}" -f "sha=${initial_sha}" >/dev/null 2>/tmp/release-latest-lock-create-error; then
+                  -f "ref=refs/heads/${lock_ref_name}" -f "sha=${initial_sha}" >/dev/null 2>"${lock_error_dir}/create-error"; then
                   continue
                 else
                   status=$?
-                  if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 422|Reference already exists|already exists' /tmp/release-latest-lock-create-error; then
-                    cat /tmp/release-latest-lock-create-error >&2
+                  if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 422|Reference already exists|already exists' "${lock_error_dir}/create-error"; then
+                    cat "${lock_error_dir}/create-error" >&2
                     exit "${status}"
                   fi
                 fi
               else
-                cat /tmp/release-latest-lock-ref-error >&2
+                cat "${lock_error_dir}/ref-error" >&2
                 exit 1
               fi
               sleep 1
@@ -605,12 +611,12 @@ jobs:
                 trap release_lock EXIT
                 break
               fi
-              if run_status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${owner_run}/attempts/${owner_attempt}" --jq '.status' 2>/tmp/release-latest-lock-run-error)"; then
+              if run_status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${owner_run}/attempts/${owner_attempt}" --jq '.status' 2>"${lock_error_dir}/run-error")"; then
                 [[ "${run_status}" == "completed" ]] || { sleep 5; continue; }
               else
                 status=$?
-                if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 404|Not Found|404' /tmp/release-latest-lock-run-error; then
-                  cat /tmp/release-latest-lock-run-error >&2
+                if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 404|Not Found|404' "${lock_error_dir}/run-error"; then
+                  cat "${lock_error_dir}/run-error" >&2
                   exit "${status}"
                 fi
               fi
@@ -622,14 +628,14 @@ jobs:
             acquire_message="$(printf 'Release latest promotion lock\n\nRelease-Latest-Lock-State: acquired\nRelease-Latest-Lock-Run: %s\nRelease-Latest-Lock-Attempt: %s\nRelease-Latest-Lock-Merge-SHA: %s' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${MERGE_SHA}")"
             acquire_sha="$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/commits" \
               -f "message=${acquire_message}" -f "tree=${current_tree}" -f "parents[]=${current_sha}" --jq .sha)"
-            if gh api --method PATCH "${lock_update_ref}" -f "sha=${acquire_sha}" -F force=false >/dev/null 2>/tmp/release-latest-lock-update-error; then
+            if gh api --method PATCH "${lock_update_ref}" -f "sha=${acquire_sha}" -F force=false >/dev/null 2>"${lock_error_dir}/update-error"; then
               lock_head_sha="${acquire_sha}"
               trap release_lock EXIT
               break
             else
               status=$?
-              if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 409|HTTP 422|non-fast-forward|fast forward' /tmp/release-latest-lock-update-error; then
-                cat /tmp/release-latest-lock-update-error >&2
+              if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 409|HTTP 422|non-fast-forward|fast forward' "${lock_error_dir}/update-error"; then
+                cat "${lock_error_dir}/update-error" >&2
                 exit "${status}"
               fi
             fi

@@ -28,6 +28,9 @@ ci_pr = text(".github/workflows/ci-pr.yml")
 assert "name: Label Gate" in label_gate and "pull_request:" in label_gate and "pull_request_target:" in label_gate
 assert "ref: ${{ github.event.pull_request.base.sha }}" in label_gate
 assert "ref: ${{ github.event.pull_request.head.sha }}" not in label_gate
+assert "github.event_name == 'pull_request_target'" in label_gate
+assert "github.event.pull_request.base.sha == '759b0cf9c0d5a57be1010e74480cbb5ae713433c'" in label_gate
+assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in label_gate
 assert "name: Release completion" in completion
 assert "pull_request_target:" in completion and "pull_request:" in completion
 assert "ref: ${{ github.event.pull_request.base.sha }}" in completion
@@ -37,6 +40,10 @@ assert "group: release-preparation-${{ inputs.pr_number || github.event.workflow
 assert "name: Prepare PR VERSION identity" in preparation
 assert "release-reservation" in text(".github/scripts/release_preparation.py")
 assert "actions: read" in preparation
+assert "checks: read" in preparation
+assert "checks: read" in completion
+assert "checks: read" in preparation
+assert "checks: read" in completion
 assert "ref: main" in preparation
 assert "createCommitOnBranch" in text(".github/scripts/release_preparation.py")
 assert "branches: [main]" in release and "merge_sha:" in release and "recovery_reason:" in release
@@ -68,6 +75,7 @@ assert release.index("trap release_lock EXIT") > release.index("while true; do")
 assert "git/ref/heads/${lock_ref_name}" in release
 assert "git/refs/heads/${lock_ref_name}" in release
 assert "Release-Latest-Lock-State: released" in release
+assert 'lock_error_dir="${RUNNER_TEMP:-/tmp}/dockrev-release-latest-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"' in release
 assert "tr '[:upper:]' '[:lower:]'" in release
 assert "overwrite: true" in release
 assert "github.run_attempt" in release
@@ -88,6 +96,7 @@ assert "release_readiness.py" not in release
 assert "refs/notes/release" not in release
 assert "pull_requests" in text(".github/scripts/release_preparation.py")
 assert "covered_product_has_identity" in text(".github/scripts/release_identity.py")
+assert "validate_source_boundary" in text(".github/scripts/release_policy.py")
 assert "pull_request_changed_files" in text(".github/scripts/release_completion.py")
 assert "tag_is_reserved_by_other_pr" in text(".github/scripts/release_completion.py")
 
@@ -106,6 +115,8 @@ with tempfile.TemporaryDirectory() as directory:
     commits_path = root / "commits.json"
     patch_calls_path = root / "patch.calls"
     run_calls_path = root / "run.calls"
+    runner_temp = root / "runner-temp"
+    runner_temp.mkdir()
     gh_stub = bin_dir / "gh"
     gh_stub.write_text(
         """#!/usr/bin/env python3
@@ -211,6 +222,7 @@ export MERGE_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     env["LOCK_COMMITS"] = str(commits_path)
     env["PATCH_CALLS"] = str(patch_calls_path)
     env["RUN_CALLS"] = str(run_calls_path)
+    env["RUNNER_TEMP"] = str(runner_temp)
     env["CAS_CONFLICT"] = "1"
     subprocess.run([str(script)], check=True, env=env, cwd=ROOT)
     final_sha = state_path.read_text(encoding="utf-8").strip()

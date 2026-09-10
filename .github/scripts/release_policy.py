@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 POLICY_PATH = ROOT / ".github/pr-label-release.json"
 VERSION_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+UNTRUSTED_SOURCE_PATH_PREFIXES = (".github/workflows/", ".github/scripts/release_")
 
 
 class PolicyError(ValueError):
@@ -115,6 +116,17 @@ def validate_channel_version(version: str, channel: str) -> None:
         raise PolicyError("dev channel requires VERSION suffix -dev.N")
     if channel not in {"stable", "beta", "dev"}:
         raise PolicyError(f"unsupported release channel: {channel}")
+
+
+def validate_source_boundary(changed_files: list[str]) -> None:
+    """Reject product PRs that can change the workflow used as their evidence."""
+    forbidden = sorted(
+        path for path in changed_files
+        if path == ".github/pr-label-release.json"
+        or any(path.startswith(prefix) for prefix in UNTRUSTED_SOURCE_PATH_PREFIXES)
+    )
+    if forbidden:
+        raise PolicyError("source CI evidence is untrusted when release workflow files change: " + ", ".join(forbidden))
 
 
 def validate_sha(value: str, field: str = "sha") -> None:
@@ -226,6 +238,10 @@ def validate_version_only(files: list[str], provenance: dict[str, Any], *, head_
         raise PolicyError("version-only release intent is invalid") from error
     if not intent["release_enabled"]:
         raise PolicyError("version-only release PR requires a release-enabled type")
+    try:
+        validate_channel_version(str(provenance["product_version"]), intent["channel"])
+    except PolicyError as error:
+        raise PolicyError("version-only release VERSION is incompatible with its channel") from error
     if provenance["release_mode"] != "version-only-release-pr":
         raise PolicyError("version-only release PR has invalid release mode")
 
