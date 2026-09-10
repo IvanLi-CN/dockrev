@@ -171,6 +171,8 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
     trailers = release_policy.parse_trailers(head_commit.get("commit", {}).get("message", ""))
     mode = trailers.get("Release-Mode")
     if mode not in {"normal-preparation", "version-only-release-pr"}:
+        if mode or any(trailers.get(key) for key in ("Source-SHA", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")):
+            raise IdentityError("merged product PR has malformed release identity")
         return {
             "release_enabled": False,
             "merge_commit_sha": merge_sha,

@@ -243,7 +243,23 @@ def tag_is_available(api_root: str, token: str, repository: str, version: str) -
     return False
 
 
-def load_github_completion(api_root: str, token: str, repository: str, pr_number: int) -> dict[str, Any]:
+def version_reservation_is_owned(
+    api_root: str, token: str, repository: str, version: str, source_sha: str
+) -> bool:
+    owner, name = repository.split("/", 1)
+    ref_name = urllib.parse.quote(f"release-reservation/v{version}", safe="")
+    try:
+        payload = api_json(api_root, token, f"/repos/{owner}/{name}/git/ref/heads/{ref_name}")
+    except CompletionError as error:
+        if "GitHub API failed: 404" in str(error):
+            return False
+        raise
+    return payload.get("object", {}).get("sha") == source_sha
+
+
+def load_github_completion(
+    api_root: str, token: str, repository: str, pr_number: int, expected_head_sha: str | None = None
+) -> dict[str, Any]:
     owner, name = repository.split("/", 1)
     pr = api_json(api_root, token, f"/repos/{owner}/{name}/pulls/{pr_number}")
     if pr.get("base", {}).get("ref") != "main" or pr.get("state") != "open":
@@ -251,6 +267,8 @@ def load_github_completion(api_root: str, token: str, repository: str, pr_number
     labels = [item["name"] for item in pr.get("labels", []) if item.get("name")]
     intent = release_policy.parse_labels(labels)
     head_sha = pr.get("head", {}).get("sha", "")
+    if expected_head_sha and head_sha != expected_head_sha:
+        raise CompletionError("PR head changed during Release completion verification")
     source_sha = head_sha
     preparation = None
     provenance = None
@@ -312,6 +330,14 @@ def load_github_completion(api_root: str, token: str, repository: str, pr_number
         version_for_tag = provenance["product_version"]
     else:
         raise CompletionError("PR head has no accepted release provenance")
+    tag_reserved = tag_is_available(api_root, token, repository, version_for_tag)
+    if mode == "normal-preparation":
+        tag_reserved = tag_reserved and version_reservation_is_owned(
+            api_root, token, repository, version_for_tag, source_sha
+        )
+    tag_reserved = tag_reserved and tag_is_reserved_by_other_pr(
+        api_root, token, repository, version_for_tag, pr_number
+    )
     payload = {
         "labels": labels,
         "head_sha": head_sha,
@@ -323,8 +349,7 @@ def load_github_completion(api_root: str, token: str, repository: str, pr_number
         "provenance": provenance,
         "version_file": version_file,
         "source_checks": {"ci_pr": ci_run or {}, "label_gate": label_gate or {}},
-        "tag_reserved": tag_is_available(api_root, token, repository, version_for_tag)
-        and tag_is_reserved_by_other_pr(api_root, token, repository, version_for_tag, pr_number),
+        "tag_reserved": tag_reserved,
     }
     return payload
 
@@ -334,6 +359,7 @@ def main() -> int:
     parser.add_argument("--input", type=Path)
     parser.add_argument("--repository")
     parser.add_argument("--pr-number", type=int)
+    parser.add_argument("--head-sha")
     parser.add_argument("--token", default=os.environ.get("GITHUB_TOKEN", ""))
     parser.add_argument("--api-root", default=os.environ.get("GITHUB_API_URL", "https://api.github.com"))
     args = parser.parse_args()
@@ -343,7 +369,7 @@ def main() -> int:
         else:
             if not args.repository or not args.pr_number or not args.token:
                 raise CompletionError("repository, pr-number and token are required without --input")
-            payload = load_github_completion(args.api_root, args.token, args.repository, args.pr_number)
+            payload = load_github_completion(args.api_root, args.token, args.repository, args.pr_number, args.head_sha)
         print(json.dumps(validate_completion(payload), sort_keys=True))
         return 0
     except (CompletionError, release_policy.PolicyError, OSError, json.JSONDecodeError) as error:

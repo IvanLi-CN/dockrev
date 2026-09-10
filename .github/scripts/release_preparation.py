@@ -137,7 +137,7 @@ def pull_requests(api_root: str, token: str, repository: str, state: str) -> lis
         page += 1
 
 
-def reserve_tag(api_root: str, token: str, repository: str, version: str, pr_number: int) -> None:
+def reserve_tag(api_root: str, token: str, repository: str, version: str, pr_number: int, source_sha: str) -> None:
     owner, name = repository_parts(repository)
     try:
         existing = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/git/ref/tags/v{version}")
@@ -162,6 +162,34 @@ def reserve_tag(api_root: str, token: str, repository: str, version: str, pr_num
                 raise PreparationError(
                     f"release version {version} is already reserved by PR #{pull.get('number')}"
                 )
+    reserve_version_ref(api_root, token, repository, version, source_sha)
+
+
+def reserve_version_ref(api_root: str, token: str, repository: str, version: str, source_sha: str) -> None:
+    """CAS a branch ref so concurrent PRs cannot select the same VERSION."""
+    owner, name = repository_parts(repository)
+    ref_name = f"release-reservation/v{version}"
+    path = f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(ref_name, safe='')}"
+    try:
+        existing = api_request(api_root, token, "GET", path)
+    except PreparationError as error:
+        if " 404:" not in str(error):
+            raise
+        try:
+            api_request(
+                api_root,
+                token,
+                "POST",
+                f"/repos/{owner}/{name}/git/refs",
+                {"ref": f"refs/heads/{ref_name}", "sha": source_sha},
+            )
+            return
+        except PreparationError as create_error:
+            if " 422:" not in str(create_error):
+                raise
+            existing = api_request(api_root, token, "GET", path)
+    if existing.get("object", {}).get("sha") != source_sha:
+        raise PreparationError(f"release version {version} is reserved for another source SHA")
 
 
 def expected_version(intent: dict[str, Any], base_version: str, exact_version: str | None) -> str:
@@ -180,13 +208,24 @@ def expected_version(intent: dict[str, Any], base_version: str, exact_version: s
         version = exact_version
     else:
         raise PreparationError("type:none does not create a release preparation commit")
-    release_policy.validate_channel_version(version, intent["channel"])
+    try:
+        release_policy.validate_preparation_version(base_version, version, intent)
+    except release_policy.PolicyError as error:
+        raise PreparationError(str(error)) from error
     return version
 
 
 def is_existing_preparation(trailers: dict[str, str]) -> bool:
     return trailers.get("Release-Mode") == "normal-preparation" and bool(
         trailers.get("Source-SHA") and trailers.get("Product-Version")
+    )
+
+
+def is_version_only_release(trailers: dict[str, str]) -> bool:
+    return trailers.get("Release-Mode") == "version-only-release-pr" and bool(
+        trailers.get("Covered-Product-Merge-SHA")
+        and trailers.get("Product-Version")
+        and trailers.get("Release-Intent")
     )
 
 
@@ -279,6 +318,42 @@ def create(args: argparse.Namespace) -> int:
     head_commit = api_request(args.api_root, args.token, "GET", f"/repos/{owner}/{name}/commits/{source_sha}")
     head_trailers = release_policy.parse_trailers(head_commit.get("commit", {}).get("message", ""))
     intent = release_policy.parse_labels([str(item.get("name")) for item in pr.get("labels", []) if item.get("name")])
+    if any(
+        head_trailers.get(key)
+        for key in ("Release-Mode", "Source-SHA", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")
+    ) and head_trailers.get("Release-Mode") not in {"normal-preparation", "version-only-release-pr"}:
+        raise PreparationError("PR head contains malformed release identity trailers")
+    if head_trailers.get("Release-Mode") == "normal-preparation" and not is_existing_preparation(head_trailers):
+        raise PreparationError("normal preparation identity is incomplete")
+    if head_trailers.get("Release-Mode") == "version-only-release-pr" and not is_version_only_release(head_trailers):
+        raise PreparationError("version-only release identity is incomplete")
+    if is_version_only_release(head_trailers):
+        if not intent["release_enabled"]:
+            raise PreparationError("type:none PR cannot retain release-only identity")
+        if head_trailers.get("Release-Intent") != f"{intent['type_label']} {intent['channel_label']}":
+            raise PreparationError("existing release-only intent does not match current PR labels")
+        version = head_trailers["Product-Version"]
+        try:
+            release_policy.parse_version(version)
+            release_policy.validate_channel_version(version, intent["channel"])
+        except release_policy.PolicyError as error:
+            raise PreparationError(str(error)) from error
+        write_json(
+            args.output,
+            {
+                "schema_version": 1,
+                "release_enabled": True,
+                "pr_number": args.pr_number,
+                "source_sha": source_sha,
+                "preparation_commit_sha": source_sha,
+                "version": version,
+                "release_tag": f"v{version}",
+                "intent": intent,
+                "release_mode": "version-only-release-pr",
+                "skipped": "already-version-only",
+            },
+        )
+        return 0
     if is_existing_preparation(head_trailers):
         if not intent["release_enabled"]:
             raise PreparationError("type:none PR cannot retain release preparation identity")
@@ -302,7 +377,7 @@ def create(args: argparse.Namespace) -> int:
             intent,
         )
         release_policy.validate_preparation_version(source_version, existing_version, intent)
-        reserve_tag(args.api_root, args.token, args.repository, existing_version, args.pr_number)
+        reserve_tag(args.api_root, args.token, args.repository, existing_version, args.pr_number, existing_source_sha)
         write_json(
             args.output,
             {
@@ -326,7 +401,7 @@ def create(args: argparse.Namespace) -> int:
     source_ci_ready(args.api_root, args.token, args.repository, args.pr_number, source_sha)
     base_version = current_version(args.api_root, args.token, args.repository, source_sha)
     version = expected_version(intent, base_version, args.exact_version)
-    reserve_tag(args.api_root, args.token, args.repository, version, args.pr_number)
+    reserve_tag(args.api_root, args.token, args.repository, version, args.pr_number, source_sha)
     commit_sha = create_commit(args.api_root, args.token, args.repository, pr["head"]["ref"], source_sha, version, intent)
     preparation = inspect_commit(args.api_root, args.token, args.repository, pr["head"]["ref"], commit_sha, source_sha, version, intent)
     payload = {

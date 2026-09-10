@@ -26,6 +26,8 @@ assert "group: release-preparation-${{ inputs.pr_number || github.event.workflow
 assert "name: Publish Release completion check" in preparation
 assert "checks.create" in preparation
 assert "head_sha: process.env.HEAD_SHA" in preparation
+assert "--head-sha \"${HEAD_SHA}\"" in preparation
+assert "release-reservation" in text(".github/scripts/release_preparation.py")
 assert "checks: write" in preparation
 assert "actions: read" in preparation
 assert "name: 'Release completion'" in preparation

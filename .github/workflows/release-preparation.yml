@@ -112,12 +112,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ inputs.pr_number || github.event.workflow_run.pull_requests[0].number }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
         run: |
           set -euo pipefail
           set +e
           python3 .github/scripts/release_completion.py \
             --repository "${GITHUB_REPOSITORY}" \
-            --pr-number "${PR_NUMBER}" > release-completion.json
+            --pr-number "${PR_NUMBER}" \
+            --head-sha "${HEAD_SHA}" > release-completion.json
           status=$?
           set -e
           if [[ "${status}" -eq 0 ]]; then

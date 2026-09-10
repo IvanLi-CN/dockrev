@@ -72,9 +72,11 @@ expect_error(policy.validate_preparation, {**preparation, "verified": False})
 expect_error(policy.parse_trailers, "Release-Mode: normal-preparation\nRelease-Mode: normal-preparation")
 assert preparation_script.is_existing_preparation({"Release-Mode": "normal-preparation", "Source-SHA": source_sha if 'source_sha' in globals() else "a" * 40, "Product-Version": "0.1.1"})
 assert not preparation_script.is_existing_preparation({"Release-Mode": "normal-preparation"})
+assert preparation_script.is_version_only_release({"Release-Mode": "version-only-release-pr", "Covered-Product-Merge-SHA": source_sha, "Product-Version": "0.1.1", "Release-Intent": "type:patch channel:stable"})
 beta_labels = policy.parse_labels(["type:patch", "channel:beta"])
 assert preparation_script.expected_version(beta_labels, "0.1.0", "0.1.1-beta.1") == "0.1.1-beta.1"
 expect_error(preparation_script.expected_version, beta_labels, "0.1.0", None)
+expect_error(preparation_script.expected_version, beta_labels, "0.1.0", "9.9.9-beta.1")
 
 assert completion.validate_completion({"labels": ["type:none", "channel:stable"]}) == {
     "status": "pass",
@@ -161,6 +163,41 @@ try:
         result = json.loads(output.read_text(encoding="utf-8"))
         assert result["release_enabled"] is False
         assert calls == {"source_ci": 0, "reserve": 0, "create": 0}
+
+        preparation_script.pull_request = lambda *_args: {
+            "state": "open",
+            "base": {"ref": "main"},
+            "head": {"sha": source_sha, "ref": "recovery/version-only", "repo": {"full_name": "IvanLi-CN/dockrev"}},
+            "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
+        }
+        def fake_version_only_api(_api_root, _token, _method, path, _payload=None):
+            if path.endswith(f"/commits/{source_sha}"):
+                return {
+                    "commit": {
+                        "message": (
+                            "VERSION-only recovery\n\n"
+                            "Covered-Product-Merge-SHA: " + source_sha + "\n"
+                            "Product-Version: 0.1.1\n"
+                            "Release-Intent: type:patch channel:stable\n"
+                            "Release-Mode: version-only-release-pr"
+                        )
+                    }
+                }
+            raise AssertionError(path)
+
+        preparation_script.api_request = fake_version_only_api
+        output = Path(directory) / "version-only.json"
+        preparation_script.create(Namespace(
+            api_root="https://api.github.test",
+            token="token",
+            repository="IvanLi-CN/dockrev",
+            pr_number=42,
+            exact_version=None,
+            output=output,
+        ))
+        result = json.loads(output.read_text(encoding="utf-8"))
+        assert result["release_mode"] == "version-only-release-pr"
+        assert result["skipped"] == "already-version-only"
 finally:
     preparation_script.pull_request = original_pull_request
     preparation_script.api_request = original_preparation_api_request
@@ -276,6 +313,8 @@ try:
             if tag_exists:
                 return {"object": {"sha": prep_sha, "type": "commit"}}
             raise completion.CompletionError("GitHub API failed: 404")
+        if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1"):
+            return {"object": {"sha": source_sha, "type": "commit"}}
         if "/pulls?state=" in path:
             return []
         raise AssertionError(f"unexpected completion API path: {path}")
@@ -289,6 +328,27 @@ try:
     assert completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42) == {"labels": labels_for_loader}
 finally:
     completion.api_json = original_completion_api_json
+
+reservation_calls = []
+original_preparation_api_request = preparation_script.api_request
+try:
+    def fake_reservation_api(_api_root, _token, method, path, payload=None):
+        reservation_calls.append((method, path, payload))
+        if method == "GET":
+            raise preparation_script.PreparationError("GitHub API GET ref failed: 404: missing")
+        return {"ref": "refs/heads/release-reservation/v0.1.1", "object": {"sha": source_sha}}
+
+    preparation_script.api_request = fake_reservation_api
+    preparation_script.reserve_version_ref(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", "0.1.1", source_sha
+    )
+    assert reservation_calls[-1] == (
+        "POST",
+        "/repos/IvanLi-CN/dockrev/git/refs",
+        {"ref": "refs/heads/release-reservation/v0.1.1", "sha": source_sha},
+    )
+finally:
+    preparation_script.api_request = original_preparation_api_request
 
 covered_sha = "c" * 40
 version_only = {

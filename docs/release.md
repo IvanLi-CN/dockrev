@@ -25,7 +25,9 @@ create a release identity.
 
 1. The source head must pass the complete `CI (PR)` workflow and `Label Gate`.
 2. `Release Preparation` reads the source `VERSION`. Patch releases use the
-   next patch; major and minor releases require an exact version input.
+   next patch; major and minor releases require an exact version input. Before
+   writing, it atomically creates `release-reservation/vVERSION` at the source
+   SHA so concurrent PRs cannot claim the same version.
 3. Preparation uses GitHub's `createCommitOnBranch(expectedHeadOid)` to add one
    signed, single-parent commit that changes only `VERSION`. Its trailers bind
    the source SHA, product version, label intent, and
@@ -49,13 +51,15 @@ the same merge SHA, a non-empty recovery reason, and a prior failed automatic
 publish another PR.
 
 If a historical product merge has no identity, create exactly one non-empty
-`VERSION`-only PR with `release-mode: version-only-release-pr`, a
+`VERSION`-only PR with `Release-Mode: version-only-release-pr`, a
 `Covered-Product-Merge-SHA` trailer, the product version, and frozen label
 intent. `Release completion` validates that boundary and the normal merged
 identity path handles publication. This PR is not a same-SHA recovery.
 
 FIFO queues, release trains, snapshot backfills, mutable label reconstruction,
-and historical tag repair are deliberately unsupported.
+and historical tag repair are deliberately unsupported. A stale reservation
+ref fails closed and requires maintainer cleanup after confirming that no
+identity uses its version.
 
 ## Failure notification
 
