@@ -40,6 +40,8 @@ assert "release_readiness.py" not in release
 assert "refs/notes/release" not in release
 assert "pull_requests" in text(".github/scripts/release_preparation.py")
 assert "covered_product_has_identity" in text(".github/scripts/release_identity.py")
+assert "pull_request_changed_files" in text(".github/scripts/release_completion.py")
+assert "tag_is_reserved_by_open_pr" in text(".github/scripts/release_completion.py")
 
 quality = json.loads((ROOT / ".github/quality-gates.json").read_text(encoding="utf-8"))
 assert quality["required_checks"] == ["Review Policy Gate", "Label Gate", "Release completion"]

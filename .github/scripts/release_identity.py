@@ -99,6 +99,26 @@ def covered_product_boundary(
     return pr, head_sha
 
 
+def pull_request_changed_files(
+    api_root: str, token: str, repository: str, pr_number: int
+) -> list[str]:
+    owner, name = repository_parts(repository)
+    files: list[str] = []
+    page = 1
+    while True:
+        batch = api_json(
+            api_root,
+            token,
+            f"/repos/{owner}/{name}/pulls/{pr_number}/files?per_page=100&page={page}",
+        )
+        if not isinstance(batch, list):
+            raise IdentityError("GitHub PR file list is invalid")
+        files.extend(str(item.get("filename")) for item in batch if item.get("filename"))
+        if len(batch) < 100:
+            return sorted(set(files))
+        page += 1
+
+
 def resolve_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if payload.get("type") == "none":
         return {"release_enabled": False, "reason": "type:none"}
@@ -174,6 +194,7 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
     else:
         covered_merge_sha = trailers.get("Covered-Product-Merge-SHA", "")
         covered_pr, covered_head_sha = covered_product_boundary(api_root, token, repository, covered_merge_sha)
+        changed_files = pull_request_changed_files(api_root, token, repository, pr.get("number", 0))
         provenance = {
             "covered_product_merge_sha": covered_merge_sha,
             "covered_product_pr_number": covered_pr.get("number", 0),

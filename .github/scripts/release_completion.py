@@ -98,6 +98,48 @@ def version_at_commit(api_root: str, token: str, repository: str, commit_sha: st
     return version
 
 
+def pull_request_changed_files(
+    api_root: str, token: str, repository: str, pr_number: int
+) -> list[str]:
+    owner, name = repository.split("/", 1)
+    files: list[str] = []
+    page = 1
+    while True:
+        batch = api_json(
+            api_root,
+            token,
+            f"/repos/{owner}/{name}/pulls/{pr_number}/files?per_page=100&page={page}",
+        )
+        if not isinstance(batch, list):
+            raise CompletionError("GitHub PR file list is invalid")
+        files.extend(str(item.get("filename")) for item in batch if item.get("filename"))
+        if len(batch) < 100:
+            return sorted(set(files))
+        page += 1
+
+
+def tag_is_reserved_by_open_pr(
+    api_root: str, token: str, repository: str, version: str, pr_number: int
+) -> bool:
+    owner, name = repository.split("/", 1)
+    pulls = api_json(
+        api_root,
+        token,
+        f"/repos/{owner}/{name}/pulls?state=open&base=main&per_page=100",
+    )
+    for pull in pulls if isinstance(pulls, list) else []:
+        if pull.get("number") == pr_number:
+            continue
+        head_sha = pull.get("head", {}).get("sha", "")
+        if not head_sha:
+            continue
+        head = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{head_sha}")
+        trailers = release_policy.parse_trailers(head.get("commit", {}).get("message", ""))
+        if trailers.get("Release-Mode") in {"normal-preparation", "version-only-release-pr"} and trailers.get("Product-Version") == version:
+            return False
+    return True
+
+
 def validate_source_checks(payload: dict[str, Any]) -> None:
     required = {"ci_pr", "label_gate"}
     if required - set(payload):
@@ -214,6 +256,7 @@ def load_github_completion(api_root: str, token: str, repository: str, pr_number
             "branch_head_sha": head_sha,
             "verified": commit.get("commit", {}).get("verification", {}).get("verified") is True,
         }
+        files = pull_request_changed_files(api_root, token, repository, pr_number)
     else:
         provenance = None
     version_file = version_at_commit(api_root, token, repository, head_sha)
@@ -241,12 +284,8 @@ def load_github_completion(api_root: str, token: str, repository: str, pr_number
         "provenance": provenance,
         "version_file": version_file,
         "source_checks": {"ci_pr": ci_run or {}, "label_gate": label_gate or {}},
-        "tag_reserved": tag_is_available(
-            api_root,
-            token,
-            repository,
-            version_for_tag,
-        ),
+        "tag_reserved": tag_is_available(api_root, token, repository, version_for_tag)
+        and tag_is_reserved_by_open_pr(api_root, token, repository, version_for_tag, pr_number),
     }
     return payload
 
