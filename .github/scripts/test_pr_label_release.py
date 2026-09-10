@@ -381,6 +381,7 @@ try:
                 "state": "open",
                 "base": {"ref": "main", "sha": "e" * 40},
                 "head": {"sha": prep_sha},
+                "updated_at": "2026-01-01T00:00:00Z",
                 "labels": [{"name": label} for label in labels_for_loader],
             }
         if path.endswith(f"/commits/{prep_sha}"):
@@ -402,7 +403,7 @@ try:
         if "/actions/workflows/ci-pr.yml/runs?per_page=100&page=" in path:
             return {"workflow_runs": [{"head_sha": source_sha, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 42}]}]}
         if "/actions/workflows/label-gate.yml/runs?per_page=100&page=" in path:
-            return {"workflow_runs": [{"head_sha": source_sha, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 42, "head": {"sha": source_sha}}]}]}
+            return {"workflow_runs": [{"head_sha": source_sha, "status": "completed", "conclusion": "success", "created_at": "2026-01-02T00:00:00Z", "pull_requests": [{"number": 42, "head": {"sha": source_sha}}]}]}
         if path.endswith("/git/ref/tags/v0.1.1"):
             if tag_exists:
                 return {"object": {"sha": prep_sha, "type": "commit"}}
@@ -455,6 +456,7 @@ try:
                 "state": "open",
                 "base": {"ref": "main"},
                 "head": {"sha": prep_sha},
+                "updated_at": "2026-01-01T00:00:00Z",
                 "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
             }
         if path.endswith(f"/commits/{prep_sha}"):
@@ -474,6 +476,7 @@ try:
                 "merge_commit_sha": covered_merge_sha,
                 "base": {"ref": "main"},
                 "head": {"sha": covered_head_sha},
+                "updated_at": "2026-01-01T00:00:00Z",
                 "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
             }]
         if path.endswith(f"/commits/{covered_head_sha}"):
@@ -488,7 +491,7 @@ try:
         if "/actions/workflows/ci-pr.yml/runs?per_page=100&page=" in path:
             return {"workflow_runs": [{"head_sha": covered_head_sha, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 41}]}]}
         if "/actions/workflows/label-gate.yml/runs?per_page=100&page=" in path:
-            return {"workflow_runs": [{"head_sha": "e" * 40, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 42, "head": {"sha": prep_sha}}]}]}
+            return {"workflow_runs": [{"head_sha": "e" * 40, "status": "completed", "conclusion": "success", "created_at": "2026-01-02T00:00:00Z", "pull_requests": [{"number": 42, "head": {"sha": prep_sha}}]}]}
         if path.endswith("/git/ref/tags/v0.1.1"):
             raise completion.CompletionError("GitHub API failed: 404")
         if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1"):
@@ -873,6 +876,7 @@ identity_failure = {
     "recovery_instruction": "create VERSION-only release PR Covered-Product-Merge-SHA=" + prep_sha,
 }
 assert policy.validate_failure_context(identity_failure) == identity_failure
+expect_error(policy.validate_failure_context, {**identity_failure, "channel": "beta"})
 expect_error(policy.validate_failure_context, {**identity_failure, "recovery_instruction": "workflow_dispatch merge_sha=" + prep_sha + " recovery_reason=<required>"})
 failure_context = load("release_failure_context", ROOT / ".github/scripts/release_failure_context.py")
 assert "recovery:" in failure_context.notification_summary(failure)

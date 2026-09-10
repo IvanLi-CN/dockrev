@@ -406,7 +406,18 @@ def load_github_completion(
     gate_sha = source_sha if mode == "normal-preparation" else head_sha
     label_runs = workflow_runs_for_pr(api_root, token, repository, "label-gate.yml", pr_number, gate_sha)
     ci_run = next((run for run in ci_runs if run.get("head_sha") == check_sha), None)
-    label_gate = next((run for run in label_runs if run.get("conclusion") == "success"), None)
+    label_pr_updated_at = str((covered_pr if mode == "version-only-release-pr" else pr).get("updated_at", ""))
+    if not label_pr_updated_at:
+        raise CompletionError("PR metadata is missing updated_at for Label Gate binding")
+    label_gate = next(
+        (
+            run for run in label_runs
+            if run.get("status") == "completed"
+            and run.get("conclusion") == "success"
+            and str(run.get("created_at", "")) >= label_pr_updated_at
+        ),
+        None,
+    )
     if mode == "normal-preparation":
         version_for_tag = preparation["version"]
     elif mode == "version-only-release-pr":

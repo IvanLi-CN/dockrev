@@ -157,6 +157,7 @@ jobs:
           python3 - <<'PY'
           import json
           import os
+          import re
           version = os.environ["VERSION"]
           merge_sha = os.environ["MERGE_SHA"]
           expected = [
@@ -174,6 +175,13 @@ jobs:
           channel = os.environ.get("INTENT_CHANNEL", "")
           if release_type not in {"major", "minor", "patch"} or channel not in {"stable", "beta", "dev"}:
               raise SystemExit("Release failure context requires a verified release intent")
+          channel_pattern = {
+              "stable": r"^[0-9]+\.[0-9]+\.[0-9]+$",
+              "beta": r"^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$",
+              "dev": r"^[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$",
+          }[channel]
+          if not re.fullmatch(channel_pattern, version):
+              raise SystemExit("Release failure context VERSION is incompatible with the verified channel; refusing to fabricate identity")
           payload = {
               "pull_request": 0,
               "source_sha": merge_sha,

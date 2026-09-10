@@ -125,6 +125,10 @@ def pull_request_changed_files(api_root: str, token: str, repository: str, numbe
 
 
 def source_ci_ready(api_root: str, token: str, repository: str, pr_number: int, source_sha: str) -> None:
+    pr = pull_request(api_root, token, repository, pr_number)
+    label_updated_at = str(pr.get("updated_at", ""))
+    if not label_updated_at:
+        raise PreparationError("PR metadata is missing updated_at for Label Gate binding")
     try:
         release_policy.validate_source_boundary(pull_request_changed_files(api_root, token, repository, pr_number))
     except release_policy.PolicyError as error:
@@ -133,7 +137,12 @@ def source_ci_ready(api_root: str, token: str, repository: str, pr_number: int, 
     if not any(run.get("status") == "completed" and run.get("conclusion") == "success" for run in ci_runs):
         raise PreparationError("source SHA does not have a successful complete CI (PR) run")
     label_runs = workflow_runs_for_pr(api_root, token, repository, "label-gate.yml", pr_number, source_sha)
-    if not any(run.get("status") == "completed" and run.get("conclusion") == "success" for run in label_runs):
+    if not any(
+        run.get("status") == "completed"
+        and run.get("conclusion") == "success"
+        and str(run.get("created_at", "")) >= label_updated_at
+        for run in label_runs
+    ):
         raise PreparationError("PR does not have a successful Label Gate check")
 
 
