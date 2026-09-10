@@ -108,6 +108,9 @@ urls = [arg for arg in args if arg.startswith("repos/")]
 url = urls[0] if urls else ""
 method = args[args.index("--method") + 1] if "--method" in args else "GET"
 if method == "DELETE":
+    if os.environ.get("FAIL_DELETE") == "1" and url.endswith("release-latest-lock/100-1"):
+        print("HTTP 500: cleanup failed", file=sys.stderr)
+        raise SystemExit(1)
     with open(os.environ["DELETE_LOG"], "a", encoding="utf-8") as handle:
         handle.write(url + "\\n")
     raise SystemExit(0)
@@ -172,5 +175,42 @@ export MERGE_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     assert any(value.endswith("release-latest-lock/100-1") for value in deleted)
     assert any(value.endswith("release-latest-lock/101-1") for value in deleted)
     assert any(value.endswith("release-latest-lock/200-1") for value in deleted)
+    calls_path.write_text("0", encoding="utf-8")
+    failed_env = {**env, "FAIL_DELETE": "1"}
+    failed = subprocess.run([str(script)], check=False, env=failed_env, cwd=ROOT)
+    assert failed.returncode != 0
+
+with tempfile.TemporaryDirectory() as directory:
+    root = Path(directory)
+    gh_stub = root / "gh"
+    gh_stub.write_text(
+        """#!/usr/bin/env python3
+import json
+print(json.dumps([
+    {"workflow_runs": [{"event": "push", "conclusion": "success"}]},
+    {"workflow_runs": [{"event": "push", "conclusion": "failure"}]},
+]))
+""",
+        encoding="utf-8",
+    )
+    gh_stub.chmod(0o755)
+    recovery_start = release.index('            prior_failure="')
+    recovery_end = release.index('            [[ "${prior_failure}"', recovery_start)
+    recovery_body = textwrap.dedent(release[recovery_start:recovery_end])
+    script = root / "recovery-check.sh"
+    script.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+export GITHUB_REPOSITORY=IvanLi-CN/dockrev
+export MERGE_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+"""
+        + recovery_body
+        + '[[ "${prior_failure}" == "True" ]]\n',
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{root}:{env['PATH']}"
+    subprocess.run([str(script)], check=True, env=env, cwd=ROOT)
 
 print("PASS: release workflow contract")
