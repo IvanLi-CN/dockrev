@@ -11,7 +11,7 @@
 | Update rollback diagnostics | active | not started | `update-rollback-diagnostics/SPEC.md` | - |
 | Service accepted state consistency | active | not started | `service-accepted-state-consistency/SPEC.md` | - |
 | Brand media variants | active | dark/light posters delivered; social variants pending | `brand-media-variants/SPEC.md` | - |
-| CI duration optimization | active | source gate, exact-SHA candidate readiness, oldest-ready release proof, and one-day preparation artifacts | `ci-duration-optimization/SPEC.md` | - |
+| CI duration optimization | active | source gate, exact-SHA candidate readiness, strict oldest-pending release proof, and one-day preparation artifacts | `ci-duration-optimization/SPEC.md` | - |
 
 ## 快速新增一个规格
 
@@ -37,7 +37,7 @@
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
 | async-data-continuity | Dockrev：异步数据连续性与加载反馈 | active | `async-data-continuity/SPEC.md` | 2026-08-19 | fast-track（统一骨架、延迟遮罩、错误重试与 fresh snapshot v2 合同） |
-| ci-duration-optimization | Dockrev：CI 时长优化与事件驱动发布就绪 | active | `ci-duration-optimization/SPEC.md` | 2026-09-03 | fast-track（同 SHA 候选编排、readiness receipt、oldest-ready 队列） |
+| ci-duration-optimization | Dockrev：CI 时长优化与事件驱动发布就绪 | active | `ci-duration-optimization/SPEC.md` | 2026-09-03 | fast-track（同 SHA 候选编排、readiness receipt、strict oldest-pending 队列） |
 | theme-preference-controls | Dockrev：三态主题偏好与响应式入口 | active | `theme-preference-controls/SPEC.md` | 2026-08-14 | fast-track（system/light/dark、AppShell 桌面侧栏、移动 Settings、Storybook 与 ui_demo 证据） |
 | unified-page-context-navigation | Dockrev：统一页面内导航 | active | `unified-page-context-navigation/SPEC.md` | 2026-09-04 | fast-track（单一 AppShell 侧栏、页面内上下文导航、移动抽屉与服务树） |
 | 5dnjc | Dockrev：任务日志实时输出与事件可见性 | active | `5dnjc-job-live-output-event-visibility/SPEC.md` | 2026-08-03 | fast-track（无持久化 job_live_log SSE、命令摘要去重、EVEN 默认隐藏与浏览器偏好） |
@@ -53,7 +53,7 @@
 | 6uwgs | Dockrev：服务镜像外链与代码仓库字段 | 已完成 | `6uwgs-service-image-links-and-repo-url/SPEC.md` | 2026-03-23 | fast-track（repoUrl 持久化 + inference API + services/detail/overview registry+repo icons + storybook/browser coverage） |
 | 2m9ge | Dockrev：repoUrl 自动回填与历史空值修复 | 已完成 | `2m9ge-repo-url-auto-backfill/SPEC.md` | 2026-03-26 | follow-up（startup/discovery backfill + repo_url_auto_disabled semantics） |
 | yt22e | Dockrev：Release Queue Override 收口硬化 | 部分完成（4/5） | `yt22e-release-queue-override-comment-hardening/SPEC.md` | 2026-03-30 | fast-track（release-infra label hardening + skip override ledger；source-PR release comment 子合同已废止） |
-| taauj | Dockrev：Release Tag 预创建与发布完成态合同 | 已完成 | `taauj-release-api-tag-publish-contract/SPEC.md` | 2026-04-05 | follow-up（explicit tag push restored; release API only updates assets/release; historical tag-backed backlog now auto-reconciles publication ledger before queue selection; live recovery execution moved to #q3nyf） |
+| taauj | Dockrev：Release Tag 预创建与发布完成态合同 | 已完成 | `taauj-release-api-tag-publish-contract/SPEC.md` | 2026-04-05 | follow-up（explicit tag push restored; release API only updates assets/release; historical backlog requires complete publication evidence and strict FIFO readiness） |
 | q3nyf | Dockrev：Release Queue 线上恢复与历史补账执行 | 待实现 | `q3nyf-release-queue-live-recovery/SPEC.md` | 2026-04-05 | follow-up（tracks post-merge mainline recovery, release evidence, and backlog outcome after #taauj lands） |
 | jkqsv | Dockrev：GitHub Release latest 指针对齐 publication ledger | 已完成 | `jkqsv-release-latest-pointer-fix/SPEC.md` | 2026-04-03 | follow-up（release-action makeLatest wired to publish_latest so backfilled stable releases can explicitly advance GitHub latest without letting older reruns steal it） |
 | 2hnkx | Dockrev：更新候选跨版本发现次数标记 | 已完成 | `2hnkx-new-version-discovery-count/SPEC.md` | 2026-03-25 | fast-track（PR #170 merged；2026-03-20 follow-up fixes visible-version counting、backfill semantics、unresolved-history normalization、and DB/API stack-path parity；PR #176 collapses repeated unresolved alias history by visible label and keeps live/timeline alias identity in sync；2026-03-23 follow-up aligns timeline currentRunning version with stack snapshot inference；2026-03-24 follow-up prevents older unresolved `latest` baselines from leaking into current stable-baseline count/timeline；currentCandidate + history normalization now use snapshot-first / notification-fallback with exact notification provenance matching, and settled fallback only rewrites unresolved/floating candidates while keeping pinned suffix candidates distinct；2026-03-25 follow-up disallows legacy `currentDigest=''` alias history from matching once the live service already has a known current digest, even if the visible current tag still reads `latest`, while preserving exact fallback for digest-pinned current baselines） |

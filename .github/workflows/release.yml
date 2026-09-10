@@ -96,12 +96,16 @@ jobs:
       - name: Resolve requested commit
         id: requested-target
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_HEAD_SHA: ${{ inputs.head_sha }}
+          WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            target_sha="${{ inputs.head_sha }}"
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            target_sha="${DISPATCH_HEAD_SHA}"
           else
-            target_sha="${{ github.event.workflow_run.head_sha }}"
+            target_sha="${WORKFLOW_RUN_HEAD_SHA}"
           fi
 
           echo "RELEASE_REQUESTED_SHA=${target_sha}"
@@ -177,6 +181,7 @@ jobs:
         shell: bash
         env:
           REQUESTED_SHA: ${{ steps.requested-target.outputs.target_sha }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.admin_action }}" = "release" ]; then
@@ -188,6 +193,9 @@ jobs:
               --publication-notes-ref "${RELEASE_PUBLICATION_NOTES_REF}" \
               --override-notes-ref "${RELEASE_OVERRIDE_NOTES_REF}" \
               --main-ref "origin/main" \
+              --github-repository "${GITHUB_REPOSITORY}" \
+              --github-token "${GITHUB_TOKEN}" \
+              --api-root "${GITHUB_API_URL}" \
               --github-output "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -207,6 +215,9 @@ jobs:
             --publication-notes-ref "${RELEASE_PUBLICATION_NOTES_REF}" \
             --override-notes-ref "${RELEASE_OVERRIDE_NOTES_REF}" \
             --main-ref "origin/main" \
+            --github-repository "${GITHUB_REPOSITORY}" \
+            --github-token "${GITHUB_TOKEN}" \
+            --api-root "${GITHUB_API_URL}" \
             --upper-bound "${upper_bound}" \
             --github-output "$GITHUB_OUTPUT"
 
@@ -794,6 +805,8 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || inputs.admin_action == 'skip'
         id: next-ready
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           git fetch --no-tags origin main
@@ -808,6 +821,9 @@ jobs:
             --publication-notes-ref "${RELEASE_PUBLICATION_NOTES_REF}" \
             --override-notes-ref "${RELEASE_OVERRIDE_NOTES_REF}" \
             --main-ref "origin/main" \
+            --github-repository "${GITHUB_REPOSITORY}" \
+            --github-token "${GITHUB_TOKEN}" \
+            --api-root "${GITHUB_API_URL}" \
             --upper-bound "$(git rev-parse origin/main)" \
             --github-output "$GITHUB_OUTPUT"
 

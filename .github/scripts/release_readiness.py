@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Manage immutable exact-SHA release readiness receipts."""
+"""Manage immutable exact-SHA release readiness receipts and FIFO recovery."""
 
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ def validate_digest(value: Any, field: str) -> str:
     return value
 
 
-def validate_receipt(payload: Any, *, expected_sha: str | None = None) -> dict[str, Any]:
+def _validate_receipt_entry(payload: Any, *, expected_sha: str | None = None) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ReadinessError("readiness receipt must be an object")
     if payload.get("schema_version") != SCHEMA_VERSION:
@@ -66,8 +66,16 @@ def validate_receipt(payload: Any, *, expected_sha: str | None = None) -> dict[s
         raise ReadinessError(f"readiness target_sha mismatch: expected {expected_sha}, got {target_sha}")
     if payload.get("candidate_workflow") != "Release Candidate Pipeline":
         raise ReadinessError("readiness candidate workflow is not trusted")
-    if payload.get("candidate_event") != "push":
-        raise ReadinessError("readiness candidate event must be push")
+    operation = payload.get("operation", "push")
+    if not isinstance(operation, str):
+        raise ReadinessError("readiness operation must be a string")
+    if operation not in {"push", "recover"}:
+        raise ReadinessError("readiness operation must be push or recover")
+    candidate_event = payload.get("candidate_event")
+    if operation == "push" and candidate_event != "push":
+        raise ReadinessError("push readiness candidate event must be push")
+    if operation == "recover" and candidate_event != "workflow_dispatch":
+        raise ReadinessError("recovery readiness candidate event must be workflow_dispatch")
     if payload.get("verification_mode") is not False:
         raise ReadinessError("verification-mode runs must not write readiness receipts")
     if payload.get("publish") is not False:
@@ -107,17 +115,63 @@ def validate_receipt(payload: Any, *, expected_sha: str | None = None) -> dict[s
     validate_digest(preparation.get("manifest_sha256"), "preparation.manifest_sha256")
     if preparation.get("publish") is not False:
         raise ReadinessError("preparation publish marker must be false")
+    if operation == "recover":
+        recovery = payload.get("recovery")
+        if not isinstance(recovery, dict):
+            raise ReadinessError("recovery audit proof is required")
+        if recovery.get("mode") != "candidate-recovery":
+            raise ReadinessError("recovery audit mode must be candidate-recovery")
+        if validate_sha(recovery.get("target_sha"), "recovery.target_sha") != target_sha:
+            raise ReadinessError("recovery target_sha does not match receipt")
+        actor = recovery.get("actor")
+        if not isinstance(actor, str) or not actor.strip():
+            raise ReadinessError("recovery actor is required")
+        reason = recovery.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ReadinessError("recovery reason is required")
     return payload
 
 
-def read_receipt(notes_ref: str, target_sha: str) -> dict[str, Any] | None:
+def validate_receipt(payload: Any, *, expected_sha: str | None = None) -> dict[str, Any]:
+    if isinstance(payload, dict) and "receipt_ledger" in payload:
+        if payload.get("schema_version") != SCHEMA_VERSION:
+            raise ReadinessError("unsupported readiness receipt schema")
+        target_sha = validate_sha(payload.get("target_sha"), "target_sha")
+        if expected_sha and target_sha != expected_sha:
+            raise ReadinessError(f"readiness target_sha mismatch: expected {expected_sha}, got {target_sha}")
+        entries = payload.get("receipt_ledger")
+        if not isinstance(entries, list) or not entries:
+            raise ReadinessError("readiness receipt ledger must contain entries")
+        validated = [_validate_receipt_entry(entry, expected_sha=target_sha) for entry in entries]
+        return validated[-1]
+    return _validate_receipt_entry(payload, expected_sha=expected_sha)
+
+
+def read_receipt_ledger(notes_ref: str, target_sha: str) -> list[dict[str, Any]]:
     result = git("notes", f"--ref={notes_ref}", "show", target_sha, check=False)
     if result.returncode != 0:
-        return None
+        return []
     try:
-        return validate_receipt(json.loads(result.stdout), expected_sha=target_sha)
+        payload = json.loads(result.stdout)
     except json.JSONDecodeError as error:
         raise ReadinessError(f"readiness note for {target_sha} is not JSON") from error
+    if isinstance(payload, dict) and "receipt_ledger" in payload:
+        if payload.get("schema_version") != SCHEMA_VERSION:
+            raise ReadinessError("unsupported readiness receipt schema")
+        if validate_sha(payload.get("target_sha"), "target_sha") != target_sha:
+            raise ReadinessError("readiness ledger target_sha does not match note target")
+        entries = payload.get("receipt_ledger")
+        if not isinstance(entries, list) or not entries:
+            raise ReadinessError("readiness receipt ledger must contain entries")
+        return [_validate_receipt_entry(entry, expected_sha=target_sha) for entry in entries]
+    return [_validate_receipt_entry(payload, expected_sha=target_sha)]
+
+
+def read_receipt(notes_ref: str, target_sha: str) -> dict[str, Any] | None:
+    entries = read_receipt_ledger(notes_ref, target_sha)
+    if not entries:
+        return None
+    return entries[-1]
 
 
 def fetch_notes(notes_ref: str) -> None:
@@ -129,17 +183,20 @@ def fetch_notes(notes_ref: str) -> None:
 
 def write_receipt(payload: dict[str, Any], notes_ref: str, max_attempts: int) -> None:
     target_sha = validate_sha(payload.get("target_sha"), "target_sha")
-    validate_receipt(payload, expected_sha=target_sha)
+    payload = _validate_receipt_entry(payload, expected_sha=target_sha)
     for attempt in range(1, max_attempts + 1):
         fetch_notes(notes_ref)
-        existing = read_receipt(notes_ref, target_sha)
-        if existing is not None:
-            if existing != payload:
-                raise ReadinessError(f"immutable readiness receipt already exists for {target_sha}")
+        existing_entries = read_receipt_ledger(notes_ref, target_sha)
+        if payload in existing_entries:
             return
+        ledger = {
+            "schema_version": SCHEMA_VERSION,
+            "target_sha": target_sha,
+            "receipt_ledger": [*existing_entries, payload],
+        }
         with tempfile.TemporaryDirectory(prefix="release-readiness-") as directory:
             path = Path(directory) / "receipt.json"
-            path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+            path.write_text(json.dumps(ledger, indent=2, sort_keys=True) + "\n")
             git("notes", f"--ref={notes_ref}", "add", "-f", "-F", str(path), target_sha)
         push = git("push", "origin", notes_ref, check=False)
         if push.returncode == 0:
@@ -194,16 +251,101 @@ def pending_ready_targets(args: argparse.Namespace) -> list[str]:
     release_snapshot.fetch_notes_ref(args.publication_notes_ref)
     release_snapshot.fetch_notes_ref(args.override_notes_ref)
     release_snapshot.fetch_tags()
-    ready: list[str] = []
-    for target_sha in release_snapshot.pending_release_targets(
+    missing_release_resolver = None
+    if getattr(args, "github_repository", "") and getattr(args, "github_token", ""):
+        missing_release_resolver = lambda commit: release_snapshot.release_enabled_for_commit(
+            args.api_root,
+            args.github_repository,
+            args.github_token,
+            commit,
+        )
+    pending = release_snapshot.pending_release_targets(
         args.snapshot_notes_ref,
         upper_bound,
         publication_notes_ref=args.publication_notes_ref,
         override_notes_ref=args.override_notes_ref,
-    ):
-        if read_receipt(args.readiness_notes_ref, target_sha) is not None:
-            ready.append(target_sha)
-    return ready
+        strict_fifo=True,
+        release_enabled_for_missing=missing_release_resolver,
+    )
+    if not pending:
+        return []
+    first_pending = pending[0]
+    return [first_pending] if read_receipt(args.readiness_notes_ref, first_pending) is not None else []
+
+
+def recover_preflight(args: argparse.Namespace) -> int:
+    target_sha = validate_sha(args.target_sha, "target_sha")
+    git("merge-base", "--is-ancestor", target_sha, args.main_ref)
+    snapshot_notes_ref = getattr(args, "snapshot_notes_ref", release_snapshot.DEFAULT_NOTES_REF)
+    release_snapshot.fetch_notes_ref(snapshot_notes_ref)
+    release_snapshot.fetch_notes_ref(args.publication_notes_ref)
+    release_snapshot.fetch_notes_ref(args.override_notes_ref)
+    release_snapshot.fetch_tags()
+    tagged = release_snapshot.released_commits_from_tags(target_sha)
+    main_commits = release_snapshot.first_parent_commits(args.main_ref)
+    if target_sha not in main_commits:
+        raise ReadinessError(f"recovery target {target_sha} is not on the main first-parent chain")
+    target_index = main_commits.index(target_sha)
+    if target_sha in tagged:
+        raise ReadinessError(f"recovery target {target_sha} already has a release tag without complete ledger")
+    trusted_tagged = set()
+    for commit in tagged:
+        if release_snapshot.read_publication(args.publication_notes_ref, commit) is not None:
+            trusted_tagged.add(commit)
+    tagged_indices = [main_commits.index(commit) for commit in trusted_tagged if commit in main_commits]
+    anchor_index = max(tagged_indices, default=-1)
+    skipped: set[str] = set()
+    for commit in main_commits[: target_index + 1]:
+        override = release_snapshot.read_override(args.override_notes_ref, commit)
+        if override is not None and override.get("status") == "skip":
+            skipped.add(commit)
+    for commit in main_commits[: anchor_index + 1]:
+        if commit not in tagged or commit in trusted_tagged or commit in skipped:
+            continue
+        pr = release_snapshot.load_pr_for_commit(
+            args.api_root,
+            args.repository,
+            args.token,
+            commit,
+            allow_zero=True,
+        )
+        if pr is None:
+            continue
+        type_label, _channel_label = release_snapshot.parse_release_labels(release_snapshot.current_pr_labels(pr))
+        if type_label not in {"type:docs", "type:skip"}:
+            raise ReadinessError(
+                f"older tagged release-enabled target {commit} lacks complete publication ledger; refusing to bypass"
+            )
+    released = {
+        commit
+        for commit in main_commits[anchor_index + 1 : target_index + 1]
+        if release_snapshot.read_publication(args.publication_notes_ref, commit) is not None
+    }
+    pending: list[str] = []
+    for commit in main_commits[anchor_index + 1 : target_index + 1]:
+        if commit in skipped:
+            continue
+        if commit in tagged and commit not in released:
+            raise ReadinessError(f"recovery target prefix contains tag-only publication without complete ledger: {commit}")
+        pr = release_snapshot.load_pr_for_commit(
+            args.api_root,
+            args.repository,
+            args.token,
+            commit,
+            allow_zero=True,
+        )
+        if pr is None:
+            continue
+        type_label, _channel_label = release_snapshot.parse_release_labels(release_snapshot.current_pr_labels(pr))
+        if type_label in {"type:docs", "type:skip"} or commit in released:
+            continue
+        pending.append(commit)
+    if not pending:
+        raise ReadinessError(f"target {target_sha} is not a release-enabled unreleased first-parent commit")
+    if pending[0] != target_sha:
+        raise ReadinessError(f"recovery target {target_sha} is not the oldest unreleased target {pending[0]}")
+    export_values({"target_sha": target_sha, "release_enabled": True}, args.github_output)
+    return 0
 
 
 def parse_args() -> argparse.Namespace:
@@ -217,6 +359,9 @@ def parse_args() -> argparse.Namespace:
     common.add_argument("--main-ref", default="origin/main")
     common.add_argument("--upper-bound", default="")
     common.add_argument("--github-output", default="")
+    common.add_argument("--github-repository", default="")
+    common.add_argument("--github-token", default="")
+    common.add_argument("--api-root", default="https://api.github.com")
     next_ready = sub.add_parser("next-ready", parents=[common])
     require = sub.add_parser("require", parents=[common])
     require.add_argument("--target-sha", required=True)
@@ -228,6 +373,16 @@ def parse_args() -> argparse.Namespace:
     write.add_argument("--receipt", type=Path, required=True)
     write.add_argument("--readiness-notes-ref", default=DEFAULT_NOTES_REF)
     write.add_argument("--max-attempts", type=int, default=3)
+    preflight = sub.add_parser("recover-preflight")
+    preflight.add_argument("--target-sha", required=True)
+    preflight.add_argument("--repository", required=True)
+    preflight.add_argument("--token", required=True)
+    preflight.add_argument("--api-root", default="https://api.github.com")
+    preflight.add_argument("--main-ref", default="origin/main")
+    preflight.add_argument("--snapshot-notes-ref", default=release_snapshot.DEFAULT_NOTES_REF)
+    preflight.add_argument("--publication-notes-ref", default=release_snapshot.DEFAULT_PUBLICATION_NOTES_REF)
+    preflight.add_argument("--override-notes-ref", default=release_snapshot.DEFAULT_OVERRIDE_NOTES_REF)
+    preflight.add_argument("--github-output", default="")
     return parser.parse_args()
 
 
@@ -238,6 +393,8 @@ def main() -> int:
             payload = json.loads(args.receipt.read_text())
             write_receipt(payload, args.readiness_notes_ref, args.max_attempts)
             return 0
+        if args.command == "recover-preflight":
+            return recover_preflight(args)
         if args.command == "export":
             fetch_notes(args.readiness_notes_ref)
             receipt = read_receipt(args.readiness_notes_ref, validate_sha(args.target_sha, "target_sha"))

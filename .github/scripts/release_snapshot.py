@@ -12,7 +12,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib import error, parse, request
 
 SNAPSHOT_SCHEMA_VERSION = 1
@@ -21,7 +21,13 @@ OVERRIDE_SCHEMA_VERSION = 1
 DEFAULT_NOTES_REF = "refs/notes/release-snapshots"
 DEFAULT_PUBLICATION_NOTES_REF = "refs/notes/release-publications"
 DEFAULT_OVERRIDE_NOTES_REF = "refs/notes/release-overrides"
-ALLOWED_SNAPSHOT_SOURCES = {"ci-main", "manual-backfill", "pr-intent-artifact", "legacy-pr-labels"}
+ALLOWED_SNAPSHOT_SOURCES = {
+    "candidate-recovery",
+    "ci-main",
+    "manual-backfill",
+    "pr-intent-artifact",
+    "legacy-pr-labels",
+}
 ALLOWED_OVERRIDE_STATUSES = {"skip"}
 ALLOWED_TYPE_LABELS = {
     "type:patch",
@@ -100,6 +106,12 @@ def parse_args() -> argparse.Namespace:
         "--target-only",
         action="store_true",
         help="Only materialize the requested target commit instead of filling every missing first-parent snapshot on the path.",
+    )
+    ensure.add_argument(
+        "--snapshot-source",
+        choices=sorted(ALLOWED_SNAPSHOT_SOURCES),
+        default="",
+        help="Audit source for the target snapshot; candidate-recovery requires --target-only.",
     )
 
     export_cmd = subparsers.add_parser("export", help="Export a stored release snapshot into GitHub outputs.")
@@ -514,6 +526,14 @@ def parse_release_labels(labels: list[str]) -> tuple[str, str]:
     return type_label, channel_label
 
 
+def release_enabled_for_commit(api_root: str, repository: str, token: str, target_sha: str) -> bool:
+    pr = load_pr_for_commit(api_root, repository, token, target_sha, allow_zero=True)
+    if pr is None:
+        return False
+    type_label, _channel_label = parse_release_labels(current_pr_labels(pr))
+    return type_label not in {"type:docs", "type:skip"}
+
+
 def cargo_base_version(target_sha: str) -> StableVersion:
     cargo_toml = git_output("show", f"{target_sha}:Cargo.toml")
     match = re.search(r'^version\s*=\s*"(\d+\.\d+\.\d+)"', cargo_toml, re.MULTILINE)
@@ -718,11 +738,52 @@ def pending_release_targets(
     *,
     publication_notes_ref: str,
     override_notes_ref: str,
+    strict_fifo: bool = False,
+    release_enabled_for_missing: Callable[[str], bool] | None = None,
 ) -> list[str]:
     pending: list[str] = []
-    for commit in first_parent_commits(upper_bound_sha):
+    missing_before_pending: list[str] = []
+    commits = first_parent_commits(upper_bound_sha)
+    anchor_index = -1
+    if strict_fifo:
+        roots = set(git_output("rev-list", "--max-parents=0", upper_bound_sha).splitlines())
+        tagged = released_commits_from_tags(upper_bound_sha)
+        trusted_tagged = set()
+        for commit in tagged:
+            snapshot = read_snapshot(notes_ref, commit)
+            if snapshot is not None and snapshot.get("release_enabled"):
+                trusted_tagged.add(commit)
+                continue
+            if read_publication(publication_notes_ref, commit) is not None:
+                trusted_tagged.add(commit)
+        tagged_indices = [commits.index(commit) for commit in trusted_tagged if commit in commits]
+        anchor_index = max(tagged_indices, default=-1)
+    else:
+        roots = set()
+        tagged = set()
+        trusted_tagged = set()
+    snapshot_started = strict_fifo and anchor_index >= 0
+    for index, commit in enumerate(commits):
         snapshot = read_snapshot(notes_ref, commit)
+        if snapshot is not None:
+            snapshot_started = True
         if not snapshot or not snapshot.get("release_enabled"):
+            if (
+                strict_fifo
+                and index > anchor_index
+                and snapshot is None
+                and commit not in roots
+                and commit in tagged
+            ):
+                missing_is_release_enabled = release_enabled_for_missing is None or release_enabled_for_missing(commit)
+                if missing_is_release_enabled:
+                    missing_before_pending.append(commit)
+                continue
+            if strict_fifo and index > anchor_index and snapshot_started and snapshot is None and commit not in roots:
+                missing_is_release_enabled = release_enabled_for_missing is None or release_enabled_for_missing(commit)
+                if not missing_is_release_enabled:
+                    continue
+                missing_before_pending.append(commit)
             continue
         if (
             release_state_for_target(
@@ -733,6 +794,11 @@ def pending_release_targets(
             != "pending"
         ):
             continue
+        if strict_fifo and missing_before_pending:
+            raise SnapshotError(
+                "missing release snapshot before oldest pending target; refusing to bypass FIFO: "
+                + ",".join(missing_before_pending)
+            )
         pending.append(commit)
     return pending
 
@@ -1080,7 +1146,12 @@ def export_snapshot(
 def ensure_snapshot(args: argparse.Namespace) -> int:
     target_sha = normalize_sha(args.target_sha)
     output_path = Path(args.output)
-    snapshot_source = "manual-backfill" if args.target_only else "ci-main"
+    requested_source = getattr(args, "snapshot_source", "")
+    snapshot_source = requested_source or ("manual-backfill" if args.target_only else "ci-main")
+    if snapshot_source not in ALLOWED_SNAPSHOT_SOURCES:
+        raise SnapshotError(f"Unsupported snapshot source: {snapshot_source}")
+    if snapshot_source == "candidate-recovery" and not args.target_only:
+        raise SnapshotError("candidate-recovery snapshots require --target-only")
 
     for attempt in range(1, args.max_attempts + 1):
         fetch_notes_ref(args.notes_ref)
@@ -1267,6 +1338,7 @@ def export_next_pending(args: argparse.Namespace) -> int:
         upper_bound,
         publication_notes_ref=args.publication_notes_ref,
         override_notes_ref=args.override_notes_ref,
+        strict_fifo=True,
     )
     export_key_values({"target_sha": pending[0] if pending else ""}, args.github_output)
     return 0
@@ -1293,6 +1365,13 @@ def reconcile_publications(args: argparse.Namespace) -> int:
                 upper_bound,
                 publication_notes_ref=args.publication_notes_ref,
                 override_notes_ref=args.override_notes_ref,
+                strict_fifo=True,
+                release_enabled_for_missing=lambda commit: release_enabled_for_commit(
+                    args.api_root,
+                    args.github_repository,
+                    args.github_token,
+                    commit,
+                ),
             ):
                 snapshot = read_snapshot(args.notes_ref, target_sha)
                 if snapshot is None:

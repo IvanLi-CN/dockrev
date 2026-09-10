@@ -274,7 +274,7 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-target-only-") as tmp:
             "tags_csv": "ghcr.io/ivanli-cn/dockrev:0.1.1,ghcr.io/ivanli-cn/dockrev:latest",
             "supervisor_tags_csv": "ghcr.io/ivanli-cn/dockrev-supervisor:0.1.1,ghcr.io/ivanli-cn/dockrev-supervisor:latest",
             "notes_ref": module.DEFAULT_NOTES_REF,
-            "snapshot_source": "manual-backfill",
+            "snapshot_source": kwargs.get("snapshot_source", "manual-backfill"),
             "created_at": "2026-03-15T00:00:00Z",
         }
 
@@ -299,6 +299,7 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-target-only-") as tmp:
                 output=str(repo / "target-only.json"),
                 max_attempts=1,
                 target_only=True,
+                snapshot_source="candidate-recovery",
             )
         )
         assert exit_code == 0
@@ -306,7 +307,7 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-target-only-") as tmp:
         assert module.read_snapshot(module.DEFAULT_NOTES_REF, old_sha) is None
         stored = module.read_snapshot(module.DEFAULT_NOTES_REF, target_sha)
         assert stored is not None
-        assert stored["snapshot_source"] == "manual-backfill"
+        assert stored["snapshot_source"] == "candidate-recovery"
     finally:
         module.load_pr_for_commit = original_load_pr
         module.build_snapshot = original_build_snapshot
@@ -535,6 +536,11 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-overrides-") as tmp:
     run("commit", "-m", "frozen target", cwd=repo)
     target_sha = run("rev-parse", "HEAD", cwd=repo)
 
+    (repo / "README.md").write_text("next release\n")
+    run("add", "README.md", cwd=repo)
+    run("commit", "-m", "next release", cwd=repo)
+    next_target_sha = run("rev-parse", "HEAD", cwd=repo)
+
     original_cwd = Path.cwd()
     original_loader = module.load_pr_for_commit
     original_git = module.git
@@ -542,6 +548,7 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-overrides-") as tmp:
         os.chdir(repo)
         module.load_pr_for_commit = lambda api_root, repository, token, commit_sha, **kwargs: {
             target_sha: make_pr(601, "Frozen target", target_sha, ["type:patch", "channel:stable"]),
+            next_target_sha: make_pr(602, "Next release", next_target_sha, ["type:patch", "channel:stable"]),
         }[commit_sha]
         snapshot = module.build_snapshot(
             target_sha=target_sha,
@@ -552,6 +559,15 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-overrides-") as tmp:
             api_root="https://api.github.com",
         )
         run("notes", f"--ref={module.DEFAULT_NOTES_REF}", "add", "-f", "-m", json.dumps(snapshot), target_sha, cwd=repo)
+        next_snapshot = module.build_snapshot(
+            target_sha=next_target_sha,
+            repository="IvanLi-CN/dockrev",
+            token="token",
+            notes_ref=module.DEFAULT_NOTES_REF,
+            registry="ghcr.io",
+            api_root="https://api.github.com",
+        )
+        run("notes", f"--ref={module.DEFAULT_NOTES_REF}", "add", "-f", "-m", json.dumps(next_snapshot), next_target_sha, cwd=repo)
 
         module.git = fake_push_git(original_git, module.DEFAULT_OVERRIDE_NOTES_REF)
         exit_code = module.record_override(
@@ -581,11 +597,11 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-overrides-") as tmp:
         )
         pending = module.pending_release_targets(
             module.DEFAULT_NOTES_REF,
-            target_sha,
+            next_target_sha,
             publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
             override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
         )
-        assert pending == []
+        assert pending == [next_target_sha]
     finally:
         module.load_pr_for_commit = original_loader
         module.git = original_git
@@ -922,6 +938,102 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-reconcile-tag-only-blo
         os.chdir(original_cwd)
 
 
+with tempfile.TemporaryDirectory(prefix="release-snapshot-missing-fifo-") as tmp:
+    repo = Path(tmp)
+    run("init", cwd=repo)
+    run("config", "user.name", "Test User", cwd=repo)
+    run("config", "user.email", "test@example.com", cwd=repo)
+    run("checkout", "-b", "main", cwd=repo)
+    (repo / "Cargo.toml").write_text('[package]\nname = "dockrev"\nversion = "0.40.0"\n')
+    run("add", "Cargo.toml", cwd=repo)
+    run("commit", "-m", "base", cwd=repo)
+    base_sha = run("rev-parse", "HEAD", cwd=repo)
+    (repo / "Cargo.toml").write_text('[package]\nname = "dockrev"\nversion = "0.40.1"\n')
+    run("add", "Cargo.toml", cwd=repo)
+    run("commit", "-m", "old release", cwd=repo)
+    old_sha = run("rev-parse", "HEAD", cwd=repo)
+    run("tag", "0.40.1", old_sha, cwd=repo)
+    (repo / "Cargo.toml").write_text('[package]\nname = "dockrev"\nversion = "0.40.2"\n')
+    run("add", "Cargo.toml", cwd=repo)
+    run("commit", "-m", "gap infrastructure fix", cwd=repo)
+    gap_sha = run("rev-parse", "HEAD", cwd=repo)
+    run("tag", "0.40.2", gap_sha, cwd=repo)
+    (repo / "Cargo.toml").write_text('[package]\nname = "dockrev"\nversion = "0.40.3"\n')
+    run("add", "Cargo.toml", cwd=repo)
+    run("commit", "-m", "new release", cwd=repo)
+    new_sha = run("rev-parse", "HEAD", cwd=repo)
+    original_cwd = Path.cwd()
+    original_loader = module.load_pr_for_commit
+    try:
+        os.chdir(repo)
+        module.load_pr_for_commit = lambda api_root, repository, token, target_sha, **kwargs: {
+            base_sha: make_pr(700, "Base", base_sha, ["type:docs", "channel:stable"]),
+            old_sha: make_pr(701, "Old release", old_sha, ["type:patch", "channel:stable"]),
+            gap_sha: make_pr(702, "Infrastructure fix", gap_sha, ["type:skip", "channel:stable"]),
+            new_sha: make_pr(703, "New release", new_sha, ["type:patch", "channel:stable"]),
+        }[target_sha]
+        base_snapshot = module.build_snapshot(
+            target_sha=base_sha,
+            repository="IvanLi-CN/dockrev",
+            token="token",
+            notes_ref=module.DEFAULT_NOTES_REF,
+            registry="ghcr.io",
+            api_root="https://api.github.com",
+        )
+        run("notes", f"--ref={module.DEFAULT_NOTES_REF}", "add", "-f", "-m", json.dumps(base_snapshot), base_sha, cwd=repo)
+        gap_snapshot = module.build_snapshot(
+            target_sha=gap_sha,
+            repository="IvanLi-CN/dockrev",
+            token="token",
+            notes_ref=module.DEFAULT_NOTES_REF,
+            registry="ghcr.io",
+            api_root="https://api.github.com",
+        )
+        run("notes", f"--ref={module.DEFAULT_NOTES_REF}", "add", "-f", "-m", json.dumps(gap_snapshot), gap_sha, cwd=repo)
+        new_snapshot = module.build_snapshot(
+            target_sha=new_sha,
+            repository="IvanLi-CN/dockrev",
+            token="token",
+            notes_ref=module.DEFAULT_NOTES_REF,
+            registry="ghcr.io",
+            api_root="https://api.github.com",
+        )
+        run("notes", f"--ref={module.DEFAULT_NOTES_REF}", "add", "-f", "-m", json.dumps(new_snapshot), new_sha, cwd=repo)
+        try:
+            module.pending_release_targets(
+                module.DEFAULT_NOTES_REF,
+                new_sha,
+                publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+                override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
+                strict_fifo=True,
+                release_enabled_for_missing=lambda commit: commit != gap_sha,
+            )
+        except module.SnapshotError as exc:
+            assert old_sha in str(exc)
+        else:
+            raise AssertionError("strict FIFO accepted a newer snapshot across a missing older snapshot")
+        old_snapshot = module.build_snapshot(
+            target_sha=old_sha,
+            repository="IvanLi-CN/dockrev",
+            token="token",
+            notes_ref=module.DEFAULT_NOTES_REF,
+            registry="ghcr.io",
+            api_root="https://api.github.com",
+        )
+        run("notes", f"--ref={module.DEFAULT_NOTES_REF}", "add", "-f", "-m", json.dumps(old_snapshot), old_sha, cwd=repo)
+        assert module.pending_release_targets(
+            module.DEFAULT_NOTES_REF,
+            new_sha,
+            publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+            override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
+            strict_fifo=True,
+            release_enabled_for_missing=lambda commit: commit != gap_sha,
+        ) == [old_sha, new_sha]
+    finally:
+        module.load_pr_for_commit = original_loader
+        os.chdir(original_cwd)
+
+
 with tempfile.TemporaryDirectory(prefix="release-snapshot-tag-only-state-regression-") as tmp:
     repo = Path(tmp)
     run("init", cwd=repo)
@@ -1060,6 +1172,46 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-tag-only-state-regress
         module.load_pr_for_commit = original_loader
         module.git = original_git
         os.chdir(original_cwd)
+
+
+interior_old = "1" * 40
+interior_gap = "2" * 40
+interior_new = "3" * 40
+original_first_parent = module.first_parent_commits
+original_git_output = module.git_output
+original_read_snapshot = module.read_snapshot
+original_read_publication = module.read_publication
+original_read_override = module.read_override
+original_released_commits = module.released_commits_from_tags
+try:
+    module.first_parent_commits = lambda _target: [interior_old, interior_gap, interior_new]
+    module.git_output = lambda *args: "" if args and args[0] == "rev-list" else original_git_output(*args)
+    module.read_snapshot = lambda _ref, target: (
+        {"target_sha": target, "release_enabled": True} if target in {interior_old, interior_new} else None
+    )
+    module.read_publication = lambda *_args: None
+    module.read_override = lambda *_args: None
+    module.released_commits_from_tags = lambda _target: set()
+    try:
+        module.pending_release_targets(
+            module.DEFAULT_NOTES_REF,
+            interior_new,
+            publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+            override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
+            strict_fifo=True,
+            release_enabled_for_missing=lambda _commit: True,
+        )
+    except module.SnapshotError as exc:
+        assert interior_gap in str(exc)
+    else:
+        raise AssertionError("strict FIFO accepted an interior missing snapshot")
+finally:
+    module.first_parent_commits = original_first_parent
+    module.git_output = original_git_output
+    module.read_snapshot = original_read_snapshot
+    module.read_publication = original_read_publication
+    module.read_override = original_read_override
+    module.released_commits_from_tags = original_released_commits
 
 print("release_snapshot.py self-test: ok")
 PY

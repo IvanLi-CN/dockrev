@@ -53,7 +53,7 @@
 ### MUST
 
 - `Release` prepare 阶段在自动 queue / skip-continue 路径上必须先对 historical tag-backed pending targets 做 publication ledger reconcile：只有当同一 target 同时满足 `tag -> target_sha`、GitHub Release 存在、且 `dockrev` / `dockrev-supervisor` 的 tag digest 都可解析时，才允许回填 `refs/notes/release-publications`。
-- 显式 `workflow_dispatch(..., admin_action=release)` 手动补发路径必须继续直达指定 `head_sha`，不得因为更早的 partial backlog 在 reconcile 阶段被拦住。
+- 显式 `workflow_dispatch(..., admin_action=release)` 手动发布路径必须消费最早未发布目标的有效就绪凭据；更早的 partial backlog 不得被绕过。
 - `Release` workflow 必须先显式创建或校验 `RELEASE_TAG -> TARGET_SHA`，若同名 tag 已存在但指向其它 commit 则立即失败。
 - GitHub Release 创建/更新步骤不得再使用 `commit: ${{ env.TARGET_SHA }}` 这类“让 Release API 代建 tag”的路径。
 - publication ledger 只能在 GitHub Release 成功后记录。
@@ -70,7 +70,7 @@
 ### Core flows
 
 - `Release` workflow 在自动 queue / skip-continue 路径的 prepare 阶段先扫描 oldest-pending queue；对“已有 tag 且证据完整”的历史 target 自动回填 publication ledger，然后才继续选择真正需要发布的下一条 target。
-- `workflow_dispatch(..., admin_action=release)` 仍按 target-only manual backfill 语义工作：先确保该 SHA 的 immutable snapshot 存在，再直接发布该 target，不扫描更老 backlog。
+- `workflow_dispatch(..., admin_action=release)` 仍按精确 SHA 语义工作：先确保该 SHA 的 immutable snapshot 与 readiness receipt 存在，再按 FIFO 校验不得绕过更老目标。
 - `Release` workflow 继续先构建二进制与 GHCR 镜像。
 - Publish 阶段先 `git fetch --tags`，若 `RELEASE_TAG` 不存在则创建 annotated tag 并 `git push origin refs/tags/...`；若已存在，则要求它解析到 `TARGET_SHA`。
 - GitHub Release 步骤直接使用现有 release action，但只负责 create/update release 与上传 assets，不再承担缺失 tag 的创建职责。
@@ -88,7 +88,7 @@
 
 - Given 一个历史 pending target 已有正确 tag、GitHub Release 与双镜像 digest，When `Release` prepare 运行 reconcile，Then publication ledger 会被自动补齐，且 queue 会继续指向真正未发布的下一个 target。
 - Given 一个历史 pending target 只有 tag、但没有 GitHub Release 或缺任一 digest，When reconcile 运行，Then workflow 明确失败并保留 queue 阻断，而不是把该 target 当成已发布。
-- Given 运维手动触发 `workflow_dispatch(head_sha=<sha>, admin_action=release)`，When 更早的 backlog 里还存在 partial published target，Then workflow 仍直接发布请求的 `head_sha`，而不是先因 reconcile 扫描旧 backlog 失败。
+- Given 运维手动触发 `workflow_dispatch(head_sha=<sha>, admin_action=release)`，When 更早的 backlog 里还存在 partial published target，Then workflow 拒绝越过缺口并保留该目标未发布状态。
 - Given 一个正常的 release-enabled target，When `Release` workflow 执行 publish，Then workflow 会先显式创建/校验 `RELEASE_TAG -> TARGET_SHA`，再调用 GitHub Release API create/update release。
 - Given GitHub Release 创建/更新失败，When workflow 收尾，Then publication ledger 仍未记录该 target，queue 不会把它视为已发布。
 - Given publish 全部成功，When workflow 完成，Then publication ledger 已记录，且 release-owning agent 向 owner 报告 successful publication；source PR 不新增发布结果或状态评论。
@@ -112,7 +112,7 @@
 - [x] M1: 恢复显式 tag 预创建/校验，并移除 release-action 的 `commit/TARGET_SHA` 代建 tag 依赖
 - [x] M2: 将 publication ledger 后移到 GitHub Release 之后
 - [x] M3: 补 contract check 防回归
-- [x] M4: historical backlog reconcile/manual backfill bypass/workflow-source queue continuation 合同、回归测试与 README/spec 同步完成；main 上实际恢复执行转交 `#q3nyf`
+- [x] M4: historical backlog reconcile/strict FIFO/workflow-source queue continuation 合同、回归测试与 README/spec 同步完成；main 上实际恢复执行转交 `#q3nyf`
 
 ## 参考（References）
 

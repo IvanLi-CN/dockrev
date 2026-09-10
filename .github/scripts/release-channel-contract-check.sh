@@ -52,6 +52,12 @@ search_fixed 'branches: [main]' .github/workflows/release-candidate.yml
 search_fixed 'uses: ./.github/workflows/ci-main.yml' .github/workflows/release-candidate.yml
 search_fixed 'uses: ./.github/workflows/source-build-release-gate.yml' .github/workflows/release-candidate.yml
 search_fixed 'uses: ./.github/workflows/release-preparation.yml' .github/workflows/release-candidate.yml
+search_fixed 'operation:' .github/workflows/release-candidate.yml
+search_fixed 'recover-preflight' .github/workflows/release-candidate.yml
+search_fixed 'candidate_invocation: true' .github/workflows/release-candidate.yml
+search_fixed 'recover requires an explicitly supplied target_sha' .github/workflows/release-candidate.yml
+search_fixed 'recovery_reason<<__RECOVERY_REASON__' .github/workflows/release-candidate.yml
+ensure_absent '-z "${{ inputs.target_sha }}"' .github/workflows/release-candidate.yml
 search_fixed 'refs/notes/release-readiness' .github/workflows/release-candidate.yml
 search_fixed 'verification_mode' .github/workflows/release-candidate.yml
 search_fixed 'publish": False' .github/workflows/release-candidate.yml
@@ -81,6 +87,26 @@ search_fixed 'workflow_call:' .github/workflows/source-build-release-gate.yml
 search_fixed 'workflow_call:' .github/workflows/release-preparation.yml
 search_fixed 'workflow_dispatch:' .github/workflows/release-preparation.yml
 search_fixed 'verification_mode:' .github/workflows/release-preparation.yml
+search_fixed 'candidate_invocation:' .github/workflows/release-preparation.yml
+search_fixed 'CALLER_WORKFLOW' .github/workflows/release-preparation.yml
+search_fixed 'CALLER_WORKFLOW_REF' .github/workflows/release-preparation.yml
+search_fixed 'workflow_ref' .github/workflows/ci-main.yml
+search_fixed "github.workflow == 'Release Candidate Pipeline'" .github/workflows/ci-main.yml
+search_fixed 'strict_fifo=True' .github/scripts/release_readiness.py
+search_fixed 'release_enabled_for_missing' .github/scripts/release_readiness.py
+search_fixed 'release_enabled_for_commit' .github/scripts/release_snapshot.py
+search_fixed 'python3 .workflow-src/.github/scripts/release_snapshot.py' .github/workflows/ci-main.yml
+search_fixed 'tag-only publication without complete ledger' .github/scripts/release_readiness.py
+search_fixed 'Resolve next pending release target' .github/workflows/release.yml
+search_fixed '--github-token "${GITHUB_TOKEN}"' .github/workflows/release.yml
+ensure_absent 'target_sha="${{ inputs.head_sha }}"' .github/workflows/release.yml
+search_fixed 'refs/notes/release-overrides' .github/workflows/release-candidate.yml
+search_fixed 'not on the main first-parent chain' .github/scripts/release_readiness.py
+search_fixed 'candidate-recovery' .github/workflows/release-candidate.yml
+search_fixed 'Release Candidate Pipeline' .github/workflows/notify-release-failure.yml
+search_fixed 'should_notify' .github/workflows/notify-release-failure.yml
+search_fixed "operation in {'push', 'recover'}" .github/workflows/notify-release-failure.yml
+search_fixed "workflow_name == 'Release'" .github/workflows/notify-release-failure.yml
 ensure_absent 'recovery_request' .github/workflows/release-preparation.yml
 ensure_absent 'recovery_request' .github/scripts/release_preparation.py
 ensure_absent 'def wait_for_' .github/scripts/release_source_gate.py
@@ -102,6 +128,7 @@ search_fixed 'name: Frontend Storybook test (main)' .github/workflows/ci-main.ym
 search_fixed 'Create and push tag' .github/workflows/release.yml
 search_fixed 'Create or update GitHub Release + upload assets' .github/workflows/release.yml
 search_fixed 'Record release publication ledger' .github/workflows/release.yml
+search_fixed 'pending_ready_targets(args) == []' .github/scripts/test_release_readiness.py
 search_fixed 'makeLatest: ${{ needs.prepare.outputs.publish_latest }}' .github/workflows/release.yml
 
 ruby -ryaml -e '

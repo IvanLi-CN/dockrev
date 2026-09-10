@@ -27,6 +27,18 @@ on:
         required: false
         type: boolean
         default: false
+      candidate_invocation:
+        required: false
+        type: boolean
+        default: false
+      snapshot_source:
+        required: false
+        type: string
+        default: ""
+      target_only:
+        required: false
+        type: boolean
+        default: false
     outputs:
       completed_at:
         description: UTC completion time of the verification fast gate
@@ -113,7 +125,12 @@ jobs:
           ref: ${{ env.CI_TARGET_SHA }}
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libsqlite3-dev
+        run: |
+          sudo apt-get update \
+            -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources \
+            -o Dir::Etc::sourceparts=- \
+            -o APT::Get::List-Cleanup=0
+          sudo apt-get install -y pkg-config libsqlite3-dev
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@v1
@@ -171,7 +188,12 @@ jobs:
           ref: ${{ env.CI_TARGET_SHA }}
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libsqlite3-dev
+        run: |
+          sudo apt-get update \
+            -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources \
+            -o Dir::Etc::sourceparts=- \
+            -o APT::Get::List-Cleanup=0
+          sudo apt-get install -y pkg-config libsqlite3-dev
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@v1
@@ -435,8 +457,10 @@ jobs:
       - storybook-coverage-summary
     if: >-
       always() &&
-      github.event_name == 'workflow_call' &&
+      inputs.candidate_invocation == true &&
+      github.workflow == 'Release Candidate Pipeline' &&
       inputs.verification_mode != true &&
+      inputs.snapshot_source != '' &&
       needs.lint.result == 'success' &&
       needs.unit-tests.result == 'success' &&
       (needs.frontend-lint-build.result == 'success' || needs.frontend-lint-build.result == 'skipped') &&
@@ -453,6 +477,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Checkout trusted workflow helpers
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .workflow-src
+          fetch-depth: 1
+
       - name: Configure git identity for release notes
         run: |
           git config user.name "github-actions[bot]"
@@ -461,15 +492,28 @@ jobs:
       - name: Ensure immutable release snapshot
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CALLER_WORKFLOW_REF: ${{ github.workflow_ref }}
         run: |
           set -euo pipefail
-          python3 .github/scripts/release_snapshot.py ensure \
+          if [[ "${{ github.workflow }}" != "Release Candidate Pipeline" || "${CALLER_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/release-candidate.yml@refs/heads/main" ]]; then
+            echo "release snapshot requires Release Candidate Pipeline caller" >&2
+            exit 2
+          fi
+          snapshot_args=(
+            ensure
             --target-sha "${CI_TARGET_SHA}" \
             --github-repository "${GITHUB_REPOSITORY}" \
             --github-token "${GITHUB_TOKEN}" \
             --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
             --registry "${REGISTRY}" \
+            --snapshot-source "${{ inputs.snapshot_source }}" \
             --output "$RUNNER_TEMP/release-snapshot.json"
+          )
+          if [[ "${{ inputs.target_only }}" == "true" ]]; then
+            snapshot_args+=(--target-only)
+            echo "snapshot mode: target-only"
+          fi
+          python3 .workflow-src/.github/scripts/release_snapshot.py "${snapshot_args[@]}"
 
       - name: Show release snapshot summary
         env:

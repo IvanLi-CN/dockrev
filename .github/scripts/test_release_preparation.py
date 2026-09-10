@@ -49,6 +49,29 @@ with tempfile.TemporaryDirectory() as directory:
 
     manifest_path = root / "release-preparation-manifest.json"
     manifest_path.write_text(json.dumps(manifest))
+    manifest_command = [
+        sys.executable,
+        str(ROOT / ".github/scripts/release_preparation.py"),
+        "manifest",
+        "--root",
+        str(root),
+        "--target-sha",
+        target,
+        "--event",
+        "workflow_call",
+        "--workflow-sha",
+        "b" * 40,
+        "--workflow-ref",
+        "IvanLi-CN/dockrev/.github/workflows/release-candidate.yml@refs/heads/main",
+        "--output",
+        str(manifest_path),
+    ]
+    generated = subprocess.run(manifest_command, cwd=ROOT, capture_output=True, text=True, check=False)
+    assert generated.returncode == 0, generated.stderr
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["target_sha"] == target
+    manifest_sha256 = module.manifest_digest(manifest)
+
     verify_command = [
         sys.executable,
         str(ROOT / ".github/scripts/release_preparation.py"),

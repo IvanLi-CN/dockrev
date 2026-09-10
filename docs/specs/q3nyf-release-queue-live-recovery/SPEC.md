@@ -8,7 +8,7 @@
 
 ## 背景 / 问题陈述
 
-- `#taauj` 已经把 historical tag-backed backlog reconcile、manual release bypass、workflow-source queue continuation 这套发布合同落地到代码与回归测试里。
+- `#taauj` 已经把 historical tag-backed backlog reconcile、严格 FIFO 手动发布校验、workflow-source queue continuation 这套发布合同落地到代码与回归测试里。
 - 但当前仓库的真实 release backlog 仍需要在 `main` 上执行一次恢复闭环：先补齐历史 publication ledger，再继续推动真实未发布版本产出 GitHub Release。
 - 这一步依赖合并后的线上 workflow 事实，不能在合并前通过本地实现 PR 自证完成，因此需要独立跟踪。
 
@@ -22,7 +22,7 @@
 
 ### Non-goals
 
-- 不再修改 release queue 逻辑本身；若线上恢复暴露新的合同缺口，再另开 follow-up implementation spec。
+- 不再修改 release queue 逻辑本身；本 spec 只记录合并后线上恢复结果，若线上恢复暴露新的合同缺口，再另开 follow-up implementation spec。
 - 不改变 release label taxonomy、版本号语义或 GHCR 命名。
 
 ## 范围（Scope）
