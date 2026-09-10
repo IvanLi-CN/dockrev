@@ -33,6 +33,12 @@ start an exact-SHA Candidate recovery explicitly, but its preflight must reject
 any target behind an older unreleased release-enabled merge and it writes no
 publication side effect.
 
+Recovery preflight treats an existing tag before the latest trusted publication
+anchor as legacy publication evidence only when that commit has no immutable
+release snapshot; it does not use mutable current PR labels to reconstruct that
+history. A snapshot-backed release-enabled tag, or any tag-only target after the
+trusted anchor, remains a blocking FIFO gap.
+
 `workflow_dispatch` verification mode is non-publishing. It can run the three
 reusable gates and create validation artifacts, but it cannot write a
 readiness note, create a tag, push GHCR, or create a GitHub Release.

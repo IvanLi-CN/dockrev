@@ -53,6 +53,7 @@
 ### MUST
 
 - `Release` prepare 阶段在自动 queue / skip-continue 路径上必须先对 historical tag-backed pending targets 做 publication ledger reconcile：只有当同一 target 同时满足 `tag -> target_sha`、GitHub Release 存在、且 `dockrev` / `dockrev-supervisor` 的 tag digest 都可解析时，才允许回填 `refs/notes/release-publications`。
+- Recovery preflight 对 trusted publication anchor 之前、没有 immutable release snapshot 的历史 tag 仅按 legacy publication evidence 处理，不读取可变当前 PR labels；snapshot-backed release-enabled tag 与 anchor 之后的 tag-only target 仍是 FIFO 阻断条件。
 - 显式 `workflow_dispatch(..., admin_action=release)` 手动发布路径必须消费最早未发布目标的有效就绪凭据；更早的 partial backlog 不得被绕过。
 - `Release` workflow 必须先显式创建或校验 `RELEASE_TAG -> TARGET_SHA`，若同名 tag 已存在但指向其它 commit 则立即失败。
 - GitHub Release 创建/更新步骤不得再使用 `commit: ${{ env.TARGET_SHA }}` 这类“让 Release API 代建 tag”的路径。
@@ -80,6 +81,7 @@
 ### Edge cases / errors
 
 - 若历史 pending target 已有 tag，但 GitHub Release 缺失、仍是 draft、或任一 GHCR digest 无法证明，workflow fail，queue 停在该 target，不得静默标记 published/skip。
+- 只有在 trusted publication anchor 之前且没有 immutable snapshot 的旧 tag 才可按 legacy evidence 跳过标签重建；这不适用于 snapshot-backed release-enabled tag 或 anchor 之后的 tag-only gap。
 - 若显式 tag 创建/校验失败，workflow fail，GitHub Release 与 publication ledger 都不得继续。
 - 若 GitHub Release API 创建/更新失败，workflow fail，publication ledger 不得写入。
 - 若 release 已存在且 tag 已正确指向目标 SHA，workflow 应允许 update 路径继续工作。
