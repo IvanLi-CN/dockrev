@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 部分完成（4/5）
+- Status: 作废（被 ADR 0008 的 PR label release identity 合同替代）
 - Created: 2026-03-23
 - Last: 2026-03-23
 

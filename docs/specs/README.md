@@ -8,10 +8,11 @@
 
 | Topic | Lifecycle | Implementation | Spec | Successor |
 | --- | --- | --- | --- | --- |
+| PR label release identity | active | workflow/scripts/docs complete | `docs/adr/0008-pr-label-release-identity.md` | - |
 | Update rollback diagnostics | active | not started | `update-rollback-diagnostics/SPEC.md` | - |
 | Service accepted state consistency | active | not started | `service-accepted-state-consistency/SPEC.md` | - |
 | Brand media variants | active | dark/light posters delivered; social variants pending | `brand-media-variants/SPEC.md` | - |
-| CI duration optimization | active | source gate, exact-SHA candidate readiness, strict oldest-pending release proof, and one-day preparation artifacts | `ci-duration-optimization/SPEC.md` | - |
+| CI duration optimization | superseded | historical candidate/readiness contract retained for context | `ci-duration-optimization/SPEC.md` | `docs/adr/0008-pr-label-release-identity.md` |
 
 ## 快速新增一个规格
 
@@ -49,16 +50,16 @@
 | 8hewd | Dockrev：概览发现异常详情改为点击弹窗并消除双 tooltip | 已完成 | `8hewd-overview-discovery-error-detail-dialog/SPEC.md` | 2026-04-05 | fast-track（shared dialog primitive + overview discovery dialog + storybook evidence） |
 | hb4cp | Dockrev：服务详情页手动回滚到升级前版本 | 已完成 | `hb4cp-service-manual-rollback/SPEC.md` | 2026-04-12 | fast-track（PR #201 merge-ready；2026-04-12 follow-up fixes rollback target stale disable race, adds diagnostics logs, and refresh-race Storybook evidence） |
 | qynjg | Dockrev：Docker Prune 清理控制台 | 已完成 | `qynjg-docker-prune-cleanup-console/SPEC.md` | 2026-07-07 | fast-track（cleanup scan/apply + cleanup console + storybook + visual evidence + review-loop；2026-07-07 新增 scan-runs SSE 流式重扫与旧缓存弱加载态） |
-| 48mh8 | Dockrev：Release Snapshot Queue 对齐与 #176 补发 | 部分完成（4/5） | `48mh8-release-snapshot-queue-alignment/SPEC.md` | 2026-03-23 | fast-track |
+| 48mh8 | Dockrev：Release Snapshot Queue 对齐与 #176 补发 | 作废 | `48mh8-release-snapshot-queue-alignment/SPEC.md` | 2026-03-23 | superseded by ADR 0008 |
 | 6uwgs | Dockrev：服务镜像外链与代码仓库字段 | 已完成 | `6uwgs-service-image-links-and-repo-url/SPEC.md` | 2026-03-23 | fast-track（repoUrl 持久化 + inference API + services/detail/overview registry+repo icons + storybook/browser coverage） |
 | 2m9ge | Dockrev：repoUrl 自动回填与历史空值修复 | 已完成 | `2m9ge-repo-url-auto-backfill/SPEC.md` | 2026-03-26 | follow-up（startup/discovery backfill + repo_url_auto_disabled semantics） |
-| yt22e | Dockrev：Release Queue Override 收口硬化 | 部分完成（4/5） | `yt22e-release-queue-override-comment-hardening/SPEC.md` | 2026-03-30 | fast-track（release-infra label hardening + skip override ledger；source-PR release comment 子合同已废止） |
-| taauj | Dockrev：Release Tag 预创建与发布完成态合同 | 已完成 | `taauj-release-api-tag-publish-contract/SPEC.md` | 2026-04-05 | follow-up（explicit tag push restored; release API only updates assets/release; historical backlog requires complete publication evidence and strict FIFO readiness） |
-| q3nyf | Dockrev：Release Queue 线上恢复与历史补账执行 | 待实现 | `q3nyf-release-queue-live-recovery/SPEC.md` | 2026-04-05 | follow-up（tracks post-merge mainline recovery, release evidence, and backlog outcome after #taauj lands） |
+| yt22e | Dockrev：Release Queue Override 收口硬化 | 作废 | `yt22e-release-queue-override-comment-hardening/SPEC.md` | 2026-03-30 | superseded by ADR 0008 |
+| taauj | Dockrev：Release Tag 预创建与发布完成态合同 | 作废 | `taauj-release-api-tag-publish-contract/SPEC.md` | 2026-04-05 | superseded by ADR 0008 |
+| q3nyf | Dockrev：Release Queue 线上恢复与历史补账执行 | 作废 | `q3nyf-release-queue-live-recovery/SPEC.md` | 2026-04-05 | superseded by ADR 0008; no historical backfill |
 | jkqsv | Dockrev：GitHub Release latest 指针对齐 publication ledger | 已完成 | `jkqsv-release-latest-pointer-fix/SPEC.md` | 2026-04-03 | follow-up（release-action makeLatest wired to publish_latest so backfilled stable releases can explicitly advance GitHub latest without letting older reruns steal it） |
 | 2hnkx | Dockrev：更新候选跨版本发现次数标记 | 已完成 | `2hnkx-new-version-discovery-count/SPEC.md` | 2026-03-25 | fast-track（PR #170 merged；2026-03-20 follow-up fixes visible-version counting、backfill semantics、unresolved-history normalization、and DB/API stack-path parity；PR #176 collapses repeated unresolved alias history by visible label and keeps live/timeline alias identity in sync；2026-03-23 follow-up aligns timeline currentRunning version with stack snapshot inference；2026-03-24 follow-up prevents older unresolved `latest` baselines from leaking into current stable-baseline count/timeline；currentCandidate + history normalization now use snapshot-first / notification-fallback with exact notification provenance matching, and settled fallback only rewrites unresolved/floating candidates while keeping pinned suffix candidates distinct；2026-03-25 follow-up disallows legacy `currentDigest=''` alias history from matching once the live service already has a known current digest, even if the visible current tag still reads `latest`, while preserving exact fallback for digest-pinned current baselines） |
 | 745rw | Dockrev：标签页恢复后自动补拉更新候选 | 已完成 | `745rw-resume-refresh-update-candidates/SPEC.md` | 2026-03-15 | fast-track（resume refresh hook + review fixes + local browser smoke passed on Overview / Services / ServiceDetail） |
-| kv9pg | Dockrev：quality-gates 最终版对齐（merge queue + 条件 review + required checks） | 进行中 | `kv9pg-quality-gates-final-alignment/SPEC.md` | 2026-03-11 | fast-track |
+| kv9pg | Dockrev：quality-gates 最终版对齐（merge queue + 条件 review + required checks） | 作废 | `kv9pg-quality-gates-final-alignment/SPEC.md` | 2026-03-11 | superseded by the PR-only required-check contract |
 | s4fqf | Dockrev：新版本通知事件驱动收敛 + 显式版本结果兜底 | 已完成 | `s4fqf-new-version-notify-event-settle-explicit-version/SPEC.md` | 2026-03-12 | fast-track |
 | np5fm | Dockrev：Supervisor 自我升级页低拥挤度重构 | 已完成 | `np5fm-supervisor-roomier-layout/SPEC.md` | 2026-03-12 | fast-track（PR #160；visual evidence + copy UX + review fixes） |
 | 99egq | Dockrev：显式 tag 驱动的 Update 契约 | 已完成 | `99egq-explicit-update-tag-contract/SPEC.md` | 2026-03-11 | fast-track（撤销 #162 的 semver raw fallback；统一 explicit targetTag + pullTags） |

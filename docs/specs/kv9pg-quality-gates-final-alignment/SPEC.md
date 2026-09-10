@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 进行中
+- Status: 作废（当前仓库采用 PR-only required-check 合同，merge queue 不在范围内）
 - Created: 2026-03-11
 - Last: 2026-06-27
 

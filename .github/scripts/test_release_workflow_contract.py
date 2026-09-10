@@ -43,6 +43,7 @@ assert "release_policy.validate_source_boundary(" in text(".github/scripts/relea
 assert "workflows: [\"CI (PR)\", \"Label Gate\"]" in preparation
 assert "group: release-preparation-${{ inputs.pr_number || github.event.workflow_run.pull_requests[0].number || github.run_id }}" in preparation
 assert "name: Prepare PR VERSION identity" in preparation
+assert "(github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')" in preparation
 assert "release-reservation" in text(".github/scripts/release_preparation.py")
 assert "actions: read" in preparation
 assert "checks: read" in preparation
@@ -114,6 +115,20 @@ assert "tag_is_reserved_by_other_pr" in text(".github/scripts/release_completion
 quality = json.loads((ROOT / ".github/quality-gates.json").read_text(encoding="utf-8"))
 assert quality["required_checks"] == ["Review Policy Gate", "Label Gate", "Release completion"]
 assert quality["policy"]["branch_protection"]["require_merge_queue"] is False
+
+workflow_paths = {
+    "Review Policy": ".github/workflows/review-policy.yml",
+    "Label Gate": ".github/workflows/label-gate.yml",
+    "Release Preparation": ".github/workflows/release-preparation.yml",
+    "Release completion": ".github/workflows/release-completion-pr.yml",
+    "CI (PR)": ".github/workflows/ci-pr.yml",
+}
+for expected in quality["expected_pr_workflows"]:
+    workflow_name = expected["workflow"]
+    workflow_text = text(workflow_paths[workflow_name])
+    assert f"name: {workflow_name}" in workflow_text
+    for job_name in expected["jobs"]:
+        assert f"name: {job_name}" in workflow_text
 
 lock_start = release.index('          lock_ref_name="release-latest-lock"')
 lock_end = release.index('          highest="', lock_start)
