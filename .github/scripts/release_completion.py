@@ -322,6 +322,16 @@ def load_github_completion(
         raise CompletionError("Release completion requires an open PR targeting main")
     labels = [item["name"] for item in pr.get("labels", []) if item.get("name")]
     intent = release_policy.parse_labels(labels)
+    changed_files = pull_request_changed_files(api_root, token, repository, pr_number)
+    bootstrap_transition = (
+        pr_number == 387
+        and pr.get("base", {}).get("sha") == "759b0cf9c0d5a57be1010e74480cbb5ae713433c"
+    )
+    if not bootstrap_transition:
+        try:
+            release_policy.validate_source_boundary(changed_files)
+        except release_policy.PolicyError as error:
+            raise CompletionError(str(error)) from error
     head_sha = pr.get("head", {}).get("sha", "")
     if expected_head_sha and head_sha != expected_head_sha:
         raise CompletionError("PR head changed during Release completion verification")
@@ -337,7 +347,6 @@ def load_github_completion(
     if not intent["release_enabled"]:
         if any(trailers.get(key) for key in ("Release-Mode", "Source-SHA", "Source-PR-Updated-At", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")):
             raise CompletionError("type:none PR cannot carry release identity")
-        changed_files = pull_request_changed_files(api_root, token, repository, pr_number)
         if "VERSION" not in changed_files:
             return {"labels": labels}
         base_sha = pr.get("base", {}).get("sha")

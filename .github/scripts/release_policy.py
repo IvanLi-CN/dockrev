@@ -16,7 +16,15 @@ ROOT = Path(__file__).resolve().parents[2]
 POLICY_PATH = ROOT / ".github/pr-label-release.json"
 VERSION_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
-UNTRUSTED_SOURCE_PATH_PREFIXES = (".github/workflows/", ".github/scripts/release_")
+UNTRUSTED_SOURCE_PATH_PREFIXES = (
+    ".github/workflows/",
+    ".github/scripts/release_",
+    ".github/scripts/check-live-quality-gates.py",
+    ".github/scripts/label-gate.sh",
+    ".github/scripts/release-channel-contract-check.sh",
+    ".github/quality-gates.json",
+    ".github/release-failure-notification.json",
+)
 
 
 class PolicyError(ValueError):

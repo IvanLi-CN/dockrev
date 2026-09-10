@@ -53,6 +53,7 @@ jobs:
         env:
           LABELS_JSON: ${{ runner.temp }}/release-labels.json
           FILES_JSON: ${{ runner.temp }}/release-files.json
+          ALLOW_BOOTSTRAP: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 387 && github.event.pull_request.base.sha == '759b0cf9c0d5a57be1010e74480cbb5ae713433c' }}
         run: |
           set -euo pipefail
           if [[ -f .github/scripts/release_policy.py ]]; then
@@ -67,6 +68,8 @@ jobs:
           labels = json.loads(Path(os.environ['LABELS_JSON']).read_text())
           files = json.loads(Path(os.environ['FILES_JSON']).read_text())
           intent = release_policy.parse_labels(labels)
+          if os.environ.get('ALLOW_BOOTSTRAP') != 'true':
+              release_policy.validate_source_boundary(files)
           print(json.dumps(intent, sort_keys=True))
           print(f"changed_files={len(files)}")
           PY
@@ -77,6 +80,7 @@ jobs:
           from pathlib import Path
 
           labels = json.loads(Path(os.environ['LABELS_JSON']).read_text())
+          files = json.loads(Path(os.environ['FILES_JSON']).read_text())
           types = [label for label in labels if label.startswith('type:')]
           channels = [label for label in labels if label.startswith('channel:')]
           allowed_types = {'type:major', 'type:minor', 'type:patch', 'type:none'}
@@ -92,6 +96,21 @@ jobs:
               errors.append('unknown channel label')
           if errors:
               raise SystemExit('; '.join(errors))
+          if os.environ.get('ALLOW_BOOTSTRAP') != 'true':
+              forbidden = [
+                  path for path in files
+                  if path.startswith('.github/workflows/')
+                  or path.startswith('.github/scripts/release_')
+                  or path in {
+                      '.github/scripts/check-live-quality-gates.py',
+                      '.github/scripts/label-gate.sh',
+                      '.github/scripts/release-channel-contract-check.sh',
+                      '.github/quality-gates.json',
+                      '.github/release-failure-notification.json',
+                  }
+              ]
+              if forbidden:
+                  raise SystemExit('source CI evidence is untrusted when release contract files change: ' + ', '.join(sorted(forbidden)))
           print(json.dumps({'type_label': types[0], 'channel_label': channels[0]}, sort_keys=True))
           PY
           fi

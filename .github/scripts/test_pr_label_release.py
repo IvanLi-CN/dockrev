@@ -49,6 +49,8 @@ policy.validate_preparation_version("0.1.0", "0.1.1-beta.1", {"type": "patch", "
 expect_error(policy.parse_labels, ["type:patch", "type:minor", "channel:stable"])
 expect_error(policy.parse_labels, ["type:patch", "channel:rc"])
 expect_error(policy.validate_source_boundary, [".github/workflows/ci-pr.yml"])
+expect_error(policy.validate_source_boundary, [".github/quality-gates.json"])
+expect_error(policy.validate_source_boundary, [".github/scripts/check-live-quality-gates.py"])
 expect_error(policy.next_patch, "0.1.0-beta.1")
 expect_error(policy.validate_channel_version, "0.1.1", "beta")
 expect_error(policy.validate_channel_version, "0.1.1-beta.preview", "beta")
