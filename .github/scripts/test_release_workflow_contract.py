@@ -172,6 +172,15 @@ raise SystemExit(0)
         encoding="utf-8",
     )
     gh_stub.chmod(0o755)
+    rg_stub = bin_dir / "rg"
+    rg_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "if [[ \"${1:-}\" == \"-q\" ]]; then shift; fi\n"
+        "grep -Eq \"$1\" \"$2\"\n",
+        encoding="utf-8",
+    )
+    rg_stub.chmod(0o755)
     sleep_stub = bin_dir / "sleep"
     sleep_stub.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     sleep_stub.chmod(0o755)
