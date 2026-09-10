@@ -206,9 +206,25 @@ export const DetailSidebarDesktop: Story = {
   render: renderDetailShell({ name: 'service', stackId: 'stack-prod', serviceId: 'svc-prod-api', section: 'logs' }),
   play: async ({ canvasElement }) => {
     const context = canvasElement.querySelector<HTMLElement>('.sidebarContextViewport')
+    const scrollViewport = context?.querySelector<HTMLElement>('[data-overlayscrollbars-viewport]')
+    const intro = context?.querySelector<HTMLElement>('.detailRouteTreeIntro')
+    const stackGroups = context ? [...context.querySelectorAll<HTMLElement>('.detailRouteStackGroup')] : []
+    const lastStackGroup = stackGroups.at(-1)
+    const lastNotificationRegion = context?.querySelector<HTMLElement>('.detailRouteServiceList > div[role="region"][aria-label="Notifications (F8)"]:last-child')
+    const sidebarMeta = canvasElement.querySelector<HTMLElement>('.sidebarMeta')
     expectStory(context?.textContent?.includes('prod'), 'Sidebar context should render stack names')
     expectStory(context?.textContent?.includes('api'), 'Sidebar context should render service names')
     expectStory(context?.textContent?.includes('web'), 'Sidebar context should render sibling services')
+    expectStory(context && scrollViewport && intro && lastStackGroup && lastNotificationRegion && sidebarMeta, 'Desktop sidebar should expose the context viewport and metadata region')
+    expectStory(getComputedStyle(context).marginBottom === '16px', 'Desktop sidebar context should reserve one 16px boundary gap')
+    expectStory(getComputedStyle(scrollViewport).paddingBottom === '0px', 'Desktop sidebar scroll viewport should not add a second bottom gap')
+    expectStory(getComputedStyle(intro).position === 'sticky', 'Desktop sidebar tree header should remain visible while the directory scrolls')
+    expectStory(getComputedStyle(lastStackGroup).paddingBottom === '0px', 'Desktop sidebar directory should not add trailing stack-group padding')
+    expectStory(getComputedStyle(lastNotificationRegion).marginTop === '-4px', 'Desktop sidebar directory should cancel the trailing notification wrapper gap')
+    expectStory(
+      Math.abs(sidebarMeta.getBoundingClientRect().top - context.getBoundingClientRect().bottom - 16) <= 1,
+      'Desktop sidebar context and metadata regions should remain 16px apart',
+    )
     expectDesktopHeaderAlignment(canvasElement, true)
   },
 }
