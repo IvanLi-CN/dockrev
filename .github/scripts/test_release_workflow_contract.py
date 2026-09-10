@@ -4,7 +4,11 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import subprocess
+import tempfile
+import textwrap
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -34,6 +38,7 @@ assert "name: 'Release completion'" in preparation
 assert "createCommitOnBranch" in text(".github/scripts/release_preparation.py")
 assert "branches: [main]" in release and "merge_sha:" in release and "recovery_reason:" in release
 assert "workflow_dispatch requires an existing release-enabled immutable identity" in release
+assert 'gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/workflows/release.yml/runs?head_sha=${MERGE_SHA}&per_page=100"' in release
 assert "release-failure-context-" in release and "workflow_dispatch merge_sha=" in release
 assert "create VERSION-only release PR Covered-Product-Merge-SHA=" in release
 assert "prior failed automatic Release run" in release
@@ -51,6 +56,7 @@ assert "Release-Latest-Lock-Run:" in release
 assert "matching-refs/heads/release-latest-lock/" in release
 assert "HTTP 404|Not Found|404" in release
 assert release.index("trap release_lock EXIT") < release.index("while true; do")
+assert "git/refs/heads/${lock_ref_name}" in release
 assert "tr '[:upper:]' '[:lower:]'" in release
 assert "overwrite: true" in release
 assert "github.run_attempt" in release
@@ -77,5 +83,93 @@ assert "tag_is_reserved_by_other_pr" in text(".github/scripts/release_completion
 quality = json.loads((ROOT / ".github/quality-gates.json").read_text(encoding="utf-8"))
 assert quality["required_checks"] == ["Review Policy Gate", "Label Gate", "Release completion"]
 assert quality["policy"]["branch_protection"]["require_merge_queue"] is False
+
+lock_start = release.index("          lock_suffix=")
+lock_end = release.index('          highest="', lock_start)
+lock_body = textwrap.dedent(release[lock_start:lock_end])
+with tempfile.TemporaryDirectory() as directory:
+    root = Path(directory)
+    bin_dir = root / "bin"
+    bin_dir.mkdir()
+    log_path = root / "deletions.log"
+    calls_path = root / "matching-refs.calls"
+    gh_stub = bin_dir / "gh"
+    gh_stub.write_text(
+        """#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import sys
+
+args = sys.argv[1:]
+joined = " ".join(args)
+urls = [arg for arg in args if arg.startswith("repos/")]
+url = urls[0] if urls else ""
+method = args[args.index("--method") + 1] if "--method" in args else "GET"
+if method == "DELETE":
+    with open(os.environ["DELETE_LOG"], "a", encoding="utf-8") as handle:
+        handle.write(url + "\\n")
+    raise SystemExit(0)
+if "matching-refs" in url:
+    calls_path = pathlib.Path(os.environ["MATCHING_REFS_CALLS"])
+    count = int(calls_path.read_text(encoding="utf-8") or "0") if calls_path.exists() else 0
+    calls_path.write_text(str(count + 1), encoding="utf-8")
+    refs = [{"ref": "refs/heads/release-latest-lock/200-1"}]
+    if count == 0:
+        refs.extend(
+            [
+                {"ref": "refs/heads/release-latest-lock/50-1"},
+                {"ref": "refs/heads/release-latest-lock/100-1"},
+                {"ref": "refs/heads/release-latest-lock/101-1"},
+            ]
+        )
+    print(json.dumps([refs]))
+    raise SystemExit(0)
+if "/actions/runs/" in url:
+    run_id = url.rsplit("/", 1)[-1]
+    if run_id == "50":
+        print("in_progress")
+    elif run_id == "100":
+        print("completed")
+    elif run_id == "101":
+        print("HTTP 404: Not Found", file=sys.stderr)
+        raise SystemExit(1)
+    else:
+        print("in_progress")
+    raise SystemExit(0)
+if "git/commits" in url:
+    print("lock-sha")
+elif "/commits/" in url:
+    print("tree-sha")
+raise SystemExit(0)
+""",
+        encoding="utf-8",
+    )
+    gh_stub.chmod(0o755)
+    sleep_stub = bin_dir / "sleep"
+    sleep_stub.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    sleep_stub.chmod(0o755)
+    script = root / "latest-lock.sh"
+    script.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+export GITHUB_REPOSITORY=IvanLi-CN/dockrev
+export GITHUB_RUN_ID=200
+export GITHUB_RUN_ATTEMPT=1
+export MERGE_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+"""
+        + lock_body,
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    env["DELETE_LOG"] = str(log_path)
+    env["MATCHING_REFS_CALLS"] = str(calls_path)
+    subprocess.run([str(script)], check=True, env=env, cwd=ROOT)
+    deleted = log_path.read_text(encoding="utf-8").splitlines()
+    assert any(value.endswith("release-latest-lock/100-1") for value in deleted)
+    assert any(value.endswith("release-latest-lock/101-1") for value in deleted)
+    assert any(value.endswith("release-latest-lock/200-1") for value in deleted)
 
 print("PASS: release workflow contract")

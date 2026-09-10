@@ -83,7 +83,7 @@ jobs:
           git fetch --no-tags origin main
           git merge-base --is-ancestor "${MERGE_SHA}" origin/main
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            prior_failure="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/release.yml/runs?head_sha=${MERGE_SHA}&per_page=100" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(any(run.get("event") == "push" and run.get("conclusion") == "failure" for run in data.get("workflow_runs", [])))')"
+            prior_failure="$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/workflows/release.yml/runs?head_sha=${MERGE_SHA}&per_page=100" | python3 -c 'import json,sys; pages=json.load(sys.stdin); print(any(run.get("event") == "push" and run.get("conclusion") == "failure" for page in pages for run in page.get("workflow_runs", [])))')"
             [[ "${prior_failure}" == "True" ]] || { echo "same-SHA recovery requires a prior failed automatic Release run" >&2; exit 2; }
           fi
           set +e
@@ -539,10 +539,23 @@ jobs:
           set -euo pipefail
           lock_suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           lock_ref_name="release-latest-lock/${lock_suffix}"
-          lock_ref="repos/${GITHUB_REPOSITORY}/git/ref/heads/${lock_ref_name}"
+          lock_ref="repos/${GITHUB_REPOSITORY}/git/refs/heads/${lock_ref_name}"
           lock_owner="${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}"
           release_lock() {
             gh api --method DELETE "${lock_ref}" >/dev/null 2>&1 || true
+          }
+          reap_lock_ref() {
+            local ref_name="$1"
+            local error_file="/tmp/release-latest-lock-delete-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            if gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${ref_name}" >/dev/null 2>"${error_file}"; then
+              return 0
+            fi
+            local status=$?
+            if [[ "${status}" -eq 1 ]] && rg -q 'HTTP 404|Not Found|404' "${error_file}"; then
+              return 0
+            fi
+            cat "${error_file}" >&2
+            return "${status}"
           }
           tree_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${MERGE_SHA}" --jq '.commit.tree.sha')"
           lock_message="$(printf 'Release latest promotion lock\n\nRelease-Latest-Lock-Run: %s\nRelease-Latest-Lock-Attempt: %s\nRelease-Latest-Lock-Merge-SHA: %s' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${MERGE_SHA}")"
@@ -566,10 +579,14 @@ jobs:
                 if run_status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${existing_run}" --jq '.status' 2>/tmp/release-latest-lock-run-error)"; then
                   if [[ "${run_status}" != "completed" ]]; then
                     owners+="${existing_run}:${existing_attempt}\n"
+                  else
+                    reap_lock_ref "${ref#refs/heads/}"
                   fi
                 else
                   status=$?
-                  if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 404|Not Found|404' /tmp/release-latest-lock-run-error; then
+                  if [[ "${status}" -eq 1 ]] && rg -q 'HTTP 404|Not Found|404' /tmp/release-latest-lock-run-error; then
+                    reap_lock_ref "${ref#refs/heads/}"
+                  else
                     cat /tmp/release-latest-lock-run-error >&2
                     exit "${status}"
                   fi

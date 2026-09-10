@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 import tempfile
 from argparse import Namespace
@@ -766,8 +767,38 @@ with tempfile.TemporaryDirectory() as directory:
     root = Path(directory)
     files = root / "files.json"
     provenance = root / "provenance.json"
+    resolved_identity = root / "resolved-identity.json"
+    failure_output = root / "failure-context.json"
     files.write_text(json.dumps(["VERSION"]))
     provenance.write_text(json.dumps(version_only["provenance"]))
+    resolved_identity.write_text(json.dumps(resolved))
+    subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / ".github/scripts/release_failure_context.py"),
+            "--resolved-identity",
+            str(resolved_identity),
+            "--repository",
+            "IvanLi-CN/dockrev",
+            "--server",
+            "https://github.com",
+            "--run-id",
+            "1",
+            "--attempt",
+            "2",
+            "--event",
+            "push",
+            "--ref",
+            "refs/heads/main",
+            "--actor",
+            "tester",
+            "--output",
+            str(failure_output),
+        ],
+        check=True,
+    )
+    cli_failure = json.loads(failure_output.read_text(encoding="utf-8"))
+    assert cli_failure == resolved_failure
     assert policy.main.__name__ == "main"
 
 print("PASS: PR label release fixtures")
