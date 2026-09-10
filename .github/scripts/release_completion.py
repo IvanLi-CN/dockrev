@@ -147,10 +147,10 @@ def load_github_completion(api_root: str, token: str, repository: str, pr_number
         covered_pulls = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{source_sha}/pulls")
         if isinstance(covered_pulls, list) and len(covered_pulls) == 1:
             check_sha = covered_pulls[0].get("head", {}).get("sha", source_sha)
-    checks = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{check_sha}/check-runs?per_page=100").get("check_runs", [])
-    workflows = api_json(api_root, token, f"/repos/{owner}/{name}/actions/runs?head_sha={check_sha}&per_page=100").get("workflow_runs", [])
-    label_gate = next((check for check in checks if "Label Gate" in str(check.get("name", ""))), None)
-    ci_run = next((run for run in workflows if run.get("name") == "CI (PR)" and run.get("head_sha") == check_sha), None)
+    ci_runs = api_json(api_root, token, f"/repos/{owner}/{name}/actions/workflows/ci-pr.yml/runs?head_sha={check_sha}&per_page=100").get("workflow_runs", [])
+    label_runs = api_json(api_root, token, f"/repos/{owner}/{name}/actions/workflows/label-gate.yml/runs?head_sha={check_sha}&per_page=100").get("workflow_runs", [])
+    ci_run = next((run for run in ci_runs if run.get("head_sha") == check_sha), None)
+    label_gate = next((run for run in label_runs if run.get("head_sha") == check_sha), None)
     if mode == "normal-preparation":
         version_for_tag = preparation["version"]
     elif mode == "version-only-release-pr":

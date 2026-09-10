@@ -71,15 +71,22 @@ def pull_request(api_root: str, token: str, repository: str, number: int) -> dic
     return api_request(api_root, token, "GET", f"/repos/{owner}/{name}/pulls/{number}")
 
 
-def source_ci_ready(api_root: str, token: str, repository: str, source_sha: str) -> None:
+def workflow_runs_for_sha(api_root: str, token: str, repository: str, workflow_file: str, source_sha: str) -> list[dict[str, Any]]:
     owner, name = repository_parts(repository)
-    runs = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/actions/runs?head_sha={source_sha}&per_page=100").get("workflow_runs", [])
-    ci_runs = [run for run in runs if run.get("name") == "CI (PR)" and run.get("head_sha") == source_sha]
+    return api_request(
+        api_root,
+        token,
+        "GET",
+        f"/repos/{owner}/{name}/actions/workflows/{urllib.parse.quote(workflow_file, safe='')}/runs?head_sha={source_sha}&per_page=100",
+    ).get("workflow_runs", [])
+
+
+def source_ci_ready(api_root: str, token: str, repository: str, source_sha: str) -> None:
+    ci_runs = [run for run in workflow_runs_for_sha(api_root, token, repository, "ci-pr.yml", source_sha) if run.get("head_sha") == source_sha]
     if not any(run.get("status") == "completed" and run.get("conclusion") == "success" for run in ci_runs):
         raise PreparationError("source SHA does not have a successful complete CI (PR) run")
-    checks = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{source_sha}/check-runs?per_page=100").get("check_runs", [])
-    label_checks = [check for check in checks if "Label Gate" in str(check.get("name", ""))]
-    if not any(check.get("status") == "completed" and check.get("conclusion") == "success" for check in label_checks):
+    label_runs = [run for run in workflow_runs_for_sha(api_root, token, repository, "label-gate.yml", source_sha) if run.get("head_sha") == source_sha]
+    if not any(run.get("status") == "completed" and run.get("conclusion") == "success" for run in label_runs):
         raise PreparationError("source SHA does not have a successful Label Gate check")
 
 
@@ -96,15 +103,31 @@ def current_version(api_root: str, token: str, repository: str, source_sha: str)
     return version
 
 
-def reserve_tag(api_root: str, token: str, repository: str, version: str) -> None:
+def reserve_tag(api_root: str, token: str, repository: str, version: str, pr_number: int) -> None:
     owner, name = repository_parts(repository)
     try:
         existing = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/git/ref/tags/v{version}")
     except PreparationError as error:
         if " 404:" in str(error):
-            return
-        raise
-    raise PreparationError(f"release tag v{version} already exists and cannot be reserved: {existing}")
+            pass
+        else:
+            raise
+    else:
+        raise PreparationError(f"release tag v{version} already exists and cannot be reserved: {existing}")
+
+    open_pulls = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/pulls?state=open&base=main&per_page=100")
+    for pull in open_pulls if isinstance(open_pulls, list) else []:
+        if pull.get("number") == pr_number:
+            continue
+        head_sha = pull.get("head", {}).get("sha", "")
+        if not re.fullmatch(r"[0-9a-f]{40}", head_sha):
+            continue
+        head_commit = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{head_sha}")
+        trailers = release_policy.parse_trailers(head_commit.get("commit", {}).get("message", ""))
+        if trailers.get("Release-Mode") == "normal-preparation" and trailers.get("Product-Version") == version:
+            raise PreparationError(
+                f"release version {version} is already reserved by open PR #{pull.get('number')}"
+            )
 
 
 def expected_version(intent: dict[str, Any], base_version: str, exact_version: str | None) -> str:
@@ -214,7 +237,7 @@ def create(args: argparse.Namespace) -> int:
     source_ci_ready(args.api_root, args.token, args.repository, source_sha)
     base_version = current_version(args.api_root, args.token, args.repository, source_sha)
     version = expected_version(intent, base_version, args.exact_version)
-    reserve_tag(args.api_root, args.token, args.repository, version)
+    reserve_tag(args.api_root, args.token, args.repository, version, args.pr_number)
     commit_sha = create_commit(args.api_root, args.token, args.repository, pr["head"]["ref"], source_sha, version, intent)
     preparation = inspect_commit(args.api_root, args.token, args.repository, pr["head"]["ref"], commit_sha, source_sha, version, intent)
     payload = {

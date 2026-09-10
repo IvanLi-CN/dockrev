@@ -22,7 +22,7 @@ permissions:
   checks: read
 
 concurrency:
-  group: release-preparation-${{ inputs.pr_number || github.event.workflow_run.pull_requests[0].number || github.run_id }}
+  group: release-preparation-main
   cancel-in-progress: false
 
 jobs:

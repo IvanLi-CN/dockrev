@@ -41,6 +41,7 @@ jobs:
     outputs:
       release_enabled: ${{ steps.resolve.outputs.release_enabled }}
       pull_request: ${{ steps.resolve.outputs.pull_request }}
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
       merge_sha: ${{ steps.resolve.outputs.merge_sha }}
       version: ${{ steps.resolve.outputs.version }}
       release_tag: ${{ steps.resolve.outputs.release_tag }}
@@ -90,6 +91,7 @@ jobs:
           payload = json.loads(Path("release-intent.json").read_text())
           print(f"release_enabled={'true' if payload.get('release_enabled') else 'false'}")
           print(f"pull_request={payload.get('pull_request', '')}")
+          print(f"source_sha={payload.get('source_sha', '')}")
           print(f"merge_sha={payload.get('merge_commit_sha', '')}")
           print(f"version={payload.get('version', '')}")
           print(f"release_tag={payload.get('release_tag', '')}")
@@ -366,6 +368,7 @@ jobs:
           RELEASE_VERSION: ${{ needs.identity.outputs.version }}
           RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
           RELEASE_MERGE_SHA: ${{ needs.identity.outputs.merge_sha }}
+          RELEASE_SOURCE_SHA: ${{ needs.identity.outputs.source_sha }}
           RELEASE_PR_NUMBER: ${{ needs.identity.outputs.pull_request }}
           RELEASE_ARTIFACT_NAMES: ${{ needs.package-assets.outputs.artifact_names }}
           RELEASE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -384,7 +387,7 @@ jobs:
           artifacts = json.loads(os.environ["RELEASE_ARTIFACT_NAMES"] or "null") or expected
           payload = {
               "pull_request": int(os.environ["RELEASE_PR_NUMBER"] or "0"),
-              "source_sha": os.environ["RELEASE_MERGE_SHA"],
+              "source_sha": os.environ["RELEASE_SOURCE_SHA"],
               "merge_commit_sha": os.environ["RELEASE_MERGE_SHA"],
               "type": os.environ["RELEASE_TYPE"],
               "channel": os.environ["RELEASE_CHANNEL"],
