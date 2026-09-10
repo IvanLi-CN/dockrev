@@ -1,0 +1,38 @@
+{
+  "receipt_ledger": [
+    {
+      "candidate_event": "workflow_dispatch",
+      "candidate_run_id": 34442305956,
+      "candidate_workflow": "Release Candidate Pipeline",
+      "created_at": "2026-09-10T05:59:14.198865Z",
+      "operation": "recover",
+      "preparation": {
+        "artifact_name": "release-preparation-9c0570681d935250310a97c5924a521515d20da0",
+        "manifest_sha256": "b8fabd053fd29be388aa8441493e9a109f84cfe2d1042d7b2381863cc29b3817",
+        "publish": false,
+        "run_id": 34442305956,
+        "target_sha": "9c0570681d935250310a97c5924a521515d20da0"
+      },
+      "publish": false,
+      "recovery": {
+        "actor": "IvanLi-CN",
+        "mode": "candidate-recovery",
+        "reason": "Catch up the next oldest unreleased release candidate after publishing 0.78.6.",
+        "target_sha": "9c0570681d935250310a97c5924a521515d20da0"
+      },
+      "schema_version": 1,
+      "source_gate": {
+        "artifact_name": "source-gate-attestation-34442305956",
+        "attestation_sha256": "602e900d7f8a6f9e261cb627fdc716c902462290bf96dc689f189cd414243609",
+        "gate_result": "success",
+        "publish": false,
+        "run_id": 34442305956,
+        "target_sha": "9c0570681d935250310a97c5924a521515d20da0"
+      },
+      "target_sha": "9c0570681d935250310a97c5924a521515d20da0",
+      "verification_mode": false
+    }
+  ],
+  "schema_version": 1,
+  "target_sha": "9c0570681d935250310a97c5924a521515d20da0"
+}
