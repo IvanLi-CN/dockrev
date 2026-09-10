@@ -536,6 +536,11 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-overrides-") as tmp:
     run("commit", "-m", "frozen target", cwd=repo)
     target_sha = run("rev-parse", "HEAD", cwd=repo)
 
+    (repo / "README.md").write_text("next release\n")
+    run("add", "README.md", cwd=repo)
+    run("commit", "-m", "next release", cwd=repo)
+    next_target_sha = run("rev-parse", "HEAD", cwd=repo)
+
     original_cwd = Path.cwd()
     original_loader = module.load_pr_for_commit
     original_git = module.git
@@ -543,6 +548,7 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-overrides-") as tmp:
         os.chdir(repo)
         module.load_pr_for_commit = lambda api_root, repository, token, commit_sha, **kwargs: {
             target_sha: make_pr(601, "Frozen target", target_sha, ["type:patch", "channel:stable"]),
+            next_target_sha: make_pr(602, "Next release", next_target_sha, ["type:patch", "channel:stable"]),
         }[commit_sha]
         snapshot = module.build_snapshot(
             target_sha=target_sha,
@@ -553,6 +559,15 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-overrides-") as tmp:
             api_root="https://api.github.com",
         )
         run("notes", f"--ref={module.DEFAULT_NOTES_REF}", "add", "-f", "-m", json.dumps(snapshot), target_sha, cwd=repo)
+        next_snapshot = module.build_snapshot(
+            target_sha=next_target_sha,
+            repository="IvanLi-CN/dockrev",
+            token="token",
+            notes_ref=module.DEFAULT_NOTES_REF,
+            registry="ghcr.io",
+            api_root="https://api.github.com",
+        )
+        run("notes", f"--ref={module.DEFAULT_NOTES_REF}", "add", "-f", "-m", json.dumps(next_snapshot), next_target_sha, cwd=repo)
 
         module.git = fake_push_git(original_git, module.DEFAULT_OVERRIDE_NOTES_REF)
         exit_code = module.record_override(
@@ -582,11 +597,11 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-overrides-") as tmp:
         )
         pending = module.pending_release_targets(
             module.DEFAULT_NOTES_REF,
-            target_sha,
+            next_target_sha,
             publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
             override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
         )
-        assert pending == []
+        assert pending == [next_target_sha]
     finally:
         module.load_pr_for_commit = original_loader
         module.git = original_git
