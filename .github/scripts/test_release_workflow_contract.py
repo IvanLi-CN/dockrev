@@ -25,17 +25,29 @@ assert "name: Label Gate" in label_gate and "pull_request_target:" in label_gate
 assert "name: Release completion" in completion and "pull_request_target:" in completion
 assert "workflows: [\"CI (PR)\", \"Label Gate\"]" in preparation
 assert "name: Release completion" in preparation
+assert "actions: read" in preparation
+assert "checks.create" in preparation
+assert "head_sha: process.env.HEAD_SHA" in preparation
+assert "checks: write" in preparation
+assert "actions: read" in completion
 assert "createCommitOnBranch" in text(".github/scripts/release_preparation.py")
 assert "branches: [main]" in release and "merge_sha:" in release and "recovery_reason:" in release
 assert "release-failure-context-" in release and "workflow_dispatch merge_sha=" in release
+assert "create VERSION-only release PR Covered-Product-Merge-SHA=" in release
 assert "prior failed automatic Release run" in release
 assert "path: release-assets" in release and 'chmod +x "${source}"' in release
 assert "needs.identity.result == 'failure'" in release
 assert "release-identity-failure-context-" in release
 assert "release-publish-${{ needs.identity.outputs.merge_sha }}" in release
+assert "tr '[:upper:]' '[:lower:]'" in release
+assert "overwrite: true" in release
+assert "github.run_attempt" in release
 assert "oidrune/.github/workflows/notify.yml@" in notify
 assert "required_secrets" in text(".github/release-failure-notification.json")
-assert "paths-ignore:" in ci_pr and "- VERSION" in ci_pr
+assert "release-identity-guard:" in ci_pr
+assert "Release-Mode:" in ci_pr
+assert "needs.release-identity-guard.outputs.skip != 'true'" in ci_pr
+assert "release-identity-guard" in ci_pr
 assert "Release Candidate Pipeline" not in release
 assert "release_readiness.py" not in release
 assert "refs/notes/release" not in release

@@ -31,7 +31,7 @@ preparation_script = load("release_preparation", ROOT / ".github/scripts/release
 def expect_error(function, *args, **kwargs):
     try:
         function(*args, **kwargs)
-    except (policy.PolicyError, completion.CompletionError, identity.IdentityError):
+    except (policy.PolicyError, completion.CompletionError, identity.IdentityError, preparation_script.PreparationError):
         return
     raise AssertionError(f"expected {function.__name__} to fail")
 
@@ -43,11 +43,13 @@ assert policy.next_patch("1.4.9") == "1.4.10"
 policy.validate_channel_version("0.1.1", "stable")
 policy.validate_channel_version("0.2.0-beta.1", "beta")
 policy.validate_channel_version("0.2.0-dev.3", "dev")
+policy.validate_preparation_version("0.1.0", "0.1.1-beta.1", {"type": "patch", "channel": "beta"})
 expect_error(policy.parse_labels, ["type:patch", "type:minor", "channel:stable"])
 expect_error(policy.parse_labels, ["type:patch", "channel:rc"])
 expect_error(policy.next_patch, "0.1.0-beta.1")
 expect_error(policy.validate_channel_version, "0.1.1", "beta")
 expect_error(policy.validate_channel_version, "0.1.1-beta.preview", "beta")
+expect_error(policy.validate_preparation_version, "0.1.0", "0.1.2-beta.1", {"type": "patch", "channel": "beta"})
 
 source_sha = "a" * 40
 prep_sha = "b" * 40
@@ -69,6 +71,49 @@ expect_error(policy.validate_preparation, {**preparation, "verified": False})
 expect_error(policy.parse_trailers, "Release-Mode: normal-preparation\nRelease-Mode: normal-preparation")
 assert preparation_script.is_existing_preparation({"Release-Mode": "normal-preparation", "Source-SHA": source_sha if 'source_sha' in globals() else "a" * 40, "Product-Version": "0.1.1"})
 assert not preparation_script.is_existing_preparation({"Release-Mode": "normal-preparation"})
+beta_labels = policy.parse_labels(["type:patch", "channel:beta"])
+assert preparation_script.expected_version(beta_labels, "0.1.0", "0.1.1-beta.1") == "0.1.1-beta.1"
+expect_error(preparation_script.expected_version, beta_labels, "0.1.0", None)
+
+captured = {}
+original_graphql = preparation_script.graphql
+def fake_graphql(_api_root, _token, _query, variables):
+    captured["variables"] = variables
+    return {"createCommitOnBranch": {"commit": {"oid": "d" * 40}}}
+
+preparation_script.graphql = fake_graphql
+assert preparation_script.create_commit(
+    "https://api.github.test", "token", "IvanLi-CN/dockrev", "feature/release", source_sha, "0.1.1", labels
+) == "d" * 40
+preparation_script.graphql = original_graphql
+commit_input = captured["variables"]["input"]
+assert commit_input["expectedHeadOid"] == source_sha
+assert commit_input["fileChanges"]["additions"][0]["path"] == "VERSION"
+assert "Release-Mode: normal-preparation" in commit_input["message"]["body"]
+
+original_api_request = preparation_script.api_request
+preparation_script.api_request = lambda _api_root, _token, _method, path, _payload=None: (
+    {
+        f"/repos/IvanLi-CN/dockrev/commits/{prep_sha}": {
+            "parents": [{"sha": source_sha}],
+            "files": [{"filename": "VERSION"}],
+            "commit": {"verification": {"verified": True}, "message": "Release-Mode: normal-preparation\nSource-SHA: " + source_sha + "\nProduct-Version: 0.1.1\nRelease-Intent: type:patch channel:stable"},
+        },
+        "/repos/IvanLi-CN/dockrev/git/ref/heads/feature%2Frelease": {"object": {"sha": prep_sha}},
+    }[path]
+)
+assert preparation_script.inspect_commit(
+    "https://api.github.test", "token", "IvanLi-CN/dockrev", "feature/release", prep_sha, source_sha, "0.1.1", labels
+)["changed_files"] == ["VERSION"]
+preparation_script.api_request = lambda _api_root, _token, _method, path, _payload=None: (
+    {"object": {"sha": "e" * 40}} if "git/ref/heads" in path else {
+        "parents": [{"sha": source_sha}],
+        "files": [{"filename": "VERSION"}],
+        "commit": {"verification": {"verified": True}, "message": "Release-Mode: normal-preparation\nSource-SHA: " + source_sha + "\nProduct-Version: 0.1.1\nRelease-Intent: type:patch channel:stable"},
+    }
+)
+expect_error(preparation_script.inspect_commit, "https://api.github.test", "token", "IvanLi-CN/dockrev", "feature/release", prep_sha, source_sha, "0.1.1", labels)
+preparation_script.api_request = original_api_request
 
 source_checks = {
     "ci_pr": {"status": "completed", "conclusion": "success"},
@@ -123,6 +168,14 @@ version_only = {
 assert completion.validate_completion(version_only)["status"] == "pass"
 expect_error(completion.validate_completion, {**version_only, "changed_files": []})
 expect_error(completion.validate_completion, {**version_only, "provenance": {**version_only["provenance"], "covered_product_merge_sha": "bad"}})
+expect_error(
+    completion.validate_completion,
+    {
+        **version_only,
+        "labels": ["type:none", "channel:stable"],
+        "provenance": {**version_only["provenance"], "release_intent": "type:none channel:stable"},
+    },
+)
 
 identity_payload = {
     "pull_request": 42,
@@ -155,6 +208,16 @@ assert policy.validate_failure_context(failure) == failure
 expect_error(policy.validate_failure_context, {**failure, "tag": "v0.1.0"})
 expect_error(policy.validate_failure_context, {**failure, "artifact_names": []})
 expect_error(policy.validate_failure_context, {**failure, "run_url": ""})
+identity_failure = {
+    **failure,
+    "source_sha": prep_sha,
+    "version": "0.0.0",
+    "tag": "v0.0.0",
+    "identity_resolution_failed": True,
+    "recovery_instruction": "create VERSION-only release PR Covered-Product-Merge-SHA=" + prep_sha,
+}
+assert policy.validate_failure_context(identity_failure) == identity_failure
+expect_error(policy.validate_failure_context, {**identity_failure, "recovery_instruction": "workflow_dispatch merge_sha=" + prep_sha + " recovery_reason=<required>"})
 failure_context = load("release_failure_context", ROOT / ".github/scripts/release_failure_context.py")
 assert "recovery:" in failure_context.notification_summary(failure)
 

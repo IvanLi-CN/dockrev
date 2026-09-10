@@ -62,7 +62,10 @@ and historical tag repair are deliberately unsupported.
 The `Release` workflow uploads `release-failure-context.json` with the release
 intent, source and merge SHAs, version, tag, asset names, run URL, and exact
 same-SHA recovery instruction. Identity resolution failures emit a marked
-fallback context from the checked-out `VERSION` so they are not silent.
+fallback context from the checked-out `VERSION` so they are not silent. An
+identity-resolution failure must be repaired by creating the single
+`VERSION`-only release PR for `Covered-Product-Merge-SHA`; it must not use the
+same-SHA recovery dispatch because no immutable release identity was accepted.
 `Notify failed release` validates every field before invoking the selected OIDC/Oidrune reusable notifier. The repo-local
 transport gate declares `required_secrets: []`; OIDC allowlists and ruleset
 alignment remain owner actions outside this repository change.

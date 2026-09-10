@@ -166,6 +166,8 @@ def validate_completion(payload: dict[str, Any]) -> dict[str, Any]:
         raise CompletionError("completion input must be an object")
     intent = release_policy.parse_labels(payload.get("labels", []))
     if not intent["release_enabled"]:
+        if payload.get("release_mode") or payload.get("provenance") or payload.get("preparation"):
+            raise CompletionError("type:none PR cannot carry release identity")
         return {"status": "pass", "release_enabled": False, "mode": "non-product"}
     source_sha = payload.get("source_sha")
     head_sha = payload.get("head_sha")
@@ -240,6 +242,9 @@ def load_github_completion(api_root: str, token: str, repository: str, pr_number
     if pr.get("base", {}).get("ref") != "main" or pr.get("state") != "open":
         raise CompletionError("Release completion requires an open PR targeting main")
     labels = [item["name"] for item in pr.get("labels", []) if item.get("name")]
+    intent = release_policy.parse_labels(labels)
+    if not intent["release_enabled"]:
+        return {"labels": labels}
     head_sha = pr.get("head", {}).get("sha", "")
     source_sha = head_sha
     preparation = None

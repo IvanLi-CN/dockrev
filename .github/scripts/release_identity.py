@@ -120,9 +120,9 @@ def pull_request_changed_files(
 
 
 def resolve_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    if payload.get("type") == "none":
-        return {"release_enabled": False, "reason": "type:none"}
     intent = payload.get("intent") or release_policy.parse_labels(payload.get("labels", []))
+    if payload.get("type") == "none" or intent.get("type") == "none":
+        return {"release_enabled": False, "reason": "type:none"}
     version = str(payload.get("version", ""))
     version_file = str(payload.get("version_file", ""))
     if not version_file or version != version_file:
@@ -225,6 +225,7 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
         "release_mode": mode,
         "version": version,
         "version_file": version_file,
+        "type": intent["type"],
         "intent": intent,
         "artifact_names": [],
         "run_url": run_url,

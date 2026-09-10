@@ -148,9 +148,14 @@ def reserve_tag(api_root: str, token: str, repository: str, version: str, pr_num
 
 def expected_version(intent: dict[str, Any], base_version: str, exact_version: str | None) -> str:
     if intent["type"] == "patch":
-        if exact_version:
-            raise PreparationError("type:patch preparation does not accept an exact version")
-        version = release_policy.next_patch(base_version)
+        if intent["channel"] == "stable":
+            if exact_version:
+                raise PreparationError("stable type:patch preparation does not accept an exact version")
+            version = release_policy.next_patch(base_version)
+        else:
+            if not exact_version:
+                raise PreparationError("beta/dev type:patch preparation requires an explicit exact version")
+            version = exact_version
     elif intent["type"] in {"major", "minor"}:
         if not exact_version:
             raise PreparationError("major/minor preparation requires an explicit exact version")

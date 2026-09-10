@@ -92,8 +92,12 @@ def validate_preparation_version(source_version: str, version: str, intent: dict
     source = parse_version(source_version)
     target = parse_version(version)
     if intent["type"] == "patch":
-        if version != next_patch(source_version):
-            raise PolicyError("patch preparation must advance VERSION by exactly one patch")
+        source_base = source[:3]
+        expected_base = source_base if source[3] else (source[0], source[1], source[2] + 1)
+        if target[:3] != expected_base:
+            raise PolicyError("patch preparation must advance VERSION by exactly one patch base")
+        if intent["channel"] == "stable" and version != next_patch(source_version):
+            raise PolicyError("stable patch preparation must use the next patch")
     elif intent["type"] == "minor" and target[:2] <= source[:2]:
         raise PolicyError("minor preparation must advance the source major/minor")
     elif intent["type"] == "major" and target[0] <= source[0]:
@@ -184,6 +188,12 @@ def validate_version_only(files: list[str], provenance: dict[str, Any], *, head_
     if provenance["verified"] is not True:
         raise PolicyError("version-only release PR signature is not verified")
     parse_version(str(provenance["product_version"]))
+    try:
+        intent = parse_labels(str(provenance["release_intent"]).split())
+    except PolicyError as error:
+        raise PolicyError("version-only release intent is invalid") from error
+    if not intent["release_enabled"]:
+        raise PolicyError("version-only release PR requires a release-enabled type")
     if provenance["release_mode"] != "version-only-release-pr":
         raise PolicyError("version-only release PR has invalid release mode")
 
@@ -223,9 +233,12 @@ def validate_failure_context(payload: dict[str, Any]) -> dict[str, Any]:
     if parsed_run_url.scheme != "https" or not parsed_run_url.netloc or not re.fullmatch(r"/[^/]+/[^/]+/actions/runs/[0-9]+", parsed_run_url.path):
         raise PolicyError("failure context run_url must be an absolute HTTPS URL")
     recovery = str(payload["recovery_instruction"])
-    expected_recovery = f"workflow_dispatch merge_sha={payload['merge_commit_sha']} recovery_reason=<required>"
+    if payload.get("identity_resolution_failed") is True:
+        expected_recovery = f"create VERSION-only release PR Covered-Product-Merge-SHA={payload['merge_commit_sha']}"
+    else:
+        expected_recovery = f"workflow_dispatch merge_sha={payload['merge_commit_sha']} recovery_reason=<required>"
     if recovery != expected_recovery:
-        raise PolicyError("failure context must bind workflow_dispatch recovery to merge SHA")
+        raise PolicyError("failure context recovery instruction is not bound to its remediation boundary")
     if payload.get("identity_resolution_failed") is True and payload["source_sha"] != payload["merge_commit_sha"]:
         raise PolicyError("identity-resolution fallback must use the merge SHA as source evidence")
     return payload
