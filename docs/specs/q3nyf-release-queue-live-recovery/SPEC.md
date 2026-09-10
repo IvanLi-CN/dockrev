@@ -47,6 +47,7 @@
 - 线上 workflow 必须先执行 historical publication reconcile，再选择真实 `next-pending` target。
 - 若某个历史 backlog 条目缺少 `tag -> target_sha`、GitHub Release、或任一 GHCR digest 证据，则必须显式阻断并记录原因，不得静默 `skip` 或误记为 `published`。
 - 若历史 backlog 证据齐全，则必须自动回填 publication ledger，让队列继续推进到真实未发布版本。
+- trusted publication anchor 之前、且没有 immutable release snapshot 的历史 tag 属于 legacy publication evidence；恢复预检不得用当前 PR labels 重构其意图。带 `release_enabled=true` snapshot 的历史 tag，以及 anchor 之后的 tag-only 缺口，仍必须阻断 FIFO。
 - 结果记录必须包含对应 workflow run / release / version outcome，便于后续追责与复盘。
 
 ### SHOULD
@@ -65,6 +66,7 @@
 ### Edge cases / errors
 
 - 若历史条目只有 tag，没有 GitHub Release 或镜像 digest 证据，则 queue 必须停在该 target 并暴露明确错误。
+- 仅有旧 tag、没有 immutable snapshot 且位于 trusted anchor 之前的 legacy 条目不属于当前可恢复队列；其当前 PR 标签不可改变该历史分类。
 - 若 `0.38.2`、`0.39.0`、`0.39.1` 中任一版本在 publish/ledger 环节失败，必须记录具体 run 与失败位置，而不是笼统描述“没发出来”。
 
 ## 验收标准（Acceptance Criteria）

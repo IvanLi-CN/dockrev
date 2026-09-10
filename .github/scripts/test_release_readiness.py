@@ -154,18 +154,15 @@ try:
         else:
             raise AssertionError("recovery preflight bypassed an older release-enabled snapshot")
         module.release_snapshot.read_snapshot = lambda *_args: None
+        module.release_snapshot.load_pr_for_commit = lambda _api, _repo, _token, target, **kwargs: (_ for _ in ()).throw(
+            AssertionError("legacy tagged commits must not consult mutable PR labels")
+        ) if target == preanchor else fixture_loader(_api, _repo, _token, target, **kwargs)
         assert module.recover_preflight(args) == 0
         module.release_snapshot.load_pr_for_commit = fixture_loader
-        module.release_snapshot.current_pr_labels = fixture_labels
         module.release_snapshot.read_override = lambda _ref, target: {"status": "skip"} if target == preanchor else None
         assert module.recover_preflight(args) == 0
         module.release_snapshot.read_override = lambda *_args: None
-        try:
-            module.recover_preflight(args)
-        except module.ReadinessError as error:
-            assert preanchor in str(error)
-        else:
-            raise AssertionError("recovery preflight bypassed an older untrusted tag")
+        assert module.recover_preflight(args) == 0
 finally:
     module.git = original_readiness_git
     module.release_snapshot.fetch_tags = original_fetch_tags

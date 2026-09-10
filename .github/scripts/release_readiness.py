@@ -309,23 +309,9 @@ def recover_preflight(args: argparse.Namespace) -> int:
                     f"older tagged release-enabled target {commit} lacks complete publication ledger; refusing to bypass"
                 )
             continue
-        pr = release_snapshot.load_pr_for_commit(
-            args.api_root,
-            args.repository,
-            args.token,
-            commit,
-            allow_zero=True,
-        )
-        if pr is None:
-            continue
-        labels = release_snapshot.current_pr_labels(pr)
-        if not any(label.startswith("type:") for label in labels):
-            continue
-        type_label, _channel_label = release_snapshot.parse_release_labels(labels)
-        if type_label not in {"type:docs", "type:skip"}:
-            raise ReadinessError(
-                f"older tagged release-enabled target {commit} lacks complete publication ledger; refusing to bypass"
-            )
+        # Tags created before immutable snapshots are legacy publication evidence;
+        # current PR labels cannot reliably reconstruct their historical intent.
+        continue
     released = {
         commit
         for commit in main_commits[anchor_index + 1 : target_index + 1]
