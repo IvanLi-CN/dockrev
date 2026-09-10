@@ -438,7 +438,7 @@ jobs:
       packages: write
       actions: read
     concurrency:
-      group: ${{ needs.identity.outputs.channel == 'stable' && 'release-publish-stable' || format('release-publish-{0}', needs.identity.outputs.merge_sha) }}
+      group: release-publish-${{ needs.identity.outputs.merge_sha }}
       cancel-in-progress: false
     env:
       VERSION: ${{ needs.identity.outputs.version }}
@@ -537,65 +537,83 @@ jobs:
           GHCR_OWNER: ${{ steps.ghcr-owner.outputs.owner }}
         run: |
           set -euo pipefail
-          lock_suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          lock_ref_name="release-latest-lock/${lock_suffix}"
+          lock_ref_name="release-latest-lock"
           lock_ref="repos/${GITHUB_REPOSITORY}/git/refs/heads/${lock_ref_name}"
-          lock_owner="${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}"
+          lock_head_sha=""
           release_lock() {
-            gh api --method DELETE "${lock_ref}" >/dev/null 2>&1 || true
-          }
-          reap_lock_ref() {
-            local ref_name="$1"
-            local error_file="/tmp/release-latest-lock-delete-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-            if gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${ref_name}" >/dev/null 2>"${error_file}"; then
-              return 0
-            else
-              local status=$?
-            fi
-            if [[ "${status}" -eq 1 ]] && rg -q 'HTTP 404|Not Found|404' "${error_file}"; then
-              return 0
-            fi
-            cat "${error_file}" >&2
-            return "${status}"
+            set +e
+            [[ -n "${lock_head_sha}" ]] || return 0
+            unlock_tree="$(gh api "repos/${GITHUB_REPOSITORY}/git/commits/${lock_head_sha}" --jq '.tree.sha')"
+            unlock_message="$(printf 'Release latest promotion lock\n\nRelease-Latest-Lock-State: released\nRelease-Latest-Lock-Run: %s\nRelease-Latest-Lock-Attempt: %s\nRelease-Latest-Lock-Merge-SHA: %s' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${MERGE_SHA}")"
+            unlock_sha="$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/commits" \
+              -f "message=${unlock_message}" -f "tree=${unlock_tree}" -f "parents[]=${lock_head_sha}" --jq .sha)"
+            gh api --method PATCH "${lock_ref}" -f "sha=${unlock_sha}" -F force=false >/dev/null 2>&1
           }
           tree_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${MERGE_SHA}" --jq '.commit.tree.sha')"
-          lock_message="$(printf 'Release latest promotion lock\n\nRelease-Latest-Lock-Run: %s\nRelease-Latest-Lock-Attempt: %s\nRelease-Latest-Lock-Merge-SHA: %s' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${MERGE_SHA}")"
-          lock_sha="$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/commits" \
-            -f "message=${lock_message}" \
-            -f "tree=${tree_sha}" -f "parents[]=${MERGE_SHA}" --jq .sha)"
-          gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-            -f "ref=refs/heads/${lock_ref_name}" -f "sha=${lock_sha}" >/dev/null
-          trap release_lock EXIT
           while true; do
-            refs_json="$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/git/matching-refs/heads/release-latest-lock/")"
-            owners="${lock_owner}\n"
-            while IFS= read -r ref; do
-              suffix="${ref#refs/heads/release-latest-lock/}"
-              if [[ "${suffix}" =~ ^([0-9]+)-([0-9]+)$ ]]; then
-                existing_run="${BASH_REMATCH[1]}"
-                existing_attempt="${BASH_REMATCH[2]}"
-                if [[ "${existing_run}" == "${GITHUB_RUN_ID}" && "${existing_attempt}" != "${GITHUB_RUN_ATTEMPT}" ]]; then
+            lock_json="$(gh api "${lock_ref}" 2>/tmp/release-latest-lock-ref-error || true)"
+            if [[ -z "${lock_json}" ]]; then
+              if rg -q 'HTTP 404|Not Found|404' /tmp/release-latest-lock-ref-error; then
+                initial_message="$(printf 'Release latest promotion lock\n\nRelease-Latest-Lock-State: released')"
+                initial_sha="$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/commits" \
+                  -f "message=${initial_message}" -f "tree=${tree_sha}" -f "parents[]=${MERGE_SHA}" --jq .sha)"
+                if gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+                  -f "ref=refs/heads/${lock_ref_name}" -f "sha=${initial_sha}" >/dev/null 2>/tmp/release-latest-lock-create-error; then
                   continue
-                fi
-                if run_status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${existing_run}" --jq '.status' 2>/tmp/release-latest-lock-run-error)"; then
-                  if [[ "${run_status}" != "completed" ]]; then
-                    owners+="${existing_run}:${existing_attempt}\n"
-                  else
-                    reap_lock_ref "${ref#refs/heads/}"
-                  fi
                 else
                   status=$?
-                  if [[ "${status}" -eq 1 ]] && rg -q 'HTTP 404|Not Found|404' /tmp/release-latest-lock-run-error; then
-                    reap_lock_ref "${ref#refs/heads/}"
-                  else
-                    cat /tmp/release-latest-lock-run-error >&2
+                  if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 422|Reference already exists|already exists' /tmp/release-latest-lock-create-error; then
+                    cat /tmp/release-latest-lock-create-error >&2
                     exit "${status}"
                   fi
                 fi
+              else
+                cat /tmp/release-latest-lock-ref-error >&2
+                exit 1
               fi
-            done < <(jq -r '.[][]?.ref' <<<"${refs_json}")
-            if [[ "$(printf '%b' "${owners}" | sort -t: -k1,1n -k2,2n | head -1)" == "${lock_owner}" ]]; then
+              sleep 1
+              continue
+            fi
+            current_sha="$(jq -r '.object.sha' <<<"${lock_json}")"
+            lock_commit="$(gh api "repos/${GITHUB_REPOSITORY}/git/commits/${current_sha}")"
+            lock_message="$(jq -r '.message' <<<"${lock_commit}")"
+            lock_state="$(awk -F': ' '/^Release-Latest-Lock-State:/{print $2; exit}' <<<"${lock_message}")"
+            owner_run="$(awk -F': ' '/^Release-Latest-Lock-Run:/{print $2; exit}' <<<"${lock_message}")"
+            owner_attempt="$(awk -F': ' '/^Release-Latest-Lock-Attempt:/{print $2; exit}' <<<"${lock_message}")"
+            if [[ "${lock_state}" == "acquired" ]]; then
+              [[ "${owner_run}" =~ ^[0-9]+$ && "${owner_attempt}" =~ ^[0-9]+$ ]] || { echo "latest promotion lock owner is invalid" >&2; exit 2; }
+              if [[ "${owner_run}" == "${GITHUB_RUN_ID}" && "${owner_attempt}" == "${GITHUB_RUN_ATTEMPT}" ]]; then
+                lock_head_sha="${current_sha}"
+                trap release_lock EXIT
+                break
+              fi
+              if run_status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${owner_run}" --jq '.status' 2>/tmp/release-latest-lock-run-error)"; then
+                [[ "${run_status}" == "completed" ]] || { sleep 5; continue; }
+              else
+                status=$?
+                if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 404|Not Found|404' /tmp/release-latest-lock-run-error; then
+                  cat /tmp/release-latest-lock-run-error >&2
+                  exit "${status}"
+                fi
+              fi
+            elif [[ "${lock_state}" != "released" ]]; then
+              echo "latest promotion lock state is invalid" >&2
+              exit 2
+            fi
+            current_tree="$(jq -r '.tree.sha' <<<"${lock_commit}")"
+            acquire_message="$(printf 'Release latest promotion lock\n\nRelease-Latest-Lock-State: acquired\nRelease-Latest-Lock-Run: %s\nRelease-Latest-Lock-Attempt: %s\nRelease-Latest-Lock-Merge-SHA: %s' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${MERGE_SHA}")"
+            acquire_sha="$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/commits" \
+              -f "message=${acquire_message}" -f "tree=${current_tree}" -f "parents[]=${current_sha}" --jq .sha)"
+            if gh api --method PATCH "${lock_ref}" -f "sha=${acquire_sha}" -F force=false >/dev/null 2>/tmp/release-latest-lock-update-error; then
+              lock_head_sha="${acquire_sha}"
+              trap release_lock EXIT
               break
+            else
+              status=$?
+              if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 409|HTTP 422|non-fast-forward|fast forward' /tmp/release-latest-lock-update-error; then
+                cat /tmp/release-latest-lock-update-error >&2
+                exit "${status}"
+              fi
             fi
             sleep 5
           done
