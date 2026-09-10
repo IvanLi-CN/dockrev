@@ -1,0 +1,38 @@
+{
+  "receipt_ledger": [
+    {
+      "candidate_event": "workflow_dispatch",
+      "candidate_run_id": 34437652817,
+      "candidate_workflow": "Release Candidate Pipeline",
+      "created_at": "2026-09-10T04:46:39.210113Z",
+      "operation": "recover",
+      "preparation": {
+        "artifact_name": "release-preparation-6ef8bdf31edfa75d6db1c569bfa9b6ccabffbe31",
+        "manifest_sha256": "f1ba323782c5b2974f742aa587b33f5aeb5fef922df10699166477d089fd31e9",
+        "publish": false,
+        "run_id": 34437652817,
+        "target_sha": "6ef8bdf31edfa75d6db1c569bfa9b6ccabffbe31"
+      },
+      "publish": false,
+      "recovery": {
+        "actor": "IvanLi-CN",
+        "mode": "candidate-recovery",
+        "reason": "Catch up the oldest unreleased release candidate after restoring the FIFO release chain.",
+        "target_sha": "6ef8bdf31edfa75d6db1c569bfa9b6ccabffbe31"
+      },
+      "schema_version": 1,
+      "source_gate": {
+        "artifact_name": "source-gate-attestation-34437652817",
+        "attestation_sha256": "bbe8ad9ce9631cde0c95cc6a1446c576a9f88661d029b89630406c5f3e99834c",
+        "gate_result": "success",
+        "publish": false,
+        "run_id": 34437652817,
+        "target_sha": "6ef8bdf31edfa75d6db1c569bfa9b6ccabffbe31"
+      },
+      "target_sha": "6ef8bdf31edfa75d6db1c569bfa9b6ccabffbe31",
+      "verification_mode": false
+    }
+  ],
+  "schema_version": 1,
+  "target_sha": "6ef8bdf31edfa75d6db1c569bfa9b6ccabffbe31"
+}
