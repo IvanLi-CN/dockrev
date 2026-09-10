@@ -226,6 +226,42 @@ finally:
     preparation_script.create_commit = original_create_commit
     preparation_script.inspect_commit = original_inspect_commit
 
+original_preparation_pull_request = preparation_script.pull_request
+original_preparation_api_request = preparation_script.api_request
+try:
+    preparation_script.pull_request = lambda *_args: {
+        "state": "open",
+        "base": {"ref": "main"},
+        "head": {"sha": source_sha, "ref": "feature/release", "repo": {"full_name": "IvanLi-CN/dockrev"}},
+        "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
+    }
+    preparation_script.api_request = lambda *_args, **_kwargs: {
+        "commit": {
+            "message": (
+                "Prepare release identity\n\n"
+                f"Source-SHA: {source_sha}\n"
+                "Product-Version: 0.1.1\n"
+                "Release-Intent: type:patch channel:stable\n"
+                "Release-Mode: normal-preparation\n"
+                f"Covered-Product-Merge-SHA: {source_sha}"
+            )
+        }
+    }
+    expect_error(
+        preparation_script.create,
+        Namespace(
+            api_root="https://api.github.test",
+            token="token",
+            repository="IvanLi-CN/dockrev",
+            pr_number=42,
+            exact_version=None,
+            output=Path(tempfile.mkdtemp()) / "mixed.json",
+        ),
+    )
+finally:
+    preparation_script.pull_request = original_preparation_pull_request
+    preparation_script.api_request = original_preparation_api_request
+
 captured = {}
 original_graphql = preparation_script.graphql
 def fake_graphql(_api_root, _token, _query, variables):
@@ -348,6 +384,10 @@ try:
     completion.api_json = fake_completion_api
     loaded = completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
     assert completion.validate_completion(loaded)["status"] == "pass"
+    normal_preparation_message = preparation_message
+    preparation_message = normal_preparation_message + "\nCovered-Product-Merge-SHA: " + source_sha
+    expect_error(completion.load_github_completion, "https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
+    preparation_message = normal_preparation_message
     expect_error(completion.load_github_completion, "https://api.github.test", "token", "IvanLi-CN/dockrev", 42, "c" * 40)
     tag_exists = True
     expect_error(completion.validate_completion, completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42))
@@ -358,6 +398,14 @@ finally:
 
 original_completion_api_json = completion.api_json
 try:
+    version_only_completion_message = (
+        "VERSION-only recovery\n\n"
+        f"Covered-Product-Merge-SHA: {covered_merge_sha}\n"
+        "Product-Version: 0.1.1\n"
+        "Release-Intent: type:patch channel:stable\n"
+        "Release-Mode: version-only-release-pr"
+    )
+
     def fake_version_only_completion_api(_api_root, _token, path):
         if path.endswith("/pulls/42"):
             return {
@@ -372,13 +420,7 @@ try:
                 "files": [{"filename": "VERSION"}],
                 "commit": {
                     "verification": {"verified": True},
-                    "message": (
-                        "VERSION-only recovery\n\n"
-                        f"Covered-Product-Merge-SHA: {covered_merge_sha}\n"
-                        "Product-Version: 0.1.1\n"
-                        "Release-Intent: type:patch channel:stable\n"
-                        "Release-Mode: version-only-release-pr"
-                    ),
+                    "message": version_only_completion_message,
                 },
             }
         if path.endswith(f"/commits/{covered_merge_sha}/pulls"):
@@ -418,6 +460,8 @@ try:
     completion.api_json = fake_version_only_completion_api
     version_only_loaded = completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
     assert completion.validate_completion(version_only_loaded)["mode"] == "version-only-release-pr"
+    version_only_completion_message += f"\nSource-SHA: {covered_head_sha}"
+    expect_error(completion.load_github_completion, "https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
 finally:
     completion.api_json = original_completion_api_json
 

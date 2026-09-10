@@ -225,7 +225,8 @@ jobs:
       - name: Capture resolved identity step failure context
         id: capture_resolved
         if: >-
-          always() && steps.resolve.outcome == 'success'
+          always() && steps.resolve.outcome == 'success' &&
+          steps.resolve.outputs.release_enabled == 'true'
         run: |
           set -euo pipefail
           python3 .workflow-src/.github/scripts/release_failure_context.py \
@@ -241,7 +242,8 @@ jobs:
 
       - name: Ensure resolved identity failure context
         if: >-
-          always() && steps.resolve.outcome == 'success'
+          always() && steps.resolve.outcome == 'success' &&
+          steps.resolve.outputs.release_enabled == 'true'
         env:
           GITHUB_SERVER_URL: ${{ github.server_url }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -268,6 +270,7 @@ jobs:
       - name: Upload resolved identity failure context
         if: >-
           always() && steps.resolve.outcome == 'success' &&
+          steps.resolve.outputs.release_enabled == 'true' &&
           steps.reserve_tag.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
@@ -280,6 +283,7 @@ jobs:
         id: upload_identity
         if: >-
           always() && steps.resolve.outcome == 'success' &&
+          steps.resolve.outputs.release_enabled == 'true' &&
           steps.reserve_tag.outcome != 'failure'
         uses: actions/upload-artifact@v4
         with:
@@ -291,6 +295,7 @@ jobs:
       - name: Upload resolved identity artifact failure context
         if: >-
           always() && steps.resolve.outcome == 'success' &&
+          steps.resolve.outputs.release_enabled == 'true' &&
           (steps.capture_resolved.outcome == 'failure' ||
           steps.upload_identity.outcome == 'failure')
         uses: actions/upload-artifact@v4
@@ -433,7 +438,7 @@ jobs:
       packages: write
       actions: read
     concurrency:
-      group: release-publish-${{ needs.identity.outputs.channel == 'stable' && 'stable-latest' || needs.identity.outputs.merge_sha }}
+      group: release-publish-${{ needs.identity.outputs.merge_sha }}
       cancel-in-progress: false
     env:
       VERSION: ${{ needs.identity.outputs.version }}
@@ -532,6 +537,48 @@ jobs:
           GHCR_OWNER: ${{ steps.ghcr-owner.outputs.owner }}
         run: |
           set -euo pipefail
+          lock_ref="repos/${GITHUB_REPOSITORY}/git/ref/heads/release-latest-lock"
+          lock_owner="${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}"
+          release_lock() {
+            gh api --method DELETE "${lock_ref}" >/dev/null 2>&1 || true
+          }
+          while true; do
+            if existing_lock="$(gh api "${lock_ref}" 2>/tmp/release-latest-lock-error)"; then
+              lock_sha="$(jq -r '.object.sha' <<<"${existing_lock}")"
+              lock_message="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${lock_sha}" --jq '.commit.message')"
+              existing_owner="$(sed -n 's/^Release-Latest-Lock-Run: //p' <<<"${lock_message}")"
+              existing_attempt="$(sed -n 's/^Release-Latest-Lock-Attempt: //p' <<<"${lock_message}")"
+              if [[ "${existing_owner}:${existing_attempt}" == "${lock_owner}" ]]; then
+                break
+              fi
+              lock_status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${existing_owner}" --jq '.status' 2>/dev/null || printf 'missing')"
+              if [[ "${lock_status}" == "completed" || "${lock_status}" == "missing" ]]; then
+                release_lock
+                continue
+              fi
+              sleep 5
+              continue
+            fi
+            status=$?
+            if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 404|Not Found|404' /tmp/release-latest-lock-error; then
+              cat /tmp/release-latest-lock-error >&2
+              exit "${status}"
+            fi
+            tree_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${MERGE_SHA}" --jq '.commit.tree.sha')"
+            lock_message="$(printf 'Release latest promotion lock\n\nRelease-Latest-Lock-Run: %s\nRelease-Latest-Lock-Attempt: %s\nRelease-Latest-Lock-Merge-SHA: %s' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${MERGE_SHA}")"
+            lock_sha="$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/commits" \
+              -f "message=${lock_message}" \
+              -f "tree=${tree_sha}" -f "parents[]=${MERGE_SHA}" --jq .sha)"
+            if gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref=refs/heads/release-latest-lock -f "sha=${lock_sha}" >/dev/null 2>/tmp/release-latest-lock-create-error; then
+              break
+            fi
+            if ! rg -q 'HTTP 422|Reference already exists|422' /tmp/release-latest-lock-create-error; then
+              cat /tmp/release-latest-lock-create-error >&2
+              exit 1
+            fi
+          done
+          trap release_lock EXIT
           highest="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq '.[] | select(.prerelease == false) | .tag_name' | python3 -c '
           import re, sys
           versions = []
