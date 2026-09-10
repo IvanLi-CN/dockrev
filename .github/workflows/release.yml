@@ -97,6 +97,15 @@ jobs:
           set -e
           if [[ "${status}" -ne 0 ]]; then
             if [[ "${status}" -eq 3 ]]; then
+              python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+          payload = json.loads(Path("release-intent.json").read_text(encoding="utf-8"))
+          if payload.get("reason") != "no-release-identity":
+              raise SystemExit("missing no-identity release intent")
+          print(f"type={payload.get('type', '')}")
+          print(f"channel={payload.get('channel', '')}")
+          PY
               echo "identity_failure_kind=no-identity" >> "$GITHUB_OUTPUT"
             else
               echo "identity_failure_kind=resolver-error" >> "$GITHUB_OUTPUT"
@@ -130,6 +139,8 @@ jobs:
         env:
           MERGE_SHA: ${{ inputs.merge_sha || github.sha }}
           FAILURE_KIND: ${{ steps.resolve.outputs.identity_failure_kind || 'resolver-error' }}
+          INTENT_TYPE: ${{ steps.resolve.outputs.type || '' }}
+          INTENT_CHANNEL: ${{ steps.resolve.outputs.channel || '' }}
         run: |
           set -euo pipefail
           if ! [[ "${MERGE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then MERGE_SHA="${GITHUB_SHA}"; fi
@@ -154,13 +165,16 @@ jobs:
               ]
               for suffix in (f"{base}.tar.gz", f"{base}.tar.gz.sha256")
           ]
-          channel = "beta" if "-beta." in version else ("dev" if "-dev." in version else "stable")
           no_identity = os.environ["FAILURE_KIND"] == "no-identity"
+          release_type = os.environ.get("INTENT_TYPE", "")
+          channel = os.environ.get("INTENT_CHANNEL", "")
+          if release_type not in {"major", "minor", "patch"} or channel not in {"stable", "beta", "dev"}:
+              raise SystemExit("Release failure context requires a verified release intent")
           payload = {
               "pull_request": 0,
               "source_sha": merge_sha,
               "merge_commit_sha": merge_sha,
-              "type": "patch",
+              "type": release_type,
               "channel": channel,
               "version": version,
               "tag": f"v{version}",

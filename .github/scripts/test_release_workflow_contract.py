@@ -48,6 +48,10 @@ assert "prior failed automatic Release run" in release
 assert "path: release-assets" in release and 'chmod +x "${source}"' in release
 assert "needs.identity.result == 'failure'" in release
 assert "release-identity-failure-context-" in release
+assert 'INTENT_TYPE: ${{ steps.resolve.outputs.type || \'\' }}' in release
+assert 'INTENT_CHANNEL: ${{ steps.resolve.outputs.channel || \'\' }}' in release
+assert "Release failure context requires a verified release intent" in release
+assert '"type": "patch"' not in release.split("Capture identity-resolution failure context", 1)[1].split("Upload identity-resolution failure context", 1)[0]
 assert "Capture resolved identity step failure context" in release
 assert "steps.resolve.outputs.release_enabled == 'true'" in release
 assert "resolver-error: retry Release workflow" in release

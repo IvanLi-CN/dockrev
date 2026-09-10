@@ -222,6 +222,9 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
             "release_enabled": False,
             "merge_commit_sha": merge_sha,
             "pull_request": pr.get("number"),
+            "intent": pr_intent,
+            "type": pr_intent["type"],
+            "channel": pr_intent["channel"],
             "reason": "no-release-identity",
         }
     version = trailers.get("Product-Version", "")

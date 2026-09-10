@@ -706,6 +706,36 @@ try:
 finally:
     identity.api_json = original_identity_api_json
 
+no_identity_merge_sha = "5" * 40
+no_identity_head_sha = "6" * 40
+original_identity_api_json = identity.api_json
+try:
+    def fake_no_identity_api(_api_root, _token, path):
+        if path.endswith(f"/commits/{no_identity_merge_sha}/pulls"):
+            return [{
+                "number": 45,
+                "state": "closed",
+                "merged_at": "2026-01-02T00:00:00Z",
+                "merge_commit_sha": no_identity_merge_sha,
+                "base": {"ref": "main", "sha": "7" * 40},
+                "head": {"sha": no_identity_head_sha},
+                "labels": [{"name": "type:minor"}, {"name": "channel:beta"}],
+            }]
+        if path.endswith(f"/commits/{no_identity_head_sha}"):
+            return {"parents": [], "files": [], "commit": {"message": "Product change"}}
+        raise AssertionError(f"unexpected no-identity API path: {path}")
+
+    identity.api_json = fake_no_identity_api
+    no_identity = identity.resolve_github(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", no_identity_merge_sha
+    )
+    assert no_identity["reason"] == "no-release-identity"
+    assert no_identity["type"] == "minor"
+    assert no_identity["channel"] == "beta"
+    assert no_identity["intent"]["type_label"] == "type:minor"
+finally:
+    identity.api_json = original_identity_api_json
+
 version_only_merge_sha = "d" * 40
 version_only_release_head_sha = "e" * 40
 version_only_covered_merge_sha = "f" * 40
