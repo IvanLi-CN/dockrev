@@ -77,7 +77,7 @@ jobs:
           retention-days: 14
 
   completion:
-    name: Release completion
+    name: Publish Release completion check
     needs: [prepare]
     if: needs.prepare.result == 'success'
     runs-on: ubuntu-latest

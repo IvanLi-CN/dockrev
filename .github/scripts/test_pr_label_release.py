@@ -236,6 +236,60 @@ expect_error(
     },
 )
 
+original_completion_api_json = completion.api_json
+try:
+    tag_exists = False
+    labels_for_loader = ["type:patch", "channel:stable"]
+    preparation_message = (
+        "Prepare release identity\n\n"
+        f"Source-SHA: {source_sha}\n"
+        "Product-Version: 0.1.1\n"
+        "Release-Intent: type:patch channel:stable\n"
+        "Release-Mode: normal-preparation"
+    )
+
+    def fake_completion_api(_api_root, _token, path):
+        if path.endswith("/pulls/42"):
+            return {
+                "state": "open",
+                "base": {"ref": "main"},
+                "head": {"sha": prep_sha},
+                "labels": [{"name": label} for label in labels_for_loader],
+            }
+        if path.endswith(f"/commits/{prep_sha}"):
+            return {
+                "parents": [{"sha": source_sha}],
+                "files": [{"filename": "VERSION"}] if labels_for_loader[0] != "type:none" else [],
+                "commit": {"verification": {"verified": True}, "message": preparation_message if labels_for_loader[0] != "type:none" else "Product change"},
+            }
+        if path.endswith("/commits/" + source_sha):
+            return {"parents": [], "files": [], "commit": {"message": "Product change"}}
+        if "/contents/VERSION?ref=" in path:
+            value = "0.1.0" if source_sha in path else "0.1.1"
+            encoded = __import__("base64").b64encode(value.encode()).decode()
+            return {"encoding": "base64", "content": encoded}
+        if path.endswith("/actions/workflows/ci-pr.yml/runs?per_page=100"):
+            return {"workflow_runs": [{"head_sha": source_sha, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 42}]}]}
+        if path.endswith("/actions/workflows/label-gate.yml/runs?per_page=100"):
+            return {"workflow_runs": [{"head_sha": source_sha, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 42, "head": {"sha": source_sha}}]}]}
+        if path.endswith("/git/ref/tags/v0.1.1"):
+            if tag_exists:
+                return {"object": {"sha": prep_sha, "type": "commit"}}
+            raise completion.CompletionError("GitHub API failed: 404")
+        if "/pulls?state=" in path:
+            return []
+        raise AssertionError(f"unexpected completion API path: {path}")
+
+    completion.api_json = fake_completion_api
+    loaded = completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
+    assert completion.validate_completion(loaded)["status"] == "pass"
+    tag_exists = True
+    expect_error(completion.validate_completion, completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42))
+    labels_for_loader = ["type:none", "channel:stable"]
+    assert completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42) == {"labels": labels_for_loader}
+finally:
+    completion.api_json = original_completion_api_json
+
 covered_sha = "c" * 40
 version_only = {
     "labels": ["type:patch", "channel:stable"],
