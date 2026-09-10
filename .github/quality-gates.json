@@ -4,9 +4,7 @@
     "baseline_policy": "explicit-waiver-required",
     "require_signed_commits": true,
     "branch_protection": {
-      "protected_branches": [
-        "main"
-      ],
+      "protected_branches": ["main"],
       "require_pull_request": true,
       "disallow_direct_pushes": true,
       "require_merge_queue": false
@@ -15,63 +13,22 @@
       "mode": "conditional-required",
       "required_approvals": 1,
       "exempt_repository_owner": true,
-      "exempt_author_permissions": [
-        "admin",
-        "maintain"
-      ],
-      "allowed_reviewer_permissions": [
-        "write",
-        "maintain",
-        "admin"
-      ],
-      "enforcement": {
-        "mode": "required-check",
-        "check_name": "Review Policy Gate"
-      }
+      "exempt_author_permissions": ["admin", "maintain"],
+      "allowed_reviewer_permissions": ["write", "maintain", "admin"],
+      "enforcement": {"mode": "required-check", "check_name": "Review Policy Gate"}
     }
   },
-  "required_checks": [
-    "Review Policy Gate",
-    "Release intent label gate",
-    "Detect changes",
-    "Lint & Checks",
-    "Worktree bootstrap smoke",
-    "Backend Tests",
-    "Frontend lint + build",
-    "Frontend Storybook build",
-    "Frontend Storybook test",
-    "Release build check (PR)"
-  ],
+  "required_checks": ["Review Policy Gate", "Label Gate", "Release completion"],
   "informational_checks": [
-    "Deploy Smoke"
+    "Detect changes", "Lint & Checks", "Worktree bootstrap smoke", "Backend Tests",
+    "Frontend lint + build", "Frontend Storybook build", "Frontend Storybook test",
+    "Deploy Smoke", "Release build check (PR)"
   ],
   "waivers": [],
   "expected_pr_workflows": [
-    {
-      "workflow": "Review Policy",
-      "jobs": [
-        "Review Policy Gate"
-      ]
-    },
-    {
-      "workflow": "PR Label Gate",
-      "jobs": [
-        "Release intent label gate"
-      ]
-    },
-    {
-      "workflow": "CI (PR)",
-      "jobs": [
-        "Detect changes",
-        "Lint & Checks",
-        "Worktree bootstrap smoke",
-        "Backend Tests",
-        "Deploy Smoke",
-        "Frontend lint + build",
-        "Frontend Storybook build",
-        "Frontend Storybook test",
-        "Release build check (PR)"
-      ]
-    }
+    {"workflow": "Review Policy", "jobs": ["Review Policy Gate"]},
+    {"workflow": "Label Gate", "jobs": ["Label Gate"]},
+    {"workflow": "Release completion", "jobs": ["Release completion"]},
+    {"workflow": "CI (PR)", "jobs": ["Detect changes", "Lint & Checks", "Worktree bootstrap smoke", "Backend Tests", "Deploy Smoke", "Frontend lint + build", "Frontend Storybook build", "Frontend Storybook test", "Release build check (PR)"]}
   ]
 }

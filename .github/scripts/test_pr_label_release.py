@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""Focused regression fixtures for Dockrev's PR label release contract."""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import sys
+import tempfile
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def load(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+policy = load("release_policy", ROOT / ".github/scripts/release_policy.py")
+completion = load("release_completion", ROOT / ".github/scripts/release_completion.py")
+identity = load("release_identity", ROOT / ".github/scripts/release_identity.py")
+
+
+def expect_error(function, *args, **kwargs):
+    try:
+        function(*args, **kwargs)
+    except (policy.PolicyError, completion.CompletionError, identity.IdentityError):
+        return
+    raise AssertionError(f"expected {function.__name__} to fail")
+
+
+labels = policy.parse_labels(["type:patch", "channel:stable", "component:app"])
+assert labels["release_enabled"] is True
+assert policy.next_patch("0.1.0") == "0.1.1"
+assert policy.next_patch("1.4.9") == "1.4.10"
+policy.validate_channel_version("0.1.1", "stable")
+policy.validate_channel_version("0.2.0-beta.1", "beta")
+policy.validate_channel_version("0.2.0-dev.3", "dev")
+expect_error(policy.parse_labels, ["type:patch", "type:minor", "channel:stable"])
+expect_error(policy.parse_labels, ["type:patch", "channel:rc"])
+expect_error(policy.next_patch, "0.1.0-beta.1")
+expect_error(policy.validate_channel_version, "0.1.1", "beta")
+expect_error(policy.validate_channel_version, "0.1.1-beta.preview", "beta")
+
+source_sha = "a" * 40
+prep_sha = "b" * 40
+preparation = {
+    "commit_sha": prep_sha,
+    "source_sha": source_sha,
+    "version": "0.1.1",
+    "intent": labels,
+    "release_mode": "normal-preparation",
+    "parents": [source_sha],
+    "changed_files": ["VERSION"],
+    "verified": True,
+}
+assert policy.validate_preparation(preparation, source_sha=source_sha) == preparation
+expect_error(policy.validate_preparation, {**preparation, "changed_files": ["src/lib.rs"]})
+expect_error(policy.validate_preparation, {**preparation, "verified": False})
+expect_error(policy.parse_trailers, "Release-Mode: normal-preparation\nRelease-Mode: normal-preparation")
+
+source_checks = {
+    "ci_pr": {"status": "completed", "conclusion": "success"},
+    "label_gate": {"status": "completed", "conclusion": "success"},
+}
+completion_payload = {
+    "labels": ["type:patch", "channel:stable", "component:app"],
+    "source_sha": source_sha,
+    "head_sha": prep_sha,
+    "base_ref": "main",
+    "release_mode": "normal-preparation",
+    "preparation": preparation,
+    "source_checks": source_checks,
+    "tag_reserved": True,
+}
+assert completion.validate_completion(completion_payload)["status"] == "pass"
+expect_error(completion.validate_completion, {**completion_payload, "source_checks": {"ci_pr": source_checks["ci_pr"], "label_gate": {}}})
+expect_error(completion.validate_completion, {**completion_payload, "tag_reserved": False})
+
+covered_sha = "c" * 40
+version_only = {
+    "labels": ["type:patch", "channel:stable"],
+    "source_sha": source_sha,
+    "head_sha": prep_sha,
+    "base_ref": "main",
+    "release_mode": "version-only-release-pr",
+    "changed_files": ["VERSION"],
+    "provenance": {
+        "covered_product_merge_sha": covered_sha,
+        "product_version": "0.1.1",
+        "release_intent": "type:patch channel:stable",
+        "release_mode": "version-only-release-pr",
+        "branch_head_sha": prep_sha,
+        "verified": True,
+    },
+    "source_checks": source_checks,
+    "tag_reserved": True,
+}
+assert completion.validate_completion(version_only)["status"] == "pass"
+expect_error(completion.validate_completion, {**version_only, "changed_files": []})
+expect_error(completion.validate_completion, {**version_only, "provenance": {**version_only["provenance"], "covered_product_merge_sha": "bad"}})
+
+identity_payload = {
+    "pull_request": 42,
+    "source_sha": source_sha,
+    "merge_commit_sha": prep_sha,
+    "release_mode": "normal-preparation",
+    "version": "0.1.1",
+    "intent": labels,
+    "artifact_names": ["dockrev_0.1.1_linux_amd64_gnu.tar.gz"],
+    "run_url": "https://github.example/runs/1",
+}
+resolved = identity.resolve_from_payload(identity_payload)
+assert resolved["release_tag"] == "v0.1.1"
+expect_error(identity.resolve_from_payload, {**identity_payload, "version": "0.1.1-beta.1"})
+
+failure = {
+    "pull_request": 42,
+    "source_sha": source_sha,
+    "merge_commit_sha": prep_sha,
+    "type": "patch",
+    "channel": "stable",
+    "version": "0.1.1",
+    "tag": "v0.1.1",
+    "artifact_names": ["dockrev_0.1.1_linux_amd64_gnu.tar.gz"],
+    "run_url": "https://github.example/runs/1",
+    "recovery_instruction": "workflow_dispatch merge_sha=" + prep_sha,
+}
+assert policy.validate_failure_context(failure) == failure
+expect_error(policy.validate_failure_context, {**failure, "tag": "v0.1.0"})
+expect_error(policy.validate_failure_context, {**failure, "artifact_names": []})
+failure_context = load("release_failure_context", ROOT / ".github/scripts/release_failure_context.py")
+assert "recovery:" in failure_context.notification_summary(failure)
+
+with tempfile.TemporaryDirectory() as directory:
+    root = Path(directory)
+    files = root / "files.json"
+    provenance = root / "provenance.json"
+    files.write_text(json.dumps(["VERSION"]))
+    provenance.write_text(json.dumps(version_only["provenance"]))
+    assert policy.main.__name__ == "main"
+
+print("PASS: PR label release fixtures")

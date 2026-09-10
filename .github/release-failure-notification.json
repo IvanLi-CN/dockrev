@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "selection_evidence": "checked-in-project-contract",
+  "transport": "oidrune-oidc",
+  "transport_owner": "Dockrev maintainers",
+  "configuration_owner": "Dockrev maintainers",
+  "required_secrets": [],
+  "required_identity": "github-actions-id-token",
+  "when_unselected": "block-rollout",
+  "missing_selected_configuration": "fail",
+  "caller_code_execution": false
+}

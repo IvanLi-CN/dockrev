@@ -1,506 +1,294 @@
 name: Release
 
 on:
-  workflow_run:
-    workflows: ["Release Candidate Pipeline"]
-    types: [completed]
+  push:
     branches: [main]
   workflow_dispatch:
     inputs:
-      head_sha:
-        description: Commit SHA on main to release or administratively skip
+      merge_sha:
+        description: Existing merged main SHA with an immutable release identity
         required: true
         type: string
-      admin_action:
-        description: Release the target SHA, or mark a frozen target as skipped and continue the queue
+      recovery_reason:
+        description: Required reason for same-SHA recovery
         required: true
-        default: release
-        type: choice
-        options:
-          - release
-          - skip
-      override_reason:
-        description: Optional reason when admin_action=skip
-        required: false
-        default: ""
         type: string
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
+  pull-requests: read
+  actions: read
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: dockrev
   SUPERVISOR_IMAGE_NAME: dockrev-supervisor
-  PLATFORMS: linux/amd64,linux/arm64
   RUST_TOOLCHAIN: "1.91.0"
-  RELEASE_SNAPSHOT_NOTES_REF: refs/notes/release-snapshots
-  RELEASE_PUBLICATION_NOTES_REF: refs/notes/release-publications
-  RELEASE_OVERRIDE_NOTES_REF: refs/notes/release-overrides
-  RELEASE_READINESS_NOTES_REF: refs/notes/release-readiness
 
 concurrency:
-  group: release-main
+  group: release-${{ inputs.merge_sha || github.sha }}
   cancel-in-progress: false
 
 jobs:
-  prepare:
-    name: Release Meta (snapshot + tags)
+  identity:
+    name: Resolve merged release identity
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    if: >-
-      (github.event_name == 'workflow_run' &&
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push') ||
-      github.event_name == 'workflow_dispatch'
+    timeout-minutes: 15
     permissions:
-      actions: read
-      contents: write
-      packages: read
+      contents: read
       pull-requests: read
-    outputs:
-      target_sha: ${{ steps.pending-target.outputs.target_sha }}
-      app_effective_version: ${{ steps.snapshot.outputs.app_effective_version }}
-      release_tag: ${{ steps.snapshot.outputs.release_tag }}
-      should_release: ${{ steps.snapshot.outputs.release_enabled }}
-      release_state: ${{ steps.snapshot.outputs.release_state }}
-      override_reason: ${{ steps.snapshot.outputs.override_reason }}
-      bump_level: ${{ steps.snapshot.outputs.release_bump }}
-      pr_title: ${{ steps.snapshot.outputs.pr_title }}
-      release_channel: ${{ steps.snapshot.outputs.release_channel }}
-      release_prerelease: ${{ steps.snapshot.outputs.release_prerelease }}
-      publish_latest: ${{ steps.snapshot.outputs.publish_latest }}
-      image_name_lower: ${{ steps.snapshot.outputs.image_name_lower }}
-      supervisor_image_name_lower: ${{ steps.snapshot.outputs.supervisor_image_name_lower }}
-      tags_csv: ${{ steps.snapshot.outputs.tags_csv }}
-      supervisor_tags_csv: ${{ steps.snapshot.outputs.supervisor_tags_csv }}
-      readiness_publish: ${{ steps.readiness.outputs.readiness_publish }}
-      source_gate_run_id: ${{ steps.readiness.outputs.source_gate_run_id }}
-      source_gate_artifact_name: ${{ steps.readiness.outputs.source_gate_artifact_name }}
-      source_gate_attestation_sha256: ${{ steps.readiness.outputs.source_gate_attestation_sha256 }}
-      preparation_run_id: ${{ steps.readiness.outputs.preparation_run_id }}
-      preparation_artifact_name: ${{ steps.readiness.outputs.preparation_artifact_name }}
-      preparation_manifest_sha256: ${{ steps.readiness.outputs.preparation_manifest_sha256 }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Configure git identity for release notes
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Resolve requested commit
-        id: requested-target
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          DISPATCH_HEAD_SHA: ${{ inputs.head_sha }}
-          WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          set -euo pipefail
-          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
-            target_sha="${DISPATCH_HEAD_SHA}"
-          else
-            target_sha="${WORKFLOW_RUN_HEAD_SHA}"
-          fi
-
-          echo "RELEASE_REQUESTED_SHA=${target_sha}"
-
-          if [[ ! "${target_sha}" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "Invalid head_sha: ${target_sha}" >&2
-            exit 1
-          fi
-
-          git fetch --no-tags origin main
-          if ! git cat-file -e "${target_sha}^{commit}" 2>/dev/null; then
-            git fetch --no-tags origin "${target_sha}"
-          fi
-          git cat-file -e "${target_sha}^{commit}"
-
-          if ! git merge-base --is-ancestor "${target_sha}" origin/main; then
-            echo "Commit ${target_sha} is not contained in origin/main" >&2
-            exit 1
-          fi
-
-          echo "target_sha=${target_sha}" >> "$GITHUB_OUTPUT"
-
-      - name: Record skip override for frozen target
-        if: github.event_name == 'workflow_dispatch' && inputs.admin_action == 'skip'
-        shell: bash
-        env:
-          TARGET_SHA: ${{ steps.requested-target.outputs.target_sha }}
-          OVERRIDE_REASON: ${{ inputs.override_reason }}
-        run: |
-          set -euo pipefail
-          reason="${OVERRIDE_REASON}"
-          if [[ -z "${reason}" ]]; then
-            reason="release-infra mislabel under no-extra-credential model"
-          fi
-
-          python3 .github/scripts/release_snapshot.py record-override \
-            --target-sha "${TARGET_SHA}" \
-            --snapshot-notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
-            --publication-notes-ref "${RELEASE_PUBLICATION_NOTES_REF}" \
-            --override-notes-ref "${RELEASE_OVERRIDE_NOTES_REF}" \
-            --status skip \
-            --reason "${reason}" \
-            --output "$RUNNER_TEMP/release-override.json"
-
-      - name: Reconcile historical published backlog
-        if: github.event_name != 'workflow_dispatch' || inputs.admin_action != 'release'
-        id: reconcile-publications
-        shell: bash
-        env:
-          REQUESTED_SHA: ${{ steps.requested-target.outputs.target_sha }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_ACTOR: ${{ github.actor }}
-        run: |
-          set -euo pipefail
-          upper_bound="${REQUESTED_SHA}"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.admin_action }}" = "skip" ]; then
-            upper_bound="$(git rev-parse origin/main)"
-          fi
-
-          python3 .github/scripts/release_snapshot.py reconcile-publications \
-            --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
-            --publication-notes-ref "${RELEASE_PUBLICATION_NOTES_REF}" \
-            --override-notes-ref "${RELEASE_OVERRIDE_NOTES_REF}" \
-            --main-ref "origin/main" \
-            --upper-bound "${upper_bound}" \
-            --github-repository "${GITHUB_REPOSITORY}" \
-            --github-token "${GITHUB_TOKEN}" \
-            --github-actor "${GITHUB_ACTOR}" \
-            --github-output "$GITHUB_OUTPUT"
-
-      - name: Select oldest ready release target
-        id: pending-target
-        shell: bash
-        env:
-          REQUESTED_SHA: ${{ steps.requested-target.outputs.target_sha }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.admin_action }}" = "release" ]; then
-            git fetch --no-tags origin "+${RELEASE_READINESS_NOTES_REF}:${RELEASE_READINESS_NOTES_REF}" || true
-            python3 .github/scripts/release_readiness.py require \
-              --target-sha "${REQUESTED_SHA}" \
-              --readiness-notes-ref "${RELEASE_READINESS_NOTES_REF}" \
-              --snapshot-notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
-              --publication-notes-ref "${RELEASE_PUBLICATION_NOTES_REF}" \
-              --override-notes-ref "${RELEASE_OVERRIDE_NOTES_REF}" \
-              --main-ref "origin/main" \
-              --github-repository "${GITHUB_REPOSITORY}" \
-              --github-token "${GITHUB_TOKEN}" \
-              --api-root "${GITHUB_API_URL}" \
-              --github-output "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          git fetch --no-tags origin "+${RELEASE_SNAPSHOT_NOTES_REF}:${RELEASE_SNAPSHOT_NOTES_REF}" || true
-          git fetch --no-tags origin "+${RELEASE_PUBLICATION_NOTES_REF}:${RELEASE_PUBLICATION_NOTES_REF}" || true
-          git fetch --no-tags origin "+${RELEASE_OVERRIDE_NOTES_REF}:${RELEASE_OVERRIDE_NOTES_REF}" || true
-          git fetch --no-tags origin "+${RELEASE_READINESS_NOTES_REF}:${RELEASE_READINESS_NOTES_REF}" || true
-          git fetch --tags origin
-          upper_bound="${REQUESTED_SHA}"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.admin_action }}" = "skip" ]; then
-            upper_bound="$(git rev-parse origin/main)"
-          fi
-          python3 .github/scripts/release_readiness.py next-ready \
-            --readiness-notes-ref "${RELEASE_READINESS_NOTES_REF}" \
-            --snapshot-notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
-            --publication-notes-ref "${RELEASE_PUBLICATION_NOTES_REF}" \
-            --override-notes-ref "${RELEASE_OVERRIDE_NOTES_REF}" \
-            --main-ref "origin/main" \
-            --github-repository "${GITHUB_REPOSITORY}" \
-            --github-token "${GITHUB_TOKEN}" \
-            --api-root "${GITHUB_API_URL}" \
-            --upper-bound "${upper_bound}" \
-            --github-output "$GITHUB_OUTPUT"
-
-      - name: Log resolved release target
-        if: always()
-        shell: bash
-        env:
-          RELEASE_TARGET_SHA: ${{ steps.pending-target.outputs.target_sha }}
-        run: |
-          echo "RELEASE_TARGET_SHA=${RELEASE_TARGET_SHA}"
-
-      - name: Load immutable readiness receipt
-        if: steps.pending-target.outputs.target_sha != ''
-        id: readiness
-        shell: bash
-        env:
-          TARGET_SHA: ${{ steps.pending-target.outputs.target_sha }}
-        run: |
-          set -euo pipefail
-          git fetch --no-tags origin "+${RELEASE_READINESS_NOTES_REF}:${RELEASE_READINESS_NOTES_REF}" || true
-          python3 .github/scripts/release_readiness.py export \
-            --target-sha "${TARGET_SHA}" \
-            --readiness-notes-ref "${RELEASE_READINESS_NOTES_REF}" \
-            --github-output "$GITHUB_OUTPUT"
-
-      - name: Load immutable release snapshot
-        if: steps.pending-target.outputs.target_sha != ''
-        id: snapshot
-        shell: bash
-        env:
-          TARGET_SHA: ${{ steps.pending-target.outputs.target_sha }}
-        run: |
-          set -euo pipefail
-          git fetch --no-tags origin "+${RELEASE_SNAPSHOT_NOTES_REF}:${RELEASE_SNAPSHOT_NOTES_REF}" || true
-          python3 .github/scripts/release_snapshot.py export \
-            --target-sha "${TARGET_SHA}" \
-            --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
-            --publication-notes-ref "${RELEASE_PUBLICATION_NOTES_REF}" \
-            --override-notes-ref "${RELEASE_OVERRIDE_NOTES_REF}" \
-            --main-ref "origin/main" \
-            --resolve-publication-tags \
-            --github-output "$GITHUB_OUTPUT"
-
-      - name: Reject skipped target for manual release
-        if: github.event_name == 'workflow_dispatch' && inputs.admin_action == 'release' && steps.snapshot.outputs.release_state == 'skipped'
-        shell: bash
-        env:
-          TARGET_SHA: ${{ steps.pending-target.outputs.target_sha }}
-          OVERRIDE_REASON: ${{ steps.snapshot.outputs.override_reason }}
-        run: |
-          set -euo pipefail
-          echo "Skipped release targets cannot be released manually: ${TARGET_SHA}" >&2
-          if [[ -n "${OVERRIDE_REASON}" ]]; then
-            echo "Override reason: ${OVERRIDE_REASON}" >&2
-          fi
-          echo "Choose a different main commit instead of retrying the skipped target." >&2
-          exit 1
-
-      - name: Summarize release target
-        shell: bash
-        env:
-          REQUESTED_SHA: ${{ steps.requested-target.outputs.target_sha }}
-          TARGET_SHA: ${{ steps.pending-target.outputs.target_sha }}
-          RELEASE_STATE: ${{ steps.snapshot.outputs.release_state }}
-          ADMIN_ACTION: ${{ github.event_name == 'workflow_dispatch' && inputs.admin_action || 'release' }}
-          OVERRIDE_REASON: ${{ steps.snapshot.outputs.override_reason }}
-          REQUESTED_OVERRIDE_REASON: ${{ inputs.override_reason }}
-        run: |
-          set -euo pipefail
-          {
-            echo "## Release target summary"
-            echo ""
-            echo "- Event: ${{ github.event_name }}"
-            echo "- Admin action: ${ADMIN_ACTION}"
-            echo "- Requested SHA: ${REQUESTED_SHA}"
-            if [[ -n "${TARGET_SHA}" ]]; then
-              echo "- Selected target SHA: ${TARGET_SHA}"
-              echo "- Target state: ${RELEASE_STATE}"
-              if [[ -n "${OVERRIDE_REASON}" ]]; then
-                echo "- Override reason: ${OVERRIDE_REASON}"
-              fi
-            else
-              echo "- Selected target SHA: (none)"
-              if [[ "${{ github.event_name }}" = "workflow_dispatch" ]] && [[ "${ADMIN_ACTION}" = "skip" ]]; then
-                reason="${REQUESTED_OVERRIDE_REASON}"
-                if [[ -z "${reason}" ]]; then
-                  reason="release-infra mislabel under no-extra-credential model"
-                fi
-                echo "- Override recorded for requested SHA; release queue is now empty up to origin/main"
-                echo "- Override reason: ${reason}"
-              else
-                echo "- Release queue is empty up to the selected upper bound"
-              fi
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  publish:
-    name: Publish (GHCR + GitHub Release)
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    needs: [prepare]
-    if: >-
-      needs.prepare.outputs.should_release == 'true' &&
-      needs.prepare.outputs.readiness_publish == 'false' &&
-      needs.prepare.outputs.target_sha != ''
-    permissions:
       actions: read
-      contents: write
-      packages: write
-    env:
-      APP_EFFECTIVE_VERSION: ${{ needs.prepare.outputs.app_effective_version }}
-      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
-      RELEASE_CHANNEL: ${{ needs.prepare.outputs.release_channel }}
-      TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
-      SOURCE_GATE_RUN_ID: ${{ needs.prepare.outputs.source_gate_run_id }}
-      SOURCE_GATE_ARTIFACT_NAME: ${{ needs.prepare.outputs.source_gate_artifact_name }}
-      SOURCE_GATE_ATTESTATION_SHA256: ${{ needs.prepare.outputs.source_gate_attestation_sha256 }}
-      PREPARATION_RUN_ID: ${{ needs.prepare.outputs.preparation_run_id }}
-      PREPARATION_ARTIFACT_NAME: ${{ needs.prepare.outputs.preparation_artifact_name }}
-      PREPARATION_MANIFEST_SHA256: ${{ needs.prepare.outputs.preparation_manifest_sha256 }}
-      DOCKREV_TAGS_CSV: ${{ needs.prepare.outputs.tags_csv }}
-      SUPERVISOR_TAGS_CSV: ${{ needs.prepare.outputs.supervisor_tags_csv }}
+    outputs:
+      release_enabled: ${{ steps.resolve.outputs.release_enabled }}
+      pull_request: ${{ steps.resolve.outputs.pull_request }}
+      merge_sha: ${{ steps.resolve.outputs.merge_sha }}
+      version: ${{ steps.resolve.outputs.version }}
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
+      channel: ${{ steps.resolve.outputs.channel }}
+      type: ${{ steps.resolve.outputs.type }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+      identity_json: ${{ steps.resolve.outputs.identity_json }}
     steps:
-      - name: Checkout release target
+      - name: Checkout merged main commit
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.TARGET_SHA }}
+          ref: ${{ inputs.merge_sha || github.sha }}
           fetch-depth: 0
 
-      - name: Checkout workflow helpers
+      - name: Checkout trusted release helpers
         uses: actions/checkout@v4
         with:
           ref: main
           path: .workflow-src
           fetch-depth: 1
 
-      - name: Download recorded source gate attestation
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.SOURCE_GATE_ARTIFACT_NAME }}
-          run-id: ${{ env.SOURCE_GATE_RUN_ID }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          path: source-gate
-
-      - name: Validate recorded source gate attestation
+      - name: Resolve and validate identity
+        id: resolve
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MERGE_SHA: ${{ inputs.merge_sha || github.sha }}
+          RECOVERY_REASON: ${{ inputs.recovery_reason || '' }}
         shell: bash
         run: |
           set -euo pipefail
-          python3 .workflow-src/.github/scripts/release_source_gate.py validate \
-            --fixture source-gate/source-gate-attestation.json \
-            --target-sha "${TARGET_SHA}" \
-            --kind push
-          test "$(sha256sum source-gate/source-gate-attestation.json | awk '{print $1}')" = "${SOURCE_GATE_ATTESTATION_SHA256}"
+          [[ "${MERGE_SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo "merge_sha must be a 40-character lowercase SHA" >&2; exit 2; }
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -z "${RECOVERY_REASON//[[:space:]]/}" ]]; then
+            echo "recovery_reason is required for same-SHA recovery" >&2
+            exit 2
+          fi
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "${MERGE_SHA}" origin/main
+          python3 .workflow-src/.github/scripts/release_identity.py \
+            --repository "${GITHUB_REPOSITORY}" \
+            --merge-sha "${MERGE_SHA}" \
+            --token "${GITHUB_TOKEN}" \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            > release-intent.json
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+          payload = json.loads(Path("release-intent.json").read_text())
+          print(f"release_enabled={'true' if payload.get('release_enabled') else 'false'}")
+          print(f"pull_request={payload.get('pull_request', '')}")
+          print(f"merge_sha={payload.get('merge_commit_sha', '')}")
+          print(f"version={payload.get('version', '')}")
+          print(f"release_tag={payload.get('release_tag', '')}")
+          print(f"channel={payload.get('channel', '')}")
+          print(f"type={payload.get('type', '')}")
+          print(f"prerelease={'true' if payload.get('channel') in {'beta', 'dev'} else 'false'}")
+          print("identity_json<<EOF")
+          print(json.dumps(payload, sort_keys=True))
+          print("EOF")
+          PY
 
-      - name: Download recorded preparation artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.PREPARATION_ARTIFACT_NAME }}
-          run-id: ${{ env.PREPARATION_RUN_ID }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          path: .
-
-      - name: Validate downloaded preparation manifest
-        shell: bash
+      - name: Reserve release tag without rewriting ownership
+        if: steps.resolve.outputs.release_enabled == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.resolve.outputs.release_tag }}
+          MERGE_SHA: ${{ steps.resolve.outputs.merge_sha }}
         run: |
           set -euo pipefail
-          python3 .workflow-src/.github/scripts/release_preparation.py validate \
-            --manifest release-preparation-manifest.json \
-            --target-sha "${TARGET_SHA}"
-
-      - name: Verify downloaded preparation files
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 .workflow-src/.github/scripts/release_preparation.py verify \
-            --root . \
-            --manifest release-preparation-manifest.json \
-            --target-sha "${TARGET_SHA}" \
-            --expected-manifest-sha256 "${PREPARATION_MANIFEST_SHA256}"
-
-      - name: Ensure docker artifacts are executable
-        shell: bash
-        run: |
-          set -euo pipefail
-          files=(
-            dist/ci/docker/amd64/dockrev
-            dist/ci/docker/amd64/dockrev-supervisor
-            dist/ci/docker/arm64/dockrev
-            dist/ci/docker/arm64/dockrev-supervisor
-          )
-
-          for f in "${files[@]}"; do
-            if [[ ! -f "${f}" ]]; then
-              echo "missing docker artifact: ${f}" >&2
-              exit 1
+          path="repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}"
+          if existing="$(gh api "${path}" 2>/tmp/release-tag-error)"; then
+            owner_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])' <<<"${existing}")"
+            test "${owner_sha}" = "${MERGE_SHA}" || { echo "tag ${RELEASE_TAG} belongs to ${owner_sha}" >&2; exit 1; }
+          else
+            status=$?
+            if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 404|Not Found|404' /tmp/release-tag-error; then
+              cat /tmp/release-tag-error >&2
+              exit "${status}"
             fi
-            chmod +x "${f}"
-            if [[ ! -x "${f}" ]]; then
-              echo "docker artifact is not executable after chmod: ${f}" >&2
-              ls -l "${f}" >&2 || true
-              exit 1
-            fi
-          done
-
-      - name: Package release assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          out_dir="dist/release"
-          mkdir -p "${out_dir}"
-          ver="${APP_EFFECTIVE_VERSION}"
-
-          package() {
-            local name="$1"
-            local arch="$2"
-            local libc="$3"
-            local bin="$4"
-            if [[ ! -f "${bin}" ]]; then
-              echo "missing binary: ${bin}" >&2
-              exit 1
-            fi
-            chmod +x "${bin}"
-            local base="${name}_${ver}_linux_${arch}_${libc}.tar.gz"
-            tar -czf "${out_dir}/${base}" -C "$(dirname "${bin}")" "${name}"
-            sha256sum "${out_dir}/${base}" > "${out_dir}/${base}.sha256"
-            echo "[assets] ${base} ($(stat -c%s "${out_dir}/${base}") bytes)"
-          }
-
-          package dockrev amd64 gnu target/ci/amd64/release/dockrev
-          package dockrev arm64 gnu target/ci/arm64/release/dockrev
-          package dockrev amd64 musl target/ci/amd64/x86_64-unknown-linux-musl/release/dockrev
-          package dockrev arm64 musl target/ci/arm64/aarch64-unknown-linux-musl/release/dockrev
-
-          package dockrev-supervisor amd64 gnu target/ci/amd64/release/dockrev-supervisor
-          package dockrev-supervisor arm64 gnu target/ci/arm64/release/dockrev-supervisor
-          package dockrev-supervisor amd64 musl target/ci/amd64/x86_64-unknown-linux-musl/release/dockrev-supervisor
-          package dockrev-supervisor arm64 musl target/ci/arm64/aarch64-unknown-linux-musl/release/dockrev-supervisor
-
-          ls -lah "${out_dir}"
-
-      - name: Validate release assets (tar content + sha256)
-        shell: bash
-        run: |
-          set -euo pipefail
-          out_dir="dist/release"
-
-          shopt -s nullglob
-          sums=("${out_dir}"/*.sha256)
-          if (( ${#sums[@]} == 0 )); then
-            echo "No sha256 files found in ${out_dir}" >&2
-            exit 1
+            echo "tag ${RELEASE_TAG} is available for ${MERGE_SHA}"
           fi
 
-          echo "[validate] sha256sum -c"
-          for sum in "${sums[@]}"; do
-            sha256sum -c "${sum}"
-          done
+      - name: Upload immutable release identity
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-intent-${{ steps.resolve.outputs.merge_sha }}
+          path: release-intent.json
+          if-no-files-found: error
+          retention-days: 90
 
-          echo "[validate] tarball content"
-          tars=("${out_dir}"/*.tar.gz)
-          if (( ${#tars[@]} == 0 )); then
-            echo "No tar.gz files found in ${out_dir}" >&2
-            exit 1
+  build-binaries:
+    name: Build ${{ matrix.arch }} release assets
+    needs: [identity]
+    if: needs.identity.outputs.release_enabled == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            gnu_target: x86_64-unknown-linux-gnu
+            musl_target: x86_64-unknown-linux-musl
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            gnu_target: aarch64-unknown-linux-gnu
+            musl_target: aarch64-unknown-linux-musl
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 50
+    env:
+      CARGO_TARGET_DIR: target/release/${{ matrix.arch }}
+    steps:
+      - name: Checkout merge identity
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.identity.outputs.merge_sha }}
+
+      - name: Set up Bun and build embedded web
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.6
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build web
+        run: |
+          set -euo pipefail
+          cd web
+          bun install --frozen-lockfile
+          bun run build
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools pkg-config libsqlite3-dev
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: ${{ matrix.gnu_target }},${{ matrix.musl_target }}
+
+      - name: Build gnu and musl binaries
+        run: |
+          set -euo pipefail
+          cargo build -p dockrev-api --bin dockrev --release --locked --target "${{ matrix.gnu_target }}"
+          cargo build -p dockrev-api --bin dockrev --release --locked --target "${{ matrix.musl_target }}"
+          cargo build -p dockrev-supervisor --bin dockrev-supervisor --release --locked --target "${{ matrix.gnu_target }}"
+          cargo build -p dockrev-supervisor --bin dockrev-supervisor --release --locked --target "${{ matrix.musl_target }}"
+          mkdir -p "release-assets/${{ matrix.arch }}"/gnu "release-assets/${{ matrix.arch }}"/musl
+          cp "${CARGO_TARGET_DIR}/${{ matrix.gnu_target }}/release/dockrev" "release-assets/${{ matrix.arch }}/gnu/dockrev"
+          cp "${CARGO_TARGET_DIR}/${{ matrix.gnu_target }}/release/dockrev-supervisor" "release-assets/${{ matrix.arch }}/gnu/dockrev-supervisor"
+          cp "${CARGO_TARGET_DIR}/${{ matrix.musl_target }}/release/dockrev" "release-assets/${{ matrix.arch }}/musl/dockrev"
+          cp "${CARGO_TARGET_DIR}/${{ matrix.musl_target }}/release/dockrev-supervisor" "release-assets/${{ matrix.arch }}/musl/dockrev-supervisor"
+          chmod +x release-assets/${{ matrix.arch }}/*/*
+
+      - name: Upload architecture assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-${{ matrix.arch }}-${{ needs.identity.outputs.merge_sha }}
+          path: release-assets/${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 14
+
+  package-assets:
+    name: Package and verify release assets
+    needs: [identity, build-binaries]
+    if: needs.identity.outputs.release_enabled == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_names: ${{ steps.package.outputs.artifact_names }}
+    steps:
+      - name: Download architecture assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-assets-*-${{ needs.identity.outputs.merge_sha }}
+          path: release-assets
+          merge-multiple: true
+
+      - name: Package tarballs and checksums
+        id: package
+        env:
+          VERSION: ${{ needs.identity.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release
+          for arch in amd64 arm64; do
+            for libc in gnu musl; do
+              for binary in dockrev dockrev-supervisor; do
+                source="release-assets/${arch}/${libc}/${binary}"
+                test -x "${source}"
+                name="${binary}_${VERSION}_linux_${arch}_${libc}"
+                tar -czf "dist/release/${name}.tar.gz" -C "$(dirname "${source}")" "${binary}"
+                sha256sum "dist/release/${name}.tar.gz" > "dist/release/${name}.tar.gz.sha256"
+              done
+            done
+          done
+          sha256sum -c dist/release/*.sha256
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+          print(f"artifact_names={json.dumps(sorted(path.name for path in Path('dist/release').glob('*.tar.gz')))}")
+          PY
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-${{ needs.identity.outputs.merge_sha }}
+          path: dist/release
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    name: Publish GHCR and GitHub Release
+    needs: [identity, package-assets]
+    if: needs.identity.outputs.release_enabled == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      packages: write
+      actions: read
+    env:
+      VERSION: ${{ needs.identity.outputs.version }}
+      RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
+      CHANNEL: ${{ needs.identity.outputs.channel }}
+      MERGE_SHA: ${{ needs.identity.outputs.merge_sha }}
+    steps:
+      - name: Checkout merge identity
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.MERGE_SHA }}
+          fetch-depth: 0
+
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets-${{ env.MERGE_SHA }}
+          path: dist/release
+
+      - name: Create immutable tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if existing="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" 2>/dev/null)"; then
+            owner_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])' <<<"${existing}")"
+            test "${owner_sha}" = "${MERGE_SHA}"
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/tags/${RELEASE_TAG}" -f "sha=${MERGE_SHA}"
           fi
-
-          for tarball in "${tars[@]}"; do
-            base="$(basename "${tarball}")"
-            expected="${base%%_*}"
-
-            mapfile -t entries < <(tar -tzf "${tarball}")
-            if (( ${#entries[@]} != 1 )) || [[ "${entries[0]}" != "${expected}" ]]; then
-              echo "Unexpected tar entries for ${tarball}: ${entries[*]}" >&2
-              exit 1
-            fi
-
-            tmp="$(mktemp -d)"
-            tar -xzf "${tarball}" -C "${tmp}"
-            if [[ ! -f "${tmp}/${expected}" ]] || [[ ! -x "${tmp}/${expected}" ]]; then
-              echo "Missing or non-executable: ${expected} (from ${tarball})" >&2
-              exit 1
-            fi
-            rm -rf "${tmp}"
-          done
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -509,460 +297,112 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Compute image tags
-        id: docker-tags
-        shell: bash
-        run: |
-          set -euo pipefail
-          IFS=',' read -r -a dockrev_tags <<< "${DOCKREV_TAGS_CSV}"
-          IFS=',' read -r -a supervisor_tags <<< "${SUPERVISOR_TAGS_CSV}"
-          {
-            echo "dockrev_tags<<EOF"
-            for tag in "${dockrev_tags[@]}"; do
-              [[ -n "${tag}" ]] && echo "${tag}"
-            done
-            echo "EOF"
-            echo "supervisor_tags<<EOF"
-            for tag in "${supervisor_tags[@]}"; do
-              [[ -n "${tag}" ]] && echo "${tag}"
-            done
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Build linux/amd64 image (smoke test; runtime-prebuilt)
+      - name: Build and push Dockrev image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
-          target: runtime-prebuilt
-          platforms: linux/amd64
-          load: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max,ignore-error=true
-          tags: dockrev-smoke:${{ github.run_id }}-${{ github.run_attempt }}
-          build-args: |
-            APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
-
-      - name: Smoke test Docker image (linux/amd64; blocking)
-        shell: bash
-        env:
-          SMOKE_IMAGE: dockrev-smoke:${{ github.run_id }}-${{ github.run_attempt }}
-          APP_EFFECTIVE_VERSION: ${{ env.APP_EFFECTIVE_VERSION }}
-        run: |
-          set -euo pipefail
-
-          name="dockrev-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-
-          cleanup() {
-            local exit_code="$?"
-            trap - EXIT
-            docker rm -f "${name}" >/dev/null 2>&1 || true
-            docker image rm -f "${SMOKE_IMAGE}" >/dev/null 2>&1 || true
-            exit "${exit_code}"
-          }
-          trap cleanup EXIT
-
-          docker run -d \
-            --name "${name}" \
-            -p "127.0.0.1::50883" \
-            -e DOCKREV_HTTP_ADDR="0.0.0.0:50883" \
-            -e DOCKREV_DB_PATH="/tmp/dockrev.sqlite3" \
-            "${SMOKE_IMAGE}" >/dev/null
-
-          host_port="$(docker port "${name}" 50883/tcp | sed -E 's/.*:([0-9]+)$/\1/' | head -n1)"
-          if [[ -z "${host_port}" ]]; then
-            echo "[smoke] failed to detect mapped host port" >&2
-            docker port "${name}" >&2 || true
-            exit 1
-          fi
-          base_url="http://127.0.0.1:${host_port}"
-
-          deadline="$((SECONDS + 30))"
-          while true; do
-            if body="$(curl -fsS "${base_url}/api/health" 2>/dev/null)" && [[ "${body}" == "ok" ]]; then
-              echo "[smoke] health ok"
-              break
-            fi
-
-            if (( SECONDS >= deadline )); then
-              echo "[smoke] timeout waiting for ${base_url}/api/health" >&2
-              docker logs --tail 200 "${name}" >&2 || true
-              exit 1
-            fi
-
-            sleep 0.5
-          done
-
-          ver_json="$(curl -fsS "${base_url}/api/version")"
-          DOCKREV_SMOKE_JSON="${ver_json}" python3 - <<'PY'
-          import json
-          import os
-          import sys
-
-          expected = os.environ.get("APP_EFFECTIVE_VERSION")
-          data = json.loads(os.environ["DOCKREV_SMOKE_JSON"])
-          got = data.get("version")
-          if got != expected:
-            print(f"[smoke] version mismatch: got={got} expected={expected}", file=sys.stderr)
-            sys.exit(1)
-          print("[smoke] version ok")
-          PY
-
-          echo "[smoke] passed"
-
-      - name: Build linux/amd64 supervisor image (smoke test; runtime-supervisor-prebuilt)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          target: runtime-supervisor-prebuilt
-          platforms: linux/amd64
-          load: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max,ignore-error=true
-          tags: dockrev-supervisor-smoke:${{ github.run_id }}-${{ github.run_attempt }}
-          build-args: |
-            APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
-
-      - name: Smoke test supervisor Docker image (linux/amd64; blocking)
-        shell: bash
-        env:
-          SMOKE_IMAGE: dockrev-supervisor-smoke:${{ github.run_id }}-${{ github.run_attempt }}
-        run: |
-          set -euo pipefail
-
-          name="dockrev-supervisor-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-
-          cleanup() {
-            local exit_code="$?"
-            trap - EXIT
-            docker rm -f "${name}" >/dev/null 2>&1 || true
-            docker image rm -f "${SMOKE_IMAGE}" >/dev/null 2>&1 || true
-            exit "${exit_code}"
-          }
-          trap cleanup EXIT
-
-          docker run -d \
-            --name "${name}" \
-            -p "127.0.0.1::50884" \
-            "${SMOKE_IMAGE}" >/dev/null
-
-          host_port="$(docker port "${name}" 50884/tcp | sed -E 's/.*:([0-9]+)$/\1/' | head -n1)"
-          if [[ -z "${host_port}" ]]; then
-            echo "[smoke] failed to detect mapped host port" >&2
-            docker port "${name}" >&2 || true
-            exit 1
-          fi
-          base_url="http://127.0.0.1:${host_port}"
-
-          deadline="$((SECONDS + 30))"
-          while true; do
-            if body="$(curl -fsS "${base_url}/supervisor/health" 2>/dev/null)"; then
-              SUP_SMOKE_JSON="${body}" python3 - <<'PY'
-          import json
-          import os
-          import sys
-          data = json.loads(os.environ["SUP_SMOKE_JSON"])
-          if data.get("ok") is True:
-            print("[smoke] health ok")
-            sys.exit(0)
-          print(f"[smoke] unexpected health payload: {data}", file=sys.stderr)
-          sys.exit(1)
-          PY
-              break
-            fi
-
-            if (( SECONDS >= deadline )); then
-              echo "[smoke] timeout waiting for ${base_url}/supervisor/health" >&2
-              docker logs --tail 200 "${name}" >&2 || true
-              exit 1
-            fi
-
-            sleep 0.5
-          done
-
-          echo "[smoke] passed"
-
-      - name: Build and push Dockrev Docker image (artifact-first)
-        id: push-dockrev
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          target: runtime-prebuilt
-          platforms: ${{ env.PLATFORMS }}
+          target: runtime
+          platforms: linux/amd64,linux/arm64
           push: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max,ignore-error=true
-          tags: ${{ steps.docker-tags.outputs.dockrev_tags }}
-          labels: |
-            org.opencontainers.image.version=${{ env.APP_EFFECTIVE_VERSION }}
-            org.opencontainers.image.revision=${{ env.TARGET_SHA }}
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-          build-args: |
-            APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
+          build-args: APP_EFFECTIVE_VERSION=${{ env.VERSION }}
 
-      - name: Build and push Supervisor Docker image (artifact-first)
-        id: push-supervisor
+      - name: Build and push supervisor image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
-          target: runtime-supervisor-prebuilt
-          platforms: ${{ env.PLATFORMS }}
+          target: runtime-supervisor
+          platforms: linux/amd64,linux/arm64
           push: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max,ignore-error=true
-          tags: ${{ steps.docker-tags.outputs.supervisor_tags }}
-          labels: |
-            org.opencontainers.image.version=${{ env.APP_EFFECTIVE_VERSION }}
-            org.opencontainers.image.revision=${{ env.TARGET_SHA }}
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-          build-args: |
-            APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.SUPERVISOR_IMAGE_NAME }}:${{ env.VERSION }}
+          build-args: APP_EFFECTIVE_VERSION=${{ env.VERSION }}
 
-      - name: Create and push tag
-        shell: bash
+      - name: Point stable images at latest
+        if: env.CHANNEL == 'stable'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          docker buildx imagetools create \
+            --tag "${REGISTRY}/${GHCR_OWNER}/${IMAGE_NAME}:latest" \
+            "${REGISTRY}/${GHCR_OWNER}/${IMAGE_NAME}:${VERSION}"
+          docker buildx imagetools create \
+            --tag "${REGISTRY}/${GHCR_OWNER}/${SUPERVISOR_IMAGE_NAME}:latest" \
+            "${REGISTRY}/${GHCR_OWNER}/${SUPERVISOR_IMAGE_NAME}:${VERSION}"
 
-          git fetch --force --tags origin
-
-          if git rev-parse -q --verify "refs/tags/${RELEASE_TAG}" >/dev/null; then
-            existing_target="$(git rev-list -n1 "refs/tags/${RELEASE_TAG}")"
-            if [[ "${existing_target}" != "${TARGET_SHA}" ]]; then
-              echo "::error::Release tag ${RELEASE_TAG} already points to ${existing_target}, expected ${TARGET_SHA}." >&2
-              exit 1
-            fi
-            echo "Release tag ${RELEASE_TAG} already exists at ${TARGET_SHA}."
-            exit 0
-          fi
-
-          git tag -a "${RELEASE_TAG}" "${TARGET_SHA}" -m "Release ${RELEASE_TAG}"
-          git push origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
-
-          git fetch --force --tags origin
-          pushed_target="$(git rev-list -n1 "refs/tags/${RELEASE_TAG}")"
-          if [[ "${pushed_target}" != "${TARGET_SHA}" ]]; then
-            echo "::error::Release tag ${RELEASE_TAG} resolved to ${pushed_target} after push, expected ${TARGET_SHA}." >&2
-            exit 1
-          fi
-
-      - name: Create or update GitHub Release + upload assets
-        id: github-release
-        continue-on-error: true
+      - name: Publish GitHub Release and assets
         uses: ncipollo/release-action@v1
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
           tag: ${{ env.RELEASE_TAG }}
-          name: ${{ env.RELEASE_TAG }}
-          prerelease: ${{ env.RELEASE_CHANNEL == 'rc' }}
-          makeLatest: ${{ needs.prepare.outputs.publish_latest }}
-          generateReleaseNotes: true
+          commit: ${{ env.MERGE_SHA }}
+          name: Dockrev ${{ env.VERSION }}
+          prerelease: ${{ env.CHANNEL != 'stable' }}
           allowUpdates: true
           replacesArtifacts: true
+          artifacts: dist/release/*.tar.gz,dist/release/*.sha256
           artifactErrorsFailBuild: true
-          artifacts: |
-            dist/release/*.tar.gz
-            dist/release/*.sha256
+          generateReleaseNotes: true
 
-      - name: Fail if GitHub Release step failed
-        if: steps.github-release.outcome != 'success'
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "::error::GitHub Release create/update/upload failed after GHCR image push."
-          echo "::error::Cause: see step 'Create or update GitHub Release + upload assets' logs above."
-          echo "::error::Retry: Actions → workflow 'Release' → Re-run jobs (tag=${RELEASE_TAG})."
-          exit 1
 
-      - name: Record release publication ledger
-        shell: bash
-        env:
-          DOCKREV_DIGEST: ${{ steps.push-dockrev.outputs.digest }}
-          DOCKREV_SUPERVISOR_DIGEST: ${{ steps.push-supervisor.outputs.digest }}
-        run: |
-          set -euo pipefail
-          python3 .workflow-src/.github/scripts/release_snapshot.py record-publication \
-            --target-sha "${TARGET_SHA}" \
-            --snapshot-notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
-            --publication-notes-ref "${RELEASE_PUBLICATION_NOTES_REF}" \
-            --override-notes-ref "${RELEASE_OVERRIDE_NOTES_REF}" \
-            --dockrev-digest "${DOCKREV_DIGEST}" \
-            --dockrev-supervisor-digest "${DOCKREV_SUPERVISOR_DIGEST}"
-
-      - name: Resolve next pending release target
-        if: github.event_name != 'workflow_dispatch' || inputs.admin_action == 'skip'
-        id: next-ready
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          git fetch --no-tags origin main
-          git fetch --tags origin
-          git fetch --no-tags origin "+${RELEASE_SNAPSHOT_NOTES_REF}:${RELEASE_SNAPSHOT_NOTES_REF}" || true
-          git fetch --no-tags origin "+${RELEASE_PUBLICATION_NOTES_REF}:${RELEASE_PUBLICATION_NOTES_REF}" || true
-          git fetch --no-tags origin "+${RELEASE_OVERRIDE_NOTES_REF}:${RELEASE_OVERRIDE_NOTES_REF}" || true
-          git fetch --no-tags origin "+${RELEASE_READINESS_NOTES_REF}:${RELEASE_READINESS_NOTES_REF}" || true
-          python3 .workflow-src/.github/scripts/release_readiness.py next-ready \
-            --readiness-notes-ref "${RELEASE_READINESS_NOTES_REF}" \
-            --snapshot-notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
-            --publication-notes-ref "${RELEASE_PUBLICATION_NOTES_REF}" \
-            --override-notes-ref "${RELEASE_OVERRIDE_NOTES_REF}" \
-            --main-ref "origin/main" \
-            --github-repository "${GITHUB_REPOSITORY}" \
-            --github-token "${GITHUB_TOKEN}" \
-            --api-root "${GITHUB_API_URL}" \
-            --upper-bound "$(git rev-parse origin/main)" \
-            --github-output "$GITHUB_OUTPUT"
-
-      - name: Continue release queue
-        if: (github.event_name != 'workflow_dispatch' || inputs.admin_action == 'skip') && steps.next-ready.outputs.target_sha != ''
-        uses: actions/github-script@v7
-        env:
-          NEXT_TARGET_SHA: ${{ steps.next-ready.outputs.target_sha }}
-        with:
-          script: |
-            const { owner, repo } = context.repo
-            const nextSha = process.env.NEXT_TARGET_SHA
-            if (!nextSha) {
-              core.notice('Release queue is empty.')
-              return
-            }
-
-            await github.rest.actions.createWorkflowDispatch({
-              owner,
-              repo,
-              workflow_id: 'release.yml',
-              ref: 'main',
-              inputs: { head_sha: nextSha, admin_action: 'release', override_reason: '' },
-            })
-            core.notice(`Queued next release target ${nextSha}`)
-
-  cleanup-artifacts:
-    name: Cleanup Actions artifacts
+  failure-context:
+    name: Record release failure context
+    needs: [identity, package-assets, publish]
+    if: always() && needs.identity.outputs.release_enabled == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: [prepare, publish]
-    if: ${{ always() && needs.prepare.result == 'success' && needs.prepare.outputs.should_release == 'true' }}
     permissions:
       actions: write
-    env:
-      NEEDS_JSON: ${{ toJSON(needs) }}
     steps:
-      - name: "Delete artifacts (success: all; failure: keep key, delete *.dockerbuild)"
-        uses: actions/github-script@v7
+      - name: Write structured failure context
+        env:
+          RELEASE_TYPE: ${{ needs.identity.outputs.type }}
+          RELEASE_CHANNEL: ${{ needs.identity.outputs.channel }}
+          RELEASE_VERSION: ${{ needs.identity.outputs.version }}
+          RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
+          RELEASE_MERGE_SHA: ${{ needs.identity.outputs.merge_sha }}
+          RELEASE_PR_NUMBER: ${{ needs.identity.outputs.pull_request }}
+          RELEASE_ARTIFACT_NAMES: ${{ needs.package-assets.outputs.artifact_names }}
+          RELEASE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          version = os.environ["RELEASE_VERSION"]
+          expected = [
+              f"{binary}_{version}_linux_{arch}_{libc}.tar.gz"
+              for arch in ("amd64", "arm64")
+              for libc in ("gnu", "musl")
+              for binary in ("dockrev", "dockrev-supervisor")
+          ]
+          artifacts = json.loads(os.environ["RELEASE_ARTIFACT_NAMES"] or "null") or expected
+          payload = {
+              "pull_request": int(os.environ["RELEASE_PR_NUMBER"] or "0"),
+              "source_sha": os.environ["RELEASE_MERGE_SHA"],
+              "merge_commit_sha": os.environ["RELEASE_MERGE_SHA"],
+              "type": os.environ["RELEASE_TYPE"],
+              "channel": os.environ["RELEASE_CHANNEL"],
+              "version": version,
+              "tag": os.environ["RELEASE_TAG"],
+              "artifact_names": artifacts,
+              "run_url": os.environ["RELEASE_RUN_URL"],
+              "recovery_instruction": "workflow_dispatch merge_sha=" + os.environ["RELEASE_MERGE_SHA"] + " recovery_reason=<required>",
+          }
+          with open("release-failure-context.json", "w", encoding="utf-8") as handle:
+              json.dump(payload, handle, sort_keys=True)
+              handle.write("\n")
+          PY
+
+      - name: Upload failure context
+        uses: actions/upload-artifact@v4
         with:
-          script: |
-            const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-            async function withRetry(fn, { label, attempts = 3 } = {}) {
-              let lastErr;
-              for (let i = 0; i < attempts; i++) {
-                try {
-                  return await fn();
-                } catch (err) {
-                  lastErr = err;
-                  const status = err?.status;
-                  const retriable = status >= 500 || status === 429 || status === 502 || status === 503 || status === 504;
-                  if (!retriable || i === attempts - 1) throw err;
-                  const waitMs = 1000 * Math.pow(2, i);
-                  core.warning(`[retry] ${label ?? "op"} failed (status=${status ?? "?"}); retrying in ${waitMs}ms`);
-                  await sleep(waitMs);
-                }
-              }
-              throw lastErr;
-            }
-
-            const needs = JSON.parse(process.env.NEEDS_JSON ?? "{}");
-            const workflowSuccess = Object.values(needs).every((n) => n?.result === "success");
-
-            const keepPrefixes = [];
-            const shouldKeepOnFailure = (name) => keepPrefixes.some((p) => name.startsWith(p));
-            const isDockerBuildRecord = (name) => name.endsWith(".dockerbuild");
-
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const runId = context.runId;
-
-            async function listAllArtifacts() {
-              const artifacts = [];
-              let page = 1;
-              while (true) {
-                const res = await withRetry(
-                  () =>
-                    github.rest.actions.listWorkflowRunArtifacts({
-                      owner,
-                      repo,
-                      run_id: runId,
-                      per_page: 100,
-                      page,
-                    }),
-                  { label: `list artifacts page=${page}` },
-                );
-
-                artifacts.push(...(res.data?.artifacts ?? []));
-                if ((res.data?.artifacts ?? []).length < 100) break;
-                page += 1;
-              }
-              return artifacts;
-            }
-
-            async function deleteArtifact(artifact) {
-              try {
-                await withRetry(
-                  () =>
-                    github.rest.actions.deleteArtifact({
-                      owner,
-                      repo,
-                      artifact_id: artifact.id,
-                    }),
-                  { label: `delete artifact id=${artifact.id} name=${artifact.name}` },
-                );
-                return { ok: true };
-              } catch (err) {
-                if (err?.status === 404) return { ok: true, ignored: true };
-                return { ok: false, err };
-              }
-            }
-
-            const artifacts = await listAllArtifacts();
-            core.info(`found ${artifacts.length} artifacts (workflowSuccess=${workflowSuccess})`);
-
-            const deleted = [];
-            const kept = [];
-            const failed = [];
-
-            for (const artifact of artifacts) {
-              const name = artifact.name ?? "";
-              const shouldDelete = workflowSuccess
-                ? true
-                : isDockerBuildRecord(name) || !shouldKeepOnFailure(name);
-
-              if (!shouldDelete) {
-                kept.push(name);
-                continue;
-              }
-
-              const res = await deleteArtifact(artifact);
-              if (res.ok) deleted.push(name);
-              else failed.push({ name, status: res.err?.status, message: String(res.err?.message ?? res.err) });
-            }
-
-            core.info(`deleted ${deleted.length} artifacts`);
-            if (!workflowSuccess) core.info(`kept ${kept.length} artifacts: ${kept.join(", ") || "(none)"}`);
-
-            if (failed.length > 0) {
-              core.setFailed(`failed to delete ${failed.length} artifacts: ${failed.map((f) => `${f.name}(status=${f.status ?? "?"})`).join(", ")}`);
-            }
+          name: release-failure-context-${{ needs.identity.outputs.merge_sha }}-${{ github.run_id }}
+          path: release-failure-context.json
+          if-no-files-found: error
+          retention-days: 90

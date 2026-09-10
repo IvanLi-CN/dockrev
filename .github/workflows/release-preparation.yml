@@ -1,481 +1,77 @@
 name: Release Preparation
 
-run-name: Release preparation ${{ inputs.target_sha || github.sha }}
-
 on:
-  workflow_call:
-    inputs:
-      target_sha:
-        description: Exact main commit to prepare
-        required: true
-        type: string
-      verification_mode:
-        description: Build and validate without release publication evidence
-        required: false
-        default: false
-        type: boolean
-      candidate_invocation:
-        description: Trusted invocation from Release Candidate Pipeline
-        required: false
-        default: false
-        type: boolean
-    outputs:
-      target_sha:
-        description: Exact target SHA prepared
-        value: ${{ jobs.meta.outputs.target_sha }}
-      release_enabled:
-        description: Whether the target carries a release label
-        value: ${{ jobs.meta.outputs.release_enabled }}
-      verification_mode:
-        description: Whether this preparation was verification-only
-        value: ${{ jobs.meta.outputs.verification_mode }}
-      artifact_name:
-        description: Immutable preparation artifact name
-        value: ${{ jobs.package.outputs.artifact_name }}
-      artifact_run_id:
-        description: Actions run containing the preparation artifact
-        value: ${{ github.run_id }}
-      manifest_sha256:
-        description: Canonical SHA-256 of the preparation manifest
-        value: ${{ jobs.package.outputs.manifest_sha256 }}
+  workflow_run:
+    workflows: ["CI (PR)"]
+    types: [completed]
   workflow_dispatch:
     inputs:
-      target_sha:
-        description: Exact main commit to prepare
+      pr_number:
+        description: Open product PR number to prepare
         required: true
         type: string
-      verification_mode:
-        description: Verification-only execution; never creates release evidence
-        required: true
-        default: true
-        type: boolean
+      exact_version:
+        description: Exact version for type:major or type:minor; omit for type:patch
+        required: false
+        default: ""
+        type: string
 
 permissions:
-  contents: read
-  actions: read
+  contents: write
   pull-requests: read
+  checks: read
 
 concurrency:
-  group: release-preparation-${{ inputs.target_sha || github.sha }}
+  group: release-preparation-${{ inputs.pr_number || github.event.workflow_run.pull_requests[0].number || github.run_id }}
   cancel-in-progress: false
 
-env:
-  RUST_TOOLCHAIN: "1.91.0"
-
 jobs:
-  meta:
-    name: Resolve release preparation target
+  prepare:
+    name: Prepare PR VERSION identity
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    outputs:
-      target_sha: ${{ steps.target.outputs.target_sha }}
-      release_enabled: ${{ steps.candidate.outputs.release_enabled }}
-      verification_mode: ${{ steps.target.outputs.verification_mode }}
+    timeout-minutes: 15
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request')
     steps:
-      - name: Checkout target source
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.target_sha }}
-          fetch-depth: 0
-
-      - name: Checkout trusted workflow helpers
+      - name: Checkout trusted release helpers
         uses: actions/checkout@v4
         with:
           ref: main
-          path: .workflow-src
           fetch-depth: 1
 
-      - name: Validate exact main target
-        id: target
-        shell: bash
+      - name: Resolve PR number
+        id: pr
         env:
-          TARGET_INPUT: ${{ inputs.target_sha }}
-          VERIFICATION_MODE: ${{ inputs.verification_mode || false }}
-          CANDIDATE_INVOCATION: ${{ inputs.candidate_invocation || false }}
-          CALLER_WORKFLOW: ${{ github.workflow }}
-          CALLER_WORKFLOW_REF: ${{ github.workflow_ref }}
+          INPUT_PR: ${{ inputs.pr_number || '' }}
+          RUN_PR: ${{ github.event.workflow_run.pull_requests[0].number || '' }}
+        shell: bash
         run: |
           set -euo pipefail
-          if [[ ! "${TARGET_INPUT}" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "target_sha must be a 40-character lowercase commit SHA" >&2
-            exit 2
-          fi
-          if [[ "${CANDIDATE_INVOCATION}" != "true" && "${{ github.event_name }}" != "workflow_dispatch" ]]; then
-            echo "release preparation requires a trusted candidate invocation or verification dispatch" >&2
-            exit 2
-          fi
-          if [[ "${CANDIDATE_INVOCATION}" == "true" && "${CALLER_WORKFLOW}" != "Release Candidate Pipeline" ]]; then
-            echo "candidate_invocation is restricted to Release Candidate Pipeline" >&2
-            exit 2
-          fi
-          if [[ "${CANDIDATE_INVOCATION}" == "true" && "${CALLER_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/release-candidate.yml@refs/heads/main" ]]; then
-            echo "candidate_invocation caller ref is not the protected main workflow" >&2
-            exit 2
-          fi
-          if [[ "${CANDIDATE_INVOCATION}" != "true" && "${VERIFICATION_MODE}" != "true" ]]; then
-            echo "workflow_dispatch preparation must be verification-only" >&2
-            exit 2
-          fi
-          git fetch --no-tags origin main
-          if ! git merge-base --is-ancestor "${TARGET_INPUT}" origin/main; then
-            echo "target ${TARGET_INPUT} is not contained in origin/main" >&2
-            exit 2
-          fi
-          echo "target_sha=${TARGET_INPUT}" >> "$GITHUB_OUTPUT"
-          echo "verification_mode=${VERIFICATION_MODE}" >> "$GITHUB_OUTPUT"
+          pr_number="${INPUT_PR:-${RUN_PR}}"
+          [[ "${pr_number}" =~ ^[1-9][0-9]*$ ]] || { echo "A valid PR number is required" >&2; exit 2; }
+          echo "pr_number=${pr_number}" >> "$GITHUB_OUTPUT"
 
-      - name: Resolve release candidate labels
-        id: candidate
-        shell: bash
+      - name: Create and verify VERSION-only preparation
         env:
-          TARGET_SHA: ${{ steps.target.outputs.target_sha }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+          EXACT_VERSION: ${{ inputs.exact_version || '' }}
         run: |
           set -euo pipefail
-          python3 .workflow-src/.github/scripts/release_preparation.py candidate \
-            --target-sha "${TARGET_SHA}" \
-            --repository "${GITHUB_REPOSITORY}" \
-            --token "${GITHUB_TOKEN}" \
-            --output "$RUNNER_TEMP/release-candidate.json"
-          python3 - "$RUNNER_TEMP/release-candidate.json" <<'PY' >> "$GITHUB_OUTPUT"
-          import json
-          import sys
-          from pathlib import Path
-
-          payload = json.loads(Path(sys.argv[1]).read_text())
-          print(f"release_enabled={'true' if payload['release_enabled'] else 'false'}")
-          PY
-
-      - name: Summarize preparation scope
-        shell: bash
-        env:
-          TARGET_SHA: ${{ steps.target.outputs.target_sha }}
-          RELEASE_ENABLED: ${{ steps.candidate.outputs.release_enabled }}
-          VERIFICATION_MODE: ${{ steps.target.outputs.verification_mode }}
-        run: |
-          set -euo pipefail
-          {
-            echo "## Release preparation"
-            echo "- target_sha: ${TARGET_SHA}"
-            echo "- release_enabled: ${RELEASE_ENABLED}"
-            echo "- verification_mode: ${VERIFICATION_MODE}"
-            echo "- publish: false"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  build-web:
-    name: Prepare web dist
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: [meta]
-    if: ${{ needs.meta.outputs.release_enabled == 'true' }}
-    steps:
-      - name: Checkout target source
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.meta.outputs.target_sha }}
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.6
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build web
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd web
-          bun install --frozen-lockfile
-          bun run build
-
-      - name: Upload preparation web artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-preparation-web-${{ needs.meta.outputs.target_sha }}
-          path: web/dist
-          retention-days: 1
-          if-no-files-found: error
-          include-hidden-files: true
-
-  build-binaries-amd64:
-    name: Prepare binaries (amd64)
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    needs: [meta, build-web]
-    if: ${{ needs.meta.outputs.release_enabled == 'true' }}
-    env:
-      TARGET_SHA: ${{ needs.meta.outputs.target_sha }}
-      CARGO_TARGET_DIR: target/ci/amd64
-    steps:
-      - name: Checkout target source
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ env.TARGET_SHA }}
-
-      - name: Set up web input
-        uses: actions/download-artifact@v4
-        with:
-          name: release-preparation-web-${{ env.TARGET_SHA }}
-          path: web/dist
-
-      - name: Verify web route contract input
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -s web/dist/.dockrev-route-contract.json
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update \
-            -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources \
-            -o Dir::Etc::sourceparts=- \
-            -o APT::Get::List-Cleanup=0
-          sudo apt-get install -y musl-tools pkg-config libsqlite3-dev
-
-      - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@v1
-        with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-
-      - name: Cache Cargo directories
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ${{ env.CARGO_TARGET_DIR }}
-          key: ${{ runner.os }}-release-preparation-${{ env.TARGET_SHA }}-amd64-${{ hashFiles('Cargo.lock') }}
-
-      - name: Add musl target
-        run: rustup target add x86_64-unknown-linux-musl
-
-      - name: Build release binaries
-        run: |
-          set -euo pipefail
-          cargo build -p dockrev-api --bin dockrev --release --locked
-          cargo build -p dockrev-api --bin dockrev --release --locked --target x86_64-unknown-linux-musl
-          cargo build -p dockrev-supervisor --bin dockrev-supervisor --release --locked
-          cargo build -p dockrev-supervisor --bin dockrev-supervisor --release --locked --target x86_64-unknown-linux-musl
-
-      - name: Stage Docker binaries
-        run: |
-          set -euo pipefail
-          mkdir -p dist/ci/docker/amd64
-          cp target/ci/amd64/x86_64-unknown-linux-musl/release/dockrev dist/ci/docker/amd64/dockrev
-          cp target/ci/amd64/x86_64-unknown-linux-musl/release/dockrev-supervisor dist/ci/docker/amd64/dockrev-supervisor
-
-      - name: Upload preparation amd64 artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-preparation-binaries-amd64-${{ env.TARGET_SHA }}
-          path: |
-            target/ci/amd64/release/dockrev
-            target/ci/amd64/release/dockrev-supervisor
-            target/ci/amd64/x86_64-unknown-linux-musl/release/dockrev
-            target/ci/amd64/x86_64-unknown-linux-musl/release/dockrev-supervisor
-            dist/ci/docker/amd64/dockrev
-            dist/ci/docker/amd64/dockrev-supervisor
-          retention-days: 1
-          if-no-files-found: error
-
-  build-binaries-arm64:
-    name: Prepare binaries (arm64)
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 45
-    needs: [meta, build-web]
-    if: ${{ needs.meta.outputs.release_enabled == 'true' }}
-    env:
-      TARGET_SHA: ${{ needs.meta.outputs.target_sha }}
-      CARGO_TARGET_DIR: target/ci/arm64
-    steps:
-      - name: Checkout target source
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ env.TARGET_SHA }}
-
-      - name: Set up web input
-        uses: actions/download-artifact@v4
-        with:
-          name: release-preparation-web-${{ env.TARGET_SHA }}
-          path: web/dist
-
-      - name: Verify web route contract input
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -s web/dist/.dockrev-route-contract.json
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update \
-            -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources \
-            -o Dir::Etc::sourceparts=- \
-            -o APT::Get::List-Cleanup=0
-          sudo apt-get install -y musl-tools pkg-config libsqlite3-dev
-
-      - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@v1
-        with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-
-      - name: Cache Cargo directories
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ${{ env.CARGO_TARGET_DIR }}
-          key: ${{ runner.os }}-release-preparation-${{ env.TARGET_SHA }}-arm64-${{ hashFiles('Cargo.lock') }}
-
-      - name: Add musl target
-        run: rustup target add aarch64-unknown-linux-musl
-
-      - name: Build release binaries
-        run: |
-          set -euo pipefail
-          cargo build -p dockrev-api --bin dockrev --release --locked
-          cargo build -p dockrev-api --bin dockrev --release --locked --target aarch64-unknown-linux-musl
-          cargo build -p dockrev-supervisor --bin dockrev-supervisor --release --locked
-          cargo build -p dockrev-supervisor --bin dockrev-supervisor --release --locked --target aarch64-unknown-linux-musl
-
-      - name: Stage Docker binaries
-        run: |
-          set -euo pipefail
-          mkdir -p dist/ci/docker/arm64
-          cp target/ci/arm64/aarch64-unknown-linux-musl/release/dockrev dist/ci/docker/arm64/dockrev
-          cp target/ci/arm64/aarch64-unknown-linux-musl/release/dockrev-supervisor dist/ci/docker/arm64/dockrev-supervisor
-
-      - name: Upload preparation arm64 artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-preparation-binaries-arm64-${{ env.TARGET_SHA }}
-          path: |
-            target/ci/arm64/release/dockrev
-            target/ci/arm64/release/dockrev-supervisor
-            target/ci/arm64/aarch64-unknown-linux-musl/release/dockrev
-            target/ci/arm64/aarch64-unknown-linux-musl/release/dockrev-supervisor
-            dist/ci/docker/arm64/dockrev
-            dist/ci/docker/arm64/dockrev-supervisor
-          retention-days: 1
-          if-no-files-found: error
-
-  package:
-    name: Package release preparation
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: [meta, build-web, build-binaries-amd64, build-binaries-arm64]
-    if: ${{ needs.meta.outputs.release_enabled == 'true' }}
-    outputs:
-      artifact_name: ${{ steps.manifest.outputs.artifact_name }}
-      manifest_sha256: ${{ steps.manifest.outputs.manifest_sha256 }}
-    env:
-      TARGET_SHA: ${{ needs.meta.outputs.target_sha }}
-      VERIFICATION_MODE: ${{ needs.meta.outputs.verification_mode }}
-    steps:
-      - name: Checkout target source
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ env.TARGET_SHA }}
-
-      - name: Checkout trusted workflow helpers
-        uses: actions/checkout@v4
-        with:
-          ref: main
-          path: .workflow-src
-          fetch-depth: 1
-
-      - name: Download web input
-        uses: actions/download-artifact@v4
-        with:
-          name: release-preparation-web-${{ env.TARGET_SHA }}
-          path: web/dist
-
-      - name: Verify web route contract input
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -s web/dist/.dockrev-route-contract.json
-
-      - name: Download amd64 input
-        uses: actions/download-artifact@v4
-        with:
-          name: release-preparation-binaries-amd64-${{ env.TARGET_SHA }}
-          path: .
-
-      - name: Download arm64 input
-        uses: actions/download-artifact@v4
-        with:
-          name: release-preparation-binaries-arm64-${{ env.TARGET_SHA }}
-          path: .
-
-      - name: Create exact-SHA manifest
-        id: manifest
-        shell: bash
-        env:
-          EVENT_NAME: ${{ inputs.candidate_invocation && 'workflow_call' || github.event_name }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
-          WORKFLOW_REF: ${{ github.workflow_ref }}
-        run: |
-          set -euo pipefail
-          manifest_args=(
-            manifest
-            --root .
-            --target-sha "${TARGET_SHA}"
-            --event "${EVENT_NAME}"
-            --workflow-sha "${WORKFLOW_SHA}"
-            --workflow-ref "${WORKFLOW_REF}"
-          )
-          if [[ "${VERIFICATION_MODE}" == "true" ]]; then
-            manifest_args+=(--verification-mode)
+          args=(create --repository "${GITHUB_REPOSITORY}" --pr-number "${PR_NUMBER}")
+          if [[ -n "${EXACT_VERSION}" ]]; then
+            args+=(--exact-version "${EXACT_VERSION}")
           fi
-          manifest_args+=(--output release-preparation-manifest.json)
-          python3 .workflow-src/.github/scripts/release_preparation.py "${manifest_args[@]}"
-          validate_args=(
-            validate
-            --manifest release-preparation-manifest.json
-            --target-sha "${TARGET_SHA}"
-          )
-          if [[ "${VERIFICATION_MODE}" == "true" ]]; then
-            validate_args+=(--allow-verification)
-          fi
-          python3 .workflow-src/.github/scripts/release_preparation.py "${validate_args[@]}"
-          manifest_sha256="$(python3 - <<'PY'
-          import json
-          import hashlib
-          from pathlib import Path
-          payload = json.loads(Path("release-preparation-manifest.json").read_text())
-          encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-          print(hashlib.sha256(encoded).hexdigest())
-          PY
-          )"
-          echo "artifact_name=release-preparation-${TARGET_SHA}" >> "$GITHUB_OUTPUT"
-          echo "manifest_sha256=${manifest_sha256}" >> "$GITHUB_OUTPUT"
+          args+=(--output release-intent.json)
+          python3 .github/scripts/release_preparation.py create \
+            "${args[@]:1}"
 
-      - name: Verify preparation files
-        shell: bash
-        run: |
-          set -euo pipefail
-          verify_args=(
-            verify
-            --root .
-            --manifest release-preparation-manifest.json
-            --target-sha "${TARGET_SHA}"
-            --expected-manifest-sha256 "${{ steps.manifest.outputs.manifest_sha256 }}"
-          )
-          if [[ "${VERIFICATION_MODE}" == "true" ]]; then
-            verify_args+=(--allow-verification)
-          fi
-          python3 .workflow-src/.github/scripts/release_preparation.py "${verify_args[@]}"
-
-      - name: Upload immutable preparation artifact
+      - name: Publish preparation provenance
         uses: actions/upload-artifact@v4
         with:
-          name: release-preparation-${{ env.TARGET_SHA }}
-          path: |
-            release-preparation-manifest.json
-            web/dist
-            target/ci
-            dist/ci/docker
-          retention-days: 1
+          name: release-intent-pr-${{ steps.pr.outputs.pr_number }}-${{ github.run_id }}
+          path: release-intent.json
           if-no-files-found: error
-          include-hidden-files: true
+          retention-days: 14
