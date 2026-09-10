@@ -85,6 +85,20 @@ assert completion.validate_completion({"labels": ["type:none", "channel:stable"]
     "mode": "non-product",
 }
 expect_error(completion.validate_completion, {"labels": ["type:none", "channel:stable"], "changed_files": ["VERSION"]})
+assert completion.validate_completion({
+    "labels": ["type:none", "channel:stable"],
+    "changed_files": ["VERSION"],
+    "version_bootstrap": True,
+    "base_version_exists": False,
+    "version_file": "0.1.0",
+})["mode"] == "non-product"
+expect_error(completion.validate_completion, {
+    "labels": ["type:none", "channel:stable"],
+    "changed_files": ["VERSION"],
+    "version_bootstrap": True,
+    "base_version_exists": True,
+    "version_file": "0.1.0",
+})
 
 original_pull_request = preparation_script.pull_request
 original_preparation_api_request = preparation_script.api_request
@@ -345,7 +359,7 @@ try:
         if path.endswith("/pulls/42"):
             return {
                 "state": "open",
-                "base": {"ref": "main"},
+                "base": {"ref": "main", "sha": "e" * 40},
                 "head": {"sha": prep_sha},
                 "labels": [{"name": label} for label in labels_for_loader],
             }
@@ -356,11 +370,13 @@ try:
                 "commit": {"verification": {"verified": True}, "message": preparation_message if labels_for_loader[0] != "type:none" else "Product change"},
             }
         if path.endswith("/pulls/42/files?per_page=100&page=1"):
-            return []
+            return [{"filename": "VERSION"}] if labels_for_loader[0] == "type:none" else []
         if path.endswith("/commits/" + source_sha):
             return {"parents": [], "files": [], "commit": {"message": "Product change"}}
         if "/contents/VERSION?ref=" in path:
-            value = "0.1.0" if source_sha in path else "0.1.1"
+            if path.endswith("ref=" + "e" * 40):
+                raise completion.CompletionError("GitHub API failed: 404")
+            value = "0.1.0" if labels_for_loader[0] == "type:none" or source_sha in path else "0.1.1"
             encoded = __import__("base64").b64encode(value.encode()).decode()
             return {"encoding": "base64", "content": encoded}
         if "/actions/workflows/ci-pr.yml/runs?per_page=100&page=" in path:
@@ -393,7 +409,13 @@ try:
     tag_exists = True
     expect_error(completion.validate_completion, completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42))
     labels_for_loader = ["type:none", "channel:stable"]
-    assert completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42) == {"labels": labels_for_loader}
+    assert completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42) == {
+        "labels": labels_for_loader,
+        "changed_files": ["VERSION"],
+        "version_bootstrap": True,
+        "base_version_exists": False,
+        "version_file": "0.1.0",
+    }
 finally:
     completion.api_json = original_completion_api_json
 

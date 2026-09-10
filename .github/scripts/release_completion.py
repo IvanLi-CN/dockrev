@@ -181,6 +181,18 @@ def tag_is_reserved_by_other_pr(
     return True
 
 
+def version_exists_at_commit(
+    api_root: str, token: str, repository: str, commit_sha: str
+) -> bool:
+    try:
+        version_at_commit(api_root, token, repository, commit_sha)
+    except CompletionError as error:
+        if "GitHub API failed: 404" in str(error):
+            return False
+        raise
+    return True
+
+
 def validate_source_checks(payload: dict[str, Any]) -> None:
     required = {"ci_pr", "label_gate"}
     if required - set(payload):
@@ -197,7 +209,13 @@ def validate_completion(payload: dict[str, Any]) -> dict[str, Any]:
     intent = release_policy.parse_labels(payload.get("labels", []))
     if not intent["release_enabled"]:
         if "VERSION" in payload.get("changed_files", []):
-            raise CompletionError("type:none PR cannot change VERSION")
+            if payload.get("version_bootstrap") is not True:
+                raise CompletionError("type:none PR cannot change VERSION after bootstrap")
+            if not payload.get("version_file"):
+                raise CompletionError("VERSION bootstrap must provide a non-empty version")
+            if payload.get("base_version_exists") is not False:
+                raise CompletionError("VERSION bootstrap requires VERSION to be absent on base")
+            release_policy.parse_version(str(payload["version_file"]))
         if payload.get("release_mode") or payload.get("provenance") or payload.get("preparation"):
             raise CompletionError("type:none PR cannot carry release identity")
         return {"status": "pass", "release_enabled": False, "mode": "non-product"}
@@ -317,9 +335,22 @@ def load_github_completion(
     if not intent["release_enabled"]:
         if any(trailers.get(key) for key in ("Release-Mode", "Source-SHA", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")):
             raise CompletionError("type:none PR cannot carry release identity")
-        if "VERSION" in pull_request_changed_files(api_root, token, repository, pr_number):
-            raise CompletionError("type:none PR cannot change VERSION")
-        return {"labels": labels}
+        changed_files = pull_request_changed_files(api_root, token, repository, pr_number)
+        if "VERSION" not in changed_files:
+            return {"labels": labels}
+        base_sha = pr.get("base", {}).get("sha")
+        if not isinstance(base_sha, str) or not base_sha:
+            raise CompletionError("VERSION bootstrap is missing the base SHA")
+        base_version_exists = version_exists_at_commit(api_root, token, repository, base_sha)
+        if base_version_exists:
+            raise CompletionError("type:none PR cannot change an existing VERSION")
+        return {
+            "labels": labels,
+            "changed_files": changed_files,
+            "version_bootstrap": True,
+            "base_version_exists": False,
+            "version_file": version_at_commit(api_root, token, repository, head_sha),
+        }
     if mode == "normal-preparation":
         if trailers.get("Covered-Product-Merge-SHA"):
             raise CompletionError("normal preparation identity cannot carry Covered-Product-Merge-SHA")

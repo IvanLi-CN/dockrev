@@ -19,7 +19,10 @@ Every product PR targeting `main` must carry exactly one `type:*` label and one
 
 Stable versions are `X.Y.Z`; beta and dev versions are respectively
 `X.Y.Z-beta.N` and `X.Y.Z-dev.N`. `type:none` is valid policy input but does not
-create a release identity and cannot change `VERSION`.
+create a release identity and cannot change an existing `VERSION`. The one
+bootstrap exception is the initial non-product PR that adds a non-empty root
+`VERSION` when the base branch has no `VERSION` yet; `Release completion` verifies
+that absence before accepting it.
 
 ## Normal product PR
 
