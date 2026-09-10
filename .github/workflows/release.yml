@@ -587,7 +587,7 @@ jobs:
                 trap release_lock EXIT
                 break
               fi
-              if run_status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${owner_run}" --jq '.status' 2>/tmp/release-latest-lock-run-error)"; then
+              if run_status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${owner_run}/attempts/${owner_attempt}" --jq '.status' 2>/tmp/release-latest-lock-run-error)"; then
                 [[ "${run_status}" == "completed" ]] || { sleep 5; continue; }
               else
                 status=$?

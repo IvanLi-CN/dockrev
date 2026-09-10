@@ -55,6 +55,7 @@ assert "release-latest-lock" in release
 assert "Release-Latest-Lock-Run:" in release
 assert "Release-Latest-Lock-State: acquired" in release
 assert "--method PATCH" in release and "-F force=false" in release
+assert "/actions/runs/${owner_run}/attempts/${owner_attempt}" in release
 assert "HTTP 404|Not Found|404" in release
 assert release.index("trap release_lock EXIT") > release.index("while true; do")
 assert "git/refs/heads/${lock_ref_name}" in release
@@ -213,6 +214,7 @@ Release-Latest-Lock-Merge-SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa""",
     run_calls_path.write_text("0", encoding="utf-8")
     patch_calls_path.write_text("0", encoding="utf-8")
     subprocess.run([str(script)], check=True, env={**env, "CAS_CONFLICT": ""}, cwd=ROOT)
+    assert int(run_calls_path.read_text(encoding="utf-8")) >= 2
     state_path.unlink()
     patch_calls_path.write_text("0", encoding="utf-8")
     failed_env = {**env, "CAS_CONFLICT": "", "FAIL_PATCH": "1"}
