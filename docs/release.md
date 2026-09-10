@@ -32,7 +32,9 @@ create a release identity.
    `Release-Mode: normal-preparation`.
 4. `Release completion` revalidates the source checks, PR base, labels,
    trailers, signature, branch head, and tag reservation. The preparation
-   commit changes only `VERSION`, so `CI (PR)` ignores it and does not recurse.
+   commit changes only `VERSION`; if the PR workflow observes that commit,
+   `Release Preparation` recognizes its signed trailers and skips a second
+   preparation, so the source identity cannot recurse.
 5. After merge, `Release` resolves the merged SHA to exactly one merged PR and
    consumes only its immutable identity. It verifies tag ownership, builds
    `dockrev` and `dockrev-supervisor` for amd64/arm64 and gnu/musl, then
@@ -41,9 +43,10 @@ create a release identity.
 ## Remediation boundaries
 
 `workflow_dispatch` on `Release` requires an existing immutable merged identity,
-the same merge SHA, and a non-empty recovery reason. It retries publication
-only; it cannot write `VERSION`, create a new PR, select a successor version,
-rewrite a tag, or publish another PR.
+the same merge SHA, a non-empty recovery reason, and a prior failed automatic
+`Release` run for that SHA. It retries publication only; it cannot write
+`VERSION`, create a new PR, select a successor version, rewrite a tag, or
+publish another PR.
 
 If a historical product merge has no identity, create exactly one non-empty
 `VERSION`-only PR with `release-mode: version-only-release-pr`, a
@@ -58,8 +61,9 @@ and historical tag repair are deliberately unsupported.
 
 The `Release` workflow uploads `release-failure-context.json` with the release
 intent, source and merge SHAs, version, tag, asset names, run URL, and exact
-same-SHA recovery instruction. `Notify failed release` validates every field
-before invoking the selected OIDC/Oidrune reusable notifier. The repo-local
+same-SHA recovery instruction. Identity resolution failures emit a marked
+fallback context from the checked-out `VERSION` so they are not silent.
+`Notify failed release` validates every field before invoking the selected OIDC/Oidrune reusable notifier. The repo-local
 transport gate declares `required_secrets: []`; OIDC allowlists and ruleset
 alignment remain owner actions outside this repository change.
 

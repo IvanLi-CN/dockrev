@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import sys
+import urllib.parse
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -36,6 +38,66 @@ def api_json(api_root: str, token: str, path: str) -> Any:
         raise CompletionError(f"GitHub API failed: {error.code}") from error
 
 
+def workflow_runs_for_pr(
+    api_root: str,
+    token: str,
+    repository: str,
+    workflow_file: str,
+    pr_number: int,
+    source_sha: str | None = None,
+) -> list[dict[str, Any]]:
+    owner, name = repository.split("/", 1)
+    runs = api_json(
+        api_root,
+        token,
+        f"/repos/{owner}/{name}/actions/workflows/{workflow_file}/runs?per_page=100",
+    ).get("workflow_runs", [])
+    return [
+        run for run in runs
+        if any(
+            item.get("number") == pr_number
+            and (source_sha is None or item.get("head", {}).get("sha") == source_sha)
+            for item in run.get("pull_requests", [])
+        )
+    ]
+
+
+def covered_product_boundary(
+    api_root: str, token: str, repository: str, covered_merge_sha: str
+) -> tuple[dict[str, Any], str]:
+    owner, name = repository.split("/", 1)
+    pulls = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{covered_merge_sha}/pulls")
+    if not isinstance(pulls, list) or len(pulls) != 1:
+        raise CompletionError("version-only release PR must cover exactly one merged product PR")
+    pr = pulls[0]
+    if pr.get("base", {}).get("ref") != "main" or pr.get("state") != "closed" or not pr.get("merged_at"):
+        raise CompletionError("covered product boundary is not a merged main PR")
+    head_sha = pr.get("head", {}).get("sha", "")
+    release_policy.validate_sha(head_sha, "covered_product_head_sha")
+    commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{head_sha}")
+    trailers = release_policy.parse_trailers(commit.get("commit", {}).get("message", ""))
+    if any(trailers.get(key) for key in ("Release-Mode", "Product-Version", "Release-Intent")):
+        raise CompletionError("covered product PR already has release identity")
+    return pr, head_sha
+
+
+def version_at_commit(api_root: str, token: str, repository: str, commit_sha: str) -> str:
+    owner, name = repository.split("/", 1)
+    payload = api_json(
+        api_root,
+        token,
+        f"/repos/{owner}/{name}/contents/VERSION?ref={urllib.parse.quote(commit_sha, safe='')}",
+    )
+    if payload.get("encoding") != "base64":
+        raise CompletionError("VERSION content is not returned as base64")
+    try:
+        version = base64.b64decode(payload["content"], validate=True).decode().strip()
+    except (KeyError, ValueError, UnicodeDecodeError) as error:
+        raise CompletionError("VERSION content is not valid UTF-8 base64") from error
+    release_policy.parse_version(version)
+    return version
+
+
 def validate_source_checks(payload: dict[str, Any]) -> None:
     required = {"ci_pr", "label_gate"}
     if required - set(payload):
@@ -58,6 +120,9 @@ def validate_completion(payload: dict[str, Any]) -> dict[str, Any]:
     release_policy.validate_sha(str(head_sha), "head_sha")
     validate_source_checks(payload.get("source_checks", {}))
     mode = payload.get("release_mode")
+    expected_version = payload.get("version") or payload.get("preparation", {}).get("version") or payload.get("provenance", {}).get("product_version")
+    if payload.get("version_file") != expected_version:
+        raise CompletionError("PR head VERSION does not match release provenance")
     if mode == "normal-preparation":
         preparation = payload.get("preparation")
         if not isinstance(preparation, dict):
@@ -74,6 +139,8 @@ def validate_completion(payload: dict[str, Any]) -> dict[str, Any]:
             raise CompletionError("derived release tag is not reserved")
     elif mode == "version-only-release-pr":
         release_policy.validate_version_only(payload.get("changed_files", []), payload.get("provenance", {}), head_sha=head_sha)
+        if source_sha != payload["provenance"].get("covered_product_head_sha"):
+            raise CompletionError("version-only source SHA is not the covered product head")
         if payload["provenance"].get("release_intent") != f"{intent['type_label']} {intent['channel_label']}":
             raise CompletionError("version-only release intent does not match current PR labels")
         release_policy.validate_channel_version(str(payload["provenance"]["product_version"]), intent["channel"])
@@ -88,6 +155,7 @@ def validate_completion(payload: dict[str, Any]) -> dict[str, Any]:
         "source_sha": source_sha,
         "head_sha": head_sha,
         "version": payload.get("version") or payload.get("preparation", {}).get("version") or payload.get("provenance", {}).get("product_version"),
+        "version_file": payload.get("version_file"),
         "intent": intent,
     }
 
@@ -131,9 +199,15 @@ def load_github_completion(api_root: str, token: str, repository: str, pr_number
             "verified": commit.get("commit", {}).get("verification", {}).get("verified") is True,
         }
     elif mode == "version-only-release-pr":
-        source_sha = trailers.get("Covered-Product-Merge-SHA", head_sha)
+        covered_merge_sha = trailers.get("Covered-Product-Merge-SHA", "")
+        covered_pr, covered_head_sha = covered_product_boundary(api_root, token, repository, covered_merge_sha)
+        source_sha = covered_head_sha
         provenance = {
-            "covered_product_merge_sha": trailers.get("Covered-Product-Merge-SHA", ""),
+            "covered_product_merge_sha": covered_merge_sha,
+            "covered_product_pr_number": covered_pr.get("number", 0),
+            "covered_product_head_sha": covered_head_sha,
+            "covered_product_merged": True,
+            "covered_product_has_identity": False,
             "product_version": trailers.get("Product-Version", ""),
             "release_intent": trailers.get("Release-Intent", ""),
             "release_mode": mode,
@@ -142,15 +216,14 @@ def load_github_completion(api_root: str, token: str, repository: str, pr_number
         }
     else:
         provenance = None
+    version_file = version_at_commit(api_root, token, repository, head_sha)
     check_sha = source_sha
-    if mode == "version-only-release-pr" and source_sha != head_sha:
-        covered_pulls = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{source_sha}/pulls")
-        if isinstance(covered_pulls, list) and len(covered_pulls) == 1:
-            check_sha = covered_pulls[0].get("head", {}).get("sha", source_sha)
-    ci_runs = api_json(api_root, token, f"/repos/{owner}/{name}/actions/workflows/ci-pr.yml/runs?head_sha={check_sha}&per_page=100").get("workflow_runs", [])
-    label_runs = api_json(api_root, token, f"/repos/{owner}/{name}/actions/workflows/label-gate.yml/runs?head_sha={check_sha}&per_page=100").get("workflow_runs", [])
+    check_pr_number = covered_pr.get("number") if mode == "version-only-release-pr" else pr_number
+    ci_runs = workflow_runs_for_pr(api_root, token, repository, "ci-pr.yml", check_pr_number)
+    gate_sha = source_sha if mode == "normal-preparation" else head_sha
+    label_runs = workflow_runs_for_pr(api_root, token, repository, "label-gate.yml", pr_number, gate_sha)
     ci_run = next((run for run in ci_runs if run.get("head_sha") == check_sha), None)
-    label_gate = next((run for run in label_runs if run.get("head_sha") == check_sha), None)
+    label_gate = next((run for run in label_runs if run.get("conclusion") == "success"), None)
     if mode == "normal-preparation":
         version_for_tag = preparation["version"]
     elif mode == "version-only-release-pr":
@@ -166,6 +239,7 @@ def load_github_completion(api_root: str, token: str, repository: str, pr_number
         "preparation": preparation,
         "changed_files": files,
         "provenance": provenance,
+        "version_file": version_file,
         "source_checks": {"ci_pr": ci_run or {}, "label_gate": label_gate or {}},
         "tag_reserved": tag_is_available(
             api_root,

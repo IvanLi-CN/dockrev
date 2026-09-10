@@ -27,12 +27,19 @@ assert "workflows: [\"CI (PR)\"]" in preparation
 assert "createCommitOnBranch" in text(".github/scripts/release_preparation.py")
 assert "branches: [main]" in release and "merge_sha:" in release and "recovery_reason:" in release
 assert "release-failure-context-" in release and "workflow_dispatch merge_sha=" in release
+assert "prior failed automatic Release run" in release
+assert "path: release-assets" in release and 'chmod +x "${source}"' in release
+assert "needs.identity.result == 'failure'" in release
+assert "release-identity-failure-context-" in release
+assert "release-publish-serial" in release
 assert "oidrune/.github/workflows/notify.yml@" in notify
 assert "required_secrets" in text(".github/release-failure-notification.json")
 assert "paths-ignore:" in ci_pr and "- VERSION" in ci_pr
 assert "Release Candidate Pipeline" not in release
 assert "release_readiness.py" not in release
 assert "refs/notes/release" not in release
+assert "pull_requests" in text(".github/scripts/release_preparation.py")
+assert "covered_product_has_identity" in text(".github/scripts/release_identity.py")
 
 quality = json.loads((ROOT / ".github/quality-gates.json").read_text(encoding="utf-8"))
 assert quality["required_checks"] == ["Review Policy Gate", "Label Gate", "Release completion"]

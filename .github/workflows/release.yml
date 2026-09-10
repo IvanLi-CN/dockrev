@@ -65,8 +65,10 @@ jobs:
 
       - name: Resolve and validate identity
         id: resolve
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MERGE_SHA: ${{ inputs.merge_sha || github.sha }}
           RECOVERY_REASON: ${{ inputs.recovery_reason || '' }}
         shell: bash
@@ -79,6 +81,10 @@ jobs:
           fi
           git fetch --no-tags origin main
           git merge-base --is-ancestor "${MERGE_SHA}" origin/main
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            prior_failure="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/release.yml/runs?head_sha=${MERGE_SHA}&per_page=100" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(any(run.get("event") == "push" and run.get("conclusion") == "failure" for run in data.get("workflow_runs", [])))')"
+            [[ "${prior_failure}" == "True" ]] || { echo "same-SHA recovery requires a prior failed automatic Release run" >&2; exit 2; }
+          fi
           python3 .workflow-src/.github/scripts/release_identity.py \
             --repository "${GITHUB_REPOSITORY}" \
             --merge-sha "${MERGE_SHA}" \
@@ -102,6 +108,56 @@ jobs:
           print(json.dumps(payload, sort_keys=True))
           print("EOF")
           PY
+
+      - name: Capture identity-resolution failure context
+        if: steps.resolve.outcome == 'failure'
+        env:
+          MERGE_SHA: ${{ inputs.merge_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          export VERSION
+          python3 - <<'PY'
+          import json
+          import os
+          version = os.environ["VERSION"]
+          merge_sha = os.environ["MERGE_SHA"]
+          expected = [
+              f"{binary}_{version}_linux_{arch}_{libc}.tar.gz"
+              for arch in ("amd64", "arm64")
+              for libc in ("gnu", "musl")
+              for binary in ("dockrev", "dockrev-supervisor")
+          ]
+          payload = {
+              "pull_request": 0,
+              "source_sha": merge_sha,
+              "merge_commit_sha": merge_sha,
+              "type": "patch",
+              "channel": "stable",
+              "version": version,
+              "tag": f"v{version}",
+              "artifact_names": expected,
+              "run_url": f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+              "recovery_instruction": f"workflow_dispatch merge_sha={merge_sha} recovery_reason=<required>",
+              "identity_resolution_failed": True,
+          }
+          with open("identity-failure-context.json", "w", encoding="utf-8") as handle:
+              json.dump(payload, handle, sort_keys=True)
+              handle.write("\n")
+          PY
+
+      - name: Upload identity-resolution failure context
+        if: steps.resolve.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-identity-failure-context-${{ inputs.merge_sha || github.sha }}-${{ github.run_id }}
+          path: identity-failure-context.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Fail identity job after recording context
+        if: steps.resolve.outcome == 'failure'
+        run: exit 1
 
       - name: Reserve release tag without rewriting ownership
         if: steps.resolve.outputs.release_enabled == 'true'
@@ -200,7 +256,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-assets-${{ matrix.arch }}-${{ needs.identity.outputs.merge_sha }}
-          path: release-assets/${{ matrix.arch }}
+          path: release-assets
           if-no-files-found: error
           retention-days: 14
 
@@ -230,7 +286,8 @@ jobs:
             for libc in gnu musl; do
               for binary in dockrev dockrev-supervisor; do
                 source="release-assets/${arch}/${libc}/${binary}"
-                test -x "${source}"
+                test -f "${source}"
+                chmod +x "${source}"
                 name="${binary}_${VERSION}_linux_${arch}_${libc}"
                 tar -czf "dist/release/${name}.tar.gz" -C "$(dirname "${source}")" "${binary}"
                 sha256sum "dist/release/${name}.tar.gz" > "dist/release/${name}.tar.gz.sha256"
@@ -262,6 +319,9 @@ jobs:
       contents: write
       packages: write
       actions: read
+    concurrency:
+      group: release-publish-serial
+      cancel-in-progress: false
     env:
       VERSION: ${{ needs.identity.outputs.version }}
       RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
@@ -285,10 +345,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          if existing="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" 2>/dev/null)"; then
+          if existing="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" 2>/tmp/release-tag-error)"; then
             owner_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])' <<<"${existing}")"
             test "${owner_sha}" = "${MERGE_SHA}"
           else
+            status=$?
+            if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 404|Not Found|404' /tmp/release-tag-error; then
+              cat /tmp/release-tag-error >&2
+              exit "${status}"
+            fi
             gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/tags/${RELEASE_TAG}" -f "sha=${MERGE_SHA}"
           fi
 
@@ -355,13 +420,29 @@ jobs:
 
   failure-context:
     name: Record release failure context
-    needs: [identity, package-assets, publish]
-    if: always() && needs.identity.outputs.release_enabled == 'true'
+    needs: [identity, build-binaries, package-assets, publish]
+    if: >-
+      always() &&
+      (needs.identity.result == 'failure' || needs.build-binaries.result == 'failure' ||
+      needs.package-assets.result == 'failure' || needs.publish.result == 'failure')
     runs-on: ubuntu-latest
     permissions:
       actions: write
     steps:
+      - name: Download identity failure context
+        if: needs.identity.result == 'failure'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-identity-failure-context-*
+          path: identity-failure-context
+          merge-multiple: true
+
+      - name: Promote identity failure context
+        if: needs.identity.result == 'failure'
+        run: cp identity-failure-context/identity-failure-context.json release-failure-context.json
+
       - name: Write structured failure context
+        if: needs.identity.result != 'failure'
         env:
           RELEASE_TYPE: ${{ needs.identity.outputs.type }}
           RELEASE_CHANNEL: ${{ needs.identity.outputs.channel }}

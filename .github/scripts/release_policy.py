@@ -141,11 +141,29 @@ def validate_preparation(payload: dict[str, Any], *, source_sha: str | None = No
 def validate_version_only(files: list[str], provenance: dict[str, Any], *, head_sha: str | None = None) -> None:
     if not files or files != ["VERSION"]:
         raise PolicyError("version-only release PR must be non-empty and change VERSION only")
-    required = {"covered_product_merge_sha", "product_version", "release_intent", "release_mode", "verified", "branch_head_sha"}
+    required = {
+        "covered_product_merge_sha",
+        "covered_product_pr_number",
+        "covered_product_head_sha",
+        "covered_product_merged",
+        "covered_product_has_identity",
+        "product_version",
+        "release_intent",
+        "release_mode",
+        "verified",
+        "branch_head_sha",
+    }
     missing = sorted(required - set(provenance))
     if missing:
         raise PolicyError(f"version-only provenance missing: {', '.join(missing)}")
     validate_sha(str(provenance["covered_product_merge_sha"]), "covered_product_merge_sha")
+    validate_sha(str(provenance["covered_product_head_sha"]), "covered_product_head_sha")
+    if not isinstance(provenance["covered_product_pr_number"], int) or provenance["covered_product_pr_number"] < 1:
+        raise PolicyError("covered_product_pr_number must identify one product PR")
+    if provenance["covered_product_merged"] is not True:
+        raise PolicyError("covered product boundary is not a merged PR")
+    if provenance["covered_product_has_identity"] is not False:
+        raise PolicyError("covered product boundary already has release identity")
     validate_sha(str(provenance["branch_head_sha"]), "branch_head_sha")
     if head_sha and provenance["branch_head_sha"] != head_sha:
         raise PolicyError("version-only branch head drifted")
@@ -186,8 +204,14 @@ def validate_failure_context(payload: dict[str, Any]) -> dict[str, Any]:
     validate_channel_version(str(payload["version"]), str(payload["channel"]))
     if payload["tag"] != f"v{payload['version']}":
         raise PolicyError("failure context tag does not match VERSION")
-    if not str(payload["recovery_instruction"]).startswith("workflow_dispatch"):
-        raise PolicyError("failure context must provide same-SHA workflow_dispatch recovery")
+    if not str(payload["run_url"]).startswith("https://"):
+        raise PolicyError("failure context run_url must be an absolute HTTPS URL")
+    recovery = str(payload["recovery_instruction"])
+    expected_sha = f"merge_sha={payload['merge_commit_sha']}"
+    if not recovery.startswith("workflow_dispatch") or expected_sha not in recovery:
+        raise PolicyError("failure context must bind workflow_dispatch recovery to merge SHA")
+    if payload.get("identity_resolution_failed") is True and payload["source_sha"] != payload["merge_commit_sha"]:
+        raise PolicyError("identity-resolution fallback must use the merge SHA as source evidence")
     return payload
 
 

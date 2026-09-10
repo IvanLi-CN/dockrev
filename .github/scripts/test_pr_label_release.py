@@ -25,6 +25,7 @@ def load(name: str, path: Path):
 policy = load("release_policy", ROOT / ".github/scripts/release_policy.py")
 completion = load("release_completion", ROOT / ".github/scripts/release_completion.py")
 identity = load("release_identity", ROOT / ".github/scripts/release_identity.py")
+preparation_script = load("release_preparation", ROOT / ".github/scripts/release_preparation.py")
 
 
 def expect_error(function, *args, **kwargs):
@@ -64,6 +65,8 @@ assert policy.validate_preparation(preparation, source_sha=source_sha) == prepar
 expect_error(policy.validate_preparation, {**preparation, "changed_files": ["src/lib.rs"]})
 expect_error(policy.validate_preparation, {**preparation, "verified": False})
 expect_error(policy.parse_trailers, "Release-Mode: normal-preparation\nRelease-Mode: normal-preparation")
+assert preparation_script.is_existing_preparation({"Release-Mode": "normal-preparation", "Source-SHA": source_sha if 'source_sha' in globals() else "a" * 40, "Product-Version": "0.1.1"})
+assert not preparation_script.is_existing_preparation({"Release-Mode": "normal-preparation"})
 
 source_checks = {
     "ci_pr": {"status": "completed", "conclusion": "success"},
@@ -73,6 +76,7 @@ completion_payload = {
     "labels": ["type:patch", "channel:stable", "component:app"],
     "source_sha": source_sha,
     "head_sha": prep_sha,
+    "version_file": "0.1.1",
     "base_ref": "main",
     "release_mode": "normal-preparation",
     "preparation": preparation,
@@ -86,8 +90,9 @@ expect_error(completion.validate_completion, {**completion_payload, "tag_reserve
 covered_sha = "c" * 40
 version_only = {
     "labels": ["type:patch", "channel:stable"],
-    "source_sha": source_sha,
+    "source_sha": covered_sha,
     "head_sha": prep_sha,
+    "version_file": "0.1.1",
     "base_ref": "main",
     "release_mode": "version-only-release-pr",
     "changed_files": ["VERSION"],
@@ -97,7 +102,11 @@ version_only = {
         "release_intent": "type:patch channel:stable",
         "release_mode": "version-only-release-pr",
         "branch_head_sha": prep_sha,
-        "verified": True,
+        "covered_product_pr_number": 41,
+        "covered_product_head_sha": covered_sha,
+        "covered_product_merged": True,
+        "covered_product_has_identity": False,
+    "verified": True,
     },
     "source_checks": source_checks,
     "tag_reserved": True,
@@ -112,6 +121,7 @@ identity_payload = {
     "merge_commit_sha": prep_sha,
     "release_mode": "normal-preparation",
     "version": "0.1.1",
+    "version_file": "0.1.1",
     "intent": labels,
     "artifact_names": ["dockrev_0.1.1_linux_amd64_gnu.tar.gz"],
     "run_url": "https://github.example/runs/1",
@@ -130,11 +140,12 @@ failure = {
     "tag": "v0.1.1",
     "artifact_names": ["dockrev_0.1.1_linux_amd64_gnu.tar.gz"],
     "run_url": "https://github.example/runs/1",
-    "recovery_instruction": "workflow_dispatch merge_sha=" + prep_sha,
+    "recovery_instruction": "workflow_dispatch merge_sha=" + prep_sha + " recovery_reason=<required>",
 }
 assert policy.validate_failure_context(failure) == failure
 expect_error(policy.validate_failure_context, {**failure, "tag": "v0.1.0"})
 expect_error(policy.validate_failure_context, {**failure, "artifact_names": []})
+expect_error(policy.validate_failure_context, {**failure, "run_url": ""})
 failure_context = load("release_failure_context", ROOT / ".github/scripts/release_failure_context.py")
 assert "recovery:" in failure_context.notification_summary(failure)
 

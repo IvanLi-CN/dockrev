@@ -71,23 +71,38 @@ def pull_request(api_root: str, token: str, repository: str, number: int) -> dic
     return api_request(api_root, token, "GET", f"/repos/{owner}/{name}/pulls/{number}")
 
 
-def workflow_runs_for_sha(api_root: str, token: str, repository: str, workflow_file: str, source_sha: str) -> list[dict[str, Any]]:
+def workflow_runs_for_pr(
+    api_root: str,
+    token: str,
+    repository: str,
+    workflow_file: str,
+    pr_number: int,
+    source_sha: str | None = None,
+) -> list[dict[str, Any]]:
     owner, name = repository_parts(repository)
-    return api_request(
+    runs = api_request(
         api_root,
         token,
         "GET",
-        f"/repos/{owner}/{name}/actions/workflows/{urllib.parse.quote(workflow_file, safe='')}/runs?head_sha={source_sha}&per_page=100",
+        f"/repos/{owner}/{name}/actions/workflows/{urllib.parse.quote(workflow_file, safe='')}/runs?per_page=100",
     ).get("workflow_runs", [])
+    return [
+        run for run in runs
+        if any(
+            item.get("number") == pr_number
+            and (source_sha is None or item.get("head", {}).get("sha") == source_sha)
+            for item in run.get("pull_requests", [])
+        )
+    ]
 
 
-def source_ci_ready(api_root: str, token: str, repository: str, source_sha: str) -> None:
-    ci_runs = [run for run in workflow_runs_for_sha(api_root, token, repository, "ci-pr.yml", source_sha) if run.get("head_sha") == source_sha]
+def source_ci_ready(api_root: str, token: str, repository: str, pr_number: int, source_sha: str) -> None:
+    ci_runs = [run for run in workflow_runs_for_pr(api_root, token, repository, "ci-pr.yml", pr_number) if run.get("head_sha") == source_sha]
     if not any(run.get("status") == "completed" and run.get("conclusion") == "success" for run in ci_runs):
         raise PreparationError("source SHA does not have a successful complete CI (PR) run")
-    label_runs = [run for run in workflow_runs_for_sha(api_root, token, repository, "label-gate.yml", source_sha) if run.get("head_sha") == source_sha]
+    label_runs = workflow_runs_for_pr(api_root, token, repository, "label-gate.yml", pr_number, source_sha)
     if not any(run.get("status") == "completed" and run.get("conclusion") == "success" for run in label_runs):
-        raise PreparationError("source SHA does not have a successful Label Gate check")
+        raise PreparationError("PR does not have a successful Label Gate check")
 
 
 def current_version(api_root: str, token: str, repository: str, source_sha: str) -> str:
@@ -143,6 +158,12 @@ def expected_version(intent: dict[str, Any], base_version: str, exact_version: s
         raise PreparationError("type:none does not create a release preparation commit")
     release_policy.validate_channel_version(version, intent["channel"])
     return version
+
+
+def is_existing_preparation(trailers: dict[str, str]) -> bool:
+    return trailers.get("Release-Mode") == "normal-preparation" and bool(
+        trailers.get("Source-SHA") and trailers.get("Product-Version")
+    )
 
 
 def create_commit(
@@ -230,11 +251,28 @@ def create(args: argparse.Namespace) -> int:
         raise PreparationError("fork PR branches are not eligible for GitHub-native preparation")
     source_sha = pr.get("head", {}).get("sha", "")
     release_policy.validate_sha(source_sha, "source_sha")
+    owner, name = repository_parts(args.repository)
+    head_commit = api_request(args.api_root, args.token, "GET", f"/repos/{owner}/{name}/commits/{source_sha}")
+    head_trailers = release_policy.parse_trailers(head_commit.get("commit", {}).get("message", ""))
+    if is_existing_preparation(head_trailers):
+        write_json(
+            args.output,
+            {
+                "release_enabled": True,
+                "pr_number": args.pr_number,
+                "source_sha": head_trailers.get("Source-SHA", source_sha),
+                "preparation_commit_sha": source_sha,
+                "version": head_trailers.get("Product-Version", ""),
+                "release_mode": "normal-preparation",
+                "skipped": "already-prepared",
+            },
+        )
+        return 0
     intent = release_policy.parse_labels([str(item.get("name")) for item in pr.get("labels", []) if item.get("name")])
     if not intent["release_enabled"]:
         write_json(args.output, {"release_enabled": False, "pr_number": args.pr_number, "source_sha": source_sha, "reason": "type:none"})
         return 0
-    source_ci_ready(args.api_root, args.token, args.repository, source_sha)
+    source_ci_ready(args.api_root, args.token, args.repository, args.pr_number, source_sha)
     base_version = current_version(args.api_root, args.token, args.repository, source_sha)
     version = expected_version(intent, base_version, args.exact_version)
     reserve_tag(args.api_root, args.token, args.repository, version, args.pr_number)
