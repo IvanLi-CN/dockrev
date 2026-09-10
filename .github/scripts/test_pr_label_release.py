@@ -184,7 +184,7 @@ try:
         result = json.loads(output.read_text(encoding="utf-8"))
         assert result["release_enabled"] is True
         assert result["version"] == "0.1.1"
-        assert calls == {"source_ci": 1, "reserve": 1, "create": 1}
+        assert calls == {"source_ci": 2, "reserve": 1, "create": 1}
 
         calls = {"source_ci": 0, "reserve": 0, "create": 0}
         preparation_script.pull_request = lambda *_args: {

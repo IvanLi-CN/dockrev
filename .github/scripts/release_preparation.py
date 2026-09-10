@@ -570,6 +570,16 @@ def create(args: argparse.Namespace) -> int:
     base_version = current_version(args.api_root, args.token, args.repository, source_sha)
     version = expected_version(intent, base_version, args.exact_version)
     reserve_tag(args.api_root, args.token, args.repository, version, args.pr_number, source_sha)
+    source_ci_ready(
+        args.api_root,
+        args.token,
+        args.repository,
+        args.pr_number,
+        source_sha,
+        expected_pr_updated_at=source_pr_updated_at,
+        expected_intent=intent,
+        require_unchanged_pr=True,
+    )
     commit_sha = create_commit(
         args.api_root, args.token, args.repository, pr["head"]["ref"], source_sha, version, intent,
         source_pr_updated_at,
