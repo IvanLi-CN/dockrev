@@ -140,13 +140,20 @@ try:
         trusted_anchor = "f" * 40
         module.release_snapshot.first_parent_commits = lambda _ref: [preanchor, trusted_anchor, new_target]
         module.release_snapshot.released_commits_from_tags = lambda _target: {preanchor, trusted_anchor}
-        module.release_snapshot.read_snapshot = lambda *_args: None
         module.release_snapshot.read_publication = lambda _ref, target: {"target_sha": target} if target == trusted_anchor else None
         args.target_sha = new_target
         fixture_loader = module.release_snapshot.load_pr_for_commit
         fixture_labels = module.release_snapshot.current_pr_labels
         module.release_snapshot.load_pr_for_commit = lambda _api, _repo, _token, target, **kwargs: {"labels": []} if target == preanchor else fixture_loader(_api, _repo, _token, target, **kwargs)
         module.release_snapshot.current_pr_labels = lambda pr: [] if pr.get("labels") == [] else fixture_labels(pr)
+        module.release_snapshot.read_snapshot = lambda _ref, target: {"release_enabled": True} if target == preanchor else None
+        try:
+            module.recover_preflight(args)
+        except module.ReadinessError as error:
+            assert preanchor in str(error)
+        else:
+            raise AssertionError("recovery preflight bypassed an older release-enabled snapshot")
+        module.release_snapshot.read_snapshot = lambda *_args: None
         assert module.recover_preflight(args) == 0
         module.release_snapshot.load_pr_for_commit = fixture_loader
         module.release_snapshot.current_pr_labels = fixture_labels

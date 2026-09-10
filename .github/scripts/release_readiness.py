@@ -302,6 +302,13 @@ def recover_preflight(args: argparse.Namespace) -> int:
     for commit in main_commits[: anchor_index + 1]:
         if commit not in tagged or commit in trusted_tagged or commit in skipped:
             continue
+        snapshot = release_snapshot.read_snapshot(snapshot_notes_ref, commit)
+        if snapshot is not None:
+            if snapshot.get("release_enabled"):
+                raise ReadinessError(
+                    f"older tagged release-enabled target {commit} lacks complete publication ledger; refusing to bypass"
+                )
+            continue
         pr = release_snapshot.load_pr_for_commit(
             args.api_root,
             args.repository,
