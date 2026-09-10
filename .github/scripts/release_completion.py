@@ -337,6 +337,8 @@ def load_github_completion(
             "verified": commit.get("commit", {}).get("verification", {}).get("verified") is True,
         }
     elif mode == "version-only-release-pr":
+        if trailers.get("Source-SHA"):
+            raise CompletionError("version-only release identity cannot carry Source-SHA")
         covered_merge_sha = trailers.get("Covered-Product-Merge-SHA", "")
         covered_pr, covered_head_sha = covered_product_boundary(api_root, token, repository, covered_merge_sha)
         source_sha = covered_head_sha

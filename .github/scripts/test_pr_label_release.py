@@ -447,6 +447,14 @@ try:
         if method == "GET" and path.endswith(f"/commits/{source_sha}"):
             return {"commit": {"tree": {"sha": "e" * 40}}}
         if method == "POST" and path.endswith("/git/commits"):
+            assert payload["tree"] == "e" * 40
+            assert payload["parents"] == [source_sha]
+            assert payload["message"] == (
+                "Reserve release version v0.1.1\n\n"
+                "Release-Reservation-Version: 0.1.1\n"
+                "Release-Reservation-PR: 42\n"
+                f"Release-Reservation-Source-SHA: {source_sha}"
+            )
             return {"sha": "f" * 40}
         if method == "POST" and path.endswith("/git/refs"):
             return {"ref": "refs/heads/release-reservation/v0.1.1", "object": {"sha": "f" * 40}}
@@ -556,6 +564,85 @@ try:
 finally:
     identity.api_json = original_identity_api_json
 
+version_only_merge_sha = "d" * 40
+version_only_release_head_sha = "e" * 40
+version_only_covered_merge_sha = "f" * 40
+version_only_covered_head_sha = "1" * 40
+original_identity_api_json = identity.api_json
+try:
+    def fake_version_only_identity_api(_api_root, _token, path):
+        if path.endswith(f"/commits/{version_only_merge_sha}/pulls"):
+            return [{
+                "number": 43,
+                "state": "closed",
+                "merged_at": "2026-01-01T00:00:00Z",
+                "merge_commit_sha": version_only_merge_sha,
+                "base": {"ref": "main"},
+                "head": {"sha": version_only_release_head_sha},
+                "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
+            }]
+        if path.endswith(f"/commits/{version_only_release_head_sha}"):
+            return {
+                "parents": [{"sha": version_only_covered_head_sha}],
+                "files": [{"filename": "VERSION"}],
+                "commit": {
+                    "verification": {"verified": True},
+                    "message": (
+                        "VERSION-only release\n\n"
+                        f"Covered-Product-Merge-SHA: {version_only_covered_merge_sha}\n"
+                        "Product-Version: 0.1.1\n"
+                        "Release-Intent: type:patch channel:stable\n"
+                        "Release-Mode: version-only-release-pr"
+                    ),
+                },
+            }
+        if path.endswith(f"/commits/{version_only_covered_merge_sha}/pulls"):
+            return [{
+                "number": 41,
+                "state": "closed",
+                "merged_at": "2026-01-01T00:00:00Z",
+                "merge_commit_sha": version_only_covered_merge_sha,
+                "base": {"ref": "main"},
+                "head": {"sha": version_only_covered_head_sha},
+                "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
+            }]
+        if path.endswith(f"/commits/{version_only_covered_head_sha}"):
+            return {"commit": {"message": "Product change"}}
+        if path.endswith("/pulls/43/files?per_page=100&page=1"):
+            return [{"filename": "VERSION"}]
+        if "/contents/VERSION?ref=" in path:
+            encoded = __import__("base64").b64encode(b"0.1.1").decode()
+            return {"encoding": "base64", "content": encoded}
+        raise AssertionError(f"unexpected version-only identity API path: {path}")
+
+    identity.api_json = fake_version_only_identity_api
+    resolved_version_only = identity.resolve_github(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
+    )
+    assert resolved_version_only["release_mode"] == "version-only-release-pr"
+    assert resolved_version_only["source_sha"] == version_only_covered_head_sha
+finally:
+    identity.api_json = original_identity_api_json
+
+original_identity_api_json = identity.api_json
+try:
+    file_page_calls = []
+
+    def fake_paged_identity_api(_api_root, _token, path):
+        file_page_calls.append(path)
+        if path.endswith("page=1"):
+            return [{"filename": f"src/file-{index}.rs"} for index in range(100)]
+        return [{"filename": "VERSION"}]
+
+    identity.api_json = fake_paged_identity_api
+    paged_files = identity.pull_request_changed_files(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", 43
+    )
+    assert "VERSION" in paged_files and len(paged_files) == 101
+    assert file_page_calls[-1].endswith("page=2")
+finally:
+    identity.api_json = original_identity_api_json
+
 failure = {
     "pull_request": 42,
     "source_sha": source_sha,
@@ -576,6 +663,7 @@ expect_error(policy.validate_failure_context, failure, expected_repository="Ivan
 expect_error(policy.validate_failure_context, failure, expected_repository="IvanLi-CN/dockrev", expected_run_id="1", expected_server="github.com", expected_attempt="2")
 expect_error(policy.validate_failure_context, {**failure, "identity_failure_kind": "unknown"})
 expect_error(policy.validate_failure_context, {**failure, "identity_failure_kind": "no-identity"})
+expect_error(policy.validate_failure_context, {**failure, "source_sha": failure["merge_commit_sha"]})
 identity_failure = {
     **failure,
     "source_sha": prep_sha,

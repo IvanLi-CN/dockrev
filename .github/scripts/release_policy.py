@@ -298,6 +298,12 @@ def validate_failure_context(
         raise PolicyError("failure context recovery instruction is not bound to its remediation boundary")
     if payload.get("identity_resolution_failed") is True and payload["source_sha"] != payload["merge_commit_sha"]:
         raise PolicyError("identity-resolution fallback must use the merge SHA as source evidence")
+    if (
+        failure_kind is None
+        and identity_failed is None
+        and payload["source_sha"] == payload["merge_commit_sha"]
+    ):
+        raise PolicyError("merge-SHA failure context requires an explicit identity failure classification")
     return payload
 
 

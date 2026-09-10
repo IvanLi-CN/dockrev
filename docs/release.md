@@ -26,9 +26,10 @@ create a release identity and cannot change `VERSION`.
 1. The source head must pass the complete `CI (PR)` workflow and `Label Gate`.
 2. `Release Preparation` reads the source `VERSION`. Patch releases use the
    next patch; major and minor releases require an exact version input. Before
-   writing, it atomically creates the PR-owned
-   `release-reservation/vVERSION/pr-N` ref at the source SHA. Completion
-   rejects the version if more than one PR-owned reservation exists.
+   writing, it atomically creates the shared
+   `release-reservation/vVERSION` ref, pointing to an owner-stamped reservation
+   commit whose trailers bind the PR and source SHA. Completion validates that
+   immutable ref ownership before accepting the identity.
 3. Preparation uses GitHub's `createCommitOnBranch(expectedHeadOid)` to add one
    signed, single-parent commit that changes only `VERSION`. Its trailers bind
    the source SHA, product version, label intent, and

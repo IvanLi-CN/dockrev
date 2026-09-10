@@ -401,6 +401,8 @@ def create(args: argparse.Namespace) -> int:
     if is_version_only_release(head_trailers):
         if not intent["release_enabled"]:
             raise PreparationError("type:none PR cannot retain release-only identity")
+        if head_trailers.get("Source-SHA"):
+            raise PreparationError("version-only release identity cannot carry Source-SHA")
         if head_trailers.get("Release-Intent") != f"{intent['type_label']} {intent['channel_label']}":
             raise PreparationError("existing release-only intent does not match current PR labels")
         version = head_trailers["Product-Version"]

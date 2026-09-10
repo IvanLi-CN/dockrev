@@ -197,6 +197,7 @@ jobs:
         run: exit 1
 
       - name: Reserve release tag without rewriting ownership
+        id: reserve_tag
         if: steps.resolve.outputs.release_enabled == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -221,12 +222,89 @@ jobs:
             echo "tag ${RELEASE_TAG} is available for ${MERGE_SHA}"
           fi
 
+      - name: Capture resolved identity step failure context
+        if: >-
+          always() && steps.resolve.outcome == 'success'
+        env:
+          MERGE_SHA: ${{ steps.resolve.outputs.merge_sha }}
+          SOURCE_SHA: ${{ steps.resolve.outputs.source_sha }}
+          RELEASE_PR: ${{ steps.resolve.outputs.pull_request }}
+          RELEASE_TYPE: ${{ steps.resolve.outputs.type }}
+          RELEASE_CHANNEL: ${{ steps.resolve.outputs.channel }}
+          RELEASE_VERSION: ${{ steps.resolve.outputs.version }}
+          RELEASE_TAG: ${{ steps.resolve.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+
+          version = os.environ["RELEASE_VERSION"]
+          expected = [
+              suffix
+              for base in [
+                  f"{binary}_{version}_linux_{arch}_{libc}"
+                  for arch in ("amd64", "arm64")
+                  for libc in ("gnu", "musl")
+                  for binary in ("dockrev", "dockrev-supervisor")
+              ]
+              for suffix in (f"{base}.tar.gz", f"{base}.tar.gz.sha256")
+          ]
+          payload = {
+              "pull_request": int(os.environ["RELEASE_PR"]),
+              "source_sha": os.environ["SOURCE_SHA"],
+              "merge_commit_sha": os.environ["MERGE_SHA"],
+              "type": os.environ["RELEASE_TYPE"],
+              "channel": os.environ["RELEASE_CHANNEL"],
+              "version": version,
+              "tag": os.environ["RELEASE_TAG"],
+              "artifact_names": expected,
+              "run_url": f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+              "recovery_instruction": "resolver-error: retry Release workflow after verifying merged identity",
+              "identity_resolution_failed": False,
+              "identity_failure_kind": "resolver-error",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "workflow": "Release",
+              "event": os.environ["GITHUB_EVENT_NAME"],
+              "ref": os.environ["GITHUB_REF"],
+              "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+              "actor": os.environ["GITHUB_ACTOR"],
+          }
+          with open("identity-failure-context.json", "w", encoding="utf-8") as handle:
+              json.dump(payload, handle, sort_keys=True)
+              handle.write("\n")
+          PY
+
+      - name: Upload resolved identity failure context
+        if: >-
+          always() && steps.resolve.outcome == 'success' &&
+          steps.reserve_tag.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-identity-failure-context-${{ github.run_id }}-${{ github.run_attempt }}
+          path: identity-failure-context.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90
       - name: Upload immutable release identity
+        id: upload_identity
         uses: actions/upload-artifact@v4
         with:
           name: release-intent-${{ steps.resolve.outputs.merge_sha }}
           path: release-intent.json
           if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload resolved identity artifact failure context
+        if: >-
+          always() && steps.resolve.outcome == 'success' &&
+          steps.upload_identity.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-identity-failure-context-${{ github.run_id }}-${{ github.run_attempt }}
+          path: identity-failure-context.json
+          if-no-files-found: error
+          overwrite: true
           retention-days: 90
 
   build-binaries:

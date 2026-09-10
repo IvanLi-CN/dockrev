@@ -242,6 +242,8 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
         except release_policy.PolicyError as error:
             raise IdentityError(str(error)) from error
     else:
+        if trailers.get("Source-SHA"):
+            raise IdentityError("version-only release identity cannot carry Source-SHA")
         covered_merge_sha = trailers.get("Covered-Product-Merge-SHA", "")
         covered_pr, covered_head_sha = covered_product_boundary(api_root, token, repository, covered_merge_sha)
         changed_files = pull_request_changed_files(api_root, token, repository, pr.get("number", 0))
@@ -263,7 +265,7 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
             raise IdentityError(str(error)) from error
     payload = {
         "pull_request": pr.get("number"),
-        "source_sha": trailers.get("Source-SHA", covered_head_sha if mode == "version-only-release-pr" else head_sha),
+        "source_sha": covered_head_sha if mode == "version-only-release-pr" else trailers.get("Source-SHA", head_sha),
         "merge_commit_sha": merge_sha,
         "preparation_commit_sha": head_sha if mode == "normal-preparation" else None,
         "covered_product_merge_sha": trailers.get("Covered-Product-Merge-SHA"),

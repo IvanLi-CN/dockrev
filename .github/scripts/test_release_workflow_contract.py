@@ -40,6 +40,9 @@ assert "prior failed automatic Release run" in release
 assert "path: release-assets" in release and 'chmod +x "${source}"' in release
 assert "needs.identity.result == 'failure'" in release
 assert "release-identity-failure-context-" in release
+assert "Capture resolved identity step failure context" in release
+assert '"identity_failure_kind": "resolver-error"' in release
+assert "steps.upload_identity.outcome == 'failure'" in release
 assert "release-publish-${{ needs.identity.outputs.merge_sha }}" in release
 assert "tr '[:upper:]' '[:lower:]'" in release
 assert "overwrite: true" in release
