@@ -334,10 +334,13 @@ try:
             if tag_exists:
                 return {"object": {"sha": prep_sha, "type": "commit"}}
             raise completion.CompletionError("GitHub API failed: 404")
-        if path.endswith("/git/matching-refs/heads/release-reservation%2Fv0.1.1"):
-            return [{"ref": "refs/heads/release-reservation/v0.1.1/pr-42", "object": {"sha": source_sha}}]
-        if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1%2Fpr-42"):
-            return {"object": {"sha": source_sha, "type": "commit"}}
+        if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1"):
+            return {"object": {"sha": "f" * 40, "type": "commit"}}
+        if path.endswith("/commits/" + "f" * 40):
+            return {
+                "parents": [{"sha": source_sha}],
+                "commit": {"message": "Reserve release version v0.1.1\n\nRelease-Reservation-Version: 0.1.1\nRelease-Reservation-PR: 42\nRelease-Reservation-Source-SHA: " + source_sha},
+            }
         if "/pulls?state=" in path:
             return []
         raise AssertionError(f"unexpected completion API path: {path}")
@@ -401,10 +404,13 @@ try:
             return {"workflow_runs": [{"head_sha": "e" * 40, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 42, "head": {"sha": prep_sha}}]}]}
         if path.endswith("/git/ref/tags/v0.1.1"):
             raise completion.CompletionError("GitHub API failed: 404")
-        if path.endswith("/git/matching-refs/heads/release-reservation%2Fv0.1.1"):
-            return [{"ref": "refs/heads/release-reservation/v0.1.1/pr-42", "object": {"sha": covered_head_sha}}]
-        if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1%2Fpr-42"):
-            return {"object": {"sha": covered_head_sha}}
+        if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1"):
+            return {"object": {"sha": "f" * 40}}
+        if path.endswith("/commits/" + "f" * 40):
+            return {
+                "parents": [{"sha": covered_head_sha}],
+                "commit": {"message": "Reserve release version v0.1.1\n\nRelease-Reservation-Version: 0.1.1\nRelease-Reservation-PR: 42\nRelease-Reservation-Source-SHA: " + covered_head_sha},
+            }
         if "/pulls?state=" in path:
             return []
         raise AssertionError(f"unexpected version-only API path: {path}")
@@ -436,11 +442,15 @@ original_preparation_api_request = preparation_script.api_request
 try:
     def fake_reservation_api(_api_root, _token, method, path, payload=None):
         reservation_calls.append((method, path, payload))
-        if method == "GET" and "matching-refs" in path:
-            return []
-        if method == "GET":
+        if method == "GET" and path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1"):
             raise preparation_script.PreparationError("GitHub API GET ref failed: 404: missing")
-        return {"ref": "refs/heads/release-reservation/v0.1.1/pr-42", "object": {"sha": source_sha}}
+        if method == "GET" and path.endswith(f"/commits/{source_sha}"):
+            return {"commit": {"tree": {"sha": "e" * 40}}}
+        if method == "POST" and path.endswith("/git/commits"):
+            return {"sha": "f" * 40}
+        if method == "POST" and path.endswith("/git/refs"):
+            return {"ref": "refs/heads/release-reservation/v0.1.1", "object": {"sha": "f" * 40}}
+        raise AssertionError((method, path, payload))
 
     preparation_script.api_request = fake_reservation_api
     preparation_script.reserve_version_ref(
@@ -449,7 +459,7 @@ try:
     assert reservation_calls[-1] == (
         "POST",
         "/repos/IvanLi-CN/dockrev/git/refs",
-        {"ref": "refs/heads/release-reservation/v0.1.1/pr-42", "sha": source_sha},
+        {"ref": "refs/heads/release-reservation/v0.1.1", "sha": "f" * 40},
     )
 finally:
     preparation_script.api_request = original_preparation_api_request
@@ -504,6 +514,7 @@ identity_payload = {
 resolved = identity.resolve_from_payload(identity_payload)
 assert resolved["release_tag"] == "v0.1.1"
 expect_error(identity.resolve_from_payload, {**identity_payload, "version": "0.1.1-beta.1"})
+expect_error(identity.resolve_from_payload, {"labels": ["type:none", "channel:stable"], "release_mode": "normal-preparation"})
 
 original_identity_api_json = identity.api_json
 try:

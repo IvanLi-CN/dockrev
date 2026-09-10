@@ -135,6 +135,38 @@ def parse_trailers(message: str) -> dict[str, str]:
     return trailers
 
 
+def parse_reservation_trailers(message: str) -> dict[str, str]:
+    trailers: dict[str, str] = {}
+    keys = {"Release-Reservation-Version", "Release-Reservation-PR", "Release-Reservation-Source-SHA"}
+    for line in message.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        if key in keys:
+            if key in trailers:
+                raise PolicyError(f"duplicate reservation trailer: {key}")
+            trailers[key] = value.strip()
+    return trailers
+
+
+def validate_reservation(
+    payload: dict[str, Any], *, version: str, pr_number: int, source_sha: str
+) -> dict[str, Any]:
+    message = payload.get("message") or payload.get("commit", {}).get("message", "")
+    trailers = parse_reservation_trailers(str(message))
+    if trailers.get("Release-Reservation-Version") != version:
+        raise PolicyError("release reservation version does not match expected VERSION")
+    if trailers.get("Release-Reservation-PR") != str(pr_number):
+        raise PolicyError("release reservation belongs to another PR")
+    if trailers.get("Release-Reservation-Source-SHA") != source_sha:
+        raise PolicyError("release reservation source SHA does not match expected source")
+    validate_sha(source_sha, "reservation_source_sha")
+    parents = [parent.get("sha") for parent in payload.get("parents", [])]
+    if parents != [source_sha]:
+        raise PolicyError("release reservation must have the source SHA as its only parent")
+    return payload
+
+
 def validate_preparation(payload: dict[str, Any], *, source_sha: str | None = None) -> dict[str, Any]:
     required = {"commit_sha", "source_sha", "version", "intent", "release_mode", "parents", "changed_files", "verified"}
     missing = sorted(required - set(payload))

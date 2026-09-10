@@ -208,42 +208,59 @@ def reserve_tag(api_root: str, token: str, repository: str, version: str, pr_num
 def reserve_version_ref(
     api_root: str, token: str, repository: str, version: str, pr_number: int, source_sha: str
 ) -> None:
-    """CAS a PR-owned branch ref and reject multiple owners for one VERSION."""
+    """CAS one version ref to an owner-stamped reservation commit."""
     owner, name = repository_parts(repository)
-    prefix = f"release-reservation/v{version}"
-    ref_name = f"{prefix}/pr-{pr_number}"
+    ref_name = f"release-reservation/v{version}"
     path = f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(ref_name, safe='')}"
-    matching = api_request(
-        api_root,
-        token,
-        "GET",
-        f"/repos/{owner}/{name}/git/matching-refs/heads/{urllib.parse.quote(prefix, safe='')}",
-    )
-    if not isinstance(matching, list):
-        raise PreparationError("release reservation refs response is invalid")
-    other_refs = [item for item in matching if item.get("ref") != f"refs/heads/{ref_name}"]
-    if other_refs:
-        raise PreparationError(f"release version {version} is already reserved by another PR")
     try:
         existing = api_request(api_root, token, "GET", path)
     except PreparationError as error:
         if " 404:" not in str(error):
             raise
+        source = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{source_sha}")
+        tree_sha = source.get("commit", {}).get("tree", {}).get("sha")
+        if not isinstance(tree_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", tree_sha):
+            raise PreparationError("source commit tree SHA is invalid")
+        reservation = api_request(
+            api_root,
+            token,
+            "POST",
+            f"/repos/{owner}/{name}/git/commits",
+            {
+                "message": (
+                    f"Reserve release version v{version}\n\n"
+                    f"Release-Reservation-Version: {version}\n"
+                    f"Release-Reservation-PR: {pr_number}\n"
+                    f"Release-Reservation-Source-SHA: {source_sha}"
+                ),
+                "tree": tree_sha,
+                "parents": [source_sha],
+            },
+        )
+        reservation_sha = reservation.get("sha")
+        if not isinstance(reservation_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", reservation_sha):
+            raise PreparationError("release reservation commit SHA is invalid")
         try:
             api_request(
                 api_root,
                 token,
                 "POST",
                 f"/repos/{owner}/{name}/git/refs",
-                {"ref": f"refs/heads/{ref_name}", "sha": source_sha},
+                {"ref": f"refs/heads/{ref_name}", "sha": reservation_sha},
             )
             return
         except PreparationError as create_error:
             if " 422:" not in str(create_error):
                 raise
             existing = api_request(api_root, token, "GET", path)
-    if existing.get("object", {}).get("sha") != source_sha:
-        raise PreparationError(f"release version {version} is reserved for another source SHA")
+    reservation_sha = existing.get("object", {}).get("sha")
+    if not isinstance(reservation_sha, str):
+        raise PreparationError("release reservation ref has no commit SHA")
+    reservation_commit = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{reservation_sha}")
+    try:
+        release_policy.validate_reservation(reservation_commit, version=version, pr_number=pr_number, source_sha=source_sha)
+    except release_policy.PolicyError as error:
+        raise PreparationError(str(error)) from error
 
 
 def expected_version(intent: dict[str, Any], base_version: str, exact_version: str | None) -> str:

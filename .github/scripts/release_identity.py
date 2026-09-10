@@ -135,6 +135,12 @@ def pull_request_changed_files(
 def resolve_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
     intent = payload.get("intent") or release_policy.parse_labels(payload.get("labels", []))
     if payload.get("type") == "none" or intent.get("type") == "none":
+        identity_fields = (
+            "release_mode", "version", "version_file", "source_sha", "merge_commit_sha",
+            "preparation_commit_sha", "covered_product_merge_sha", "provenance", "artifact_names",
+        )
+        if any(payload.get(field) not in (None, "", [], {}) for field in identity_fields):
+            raise IdentityError("type:none payload cannot carry release identity")
         return {"release_enabled": False, "reason": "type:none"}
     version = str(payload.get("version", ""))
     version_file = str(payload.get("version_file", ""))

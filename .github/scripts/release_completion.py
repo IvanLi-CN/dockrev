@@ -274,22 +274,24 @@ def version_reservation_is_owned(
     api_root: str, token: str, repository: str, version: str, pr_number: int, source_sha: str
 ) -> bool:
     owner, name = repository.split("/", 1)
-    prefix = f"release-reservation/v{version}"
-    ref_name = f"{prefix}/pr-{pr_number}"
-    matching = api_json(
-        api_root,
-        token,
-        f"/repos/{owner}/{name}/git/matching-refs/heads/{urllib.parse.quote(prefix, safe='')}",
-    )
-    if not isinstance(matching, list) or len(matching) != 1 or matching[0].get("ref") != f"refs/heads/{ref_name}":
-        return False
+    ref_name = f"release-reservation/v{version}"
     try:
-        payload = api_json(api_root, token, f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(ref_name, safe='')}")
+        ref = api_json(api_root, token, f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(ref_name, safe='')}")
     except CompletionError as error:
         if "GitHub API failed: 404" in str(error):
             return False
         raise
-    return payload.get("object", {}).get("sha") == source_sha
+    reservation_sha = ref.get("object", {}).get("sha")
+    if not reservation_sha:
+        return False
+    try:
+        reservation = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{reservation_sha}")
+        release_policy.validate_reservation(
+            reservation, version=version, pr_number=pr_number, source_sha=source_sha
+        )
+    except (CompletionError, release_policy.PolicyError):
+        return False
+    return True
 
 
 def load_github_completion(
