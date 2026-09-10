@@ -327,7 +327,7 @@ def load_github_completion(
         pr_number == 387
         and pr.get("base", {}).get("sha") == "759b0cf9c0d5a57be1010e74480cbb5ae713433c"
     )
-    if not bootstrap_transition:
+    if intent["release_enabled"] and not bootstrap_transition:
         try:
             release_policy.validate_source_boundary(changed_files)
         except release_policy.PolicyError as error:

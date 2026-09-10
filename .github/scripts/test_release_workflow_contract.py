@@ -49,7 +49,8 @@ assert "checks: read" in preparation
 assert "checks: read" in completion
 assert "checks: read" in preparation
 assert "checks: read" in completion
-assert "ref: main" in preparation
+assert "ref: ${{ github.event.workflow_run.head_sha || github.sha }}" in preparation
+assert "actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b" in label_gate
 assert "ref: ${{ inputs.merge_sha || github.sha }}" in release
 assert "ref: ${{ github.event.workflow_run.head_sha || github.sha }}" in notify
 assert "createCommitOnBranch" in text(".github/scripts/release_preparation.py")

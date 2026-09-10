@@ -132,9 +132,30 @@ def source_ci_ready(
     source_sha: str,
     *,
     expected_pr_updated_at: str | None = None,
+    expected_intent: dict[str, Any] | None = None,
+    require_current_head: bool = True,
+    require_unchanged_pr: bool = False,
 ) -> str:
     pr = pull_request(api_root, token, repository, pr_number)
-    label_updated_at = expected_pr_updated_at or str(pr.get("updated_at", ""))
+    current_head = str(pr.get("head", {}).get("sha", ""))
+    if require_current_head and current_head != source_sha:
+        raise PreparationError("PR head changed while source checks were being verified")
+    current_updated_at = str(pr.get("updated_at", ""))
+    if require_unchanged_pr and expected_pr_updated_at and current_updated_at != expected_pr_updated_at:
+        raise PreparationError("PR labels or metadata changed while source checks were being verified")
+    if expected_intent is not None:
+        try:
+            current_intent = release_policy.parse_labels(
+                [str(item.get("name")) for item in pr.get("labels", []) if item.get("name")]
+            )
+        except release_policy.PolicyError as error:
+            raise PreparationError(str(error)) from error
+        if any(
+            current_intent[field] != expected_intent[field]
+            for field in ("type_label", "channel_label", "components")
+        ):
+            raise PreparationError("PR release intent labels changed while source checks were being verified")
+    label_updated_at = expected_pr_updated_at or current_updated_at
     if not label_updated_at:
         raise PreparationError("PR metadata is missing updated_at for Label Gate binding")
     try:
@@ -501,6 +522,8 @@ def create(args: argparse.Namespace) -> int:
         source_ci_ready(
             args.api_root, args.token, args.repository, args.pr_number, existing_source_sha,
             expected_pr_updated_at=head_trailers.get("Source-PR-Updated-At"),
+            expected_intent=intent,
+            require_current_head=False,
         )
         existing = inspect_commit(
             args.api_root,
@@ -534,7 +557,16 @@ def create(args: argparse.Namespace) -> int:
     if not intent["release_enabled"]:
         write_json(args.output, {"release_enabled": False, "pr_number": args.pr_number, "source_sha": source_sha, "reason": "type:none"})
         return 0
-    source_pr_updated_at = source_ci_ready(args.api_root, args.token, args.repository, args.pr_number, source_sha)
+    source_pr_updated_at = source_ci_ready(
+        args.api_root,
+        args.token,
+        args.repository,
+        args.pr_number,
+        source_sha,
+        expected_pr_updated_at=str(pr.get("updated_at", "")),
+        expected_intent=intent,
+        require_unchanged_pr=True,
+    )
     base_version = current_version(args.api_root, args.token, args.repository, source_sha)
     version = expected_version(intent, base_version, args.exact_version)
     reserve_tag(args.api_root, args.token, args.repository, version, args.pr_number, source_sha)

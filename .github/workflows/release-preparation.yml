@@ -39,7 +39,7 @@ jobs:
       - name: Checkout trusted release helpers
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 1
 
       - name: Resolve PR number

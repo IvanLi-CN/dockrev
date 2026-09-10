@@ -35,7 +35,7 @@ jobs:
 
       - name: Read labels and changed files
         id: metadata
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
         with:
           script: |
             const pr = context.payload.pull_request
@@ -68,7 +68,7 @@ jobs:
           labels = json.loads(Path(os.environ['LABELS_JSON']).read_text())
           files = json.loads(Path(os.environ['FILES_JSON']).read_text())
           intent = release_policy.parse_labels(labels)
-          if os.environ.get('ALLOW_BOOTSTRAP') != 'true':
+          if intent['release_enabled'] and os.environ.get('ALLOW_BOOTSTRAP') != 'true':
               release_policy.validate_source_boundary(files)
           print(json.dumps(intent, sort_keys=True))
           print(f"changed_files={len(files)}")
@@ -96,7 +96,7 @@ jobs:
               errors.append('unknown channel label')
           if errors:
               raise SystemExit('; '.join(errors))
-          if os.environ.get('ALLOW_BOOTSTRAP') != 'true':
+          if types[0] != 'type:none' and os.environ.get('ALLOW_BOOTSTRAP') != 'true':
               forbidden = [
                   path for path in files
                   if path.startswith('.github/workflows/')
@@ -105,6 +105,7 @@ jobs:
                       '.github/scripts/check-live-quality-gates.py',
                       '.github/scripts/label-gate.sh',
                       '.github/scripts/release-channel-contract-check.sh',
+                      '.github/pr-label-release.json',
                       '.github/quality-gates.json',
                       '.github/release-failure-notification.json',
                   }

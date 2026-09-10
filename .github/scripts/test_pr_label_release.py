@@ -146,8 +146,9 @@ try:
         assert path.endswith(f"/commits/{source_sha}")
         return {"commit": {"message": "Product change"}}
 
-    def fake_source_ci(*_args):
+    def fake_source_ci(*_args, **_kwargs):
         calls["source_ci"] += 1
+        return "2026-01-01T00:00:00Z"
 
     def fake_current_version(*_args):
         return "0.1.0"
