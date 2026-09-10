@@ -549,8 +549,9 @@ jobs:
             local error_file="/tmp/release-latest-lock-delete-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
             if gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${ref_name}" >/dev/null 2>"${error_file}"; then
               return 0
+            else
+              local status=$?
             fi
-            local status=$?
             if [[ "${status}" -eq 1 ]] && rg -q 'HTTP 404|Not Found|404' "${error_file}"; then
               return 0
             fi

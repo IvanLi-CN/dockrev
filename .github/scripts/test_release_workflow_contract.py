@@ -57,6 +57,7 @@ assert "matching-refs/heads/release-latest-lock/" in release
 assert "HTTP 404|Not Found|404" in release
 assert release.index("trap release_lock EXIT") < release.index("while true; do")
 assert "git/refs/heads/${lock_ref_name}" in release
+assert 'else\n              local status=$?\n            fi' in release
 assert "tr '[:upper:]' '[:lower:]'" in release
 assert "overwrite: true" in release
 assert "github.run_attempt" in release
