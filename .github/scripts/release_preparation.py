@@ -124,9 +124,17 @@ def pull_request_changed_files(api_root: str, token: str, repository: str, numbe
         page += 1
 
 
-def source_ci_ready(api_root: str, token: str, repository: str, pr_number: int, source_sha: str) -> None:
+def source_ci_ready(
+    api_root: str,
+    token: str,
+    repository: str,
+    pr_number: int,
+    source_sha: str,
+    *,
+    expected_pr_updated_at: str | None = None,
+) -> str:
     pr = pull_request(api_root, token, repository, pr_number)
-    label_updated_at = str(pr.get("updated_at", ""))
+    label_updated_at = expected_pr_updated_at or str(pr.get("updated_at", ""))
     if not label_updated_at:
         raise PreparationError("PR metadata is missing updated_at for Label Gate binding")
     try:
@@ -144,6 +152,7 @@ def source_ci_ready(api_root: str, token: str, repository: str, pr_number: int, 
         for run in label_runs
     ):
         raise PreparationError("PR does not have a successful Label Gate check")
+    return label_updated_at
 
 
 def current_version(api_root: str, token: str, repository: str, source_sha: str) -> str:
@@ -203,7 +212,7 @@ def covered_product_head_sha(api_root: str, token: str, repository: str, merge_s
     trailers = release_policy.parse_trailers(commit.get("commit", {}).get("message", ""))
     if any(
         trailers.get(key)
-        for key in ("Release-Mode", "Source-SHA", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")
+        for key in ("Release-Mode", "Source-SHA", "Source-PR-Updated-At", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")
     ):
         raise PreparationError("covered product PR already has release identity")
     return head_sha
@@ -340,6 +349,7 @@ def create_commit(
     source_sha: str,
     version: str,
     intent: dict[str, Any],
+    source_pr_updated_at: str,
 ) -> str:
     encoded = base64.b64encode((version + "\n").encode()).decode()
     query = """
@@ -354,6 +364,7 @@ def create_commit(
             "Prepare release identity",
             "",
             f"Source-SHA: {source_sha}",
+            f"Source-PR-Updated-At: {source_pr_updated_at}",
             f"Product-Version: {version}",
             f"Release-Intent: {intent['type_label']} {intent['channel_label']}",
             "Release-Mode: normal-preparation",
@@ -393,6 +404,7 @@ def inspect_commit(api_root: str, token: str, repository: str, branch: str, comm
     payload = {
         "commit_sha": commit_sha,
         "source_sha": source_sha,
+        "source_pr_updated_at": trailers.get("Source-PR-Updated-At", ""),
         "version": version,
         "intent": intent,
         "release_mode": trailers.get("Release-Mode", ""),
@@ -407,6 +419,8 @@ def inspect_commit(api_root: str, token: str, repository: str, branch: str, comm
         raise PreparationError("PR branch head drifted after preparation commit")
     if trailers.get("Source-SHA") != source_sha or trailers.get("Product-Version") != version:
         raise PreparationError("preparation provenance trailers do not match source/version")
+    if not trailers.get("Source-PR-Updated-At"):
+        raise PreparationError("preparation source PR timestamp trailer is missing")
     if trailers.get("Release-Intent") != f"{intent['type_label']} {intent['channel_label']}":
         raise PreparationError("preparation release intent trailer does not match labels")
     return payload
@@ -431,7 +445,7 @@ def create(args: argparse.Namespace) -> int:
     intent = release_policy.parse_labels([str(item.get("name")) for item in pr.get("labels", []) if item.get("name")])
     if any(
         head_trailers.get(key)
-        for key in ("Release-Mode", "Source-SHA", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")
+        for key in ("Release-Mode", "Source-SHA", "Source-PR-Updated-At", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")
     ) and head_trailers.get("Release-Mode") not in {"normal-preparation", "version-only-release-pr"}:
         raise PreparationError("PR head contains malformed release identity trailers")
     if head_trailers.get("Release-Mode") == "normal-preparation" and not is_existing_preparation(head_trailers):
@@ -484,7 +498,10 @@ def create(args: argparse.Namespace) -> int:
         if release_intent["type_label"] != intent["type_label"] or release_intent["channel_label"] != intent["channel_label"]:
             raise PreparationError("existing preparation release intent does not match current PR labels")
         source_version = current_version(args.api_root, args.token, args.repository, existing_source_sha)
-        source_ci_ready(args.api_root, args.token, args.repository, args.pr_number, existing_source_sha)
+        source_ci_ready(
+            args.api_root, args.token, args.repository, args.pr_number, existing_source_sha,
+            expected_pr_updated_at=head_trailers.get("Source-PR-Updated-At"),
+        )
         existing = inspect_commit(
             args.api_root,
             args.token,
@@ -517,11 +534,14 @@ def create(args: argparse.Namespace) -> int:
     if not intent["release_enabled"]:
         write_json(args.output, {"release_enabled": False, "pr_number": args.pr_number, "source_sha": source_sha, "reason": "type:none"})
         return 0
-    source_ci_ready(args.api_root, args.token, args.repository, args.pr_number, source_sha)
+    source_pr_updated_at = source_ci_ready(args.api_root, args.token, args.repository, args.pr_number, source_sha)
     base_version = current_version(args.api_root, args.token, args.repository, source_sha)
     version = expected_version(intent, base_version, args.exact_version)
     reserve_tag(args.api_root, args.token, args.repository, version, args.pr_number, source_sha)
-    commit_sha = create_commit(args.api_root, args.token, args.repository, pr["head"]["ref"], source_sha, version, intent)
+    commit_sha = create_commit(
+        args.api_root, args.token, args.repository, pr["head"]["ref"], source_sha, version, intent,
+        source_pr_updated_at,
+    )
     preparation = inspect_commit(args.api_root, args.token, args.repository, pr["head"]["ref"], commit_sha, source_sha, version, intent)
     payload = {
         "schema_version": 1,

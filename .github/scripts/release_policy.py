@@ -140,7 +140,7 @@ def parse_trailers(message: str) -> dict[str, str]:
         if ":" not in line:
             continue
         key, value = line.split(":", 1)
-        if key in {"Source-SHA", "Product-Version", "Release-Intent", "Release-Mode", "Covered-Product-Merge-SHA"}:
+        if key in {"Source-SHA", "Source-PR-Updated-At", "Product-Version", "Release-Intent", "Release-Mode", "Covered-Product-Merge-SHA"}:
             if key in trailers:
                 raise PolicyError(f"duplicate release trailer: {key}")
             trailers[key] = value.strip()
@@ -180,12 +180,14 @@ def validate_reservation(
 
 
 def validate_preparation(payload: dict[str, Any], *, source_sha: str | None = None) -> dict[str, Any]:
-    required = {"commit_sha", "source_sha", "version", "intent", "release_mode", "parents", "changed_files", "verified"}
+    required = {"commit_sha", "source_sha", "source_pr_updated_at", "version", "intent", "release_mode", "parents", "changed_files", "verified"}
     missing = sorted(required - set(payload))
     if missing:
         raise PolicyError(f"preparation provenance missing: {', '.join(missing)}")
     validate_sha(str(payload["commit_sha"]), "commit_sha")
     validate_sha(str(payload["source_sha"]), "source_sha")
+    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", str(payload["source_pr_updated_at"])):
+        raise PolicyError("preparation source_pr_updated_at is not an RFC3339 UTC timestamp")
     if source_sha and payload["source_sha"] != source_sha:
         raise PolicyError("preparation source_sha does not match expected source")
     parse_version(str(payload["version"]))
@@ -278,9 +280,14 @@ def validate_failure_context(
     validate_sha(str(payload["source_sha"]), "source_sha")
     validate_sha(str(payload["merge_commit_sha"]), "merge_commit_sha")
     parse_version(str(payload["version"]))
-    if payload["type"] not in {"major", "minor", "patch"}:
-        raise PolicyError("failure context type is not release-enabled")
-    validate_channel_version(str(payload["version"]), str(payload["channel"]))
+    failure_kind = payload.get("identity_failure_kind")
+    if failure_kind == "resolver-error":
+        if payload["type"] != "unknown" or payload["channel"] != "unknown":
+            raise PolicyError("resolver-error context must use unknown intent")
+    else:
+        if payload["type"] not in {"major", "minor", "patch"}:
+            raise PolicyError("failure context type is not release-enabled")
+        validate_channel_version(str(payload["version"]), str(payload["channel"]))
     if payload["tag"] != f"v{payload['version']}":
         raise PolicyError("failure context tag does not match VERSION")
     run_url = str(payload["run_url"])
@@ -298,7 +305,6 @@ def validate_failure_context(
     if expected_attempt and str(payload.get("run_attempt")) != str(expected_attempt):
         raise PolicyError("failure context attempt is not bound to the triggering Release attempt")
     recovery = str(payload["recovery_instruction"])
-    failure_kind = payload.get("identity_failure_kind")
     if failure_kind is not None and failure_kind not in {"no-identity", "resolver-error", "identity-step-failure"}:
         raise PolicyError("failure context identity_failure_kind is unsupported")
     identity_failed = payload.get("identity_resolution_failed")

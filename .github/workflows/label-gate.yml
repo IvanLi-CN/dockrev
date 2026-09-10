@@ -21,7 +21,9 @@ jobs:
     name: Label Gate
     if: >-
       github.event_name == 'pull_request_target' ||
-      github.event.pull_request.base.sha == '759b0cf9c0d5a57be1010e74480cbb5ae713433c'
+      (github.event_name == 'pull_request' &&
+      github.event.pull_request.number == 387 &&
+      github.event.pull_request.base.sha == '759b0cf9c0d5a57be1010e74480cbb5ae713433c')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

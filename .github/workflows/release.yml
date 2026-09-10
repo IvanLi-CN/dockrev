@@ -60,7 +60,7 @@ jobs:
       - name: Checkout trusted release helpers
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ inputs.merge_sha || github.sha }}
           path: .workflow-src
           fetch-depth: 1
 
@@ -173,15 +173,23 @@ jobs:
           no_identity = os.environ["FAILURE_KIND"] == "no-identity"
           release_type = os.environ.get("INTENT_TYPE", "")
           channel = os.environ.get("INTENT_CHANNEL", "")
-          if release_type not in {"major", "minor", "patch"} or channel not in {"stable", "beta", "dev"}:
+          resolver_error = os.environ["FAILURE_KIND"] == "resolver-error"
+          if resolver_error and not release_type and not channel:
+              release_type = "unknown"
+              channel = "unknown"
+          if resolver_error:
+              if release_type != "unknown" or channel != "unknown":
+                  raise SystemExit("Resolver-error context must use unknown intent")
+          elif release_type not in {"major", "minor", "patch"} or channel not in {"stable", "beta", "dev"}:
               raise SystemExit("Release failure context requires a verified release intent")
-          channel_pattern = {
-              "stable": r"^[0-9]+\.[0-9]+\.[0-9]+$",
-              "beta": r"^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$",
-              "dev": r"^[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$",
-          }[channel]
-          if not re.fullmatch(channel_pattern, version):
-              raise SystemExit("Release failure context VERSION is incompatible with the verified channel; refusing to fabricate identity")
+          if not resolver_error:
+              channel_pattern = {
+                  "stable": r"^[0-9]+\.[0-9]+\.[0-9]+$",
+                  "beta": r"^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$",
+                  "dev": r"^[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$",
+              }[channel]
+              if not re.fullmatch(channel_pattern, version):
+                  raise SystemExit("Release failure context VERSION is incompatible with the verified channel; refusing to fabricate identity")
           payload = {
               "pull_request": 0,
               "source_sha": merge_sha,

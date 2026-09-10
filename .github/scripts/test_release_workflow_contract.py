@@ -29,12 +29,14 @@ assert "name: Label Gate" in label_gate and "pull_request:" in label_gate and "p
 assert "ref: ${{ github.event.pull_request.base.sha }}" in label_gate
 assert "ref: ${{ github.event.pull_request.head.sha }}" not in label_gate
 assert "github.event_name == 'pull_request_target'" in label_gate
+assert "github.event.pull_request.number == 387" in label_gate
 assert "github.event.pull_request.base.sha == '759b0cf9c0d5a57be1010e74480cbb5ae713433c'" in label_gate
 assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in label_gate
 assert "name: Release completion" in completion
 assert "pull_request_target:" in completion and "pull_request:" in completion
 assert "ref: ${{ github.event.pull_request.base.sha }}" in completion
 assert "759b0cf9c0d5a57be1010e74480cbb5ae713433c" in completion
+assert "github.event.pull_request.number == 387" in completion
 assert "workflows: [\"CI (PR)\", \"Label Gate\"]" in preparation
 assert "group: release-preparation-${{ inputs.pr_number || github.event.workflow_run.pull_requests[0].number || github.run_id }}" in preparation
 assert "name: Prepare PR VERSION identity" in preparation
@@ -45,6 +47,8 @@ assert "checks: read" in completion
 assert "checks: read" in preparation
 assert "checks: read" in completion
 assert "ref: main" in preparation
+assert "ref: ${{ inputs.merge_sha || github.sha }}" in release
+assert "ref: ${{ github.event.workflow_run.head_sha || github.sha }}" in notify
 assert "createCommitOnBranch" in text(".github/scripts/release_preparation.py")
 assert "branches: [main]" in release and "merge_sha:" in release and "recovery_reason:" in release
 assert "workflow_dispatch requires an existing release-enabled immutable identity" in release

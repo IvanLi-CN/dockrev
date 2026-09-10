@@ -117,7 +117,7 @@ def covered_product_boundary(
     trailers = release_policy.parse_trailers(commit.get("commit", {}).get("message", ""))
     if any(
         trailers.get(key)
-        for key in ("Release-Mode", "Source-SHA", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")
+        for key in ("Release-Mode", "Source-SHA", "Source-PR-Updated-At", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")
     ):
         raise IdentityError("covered product PR already has release identity")
     return pr, head_sha
@@ -195,7 +195,7 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
     if not pr_intent["release_enabled"]:
         if any(
             trailers.get(key)
-            for key in ("Release-Mode", "Source-SHA", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")
+            for key in ("Release-Mode", "Source-SHA", "Source-PR-Updated-At", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")
         ):
             raise IdentityError("type:none labels conflict with merged release identity")
         changed_files = pull_request_changed_files(api_root, token, repository, pr.get("number", 0))
@@ -216,7 +216,7 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
         }
     mode = trailers.get("Release-Mode")
     if mode not in {"normal-preparation", "version-only-release-pr"}:
-        if mode or any(trailers.get(key) for key in ("Source-SHA", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")):
+        if mode or any(trailers.get(key) for key in ("Source-SHA", "Source-PR-Updated-At", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")):
             raise IdentityError("merged product PR has malformed release identity")
         return {
             "release_enabled": False,
@@ -251,6 +251,7 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
         preparation = {
             "commit_sha": head_sha,
             "source_sha": source_sha,
+            "source_pr_updated_at": trailers.get("Source-PR-Updated-At", ""),
             "version": version,
             "intent": intent,
             "source_version": source_version,

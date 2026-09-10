@@ -22,7 +22,7 @@ jobs:
       - name: Checkout trusted notifier helper
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 1
 
       - name: Download structured release failure context

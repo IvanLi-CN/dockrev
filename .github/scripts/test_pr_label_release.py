@@ -59,6 +59,7 @@ prep_sha = "b" * 40
 preparation = {
     "commit_sha": prep_sha,
     "source_sha": source_sha,
+    "source_pr_updated_at": "2026-01-01T00:00:00Z",
     "version": "0.1.1",
     "intent": policy.parse_labels(["type:patch", "channel:stable"]),
     "source_version": "0.1.0",
@@ -305,7 +306,8 @@ def fake_graphql(_api_root, _token, _query, variables):
 
 preparation_script.graphql = fake_graphql
 assert preparation_script.create_commit(
-    "https://api.github.test", "token", "IvanLi-CN/dockrev", "feature/release", source_sha, "0.1.1", labels
+    "https://api.github.test", "token", "IvanLi-CN/dockrev", "feature/release", source_sha, "0.1.1", labels,
+    "2026-01-01T00:00:00Z",
 ) == "d" * 40
 preparation_script.graphql = original_graphql
 commit_input = captured["variables"]["input"]
@@ -319,7 +321,7 @@ preparation_script.api_request = lambda _api_root, _token, _method, path, _paylo
         f"/repos/IvanLi-CN/dockrev/commits/{prep_sha}": {
             "parents": [{"sha": source_sha}],
             "files": [{"filename": "VERSION"}],
-            "commit": {"verification": {"verified": True}, "message": "Release-Mode: normal-preparation\nSource-SHA: " + source_sha + "\nProduct-Version: 0.1.1\nRelease-Intent: type:patch channel:stable"},
+            "commit": {"verification": {"verified": True}, "message": "Release-Mode: normal-preparation\nSource-SHA: " + source_sha + "\nSource-PR-Updated-At: 2026-01-01T00:00:00Z\nProduct-Version: 0.1.1\nRelease-Intent: type:patch channel:stable"},
         },
         "/repos/IvanLi-CN/dockrev/git/ref/heads/feature%2Frelease": {"object": {"sha": prep_sha}},
     }[path]
@@ -331,7 +333,7 @@ preparation_script.api_request = lambda _api_root, _token, _method, path, _paylo
     {"object": {"sha": "e" * 40}} if "git/ref/heads" in path else {
         "parents": [{"sha": source_sha}],
         "files": [{"filename": "VERSION"}],
-        "commit": {"verification": {"verified": True}, "message": "Release-Mode: normal-preparation\nSource-SHA: " + source_sha + "\nProduct-Version: 0.1.1\nRelease-Intent: type:patch channel:stable"},
+        "commit": {"verification": {"verified": True}, "message": "Release-Mode: normal-preparation\nSource-SHA: " + source_sha + "\nSource-PR-Updated-At: 2026-01-01T00:00:00Z\nProduct-Version: 0.1.1\nRelease-Intent: type:patch channel:stable"},
     }
 )
 expect_error(preparation_script.inspect_commit, "https://api.github.test", "token", "IvanLi-CN/dockrev", "feature/release", prep_sha, source_sha, "0.1.1", labels)
@@ -370,6 +372,7 @@ try:
     preparation_message = (
         "Prepare release identity\n\n"
         f"Source-SHA: {source_sha}\n"
+        "Source-PR-Updated-At: 2026-01-01T00:00:00Z\n"
         "Product-Version: 0.1.1\n"
         "Release-Intent: type:patch channel:stable\n"
         "Release-Mode: normal-preparation"
@@ -381,7 +384,7 @@ try:
                 "state": "open",
                 "base": {"ref": "main", "sha": "e" * 40},
                 "head": {"sha": prep_sha},
-                "updated_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-03T00:00:00Z",
                 "labels": [{"name": label} for label in labels_for_loader],
             }
         if path.endswith(f"/commits/{prep_sha}"):
@@ -652,6 +655,7 @@ try:
                     "message": (
                         "Prepare release identity\n\n"
                         f"Source-SHA: {source_sha}\n"
+                        "Source-PR-Updated-At: 2026-01-01T00:00:00Z\n"
                         "Product-Version: 0.1.1\n"
                         "Release-Intent: type:patch channel:stable\n"
                         "Release-Mode: normal-preparation"
@@ -867,6 +871,17 @@ step_failure = {
 }
 assert policy.validate_failure_context(step_failure) == step_failure
 expect_error(policy.validate_failure_context, {**step_failure, "identity_failure_kind": None})
+resolver_failure = {
+    **failure,
+    "source_sha": prep_sha,
+    "identity_resolution_failed": False,
+    "identity_failure_kind": "resolver-error",
+    "type": "unknown",
+    "channel": "unknown",
+    "recovery_instruction": "resolver-error: retry Release workflow after verifying merged identity",
+}
+assert policy.validate_failure_context(resolver_failure) == resolver_failure
+expect_error(policy.validate_failure_context, {**resolver_failure, "type": "patch"})
 identity_failure = {
     **failure,
     "source_sha": prep_sha,

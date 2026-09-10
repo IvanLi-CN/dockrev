@@ -72,7 +72,7 @@ identity uses its version.
 The `Release` workflow uploads `release-failure-context.json` with the release
 intent, source and merge SHAs, version, tag, asset names, run URL, and exact
 same-SHA recovery instruction. Identity resolution failures emit a marked
-fallback context from the checked-out `VERSION` so they are not silent; if no
+`unknown/unknown` fallback context from the checked-out `VERSION` so they are not silent; if no
 valid immutable version is available, the context job fails closed instead of
 inventing a sentinel version. A resolver result that explicitly proves a historical product merge has no
 identity must be repaired by creating the single `VERSION`-only release PR for
