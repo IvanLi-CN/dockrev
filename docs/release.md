@@ -37,9 +37,9 @@ that absence before accepting it.
    signed, single-parent commit that changes only `VERSION`. Its trailers bind
    the source SHA, product version, label intent, and
    `Release-Mode: normal-preparation`.
-4. The trusted `Release Preparation` workflow, checked out from `main`, emits
-   the single `Release completion` check. It revalidates the source checks, PR
-   base, labels, trailers, signature, branch head, and tag reservation. The
+4. The trusted `Release completion` workflow, checked out from `main`, emits
+   the single required check. It revalidates the source checks, PR base, labels,
+   trailers, signature, branch head, and tag reservation. The
    preparation commit changes only `VERSION`; if the PR workflow observes that commit,
    `Release Preparation` recognizes its signed trailers and skips a second
    preparation, so the source identity cannot recurse.

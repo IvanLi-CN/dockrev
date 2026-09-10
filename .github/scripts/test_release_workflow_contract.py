@@ -20,6 +20,7 @@ def text(path: str) -> str:
 
 label_gate = text(".github/workflows/label-gate.yml")
 preparation = text(".github/workflows/release-preparation.yml")
+completion = text(".github/workflows/release-completion-pr.yml")
 release = text(".github/workflows/release.yml")
 notify = text(".github/workflows/notify-release-failure.yml")
 ci_pr = text(".github/workflows/ci-pr.yml")
@@ -27,17 +28,15 @@ ci_pr = text(".github/workflows/ci-pr.yml")
 assert "name: Label Gate" in label_gate and "pull_request:" in label_gate and "pull_request_target:" in label_gate
 assert "ref: ${{ github.event.pull_request.base.sha }}" in label_gate
 assert "ref: ${{ github.event.pull_request.head.sha }}" not in label_gate
-assert not (ROOT / ".github/workflows/release-completion-pr.yml").exists()
+assert "name: Release completion" in completion
+assert "pull_request_target:" in completion and "pull_request:" in completion
+assert "ref: ${{ github.event.pull_request.base.sha }}" in completion
+assert "759b0cf9c0d5a57be1010e74480cbb5ae713433c" in completion
 assert "workflows: [\"CI (PR)\", \"Label Gate\"]" in preparation
 assert "group: release-preparation-${{ inputs.pr_number || github.event.workflow_run.pull_requests[0].number || github.run_id }}" in preparation
-assert "name: Publish Release completion check" in preparation
-assert "checks.create" in preparation
-assert "head_sha: process.env.HEAD_SHA" in preparation
-assert "--head-sha \"${HEAD_SHA}\"" in preparation
+assert "name: Prepare PR VERSION identity" in preparation
 assert "release-reservation" in text(".github/scripts/release_preparation.py")
-assert "checks: write" in preparation
 assert "actions: read" in preparation
-assert "name: 'Release completion'" in preparation
 assert "ref: main" in preparation
 assert "createCommitOnBranch" in text(".github/scripts/release_preparation.py")
 assert "branches: [main]" in release and "merge_sha:" in release and "recovery_reason:" in release

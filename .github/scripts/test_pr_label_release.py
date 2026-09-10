@@ -92,6 +92,13 @@ assert completion.validate_completion({
     "base_version_exists": False,
     "version_file": "0.1.0",
 })["mode"] == "non-product"
+assert completion.validate_completion({
+    "labels": ["type:none", "channel:stable"],
+    "changed_files": ["VERSION", "docs/release.md"],
+    "version_bootstrap": True,
+    "base_version_exists": False,
+    "version_file": "0.1.0",
+})["mode"] == "non-product"
 expect_error(completion.validate_completion, {
     "labels": ["type:none", "channel:stable"],
     "changed_files": ["VERSION"],
@@ -679,7 +686,7 @@ try:
         if path.endswith(f"/commits/{bootstrap_source_sha}"):
             return {"parents": [], "files": [], "commit": {"message": "Bootstrap VERSION"}}
         if path.endswith(f"/pulls/44/files?per_page=100&page=1"):
-            return [{"filename": "VERSION"}]
+            return [{"filename": "VERSION"}, {"filename": "docs/release.md"}]
         if path.endswith(f"/contents/VERSION?ref={bootstrap_parent_sha}"):
             raise identity.IdentityError("GitHub API failed: 404: missing")
         if path.endswith(f"/contents/VERSION?ref={bootstrap_merge_sha}"):

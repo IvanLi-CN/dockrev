@@ -200,8 +200,6 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
             raise IdentityError("type:none labels conflict with merged release identity")
         changed_files = pull_request_changed_files(api_root, token, repository, pr.get("number", 0))
         if "VERSION" in changed_files:
-            if changed_files != ["VERSION"]:
-                raise IdentityError("type:none bootstrap PR must change VERSION only")
             base_sha = pr.get("base", {}).get("sha", "")
             if not base_sha:
                 merge_commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{merge_sha}")
