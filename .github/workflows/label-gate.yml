@@ -50,7 +50,8 @@ jobs:
           FILES_JSON: ${{ runner.temp }}/release-files.json
         run: |
           set -euo pipefail
-          python3 - <<'PY'
+          if [[ -f .github/scripts/release_policy.py ]]; then
+            python3 - <<'PY'
           import json
           import os
           from pathlib import Path
@@ -64,6 +65,31 @@ jobs:
           print(json.dumps(intent, sort_keys=True))
           print(f"changed_files={len(files)}")
           PY
+          else
+            python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          labels = json.loads(Path(os.environ['LABELS_JSON']).read_text())
+          types = [label for label in labels if label.startswith('type:')]
+          channels = [label for label in labels if label.startswith('channel:')]
+          allowed_types = {'type:major', 'type:minor', 'type:patch', 'type:none'}
+          allowed_channels = {'channel:stable', 'channel:beta', 'channel:dev'}
+          errors = []
+          if len(types) != 1:
+              errors.append(f'exactly one type:* label required; found {len(types)}')
+          if len(channels) != 1:
+              errors.append(f'exactly one channel:* label required; found {len(channels)}')
+          if any(label not in allowed_types for label in types):
+              errors.append('unknown type label')
+          if any(label not in allowed_channels for label in channels):
+              errors.append('unknown channel label')
+          if errors:
+              raise SystemExit('; '.join(errors))
+          print(json.dumps({'type_label': types[0], 'channel_label': channels[0]}, sort_keys=True))
+          PY
+          fi
 
       - name: Summarize release intent
         if: always()
