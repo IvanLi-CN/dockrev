@@ -240,6 +240,7 @@ export const MobileBottomNavAndDrawer: Story = {
     expectStory(Boolean(installButton), 'Mobile drawer should expose the PWA install action in the compact footer row')
     expectStory(Boolean(themeButton), 'Mobile drawer should keep a single theme button in the compact footer row')
     expectStory(Boolean(themeGlyph), 'Mobile drawer theme button should render its glyph')
+    expectStory(footerControls?.dataset.hasPwaInstall === 'true', 'Mobile footer should mark the install column as available')
     expectStory(!footerControls?.querySelector('.themePreferenceSegmented'), 'Mobile drawer should remove the expanded theme control')
     expectStory(
       Math.abs((identityTrigger?.getBoundingClientRect().top ?? 0) - (themeButton?.getBoundingClientRect().top ?? 0)) < 2,
@@ -267,6 +268,34 @@ export const MobileBottomNavAndDrawer: Story = {
     expectStory(
       !canvasElement.querySelector('.topbarUserSlotSidebar'),
       'Mobile AppShell should not mount the desktop sidebar identity trigger',
+    )
+  },
+}
+export const MobileDrawerWithoutPwaInstall: Story = {
+  render: renderDetailShell(
+    { name: 'service', stackId: 'stack-prod', serviceId: 'svc-prod-api', section: 'logs' },
+    { autoOpenMobileDrawer: true },
+  ),
+  parameters: {
+    pwaStatus: { installCapability: null },
+    viewport: { defaultViewport: 'mobile1' },
+  },
+  play: async ({ canvasElement }) => {
+    const drawer = canvasElement.querySelector<HTMLElement>('#mobileDockrevMenu')
+    const controls = drawer?.querySelector<HTMLElement>('.mobileDrawerFooterControls')
+    const identity = controls?.querySelector<HTMLElement>('.topbarUserTrigger')
+    const install = controls?.querySelector<HTMLElement>('.pwaInstallControlButton')
+    const theme = controls?.querySelector<HTMLElement>('.themePreferenceIconButton')
+    expectStory(controls?.dataset.hasPwaInstall === 'false', 'Mobile footer should mark the install column as unavailable')
+    expectStory(!install, 'Mobile footer should remove the unavailable install control')
+    expectStory(Boolean(identity && theme), 'Mobile footer should keep identity and theme controls')
+    expectStory(
+      getComputedStyle(controls!).gridTemplateColumns.trim().split(/\s+/).length === 2,
+      'Mobile footer should collapse to identity and theme grid tracks',
+    )
+    expectStory(
+      Math.abs((identity?.getBoundingClientRect().right ?? 0) - (theme?.getBoundingClientRect().left ?? 0) + 8) < 2,
+      'Mobile identity should expand to the theme button with one grid gap',
     )
   },
 }
@@ -330,6 +359,28 @@ export const OverviewWithSidebarIdentityPopover: Story = {
     const doc = canvasElement.ownerDocument
     const popover = doc.querySelector<HTMLElement>('.topbarUserPopover')
     expectStory(popover?.textContent?.includes('Forward Auth'), 'AppShell sidebar popover should expose auth source details')
+  },
+}
+export const OverviewWithoutPwaInstall: Story = {
+  render: render({ name: 'overview' }),
+  parameters: {
+    pwaStatus: { installCapability: null },
+  },
+  play: async ({ canvasElement }) => {
+    const controls = canvasElement.querySelector<HTMLElement>('.sidebarProfileControls')
+    const identity = controls?.querySelector<HTMLElement>('.topbarUserTrigger')
+    const install = controls?.querySelector<HTMLElement>('.pwaInstallControlButton')
+    expectStory(controls?.dataset.hasPwaInstall === 'false', 'Desktop profile row should mark the install column as unavailable')
+    expectStory(!install, 'Desktop profile row should remove the unavailable install control')
+    expectStory(Boolean(identity), 'Desktop profile row should keep the user identity trigger')
+    expectStory(
+      getComputedStyle(controls!).gridTemplateColumns.trim().split(/\s+/).length === 1,
+      'Desktop profile row should collapse to one identity grid track',
+    )
+    expectStory(
+      Math.abs((identity?.getBoundingClientRect().width ?? 0) - (controls?.getBoundingClientRect().width ?? 0)) < 2,
+      'Desktop identity should expand to the full profile row',
+    )
   },
 }
 export const OverviewWithSafariInstallGuide: Story = {

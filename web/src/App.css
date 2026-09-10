@@ -12334,6 +12334,10 @@ html[data-theme="light"] .brandLogoThemeSwitch {
   gap: 8px;
 }
 
+.sidebarProfileControls[data-has-pwa-install="false"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .sidebarProfileControls .topbarUserSlotSidebar {
   width: auto;
   min-width: 0;
@@ -14090,6 +14094,10 @@ html[data-theme="light"] .btnPrimary {
     grid-template-columns: minmax(0, 1fr) 38px 38px;
     align-items: center;
     gap: 8px;
+  }
+
+  .mobileDrawerFooterControls[data-has-pwa-install="false"] {
+    grid-template-columns: minmax(0, 1fr) 38px;
   }
 
   .mobileDrawerFooter .topbarUserSlotSidebar {

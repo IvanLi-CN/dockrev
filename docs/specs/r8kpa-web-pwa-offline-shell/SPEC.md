@@ -5,6 +5,22 @@
 - Status: 实现中
 - Last: 2026-08-08
 
+## Context and Scope
+
+- 本主题覆盖 Dockrev Web PWA 的安装能力、离线应用壳、受控更新、缓存边界及其 AppShell 入口。
+- In scope: `web/src/`、`web/tests/`、PWA 构建资产、相关 Storybook 状态和本主题的实现与视觉证据文档。
+- Out of scope: 后端业务 API、鉴权模型、离线写操作和推送通知业务语义。
+
+## Requirements
+
+### REQ-PWA-INSTALL-001
+
+- AppShell MUST only render a truthful install control when `PwaInstallCapability` is available; standalone apps, disabled PWA runtime, installed apps, and unsupported browsers MUST hide the control.
+
+### REQ-PWA-INSTALL-002
+
+- When install capability exists, desktop and mobile user rows MUST reserve their documented install track; when capability becomes `null`, the rows MUST immediately collapse to the remaining identity/theme tracks without an empty slot or layout animation.
+
 ## 背景 / 问题陈述
 
 - 当前前端只在通知设置场景里临时注册 `public/sw.js`，它只承载 Web Push 与通知点击跳转，不具备真正的 PWA app shell、离线启动、安装能力或受控更新体验。
@@ -79,6 +95,7 @@
 - Android Chrome 的 WebAPK 与 Chromium desktop 安装均依据稳定 manifest identity 识别应用，并在新 manifest 可用时按平台节流规则更新图标/元数据；现有 iOS/iPadOS Web Clips、浏览器快捷方式及不支持 manifest 迁移的浏览器不能被网站强制更新其已保存的图标或元数据。Dockrev 不把重新安装作为常规更新机制，文档只说明该平台限制与异常恢复边界。
 - 应用壳在用户信息旁提供能力感知的安装入口：Chromium 捕获 `beforeinstallprompt` 后调用原生安装确认；Safari/iOS 使用平台对应的“添加到主屏幕/添加到 Dock”引导；独立应用、已安装、PWA 运行时关闭或不支持安装的环境不渲染该入口。
 - 安装入口只存在于桌面侧栏用户区和移动端导航抽屉底部控制行，不改变用户身份详情、主题控制、主内容或底部主导航；安装事件为一次性状态，不持久化安装遥测或服务端状态。
+- 安装能力存在时，桌面用户行使用身份信息加 36px 安装控件，移动控制行使用身份信息加 38px 安装控件和 38px 主题控件；安装能力变为 `null` 后立即切换为桌面单列或移动身份加主题的两列布局，不保留空槽或布局动画。
 
 ## 验收标准（Acceptance Criteria）
 
@@ -99,6 +116,20 @@
 - Given 离线且 worker 未 ready，When 更新气泡没有 hover/focus，Then 气泡隐藏；Given worker 已 ready，Then 离线状态仍可更新。
 - Given 窄屏 `393x852` 或 `320px` 宽度，When 更新气泡显示，Then 它不改变内容区尺寸、不遮挡底部导航，并保持可键盘聚焦、`aria-live="polite"` 和 reduced-motion 兼容。
 - Given 现有 Web Push 已启用，When 升级到新的 worker 实现，Then 订阅、通知展示与通知点击跳转行为保持可用。
+
+## Verification
+
+### VER-PWA-INSTALL-001
+
+- Method: `Layouts/AppShell` Storybook canvas and interaction tests at desktop and `393x852` mobile viewports.
+- covers: `REQ-PWA-INSTALL-001`, `REQ-PWA-INSTALL-002`
+- Pass condition: browser prompt and Safari guide states retain their install tracks; unavailable capability removes the control and the desktop/mobile rows have no residual grid slot.
+
+### VER-PWA-INSTALL-002
+
+- Method: `web/tests/pwaInstallLifecycle.test.ts`, Web build, Storybook suite, and PWA asset contract.
+- covers: `REQ-PWA-INSTALL-001`
+- Pass condition: lifecycle cleanup, standalone/unsupported hiding, type checks, Storybook interactions, and existing manifest/Service Worker asset contracts pass.
 
 ## Visual Evidence
 
@@ -165,6 +196,30 @@
 - viewport_strategy: storybook-viewport
 - story_id_or_title: `Layouts/AppShell/MobileBottomNavAndDrawer`
 - state: mobile drawer identity, install, and theme controls in one stable row
+- PR: include
+
+![PWA install entry desktop without capability](./assets/app-shell-desktop-without-pwa-install.png)
+
+- source_type: storybook_canvas
+- target_program: mock-only
+- capture_scope: browser-viewport
+- requested_viewport: 1440x900
+- viewport_strategy: browser-resize-fallback
+- story_id_or_title: `Layouts/AppShell/OverviewWithoutPwaInstall`
+- state: desktop AppShell with `installCapability=null`, identity row expanded into the full profile width
+- evidence_note: confirms the desktop fixed install track is removed with no residual empty slot
+- PR: include
+
+![PWA install entry mobile without capability](./assets/app-shell-mobile-drawer-without-pwa-install.png)
+
+- source_type: storybook_canvas
+- target_program: mock-only
+- capture_scope: browser-viewport
+- requested_viewport: 393x852
+- viewport_strategy: browser-resize-fallback
+- story_id_or_title: `Layouts/AppShell/MobileDrawerWithoutPwaInstall`
+- state: mobile drawer with `installCapability=null`, identity expanded beside the fixed 38px theme control
+- evidence_note: confirms the mobile install track is removed while the theme button stays at the right edge
 - PR: include
 
 ![PWA Safari install guide](./assets/app-shell-desktop-safari-guide.png)
@@ -260,7 +315,7 @@
 
 ## Related ADRs
 
-- None
+None
 
 ## Related Contract
 

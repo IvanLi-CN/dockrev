@@ -21,6 +21,7 @@
 - 已记录 Android Chrome/WebAPK 与 Chromium desktop 的 manifest 更新边界，以及 iOS/iPadOS Web Clips、浏览器快捷方式等不能由网站强制迁移既有图标的限制。
 - 已新增可测试的 PWA 安装生命周期：捕获 Chromium `beforeinstallprompt`、处理一次性 `prompt()`/`userChoice`、监听 `appinstalled`，并识别独立应用与 Safari/iOS 手动安装引导。
 - 已在 AppShell 桌面侧栏用户区和移动端导航抽屉底部加入独立 `PwaInstallControl`；Chromium 调用原生确认，Safari/iOS 展示平台步骤，其他不可安装状态保持隐藏。
+- AppShell 用户行与移动抽屉控制行通过 `data-has-pwa-install` 感知安装能力；入口隐藏后分别收拢为桌面单列与移动两列，身份区域扩展填满可用空间，主题按钮保持固定尺寸与右侧位置。
 
 ## Outstanding
 
