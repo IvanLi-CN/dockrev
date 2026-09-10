@@ -143,6 +143,9 @@ try:
         module.release_snapshot.read_snapshot = lambda *_args: None
         module.release_snapshot.read_publication = lambda _ref, target: {"target_sha": target} if target == trusted_anchor else None
         args.target_sha = new_target
+        module.release_snapshot.read_override = lambda _ref, target: {"status": "skip"} if target == preanchor else None
+        assert module.recover_preflight(args) == 0
+        module.release_snapshot.read_override = lambda *_args: None
         try:
             module.recover_preflight(args)
         except module.ReadinessError as error:

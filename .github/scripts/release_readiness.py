@@ -294,8 +294,13 @@ def recover_preflight(args: argparse.Namespace) -> int:
             trusted_tagged.add(commit)
     tagged_indices = [main_commits.index(commit) for commit in trusted_tagged if commit in main_commits]
     anchor_index = max(tagged_indices, default=-1)
+    skipped: set[str] = set()
+    for commit in main_commits[: target_index + 1]:
+        override = release_snapshot.read_override(args.override_notes_ref, commit)
+        if override is not None and override.get("status") == "skip":
+            skipped.add(commit)
     for commit in main_commits[: anchor_index + 1]:
-        if commit not in tagged or commit in trusted_tagged:
+        if commit not in tagged or commit in trusted_tagged or commit in skipped:
             continue
         pr = release_snapshot.load_pr_for_commit(
             args.api_root,
@@ -316,11 +321,6 @@ def recover_preflight(args: argparse.Namespace) -> int:
         for commit in main_commits[anchor_index + 1 : target_index + 1]
         if release_snapshot.read_publication(args.publication_notes_ref, commit) is not None
     }
-    skipped: set[str] = set()
-    for commit in main_commits[anchor_index + 1 : target_index + 1]:
-        override = release_snapshot.read_override(args.override_notes_ref, commit)
-        if override is not None and override.get("status") == "skip":
-            skipped.add(commit)
     pending: list[str] = []
     for commit in main_commits[anchor_index + 1 : target_index + 1]:
         if commit in skipped:
