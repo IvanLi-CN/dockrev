@@ -17363,9 +17363,18 @@ html[data-theme="light"] .homepageHeaderSearchPopover {
 }
 .sidebar > .nav .navItemLabel { display: none; }
 .sidebar > .nav .navItemIcon { width: 21px; height: 21px; }
-.sidebarContextViewport { min-height: 0; flex: 1 1 auto; margin-top: 12px; }
+.sidebarContextViewport { min-height: 0; flex: 1 1 auto; margin: 12px 0 16px; }
 .sidebarContextScroll { height: 100%; }
-.sidebarContextScroll [data-overlayscrollbars-viewport] { min-height: 0; padding: 0 4px 12px; }
+.sidebarContextScroll [data-overlayscrollbars-viewport] { min-height: 0; padding: 0 4px; }
+.detailRouteTree:not(.detailRouteTreeMobile) .detailRouteTreeIntro {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: color-mix(in srgb, var(--panel2) 98%, transparent);
+  border-bottom: 0;
+}
+.detailRouteTree:not(.detailRouteTreeMobile) .detailRouteStackGroup:last-child { padding-bottom: 0; }
+.detailRouteTree:not(.detailRouteTreeMobile) .detailRouteServiceList > div[role="region"][aria-label="Notifications (F8)"]:last-child { margin-top: -4px; }
 .sidebarContextViewport .homepageDrawerBottomSummary { display: none; }
 .sidebarMeta { flex: 0 0 auto; }
 
