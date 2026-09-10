@@ -133,21 +133,28 @@ def tag_is_reserved_by_other_pr(
 ) -> bool:
     owner, name = repository.split("/", 1)
     for state in ("open", "closed"):
-        pulls = api_json(
-            api_root,
-            token,
-            f"/repos/{owner}/{name}/pulls?state={state}&base=main&per_page=100",
-        )
-        for pull in pulls if isinstance(pulls, list) else []:
-            if pull.get("number") == pr_number or (state == "closed" and not pull.get("merged_at")):
-                continue
-            head_sha = pull.get("head", {}).get("sha", "")
-            if not head_sha:
-                continue
-            head = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{head_sha}")
-            trailers = release_policy.parse_trailers(head.get("commit", {}).get("message", ""))
-            if trailers.get("Release-Mode") in {"normal-preparation", "version-only-release-pr"} and trailers.get("Product-Version") == version:
-                return False
+        page = 1
+        while True:
+            pulls = api_json(
+                api_root,
+                token,
+                f"/repos/{owner}/{name}/pulls?state={state}&base=main&per_page=100&page={page}",
+            )
+            if not isinstance(pulls, list):
+                raise CompletionError("GitHub PR list is invalid")
+            for pull in pulls:
+                if pull.get("number") == pr_number or (state == "closed" and not pull.get("merged_at")):
+                    continue
+                head_sha = pull.get("head", {}).get("sha", "")
+                if not head_sha:
+                    continue
+                head = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{head_sha}")
+                trailers = release_policy.parse_trailers(head.get("commit", {}).get("message", ""))
+                if trailers.get("Release-Mode") in {"normal-preparation", "version-only-release-pr"} and trailers.get("Product-Version") == version:
+                    return False
+            if len(pulls) < 100:
+                break
+            page += 1
     return True
 
 
@@ -243,8 +250,6 @@ def load_github_completion(api_root: str, token: str, repository: str, pr_number
         raise CompletionError("Release completion requires an open PR targeting main")
     labels = [item["name"] for item in pr.get("labels", []) if item.get("name")]
     intent = release_policy.parse_labels(labels)
-    if not intent["release_enabled"]:
-        return {"labels": labels}
     head_sha = pr.get("head", {}).get("sha", "")
     source_sha = head_sha
     preparation = None
@@ -254,6 +259,10 @@ def load_github_completion(api_root: str, token: str, repository: str, pr_number
     files = sorted({entry.get("filename") for entry in commit.get("files", []) if entry.get("filename")})
     trailers = release_policy.parse_trailers(commit.get("commit", {}).get("message", ""))
     mode = trailers.get("Release-Mode")
+    if not intent["release_enabled"]:
+        if any(trailers.get(key) for key in ("Release-Mode", "Source-SHA", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")):
+            raise CompletionError("type:none PR cannot carry release identity")
+        return {"labels": labels}
     if mode == "normal-preparation":
         trailer_intent = intent_from_trailer(trailers.get("Release-Intent", ""))
         source_sha = trailers.get("Source-SHA", "")

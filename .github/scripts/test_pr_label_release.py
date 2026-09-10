@@ -7,6 +7,7 @@ import importlib.util
 import json
 import sys
 import tempfile
+from argparse import Namespace
 from pathlib import Path
 
 
@@ -74,6 +75,100 @@ assert not preparation_script.is_existing_preparation({"Release-Mode": "normal-p
 beta_labels = policy.parse_labels(["type:patch", "channel:beta"])
 assert preparation_script.expected_version(beta_labels, "0.1.0", "0.1.1-beta.1") == "0.1.1-beta.1"
 expect_error(preparation_script.expected_version, beta_labels, "0.1.0", None)
+
+assert completion.validate_completion({"labels": ["type:none", "channel:stable"]}) == {
+    "status": "pass",
+    "release_enabled": False,
+    "mode": "non-product",
+}
+
+original_pull_request = preparation_script.pull_request
+original_preparation_api_request = preparation_script.api_request
+original_source_ci_ready = preparation_script.source_ci_ready
+original_current_version = preparation_script.current_version
+original_reserve_tag = preparation_script.reserve_tag
+original_create_commit = preparation_script.create_commit
+original_inspect_commit = preparation_script.inspect_commit
+try:
+    calls = {"source_ci": 0, "reserve": 0, "create": 0}
+
+    def fake_pull_request(_api_root, _token, _repository, _number):
+        return {
+            "state": "open",
+            "base": {"ref": "main"},
+            "head": {"sha": source_sha, "ref": "feature/release", "repo": {"full_name": "IvanLi-CN/dockrev"}},
+            "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
+        }
+
+    def fake_preparation_api_request(_api_root, _token, _method, path, _payload=None):
+        assert path.endswith(f"/commits/{source_sha}")
+        return {"commit": {"message": "Product change"}}
+
+    def fake_source_ci(*_args):
+        calls["source_ci"] += 1
+
+    def fake_current_version(*_args):
+        return "0.1.0"
+
+    def fake_reserve(*_args):
+        calls["reserve"] += 1
+
+    def fake_create_commit(*_args):
+        calls["create"] += 1
+        return prep_sha
+
+    def fake_inspect(*_args):
+        return preparation
+
+    preparation_script.pull_request = fake_pull_request
+    preparation_script.api_request = fake_preparation_api_request
+    preparation_script.source_ci_ready = fake_source_ci
+    preparation_script.current_version = fake_current_version
+    preparation_script.reserve_tag = fake_reserve
+    preparation_script.create_commit = fake_create_commit
+    preparation_script.inspect_commit = fake_inspect
+    with tempfile.TemporaryDirectory() as directory:
+        output = Path(directory) / "release-intent.json"
+        preparation_script.create(Namespace(
+            api_root="https://api.github.test",
+            token="token",
+            repository="IvanLi-CN/dockrev",
+            pr_number=42,
+            exact_version=None,
+            output=output,
+        ))
+        result = json.loads(output.read_text(encoding="utf-8"))
+        assert result["release_enabled"] is True
+        assert result["version"] == "0.1.1"
+        assert calls == {"source_ci": 1, "reserve": 1, "create": 1}
+
+        calls = {"source_ci": 0, "reserve": 0, "create": 0}
+        preparation_script.pull_request = lambda *_args: {
+            "state": "open",
+            "base": {"ref": "main"},
+            "head": {"sha": source_sha, "ref": "feature/release", "repo": {"full_name": "IvanLi-CN/dockrev"}},
+            "labels": [{"name": "type:none"}, {"name": "channel:stable"}],
+        }
+        output = Path(directory) / "non-product.json"
+        preparation_script.create(Namespace(
+            api_root="https://api.github.test",
+            token="token",
+            repository="IvanLi-CN/dockrev",
+            pr_number=42,
+            exact_version=None,
+            output=output,
+        ))
+        result = json.loads(output.read_text(encoding="utf-8"))
+        assert result["release_enabled"] is False
+        assert calls == {"source_ci": 0, "reserve": 0, "create": 0}
+finally:
+    preparation_script.pull_request = original_pull_request
+    preparation_script.api_request = original_preparation_api_request
+    preparation_script.source_ci_ready = original_source_ci_ready
+    preparation_script.current_version = original_current_version
+    preparation_script.reserve_tag = original_reserve_tag
+    preparation_script.create_commit = original_create_commit
+    preparation_script.inspect_commit = original_inspect_commit
 
 captured = {}
 original_graphql = preparation_script.graphql
@@ -208,6 +303,7 @@ assert policy.validate_failure_context(failure) == failure
 expect_error(policy.validate_failure_context, {**failure, "tag": "v0.1.0"})
 expect_error(policy.validate_failure_context, {**failure, "artifact_names": []})
 expect_error(policy.validate_failure_context, {**failure, "run_url": ""})
+expect_error(policy.validate_failure_context, failure, expected_repository="IvanLi-CN/dockrev", expected_run_id="2")
 identity_failure = {
     **failure,
     "source_sha": prep_sha,

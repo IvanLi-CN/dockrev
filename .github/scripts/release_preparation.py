@@ -118,6 +118,25 @@ def current_version(api_root: str, token: str, repository: str, source_sha: str)
     return version
 
 
+def pull_requests(api_root: str, token: str, repository: str, state: str) -> list[dict[str, Any]]:
+    owner, name = repository_parts(repository)
+    result: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        batch = api_request(
+            api_root,
+            token,
+            "GET",
+            f"/repos/{owner}/{name}/pulls?state={state}&base=main&per_page=100&page={page}",
+        )
+        if not isinstance(batch, list):
+            raise PreparationError("GitHub PR list is invalid")
+        result.extend(batch)
+        if len(batch) < 100:
+            return result
+        page += 1
+
+
 def reserve_tag(api_root: str, token: str, repository: str, version: str, pr_number: int) -> None:
     owner, name = repository_parts(repository)
     try:
@@ -131,8 +150,7 @@ def reserve_tag(api_root: str, token: str, repository: str, version: str, pr_num
         raise PreparationError(f"release tag v{version} already exists and cannot be reserved: {existing}")
 
     for state in ("open", "closed"):
-        pulls = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/pulls?state={state}&base=main&per_page=100")
-        for pull in pulls if isinstance(pulls, list) else []:
+        for pull in pull_requests(api_root, token, repository, state):
             if pull.get("number") == pr_number or (state == "closed" and not pull.get("merged_at")):
                 continue
             head_sha = pull.get("head", {}).get("sha", "")
@@ -260,21 +278,48 @@ def create(args: argparse.Namespace) -> int:
     owner, name = repository_parts(args.repository)
     head_commit = api_request(args.api_root, args.token, "GET", f"/repos/{owner}/{name}/commits/{source_sha}")
     head_trailers = release_policy.parse_trailers(head_commit.get("commit", {}).get("message", ""))
+    intent = release_policy.parse_labels([str(item.get("name")) for item in pr.get("labels", []) if item.get("name")])
     if is_existing_preparation(head_trailers):
+        if not intent["release_enabled"]:
+            raise PreparationError("type:none PR cannot retain release preparation identity")
+        existing_source_sha = head_trailers["Source-SHA"]
+        existing_version = head_trailers["Product-Version"]
+        release_policy.validate_sha(existing_source_sha, "preparation source_sha")
+        release_policy.parse_version(existing_version)
+        release_intent = release_policy.parse_labels(head_trailers.get("Release-Intent", "").split())
+        if release_intent["type_label"] != intent["type_label"] or release_intent["channel_label"] != intent["channel_label"]:
+            raise PreparationError("existing preparation release intent does not match current PR labels")
+        source_version = current_version(args.api_root, args.token, args.repository, existing_source_sha)
+        source_ci_ready(args.api_root, args.token, args.repository, args.pr_number, existing_source_sha)
+        existing = inspect_commit(
+            args.api_root,
+            args.token,
+            args.repository,
+            pr["head"]["ref"],
+            source_sha,
+            existing_source_sha,
+            existing_version,
+            intent,
+        )
+        release_policy.validate_preparation_version(source_version, existing_version, intent)
+        reserve_tag(args.api_root, args.token, args.repository, existing_version, args.pr_number)
         write_json(
             args.output,
             {
+                "schema_version": 1,
                 "release_enabled": True,
                 "pr_number": args.pr_number,
-                "source_sha": head_trailers.get("Source-SHA", source_sha),
+                "source_sha": existing_source_sha,
                 "preparation_commit_sha": source_sha,
-                "version": head_trailers.get("Product-Version", ""),
+                "version": existing_version,
+                "release_tag": f"v{existing_version}",
+                "intent": intent,
                 "release_mode": "normal-preparation",
+                "preparation": existing,
                 "skipped": "already-prepared",
             },
         )
         return 0
-    intent = release_policy.parse_labels([str(item.get("name")) for item in pr.get("labels", []) if item.get("name")])
     if not intent["release_enabled"]:
         write_json(args.output, {"release_enabled": False, "pr_number": args.pr_number, "source_sha": source_sha, "reason": "type:none"})
         return 0

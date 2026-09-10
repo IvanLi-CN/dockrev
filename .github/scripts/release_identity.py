@@ -252,7 +252,7 @@ def main() -> int:
                 raise IdentityError("repository, merge-sha and token are required without --input")
             result = resolve_github(args.api_root, args.token, args.repository, args.merge_sha, args.run_url)
         print(json.dumps(result, sort_keys=True, indent=2))
-        return 0
+        return 3 if result.get("release_enabled") is False and result.get("reason") == "no-release-identity" else 0
     except (IdentityError, release_policy.PolicyError, OSError, ValueError, json.JSONDecodeError) as error:
         print(str(error), file=sys.stderr)
         return 1

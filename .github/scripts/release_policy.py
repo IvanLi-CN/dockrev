@@ -213,7 +213,9 @@ def validate_identity(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def validate_failure_context(payload: dict[str, Any]) -> dict[str, Any]:
+def validate_failure_context(
+    payload: dict[str, Any], *, expected_repository: str | None = None, expected_run_id: str | None = None
+) -> dict[str, Any]:
     required = {"pull_request", "source_sha", "merge_commit_sha", "type", "channel", "version", "tag", "artifact_names", "run_url", "recovery_instruction"}
     missing = sorted(required - set(payload))
     if missing:
@@ -232,6 +234,10 @@ def validate_failure_context(payload: dict[str, Any]) -> dict[str, Any]:
     parsed_run_url = urllib.parse.urlparse(run_url)
     if parsed_run_url.scheme != "https" or not parsed_run_url.netloc or not re.fullmatch(r"/[^/]+/[^/]+/actions/runs/[0-9]+", parsed_run_url.path):
         raise PolicyError("failure context run_url must be an absolute HTTPS URL")
+    if expected_repository and expected_run_id:
+        expected_path = f"/{expected_repository}/actions/runs/{expected_run_id}"
+        if parsed_run_url.path != expected_path:
+            raise PolicyError("failure context run_url is not bound to the triggering Release run")
     recovery = str(payload["recovery_instruction"])
     if payload.get("identity_resolution_failed") is True:
         expected_recovery = f"create VERSION-only release PR Covered-Product-Merge-SHA={payload['merge_commit_sha']}"

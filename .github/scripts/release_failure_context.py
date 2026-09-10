@@ -13,7 +13,11 @@ import release_policy
 
 
 def notification_summary(payload: dict[str, Any]) -> str:
-    release_policy.validate_failure_context(payload)
+    release_policy.validate_failure_context(
+        payload,
+        expected_repository=os.environ.get("GITHUB_REPOSITORY"),
+        expected_run_id=os.environ.get("EXPECTED_RELEASE_RUN_ID"),
+    )
     lines = [
         f"Dockrev release failed - {payload['tag']}",
         "status: failure",

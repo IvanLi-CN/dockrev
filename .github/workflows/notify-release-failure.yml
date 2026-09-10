@@ -30,12 +30,13 @@ jobs:
         with:
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
-          pattern: release-failure-context-*
+          name: release-failure-context-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
           path: release-failure-context
-          merge-multiple: true
 
       - name: Validate and render failure context
         id: context
+        env:
+          EXPECTED_RELEASE_RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
           set -euo pipefail
           python3 .github/scripts/release_failure_context.py \

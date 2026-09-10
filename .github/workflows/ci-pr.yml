@@ -35,7 +35,30 @@ jobs:
               ref: sha,
             })
             const message = commit.data.commit.message || ''
-            const skip = /(?:^|\n)Release-Mode:\s*(?:normal-preparation|version-only-release-pr)\s*$/m.test(message)
+            const trailerValues = {}
+            for (const line of message.split(/\r?\n/)) {
+              const match = line.match(/^(Source-SHA|Product-Version|Release-Intent|Release-Mode|Covered-Product-Merge-SHA):\s*(.*)$/)
+              if (!match) continue
+              if (trailerValues[match[1]]) trailerValues[match[1]].push(match[2].trim())
+              else trailerValues[match[1]] = [match[2].trim()]
+            }
+            const exactlyOne = (name, pattern) => trailerValues[name]?.length === 1 && pattern.test(trailerValues[name][0])
+            const verified = commit.data.commit.verification?.verified === true
+            const singleParent = commit.data.parents?.length === 1
+            const files = [...new Set((commit.data.files || []).map((file) => file.filename).filter(Boolean))].sort()
+            const versionOnly = files.length === 1 && files[0] === 'VERSION'
+            const mode = trailerValues['Release-Mode']?.[0]
+            const normalIntent = /^type:(patch|minor|major) channel:(stable|beta|dev)$/.test(trailerValues['Release-Intent']?.[0] || '')
+            const normal = mode === 'normal-preparation' &&
+              exactlyOne('Source-SHA', /^[0-9a-f]{40}$/) &&
+              trailerValues['Source-SHA'][0] === commit.data.parents?.[0]?.sha &&
+              exactlyOne('Product-Version', /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/) &&
+              exactlyOne('Release-Intent', /^type:(patch|minor|major) channel:(stable|beta|dev)$/)
+            const versionOnlyRelease = mode === 'version-only-release-pr' &&
+              exactlyOne('Covered-Product-Merge-SHA', /^[0-9a-f]{40}$/) &&
+              exactlyOne('Product-Version', /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/) &&
+              exactlyOne('Release-Intent', /^type:(patch|minor|major) channel:(stable|beta|dev)$/)
+            const skip = verified && singleParent && versionOnly && normalIntent && (normal || versionOnlyRelease)
             core.setOutput('skip', skip ? 'true' : 'false')
 
   changes:
@@ -140,6 +163,8 @@ jobs:
   unit-tests:
     name: Backend Tests
     runs-on: ubuntu-latest
+    needs: [release-identity-guard]
+    if: needs.release-identity-guard.outputs.skip != 'true'
     timeout-minutes: 25
     env:
       CARGO_TARGET_DIR: target/ci/pr/${{ github.job }}
