@@ -54,11 +54,7 @@ jobs:
               trailerValues['Source-SHA'][0] === commit.data.parents?.[0]?.sha &&
               exactlyOne('Product-Version', /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/) &&
               exactlyOne('Release-Intent', /^type:(patch|minor|major) channel:(stable|beta|dev)$/)
-            const versionOnlyRelease = mode === 'version-only-release-pr' &&
-              exactlyOne('Covered-Product-Merge-SHA', /^[0-9a-f]{40}$/) &&
-              exactlyOne('Product-Version', /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/) &&
-              exactlyOne('Release-Intent', /^type:(patch|minor|major) channel:(stable|beta|dev)$/)
-            const skip = verified && singleParent && versionOnly && normalIntent && (normal || versionOnlyRelease)
+            const skip = verified && singleParent && versionOnly && normalIntent && normal
             core.setOutput('skip', skip ? 'true' : 'false')
 
   changes:

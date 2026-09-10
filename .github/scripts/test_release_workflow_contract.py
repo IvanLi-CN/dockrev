@@ -85,6 +85,8 @@ assert "name: release-failure-context-${{ github.event.workflow_run.id }}-${{ gi
 assert "EXPECTED_RELEASE_RUN_ID" in notify
 assert "required_secrets" in text(".github/release-failure-notification.json")
 assert "release-identity-guard:" in ci_pr
+assert "const skip = verified && singleParent && versionOnly && normalIntent && normal" in ci_pr
+assert "versionOnlyRelease" not in ci_pr
 assert "Release-Mode" in ci_pr
 assert "commit.data.commit.verification" in ci_pr
 assert "commit.data.parents" in ci_pr
