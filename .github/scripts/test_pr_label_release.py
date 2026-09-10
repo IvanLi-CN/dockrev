@@ -157,7 +157,7 @@ try:
     def fake_reserve(*_args):
         calls["reserve"] += 1
         reserved_sources.append(_args[-1])
-        return True
+        return "f" * 40
 
     def fake_create_commit(*_args):
         calls["create"] += 1
@@ -593,6 +593,27 @@ try:
         "/repos/IvanLi-CN/dockrev/git/refs",
         {"ref": "refs/heads/release-reservation/v0.1.1", "sha": "f" * 40},
     )
+finally:
+    preparation_script.api_request = original_preparation_api_request
+
+reservation_delete_calls = []
+original_preparation_api_request = preparation_script.api_request
+try:
+    def fake_delete_reservation_api(_api_root, _token, method, path, _payload=None):
+        if method == "GET":
+            return {"object": {"sha": "f" * 40}}
+        if method == "DELETE":
+            reservation_delete_calls.append((method, path))
+            return {}
+        raise AssertionError((method, path))
+
+    preparation_script.api_request = fake_delete_reservation_api
+    preparation_script.delete_reservation_ref(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", "0.1.1", "f" * 40
+    )
+    assert reservation_delete_calls == [
+        ("DELETE", "/repos/IvanLi-CN/dockrev/git/refs/heads/release-reservation%2Fv0.1.1")
+    ]
 finally:
     preparation_script.api_request = original_preparation_api_request
 
