@@ -121,7 +121,8 @@ def current_version(api_root: str, token: str, repository: str, source_sha: str)
     if payload.get("encoding") != "base64":
         raise PreparationError("VERSION content is not returned as base64")
     try:
-        version = base64.b64decode(payload["content"], validate=True).decode().strip()
+        encoded_content = "".join(str(payload["content"]).split())
+        version = base64.b64decode(encoded_content, validate=True).decode().strip()
     except (KeyError, ValueError, UnicodeDecodeError) as error:
         raise PreparationError("VERSION content is not valid UTF-8 base64") from error
     release_policy.parse_version(version)

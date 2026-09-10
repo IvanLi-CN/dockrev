@@ -80,11 +80,22 @@ def version_at_commit(api_root: str, token: str, repository: str, commit_sha: st
     try:
         import base64
 
-        version = base64.b64decode(payload["content"], validate=True).decode().strip()
+        encoded_content = "".join(str(payload["content"]).split())
+        version = base64.b64decode(encoded_content, validate=True).decode().strip()
     except (KeyError, ValueError, UnicodeDecodeError) as error:
         raise IdentityError("merged identity VERSION is not valid UTF-8 base64") from error
     release_policy.parse_version(version)
     return version
+
+
+def version_exists_at_commit(api_root: str, token: str, repository: str, commit_sha: str) -> bool:
+    try:
+        version_at_commit(api_root, token, repository, commit_sha)
+    except IdentityError as error:
+        if "GitHub API failed: 404" in str(error):
+            return False
+        raise
+    return True
 
 
 def covered_product_boundary(
@@ -187,13 +198,23 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
             for key in ("Release-Mode", "Source-SHA", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")
         ):
             raise IdentityError("type:none labels conflict with merged release identity")
-        if "VERSION" in pull_request_changed_files(api_root, token, repository, pr.get("number", 0)):
-            raise IdentityError("type:none merged PR cannot change VERSION")
+        changed_files = pull_request_changed_files(api_root, token, repository, pr.get("number", 0))
+        if "VERSION" in changed_files:
+            if changed_files != ["VERSION"]:
+                raise IdentityError("type:none bootstrap PR must change VERSION only")
+            base_sha = pr.get("base", {}).get("sha", "")
+            if not base_sha:
+                merge_commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{merge_sha}")
+                parents = [parent.get("sha") for parent in merge_commit.get("parents", [])]
+                base_sha = parents[0] if parents else ""
+            if not base_sha or version_exists_at_commit(api_root, token, repository, base_sha):
+                raise IdentityError("type:none merged PR cannot change an existing VERSION")
+            version_at_commit(api_root, token, repository, merge_sha)
         return {
             "release_enabled": False,
             "merge_commit_sha": merge_sha,
             "pull_request": pr.get("number"),
-            "reason": "type:none",
+            "reason": "version-bootstrap" if "VERSION" in changed_files else "type:none",
         }
     mode = trailers.get("Release-Mode")
     if mode not in {"normal-preparation", "version-only-release-pr"}:

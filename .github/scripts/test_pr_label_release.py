@@ -100,6 +100,18 @@ expect_error(completion.validate_completion, {
     "version_file": "0.1.0",
 })
 
+original_preparation_version_api_request = preparation_script.api_request
+try:
+    preparation_script.api_request = lambda *_args, **_kwargs: {
+        "encoding": "base64",
+        "content": "MC4xLjAK\n",
+    }
+    assert preparation_script.current_version(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", source_sha
+    ) == "0.1.0"
+finally:
+    preparation_script.api_request = original_preparation_version_api_request
+
 original_pull_request = preparation_script.pull_request
 original_preparation_api_request = preparation_script.api_request
 original_source_ci_ready = preparation_script.source_ci_ready
@@ -594,6 +606,14 @@ expect_error(identity.resolve_from_payload, {**identity_payload, "covered_produc
 
 original_identity_api_json = identity.api_json
 try:
+    identity.api_json = lambda *_args, **_kwargs: {
+        "encoding": "base64",
+        "content": "MC4xLjAK\n",
+    }
+    assert identity.version_at_commit(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", source_sha
+    ) == "0.1.0"
+
     def fake_identity_api(_api_root, _token, path):
         if path.endswith(f"/commits/{prep_sha}/pulls"):
             return [{
@@ -622,7 +642,7 @@ try:
             }
         if "/contents/VERSION?ref=" in path:
             version = "0.1.0" if source_sha in path else "0.1.1"
-            encoded = __import__("base64").b64encode(version.encode()).decode()
+            encoded = __import__("base64").b64encode(version.encode()).decode() + "\n"
             return {"encoding": "base64", "content": encoded}
         raise AssertionError(f"unexpected identity API path: {path}")
 
@@ -637,6 +657,45 @@ try:
 
     identity.api_json = fake_mixed_identity_api
     expect_error(identity.resolve_github, "https://api.github.test", "token", "IvanLi-CN/dockrev", prep_sha)
+finally:
+    identity.api_json = original_identity_api_json
+
+bootstrap_merge_sha = "2" * 40
+bootstrap_parent_sha = "3" * 40
+bootstrap_source_sha = "4" * 40
+original_identity_api_json = identity.api_json
+try:
+    def fake_bootstrap_identity_api(_api_root, _token, path):
+        if path.endswith(f"/commits/{bootstrap_merge_sha}/pulls"):
+            return [{
+                "number": 44,
+                "state": "closed",
+                "merged_at": "2026-01-01T00:00:00Z",
+                "merge_commit_sha": bootstrap_merge_sha,
+                "base": {"ref": "main", "sha": bootstrap_parent_sha},
+                "head": {"sha": bootstrap_source_sha},
+                "labels": [{"name": "type:none"}, {"name": "channel:stable"}],
+            }]
+        if path.endswith(f"/commits/{bootstrap_source_sha}"):
+            return {"parents": [], "files": [], "commit": {"message": "Bootstrap VERSION"}}
+        if path.endswith(f"/pulls/44/files?per_page=100&page=1"):
+            return [{"filename": "VERSION"}]
+        if path.endswith(f"/contents/VERSION?ref={bootstrap_parent_sha}"):
+            raise identity.IdentityError("GitHub API failed: 404: missing")
+        if path.endswith(f"/contents/VERSION?ref={bootstrap_merge_sha}"):
+            return {"encoding": "base64", "content": "MC4xLjAK\n"}
+        raise AssertionError(f"unexpected bootstrap identity API path: {path}")
+
+    identity.api_json = fake_bootstrap_identity_api
+    bootstrap_identity = identity.resolve_github(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", bootstrap_merge_sha
+    )
+    assert bootstrap_identity == {
+        "release_enabled": False,
+        "merge_commit_sha": bootstrap_merge_sha,
+        "pull_request": 44,
+        "reason": "version-bootstrap",
+    }
 finally:
     identity.api_json = original_identity_api_json
 

@@ -1,7 +1,7 @@
 name: Label Gate
 
 on:
-  pull_request:
+  pull_request_target:
     branches: [main]
     types: [opened, synchronize, reopened, edited, labeled, unlabeled, ready_for_review]
 
@@ -22,7 +22,7 @@ jobs:
       - name: Checkout trusted policy
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 1
 
       - name: Read labels and changed files

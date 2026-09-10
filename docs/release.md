@@ -37,9 +37,10 @@ that absence before accepting it.
    signed, single-parent commit that changes only `VERSION`. Its trailers bind
    the source SHA, product version, label intent, and
    `Release-Mode: normal-preparation`.
-4. `Release completion` revalidates the source checks, PR base, labels,
-   trailers, signature, branch head, and tag reservation. The preparation
-   commit changes only `VERSION`; if the PR workflow observes that commit,
+4. The trusted `Release Preparation` workflow, checked out from `main`, emits
+   the single `Release completion` check. It revalidates the source checks, PR
+   base, labels, trailers, signature, branch head, and tag reservation. The
+   preparation commit changes only `VERSION`; if the PR workflow observes that commit,
    `Release Preparation` recognizes its signed trailers and skips a second
    preparation, so the source identity cannot recurse.
 5. After merge, `Release` resolves the merged SHA to exactly one merged PR and
@@ -71,8 +72,9 @@ identity uses its version.
 The `Release` workflow uploads `release-failure-context.json` with the release
 intent, source and merge SHAs, version, tag, asset names, run URL, and exact
 same-SHA recovery instruction. Identity resolution failures emit a marked
-fallback context from the checked-out `VERSION` so they are not silent. A
-resolver result that explicitly proves a historical product merge has no
+fallback context from the checked-out `VERSION` so they are not silent; if no
+valid immutable version is available, the context job fails closed instead of
+inventing a sentinel version. A resolver result that explicitly proves a historical product merge has no
 identity must be repaired by creating the single `VERSION`-only release PR for
 `Covered-Product-Merge-SHA`; it must not use the same-SHA recovery dispatch. A
 resolver error, such as a transient API or checkout failure, is classified

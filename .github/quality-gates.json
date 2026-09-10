@@ -29,7 +29,6 @@
     {"workflow": "Review Policy", "jobs": ["Review Policy Gate"]},
     {"workflow": "Label Gate", "jobs": ["Label Gate"]},
     {"workflow": "Release Preparation", "jobs": ["Publish Release completion check"]},
-    {"workflow": "Release completion", "jobs": ["Release completion"]},
     {"workflow": "CI (PR)", "jobs": ["Detect changes", "Lint & Checks", "Worktree bootstrap smoke", "Backend Tests", "Deploy Smoke", "Frontend lint + build", "Frontend Storybook build", "Frontend Storybook test", "Release build check (PR)"]}
   ]
 }

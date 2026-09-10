@@ -15,7 +15,8 @@ product PR had already merged.
 ## Decision
 
 Use the PR label and a root `VERSION` file as the release intent contract. A
-trusted `Label Gate` requires exactly one release type and channel. After full
+trusted `Label Gate` runs from `pull_request_target` with base-branch helpers
+and requires exactly one release type and channel. After full
 source PR CI succeeds, `Release Preparation` creates a `VERSION`-only,
 single-parent preparation commit on the same PR branch using
 `createCommitOnBranch(expectedHeadOid)`. Its signed trailers bind the source

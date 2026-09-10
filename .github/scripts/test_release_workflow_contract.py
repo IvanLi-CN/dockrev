@@ -24,13 +24,10 @@ release = text(".github/workflows/release.yml")
 notify = text(".github/workflows/notify-release-failure.yml")
 ci_pr = text(".github/workflows/ci-pr.yml")
 
-assert "name: Label Gate" in label_gate and "pull_request:" in label_gate
-assert "ref: ${{ github.event.pull_request.head.sha }}" in label_gate
-completion_pr = text(".github/workflows/release-completion-pr.yml")
-assert "name: Release completion" in completion_pr
-assert "pull_request:" in completion_pr
-assert "contents: read" in completion_pr
-assert "--head-sha \"${HEAD_SHA}\"" in completion_pr
+assert "name: Label Gate" in label_gate and "pull_request_target:" in label_gate
+assert "ref: ${{ github.event.pull_request.base.sha }}" in label_gate
+assert "ref: ${{ github.event.pull_request.head.sha }}" not in label_gate
+assert not (ROOT / ".github/workflows/release-completion-pr.yml").exists()
 assert "workflows: [\"CI (PR)\", \"Label Gate\"]" in preparation
 assert "group: release-preparation-${{ inputs.pr_number || github.event.workflow_run.pull_requests[0].number || github.run_id }}" in preparation
 assert "name: Publish Release completion check" in preparation
@@ -41,6 +38,7 @@ assert "release-reservation" in text(".github/scripts/release_preparation.py")
 assert "checks: write" in preparation
 assert "actions: read" in preparation
 assert "name: 'Release completion'" in preparation
+assert "ref: main" in preparation
 assert "createCommitOnBranch" in text(".github/scripts/release_preparation.py")
 assert "branches: [main]" in release and "merge_sha:" in release and "recovery_reason:" in release
 assert "workflow_dispatch requires an existing release-enabled immutable identity" in release
