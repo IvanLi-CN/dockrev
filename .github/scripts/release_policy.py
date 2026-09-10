@@ -242,6 +242,10 @@ def validate_identity(payload: dict[str, Any]) -> dict[str, Any]:
         raise PolicyError("release tag must be derived from VERSION only")
     if payload["release_mode"] not in {"normal-preparation", "version-only-release-pr"}:
         raise PolicyError("release identity mode is not publishable")
+    if payload["release_mode"] == "normal-preparation" and payload.get("covered_product_merge_sha"):
+        raise PolicyError("normal-preparation identity cannot carry Covered-Product-Merge-SHA")
+    if payload["release_mode"] == "version-only-release-pr" and payload.get("preparation_commit_sha"):
+        raise PolicyError("version-only identity cannot carry preparation_commit_sha")
     return payload
 
 
@@ -279,7 +283,7 @@ def validate_failure_context(
         raise PolicyError("failure context attempt is not bound to the triggering Release attempt")
     recovery = str(payload["recovery_instruction"])
     failure_kind = payload.get("identity_failure_kind")
-    if failure_kind is not None and failure_kind not in {"no-identity", "resolver-error"}:
+    if failure_kind is not None and failure_kind not in {"no-identity", "resolver-error", "identity-step-failure"}:
         raise PolicyError("failure context identity_failure_kind is unsupported")
     identity_failed = payload.get("identity_resolution_failed")
     if identity_failed is not None and not isinstance(identity_failed, bool):
@@ -288,10 +292,14 @@ def validate_failure_context(
         raise PolicyError("no-identity failure context must set identity_resolution_failed")
     if failure_kind == "resolver-error" and identity_failed is True:
         raise PolicyError("resolver-error cannot be marked as missing identity")
+    if failure_kind == "identity-step-failure" and identity_failed is not False:
+        raise PolicyError("identity-step-failure must preserve a resolved identity")
     if payload.get("identity_resolution_failed") is True or failure_kind == "no-identity":
         expected_recovery = f"create VERSION-only release PR Covered-Product-Merge-SHA={payload['merge_commit_sha']}"
     elif failure_kind == "resolver-error":
         expected_recovery = "resolver-error: retry Release workflow after verifying merged identity"
+    elif failure_kind == "identity-step-failure":
+        expected_recovery = f"workflow_dispatch merge_sha={payload['merge_commit_sha']} recovery_reason=<required>"
     else:
         expected_recovery = f"workflow_dispatch merge_sha={payload['merge_commit_sha']} recovery_reason=<required>"
     if recovery != expected_recovery:
@@ -300,7 +308,7 @@ def validate_failure_context(
         raise PolicyError("identity-resolution fallback must use the merge SHA as source evidence")
     if (
         failure_kind is None
-        and identity_failed is None
+        and identity_failed is not True
         and payload["source_sha"] == payload["merge_commit_sha"]
     ):
         raise PolicyError("merge-SHA failure context requires an explicit identity failure classification")

@@ -396,6 +396,8 @@ def create(args: argparse.Namespace) -> int:
         raise PreparationError("PR head contains malformed release identity trailers")
     if head_trailers.get("Release-Mode") == "normal-preparation" and not is_existing_preparation(head_trailers):
         raise PreparationError("normal preparation identity is incomplete")
+    if head_trailers.get("Release-Mode") == "normal-preparation" and head_trailers.get("Covered-Product-Merge-SHA"):
+        raise PreparationError("normal preparation identity cannot carry Covered-Product-Merge-SHA")
     if head_trailers.get("Release-Mode") == "version-only-release-pr" and not is_version_only_release(head_trailers):
         raise PreparationError("version-only release identity is incomplete")
     if is_version_only_release(head_trailers):

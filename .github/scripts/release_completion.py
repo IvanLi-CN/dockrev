@@ -321,6 +321,8 @@ def load_github_completion(
             raise CompletionError("type:none PR cannot change VERSION")
         return {"labels": labels}
     if mode == "normal-preparation":
+        if trailers.get("Covered-Product-Merge-SHA"):
+            raise CompletionError("normal preparation identity cannot carry Covered-Product-Merge-SHA")
         trailer_intent = intent_from_trailer(trailers.get("Release-Intent", ""))
         source_sha = trailers.get("Source-SHA", "")
         source_version = version_at_commit(api_root, token, repository, source_sha)

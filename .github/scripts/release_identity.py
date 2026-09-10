@@ -222,6 +222,8 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
     if version_file != version:
         raise IdentityError("merged commit VERSION does not match Product-Version provenance")
     if mode == "normal-preparation":
+        if trailers.get("Covered-Product-Merge-SHA"):
+            raise IdentityError("normal preparation identity cannot carry Covered-Product-Merge-SHA")
         source_sha = trailers.get("Source-SHA", "")
         source_version = version_at_commit(api_root, token, repository, source_sha)
         preparation = {

@@ -523,6 +523,7 @@ resolved = identity.resolve_from_payload(identity_payload)
 assert resolved["release_tag"] == "v0.1.1"
 expect_error(identity.resolve_from_payload, {**identity_payload, "version": "0.1.1-beta.1"})
 expect_error(identity.resolve_from_payload, {"labels": ["type:none", "channel:stable"], "release_mode": "normal-preparation"})
+expect_error(identity.resolve_from_payload, {**identity_payload, "covered_product_merge_sha": source_sha})
 
 original_identity_api_json = identity.api_json
 try:
@@ -621,6 +622,17 @@ try:
     )
     assert resolved_version_only["release_mode"] == "version-only-release-pr"
     assert resolved_version_only["source_sha"] == version_only_covered_head_sha
+    def fake_version_only_source_sha_api(_api_root, _token, path):
+        payload = fake_version_only_identity_api(_api_root, _token, path)
+        if path.endswith(f"/commits/{version_only_release_head_sha}"):
+            payload["commit"]["message"] += f"\nSource-SHA: {version_only_covered_head_sha}"
+        return payload
+
+    identity.api_json = fake_version_only_source_sha_api
+    expect_error(
+        identity.resolve_github,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
+    )
 finally:
     identity.api_json = original_identity_api_json
 
@@ -664,6 +676,15 @@ expect_error(policy.validate_failure_context, failure, expected_repository="Ivan
 expect_error(policy.validate_failure_context, {**failure, "identity_failure_kind": "unknown"})
 expect_error(policy.validate_failure_context, {**failure, "identity_failure_kind": "no-identity"})
 expect_error(policy.validate_failure_context, {**failure, "source_sha": failure["merge_commit_sha"]})
+step_failure = {
+    **failure,
+    "source_sha": failure["merge_commit_sha"],
+    "identity_resolution_failed": False,
+    "identity_failure_kind": "identity-step-failure",
+    "recovery_instruction": "workflow_dispatch merge_sha=" + failure["merge_commit_sha"] + " recovery_reason=<required>",
+}
+assert policy.validate_failure_context(step_failure) == step_failure
+expect_error(policy.validate_failure_context, {**step_failure, "identity_failure_kind": None})
 identity_failure = {
     **failure,
     "source_sha": prep_sha,
@@ -676,6 +697,18 @@ assert policy.validate_failure_context(identity_failure) == identity_failure
 expect_error(policy.validate_failure_context, {**identity_failure, "recovery_instruction": "workflow_dispatch merge_sha=" + prep_sha + " recovery_reason=<required>"})
 failure_context = load("release_failure_context", ROOT / ".github/scripts/release_failure_context.py")
 assert "recovery:" in failure_context.notification_summary(failure)
+resolved_failure = failure_context.resolved_identity_failure_context(
+    resolved,
+    repository="IvanLi-CN/dockrev",
+    server="https://github.com",
+    run_id="1",
+    attempt="2",
+    event="push",
+    ref="refs/heads/main",
+    actor="tester",
+)
+assert resolved_failure["identity_failure_kind"] == "identity-step-failure"
+assert policy.validate_failure_context(resolved_failure) == resolved_failure
 
 with tempfile.TemporaryDirectory() as directory:
     root = Path(directory)
