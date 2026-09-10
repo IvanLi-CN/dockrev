@@ -37,6 +37,7 @@ jobs:
         id: context
         env:
           EXPECTED_RELEASE_RUN_ID: ${{ github.event.workflow_run.id }}
+          EXPECTED_RELEASE_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: |
           set -euo pipefail
           python3 .github/scripts/release_failure_context.py \

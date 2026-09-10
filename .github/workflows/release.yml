@@ -49,6 +49,7 @@ jobs:
       type: ${{ steps.resolve.outputs.type }}
       prerelease: ${{ steps.resolve.outputs.prerelease }}
       identity_json: ${{ steps.resolve.outputs.identity_json }}
+      identity_failure_kind: ${{ steps.resolve.outputs.identity_failure_kind }}
     steps:
       - name: Checkout merged main commit
         uses: actions/checkout@v4
@@ -161,7 +162,7 @@ jobs:
               "recovery_instruction": (
                   f"create VERSION-only release PR Covered-Product-Merge-SHA={merge_sha}"
                   if no_identity else
-                  f"workflow_dispatch merge_sha={merge_sha} recovery_reason=<required>"
+                  "resolver-error: retry Release workflow after verifying merged identity"
               ),
               "identity_resolution_failed": no_identity,
               "identity_failure_kind": os.environ["FAILURE_KIND"],
@@ -501,6 +502,7 @@ jobs:
         if: needs.identity.result == 'failure'
         env:
           MERGE_SHA: ${{ inputs.merge_sha || github.sha }}
+          FAILURE_KIND: ${{ needs.identity.outputs.identity_failure_kind || 'resolver-error' }}
         run: |
           set -euo pipefail
           if [[ -f identity-failure-context/identity-failure-context.json ]]; then
@@ -527,6 +529,7 @@ jobs:
               for suffix in (f"{base}.tar.gz", f"{base}.tar.gz.sha256")
           ]
           channel = "beta" if "-beta." in version else ("dev" if "-dev." in version else "stable")
+          no_identity = os.environ["FAILURE_KIND"] == "no-identity"
           payload = {
               "pull_request": 0,
               "source_sha": merge_sha,
@@ -537,9 +540,13 @@ jobs:
               "tag": f"v{version}",
               "artifact_names": expected,
               "run_url": f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
-              "recovery_instruction": f"workflow_dispatch merge_sha={merge_sha} recovery_reason=<required>",
-              "identity_resolution_failed": False,
-              "identity_failure_kind": "resolver-error",
+              "recovery_instruction": (
+                  f"create VERSION-only release PR Covered-Product-Merge-SHA={merge_sha}"
+                  if no_identity else
+                  "resolver-error: retry Release workflow after verifying merged identity"
+              ),
+              "identity_resolution_failed": no_identity,
+              "identity_failure_kind": os.environ["FAILURE_KIND"],
               "repository": os.environ["GITHUB_REPOSITORY"],
               "workflow": "Release",
               "event": os.environ["GITHUB_EVENT_NAME"],

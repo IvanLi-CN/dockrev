@@ -17,6 +17,8 @@ def notification_summary(payload: dict[str, Any]) -> str:
         payload,
         expected_repository=os.environ.get("GITHUB_REPOSITORY"),
         expected_run_id=os.environ.get("EXPECTED_RELEASE_RUN_ID"),
+        expected_server=os.environ.get("GITHUB_SERVER_URL"),
+        expected_attempt=os.environ.get("EXPECTED_RELEASE_ATTEMPT"),
     )
     lines = [
         f"Dockrev release failed - {payload['tag']}",

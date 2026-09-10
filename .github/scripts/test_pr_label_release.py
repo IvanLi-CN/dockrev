@@ -304,6 +304,7 @@ expect_error(policy.validate_failure_context, {**failure, "tag": "v0.1.0"})
 expect_error(policy.validate_failure_context, {**failure, "artifact_names": []})
 expect_error(policy.validate_failure_context, {**failure, "run_url": ""})
 expect_error(policy.validate_failure_context, failure, expected_repository="IvanLi-CN/dockrev", expected_run_id="2")
+expect_error(policy.validate_failure_context, failure, expected_repository="IvanLi-CN/dockrev", expected_run_id="1", expected_server="github.com", expected_attempt="2")
 identity_failure = {
     **failure,
     "source_sha": prep_sha,

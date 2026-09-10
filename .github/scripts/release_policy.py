@@ -214,7 +214,8 @@ def validate_identity(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def validate_failure_context(
-    payload: dict[str, Any], *, expected_repository: str | None = None, expected_run_id: str | None = None
+    payload: dict[str, Any], *, expected_repository: str | None = None, expected_run_id: str | None = None,
+    expected_server: str | None = None, expected_attempt: str | None = None
 ) -> dict[str, Any]:
     required = {"pull_request", "source_sha", "merge_commit_sha", "type", "channel", "version", "tag", "artifact_names", "run_url", "recovery_instruction"}
     missing = sorted(required - set(payload))
@@ -238,9 +239,18 @@ def validate_failure_context(
         expected_path = f"/{expected_repository}/actions/runs/{expected_run_id}"
         if parsed_run_url.path != expected_path:
             raise PolicyError("failure context run_url is not bound to the triggering Release run")
+        if payload.get("repository") != expected_repository:
+            raise PolicyError("failure context repository is not bound to the triggering repository")
+    if expected_server and parsed_run_url.netloc != expected_server.removeprefix("https://"):
+        raise PolicyError("failure context run_url host is not the configured GitHub server")
+    if expected_attempt and str(payload.get("run_attempt")) != str(expected_attempt):
+        raise PolicyError("failure context attempt is not bound to the triggering Release attempt")
     recovery = str(payload["recovery_instruction"])
-    if payload.get("identity_resolution_failed") is True:
+    failure_kind = payload.get("identity_failure_kind")
+    if payload.get("identity_resolution_failed") is True or failure_kind == "no-identity":
         expected_recovery = f"create VERSION-only release PR Covered-Product-Merge-SHA={payload['merge_commit_sha']}"
+    elif failure_kind == "resolver-error":
+        expected_recovery = "resolver-error: retry Release workflow after verifying merged identity"
     else:
         expected_recovery = f"workflow_dispatch merge_sha={payload['merge_commit_sha']} recovery_reason=<required>"
     if recovery != expected_recovery:

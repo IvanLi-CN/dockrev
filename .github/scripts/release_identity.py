@@ -153,6 +153,18 @@ def resolve_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
 def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, run_url: str = "") -> dict[str, Any]:
     release_policy.validate_sha(merge_sha, "merge_commit_sha")
     pr, _ = merged_pr(api_root, token, repository, merge_sha)
+    labels = [item.get("name") for item in pr.get("labels", []) if item.get("name")]
+    try:
+        pr_intent = release_policy.parse_labels(labels)
+    except release_policy.PolicyError as error:
+        raise IdentityError(f"merged product PR labels are invalid: {error}") from error
+    if not pr_intent["release_enabled"]:
+        return {
+            "release_enabled": False,
+            "merge_commit_sha": merge_sha,
+            "pull_request": pr.get("number"),
+            "reason": "type:none",
+        }
     owner, name = repository_parts(repository)
     head_sha = pr.get("head", {}).get("sha", "")
     head_commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{head_sha}")

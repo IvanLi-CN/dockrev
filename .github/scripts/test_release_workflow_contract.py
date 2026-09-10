@@ -15,21 +15,19 @@ def text(path: str) -> str:
 
 
 label_gate = text(".github/workflows/label-gate.yml")
-completion = text(".github/workflows/release-completion.yml")
 preparation = text(".github/workflows/release-preparation.yml")
 release = text(".github/workflows/release.yml")
 notify = text(".github/workflows/notify-release-failure.yml")
 ci_pr = text(".github/workflows/ci-pr.yml")
 
 assert "name: Label Gate" in label_gate and "pull_request_target:" in label_gate
-assert "name: Release completion" in completion and "pull_request_target:" in completion
 assert "workflows: [\"CI (PR)\", \"Label Gate\"]" in preparation
 assert "group: release-preparation" in preparation
+assert "name: Release completion" in preparation
+assert "checks.create" in preparation
+assert "head_sha: process.env.HEAD_SHA" in preparation
+assert "checks: write" in preparation
 assert "actions: read" in preparation
-assert "checks.create" not in preparation
-assert "head_sha: process.env.HEAD_SHA" not in preparation
-assert "checks: write" not in preparation
-assert "actions: read" in completion
 assert "createCommitOnBranch" in text(".github/scripts/release_preparation.py")
 assert "branches: [main]" in release and "merge_sha:" in release and "recovery_reason:" in release
 assert "release-failure-context-" in release and "workflow_dispatch merge_sha=" in release
