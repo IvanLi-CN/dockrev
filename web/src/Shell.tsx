@@ -117,6 +117,8 @@ export function AppShell(props: {
   authIdentity?: TopbarAuthIdentity | null;
   children: ReactNode;
 }) {
+  const { installCapability } = usePwaStatus();
+  const hasPwaInstall = Boolean(installCapability);
   const active =
     props.route.name === "service" || props.route.name === "stack"
       ? "services"
@@ -362,7 +364,10 @@ export function AppShell(props: {
               </div>
             ) : null}
             <div className="mobileDrawerFooter" aria-label="应用与用户信息">
-              <div className="mobileDrawerFooterControls">
+              <div
+                className="mobileDrawerFooterControls"
+                data-has-pwa-install={hasPwaInstall ? "true" : "false"}
+              >
                 <TopbarUserIdentity authIdentity={props.authIdentity} placement="sidebar" />
                 <PwaInstallControl placement="mobile" />
                 <ThemePreferenceControl variant="icon" />
@@ -411,7 +416,10 @@ export function AppShell(props: {
             </div>
             <div className="sidebarMeta">
               {!mobileMenuMediaMatches ? (
-                <div className="sidebarProfileControls">
+                <div
+                  className="sidebarProfileControls"
+                  data-has-pwa-install={hasPwaInstall ? "true" : "false"}
+                >
                   <TopbarUserIdentity authIdentity={props.authIdentity} placement="sidebar" />
                   <PwaInstallControl placement="sidebar" />
                 </div>
