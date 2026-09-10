@@ -1,0 +1,10 @@
+{
+  "dockrev_digest": "sha256:cb46d48f2924aeebcbfc0065fe623fd5b5271cb7f49fdc7b97edeeed5162f6b2",
+  "dockrev_supervisor_digest": "sha256:e6343e9b02153572342e256282d480b4785bf26016e2328522ee83bef1699417",
+  "pr_number": 386,
+  "published_at": "2026-09-10T08:00:52Z",
+  "release_channel": "stable",
+  "release_tag": "0.80.0",
+  "schema_version": 1,
+  "target_sha": "d4c06a06b6602b3ca010197603f37a72192c2c69"
+}
