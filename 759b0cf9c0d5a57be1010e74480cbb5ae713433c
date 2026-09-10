@@ -1,0 +1,32 @@
+{
+  "receipt_ledger": [
+    {
+      "candidate_event": "push",
+      "candidate_run_id": 34504177719,
+      "candidate_workflow": "Release Candidate Pipeline",
+      "created_at": "2026-09-10T17:01:04.510106Z",
+      "operation": "push",
+      "preparation": {
+        "artifact_name": "release-preparation-759b0cf9c0d5a57be1010e74480cbb5ae713433c",
+        "manifest_sha256": "47ecc98aa36a94b6521a8a166c45ae4cce7649f048ccccfbed190697ae2a90ee",
+        "publish": false,
+        "run_id": 34504177719,
+        "target_sha": "759b0cf9c0d5a57be1010e74480cbb5ae713433c"
+      },
+      "publish": false,
+      "schema_version": 1,
+      "source_gate": {
+        "artifact_name": "source-gate-attestation-34504177719",
+        "attestation_sha256": "911473bf71910297658f27af7ad8f52515768a758b3498447a6540acd4055d05",
+        "gate_result": "success",
+        "publish": false,
+        "run_id": 34504177719,
+        "target_sha": "759b0cf9c0d5a57be1010e74480cbb5ae713433c"
+      },
+      "target_sha": "759b0cf9c0d5a57be1010e74480cbb5ae713433c",
+      "verification_mode": false
+    }
+  ],
+  "schema_version": 1,
+  "target_sha": "759b0cf9c0d5a57be1010e74480cbb5ae713433c"
+}
