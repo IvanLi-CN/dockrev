@@ -104,7 +104,10 @@ def covered_product_boundary(
         raise IdentityError("version-only release PR must cover a release-enabled product PR")
     commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{head_sha}")
     trailers = release_policy.parse_trailers(commit.get("commit", {}).get("message", ""))
-    if any(trailers.get(key) for key in ("Release-Mode", "Product-Version", "Release-Intent")):
+    if any(
+        trailers.get(key)
+        for key in ("Release-Mode", "Source-SHA", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")
+    ):
         raise IdentityError("covered product PR already has release identity")
     return pr, head_sha
 
@@ -178,6 +181,8 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
             for key in ("Release-Mode", "Source-SHA", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")
         ):
             raise IdentityError("type:none labels conflict with merged release identity")
+        if "VERSION" in pull_request_changed_files(api_root, token, repository, pr.get("number", 0)):
+            raise IdentityError("type:none merged PR cannot change VERSION")
         return {
             "release_enabled": False,
             "merge_commit_sha": merge_sha,

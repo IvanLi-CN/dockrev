@@ -96,7 +96,10 @@ def covered_product_boundary(
     release_policy.validate_sha(head_sha, "covered_product_head_sha")
     commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{head_sha}")
     trailers = release_policy.parse_trailers(commit.get("commit", {}).get("message", ""))
-    if any(trailers.get(key) for key in ("Release-Mode", "Product-Version", "Release-Intent")):
+    if any(
+        trailers.get(key)
+        for key in ("Release-Mode", "Source-SHA", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")
+    ):
         raise CompletionError("covered product PR already has release identity")
     return pr, head_sha
 
@@ -193,6 +196,8 @@ def validate_completion(payload: dict[str, Any]) -> dict[str, Any]:
         raise CompletionError("completion input must be an object")
     intent = release_policy.parse_labels(payload.get("labels", []))
     if not intent["release_enabled"]:
+        if "VERSION" in payload.get("changed_files", []):
+            raise CompletionError("type:none PR cannot change VERSION")
         if payload.get("release_mode") or payload.get("provenance") or payload.get("preparation"):
             raise CompletionError("type:none PR cannot carry release identity")
         return {"status": "pass", "release_enabled": False, "mode": "non-product"}
@@ -202,7 +207,9 @@ def validate_completion(payload: dict[str, Any]) -> dict[str, Any]:
     release_policy.validate_sha(str(head_sha), "head_sha")
     validate_source_checks(payload.get("source_checks", {}))
     mode = payload.get("release_mode")
-    expected_version = payload.get("version") or payload.get("preparation", {}).get("version") or payload.get("provenance", {}).get("product_version")
+    preparation_payload = payload.get("preparation") or {}
+    provenance_payload = payload.get("provenance") or {}
+    expected_version = payload.get("version") or preparation_payload.get("version") or provenance_payload.get("product_version")
     if payload.get("version_file") != expected_version:
         raise CompletionError("PR head VERSION does not match release provenance")
     if mode == "normal-preparation":
@@ -246,7 +253,7 @@ def validate_completion(payload: dict[str, Any]) -> dict[str, Any]:
         "mode": mode,
         "source_sha": source_sha,
         "head_sha": head_sha,
-        "version": payload.get("version") or payload.get("preparation", {}).get("version") or payload.get("provenance", {}).get("product_version"),
+        "version": payload.get("version") or preparation_payload.get("version") or provenance_payload.get("product_version"),
         "version_file": payload.get("version_file"),
         "intent": intent,
     }
@@ -264,12 +271,20 @@ def tag_is_available(api_root: str, token: str, repository: str, version: str) -
 
 
 def version_reservation_is_owned(
-    api_root: str, token: str, repository: str, version: str, source_sha: str
+    api_root: str, token: str, repository: str, version: str, pr_number: int, source_sha: str
 ) -> bool:
     owner, name = repository.split("/", 1)
-    ref_name = urllib.parse.quote(f"release-reservation/v{version}", safe="")
+    prefix = f"release-reservation/v{version}"
+    ref_name = f"{prefix}/pr-{pr_number}"
+    matching = api_json(
+        api_root,
+        token,
+        f"/repos/{owner}/{name}/git/matching-refs/heads/{urllib.parse.quote(prefix, safe='')}",
+    )
+    if not isinstance(matching, list) or len(matching) != 1 or matching[0].get("ref") != f"refs/heads/{ref_name}":
+        return False
     try:
-        payload = api_json(api_root, token, f"/repos/{owner}/{name}/git/ref/heads/{ref_name}")
+        payload = api_json(api_root, token, f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(ref_name, safe='')}")
     except CompletionError as error:
         if "GitHub API failed: 404" in str(error):
             return False
@@ -300,6 +315,8 @@ def load_github_completion(
     if not intent["release_enabled"]:
         if any(trailers.get(key) for key in ("Release-Mode", "Source-SHA", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")):
             raise CompletionError("type:none PR cannot carry release identity")
+        if "VERSION" in pull_request_changed_files(api_root, token, repository, pr_number):
+            raise CompletionError("type:none PR cannot change VERSION")
         return {"labels": labels}
     if mode == "normal-preparation":
         trailer_intent = intent_from_trailer(trailers.get("Release-Intent", ""))
@@ -352,7 +369,9 @@ def load_github_completion(
         raise CompletionError("PR head has no accepted release provenance")
     tag_reserved = tag_is_available(api_root, token, repository, version_for_tag)
     if mode in {"normal-preparation", "version-only-release-pr"}:
-        tag_reserved = tag_reserved and version_reservation_is_owned(api_root, token, repository, version_for_tag, source_sha)
+        tag_reserved = tag_reserved and version_reservation_is_owned(
+            api_root, token, repository, version_for_tag, pr_number, source_sha
+        )
     tag_reserved = tag_reserved and tag_is_reserved_by_other_pr(
         api_root, token, repository, version_for_tag, pr_number
     )

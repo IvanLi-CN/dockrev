@@ -169,7 +169,10 @@ def covered_product_head_sha(api_root: str, token: str, repository: str, merge_s
     release_policy.validate_sha(head_sha, "covered_product_head_sha")
     commit = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{head_sha}")
     trailers = release_policy.parse_trailers(commit.get("commit", {}).get("message", ""))
-    if any(trailers.get(key) for key in ("Release-Mode", "Product-Version", "Release-Intent")):
+    if any(
+        trailers.get(key)
+        for key in ("Release-Mode", "Source-SHA", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")
+    ):
         raise PreparationError("covered product PR already has release identity")
     return head_sha
 
@@ -199,14 +202,28 @@ def reserve_tag(api_root: str, token: str, repository: str, version: str, pr_num
                 raise PreparationError(
                     f"release version {version} is already reserved by PR #{pull.get('number')}"
                 )
-    reserve_version_ref(api_root, token, repository, version, source_sha)
+    reserve_version_ref(api_root, token, repository, version, pr_number, source_sha)
 
 
-def reserve_version_ref(api_root: str, token: str, repository: str, version: str, source_sha: str) -> None:
-    """CAS a branch ref so concurrent PRs cannot select the same VERSION."""
+def reserve_version_ref(
+    api_root: str, token: str, repository: str, version: str, pr_number: int, source_sha: str
+) -> None:
+    """CAS a PR-owned branch ref and reject multiple owners for one VERSION."""
     owner, name = repository_parts(repository)
-    ref_name = f"release-reservation/v{version}"
+    prefix = f"release-reservation/v{version}"
+    ref_name = f"{prefix}/pr-{pr_number}"
     path = f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(ref_name, safe='')}"
+    matching = api_request(
+        api_root,
+        token,
+        "GET",
+        f"/repos/{owner}/{name}/git/matching-refs/heads/{urllib.parse.quote(prefix, safe='')}",
+    )
+    if not isinstance(matching, list):
+        raise PreparationError("release reservation refs response is invalid")
+    other_refs = [item for item in matching if item.get("ref") != f"refs/heads/{ref_name}"]
+    if other_refs:
+        raise PreparationError(f"release version {version} is already reserved by another PR")
     try:
         existing = api_request(api_root, token, "GET", path)
     except PreparationError as error:

@@ -83,6 +83,7 @@ assert completion.validate_completion({"labels": ["type:none", "channel:stable"]
     "release_enabled": False,
     "mode": "non-product",
 }
+expect_error(completion.validate_completion, {"labels": ["type:none", "channel:stable"], "changed_files": ["VERSION"]})
 
 original_pull_request = preparation_script.pull_request
 original_preparation_api_request = preparation_script.api_request
@@ -93,6 +94,7 @@ original_create_commit = preparation_script.create_commit
 original_inspect_commit = preparation_script.inspect_commit
 try:
     calls = {"source_ci": 0, "reserve": 0, "create": 0}
+    reserved_sources = []
 
     def fake_pull_request(_api_root, _token, _repository, _number):
         return {
@@ -114,6 +116,7 @@ try:
 
     def fake_reserve(*_args):
         calls["reserve"] += 1
+        reserved_sources.append(_args[-1])
 
     def fake_create_commit(*_args):
         calls["create"] += 1
@@ -212,6 +215,8 @@ try:
         result = json.loads(output.read_text(encoding="utf-8"))
         assert result["release_mode"] == "version-only-release-pr"
         assert result["skipped"] == "already-version-only"
+        assert calls["reserve"] == 1
+        assert reserved_sources[-1] == covered_head_sha
 finally:
     preparation_script.pull_request = original_pull_request
     preparation_script.api_request = original_preparation_api_request
@@ -313,6 +318,8 @@ try:
                 "files": [{"filename": "VERSION"}] if labels_for_loader[0] != "type:none" else [],
                 "commit": {"verification": {"verified": True}, "message": preparation_message if labels_for_loader[0] != "type:none" else "Product change"},
             }
+        if path.endswith("/pulls/42/files?per_page=100&page=1"):
+            return []
         if path.endswith("/commits/" + source_sha):
             return {"parents": [], "files": [], "commit": {"message": "Product change"}}
         if "/contents/VERSION?ref=" in path:
@@ -327,7 +334,9 @@ try:
             if tag_exists:
                 return {"object": {"sha": prep_sha, "type": "commit"}}
             raise completion.CompletionError("GitHub API failed: 404")
-        if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1"):
+        if path.endswith("/git/matching-refs/heads/release-reservation%2Fv0.1.1"):
+            return [{"ref": "refs/heads/release-reservation/v0.1.1/pr-42", "object": {"sha": source_sha}}]
+        if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1%2Fpr-42"):
             return {"object": {"sha": source_sha, "type": "commit"}}
         if "/pulls?state=" in path:
             return []
@@ -336,10 +345,89 @@ try:
     completion.api_json = fake_completion_api
     loaded = completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
     assert completion.validate_completion(loaded)["status"] == "pass"
+    expect_error(completion.load_github_completion, "https://api.github.test", "token", "IvanLi-CN/dockrev", 42, "c" * 40)
     tag_exists = True
     expect_error(completion.validate_completion, completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42))
     labels_for_loader = ["type:none", "channel:stable"]
     assert completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42) == {"labels": labels_for_loader}
+finally:
+    completion.api_json = original_completion_api_json
+
+original_completion_api_json = completion.api_json
+try:
+    def fake_version_only_completion_api(_api_root, _token, path):
+        if path.endswith("/pulls/42"):
+            return {
+                "state": "open",
+                "base": {"ref": "main"},
+                "head": {"sha": prep_sha},
+                "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
+            }
+        if path.endswith(f"/commits/{prep_sha}"):
+            return {
+                "parents": [{"sha": covered_head_sha}],
+                "files": [{"filename": "VERSION"}],
+                "commit": {
+                    "verification": {"verified": True},
+                    "message": (
+                        "VERSION-only recovery\n\n"
+                        f"Covered-Product-Merge-SHA: {covered_merge_sha}\n"
+                        "Product-Version: 0.1.1\n"
+                        "Release-Intent: type:patch channel:stable\n"
+                        "Release-Mode: version-only-release-pr"
+                    ),
+                },
+            }
+        if path.endswith(f"/commits/{covered_merge_sha}/pulls"):
+            return [{
+                "number": 41,
+                "state": "closed",
+                "merged_at": "2026-01-01T00:00:00Z",
+                "merge_commit_sha": covered_merge_sha,
+                "base": {"ref": "main"},
+                "head": {"sha": covered_head_sha},
+                "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
+            }]
+        if path.endswith(f"/commits/{covered_head_sha}"):
+            return {"parents": [], "files": [], "commit": {"message": "Product change"}}
+        if path.endswith(f"/pulls/42/files?per_page=100&page=1"):
+            return [{"filename": "VERSION"}]
+        if "/contents/VERSION?ref=" in path:
+            encoded = __import__("base64").b64encode(b"0.1.1").decode()
+            return {"encoding": "base64", "content": encoded}
+        if "/actions/workflows/ci-pr.yml/runs?per_page=100&page=" in path:
+            return {"workflow_runs": [{"head_sha": covered_head_sha, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 41}]}]}
+        if "/actions/workflows/label-gate.yml/runs?per_page=100&page=" in path:
+            return {"workflow_runs": [{"head_sha": "e" * 40, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 42, "head": {"sha": prep_sha}}]}]}
+        if path.endswith("/git/ref/tags/v0.1.1"):
+            raise completion.CompletionError("GitHub API failed: 404")
+        if path.endswith("/git/matching-refs/heads/release-reservation%2Fv0.1.1"):
+            return [{"ref": "refs/heads/release-reservation/v0.1.1/pr-42", "object": {"sha": covered_head_sha}}]
+        if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1%2Fpr-42"):
+            return {"object": {"sha": covered_head_sha}}
+        if "/pulls?state=" in path:
+            return []
+        raise AssertionError(f"unexpected version-only API path: {path}")
+
+    completion.api_json = fake_version_only_completion_api
+    version_only_loaded = completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
+    assert completion.validate_completion(version_only_loaded)["mode"] == "version-only-release-pr"
+finally:
+    completion.api_json = original_completion_api_json
+
+original_completion_api_json = completion.api_json
+try:
+    page_calls = []
+
+    def fake_paged_runs(_api_root, _token, path):
+        page_calls.append(path)
+        if path.endswith("page=1"):
+            return {"workflow_runs": [{"pull_requests": []}] * 100}
+        return {"workflow_runs": [{"head_sha": source_sha, "pull_requests": [{"number": 42}]}]}
+
+    completion.api_json = fake_paged_runs
+    assert len(completion.workflow_runs_for_pr("https://api.github.test", "token", "IvanLi-CN/dockrev", "ci-pr.yml", 42, source_sha)) == 1
+    assert page_calls[-1].endswith("page=2")
 finally:
     completion.api_json = original_completion_api_json
 
@@ -348,18 +436,20 @@ original_preparation_api_request = preparation_script.api_request
 try:
     def fake_reservation_api(_api_root, _token, method, path, payload=None):
         reservation_calls.append((method, path, payload))
+        if method == "GET" and "matching-refs" in path:
+            return []
         if method == "GET":
             raise preparation_script.PreparationError("GitHub API GET ref failed: 404: missing")
-        return {"ref": "refs/heads/release-reservation/v0.1.1", "object": {"sha": source_sha}}
+        return {"ref": "refs/heads/release-reservation/v0.1.1/pr-42", "object": {"sha": source_sha}}
 
     preparation_script.api_request = fake_reservation_api
     preparation_script.reserve_version_ref(
-        "https://api.github.test", "token", "IvanLi-CN/dockrev", "0.1.1", source_sha
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", "0.1.1", 42, source_sha
     )
     assert reservation_calls[-1] == (
         "POST",
         "/repos/IvanLi-CN/dockrev/git/refs",
-        {"ref": "refs/heads/release-reservation/v0.1.1", "sha": source_sha},
+        {"ref": "refs/heads/release-reservation/v0.1.1/pr-42", "sha": source_sha},
     )
 finally:
     preparation_script.api_request = original_preparation_api_request
@@ -414,6 +504,46 @@ identity_payload = {
 resolved = identity.resolve_from_payload(identity_payload)
 assert resolved["release_tag"] == "v0.1.1"
 expect_error(identity.resolve_from_payload, {**identity_payload, "version": "0.1.1-beta.1"})
+
+original_identity_api_json = identity.api_json
+try:
+    def fake_identity_api(_api_root, _token, path):
+        if path.endswith(f"/commits/{prep_sha}/pulls"):
+            return [{
+                "number": 42,
+                "state": "closed",
+                "merged_at": "2026-01-01T00:00:00Z",
+                "merge_commit_sha": prep_sha,
+                "base": {"ref": "main"},
+                "head": {"sha": prep_sha},
+                "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
+            }]
+        if path.endswith(f"/commits/{prep_sha}"):
+            return {
+                "parents": [{"sha": source_sha}],
+                "files": [{"filename": "VERSION"}],
+                "commit": {
+                    "verification": {"verified": True},
+                    "message": (
+                        "Prepare release identity\n\n"
+                        f"Source-SHA: {source_sha}\n"
+                        "Product-Version: 0.1.1\n"
+                        "Release-Intent: type:patch channel:stable\n"
+                        "Release-Mode: normal-preparation"
+                    ),
+                },
+            }
+        if "/contents/VERSION?ref=" in path:
+            version = "0.1.0" if source_sha in path else "0.1.1"
+            encoded = __import__("base64").b64encode(version.encode()).decode()
+            return {"encoding": "base64", "content": encoded}
+        raise AssertionError(f"unexpected identity API path: {path}")
+
+    identity.api_json = fake_identity_api
+    resolved_api = identity.resolve_github("https://api.github.test", "token", "IvanLi-CN/dockrev", prep_sha)
+    assert resolved_api["release_tag"] == "v0.1.1"
+finally:
+    identity.api_json = original_identity_api_json
 
 failure = {
     "pull_request": 42,

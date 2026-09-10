@@ -120,6 +120,10 @@ jobs:
           print(json.dumps(payload, sort_keys=True))
           print("EOF")
           PY
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]] && [[ "$(jq -r '.release_enabled' release-intent.json)" != "true" ]]; then
+            echo "workflow_dispatch requires an existing release-enabled immutable identity" >&2
+            exit 2
+          fi
 
       - name: Capture identity-resolution failure context
         if: always() && steps.resolve.outcome != 'success'

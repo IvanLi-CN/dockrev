@@ -33,6 +33,7 @@ assert "actions: read" in preparation
 assert "name: 'Release completion'" in preparation
 assert "createCommitOnBranch" in text(".github/scripts/release_preparation.py")
 assert "branches: [main]" in release and "merge_sha:" in release and "recovery_reason:" in release
+assert "workflow_dispatch requires an existing release-enabled immutable identity" in release
 assert "release-failure-context-" in release and "workflow_dispatch merge_sha=" in release
 assert "create VERSION-only release PR Covered-Product-Merge-SHA=" in release
 assert "prior failed automatic Release run" in release

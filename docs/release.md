@@ -19,15 +19,16 @@ Every product PR targeting `main` must carry exactly one `type:*` label and one
 
 Stable versions are `X.Y.Z`; beta and dev versions are respectively
 `X.Y.Z-beta.N` and `X.Y.Z-dev.N`. `type:none` is valid policy input but does not
-create a release identity.
+create a release identity and cannot change `VERSION`.
 
 ## Normal product PR
 
 1. The source head must pass the complete `CI (PR)` workflow and `Label Gate`.
 2. `Release Preparation` reads the source `VERSION`. Patch releases use the
    next patch; major and minor releases require an exact version input. Before
-   writing, it atomically creates `release-reservation/vVERSION` at the source
-   SHA so concurrent PRs cannot claim the same version.
+   writing, it atomically creates the PR-owned
+   `release-reservation/vVERSION/pr-N` ref at the source SHA. Completion
+   rejects the version if more than one PR-owned reservation exists.
 3. Preparation uses GitHub's `createCommitOnBranch(expectedHeadOid)` to add one
    signed, single-parent commit that changes only `VERSION`. Its trailers bind
    the source SHA, product version, label intent, and
@@ -44,7 +45,7 @@ create a release identity.
 
 ## Remediation boundaries
 
-`workflow_dispatch` on `Release` requires an existing immutable merged identity,
+`workflow_dispatch` on `Release` requires an existing release-enabled immutable merged identity,
 the same merge SHA, a non-empty recovery reason, and a prior failed automatic
 `Release` run for that SHA. It retries publication only; it cannot write
 `VERSION`, create a new PR, select a successor version, rewrite a tag, or
