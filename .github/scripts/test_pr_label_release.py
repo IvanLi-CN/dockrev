@@ -281,7 +281,7 @@ identity_payload = {
     "version_file": "0.1.1",
     "intent": labels,
     "artifact_names": ["dockrev_0.1.1_linux_amd64_gnu.tar.gz", "dockrev_0.1.1_linux_amd64_gnu.tar.gz.sha256"],
-    "run_url": "https://github.example/IvanLi-CN/dockrev/actions/runs/1",
+    "run_url": "https://github.com/IvanLi-CN/dockrev/actions/runs/1",
 }
 resolved = identity.resolve_from_payload(identity_payload)
 assert resolved["release_tag"] == "v0.1.1"
@@ -296,7 +296,7 @@ failure = {
     "version": "0.1.1",
     "tag": "v0.1.1",
     "artifact_names": ["dockrev_0.1.1_linux_amd64_gnu.tar.gz", "dockrev_0.1.1_linux_amd64_gnu.tar.gz.sha256"],
-    "run_url": "https://github.example/IvanLi-CN/dockrev/actions/runs/1",
+    "run_url": "https://github.com/IvanLi-CN/dockrev/actions/runs/1",
     "recovery_instruction": "workflow_dispatch merge_sha=" + prep_sha + " recovery_reason=<required>",
 }
 assert policy.validate_failure_context(failure) == failure
@@ -305,6 +305,8 @@ expect_error(policy.validate_failure_context, {**failure, "artifact_names": []})
 expect_error(policy.validate_failure_context, {**failure, "run_url": ""})
 expect_error(policy.validate_failure_context, failure, expected_repository="IvanLi-CN/dockrev", expected_run_id="2")
 expect_error(policy.validate_failure_context, failure, expected_repository="IvanLi-CN/dockrev", expected_run_id="1", expected_server="github.com", expected_attempt="2")
+expect_error(policy.validate_failure_context, {**failure, "identity_failure_kind": "unknown"})
+expect_error(policy.validate_failure_context, {**failure, "identity_failure_kind": "no-identity"})
 identity_failure = {
     **failure,
     "source_sha": prep_sha,

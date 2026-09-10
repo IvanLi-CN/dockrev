@@ -22,7 +22,7 @@ ci_pr = text(".github/workflows/ci-pr.yml")
 
 assert "name: Label Gate" in label_gate and "pull_request_target:" in label_gate
 assert "workflows: [\"CI (PR)\", \"Label Gate\"]" in preparation
-assert "group: release-preparation" in preparation
+assert "group: release-preparation-${{ inputs.pr_number || github.event.workflow_run.pull_requests[0].number || github.run_id }}" in preparation
 assert "name: Release completion" in preparation
 assert "checks.create" in preparation
 assert "head_sha: process.env.HEAD_SHA" in preparation

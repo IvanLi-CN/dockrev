@@ -247,6 +247,15 @@ def validate_failure_context(
         raise PolicyError("failure context attempt is not bound to the triggering Release attempt")
     recovery = str(payload["recovery_instruction"])
     failure_kind = payload.get("identity_failure_kind")
+    if failure_kind is not None and failure_kind not in {"no-identity", "resolver-error"}:
+        raise PolicyError("failure context identity_failure_kind is unsupported")
+    identity_failed = payload.get("identity_resolution_failed")
+    if identity_failed is not None and not isinstance(identity_failed, bool):
+        raise PolicyError("failure context identity_resolution_failed must be boolean")
+    if failure_kind == "no-identity" and identity_failed is not True:
+        raise PolicyError("no-identity failure context must set identity_resolution_failed")
+    if failure_kind == "resolver-error" and identity_failed is True:
+        raise PolicyError("resolver-error cannot be marked as missing identity")
     if payload.get("identity_resolution_failed") is True or failure_kind == "no-identity":
         expected_recovery = f"create VERSION-only release PR Covered-Product-Merge-SHA={payload['merge_commit_sha']}"
     elif failure_kind == "resolver-error":
