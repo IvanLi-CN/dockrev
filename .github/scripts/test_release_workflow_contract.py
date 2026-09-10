@@ -58,6 +58,7 @@ assert "--method PATCH" in release and "-F force=false" in release
 assert "/actions/runs/${owner_run}/attempts/${owner_attempt}" in release
 assert "HTTP 404|Not Found|404" in release
 assert release.index("trap release_lock EXIT") > release.index("while true; do")
+assert "git/ref/heads/${lock_ref_name}" in release
 assert "git/refs/heads/${lock_ref_name}" in release
 assert "Release-Latest-Lock-State: released" in release
 assert "tr '[:upper:]' '[:lower:]'" in release
@@ -113,7 +114,7 @@ method = args[args.index("--method") + 1] if "--method" in args else "GET"
 state_path = pathlib.Path(os.environ["LOCK_STATE"])
 commits_path = pathlib.Path(os.environ["LOCK_COMMITS"])
 commits = json.loads(commits_path.read_text(encoding="utf-8")) if commits_path.exists() else {}
-if url.endswith("/git/refs/heads/release-latest-lock") and method == "GET":
+if url.endswith("/git/ref/heads/release-latest-lock") and method == "GET":
     if not state_path.exists():
         print("HTTP 404: Not Found", file=sys.stderr)
         raise SystemExit(1)

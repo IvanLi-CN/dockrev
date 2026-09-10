@@ -538,7 +538,8 @@ jobs:
         run: |
           set -euo pipefail
           lock_ref_name="release-latest-lock"
-          lock_ref="repos/${GITHUB_REPOSITORY}/git/refs/heads/${lock_ref_name}"
+          lock_read_ref="repos/${GITHUB_REPOSITORY}/git/ref/heads/${lock_ref_name}"
+          lock_update_ref="repos/${GITHUB_REPOSITORY}/git/refs/heads/${lock_ref_name}"
           lock_head_sha=""
           release_lock() {
             set +e
@@ -547,11 +548,11 @@ jobs:
             unlock_message="$(printf 'Release latest promotion lock\n\nRelease-Latest-Lock-State: released\nRelease-Latest-Lock-Run: %s\nRelease-Latest-Lock-Attempt: %s\nRelease-Latest-Lock-Merge-SHA: %s' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${MERGE_SHA}")"
             unlock_sha="$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/commits" \
               -f "message=${unlock_message}" -f "tree=${unlock_tree}" -f "parents[]=${lock_head_sha}" --jq .sha)"
-            gh api --method PATCH "${lock_ref}" -f "sha=${unlock_sha}" -F force=false >/dev/null 2>&1
+            gh api --method PATCH "${lock_update_ref}" -f "sha=${unlock_sha}" -F force=false >/dev/null 2>&1
           }
           tree_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${MERGE_SHA}" --jq '.commit.tree.sha')"
           while true; do
-            lock_json="$(gh api "${lock_ref}" 2>/tmp/release-latest-lock-ref-error || true)"
+            lock_json="$(gh api "${lock_read_ref}" 2>/tmp/release-latest-lock-ref-error || true)"
             if [[ -z "${lock_json}" ]]; then
               if rg -q 'HTTP 404|Not Found|404' /tmp/release-latest-lock-ref-error; then
                 initial_message="$(printf 'Release latest promotion lock\n\nRelease-Latest-Lock-State: released')"
@@ -604,7 +605,7 @@ jobs:
             acquire_message="$(printf 'Release latest promotion lock\n\nRelease-Latest-Lock-State: acquired\nRelease-Latest-Lock-Run: %s\nRelease-Latest-Lock-Attempt: %s\nRelease-Latest-Lock-Merge-SHA: %s' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${MERGE_SHA}")"
             acquire_sha="$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/commits" \
               -f "message=${acquire_message}" -f "tree=${current_tree}" -f "parents[]=${current_sha}" --jq .sha)"
-            if gh api --method PATCH "${lock_ref}" -f "sha=${acquire_sha}" -F force=false >/dev/null 2>/tmp/release-latest-lock-update-error; then
+            if gh api --method PATCH "${lock_update_ref}" -f "sha=${acquire_sha}" -F force=false >/dev/null 2>/tmp/release-latest-lock-update-error; then
               lock_head_sha="${acquire_sha}"
               trap release_lock EXIT
               break
