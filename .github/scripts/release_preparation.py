@@ -223,9 +223,27 @@ def covered_product_boundary(api_root: str, token: str, repository: str, merge_s
 
 
 def covered_product_has_existing_identity(
-    api_root: str, token: str, repository: str, version: str
+    api_root: str,
+    token: str,
+    repository: str,
+    covered_merge_sha: str,
+    version: str,
+    *,
+    expected_recovery_identity_sha: str | None = None,
 ) -> bool:
     owner, name = repository_parts(repository)
+    recovery_path = recovery_ref_path(owner, name, covered_merge_sha)
+    try:
+        recovery_ref = api_request(api_root, token, "GET", recovery_path)
+    except PreparationError as error:
+        if " 404:" not in str(error):
+            raise
+    else:
+        recovery_identity_sha = recovery_ref.get("object", {}).get("sha")
+        if not isinstance(recovery_identity_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", recovery_identity_sha):
+            raise PreparationError("existing covered recovery identity ref has an invalid commit SHA")
+        if recovery_identity_sha != expected_recovery_identity_sha:
+            return True
     reservation_path = (
         f"/repos/{owner}/{name}/git/ref/heads/"
         f"{urllib.parse.quote(f'release-reservation/v{version}', safe='')}"
@@ -253,6 +271,67 @@ def covered_product_has_existing_identity(
             raise
         return False
     return True
+
+
+def recovery_ref_path(owner: str, name: str, covered_merge_sha: str) -> str:
+    ref_name = f"release-recovery/{covered_merge_sha}"
+    return f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(ref_name, safe='')}"
+
+
+def reserve_recovery_identity(
+    api_root: str, token: str, repository: str, covered_merge_sha: str, identity_sha: str
+) -> bool:
+    """CAS one immutable recovery identity for each covered product merge."""
+    try:
+        release_policy.validate_sha(covered_merge_sha, "covered_product_merge_sha")
+        release_policy.validate_sha(identity_sha, "version-only recovery identity SHA")
+    except release_policy.PolicyError as error:
+        raise PreparationError(str(error)) from error
+    owner, name = repository_parts(repository)
+    path = recovery_ref_path(owner, name, covered_merge_sha)
+    try:
+        existing = api_request(api_root, token, "GET", path)
+    except PreparationError as error:
+        if " 404:" not in str(error):
+            raise
+        try:
+            api_request(
+                api_root,
+                token,
+                "POST",
+                f"/repos/{owner}/{name}/git/refs",
+                {"ref": f"refs/heads/release-recovery/{covered_merge_sha}", "sha": identity_sha},
+            )
+            return True
+        except PreparationError as create_error:
+            if " 422:" not in str(create_error):
+                raise
+            existing = api_request(api_root, token, "GET", path)
+    if existing.get("object", {}).get("sha") != identity_sha:
+        raise PreparationError("covered product merge already has an immutable recovery identity")
+    return False
+
+
+def delete_recovery_identity_ref(
+    api_root: str, token: str, repository: str, covered_merge_sha: str, expected_identity_sha: str
+) -> None:
+    owner, name = repository_parts(repository)
+    path = recovery_ref_path(owner, name, covered_merge_sha)
+    ref_name = f"release-recovery/{covered_merge_sha}"
+    try:
+        existing = api_request(api_root, token, "GET", path)
+    except PreparationError as error:
+        if " 404:" not in str(error):
+            raise
+        return
+    if existing.get("object", {}).get("sha") != expected_identity_sha:
+        return
+    api_request(
+        api_root,
+        token,
+        "DELETE",
+        f"/repos/{owner}/{name}/git/refs/heads/{urllib.parse.quote(ref_name, safe='')}",
+    )
 
 
 def reserve_tag(
@@ -592,7 +671,14 @@ def create(args: argparse.Namespace) -> int:
         covered_merge_sha = head_trailers["Covered-Product-Merge-SHA"]
         covered_product = covered_product_boundary(args.api_root, args.token, args.repository, covered_merge_sha)
         covered_product_version = current_version(args.api_root, args.token, args.repository, covered_merge_sha)
-        if covered_product_has_existing_identity(args.api_root, args.token, args.repository, covered_product_version):
+        if covered_product_has_existing_identity(
+            args.api_root,
+            args.token,
+            args.repository,
+            covered_merge_sha,
+            covered_product_version,
+            expected_recovery_identity_sha=source_sha,
+        ):
             raise PreparationError("covered product merge already has immutable release identity")
         try:
             release_policy.validate_version_only(
@@ -623,6 +709,7 @@ def create(args: argparse.Namespace) -> int:
             require_unchanged_pr=True,
         )
         reservation_sha = None
+        recovery_identity_reserved = False
         try:
             reservation_sha = reserve_tag(
                 args.api_root,
@@ -635,6 +722,9 @@ def create(args: argparse.Namespace) -> int:
                 release_intent=head_trailers["Release-Intent"],
                 release_mode="version-only-release-pr",
             )
+            recovery_identity_reserved = reserve_recovery_identity(
+                args.api_root, args.token, args.repository, covered_merge_sha, source_sha
+            )
             source_ci_ready(
                 args.api_root,
                 args.token,
@@ -646,6 +736,10 @@ def create(args: argparse.Namespace) -> int:
                 require_unchanged_pr=True,
             )
         except PreparationError:
+            if recovery_identity_reserved:
+                delete_recovery_identity_ref(
+                    args.api_root, args.token, args.repository, covered_merge_sha, source_sha
+                )
             if reservation_sha:
                 delete_reservation_ref(args.api_root, args.token, args.repository, version, reservation_sha)
             raise

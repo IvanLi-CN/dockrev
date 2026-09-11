@@ -43,7 +43,9 @@ cannot select or replace it.
 Every downstream boundary validates the frozen identity pair: `Release
 completion`, merged identity resolution, tag ownership, failure context and
 notifier transport, and same-SHA recovery. Recovery reuses the immutable
-version/channel pair and cannot promote an RC or rebuild its preparation.
+version/channel pair and cannot promote an RC or rebuild its preparation. A
+covered-merge-keyed immutable recovery index binds that boundary to one
+`VERSION`-only recovery identity, independently of its target version.
 
 ## Consequences
 

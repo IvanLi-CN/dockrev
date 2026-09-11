@@ -150,12 +150,16 @@ original_source_ci_ready = preparation_script.source_ci_ready
 original_current_version = preparation_script.current_version
 original_reserve_tag = preparation_script.reserve_tag
 original_delete_reservation_ref = preparation_script.delete_reservation_ref
+original_reserve_recovery_identity = preparation_script.reserve_recovery_identity
+original_delete_recovery_identity_ref = preparation_script.delete_recovery_identity_ref
 original_create_commit = preparation_script.create_commit
 original_inspect_commit = preparation_script.inspect_commit
 try:
     calls = {"source_ci": 0, "reserve": 0, "create": 0}
     reserved_sources = []
     reservation_kwargs = []
+    recovery_identity_reservations = []
+    recovery_identity_cleanup_calls = []
 
     def fake_pull_request(_api_root, _token, _repository, _number):
         return {
@@ -182,6 +186,10 @@ try:
         reservation_kwargs.append(_kwargs)
         return "f" * 40
 
+    def fake_reserve_recovery_identity(*_args):
+        recovery_identity_reservations.append(_args[-2:])
+        return True
+
     def fake_create_commit(*_args):
         calls["create"] += 1
         return prep_sha
@@ -194,6 +202,8 @@ try:
     preparation_script.source_ci_ready = fake_source_ci
     preparation_script.current_version = fake_current_version
     preparation_script.reserve_tag = fake_reserve
+    preparation_script.reserve_recovery_identity = fake_reserve_recovery_identity
+    preparation_script.delete_recovery_identity_ref = lambda *_args: recovery_identity_cleanup_calls.append(_args)
     preparation_script.create_commit = fake_create_commit
     preparation_script.inspect_commit = fake_inspect
     with tempfile.TemporaryDirectory() as directory:
@@ -294,6 +304,10 @@ try:
                     "head": {"sha": moved_covered_head_sha},
                     "labels": [{"name": "type:none"}, {"name": "channel:stable"}],
                 }]
+            if path.endswith(f"/git/ref/heads/release-recovery%2F{covered_merge_sha}"):
+                if covered_identity_marker:
+                    return {"object": {"sha": "9" * 40}}
+                raise preparation_script.PreparationError("GitHub API failed: 404:")
             if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-beta.1"):
                 if covered_identity_marker:
                     return {"object": {"sha": "a" * 40}}
@@ -336,6 +350,7 @@ try:
             "release_intent": "type:patch channel:rc",
             "release_mode": "version-only-release-pr",
         }
+        assert recovery_identity_reservations[-1] == (covered_merge_sha, prep_sha)
 
         covered_identity_marker = True
         reservations_before = calls["reserve"]
@@ -353,7 +368,10 @@ try:
         original_version_only_source_ci = preparation_script.source_ci_ready
         try:
             def fail_recovery_ci(*_args, **_kwargs):
-                raise preparation_script.PreparationError("recovery CI is not ready")
+                calls["source_ci"] += 1
+                if calls["source_ci"] % 2 == 0:
+                    raise preparation_script.PreparationError("recovery CI is not ready")
+                return "2026-01-01T00:00:00Z"
 
             preparation_script.source_ci_ready = fail_recovery_ci
             reservations_before = calls["reserve"]
@@ -365,7 +383,8 @@ try:
                 exact_version=None,
                 output=Path(directory) / "failed-recovery-ci.json",
             ))
-            assert calls["reserve"] == reservations_before
+            assert calls["reserve"] == reservations_before + 1
+            assert len(recovery_identity_cleanup_calls) == 1
         finally:
             preparation_script.source_ci_ready = original_version_only_source_ci
 finally:
@@ -375,6 +394,8 @@ finally:
     preparation_script.current_version = original_current_version
     preparation_script.reserve_tag = original_reserve_tag
     preparation_script.delete_reservation_ref = original_delete_reservation_ref
+    preparation_script.reserve_recovery_identity = original_reserve_recovery_identity
+    preparation_script.delete_recovery_identity_ref = original_delete_recovery_identity_ref
     preparation_script.create_commit = original_create_commit
     preparation_script.inspect_commit = original_inspect_commit
 
@@ -569,6 +590,7 @@ try:
         "Release-Intent: type:patch channel:rc\n"
         "Release-Mode: version-only-release-pr"
     )
+    recovery_identity_matches = True
 
     def fake_version_only_completion_api(_api_root, _token, path):
         if path.endswith("/pulls/42"):
@@ -607,6 +629,8 @@ try:
             version = b"0.1.1-beta.1" if covered_merge_sha in path else b"0.1.1-rc.1"
             encoded = __import__("base64").b64encode(version).decode()
             return {"encoding": "base64", "content": encoded}
+        if path.endswith(f"/git/ref/heads/release-recovery%2F{covered_merge_sha}"):
+            return {"object": {"sha": prep_sha if recovery_identity_matches else "9" * 40}}
         if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-beta.1"):
             raise completion.CompletionError("GitHub API failed: 404")
         if path.endswith("/git/ref/tags/v0.1.1-beta.1"):
@@ -631,6 +655,9 @@ try:
     completion.api_json = fake_version_only_completion_api
     version_only_loaded = completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
     assert completion.validate_completion(version_only_loaded)["mode"] == "version-only-release-pr"
+    recovery_identity_matches = False
+    expect_error(completion.load_github_completion, "https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
+    recovery_identity_matches = True
     version_only_completion_message += f"\nSource-SHA: {completion_moved_covered_head_sha}"
     expect_error(completion.load_github_completion, "https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
 finally:
@@ -705,6 +732,48 @@ try:
     assert reservation_delete_calls == [
         ("DELETE", "/repos/IvanLi-CN/dockrev/git/refs/heads/release-reservation%2Fv0.1.1")
     ]
+finally:
+    preparation_script.api_request = original_preparation_api_request
+
+recovery_ref_calls = []
+original_preparation_api_request = preparation_script.api_request
+try:
+    recovery_ref_state = {"sha": None}
+
+    def fake_recovery_ref_api(_api_root, _token, method, path, payload=None):
+        recovery_ref_calls.append((method, path, payload))
+        if path.endswith("/git/ref/heads/release-recovery%2F" + "c" * 40):
+            if recovery_ref_state["sha"] is None:
+                raise preparation_script.PreparationError("GitHub API GET ref failed: 404: missing")
+            return {"object": {"sha": recovery_ref_state["sha"]}}
+        if method == "POST" and path.endswith("/git/refs"):
+            assert payload == {"ref": "refs/heads/release-recovery/" + "c" * 40, "sha": prep_sha}
+            recovery_ref_state["sha"] = prep_sha
+            return {"ref": payload["ref"], "object": {"sha": prep_sha}}
+        if method == "DELETE" and path.endswith("/git/refs/heads/release-recovery%2F" + "c" * 40):
+            recovery_ref_state["sha"] = None
+            return {}
+        raise AssertionError((method, path, payload))
+
+    preparation_script.api_request = fake_recovery_ref_api
+    assert preparation_script.reserve_recovery_identity(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", "c" * 40, prep_sha
+    ) is True
+    assert preparation_script.reserve_recovery_identity(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", "c" * 40, prep_sha
+    ) is False
+    expect_error(
+        preparation_script.reserve_recovery_identity,
+        "https://api.github.test",
+        "token",
+        "IvanLi-CN/dockrev",
+        "c" * 40,
+        "d" * 40,
+    )
+    preparation_script.delete_recovery_identity_ref(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", "c" * 40, prep_sha
+    )
+    assert recovery_ref_state["sha"] is None
 finally:
     preparation_script.api_request = original_preparation_api_request
 
@@ -932,6 +1001,8 @@ version_only_moved_head_sha = "2" * 40
 version_only_reservation_sha = "3" * 40
 original_identity_api_json = identity.api_json
 try:
+    recovery_identity_matches = True
+
     def fake_version_only_identity_api(_api_root, _token, path):
         if path.endswith(f"/commits/{version_only_merge_sha}/pulls"):
             return [{
@@ -960,6 +1031,8 @@ try:
                     )
                 },
             }
+        if path.endswith(f"/git/ref/heads/release-recovery%2F{version_only_covered_merge_sha}"):
+            return {"object": {"sha": version_only_release_head_sha if recovery_identity_matches else "4" * 40}}
         if path.endswith(f"/commits/{version_only_release_head_sha}"):
             return {
                 "parents": [{"sha": version_only_covered_head_sha}],
@@ -1000,6 +1073,12 @@ try:
     assert resolved_version_only["release_mode"] == "version-only-release-pr"
     assert resolved_version_only["source_sha"] == version_only_covered_merge_sha
     assert resolved_version_only["channel"] == "rc" and resolved_version_only["release_tag"] == "v0.1.1-rc.1"
+    recovery_identity_matches = False
+    expect_error(
+        identity.resolve_github,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
+    )
+    recovery_identity_matches = True
     def fake_version_only_source_sha_api(_api_root, _token, path):
         payload = fake_version_only_identity_api(_api_root, _token, path)
         if path.endswith(f"/commits/{version_only_release_head_sha}"):

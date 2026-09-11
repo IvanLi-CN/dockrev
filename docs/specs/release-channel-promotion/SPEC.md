@@ -51,8 +51,10 @@
 - A `VERSION`-only historical identity recovery MUST preserve its signed
   release intent in an immutable reservation identity record, validate its
   explicit version against the covered merge `VERSION`, and reject covered
-  versions with an existing reservation or tag; it MUST NOT choose an
-  arbitrary successor.
+  versions with an existing reservation or tag. A separate immutable index
+  keyed by the covered merge MUST bind exactly one recovery identity, so
+  distinct successor versions cannot recover the same product merge; it MUST
+  NOT choose an arbitrary successor.
 - Inputs: immutable merged provenance and its version/channel pair.
 - Outputs: channel-consistent publication or recovery behavior.
 - covers: `G2`, `G3`

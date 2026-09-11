@@ -138,6 +138,24 @@ def version_only_reservation(
         raise IdentityError(str(error)) from error
 
 
+def recovery_identity_is_owned(
+    api_root: str, token: str, repository: str, covered_merge_sha: str, identity_sha: str
+) -> bool:
+    owner, name = repository_parts(repository)
+    ref_name = f"release-recovery/{covered_merge_sha}"
+    try:
+        ref = api_json(
+            api_root,
+            token,
+            f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(ref_name, safe='')}",
+        )
+    except IdentityError as error:
+        if "GitHub API failed: 404" in str(error):
+            return False
+        raise
+    return ref.get("object", {}).get("sha") == identity_sha
+
+
 def resolve_version_only_reservation(
     api_root: str,
     token: str,
@@ -164,6 +182,8 @@ def resolve_version_only_reservation(
         raise IdentityError("reserved recovery identity VERSION does not match merged VERSION")
     if trailers.get("Release-Intent") != release_intent:
         raise IdentityError("reserved recovery identity intent does not match the reservation")
+    if not recovery_identity_is_owned(api_root, token, repository, covered_merge_sha, identity_sha):
+        raise IdentityError("version-only reservation does not own the covered recovery identity")
     intent = intent_from_trailer(release_intent)
     covered_pr = covered_product_boundary(api_root, token, repository, covered_merge_sha)
     changed_files = sorted(

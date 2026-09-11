@@ -86,9 +86,28 @@ def covered_product_boundary(api_root: str, token: str, repository: str, covered
 
 
 def covered_product_has_existing_identity(
-    api_root: str, token: str, repository: str, version: str
+    api_root: str,
+    token: str,
+    repository: str,
+    covered_merge_sha: str,
+    version: str,
+    *,
+    expected_recovery_identity_sha: str | None = None,
 ) -> bool:
     owner, name = repository.split("/", 1)
+    recovery_ref_name = f"release-recovery/{covered_merge_sha}"
+    recovery_path = f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(recovery_ref_name, safe='')}"
+    try:
+        recovery_ref = api_json(api_root, token, recovery_path)
+    except CompletionError as error:
+        if "GitHub API failed: 404" not in str(error):
+            raise
+    else:
+        recovery_identity_sha = recovery_ref.get("object", {}).get("sha")
+        if not isinstance(recovery_identity_sha, str):
+            raise CompletionError("existing covered recovery identity ref has no commit SHA")
+        if recovery_identity_sha != expected_recovery_identity_sha:
+            return True
     reservation_path = (
         f"/repos/{owner}/{name}/git/ref/heads/"
         f"{urllib.parse.quote(f'release-reservation/v{version}', safe='')}"
@@ -116,6 +135,24 @@ def covered_product_has_existing_identity(
             raise
         return False
     return True
+
+
+def recovery_identity_is_owned(
+    api_root: str, token: str, repository: str, covered_merge_sha: str, identity_sha: str
+) -> bool:
+    owner, name = repository.split("/", 1)
+    ref_name = f"release-recovery/{covered_merge_sha}"
+    try:
+        ref = api_json(
+            api_root,
+            token,
+            f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(ref_name, safe='')}",
+        )
+    except CompletionError as error:
+        if "GitHub API failed: 404" in str(error):
+            return False
+        raise
+    return ref.get("object", {}).get("sha") == identity_sha
 
 
 def intent_from_trailer(value: str) -> dict[str, Any]:
@@ -421,7 +458,14 @@ def load_github_completion(
         covered_pr = covered_product_boundary(api_root, token, repository, covered_merge_sha)
         source_sha = covered_merge_sha
         covered_product_version = version_at_commit(api_root, token, repository, covered_merge_sha)
-        if covered_product_has_existing_identity(api_root, token, repository, covered_product_version):
+        if covered_product_has_existing_identity(
+            api_root,
+            token,
+            repository,
+            covered_merge_sha,
+            covered_product_version,
+            expected_recovery_identity_sha=head_sha,
+        ):
             raise CompletionError("covered product merge already has immutable release identity")
         provenance = {
             "covered_product_merge_sha": covered_merge_sha,
@@ -486,6 +530,10 @@ def load_github_completion(
         tag_reserved = tag_reserved and version_reservation_is_owned(
             api_root, token, repository, version_for_tag, pr_number, source_sha, **reservation_kwargs
         )
+        if mode == "version-only-release-pr":
+            tag_reserved = tag_reserved and recovery_identity_is_owned(
+                api_root, token, repository, provenance["covered_product_merge_sha"], head_sha
+            )
     tag_reserved = tag_reserved and tag_is_reserved_by_other_pr(
         api_root, token, repository, version_for_tag, pr_number
     )
