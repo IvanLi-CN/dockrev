@@ -49,8 +49,10 @@
   identity resolution, tag ownership, failure context/transport, and same-SHA
   recovery. RC MUST remain a prerelease and MUST NOT advance stable `latest`.
 - A `VERSION`-only historical identity recovery MUST preserve its signed
-  release intent and validate its explicit version against the immutable
-  covered merge `VERSION`; it MUST NOT choose an arbitrary successor.
+  release intent in an immutable reservation identity record, validate its
+  explicit version against the covered merge `VERSION`, and reject covered
+  versions with an existing reservation or tag; it MUST NOT choose an
+  arbitrary successor.
 - Inputs: immutable merged provenance and its version/channel pair.
 - Outputs: channel-consistent publication or recovery behavior.
 - covers: `G2`, `G3`

@@ -103,6 +103,104 @@ def covered_product_boundary(api_root: str, token: str, repository: str, covered
     return pr
 
 
+def version_only_reservation(
+    api_root: str, token: str, repository: str, version: str, pr_number: int
+) -> dict[str, str] | None:
+    owner, name = repository_parts(repository)
+    ref_name = f"release-reservation/v{version}"
+    try:
+        ref = api_json(
+            api_root,
+            token,
+            f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(ref_name, safe='')}",
+        )
+    except IdentityError as error:
+        if "GitHub API failed: 404" in str(error):
+            return None
+        raise
+    reservation_sha = ref.get("object", {}).get("sha")
+    try:
+        release_policy.validate_sha(str(reservation_sha), "version-only reservation commit SHA")
+    except release_policy.PolicyError as error:
+        raise IdentityError(str(error)) from error
+    reservation = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{reservation_sha}")
+    raw = release_policy.parse_reservation_trailers(str(reservation.get("commit", {}).get("message", "")))
+    if raw.get("Release-Reservation-PR") != str(pr_number):
+        return None
+    if raw.get("Release-Reservation-Mode") != "version-only-release-pr":
+        return None
+    source_sha = raw.get("Release-Reservation-Source-SHA", "")
+    try:
+        return release_policy.validate_version_only_reservation(
+            reservation, version=version, pr_number=pr_number, source_sha=source_sha
+        )
+    except release_policy.PolicyError as error:
+        raise IdentityError(str(error)) from error
+
+
+def resolve_version_only_reservation(
+    api_root: str,
+    token: str,
+    repository: str,
+    merge_sha: str,
+    pr: dict[str, Any],
+    version: str,
+    reservation: dict[str, str],
+    run_url: str,
+) -> dict[str, Any]:
+    owner, name = repository_parts(repository)
+    identity_sha = reservation["Release-Reservation-Identity-SHA"]
+    release_intent = reservation["Release-Reservation-Intent"]
+    covered_merge_sha = reservation["Release-Reservation-Source-SHA"]
+    identity_commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{identity_sha}")
+    trailers = release_policy.parse_trailers(identity_commit.get("commit", {}).get("message", ""))
+    if trailers.get("Release-Mode") != "version-only-release-pr":
+        raise IdentityError("reserved recovery identity has an invalid release mode")
+    if trailers.get("Source-SHA"):
+        raise IdentityError("version-only release identity cannot carry Source-SHA")
+    if trailers.get("Covered-Product-Merge-SHA") != covered_merge_sha:
+        raise IdentityError("reserved recovery identity covers a different product merge")
+    if trailers.get("Product-Version") != version:
+        raise IdentityError("reserved recovery identity VERSION does not match merged VERSION")
+    if trailers.get("Release-Intent") != release_intent:
+        raise IdentityError("reserved recovery identity intent does not match the reservation")
+    intent = intent_from_trailer(release_intent)
+    covered_pr = covered_product_boundary(api_root, token, repository, covered_merge_sha)
+    changed_files = sorted(
+        {entry.get("filename") for entry in identity_commit.get("files", []) if entry.get("filename")}
+    )
+    provenance = {
+        "covered_product_merge_sha": covered_merge_sha,
+        "covered_product_pr_number": covered_pr.get("number", 0),
+        "covered_product_version": version_at_commit(api_root, token, repository, covered_merge_sha),
+        "covered_product_merged": True,
+        "product_version": version,
+        "release_intent": release_intent,
+        "release_mode": "version-only-release-pr",
+        "branch_head_sha": identity_sha,
+        "verified": identity_commit.get("commit", {}).get("verification", {}).get("verified") is True,
+    }
+    try:
+        release_policy.validate_version_only(changed_files, provenance, head_sha=identity_sha)
+    except release_policy.PolicyError as error:
+        raise IdentityError(str(error)) from error
+    return resolve_from_payload(
+        {
+            "pull_request": pr.get("number"),
+            "source_sha": covered_merge_sha,
+            "merge_commit_sha": merge_sha,
+            "preparation_commit_sha": None,
+            "covered_product_merge_sha": covered_merge_sha,
+            "release_mode": "version-only-release-pr",
+            "version": version,
+            "version_file": version,
+            "intent": intent,
+            "artifact_names": [],
+            "run_url": run_url,
+        }
+    )
+
+
 def pull_request_changed_files(
     api_root: str, token: str, repository: str, pr_number: int
 ) -> list[str]:
@@ -163,6 +261,12 @@ def resolve_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
 def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, run_url: str = "") -> dict[str, Any]:
     release_policy.validate_sha(merge_sha, "merge_commit_sha")
     pr, _ = merged_pr(api_root, token, repository, merge_sha)
+    merge_version = version_at_commit(api_root, token, repository, merge_sha)
+    reservation = version_only_reservation(api_root, token, repository, merge_version, pr.get("number", 0))
+    if reservation is not None:
+        return resolve_version_only_reservation(
+            api_root, token, repository, merge_sha, pr, merge_version, reservation, run_url
+        )
     labels = [item.get("name") for item in pr.get("labels", []) if item.get("name")]
     try:
         pr_intent = release_policy.parse_labels(labels)
@@ -220,7 +324,7 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
         or intent["channel_label"] != pr_intent["channel_label"]
     ):
         raise IdentityError("merged PR labels do not match frozen release intent")
-    version_file = version_at_commit(api_root, token, repository, merge_sha)
+    version_file = merge_version
     if version_file != version:
         raise IdentityError("merged commit VERSION does not match Product-Version provenance")
     if mode == "normal-preparation":
@@ -247,29 +351,10 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
         except release_policy.PolicyError as error:
             raise IdentityError(str(error)) from error
     else:
-        if trailers.get("Source-SHA"):
-            raise IdentityError("version-only release identity cannot carry Source-SHA")
-        covered_merge_sha = trailers.get("Covered-Product-Merge-SHA", "")
-        covered_pr = covered_product_boundary(api_root, token, repository, covered_merge_sha)
-        changed_files = pull_request_changed_files(api_root, token, repository, pr.get("number", 0))
-        provenance = {
-            "covered_product_merge_sha": covered_merge_sha,
-            "covered_product_pr_number": covered_pr.get("number", 0),
-            "covered_product_version": version_at_commit(api_root, token, repository, covered_merge_sha),
-            "covered_product_merged": True,
-            "product_version": version,
-            "release_intent": release_intent,
-            "release_mode": mode,
-            "branch_head_sha": head_sha,
-            "verified": verified,
-        }
-        try:
-            release_policy.validate_version_only(changed_files, provenance, head_sha=head_sha)
-        except release_policy.PolicyError as error:
-            raise IdentityError(str(error)) from error
+        raise IdentityError("version-only merged identity is missing an immutable reservation record")
     payload = {
         "pull_request": pr.get("number"),
-        "source_sha": covered_merge_sha if mode == "version-only-release-pr" else trailers.get("Source-SHA", head_sha),
+        "source_sha": trailers.get("Source-SHA", head_sha),
         "merge_commit_sha": merge_sha,
         "preparation_commit_sha": head_sha if mode == "normal-preparation" else None,
         "covered_product_merge_sha": trailers.get("Covered-Product-Merge-SHA"),

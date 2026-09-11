@@ -123,6 +123,9 @@ for helper in (
     assert "covered_product_head_sha" not in helper_text
     assert "covered_product_release_intent" not in helper_text
     assert "covered_product_has_identity" not in helper_text
+assert "Release-Reservation-Identity-SHA" in text(".github/scripts/release_policy.py")
+assert "validate_version_only_reservation" in text(".github/scripts/release_completion.py")
+assert "version_only_reservation" in text(".github/scripts/release_identity.py")
 assert "validate_source_boundary" in text(".github/scripts/release_policy.py")
 assert "pull_request_changed_files" in text(".github/scripts/release_completion.py")
 assert "tag_is_reserved_by_other_pr" in text(".github/scripts/release_completion.py")

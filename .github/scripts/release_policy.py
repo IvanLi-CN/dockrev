@@ -194,7 +194,14 @@ def parse_trailers(message: str) -> dict[str, str]:
 
 def parse_reservation_trailers(message: str) -> dict[str, str]:
     trailers: dict[str, str] = {}
-    keys = {"Release-Reservation-Version", "Release-Reservation-PR", "Release-Reservation-Source-SHA"}
+    keys = {
+        "Release-Reservation-Version",
+        "Release-Reservation-PR",
+        "Release-Reservation-Source-SHA",
+        "Release-Reservation-Identity-SHA",
+        "Release-Reservation-Intent",
+        "Release-Reservation-Mode",
+    }
     for line in message.splitlines():
         if ":" not in line:
             continue
@@ -222,6 +229,25 @@ def validate_reservation(
     if parents != [source_sha]:
         raise PolicyError("release reservation must have the source SHA as its only parent")
     return payload
+
+
+def validate_version_only_reservation(
+    payload: dict[str, Any], *, version: str, pr_number: int, source_sha: str
+) -> dict[str, str]:
+    validate_reservation(payload, version=version, pr_number=pr_number, source_sha=source_sha)
+    message = payload.get("message") or payload.get("commit", {}).get("message", "")
+    trailers = parse_reservation_trailers(str(message))
+    identity_sha = trailers.get("Release-Reservation-Identity-SHA", "")
+    validate_sha(identity_sha, "version-only reservation identity SHA")
+    if trailers.get("Release-Reservation-Mode") != "version-only-release-pr":
+        raise PolicyError("release reservation mode is not version-only-release-pr")
+    try:
+        intent = parse_labels(trailers.get("Release-Reservation-Intent", "").split())
+    except PolicyError as error:
+        raise PolicyError("version-only reservation intent is invalid") from error
+    if not intent["release_enabled"]:
+        raise PolicyError("version-only reservation intent must be release-enabled")
+    return trailers
 
 
 def validate_preparation(payload: dict[str, Any], *, source_sha: str | None = None) -> dict[str, Any]:

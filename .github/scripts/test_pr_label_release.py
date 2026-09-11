@@ -155,6 +155,7 @@ original_inspect_commit = preparation_script.inspect_commit
 try:
     calls = {"source_ci": 0, "reserve": 0, "create": 0}
     reserved_sources = []
+    reservation_kwargs = []
 
     def fake_pull_request(_api_root, _token, _repository, _number):
         return {
@@ -175,9 +176,10 @@ try:
     def fake_current_version(*_args):
         return "0.1.0"
 
-    def fake_reserve(*_args):
+    def fake_reserve(*_args, **_kwargs):
         calls["reserve"] += 1
         reserved_sources.append(_args[-1])
+        reservation_kwargs.append(_kwargs)
         return "f" * 40
 
     def fake_create_commit(*_args):
@@ -258,9 +260,16 @@ try:
             "head": {"sha": prep_sha, "ref": "recovery/version-only", "repo": {"full_name": "IvanLi-CN/dockrev"}},
             "labels": [{"name": "type:patch"}, {"name": "channel:rc"}],
         }
-        preparation_script.current_version = lambda *_args: "0.1.1-beta.1"
+        preparation_script.source_ci_ready = fake_source_ci
         covered_merge_sha = "c" * 40
         moved_covered_head_sha = "d" * 40
+        covered_identity_marker = False
+
+        def immutable_covered_version(*_args):
+            assert _args[-1] == covered_merge_sha
+            return "0.1.1-beta.1"
+
+        preparation_script.current_version = immutable_covered_version
         def fake_version_only_api(_api_root, _token, _method, path, _payload=None):
             if path.endswith(f"/commits/{prep_sha}"):
                 return {
@@ -285,6 +294,24 @@ try:
                     "head": {"sha": moved_covered_head_sha},
                     "labels": [{"name": "type:none"}, {"name": "channel:stable"}],
                 }]
+            if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-beta.1"):
+                if covered_identity_marker:
+                    return {"object": {"sha": "a" * 40}}
+                raise preparation_script.PreparationError("GitHub API failed: 404:")
+            if path.endswith("/commits/" + "a" * 40):
+                return {
+                    "parents": [{"sha": covered_merge_sha}],
+                    "commit": {
+                        "message": (
+                            "Reserve release version v0.1.1-beta.1\n\n"
+                            "Release-Reservation-Version: 0.1.1-beta.1\n"
+                            "Release-Reservation-PR: 41\n"
+                            f"Release-Reservation-Source-SHA: {covered_merge_sha}"
+                        )
+                    },
+                }
+            if path.endswith("/git/ref/tags/v0.1.1-beta.1"):
+                raise preparation_script.PreparationError("GitHub API failed: 404:")
             if path.endswith("/pulls/42/files?per_page=100&page=1"):
                 return [{"filename": "VERSION"}]
             raise AssertionError(path)
@@ -304,6 +331,43 @@ try:
         assert result["skipped"] == "already-version-only"
         assert calls["reserve"] == 1
         assert reserved_sources[-1] == covered_merge_sha
+        assert reservation_kwargs[-1] == {
+            "identity_sha": prep_sha,
+            "release_intent": "type:patch channel:rc",
+            "release_mode": "version-only-release-pr",
+        }
+
+        covered_identity_marker = True
+        reservations_before = calls["reserve"]
+        expect_error(preparation_script.create, Namespace(
+            api_root="https://api.github.test",
+            token="token",
+            repository="IvanLi-CN/dockrev",
+            pr_number=42,
+            exact_version=None,
+            output=Path(directory) / "existing-identity.json",
+        ))
+        assert calls["reserve"] == reservations_before
+        covered_identity_marker = False
+
+        original_version_only_source_ci = preparation_script.source_ci_ready
+        try:
+            def fail_recovery_ci(*_args, **_kwargs):
+                raise preparation_script.PreparationError("recovery CI is not ready")
+
+            preparation_script.source_ci_ready = fail_recovery_ci
+            reservations_before = calls["reserve"]
+            expect_error(preparation_script.create, Namespace(
+                api_root="https://api.github.test",
+                token="token",
+                repository="IvanLi-CN/dockrev",
+                pr_number=42,
+                exact_version=None,
+                output=Path(directory) / "failed-recovery-ci.json",
+            ))
+            assert calls["reserve"] == reservations_before
+        finally:
+            preparation_script.source_ci_ready = original_version_only_source_ci
 finally:
     preparation_script.pull_request = original_pull_request
     preparation_script.api_request = original_preparation_api_request
@@ -543,6 +607,10 @@ try:
             version = b"0.1.1-beta.1" if covered_merge_sha in path else b"0.1.1-rc.1"
             encoded = __import__("base64").b64encode(version).decode()
             return {"encoding": "base64", "content": encoded}
+        if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-beta.1"):
+            raise completion.CompletionError("GitHub API failed: 404")
+        if path.endswith("/git/ref/tags/v0.1.1-beta.1"):
+            raise completion.CompletionError("GitHub API failed: 404")
         if "/actions/workflows/ci-pr.yml/runs?per_page=100&page=" in path:
             return {"workflow_runs": [{"head_sha": prep_sha, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 42}]}]}
         if "/actions/workflows/label-gate.yml/runs?per_page=100&page=" in path:
@@ -554,7 +622,7 @@ try:
         if path.endswith("/commits/" + "f" * 40):
             return {
                 "parents": [{"sha": covered_merge_sha}],
-                "commit": {"message": "Reserve release version v0.1.1-rc.1\n\nRelease-Reservation-Version: 0.1.1-rc.1\nRelease-Reservation-PR: 42\nRelease-Reservation-Source-SHA: " + covered_merge_sha},
+                "commit": {"message": "Reserve release version v0.1.1-rc.1\n\nRelease-Reservation-Version: 0.1.1-rc.1\nRelease-Reservation-PR: 42\nRelease-Reservation-Source-SHA: " + covered_merge_sha + "\nRelease-Reservation-Identity-SHA: " + prep_sha + "\nRelease-Reservation-Intent: type:patch channel:rc\nRelease-Reservation-Mode: version-only-release-pr"},
             }
         if "/pulls?state=" in path:
             return []
@@ -763,6 +831,8 @@ try:
             version = "0.1.0" if source_sha in path else "0.1.1"
             encoded = __import__("base64").b64encode(version.encode()).decode() + "\n"
             return {"encoding": "base64", "content": encoded}
+        if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1"):
+            raise identity.IdentityError("GitHub API failed: 404")
         raise AssertionError(f"unexpected identity API path: {path}")
 
     identity.api_json = fake_identity_api
@@ -803,6 +873,8 @@ try:
             raise identity.IdentityError("GitHub API failed: 404: missing")
         if path.endswith(f"/contents/VERSION?ref={bootstrap_merge_sha}"):
             return {"encoding": "base64", "content": "MC4xLjAK\n"}
+        if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.0"):
+            raise identity.IdentityError("GitHub API failed: 404")
         raise AssertionError(f"unexpected bootstrap identity API path: {path}")
 
     identity.api_json = fake_bootstrap_identity_api
@@ -835,6 +907,10 @@ try:
             }]
         if path.endswith(f"/commits/{no_identity_head_sha}"):
             return {"parents": [], "files": [], "commit": {"message": "Product change"}}
+        if path.endswith(f"/contents/VERSION?ref={no_identity_merge_sha}"):
+            return {"encoding": "base64", "content": "MC4xLjAK\n"}
+        if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.0"):
+            raise identity.IdentityError("GitHub API failed: 404")
         raise AssertionError(f"unexpected no-identity API path: {path}")
 
     identity.api_json = fake_no_identity_api
@@ -852,6 +928,8 @@ version_only_merge_sha = "d" * 40
 version_only_release_head_sha = "e" * 40
 version_only_covered_merge_sha = "f" * 40
 version_only_covered_head_sha = "1" * 40
+version_only_moved_head_sha = "2" * 40
+version_only_reservation_sha = "3" * 40
 original_identity_api_json = identity.api_json
 try:
     def fake_version_only_identity_api(_api_root, _token, path):
@@ -862,9 +940,26 @@ try:
                 "merged_at": "2026-01-01T00:00:00Z",
                 "merge_commit_sha": version_only_merge_sha,
                 "base": {"ref": "main"},
-                "head": {"sha": version_only_release_head_sha},
+                "head": {"sha": version_only_moved_head_sha},
                 "labels": [{"name": "type:patch"}, {"name": "channel:rc"}],
             }]
+        if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-rc.1"):
+            return {"object": {"sha": version_only_reservation_sha}}
+        if path.endswith(f"/commits/{version_only_reservation_sha}"):
+            return {
+                "parents": [{"sha": version_only_covered_merge_sha}],
+                "commit": {
+                    "message": (
+                        "Reserve release version v0.1.1-rc.1\n\n"
+                        "Release-Reservation-Version: 0.1.1-rc.1\n"
+                        "Release-Reservation-PR: 43\n"
+                        f"Release-Reservation-Source-SHA: {version_only_covered_merge_sha}\n"
+                        f"Release-Reservation-Identity-SHA: {version_only_release_head_sha}\n"
+                        "Release-Reservation-Intent: type:patch channel:rc\n"
+                        "Release-Reservation-Mode: version-only-release-pr"
+                    )
+                },
+            }
         if path.endswith(f"/commits/{version_only_release_head_sha}"):
             return {
                 "parents": [{"sha": version_only_covered_head_sha}],

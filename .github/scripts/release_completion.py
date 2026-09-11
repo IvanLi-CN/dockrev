@@ -85,6 +85,39 @@ def covered_product_boundary(api_root: str, token: str, repository: str, covered
     return pr
 
 
+def covered_product_has_existing_identity(
+    api_root: str, token: str, repository: str, version: str
+) -> bool:
+    owner, name = repository.split("/", 1)
+    reservation_path = (
+        f"/repos/{owner}/{name}/git/ref/heads/"
+        f"{urllib.parse.quote(f'release-reservation/v{version}', safe='')}"
+    )
+    try:
+        reservation_ref = api_json(api_root, token, reservation_path)
+    except CompletionError as error:
+        if "GitHub API failed: 404" not in str(error):
+            raise
+    else:
+        reservation_sha = reservation_ref.get("object", {}).get("sha")
+        if not isinstance(reservation_sha, str):
+            raise CompletionError("existing release reservation ref has no commit SHA")
+        reservation = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{reservation_sha}")
+        trailers = release_policy.parse_reservation_trailers(
+            str(reservation.get("commit", {}).get("message", ""))
+        )
+        if trailers.get("Release-Reservation-Version") != version:
+            raise CompletionError("existing release reservation version does not match covered VERSION")
+        return True
+    try:
+        api_json(api_root, token, f"/repos/{owner}/{name}/git/ref/tags/v{version}")
+    except CompletionError as error:
+        if "GitHub API failed: 404" not in str(error):
+            raise
+        return False
+    return True
+
+
 def intent_from_trailer(value: str) -> dict[str, Any]:
     labels = value.split()
     if len(labels) != 2:
@@ -271,7 +304,15 @@ def tag_is_available(api_root: str, token: str, repository: str, version: str) -
 
 
 def version_reservation_is_owned(
-    api_root: str, token: str, repository: str, version: str, pr_number: int, source_sha: str
+    api_root: str,
+    token: str,
+    repository: str,
+    version: str,
+    pr_number: int,
+    source_sha: str,
+    *,
+    identity_sha: str | None = None,
+    release_intent: str | None = None,
 ) -> bool:
     owner, name = repository.split("/", 1)
     ref_name = f"release-reservation/v{version}"
@@ -286,9 +327,20 @@ def version_reservation_is_owned(
         return False
     try:
         reservation = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{reservation_sha}")
-        release_policy.validate_reservation(
-            reservation, version=version, pr_number=pr_number, source_sha=source_sha
-        )
+        if identity_sha is None and release_intent is None:
+            release_policy.validate_reservation(
+                reservation, version=version, pr_number=pr_number, source_sha=source_sha
+            )
+        elif identity_sha is not None and release_intent is not None:
+            trailers = release_policy.validate_version_only_reservation(
+                reservation, version=version, pr_number=pr_number, source_sha=source_sha
+            )
+            if trailers.get("Release-Reservation-Identity-SHA") != identity_sha:
+                return False
+            if trailers.get("Release-Reservation-Intent") != release_intent:
+                return False
+        else:
+            return False
     except (CompletionError, release_policy.PolicyError):
         return False
     return True
@@ -368,10 +420,13 @@ def load_github_completion(
         covered_merge_sha = trailers.get("Covered-Product-Merge-SHA", "")
         covered_pr = covered_product_boundary(api_root, token, repository, covered_merge_sha)
         source_sha = covered_merge_sha
+        covered_product_version = version_at_commit(api_root, token, repository, covered_merge_sha)
+        if covered_product_has_existing_identity(api_root, token, repository, covered_product_version):
+            raise CompletionError("covered product merge already has immutable release identity")
         provenance = {
             "covered_product_merge_sha": covered_merge_sha,
             "covered_product_pr_number": covered_pr.get("number", 0),
-            "covered_product_version": version_at_commit(api_root, token, repository, covered_merge_sha),
+            "covered_product_version": covered_product_version,
             "covered_product_merged": True,
             "product_version": trailers.get("Product-Version", ""),
             "release_intent": trailers.get("Release-Intent", ""),
@@ -420,8 +475,16 @@ def load_github_completion(
         raise CompletionError("PR head has no accepted release provenance")
     tag_reserved = tag_is_available(api_root, token, repository, version_for_tag)
     if mode in {"normal-preparation", "version-only-release-pr"}:
+        reservation_kwargs = (
+            {
+                "identity_sha": head_sha,
+                "release_intent": provenance["release_intent"],
+            }
+            if mode == "version-only-release-pr"
+            else {}
+        )
         tag_reserved = tag_reserved and version_reservation_is_owned(
-            api_root, token, repository, version_for_tag, pr_number, source_sha
+            api_root, token, repository, version_for_tag, pr_number, source_sha, **reservation_kwargs
         )
     tag_reserved = tag_reserved and tag_is_reserved_by_other_pr(
         api_root, token, repository, version_for_tag, pr_number

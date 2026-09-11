@@ -22,7 +22,7 @@
         "implementation_status": "project-workflow-and-test-adopted",
         "input": "exactly-one-unprepared-product-boundary-on-mainline",
         "output": "new-nonempty-version-only-release-pr",
-        "required_provenance": ["covered-product-merge-sha", "product-version", "frozen-release-intent", "release-mode:version-only-release-pr"],
+        "required_provenance": ["covered-product-merge-sha", "product-version", "frozen-release-intent", "release-mode:version-only-release-pr", "immutable-reservation-identity-sha"],
         "forbidden": ["empty-pull-request", "same-sha-recovery", "historical-backfill", "direct-main-write", "tag-rewrite", "multiple-product-pr-aggregation", "release-queue", "release-train"]
       },
       "same_sha_recovery": {
