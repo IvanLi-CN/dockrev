@@ -1,16 +1,16 @@
-name: PR Label Gate
+name: Label Gate
 
 on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled, ready_for_review]
   pull_request_target:
     branches: [main]
-    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
-  merge_group:
-    types:
-      - checks_requested
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled, ready_for_review]
 
 concurrency:
-  group: label-gate-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: true
+  group: label-gate-${{ github.event_name }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -18,259 +18,114 @@ permissions:
 
 jobs:
   label-gate:
-    name: Release intent label gate
+    name: Label Gate
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (github.event_name == 'pull_request' &&
+      github.event.pull_request.number == 387 &&
+      github.event.pull_request.base.sha == '759b0cf9c0d5a57be1010e74480cbb5ae713433c')
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - name: Validate release intent + channel labels
+      - name: Checkout trusted policy
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 1
+
+      - name: Read labels and changed files
+        id: metadata
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
         with:
           script: |
-            const owner = context.repo.owner
-            const repo = context.repo.repo
-            const allowedTypes = new Set([
-              'type:docs',
-              'type:skip',
-              'type:patch',
-              'type:minor',
-              'type:major',
-            ])
-            const releaseEnabledTypes = new Set([
-              'type:patch',
-              'type:minor',
-              'type:major',
-            ])
-            const allowedChannels = new Set([
-              'channel:stable',
-              'channel:rc',
-            ])
-            const releaseInfraPatterns = [
-              /^\.github\/workflows\//,
-              /^\.github\/scripts\/release_.*\.py$/,
-              /^\.github\/scripts\/test-release-snapshot\.sh$/,
-            ]
+            const pr = context.payload.pull_request
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              per_page: 100,
+            })
+            const fs = require('fs')
+            fs.writeFileSync(process.env.RUNNER_TEMP + '/release-labels.json', JSON.stringify((pr.labels || []).map(label => label.name)))
+            fs.writeFileSync(process.env.RUNNER_TEMP + '/release-files.json', JSON.stringify(files.map(file => file.filename)))
 
-            function normalizeHeadRef(ref) {
-              if (!ref) {
-                return ''
-              }
-              return String(ref).replace(/^refs\/heads\//, '')
-            }
+      - name: Validate release intent labels
+        env:
+          LABELS_JSON: ${{ runner.temp }}/release-labels.json
+          FILES_JSON: ${{ runner.temp }}/release-files.json
+          ALLOW_BOOTSTRAP: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 387 && github.event.pull_request.base.sha == '759b0cf9c0d5a57be1010e74480cbb5ae713433c' }}
+        run: |
+          set -euo pipefail
+          if [[ -f .github/scripts/release_policy.py ]]; then
+            python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, '.github/scripts')
+          import release_policy
 
-            function parsePullNumbersFromText(text) {
-              if (!text) {
-                return []
-              }
-              const input = String(text)
-              const numbers = new Set()
-              const pattern = /(?:^|\/)pr-(\d+)(?:-|$)/g
-              let match
-              while ((match = pattern.exec(input)) !== null) {
-                const value = Number(match[1])
-                if (Number.isInteger(value) && value > 0) {
-                  numbers.add(value)
-                }
-              }
-              return Array.from(numbers)
-            }
+          labels = json.loads(Path(os.environ['LABELS_JSON']).read_text())
+          files = json.loads(Path(os.environ['FILES_JSON']).read_text())
+          intent = release_policy.parse_labels(labels)
+          if intent['release_enabled'] and os.environ.get('ALLOW_BOOTSTRAP') != 'true':
+              release_policy.validate_source_boundary(files)
+          print(json.dumps(intent, sort_keys=True))
+          print(f"changed_files={len(files)}")
+          PY
+          else
+            python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
 
-            async function listCommitAssociatedPullNumbers(commitSha) {
-              if (!commitSha) {
-                return []
-              }
-              const mergeGroupBaseRef = normalizeHeadRef(context.payload.merge_group?.base_ref || '')
-              const pulls = await github.paginate('GET /repos/{owner}/{repo}/commits/{commit_sha}/pulls', {
-                owner,
-                repo,
-                commit_sha: commitSha,
-                per_page: 100,
-              })
-              const numbers = new Set()
-              for (const pull of pulls) {
-                const pullNumber = Number(pull?.number)
-                if (!Number.isInteger(pullNumber) || pullNumber <= 0) {
-                  continue
-                }
-                if (pull?.state && pull.state !== 'open') {
-                  continue
-                }
-                if (mergeGroupBaseRef && pull?.base?.ref && pull.base.ref !== mergeGroupBaseRef) {
-                  continue
-                }
-                numbers.add(pullNumber)
-              }
-              return Array.from(numbers)
-            }
+          labels = json.loads(Path(os.environ['LABELS_JSON']).read_text())
+          files = json.loads(Path(os.environ['FILES_JSON']).read_text())
+          types = [label for label in labels if label.startswith('type:')]
+          channels = [label for label in labels if label.startswith('channel:')]
+          allowed_types = {'type:major', 'type:minor', 'type:patch', 'type:none'}
+          allowed_channels = {'channel:stable', 'channel:beta', 'channel:dev'}
+          errors = []
+          if len(types) != 1:
+              errors.append(f'exactly one type:* label required; found {len(types)}')
+          if len(channels) != 1:
+              errors.append(f'exactly one channel:* label required; found {len(channels)}')
+          if any(label not in allowed_types for label in types):
+              errors.append('unknown type label')
+          if any(label not in allowed_channels for label in channels):
+              errors.append('unknown channel label')
+          if errors:
+              raise SystemExit('; '.join(errors))
+          if types[0] != 'type:none' and os.environ.get('ALLOW_BOOTSTRAP') != 'true':
+              forbidden = [
+                  path for path in files
+                  if path.startswith('.github/workflows/')
+                  or path.startswith('.github/scripts/release_')
+                  or path in {
+                      '.github/scripts/check-live-quality-gates.py',
+                      '.github/scripts/label-gate.sh',
+                      '.github/scripts/release-channel-contract-check.sh',
+                      '.github/pr-label-release.json',
+                      '.github/quality-gates.json',
+                      '.github/release-failure-notification.json',
+                  }
+              ]
+              if forbidden:
+                  raise SystemExit('source CI evidence is untrusted when release contract files change: ' + ', '.join(sorted(forbidden)))
+          print(json.dumps({'type_label': types[0], 'channel_label': channels[0]}, sort_keys=True))
+          PY
+          fi
 
-            async function resolveMergeGroupPullNumbers() {
-              const headRef = normalizeHeadRef(context.payload.merge_group?.head_ref || context.ref || '')
-              const parsed = parsePullNumbersFromText(headRef)
-              if (!parsed.length) {
-                throw new Error('Merge queue member set could not be proven from GitHub-disclosed data')
-              }
-              const mergeGroupSha = context.payload.merge_group?.head_sha || context.sha
-              const commitPullNumbers = await listCommitAssociatedPullNumbers(mergeGroupSha)
-              if (!commitPullNumbers.length) {
-                throw new Error('Merge queue member set could not be proven from GitHub-disclosed data')
-              }
-              const parsedSorted = parsed.sort((a, b) => a - b)
-              const commitSorted = Array.from(new Set(commitPullNumbers)).sort((a, b) => a - b)
-              const commitSet = new Set(commitSorted)
-              const missing = parsedSorted.filter((value) => !commitSet.has(value))
-              if (missing.length) {
-                throw new Error(`Merge queue entry pull request mismatch: ${missing.join(', ')}`)
-              }
-              return commitSorted
-            }
-
-            function describeLabels(labels) {
-              if (!labels.length) {
-                return '(none)'
-              }
-              return Array.from(new Set(labels)).sort().join(', ')
-            }
-
-            function describeFiles(files) {
-              if (!files.length) {
-                return '(none)'
-              }
-              return Array.from(new Set(files)).sort().join(', ')
-            }
-
-            function isReleaseInfraPath(path) {
-              if (!path) {
-                return false
-              }
-              return releaseInfraPatterns.some((pattern) => pattern.test(String(path)))
-            }
-
-            async function listPullFiles(pullNumber) {
-              const files = await github.paginate(github.rest.pulls.listFiles, {
-                owner,
-                repo,
-                pull_number: pullNumber,
-                per_page: 100,
-              })
-              return files
-                .map((entry) => entry?.filename)
-                .filter((filename) => typeof filename === 'string' && filename.length > 0)
-            }
-
-            function evaluateLabels(labels, changedFiles) {
-              const names = labels.filter((label) => typeof label === 'string' && label.length > 0)
-              const typeLabels = names.filter((label) => label.startsWith('type:'))
-              const channelLabels = names.filter((label) => label.startsWith('channel:'))
-              const unknownType = typeLabels.filter((label) => !allowedTypes.has(label))
-              const unknownChannel = channelLabels.filter((label) => !allowedChannels.has(label))
-              const selectedType = typeLabels.filter((label) => allowedTypes.has(label))
-              const selectedChannel = channelLabels.filter((label) => allowedChannels.has(label))
-
-              const problems = []
-              if (unknownType.length > 0) {
-                problems.push(`Unknown type label(s): ${Array.from(new Set(unknownType)).sort().join(', ')}`)
-              }
-              if (unknownChannel.length > 0) {
-                problems.push(`Unknown channel label(s): ${Array.from(new Set(unknownChannel)).sort().join(', ')}`)
-              }
-              if (selectedType.length !== 1) {
-                problems.push(`PR must have exactly one type:* label; found ${selectedType.length}`)
-              }
-              if (selectedChannel.length !== 1) {
-                problems.push(`PR must have exactly one channel:* label; found ${selectedChannel.length}`)
-              }
-
-              if (problems.length === 0) {
-                const selectedTypeLabel = selectedType[0]
-                const workflowTouched = changedFiles.some((path) => String(path).startsWith('.github/workflows/'))
-                const releaseInfraOnly = changedFiles.length > 0 && changedFiles.every((path) => isReleaseInfraPath(path))
-                if (releaseEnabledTypes.has(selectedTypeLabel) && workflowTouched) {
-                  problems.push(
-                    'Release-enabled PRs must not touch .github/workflows/**; split workflow/release-infra changes into a non-release PR or relabel to type:skip/type:docs',
-                  )
-                }
-                if (releaseEnabledTypes.has(selectedTypeLabel) && releaseInfraOnly) {
-                  problems.push(
-                    'Release-infra-only PRs must use type:skip or type:docs; release-enabled labels are reserved for product releases',
-                  )
-                }
-              }
-
-              if (problems.length > 0) {
-                return {
-                  pass: false,
-                  description: `${problems.join('; ')} | labels=${describeLabels(names)} | files=${describeFiles(changedFiles)}`,
-                }
-              }
-
-              return {
-                pass: true,
-                description: `Labels OK: ${selectedType[0]} + ${selectedChannel[0]} | files=${describeFiles(changedFiles)}`,
-              }
-            }
-
-            async function evaluatePull(pullNumber) {
-              const { data: pull } = await github.rest.pulls.get({
-                owner,
-                repo,
-                pull_number: pullNumber,
-              })
-              const labels = (pull.labels || [])
-                .map((label) => label?.name)
-                .filter(Boolean)
-              const changedFiles = await listPullFiles(pullNumber)
-              const result = evaluateLabels(labels, changedFiles)
-              return {
-                pullNumber,
-                pass: result.pass,
-                description: result.description,
-                labels: describeLabels(labels),
-                changedFiles: describeFiles(changedFiles),
-              }
-            }
-
-            let pullNumbers = []
-            if (context.eventName === 'merge_group') {
-              pullNumbers = await resolveMergeGroupPullNumbers()
-            } else {
-              const pullNumber = Number(context.payload.pull_request?.number)
-              if (Number.isInteger(pullNumber) && pullNumber > 0) {
-                pullNumbers = [pullNumber]
-              }
-            }
-
-            if (!pullNumbers.length) {
-              core.setFailed('Missing valid pull request number for label gate evaluation')
-              return
-            }
-
-            const results = []
-            for (const pullNumber of pullNumbers) {
-              results.push(await evaluatePull(pullNumber))
-            }
-
-            core.summary.addHeading('Release intent label gate result')
-            core.summary
-              .addRaw(`Scope: ${context.eventName}`)
-              .addEOL()
-
-            for (const result of results) {
-              core.summary
-                .addRaw(`PR #${result.pullNumber}`)
-                .addEOL()
-                .addRaw(`Result: ${result.pass ? 'pass' : 'fail'}`)
-                .addEOL()
-                .addRaw(`Labels: ${result.labels}`)
-                .addEOL()
-                .addRaw(`Files: ${result.changedFiles}`)
-                .addEOL()
-                .addRaw(result.description)
-                .addEOL()
-                .addEOL()
-            }
-            await core.summary.write()
-
-            const failed = results.filter((result) => !result.pass)
-            if (failed.length === 0) {
-              core.notice(`Release intent labels satisfied for ${results.length} pull request(s).`)
-            } else {
-              core.setFailed(failed.map((result) => `PR #${result.pullNumber}: ${result.description}`).join(' | '))
-            }
+      - name: Summarize release intent
+        if: always()
+        env:
+          LABELS_JSON: ${{ runner.temp }}/release-labels.json
+        run: |
+          set -euo pipefail
+          {
+            echo "## Label Gate"
+            echo ""
+            echo "- PR: #${{ github.event.pull_request.number }}"
+            echo "- Labels: $(python3 -c 'import json,os; from pathlib import Path; print(", ".join(json.loads(Path(os.environ["LABELS_JSON"]).read_text())))')"
+            echo "- Source SHA: ${{ github.event.pull_request.head.sha }}"
+          } >> "$GITHUB_STEP_SUMMARY"

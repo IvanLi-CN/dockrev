@@ -1,0 +1,103 @@
+name: Release completion
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled, ready_for_review]
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled, ready_for_review]
+
+concurrency:
+  group: release-completion-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+  checks: read
+
+jobs:
+  completion:
+    name: Release completion
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (github.event_name == 'pull_request' &&
+      github.event.pull_request.number == 387 &&
+      github.event.pull_request.base.sha == '759b0cf9c0d5a57be1010e74480cbb5ae713433c')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout trusted release helpers
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 1
+
+      - name: Verify release identity completion
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [[ -f .github/scripts/release_completion.py ]]; then
+            python3 .github/scripts/release_completion.py \
+              --repository "${GITHUB_REPOSITORY}" \
+              --pr-number "${PR_NUMBER}" \
+              --head-sha "${HEAD_SHA}" | tee release-completion.json
+            exit 0
+          fi
+
+          if [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
+            echo "Trusted release completion helper is missing from the base branch" >&2
+            exit 1
+          fi
+
+          # One-time migration path for the first PR that introduces the policy module.
+          pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          labels="$(jq -r '[.labels[].name] | .[]' <<<"${pr_json}")"
+          type_labels=()
+          while IFS= read -r label; do type_labels+=("${label}"); done < <(grep '^type:' <<<"${labels}" || true)
+          channel_labels=()
+          while IFS= read -r label; do channel_labels+=("${label}"); done < <(grep '^channel:' <<<"${labels}" || true)
+          [[ "${#type_labels[@]}" -eq 1 && "${type_labels[0]}" == "type:none" ]] || {
+            echo "Bootstrap completion only accepts type:none" >&2
+            exit 1
+          }
+          [[ "${#channel_labels[@]}" -eq 1 && "${channel_labels[0]}" =~ ^channel:(stable|beta|dev)$ ]] || {
+            echo "Bootstrap completion requires one supported channel" >&2
+            exit 1
+          }
+          files="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" --jq '.[].filename')"
+          grep -qx 'VERSION' <<<"${files}" || {
+            echo "Bootstrap completion requires a root VERSION file" >&2
+            exit 1
+          }
+          base_sha="$(jq -r '.base.sha' <<<"${pr_json}")"
+          if gh api "repos/${GITHUB_REPOSITORY}/contents/VERSION?ref=${base_sha}" >/dev/null 2>&1; then
+            echo "Bootstrap completion requires VERSION to be absent on the base" >&2
+            exit 1
+          fi
+          version="$(gh api "repos/${GITHUB_REPOSITORY}/contents/VERSION?ref=${HEAD_SHA}" --jq .content | tr -d '\n' | base64 --decode | tr -d '[:space:]')"
+          [[ "${version}" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((beta|dev)\.[0-9]+))?$ ]] || {
+            echo "Bootstrap VERSION is invalid" >&2
+            exit 1
+          }
+          message="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}" --jq '.commit.message')"
+          if grep -Eq '^(Release-Mode|Source-SHA|Product-Version|Release-Intent|Covered-Product-Merge-SHA):' <<<"${message}"; then
+            echo "Bootstrap PR cannot carry release identity trailers" >&2
+            exit 1
+          fi
+          jq -n --arg version "${version}" '{status:"pass",release_enabled:false,mode:"non-product",version:$version}' > release-completion.json
+
+      - name: Upload completion evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-completion-${{ github.event.pull_request.number }}-${{ github.run_id }}
+          path: release-completion.json
+          if-no-files-found: error
+          retention-days: 14

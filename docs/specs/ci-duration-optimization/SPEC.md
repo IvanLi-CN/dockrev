@@ -1,5 +1,9 @@
 # Dockrev CI Duration Optimization and Release Assurance
 
+## Status
+
+Superseded by [ADR 0008](../../adr/0008-pr-label-release-identity.md). The candidate/readiness and FIFO release contract described here is retained as historical context only.
+
 ## Context and Scope
 
 - Context: Fast CI feedback currently shares its critical path with a costly Dockerfile source build and Compose deployment smoke.

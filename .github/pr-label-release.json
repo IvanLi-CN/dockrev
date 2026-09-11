@@ -1,0 +1,66 @@
+{
+  "schema_version": 2,
+  "policy": {
+    "source_of_truth": "pull-request-labels",
+    "trusted_gate_workflow": "Label Gate",
+    "release_completion_workflow": "Release completion",
+    "release_workflow": "Release",
+    "failure_notification_workflow": "Notify failed release",
+    "unknown_release_labels": "fail",
+    "duplicate_release_labels": "fail",
+    "missing_required_release_labels": "fail",
+    "release_identity_modes": {
+      "normal_product_pr_preparation": {
+        "allowed": true,
+        "input": "unmerged-product-pr-after-full-pr-ci-and-label-gate",
+        "output": "same-pr-branch-child-commit-that-modifies-version-only",
+        "required_provenance": ["source-sha", "product-version", "frozen-release-intent"],
+        "forbidden": ["post-merge-preparation", "direct-main-write", "product-code-change", "multiple-parent-commit"]
+      },
+      "version_only_release_pr": {
+        "allowed": true,
+        "implementation_status": "project-workflow-and-test-adopted",
+        "input": "exactly-one-unprepared-product-boundary-on-mainline",
+        "output": "new-nonempty-version-only-release-pr",
+        "required_provenance": ["covered-product-merge-sha", "product-version", "frozen-release-intent", "release-mode:version-only-release-pr"],
+        "forbidden": ["empty-pull-request", "same-sha-recovery", "historical-backfill", "direct-main-write", "tag-rewrite", "multiple-product-pr-aggregation", "release-queue", "release-train"]
+      },
+      "same_sha_recovery": {
+        "allowed": true,
+        "input": "existing-immutable-merged-sha-and-version-with-incomplete-publication",
+        "output": "retry-publication-for-the-same-sha-and-version",
+        "entrypoint": "workflow_dispatch",
+        "forbidden": ["VERSION-write", "new-pull-request", "successor-version", "preparation-rebuild", "tag-rewrite", "other-pr-merge"]
+      },
+      "historical_backfill": {
+        "allowed": false,
+        "output": "non-release-audit-or-history-record-only",
+        "forbidden": ["VERSION-write", "version-allocation", "tag-or-asset-publication", "workflow-dispatch-release-entrypoint"]
+      },
+      "release_queue_or_train": {
+        "allowed": false,
+        "output": "fail-closed-before-version-allocation",
+        "forbidden": ["next-pending-selection", "multi-product-pr-aggregation", "product-pr-reordering", "version-reallocation"]
+      }
+    },
+    "persist_release_intent": {
+      "mode": "per-release-identity-snapshot",
+      "snapshot_artifact": "release-intent.json",
+      "recovery_entrypoint": "workflow_dispatch",
+      "historical_backfill": "forbidden",
+      "queue_strategy": "forbidden",
+      "release_train": "forbidden"
+    }
+  },
+  "label_groups": [
+    {"name": "type", "prefix": "type:", "required": true, "cardinality": "exactly-one", "allowed": ["type:major", "type:minor", "type:patch", "type:none"]},
+    {"name": "channel", "prefix": "channel:", "required": true, "cardinality": "exactly-one", "allowed": ["channel:stable", "channel:beta", "channel:dev"]},
+    {"name": "component", "prefix": "component:", "required": false, "cardinality": "zero-or-more", "allowed": ["component:app", "component:web", "component:firmware", "component:docs"]}
+  ],
+  "channel_contract": {
+    "stable": {"version": "X.Y.Z", "release_class": "stable", "surfaces": ["github-release", "ghcr-version", "ghcr-latest"]},
+    "beta": {"version": "X.Y.Z-beta.N", "release_class": "prerelease", "surfaces": ["github-prerelease", "ghcr-version"]},
+    "dev": {"version": "X.Y.Z-dev.N", "release_class": "prerelease", "surfaces": ["github-prerelease", "ghcr-version"]}
+  },
+  "required_quality_gate": {"check_name": "Label Gate", "completion_check_name": "Release completion", "quality_gates_declaration": ".github/quality-gates.json"}
+}

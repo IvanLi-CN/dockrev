@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted for implementation.
+Superseded by [ADR 0008](0008-pr-label-release-identity.md). Retained as historical context for the removed queue/readiness implementation.
 
 ## Context
 

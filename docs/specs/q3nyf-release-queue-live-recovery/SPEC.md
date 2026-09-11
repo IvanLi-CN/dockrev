@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 作废（ADR 0008 禁止历史 backfill 与 queue recovery）
 - Created: 2026-04-05
 - Last: 2026-04-05
 
