@@ -153,6 +153,7 @@ original_current_version = preparation_script.current_version
 original_reserve_tag = preparation_script.reserve_tag
 original_delete_reservation_ref = preparation_script.delete_reservation_ref
 original_reserve_recovery_identity = preparation_script.reserve_recovery_identity
+original_reserve_preparation_identity = preparation_script.reserve_preparation_identity
 original_create_commit = preparation_script.create_commit
 original_inspect_commit = preparation_script.inspect_commit
 try:
@@ -206,6 +207,7 @@ try:
     preparation_script.current_version = fake_current_version
     preparation_script.reserve_tag = fake_reserve
     preparation_script.reserve_recovery_identity = fake_reserve_recovery_identity
+    preparation_script.reserve_preparation_identity = lambda *_args: True
     preparation_script.create_commit = fake_create_commit
     preparation_script.inspect_commit = fake_inspect
     with tempfile.TemporaryDirectory() as directory:
@@ -442,6 +444,7 @@ finally:
     preparation_script.reserve_tag = original_reserve_tag
     preparation_script.delete_reservation_ref = original_delete_reservation_ref
     preparation_script.reserve_recovery_identity = original_reserve_recovery_identity
+    preparation_script.reserve_preparation_identity = original_reserve_preparation_identity
     preparation_script.create_commit = original_create_commit
     preparation_script.inspect_commit = original_inspect_commit
 
@@ -601,6 +604,8 @@ try:
                 "parents": [{"sha": source_sha}],
                 "commit": {"message": "Reserve release version v0.1.1\n\nRelease-Reservation-Version: 0.1.1\nRelease-Reservation-PR: 42\nRelease-Reservation-Source-SHA: " + source_sha},
             }
+        if path.endswith(f"/git/ref/heads/release-preparation%2F42%2F{source_sha}"):
+            return {"object": {"sha": prep_sha}}
         if "/pulls?state=" in path:
             return []
         raise AssertionError(f"unexpected completion API path: {path}")
@@ -838,6 +843,57 @@ try:
 finally:
     preparation_script.api_request = original_preparation_api_request
 
+preparation_ref_calls = []
+original_preparation_api_request = preparation_script.api_request
+try:
+    preparation_ref_state = {"sha": None}
+    preparation_create_collision = None
+
+    def fake_preparation_ref_api(_api_root, _token, method, path, payload=None):
+        preparation_ref_calls.append((method, path, payload))
+        expected_ref = "/git/ref/heads/release-preparation%2F42%2F" + source_sha
+        if path.endswith(expected_ref):
+            if preparation_ref_state["sha"] is None:
+                raise preparation_script.PreparationError("GitHub API GET ref failed: 404: missing")
+            return {"object": {"sha": preparation_ref_state["sha"]}}
+        if method == "POST" and path.endswith("/git/refs"):
+            assert payload == {
+                "ref": "refs/heads/release-preparation/42/" + source_sha,
+                "sha": prep_sha,
+            }
+            if preparation_create_collision is not None:
+                preparation_ref_state["sha"] = preparation_create_collision
+                raise preparation_script.PreparationError("GitHub API POST ref failed: 422: already exists")
+            preparation_ref_state["sha"] = prep_sha
+            return {"ref": payload["ref"], "object": {"sha": prep_sha}}
+        raise AssertionError((method, path, payload))
+
+    preparation_script.api_request = fake_preparation_ref_api
+    assert preparation_script.reserve_preparation_identity(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", 42, source_sha, prep_sha
+    ) is True
+    assert preparation_script.reserve_preparation_identity(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", 42, source_sha, prep_sha
+    ) is False
+    preparation_ref_state["sha"] = None
+    preparation_create_collision = prep_sha
+    assert preparation_script.reserve_preparation_identity(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", 42, source_sha, prep_sha
+    ) is False
+    preparation_ref_state["sha"] = None
+    preparation_create_collision = "d" * 40
+    expect_error(
+        preparation_script.reserve_preparation_identity,
+        "https://api.github.test",
+        "token",
+        "IvanLi-CN/dockrev",
+        42,
+        source_sha,
+        prep_sha,
+    )
+finally:
+    preparation_script.api_request = original_preparation_api_request
+
 covered_sha = "c" * 40
 version_only = {
     "labels": ["type:patch", "channel:stable"],
@@ -924,7 +980,9 @@ original_identity_api_json = identity.api_json
 try:
     normal_merge_sha = "0" * 40
     normal_pr_head_sha = prep_sha
-    normal_merge_parents = [{"sha": source_sha}, {"sha": prep_sha}]
+    normal_merge_parents = [{"sha": source_sha}]
+    normal_reservation_sha = "8" * 40
+    normal_tree_sha = "9" * 40
 
     identity.api_json = lambda *_args, **_kwargs: {
         "encoding": "base64",
@@ -949,7 +1007,7 @@ try:
             return {
                 "parents": normal_merge_parents,
                 "files": [{"filename": "VERSION"}],
-                "commit": {"message": "Merge release preparation"},
+                "commit": {"message": "Merge release preparation", "tree": {"sha": normal_tree_sha}},
             }
         if path.endswith(f"/commits/{prep_sha}"):
             return {
@@ -957,6 +1015,7 @@ try:
                 "files": [{"filename": "VERSION"}],
                 "commit": {
                     "verification": {"verified": True},
+                    "tree": {"sha": normal_tree_sha},
                     "message": (
                         "Prepare release identity\n\n"
                         f"Source-SHA: {source_sha}\n"
@@ -974,7 +1033,19 @@ try:
             encoded = __import__("base64").b64encode(version.encode()).decode() + "\n"
             return {"encoding": "base64", "content": encoded}
         if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1"):
-            raise identity.IdentityError("GitHub API failed: 404")
+            return {"object": {"sha": normal_reservation_sha}}
+        if path.endswith(f"/commits/{normal_reservation_sha}"):
+            return {
+                "parents": [{"sha": source_sha}],
+                "commit": {"message": (
+                    "Reserve release version v0.1.1\n\n"
+                    "Release-Reservation-Version: 0.1.1\n"
+                    "Release-Reservation-PR: 42\n"
+                    f"Release-Reservation-Source-SHA: {source_sha}"
+                )},
+            }
+        if path.endswith(f"/git/ref/heads/release-preparation%2F42%2F{source_sha}"):
+            return {"object": {"sha": prep_sha}}
         raise AssertionError(f"unexpected identity API path: {path}")
 
     identity.api_json = fake_identity_api
@@ -1084,11 +1155,13 @@ version_only_covered_merge_sha = "f" * 40
 version_only_covered_head_sha = "1" * 40
 version_only_moved_head_sha = "2" * 40
 version_only_reservation_sha = "3" * 40
+version_only_merge_tree_sha = "6" * 40
+version_only_identity_tree_sha = version_only_merge_tree_sha
 original_identity_api_json = identity.api_json
 try:
     recovery_identity_matches = True
     recovery_merge_files = [{"filename": "VERSION"}]
-    recovery_merge_parents = [{"sha": "0" * 40}, {"sha": version_only_release_head_sha}]
+    recovery_merge_parents = [{"sha": "0" * 40}]
     covered_identity_state = {"kind": None, "after_initial_check": None, "reads": 0}
     reservation_ref_state = {"reads": 0, "rebound": False}
 
@@ -1107,7 +1180,7 @@ try:
             return {
                 "parents": recovery_merge_parents,
                 "files": recovery_merge_files,
-                "commit": {"message": "Merge version-only recovery"},
+                "commit": {"message": "Merge version-only recovery", "tree": {"sha": version_only_merge_tree_sha}},
             }
         if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-rc.1"):
             reservation_ref_state["reads"] += 1
@@ -1155,6 +1228,7 @@ try:
                 "files": [{"filename": "VERSION"}],
                 "commit": {
                     "verification": {"verified": True},
+                    "tree": {"sha": version_only_identity_tree_sha},
                     "message": (
                         "VERSION-only release\n\n"
                         f"Covered-Product-Merge-SHA: {version_only_covered_merge_sha}\n"
@@ -1201,12 +1275,12 @@ try:
         "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
     )
     covered_identity_state = {"kind": None, "after_initial_check": None, "reads": 0}
-    recovery_merge_parents = [{"sha": "0" * 40}, {"sha": "5" * 40}]
+    version_only_merge_tree_sha = "7" * 40
     expect_error(
         identity.resolve_github,
         "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
     )
-    recovery_merge_parents = [{"sha": "0" * 40}, {"sha": version_only_release_head_sha}]
+    version_only_merge_tree_sha = version_only_identity_tree_sha
     reservation_ref_state = {"reads": 0, "rebound": True}
     expect_error(
         identity.resolve_github,

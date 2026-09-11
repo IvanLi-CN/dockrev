@@ -410,6 +410,21 @@ def version_reservation_is_owned(
     return True
 
 
+def preparation_identity_is_owned(
+    api_root: str, token: str, repository: str, pr_number: int, source_sha: str, identity_sha: str
+) -> bool:
+    owner, name = repository.split("/", 1)
+    ref_name = f"release-preparation/{pr_number}/{source_sha}"
+    path = f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(ref_name, safe='')}"
+    try:
+        ref = api_json(api_root, token, path)
+    except CompletionError as error:
+        if "GitHub API failed: 404" in str(error):
+            return False
+        raise
+    return ref.get("object", {}).get("sha") == identity_sha
+
+
 def load_github_completion(
     api_root: str, token: str, repository: str, pr_number: int, expected_head_sha: str | None = None
 ) -> dict[str, Any]:
@@ -559,6 +574,10 @@ def load_github_completion(
         tag_reserved = tag_reserved and version_reservation_is_owned(
             api_root, token, repository, version_for_tag, pr_number, source_sha, **reservation_kwargs
         )
+        if mode == "normal-preparation":
+            tag_reserved = tag_reserved and preparation_identity_is_owned(
+                api_root, token, repository, pr_number, source_sha, head_sha
+            )
         if mode == "version-only-release-pr":
             tag_reserved = tag_reserved and recovery_identity_is_owned(
                 api_root, token, repository, provenance["covered_product_merge_sha"], head_sha

@@ -322,6 +322,45 @@ def recovery_ref_path(owner: str, name: str, covered_merge_sha: str) -> str:
     return f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(ref_name, safe='')}"
 
 
+def preparation_ref_path(owner: str, name: str, pr_number: int, source_sha: str) -> str:
+    ref_name = f"release-preparation/{pr_number}/{source_sha}"
+    return f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(ref_name, safe='')}"
+
+
+def reserve_preparation_identity(
+    api_root: str, token: str, repository: str, pr_number: int, source_sha: str, identity_sha: str
+) -> bool:
+    """CAS one immutable normal preparation identity for a PR source."""
+    try:
+        release_policy.validate_sha(source_sha, "preparation source SHA")
+        release_policy.validate_sha(identity_sha, "preparation identity SHA")
+    except release_policy.PolicyError as error:
+        raise PreparationError(str(error)) from error
+    owner, name = repository_parts(repository)
+    path = preparation_ref_path(owner, name, pr_number, source_sha)
+    try:
+        existing = api_request(api_root, token, "GET", path)
+    except PreparationError as error:
+        if " 404:" not in str(error):
+            raise
+        try:
+            api_request(
+                api_root,
+                token,
+                "POST",
+                f"/repos/{owner}/{name}/git/refs",
+                {"ref": f"refs/heads/release-preparation/{pr_number}/{source_sha}", "sha": identity_sha},
+            )
+            return True
+        except PreparationError as create_error:
+            if " 422:" not in str(create_error):
+                raise
+            existing = api_request(api_root, token, "GET", path)
+    if existing.get("object", {}).get("sha") != identity_sha:
+        raise PreparationError("preparation identity ref already belongs to another commit")
+    return False
+
+
 def reserve_recovery_identity(
     api_root: str, token: str, repository: str, covered_merge_sha: str, identity_sha: str
 ) -> bool:
@@ -833,6 +872,14 @@ def create(args: argparse.Namespace) -> int:
             intent,
         )
         release_policy.validate_preparation_version(source_version, existing_version, intent)
+        reserve_preparation_identity(
+            args.api_root,
+            args.token,
+            args.repository,
+            args.pr_number,
+            existing_source_sha,
+            source_sha,
+        )
         reserve_tag(args.api_root, args.token, args.repository, existing_version, args.pr_number, existing_source_sha)
         write_json(
             args.output,
@@ -888,6 +935,9 @@ def create(args: argparse.Namespace) -> int:
             delete_reservation_ref(args.api_root, args.token, args.repository, version, reservation_sha)
         raise
     preparation = inspect_commit(args.api_root, args.token, args.repository, pr["head"]["ref"], commit_sha, source_sha, version, intent)
+    reserve_preparation_identity(
+        args.api_root, args.token, args.repository, args.pr_number, source_sha, commit_sha
+    )
     payload = {
         "schema_version": 1,
         "release_enabled": True,
