@@ -207,7 +207,7 @@ See `deploy/README.md` for a minimal Docker Compose deployment.
 - GHCR (Dockrev): `ghcr.io/ivanli-cn/dockrev:<semver>`
 - GHCR (Supervisor): `ghcr.io/ivanli-cn/dockrev-supervisor:<semver>`
 - The complete maintainer contract is in [`docs/release.md`](docs/release.md).
-- `VERSION` is the sole numeric release source. Every product PR targeting `main` has exactly one `type:*` label (`major`, `minor`, `patch`, or `none`) and one `channel:*` label (`stable`, `beta`, or `dev`).
+- `VERSION` is the sole numeric release source. Every product PR targeting `main` has exactly one `type:*` label (`major`, `minor`, `patch`, or `none`) and one `channel:*` label (`stable`, `beta`, `rc`, or `dev`). `beta` and `rc` are separate prerelease channels; only an exact, same-base `beta -> rc -> stable` promotion path can produce a stable release from a prerelease lineage.
 - After source `CI (PR)` and `Label Gate` pass, `Release Preparation` writes a signed, single-parent, `VERSION`-only preparation commit to the same PR branch. `Release completion` verifies that identity before merge.
 - `Release` resolves only the merged PR SHA and its immutable preparation or `version-only-release-pr` provenance. It creates the matching tag, builds both images and all Linux binary assets, and publishes the channel-appropriate GitHub Release. There is no FIFO queue, readiness note, snapshot backfill, or successor-version recovery.
 - `workflow_dispatch` accepts only an existing immutable identity for same-SHA publication recovery. A missing historical identity is repaired by one non-empty `VERSION`-only release PR, never by recovery.

@@ -84,7 +84,7 @@ jobs:
           types = [label for label in labels if label.startswith('type:')]
           channels = [label for label in labels if label.startswith('channel:')]
           allowed_types = {'type:major', 'type:minor', 'type:patch', 'type:none'}
-          allowed_channels = {'channel:stable', 'channel:beta', 'channel:dev'}
+          allowed_channels = {'channel:stable', 'channel:beta', 'channel:rc', 'channel:dev'}
           errors = []
           if len(types) != 1:
               errors.append(f'exactly one type:* label required; found {len(types)}')

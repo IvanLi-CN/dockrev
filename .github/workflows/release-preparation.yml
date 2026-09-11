@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       exact_version:
-        description: Exact version for major/minor and beta/dev releases; stable patch releases use the next patch
+        description: Exact version for major/minor, beta, rc, dev, and RC-to-stable promotion; stable patch releases from a final VERSION use the next patch
         required: false
         default: ""
         type: string

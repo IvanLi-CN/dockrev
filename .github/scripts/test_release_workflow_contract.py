@@ -32,6 +32,7 @@ assert "github.event_name == 'pull_request_target'" in label_gate
 assert "github.event.pull_request.number == 387" in label_gate
 assert "github.event.pull_request.base.sha == '759b0cf9c0d5a57be1010e74480cbb5ae713433c'" in label_gate
 assert "release_policy.validate_source_boundary(files)" in label_gate
+assert "'channel:rc'" in label_gate
 assert "ALLOW_BOOTSTRAP" in label_gate
 assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in label_gate
 assert "name: Release completion" in completion
@@ -45,6 +46,8 @@ assert "group: release-preparation-${{ inputs.pr_number || github.event.workflow
 assert "name: Prepare PR VERSION identity" in preparation
 assert "(github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')" in preparation
 assert "release-reservation" in text(".github/scripts/release_preparation.py")
+assert "RC-to-stable promotion" in preparation
+assert "channel-for-version" in text(".github/scripts/release-channel-contract-check.sh")
 assert "actions: read" in preparation
 assert "checks: read" in preparation
 assert "checks: read" in completion
@@ -62,6 +65,15 @@ assert "release-failure-context-" in release and "workflow_dispatch merge_sha=" 
 assert "create VERSION-only release PR Covered-Product-Merge-SHA=" in release
 assert "prior failed automatic Release run" in release
 assert "path: release-assets" in release and 'chmod +x "${source}"' in release
+assert "Acquire immutable publication lock" in release
+assert "release-publication-lock/v${lock_version}" in release
+assert "identity_ref_sha" in release
+assert "covered_product_version" in release
+assert 'release-preparation/${identity_pr}/${identity_source}' in release
+assert 'test "${live_identity_sha}" = "${expected_identity_sha}"' in release
+assert "Revalidate release identity before publication" in release
+assert "fresh-release-intent.json" in release
+assert "release identity changed before publication" in release
 assert "needs.identity.result == 'failure'" in release
 assert "release-identity-failure-context-" in release
 assert 'INTENT_TYPE: ${{ steps.resolve.outputs.type || \'\' }}' in release
@@ -103,11 +115,33 @@ assert "files[0] === 'VERSION'" in ci_pr
 assert "needs: [release-identity-guard]" in ci_pr[ci_pr.index("  unit-tests:"):]
 assert "needs.release-identity-guard.outputs.skip != 'true'" in ci_pr
 assert "release-identity-guard" in ci_pr
+assert "channel:(stable|beta|rc|dev)" in ci_pr
+assert "{'beta', 'rc', 'dev'}" in release
+assert '"rc": r"^[0-9]+\\.[0-9]+\\.[0-9]+-rc\\.[0-9]+$"' in release
+assert "prerelease: ${{ env.CHANNEL != 'stable' }}" in release
+assert "if: env.CHANNEL == 'stable'" in release
 assert "Release Candidate Pipeline" not in release
 assert "release_readiness.py" not in release
 assert "refs/notes/release" not in release
 assert "pull_requests" in text(".github/scripts/release_preparation.py")
-assert "covered_product_has_identity" in text(".github/scripts/release_identity.py")
+for helper in (
+    ".github/scripts/release_preparation.py",
+    ".github/scripts/release_completion.py",
+    ".github/scripts/release_identity.py",
+):
+    helper_text = text(helper)
+    assert "covered_product_merge_sha" in helper_text
+    assert "covered_product_head_sha" not in helper_text
+    assert "covered_product_release_intent" not in helper_text
+    assert "covered_product_has_identity" not in helper_text
+assert "Release-Reservation-Identity-SHA" in text(".github/scripts/release_policy.py")
+assert "validate_version_only_reservation" in text(".github/scripts/release_completion.py")
+assert "version_only_reservation" in text(".github/scripts/release_identity.py")
+assert "preparation_identity_is_owned" in text(".github/scripts/release_completion.py")
+assert "reserve_preparation_identity" in text(".github/scripts/release_preparation.py")
+assert "preparation_identity_reservation" in text(".github/scripts/release_identity.py")
+assert "version_blob_sha" in text(".github/scripts/release_identity.py")
+assert "publication_lock_sha" in text(".github/scripts/release_identity.py")
 assert "validate_source_boundary" in text(".github/scripts/release_policy.py")
 assert "pull_request_changed_files" in text(".github/scripts/release_completion.py")
 assert "tag_is_reserved_by_other_pr" in text(".github/scripts/release_completion.py")
@@ -115,6 +149,11 @@ assert "tag_is_reserved_by_other_pr" in text(".github/scripts/release_completion
 quality = json.loads((ROOT / ".github/quality-gates.json").read_text(encoding="utf-8"))
 assert quality["required_checks"] == ["Review Policy Gate", "Label Gate", "Release completion"]
 assert quality["policy"]["branch_protection"]["require_merge_queue"] is False
+assert quality["release_label_contract"] == {
+    "policy_file": ".github/pr-label-release.json",
+    "supported_channels": ["stable", "beta", "rc", "dev"],
+    "promotion_sequence": ["beta", "rc", "stable"],
+}
 
 workflow_paths = {
     "Review Policy": ".github/workflows/review-policy.yml",
@@ -250,7 +289,10 @@ export MERGE_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     env["RUN_CALLS"] = str(run_calls_path)
     env["RUNNER_TEMP"] = str(runner_temp)
     env["CAS_CONFLICT"] = "1"
-    subprocess.run([str(script)], check=True, env=env, cwd=ROOT)
+    first_run = subprocess.run([str(script)], check=False, env=env, cwd=ROOT, capture_output=True, text=True)
+    if first_run.returncode:
+        print(first_run.stdout, first_run.stderr)
+    assert first_run.returncode == 0
     final_sha = state_path.read_text(encoding="utf-8").strip()
     assert "Release-Latest-Lock-State: released" in json.loads(commits_path.read_text(encoding="utf-8"))[final_sha]["message"]
     commits = json.loads(commits_path.read_text(encoding="utf-8"))
@@ -275,6 +317,192 @@ Release-Latest-Lock-Merge-SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa""",
     failed_env = {**env, "CAS_CONFLICT": "", "FAIL_PATCH": "1"}
     failed = subprocess.run([str(script)], check=False, env=failed_env, cwd=ROOT)
     assert failed.returncode != 0
+
+publication_lock_start = release.index('          identity_mode="$(jq -r')
+publication_lock_end = release.index("\n\n      - name: Revalidate release identity before publication", publication_lock_start)
+publication_lock_body = textwrap.dedent(release[publication_lock_start:publication_lock_end])
+with tempfile.TemporaryDirectory() as directory:
+    root = Path(directory)
+    bin_dir = root / "bin"
+    bin_dir.mkdir()
+    state_path = root / "publication-locks.json"
+    race_path = root / "race-used"
+    gh_stub = bin_dir / "gh"
+    gh_stub.write_text(
+        """#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+urls = [arg for arg in args if arg.startswith("repos/")]
+url = urls[0] if urls else ""
+method = args[args.index("--method") + 1] if "--method" in args else "GET"
+state_path = Path(os.environ["PUBLICATION_LOCKS"])
+state = json.loads(state_path.read_text()) if state_path.exists() else {}
+if "/git/ref/heads/release-recovery/" in url or "/git/ref/heads/release-preparation/" in url:
+    identity_sha = os.environ.get("IDENTITY_SHA", "e" * 40)
+    if "--jq" in args:
+        print(identity_sha)
+    else:
+        print(json.dumps({"object": {"sha": identity_sha}}))
+    raise SystemExit(0)
+if "/git/ref/heads/release-publication-lock/" in url and method == "GET":
+    ref = url.split("/git/ref/heads/", 1)[1]
+    if ref not in state:
+        print("HTTP 404: Not Found", file=sys.stderr)
+        raise SystemExit(1)
+    if "--jq" in args:
+        print(state[ref])
+    else:
+        print(json.dumps({"object": {"sha": state[ref]}}))
+    raise SystemExit(0)
+if url.endswith("/git/refs") and method == "POST":
+    ref = next(value.split("=", 1)[1] for value in args if value.startswith("ref="))
+    sha = next(value.split("=", 1)[1] for value in args if value.startswith("sha="))
+    ref = ref.removeprefix("refs/heads/")
+    if ref in state:
+        print("HTTP 422: Reference already exists", file=sys.stderr)
+        raise SystemExit(1)
+    if os.environ.get("RACE") == "1" and not Path(os.environ["RACE_USED"]).exists():
+        state[ref] = os.environ.get("RACE_SHA", sha)
+        state_path.write_text(json.dumps(state))
+        Path(os.environ["RACE_USED"]).write_text("1")
+        print("HTTP 422: Reference already exists", file=sys.stderr)
+        raise SystemExit(1)
+    state[ref] = sha
+    state_path.write_text(json.dumps(state))
+    raise SystemExit(0)
+raise SystemExit(2)
+""",
+        encoding="utf-8",
+    )
+    gh_stub.chmod(0o755)
+    rg_stub = bin_dir / "rg"
+    rg_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "if [[ \"${1:-}\" == \"-q\" ]]; then shift; fi\n"
+        "grep -Eq \"$1\" \"$2\"\n",
+        encoding="utf-8",
+    )
+    rg_stub.chmod(0o755)
+    expected = json.dumps({
+        "release_mode": "version-only-release-pr",
+        "pull_request": 43,
+        "source_sha": "f" * 40,
+        "identity_ref_sha": "e" * 40,
+        "covered_product_version": "0.1.1-beta.1",
+    }, separators=(",", ":"))
+    script = root / "publication-lock.sh"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "export GITHUB_REPOSITORY=IvanLi-CN/dockrev\n"
+        "export VERSION=0.1.1-rc.1\n"
+        f"export EXPECTED_IDENTITY_JSON='{expected}'\n"
+        + publication_lock_body,
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    env["PUBLICATION_LOCKS"] = str(state_path)
+    env["RACE_USED"] = str(race_path)
+    first_publication_run = subprocess.run([str(script)], check=False, env=env, cwd=ROOT, capture_output=True, text=True)
+    if first_publication_run.returncode:
+        print(first_publication_run.stdout, first_publication_run.stderr)
+    assert first_publication_run.returncode == 0
+    locks = json.loads(state_path.read_text(encoding="utf-8"))
+    assert locks == {
+        "release-publication-lock/v0.1.1-rc.1": "e" * 40,
+        "release-publication-lock/v0.1.1-beta.1": "e" * 40,
+    }
+    subprocess.run([str(script)], check=True, env=env, cwd=ROOT)
+    state_path.write_text(json.dumps({"release-publication-lock/v0.1.1-rc.1": "4" * 40}))
+    foreign = subprocess.run([str(script)], check=False, env=env, cwd=ROOT)
+    assert foreign.returncode != 0
+    state_path.unlink()
+    race = subprocess.run([str(script)], check=False, env={**env, "RACE": "1"}, cwd=ROOT, capture_output=True, text=True)
+    assert race.returncode == 0
+    state_path.unlink()
+    Path(race_path).unlink()
+    foreign_race = subprocess.run(
+        [str(script)],
+        check=False,
+        env={**env, "RACE": "1", "RACE_SHA": "4" * 40},
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    assert foreign_race.returncode != 0
+    live_drift = subprocess.run(
+        [str(script)],
+        check=False,
+        env={**env, "IDENTITY_SHA": "d" * 40},
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    assert live_drift.returncode != 0
+
+    normal_expected = json.dumps({
+        "release_mode": "normal-preparation",
+        "pull_request": 43,
+        "source_sha": "f" * 40,
+        "identity_ref_sha": "b" * 40,
+    }, separators=(",", ":"))
+    normal_script = root / "publication-lock-normal.sh"
+    normal_script.write_text(
+        script.read_text(encoding="utf-8")
+        .replace("export VERSION=0.1.1-rc.1", "export VERSION=0.1.2")
+        .replace(f"export EXPECTED_IDENTITY_JSON='{expected}'", f"export EXPECTED_IDENTITY_JSON='{normal_expected}'"),
+        encoding="utf-8",
+    )
+    normal_script.chmod(0o755)
+    normal_run = subprocess.run(
+        [str(normal_script)],
+        check=False,
+        env={**env, "IDENTITY_SHA": "b" * 40},
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert normal_run.returncode == 0
+    assert json.loads(state_path.read_text(encoding="utf-8"))["release-publication-lock/v0.1.2"] == "b" * 40
+
+    compare_start = release.index("          python3 - <<'PY'", release.index("- name: Revalidate release identity before publication"))
+    compare_end = release.index("\n          PY", compare_start) + len("\n          PY")
+    compare_body = textwrap.dedent(release[compare_start:compare_end])
+    compare_script = root / "revalidate.sh"
+    compare_script.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "printf '%s' \"${EXPECTED_JSON}\" > expected-release-intent.json\n"
+        "printf '%s' \"${FRESH_JSON}\" > fresh-release-intent.json\n"
+        + compare_body + "\n",
+        encoding="utf-8",
+    )
+    compare_script.chmod(0o755)
+    equal_json = '{"version":"0.1.2"}'
+    assert subprocess.run(
+        [str(compare_script)],
+        check=False,
+        env={**env, "EXPECTED_JSON": equal_json, "FRESH_JSON": equal_json},
+        cwd=root,
+        capture_output=True,
+        text=True,
+    ).returncode == 0
+    mismatch = subprocess.run(
+        [str(compare_script)],
+        check=False,
+        env={**env, "EXPECTED_JSON": equal_json, "FRESH_JSON": '{"version":"0.1.3"}'},
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    assert mismatch.returncode != 0
 
 with tempfile.TemporaryDirectory() as directory:
     root = Path(directory)

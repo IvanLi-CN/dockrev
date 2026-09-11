@@ -16,6 +16,11 @@ ROOT = Path(__file__).resolve().parents[2]
 POLICY_PATH = ROOT / ".github/pr-label-release.json"
 VERSION_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+CHANNEL_PRERELEASE_RE = {
+    "beta": re.compile(r"beta\.[0-9]+"),
+    "rc": re.compile(r"rc\.[0-9]+"),
+    "dev": re.compile(r"dev\.[0-9]+"),
+}
 UNTRUSTED_SOURCE_PATH_PREFIXES = (
     ".github/workflows/",
     ".github/scripts/release_",
@@ -97,33 +102,70 @@ def next_patch(version: str) -> str:
     return f"{major}.{minor}.{patch + 1}"
 
 
+def channel_for_version(version: str) -> str:
+    _major, _minor, _patch, prerelease = parse_version(version)
+    if prerelease is None:
+        return "stable"
+    for channel, pattern in CHANNEL_PRERELEASE_RE.items():
+        if pattern.fullmatch(prerelease):
+            return channel
+    raise PolicyError(f"VERSION prerelease does not identify a supported release channel: {version!r}")
+
+
+def patch_channel_transitions() -> dict[str, set[str]]:
+    policy = load_policy()
+    contract = policy.get("promotion_contract")
+    if not isinstance(contract, dict) or contract.get("type") != "patch-only":
+        raise PolicyError("missing patch-only promotion contract")
+    transitions = contract.get("transitions")
+    if not isinstance(transitions, dict):
+        raise PolicyError("promotion contract must define channel transitions")
+    channels = {label.removeprefix("channel:") for label in _allowed(policy, "channel")}
+    if set(transitions) != channels:
+        raise PolicyError("promotion contract must define transitions for every release channel")
+    normalized: dict[str, set[str]] = {}
+    for source, targets in transitions.items():
+        if not isinstance(targets, list) or not targets or set(targets) - channels:
+            raise PolicyError(f"invalid promotion targets for {source!r}")
+        normalized[source] = set(targets)
+    return normalized
+
+
 def validate_preparation_version(source_version: str, version: str, intent: dict[str, Any]) -> None:
     source = parse_version(source_version)
     target = parse_version(version)
+    source_channel = channel_for_version(source_version)
+    target_channel = str(intent["channel"])
     if intent["type"] == "patch":
-        source_base = source[:3]
-        expected_base = source_base if source[3] else (source[0], source[1], source[2] + 1)
+        expected_base = source[:3] if source_channel != "stable" else (source[0], source[1], source[2] + 1)
         if target[:3] != expected_base:
             raise PolicyError("patch preparation must advance VERSION by exactly one patch base")
-        if intent["channel"] == "stable" and version != next_patch(source_version):
+        transitions = patch_channel_transitions()
+        if target_channel not in transitions[source_channel]:
+            raise PolicyError(
+                f"patch release promotion from {source_channel} to {target_channel} is not allowed"
+            )
+        if source_channel == "stable" and target_channel == "stable" and version != next_patch(source_version):
             raise PolicyError("stable patch preparation must use the next patch")
+        if source_channel == target_channel and source_channel != "stable":
+            source_sequence = int(str(source[3]).rsplit(".", 1)[1])
+            target_sequence = int(str(target[3]).rsplit(".", 1)[1])
+            if target_sequence <= source_sequence:
+                raise PolicyError("prerelease patch preparation must advance its channel sequence")
     elif intent["type"] == "minor" and target[:2] <= source[:2]:
         raise PolicyError("minor preparation must advance the source major/minor")
     elif intent["type"] == "major" and target[0] <= source[0]:
         raise PolicyError("major preparation must advance the source major")
-    validate_channel_version(version, intent["channel"])
+    validate_channel_version(version, target_channel)
 
 
 def validate_channel_version(version: str, channel: str) -> None:
-    _major, _minor, _patch, prerelease = parse_version(version)
-    if channel == "stable" and prerelease is not None:
-        raise PolicyError("stable channel requires a final semver VERSION")
-    if channel == "beta" and (not prerelease or not re.fullmatch(r"beta\.[0-9]+", prerelease)):
-        raise PolicyError("beta channel requires VERSION suffix -beta.N")
-    if channel == "dev" and (not prerelease or not re.fullmatch(r"dev\.[0-9]+", prerelease)):
-        raise PolicyError("dev channel requires VERSION suffix -dev.N")
-    if channel not in {"stable", "beta", "dev"}:
+    if channel not in {"stable", *CHANNEL_PRERELEASE_RE}:
         raise PolicyError(f"unsupported release channel: {channel}")
+    version_channel = channel_for_version(version)
+    if version_channel != channel:
+        suffix = "a final semver VERSION" if channel == "stable" else f"VERSION suffix -{channel}.N"
+        raise PolicyError(f"{channel} channel requires {suffix}")
 
 
 def validate_source_boundary(changed_files: list[str]) -> None:
@@ -157,7 +199,14 @@ def parse_trailers(message: str) -> dict[str, str]:
 
 def parse_reservation_trailers(message: str) -> dict[str, str]:
     trailers: dict[str, str] = {}
-    keys = {"Release-Reservation-Version", "Release-Reservation-PR", "Release-Reservation-Source-SHA"}
+    keys = {
+        "Release-Reservation-Version",
+        "Release-Reservation-PR",
+        "Release-Reservation-Source-SHA",
+        "Release-Reservation-Identity-SHA",
+        "Release-Reservation-Intent",
+        "Release-Reservation-Mode",
+    }
     for line in message.splitlines():
         if ":" not in line:
             continue
@@ -185,6 +234,25 @@ def validate_reservation(
     if parents != [source_sha]:
         raise PolicyError("release reservation must have the source SHA as its only parent")
     return payload
+
+
+def validate_version_only_reservation(
+    payload: dict[str, Any], *, version: str, pr_number: int, source_sha: str
+) -> dict[str, str]:
+    validate_reservation(payload, version=version, pr_number=pr_number, source_sha=source_sha)
+    message = payload.get("message") or payload.get("commit", {}).get("message", "")
+    trailers = parse_reservation_trailers(str(message))
+    identity_sha = trailers.get("Release-Reservation-Identity-SHA", "")
+    validate_sha(identity_sha, "version-only reservation identity SHA")
+    if trailers.get("Release-Reservation-Mode") != "version-only-release-pr":
+        raise PolicyError("release reservation mode is not version-only-release-pr")
+    try:
+        intent = parse_labels(trailers.get("Release-Reservation-Intent", "").split())
+    except PolicyError as error:
+        raise PolicyError("version-only reservation intent is invalid") from error
+    if not intent["release_enabled"]:
+        raise PolicyError("version-only reservation intent must be release-enabled")
+    return trailers
 
 
 def validate_preparation(payload: dict[str, Any], *, source_sha: str | None = None) -> dict[str, Any]:
@@ -216,9 +284,8 @@ def validate_version_only(files: list[str], provenance: dict[str, Any], *, head_
     required = {
         "covered_product_merge_sha",
         "covered_product_pr_number",
-        "covered_product_head_sha",
+        "covered_product_version",
         "covered_product_merged",
-        "covered_product_has_identity",
         "product_version",
         "release_intent",
         "release_mode",
@@ -229,18 +296,17 @@ def validate_version_only(files: list[str], provenance: dict[str, Any], *, head_
     if missing:
         raise PolicyError(f"version-only provenance missing: {', '.join(missing)}")
     validate_sha(str(provenance["covered_product_merge_sha"]), "covered_product_merge_sha")
-    validate_sha(str(provenance["covered_product_head_sha"]), "covered_product_head_sha")
     if not isinstance(provenance["covered_product_pr_number"], int) or provenance["covered_product_pr_number"] < 1:
         raise PolicyError("covered_product_pr_number must identify one product PR")
     if provenance["covered_product_merged"] is not True:
         raise PolicyError("covered product boundary is not a merged PR")
-    if provenance["covered_product_has_identity"] is not False:
-        raise PolicyError("covered product boundary already has release identity")
     validate_sha(str(provenance["branch_head_sha"]), "branch_head_sha")
     if head_sha and provenance["branch_head_sha"] != head_sha:
         raise PolicyError("version-only branch head drifted")
     if provenance["verified"] is not True:
         raise PolicyError("version-only release PR signature is not verified")
+    covered_product_version = str(provenance["covered_product_version"])
+    parse_version(covered_product_version)
     parse_version(str(provenance["product_version"]))
     try:
         intent = parse_labels(str(provenance["release_intent"]).split())
@@ -250,8 +316,9 @@ def validate_version_only(files: list[str], provenance: dict[str, Any], *, head_
         raise PolicyError("version-only release PR requires a release-enabled type")
     try:
         validate_channel_version(str(provenance["product_version"]), intent["channel"])
+        validate_preparation_version(covered_product_version, str(provenance["product_version"]), intent)
     except PolicyError as error:
-        raise PolicyError("version-only release VERSION is incompatible with its channel") from error
+        raise PolicyError("version-only release VERSION is incompatible with the covered product identity") from error
     if provenance["release_mode"] != "version-only-release-pr":
         raise PolicyError("version-only release PR has invalid release mode")
 
@@ -355,6 +422,8 @@ def _cli() -> argparse.ArgumentParser:
     channel = sub.add_parser("validate-channel")
     channel.add_argument("--version", required=True)
     channel.add_argument("--channel", required=True)
+    resolved_channel = sub.add_parser("channel-for-version")
+    resolved_channel.add_argument("--version", required=True)
     prep = sub.add_parser("validate-preparation")
     prep.add_argument("--input", type=Path, required=True)
     version_only = sub.add_parser("validate-version-only")
@@ -377,6 +446,8 @@ def main() -> int:
         elif args.command == "validate-channel":
             validate_channel_version(args.version, args.channel)
             print("ok")
+        elif args.command == "channel-for-version":
+            print(channel_for_version(args.version))
         elif args.command == "validate-preparation":
             validate_preparation(json.loads(args.input.read_text(encoding="utf-8")))
             print("ok")
