@@ -256,10 +256,11 @@ try:
             "state": "open",
             "base": {"ref": "main"},
             "head": {"sha": prep_sha, "ref": "recovery/version-only", "repo": {"full_name": "IvanLi-CN/dockrev"}},
-            "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
+            "labels": [{"name": "type:patch"}, {"name": "channel:rc"}],
         }
+        preparation_script.current_version = lambda *_args: "0.1.1-beta.1"
         covered_merge_sha = "c" * 40
-        covered_head_sha = "d" * 40
+        moved_covered_head_sha = "d" * 40
         def fake_version_only_api(_api_root, _token, _method, path, _payload=None):
             if path.endswith(f"/commits/{prep_sha}"):
                 return {
@@ -268,8 +269,8 @@ try:
                         "message": (
                             "VERSION-only recovery\n\n"
                             "Covered-Product-Merge-SHA: " + covered_merge_sha + "\n"
-                            "Product-Version: 0.1.1\n"
-                            "Release-Intent: type:patch channel:stable\n"
+                            "Product-Version: 0.1.1-rc.1\n"
+                            "Release-Intent: type:patch channel:rc\n"
                             "Release-Mode: version-only-release-pr"
                         )
                     }
@@ -281,11 +282,9 @@ try:
                     "merged_at": "2026-01-01T00:00:00Z",
                     "merge_commit_sha": covered_merge_sha,
                     "base": {"ref": "main"},
-                    "head": {"sha": covered_head_sha},
-                    "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
+                    "head": {"sha": moved_covered_head_sha},
+                    "labels": [{"name": "type:none"}, {"name": "channel:stable"}],
                 }]
-            if path.endswith(f"/commits/{covered_head_sha}"):
-                return {"commit": {"message": "Product change"}}
             if path.endswith("/pulls/42/files?per_page=100&page=1"):
                 return [{"filename": "VERSION"}]
             raise AssertionError(path)
@@ -304,7 +303,7 @@ try:
         assert result["release_mode"] == "version-only-release-pr"
         assert result["skipped"] == "already-version-only"
         assert calls["reserve"] == 1
-        assert reserved_sources[-1] == covered_head_sha
+        assert reserved_sources[-1] == covered_merge_sha
 finally:
     preparation_script.pull_request = original_pull_request
     preparation_script.api_request = original_preparation_api_request
@@ -498,11 +497,12 @@ finally:
 
 original_completion_api_json = completion.api_json
 try:
+    completion_moved_covered_head_sha = "d" * 40
     version_only_completion_message = (
         "VERSION-only recovery\n\n"
         f"Covered-Product-Merge-SHA: {covered_merge_sha}\n"
-        "Product-Version: 0.1.1\n"
-        "Release-Intent: type:patch channel:stable\n"
+        "Product-Version: 0.1.1-rc.1\n"
+        "Release-Intent: type:patch channel:rc\n"
         "Release-Mode: version-only-release-pr"
     )
 
@@ -513,11 +513,11 @@ try:
                 "base": {"ref": "main"},
                 "head": {"sha": prep_sha},
                 "updated_at": "2026-01-01T00:00:00Z",
-                "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
+                "labels": [{"name": "type:patch"}, {"name": "channel:rc"}],
             }
         if path.endswith(f"/commits/{prep_sha}"):
             return {
-                "parents": [{"sha": covered_head_sha}],
+                "parents": [{"sha": covered_merge_sha}],
                 "files": [{"filename": "VERSION"}],
                 "commit": {
                     "verification": {"verified": True},
@@ -531,32 +531,30 @@ try:
                 "merged_at": "2026-01-01T00:00:00Z",
                 "merge_commit_sha": covered_merge_sha,
                 "base": {"ref": "main"},
-                "head": {"sha": covered_head_sha},
+                "head": {"sha": completion_moved_covered_head_sha},
                 "updated_at": "2026-01-01T00:00:00Z",
-                "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
+                "labels": [{"name": "type:none"}, {"name": "channel:stable"}],
             }]
-        if path.endswith(f"/commits/{covered_head_sha}"):
-            return {"parents": [], "files": [], "commit": {"message": "Product change"}}
         if path.endswith(f"/pulls/42/files?per_page=100&page=1"):
             return [{"filename": "VERSION"}]
         if path.endswith(f"/pulls/41/files?per_page=100&page=1"):
             return []
         if "/contents/VERSION?ref=" in path:
-            version = b"0.1.0" if covered_head_sha in path else b"0.1.1"
+            version = b"0.1.1-beta.1" if covered_merge_sha in path else b"0.1.1-rc.1"
             encoded = __import__("base64").b64encode(version).decode()
             return {"encoding": "base64", "content": encoded}
         if "/actions/workflows/ci-pr.yml/runs?per_page=100&page=" in path:
-            return {"workflow_runs": [{"head_sha": covered_head_sha, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 41}]}]}
+            return {"workflow_runs": [{"head_sha": prep_sha, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 42}]}]}
         if "/actions/workflows/label-gate.yml/runs?per_page=100&page=" in path:
             return {"workflow_runs": [{"head_sha": "e" * 40, "status": "completed", "conclusion": "success", "created_at": "2026-01-02T00:00:00Z", "pull_requests": [{"number": 42, "head": {"sha": prep_sha}}]}]}
-        if path.endswith("/git/ref/tags/v0.1.1"):
+        if path.endswith("/git/ref/tags/v0.1.1-rc.1"):
             raise completion.CompletionError("GitHub API failed: 404")
-        if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1"):
+        if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-rc.1"):
             return {"object": {"sha": "f" * 40}}
         if path.endswith("/commits/" + "f" * 40):
             return {
-                "parents": [{"sha": covered_head_sha}],
-                "commit": {"message": "Reserve release version v0.1.1\n\nRelease-Reservation-Version: 0.1.1\nRelease-Reservation-PR: 42\nRelease-Reservation-Source-SHA: " + covered_head_sha},
+                "parents": [{"sha": covered_merge_sha}],
+                "commit": {"message": "Reserve release version v0.1.1-rc.1\n\nRelease-Reservation-Version: 0.1.1-rc.1\nRelease-Reservation-PR: 42\nRelease-Reservation-Source-SHA: " + covered_merge_sha},
             }
         if "/pulls?state=" in path:
             return []
@@ -565,7 +563,7 @@ try:
     completion.api_json = fake_version_only_completion_api
     version_only_loaded = completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
     assert completion.validate_completion(version_only_loaded)["mode"] == "version-only-release-pr"
-    version_only_completion_message += f"\nSource-SHA: {covered_head_sha}"
+    version_only_completion_message += f"\nSource-SHA: {completion_moved_covered_head_sha}"
     expect_error(completion.load_github_completion, "https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
 finally:
     completion.api_json = original_completion_api_json
@@ -658,11 +656,8 @@ version_only = {
         "release_mode": "version-only-release-pr",
         "branch_head_sha": prep_sha,
         "covered_product_pr_number": 41,
-        "covered_product_head_sha": covered_sha,
         "covered_product_version": "0.1.0",
-        "covered_product_release_intent": "type:patch channel:stable",
         "covered_product_merged": True,
-        "covered_product_has_identity": False,
     "verified": True,
     },
     "source_checks": source_checks,
@@ -680,11 +675,6 @@ expect_error(
     version_only["changed_files"],
     {**version_only["provenance"], "product_version": "9.9.9"},
 )
-expect_error(
-    policy.validate_version_only,
-    version_only["changed_files"],
-    {**version_only["provenance"], "covered_product_release_intent": "type:patch channel:beta"},
-)
 rc_version_only = {
     **version_only,
     "labels": ["type:patch", "channel:rc"],
@@ -692,7 +682,6 @@ rc_version_only = {
     "provenance": {
         **version_only["provenance"],
         "covered_product_version": "0.1.1-beta.1",
-        "covered_product_release_intent": "type:patch channel:rc",
         "product_version": "0.1.1-rc.1",
         "release_intent": "type:patch channel:rc",
     },
@@ -874,7 +863,7 @@ try:
                 "merge_commit_sha": version_only_merge_sha,
                 "base": {"ref": "main"},
                 "head": {"sha": version_only_release_head_sha},
-                "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
+                "labels": [{"name": "type:patch"}, {"name": "channel:rc"}],
             }]
         if path.endswith(f"/commits/{version_only_release_head_sha}"):
             return {
@@ -885,8 +874,8 @@ try:
                     "message": (
                         "VERSION-only release\n\n"
                         f"Covered-Product-Merge-SHA: {version_only_covered_merge_sha}\n"
-                        "Product-Version: 0.1.1\n"
-                        "Release-Intent: type:patch channel:stable\n"
+                        "Product-Version: 0.1.1-rc.1\n"
+                        "Release-Intent: type:patch channel:rc\n"
                         "Release-Mode: version-only-release-pr"
                     ),
                 },
@@ -899,14 +888,12 @@ try:
                 "merge_commit_sha": version_only_covered_merge_sha,
                 "base": {"ref": "main"},
                 "head": {"sha": version_only_covered_head_sha},
-                "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
+                "labels": [{"name": "type:none"}, {"name": "channel:stable"}],
             }]
-        if path.endswith(f"/commits/{version_only_covered_head_sha}"):
-            return {"commit": {"message": "Product change"}}
         if path.endswith("/pulls/43/files?per_page=100&page=1"):
             return [{"filename": "VERSION"}]
         if "/contents/VERSION?ref=" in path:
-            version = b"0.1.0" if version_only_covered_head_sha in path else b"0.1.1"
+            version = b"0.1.1-beta.1" if version_only_covered_merge_sha in path else b"0.1.1-rc.1"
             encoded = __import__("base64").b64encode(version).decode()
             return {"encoding": "base64", "content": encoded}
         raise AssertionError(f"unexpected version-only identity API path: {path}")
@@ -916,7 +903,8 @@ try:
         "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
     )
     assert resolved_version_only["release_mode"] == "version-only-release-pr"
-    assert resolved_version_only["source_sha"] == version_only_covered_head_sha
+    assert resolved_version_only["source_sha"] == version_only_covered_merge_sha
+    assert resolved_version_only["channel"] == "rc" and resolved_version_only["release_tag"] == "v0.1.1-rc.1"
     def fake_version_only_source_sha_api(_api_root, _token, path):
         payload = fake_version_only_identity_api(_api_root, _token, path)
         if path.endswith(f"/commits/{version_only_release_head_sha}"):

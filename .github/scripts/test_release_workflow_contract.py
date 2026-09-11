@@ -113,7 +113,16 @@ assert "Release Candidate Pipeline" not in release
 assert "release_readiness.py" not in release
 assert "refs/notes/release" not in release
 assert "pull_requests" in text(".github/scripts/release_preparation.py")
-assert "covered_product_has_identity" in text(".github/scripts/release_identity.py")
+for helper in (
+    ".github/scripts/release_preparation.py",
+    ".github/scripts/release_completion.py",
+    ".github/scripts/release_identity.py",
+):
+    helper_text = text(helper)
+    assert "covered_product_merge_sha" in helper_text
+    assert "covered_product_head_sha" not in helper_text
+    assert "covered_product_release_intent" not in helper_text
+    assert "covered_product_has_identity" not in helper_text
 assert "validate_source_boundary" in text(".github/scripts/release_policy.py")
 assert "pull_request_changed_files" in text(".github/scripts/release_completion.py")
 assert "tag_is_reserved_by_other_pr" in text(".github/scripts/release_completion.py")

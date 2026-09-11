@@ -253,11 +253,8 @@ def validate_version_only(files: list[str], provenance: dict[str, Any], *, head_
     required = {
         "covered_product_merge_sha",
         "covered_product_pr_number",
-        "covered_product_head_sha",
         "covered_product_version",
-        "covered_product_release_intent",
         "covered_product_merged",
-        "covered_product_has_identity",
         "product_version",
         "release_intent",
         "release_mode",
@@ -268,13 +265,10 @@ def validate_version_only(files: list[str], provenance: dict[str, Any], *, head_
     if missing:
         raise PolicyError(f"version-only provenance missing: {', '.join(missing)}")
     validate_sha(str(provenance["covered_product_merge_sha"]), "covered_product_merge_sha")
-    validate_sha(str(provenance["covered_product_head_sha"]), "covered_product_head_sha")
     if not isinstance(provenance["covered_product_pr_number"], int) or provenance["covered_product_pr_number"] < 1:
         raise PolicyError("covered_product_pr_number must identify one product PR")
     if provenance["covered_product_merged"] is not True:
         raise PolicyError("covered product boundary is not a merged PR")
-    if provenance["covered_product_has_identity"] is not False:
-        raise PolicyError("covered product boundary already has release identity")
     validate_sha(str(provenance["branch_head_sha"]), "branch_head_sha")
     if head_sha and provenance["branch_head_sha"] != head_sha:
         raise PolicyError("version-only branch head drifted")
@@ -289,15 +283,6 @@ def validate_version_only(files: list[str], provenance: dict[str, Any], *, head_
         raise PolicyError("version-only release intent is invalid") from error
     if not intent["release_enabled"]:
         raise PolicyError("version-only release PR requires a release-enabled type")
-    try:
-        covered_intent = parse_labels(str(provenance["covered_product_release_intent"]).split())
-    except PolicyError as error:
-        raise PolicyError("covered product release intent is invalid") from error
-    if (
-        covered_intent["type_label"] != intent["type_label"]
-        or covered_intent["channel_label"] != intent["channel_label"]
-    ):
-        raise PolicyError("version-only release intent must match the covered product PR")
     try:
         validate_channel_version(str(provenance["product_version"]), intent["channel"])
         validate_preparation_version(covered_product_version, str(provenance["product_version"]), intent)

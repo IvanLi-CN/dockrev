@@ -209,7 +209,7 @@ def pull_requests(api_root: str, token: str, repository: str, state: str) -> lis
         page += 1
 
 
-def covered_product_boundary(api_root: str, token: str, repository: str, merge_sha: str) -> tuple[dict[str, Any], str]:
+def covered_product_boundary(api_root: str, token: str, repository: str, merge_sha: str) -> dict[str, Any]:
     owner, name = repository_parts(repository)
     pulls = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{merge_sha}/pulls")
     if not isinstance(pulls, list) or len(pulls) != 1:
@@ -219,24 +219,7 @@ def covered_product_boundary(api_root: str, token: str, repository: str, merge_s
         raise PreparationError("covered product boundary is not a merged main PR")
     if product.get("merge_commit_sha") != merge_sha:
         raise PreparationError("covered product boundary does not match the exact merge SHA")
-    try:
-        product_intent = release_policy.parse_labels(
-            [item.get("name") for item in product.get("labels", []) if item.get("name")]
-        )
-    except release_policy.PolicyError as error:
-        raise PreparationError(f"covered product labels are invalid: {error}") from error
-    if not product_intent["release_enabled"]:
-        raise PreparationError("version-only release PR must cover a release-enabled product PR")
-    head_sha = product.get("head", {}).get("sha", "")
-    release_policy.validate_sha(head_sha, "covered_product_head_sha")
-    commit = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{head_sha}")
-    trailers = release_policy.parse_trailers(commit.get("commit", {}).get("message", ""))
-    if any(
-        trailers.get(key)
-        for key in ("Release-Mode", "Source-SHA", "Source-PR-Updated-At", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")
-    ):
-        raise PreparationError("covered product PR already has release identity")
-    return product, head_sha
+    return product
 
 
 def reserve_tag(
@@ -513,27 +496,18 @@ def create(args: argparse.Namespace) -> int:
             release_policy.validate_channel_version(version, intent["channel"])
         except release_policy.PolicyError as error:
             raise PreparationError(str(error)) from error
-        covered_product, covered_head_sha = covered_product_boundary(
-            args.api_root, args.token, args.repository, head_trailers["Covered-Product-Merge-SHA"]
-        )
+        covered_merge_sha = head_trailers["Covered-Product-Merge-SHA"]
+        covered_product = covered_product_boundary(args.api_root, args.token, args.repository, covered_merge_sha)
         try:
-            covered_intent = release_policy.parse_labels(
-                [str(item.get("name")) for item in covered_product.get("labels", []) if item.get("name")]
-            )
             release_policy.validate_version_only(
                 pull_request_changed_files(args.api_root, args.token, args.repository, args.pr_number),
                 {
-                    "covered_product_merge_sha": head_trailers["Covered-Product-Merge-SHA"],
+                    "covered_product_merge_sha": covered_merge_sha,
                     "covered_product_pr_number": covered_product.get("number", 0),
-                    "covered_product_head_sha": covered_head_sha,
                     "covered_product_version": current_version(
-                        args.api_root, args.token, args.repository, covered_head_sha
-                    ),
-                    "covered_product_release_intent": (
-                        f"{covered_intent['type_label']} {covered_intent['channel_label']}"
+                        args.api_root, args.token, args.repository, covered_merge_sha
                     ),
                     "covered_product_merged": True,
-                    "covered_product_has_identity": False,
                     "product_version": version,
                     "release_intent": head_trailers["Release-Intent"],
                     "release_mode": "version-only-release-pr",
@@ -544,14 +518,14 @@ def create(args: argparse.Namespace) -> int:
             )
         except release_policy.PolicyError as error:
             raise PreparationError(str(error)) from error
-        reserve_tag(args.api_root, args.token, args.repository, version, args.pr_number, covered_head_sha)
+        reserve_tag(args.api_root, args.token, args.repository, version, args.pr_number, covered_merge_sha)
         write_json(
             args.output,
             {
                 "schema_version": 1,
                 "release_enabled": True,
                 "pr_number": args.pr_number,
-                "source_sha": covered_head_sha,
+                "source_sha": covered_merge_sha,
                 "preparation_commit_sha": source_sha,
                 "version": version,
                 "release_tag": f"v{version}",

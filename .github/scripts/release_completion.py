@@ -72,9 +72,7 @@ def workflow_runs_for_pr(
         page += 1
 
 
-def covered_product_boundary(
-    api_root: str, token: str, repository: str, covered_merge_sha: str
-) -> tuple[dict[str, Any], str]:
+def covered_product_boundary(api_root: str, token: str, repository: str, covered_merge_sha: str) -> dict[str, Any]:
     owner, name = repository.split("/", 1)
     pulls = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{covered_merge_sha}/pulls")
     if not isinstance(pulls, list) or len(pulls) != 1:
@@ -84,24 +82,7 @@ def covered_product_boundary(
         raise CompletionError("covered product boundary is not a merged main PR")
     if pr.get("merge_commit_sha") != covered_merge_sha:
         raise CompletionError("covered product boundary does not match the exact merge SHA")
-    try:
-        covered_intent = release_policy.parse_labels(
-            [item.get("name") for item in pr.get("labels", []) if item.get("name")]
-        )
-    except release_policy.PolicyError as error:
-        raise CompletionError(f"covered product labels are invalid: {error}") from error
-    if not covered_intent["release_enabled"]:
-        raise CompletionError("version-only release PR must cover a release-enabled product PR")
-    head_sha = pr.get("head", {}).get("sha", "")
-    release_policy.validate_sha(head_sha, "covered_product_head_sha")
-    commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{head_sha}")
-    trailers = release_policy.parse_trailers(commit.get("commit", {}).get("message", ""))
-    if any(
-        trailers.get(key)
-        for key in ("Release-Mode", "Source-SHA", "Source-PR-Updated-At", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")
-    ):
-        raise CompletionError("covered product PR already has release identity")
-    return pr, head_sha
+    return pr
 
 
 def intent_from_trailer(value: str) -> dict[str, Any]:
@@ -257,8 +238,8 @@ def validate_completion(payload: dict[str, Any]) -> dict[str, Any]:
             raise CompletionError("derived release tag is not reserved")
     elif mode == "version-only-release-pr":
         release_policy.validate_version_only(payload.get("changed_files", []), payload.get("provenance", {}), head_sha=head_sha)
-        if source_sha != payload["provenance"].get("covered_product_head_sha"):
-            raise CompletionError("version-only source SHA is not the covered product head")
+        if source_sha != payload["provenance"].get("covered_product_merge_sha"):
+            raise CompletionError("version-only source SHA is not the covered product merge")
         if payload["provenance"].get("release_intent") != f"{intent['type_label']} {intent['channel_label']}":
             raise CompletionError("version-only release intent does not match current PR labels")
         release_policy.validate_channel_version(str(payload["provenance"]["product_version"]), intent["channel"])
@@ -385,19 +366,13 @@ def load_github_completion(
         if trailers.get("Source-SHA"):
             raise CompletionError("version-only release identity cannot carry Source-SHA")
         covered_merge_sha = trailers.get("Covered-Product-Merge-SHA", "")
-        covered_pr, covered_head_sha = covered_product_boundary(api_root, token, repository, covered_merge_sha)
-        covered_intent = release_policy.parse_labels(
-            [str(item.get("name")) for item in covered_pr.get("labels", []) if item.get("name")]
-        )
-        source_sha = covered_head_sha
+        covered_pr = covered_product_boundary(api_root, token, repository, covered_merge_sha)
+        source_sha = covered_merge_sha
         provenance = {
             "covered_product_merge_sha": covered_merge_sha,
             "covered_product_pr_number": covered_pr.get("number", 0),
-            "covered_product_head_sha": covered_head_sha,
-            "covered_product_version": version_at_commit(api_root, token, repository, covered_head_sha),
-            "covered_product_release_intent": f"{covered_intent['type_label']} {covered_intent['channel_label']}",
+            "covered_product_version": version_at_commit(api_root, token, repository, covered_merge_sha),
             "covered_product_merged": True,
-            "covered_product_has_identity": False,
             "product_version": trailers.get("Product-Version", ""),
             "release_intent": trailers.get("Release-Intent", ""),
             "release_mode": mode,
@@ -407,7 +382,7 @@ def load_github_completion(
         files = pull_request_changed_files(api_root, token, repository, pr_number)
     else:
         provenance = None
-    source_pr_number = covered_pr.get("number") if mode == "version-only-release-pr" and covered_pr else pr_number
+    source_pr_number = pr_number
     try:
         release_policy.validate_source_boundary(
             pull_request_changed_files(api_root, token, repository, int(source_pr_number))
@@ -415,8 +390,8 @@ def load_github_completion(
     except release_policy.PolicyError as error:
         raise CompletionError(str(error)) from error
     version_file = version_at_commit(api_root, token, repository, head_sha)
-    check_sha = source_sha
-    check_pr_number = covered_pr.get("number") if mode == "version-only-release-pr" else pr_number
+    check_sha = head_sha if mode == "version-only-release-pr" else source_sha
+    check_pr_number = pr_number
     ci_runs = workflow_runs_for_pr(api_root, token, repository, "ci-pr.yml", check_pr_number)
     gate_sha = source_sha if mode == "normal-preparation" else head_sha
     label_runs = workflow_runs_for_pr(api_root, token, repository, "label-gate.yml", pr_number, gate_sha)
@@ -424,7 +399,7 @@ def load_github_completion(
     label_pr_updated_at = str(
         preparation.get("source_pr_updated_at", "")
         if mode == "normal-preparation"
-        else (covered_pr if mode == "version-only-release-pr" else pr).get("updated_at", "")
+        else pr.get("updated_at", "")
     )
     if not label_pr_updated_at:
         raise CompletionError("PR metadata is missing updated_at for Label Gate binding")

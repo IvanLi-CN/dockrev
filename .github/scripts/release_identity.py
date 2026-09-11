@@ -98,29 +98,9 @@ def version_exists_at_commit(api_root: str, token: str, repository: str, commit_
     return True
 
 
-def covered_product_boundary(
-    api_root: str, token: str, repository: str, covered_merge_sha: str
-) -> tuple[dict[str, Any], str]:
+def covered_product_boundary(api_root: str, token: str, repository: str, covered_merge_sha: str) -> dict[str, Any]:
     pr, _ = merged_pr(api_root, token, repository, covered_merge_sha)
-    owner, name = repository_parts(repository)
-    head_sha = pr.get("head", {}).get("sha", "")
-    release_policy.validate_sha(head_sha, "covered_product_head_sha")
-    try:
-        covered_intent = release_policy.parse_labels(
-            [item.get("name") for item in pr.get("labels", []) if item.get("name")]
-        )
-    except release_policy.PolicyError as error:
-        raise IdentityError(f"covered product labels are invalid: {error}") from error
-    if not covered_intent["release_enabled"]:
-        raise IdentityError("version-only release PR must cover a release-enabled product PR")
-    commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{head_sha}")
-    trailers = release_policy.parse_trailers(commit.get("commit", {}).get("message", ""))
-    if any(
-        trailers.get(key)
-        for key in ("Release-Mode", "Source-SHA", "Source-PR-Updated-At", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")
-    ):
-        raise IdentityError("covered product PR already has release identity")
-    return pr, head_sha
+    return pr
 
 
 def pull_request_changed_files(
@@ -270,19 +250,13 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
         if trailers.get("Source-SHA"):
             raise IdentityError("version-only release identity cannot carry Source-SHA")
         covered_merge_sha = trailers.get("Covered-Product-Merge-SHA", "")
-        covered_pr, covered_head_sha = covered_product_boundary(api_root, token, repository, covered_merge_sha)
-        covered_intent = release_policy.parse_labels(
-            [str(item.get("name")) for item in covered_pr.get("labels", []) if item.get("name")]
-        )
+        covered_pr = covered_product_boundary(api_root, token, repository, covered_merge_sha)
         changed_files = pull_request_changed_files(api_root, token, repository, pr.get("number", 0))
         provenance = {
             "covered_product_merge_sha": covered_merge_sha,
             "covered_product_pr_number": covered_pr.get("number", 0),
-            "covered_product_head_sha": covered_head_sha,
-            "covered_product_version": version_at_commit(api_root, token, repository, covered_head_sha),
-            "covered_product_release_intent": f"{covered_intent['type_label']} {covered_intent['channel_label']}",
+            "covered_product_version": version_at_commit(api_root, token, repository, covered_merge_sha),
             "covered_product_merged": True,
-            "covered_product_has_identity": False,
             "product_version": version,
             "release_intent": release_intent,
             "release_mode": mode,
@@ -295,7 +269,7 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
             raise IdentityError(str(error)) from error
     payload = {
         "pull_request": pr.get("number"),
-        "source_sha": covered_head_sha if mode == "version-only-release-pr" else trailers.get("Source-SHA", head_sha),
+        "source_sha": covered_merge_sha if mode == "version-only-release-pr" else trailers.get("Source-SHA", head_sha),
         "merge_commit_sha": merge_sha,
         "preparation_commit_sha": head_sha if mode == "normal-preparation" else None,
         "covered_product_merge_sha": trailers.get("Covered-Product-Merge-SHA"),
