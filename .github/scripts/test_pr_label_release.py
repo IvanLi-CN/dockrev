@@ -44,10 +44,20 @@ assert policy.next_patch("0.1.0") == "0.1.1"
 assert policy.next_patch("1.4.9") == "1.4.10"
 policy.validate_channel_version("0.1.1", "stable")
 policy.validate_channel_version("0.2.0-beta.1", "beta")
+policy.validate_channel_version("0.2.0-rc.1", "rc")
 policy.validate_channel_version("0.2.0-dev.3", "dev")
+assert policy.patch_channel_transitions() == {
+    "stable": {"stable", "beta", "dev"},
+    "beta": {"beta", "rc"},
+    "rc": {"rc", "stable"},
+    "dev": {"dev"},
+}
 policy.validate_preparation_version("0.1.0", "0.1.1-beta.1", {"type": "patch", "channel": "beta"})
+policy.validate_preparation_version("0.1.1-beta.1", "0.1.1-rc.1", {"type": "patch", "channel": "rc"})
+policy.validate_preparation_version("0.1.1-rc.1", "0.1.1", {"type": "patch", "channel": "stable"})
 expect_error(policy.parse_labels, ["type:patch", "type:minor", "channel:stable"])
-expect_error(policy.parse_labels, ["type:patch", "channel:rc"])
+assert policy.parse_labels(["type:patch", "channel:rc"])["channel"] == "rc"
+expect_error(policy.parse_labels, ["type:patch", "channel:preview"])
 expect_error(policy.validate_source_boundary, [".github/workflows/ci-pr.yml"])
 expect_error(policy.validate_source_boundary, [".github/quality-gates.json"])
 expect_error(policy.validate_source_boundary, [".github/scripts/check-live-quality-gates.py"])
@@ -55,6 +65,9 @@ expect_error(policy.next_patch, "0.1.0-beta.1")
 expect_error(policy.validate_channel_version, "0.1.1", "beta")
 expect_error(policy.validate_channel_version, "0.1.1-beta.preview", "beta")
 expect_error(policy.validate_preparation_version, "0.1.0", "0.1.2-beta.1", {"type": "patch", "channel": "beta"})
+expect_error(policy.validate_preparation_version, "0.1.1-beta.1", "0.1.1", {"type": "patch", "channel": "stable"})
+expect_error(policy.validate_preparation_version, "0.1.1-rc.1", "0.1.1-beta.2", {"type": "patch", "channel": "beta"})
+expect_error(policy.validate_preparation_version, "0.1.1-dev.1", "0.1.1-rc.1", {"type": "patch", "channel": "rc"})
 
 source_sha = "a" * 40
 prep_sha = "b" * 40
@@ -82,6 +95,12 @@ beta_labels = policy.parse_labels(["type:patch", "channel:beta"])
 assert preparation_script.expected_version(beta_labels, "0.1.0", "0.1.1-beta.1") == "0.1.1-beta.1"
 expect_error(preparation_script.expected_version, beta_labels, "0.1.0", None)
 expect_error(preparation_script.expected_version, beta_labels, "0.1.0", "9.9.9-beta.1")
+rc_labels = policy.parse_labels(["type:patch", "channel:rc"])
+assert preparation_script.expected_version(rc_labels, "0.1.1-beta.1", "0.1.1-rc.1") == "0.1.1-rc.1"
+expect_error(preparation_script.expected_version, rc_labels, "0.1.1-beta.1", None)
+stable_labels = policy.parse_labels(["type:patch", "channel:stable"])
+assert preparation_script.expected_version(stable_labels, "0.1.1-rc.1", "0.1.1") == "0.1.1"
+expect_error(preparation_script.expected_version, stable_labels, "0.1.1-rc.1", None)
 
 assert completion.validate_completion({"labels": ["type:none", "channel:stable"]}) == {
     "status": "pass",
@@ -671,6 +690,14 @@ identity_payload = {
 }
 resolved = identity.resolve_from_payload(identity_payload)
 assert resolved["release_tag"] == "v0.1.1"
+rc_identity_payload = {
+    **identity_payload,
+    "version": "0.1.1-rc.1",
+    "version_file": "0.1.1-rc.1",
+    "intent": rc_labels,
+}
+resolved_rc = identity.resolve_from_payload(rc_identity_payload)
+assert resolved_rc["channel"] == "rc" and resolved_rc["release_tag"] == "v0.1.1-rc.1"
 expect_error(identity.resolve_from_payload, {**identity_payload, "version": "0.1.1-beta.1"})
 expect_error(identity.resolve_from_payload, {"labels": ["type:none", "channel:stable"], "release_mode": "normal-preparation"})
 expect_error(identity.resolve_from_payload, {**identity_payload, "covered_product_merge_sha": source_sha})
@@ -904,6 +931,13 @@ failure = {
     "recovery_instruction": "workflow_dispatch merge_sha=" + prep_sha + " recovery_reason=<required>",
 }
 assert policy.validate_failure_context(failure) == failure
+rc_failure = {
+    **failure,
+    "channel": "rc",
+    "version": "0.1.1-rc.1",
+    "tag": "v0.1.1-rc.1",
+}
+assert policy.validate_failure_context(rc_failure) == rc_failure
 expect_error(policy.validate_failure_context, {**failure, "tag": "v0.1.0"})
 expect_error(policy.validate_failure_context, {**failure, "artifact_names": []})
 expect_error(policy.validate_failure_context, {**failure, "run_url": ""})
@@ -920,6 +954,14 @@ step_failure = {
     "recovery_instruction": "workflow_dispatch merge_sha=" + failure["merge_commit_sha"] + " recovery_reason=<required>",
 }
 assert policy.validate_failure_context(step_failure) == step_failure
+rc_step_failure = {
+    **rc_failure,
+    "source_sha": rc_failure["merge_commit_sha"],
+    "identity_resolution_failed": False,
+    "identity_failure_kind": "identity-step-failure",
+    "recovery_instruction": "workflow_dispatch merge_sha=" + rc_failure["merge_commit_sha"] + " recovery_reason=<required>",
+}
+assert policy.validate_failure_context(rc_step_failure) == rc_step_failure
 expect_error(policy.validate_failure_context, {**step_failure, "identity_failure_kind": None})
 resolver_failure = {
     **failure,

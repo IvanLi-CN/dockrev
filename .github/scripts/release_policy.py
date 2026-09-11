@@ -16,6 +16,11 @@ ROOT = Path(__file__).resolve().parents[2]
 POLICY_PATH = ROOT / ".github/pr-label-release.json"
 VERSION_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+CHANNEL_PRERELEASE_RE = {
+    "beta": re.compile(r"beta\.[0-9]+"),
+    "rc": re.compile(r"rc\.[0-9]+"),
+    "dev": re.compile(r"dev\.[0-9]+"),
+}
 UNTRUSTED_SOURCE_PATH_PREFIXES = (
     ".github/workflows/",
     ".github/scripts/release_",
@@ -97,33 +102,65 @@ def next_patch(version: str) -> str:
     return f"{major}.{minor}.{patch + 1}"
 
 
+def channel_for_version(version: str) -> str:
+    _major, _minor, _patch, prerelease = parse_version(version)
+    if prerelease is None:
+        return "stable"
+    for channel, pattern in CHANNEL_PRERELEASE_RE.items():
+        if pattern.fullmatch(prerelease):
+            return channel
+    raise PolicyError(f"VERSION prerelease does not identify a supported release channel: {version!r}")
+
+
+def patch_channel_transitions() -> dict[str, set[str]]:
+    policy = load_policy()
+    contract = policy.get("promotion_contract")
+    if not isinstance(contract, dict) or contract.get("type") != "patch-only":
+        raise PolicyError("missing patch-only promotion contract")
+    transitions = contract.get("transitions")
+    if not isinstance(transitions, dict):
+        raise PolicyError("promotion contract must define channel transitions")
+    channels = {label.removeprefix("channel:") for label in _allowed(policy, "channel")}
+    if set(transitions) != channels:
+        raise PolicyError("promotion contract must define transitions for every release channel")
+    normalized: dict[str, set[str]] = {}
+    for source, targets in transitions.items():
+        if not isinstance(targets, list) or not targets or set(targets) - channels:
+            raise PolicyError(f"invalid promotion targets for {source!r}")
+        normalized[source] = set(targets)
+    return normalized
+
+
 def validate_preparation_version(source_version: str, version: str, intent: dict[str, Any]) -> None:
     source = parse_version(source_version)
     target = parse_version(version)
+    source_channel = channel_for_version(source_version)
+    target_channel = str(intent["channel"])
     if intent["type"] == "patch":
-        source_base = source[:3]
-        expected_base = source_base if source[3] else (source[0], source[1], source[2] + 1)
+        expected_base = source[:3] if source_channel != "stable" else (source[0], source[1], source[2] + 1)
         if target[:3] != expected_base:
             raise PolicyError("patch preparation must advance VERSION by exactly one patch base")
-        if intent["channel"] == "stable" and version != next_patch(source_version):
+        transitions = patch_channel_transitions()
+        if target_channel not in transitions[source_channel]:
+            raise PolicyError(
+                f"patch release promotion from {source_channel} to {target_channel} is not allowed"
+            )
+        if source_channel == "stable" and target_channel == "stable" and version != next_patch(source_version):
             raise PolicyError("stable patch preparation must use the next patch")
     elif intent["type"] == "minor" and target[:2] <= source[:2]:
         raise PolicyError("minor preparation must advance the source major/minor")
     elif intent["type"] == "major" and target[0] <= source[0]:
         raise PolicyError("major preparation must advance the source major")
-    validate_channel_version(version, intent["channel"])
+    validate_channel_version(version, target_channel)
 
 
 def validate_channel_version(version: str, channel: str) -> None:
-    _major, _minor, _patch, prerelease = parse_version(version)
-    if channel == "stable" and prerelease is not None:
-        raise PolicyError("stable channel requires a final semver VERSION")
-    if channel == "beta" and (not prerelease or not re.fullmatch(r"beta\.[0-9]+", prerelease)):
-        raise PolicyError("beta channel requires VERSION suffix -beta.N")
-    if channel == "dev" and (not prerelease or not re.fullmatch(r"dev\.[0-9]+", prerelease)):
-        raise PolicyError("dev channel requires VERSION suffix -dev.N")
-    if channel not in {"stable", "beta", "dev"}:
+    if channel not in {"stable", *CHANNEL_PRERELEASE_RE}:
         raise PolicyError(f"unsupported release channel: {channel}")
+    version_channel = channel_for_version(version)
+    if version_channel != channel:
+        suffix = "a final semver VERSION" if channel == "stable" else f"VERSION suffix -{channel}.N"
+        raise PolicyError(f"{channel} channel requires {suffix}")
 
 
 def validate_source_boundary(changed_files: list[str]) -> None:

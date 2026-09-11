@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 已完成
+- Status: superseded by `docs/specs/release-channel-promotion/SPEC.md`
 - Created: 2026-03-04
 - Last: 2026-03-04
 
@@ -21,7 +21,8 @@ Dockrev 的发布流程原本只支持可选 `channel:prerelease`：
 ### Goals
 
 - 对齐 PR + Label 契约：每个面向 `main` 的 PR 必须且仅能有一个 channel 标签。
-- Channel 标签集合固定为 `channel:stable | channel:rc`。
+- Historical channel 标签集合固定为 `channel:stable | channel:rc`。当前合同由
+  `docs/specs/release-channel-promotion/SPEC.md` 与 ADR 0009 取代。
 - 保持现有发布语义：
   - `stable` 更新 `latest`
   - `rc` 走 prerelease（`<semver>-rc.<shortsha>`）且不更新 `latest`

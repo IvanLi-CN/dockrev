@@ -128,7 +128,7 @@ jobs:
           print(f"release_tag={payload.get('release_tag', '')}")
           print(f"channel={payload.get('channel', '')}")
           print(f"type={payload.get('type', '')}")
-          print(f"prerelease={'true' if payload.get('channel') in {'beta', 'dev'} else 'false'}")
+          print(f"prerelease={'true' if payload.get('channel') in {'beta', 'rc', 'dev'} else 'false'}")
           print("identity_json<<EOF")
           print(json.dumps(payload, sort_keys=True))
           print("EOF")
@@ -149,7 +149,7 @@ jobs:
           set -euo pipefail
           if ! [[ "${MERGE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then MERGE_SHA="${GITHUB_SHA}"; fi
           VERSION="$(tr -d '[:space:]' < VERSION 2>/dev/null || true)"
-          [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-((beta|dev)\.[0-9]+))?$ ]] || {
+          [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-((beta|rc|dev)\.[0-9]+))?$ ]] || {
             echo "Release failure context cannot be created without a valid VERSION" >&2
             exit 1
           }
@@ -180,13 +180,14 @@ jobs:
           if resolver_error:
               if release_type != "unknown" or channel != "unknown":
                   raise SystemExit("Resolver-error context must use unknown intent")
-          elif release_type not in {"major", "minor", "patch"} or channel not in {"stable", "beta", "dev"}:
+          elif release_type not in {"major", "minor", "patch"} or channel not in {"stable", "beta", "rc", "dev"}:
               raise SystemExit("Release failure context requires a verified release intent")
           if not resolver_error:
               channel_pattern = {
-                  "stable": r"^[0-9]+\.[0-9]+\.[0-9]+$",
-                  "beta": r"^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$",
-                  "dev": r"^[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$",
+              "stable": r"^[0-9]+\.[0-9]+\.[0-9]+$",
+              "beta": r"^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$",
+              "rc": r"^[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$",
+              "dev": r"^[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$",
               }[channel]
               if not re.fullmatch(channel_pattern, version):
                   raise SystemExit("Release failure context VERSION is incompatible with the verified channel; refusing to fabricate identity")

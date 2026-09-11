@@ -348,13 +348,16 @@ def delete_reservation_ref(
 
 def expected_version(intent: dict[str, Any], base_version: str, exact_version: str | None) -> str:
     if intent["type"] == "patch":
-        if intent["channel"] == "stable":
+        source_channel = release_policy.channel_for_version(base_version)
+        if intent["channel"] == "stable" and source_channel == "stable":
             if exact_version:
                 raise PreparationError("stable type:patch preparation does not accept an exact version")
             version = release_policy.next_patch(base_version)
         else:
             if not exact_version:
-                raise PreparationError("beta/dev type:patch preparation requires an explicit exact version")
+                raise PreparationError(
+                    "beta/rc/dev and prerelease-to-stable type:patch preparation require an explicit exact version"
+                )
             version = exact_version
     elif intent["type"] in {"major", "minor"}:
         if not exact_version:

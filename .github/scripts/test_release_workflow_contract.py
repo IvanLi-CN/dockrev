@@ -32,6 +32,7 @@ assert "github.event_name == 'pull_request_target'" in label_gate
 assert "github.event.pull_request.number == 387" in label_gate
 assert "github.event.pull_request.base.sha == '759b0cf9c0d5a57be1010e74480cbb5ae713433c'" in label_gate
 assert "release_policy.validate_source_boundary(files)" in label_gate
+assert "'channel:rc'" in label_gate
 assert "ALLOW_BOOTSTRAP" in label_gate
 assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in label_gate
 assert "name: Release completion" in completion
@@ -45,6 +46,7 @@ assert "group: release-preparation-${{ inputs.pr_number || github.event.workflow
 assert "name: Prepare PR VERSION identity" in preparation
 assert "(github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')" in preparation
 assert "release-reservation" in text(".github/scripts/release_preparation.py")
+assert "RC-to-stable promotion" in preparation
 assert "actions: read" in preparation
 assert "checks: read" in preparation
 assert "checks: read" in completion
@@ -103,6 +105,9 @@ assert "files[0] === 'VERSION'" in ci_pr
 assert "needs: [release-identity-guard]" in ci_pr[ci_pr.index("  unit-tests:"):]
 assert "needs.release-identity-guard.outputs.skip != 'true'" in ci_pr
 assert "release-identity-guard" in ci_pr
+assert "channel:(stable|beta|rc|dev)" in ci_pr
+assert "{'beta', 'rc', 'dev'}" in release
+assert '"rc": r"^[0-9]+\\.[0-9]+\\.[0-9]+-rc\\.[0-9]+$"' in release
 assert "Release Candidate Pipeline" not in release
 assert "release_readiness.py" not in release
 assert "refs/notes/release" not in release
@@ -115,6 +120,11 @@ assert "tag_is_reserved_by_other_pr" in text(".github/scripts/release_completion
 quality = json.loads((ROOT / ".github/quality-gates.json").read_text(encoding="utf-8"))
 assert quality["required_checks"] == ["Review Policy Gate", "Label Gate", "Release completion"]
 assert quality["policy"]["branch_protection"]["require_merge_queue"] is False
+assert quality["release_label_contract"] == {
+    "policy_file": ".github/pr-label-release.json",
+    "supported_channels": ["stable", "beta", "rc", "dev"],
+    "promotion_sequence": ["beta", "rc", "stable"],
+}
 
 workflow_paths = {
     "Review Policy": ".github/workflows/review-policy.yml",

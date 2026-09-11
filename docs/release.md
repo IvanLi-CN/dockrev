@@ -15,10 +15,11 @@ Every product PR targeting `main` must carry exactly one `type:*` label and one
 `channel:*` label. The supported values are:
 
 - `type:patch`, `type:minor`, `type:major`, or `type:none`;
-- `channel:stable`, `channel:beta`, or `channel:dev`.
+- `channel:stable`, `channel:beta`, `channel:rc`, or `channel:dev`.
 
-Stable versions are `X.Y.Z`; beta and dev versions are respectively
-`X.Y.Z-beta.N` and `X.Y.Z-dev.N`. `type:none` is valid policy input but does not
+Stable versions are `X.Y.Z`; beta, RC, and dev versions are respectively
+`X.Y.Z-beta.N`, `X.Y.Z-rc.N`, and `X.Y.Z-dev.N`. All non-stable channels create
+GitHub prereleases and versioned GHCR images, never `latest`. `type:none` is valid policy input but does not
 create a release identity and cannot change an existing `VERSION`. The one
 bootstrap exception is the initial non-product PR that adds a non-empty root
 `VERSION` when the base branch has no `VERSION` yet; `Release completion` verifies
@@ -27,8 +28,15 @@ that absence before accepting it.
 ## Normal product PR
 
 1. The source head must pass the complete `CI (PR)` workflow and `Label Gate`.
-2. `Release Preparation` reads the source `VERSION`. Patch releases use the
-   next patch; major and minor releases require an exact version input. Before
+2. `Release Preparation` reads the source `VERSION`. A stable patch release
+   from a final `VERSION` uses the next patch. Major/minor, beta, RC, dev, and
+   prerelease-to-stable promotion require an exact version input; the exact
+   value is verified against the source `VERSION`, frozen labels, signed
+   trailers, branch head, and tag reservation before it can become identity.
+   For `type:patch`, the only prerelease promotion sequence is
+   `X.Y.Z-beta.N -> X.Y.Z-rc.N -> X.Y.Z`; each step keeps `X.Y.Z` unchanged.
+   Beta cannot promote directly to stable, dev does not promote into the
+   beta/RC/stable sequence, and RC cannot return to beta or dev. Before
    writing, it atomically creates the shared
    `release-reservation/vVERSION` ref, pointing to an owner-stamped reservation
    commit whose trailers bind the PR and source SHA. Completion validates that
@@ -61,6 +69,13 @@ If a historical product merge has no identity, create exactly one non-empty
 `Covered-Product-Merge-SHA` trailer, the product version, and frozen label
 intent. `Release completion` validates that boundary and the normal merged
 identity path handles publication. This PR is not a same-SHA recovery.
+
+The release channel is frozen in the preparation or version-only provenance.
+`Release completion`, merged-identity resolution, tag ownership, failure
+context, notifier transport, and same-SHA recovery all revalidate the same
+version/channel pair. A recovery never recomputes an RC or converts it into a
+stable version. RC is always a prerelease and never advances the stable
+`latest` surface.
 
 FIFO queues, release trains, snapshot backfills, mutable label reconstruction,
 and historical tag repair are deliberately unsupported. A stale reservation

@@ -54,13 +54,20 @@
   },
   "label_groups": [
     {"name": "type", "prefix": "type:", "required": true, "cardinality": "exactly-one", "allowed": ["type:major", "type:minor", "type:patch", "type:none"]},
-    {"name": "channel", "prefix": "channel:", "required": true, "cardinality": "exactly-one", "allowed": ["channel:stable", "channel:beta", "channel:dev"]},
+    {"name": "channel", "prefix": "channel:", "required": true, "cardinality": "exactly-one", "allowed": ["channel:stable", "channel:beta", "channel:rc", "channel:dev"]},
     {"name": "component", "prefix": "component:", "required": false, "cardinality": "zero-or-more", "allowed": ["component:app", "component:web", "component:firmware", "component:docs"]}
   ],
   "channel_contract": {
     "stable": {"version": "X.Y.Z", "release_class": "stable", "surfaces": ["github-release", "ghcr-version", "ghcr-latest"]},
     "beta": {"version": "X.Y.Z-beta.N", "release_class": "prerelease", "surfaces": ["github-prerelease", "ghcr-version"]},
+    "rc": {"version": "X.Y.Z-rc.N", "release_class": "prerelease", "surfaces": ["github-prerelease", "ghcr-version"]},
     "dev": {"version": "X.Y.Z-dev.N", "release_class": "prerelease", "surfaces": ["github-prerelease", "ghcr-version"]}
+  },
+  "promotion_contract": {
+    "type": "patch-only",
+    "transitions": {"stable": ["stable", "beta", "dev"], "beta": ["beta", "rc"], "rc": ["rc", "stable"], "dev": ["dev"]},
+    "exact_version_required": ["beta", "rc", "dev", "prerelease-to-stable"],
+    "forbidden": ["beta-to-stable", "dev-to-beta-or-rc-or-stable", "rc-to-beta-or-dev"]
   },
   "required_quality_gate": {"check_name": "Label Gate", "completion_check_name": "Release completion", "quality_gates_declaration": ".github/quality-gates.json"}
 }
