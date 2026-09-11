@@ -377,18 +377,25 @@ try:
         assert recovery_identity_reservations[-1] == (covered_merge_sha, prep_sha)
         assert reservation_sequence == ["covered", "version"]
 
-        covered_identity_marker = "owned"
+        covered_identity_marker = False
         assert preparation_script.covered_product_has_existing_identity(
             "https://api.github.test",
             "token",
             "IvanLi-CN/dockrev",
             covered_merge_sha,
-            "0.1.1-rc.1",
-            expected_recovery_identity_sha=prep_sha,
-            expected_recovery_pr_number=42,
-            expected_recovery_intent="type:patch channel:rc",
+            "0.1.1-beta.1",
         ) is False
-        covered_identity_marker = False
+
+        preparation_script.reserve_recovery_identity = lambda *_args: False
+        expect_error(preparation_script.create, Namespace(
+            api_root="https://api.github.test",
+            token="token",
+            repository="IvanLi-CN/dockrev",
+            pr_number=42,
+            exact_version=None,
+            output=Path(directory) / "orphaned-recovery.json",
+        ))
+        preparation_script.reserve_recovery_identity = fake_reserve_recovery_identity
 
         covered_identity_marker = "foreign"
         reservations_before = calls["reserve"]
@@ -412,6 +419,7 @@ try:
                 return "2026-01-01T00:00:00Z"
 
             preparation_script.source_ci_ready = fail_recovery_ci
+            calls["source_ci"] = 0
             reservations_before = calls["reserve"]
             expect_error(preparation_script.create, Namespace(
                 api_root="https://api.github.test",
@@ -695,16 +703,6 @@ try:
     completion.api_json = fake_version_only_completion_api
     version_only_loaded = completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
     assert completion.validate_completion(version_only_loaded)["mode"] == "version-only-release-pr"
-    assert completion.covered_product_has_existing_identity(
-        "https://api.github.test",
-        "token",
-        "IvanLi-CN/dockrev",
-        covered_merge_sha,
-        "0.1.1-rc.1",
-        expected_recovery_identity_sha=prep_sha,
-        expected_recovery_pr_number=42,
-        expected_recovery_intent="type:patch channel:rc",
-    ) is False
     recovery_identity_matches = False
     expect_error(completion.load_github_completion, "https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
     recovery_identity_matches = None
@@ -794,6 +792,7 @@ recovery_ref_calls = []
 original_preparation_api_request = preparation_script.api_request
 try:
     recovery_ref_state = {"sha": None}
+    recovery_create_collision = None
 
     def fake_recovery_ref_api(_api_root, _token, method, path, payload=None):
         recovery_ref_calls.append((method, path, payload))
@@ -803,6 +802,9 @@ try:
             return {"object": {"sha": recovery_ref_state["sha"]}}
         if method == "POST" and path.endswith("/git/refs"):
             assert payload == {"ref": "refs/heads/release-recovery/" + "c" * 40, "sha": prep_sha}
+            if recovery_create_collision is not None:
+                recovery_ref_state["sha"] = recovery_create_collision
+                raise preparation_script.PreparationError("GitHub API POST ref failed: 422: already exists")
             recovery_ref_state["sha"] = prep_sha
             return {"ref": payload["ref"], "object": {"sha": prep_sha}}
         if method == "DELETE" and path.endswith("/git/refs/heads/release-recovery%2F" + "c" * 40):
@@ -817,15 +819,22 @@ try:
     assert preparation_script.reserve_recovery_identity(
         "https://api.github.test", "token", "IvanLi-CN/dockrev", "c" * 40, prep_sha
     ) is False
+    recovery_ref_state["sha"] = None
+    recovery_create_collision = prep_sha
+    assert preparation_script.reserve_recovery_identity(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", "c" * 40, prep_sha
+    ) is False
+    recovery_ref_state["sha"] = None
+    recovery_create_collision = "d" * 40
     expect_error(
         preparation_script.reserve_recovery_identity,
         "https://api.github.test",
         "token",
         "IvanLi-CN/dockrev",
         "c" * 40,
-        "d" * 40,
+        prep_sha,
     )
-    assert recovery_ref_state["sha"] == prep_sha
+    assert recovery_ref_state["sha"] == "d" * 40
 finally:
     preparation_script.api_request = original_preparation_api_request
 
@@ -913,6 +922,8 @@ expect_error(identity.resolve_from_payload, {**identity_payload, "covered_produc
 
 original_identity_api_json = identity.api_json
 try:
+    normal_merge_sha = "0" * 40
+
     identity.api_json = lambda *_args, **_kwargs: {
         "encoding": "base64",
         "content": "MC4xLjAK\n",
@@ -922,16 +933,22 @@ try:
     ) == "0.1.0"
 
     def fake_identity_api(_api_root, _token, path):
-        if path.endswith(f"/commits/{prep_sha}/pulls"):
+        if path.endswith(f"/commits/{normal_merge_sha}/pulls"):
             return [{
                 "number": 42,
                 "state": "closed",
                 "merged_at": "2026-01-01T00:00:00Z",
-                "merge_commit_sha": prep_sha,
+                "merge_commit_sha": normal_merge_sha,
                 "base": {"ref": "main"},
                 "head": {"sha": prep_sha},
                 "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
             }]
+        if path.endswith(f"/commits/{normal_merge_sha}"):
+            return {
+                "parents": [{"sha": source_sha}, {"sha": prep_sha}],
+                "files": [{"filename": "VERSION"}],
+                "commit": {"message": "Merge release preparation"},
+            }
         if path.endswith(f"/commits/{prep_sha}"):
             return {
                 "parents": [{"sha": source_sha}],
@@ -957,7 +974,7 @@ try:
         raise AssertionError(f"unexpected identity API path: {path}")
 
     identity.api_json = fake_identity_api
-    resolved_api = identity.resolve_github("https://api.github.test", "token", "IvanLi-CN/dockrev", prep_sha)
+    resolved_api = identity.resolve_github("https://api.github.test", "token", "IvanLi-CN/dockrev", normal_merge_sha)
     assert resolved_api["release_tag"] == "v0.1.1"
     def fake_mixed_identity_api(_api_root, _token, path):
         payload = fake_identity_api(_api_root, _token, path)
@@ -966,7 +983,7 @@ try:
         return payload
 
     identity.api_json = fake_mixed_identity_api
-    expect_error(identity.resolve_github, "https://api.github.test", "token", "IvanLi-CN/dockrev", prep_sha)
+    expect_error(identity.resolve_github, "https://api.github.test", "token", "IvanLi-CN/dockrev", normal_merge_sha)
 finally:
     identity.api_json = original_identity_api_json
 
@@ -1054,6 +1071,7 @@ version_only_reservation_sha = "3" * 40
 original_identity_api_json = identity.api_json
 try:
     recovery_identity_matches = True
+    recovery_merge_files = [{"filename": "VERSION"}]
 
     def fake_version_only_identity_api(_api_root, _token, path):
         if path.endswith(f"/commits/{version_only_merge_sha}/pulls"):
@@ -1066,6 +1084,12 @@ try:
                 "head": {"sha": version_only_moved_head_sha},
                 "labels": [{"name": "type:patch"}, {"name": "channel:rc"}],
             }]
+        if path.endswith(f"/commits/{version_only_merge_sha}"):
+            return {
+                "parents": [{"sha": "0" * 40}, {"sha": version_only_release_head_sha}],
+                "files": recovery_merge_files,
+                "commit": {"message": "Merge version-only recovery"},
+            }
         if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-rc.1"):
             return {"object": {"sha": version_only_reservation_sha}}
         if path.endswith(f"/commits/{version_only_reservation_sha}"):
@@ -1087,6 +1111,10 @@ try:
             if recovery_identity_matches is None:
                 raise identity.IdentityError("GitHub API failed: 404")
             return {"object": {"sha": version_only_release_head_sha if recovery_identity_matches else "4" * 40}}
+        if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-beta.1"):
+            raise identity.IdentityError("GitHub API failed: 404")
+        if path.endswith("/git/ref/tags/v0.1.1-beta.1"):
+            raise identity.IdentityError("GitHub API failed: 404")
         if path.endswith(f"/commits/{version_only_release_head_sha}"):
             return {
                 "parents": [{"sha": version_only_covered_head_sha}],
@@ -1127,6 +1155,12 @@ try:
     assert resolved_version_only["release_mode"] == "version-only-release-pr"
     assert resolved_version_only["source_sha"] == version_only_covered_merge_sha
     assert resolved_version_only["channel"] == "rc" and resolved_version_only["release_tag"] == "v0.1.1-rc.1"
+    recovery_merge_files = [{"filename": "VERSION"}, {"filename": "docs/release.md"}]
+    expect_error(
+        identity.resolve_github,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
+    )
+    recovery_merge_files = [{"filename": "VERSION"}]
     recovery_identity_matches = False
     expect_error(
         identity.resolve_github,

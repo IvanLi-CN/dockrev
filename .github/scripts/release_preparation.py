@@ -228,33 +228,8 @@ def covered_product_has_existing_identity(
     repository: str,
     covered_merge_sha: str,
     version: str,
-    *,
-    expected_recovery_identity_sha: str | None = None,
-    expected_recovery_pr_number: int | None = None,
-    expected_recovery_intent: str | None = None,
 ) -> bool:
-    expected_recovery_reservation = (
-        expected_recovery_identity_sha,
-        expected_recovery_pr_number,
-        expected_recovery_intent,
-    )
-    if any(value is not None for value in expected_recovery_reservation) and not all(
-        value is not None for value in expected_recovery_reservation
-    ):
-        raise PreparationError("expected recovery reservation ownership is incomplete")
     owner, name = repository_parts(repository)
-    recovery_path = recovery_ref_path(owner, name, covered_merge_sha)
-    try:
-        recovery_ref = api_request(api_root, token, "GET", recovery_path)
-    except PreparationError as error:
-        if " 404:" not in str(error):
-            raise
-    else:
-        recovery_identity_sha = recovery_ref.get("object", {}).get("sha")
-        if not isinstance(recovery_identity_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", recovery_identity_sha):
-            raise PreparationError("existing covered recovery identity ref has an invalid commit SHA")
-        if recovery_identity_sha != expected_recovery_identity_sha:
-            return True
     reservation_path = (
         f"/repos/{owner}/{name}/git/ref/heads/"
         f"{urllib.parse.quote(f'release-reservation/v{version}', safe='')}"
@@ -265,31 +240,6 @@ def covered_product_has_existing_identity(
         if " 404:" not in str(error):
             raise
     else:
-        reservation_sha = reservation_ref.get("object", {}).get("sha")
-        if not isinstance(reservation_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", reservation_sha):
-            raise PreparationError("existing release reservation ref has an invalid commit SHA")
-        reservation = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{reservation_sha}")
-        trailers = release_policy.parse_reservation_trailers(
-            str(reservation.get("commit", {}).get("message", ""))
-        )
-        if trailers.get("Release-Reservation-Version") != version:
-            raise PreparationError("existing release reservation version does not match covered VERSION")
-        if all(value is not None for value in expected_recovery_reservation):
-            try:
-                trailers = release_policy.validate_version_only_reservation(
-                    reservation,
-                    version=version,
-                    pr_number=int(expected_recovery_pr_number),
-                    source_sha=covered_merge_sha,
-                )
-            except release_policy.PolicyError:
-                return True
-            if (
-                trailers.get("Release-Reservation-Identity-SHA")
-                == expected_recovery_identity_sha
-                and trailers.get("Release-Reservation-Intent") == expected_recovery_intent
-            ):
-                return False
         return True
     try:
         api_request(api_root, token, "GET", f"/repos/{owner}/{name}/git/ref/tags/v{version}")
@@ -298,6 +248,73 @@ def covered_product_has_existing_identity(
             raise
         return False
     return True
+
+
+def version_only_reservation_is_owned(
+    api_root: str,
+    token: str,
+    repository: str,
+    version: str,
+    pr_number: int,
+    source_sha: str,
+    identity_sha: str,
+    release_intent: str,
+) -> bool:
+    owner, name = repository_parts(repository)
+    path = (
+        f"/repos/{owner}/{name}/git/ref/heads/"
+        f"{urllib.parse.quote(f'release-reservation/v{version}', safe='')}"
+    )
+    try:
+        ref = api_request(api_root, token, "GET", path)
+    except PreparationError as error:
+        if " 404:" in str(error):
+            return False
+        raise
+    reservation_sha = ref.get("object", {}).get("sha")
+    if not isinstance(reservation_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", reservation_sha):
+        return False
+    try:
+        reservation = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{reservation_sha}")
+        trailers = release_policy.validate_version_only_reservation(
+            reservation, version=version, pr_number=pr_number, source_sha=source_sha
+        )
+    except (PreparationError, release_policy.PolicyError):
+        return False
+    return (
+        trailers.get("Release-Reservation-Identity-SHA") == identity_sha
+        and trailers.get("Release-Reservation-Intent") == release_intent
+    )
+
+
+def version_reservation_exists(
+    api_root: str, token: str, repository: str, version: str
+) -> bool:
+    owner, name = repository_parts(repository)
+    path = (
+        f"/repos/{owner}/{name}/git/ref/heads/"
+        f"{urllib.parse.quote(f'release-reservation/v{version}', safe='')}"
+    )
+    try:
+        api_request(api_root, token, "GET", path)
+    except PreparationError as error:
+        if " 404:" in str(error):
+            return False
+        raise
+    return True
+
+
+def recovery_identity_is_owned(
+    api_root: str, token: str, repository: str, covered_merge_sha: str, identity_sha: str
+) -> bool:
+    owner, name = repository_parts(repository)
+    try:
+        ref = api_request(api_root, token, "GET", recovery_ref_path(owner, name, covered_merge_sha))
+    except PreparationError as error:
+        if " 404:" in str(error):
+            return False
+        raise
+    return ref.get("object", {}).get("sha") == identity_sha
 
 
 def recovery_ref_path(owner: str, name: str, covered_merge_sha: str) -> str:
@@ -682,9 +699,6 @@ def create(args: argparse.Namespace) -> int:
             args.repository,
             covered_merge_sha,
             covered_product_version,
-            expected_recovery_identity_sha=source_sha,
-            expected_recovery_pr_number=args.pr_number,
-            expected_recovery_intent=head_trailers["Release-Intent"],
         ):
             raise PreparationError("covered product merge already has immutable release identity")
         try:
@@ -717,18 +731,34 @@ def create(args: argparse.Namespace) -> int:
         )
         reservation_sha = None
         try:
-            reserve_recovery_identity(
+            target_reservation_exists = version_reservation_exists(
+                args.api_root, args.token, args.repository, version
+            )
+            recovery_was_owned = recovery_identity_is_owned(
                 args.api_root, args.token, args.repository, covered_merge_sha, source_sha
             )
+            if target_reservation_exists and not recovery_was_owned:
+                raise PreparationError("target reservation exists without a matching covered recovery identity")
+            recovery_created = reserve_recovery_identity(
+                args.api_root, args.token, args.repository, covered_merge_sha, source_sha
+            )
+            if not recovery_created and not version_only_reservation_is_owned(
+                args.api_root,
+                args.token,
+                args.repository,
+                version,
+                args.pr_number,
+                covered_merge_sha,
+                source_sha,
+                head_trailers["Release-Intent"],
+            ):
+                raise PreparationError("covered recovery identity is orphaned without its target reservation")
             if covered_product_has_existing_identity(
                 args.api_root,
                 args.token,
                 args.repository,
                 covered_merge_sha,
                 covered_product_version,
-                expected_recovery_identity_sha=source_sha,
-                expected_recovery_pr_number=args.pr_number,
-                expected_recovery_intent=head_trailers["Release-Intent"],
             ):
                 raise PreparationError("covered product merge already has immutable release identity")
             reservation_sha = reserve_tag(

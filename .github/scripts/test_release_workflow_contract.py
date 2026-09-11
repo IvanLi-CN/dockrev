@@ -109,6 +109,8 @@ assert "release-identity-guard" in ci_pr
 assert "channel:(stable|beta|rc|dev)" in ci_pr
 assert "{'beta', 'rc', 'dev'}" in release
 assert '"rc": r"^[0-9]+\\.[0-9]+\\.[0-9]+-rc\\.[0-9]+$"' in release
+assert "prerelease: ${{ env.CHANNEL != 'stable' }}" in release
+assert "if: env.CHANNEL == 'stable'" in release
 assert "Release Candidate Pipeline" not in release
 assert "release_readiness.py" not in release
 assert "refs/notes/release" not in release

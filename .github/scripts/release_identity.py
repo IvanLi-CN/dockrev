@@ -156,6 +156,25 @@ def recovery_identity_is_owned(
     return ref.get("object", {}).get("sha") == identity_sha
 
 
+def covered_version_has_existing_identity(
+    api_root: str, token: str, repository: str, version: str
+) -> bool:
+    owner, name = repository_parts(repository)
+    for path in (
+        f"/repos/{owner}/{name}/git/ref/heads/"
+        f"{urllib.parse.quote(f'release-reservation/v{version}', safe='')}",
+        f"/repos/{owner}/{name}/git/ref/tags/v{version}",
+    ):
+        try:
+            api_json(api_root, token, path)
+        except IdentityError as error:
+            if "GitHub API failed: 404" in str(error):
+                continue
+            raise
+        return True
+    return False
+
+
 def resolve_version_only_reservation(
     api_root: str,
     token: str,
@@ -186,13 +205,25 @@ def resolve_version_only_reservation(
         raise IdentityError("version-only reservation does not own the covered recovery identity")
     intent = intent_from_trailer(release_intent)
     covered_pr = covered_product_boundary(api_root, token, repository, covered_merge_sha)
+    covered_product_version = version_at_commit(api_root, token, repository, covered_merge_sha)
+    if covered_version_has_existing_identity(api_root, token, repository, covered_product_version):
+        raise IdentityError("covered product merge already has an immutable release identity")
+    merge_commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{merge_sha}")
+    merge_parents = [parent.get("sha") for parent in merge_commit.get("parents", [])]
+    if identity_sha not in merge_parents:
+        raise IdentityError("merged version-only PR does not retain its reserved identity commit")
+    merged_files = sorted(
+        {entry.get("filename") for entry in merge_commit.get("files", []) if entry.get("filename")}
+    )
+    if merged_files != ["VERSION"]:
+        raise IdentityError("merged version-only PR must change VERSION only")
     changed_files = sorted(
         {entry.get("filename") for entry in identity_commit.get("files", []) if entry.get("filename")}
     )
     provenance = {
         "covered_product_merge_sha": covered_merge_sha,
         "covered_product_pr_number": covered_pr.get("number", 0),
-        "covered_product_version": version_at_commit(api_root, token, repository, covered_merge_sha),
+        "covered_product_version": covered_product_version,
         "covered_product_merged": True,
         "product_version": version,
         "release_intent": release_intent,
@@ -348,6 +379,10 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
     if version_file != version:
         raise IdentityError("merged commit VERSION does not match Product-Version provenance")
     if mode == "normal-preparation":
+        merge_commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{merge_sha}")
+        merge_parents = [parent.get("sha") for parent in merge_commit.get("parents", [])]
+        if head_sha not in merge_parents:
+            raise IdentityError("normal preparation is not an immutable parent of the merged PR")
         if trailers.get("Covered-Product-Merge-SHA"):
             raise IdentityError("normal preparation identity cannot carry Covered-Product-Merge-SHA")
         source_sha = trailers.get("Source-SHA", "")
