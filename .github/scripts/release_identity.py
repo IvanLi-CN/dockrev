@@ -218,13 +218,21 @@ def normal_preparation_reservation(
     return {**raw, "Release-Reservation-Commit-SHA": str(reservation_sha)}
 
 
-def commit_tree_sha(commit: dict[str, Any], label: str) -> str:
-    tree_sha = commit.get("commit", {}).get("tree", {}).get("sha")
+def version_blob_sha(
+    api_root: str, token: str, repository: str, commit_sha: str
+) -> str:
+    owner, name = repository_parts(repository)
+    payload = api_json(
+        api_root,
+        token,
+        f"/repos/{owner}/{name}/contents/VERSION?ref={urllib.parse.quote(commit_sha, safe='')}",
+    )
+    blob_sha = payload.get("sha")
     try:
-        release_policy.validate_sha(str(tree_sha), f"{label} tree SHA")
+        release_policy.validate_sha(str(blob_sha), "VERSION blob SHA")
     except release_policy.PolicyError as error:
         raise IdentityError(str(error)) from error
-    return str(tree_sha)
+    return str(blob_sha)
 
 
 def recovery_identity_is_owned(
@@ -298,10 +306,10 @@ def resolve_version_only_reservation(
     if covered_version_has_existing_identity(api_root, token, repository, covered_product_version):
         raise IdentityError("covered product merge already has an immutable release identity")
     merge_commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{merge_sha}")
-    if commit_tree_sha(identity_commit, "reserved recovery identity") != commit_tree_sha(
-        merge_commit, "merged version-only PR"
+    if version_blob_sha(api_root, token, repository, identity_sha) != version_blob_sha(
+        api_root, token, repository, merge_sha
     ):
-        raise IdentityError("merged version-only PR tree does not match its reserved identity commit")
+        raise IdentityError("merged version-only PR VERSION does not match its reserved identity commit")
     merged_files = sorted(
         {entry.get("filename") for entry in merge_commit.get("files", []) if entry.get("filename")}
     )
@@ -485,10 +493,10 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
     trailers = release_policy.parse_trailers(str(head_commit.get("commit", {}).get("message", "")))
     if trailers.get("Release-Mode") != "normal-preparation":
         raise IdentityError("preparation identity ref does not point to a normal preparation")
-    if commit_tree_sha(head_commit, "normal preparation") != commit_tree_sha(
-        merge_commit, "merged product PR"
+    if version_blob_sha(api_root, token, repository, head_sha) != version_blob_sha(
+        api_root, token, repository, merge_sha
     ):
-        raise IdentityError("merged product PR tree does not match its normal preparation")
+        raise IdentityError("merged product PR VERSION does not match its normal preparation")
     if trailers.get("Source-SHA") != source_sha:
         raise IdentityError("normal preparation source SHA does not match its reservation")
     mode = trailers["Release-Mode"]

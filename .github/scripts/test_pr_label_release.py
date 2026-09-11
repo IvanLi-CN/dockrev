@@ -740,9 +740,14 @@ finally:
 reservation_calls = []
 original_preparation_api_request = preparation_script.api_request
 try:
+    reservation_ref_state = {"sha": None}
+    reservation_create_collision = None
+
     def fake_reservation_api(_api_root, _token, method, path, payload=None):
         reservation_calls.append((method, path, payload))
         if method == "GET" and path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1"):
+            if reservation_ref_state["sha"] is not None:
+                return {"object": {"sha": reservation_ref_state["sha"]}}
             raise preparation_script.PreparationError("GitHub API GET ref failed: 404: missing")
         if method == "GET" and path.endswith(f"/commits/{source_sha}"):
             return {"commit": {"tree": {"sha": "e" * 40}}}
@@ -757,7 +762,31 @@ try:
             )
             return {"sha": "f" * 40}
         if method == "POST" and path.endswith("/git/refs"):
+            if reservation_create_collision is not None:
+                reservation_ref_state["sha"] = reservation_create_collision
+                raise preparation_script.PreparationError("GitHub API POST ref failed: 422: already exists")
+            reservation_ref_state["sha"] = "f" * 40
             return {"ref": "refs/heads/release-reservation/v0.1.1", "object": {"sha": "f" * 40}}
+        if method == "GET" and path.endswith("/commits/" + "f" * 40):
+            return {
+                "parents": [{"sha": source_sha}],
+                "commit": {"message": (
+                    "Reserve release version v0.1.1\n\n"
+                    "Release-Reservation-Version: 0.1.1\n"
+                    "Release-Reservation-PR: 42\n"
+                    f"Release-Reservation-Source-SHA: {source_sha}"
+                )},
+            }
+        if method == "GET" and path.endswith("/commits/" + "a" * 40):
+            return {
+                "parents": [{"sha": source_sha}],
+                "commit": {"message": (
+                    "Reserve release version v0.1.1\n\n"
+                    "Release-Reservation-Version: 0.1.1\n"
+                    "Release-Reservation-PR: 41\n"
+                    f"Release-Reservation-Source-SHA: {source_sha}"
+                )},
+            }
         raise AssertionError((method, path, payload))
 
     preparation_script.api_request = fake_reservation_api
@@ -768,6 +797,17 @@ try:
         "POST",
         "/repos/IvanLi-CN/dockrev/git/refs",
         {"ref": "refs/heads/release-reservation/v0.1.1", "sha": "f" * 40},
+    )
+    reservation_ref_state["sha"] = None
+    reservation_create_collision = "f" * 40
+    assert preparation_script.reserve_version_ref(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", "0.1.1", 42, source_sha
+    ) is None
+    reservation_ref_state["sha"] = None
+    reservation_create_collision = "a" * 40
+    expect_error(
+        preparation_script.reserve_version_ref,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", "0.1.1", 42, source_sha
     )
 finally:
     preparation_script.api_request = original_preparation_api_request
@@ -983,6 +1023,10 @@ try:
     normal_merge_parents = [{"sha": source_sha}]
     normal_reservation_sha = "8" * 40
     normal_tree_sha = "9" * 40
+    normal_merge_blob_sha = normal_tree_sha
+    normal_preparation_blob_sha = normal_tree_sha
+    normal_reservation_state = {"reads": 0, "rebound": False}
+    normal_preparation_ref_state = {"reads": 0, "rebound": False}
 
     identity.api_json = lambda *_args, **_kwargs: {
         "encoding": "base64",
@@ -1031,8 +1075,12 @@ try:
         if "/contents/VERSION?ref=" in path:
             version = "0.1.0" if source_sha in path else "0.1.1"
             encoded = __import__("base64").b64encode(version.encode()).decode() + "\n"
-            return {"encoding": "base64", "content": encoded}
+            blob_sha = normal_merge_blob_sha if normal_merge_sha in path else normal_preparation_blob_sha
+            return {"encoding": "base64", "content": encoded, "sha": blob_sha}
         if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1"):
+            normal_reservation_state["reads"] += 1
+            if normal_reservation_state["rebound"] and normal_reservation_state["reads"] > 2:
+                return {"object": {"sha": "4" * 40}}
             return {"object": {"sha": normal_reservation_sha}}
         if path.endswith(f"/commits/{normal_reservation_sha}"):
             return {
@@ -1045,6 +1093,9 @@ try:
                 )},
             }
         if path.endswith(f"/git/ref/heads/release-preparation%2F42%2F{source_sha}"):
+            normal_preparation_ref_state["reads"] += 1
+            if normal_preparation_ref_state["rebound"] and normal_preparation_ref_state["reads"] > 1:
+                return {"object": {"sha": "4" * 40}}
             return {"object": {"sha": prep_sha}}
         raise AssertionError(f"unexpected identity API path: {path}")
 
@@ -1055,6 +1106,24 @@ try:
     assert identity.resolve_github(
         "https://api.github.test", "token", "IvanLi-CN/dockrev", normal_merge_sha
     )["preparation_commit_sha"] == prep_sha
+    normal_reservation_state = {"reads": 0, "rebound": True}
+    expect_error(
+        identity.resolve_github,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", normal_merge_sha
+    )
+    normal_reservation_state = {"reads": 0, "rebound": False}
+    normal_preparation_ref_state = {"reads": 0, "rebound": True}
+    expect_error(
+        identity.resolve_github,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", normal_merge_sha
+    )
+    normal_preparation_ref_state = {"reads": 0, "rebound": False}
+    normal_merge_blob_sha = "a" * 40
+    expect_error(
+        identity.resolve_github,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", normal_merge_sha
+    )
+    normal_merge_blob_sha = normal_tree_sha
     def fake_mixed_identity_api(_api_root, _token, path):
         payload = fake_identity_api(_api_root, _token, path)
         if path.endswith(f"/commits/{prep_sha}"):
@@ -1253,7 +1322,8 @@ try:
         if "/contents/VERSION?ref=" in path:
             version = b"0.1.1-beta.1" if version_only_covered_merge_sha in path else b"0.1.1-rc.1"
             encoded = __import__("base64").b64encode(version).decode()
-            return {"encoding": "base64", "content": encoded}
+            blob_sha = version_only_merge_tree_sha if version_only_merge_sha in path else version_only_identity_tree_sha
+            return {"encoding": "base64", "content": encoded, "sha": blob_sha}
         raise AssertionError(f"unexpected version-only identity API path: {path}")
 
     identity.api_json = fake_version_only_identity_api
