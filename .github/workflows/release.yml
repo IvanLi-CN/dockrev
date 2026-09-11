@@ -496,6 +496,72 @@ jobs:
           name: release-assets-${{ env.MERGE_SHA }}
           path: dist/release
 
+      - name: Acquire immutable publication lock
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXPECTED_IDENTITY_JSON: ${{ needs.identity.outputs.identity_json }}
+        run: |
+          set -euo pipefail
+          identity_mode="$(jq -r '.release_mode' <<<"${EXPECTED_IDENTITY_JSON}")"
+          identity_pr="$(jq -r '.pull_request' <<<"${EXPECTED_IDENTITY_JSON}")"
+          identity_source="$(jq -r '.source_sha' <<<"${EXPECTED_IDENTITY_JSON}")"
+          if [[ "${identity_mode}" == "version-only-release-pr" ]]; then
+            identity_ref_name="release-recovery/${identity_source}"
+          elif [[ "${identity_mode}" == "normal-preparation" ]]; then
+            identity_ref_name="release-preparation/${identity_pr}/${identity_source}"
+          else
+            echo "unsupported release mode for publication lock: ${identity_mode}" >&2
+            exit 2
+          fi
+          identity_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${identity_ref_name}" --jq '.object.sha')"
+          [[ "${identity_sha}" =~ ^[0-9a-f]{40}$ ]] || { echo "publication identity ref is invalid" >&2; exit 2; }
+          lock_ref_name="release-publication-lock/v${VERSION}"
+          lock_path="repos/${GITHUB_REPOSITORY}/git/ref/heads/${lock_ref_name}"
+          if existing="$(gh api "${lock_path}" 2>/tmp/release-publication-lock-error)"; then
+            owner_sha="$(jq -r '.object.sha' <<<"${existing}")"
+            test "${owner_sha}" = "${identity_sha}"
+          else
+            status=$?
+            if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 404|Not Found|404' /tmp/release-publication-lock-error; then
+              cat /tmp/release-publication-lock-error >&2
+              exit "${status}"
+            fi
+            if gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f "ref=refs/heads/${lock_ref_name}" -f "sha=${identity_sha}" >/dev/null 2>/tmp/release-publication-lock-create-error; then
+              exit 0
+            fi
+            status=$?
+            if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 422|Reference already exists|already exists' /tmp/release-publication-lock-create-error; then
+              cat /tmp/release-publication-lock-create-error >&2
+              exit "${status}"
+            fi
+            owner_sha="$(gh api "${lock_path}" --jq '.object.sha')"
+            test "${owner_sha}" = "${identity_sha}"
+          fi
+
+      - name: Revalidate release identity before publication
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXPECTED_IDENTITY_JSON: ${{ needs.identity.outputs.identity_json }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${EXPECTED_IDENTITY_JSON}" > expected-release-intent.json
+          python3 .github/scripts/release_identity.py \
+            --repository "${GITHUB_REPOSITORY}" \
+            --merge-sha "${MERGE_SHA}" \
+            --token "${GITHUB_TOKEN}" \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            > fresh-release-intent.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          expected = json.loads(Path("expected-release-intent.json").read_text(encoding="utf-8"))
+          fresh = json.loads(Path("fresh-release-intent.json").read_text(encoding="utf-8"))
+          if expected != fresh:
+              raise SystemExit("release identity changed before publication")
+          PY
+
       - name: Create immutable tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

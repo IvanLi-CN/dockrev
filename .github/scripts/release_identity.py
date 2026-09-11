@@ -157,6 +157,29 @@ def version_reservation_ref_is_current(
     return ref.get("object", {}).get("sha") == expected_sha
 
 
+def publication_lock_sha(
+    api_root: str, token: str, repository: str, version: str
+) -> str | None:
+    owner, name = repository_parts(repository)
+    ref_name = f"release-publication-lock/v{version}"
+    try:
+        ref = api_json(
+            api_root,
+            token,
+            f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(ref_name, safe='')}",
+        )
+    except IdentityError as error:
+        if "GitHub API failed: 404" in str(error):
+            return None
+        raise
+    lock_sha = ref.get("object", {}).get("sha")
+    try:
+        release_policy.validate_sha(str(lock_sha), "publication lock commit SHA")
+    except release_policy.PolicyError as error:
+        raise IdentityError(str(error)) from error
+    return str(lock_sha)
+
+
 def preparation_identity_reservation(
     api_root: str, token: str, repository: str, pr_number: int, source_sha: str
 ) -> str | None:
@@ -254,7 +277,11 @@ def recovery_identity_is_owned(
 
 
 def covered_version_has_existing_identity(
-    api_root: str, token: str, repository: str, version: str
+    api_root: str,
+    token: str,
+    repository: str,
+    version: str,
+    allowed_lock_sha: str | None = None,
 ) -> bool:
     owner, name = repository_parts(repository)
     for path in (
@@ -268,6 +295,9 @@ def covered_version_has_existing_identity(
             if "GitHub API failed: 404" in str(error):
                 continue
             raise
+        return True
+    lock_sha = publication_lock_sha(api_root, token, repository, version)
+    if lock_sha is not None and lock_sha != allowed_lock_sha:
         return True
     return False
 
@@ -303,7 +333,9 @@ def resolve_version_only_reservation(
     intent = intent_from_trailer(release_intent)
     covered_pr = covered_product_boundary(api_root, token, repository, covered_merge_sha)
     covered_product_version = version_at_commit(api_root, token, repository, covered_merge_sha)
-    if covered_version_has_existing_identity(api_root, token, repository, covered_product_version):
+    if covered_version_has_existing_identity(
+        api_root, token, repository, covered_product_version, allowed_lock_sha=identity_sha
+    ):
         raise IdentityError("covered product merge already has an immutable release identity")
     merge_commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{merge_sha}")
     if version_blob_sha(api_root, token, repository, identity_sha) != version_blob_sha(
@@ -343,7 +375,9 @@ def resolve_version_only_reservation(
         raise IdentityError("version-only reservation ownership changed during identity resolution")
     if not recovery_identity_is_owned(api_root, token, repository, covered_merge_sha, identity_sha):
         raise IdentityError("covered recovery identity changed during identity resolution")
-    if covered_version_has_existing_identity(api_root, token, repository, covered_product_version):
+    if covered_version_has_existing_identity(
+        api_root, token, repository, covered_product_version, allowed_lock_sha=identity_sha
+    ):
         raise IdentityError("covered product merge gained an immutable release identity")
     return resolve_from_payload(
         {
@@ -489,6 +523,9 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
             "reason": "no-release-identity",
         }
     head_sha = preparation_sha
+    lock_sha = publication_lock_sha(api_root, token, repository, merge_version)
+    if lock_sha is not None and lock_sha != head_sha:
+        raise IdentityError("release version is already locked for publication by another identity")
     head_commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{head_sha}")
     trailers = release_policy.parse_trailers(str(head_commit.get("commit", {}).get("message", "")))
     if trailers.get("Release-Mode") != "normal-preparation":

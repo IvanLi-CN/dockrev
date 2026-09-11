@@ -915,6 +915,7 @@ def create(args: argparse.Namespace) -> int:
     version = expected_version(intent, base_version, args.exact_version)
     reservation_sha = reserve_tag(args.api_root, args.token, args.repository, version, args.pr_number, source_sha)
     commit_sha = None
+    preparation_reserved = False
     try:
         source_ci_ready(
             args.api_root,
@@ -930,14 +931,17 @@ def create(args: argparse.Namespace) -> int:
             args.api_root, args.token, args.repository, pr["head"]["ref"], source_sha, version, intent,
             source_pr_updated_at,
         )
+        preparation = inspect_commit(
+            args.api_root, args.token, args.repository, pr["head"]["ref"], commit_sha, source_sha, version, intent
+        )
+        reserve_preparation_identity(
+            args.api_root, args.token, args.repository, args.pr_number, source_sha, commit_sha
+        )
+        preparation_reserved = True
     except PreparationError:
-        if reservation_sha and commit_sha is None:
+        if reservation_sha and not preparation_reserved:
             delete_reservation_ref(args.api_root, args.token, args.repository, version, reservation_sha)
         raise
-    preparation = inspect_commit(args.api_root, args.token, args.repository, pr["head"]["ref"], commit_sha, source_sha, version, intent)
-    reserve_preparation_identity(
-        args.api_root, args.token, args.repository, args.pr_number, source_sha, commit_sha
-    )
     payload = {
         "schema_version": 1,
         "release_enabled": True,

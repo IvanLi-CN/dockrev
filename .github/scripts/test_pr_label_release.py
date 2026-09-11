@@ -248,6 +248,43 @@ try:
         assert len(cleanup_calls) == 1
         assert calls["create"] == 0
 
+        preparation_script.source_ci_ready = fake_source_ci
+        cleanup_calls.clear()
+
+        def fail_inspect(*_args):
+            raise preparation_script.PreparationError("prepared commit is invalid")
+
+        preparation_script.inspect_commit = fail_inspect
+        with tempfile.TemporaryDirectory() as inspect_directory:
+            expect_error(preparation_script.create, Namespace(
+                api_root="https://api.github.test",
+                token="token",
+                repository="IvanLi-CN/dockrev",
+                pr_number=42,
+                exact_version=None,
+                output=Path(inspect_directory) / "release-intent.json",
+            ))
+        assert len(cleanup_calls) == 1
+        preparation_script.inspect_commit = fake_inspect
+
+        cleanup_calls.clear()
+
+        def fail_preparation_reservation(*_args, **_kwargs):
+            raise preparation_script.PreparationError("preparation identity collision")
+
+        preparation_script.reserve_preparation_identity = fail_preparation_reservation
+        with tempfile.TemporaryDirectory() as reservation_directory:
+            expect_error(preparation_script.create, Namespace(
+                api_root="https://api.github.test",
+                token="token",
+                repository="IvanLi-CN/dockrev",
+                pr_number=42,
+                exact_version=None,
+                output=Path(reservation_directory) / "release-intent.json",
+            ))
+        assert len(cleanup_calls) == 1
+        preparation_script.reserve_preparation_identity = lambda *_args: True
+
         calls = {"source_ci": 0, "reserve": 0, "create": 0}
         preparation_script.pull_request = lambda *_args: {
             "state": "open",
@@ -1023,6 +1060,7 @@ try:
     normal_merge_parents = [{"sha": source_sha}]
     normal_reservation_sha = "8" * 40
     normal_tree_sha = "9" * 40
+    normal_merge_tree_sha = normal_tree_sha
     normal_merge_blob_sha = normal_tree_sha
     normal_preparation_blob_sha = normal_tree_sha
     normal_reservation_state = {"reads": 0, "rebound": False}
@@ -1051,7 +1089,7 @@ try:
             return {
                 "parents": normal_merge_parents,
                 "files": [{"filename": "VERSION"}],
-                "commit": {"message": "Merge release preparation", "tree": {"sha": normal_tree_sha}},
+                "commit": {"message": "Merge release preparation", "tree": {"sha": normal_merge_tree_sha}},
             }
         if path.endswith(f"/commits/{prep_sha}"):
             return {
@@ -1097,6 +1135,8 @@ try:
             if normal_preparation_ref_state["rebound"] and normal_preparation_ref_state["reads"] > 1:
                 return {"object": {"sha": "4" * 40}}
             return {"object": {"sha": prep_sha}}
+        if path.endswith("/git/ref/heads/release-publication-lock%2Fv0.1.1"):
+            raise identity.IdentityError("GitHub API failed: 404")
         raise AssertionError(f"unexpected identity API path: {path}")
 
     identity.api_json = fake_identity_api
@@ -1106,6 +1146,14 @@ try:
     assert identity.resolve_github(
         "https://api.github.test", "token", "IvanLi-CN/dockrev", normal_merge_sha
     )["preparation_commit_sha"] == prep_sha
+    normal_merge_parents = [{"sha": source_sha}, {"sha": "2" * 40}]
+    normal_merge_tree_sha = "a" * 40
+    advanced_normal = identity.resolve_github(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", normal_merge_sha
+    )
+    assert advanced_normal["preparation_commit_sha"] == prep_sha
+    normal_merge_parents = [{"sha": source_sha}]
+    normal_merge_tree_sha = normal_tree_sha
     normal_reservation_state = {"reads": 0, "rebound": True}
     expect_error(
         identity.resolve_github,
@@ -1226,6 +1274,7 @@ version_only_moved_head_sha = "2" * 40
 version_only_reservation_sha = "3" * 40
 version_only_merge_tree_sha = "6" * 40
 version_only_identity_tree_sha = version_only_merge_tree_sha
+version_only_merge_blob_sha = version_only_identity_tree_sha
 original_identity_api_json = identity.api_json
 try:
     recovery_identity_matches = True
@@ -1275,6 +1324,10 @@ try:
             if recovery_identity_matches is None:
                 raise identity.IdentityError("GitHub API failed: 404")
             return {"object": {"sha": version_only_release_head_sha if recovery_identity_matches else "4" * 40}}
+        if path.endswith("/git/ref/heads/release-publication-lock%2Fv0.1.1-rc.1"):
+            raise identity.IdentityError("GitHub API failed: 404")
+        if path.endswith("/git/ref/heads/release-publication-lock%2Fv0.1.1-beta.1"):
+            raise identity.IdentityError("GitHub API failed: 404")
         if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-beta.1"):
             covered_identity_state["reads"] += 1
             covered_identity = covered_identity_state["kind"]
@@ -1322,7 +1375,7 @@ try:
         if "/contents/VERSION?ref=" in path:
             version = b"0.1.1-beta.1" if version_only_covered_merge_sha in path else b"0.1.1-rc.1"
             encoded = __import__("base64").b64encode(version).decode()
-            blob_sha = version_only_merge_tree_sha if version_only_merge_sha in path else version_only_identity_tree_sha
+            blob_sha = version_only_merge_blob_sha if version_only_merge_sha in path else version_only_identity_tree_sha
             return {"encoding": "base64", "content": encoded, "sha": blob_sha}
         raise AssertionError(f"unexpected version-only identity API path: {path}")
 
@@ -1333,6 +1386,14 @@ try:
     assert resolved_version_only["release_mode"] == "version-only-release-pr"
     assert resolved_version_only["source_sha"] == version_only_covered_merge_sha
     assert resolved_version_only["channel"] == "rc" and resolved_version_only["release_tag"] == "v0.1.1-rc.1"
+    recovery_merge_parents = [{"sha": "0" * 40}, {"sha": "2" * 40}]
+    version_only_merge_tree_sha = "8" * 40
+    advanced_version_only = identity.resolve_github(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
+    )
+    assert advanced_version_only["release_mode"] == "version-only-release-pr"
+    recovery_merge_parents = [{"sha": "0" * 40}]
+    version_only_merge_tree_sha = version_only_identity_tree_sha
     for covered_identity in ("reservation", "tag"):
         covered_identity_state = {"kind": covered_identity, "after_initial_check": None, "reads": 0}
         expect_error(
@@ -1345,12 +1406,12 @@ try:
         "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
     )
     covered_identity_state = {"kind": None, "after_initial_check": None, "reads": 0}
-    version_only_merge_tree_sha = "7" * 40
+    version_only_merge_blob_sha = "7" * 40
     expect_error(
         identity.resolve_github,
         "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
     )
-    version_only_merge_tree_sha = version_only_identity_tree_sha
+    version_only_merge_blob_sha = version_only_identity_tree_sha
     reservation_ref_state = {"reads": 0, "rebound": True}
     expect_error(
         identity.resolve_github,

@@ -65,6 +65,11 @@ assert "release-failure-context-" in release and "workflow_dispatch merge_sha=" 
 assert "create VERSION-only release PR Covered-Product-Merge-SHA=" in release
 assert "prior failed automatic Release run" in release
 assert "path: release-assets" in release and 'chmod +x "${source}"' in release
+assert "Acquire immutable publication lock" in release
+assert "release-publication-lock/v${VERSION}" in release
+assert "Revalidate release identity before publication" in release
+assert "fresh-release-intent.json" in release
+assert "release identity changed before publication" in release
 assert "needs.identity.result == 'failure'" in release
 assert "release-identity-failure-context-" in release
 assert 'INTENT_TYPE: ${{ steps.resolve.outputs.type || \'\' }}' in release
@@ -132,6 +137,7 @@ assert "preparation_identity_is_owned" in text(".github/scripts/release_completi
 assert "reserve_preparation_identity" in text(".github/scripts/release_preparation.py")
 assert "preparation_identity_reservation" in text(".github/scripts/release_identity.py")
 assert "version_blob_sha" in text(".github/scripts/release_identity.py")
+assert "publication_lock_sha" in text(".github/scripts/release_identity.py")
 assert "validate_source_boundary" in text(".github/scripts/release_policy.py")
 assert "pull_request_changed_files" in text(".github/scripts/release_completion.py")
 assert "tag_is_reserved_by_other_pr" in text(".github/scripts/release_completion.py")
