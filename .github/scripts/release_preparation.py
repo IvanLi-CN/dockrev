@@ -312,28 +312,6 @@ def reserve_recovery_identity(
     return False
 
 
-def delete_recovery_identity_ref(
-    api_root: str, token: str, repository: str, covered_merge_sha: str, expected_identity_sha: str
-) -> None:
-    owner, name = repository_parts(repository)
-    path = recovery_ref_path(owner, name, covered_merge_sha)
-    ref_name = f"release-recovery/{covered_merge_sha}"
-    try:
-        existing = api_request(api_root, token, "GET", path)
-    except PreparationError as error:
-        if " 404:" not in str(error):
-            raise
-        return
-    if existing.get("object", {}).get("sha") != expected_identity_sha:
-        return
-    api_request(
-        api_root,
-        token,
-        "DELETE",
-        f"/repos/{owner}/{name}/git/refs/heads/{urllib.parse.quote(ref_name, safe='')}",
-    )
-
-
 def reserve_tag(
     api_root: str,
     token: str,
@@ -709,8 +687,10 @@ def create(args: argparse.Namespace) -> int:
             require_unchanged_pr=True,
         )
         reservation_sha = None
-        recovery_identity_reserved = False
         try:
+            reserve_recovery_identity(
+                args.api_root, args.token, args.repository, covered_merge_sha, source_sha
+            )
             reservation_sha = reserve_tag(
                 args.api_root,
                 args.token,
@@ -721,9 +701,6 @@ def create(args: argparse.Namespace) -> int:
                 identity_sha=source_sha,
                 release_intent=head_trailers["Release-Intent"],
                 release_mode="version-only-release-pr",
-            )
-            recovery_identity_reserved = reserve_recovery_identity(
-                args.api_root, args.token, args.repository, covered_merge_sha, source_sha
             )
             source_ci_ready(
                 args.api_root,
@@ -736,12 +713,11 @@ def create(args: argparse.Namespace) -> int:
                 require_unchanged_pr=True,
             )
         except PreparationError:
-            if recovery_identity_reserved:
-                delete_recovery_identity_ref(
-                    args.api_root, args.token, args.repository, covered_merge_sha, source_sha
-                )
             if reservation_sha:
                 delete_reservation_ref(args.api_root, args.token, args.repository, version, reservation_sha)
+            # The covered-merge lock intentionally survives failure. GitHub's ref
+            # API has no conditional delete, so removing it could erase a later
+            # owner's lock after a read/delete race.
             raise
         write_json(
             args.output,

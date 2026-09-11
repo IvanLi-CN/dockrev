@@ -54,7 +54,8 @@
   versions with an existing reservation or tag. A separate immutable index
   keyed by the covered merge MUST bind exactly one recovery identity, so
   distinct successor versions cannot recover the same product merge; it MUST
-  NOT choose an arbitrary successor.
+  NOT choose an arbitrary successor. The index MUST be allocated before the
+  target-version reservation, and an orphaned index MUST fail closed.
 - Inputs: immutable merged provenance and its version/channel pair.
 - Outputs: channel-consistent publication or recovery behavior.
 - covers: `G2`, `G3`

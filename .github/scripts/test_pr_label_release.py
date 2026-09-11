@@ -151,15 +151,14 @@ original_current_version = preparation_script.current_version
 original_reserve_tag = preparation_script.reserve_tag
 original_delete_reservation_ref = preparation_script.delete_reservation_ref
 original_reserve_recovery_identity = preparation_script.reserve_recovery_identity
-original_delete_recovery_identity_ref = preparation_script.delete_recovery_identity_ref
 original_create_commit = preparation_script.create_commit
 original_inspect_commit = preparation_script.inspect_commit
 try:
     calls = {"source_ci": 0, "reserve": 0, "create": 0}
     reserved_sources = []
     reservation_kwargs = []
+    reservation_sequence = []
     recovery_identity_reservations = []
-    recovery_identity_cleanup_calls = []
 
     def fake_pull_request(_api_root, _token, _repository, _number):
         return {
@@ -181,12 +180,14 @@ try:
         return "0.1.0"
 
     def fake_reserve(*_args, **_kwargs):
+        reservation_sequence.append("version")
         calls["reserve"] += 1
         reserved_sources.append(_args[-1])
         reservation_kwargs.append(_kwargs)
         return "f" * 40
 
     def fake_reserve_recovery_identity(*_args):
+        reservation_sequence.append("covered")
         recovery_identity_reservations.append(_args[-2:])
         return True
 
@@ -203,7 +204,6 @@ try:
     preparation_script.current_version = fake_current_version
     preparation_script.reserve_tag = fake_reserve
     preparation_script.reserve_recovery_identity = fake_reserve_recovery_identity
-    preparation_script.delete_recovery_identity_ref = lambda *_args: recovery_identity_cleanup_calls.append(_args)
     preparation_script.create_commit = fake_create_commit
     preparation_script.inspect_commit = fake_inspect
     with tempfile.TemporaryDirectory() as directory:
@@ -274,6 +274,7 @@ try:
         covered_merge_sha = "c" * 40
         moved_covered_head_sha = "d" * 40
         covered_identity_marker = False
+        reservation_sequence.clear()
 
         def immutable_covered_version(*_args):
             assert _args[-1] == covered_merge_sha
@@ -351,6 +352,7 @@ try:
             "release_mode": "version-only-release-pr",
         }
         assert recovery_identity_reservations[-1] == (covered_merge_sha, prep_sha)
+        assert reservation_sequence == ["covered", "version"]
 
         covered_identity_marker = True
         reservations_before = calls["reserve"]
@@ -384,7 +386,7 @@ try:
                 output=Path(directory) / "failed-recovery-ci.json",
             ))
             assert calls["reserve"] == reservations_before + 1
-            assert len(recovery_identity_cleanup_calls) == 1
+            assert recovery_identity_reservations[-1] == (covered_merge_sha, prep_sha)
         finally:
             preparation_script.source_ci_ready = original_version_only_source_ci
 finally:
@@ -395,7 +397,6 @@ finally:
     preparation_script.reserve_tag = original_reserve_tag
     preparation_script.delete_reservation_ref = original_delete_reservation_ref
     preparation_script.reserve_recovery_identity = original_reserve_recovery_identity
-    preparation_script.delete_recovery_identity_ref = original_delete_recovery_identity_ref
     preparation_script.create_commit = original_create_commit
     preparation_script.inspect_commit = original_inspect_commit
 
@@ -630,6 +631,8 @@ try:
             encoded = __import__("base64").b64encode(version).decode()
             return {"encoding": "base64", "content": encoded}
         if path.endswith(f"/git/ref/heads/release-recovery%2F{covered_merge_sha}"):
+            if recovery_identity_matches is None:
+                raise completion.CompletionError("GitHub API failed: 404")
             return {"object": {"sha": prep_sha if recovery_identity_matches else "9" * 40}}
         if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-beta.1"):
             raise completion.CompletionError("GitHub API failed: 404")
@@ -657,6 +660,11 @@ try:
     assert completion.validate_completion(version_only_loaded)["mode"] == "version-only-release-pr"
     recovery_identity_matches = False
     expect_error(completion.load_github_completion, "https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
+    recovery_identity_matches = None
+    expect_error(
+        completion.validate_completion,
+        completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42),
+    )
     recovery_identity_matches = True
     version_only_completion_message += f"\nSource-SHA: {completion_moved_covered_head_sha}"
     expect_error(completion.load_github_completion, "https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
@@ -770,10 +778,7 @@ try:
         "c" * 40,
         "d" * 40,
     )
-    preparation_script.delete_recovery_identity_ref(
-        "https://api.github.test", "token", "IvanLi-CN/dockrev", "c" * 40, prep_sha
-    )
-    assert recovery_ref_state["sha"] is None
+    assert recovery_ref_state["sha"] == prep_sha
 finally:
     preparation_script.api_request = original_preparation_api_request
 
@@ -1032,6 +1037,8 @@ try:
                 },
             }
         if path.endswith(f"/git/ref/heads/release-recovery%2F{version_only_covered_merge_sha}"):
+            if recovery_identity_matches is None:
+                raise identity.IdentityError("GitHub API failed: 404")
             return {"object": {"sha": version_only_release_head_sha if recovery_identity_matches else "4" * 40}}
         if path.endswith(f"/commits/{version_only_release_head_sha}"):
             return {
@@ -1074,6 +1081,11 @@ try:
     assert resolved_version_only["source_sha"] == version_only_covered_merge_sha
     assert resolved_version_only["channel"] == "rc" and resolved_version_only["release_tag"] == "v0.1.1-rc.1"
     recovery_identity_matches = False
+    expect_error(
+        identity.resolve_github,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
+    )
+    recovery_identity_matches = None
     expect_error(
         identity.resolve_github,
         "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
