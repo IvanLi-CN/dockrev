@@ -246,6 +246,7 @@ try:
                 output=Path(drift_directory) / "release-intent.json",
             ))
         assert len(cleanup_calls) == 1
+        assert cleanup_calls[-1][-2:] == ("0.1.1", "f" * 40)
         assert calls["create"] == 0
 
         preparation_script.source_ci_ready = fake_source_ci
@@ -265,6 +266,7 @@ try:
                 output=Path(inspect_directory) / "release-intent.json",
             ))
         assert len(cleanup_calls) == 1
+        assert cleanup_calls[-1][-2:] == ("0.1.1", "f" * 40)
         preparation_script.inspect_commit = fake_inspect
 
         cleanup_calls.clear()
@@ -283,6 +285,7 @@ try:
                 output=Path(reservation_directory) / "release-intent.json",
             ))
         assert len(cleanup_calls) == 1
+        assert cleanup_calls[-1][-2:] == ("0.1.1", "f" * 40)
         preparation_script.reserve_preparation_identity = lambda *_args: True
 
         calls = {"source_ci": 0, "reserve": 0, "create": 0}
@@ -1065,6 +1068,7 @@ try:
     normal_preparation_blob_sha = normal_tree_sha
     normal_reservation_state = {"reads": 0, "rebound": False}
     normal_preparation_ref_state = {"reads": 0, "rebound": False}
+    normal_publication_lock_sha = None
 
     identity.api_json = lambda *_args, **_kwargs: {
         "encoding": "base64",
@@ -1136,12 +1140,15 @@ try:
                 return {"object": {"sha": "4" * 40}}
             return {"object": {"sha": prep_sha}}
         if path.endswith("/git/ref/heads/release-publication-lock%2Fv0.1.1"):
+            if normal_publication_lock_sha is not None:
+                return {"object": {"sha": normal_publication_lock_sha}}
             raise identity.IdentityError("GitHub API failed: 404")
         raise AssertionError(f"unexpected identity API path: {path}")
 
     identity.api_json = fake_identity_api
     resolved_api = identity.resolve_github("https://api.github.test", "token", "IvanLi-CN/dockrev", normal_merge_sha)
     assert resolved_api["release_tag"] == "v0.1.1"
+    assert resolved_api["identity_ref_sha"] == prep_sha
     normal_pr_head_sha = "7" * 40
     assert identity.resolve_github(
         "https://api.github.test", "token", "IvanLi-CN/dockrev", normal_merge_sha
@@ -1154,6 +1161,16 @@ try:
     assert advanced_normal["preparation_commit_sha"] == prep_sha
     normal_merge_parents = [{"sha": source_sha}]
     normal_merge_tree_sha = normal_tree_sha
+    normal_publication_lock_sha = "c" * 40
+    expect_error(
+        identity.resolve_github,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", normal_merge_sha
+    )
+    normal_publication_lock_sha = prep_sha
+    assert identity.resolve_github(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", normal_merge_sha
+    )["identity_ref_sha"] == prep_sha
+    normal_publication_lock_sha = None
     normal_reservation_state = {"reads": 0, "rebound": True}
     expect_error(
         identity.resolve_github,
@@ -1282,6 +1299,7 @@ try:
     recovery_merge_parents = [{"sha": "0" * 40}]
     covered_identity_state = {"kind": None, "after_initial_check": None, "reads": 0}
     reservation_ref_state = {"reads": 0, "rebound": False}
+    version_only_publication_lock_sha = {}
 
     def fake_version_only_identity_api(_api_root, _token, path):
         if path.endswith(f"/commits/{version_only_merge_sha}/pulls"):
@@ -1325,8 +1343,12 @@ try:
                 raise identity.IdentityError("GitHub API failed: 404")
             return {"object": {"sha": version_only_release_head_sha if recovery_identity_matches else "4" * 40}}
         if path.endswith("/git/ref/heads/release-publication-lock%2Fv0.1.1-rc.1"):
+            if version_only_publication_lock_sha.get("0.1.1-rc.1") is not None:
+                return {"object": {"sha": version_only_publication_lock_sha["0.1.1-rc.1"]}}
             raise identity.IdentityError("GitHub API failed: 404")
         if path.endswith("/git/ref/heads/release-publication-lock%2Fv0.1.1-beta.1"):
+            if version_only_publication_lock_sha.get("0.1.1-beta.1") is not None:
+                return {"object": {"sha": version_only_publication_lock_sha["0.1.1-beta.1"]}}
             raise identity.IdentityError("GitHub API failed: 404")
         if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-beta.1"):
             covered_identity_state["reads"] += 1
@@ -1386,6 +1408,8 @@ try:
     assert resolved_version_only["release_mode"] == "version-only-release-pr"
     assert resolved_version_only["source_sha"] == version_only_covered_merge_sha
     assert resolved_version_only["channel"] == "rc" and resolved_version_only["release_tag"] == "v0.1.1-rc.1"
+    assert resolved_version_only["identity_ref_sha"] == version_only_release_head_sha
+    assert resolved_version_only["covered_product_version"] == "0.1.1-beta.1"
     recovery_merge_parents = [{"sha": "0" * 40}, {"sha": "2" * 40}]
     version_only_merge_tree_sha = "8" * 40
     advanced_version_only = identity.resolve_github(
@@ -1394,6 +1418,20 @@ try:
     assert advanced_version_only["release_mode"] == "version-only-release-pr"
     recovery_merge_parents = [{"sha": "0" * 40}]
     version_only_merge_tree_sha = version_only_identity_tree_sha
+    version_only_publication_lock_sha = {
+        "0.1.1-rc.1": version_only_release_head_sha,
+        "0.1.1-beta.1": version_only_release_head_sha,
+    }
+    locked_version_only = identity.resolve_github(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
+    )
+    assert locked_version_only["identity_ref_sha"] == version_only_release_head_sha
+    version_only_publication_lock_sha["0.1.1-beta.1"] = "4" * 40
+    expect_error(
+        identity.resolve_github,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
+    )
+    version_only_publication_lock_sha = {}
     for covered_identity in ("reservation", "tag"):
         covered_identity_state = {"kind": covered_identity, "after_initial_check": None, "reads": 0}
         expect_error(
@@ -1401,6 +1439,11 @@ try:
             "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
         )
     covered_identity_state = {"kind": None, "after_initial_check": "reservation", "reads": 0}
+    expect_error(
+        identity.resolve_github,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
+    )
+    covered_identity_state = {"kind": None, "after_initial_check": "tag", "reads": 0}
     expect_error(
         identity.resolve_github,
         "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha

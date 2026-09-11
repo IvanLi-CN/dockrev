@@ -385,7 +385,9 @@ def resolve_version_only_reservation(
             "source_sha": covered_merge_sha,
             "merge_commit_sha": merge_sha,
             "preparation_commit_sha": None,
+            "identity_ref_sha": identity_sha,
             "covered_product_merge_sha": covered_merge_sha,
+            "covered_product_version": covered_product_version,
             "release_mode": "version-only-release-pr",
             "version": version,
             "version_file": version,
@@ -421,7 +423,8 @@ def resolve_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if payload.get("type") == "none" or intent.get("type") == "none":
         identity_fields = (
             "release_mode", "version", "version_file", "source_sha", "merge_commit_sha",
-            "preparation_commit_sha", "covered_product_merge_sha", "provenance", "artifact_names",
+            "preparation_commit_sha", "identity_ref_sha", "covered_product_merge_sha",
+            "covered_product_version", "provenance", "artifact_names",
         )
         if any(payload.get(field) not in (None, "", [], {}) for field in identity_fields):
             raise IdentityError("type:none payload cannot carry release identity")
@@ -449,6 +452,12 @@ def resolve_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "artifact_names": payload.get("artifact_names", []),
         "run_url": payload.get("run_url", ""),
     }
+    if payload.get("identity_ref_sha"):
+        release_policy.validate_sha(str(payload["identity_ref_sha"]), "identity_ref_sha")
+        identity["identity_ref_sha"] = payload["identity_ref_sha"]
+    if payload.get("covered_product_version"):
+        release_policy.parse_version(str(payload["covered_product_version"]))
+        identity["covered_product_version"] = payload["covered_product_version"]
     release_policy.validate_identity(identity)
     return identity
 
@@ -594,6 +603,7 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
         "source_sha": trailers.get("Source-SHA", head_sha),
         "merge_commit_sha": merge_sha,
         "preparation_commit_sha": head_sha if mode == "normal-preparation" else None,
+        "identity_ref_sha": head_sha,
         "covered_product_merge_sha": trailers.get("Covered-Product-Merge-SHA"),
         "release_mode": mode,
         "version": version,

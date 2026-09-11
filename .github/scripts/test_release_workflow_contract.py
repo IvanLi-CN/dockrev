@@ -66,7 +66,9 @@ assert "create VERSION-only release PR Covered-Product-Merge-SHA=" in release
 assert "prior failed automatic Release run" in release
 assert "path: release-assets" in release and 'chmod +x "${source}"' in release
 assert "Acquire immutable publication lock" in release
-assert "release-publication-lock/v${VERSION}" in release
+assert "release-publication-lock/v${lock_version}" in release
+assert "identity_ref_sha" in release
+assert "covered_product_version" in release
 assert "Revalidate release identity before publication" in release
 assert "fresh-release-intent.json" in release
 assert "release identity changed before publication" in release
@@ -285,7 +287,10 @@ export MERGE_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     env["RUN_CALLS"] = str(run_calls_path)
     env["RUNNER_TEMP"] = str(runner_temp)
     env["CAS_CONFLICT"] = "1"
-    subprocess.run([str(script)], check=True, env=env, cwd=ROOT)
+    first_run = subprocess.run([str(script)], check=False, env=env, cwd=ROOT, capture_output=True, text=True)
+    if first_run.returncode:
+        print(first_run.stdout, first_run.stderr)
+    assert first_run.returncode == 0
     final_sha = state_path.read_text(encoding="utf-8").strip()
     assert "Release-Latest-Lock-State: released" in json.loads(commits_path.read_text(encoding="utf-8"))[final_sha]["message"]
     commits = json.loads(commits_path.read_text(encoding="utf-8"))
@@ -310,6 +315,105 @@ Release-Latest-Lock-Merge-SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa""",
     failed_env = {**env, "CAS_CONFLICT": "", "FAIL_PATCH": "1"}
     failed = subprocess.run([str(script)], check=False, env=failed_env, cwd=ROOT)
     assert failed.returncode != 0
+
+publication_lock_start = release.index('          identity_mode="$(jq -r')
+publication_lock_end = release.index("\n\n      - name: Revalidate release identity before publication", publication_lock_start)
+publication_lock_body = textwrap.dedent(release[publication_lock_start:publication_lock_end])
+with tempfile.TemporaryDirectory() as directory:
+    root = Path(directory)
+    bin_dir = root / "bin"
+    bin_dir.mkdir()
+    state_path = root / "publication-locks.json"
+    race_path = root / "race-used"
+    gh_stub = bin_dir / "gh"
+    gh_stub.write_text(
+        """#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+urls = [arg for arg in args if arg.startswith("repos/")]
+url = urls[0] if urls else ""
+method = args[args.index("--method") + 1] if "--method" in args else "GET"
+state_path = Path(os.environ["PUBLICATION_LOCKS"])
+state = json.loads(state_path.read_text()) if state_path.exists() else {}
+if "/git/ref/heads/release-recovery/" in url:
+    if "--jq" in args:
+        print("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+    else:
+        print(json.dumps({"object": {"sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}}))
+    raise SystemExit(0)
+if "/git/ref/heads/release-publication-lock/" in url and method == "GET":
+    ref = url.split("/git/ref/heads/", 1)[1]
+    if ref not in state:
+        print("HTTP 404: Not Found", file=sys.stderr)
+        raise SystemExit(1)
+    if "--jq" in args:
+        print(state[ref])
+    else:
+        print(json.dumps({"object": {"sha": state[ref]}}))
+    raise SystemExit(0)
+if url.endswith("/git/refs") and method == "POST":
+    ref = next(value.split("=", 1)[1] for value in args if value.startswith("ref="))
+    sha = next(value.split("=", 1)[1] for value in args if value.startswith("sha="))
+    ref = ref.removeprefix("refs/heads/")
+    if ref in state:
+        print("HTTP 422: Reference already exists", file=sys.stderr)
+        raise SystemExit(1)
+    if os.environ.get("RACE") == "1" and not Path(os.environ["RACE_USED"]).exists():
+        state[ref] = sha
+        state_path.write_text(json.dumps(state))
+        Path(os.environ["RACE_USED"]).write_text("1")
+        print("HTTP 422: Reference already exists", file=sys.stderr)
+        raise SystemExit(1)
+    state[ref] = sha
+    state_path.write_text(json.dumps(state))
+    raise SystemExit(0)
+raise SystemExit(2)
+""",
+        encoding="utf-8",
+    )
+    gh_stub.chmod(0o755)
+    expected = json.dumps({
+        "release_mode": "version-only-release-pr",
+        "pull_request": 43,
+        "source_sha": "f" * 40,
+        "identity_ref_sha": "e" * 40,
+        "covered_product_version": "0.1.1-beta.1",
+    }, separators=(",", ":"))
+    script = root / "publication-lock.sh"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "export GITHUB_REPOSITORY=IvanLi-CN/dockrev\n"
+        "export VERSION=0.1.1-rc.1\n"
+        f"export EXPECTED_IDENTITY_JSON='{expected}'\n"
+        + publication_lock_body,
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    env["PUBLICATION_LOCKS"] = str(state_path)
+    env["RACE_USED"] = str(race_path)
+    first_publication_run = subprocess.run([str(script)], check=False, env=env, cwd=ROOT, capture_output=True, text=True)
+    if first_publication_run.returncode:
+        print(first_publication_run.stdout, first_publication_run.stderr)
+    assert first_publication_run.returncode == 0
+    locks = json.loads(state_path.read_text(encoding="utf-8"))
+    assert locks == {
+        "release-publication-lock/v0.1.1-rc.1": "e" * 40,
+        "release-publication-lock/v0.1.1-beta.1": "e" * 40,
+    }
+    subprocess.run([str(script)], check=True, env=env, cwd=ROOT)
+    state_path.write_text(json.dumps({"release-publication-lock/v0.1.1-rc.1": "4" * 40}))
+    foreign = subprocess.run([str(script)], check=False, env=env, cwd=ROOT)
+    assert foreign.returncode != 0
+    state_path.unlink()
+    race = subprocess.run([str(script)], check=False, env={**env, "RACE": "1"}, cwd=ROOT, capture_output=True, text=True)
+    assert race.returncode == 0
 
 with tempfile.TemporaryDirectory() as directory:
     root = Path(directory)

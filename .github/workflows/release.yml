@@ -505,6 +505,8 @@ jobs:
           identity_mode="$(jq -r '.release_mode' <<<"${EXPECTED_IDENTITY_JSON}")"
           identity_pr="$(jq -r '.pull_request' <<<"${EXPECTED_IDENTITY_JSON}")"
           identity_source="$(jq -r '.source_sha' <<<"${EXPECTED_IDENTITY_JSON}")"
+          expected_identity_sha="$(jq -r '.identity_ref_sha // empty' <<<"${EXPECTED_IDENTITY_JSON}")"
+          [[ "${expected_identity_sha}" =~ ^[0-9a-f]{40}$ ]] || { echo "resolved identity is missing identity_ref_sha" >&2; exit 2; }
           if [[ "${identity_mode}" == "version-only-release-pr" ]]; then
             identity_ref_name="release-recovery/${identity_source}"
           elif [[ "${identity_mode}" == "normal-preparation" ]]; then
@@ -513,30 +515,45 @@ jobs:
             echo "unsupported release mode for publication lock: ${identity_mode}" >&2
             exit 2
           fi
-          identity_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${identity_ref_name}" --jq '.object.sha')"
-          [[ "${identity_sha}" =~ ^[0-9a-f]{40}$ ]] || { echo "publication identity ref is invalid" >&2; exit 2; }
-          lock_ref_name="release-publication-lock/v${VERSION}"
-          lock_path="repos/${GITHUB_REPOSITORY}/git/ref/heads/${lock_ref_name}"
-          if existing="$(gh api "${lock_path}" 2>/tmp/release-publication-lock-error)"; then
-            owner_sha="$(jq -r '.object.sha' <<<"${existing}")"
-            test "${owner_sha}" = "${identity_sha}"
-          else
-            status=$?
-            if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 404|Not Found|404' /tmp/release-publication-lock-error; then
-              cat /tmp/release-publication-lock-error >&2
-              exit "${status}"
+          live_identity_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${identity_ref_name}" --jq '.object.sha')"
+          test "${live_identity_sha}" = "${expected_identity_sha}"
+
+          acquire_publication_lock() {
+            local lock_version="$1"
+            local lock_ref_name="release-publication-lock/v${lock_version}"
+            local lock_path="repos/${GITHUB_REPOSITORY}/git/ref/heads/${lock_ref_name}"
+            local lock_error="/tmp/release-publication-lock-${lock_version}-error"
+            local lock_create_error="/tmp/release-publication-lock-${lock_version}-create-error"
+            if existing="$(gh api "${lock_path}" 2>"${lock_error}")"; then
+              owner_sha="$(jq -r '.object.sha' <<<"${existing}")"
+              test "${owner_sha}" = "${expected_identity_sha}"
+              return 0
+            else
+              status=$?
+            fi
+            if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 404|Not Found|404' "${lock_error}"; then
+              cat "${lock_error}" >&2
+              return "${status}"
             fi
             if gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-              -f "ref=refs/heads/${lock_ref_name}" -f "sha=${identity_sha}" >/dev/null 2>/tmp/release-publication-lock-create-error; then
-              exit 0
+              -f "ref=refs/heads/${lock_ref_name}" -f "sha=${expected_identity_sha}" >/dev/null 2>"${lock_create_error}"; then
+              return 0
+            else
+              status=$?
             fi
-            status=$?
-            if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 422|Reference already exists|already exists' /tmp/release-publication-lock-create-error; then
-              cat /tmp/release-publication-lock-create-error >&2
-              exit "${status}"
+            if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 422|Reference already exists|already exists' "${lock_create_error}"; then
+              cat "${lock_create_error}" >&2
+              return "${status}"
             fi
             owner_sha="$(gh api "${lock_path}" --jq '.object.sha')"
-            test "${owner_sha}" = "${identity_sha}"
+            test "${owner_sha}" = "${expected_identity_sha}"
+          }
+
+          acquire_publication_lock "${VERSION}"
+          if [[ "${identity_mode}" == "version-only-release-pr" ]]; then
+            covered_version="$(jq -r '.covered_product_version // empty' <<<"${EXPECTED_IDENTITY_JSON}")"
+            [[ -n "${covered_version}" ]] || { echo "version-only identity is missing covered_product_version" >&2; exit 2; }
+            acquire_publication_lock "${covered_version}"
           fi
 
       - name: Revalidate release identity before publication

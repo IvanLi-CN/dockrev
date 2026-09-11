@@ -327,6 +327,30 @@ def preparation_ref_path(owner: str, name: str, pr_number: int, source_sha: str)
     return f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(ref_name, safe='')}"
 
 
+def publication_lock_is_owned(
+    api_root: str,
+    token: str,
+    repository: str,
+    version: str,
+    identity_sha: str | None = None,
+) -> bool:
+    owner, name = repository_parts(repository)
+    ref_name = f"release-publication-lock/v{version}"
+    path = f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(ref_name, safe='')}"
+    try:
+        ref = api_request(api_root, token, "GET", path)
+    except PreparationError as error:
+        if " 404:" in str(error):
+            return False
+        raise
+    lock_sha = ref.get("object", {}).get("sha")
+    if not isinstance(lock_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", lock_sha):
+        raise PreparationError("publication lock ref has an invalid commit SHA")
+    if identity_sha != lock_sha:
+        raise PreparationError(f"release version {version} is already locked for publication")
+    return True
+
+
 def reserve_preparation_identity(
     api_root: str, token: str, repository: str, pr_number: int, source_sha: str, identity_sha: str
 ) -> bool:
@@ -408,6 +432,9 @@ def reserve_tag(
     release_mode: str | None = None,
 ) -> str | None:
     owner, name = repository_parts(repository)
+    publication_lock_is_owned(
+        api_root, token, repository, version, identity_sha=identity_sha
+    )
     try:
         existing = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/git/ref/tags/v{version}")
     except PreparationError as error:
