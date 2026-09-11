@@ -254,6 +254,8 @@ def validate_version_only(files: list[str], provenance: dict[str, Any], *, head_
         "covered_product_merge_sha",
         "covered_product_pr_number",
         "covered_product_head_sha",
+        "covered_product_version",
+        "covered_product_release_intent",
         "covered_product_merged",
         "covered_product_has_identity",
         "product_version",
@@ -278,6 +280,8 @@ def validate_version_only(files: list[str], provenance: dict[str, Any], *, head_
         raise PolicyError("version-only branch head drifted")
     if provenance["verified"] is not True:
         raise PolicyError("version-only release PR signature is not verified")
+    covered_product_version = str(provenance["covered_product_version"])
+    parse_version(covered_product_version)
     parse_version(str(provenance["product_version"]))
     try:
         intent = parse_labels(str(provenance["release_intent"]).split())
@@ -286,9 +290,19 @@ def validate_version_only(files: list[str], provenance: dict[str, Any], *, head_
     if not intent["release_enabled"]:
         raise PolicyError("version-only release PR requires a release-enabled type")
     try:
-        validate_channel_version(str(provenance["product_version"]), intent["channel"])
+        covered_intent = parse_labels(str(provenance["covered_product_release_intent"]).split())
     except PolicyError as error:
-        raise PolicyError("version-only release VERSION is incompatible with its channel") from error
+        raise PolicyError("covered product release intent is invalid") from error
+    if (
+        covered_intent["type_label"] != intent["type_label"]
+        or covered_intent["channel_label"] != intent["channel_label"]
+    ):
+        raise PolicyError("version-only release intent must match the covered product PR")
+    try:
+        validate_channel_version(str(provenance["product_version"]), intent["channel"])
+        validate_preparation_version(covered_product_version, str(provenance["product_version"]), intent)
+    except PolicyError as error:
+        raise PolicyError("version-only release VERSION is incompatible with the covered product identity") from error
     if provenance["release_mode"] != "version-only-release-pr":
         raise PolicyError("version-only release PR has invalid release mode")
 
@@ -392,6 +406,8 @@ def _cli() -> argparse.ArgumentParser:
     channel = sub.add_parser("validate-channel")
     channel.add_argument("--version", required=True)
     channel.add_argument("--channel", required=True)
+    resolved_channel = sub.add_parser("channel-for-version")
+    resolved_channel.add_argument("--version", required=True)
     prep = sub.add_parser("validate-preparation")
     prep.add_argument("--input", type=Path, required=True)
     version_only = sub.add_parser("validate-version-only")
@@ -414,6 +430,8 @@ def main() -> int:
         elif args.command == "validate-channel":
             validate_channel_version(args.version, args.channel)
             print("ok")
+        elif args.command == "channel-for-version":
+            print(channel_for_version(args.version))
         elif args.command == "validate-preparation":
             validate_preparation(json.loads(args.input.read_text(encoding="utf-8")))
             print("ok")

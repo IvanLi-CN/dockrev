@@ -97,7 +97,9 @@ expect_error(preparation_script.expected_version, beta_labels, "0.1.0", None)
 expect_error(preparation_script.expected_version, beta_labels, "0.1.0", "9.9.9-beta.1")
 rc_labels = policy.parse_labels(["type:patch", "channel:rc"])
 assert preparation_script.expected_version(rc_labels, "0.1.1-beta.1", "0.1.1-rc.1") == "0.1.1-rc.1"
+assert preparation_script.expected_version(rc_labels, "0.1.1-beta.1", " 0.1.1-rc.1 ") == "0.1.1-rc.1"
 expect_error(preparation_script.expected_version, rc_labels, "0.1.1-beta.1", None)
+expect_error(preparation_script.expected_version, rc_labels, "0.1.1-beta.1", " \t ")
 stable_labels = policy.parse_labels(["type:patch", "channel:stable"])
 assert preparation_script.expected_version(stable_labels, "0.1.1-rc.1", "0.1.1") == "0.1.1"
 expect_error(preparation_script.expected_version, stable_labels, "0.1.1-rc.1", None)
@@ -262,6 +264,7 @@ try:
             if path.endswith(f"/commits/{prep_sha}"):
                 return {
                     "commit": {
+                        "verification": {"verified": True},
                         "message": (
                             "VERSION-only recovery\n\n"
                             "Covered-Product-Merge-SHA: " + covered_merge_sha + "\n"
@@ -283,6 +286,8 @@ try:
                 }]
             if path.endswith(f"/commits/{covered_head_sha}"):
                 return {"commit": {"message": "Product change"}}
+            if path.endswith("/pulls/42/files?per_page=100&page=1"):
+                return [{"filename": "VERSION"}]
             raise AssertionError(path)
 
         preparation_script.api_request = fake_version_only_api
@@ -537,7 +542,8 @@ try:
         if path.endswith(f"/pulls/41/files?per_page=100&page=1"):
             return []
         if "/contents/VERSION?ref=" in path:
-            encoded = __import__("base64").b64encode(b"0.1.1").decode()
+            version = b"0.1.0" if covered_head_sha in path else b"0.1.1"
+            encoded = __import__("base64").b64encode(version).decode()
             return {"encoding": "base64", "content": encoded}
         if "/actions/workflows/ci-pr.yml/runs?per_page=100&page=" in path:
             return {"workflow_runs": [{"head_sha": covered_head_sha, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 41}]}]}
@@ -653,6 +659,8 @@ version_only = {
         "branch_head_sha": prep_sha,
         "covered_product_pr_number": 41,
         "covered_product_head_sha": covered_sha,
+        "covered_product_version": "0.1.0",
+        "covered_product_release_intent": "type:patch channel:stable",
         "covered_product_merged": True,
         "covered_product_has_identity": False,
     "verified": True,
@@ -667,6 +675,29 @@ expect_error(
     version_only["changed_files"],
     {**version_only["provenance"], "product_version": "0.1.1-beta.1"},
 )
+expect_error(
+    policy.validate_version_only,
+    version_only["changed_files"],
+    {**version_only["provenance"], "product_version": "9.9.9"},
+)
+expect_error(
+    policy.validate_version_only,
+    version_only["changed_files"],
+    {**version_only["provenance"], "covered_product_release_intent": "type:patch channel:beta"},
+)
+rc_version_only = {
+    **version_only,
+    "labels": ["type:patch", "channel:rc"],
+    "version_file": "0.1.1-rc.1",
+    "provenance": {
+        **version_only["provenance"],
+        "covered_product_version": "0.1.1-beta.1",
+        "covered_product_release_intent": "type:patch channel:rc",
+        "product_version": "0.1.1-rc.1",
+        "release_intent": "type:patch channel:rc",
+    },
+}
+assert completion.validate_completion(rc_version_only)["status"] == "pass"
 expect_error(completion.validate_completion, {**version_only, "provenance": {**version_only["provenance"], "covered_product_merge_sha": "bad"}})
 expect_error(
     completion.validate_completion,
@@ -875,7 +906,8 @@ try:
         if path.endswith("/pulls/43/files?per_page=100&page=1"):
             return [{"filename": "VERSION"}]
         if "/contents/VERSION?ref=" in path:
-            encoded = __import__("base64").b64encode(b"0.1.1").decode()
+            version = b"0.1.0" if version_only_covered_head_sha in path else b"0.1.1"
+            encoded = __import__("base64").b64encode(version).decode()
             return {"encoding": "base64", "content": encoded}
         raise AssertionError(f"unexpected version-only identity API path: {path}")
 

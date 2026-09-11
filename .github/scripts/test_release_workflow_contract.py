@@ -47,6 +47,7 @@ assert "name: Prepare PR VERSION identity" in preparation
 assert "(github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')" in preparation
 assert "release-reservation" in text(".github/scripts/release_preparation.py")
 assert "RC-to-stable promotion" in preparation
+assert "channel-for-version" in text(".github/scripts/release-channel-contract-check.sh")
 assert "actions: read" in preparation
 assert "checks: read" in preparation
 assert "checks: read" in completion

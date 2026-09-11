@@ -271,11 +271,16 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
             raise IdentityError("version-only release identity cannot carry Source-SHA")
         covered_merge_sha = trailers.get("Covered-Product-Merge-SHA", "")
         covered_pr, covered_head_sha = covered_product_boundary(api_root, token, repository, covered_merge_sha)
+        covered_intent = release_policy.parse_labels(
+            [str(item.get("name")) for item in covered_pr.get("labels", []) if item.get("name")]
+        )
         changed_files = pull_request_changed_files(api_root, token, repository, pr.get("number", 0))
         provenance = {
             "covered_product_merge_sha": covered_merge_sha,
             "covered_product_pr_number": covered_pr.get("number", 0),
             "covered_product_head_sha": covered_head_sha,
+            "covered_product_version": version_at_commit(api_root, token, repository, covered_head_sha),
+            "covered_product_release_intent": f"{covered_intent['type_label']} {covered_intent['channel_label']}",
             "covered_product_merged": True,
             "covered_product_has_identity": False,
             "product_version": version,

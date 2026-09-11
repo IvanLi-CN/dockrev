@@ -48,6 +48,9 @@
 - The system MUST preserve the frozen RC identity through completion, merged
   identity resolution, tag ownership, failure context/transport, and same-SHA
   recovery. RC MUST remain a prerelease and MUST NOT advance stable `latest`.
+- A `VERSION`-only historical identity recovery MUST retain the covered product
+  PR's release intent and validate its explicit version against the covered
+  product head `VERSION`; it MUST NOT choose an arbitrary successor.
 - Inputs: immutable merged provenance and its version/channel pair.
 - Outputs: channel-consistent publication or recovery behavior.
 - covers: `G2`, `G3`

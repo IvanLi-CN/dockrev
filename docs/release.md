@@ -67,7 +67,9 @@ publish another PR.
 If a historical product merge has no identity, create exactly one non-empty
 `VERSION`-only PR with `Release-Mode: version-only-release-pr`, a
 `Covered-Product-Merge-SHA` trailer, the product version, and frozen label
-intent. `Release completion` validates that boundary and the normal merged
+intent. Its type/channel labels must match the covered product PR, and its
+product version is validated against that PR head's `VERSION` by the same
+promotion policy. `Release completion` validates that boundary and the normal merged
 identity path handles publication. This PR is not a same-SHA recovery.
 
 The release channel is frozen in the preparation or version-only provenance.
