@@ -41,6 +41,7 @@
 - 已归档的服务或所属 Stack 不接受生命周期写操作；历史详情保持可读。
 - 当前默认主动作仅由 split button 的主按钮表达；不可用动作仍可发现，但不在菜单内展示原因。
 - 桌面端保留两个 split button；移动端只显示一个 44px 服务操作入口。菜单直接列出更新三项、生命周期三项与 Stack 详情，不使用二级菜单或组标题，组间使用 UI 库分隔线。
+- 桌面端 split button 的主操作区与菜单触发区属于同一个连续动作组；指针悬停任一子区时，整个动作组同步上浮，子区之间不得产生独立位移；整组禁用时不产生上浮。
 - 操作历史应包含 update、rollback 和 service_lifecycle；生命周期项显示“启动 / 停止 / 重启”而不是泛化类型名。
 - 桌面端在 update 或 rollback 占用服务时，完整禁用生命周期 split button（主按钮与箭头），保留“启动/停止”默认文案并通过 Tooltip 说明占用原因；生命周期占用时对称禁用更新组。
 - 移动端仍可打开服务操作菜单，非 owner 动作项保持可发现但禁用，点击继续使用 Toast 提示原因。
@@ -48,6 +49,7 @@
 ## 验收标准
 
 - Given 服务有候选版本，When 打开详情页，Then 更新 split button 的主动作是“更新”；没有候选时主动作是“回滚”，且菜单始终含三项更新动作。
+- Given 桌面端显示 split button，When 指针悬停主操作区或菜单触发区，Then 两个子区的垂直位移相同并作为一个整体上浮；整组禁用时保持静止。
 - Given 服务详情已加载，When 查看页面，Then 当前服务名显示在 AppShell 顶栏，正文不再重复渲染服务标题。
 - Given 服务详情顶栏空间缩小时，When 资源摘要无法完整容纳，Then 先整体隐藏网络组，再隐藏磁盘组，最后才隐藏 CPU 与内存组；任一组内的两个指标不得拆开、折行或造成横向溢出。
 - Given 服务正在运行，When 打开详情页，Then 生命周期 split button 主动作为“停止”；服务停止时为“启动”。
@@ -116,7 +118,6 @@
 - state: `mobile single-row header, action menu closed`
 - evidence_note: `移动端页头保持单行：图标 Logo、当前服务名和 44px 服务操作入口沿 Y 轴居中；资源摘要和旧的第二行操作均不占用页头空间。边缘空白检查无需裁剪。`
 
-PR: include
 
 ![Service detail mobile actions closed](./assets/service-detail-mobile-actions-closed.png)
 
@@ -133,7 +134,6 @@ PR: include
 - state: `mobile service action menu open`
 - evidence_note: `右上角入口展开后，预览更新/更新/回滚、启动/停止/重启、Stack 详情按三组直接平铺；两条 UI 库分隔线表达组边界，面板按最长内容自然定宽，没有二级菜单或额外说明文字。边缘空白检查无需裁剪。`
 
-PR: include
 
 ![Service detail mobile actions open](./assets/service-detail-mobile-actions-open.png)
 
@@ -165,7 +165,6 @@ PR: include
 - state: `desktop update owner with lifecycle group disabled`
 - evidence_note: `更新任务在候选已消失时仍显示“更新中…”，生命周期主按钮与菜单箭头同步置灰，点击可见占用 Tooltip。`
 
-PR: include
 
 ![Service action progress desktop](./assets/service-action-progress-desktop.png)
 
@@ -182,7 +181,6 @@ PR: include
 - state: `mobile owner menu open`
 - evidence_note: `移动端保留统一服务操作菜单，更新项可进入任务，生命周期和回滚等非 owner 项保持禁用。`
 
-PR: include
 
 ![Service action progress mobile](./assets/service-action-progress-mobile-393x852.png)
 
@@ -200,7 +198,6 @@ PR: include
 - state: `intermediate desktop candidate action rail`
 - evidence_note: `在服务详情 mock 应用壳内，版本区释放目录后保持既有宽卡三栏与固定操作轨道；候选版本的更新与回滚入口均完整可见，且没有版本目录或横向溢出。边缘空白检查无需裁剪。`
 
-PR: include
 
 ![Service detail versions intermediate action rail](./assets/service-detail-versions-intermediate-wide-actions.jpg)
 

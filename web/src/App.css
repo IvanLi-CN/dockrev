@@ -84,6 +84,16 @@
 
 .serviceSplitAction[data-slot='button-group'] {
   min-width: 0;
+  transition: transform 140ms ease;
+}
+
+.serviceSplitAction[data-slot='button-group']:not([aria-disabled='true']):hover {
+  transform: translateY(-1px);
+}
+
+.serviceSplitAction[data-slot='button-group']:not([aria-disabled='true']):hover > .btn:not(:disabled),
+.serviceSplitAction[data-slot='button-group']:not([aria-disabled='true']):hover > .btnTooltipAnchor > .btn:not(:disabled) {
+  transform: none;
 }
 
 .serviceSplitActionDisabledAnchor {
