@@ -230,7 +230,18 @@ def covered_product_has_existing_identity(
     version: str,
     *,
     expected_recovery_identity_sha: str | None = None,
+    expected_recovery_pr_number: int | None = None,
+    expected_recovery_intent: str | None = None,
 ) -> bool:
+    expected_recovery_reservation = (
+        expected_recovery_identity_sha,
+        expected_recovery_pr_number,
+        expected_recovery_intent,
+    )
+    if any(value is not None for value in expected_recovery_reservation) and not all(
+        value is not None for value in expected_recovery_reservation
+    ):
+        raise PreparationError("expected recovery reservation ownership is incomplete")
     owner, name = repository_parts(repository)
     recovery_path = recovery_ref_path(owner, name, covered_merge_sha)
     try:
@@ -263,6 +274,22 @@ def covered_product_has_existing_identity(
         )
         if trailers.get("Release-Reservation-Version") != version:
             raise PreparationError("existing release reservation version does not match covered VERSION")
+        if all(value is not None for value in expected_recovery_reservation):
+            try:
+                trailers = release_policy.validate_version_only_reservation(
+                    reservation,
+                    version=version,
+                    pr_number=int(expected_recovery_pr_number),
+                    source_sha=covered_merge_sha,
+                )
+            except release_policy.PolicyError:
+                return True
+            if (
+                trailers.get("Release-Reservation-Identity-SHA")
+                == expected_recovery_identity_sha
+                and trailers.get("Release-Reservation-Intent") == expected_recovery_intent
+            ):
+                return False
         return True
     try:
         api_request(api_root, token, "GET", f"/repos/{owner}/{name}/git/ref/tags/v{version}")
@@ -656,6 +683,8 @@ def create(args: argparse.Namespace) -> int:
             covered_merge_sha,
             covered_product_version,
             expected_recovery_identity_sha=source_sha,
+            expected_recovery_pr_number=args.pr_number,
+            expected_recovery_intent=head_trailers["Release-Intent"],
         ):
             raise PreparationError("covered product merge already has immutable release identity")
         try:
@@ -691,6 +720,17 @@ def create(args: argparse.Namespace) -> int:
             reserve_recovery_identity(
                 args.api_root, args.token, args.repository, covered_merge_sha, source_sha
             )
+            if covered_product_has_existing_identity(
+                args.api_root,
+                args.token,
+                args.repository,
+                covered_merge_sha,
+                covered_product_version,
+                expected_recovery_identity_sha=source_sha,
+                expected_recovery_pr_number=args.pr_number,
+                expected_recovery_intent=head_trailers["Release-Intent"],
+            ):
+                raise PreparationError("covered product merge already has immutable release identity")
             reservation_sha = reserve_tag(
                 args.api_root,
                 args.token,

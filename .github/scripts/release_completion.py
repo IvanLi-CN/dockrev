@@ -93,7 +93,18 @@ def covered_product_has_existing_identity(
     version: str,
     *,
     expected_recovery_identity_sha: str | None = None,
+    expected_recovery_pr_number: int | None = None,
+    expected_recovery_intent: str | None = None,
 ) -> bool:
+    expected_recovery_reservation = (
+        expected_recovery_identity_sha,
+        expected_recovery_pr_number,
+        expected_recovery_intent,
+    )
+    if any(value is not None for value in expected_recovery_reservation) and not all(
+        value is not None for value in expected_recovery_reservation
+    ):
+        raise CompletionError("expected recovery reservation ownership is incomplete")
     owner, name = repository.split("/", 1)
     recovery_ref_name = f"release-recovery/{covered_merge_sha}"
     recovery_path = f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(recovery_ref_name, safe='')}"
@@ -127,6 +138,22 @@ def covered_product_has_existing_identity(
         )
         if trailers.get("Release-Reservation-Version") != version:
             raise CompletionError("existing release reservation version does not match covered VERSION")
+        if all(value is not None for value in expected_recovery_reservation):
+            try:
+                trailers = release_policy.validate_version_only_reservation(
+                    reservation,
+                    version=version,
+                    pr_number=int(expected_recovery_pr_number),
+                    source_sha=covered_merge_sha,
+                )
+            except release_policy.PolicyError:
+                return True
+            if (
+                trailers.get("Release-Reservation-Identity-SHA")
+                == expected_recovery_identity_sha
+                and trailers.get("Release-Reservation-Intent") == expected_recovery_intent
+            ):
+                return False
         return True
     try:
         api_json(api_root, token, f"/repos/{owner}/{name}/git/ref/tags/v{version}")
@@ -465,6 +492,8 @@ def load_github_completion(
             covered_merge_sha,
             covered_product_version,
             expected_recovery_identity_sha=head_sha,
+            expected_recovery_pr_number=pr_number,
+            expected_recovery_intent=trailers.get("Release-Intent", ""),
         ):
             raise CompletionError("covered product merge already has immutable release identity")
         provenance = {

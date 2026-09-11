@@ -68,6 +68,8 @@ expect_error(policy.validate_preparation_version, "0.1.0", "0.1.2-beta.1", {"typ
 expect_error(policy.validate_preparation_version, "0.1.1-beta.1", "0.1.1", {"type": "patch", "channel": "stable"})
 expect_error(policy.validate_preparation_version, "0.1.1-rc.1", "0.1.1-beta.2", {"type": "patch", "channel": "beta"})
 expect_error(policy.validate_preparation_version, "0.1.1-dev.1", "0.1.1-rc.1", {"type": "patch", "channel": "rc"})
+expect_error(policy.validate_preparation_version, "0.1.1-beta.1", "0.1.1-beta.1", {"type": "patch", "channel": "beta"})
+expect_error(policy.validate_preparation_version, "0.1.1-rc.2", "0.1.1-rc.1", {"type": "patch", "channel": "rc"})
 
 source_sha = "a" * 40
 prep_sha = "b" * 40
@@ -306,12 +308,18 @@ try:
                     "labels": [{"name": "type:none"}, {"name": "channel:stable"}],
                 }]
             if path.endswith(f"/git/ref/heads/release-recovery%2F{covered_merge_sha}"):
-                if covered_identity_marker:
+                if covered_identity_marker == "foreign":
                     return {"object": {"sha": "9" * 40}}
+                if covered_identity_marker == "owned":
+                    return {"object": {"sha": prep_sha}}
                 raise preparation_script.PreparationError("GitHub API failed: 404:")
             if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-beta.1"):
-                if covered_identity_marker:
+                if covered_identity_marker == "foreign":
                     return {"object": {"sha": "a" * 40}}
+                raise preparation_script.PreparationError("GitHub API failed: 404:")
+            if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-rc.1"):
+                if covered_identity_marker == "owned":
+                    return {"object": {"sha": "f" * 40}}
                 raise preparation_script.PreparationError("GitHub API failed: 404:")
             if path.endswith("/commits/" + "a" * 40):
                 return {
@@ -322,6 +330,21 @@ try:
                             "Release-Reservation-Version: 0.1.1-beta.1\n"
                             "Release-Reservation-PR: 41\n"
                             f"Release-Reservation-Source-SHA: {covered_merge_sha}"
+                        )
+                    },
+                }
+            if path.endswith("/commits/" + "f" * 40):
+                return {
+                    "parents": [{"sha": covered_merge_sha}],
+                    "commit": {
+                        "message": (
+                            "Reserve release version v0.1.1-rc.1\n\n"
+                            "Release-Reservation-Version: 0.1.1-rc.1\n"
+                            "Release-Reservation-PR: 42\n"
+                            f"Release-Reservation-Source-SHA: {covered_merge_sha}\n"
+                            f"Release-Reservation-Identity-SHA: {prep_sha}\n"
+                            "Release-Reservation-Intent: type:patch channel:rc\n"
+                            "Release-Reservation-Mode: version-only-release-pr"
                         )
                     },
                 }
@@ -354,7 +377,20 @@ try:
         assert recovery_identity_reservations[-1] == (covered_merge_sha, prep_sha)
         assert reservation_sequence == ["covered", "version"]
 
-        covered_identity_marker = True
+        covered_identity_marker = "owned"
+        assert preparation_script.covered_product_has_existing_identity(
+            "https://api.github.test",
+            "token",
+            "IvanLi-CN/dockrev",
+            covered_merge_sha,
+            "0.1.1-rc.1",
+            expected_recovery_identity_sha=prep_sha,
+            expected_recovery_pr_number=42,
+            expected_recovery_intent="type:patch channel:rc",
+        ) is False
+        covered_identity_marker = False
+
+        covered_identity_marker = "foreign"
         reservations_before = calls["reserve"]
         expect_error(preparation_script.create, Namespace(
             api_root="https://api.github.test",
@@ -659,6 +695,16 @@ try:
     completion.api_json = fake_version_only_completion_api
     version_only_loaded = completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
     assert completion.validate_completion(version_only_loaded)["mode"] == "version-only-release-pr"
+    assert completion.covered_product_has_existing_identity(
+        "https://api.github.test",
+        "token",
+        "IvanLi-CN/dockrev",
+        covered_merge_sha,
+        "0.1.1-rc.1",
+        expected_recovery_identity_sha=prep_sha,
+        expected_recovery_pr_number=42,
+        expected_recovery_intent="type:patch channel:rc",
+    ) is False
     recovery_identity_matches = False
     expect_error(completion.load_github_completion, "https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
     recovery_identity_matches = None

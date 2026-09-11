@@ -147,6 +147,11 @@ def validate_preparation_version(source_version: str, version: str, intent: dict
             )
         if source_channel == "stable" and target_channel == "stable" and version != next_patch(source_version):
             raise PolicyError("stable patch preparation must use the next patch")
+        if source_channel == target_channel and source_channel != "stable":
+            source_sequence = int(str(source[3]).rsplit(".", 1)[1])
+            target_sequence = int(str(target[3]).rsplit(".", 1)[1])
+            if target_sequence <= source_sequence:
+                raise PolicyError("prerelease patch preparation must advance its channel sequence")
     elif intent["type"] == "minor" and target[:2] <= source[:2]:
         raise PolicyError("minor preparation must advance the source major/minor")
     elif intent["type"] == "major" and target[0] <= source[0]:
