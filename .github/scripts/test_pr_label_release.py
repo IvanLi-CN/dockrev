@@ -923,6 +923,8 @@ expect_error(identity.resolve_from_payload, {**identity_payload, "covered_produc
 original_identity_api_json = identity.api_json
 try:
     normal_merge_sha = "0" * 40
+    normal_pr_head_sha = prep_sha
+    normal_merge_parents = [{"sha": source_sha}, {"sha": prep_sha}]
 
     identity.api_json = lambda *_args, **_kwargs: {
         "encoding": "base64",
@@ -940,12 +942,12 @@ try:
                 "merged_at": "2026-01-01T00:00:00Z",
                 "merge_commit_sha": normal_merge_sha,
                 "base": {"ref": "main"},
-                "head": {"sha": prep_sha},
+                "head": {"sha": normal_pr_head_sha},
                 "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
             }]
         if path.endswith(f"/commits/{normal_merge_sha}"):
             return {
-                "parents": [{"sha": source_sha}, {"sha": prep_sha}],
+                "parents": normal_merge_parents,
                 "files": [{"filename": "VERSION"}],
                 "commit": {"message": "Merge release preparation"},
             }
@@ -965,6 +967,8 @@ try:
                     ),
                 },
             }
+        if path.endswith(f"/commits/{source_sha}"):
+            return {"parents": [], "files": [{"filename": "src/lib.rs"}], "commit": {"message": "Product change"}}
         if "/contents/VERSION?ref=" in path:
             version = "0.1.0" if source_sha in path else "0.1.1"
             encoded = __import__("base64").b64encode(version.encode()).decode() + "\n"
@@ -976,6 +980,10 @@ try:
     identity.api_json = fake_identity_api
     resolved_api = identity.resolve_github("https://api.github.test", "token", "IvanLi-CN/dockrev", normal_merge_sha)
     assert resolved_api["release_tag"] == "v0.1.1"
+    normal_pr_head_sha = "7" * 40
+    assert identity.resolve_github(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", normal_merge_sha
+    )["preparation_commit_sha"] == prep_sha
     def fake_mixed_identity_api(_api_root, _token, path):
         payload = fake_identity_api(_api_root, _token, path)
         if path.endswith(f"/commits/{prep_sha}"):
@@ -1043,6 +1051,14 @@ try:
                 "head": {"sha": no_identity_head_sha},
                 "labels": [{"name": "type:minor"}, {"name": "channel:beta"}],
             }]
+        if path.endswith(f"/commits/{no_identity_merge_sha}"):
+            return {
+                "parents": [{"sha": "7" * 40}, {"sha": no_identity_head_sha}],
+                "files": [{"filename": "src/lib.rs"}],
+                "commit": {"message": "Merge product change"},
+            }
+        if path.endswith(f"/commits/{'7' * 40}"):
+            return {"parents": [], "files": [{"filename": "src/lib.rs"}], "commit": {"message": "Main parent"}}
         if path.endswith(f"/commits/{no_identity_head_sha}"):
             return {"parents": [], "files": [], "commit": {"message": "Product change"}}
         if path.endswith(f"/contents/VERSION?ref={no_identity_merge_sha}"):
@@ -1072,6 +1088,9 @@ original_identity_api_json = identity.api_json
 try:
     recovery_identity_matches = True
     recovery_merge_files = [{"filename": "VERSION"}]
+    recovery_merge_parents = [{"sha": "0" * 40}, {"sha": version_only_release_head_sha}]
+    covered_identity_state = {"kind": None, "after_initial_check": None, "reads": 0}
+    reservation_ref_state = {"reads": 0, "rebound": False}
 
     def fake_version_only_identity_api(_api_root, _token, path):
         if path.endswith(f"/commits/{version_only_merge_sha}/pulls"):
@@ -1086,11 +1105,14 @@ try:
             }]
         if path.endswith(f"/commits/{version_only_merge_sha}"):
             return {
-                "parents": [{"sha": "0" * 40}, {"sha": version_only_release_head_sha}],
+                "parents": recovery_merge_parents,
                 "files": recovery_merge_files,
                 "commit": {"message": "Merge version-only recovery"},
             }
         if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-rc.1"):
+            reservation_ref_state["reads"] += 1
+            if reservation_ref_state["rebound"] and reservation_ref_state["reads"] > 1:
+                return {"object": {"sha": "4" * 40}}
             return {"object": {"sha": version_only_reservation_sha}}
         if path.endswith(f"/commits/{version_only_reservation_sha}"):
             return {
@@ -1112,8 +1134,20 @@ try:
                 raise identity.IdentityError("GitHub API failed: 404")
             return {"object": {"sha": version_only_release_head_sha if recovery_identity_matches else "4" * 40}}
         if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-beta.1"):
+            covered_identity_state["reads"] += 1
+            covered_identity = covered_identity_state["kind"]
+            if covered_identity is None and covered_identity_state["reads"] > 2:
+                covered_identity = covered_identity_state["after_initial_check"]
+            if covered_identity == "reservation":
+                return {"object": {"sha": "5" * 40}}
             raise identity.IdentityError("GitHub API failed: 404")
         if path.endswith("/git/ref/tags/v0.1.1-beta.1"):
+            covered_identity_state["reads"] += 1
+            covered_identity = covered_identity_state["kind"]
+            if covered_identity is None and covered_identity_state["reads"] > 2:
+                covered_identity = covered_identity_state["after_initial_check"]
+            if covered_identity == "tag":
+                return {"object": {"sha": "5" * 40}}
             raise identity.IdentityError("GitHub API failed: 404")
         if path.endswith(f"/commits/{version_only_release_head_sha}"):
             return {
@@ -1155,6 +1189,30 @@ try:
     assert resolved_version_only["release_mode"] == "version-only-release-pr"
     assert resolved_version_only["source_sha"] == version_only_covered_merge_sha
     assert resolved_version_only["channel"] == "rc" and resolved_version_only["release_tag"] == "v0.1.1-rc.1"
+    for covered_identity in ("reservation", "tag"):
+        covered_identity_state = {"kind": covered_identity, "after_initial_check": None, "reads": 0}
+        expect_error(
+            identity.resolve_github,
+            "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
+        )
+    covered_identity_state = {"kind": None, "after_initial_check": "reservation", "reads": 0}
+    expect_error(
+        identity.resolve_github,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
+    )
+    covered_identity_state = {"kind": None, "after_initial_check": None, "reads": 0}
+    recovery_merge_parents = [{"sha": "0" * 40}, {"sha": "5" * 40}]
+    expect_error(
+        identity.resolve_github,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
+    )
+    recovery_merge_parents = [{"sha": "0" * 40}, {"sha": version_only_release_head_sha}]
+    reservation_ref_state = {"reads": 0, "rebound": True}
+    expect_error(
+        identity.resolve_github,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
+    )
+    reservation_ref_state = {"reads": 0, "rebound": False}
     recovery_merge_files = [{"filename": "VERSION"}, {"filename": "docs/release.md"}]
     expect_error(
         identity.resolve_github,

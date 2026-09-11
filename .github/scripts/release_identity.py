@@ -131,11 +131,30 @@ def version_only_reservation(
         return None
     source_sha = raw.get("Release-Reservation-Source-SHA", "")
     try:
-        return release_policy.validate_version_only_reservation(
+        trailers = release_policy.validate_version_only_reservation(
             reservation, version=version, pr_number=pr_number, source_sha=source_sha
         )
     except release_policy.PolicyError as error:
         raise IdentityError(str(error)) from error
+    return {**trailers, "Release-Reservation-Commit-SHA": reservation_sha}
+
+
+def version_reservation_ref_is_current(
+    api_root: str, token: str, repository: str, version: str, expected_sha: str
+) -> bool:
+    owner, name = repository_parts(repository)
+    ref_name = f"release-reservation/v{version}"
+    try:
+        ref = api_json(
+            api_root,
+            token,
+            f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(ref_name, safe='')}",
+        )
+    except IdentityError as error:
+        if "GitHub API failed: 404" in str(error):
+            return False
+        raise
+    return ref.get("object", {}).get("sha") == expected_sha
 
 
 def recovery_identity_is_owned(
@@ -235,6 +254,18 @@ def resolve_version_only_reservation(
         release_policy.validate_version_only(changed_files, provenance, head_sha=identity_sha)
     except release_policy.PolicyError as error:
         raise IdentityError(str(error)) from error
+    if not version_reservation_ref_is_current(
+        api_root,
+        token,
+        repository,
+        version,
+        reservation["Release-Reservation-Commit-SHA"],
+    ):
+        raise IdentityError("version-only reservation ownership changed during identity resolution")
+    if not recovery_identity_is_owned(api_root, token, repository, covered_merge_sha, identity_sha):
+        raise IdentityError("covered recovery identity changed during identity resolution")
+    if covered_version_has_existing_identity(api_root, token, repository, covered_product_version):
+        raise IdentityError("covered product merge gained an immutable release identity")
     return resolve_from_payload(
         {
             "pull_request": pr.get("number"),
@@ -323,11 +354,11 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
         pr_intent = release_policy.parse_labels(labels)
     except release_policy.PolicyError as error:
         raise IdentityError(f"merged product PR labels are invalid: {error}") from error
-    owner, name = repository_parts(repository)
-    head_sha = pr.get("head", {}).get("sha", "")
-    head_commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{head_sha}")
-    trailers = release_policy.parse_trailers(head_commit.get("commit", {}).get("message", ""))
     if not pr_intent["release_enabled"]:
+        owner, name = repository_parts(repository)
+        head_sha = pr.get("head", {}).get("sha", "")
+        head_commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{head_sha}")
+        trailers = release_policy.parse_trailers(head_commit.get("commit", {}).get("message", ""))
         if any(
             trailers.get(key)
             for key in ("Release-Mode", "Source-SHA", "Source-PR-Updated-At", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")
@@ -349,10 +380,30 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
             "pull_request": pr.get("number"),
             "reason": "version-bootstrap" if "VERSION" in changed_files else "type:none",
         }
-    mode = trailers.get("Release-Mode")
-    if mode not in {"normal-preparation", "version-only-release-pr"}:
-        if mode or any(trailers.get(key) for key in ("Source-SHA", "Source-PR-Updated-At", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")):
+    owner, name = repository_parts(repository)
+    merge_commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{merge_sha}")
+    merge_parents = [parent.get("sha") for parent in merge_commit.get("parents", [])]
+    release_fields = (
+        "Release-Mode", "Source-SHA", "Source-PR-Updated-At", "Product-Version", "Release-Intent",
+        "Covered-Product-Merge-SHA",
+    )
+    normal_candidates: list[tuple[str, dict[str, Any], dict[str, str]]] = []
+    version_only_parent_found = False
+    for parent_sha in merge_parents:
+        if not isinstance(parent_sha, str):
+            continue
+        parent_commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{parent_sha}")
+        parent_trailers = release_policy.parse_trailers(str(parent_commit.get("commit", {}).get("message", "")))
+        parent_mode = parent_trailers.get("Release-Mode")
+        if parent_mode == "normal-preparation":
+            normal_candidates.append((parent_sha, parent_commit, parent_trailers))
+        elif parent_mode == "version-only-release-pr":
+            version_only_parent_found = True
+        elif parent_mode or any(parent_trailers.get(key) for key in release_fields):
             raise IdentityError("merged product PR has malformed release identity")
+    if version_only_parent_found:
+        raise IdentityError("version-only merged identity is missing an immutable reservation record")
+    if not normal_candidates:
         return {
             "release_enabled": False,
             "merge_commit_sha": merge_sha,
@@ -362,6 +413,10 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
             "channel": pr_intent["channel"],
             "reason": "no-release-identity",
         }
+    if len(normal_candidates) != 1:
+        raise IdentityError("merged product PR has multiple normal preparation parents")
+    head_sha, head_commit, trailers = normal_candidates[0]
+    mode = trailers["Release-Mode"]
     version = trailers.get("Product-Version", "")
     if not version:
         raise IdentityError("merged product PR is missing Product-Version provenance")
@@ -379,10 +434,6 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
     if version_file != version:
         raise IdentityError("merged commit VERSION does not match Product-Version provenance")
     if mode == "normal-preparation":
-        merge_commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{merge_sha}")
-        merge_parents = [parent.get("sha") for parent in merge_commit.get("parents", [])]
-        if head_sha not in merge_parents:
-            raise IdentityError("normal preparation is not an immutable parent of the merged PR")
         if trailers.get("Covered-Product-Merge-SHA"):
             raise IdentityError("normal preparation identity cannot carry Covered-Product-Merge-SHA")
         source_sha = trailers.get("Source-SHA", "")
