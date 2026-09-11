@@ -57,3 +57,29 @@ export async function assertMonitoringResourceSync({
   expectStory(panel.getAttribute("data-resource-current-sampled-at") !== liveTick?.sampledAt, "7d chart should keep aggregated history separate from raw SSE");
   expectStory(!normalizeText(monitorSummary?.textContent).includes("服务监控摘要"), "monitoring section should keep the compact topbar monitor summary without the subtitle");
 }
+
+export async function assertMonitoringActivationRefresh({
+  canvasElement,
+  previousHistoryCalls,
+  previousEventSourceCalls,
+}: {
+  canvasElement: HTMLElement;
+  previousHistoryCalls: number;
+  previousEventSourceCalls: number;
+}) {
+  await waitForCondition(() => (globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageHistoryCalls ?? 0) === previousHistoryCalls + 1);
+  await waitForCondition(() => (globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageEventSourceCalls ?? 0) === previousEventSourceCalls + 1);
+  await waitForCondition(() => {
+    const debug = globalThis.__DOCKREV_MOCK_DEBUG__;
+    const panel = canvasElement.querySelector<HTMLElement>("[data-resource-window]");
+    return Boolean(debug?.resourceUsageLastTick?.sampledAt) && panel?.getAttribute("data-resource-current-sampled-at") === debug?.resourceUsageLastTick?.sampledAt;
+  });
+  const liveCpu = globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageLastTick?.cpuPercent;
+  expectStory(liveCpu != null, "monitoring activation should expose the latest mock tick");
+  await waitForCondition(() => canvasElement.ownerDocument.querySelector<HTMLElement>('[data-monitor-metric="CPU"]')?.getAttribute("aria-label")?.includes(monitorTickCpuLabel(liveCpu)) === true);
+  expectStory(
+    (globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageEventSourceCalls ?? 0) -
+      (globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageEventSourceCloseCalls ?? 0) === 1,
+    "monitoring activation should keep exactly one active resource SSE",
+  );
+}

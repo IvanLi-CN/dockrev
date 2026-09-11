@@ -8,7 +8,7 @@ import { expectLightServiceLogsContrast } from "./serviceLogsLightContrastStory"
 import { expectDesktopLogTimestampLayout } from "./serviceDetailLogsStories";
 import { buildLongLogsSnapshot, buildMultilineLogsSnapshot, historyReleaseNotes, paginatedHistoryJobs, partialHistoryBackupRecords } from "./serviceDetailPageStoryFixtures";
 import { assertRecentUpdateKeyboardNavigation, assertRecentUpdateReasonPopoverStaysOnRoute, navigateStoryPath } from "./recentUpdateStoryAssertions";
-import { assertMonitoringResourceSync, assertOverviewMonitorSummary } from "./serviceDetailMonitorAssertions";
+import { assertMonitoringActivationRefresh, assertMonitoringResourceSync, assertOverviewMonitorSummary } from "./serviceDetailMonitorAssertions";
 import { drawerText, findActionButton, findHistoryRowByJobId, findLogRowContaining, findSectionCard, findTab, render, tabLabels, type ServiceDetailStory } from "./serviceDetailStoryShared";
 export { ActiveUpdateWithoutCandidate, DockrevVersionsSelfUpgrade, DockrevVersionsSelfUpgradeVisual, DockrevVersionsSelfUpgradeOffline, MobileVersionsSection, VersionsSection, VersionsSectionActionGuard, VersionsSectionIntermediateWidth, VersionsSectionIntermediateWideActions } from "./serviceDetailVersionsStories";
 export { DesktopLogsTimestampLayout, LogsSectionDateBoundaries, LogsSectionLifecycleUnion, MobileLogsSection, MobileLogsTimestampLayout } from "./serviceDetailLogsStories";
@@ -24,6 +24,11 @@ const meta: Meta<typeof ServiceDetailPage> = {
 
 export default meta;
 type Story = ServiceDetailStory;
+
+function activateTab(canvasElement: ParentNode, section: Parameters<typeof findTab>[1]): void {
+  findTab(canvasElement, section)?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+}
+
 export const OverviewDefault: Story = {
   parameters: { dockrevApiScenario: "dashboard-demo" },
   render: render("stack-prod", "svc-prod-api", "overview", "旧链接默认落到概览；保留共享顶部动作与最近更新记录"),
@@ -627,36 +632,50 @@ export const TabNavigation: Story = {
   render: render("stack-prod", "svc-prod-api", "overview", "页头 Tabs 直接驱动 service section 路由"),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => findTab(canvasElement, "overview") != null);
+    await waitForCondition(() => {
+      const debug = globalThis.__DOCKREV_MOCK_DEBUG__;
+      return (debug?.resourceUsageHistoryCalls ?? 0) > 0 && (debug?.resourceUsageEventSourceCalls ?? 0) > 0;
+    });
 
-    findTab(canvasElement, "versions")?.click();
+    activateTab(canvasElement, "versions");
     await waitForCondition(() => currentRoutePathname() === "/services/stack-prod/svc-prod-api/versions");
     await waitForCondition(() => Boolean(findSectionCard(canvasElement, "versions")));
     expectStory(findTab(canvasElement, "versions")?.getAttribute("data-state") === "active", "versions tab active state missing after switch");
 
-    findTab(canvasElement, "history")?.click();
+    activateTab(canvasElement, "history");
     await waitForCondition(() => currentRoutePathname() === "/services/stack-prod/svc-prod-api/history");
     await waitForCondition(() => Boolean(findSectionCard(canvasElement, "update-history")));
     expectStory(findTab(canvasElement, "history")?.getAttribute("data-state") === "active", "history tab active state missing after switch");
 
-    findTab(canvasElement, "monitoring")?.click();
+    const firstMonitoringHistoryCalls = globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageHistoryCalls ?? 0;
+    const firstMonitoringEventSourceCalls = globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageEventSourceCalls ?? 0;
+    activateTab(canvasElement, "monitoring");
     await waitForCondition(() => currentRoutePathname() === "/services/stack-prod/svc-prod-api/monitoring");
     await waitForCondition(() => normalizeText(canvasElement.textContent).includes("资源监控"));
     expectStory(findTab(canvasElement, "monitoring")?.getAttribute("data-state") === "active", "monitoring tab active state missing after switch");
+    await assertMonitoringActivationRefresh({ canvasElement, previousHistoryCalls: firstMonitoringHistoryCalls, previousEventSourceCalls: firstMonitoringEventSourceCalls });
 
-    findTab(canvasElement, "backup")?.click();
+    activateTab(canvasElement, "backup");
     await waitForCondition(() => currentRoutePathname() === "/services/stack-prod/svc-prod-api/backup");
     await waitForCondition(() => Boolean(findSectionCard(canvasElement, "backup-summary")));
     expectStory(findTab(canvasElement, "backup")?.getAttribute("data-state") === "active", "backup tab active state missing after switch");
 
-    findTab(canvasElement, "logs")?.click();
+    activateTab(canvasElement, "logs");
     await waitForCondition(() => currentRoutePathname() === "/services/stack-prod/svc-prod-api/logs");
     await waitForCondition(() => normalizeText(canvasElement.textContent).includes("实时日志"));
     expectStory(findTab(canvasElement, "logs")?.getAttribute("data-state") === "active", "logs tab active state missing after switch");
 
-    findTab(canvasElement, "settings")?.click();
+    activateTab(canvasElement, "settings");
     await waitForCondition(() => currentRoutePathname() === "/services/stack-prod/svc-prod-api/settings");
     await waitForCondition(() => Boolean(findSectionCard(canvasElement, "auto-policy")));
     expectStory(findTab(canvasElement, "settings")?.getAttribute("data-state") === "active", "settings tab active state missing after switch");
+
+    const secondMonitoringHistoryCalls = globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageHistoryCalls ?? 0;
+    const secondMonitoringEventSourceCalls = globalThis.__DOCKREV_MOCK_DEBUG__?.resourceUsageEventSourceCalls ?? 0;
+    activateTab(canvasElement, "monitoring");
+    await waitForCondition(() => currentRoutePathname() === "/services/stack-prod/svc-prod-api/monitoring");
+    await waitForCondition(() => normalizeText(canvasElement.textContent).includes("资源监控"));
+    await assertMonitoringActivationRefresh({ canvasElement, previousHistoryCalls: secondMonitoringHistoryCalls, previousEventSourceCalls: secondMonitoringEventSourceCalls });
   },
 };
 

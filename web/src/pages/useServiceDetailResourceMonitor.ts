@@ -174,8 +174,15 @@ export function useServiceDetailResourceMonitor(props: {
   readonly?: boolean
   initialSnapshot?: ServiceResourceSnapshot | null
   isOnline?: boolean
+  isMonitoringSectionActive?: boolean
 }): ServiceDetailResourceMonitorController {
-  const { serviceId, readonly = false, initialSnapshot = null, isOnline = true } = props
+  const {
+    serviceId,
+    readonly = false,
+    initialSnapshot = null,
+    isOnline = true,
+    isMonitoringSectionActive = false,
+  } = props
   const initialWindow = initialSnapshot?.windowKey ?? '1h'
   const initialPanelSamples = initialSnapshot
     ? trimSamplesToWindow(initialSnapshot.samples, RESOURCE_WINDOW_SECONDS[initialWindow])
@@ -198,6 +205,7 @@ export function useServiceDetailResourceMonitor(props: {
   const [lifecycleSubscription, setLifecycleSubscription] = useState<LifecycleSubscription | null>(null)
   const [historyTrigger, setHistoryTrigger] = useState<AsyncDataTrigger>('background')
   const [historyReloadTick, setHistoryReloadTick] = useState(0)
+  const [streamRefreshTick, setStreamRefreshTick] = useState(0)
   const [historyError, setHistoryError] = useState<string | null>(null)
   const [monitorDisabled, setMonitorDisabled] = useState(initialSnapshot?.monitorDisabled === true)
   const [streamState, setStreamState] = useState<ServiceResourceStreamState>('idle')
@@ -212,6 +220,7 @@ export function useServiceDetailResourceMonitor(props: {
   const summaryHistoryRequestIdRef = useRef(0)
   const lifecycleRefreshRequestIdRef = useRef(0)
   const previousPageVisibilityRef = useRef(isPageVisible)
+  const previousMonitoringSectionActiveRef = useRef(isMonitoringSectionActive)
 
   windowKeyRef.current = windowKey
 
@@ -290,6 +299,15 @@ export function useServiceDetailResourceMonitor(props: {
     setHistoryTrigger('background')
     setHistoryReloadTick((current) => current + 1)
   }, [isOnline, isPageVisible, monitorDisabled, readonly])
+
+  useEffect(() => {
+    const wasActive = previousMonitoringSectionActiveRef.current
+    previousMonitoringSectionActiveRef.current = isMonitoringSectionActive
+    if (!isMonitoringSectionActive || wasActive || !isPageVisible || readonly || !isOnline || monitorDisabled) return
+    setHistoryTrigger('background')
+    setHistoryReloadTick((current) => current + 1)
+    setStreamRefreshTick((current) => current + 1)
+  }, [isMonitoringSectionActive, isOnline, isPageVisible, monitorDisabled, readonly])
 
   useEffect(() => {
     if (readonly || !isOnline || monitorDisabled) {
@@ -511,7 +529,7 @@ export function useServiceDetailResourceMonitor(props: {
       closeSource()
       setStreamState('idle')
     }
-  }, [isOnline, isPageVisible, monitorDisabled, readonly, serviceId])
+  }, [isOnline, isPageVisible, monitorDisabled, readonly, serviceId, streamRefreshTick])
 
   useEffect(() => {
     if (

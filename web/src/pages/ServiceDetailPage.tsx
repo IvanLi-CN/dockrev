@@ -190,6 +190,7 @@ export function ServiceDetailPage(props: {
   const [serviceSettingsDraft, setServiceSettingsDraft] = useState<ServiceSettings | null>(null);
   const [serviceBackupTargetsDraft, setServiceBackupTargetsDraft] = useState<BackupTargetsDraft>(() => createBackupTargetsDraft(null));
   const readonlyUi = !isOnline;
+  const sectionValue = section;
   const readonlyMonitorSnapshot = readonlyUi && snapshotPayload?.committedQueryKey.startsWith(`${props.stackId}:${props.serviceId}:`)
     ? (snapshotPayload.monitoring ?? null)
     : null;
@@ -198,6 +199,7 @@ export function ServiceDetailPage(props: {
     readonly: readonlyUi,
     initialSnapshot: readonlyMonitorSnapshot,
     isOnline,
+    isMonitoringSectionActive: sectionValue === "monitoring",
   });
   const monitoringSnapshot = resourceMonitor.summarySnapshot;
   const refreshRecentJobs = useCallback(async (activateLive = false, cursor: string | null = historyCursorRef.current, nextCursorStack?: (string | null)[], trigger: AsyncDataTrigger = "background") => {
@@ -441,8 +443,6 @@ export function ServiceDetailPage(props: {
   const recentUpdateJobs = selectRecentServiceUpdateJobs(snapshotActive || !versionJobsLoaded ? effectiveJobs : versionJobs, effectiveService.id);
   const serviceOperationJobs = filterServiceOperationJobs(effectiveJobs, effectiveService.id, effectiveStack.id);
   const versionOperationJobs = selectServiceOperationJobs(versionJobs, effectiveService.id, effectiveStack.id);
-  const sectionValue = section;
-
   const effectiveBannerTitle =
     service != null
       ? bannerTitle
