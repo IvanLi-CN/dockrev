@@ -8,9 +8,12 @@ python3 -m json.tool .github/pr-label-release.json >/dev/null
 python3 -m json.tool .github/release-failure-notification.json >/dev/null
 python3 -m json.tool .github/quality-gates.json >/dev/null
 test -s VERSION
-python3 .github/scripts/release_policy.py validate-channel --version "$(tr -d '[:space:]' < VERSION)" --channel stable
+version="$(tr -d '[:space:]' < VERSION)"
+channel="$(python3 .github/scripts/release_policy.py channel-for-version --version "${version}")"
+python3 .github/scripts/release_policy.py validate-channel --version "${version}" --channel "${channel}"
 python3 .github/scripts/test_pr_label_release.py
 python3 .github/scripts/test_release_workflow_contract.py
+grep -q 'release-recovery' .github/scripts/release_preparation.py .github/scripts/release_completion.py .github/scripts/release_identity.py
 
 for obsolete in \
   'Release Candidate Pipeline' \

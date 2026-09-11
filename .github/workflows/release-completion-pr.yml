@@ -67,7 +67,7 @@ jobs:
             echo "Bootstrap completion only accepts type:none" >&2
             exit 1
           }
-          [[ "${#channel_labels[@]}" -eq 1 && "${channel_labels[0]}" =~ ^channel:(stable|beta|dev)$ ]] || {
+          [[ "${#channel_labels[@]}" -eq 1 && "${channel_labels[0]}" =~ ^channel:(stable|beta|rc|dev)$ ]] || {
             echo "Bootstrap completion requires one supported channel" >&2
             exit 1
           }
@@ -82,7 +82,7 @@ jobs:
             exit 1
           fi
           version="$(gh api "repos/${GITHUB_REPOSITORY}/contents/VERSION?ref=${HEAD_SHA}" --jq .content | tr -d '\n' | base64 --decode | tr -d '[:space:]')"
-          [[ "${version}" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((beta|dev)\.[0-9]+))?$ ]] || {
+          [[ "${version}" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((beta|rc|dev)\.[0-9]+))?$ ]] || {
             echo "Bootstrap VERSION is invalid" >&2
             exit 1
           }

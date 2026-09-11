@@ -9,6 +9,7 @@
 | Topic | Lifecycle | Implementation | Spec | Successor |
 | --- | --- | --- | --- | --- |
 | PR label release identity | active | workflow/scripts/docs complete | `docs/adr/0008-pr-label-release-identity.md` | - |
+| Release channel promotion | active | beta/RC/stable identity contract | `release-channel-promotion/SPEC.md` | - |
 | Update rollback diagnostics | active | not started | `update-rollback-diagnostics/SPEC.md` | - |
 | Service accepted state consistency | active | not started | `service-accepted-state-consistency/SPEC.md` | - |
 | Brand media variants | active | dark/light posters delivered; social variants pending | `brand-media-variants/SPEC.md` | - |
@@ -39,6 +40,7 @@
 |-----:|-------|--------|------|------|-------|
 | async-data-continuity | Dockrev：异步数据连续性与加载反馈 | active | `async-data-continuity/SPEC.md` | 2026-08-19 | fast-track（统一骨架、延迟遮罩、错误重试与 fresh snapshot v2 合同） |
 | ci-duration-optimization | Dockrev：CI 时长优化与事件驱动发布就绪 | superseded | `ci-duration-optimization/SPEC.md` | 2026-09-03 | successor: ADR 0008; candidate/readiness/FIFO contract is historical |
+| release-channel-promotion | Dockrev：Beta、RC 与 Stable 发布身份晋升 | active | `release-channel-promotion/SPEC.md` | 2026-09-11 | beta/RC/stable exact promotion and same-SHA identity contract |
 | theme-preference-controls | Dockrev：三态主题偏好与响应式入口 | active | `theme-preference-controls/SPEC.md` | 2026-08-14 | fast-track（system/light/dark、AppShell 桌面侧栏、移动 Settings、Storybook 与 ui_demo 证据） |
 | unified-page-context-navigation | Dockrev：统一页面内导航 | active | `unified-page-context-navigation/SPEC.md` | 2026-09-04 | fast-track（单一 AppShell 侧栏、页面内上下文导航、移动抽屉与服务树） |
 | 5dnjc | Dockrev：任务日志实时输出与事件可见性 | active | `5dnjc-job-live-output-event-visibility/SPEC.md` | 2026-08-03 | fast-track（无持久化 job_live_log SSE、命令摘要去重、EVEN 默认隐藏与浏览器偏好） |
@@ -87,7 +89,7 @@
 | 7cbvf | Dockrev：任务类型/作用域标签间距修复（全站统一 6px） | 已完成 | `7cbvf-job-tag-spacing/SPEC.md` | 2026-03-05 | fast-track（Queue/JobDetail 标签容器统一 + 6px gap） |
 | gr3cs | Dockrev：通知渠道独立测试按钮与气泡结果可视化 | 已完成 | `gr3cs-notification-channel-test-bubbles/SPEC.md` | 2026-03-04 | fast-track（分渠道测试 + 常驻步骤气泡） |
 | 7ruev | Dockrev：更新进行中按钮可点击直达任务详情 | 已完成 | `7ruev-update-running-button-job-link/SPEC.md` | 2026-03-04 | fast-track（活跃态按钮可点击直达 /queue/:jobId） |
-| mzqkx | Dockrev：发布流程补齐 Channel 显式选择（PR + Label） | 已完成 | `mzqkx-release-channel-selection/SPEC.md` | 2026-03-04 | fast-track（channel 契约改为 required stable/rc） |
+| mzqkx | Dockrev：发布流程补齐 Channel 显式选择（PR + Label） | superseded | `mzqkx-release-channel-selection/SPEC.md` | 2026-09-11 | successor: `release-channel-promotion/SPEC.md`; historical stable/rc-only contract |
 | dvxvx | Dockrev：检查更新并行提升到 7（registry per-host 维持 5） | 已完成 | `dvxvx-check-parallelism-7-registry-5/SPEC.md` | 2026-03-04 | fast-track（check=7, registry=5） |
 | fmcxc | Dockrev：版本推测扫描提速（保守过滤） | 已完成 | `fmcxc-snapshot-scan-conservative-filter/SPEC.md` | 2026-03-04 | fast-track |
 | b5tcx | Dockrev：概览卡片运行任务整行背景进度条（慢速流光） | 已完成 | `b5tcx-overview-running-row-progress-bg/SPEC.md` | 2026-03-03 | fast-track（overview running 行 subtle 背景进度 + 慢速流光） |

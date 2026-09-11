@@ -128,7 +128,7 @@ jobs:
           print(f"release_tag={payload.get('release_tag', '')}")
           print(f"channel={payload.get('channel', '')}")
           print(f"type={payload.get('type', '')}")
-          print(f"prerelease={'true' if payload.get('channel') in {'beta', 'dev'} else 'false'}")
+          print(f"prerelease={'true' if payload.get('channel') in {'beta', 'rc', 'dev'} else 'false'}")
           print("identity_json<<EOF")
           print(json.dumps(payload, sort_keys=True))
           print("EOF")
@@ -149,7 +149,7 @@ jobs:
           set -euo pipefail
           if ! [[ "${MERGE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then MERGE_SHA="${GITHUB_SHA}"; fi
           VERSION="$(tr -d '[:space:]' < VERSION 2>/dev/null || true)"
-          [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-((beta|dev)\.[0-9]+))?$ ]] || {
+          [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-((beta|rc|dev)\.[0-9]+))?$ ]] || {
             echo "Release failure context cannot be created without a valid VERSION" >&2
             exit 1
           }
@@ -180,13 +180,14 @@ jobs:
           if resolver_error:
               if release_type != "unknown" or channel != "unknown":
                   raise SystemExit("Resolver-error context must use unknown intent")
-          elif release_type not in {"major", "minor", "patch"} or channel not in {"stable", "beta", "dev"}:
+          elif release_type not in {"major", "minor", "patch"} or channel not in {"stable", "beta", "rc", "dev"}:
               raise SystemExit("Release failure context requires a verified release intent")
           if not resolver_error:
               channel_pattern = {
-                  "stable": r"^[0-9]+\.[0-9]+\.[0-9]+$",
-                  "beta": r"^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$",
-                  "dev": r"^[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$",
+              "stable": r"^[0-9]+\.[0-9]+\.[0-9]+$",
+              "beta": r"^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$",
+              "rc": r"^[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$",
+              "dev": r"^[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$",
               }[channel]
               if not re.fullmatch(channel_pattern, version):
                   raise SystemExit("Release failure context VERSION is incompatible with the verified channel; refusing to fabricate identity")
@@ -494,6 +495,89 @@ jobs:
         with:
           name: release-assets-${{ env.MERGE_SHA }}
           path: dist/release
+
+      - name: Acquire immutable publication lock
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXPECTED_IDENTITY_JSON: ${{ needs.identity.outputs.identity_json }}
+        run: |
+          set -euo pipefail
+          identity_mode="$(jq -r '.release_mode' <<<"${EXPECTED_IDENTITY_JSON}")"
+          identity_pr="$(jq -r '.pull_request' <<<"${EXPECTED_IDENTITY_JSON}")"
+          identity_source="$(jq -r '.source_sha' <<<"${EXPECTED_IDENTITY_JSON}")"
+          expected_identity_sha="$(jq -r '.identity_ref_sha // empty' <<<"${EXPECTED_IDENTITY_JSON}")"
+          [[ "${expected_identity_sha}" =~ ^[0-9a-f]{40}$ ]] || { echo "resolved identity is missing identity_ref_sha" >&2; exit 2; }
+          if [[ "${identity_mode}" == "version-only-release-pr" ]]; then
+            identity_ref_name="release-recovery/${identity_source}"
+          elif [[ "${identity_mode}" == "normal-preparation" ]]; then
+            identity_ref_name="release-preparation/${identity_pr}/${identity_source}"
+          else
+            echo "unsupported release mode for publication lock: ${identity_mode}" >&2
+            exit 2
+          fi
+          live_identity_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${identity_ref_name}" --jq '.object.sha')"
+          test "${live_identity_sha}" = "${expected_identity_sha}"
+
+          acquire_publication_lock() {
+            local lock_version="$1"
+            local lock_ref_name="release-publication-lock/v${lock_version}"
+            local lock_path="repos/${GITHUB_REPOSITORY}/git/ref/heads/${lock_ref_name}"
+            local lock_error="/tmp/release-publication-lock-${lock_version}-error"
+            local lock_create_error="/tmp/release-publication-lock-${lock_version}-create-error"
+            if existing="$(gh api "${lock_path}" 2>"${lock_error}")"; then
+              owner_sha="$(jq -r '.object.sha' <<<"${existing}")"
+              test "${owner_sha}" = "${expected_identity_sha}"
+              return 0
+            else
+              status=$?
+            fi
+            if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 404|Not Found|404' "${lock_error}"; then
+              cat "${lock_error}" >&2
+              return "${status}"
+            fi
+            if gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f "ref=refs/heads/${lock_ref_name}" -f "sha=${expected_identity_sha}" >/dev/null 2>"${lock_create_error}"; then
+              return 0
+            else
+              status=$?
+            fi
+            if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 422|Reference already exists|already exists' "${lock_create_error}"; then
+              cat "${lock_create_error}" >&2
+              return "${status}"
+            fi
+            owner_sha="$(gh api "${lock_path}" --jq '.object.sha')"
+            test "${owner_sha}" = "${expected_identity_sha}"
+          }
+
+          acquire_publication_lock "${VERSION}"
+          if [[ "${identity_mode}" == "version-only-release-pr" ]]; then
+            covered_version="$(jq -r '.covered_product_version // empty' <<<"${EXPECTED_IDENTITY_JSON}")"
+            [[ -n "${covered_version}" ]] || { echo "version-only identity is missing covered_product_version" >&2; exit 2; }
+            acquire_publication_lock "${covered_version}"
+          fi
+
+      - name: Revalidate release identity before publication
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXPECTED_IDENTITY_JSON: ${{ needs.identity.outputs.identity_json }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${EXPECTED_IDENTITY_JSON}" > expected-release-intent.json
+          python3 .github/scripts/release_identity.py \
+            --repository "${GITHUB_REPOSITORY}" \
+            --merge-sha "${MERGE_SHA}" \
+            --token "${GITHUB_TOKEN}" \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            > fresh-release-intent.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          expected = json.loads(Path("expected-release-intent.json").read_text(encoding="utf-8"))
+          fresh = json.loads(Path("fresh-release-intent.json").read_text(encoding="utf-8"))
+          if expected != fresh:
+              raise SystemExit("release identity changed before publication")
+          PY
 
       - name: Create immutable tag
         env:

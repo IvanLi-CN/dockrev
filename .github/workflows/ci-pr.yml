@@ -48,12 +48,12 @@ jobs:
             const files = [...new Set((commit.data.files || []).map((file) => file.filename).filter(Boolean))].sort()
             const versionOnly = files.length === 1 && files[0] === 'VERSION'
             const mode = trailerValues['Release-Mode']?.[0]
-            const normalIntent = /^type:(patch|minor|major) channel:(stable|beta|dev)$/.test(trailerValues['Release-Intent']?.[0] || '')
+            const normalIntent = /^type:(patch|minor|major) channel:(stable|beta|rc|dev)$/.test(trailerValues['Release-Intent']?.[0] || '')
             const normal = mode === 'normal-preparation' &&
               exactlyOne('Source-SHA', /^[0-9a-f]{40}$/) &&
               trailerValues['Source-SHA'][0] === commit.data.parents?.[0]?.sha &&
               exactlyOne('Product-Version', /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/) &&
-              exactlyOne('Release-Intent', /^type:(patch|minor|major) channel:(stable|beta|dev)$/)
+              exactlyOne('Release-Intent', /^type:(patch|minor|major) channel:(stable|beta|rc|dev)$/)
             const skip = verified && singleParent && versionOnly && normalIntent && normal
             core.setOutput('skip', skip ? 'true' : 'false')
 

@@ -19,6 +19,11 @@
     }
   },
   "required_checks": ["Review Policy Gate", "Label Gate", "Release completion"],
+  "release_label_contract": {
+    "policy_file": ".github/pr-label-release.json",
+    "supported_channels": ["stable", "beta", "rc", "dev"],
+    "promotion_sequence": ["beta", "rc", "stable"]
+  },
   "informational_checks": [
     "Detect changes", "Lint & Checks", "Worktree bootstrap smoke", "Backend Tests",
     "Frontend lint + build", "Frontend Storybook build", "Frontend Storybook test",
