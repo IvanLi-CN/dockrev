@@ -1042,6 +1042,91 @@ async function runRollbackRefreshRace({ baseUrl, browser }) {
   }
 }
 
+async function runSplitActionHover({ baseUrl, browser }) {
+  const base = normalizeBaseUrl(baseUrl);
+  const deltasByTarget = [];
+
+  for (const targetIndex of [0, 1]) {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    const url = new URL("iframe.html", base);
+    url.searchParams.set("id", "pages-servicedetailpage--lifecycle-active");
+    url.searchParams.set("viewMode", "story");
+    await page.goto(url.toString(), { waitUntil: "domcontentloaded" });
+    await page.waitForFunction(
+      () => {
+        const root = document.querySelector("#storybook-root, #root");
+        return Boolean(root && root.childElementCount > 0);
+      },
+      null,
+      { timeout: 60_000 },
+    );
+
+    try {
+      const group = page.locator('[data-service-split-action="服务生命周期"]');
+      await group.waitFor({ timeout: 10_000 });
+      const parts = group.locator(":scope > *");
+      const measure = () =>
+        parts.evaluateAll((nodes) =>
+          nodes.map((node) => Math.round(node.getBoundingClientRect().top)),
+        );
+      const before = await measure();
+      await group.getByRole("button").nth(targetIndex).hover();
+      await page.waitForTimeout(250);
+      const after = await measure();
+      const delta = after.map((top, index) => top - before[index]);
+      deltasByTarget.push({ target: targetIndex === 0 ? "primary" : "menu", delta });
+
+      if (delta.length !== 2 || delta[0] !== -1 || delta[1] !== -1) {
+        throw new Error(
+          `Split action hover drift (${targetIndex === 0 ? "primary" : "menu"}): expected both segments to move -1px, got [${delta.join(", ")}].`,
+        );
+      }
+    } finally {
+      await page.close().catch(() => {});
+    }
+  }
+
+  const disabledPage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const disabledUrl = new URL("iframe.html", base);
+  disabledUrl.searchParams.set("id", "pages-servicedetailpage--service-action-progress");
+  disabledUrl.searchParams.set("viewMode", "story");
+  await disabledPage.goto(disabledUrl.toString(), { waitUntil: "domcontentloaded" });
+  await disabledPage.waitForFunction(
+    () => {
+      const root = document.querySelector("#storybook-root, #root");
+      return Boolean(root && root.childElementCount > 0);
+    },
+    null,
+    { timeout: 60_000 },
+  );
+  try {
+    const disabledGroup = disabledPage.locator('[data-service-split-action="服务生命周期"]');
+    await disabledGroup.waitFor({ timeout: 10_000 });
+    const disabledParts = disabledGroup.locator(":scope > *");
+    const before = await disabledParts.evaluateAll((nodes) =>
+      nodes.map((node) => Math.round(node.getBoundingClientRect().top)),
+    );
+    const disabledBox = await disabledGroup.boundingBox();
+    if (!disabledBox) throw new Error("Disabled split action has no measurable bounds.");
+    await disabledPage.mouse.move(
+      disabledBox.x + disabledBox.width / 2,
+      disabledBox.y + disabledBox.height / 2,
+    );
+    await disabledPage.waitForTimeout(250);
+    const after = await disabledParts.evaluateAll((nodes) =>
+      nodes.map((node) => Math.round(node.getBoundingClientRect().top)),
+    );
+    const delta = after.map((top, index) => top - before[index]);
+    if (delta.length !== 2 || delta[0] !== 0 || delta[1] !== 0) {
+      throw new Error(`Disabled split action moved on hover: expected [0, 0], got [${delta.join(", ")}].`);
+    }
+  } finally {
+    await disabledPage.close().catch(() => {});
+  }
+
+  console.log(`Split action hover passed: ${JSON.stringify(deltasByTarget)}.`);
+}
+
 async function runInteractive({ baseUrl, browser }) {
   const base = normalizeBaseUrl(baseUrl);
 
@@ -3168,9 +3253,15 @@ async function main() {
   const smokeOnly = process.env.DOCKREV_TEST_STORYBOOK_SMOKE_ONLY === "1";
   const interactiveOnly = process.env.DOCKREV_TEST_STORYBOOK_INTERACTIVE_ONLY === "1";
   const rollbackRaceOnly = process.env.DOCKREV_TEST_STORYBOOK_ROLLBACK_RACE_ONLY === "1";
-  if (smokeOnly && (interactiveOnly || rollbackRaceOnly)) {
+  const splitActionHoverOnly = process.env.DOCKREV_TEST_STORYBOOK_SPLIT_ACTION_HOVER_ONLY === "1";
+  if (smokeOnly && (interactiveOnly || rollbackRaceOnly || splitActionHoverOnly)) {
     throw new Error(
-      "DOCKREV_TEST_STORYBOOK_SMOKE_ONLY and DOCKREV_TEST_STORYBOOK_INTERACTIVE_ONLY cannot both be set.",
+      "DOCKREV_TEST_STORYBOOK_SMOKE_ONLY cannot be combined with another focused Storybook test mode.",
+    );
+  }
+  if (splitActionHoverOnly && (interactiveOnly || rollbackRaceOnly)) {
+    throw new Error(
+      "DOCKREV_TEST_STORYBOOK_SPLIT_ACTION_HOVER_ONLY cannot be combined with another focused Storybook test mode.",
     );
   }
 
@@ -3188,7 +3279,7 @@ async function main() {
       if (lightLogsOnly) {
         await assertServiceLogsLightContrast({ baseUrl: targetUrl, browser });
       } else {
-        if (smokeOnly || (!interactiveOnly && !rollbackRaceOnly)) {
+        if (!splitActionHoverOnly && (smokeOnly || (!interactiveOnly && !rollbackRaceOnly))) {
           const selectedStoryIds = smokeOnly ? selectSmokeShard(storyIds) : storyIds;
           await writeSmokeCoverage({ baselineStoryIds: storyIds, selectedStoryIds, mode: smokeOnly ? "shard" : "full" });
           await runSmoke({
@@ -3197,10 +3288,11 @@ async function main() {
             browser,
           });
         }
-        if (interactiveOnly) {
+        if (interactiveOnly || splitActionHoverOnly) {
           await writeSmokeCoverage({ baselineStoryIds: storyIds, selectedStoryIds: [], mode: "global" });
         }
-        if (rollbackRaceOnly) await runRollbackRefreshRace({ baseUrl: targetUrl, browser });
+        if (splitActionHoverOnly) await runSplitActionHover({ baseUrl: targetUrl, browser });
+        else if (rollbackRaceOnly) await runRollbackRefreshRace({ baseUrl: targetUrl, browser });
         else if (!smokeOnly) await runInteractive({ baseUrl: targetUrl, browser });
       }
     } finally {
@@ -3244,7 +3336,7 @@ async function main() {
       if (lightLogsOnly) {
         await assertServiceLogsLightContrast({ baseUrl: localUrl, browser });
       } else {
-        if (smokeOnly || (!interactiveOnly && !rollbackRaceOnly)) {
+        if (!splitActionHoverOnly && (smokeOnly || (!interactiveOnly && !rollbackRaceOnly))) {
           const selectedStoryIds = smokeOnly ? selectSmokeShard(storyIds) : storyIds;
           await writeSmokeCoverage({ baselineStoryIds: storyIds, selectedStoryIds, mode: smokeOnly ? "shard" : "full" });
           await runSmoke({
@@ -3253,10 +3345,11 @@ async function main() {
             browser,
           });
         }
-        if (interactiveOnly) {
+        if (interactiveOnly || splitActionHoverOnly) {
           await writeSmokeCoverage({ baselineStoryIds: storyIds, selectedStoryIds: [], mode: "global" });
         }
-        if (rollbackRaceOnly) await runRollbackRefreshRace({ baseUrl: localUrl, browser });
+        if (splitActionHoverOnly) await runSplitActionHover({ baseUrl: localUrl, browser });
+        else if (rollbackRaceOnly) await runRollbackRefreshRace({ baseUrl: localUrl, browser });
         else if (!smokeOnly) await runInteractive({ baseUrl: localUrl, browser });
       }
     } finally {
