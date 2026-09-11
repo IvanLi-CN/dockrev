@@ -318,6 +318,7 @@ try:
         covered_merge_sha = "c" * 40
         moved_covered_head_sha = "d" * 40
         covered_identity_marker = False
+        covered_publication_lock_sha = None
         reservation_sequence.clear()
 
         def immutable_covered_version(*_args):
@@ -358,6 +359,10 @@ try:
             if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-beta.1"):
                 if covered_identity_marker == "foreign":
                     return {"object": {"sha": "a" * 40}}
+                raise preparation_script.PreparationError("GitHub API failed: 404:")
+            if path.endswith("/git/ref/heads/release-publication-lock%2Fv0.1.1-beta.1"):
+                if covered_publication_lock_sha is not None:
+                    return {"object": {"sha": covered_publication_lock_sha}}
                 raise preparation_script.PreparationError("GitHub API failed: 404:")
             if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-rc.1"):
                 if covered_identity_marker == "owned":
@@ -427,6 +432,20 @@ try:
             covered_merge_sha,
             "0.1.1-beta.1",
         ) is False
+        covered_publication_lock_sha = "9" * 40
+        reservations_before = calls["reserve"]
+        recoveries_before = len(recovery_identity_reservations)
+        expect_error(preparation_script.create, Namespace(
+            api_root="https://api.github.test",
+            token="token",
+            repository="IvanLi-CN/dockrev",
+            pr_number=42,
+            exact_version=None,
+            output=Path(directory) / "covered-publication-lock.json",
+        ))
+        assert calls["reserve"] == reservations_before
+        assert len(recovery_identity_reservations) == recoveries_before
+        covered_publication_lock_sha = None
 
         preparation_script.reserve_recovery_identity = lambda *_args: False
         expect_error(preparation_script.create, Namespace(
@@ -726,6 +745,8 @@ try:
             return {"object": {"sha": prep_sha if recovery_identity_matches else "9" * 40}}
         if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-beta.1"):
             raise completion.CompletionError("GitHub API failed: 404")
+        if path.endswith("/git/ref/heads/release-publication-lock%2Fv0.1.1-beta.1"):
+            raise completion.CompletionError("GitHub API failed: 404")
         if path.endswith("/git/ref/tags/v0.1.1-beta.1"):
             raise completion.CompletionError("GitHub API failed: 404")
         if "/actions/workflows/ci-pr.yml/runs?per_page=100&page=" in path:
@@ -1021,6 +1042,41 @@ rc_version_only = {
     },
 }
 assert completion.validate_completion(rc_version_only)["status"] == "pass"
+original_completion_api_json = completion.api_json
+try:
+    completion_publication_lock_sha = "9" * 40
+
+    def fake_completion_lock_api(_api_root, _token, path):
+        if "/git/ref/heads/release-publication-lock%2Fv0.1.0" in path:
+            if completion_publication_lock_sha is None:
+                raise completion.CompletionError("GitHub API failed: 404")
+            return {"object": {"sha": completion_publication_lock_sha}}
+        raise completion.CompletionError("GitHub API failed: 404")
+
+    completion.api_json = fake_completion_lock_api
+    assert completion.covered_product_has_existing_identity(
+        "https://api.github.test",
+        "token",
+        "IvanLi-CN/dockrev",
+        covered_sha,
+        "0.1.0",
+        expected_recovery_identity_sha=prep_sha,
+        expected_recovery_pr_number=42,
+        expected_recovery_intent="type:patch channel:stable",
+    ) is True
+    completion_publication_lock_sha = prep_sha
+    assert completion.covered_product_has_existing_identity(
+        "https://api.github.test",
+        "token",
+        "IvanLi-CN/dockrev",
+        covered_sha,
+        "0.1.0",
+        expected_recovery_identity_sha=prep_sha,
+        expected_recovery_pr_number=42,
+        expected_recovery_intent="type:patch channel:stable",
+    ) is False
+finally:
+    completion.api_json = original_completion_api_json
 expect_error(completion.validate_completion, {**version_only, "provenance": {**version_only["provenance"], "covered_product_merge_sha": "bad"}})
 expect_error(
     completion.validate_completion,

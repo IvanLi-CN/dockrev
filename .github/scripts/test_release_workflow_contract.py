@@ -69,6 +69,8 @@ assert "Acquire immutable publication lock" in release
 assert "release-publication-lock/v${lock_version}" in release
 assert "identity_ref_sha" in release
 assert "covered_product_version" in release
+assert 'release-preparation/${identity_pr}/${identity_source}' in release
+assert 'test "${live_identity_sha}" = "${expected_identity_sha}"' in release
 assert "Revalidate release identity before publication" in release
 assert "fresh-release-intent.json" in release
 assert "release identity changed before publication" in release
@@ -339,11 +341,12 @@ url = urls[0] if urls else ""
 method = args[args.index("--method") + 1] if "--method" in args else "GET"
 state_path = Path(os.environ["PUBLICATION_LOCKS"])
 state = json.loads(state_path.read_text()) if state_path.exists() else {}
-if "/git/ref/heads/release-recovery/" in url:
+if "/git/ref/heads/release-recovery/" in url or "/git/ref/heads/release-preparation/" in url:
+    identity_sha = os.environ.get("IDENTITY_SHA", "e" * 40)
     if "--jq" in args:
-        print("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+        print(identity_sha)
     else:
-        print(json.dumps({"object": {"sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}}))
+        print(json.dumps({"object": {"sha": identity_sha}}))
     raise SystemExit(0)
 if "/git/ref/heads/release-publication-lock/" in url and method == "GET":
     ref = url.split("/git/ref/heads/", 1)[1]
@@ -363,7 +366,7 @@ if url.endswith("/git/refs") and method == "POST":
         print("HTTP 422: Reference already exists", file=sys.stderr)
         raise SystemExit(1)
     if os.environ.get("RACE") == "1" and not Path(os.environ["RACE_USED"]).exists():
-        state[ref] = sha
+        state[ref] = os.environ.get("RACE_SHA", sha)
         state_path.write_text(json.dumps(state))
         Path(os.environ["RACE_USED"]).write_text("1")
         print("HTTP 422: Reference already exists", file=sys.stderr)
@@ -414,6 +417,83 @@ raise SystemExit(2)
     state_path.unlink()
     race = subprocess.run([str(script)], check=False, env={**env, "RACE": "1"}, cwd=ROOT, capture_output=True, text=True)
     assert race.returncode == 0
+    state_path.unlink()
+    Path(race_path).unlink()
+    foreign_race = subprocess.run(
+        [str(script)],
+        check=False,
+        env={**env, "RACE": "1", "RACE_SHA": "4" * 40},
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    assert foreign_race.returncode != 0
+    live_drift = subprocess.run(
+        [str(script)],
+        check=False,
+        env={**env, "IDENTITY_SHA": "d" * 40},
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    assert live_drift.returncode != 0
+
+    normal_expected = json.dumps({
+        "release_mode": "normal-preparation",
+        "pull_request": 43,
+        "source_sha": "f" * 40,
+        "identity_ref_sha": "b" * 40,
+    }, separators=(",", ":"))
+    normal_script = root / "publication-lock-normal.sh"
+    normal_script.write_text(
+        script.read_text(encoding="utf-8")
+        .replace("export VERSION=0.1.1-rc.1", "export VERSION=0.1.2")
+        .replace(f"export EXPECTED_IDENTITY_JSON='{expected}'", f"export EXPECTED_IDENTITY_JSON='{normal_expected}'"),
+        encoding="utf-8",
+    )
+    normal_script.chmod(0o755)
+    normal_run = subprocess.run(
+        [str(normal_script)],
+        check=False,
+        env={**env, "IDENTITY_SHA": "b" * 40},
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert normal_run.returncode == 0
+    assert json.loads(state_path.read_text(encoding="utf-8"))["release-publication-lock/v0.1.2"] == "b" * 40
+
+    compare_start = release.index("          python3 - <<'PY'", release.index("- name: Revalidate release identity before publication"))
+    compare_end = release.index("\n          PY", compare_start) + len("\n          PY")
+    compare_body = textwrap.dedent(release[compare_start:compare_end])
+    compare_script = root / "revalidate.sh"
+    compare_script.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "printf '%s' \"${EXPECTED_JSON}\" > expected-release-intent.json\n"
+        "printf '%s' \"${FRESH_JSON}\" > fresh-release-intent.json\n"
+        + compare_body + "\n",
+        encoding="utf-8",
+    )
+    compare_script.chmod(0o755)
+    equal_json = '{"version":"0.1.2"}'
+    assert subprocess.run(
+        [str(compare_script)],
+        check=False,
+        env={**env, "EXPECTED_JSON": equal_json, "FRESH_JSON": equal_json},
+        cwd=root,
+        capture_output=True,
+        text=True,
+    ).returncode == 0
+    mismatch = subprocess.run(
+        [str(compare_script)],
+        check=False,
+        env={**env, "EXPECTED_JSON": equal_json, "FRESH_JSON": '{"version":"0.1.3"}'},
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    assert mismatch.returncode != 0
 
 with tempfile.TemporaryDirectory() as directory:
     root = Path(directory)

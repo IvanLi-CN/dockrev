@@ -228,6 +228,8 @@ def covered_product_has_existing_identity(
     repository: str,
     covered_merge_sha: str,
     version: str,
+    *,
+    identity_sha: str | None = None,
 ) -> bool:
     owner, name = repository_parts(repository)
     reservation_path = (
@@ -246,8 +248,22 @@ def covered_product_has_existing_identity(
     except PreparationError as error:
         if " 404:" not in str(error):
             raise
+    else:
+        return True
+    lock_path = (
+        f"/repos/{owner}/{name}/git/ref/heads/"
+        f"{urllib.parse.quote(f'release-publication-lock/v{version}', safe='')}"
+    )
+    try:
+        lock_ref = api_request(api_root, token, "GET", lock_path)
+    except PreparationError as error:
+        if " 404:" not in str(error):
+            raise
         return False
-    return True
+    lock_sha = lock_ref.get("object", {}).get("sha")
+    if not isinstance(lock_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", lock_sha):
+        raise PreparationError("publication lock ref has an invalid commit SHA")
+    return lock_sha != identity_sha
 
 
 def version_only_reservation_is_owned(
@@ -765,6 +781,7 @@ def create(args: argparse.Namespace) -> int:
             args.repository,
             covered_merge_sha,
             covered_product_version,
+            identity_sha=source_sha,
         ):
             raise PreparationError("covered product merge already has immutable release identity")
         try:
@@ -825,6 +842,7 @@ def create(args: argparse.Namespace) -> int:
                 args.repository,
                 covered_merge_sha,
                 covered_product_version,
+                identity_sha=source_sha,
             ):
                 raise PreparationError("covered product merge already has immutable release identity")
             reservation_sha = reserve_tag(

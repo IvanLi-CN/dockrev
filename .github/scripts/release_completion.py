@@ -7,6 +7,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import sys
 import urllib.parse
 import urllib.error
@@ -155,6 +156,21 @@ def covered_product_has_existing_identity(
             ):
                 return False
         return True
+    lock_path = (
+        f"/repos/{owner}/{name}/git/ref/heads/"
+        f"{urllib.parse.quote(f'release-publication-lock/v{version}', safe='')}"
+    )
+    try:
+        lock_ref = api_json(api_root, token, lock_path)
+    except CompletionError as error:
+        if "GitHub API failed: 404" not in str(error):
+            raise
+    else:
+        lock_sha = lock_ref.get("object", {}).get("sha")
+        if not isinstance(lock_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", lock_sha):
+            raise CompletionError("existing publication lock ref has no valid commit SHA")
+        if lock_sha != expected_recovery_identity_sha:
+            return True
     try:
         api_json(api_root, token, f"/repos/{owner}/{name}/git/ref/tags/v{version}")
     except CompletionError as error:
