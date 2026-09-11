@@ -379,6 +379,15 @@ raise SystemExit(2)
         encoding="utf-8",
     )
     gh_stub.chmod(0o755)
+    rg_stub = bin_dir / "rg"
+    rg_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "if [[ \"${1:-}\" == \"-q\" ]]; then shift; fi\n"
+        "grep -Eq \"$1\" \"$2\"\n",
+        encoding="utf-8",
+    )
+    rg_stub.chmod(0o755)
     expected = json.dumps({
         "release_mode": "version-only-release-pr",
         "pull_request": 43,
