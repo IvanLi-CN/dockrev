@@ -387,6 +387,7 @@ try:
             ))
             assert calls["reserve"] == reservations_before + 1
             assert recovery_identity_reservations[-1] == (covered_merge_sha, prep_sha)
+            assert cleanup_calls[-1][-2:] == ("0.1.1-rc.1", "f" * 40)
         finally:
             preparation_script.source_ci_ready = original_version_only_source_ci
 finally:
