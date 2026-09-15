@@ -741,16 +741,9 @@ jobs:
             fi
             sleep 5
           done
-          highest="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq '.[] | select(.prerelease == false) | .tag_name' | python3 -c '
-          import re, sys
-          versions = []
-          for raw in sys.stdin:
-              value = raw.strip().removeprefix("v")
-              match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", value)
-              if match:
-                  versions.append((tuple(map(int, match.groups())), value))
-          print(max(versions)[1] if versions else "")
-          ')"
+          highest="$(python3 .github/scripts/release_baseline.py \
+            --repository "${GITHUB_REPOSITORY}" \
+            --token "${GH_TOKEN}")"
           if [[ "${highest}" != "${VERSION}" ]]; then
             echo "stable ${VERSION} is not the newest published stable release (${highest}); latest remains unchanged"
             exit 0

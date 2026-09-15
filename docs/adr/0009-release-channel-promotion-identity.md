@@ -34,11 +34,12 @@ closed. Major and minor versions remain exact-version operations and continue
 to use their existing monotonic version checks.
 
 An exact version is an input to the trusted preparation controller, not an
-inference. The controller reads only the PR source `VERSION`, validates the
-exact value against the labels and allowed transition, reserves the matching
-tag, writes it into a signed `VERSION`-only commit, and records it in frozen
-provenance. Cargo manifests, tags, snapshots, queue order, and recovery state
-cannot select or replace it.
+inference. The controller reads the PR source `VERSION` for source identity and
+promotion lineage. Automatic version allocation uses the highest published
+final release, while an explicit version is validated against that final
+baseline and the source lineage, then reserved and written into a signed
+`VERSION`-only commit. Cargo manifests, snapshots, queue order, and recovery
+state cannot select or replace it.
 
 Every downstream boundary validates the frozen identity pair: `Release
 completion`, merged identity resolution, tag ownership, failure context and

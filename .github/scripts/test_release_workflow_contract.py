@@ -124,6 +124,20 @@ assert "Release Candidate Pipeline" not in release
 assert "release_readiness.py" not in release
 assert "refs/notes/release" not in release
 assert "pull_requests" in text(".github/scripts/release_preparation.py")
+baseline_helper = text(".github/scripts/release_baseline.py")
+assert "RELEASE_AUTOMATION_ACTOR = \"github-actions[bot]\"" in baseline_helper
+assert "is_main_reachable" in baseline_helper
+assert "latest_qualified_final_release_version" in baseline_helper
+assert "validate_frozen_final_baseline" in baseline_helper
+assert "import release_baseline" in text(".github/scripts/release_preparation.py")
+assert "import release_baseline" in text(".github/scripts/release_completion.py")
+assert "import release_baseline" in text(".github/scripts/release_identity.py")
+assert "Release-Baseline-Version" in ci_pr
+assert "Release-Baseline-Version" in completion
+assert "Release-Baseline-Version" in text(".github/scripts/release_preparation.py")
+assert "Release-Baseline-Version" in text(".github/scripts/release_completion.py")
+assert "Release-Baseline-Version" in text(".github/scripts/release_identity.py")
+assert "python3 .github/scripts/release_baseline.py" in release
 for helper in (
     ".github/scripts/release_preparation.py",
     ".github/scripts/release_completion.py",

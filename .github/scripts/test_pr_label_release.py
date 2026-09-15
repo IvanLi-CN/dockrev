@@ -8,6 +8,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import urllib.error
 from argparse import Namespace
 from pathlib import Path
 
@@ -25,6 +26,7 @@ def load(name: str, path: Path):
 
 
 policy = load("release_policy", ROOT / ".github/scripts/release_policy.py")
+baseline = load("release_baseline", ROOT / ".github/scripts/release_baseline.py")
 completion = load("release_completion", ROOT / ".github/scripts/release_completion.py")
 identity = load("release_identity", ROOT / ".github/scripts/release_identity.py")
 preparation_script = load("release_preparation", ROOT / ".github/scripts/release_preparation.py")
@@ -38,10 +40,28 @@ def expect_error(function, *args, **kwargs):
     raise AssertionError(f"expected {function.__name__} to fail")
 
 
+def expect_baseline_error(function, *args, **kwargs):
+    try:
+        function(*args, **kwargs)
+    except baseline.BaselineError:
+        return
+    raise AssertionError(f"expected {function.__name__} to fail")
+
+
+def expect_exception(error_type, function, *args, **kwargs):
+    try:
+        function(*args, **kwargs)
+    except error_type:
+        return
+    raise AssertionError(f"expected {function.__name__} to raise {error_type.__name__}")
+
+
 labels = policy.parse_labels(["type:patch", "channel:stable", "component:app"])
 assert labels["release_enabled"] is True
 assert policy.next_patch("0.1.0") == "0.1.1"
 assert policy.next_patch("1.4.9") == "1.4.10"
+assert baseline.final_version_from_tag("v1.2.3") == "1.2.3"
+assert baseline.final_version_from_tag("v1.2.3 ") is None
 policy.validate_channel_version("0.1.1", "stable")
 policy.validate_channel_version("0.2.0-beta.1", "beta")
 policy.validate_channel_version("0.2.0-rc.1", "rc")
@@ -52,9 +72,15 @@ assert policy.patch_channel_transitions() == {
     "rc": {"rc", "stable"},
     "dev": {"dev"},
 }
-policy.validate_preparation_version("0.1.0", "0.1.1-beta.1", {"type": "patch", "channel": "beta"})
-policy.validate_preparation_version("0.1.1-beta.1", "0.1.1-rc.1", {"type": "patch", "channel": "rc"})
-policy.validate_preparation_version("0.1.1-rc.1", "0.1.1", {"type": "patch", "channel": "stable"})
+policy.validate_preparation_version(
+    "0.1.0", "0.1.1-beta.1", {"type": "patch", "channel": "beta"}, baseline_version="0.1.0"
+)
+policy.validate_preparation_version(
+    "0.1.1-beta.1", "0.1.1-rc.1", {"type": "patch", "channel": "rc"}, baseline_version="0.1.0"
+)
+policy.validate_preparation_version(
+    "0.1.1-rc.1", "0.1.1", {"type": "patch", "channel": "stable"}, baseline_version="0.1.0"
+)
 expect_error(policy.parse_labels, ["type:patch", "type:minor", "channel:stable"])
 assert policy.parse_labels(["type:patch", "channel:rc"])["channel"] == "rc"
 expect_error(policy.parse_labels, ["type:patch", "channel:preview"])
@@ -64,12 +90,81 @@ expect_error(policy.validate_source_boundary, [".github/scripts/check-live-quali
 expect_error(policy.next_patch, "0.1.0-beta.1")
 expect_error(policy.validate_channel_version, "0.1.1", "beta")
 expect_error(policy.validate_channel_version, "0.1.1-beta.preview", "beta")
-expect_error(policy.validate_preparation_version, "0.1.0", "0.1.2-beta.1", {"type": "patch", "channel": "beta"})
-expect_error(policy.validate_preparation_version, "0.1.1-beta.1", "0.1.1", {"type": "patch", "channel": "stable"})
-expect_error(policy.validate_preparation_version, "0.1.1-rc.1", "0.1.1-beta.2", {"type": "patch", "channel": "beta"})
-expect_error(policy.validate_preparation_version, "0.1.1-dev.1", "0.1.1-rc.1", {"type": "patch", "channel": "rc"})
-expect_error(policy.validate_preparation_version, "0.1.1-beta.1", "0.1.1-beta.1", {"type": "patch", "channel": "beta"})
-expect_error(policy.validate_preparation_version, "0.1.1-rc.2", "0.1.1-rc.1", {"type": "patch", "channel": "rc"})
+expect_error(
+    policy.validate_preparation_version,
+    "0.1.0",
+    "0.1.2-beta.1",
+    {"type": "patch", "channel": "beta"},
+    baseline_version="0.1.0",
+)
+expect_error(
+    policy.validate_preparation_version,
+    "0.1.1-beta.1",
+    "0.1.1",
+    {"type": "patch", "channel": "stable"},
+    baseline_version="0.1.0",
+)
+expect_error(
+    policy.validate_preparation_version,
+    "0.1.1-rc.1",
+    "0.1.1-beta.2",
+    {"type": "patch", "channel": "beta"},
+    baseline_version="0.1.0",
+)
+expect_error(
+    policy.validate_preparation_version,
+    "0.1.1-dev.1",
+    "0.1.1-rc.1",
+    {"type": "patch", "channel": "rc"},
+    baseline_version="0.1.0",
+)
+expect_error(
+    policy.validate_preparation_version,
+    "0.1.1-beta.1",
+    "0.1.1-beta.1",
+    {"type": "patch", "channel": "beta"},
+    baseline_version="0.1.0",
+)
+expect_error(
+    policy.validate_preparation_version,
+    "0.1.1-rc.2",
+    "0.1.1-rc.1",
+    {"type": "patch", "channel": "rc"},
+    baseline_version="0.1.0",
+)
+expect_error(
+    policy.validate_preparation_version,
+    "0.9.1-rc.1",
+    "0.9.1",
+    {"type": "patch", "channel": "stable"},
+    baseline_version="0.10.0",
+)
+policy.validate_preparation_version(
+    "0.9.0",
+    "0.11.0",
+    {"type": "minor", "channel": "stable"},
+    baseline_version="0.10.0",
+)
+expect_error(
+    policy.validate_preparation_version,
+    "0.9.0",
+    "0.12.0",
+    {"type": "minor", "channel": "stable"},
+    baseline_version="0.10.0",
+)
+policy.validate_preparation_version(
+    "0.9.0",
+    "1.0.0",
+    {"type": "major", "channel": "stable"},
+    baseline_version="0.10.0",
+)
+expect_error(
+    policy.validate_preparation_version,
+    "0.9.0",
+    "2.0.0",
+    {"type": "major", "channel": "stable"},
+    baseline_version="0.10.0",
+)
 
 source_sha = "a" * 40
 prep_sha = "b" * 40
@@ -78,6 +173,7 @@ preparation = {
     "source_sha": source_sha,
     "source_pr_updated_at": "2026-01-01T00:00:00Z",
     "version": "0.1.1",
+    "baseline_version": "0.1.0",
     "intent": policy.parse_labels(["type:patch", "channel:stable"]),
     "source_version": "0.1.0",
     "release_intent": "type:patch channel:stable",
@@ -90,21 +186,32 @@ assert policy.validate_preparation(preparation, source_sha=source_sha) == prepar
 expect_error(policy.validate_preparation, {**preparation, "changed_files": ["src/lib.rs"]})
 expect_error(policy.validate_preparation, {**preparation, "verified": False})
 expect_error(policy.parse_trailers, "Release-Mode: normal-preparation\nRelease-Mode: normal-preparation")
-assert preparation_script.is_existing_preparation({"Release-Mode": "normal-preparation", "Source-SHA": source_sha if 'source_sha' in globals() else "a" * 40, "Product-Version": "0.1.1"})
+assert preparation_script.is_existing_preparation({"Release-Mode": "normal-preparation", "Source-SHA": source_sha if 'source_sha' in globals() else "a" * 40, "Product-Version": "0.1.1", "Release-Baseline-Version": "0.1.0"})
 assert not preparation_script.is_existing_preparation({"Release-Mode": "normal-preparation"})
-assert preparation_script.is_version_only_release({"Release-Mode": "version-only-release-pr", "Covered-Product-Merge-SHA": source_sha, "Product-Version": "0.1.1", "Release-Intent": "type:patch channel:stable"})
+assert preparation_script.is_version_only_release({"Release-Mode": "version-only-release-pr", "Covered-Product-Merge-SHA": source_sha, "Product-Version": "0.1.1", "Release-Baseline-Version": "0.1.0", "Release-Intent": "type:patch channel:stable"})
 beta_labels = policy.parse_labels(["type:patch", "channel:beta"])
-assert preparation_script.expected_version(beta_labels, "0.1.0", "0.1.1-beta.1") == "0.1.1-beta.1"
-expect_error(preparation_script.expected_version, beta_labels, "0.1.0", None)
-expect_error(preparation_script.expected_version, beta_labels, "0.1.0", "9.9.9-beta.1")
+assert preparation_script.expected_version(beta_labels, "0.1.0", "0.1.1-beta.1", baseline_version="0.1.0") == "0.1.1-beta.1"
+expect_error(preparation_script.expected_version, beta_labels, "0.1.0", None, baseline_version="0.1.0")
+expect_error(preparation_script.expected_version, beta_labels, "0.1.0", "9.9.9-beta.1", baseline_version="0.1.0")
 rc_labels = policy.parse_labels(["type:patch", "channel:rc"])
-assert preparation_script.expected_version(rc_labels, "0.1.1-beta.1", "0.1.1-rc.1") == "0.1.1-rc.1"
-assert preparation_script.expected_version(rc_labels, "0.1.1-beta.1", " 0.1.1-rc.1 ") == "0.1.1-rc.1"
-expect_error(preparation_script.expected_version, rc_labels, "0.1.1-beta.1", None)
-expect_error(preparation_script.expected_version, rc_labels, "0.1.1-beta.1", " \t ")
+assert preparation_script.expected_version(rc_labels, "0.1.1-beta.1", "0.1.1-rc.1", baseline_version="0.1.0") == "0.1.1-rc.1"
+assert preparation_script.expected_version(rc_labels, "0.1.1-beta.1", " 0.1.1-rc.1 ", baseline_version="0.1.0") == "0.1.1-rc.1"
+expect_error(preparation_script.expected_version, rc_labels, "0.1.1-beta.1", None, baseline_version="0.1.0")
+expect_error(preparation_script.expected_version, rc_labels, "0.1.1-beta.1", " \t ", baseline_version="0.1.0")
 stable_labels = policy.parse_labels(["type:patch", "channel:stable"])
-assert preparation_script.expected_version(stable_labels, "0.1.1-rc.1", "0.1.1") == "0.1.1"
-expect_error(preparation_script.expected_version, stable_labels, "0.1.1-rc.1", None)
+assert preparation_script.expected_version(stable_labels, "0.1.1-rc.1", "0.1.1", baseline_version="0.1.0") == "0.1.1"
+expect_error(preparation_script.expected_version, stable_labels, "0.1.1-rc.1", None, baseline_version="0.1.0")
+stable_source_labels = policy.parse_labels(["type:patch", "channel:stable"])
+assert preparation_script.expected_version(
+    stable_source_labels, "0.9.0", None, baseline_version="0.10.0"
+) == "0.10.1"
+expect_error(
+    preparation_script.expected_version,
+    stable_source_labels,
+    "0.9.0",
+    "0.9.1",
+    baseline_version="0.10.0",
+)
 
 assert completion.validate_completion({"labels": ["type:none", "channel:stable"]}) == {
     "status": "pass",
@@ -146,10 +253,269 @@ try:
 finally:
     preparation_script.api_request = original_preparation_version_api_request
 
+original_release_list_api_request = preparation_script.api_request
+try:
+    qualified_baseline_sha = "f" * 40
+    off_main_baseline_sha = "e" * 40
+    qualified_release = {
+        "tag_name": "v0.10.0",
+        "draft": False,
+        "prerelease": False,
+        "author": {"login": "github-actions[bot]"},
+    }
+
+    def qualified_release_api(path):
+        if path == "/repos/IvanLi-CN/dockrev/releases?per_page=100&page=1":
+            return [
+                {"tag_name": "v99.0.0", "draft": False, "prerelease": False, "author": {"login": "maintainer"}},
+                {"tag_name": "v20.0.0", "draft": False, "prerelease": False, "author": {"login": "github-actions[bot]"}},
+                {"tag_name": "v99.0.0 ", "draft": False, "prerelease": False, "author": {"login": "github-actions[bot]"}},
+                {"tag_name": "v1.0.0-rc.1", "draft": False, "prerelease": True, "author": {"login": "github-actions[bot]"}},
+                qualified_release,
+                {"tag_name": "v9.9.9", "draft": True, "prerelease": False, "author": {"login": "github-actions[bot]"}},
+                {"tag_name": "0.11.0", "draft": False, "prerelease": False, "author": {"login": "github-actions[bot]"}},
+            ]
+        if path == "/repos/IvanLi-CN/dockrev/releases/tags/v0.10.0":
+            return qualified_release
+        if path == "/repos/IvanLi-CN/dockrev/releases/tags/v20.0.0":
+            return {"tag_name": "v20.0.0", "draft": False, "prerelease": False, "author": {"login": "github-actions[bot]"}}
+        if path == "/repos/IvanLi-CN/dockrev/git/ref/tags/v0.10.0":
+            return {"object": {"type": "commit", "sha": qualified_baseline_sha}}
+        if path == "/repos/IvanLi-CN/dockrev/git/ref/tags/v20.0.0":
+            return {"object": {"type": "commit", "sha": off_main_baseline_sha}}
+        if path == f"/repos/IvanLi-CN/dockrev/compare/{qualified_baseline_sha}...main":
+            return {"status": "ahead"}
+        if path == f"/repos/IvanLi-CN/dockrev/compare/{off_main_baseline_sha}...main":
+            return {"status": "behind"}
+        raise AssertionError(f"unexpected qualified-release API path: {path}")
+
+    assert baseline.latest_qualified_final_release_version(
+        qualified_release_api, "IvanLi-CN/dockrev"
+    ) == "0.10.0"
+    baseline.validate_frozen_final_baseline(
+        qualified_release_api, "IvanLi-CN/dockrev", "0.10.0"
+    )
+    expect_baseline_error(
+        baseline.validate_frozen_final_baseline,
+        qualified_release_api,
+        "IvanLi-CN/dockrev",
+        "20.0.0",
+    )
+
+    def mismatched_release_api(path):
+        if path == "/repos/IvanLi-CN/dockrev/releases/tags/v0.10.0":
+            return {
+                "tag_name": "v0.9.0",
+                "draft": False,
+                "prerelease": False,
+                "author": {"login": "github-actions[bot]"},
+            }
+        raise AssertionError(f"unexpected mismatched-release API path: {path}")
+
+    expect_baseline_error(
+        baseline.validate_frozen_final_baseline,
+        mismatched_release_api,
+        "IvanLi-CN/dockrev",
+        "0.10.0",
+    )
+
+    def no_qualified_release_api(path):
+        if path == "/repos/IvanLi-CN/dockrev/releases/tags/v0.0.0":
+            try:
+                raise urllib.error.HTTPError(
+                    "https://api.github.test/releases/tags/v0.0.0",
+                    404,
+                    "Not Found",
+                    None,
+                    None,
+                )
+            except urllib.error.HTTPError as error:
+                raise baseline.BaselineError("GitHub API GET failed: 404: Not Found") from error
+        if path == "/repos/IvanLi-CN/dockrev/releases?per_page=100&page=1":
+            return [{"tag_name": "v9.9.9", "draft": False, "prerelease": False, "author": {"login": "maintainer"}}]
+        raise AssertionError(f"unexpected virtual-baseline API path: {path}")
+
+    baseline.validate_frozen_final_baseline(
+        no_qualified_release_api, "IvanLi-CN/dockrev", "0.0.0"
+    )
+
+    def raw_not_found_api(_path):
+        raise urllib.error.HTTPError(
+            "https://api.github.test/releases/tags/v0.0.0", 404, "Not Found", None, None
+        )
+
+    assert baseline.release_for_tag(
+        raw_not_found_api, "IvanLi-CN/dockrev", "v0.0.0"
+    ) is None
+
+    def annotated_release_api(path):
+        annotated_release = {
+            "tag_name": "v0.11.0",
+            "draft": False,
+            "prerelease": False,
+            "author": {"login": "github-actions[bot]"},
+        }
+        annotated_tag_sha = "c" * 40
+        annotated_commit_sha = "d" * 40
+        if path == "/repos/IvanLi-CN/dockrev/releases?per_page=100&page=1":
+            return [annotated_release]
+        if path == "/repos/IvanLi-CN/dockrev/git/ref/tags/v0.11.0":
+            return {"object": {"type": "tag", "sha": annotated_tag_sha}}
+        if path == f"/repos/IvanLi-CN/dockrev/git/tags/{annotated_tag_sha}":
+            return {"object": {"type": "commit", "sha": annotated_commit_sha}}
+        if path == f"/repos/IvanLi-CN/dockrev/compare/{annotated_commit_sha}...main":
+            return {"status": "identical"}
+        raise AssertionError(f"unexpected annotated-tag API path: {path}")
+
+    assert baseline.latest_qualified_final_release_version(
+        annotated_release_api, "IvanLi-CN/dockrev"
+    ) == "0.11.0"
+
+    paginated_release = {
+        "tag_name": "v1.0.0",
+        "draft": False,
+        "prerelease": False,
+        "author": {"login": "github-actions[bot]"},
+    }
+    pagination_first_page = [
+        {"tag_name": f"v0.0.{patch}", "draft": False, "prerelease": False, "author": {"login": "maintainer"}}
+        for patch in range(1, 101)
+    ]
+    paginated_commit_sha = "c" * 40
+
+    def paginated_release_api(path):
+        if path == "/repos/IvanLi-CN/dockrev/releases?per_page=100&page=1":
+            return pagination_first_page
+        if path == "/repos/IvanLi-CN/dockrev/releases?per_page=100&page=2":
+            return [paginated_release]
+        if path == "/repos/IvanLi-CN/dockrev/git/ref/tags/v1.0.0":
+            return {"object": {"type": "commit", "sha": paginated_commit_sha}}
+        if path == f"/repos/IvanLi-CN/dockrev/compare/{paginated_commit_sha}...main":
+            return {"status": "ahead"}
+        raise AssertionError(f"unexpected paginated-release API path: {path}")
+
+    assert baseline.latest_qualified_final_release_version(
+        paginated_release_api, "IvanLi-CN/dockrev"
+    ) == "1.0.0"
+
+    def malformed_release_api(path):
+        if path == "/repos/IvanLi-CN/dockrev/releases?per_page=100&page=1":
+            return [{"tag_name": "v99.0.0"}]
+        raise AssertionError(f"unexpected malformed-release API path: {path}")
+
+    expect_baseline_error(
+        baseline.latest_qualified_final_release_version,
+        malformed_release_api,
+        "IvanLi-CN/dockrev",
+    )
+
+    def server_error_api(_path):
+        raise urllib.error.HTTPError(
+            "https://api.github.test/releases", 500, "404 mentioned by upstream", None, None
+        )
+
+    expect_exception(
+        urllib.error.HTTPError,
+        baseline.latest_qualified_final_release_version,
+        server_error_api,
+        "IvanLi-CN/dockrev",
+    )
+
+    def optional_server_error_api(path):
+        if path == "/repos/IvanLi-CN/dockrev/releases/tags/v0.13.0":
+            try:
+                raise urllib.error.HTTPError(
+                    "https://api.github.test/releases/tags/v0.13.0",
+                    500,
+                    "404 mentioned by upstream",
+                    None,
+                    None,
+                )
+            except urllib.error.HTTPError as error:
+                raise baseline.BaselineError(
+                    "GitHub API GET failed: 500: 404 mentioned by upstream"
+                ) from error
+        raise AssertionError(f"unexpected optional-error API path: {path}")
+
+    expect_exception(
+        baseline.BaselineError,
+        baseline.release_for_tag,
+        optional_server_error_api,
+        "IvanLi-CN/dockrev",
+        "v0.13.0",
+    )
+
+    expect_baseline_error(
+        baseline.release_for_tag,
+        lambda _path: None,
+        "IvanLi-CN/dockrev",
+        "v0.13.0",
+    )
+
+    def malformed_tag_api(path):
+        if path == "/repos/IvanLi-CN/dockrev/releases?per_page=100&page=1":
+            return [{
+                "tag_name": "v0.12.0",
+                "draft": False,
+                "prerelease": False,
+                "author": {"login": "github-actions[bot]"},
+            }]
+        if path == "/repos/IvanLi-CN/dockrev/git/ref/tags/v0.12.0":
+            return {"object": {"type": "commit", "sha": "not-a-sha"}}
+        raise AssertionError(f"unexpected malformed-tag API path: {path}")
+
+    expect_baseline_error(
+        baseline.latest_qualified_final_release_version,
+        malformed_tag_api,
+        "IvanLi-CN/dockrev",
+    )
+
+    def malformed_compare_api(path):
+        if path == "/repos/IvanLi-CN/dockrev/releases?per_page=100&page=1":
+            return [{
+                "tag_name": "v0.12.0",
+                "draft": False,
+                "prerelease": False,
+                "author": {"login": "github-actions[bot]"},
+            }]
+        if path == "/repos/IvanLi-CN/dockrev/git/ref/tags/v0.12.0":
+            return {"object": {"type": "commit", "sha": "e" * 40}}
+        if path == f"/repos/IvanLi-CN/dockrev/compare/{'e' * 40}...main":
+            return {"status": "unexpected"}
+        raise AssertionError(f"unexpected malformed-comparison API path: {path}")
+
+    expect_baseline_error(
+        baseline.latest_qualified_final_release_version,
+        malformed_compare_api,
+        "IvanLi-CN/dockrev",
+    )
+
+    preparation_script.api_request = lambda _api_root, _token, _method, path, _payload=None: qualified_release_api(path)
+    assert preparation_script.latest_final_release_version(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev"
+    ) == "0.10.0"
+    preparation_script.api_request = lambda *_args, **_kwargs: []
+    assert preparation_script.latest_final_release_version(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev"
+    ) == "0.0.0"
+finally:
+    preparation_script.api_request = original_release_list_api_request
+
+
+# Older fixtures isolate their narrow concern from GitHub release qualification.
+# The stale-source lifecycle fixture at the end exercises real qualification.
+original_preparation_baseline_validation = preparation_script.validate_frozen_final_baseline
+original_completion_baseline_validation = completion.validate_frozen_final_baseline
+original_identity_baseline_validation = identity.validate_frozen_final_baseline
+preparation_script.validate_frozen_final_baseline = lambda *_args: None
+completion.validate_frozen_final_baseline = lambda *_args: None
+identity.validate_frozen_final_baseline = lambda *_args: None
+
 original_pull_request = preparation_script.pull_request
 original_preparation_api_request = preparation_script.api_request
 original_source_ci_ready = preparation_script.source_ci_ready
 original_current_version = preparation_script.current_version
+original_latest_final_release_version = preparation_script.latest_final_release_version
 original_reserve_tag = preparation_script.reserve_tag
 original_delete_reservation_ref = preparation_script.delete_reservation_ref
 original_reserve_recovery_identity = preparation_script.reserve_recovery_identity
@@ -205,6 +571,7 @@ try:
     preparation_script.api_request = fake_preparation_api_request
     preparation_script.source_ci_ready = fake_source_ci
     preparation_script.current_version = fake_current_version
+    preparation_script.latest_final_release_version = lambda *_args: "0.1.0"
     preparation_script.reserve_tag = fake_reserve
     preparation_script.reserve_recovery_identity = fake_reserve_recovery_identity
     preparation_script.reserve_preparation_identity = lambda *_args: True
@@ -335,6 +702,7 @@ try:
                             "VERSION-only recovery\n\n"
                             "Covered-Product-Merge-SHA: " + covered_merge_sha + "\n"
                             "Product-Version: 0.1.1-rc.1\n"
+                            "Release-Baseline-Version: 0.1.0\n"
                             "Release-Intent: type:patch channel:rc\n"
                             "Release-Mode: version-only-release-pr"
                         )
@@ -500,6 +868,7 @@ finally:
     preparation_script.api_request = original_preparation_api_request
     preparation_script.source_ci_ready = original_source_ci_ready
     preparation_script.current_version = original_current_version
+    preparation_script.latest_final_release_version = original_latest_final_release_version
     preparation_script.reserve_tag = original_reserve_tag
     preparation_script.delete_reservation_ref = original_delete_reservation_ref
     preparation_script.reserve_recovery_identity = original_reserve_recovery_identity
@@ -522,6 +891,7 @@ try:
                 "Prepare release identity\n\n"
                 f"Source-SHA: {source_sha}\n"
                 "Product-Version: 0.1.1\n"
+                "Release-Baseline-Version: 0.1.0\n"
                 "Release-Intent: type:patch channel:stable\n"
                 "Release-Mode: normal-preparation\n"
                 f"Covered-Product-Merge-SHA: {source_sha}"
@@ -553,6 +923,7 @@ preparation_script.graphql = fake_graphql
 assert preparation_script.create_commit(
     "https://api.github.test", "token", "IvanLi-CN/dockrev", "feature/release", source_sha, "0.1.1", labels,
     "2026-01-01T00:00:00Z",
+    "0.1.0",
 ) == "d" * 40
 preparation_script.graphql = original_graphql
 commit_input = captured["variables"]["input"]
@@ -566,22 +937,22 @@ preparation_script.api_request = lambda _api_root, _token, _method, path, _paylo
         f"/repos/IvanLi-CN/dockrev/commits/{prep_sha}": {
             "parents": [{"sha": source_sha}],
             "files": [{"filename": "VERSION"}],
-            "commit": {"verification": {"verified": True}, "message": "Release-Mode: normal-preparation\nSource-SHA: " + source_sha + "\nSource-PR-Updated-At: 2026-01-01T00:00:00Z\nProduct-Version: 0.1.1\nRelease-Intent: type:patch channel:stable"},
+            "commit": {"verification": {"verified": True}, "message": "Release-Mode: normal-preparation\nSource-SHA: " + source_sha + "\nSource-PR-Updated-At: 2026-01-01T00:00:00Z\nProduct-Version: 0.1.1\nRelease-Baseline-Version: 0.1.0\nRelease-Intent: type:patch channel:stable"},
         },
         "/repos/IvanLi-CN/dockrev/git/ref/heads/feature%2Frelease": {"object": {"sha": prep_sha}},
     }[path]
 )
 assert preparation_script.inspect_commit(
-    "https://api.github.test", "token", "IvanLi-CN/dockrev", "feature/release", prep_sha, source_sha, "0.1.1", labels
+    "https://api.github.test", "token", "IvanLi-CN/dockrev", "feature/release", prep_sha, source_sha, "0.1.1", labels, "0.1.0"
 )["changed_files"] == ["VERSION"]
 preparation_script.api_request = lambda _api_root, _token, _method, path, _payload=None: (
     {"object": {"sha": "e" * 40}} if "git/ref/heads" in path else {
         "parents": [{"sha": source_sha}],
         "files": [{"filename": "VERSION"}],
-        "commit": {"verification": {"verified": True}, "message": "Release-Mode: normal-preparation\nSource-SHA: " + source_sha + "\nSource-PR-Updated-At: 2026-01-01T00:00:00Z\nProduct-Version: 0.1.1\nRelease-Intent: type:patch channel:stable"},
+        "commit": {"verification": {"verified": True}, "message": "Release-Mode: normal-preparation\nSource-SHA: " + source_sha + "\nSource-PR-Updated-At: 2026-01-01T00:00:00Z\nProduct-Version: 0.1.1\nRelease-Baseline-Version: 0.1.0\nRelease-Intent: type:patch channel:stable"},
     }
 )
-expect_error(preparation_script.inspect_commit, "https://api.github.test", "token", "IvanLi-CN/dockrev", "feature/release", prep_sha, source_sha, "0.1.1", labels)
+expect_error(preparation_script.inspect_commit, "https://api.github.test", "token", "IvanLi-CN/dockrev", "feature/release", prep_sha, source_sha, "0.1.1", labels, "0.1.0")
 preparation_script.api_request = original_api_request
 
 source_checks = {
@@ -619,6 +990,7 @@ try:
         f"Source-SHA: {source_sha}\n"
         "Source-PR-Updated-At: 2026-01-01T00:00:00Z\n"
         "Product-Version: 0.1.1\n"
+        "Release-Baseline-Version: 0.1.0\n"
         "Release-Intent: type:patch channel:stable\n"
         "Release-Mode: normal-preparation"
     )
@@ -697,6 +1069,7 @@ try:
         "VERSION-only recovery\n\n"
         f"Covered-Product-Merge-SHA: {covered_merge_sha}\n"
         "Product-Version: 0.1.1-rc.1\n"
+        "Release-Baseline-Version: 0.1.0\n"
         "Release-Intent: type:patch channel:rc\n"
         "Release-Mode: version-only-release-pr"
     )
@@ -1007,6 +1380,7 @@ version_only = {
     "provenance": {
         "covered_product_merge_sha": covered_sha,
         "product_version": "0.1.1",
+        "baseline_version": "0.1.0",
         "release_intent": "type:patch channel:stable",
         "release_mode": "version-only-release-pr",
         "branch_head_sha": prep_sha,
@@ -1029,6 +1403,17 @@ expect_error(
     policy.validate_version_only,
     version_only["changed_files"],
     {**version_only["provenance"], "product_version": "9.9.9"},
+)
+expect_error(
+    policy.validate_version_only,
+    version_only["changed_files"],
+    {
+        **version_only["provenance"],
+        "covered_product_version": "0.9.0",
+        "product_version": "0.9.1",
+        "baseline_version": "0.10.0",
+    },
+    head_sha=prep_sha,
 )
 rc_version_only = {
     **version_only,
@@ -1163,6 +1548,7 @@ try:
                         f"Source-SHA: {source_sha}\n"
                         "Source-PR-Updated-At: 2026-01-01T00:00:00Z\n"
                         "Product-Version: 0.1.1\n"
+                        "Release-Baseline-Version: 0.1.0\n"
                         "Release-Intent: type:patch channel:stable\n"
                         "Release-Mode: normal-preparation"
                     ),
@@ -1433,6 +1819,7 @@ try:
                         "VERSION-only release\n\n"
                         f"Covered-Product-Merge-SHA: {version_only_covered_merge_sha}\n"
                         "Product-Version: 0.1.1-rc.1\n"
+                        "Release-Baseline-Version: 0.1.0\n"
                         "Release-Intent: type:patch channel:rc\n"
                         "Release-Mode: version-only-release-pr"
                     ),
@@ -1686,5 +2073,262 @@ with tempfile.TemporaryDirectory() as directory:
     cli_failure = json.loads(failure_output.read_text(encoding="utf-8"))
     assert cli_failure == resolved_failure
     assert policy.main.__name__ == "main"
+
+
+# A source VERSION may lag the final baseline. The signed baseline trailer must
+# carry the allocation through initial creation, an existing preparation,
+# completion, and merged identity resolution without reverting to source VERSION.
+stale_source_sha = "1" * 40
+stale_preparation_sha = "2" * 40
+stale_merge_sha = "3" * 40
+stale_reservation_sha = "4" * 40
+stale_baseline_tag_sha = "5" * 40
+stale_version_blob_sha = "6" * 40
+stale_source_blob_sha = "7" * 40
+stale_baseline_release = {
+    "tag_name": "v0.10.0",
+    "draft": False,
+    "prerelease": False,
+    "author": {"login": "github-actions[bot]"},
+}
+stale_preparation_message = "\n".join(
+    [
+        "Prepare release identity",
+        "",
+        f"Source-SHA: {stale_source_sha}",
+        "Source-PR-Updated-At: 2026-01-01T00:00:00Z",
+        "Product-Version: 0.10.1",
+        "Release-Baseline-Version: 0.10.0",
+        "Release-Intent: type:patch channel:stable",
+        "Release-Mode: normal-preparation",
+    ]
+)
+stale_reservation_message = "\n".join(
+    [
+        "Reserve release version v0.10.1",
+        "",
+        "Release-Reservation-Version: 0.10.1",
+        "Release-Reservation-PR: 42",
+        f"Release-Reservation-Source-SHA: {stale_source_sha}",
+    ]
+)
+
+
+def encoded_version(value):
+    return __import__("base64").b64encode(value.encode()).decode()
+
+
+def stale_lifecycle_response(path, error_type):
+    if path == "/repos/IvanLi-CN/dockrev/releases?per_page=100&page=1":
+        return [stale_baseline_release]
+    if path == "/repos/IvanLi-CN/dockrev/releases/tags/v0.10.0":
+        return stale_baseline_release
+    if path == "/repos/IvanLi-CN/dockrev/git/ref/tags/v0.10.0":
+        return {"object": {"type": "commit", "sha": stale_baseline_tag_sha}}
+    if path == f"/repos/IvanLi-CN/dockrev/compare/{stale_baseline_tag_sha}...main":
+        return {"status": "ahead"}
+    if path == f"/repos/IvanLi-CN/dockrev/commits/{stale_source_sha}":
+        return {
+            "parents": [],
+            "files": [{"filename": "src/lib.rs"}],
+            "commit": {"message": "Product change", "tree": {"sha": stale_source_blob_sha}},
+        }
+    if path == f"/repos/IvanLi-CN/dockrev/commits/{stale_preparation_sha}":
+        return {
+            "parents": [{"sha": stale_source_sha}],
+            "files": [{"filename": "VERSION"}],
+            "commit": {
+                "verification": {"verified": True},
+                "message": stale_preparation_message,
+                "tree": {"sha": stale_version_blob_sha},
+            },
+        }
+    if path == f"/repos/IvanLi-CN/dockrev/commits/{stale_merge_sha}":
+        return {
+            "parents": [{"sha": stale_source_sha}, {"sha": stale_preparation_sha}],
+            "files": [{"filename": "VERSION"}],
+            "commit": {"message": "Merge release preparation", "tree": {"sha": stale_version_blob_sha}},
+        }
+    if path == f"/repos/IvanLi-CN/dockrev/commits/{stale_reservation_sha}":
+        return {
+            "parents": [{"sha": stale_source_sha}],
+            "commit": {"message": stale_reservation_message, "tree": {"sha": stale_source_blob_sha}},
+        }
+    if path == f"/repos/IvanLi-CN/dockrev/contents/VERSION?ref={stale_source_sha}":
+        return {"encoding": "base64", "content": encoded_version("0.9.0"), "sha": stale_source_blob_sha}
+    if path in {
+        f"/repos/IvanLi-CN/dockrev/contents/VERSION?ref={stale_preparation_sha}",
+        f"/repos/IvanLi-CN/dockrev/contents/VERSION?ref={stale_merge_sha}",
+    }:
+        return {"encoding": "base64", "content": encoded_version("0.10.1"), "sha": stale_version_blob_sha}
+    if path == "/repos/IvanLi-CN/dockrev/pulls/42":
+        return {
+            "number": 42,
+            "state": "open",
+            "base": {"ref": "main", "sha": "8" * 40},
+            "head": {
+                "sha": stale_preparation_sha,
+                "ref": "feature/stale-release",
+                "repo": {"full_name": "IvanLi-CN/dockrev"},
+            },
+            "updated_at": "2026-01-01T00:00:00Z",
+            "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
+        }
+    if path == f"/repos/IvanLi-CN/dockrev/commits/{stale_merge_sha}/pulls":
+        return [
+            {
+                "number": 42,
+                "state": "closed",
+                "merged_at": "2026-01-02T00:00:00Z",
+                "merge_commit_sha": stale_merge_sha,
+                "base": {"ref": "main"},
+                "head": {"sha": stale_preparation_sha},
+                "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
+            }
+        ]
+    if path == "/repos/IvanLi-CN/dockrev/pulls/42/files?per_page=100&page=1":
+        return [{"filename": "src/lib.rs"}, {"filename": "VERSION"}]
+    if path == "/repos/IvanLi-CN/dockrev/git/ref/heads/feature%2Fstale-release":
+        return {"object": {"sha": stale_preparation_sha}}
+    if path == "/repos/IvanLi-CN/dockrev/git/ref/heads/release-reservation%2Fv0.10.1":
+        return {"object": {"sha": stale_reservation_sha}}
+    if path == f"/repos/IvanLi-CN/dockrev/git/ref/heads/release-preparation%2F42%2F{stale_source_sha}":
+        return {"object": {"sha": stale_preparation_sha}}
+    if path in {
+        "/repos/IvanLi-CN/dockrev/git/ref/tags/v0.10.1",
+        "/repos/IvanLi-CN/dockrev/git/ref/heads/release-publication-lock%2Fv0.10.1",
+    }:
+        raise error_type("GitHub API failed: 404")
+    if "/actions/workflows/ci-pr.yml/runs?per_page=100&page=1" in path:
+        return {
+            "workflow_runs": [
+                {
+                    "head_sha": stale_source_sha,
+                    "status": "completed",
+                    "conclusion": "success",
+                    "pull_requests": [{"number": 42}],
+                }
+            ]
+        }
+    if "/actions/workflows/label-gate.yml/runs?per_page=100&page=1" in path:
+        return {
+            "workflow_runs": [
+                {
+                    "head_sha": stale_source_sha,
+                    "status": "completed",
+                    "conclusion": "success",
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "pull_requests": [{"number": 42, "head": {"sha": stale_source_sha}}],
+                }
+            ]
+        }
+    if path.startswith("/repos/IvanLi-CN/dockrev/pulls?state="):
+        return []
+    raise AssertionError(f"unexpected stale-lifecycle API path: {path}")
+
+
+preparation_script.validate_frozen_final_baseline = original_preparation_baseline_validation
+completion.validate_frozen_final_baseline = original_completion_baseline_validation
+identity.validate_frozen_final_baseline = original_identity_baseline_validation
+original_stale_pull_request = preparation_script.pull_request
+original_stale_api_request = preparation_script.api_request
+original_stale_source_ci_ready = preparation_script.source_ci_ready
+original_stale_reserve_tag = preparation_script.reserve_tag
+original_stale_create_commit = preparation_script.create_commit
+original_stale_reserve_preparation_identity = preparation_script.reserve_preparation_identity
+original_stale_completion_api = completion.api_json
+original_stale_identity_api = identity.api_json
+try:
+    stale_head = {"sha": stale_source_sha}
+    created_versions = []
+
+    def stale_pull_request(_api_root, _token, _repository, _number):
+        return {
+            "state": "open",
+            "base": {"ref": "main"},
+            "head": {
+                "sha": stale_head["sha"],
+                "ref": "feature/stale-release",
+                "repo": {"full_name": "IvanLi-CN/dockrev"},
+            },
+            "updated_at": "2026-01-01T00:00:00Z",
+            "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
+        }
+
+    preparation_script.pull_request = stale_pull_request
+    preparation_script.api_request = lambda _api_root, _token, _method, path, _payload=None: stale_lifecycle_response(
+        path, preparation_script.PreparationError
+    )
+    preparation_script.source_ci_ready = lambda *_args, **_kwargs: "2026-01-01T00:00:00Z"
+    preparation_script.reserve_tag = lambda *_args, **_kwargs: stale_reservation_sha
+
+    def stale_create_commit(*args):
+        created_versions.append(args[5])
+        return stale_preparation_sha
+
+    preparation_script.create_commit = stale_create_commit
+    preparation_script.reserve_preparation_identity = lambda *_args: True
+    with tempfile.TemporaryDirectory() as directory:
+        created_output = Path(directory) / "created.json"
+        preparation_script.create(
+            Namespace(
+                api_root="https://api.github.test",
+                token="token",
+                repository="IvanLi-CN/dockrev",
+                pr_number=42,
+                exact_version=None,
+                output=created_output,
+            )
+        )
+        created = json.loads(created_output.read_text(encoding="utf-8"))
+        assert created_versions == ["0.10.1"]
+        assert created["version"] == "0.10.1"
+        assert created["baseline_version"] == "0.10.0"
+
+        stale_head["sha"] = stale_preparation_sha
+        preparation_script.reserve_tag = lambda *_args, **_kwargs: None
+        preparation_script.reserve_preparation_identity = lambda *_args: False
+        existing_output = Path(directory) / "existing.json"
+        preparation_script.create(
+            Namespace(
+                api_root="https://api.github.test",
+                token="token",
+                repository="IvanLi-CN/dockrev",
+                pr_number=42,
+                exact_version=None,
+                output=existing_output,
+            )
+        )
+        existing = json.loads(existing_output.read_text(encoding="utf-8"))
+        assert existing["skipped"] == "already-prepared"
+        assert existing["version"] == "0.10.1"
+        assert existing["baseline_version"] == "0.10.0"
+
+    completion.api_json = lambda _api_root, _token, path: stale_lifecycle_response(
+        path, completion.CompletionError
+    )
+    loaded_stale_completion = completion.load_github_completion(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", 42, stale_preparation_sha
+    )
+    assert completion.validate_completion(loaded_stale_completion)["status"] == "pass"
+    assert loaded_stale_completion["preparation"]["baseline_version"] == "0.10.0"
+
+    identity.api_json = lambda _api_root, _token, path: stale_lifecycle_response(
+        path, identity.IdentityError
+    )
+    resolved_stale_identity = identity.resolve_github(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", stale_merge_sha
+    )
+    assert resolved_stale_identity["version"] == "0.10.1"
+    assert resolved_stale_identity["release_tag"] == "v0.10.1"
+finally:
+    preparation_script.pull_request = original_stale_pull_request
+    preparation_script.api_request = original_stale_api_request
+    preparation_script.source_ci_ready = original_stale_source_ci_ready
+    preparation_script.reserve_tag = original_stale_reserve_tag
+    preparation_script.create_commit = original_stale_create_commit
+    preparation_script.reserve_preparation_identity = original_stale_reserve_preparation_identity
+    completion.api_json = original_stale_completion_api
+    identity.api_json = original_stale_identity_api
 
 print("PASS: PR label release fixtures")

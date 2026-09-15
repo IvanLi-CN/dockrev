@@ -15,6 +15,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+import release_baseline
 import release_policy
 
 
@@ -37,6 +38,17 @@ def api_json(api_root: str, token: str, path: str) -> Any:
             return json.loads(response.read().decode(response.headers.get_content_charset() or "utf-8"))
     except urllib.error.HTTPError as error:
         raise CompletionError(f"GitHub API failed: {error.code}") from error
+
+
+def validate_frozen_final_baseline(
+    api_root: str, token: str, repository: str, baseline_version: str
+) -> None:
+    try:
+        release_baseline.validate_frozen_final_baseline(
+            lambda path: api_json(api_root, token, path), repository, baseline_version
+        )
+    except release_baseline.BaselineError as error:
+        raise CompletionError(str(error)) from error
 
 
 def workflow_runs_for_pr(
@@ -345,7 +357,10 @@ def validate_completion(payload: dict[str, Any]) -> dict[str, Any]:
         release_policy.validate_channel_version(str(preparation["version"]), intent["channel"])
         if preparation.get("source_version"):
             release_policy.validate_preparation_version(
-                str(preparation["source_version"]), str(preparation["version"]), intent
+                str(preparation["source_version"]),
+                str(preparation["version"]),
+                intent,
+                baseline_version=str(preparation["baseline_version"]),
             )
         if payload.get("tag_reserved") is not True:
             raise CompletionError("derived release tag is not reserved")
@@ -473,7 +488,18 @@ def load_github_completion(
     trailers = release_policy.parse_trailers(commit.get("commit", {}).get("message", ""))
     mode = trailers.get("Release-Mode")
     if not intent["release_enabled"]:
-        if any(trailers.get(key) for key in ("Release-Mode", "Source-SHA", "Source-PR-Updated-At", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")):
+        if any(
+            trailers.get(key)
+            for key in (
+                "Release-Mode",
+                "Source-SHA",
+                "Source-PR-Updated-At",
+                "Product-Version",
+                "Release-Baseline-Version",
+                "Release-Intent",
+                "Covered-Product-Merge-SHA",
+            )
+        ):
             raise CompletionError("type:none PR cannot carry release identity")
         if "VERSION" not in changed_files:
             return {"labels": labels}
@@ -496,11 +522,14 @@ def load_github_completion(
         trailer_intent = intent_from_trailer(trailers.get("Release-Intent", ""))
         source_sha = trailers.get("Source-SHA", "")
         source_version = version_at_commit(api_root, token, repository, source_sha)
+        baseline_version = trailers.get("Release-Baseline-Version", "")
+        validate_frozen_final_baseline(api_root, token, repository, baseline_version)
         preparation = {
             "commit_sha": head_sha,
             "source_sha": source_sha,
             "source_pr_updated_at": trailers.get("Source-PR-Updated-At", ""),
             "version": trailers.get("Product-Version", ""),
+            "baseline_version": baseline_version,
             "intent": trailer_intent,
             "source_version": source_version,
             "release_intent": trailers.get("Release-Intent", ""),
@@ -513,6 +542,8 @@ def load_github_completion(
         if trailers.get("Source-SHA"):
             raise CompletionError("version-only release identity cannot carry Source-SHA")
         covered_merge_sha = trailers.get("Covered-Product-Merge-SHA", "")
+        baseline_version = trailers.get("Release-Baseline-Version", "")
+        validate_frozen_final_baseline(api_root, token, repository, baseline_version)
         covered_pr = covered_product_boundary(api_root, token, repository, covered_merge_sha)
         source_sha = covered_merge_sha
         covered_product_version = version_at_commit(api_root, token, repository, covered_merge_sha)
@@ -533,6 +564,7 @@ def load_github_completion(
             "covered_product_version": covered_product_version,
             "covered_product_merged": True,
             "product_version": trailers.get("Product-Version", ""),
+            "baseline_version": baseline_version,
             "release_intent": trailers.get("Release-Intent", ""),
             "release_mode": mode,
             "branch_head_sha": head_sha,

@@ -87,7 +87,7 @@ jobs:
             exit 1
           }
           message="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}" --jq '.commit.message')"
-          if grep -Eq '^(Release-Mode|Source-SHA|Product-Version|Release-Intent|Covered-Product-Merge-SHA):' <<<"${message}"; then
+          if grep -Eq '^(Release-Mode|Source-SHA|Product-Version|Release-Baseline-Version|Release-Intent|Covered-Product-Merge-SHA):' <<<"${message}"; then
             echo "Bootstrap PR cannot carry release identity trailers" >&2
             exit 1
           fi

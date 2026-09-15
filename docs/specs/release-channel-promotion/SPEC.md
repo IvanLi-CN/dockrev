@@ -38,9 +38,12 @@
 - The system MUST permit only patch-level `beta -> rc -> stable` promotion at
   one unchanged `X.Y.Z` base, and every beta, RC, dev, or
   prerelease-to-stable preparation MUST use an exact version input.
-- Inputs: source `VERSION`, frozen type/channel labels, and exact version
-  input where required.
-- Outputs: a signed `VERSION`-only identity or a fail-closed validation error.
+- Inputs: a qualified final-release baseline, source `VERSION`, frozen
+  type/channel labels, and exact version input where required. A qualified
+  baseline is non-draft, non-prerelease, created by release automation, and
+  tagged at a `main`-reachable commit.
+- Outputs: a signed `VERSION`-only identity carrying
+  `Release-Baseline-Version`, or a fail-closed validation error.
 - covers: `G1`, `G2`
 
 ### REQ-RELEASE-CHANNEL-003
@@ -56,6 +59,10 @@
   distinct successor versions cannot recover the same product merge; it MUST
   NOT choose an arbitrary successor. The index MUST be allocated before the
   target-version reservation, and an orphaned index MUST fail closed.
+- Normal and `VERSION`-only provenance MUST freeze a qualified final baseline
+  in `Release-Baseline-Version`; existing preparation, completion, and merged
+  identity resolution MUST revalidate that exact baseline instead of using the
+  source or covered `VERSION` as a fallback allocator.
 - Inputs: immutable merged provenance and its version/channel pair.
 - Outputs: channel-consistent publication or recovery behavior.
 - covers: `G2`, `G3`
@@ -68,7 +75,9 @@
 - covers: `REQ-RELEASE-CHANNEL-001`, `REQ-RELEASE-CHANNEL-002`
 - Pass condition: beta, RC, stable, and dev labels/version forms are accepted
   only in their allowed combinations; unknown, duplicate, missing, incompatible,
-  reverse, and shortcut transitions fail.
+  reverse, and shortcut transitions fail. A stale source is accepted only when
+  its signed version is the successor of the qualified final baseline; manual,
+  draft, prerelease, and off-main release candidates do not qualify.
 
 ### VER-RELEASE-CHANNEL-002
 
@@ -82,6 +91,7 @@
 
 - [0008-pr-label-release-identity](../../adr/0008-pr-label-release-identity.md)
 - [0009-release-channel-promotion-identity](../../adr/0009-release-channel-promotion-identity.md)
+- [0010-release-version-baseline](../../adr/0010-release-version-baseline.md)
 
 ## References
 

@@ -131,31 +131,55 @@ def patch_channel_transitions() -> dict[str, set[str]]:
     return normalized
 
 
-def validate_preparation_version(source_version: str, version: str, intent: dict[str, Any]) -> None:
+def validate_final_baseline_version(version: str) -> tuple[int, int, int]:
+    major, minor, patch, prerelease = parse_version(version)
+    if prerelease is not None:
+        raise PolicyError("release baseline must be a final semver version")
+    return major, minor, patch
+
+
+def validate_preparation_version(
+    source_version: str,
+    version: str,
+    intent: dict[str, Any],
+    *,
+    baseline_version: str,
+) -> None:
     source = parse_version(source_version)
     target = parse_version(version)
+    baseline = validate_final_baseline_version(baseline_version)
     source_channel = channel_for_version(source_version)
     target_channel = str(intent["channel"])
     if intent["type"] == "patch":
-        expected_base = source[:3] if source_channel != "stable" else (source[0], source[1], source[2] + 1)
+        expected_base = (
+            source[:3]
+            if source_channel != "stable"
+            else (baseline[0], baseline[1], baseline[2] + 1)
+        )
         if target[:3] != expected_base:
             raise PolicyError("patch preparation must advance VERSION by exactly one patch base")
+        if source_channel != "stable" and target[:3] <= baseline:
+            raise PolicyError("prerelease preparation must advance the final release baseline")
         transitions = patch_channel_transitions()
         if target_channel not in transitions[source_channel]:
             raise PolicyError(
                 f"patch release promotion from {source_channel} to {target_channel} is not allowed"
             )
-        if source_channel == "stable" and target_channel == "stable" and version != next_patch(source_version):
+        if source_channel == "stable" and target_channel == "stable" and version != next_patch(baseline_version):
             raise PolicyError("stable patch preparation must use the next patch")
         if source_channel == target_channel and source_channel != "stable":
             source_sequence = int(str(source[3]).rsplit(".", 1)[1])
             target_sequence = int(str(target[3]).rsplit(".", 1)[1])
             if target_sequence <= source_sequence:
                 raise PolicyError("prerelease patch preparation must advance its channel sequence")
-    elif intent["type"] == "minor" and target[:2] <= source[:2]:
-        raise PolicyError("minor preparation must advance the source major/minor")
-    elif intent["type"] == "major" and target[0] <= source[0]:
-        raise PolicyError("major preparation must advance the source major")
+    elif intent["type"] == "minor":
+        expected_base = (baseline[0], baseline[1] + 1, 0)
+        if target[:3] != expected_base:
+            raise PolicyError("minor preparation must advance the final release baseline by one minor version")
+    elif intent["type"] == "major":
+        expected_base = (baseline[0] + 1, 0, 0)
+        if target[:3] != expected_base:
+            raise PolicyError("major preparation must advance the final release baseline by one major version")
     validate_channel_version(version, target_channel)
 
 
@@ -190,7 +214,15 @@ def parse_trailers(message: str) -> dict[str, str]:
         if ":" not in line:
             continue
         key, value = line.split(":", 1)
-        if key in {"Source-SHA", "Source-PR-Updated-At", "Product-Version", "Release-Intent", "Release-Mode", "Covered-Product-Merge-SHA"}:
+        if key in {
+            "Source-SHA",
+            "Source-PR-Updated-At",
+            "Product-Version",
+            "Release-Intent",
+            "Release-Mode",
+            "Release-Baseline-Version",
+            "Covered-Product-Merge-SHA",
+        }:
             if key in trailers:
                 raise PolicyError(f"duplicate release trailer: {key}")
             trailers[key] = value.strip()
@@ -256,7 +288,18 @@ def validate_version_only_reservation(
 
 
 def validate_preparation(payload: dict[str, Any], *, source_sha: str | None = None) -> dict[str, Any]:
-    required = {"commit_sha", "source_sha", "source_pr_updated_at", "version", "intent", "release_mode", "parents", "changed_files", "verified"}
+    required = {
+        "commit_sha",
+        "source_sha",
+        "source_pr_updated_at",
+        "version",
+        "baseline_version",
+        "intent",
+        "release_mode",
+        "parents",
+        "changed_files",
+        "verified",
+    }
     missing = sorted(required - set(payload))
     if missing:
         raise PolicyError(f"preparation provenance missing: {', '.join(missing)}")
@@ -267,6 +310,7 @@ def validate_preparation(payload: dict[str, Any], *, source_sha: str | None = No
     if source_sha and payload["source_sha"] != source_sha:
         raise PolicyError("preparation source_sha does not match expected source")
     parse_version(str(payload["version"]))
+    validate_final_baseline_version(str(payload["baseline_version"]))
     if payload["release_mode"] != "normal-preparation":
         raise PolicyError("unexpected preparation release mode")
     if payload["parents"] != [payload["source_sha"]]:
@@ -287,6 +331,7 @@ def validate_version_only(files: list[str], provenance: dict[str, Any], *, head_
         "covered_product_version",
         "covered_product_merged",
         "product_version",
+        "baseline_version",
         "release_intent",
         "release_mode",
         "verified",
@@ -308,6 +353,8 @@ def validate_version_only(files: list[str], provenance: dict[str, Any], *, head_
     covered_product_version = str(provenance["covered_product_version"])
     parse_version(covered_product_version)
     parse_version(str(provenance["product_version"]))
+    baseline_version = str(provenance["baseline_version"])
+    validate_final_baseline_version(baseline_version)
     try:
         intent = parse_labels(str(provenance["release_intent"]).split())
     except PolicyError as error:
@@ -316,7 +363,12 @@ def validate_version_only(files: list[str], provenance: dict[str, Any], *, head_
         raise PolicyError("version-only release PR requires a release-enabled type")
     try:
         validate_channel_version(str(provenance["product_version"]), intent["channel"])
-        validate_preparation_version(covered_product_version, str(provenance["product_version"]), intent)
+        validate_preparation_version(
+            covered_product_version,
+            str(provenance["product_version"]),
+            intent,
+            baseline_version=baseline_version,
+        )
     except PolicyError as error:
         raise PolicyError("version-only release VERSION is incompatible with the covered product identity") from error
     if provenance["release_mode"] != "version-only-release-pr":
