@@ -7,9 +7,11 @@ and `.github/quality-gates.json`; the offline validation entrypoint is
 
 ## Release identity
 
-`VERSION` at the repository root is the only numeric version source. Cargo
-manifest versions, existing tags, environment variables, and commit order do
-not allocate a release version.
+The highest published final `vX.Y.Z` release is the numeric version baseline;
+when no final release exists, the baseline is `0.0.0`. The root `VERSION` file
+is the merged release identity and provenance, not a counter. Cargo manifest
+versions, environment variables, and commit order do not allocate a release
+version.
 
 Every product PR targeting `main` must carry exactly one `type:*` label and one
 `channel:*` label. The supported values are:
@@ -28,11 +30,15 @@ that absence before accepting it.
 ## Normal product PR
 
 1. The source head must pass the complete `CI (PR)` workflow and `Label Gate`.
-2. `Release Preparation` reads the source `VERSION`. A stable patch release
-   from a final `VERSION` uses the next patch. Major/minor, beta, RC, dev, and
-   prerelease-to-stable promotion require an exact version input; the exact
-   value is verified against the source `VERSION`, frozen labels, signed
-   trailers, branch head, and tag reservation before it can become identity.
+2. `Release Preparation` reads the source `VERSION` only to verify the source
+   identity and promotion lineage. Version allocation uses the highest
+   published final `vX.Y.Z` release as its numeric baseline (or `0.0.0` when
+   no final release exists); it never increments the source `VERSION`. A stable
+   patch release uses the next patch after that final baseline. Major/minor,
+   beta, RC, dev, and prerelease-to-stable promotion require an exact version
+   input; the exact value is verified against the source `VERSION`, frozen
+   labels, signed trailers, branch head, and tag reservation before it can
+   become identity.
    For `type:patch`, the only prerelease promotion sequence is
    `X.Y.Z-beta.N -> X.Y.Z-rc.N -> X.Y.Z`; each step keeps `X.Y.Z` unchanged.
    Beta cannot promote directly to stable, dev does not promote into the

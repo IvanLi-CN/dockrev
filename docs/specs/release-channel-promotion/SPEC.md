@@ -38,8 +38,8 @@
 - The system MUST permit only patch-level `beta -> rc -> stable` promotion at
   one unchanged `X.Y.Z` base, and every beta, RC, dev, or
   prerelease-to-stable preparation MUST use an exact version input.
-- Inputs: source `VERSION`, frozen type/channel labels, and exact version
-  input where required.
+- Inputs: published final-release baseline, source `VERSION`, frozen
+  type/channel labels, and exact version input where required.
 - Outputs: a signed `VERSION`-only identity or a fail-closed validation error.
 - covers: `G1`, `G2`
 
@@ -82,6 +82,7 @@
 
 - [0008-pr-label-release-identity](../../adr/0008-pr-label-release-identity.md)
 - [0009-release-channel-promotion-identity](../../adr/0009-release-channel-promotion-identity.md)
+- [0010-release-version-baseline](../../adr/0010-release-version-baseline.md)
 
 ## References
 

@@ -11,6 +11,10 @@
   material. The current four-channel and promotion contract is defined here and
   by ADR 0009.
 
+- Automatic version allocation now follows ADR 0010: the highest published
+  final release is the numeric baseline, while source `VERSION` remains
+  identity/provenance input.
+
 ## References
 
 - `./SPEC.md`

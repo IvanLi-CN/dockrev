@@ -131,13 +131,24 @@ def patch_channel_transitions() -> dict[str, set[str]]:
     return normalized
 
 
-def validate_preparation_version(source_version: str, version: str, intent: dict[str, Any]) -> None:
+def validate_preparation_version(
+    source_version: str,
+    version: str,
+    intent: dict[str, Any],
+    *,
+    baseline_version: str | None = None,
+) -> None:
     source = parse_version(source_version)
     target = parse_version(version)
+    baseline = parse_version(baseline_version or source_version)
     source_channel = channel_for_version(source_version)
     target_channel = str(intent["channel"])
     if intent["type"] == "patch":
-        expected_base = source[:3] if source_channel != "stable" else (source[0], source[1], source[2] + 1)
+        expected_base = (
+            source[:3]
+            if source_channel != "stable"
+            else (baseline[0], baseline[1], baseline[2] + 1)
+        )
         if target[:3] != expected_base:
             raise PolicyError("patch preparation must advance VERSION by exactly one patch base")
         transitions = patch_channel_transitions()
@@ -145,16 +156,16 @@ def validate_preparation_version(source_version: str, version: str, intent: dict
             raise PolicyError(
                 f"patch release promotion from {source_channel} to {target_channel} is not allowed"
             )
-        if source_channel == "stable" and target_channel == "stable" and version != next_patch(source_version):
+        if source_channel == "stable" and target_channel == "stable" and version != next_patch(baseline_version or source_version):
             raise PolicyError("stable patch preparation must use the next patch")
         if source_channel == target_channel and source_channel != "stable":
             source_sequence = int(str(source[3]).rsplit(".", 1)[1])
             target_sequence = int(str(target[3]).rsplit(".", 1)[1])
             if target_sequence <= source_sequence:
                 raise PolicyError("prerelease patch preparation must advance its channel sequence")
-    elif intent["type"] == "minor" and target[:2] <= source[:2]:
+    elif intent["type"] == "minor" and target[:2] <= baseline[:2]:
         raise PolicyError("minor preparation must advance the source major/minor")
-    elif intent["type"] == "major" and target[0] <= source[0]:
+    elif intent["type"] == "major" and target[0] <= baseline[0]:
         raise PolicyError("major preparation must advance the source major")
     validate_channel_version(version, target_channel)
 

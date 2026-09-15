@@ -105,6 +105,17 @@ expect_error(preparation_script.expected_version, rc_labels, "0.1.1-beta.1", " \
 stable_labels = policy.parse_labels(["type:patch", "channel:stable"])
 assert preparation_script.expected_version(stable_labels, "0.1.1-rc.1", "0.1.1") == "0.1.1"
 expect_error(preparation_script.expected_version, stable_labels, "0.1.1-rc.1", None)
+stable_source_labels = policy.parse_labels(["type:patch", "channel:stable"])
+assert preparation_script.expected_version(
+    stable_source_labels, "0.9.0", None, baseline_version="0.10.0"
+) == "0.10.1"
+expect_error(
+    preparation_script.expected_version,
+    stable_source_labels,
+    "0.9.0",
+    "0.9.1",
+    baseline_version="0.10.0",
+)
 
 assert completion.validate_completion({"labels": ["type:none", "channel:stable"]}) == {
     "status": "pass",
@@ -146,10 +157,31 @@ try:
 finally:
     preparation_script.api_request = original_preparation_version_api_request
 
+original_release_list_api_request = preparation_script.api_request
+try:
+    preparation_script.api_request = lambda _api_root, _token, _method, path, _payload=None: {
+        "/repos/IvanLi-CN/dockrev/releases?per_page=100&page=1": [
+            {"tag_name": "v0.9.0", "draft": False, "prerelease": False},
+            {"tag_name": "v1.0.0-rc.1", "draft": False, "prerelease": True},
+            {"tag_name": "v0.10.0", "draft": False, "prerelease": False},
+            {"tag_name": "v9.9.9", "draft": True, "prerelease": False},
+        ]
+    }[path]
+    assert preparation_script.latest_final_release_version(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev"
+    ) == "0.10.0"
+    preparation_script.api_request = lambda *_args, **_kwargs: []
+    assert preparation_script.latest_final_release_version(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev"
+    ) == "0.0.0"
+finally:
+    preparation_script.api_request = original_release_list_api_request
+
 original_pull_request = preparation_script.pull_request
 original_preparation_api_request = preparation_script.api_request
 original_source_ci_ready = preparation_script.source_ci_ready
 original_current_version = preparation_script.current_version
+original_latest_final_release_version = preparation_script.latest_final_release_version
 original_reserve_tag = preparation_script.reserve_tag
 original_delete_reservation_ref = preparation_script.delete_reservation_ref
 original_reserve_recovery_identity = preparation_script.reserve_recovery_identity
@@ -205,6 +237,7 @@ try:
     preparation_script.api_request = fake_preparation_api_request
     preparation_script.source_ci_ready = fake_source_ci
     preparation_script.current_version = fake_current_version
+    preparation_script.latest_final_release_version = lambda *_args: "0.1.0"
     preparation_script.reserve_tag = fake_reserve
     preparation_script.reserve_recovery_identity = fake_reserve_recovery_identity
     preparation_script.reserve_preparation_identity = lambda *_args: True
@@ -500,6 +533,7 @@ finally:
     preparation_script.api_request = original_preparation_api_request
     preparation_script.source_ci_ready = original_source_ci_ready
     preparation_script.current_version = original_current_version
+    preparation_script.latest_final_release_version = original_latest_final_release_version
     preparation_script.reserve_tag = original_reserve_tag
     preparation_script.delete_reservation_ref = original_delete_reservation_ref
     preparation_script.reserve_recovery_identity = original_reserve_recovery_identity

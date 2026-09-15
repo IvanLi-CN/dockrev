@@ -190,6 +190,38 @@ def current_version(api_root: str, token: str, repository: str, source_sha: str)
     return version
 
 
+def latest_final_release_version(api_root: str, token: str, repository: str) -> str:
+    """Return the highest published final release version, or the empty baseline."""
+    owner, name = repository_parts(repository)
+    versions: list[tuple[tuple[int, int, int], str]] = []
+    page = 1
+    while True:
+        releases = api_request(
+            api_root,
+            token,
+            "GET",
+            f"/repos/{owner}/{name}/releases?per_page=100&page={page}",
+        )
+        if not isinstance(releases, list):
+            raise PreparationError("GitHub release list is invalid")
+        for release in releases:
+            if release.get("draft") is True or release.get("prerelease") is True:
+                continue
+            tag = str(release.get("tag_name", ""))
+            if not tag.startswith("v"):
+                continue
+            try:
+                major, minor, patch, prerelease = release_policy.parse_version(tag[1:])
+            except release_policy.PolicyError:
+                continue
+            if prerelease is None:
+                versions.append(((major, minor, patch), tag[1:]))
+        if len(releases) < 100:
+            break
+        page += 1
+    return max(versions)[1] if versions else "0.0.0"
+
+
 def pull_requests(api_root: str, token: str, repository: str, state: str) -> list[dict[str, Any]]:
     owner, name = repository_parts(repository)
     result: list[dict[str, Any]] = []
@@ -605,14 +637,22 @@ def delete_reservation_ref(
     api_request(api_root, token, "DELETE", path)
 
 
-def expected_version(intent: dict[str, Any], base_version: str, exact_version: str | None) -> str:
+def expected_version(
+    intent: dict[str, Any],
+    base_version: str,
+    exact_version: str | None,
+    *,
+    baseline_version: str | None = None,
+) -> str:
     exact_version = exact_version.strip() if exact_version is not None else None
+    allocation_base = baseline_version or base_version
+    release_policy.parse_version(allocation_base)
     if intent["type"] == "patch":
         source_channel = release_policy.channel_for_version(base_version)
         if intent["channel"] == "stable" and source_channel == "stable":
             if exact_version:
                 raise PreparationError("stable type:patch preparation does not accept an exact version")
-            version = release_policy.next_patch(base_version)
+            version = release_policy.next_patch(allocation_base)
         else:
             if not exact_version:
                 raise PreparationError(
@@ -626,7 +666,9 @@ def expected_version(intent: dict[str, Any], base_version: str, exact_version: s
     else:
         raise PreparationError("type:none does not create a release preparation commit")
     try:
-        release_policy.validate_preparation_version(base_version, version, intent)
+        release_policy.validate_preparation_version(
+            base_version, version, intent, baseline_version=allocation_base
+        )
     except release_policy.PolicyError as error:
         raise PreparationError(str(error)) from error
     return version
@@ -956,8 +998,14 @@ def create(args: argparse.Namespace) -> int:
         expected_intent=intent,
         require_unchanged_pr=True,
     )
-    base_version = current_version(args.api_root, args.token, args.repository, source_sha)
-    version = expected_version(intent, base_version, args.exact_version)
+    source_version = current_version(args.api_root, args.token, args.repository, source_sha)
+    final_baseline = latest_final_release_version(args.api_root, args.token, args.repository)
+    version = expected_version(
+        intent,
+        source_version,
+        args.exact_version,
+        baseline_version=final_baseline,
+    )
     reservation_sha = reserve_tag(args.api_root, args.token, args.repository, version, args.pr_number, source_sha)
     commit_sha = None
     preparation_reserved = False

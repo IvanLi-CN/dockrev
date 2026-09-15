@@ -13,8 +13,9 @@
   `.github/workflows/release-completion-pr.yml` define and validate the four
   channels.
 - `REQ-RELEASE-CHANNEL-002`: `.github/scripts/release_preparation.py` and
-  `.github/scripts/release_policy.py` enforce the exact promotion transition
-  and preserve signed `VERSION` provenance.
+  `.github/scripts/release_policy.py` enforce the exact promotion transition,
+  use the highest published final release as the numeric baseline, and preserve
+  signed `VERSION` provenance.
 - `REQ-RELEASE-CHANNEL-003`: `.github/scripts/release_identity.py`,
   `.github/scripts/release_completion.py`,
   `.github/scripts/release_failure_context.py`, and `.github/workflows/release.yml`

@@ -14,6 +14,8 @@ python3 .github/scripts/release_policy.py validate-channel --version "${version}
 python3 .github/scripts/test_pr_label_release.py
 python3 .github/scripts/test_release_workflow_contract.py
 grep -q 'release-recovery' .github/scripts/release_preparation.py .github/scripts/release_completion.py .github/scripts/release_identity.py
+grep -q 'latest_final_release_version' .github/scripts/release_preparation.py
+grep -q 'baseline_version=final_baseline' .github/scripts/release_preparation.py
 
 for obsolete in \
   'Release Candidate Pipeline' \
