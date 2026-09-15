@@ -13,6 +13,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+import release_baseline
 import release_policy
 
 
@@ -36,6 +37,17 @@ def api_json(api_root: str, token: str, path: str) -> Any:
     except urllib.error.HTTPError as error:
         detail = error.read().decode(errors="replace")
         raise IdentityError(f"GitHub API failed: {error.code}: {detail[:400]}") from error
+
+
+def validate_frozen_final_baseline(
+    api_root: str, token: str, repository: str, baseline_version: str
+) -> None:
+    try:
+        release_baseline.validate_frozen_final_baseline(
+            lambda path: api_json(api_root, token, path), repository, baseline_version
+        )
+    except release_baseline.BaselineError as error:
+        raise IdentityError(str(error)) from error
 
 
 def repository_parts(repository: str) -> tuple[str, str]:
@@ -328,6 +340,8 @@ def resolve_version_only_reservation(
         raise IdentityError("reserved recovery identity VERSION does not match merged VERSION")
     if trailers.get("Release-Intent") != release_intent:
         raise IdentityError("reserved recovery identity intent does not match the reservation")
+    baseline_version = trailers.get("Release-Baseline-Version", "")
+    validate_frozen_final_baseline(api_root, token, repository, baseline_version)
     if not recovery_identity_is_owned(api_root, token, repository, covered_merge_sha, identity_sha):
         raise IdentityError("version-only reservation does not own the covered recovery identity")
     intent = intent_from_trailer(release_intent)
@@ -356,6 +370,7 @@ def resolve_version_only_reservation(
         "covered_product_version": covered_product_version,
         "covered_product_merged": True,
         "product_version": version,
+        "baseline_version": baseline_version,
         "release_intent": release_intent,
         "release_mode": "version-only-release-pr",
         "branch_head_sha": identity_sha,
@@ -483,7 +498,15 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
         trailers = release_policy.parse_trailers(head_commit.get("commit", {}).get("message", ""))
         if any(
             trailers.get(key)
-            for key in ("Release-Mode", "Source-SHA", "Source-PR-Updated-At", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")
+            for key in (
+                "Release-Mode",
+                "Source-SHA",
+                "Source-PR-Updated-At",
+                "Product-Version",
+                "Release-Baseline-Version",
+                "Release-Intent",
+                "Covered-Product-Merge-SHA",
+            )
         ):
             raise IdentityError("type:none labels conflict with merged release identity")
         changed_files = pull_request_changed_files(api_root, token, repository, pr.get("number", 0))
@@ -549,6 +572,8 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
     version = trailers.get("Product-Version", "")
     if not version:
         raise IdentityError("merged product PR is missing Product-Version provenance")
+    baseline_version = trailers.get("Release-Baseline-Version", "")
+    validate_frozen_final_baseline(api_root, token, repository, baseline_version)
     changed_files = sorted({entry.get("filename") for entry in head_commit.get("files", []) if entry.get("filename")})
     parents = [parent.get("sha") for parent in head_commit.get("parents", [])]
     verified = head_commit.get("commit", {}).get("verification", {}).get("verified") is True
@@ -571,6 +596,7 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
             "source_sha": source_sha,
             "source_pr_updated_at": trailers.get("Source-PR-Updated-At", ""),
             "version": version,
+            "baseline_version": baseline_version,
             "intent": intent,
             "source_version": source_version,
             "release_intent": release_intent,
@@ -581,7 +607,12 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
         }
         try:
             release_policy.validate_preparation(preparation)
-            release_policy.validate_preparation_version(source_version, version, intent)
+            release_policy.validate_preparation_version(
+                source_version,
+                version,
+                intent,
+                baseline_version=baseline_version,
+            )
         except release_policy.PolicyError as error:
             raise IdentityError(str(error)) from error
         if not version_reservation_ref_is_current(
@@ -607,6 +638,7 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
         "covered_product_merge_sha": trailers.get("Covered-Product-Merge-SHA"),
         "release_mode": mode,
         "version": version,
+        "baseline_version": baseline_version,
         "version_file": version_file,
         "type": intent["type"],
         "intent": intent,

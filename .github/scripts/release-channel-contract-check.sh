@@ -16,6 +16,11 @@ python3 .github/scripts/test_release_workflow_contract.py
 grep -q 'release-recovery' .github/scripts/release_preparation.py .github/scripts/release_completion.py .github/scripts/release_identity.py
 grep -q 'latest_final_release_version' .github/scripts/release_preparation.py
 grep -q 'baseline_version=final_baseline' .github/scripts/release_preparation.py
+test -s .github/scripts/release_baseline.py
+grep -q 'latest_qualified_final_release_version' .github/scripts/release_baseline.py
+grep -q 'validate_frozen_final_baseline' .github/scripts/release_baseline.py
+grep -q 'Release-Baseline-Version' .github/scripts/release_preparation.py .github/scripts/release_completion.py .github/scripts/release_identity.py
+grep -q 'release_baseline.py' .github/workflows/release.yml
 
 for obsolete in \
   'Release Candidate Pipeline' \

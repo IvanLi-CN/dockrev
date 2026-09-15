@@ -7,11 +7,13 @@ and `.github/quality-gates.json`; the offline validation entrypoint is
 
 ## Release identity
 
-The highest published final `vX.Y.Z` release is the numeric version baseline;
-when no final release exists, the baseline is `0.0.0`. The root `VERSION` file
-is the merged release identity and provenance, not a counter. Cargo manifest
-versions, environment variables, and commit order do not allocate a release
-version.
+The highest qualified final `vX.Y.Z` release is the numeric version baseline;
+when no final release qualifies, the baseline is `0.0.0`. A qualified final
+release is non-draft and non-prerelease, is created by the release automation
+(`github-actions[bot]`), and has a tag that resolves to a commit reachable from
+`main`. The root `VERSION` file is the merged release identity and provenance,
+not a counter. Cargo manifest versions, environment variables, and commit order
+do not allocate a release version.
 
 Every product PR targeting `main` must carry exactly one `type:*` label and one
 `channel:*` label. The supported values are:
@@ -32,13 +34,13 @@ that absence before accepting it.
 1. The source head must pass the complete `CI (PR)` workflow and `Label Gate`.
 2. `Release Preparation` reads the source `VERSION` only to verify the source
    identity and promotion lineage. Version allocation uses the highest
-   published final `vX.Y.Z` release as its numeric baseline (or `0.0.0` when
-   no final release exists); it never increments the source `VERSION`. A stable
-   patch release uses the next patch after that final baseline. Major/minor,
-   beta, RC, dev, and prerelease-to-stable promotion require an exact version
-   input; the exact value is verified against the source `VERSION`, frozen
-   labels, signed trailers, branch head, and tag reservation before it can
-   become identity.
+   qualified final `vX.Y.Z` release as its numeric baseline (or `0.0.0` when
+   none qualifies); it never increments the source `VERSION`. A stable patch
+   release uses the next patch after that final baseline. Major and minor use
+   the next final major or minor base. Beta, RC, dev, and prerelease-to-stable
+   promotion require an exact version input; the exact value is verified against
+   the source `VERSION`, frozen labels, signed trailers, branch head, and tag
+   reservation before it can become identity.
    For `type:patch`, the only prerelease promotion sequence is
    `X.Y.Z-beta.N -> X.Y.Z-rc.N -> X.Y.Z`; each step keeps `X.Y.Z` unchanged.
    Beta cannot promote directly to stable, dev does not promote into the
@@ -49,14 +51,15 @@ that absence before accepting it.
    immutable ref ownership before accepting the identity.
 3. Preparation uses GitHub's `createCommitOnBranch(expectedHeadOid)` to add one
    signed, single-parent commit that changes only `VERSION`. Its trailers bind
-   the source SHA, product version, label intent, and
+   the source SHA, product version, qualified final baseline
+   (`Release-Baseline-Version`), label intent, and
    `Release-Mode: normal-preparation`.
 4. The trusted `Release completion` workflow, checked out from `main`, emits
    the single required check. It revalidates the source checks, PR base, labels,
-   trailers, signature, branch head, and tag reservation. The
-   preparation commit changes only `VERSION`; if the PR workflow observes that commit,
-   `Release Preparation` recognizes its signed trailers and skips a second
-   preparation, so the source identity cannot recurse.
+   trailers, signature, branch head, tag reservation, and frozen baseline. The
+   preparation commit changes only `VERSION`; if the PR workflow observes that
+   commit, `Release Preparation` recognizes its signed trailers and skips a
+   second preparation, so the source identity cannot recurse.
 5. After merge, `Release` resolves the merged SHA to exactly one merged PR and
    consumes only its immutable identity. It verifies tag ownership, builds
    `dockrev` and `dockrev-supervisor` for amd64/arm64 and gnu/musl, then
@@ -72,8 +75,9 @@ publish another PR.
 
 If a historical product merge has no identity, create exactly one non-empty
 `VERSION`-only PR with `Release-Mode: version-only-release-pr`, a
-`Covered-Product-Merge-SHA` trailer, the product version, and frozen label
-intent. The recovery PR must first pass its own CI and Label Gate. Its
+`Covered-Product-Merge-SHA` trailer, the product version, qualified final
+baseline, and frozen label intent. The recovery PR must first pass its own CI
+and Label Gate. Its
 reservation binds that signed identity commit, intent, mode, and covered merge;
 after merge, `Release` reads that reservation rather than the PR's current
 head. The covered merge's immutable `VERSION` must have neither a reservation
@@ -81,12 +85,13 @@ nor a tag, and validates the explicit recovery version by the same promotion
 policy. `Release completion` validates that boundary and the normal merged
 identity path handles publication. This PR is not a same-SHA recovery.
 
-The release channel is frozen in the preparation or version-only provenance.
-`Release completion`, merged-identity resolution, tag ownership, failure
-context, notifier transport, and same-SHA recovery all revalidate the same
-version/channel pair. A recovery never recomputes an RC or converts it into a
-stable version. RC is always a prerelease and never advances the stable
-`latest` surface.
+The release channel and qualified final baseline are frozen in the preparation
+or version-only provenance. `Release Preparation` on an existing identity,
+`Release completion`, and merged-identity resolution all revalidate the same
+qualified baseline before accepting the version/channel pair. Tag ownership,
+failure context, notifier transport, and same-SHA recovery preserve that pair.
+A recovery never recomputes an RC or converts it into a stable version. RC is
+always a prerelease and never advances the stable `latest` surface.
 
 FIFO queues, release trains, snapshot backfills, mutable label reconstruction,
 and historical tag repair are deliberately unsupported. A stale reservation

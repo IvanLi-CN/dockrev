@@ -16,6 +16,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+import release_baseline
 import release_policy
 
 
@@ -191,35 +192,24 @@ def current_version(api_root: str, token: str, repository: str, source_sha: str)
 
 
 def latest_final_release_version(api_root: str, token: str, repository: str) -> str:
-    """Return the highest published final release version, or the empty baseline."""
-    owner, name = repository_parts(repository)
-    versions: list[tuple[tuple[int, int, int], str]] = []
-    page = 1
-    while True:
-        releases = api_request(
-            api_root,
-            token,
-            "GET",
-            f"/repos/{owner}/{name}/releases?per_page=100&page={page}",
+    """Return the highest qualified final release version, or the virtual baseline."""
+    try:
+        return release_baseline.latest_qualified_final_release_version(
+            lambda path: api_request(api_root, token, "GET", path), repository
         )
-        if not isinstance(releases, list):
-            raise PreparationError("GitHub release list is invalid")
-        for release in releases:
-            if release.get("draft") is True or release.get("prerelease") is True:
-                continue
-            tag = str(release.get("tag_name", ""))
-            if not tag.startswith("v"):
-                continue
-            try:
-                major, minor, patch, prerelease = release_policy.parse_version(tag[1:])
-            except release_policy.PolicyError:
-                continue
-            if prerelease is None:
-                versions.append(((major, minor, patch), tag[1:]))
-        if len(releases) < 100:
-            break
-        page += 1
-    return max(versions)[1] if versions else "0.0.0"
+    except release_baseline.BaselineError as error:
+        raise PreparationError(str(error)) from error
+
+
+def validate_frozen_final_baseline(
+    api_root: str, token: str, repository: str, baseline_version: str
+) -> None:
+    try:
+        release_baseline.validate_frozen_final_baseline(
+            lambda path: api_request(api_root, token, "GET", path), repository, baseline_version
+        )
+    except release_baseline.BaselineError as error:
+        raise PreparationError(str(error)) from error
 
 
 def pull_requests(api_root: str, token: str, repository: str, state: str) -> list[dict[str, Any]]:
@@ -642,17 +632,16 @@ def expected_version(
     base_version: str,
     exact_version: str | None,
     *,
-    baseline_version: str | None = None,
+    baseline_version: str,
 ) -> str:
     exact_version = exact_version.strip() if exact_version is not None else None
-    allocation_base = baseline_version or base_version
-    release_policy.parse_version(allocation_base)
+    release_policy.validate_final_baseline_version(baseline_version)
     if intent["type"] == "patch":
         source_channel = release_policy.channel_for_version(base_version)
         if intent["channel"] == "stable" and source_channel == "stable":
             if exact_version:
                 raise PreparationError("stable type:patch preparation does not accept an exact version")
-            version = release_policy.next_patch(allocation_base)
+            version = release_policy.next_patch(baseline_version)
         else:
             if not exact_version:
                 raise PreparationError(
@@ -667,7 +656,7 @@ def expected_version(
         raise PreparationError("type:none does not create a release preparation commit")
     try:
         release_policy.validate_preparation_version(
-            base_version, version, intent, baseline_version=allocation_base
+            base_version, version, intent, baseline_version=baseline_version
         )
     except release_policy.PolicyError as error:
         raise PreparationError(str(error)) from error
@@ -676,7 +665,9 @@ def expected_version(
 
 def is_existing_preparation(trailers: dict[str, str]) -> bool:
     return trailers.get("Release-Mode") == "normal-preparation" and bool(
-        trailers.get("Source-SHA") and trailers.get("Product-Version")
+        trailers.get("Source-SHA")
+        and trailers.get("Product-Version")
+        and trailers.get("Release-Baseline-Version")
     )
 
 
@@ -685,6 +676,7 @@ def is_version_only_release(trailers: dict[str, str]) -> bool:
         trailers.get("Covered-Product-Merge-SHA")
         and trailers.get("Product-Version")
         and trailers.get("Release-Intent")
+        and trailers.get("Release-Baseline-Version")
     )
 
 
@@ -697,6 +689,7 @@ def create_commit(
     version: str,
     intent: dict[str, Any],
     source_pr_updated_at: str,
+    baseline_version: str,
 ) -> str:
     encoded = base64.b64encode((version + "\n").encode()).decode()
     query = """
@@ -713,6 +706,7 @@ def create_commit(
             f"Source-SHA: {source_sha}",
             f"Source-PR-Updated-At: {source_pr_updated_at}",
             f"Product-Version: {version}",
+            f"Release-Baseline-Version: {baseline_version}",
             f"Release-Intent: {intent['type_label']} {intent['channel_label']}",
             "Release-Mode: normal-preparation",
         ]
@@ -732,7 +726,17 @@ def create_commit(
     return oid
 
 
-def inspect_commit(api_root: str, token: str, repository: str, branch: str, commit_sha: str, source_sha: str, version: str, intent: dict[str, Any]) -> dict[str, Any]:
+def inspect_commit(
+    api_root: str,
+    token: str,
+    repository: str,
+    branch: str,
+    commit_sha: str,
+    source_sha: str,
+    version: str,
+    intent: dict[str, Any],
+    baseline_version: str,
+) -> dict[str, Any]:
     owner, name = repository_parts(repository)
     commit = None
     for attempt in range(5):
@@ -753,6 +757,7 @@ def inspect_commit(api_root: str, token: str, repository: str, branch: str, comm
         "source_sha": source_sha,
         "source_pr_updated_at": trailers.get("Source-PR-Updated-At", ""),
         "version": version,
+        "baseline_version": trailers.get("Release-Baseline-Version", ""),
         "intent": intent,
         "release_mode": trailers.get("Release-Mode", ""),
         "parents": [parent.get("sha") for parent in commit.get("parents", [])],
@@ -764,7 +769,11 @@ def inspect_commit(api_root: str, token: str, repository: str, branch: str, comm
     release_policy.validate_preparation(payload, source_sha=source_sha)
     if head_sha != commit_sha:
         raise PreparationError("PR branch head drifted after preparation commit")
-    if trailers.get("Source-SHA") != source_sha or trailers.get("Product-Version") != version:
+    if (
+        trailers.get("Source-SHA") != source_sha
+        or trailers.get("Product-Version") != version
+        or trailers.get("Release-Baseline-Version") != baseline_version
+    ):
         raise PreparationError("preparation provenance trailers do not match source/version")
     if not trailers.get("Source-PR-Updated-At"):
         raise PreparationError("preparation source PR timestamp trailer is missing")
@@ -792,7 +801,15 @@ def create(args: argparse.Namespace) -> int:
     intent = release_policy.parse_labels([str(item.get("name")) for item in pr.get("labels", []) if item.get("name")])
     if any(
         head_trailers.get(key)
-        for key in ("Release-Mode", "Source-SHA", "Source-PR-Updated-At", "Product-Version", "Release-Intent", "Covered-Product-Merge-SHA")
+        for key in (
+            "Release-Mode",
+            "Source-SHA",
+            "Source-PR-Updated-At",
+            "Product-Version",
+            "Release-Baseline-Version",
+            "Release-Intent",
+            "Covered-Product-Merge-SHA",
+        )
     ) and head_trailers.get("Release-Mode") not in {"normal-preparation", "version-only-release-pr"}:
         raise PreparationError("PR head contains malformed release identity trailers")
     if head_trailers.get("Release-Mode") == "normal-preparation" and not is_existing_preparation(head_trailers):
@@ -809,11 +826,16 @@ def create(args: argparse.Namespace) -> int:
         if head_trailers.get("Release-Intent") != f"{intent['type_label']} {intent['channel_label']}":
             raise PreparationError("existing release-only intent does not match current PR labels")
         version = head_trailers["Product-Version"]
+        baseline_version = head_trailers["Release-Baseline-Version"]
         try:
             release_policy.parse_version(version)
+            release_policy.validate_final_baseline_version(baseline_version)
             release_policy.validate_channel_version(version, intent["channel"])
         except release_policy.PolicyError as error:
             raise PreparationError(str(error)) from error
+        validate_frozen_final_baseline(
+            args.api_root, args.token, args.repository, baseline_version
+        )
         covered_merge_sha = head_trailers["Covered-Product-Merge-SHA"]
         covered_product = covered_product_boundary(args.api_root, args.token, args.repository, covered_merge_sha)
         covered_product_version = current_version(args.api_root, args.token, args.repository, covered_merge_sha)
@@ -835,6 +857,7 @@ def create(args: argparse.Namespace) -> int:
                     "covered_product_version": covered_product_version,
                     "covered_product_merged": True,
                     "product_version": version,
+                    "baseline_version": baseline_version,
                     "release_intent": head_trailers["Release-Intent"],
                     "release_mode": "version-only-release-pr",
                     "branch_head_sha": source_sha,
@@ -924,6 +947,7 @@ def create(args: argparse.Namespace) -> int:
                 "source_sha": covered_merge_sha,
                 "preparation_commit_sha": source_sha,
                 "version": version,
+                "baseline_version": baseline_version,
                 "release_tag": f"v{version}",
                 "intent": intent,
                 "release_mode": "version-only-release-pr",
@@ -936,11 +960,16 @@ def create(args: argparse.Namespace) -> int:
             raise PreparationError("type:none PR cannot retain release preparation identity")
         existing_source_sha = head_trailers["Source-SHA"]
         existing_version = head_trailers["Product-Version"]
+        baseline_version = head_trailers["Release-Baseline-Version"]
         release_policy.validate_sha(existing_source_sha, "preparation source_sha")
         release_policy.parse_version(existing_version)
+        release_policy.validate_final_baseline_version(baseline_version)
         release_intent = release_policy.parse_labels(head_trailers.get("Release-Intent", "").split())
         if release_intent["type_label"] != intent["type_label"] or release_intent["channel_label"] != intent["channel_label"]:
             raise PreparationError("existing preparation release intent does not match current PR labels")
+        validate_frozen_final_baseline(
+            args.api_root, args.token, args.repository, baseline_version
+        )
         source_version = current_version(args.api_root, args.token, args.repository, existing_source_sha)
         source_ci_ready(
             args.api_root, args.token, args.repository, args.pr_number, existing_source_sha,
@@ -957,8 +986,14 @@ def create(args: argparse.Namespace) -> int:
             existing_source_sha,
             existing_version,
             intent,
+            baseline_version,
         )
-        release_policy.validate_preparation_version(source_version, existing_version, intent)
+        release_policy.validate_preparation_version(
+            source_version,
+            existing_version,
+            intent,
+            baseline_version=baseline_version,
+        )
         reserve_preparation_identity(
             args.api_root,
             args.token,
@@ -977,6 +1012,7 @@ def create(args: argparse.Namespace) -> int:
                 "source_sha": existing_source_sha,
                 "preparation_commit_sha": source_sha,
                 "version": existing_version,
+                "baseline_version": baseline_version,
                 "release_tag": f"v{existing_version}",
                 "intent": intent,
                 "release_mode": "normal-preparation",
@@ -1022,10 +1058,18 @@ def create(args: argparse.Namespace) -> int:
         )
         commit_sha = create_commit(
             args.api_root, args.token, args.repository, pr["head"]["ref"], source_sha, version, intent,
-            source_pr_updated_at,
+            source_pr_updated_at, final_baseline,
         )
         preparation = inspect_commit(
-            args.api_root, args.token, args.repository, pr["head"]["ref"], commit_sha, source_sha, version, intent
+            args.api_root,
+            args.token,
+            args.repository,
+            pr["head"]["ref"],
+            commit_sha,
+            source_sha,
+            version,
+            intent,
+            final_baseline,
         )
         reserve_preparation_identity(
             args.api_root, args.token, args.repository, args.pr_number, source_sha, commit_sha
@@ -1042,6 +1086,7 @@ def create(args: argparse.Namespace) -> int:
         "source_sha": source_sha,
         "preparation_commit_sha": commit_sha,
         "version": version,
+        "baseline_version": final_baseline,
         "release_tag": f"v{version}",
         "intent": intent,
         "release_mode": "normal-preparation",
