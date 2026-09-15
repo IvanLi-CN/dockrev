@@ -48,16 +48,67 @@ def final_version_from_tag(tag: str) -> str | None:
 
 
 def _is_not_found(error: Exception) -> bool:
-    return "404" in str(error)
+    """Return true only for a real HTTP 404 in the exception chain."""
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, urllib.error.HTTPError) and current.code == 404:
+            return True
+        if current.__cause__ is not None:
+            current = current.__cause__
+        elif current.__suppress_context__:
+            current = None
+        else:
+            current = current.__context__
+    return False
 
 
 def _optional_fetch(fetch: Fetch, path: str) -> Any | None:
     try:
-        return fetch(path)
+        payload = fetch(path)
     except Exception as error:
         if _is_not_found(error):
             return None
         raise
+    if payload is None:
+        raise BaselineError("GitHub API response is invalid")
+    return payload
+
+
+def release_metadata(release: Any) -> tuple[str, bool, bool, str]:
+    if not isinstance(release, dict):
+        raise BaselineError("GitHub release is invalid")
+    tag = release.get("tag_name")
+    draft = release.get("draft")
+    prerelease = release.get("prerelease")
+    author = release.get("author")
+    if not isinstance(tag, str) or not tag:
+        raise BaselineError("GitHub release tag_name is invalid")
+    if not isinstance(draft, bool) or not isinstance(prerelease, bool):
+        raise BaselineError("GitHub release draft state is invalid")
+    if not isinstance(author, dict):
+        raise BaselineError("GitHub release author is invalid")
+    author_login = author.get("login")
+    if not isinstance(author_login, str) or not author_login:
+        raise BaselineError("GitHub release author login is invalid")
+    return tag, draft, prerelease, author_login
+
+
+def tag_target(target: Any, description: str) -> tuple[str, str]:
+    if not isinstance(target, dict):
+        raise BaselineError(f"{description} is invalid")
+    target_type = target.get("type")
+    target_sha = target.get("sha")
+    if target_type not in {"commit", "tag"}:
+        raise BaselineError(f"{description} type is invalid")
+    if not isinstance(target_sha, str):
+        raise BaselineError(f"{description} SHA is invalid")
+    try:
+        release_policy.validate_sha(target_sha, f"{description} SHA")
+    except release_policy.PolicyError as error:
+        raise BaselineError(f"{description} SHA is invalid") from error
+    return target_type, target_sha
 
 
 def tagged_commit_sha(fetch: Fetch, repository: str, tag: str) -> str | None:
@@ -66,29 +117,22 @@ def tagged_commit_sha(fetch: Fetch, repository: str, tag: str) -> str | None:
         fetch,
         f"/repos/{owner}/{name}/git/ref/tags/{urllib.parse.quote(tag, safe='')}",
     )
-    if not isinstance(ref, dict):
+    if ref is None:
         return None
+    if not isinstance(ref, dict):
+        raise BaselineError("GitHub tag ref is invalid")
     target = ref.get("object")
     for _ in range(5):
-        if not isinstance(target, dict):
-            return None
-        target_type = target.get("type")
-        target_sha = target.get("sha")
-        if not isinstance(target_sha, str):
-            return None
+        target_type, target_sha = tag_target(target, "GitHub tag target")
         if target_type == "commit":
-            try:
-                release_policy.validate_sha(target_sha, "final release tag target SHA")
-            except release_policy.PolicyError:
-                return None
             return target_sha
-        if target_type != "tag":
-            return None
         annotated = _optional_fetch(fetch, f"/repos/{owner}/{name}/git/tags/{target_sha}")
-        if not isinstance(annotated, dict):
+        if annotated is None:
             return None
+        if not isinstance(annotated, dict):
+            raise BaselineError("GitHub annotated tag is invalid")
         target = annotated.get("object")
-    return None
+    raise BaselineError("GitHub tag annotation depth exceeds the supported limit")
 
 
 def is_main_reachable(fetch: Fetch, repository: str, commit_sha: str) -> bool:
@@ -97,19 +141,23 @@ def is_main_reachable(fetch: Fetch, repository: str, commit_sha: str) -> bool:
         fetch,
         f"/repos/{owner}/{name}/compare/{urllib.parse.quote(f'{commit_sha}...main', safe='')}",
     )
-    return isinstance(comparison, dict) and comparison.get("status") in {"ahead", "identical"}
+    if comparison is None:
+        return False
+    if not isinstance(comparison, dict):
+        raise BaselineError("GitHub comparison is invalid")
+    status = comparison.get("status")
+    if status not in {"ahead", "behind", "diverged", "identical"}:
+        raise BaselineError("GitHub comparison status is invalid")
+    return status in {"ahead", "identical"}
 
 
 def is_qualified_final_release(fetch: Fetch, repository: str, release: Any) -> bool:
-    if not isinstance(release, dict):
+    tag, draft, prerelease, author_login = release_metadata(release)
+    if draft or prerelease:
         return False
-    if release.get("draft") is not False or release.get("prerelease") is not False:
+    if author_login != RELEASE_AUTOMATION_ACTOR:
         return False
-    author = release.get("author")
-    if not isinstance(author, dict) or author.get("login") != RELEASE_AUTOMATION_ACTOR:
-        return False
-    tag = release.get("tag_name")
-    if not isinstance(tag, str) or final_version_from_tag(tag) is None:
+    if final_version_from_tag(tag) is None:
         return False
     target_sha = tagged_commit_sha(fetch, repository, tag)
     return target_sha is not None and is_main_reachable(fetch, repository, target_sha)
@@ -121,7 +169,12 @@ def release_for_tag(fetch: Fetch, repository: str, tag: str) -> dict[str, Any] |
         fetch,
         f"/repos/{owner}/{name}/releases/tags/{urllib.parse.quote(tag, safe='')}",
     )
-    return release if isinstance(release, dict) else None
+    if release is None:
+        return None
+    returned_tag, _draft, _prerelease, _author_login = release_metadata(release)
+    if returned_tag != tag:
+        raise BaselineError("GitHub release tag does not match the requested tag")
+    return release
 
 
 def latest_qualified_final_release_version(fetch: Fetch, repository: str) -> str:
@@ -133,11 +186,7 @@ def latest_qualified_final_release_version(fetch: Fetch, repository: str) -> str
         if not isinstance(releases, list):
             raise BaselineError("GitHub release list is invalid")
         for release in releases:
-            if not isinstance(release, dict):
-                continue
-            tag = release.get("tag_name")
-            if not isinstance(tag, str):
-                continue
+            tag, _draft, _prerelease, _author_login = release_metadata(release)
             version = final_version_from_tag(tag)
             if version is None:
                 continue

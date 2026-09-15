@@ -8,6 +8,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import urllib.error
 from argparse import Namespace
 from pathlib import Path
 
@@ -45,6 +46,14 @@ def expect_baseline_error(function, *args, **kwargs):
     except baseline.BaselineError:
         return
     raise AssertionError(f"expected {function.__name__} to fail")
+
+
+def expect_exception(error_type, function, *args, **kwargs):
+    try:
+        function(*args, **kwargs)
+    except error_type:
+        return
+    raise AssertionError(f"expected {function.__name__} to raise {error_type.__name__}")
 
 
 labels = policy.parse_labels(["type:patch", "channel:stable", "component:app"])
@@ -290,15 +299,183 @@ try:
         "20.0.0",
     )
 
+    def mismatched_release_api(path):
+        if path == "/repos/IvanLi-CN/dockrev/releases/tags/v0.10.0":
+            return {
+                "tag_name": "v0.9.0",
+                "draft": False,
+                "prerelease": False,
+                "author": {"login": "github-actions[bot]"},
+            }
+        raise AssertionError(f"unexpected mismatched-release API path: {path}")
+
+    expect_baseline_error(
+        baseline.validate_frozen_final_baseline,
+        mismatched_release_api,
+        "IvanLi-CN/dockrev",
+        "0.10.0",
+    )
+
     def no_qualified_release_api(path):
         if path == "/repos/IvanLi-CN/dockrev/releases/tags/v0.0.0":
-            raise RuntimeError("404")
+            try:
+                raise urllib.error.HTTPError(
+                    "https://api.github.test/releases/tags/v0.0.0",
+                    404,
+                    "Not Found",
+                    None,
+                    None,
+                )
+            except urllib.error.HTTPError as error:
+                raise baseline.BaselineError("GitHub API GET failed: 404: Not Found") from error
         if path == "/repos/IvanLi-CN/dockrev/releases?per_page=100&page=1":
             return [{"tag_name": "v9.9.9", "draft": False, "prerelease": False, "author": {"login": "maintainer"}}]
         raise AssertionError(f"unexpected virtual-baseline API path: {path}")
 
     baseline.validate_frozen_final_baseline(
         no_qualified_release_api, "IvanLi-CN/dockrev", "0.0.0"
+    )
+
+    def annotated_release_api(path):
+        annotated_release = {
+            "tag_name": "v0.11.0",
+            "draft": False,
+            "prerelease": False,
+            "author": {"login": "github-actions[bot]"},
+        }
+        annotated_tag_sha = "c" * 40
+        annotated_commit_sha = "d" * 40
+        if path == "/repos/IvanLi-CN/dockrev/releases?per_page=100&page=1":
+            return [annotated_release]
+        if path == "/repos/IvanLi-CN/dockrev/git/ref/tags/v0.11.0":
+            return {"object": {"type": "tag", "sha": annotated_tag_sha}}
+        if path == f"/repos/IvanLi-CN/dockrev/git/tags/{annotated_tag_sha}":
+            return {"object": {"type": "commit", "sha": annotated_commit_sha}}
+        if path == f"/repos/IvanLi-CN/dockrev/compare/{annotated_commit_sha}...main":
+            return {"status": "identical"}
+        raise AssertionError(f"unexpected annotated-tag API path: {path}")
+
+    assert baseline.latest_qualified_final_release_version(
+        annotated_release_api, "IvanLi-CN/dockrev"
+    ) == "0.11.0"
+
+    paginated_release = {
+        "tag_name": "v1.0.0",
+        "draft": False,
+        "prerelease": False,
+        "author": {"login": "github-actions[bot]"},
+    }
+    pagination_first_page = [
+        {"tag_name": f"v0.0.{patch}", "draft": False, "prerelease": False, "author": {"login": "maintainer"}}
+        for patch in range(1, 101)
+    ]
+    paginated_commit_sha = "c" * 40
+
+    def paginated_release_api(path):
+        if path == "/repos/IvanLi-CN/dockrev/releases?per_page=100&page=1":
+            return pagination_first_page
+        if path == "/repos/IvanLi-CN/dockrev/releases?per_page=100&page=2":
+            return [paginated_release]
+        if path == "/repos/IvanLi-CN/dockrev/git/ref/tags/v1.0.0":
+            return {"object": {"type": "commit", "sha": paginated_commit_sha}}
+        if path == f"/repos/IvanLi-CN/dockrev/compare/{paginated_commit_sha}...main":
+            return {"status": "ahead"}
+        raise AssertionError(f"unexpected paginated-release API path: {path}")
+
+    assert baseline.latest_qualified_final_release_version(
+        paginated_release_api, "IvanLi-CN/dockrev"
+    ) == "1.0.0"
+
+    def malformed_release_api(path):
+        if path == "/repos/IvanLi-CN/dockrev/releases?per_page=100&page=1":
+            return [{"tag_name": "v99.0.0"}]
+        raise AssertionError(f"unexpected malformed-release API path: {path}")
+
+    expect_baseline_error(
+        baseline.latest_qualified_final_release_version,
+        malformed_release_api,
+        "IvanLi-CN/dockrev",
+    )
+
+    def server_error_api(_path):
+        raise urllib.error.HTTPError(
+            "https://api.github.test/releases", 500, "404 mentioned by upstream", None, None
+        )
+
+    expect_exception(
+        urllib.error.HTTPError,
+        baseline.latest_qualified_final_release_version,
+        server_error_api,
+        "IvanLi-CN/dockrev",
+    )
+
+    def optional_server_error_api(path):
+        if path == "/repos/IvanLi-CN/dockrev/releases/tags/v0.13.0":
+            try:
+                raise urllib.error.HTTPError(
+                    "https://api.github.test/releases/tags/v0.13.0",
+                    500,
+                    "404 mentioned by upstream",
+                    None,
+                    None,
+                )
+            except urllib.error.HTTPError as error:
+                raise baseline.BaselineError(
+                    "GitHub API GET failed: 500: 404 mentioned by upstream"
+                ) from error
+        raise AssertionError(f"unexpected optional-error API path: {path}")
+
+    expect_exception(
+        baseline.BaselineError,
+        baseline.release_for_tag,
+        optional_server_error_api,
+        "IvanLi-CN/dockrev",
+        "v0.13.0",
+    )
+
+    expect_baseline_error(
+        baseline.release_for_tag,
+        lambda _path: None,
+        "IvanLi-CN/dockrev",
+        "v0.13.0",
+    )
+
+    def malformed_tag_api(path):
+        if path == "/repos/IvanLi-CN/dockrev/releases?per_page=100&page=1":
+            return [{
+                "tag_name": "v0.12.0",
+                "draft": False,
+                "prerelease": False,
+                "author": {"login": "github-actions[bot]"},
+            }]
+        if path == "/repos/IvanLi-CN/dockrev/git/ref/tags/v0.12.0":
+            return {"object": {"type": "commit", "sha": "not-a-sha"}}
+        raise AssertionError(f"unexpected malformed-tag API path: {path}")
+
+    expect_baseline_error(
+        baseline.latest_qualified_final_release_version,
+        malformed_tag_api,
+        "IvanLi-CN/dockrev",
+    )
+
+    def malformed_compare_api(path):
+        if path == "/repos/IvanLi-CN/dockrev/releases?per_page=100&page=1":
+            return [{
+                "tag_name": "v0.12.0",
+                "draft": False,
+                "prerelease": False,
+                "author": {"login": "github-actions[bot]"},
+            }]
+        if path == "/repos/IvanLi-CN/dockrev/git/ref/tags/v0.12.0":
+            return {"object": {"type": "commit", "sha": "e" * 40}}
+        if path == f"/repos/IvanLi-CN/dockrev/compare/{'e' * 40}...main":
+            return {"status": "unexpected"}
+        raise AssertionError(f"unexpected malformed-comparison API path: {path}")
+
+    expect_baseline_error(
+        baseline.latest_qualified_final_release_version,
+        malformed_compare_api,
+        "IvanLi-CN/dockrev",
     )
 
     preparation_script.api_request = lambda _api_root, _token, _method, path, _payload=None: qualified_release_api(path)
