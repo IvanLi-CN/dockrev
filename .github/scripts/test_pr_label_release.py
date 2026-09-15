@@ -60,6 +60,8 @@ labels = policy.parse_labels(["type:patch", "channel:stable", "component:app"])
 assert labels["release_enabled"] is True
 assert policy.next_patch("0.1.0") == "0.1.1"
 assert policy.next_patch("1.4.9") == "1.4.10"
+assert baseline.final_version_from_tag("v1.2.3") == "1.2.3"
+assert baseline.final_version_from_tag("v1.2.3 ") is None
 policy.validate_channel_version("0.1.1", "stable")
 policy.validate_channel_version("0.2.0-beta.1", "beta")
 policy.validate_channel_version("0.2.0-rc.1", "rc")
@@ -267,6 +269,7 @@ try:
             return [
                 {"tag_name": "v99.0.0", "draft": False, "prerelease": False, "author": {"login": "maintainer"}},
                 {"tag_name": "v20.0.0", "draft": False, "prerelease": False, "author": {"login": "github-actions[bot]"}},
+                {"tag_name": "v99.0.0 ", "draft": False, "prerelease": False, "author": {"login": "github-actions[bot]"}},
                 {"tag_name": "v1.0.0-rc.1", "draft": False, "prerelease": True, "author": {"login": "github-actions[bot]"}},
                 qualified_release,
                 {"tag_name": "v9.9.9", "draft": True, "prerelease": False, "author": {"login": "github-actions[bot]"}},
@@ -335,6 +338,15 @@ try:
     baseline.validate_frozen_final_baseline(
         no_qualified_release_api, "IvanLi-CN/dockrev", "0.0.0"
     )
+
+    def raw_not_found_api(_path):
+        raise urllib.error.HTTPError(
+            "https://api.github.test/releases/tags/v0.0.0", 404, "Not Found", None, None
+        )
+
+    assert baseline.release_for_tag(
+        raw_not_found_api, "IvanLi-CN/dockrev", "v0.0.0"
+    ) is None
 
     def annotated_release_api(path):
         annotated_release = {

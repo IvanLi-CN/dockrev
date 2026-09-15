@@ -44,7 +44,8 @@ def final_version_from_tag(tag: str) -> str | None:
         return None
     if prerelease is not None:
         return None
-    return f"{major}.{minor}.{patch}"
+    version = f"{major}.{minor}.{patch}"
+    return version if tag == f"v{version}" else None
 
 
 def _is_not_found(error: Exception) -> bool:
