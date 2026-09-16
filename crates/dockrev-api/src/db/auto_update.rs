@@ -1,5 +1,21 @@
 use super::*;
 
+impl Db {
+    pub(super) async fn sync_auto_update_candidate_policy_for_claimed_job(
+        &self,
+        job: &JobListItem,
+    ) -> anyhow::Result<()> {
+        if job.r#type.as_str() == "update" {
+            self.sync_auto_update_candidate_policy_for_job(
+                &job.id,
+                job.started_at.as_deref().unwrap_or_default(),
+            )
+            .await?;
+        }
+        Ok(())
+    }
+}
+
 fn map_serde_error(error: serde_json::Error) -> rusqlite::Error {
     rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
 }

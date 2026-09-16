@@ -1,6 +1,9 @@
 use super::*;
 use std::time::{Duration, Instant};
 
+include!("jobs_auto_update.rs");
+include!("jobs_stale.rs");
+
 const SLOW_JOB_CLAIM_WARN_THRESHOLD: Duration = Duration::from_millis(25);
 const SLOW_JOB_CLAIM_WARN_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -296,41 +299,6 @@ LIMIT 1
         Ok(result)
     }
 
-    async fn publish_stale_job_termination(&self, job: &JobListItem) {
-        let mut entities = vec![crate::management_events::ManagementEventEntity {
-            entity_type: "job".to_string(),
-            id: job.id.clone(),
-        }];
-        if let Some(stack_id) = job.stack_id.as_ref() {
-            entities.push(crate::management_events::ManagementEventEntity {
-                entity_type: "stack".to_string(),
-                id: stack_id.clone(),
-            });
-        }
-        if let Some(service_id) = job.service_id.as_ref() {
-            entities.push(crate::management_events::ManagementEventEntity {
-                entity_type: "service".to_string(),
-                id: service_id.clone(),
-            });
-        }
-        self.management_events
-            .publish_immediate(
-                "jobs",
-                entities,
-                serde_json::json!({
-                    "jobId": job.id,
-                    "status": "failed",
-                    "jobType": job.r#type.as_str(),
-                    "scope": job.scope.as_str(),
-                    "stackId": job.stack_id,
-                    "serviceId": job.service_id,
-                    "terminal": true,
-                    "reason": "stale_check",
-                }),
-            )
-            .await;
-    }
-
     pub async fn claim_next_queued_job_by_type(
         &self,
         job_type: JobType,
@@ -396,13 +364,8 @@ WHERE id = ?1 AND status = 'queued'
         }
 
         if let Ok(Some(item)) = result.as_ref() {
-            if item.r#type.as_str() == "update" {
-                self.sync_auto_update_candidate_policy_for_job(
-                    &item.id,
-                    item.started_at.as_deref().unwrap_or_default(),
-                )
+            self.sync_auto_update_candidate_policy_for_claimed_job(item)
                 .await?;
-            }
             self.management_events
                 .publish_change(
                     "jobs",
@@ -420,47 +383,6 @@ WHERE id = ?1 AND status = 'queued'
                 .await;
         }
         result
-    }
-
-    pub async fn claim_queued_job_by_id(
-        &self,
-        job_id: &str,
-        started_at: &str,
-    ) -> anyhow::Result<bool> {
-        let job_id = job_id.to_string();
-        let query_job_id = job_id.clone();
-        let started_at = started_at.to_string();
-        let query_started_at = started_at.clone();
-        let claimed = self
-            .call(move |conn| {
-                Ok(conn.execute(
-                    r#"
-UPDATE jobs
-SET status = 'running', started_at = ?2
-WHERE id = ?1 AND status = 'queued'
-"#,
-                    params![query_job_id, query_started_at],
-                )? == 1)
-            })
-            .await
-            .context("claim queued job by id")?;
-        if claimed {
-            self.sync_auto_update_candidate_policy_for_job(job_id.as_str(), started_at.as_str())
-                .await?;
-            self.management_events
-                .publish_change(
-                    "jobs",
-                    "job",
-                    job_id.clone(),
-                    serde_json::json!({
-                        "jobId": job_id,
-                        "status": "running",
-                        "jobType": "update",
-                    }),
-                )
-                .await;
-        }
-        Ok(claimed)
     }
 
     pub async fn finish_job(
@@ -505,7 +427,6 @@ WHERE id = ?1 AND status = 'queued'
         let finished_at = finished_at.to_string();
         let mut summary_json = summary_json.clone();
         let settlements = settlements.map(|items| items.to_vec());
-        let projection_job_id = job_id.clone();
         let projection_finished_at = finished_at.clone();
         let completed = self
             .call(move |conn| {
@@ -647,15 +568,11 @@ WHERE id IN (
             .await
             .context("finish job")?;
 
-        if completed
-            .as_ref()
-            .is_some_and(|(_, _, job_type, ..)| job_type == "update")
+        if let Some((job_id, _, job_type, ..)) = completed.as_ref()
+            && job_type == "update"
         {
-            self.sync_auto_update_candidate_policy_for_job(
-                projection_job_id.as_str(),
-                &projection_finished_at,
-            )
-            .await?;
+            self.sync_auto_update_candidate_policy_for_job(job_id, &projection_finished_at)
+                .await?;
         }
         if let Some((
             job_id,
