@@ -624,6 +624,7 @@ CREATE TABLE IF NOT EXISTS auto_update_candidates (
   retry_at TEXT,
   discovered_at TEXT NOT NULL,
   source_job_id TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'unknown',
   current_tag TEXT NOT NULL DEFAULT '',
   current_display_tag TEXT NOT NULL DEFAULT '',
   current_digest TEXT,
@@ -725,6 +726,7 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     apply_migration_0012_track_image_ref_in_new_version_discoveries(conn)?;
     apply_migration_0013_add_update_job_stop_controls(conn)?;
     apply_migration_0014_add_auto_update_candidates(conn)?;
+    apply_migration_0015_add_auto_update_candidate_provenance(conn)?;
     schema_lifecycle_events::apply(conn)?;
     schema_job_history_retention::apply(conn)?;
     schema_backup_cleanup_state::apply(conn)?;
@@ -756,6 +758,7 @@ CREATE TABLE IF NOT EXISTS auto_update_candidates (
   retry_at TEXT,
   discovered_at TEXT NOT NULL,
   source_job_id TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'unknown',
   current_tag TEXT NOT NULL DEFAULT '',
   current_display_tag TEXT NOT NULL DEFAULT '',
   current_digest TEXT,
@@ -783,38 +786,86 @@ ALTER TABLE auto_update_pending ADD COLUMN candidate_id TEXT;
         r#"
 INSERT OR IGNORE INTO auto_update_candidates (
   id, stack_id, service_id, image_ref, raw_tag, candidate_digest,
-  status, reason, attempts, discovered_at, source_job_id,
+  resolved_version, status, reason, attempts, discovered_at, source_job_id, source,
   current_tag, current_display_tag, current_digest, created_at, updated_at
 )
 SELECT
   p.service_id || ':' || p.candidate_digest,
   p.stack_id,
   p.service_id,
-  COALESCE(NULLIF(CASE WHEN json_valid(p.summary_json) THEN json_extract(p.summary_json, '$.imageRef') END, ''), ''),
+  COALESCE(NULLIF(json_extract(CASE WHEN json_valid(p.summary_json) THEN p.summary_json ELSE '{}' END, '$.imageRef'), ''), ''),
   p.candidate_tag,
   p.candidate_digest,
+  COALESCE(
+    NULLIF(json_extract(CASE WHEN json_valid(p.summary_json) THEN p.summary_json ELSE '{}' END, '$.candidateDisplayTag'), ''),
+    NULLIF(p.candidate_display_tag, ''),
+    NULLIF(p.candidate_tag, '')
+  ),
   'awaiting_inference',
   'migration_pending_history',
   0,
   p.first_seen_at,
   p.source_check_job_id,
-  COALESCE(NULLIF(CASE WHEN json_valid(p.summary_json) THEN json_extract(p.summary_json, '$.currentTag') END, ''), p.current_display_tag),
+  CASE
+    WHEN LOWER(j.reason) = 'schedule' THEN 'schedule'
+    ELSE 'github_webhook'
+  END,
+  COALESCE(NULLIF(json_extract(CASE WHEN json_valid(p.summary_json) THEN p.summary_json ELSE '{}' END, '$.currentTag'), ''), p.current_display_tag),
   p.current_display_tag,
-  CASE WHEN json_valid(p.summary_json) THEN json_extract(p.summary_json, '$.currentDigest') END,
+  json_extract(CASE WHEN json_valid(p.summary_json) THEN p.summary_json ELSE '{}' END, '$.currentDigest'),
   ?1,
   ?1
 FROM auto_update_pending p
 JOIN jobs j ON j.id = p.source_check_job_id
+JOIN services s
+  ON s.id = p.service_id
+ AND s.candidate_digest = p.candidate_digest
 WHERE p.status IN ('pending', 'enqueuing', 'enqueued')
   AND COALESCE(TRIM(p.candidate_digest), '') <> ''
   AND COALESCE(TRIM(p.first_seen_at), '') <> ''
   AND (
     LOWER(j.reason) = 'schedule'
-    OR LOWER(COALESCE(CASE WHEN json_valid(j.summary_json) THEN json_extract(j.summary_json, '$.source') END, '')) = 'github_webhook'
+    OR LOWER(COALESCE(json_extract(CASE WHEN json_valid(j.summary_json) THEN j.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook'
   )
 "#,
         params![&now],
     )?;
+
+    // Preserve historical strict SemVer evidence only when it is still parseable. A floating tag
+    // must remain awaiting inference, while a previously resolved display tag can become ready.
+    let migrated_versions = {
+        let mut stmt = tx.prepare(
+            "SELECT id, resolved_version FROM auto_update_candidates WHERE reason = 'migration_pending_history'",
+        )?;
+        stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+    };
+    for (candidate_id, version) in migrated_versions {
+        let normalized = version
+            .as_deref()
+            .and_then(dockrev_common::normalized_semver_from_oci_version);
+        if let Some(version) = normalized {
+            tx.execute(
+                r#"
+UPDATE auto_update_candidates
+SET resolved_version = ?2,
+    status = 'ready',
+    reason = 'migration_digest_bound_version',
+    settled_at = ?3,
+    updated_at = ?3
+WHERE id = ?1
+"#,
+                params![candidate_id, version, &now],
+            )?;
+        } else {
+            tx.execute(
+                "UPDATE auto_update_candidates SET resolved_version = NULL WHERE id = ?1",
+                params![candidate_id],
+            )?;
+        }
+    }
     tx.execute(
         r#"
 UPDATE auto_update_pending
@@ -829,7 +880,7 @@ WHERE candidate_id IS NULL
     WHERE j.id = auto_update_pending.source_check_job_id
       AND (
         LOWER(j.reason) = 'schedule'
-        OR LOWER(COALESCE(CASE WHEN json_valid(j.summary_json) THEN json_extract(j.summary_json, '$.source') END, '')) = 'github_webhook'
+        OR LOWER(COALESCE(json_extract(CASE WHEN json_valid(j.summary_json) THEN j.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook'
       )
   )
 "#,
@@ -843,7 +894,8 @@ WHERE candidate_id IS NULL
 UPDATE auto_update_pending
 SET status = 'skipped',
     summary_json = CASE
-      WHEN json_valid(summary_json) AND json_type(summary_json) = 'object'
+      WHEN json_valid(summary_json)
+        AND json_type(CASE WHEN json_valid(summary_json) THEN summary_json ELSE '{}' END) = 'object'
         THEN json_set(summary_json, '$.skipReason', 'migration_ambiguous_history', '$.skippedAt', ?1)
       ELSE json_object('skipReason', 'migration_ambiguous_history', 'skippedAt', ?1)
     END,
@@ -852,6 +904,138 @@ WHERE candidate_id IS NULL
   AND status IN ('pending', 'enqueuing', 'enqueued')
 "#,
         params![&now],
+    )?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
+fn apply_migration_0015_add_auto_update_candidate_provenance(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0015_add_auto_update_candidate_provenance";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let now = now_rfc3339()?;
+    let mut columns = tx.prepare("PRAGMA table_info(auto_update_candidates)")?;
+    let existing = columns
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(columns);
+    if !existing.iter().any(|column| column == "source") {
+        tx.execute_batch(
+            "ALTER TABLE auto_update_candidates ADD COLUMN source TEXT NOT NULL DEFAULT 'unknown'",
+        )?;
+    }
+    tx.execute(
+        r#"
+UPDATE auto_update_candidates
+SET resolved_version = (
+  SELECT COALESCE(
+    NULLIF(json_extract(CASE WHEN json_valid(p.summary_json) THEN p.summary_json ELSE '{}' END, '$.candidateDisplayTag'), ''),
+    NULLIF(p.candidate_display_tag, ''),
+    NULLIF(p.candidate_tag, '')
+  )
+  FROM auto_update_pending p
+  WHERE p.candidate_id = auto_update_candidates.id
+  LIMIT 1
+)
+WHERE auto_update_candidates.reason = 'migration_pending_history'
+  AND auto_update_candidates.resolved_version IS NULL
+  AND EXISTS (
+    SELECT 1 FROM auto_update_pending p
+    WHERE p.candidate_id = auto_update_candidates.id
+  )
+"#,
+        [],
+    )?;
+    tx.execute(
+        r#"
+UPDATE auto_update_candidates
+SET status = 'superseded',
+    reason = 'migration_candidate_not_current',
+    settled_at = ?1,
+    policy_status = 'skipped',
+    policy_reason = 'migration_candidate_not_current',
+    policy_evaluated_at = ?1,
+    updated_at = ?1
+WHERE reason = 'migration_pending_history'
+  AND NOT EXISTS (
+    SELECT 1 FROM services s
+    WHERE s.id = auto_update_candidates.service_id
+      AND s.candidate_digest = auto_update_candidates.candidate_digest
+  )
+"#,
+        params![&now],
+    )?;
+    let migrated_versions = {
+        let mut stmt = tx.prepare(
+            "SELECT id, resolved_version FROM auto_update_candidates WHERE reason = 'migration_pending_history'",
+        )?;
+        stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+    };
+    for (candidate_id, version) in migrated_versions {
+        let normalized = version
+            .as_deref()
+            .and_then(dockrev_common::normalized_semver_from_oci_version);
+        if let Some(version) = normalized {
+            tx.execute(
+                r#"
+UPDATE auto_update_candidates
+SET resolved_version = ?2,
+    status = 'ready',
+    reason = 'migration_digest_bound_version',
+    settled_at = COALESCE(settled_at, ?3),
+    updated_at = ?3
+WHERE id = ?1
+"#,
+                params![candidate_id, version, &now],
+            )?;
+        } else {
+            tx.execute(
+                "UPDATE auto_update_candidates SET resolved_version = NULL WHERE id = ?1",
+                params![candidate_id],
+            )?;
+        }
+    }
+    tx.execute(
+        r#"
+UPDATE auto_update_pending
+SET candidate_id = NULL
+WHERE candidate_id IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM services s
+    WHERE s.id = auto_update_pending.service_id
+      AND s.candidate_digest = auto_update_pending.candidate_digest
+  )
+  AND status IN ('pending', 'enqueuing', 'enqueued')
+"#,
+        [],
+    )?;
+    tx.execute(
+        r#"
+UPDATE auto_update_candidates
+SET source = CASE
+  WHEN EXISTS (
+    SELECT 1 FROM jobs j
+    WHERE j.id = auto_update_candidates.source_job_id
+      AND LOWER(j.reason) = 'schedule'
+  ) THEN 'schedule'
+  WHEN EXISTS (
+    SELECT 1 FROM jobs j
+    WHERE j.id = auto_update_candidates.source_job_id
+      AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(j.summary_json) THEN j.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook'
+  ) THEN 'github_webhook'
+  ELSE 'unknown'
+END
+WHERE source = 'unknown'
+"#,
+        [],
     )?;
     record_migration_tx(&tx, id)?;
     tx.commit()?;
@@ -1549,6 +1733,7 @@ CREATE TABLE IF NOT EXISTS auto_update_candidates (
   retry_at TEXT,
   discovered_at TEXT NOT NULL,
   source_job_id TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'unknown',
   current_tag TEXT NOT NULL DEFAULT '',
   current_display_tag TEXT NOT NULL DEFAULT '',
   current_digest TEXT,

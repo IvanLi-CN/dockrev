@@ -55,7 +55,13 @@ JOIN services s ON s.id = j.service_id;
 INSERT OR IGNORE INTO job_service_targets (job_id, service_id)
 SELECT j.id, json_extract(t.value, '$.serviceId')
 FROM jobs j
-JOIN json_each(COALESCE(json_extract(j.summary_json, '$.targets'), '[]')) AS t
+JOIN json_each(
+  CASE
+    WHEN json_valid(j.summary_json)
+      THEN COALESCE(json_extract(j.summary_json, '$.targets'), '[]')
+    ELSE '[]'
+  END
+) AS t
 JOIN services s ON s.id = json_extract(t.value, '$.serviceId')
 WHERE json_type(t.value, '$.serviceId') = 'text';
 "#,

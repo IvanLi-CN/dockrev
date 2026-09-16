@@ -5,6 +5,8 @@
 - Implementation: complete
 - Lifecycle: active
 - 已实现候选事实表、幂等 settlement、digest-bound SemVer 门禁、策略重评估、重试/周期 reconciliation 和兼容 API/UI 投影；迁移对不可证明历史采用 fail-closed 处理。
+- 自动策略 update job 先持久化为 queued，再通过候选有效性 CAS 转为 running；候选替代会取消尚未启动的 queued job，并在 apply 尚未提交时请求停止已运行 job。
+- 候选来源以结构化 provenance 保存为 schedule、github_webhook 或 unknown；unknown 历史只保留审计，不获得自动部署授权。
 - Validation: local checks complete; the shared-testbox Compose smoke is partially blocked by the existing metrics migration error <code>retained rollups cannot be recovered after raw retention</code> during the Compose V1 rejection setup. The V2 plugin and standalone lifecycle portions passed before that blocker.
 
 ## 实现顺序
@@ -39,6 +41,7 @@
 - candidate discovery、settlement、policy save、service recovery 和 reconciliation 都调用同一个 evaluator。
 - delayed action 使用 candidate discoveredAt，并同时满足时间和版本滞后门槛。
 - enqueue 前重新检查最新 candidate、effective policy、service digest、并发保护和 Dockrev 自身保护。
+- 自动 job 采用 deferred enqueue：先写 queued 事实，再以 candidate/pending 条件 claim 启动；candidate supersession 在启动前取消 queued，启动后且 apply 未提交时写入 stop control。
 - 自动 update job 使用现有显式 targets/digest update path；不新增镜像发布路径。
 
 ### M5：API、UI、通知与历史
@@ -53,6 +56,7 @@
 
 - 从 active pending、可证明的发现记录和现有 snapshot 建立 candidate 初始状态。
 - 对来源可证明为 schedule/GHCR webhook 且有 discoveredAt、仍是最新 digest 的候选执行一次有限 reconciliation。
+- 迁移恢复严格 SemVer 或 digest-bound display evidence；floating/不可解析版本保持等待或 unresolved，只有当前服务 candidate digest 才能保留 active authorization。
 - 来源不明、时间缺失、已 superseded 或历史终态记录不自动补发 update job。
 - 迁移脚本必须可重复执行，且不能把历史通知直接转换成新的自动部署授权。
 
@@ -183,4 +187,4 @@ reload candidate and evaluate current policy
 - [x] API/UI states are distinguishable from inference readiness.
 - [x] Notification/history/API consume the same settlement.
 - [x] Existing updater safety boundaries remain intact.
-- [ ] Implementation-level validation and rollout evidence are complete. Local validation is complete; the shared-testbox Compose smoke remains blocked by the metrics migration error recorded above.
+- [ ] Implementation-level validation and rollout evidence are complete. Local Rust tests and Clippy are complete; the shared-testbox Compose smoke remains blocked by the metrics migration error recorded above.

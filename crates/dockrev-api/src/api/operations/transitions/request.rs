@@ -165,8 +165,29 @@ pub(crate) async fn enqueue_update_job(
     state: Arc<AppState>,
     created_by: String,
     reason: String,
+    req: TriggerUpdateRequest,
+    now: String,
+) -> Result<String, ApiError> {
+    enqueue_update_job_with_start(state, created_by, reason, req, now, true).await
+}
+
+pub(crate) async fn enqueue_update_job_deferred(
+    state: Arc<AppState>,
+    created_by: String,
+    reason: String,
+    req: TriggerUpdateRequest,
+    now: String,
+) -> Result<String, ApiError> {
+    enqueue_update_job_with_start(state, created_by, reason, req, now, false).await
+}
+
+async fn enqueue_update_job_with_start(
+    state: Arc<AppState>,
+    created_by: String,
+    reason: String,
     mut req: TriggerUpdateRequest,
     now: String,
+    start_immediately: bool,
 ) -> Result<String, ApiError> {
     let stack_ids = resolve_stack_ids_for_update(&state, &req)
         .await
@@ -216,6 +237,10 @@ pub(crate) async fn enqueue_update_job(
         req.service_id.clone(),
         &now,
     );
+    if !start_immediately {
+        job.status = "queued".to_string();
+        job.started_at = None;
+    }
     job.allow_arch_mismatch = req.allow_arch_mismatch;
     job.backup_mode = req.backup_mode.as_str().to_string();
     job.summary_json = json!({
@@ -237,7 +262,11 @@ pub(crate) async fn enqueue_update_job(
             Some(JobLogLine {
                 ts: now.clone(),
                 level: "info".to_string(),
-                msg: "update started".to_string(),
+                msg: if start_immediately {
+                    "update started".to_string()
+                } else {
+                    "update queued".to_string()
+                },
             }),
         )
         .await
@@ -261,7 +290,11 @@ pub(crate) async fn enqueue_update_job(
                 &JobLogLine {
                     ts: now.clone(),
                     level: "info".to_string(),
-                    msg: "update started".to_string(),
+                    msg: if start_immediately {
+                        "update started".to_string()
+                    } else {
+                        "update queued".to_string()
+                    },
                 },
             )
             .await
@@ -279,12 +312,14 @@ pub(crate) async fn enqueue_update_job(
         tracing::warn!(job_id = %job_id, error = %e, "failed to persist initial update progress");
     }
 
-    let run_state = state.clone();
-    let run_job_id = job_id.clone();
-    let run_req = req.clone();
-    tokio::spawn(async move {
-        let _ = run_update_job(run_state, run_job_id, run_req).await;
-    });
+    if start_immediately {
+        let run_state = state.clone();
+        let run_job_id = job_id.clone();
+        let run_req = req.clone();
+        tokio::spawn(async move {
+            let _ = run_update_job(run_state, run_job_id, run_req).await;
+        });
+    }
 
     Ok(job_id)
 }

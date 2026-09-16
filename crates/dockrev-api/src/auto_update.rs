@@ -526,12 +526,14 @@ pub async fn reconcile_inference_for_digest(
                 }
             };
         }
-        let attempts = if resolved.is_some() {
+        let authoritative_without_version = snapshot_ready && resolved.is_none();
+        let attempts = if resolved.is_some() || authoritative_without_version {
             candidate.attempts
         } else {
             candidate.attempts.saturating_add(1)
         };
-        let terminal = resolved.is_none() && inference_attempt_is_terminal(attempts);
+        let terminal = resolved.is_none()
+            && (authoritative_without_version || inference_attempt_is_terminal(attempts));
         let status = if resolved.is_some() {
             "ready"
         } else if terminal {
@@ -582,6 +584,7 @@ pub async fn reconcile_inference_for_digest(
                 &candidate.source_job_id,
                 now,
                 &candidate_from_row(&settled),
+                Some(&settled.source),
             )
             .await?;
         }
@@ -639,6 +642,7 @@ pub async fn reevaluate_service_policy(
                 &candidate.source_job_id,
                 now,
                 &candidate_from_row(&candidate),
+                Some(&candidate.source),
             )
             .await?;
         }
@@ -907,11 +911,11 @@ async fn enqueue_pending(
         reason: UpdateReason::AutoPolicy,
     };
 
-    match api::enqueue_update_job(
+    match api::enqueue_update_job_deferred(
         state.clone(),
         "auto-policy".to_string(),
         "auto_policy".to_string(),
-        req,
+        req.clone(),
         now.to_string(),
     )
     .await
@@ -921,7 +925,23 @@ async fn enqueue_pending(
                 .db
                 .mark_auto_update_pending_enqueued(&pending.id, &job_id, now)
                 .await?;
-            Ok(enqueued.then_some(job_id))
+            if !enqueued {
+                return Ok(None);
+            }
+            let started_at = crate::now_rfc3339().unwrap_or_else(|_| now.to_string());
+            if !state
+                .db
+                .claim_queued_job_by_id(&job_id, &started_at)
+                .await?
+            {
+                return Ok(None);
+            }
+            let run_state = state.clone();
+            let run_job_id = job_id.clone();
+            tokio::spawn(async move {
+                let _ = api::run_update_job(run_state, run_job_id, req).await;
+            });
+            Ok(Some(job_id))
         }
         Err(err) => {
             if permanent_enqueue_error(&err) {
@@ -948,6 +968,7 @@ async fn evaluate_candidate(
     job_id: &str,
     finished_at: &str,
     candidate: &notify::NewVersionDiscoveredService,
+    source: Option<&str>,
 ) -> anyhow::Result<()> {
     let (settlement_status, resolved_version, settlement_reason) =
         candidate_settlement_state(candidate);
@@ -969,6 +990,7 @@ async fn evaluate_candidate(
                 retry_at: None,
                 discovered_at: finished_at.to_string(),
                 source_job_id: job_id.to_string(),
+                source: source.unwrap_or("unknown").to_string(),
                 current_tag: candidate.current_tag.clone(),
                 current_display_tag: candidate.current_display_tag.clone(),
                 current_digest: candidate.current_digest.clone(),
@@ -1142,8 +1164,19 @@ async fn evaluate_candidate(
     Ok(())
 }
 
-fn auto_policy_source(reason: &str, summary: &serde_json::Value) -> bool {
-    reason.eq_ignore_ascii_case("schedule") || api::summary_emits_new_version_notification(summary)
+fn auto_policy_source(reason: &str, summary: &serde_json::Value) -> Option<&'static str> {
+    if reason.eq_ignore_ascii_case("schedule") {
+        return Some("schedule");
+    }
+    if summary
+        .get("source")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|source| source.eq_ignore_ascii_case("github_webhook"))
+        && api::summary_emits_new_version_notification(summary)
+    {
+        return Some("github_webhook");
+    }
+    None
 }
 
 pub async fn handle_completed_check(
@@ -1153,9 +1186,9 @@ pub async fn handle_completed_check(
     finished_at: &str,
     summary: &serde_json::Value,
 ) -> anyhow::Result<()> {
-    if !auto_policy_source(reason, summary) {
+    let Some(source) = auto_policy_source(reason, summary) else {
         return Ok(());
-    }
+    };
     let mut discovered_services = notify::extract_new_versions_discovered(summary);
     if api::summary_emits_new_version_notification(summary)
         && let Some(matched_service_ids) = api::summary_matched_service_ids(summary)
@@ -1170,7 +1203,7 @@ pub async fn handle_completed_check(
         crate::registry::host_platform_override(state.config.host_platform.as_deref())
             .unwrap_or_else(|| "linux/amd64".to_string());
     for candidate in &discovered_services {
-        evaluate_candidate(state, job_id, finished_at, candidate).await?;
+        evaluate_candidate(state, job_id, finished_at, candidate, Some(source)).await?;
         if let Some(image_repo) =
             crate::snapshot_worker::image_repo_from_image_ref(&candidate.image_ref)
         {
@@ -1577,6 +1610,7 @@ mod tests {
             retry_at: None,
             discovered_at: "2026-04-30T00:00:00Z".to_string(),
             source_job_id: "check".to_string(),
+            source: "schedule".to_string(),
             current_tag: "latest".to_string(),
             current_display_tag: "1.0.0".to_string(),
             current_digest: Some("sha256:old".to_string()),
@@ -1626,6 +1660,7 @@ mod tests {
             retry_at: None,
             discovered_at: "2026-04-30T00:00:00Z".to_string(),
             source_job_id: "check".to_string(),
+            source: "schedule".to_string(),
             current_tag: "latest".to_string(),
             current_display_tag: "1.0.0".to_string(),
             current_digest: Some("sha256:old".to_string()),

@@ -266,6 +266,11 @@ CREATE TABLE jobs (
   finished_at TEXT,
   summary_json TEXT NOT NULL
 );
+CREATE TABLE services (
+  id TEXT PRIMARY KEY NOT NULL,
+  stack_id TEXT NOT NULL,
+  candidate_digest TEXT
+);
 CREATE TABLE auto_update_pending (
   id TEXT PRIMARY KEY NOT NULL,
   policy_scope_type TEXT NOT NULL,
@@ -296,6 +301,8 @@ INSERT INTO schema_migrations (id, applied_at) VALUES
   ('0011_track_candidate_display_tags_in_new_version_discoveries', '2026-01-01T00:00:00Z'),
   ('0012_track_image_ref_in_new_version_discoveries', '2026-01-01T00:00:00Z'),
   ('0013_add_update_job_stop_controls', '2026-01-01T00:00:00Z');
+INSERT INTO services (id, stack_id, candidate_digest)
+VALUES ('service-1', 'stack-1', 'sha256:new');
 INSERT INTO jobs (
   id, type, scope, status, allow_arch_mismatch, backup_mode, created_by,
   reason, created_at, summary_json

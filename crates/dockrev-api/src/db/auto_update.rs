@@ -72,19 +72,20 @@ fn map_auto_update_candidate_row(
         retry_at: row.get(10)?,
         discovered_at: row.get(11)?,
         source_job_id: row.get(12)?,
-        current_tag: row.get(13)?,
-        current_display_tag: row.get(14)?,
-        current_digest: row.get(15)?,
-        settled_at: row.get(16)?,
-        updated_at: row.get(18)?,
-        policy_status: row.get(19)?,
-        policy_reason: row.get(20)?,
-        policy_rule_id: row.get(21)?,
-        policy_evaluated_at: row.get(22)?,
+        source: row.get(13)?,
+        current_tag: row.get(14)?,
+        current_display_tag: row.get(15)?,
+        current_digest: row.get(16)?,
+        settled_at: row.get(17)?,
+        updated_at: row.get(19)?,
+        policy_status: row.get(20)?,
+        policy_reason: row.get(21)?,
+        policy_rule_id: row.get(22)?,
+        policy_evaluated_at: row.get(23)?,
     })
 }
 
-const AUTO_UPDATE_CANDIDATE_COLUMNS: &str = "id, stack_id, service_id, image_ref, raw_tag, candidate_digest, resolved_version, status, reason, attempts, retry_at, discovered_at, source_job_id, current_tag, current_display_tag, current_digest, settled_at, created_at, updated_at, policy_status, policy_reason, policy_rule_id, policy_evaluated_at";
+const AUTO_UPDATE_CANDIDATE_COLUMNS: &str = "id, stack_id, service_id, image_ref, raw_tag, candidate_digest, resolved_version, status, reason, attempts, retry_at, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, settled_at, created_at, updated_at, policy_status, policy_reason, policy_rule_id, policy_evaluated_at";
 
 impl Db {
     pub async fn upsert_auto_update_candidate(
@@ -100,9 +101,9 @@ impl Db {
 INSERT INTO auto_update_candidates (
   id, stack_id, service_id, image_ref, raw_tag, candidate_digest,
   resolved_version, status, reason, attempts, retry_at, discovered_at,
-  source_job_id, current_tag, current_display_tag, current_digest,
+  source_job_id, source, current_tag, current_display_tag, current_digest,
   created_at, updated_at
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
 ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
   stack_id = excluded.stack_id,
   image_ref = excluded.image_ref,
@@ -119,8 +120,21 @@ ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
       THEN auto_update_candidates.status
     ELSE excluded.status
   END,
-  reason = COALESCE(excluded.reason, auto_update_candidates.reason),
+  reason = CASE
+    WHEN auto_update_candidates.status = 'superseded'
+      THEN auto_update_candidates.reason
+    WHEN auto_update_candidates.status = 'ready' AND excluded.status <> 'ready'
+      THEN auto_update_candidates.reason
+    WHEN auto_update_candidates.status = 'unresolved' AND excluded.status = 'awaiting_inference'
+      THEN auto_update_candidates.reason
+    ELSE COALESCE(excluded.reason, auto_update_candidates.reason)
+  END,
   retry_at = COALESCE(excluded.retry_at, auto_update_candidates.retry_at),
+  source = CASE
+    WHEN auto_update_candidates.source IS NULL OR auto_update_candidates.source = 'unknown'
+      THEN excluded.source
+    ELSE auto_update_candidates.source
+  END,
   current_tag = excluded.current_tag,
   current_display_tag = excluded.current_display_tag,
   current_digest = excluded.current_digest,
@@ -140,6 +154,7 @@ ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
                     input.retry_at,
                     input.discovered_at,
                     input.source_job_id,
+                    input.source,
                     input.current_tag,
                     input.current_display_tag,
                     input.current_digest,
@@ -263,10 +278,11 @@ WHERE service_id = ?1 AND candidate_digest <> ?2
 
             let pending_rows = {
                 let mut stmt = tx.prepare(r#"
-SELECT p.id, p.update_job_id, p.summary_json
+SELECT p.id, p.update_job_id, p.summary_json, j.status
 FROM auto_update_pending p
 JOIN auto_update_candidates c
   ON c.service_id = p.service_id AND c.candidate_digest = p.candidate_digest
+LEFT JOIN jobs j ON j.id = p.update_job_id
 WHERE p.service_id = ?1
   AND p.candidate_digest <> ?2
   AND p.status IN ('pending', 'enqueuing', 'enqueued')
@@ -280,12 +296,13 @@ WHERE p.service_id = ?1
                             row.get::<_, String>(0)?,
                             row.get::<_, Option<String>>(1)?,
                             row.get::<_, String>(2)?,
+                            row.get::<_, Option<String>>(3)?,
                         ))
                     },
                 )?
                     .collect::<Result<Vec<_>, _>>()?
             };
-            for (pending_id, update_job_id, summary_raw) in pending_rows {
+            for (pending_id, update_job_id, summary_raw, update_job_status) in pending_rows {
                 let mut summary = serde_json::from_str::<serde_json::Value>(&summary_raw)
                     .unwrap_or_else(|_| serde_json::json!({}));
                 if !summary.is_object() {
@@ -308,6 +325,20 @@ WHERE id = ?1 AND status = 'queued' AND created_by = 'auto-policy'
 "#,
                         params![update_job_id, now],
                     )?;
+                    if update_job_status.as_deref() == Some("running") {
+                        tx.execute(
+                            r#"
+UPDATE update_job_stop_controls
+SET stop_requested_at = ?2,
+    stop_requested_by = 'auto-policy-supersession',
+    updated_at = ?2
+WHERE job_id = ?1
+  AND stop_requested_at IS NULL
+  AND apply_committed_at IS NULL
+"#,
+                            params![update_job_id, now],
+                        )?;
+                    }
                 }
             }
             tx.commit()?;
@@ -989,6 +1020,7 @@ mod tests {
             retry_at: None,
             discovered_at: discovered_at.to_string(),
             source_job_id: "check".to_string(),
+            source: "schedule".to_string(),
             current_tag: "latest".to_string(),
             current_display_tag: "1.0.0".to_string(),
             current_digest: Some("sha256:old".to_string()),
@@ -1204,6 +1236,85 @@ mod tests {
                 .unwrap()
                 .status,
             "cancelled"
+        );
+
+        let running_pending = db
+            .reserve_auto_update_pending(
+                &AutoUpdatePendingInput {
+                    id: "pending-running-old".to_string(),
+                    policy_scope_type: "stack".to_string(),
+                    policy_scope_id: "stack".to_string(),
+                    rule_id: "rule-running".to_string(),
+                    stack_id: "stack".to_string(),
+                    service_id: "service".to_string(),
+                    source_check_job_id: "check".to_string(),
+                    candidate_tag: "latest".to_string(),
+                    candidate_display_tag: "1.3.0".to_string(),
+                    candidate_digest: "sha256:old-candidate".to_string(),
+                    current_display_tag: "1.0.0".to_string(),
+                    first_seen_at: "2026-04-30T00:00:00Z".to_string(),
+                    due_at: "2026-04-30T00:00:00Z".to_string(),
+                    min_age_seconds: 0,
+                    min_version_lag: 0,
+                    summary_json: serde_json::json!({}),
+                    candidate_id: Some(old.id.clone()),
+                },
+                "2026-04-30T00:00:00Z",
+            )
+            .await
+            .unwrap();
+        db.insert_job(crate::api::types::JobListItem {
+            id: "running-auto-update-job".to_string(),
+            r#type: crate::api::types::JobType::Update,
+            scope: crate::api::types::JobScope::Service,
+            stack_id: Some("stack".to_string()),
+            service_id: Some("service".to_string()),
+            status: "running".to_string(),
+            created_by: "auto-policy".to_string(),
+            reason: "auto_policy".to_string(),
+            created_at: "2026-04-30T00:00:00Z".to_string(),
+            started_at: Some("2026-04-30T00:00:31Z".to_string()),
+            finished_at: None,
+            allow_arch_mismatch: false,
+            backup_mode: "inherit".to_string(),
+            summary_json: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+        db.create_update_stop_control("running-auto-update-job", "2026-04-30T00:00:31Z")
+            .await
+            .unwrap();
+        assert!(
+            db.try_claim_auto_update_pending(&running_pending.id, "2026-04-30T00:00:32Z")
+                .await
+                .unwrap()
+        );
+        assert!(
+            db.mark_auto_update_pending_enqueued(
+                &running_pending.id,
+                "running-auto-update-job",
+                "2026-04-30T00:00:33Z",
+            )
+            .await
+            .unwrap()
+        );
+        db.supersede_auto_update_candidates(
+            "service",
+            "sha256:new-candidate",
+            &new.discovered_at,
+            &new.id,
+            "2026-04-30T01:00:01Z",
+        )
+        .await
+        .unwrap();
+        let stop = db
+            .get_update_stop_control("running-auto-update-job")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            stop.stop_requested_by.as_deref(),
+            Some("auto-policy-supersession")
         );
     }
 

@@ -275,6 +275,7 @@ async fn digest_bound_snapshot_settles_candidate_and_re_evaluates_policy() {
                 retry_at: Some("2026-04-30T00:01:00Z".to_string()),
                 discovered_at: "2026-04-30T00:00:00Z".to_string(),
                 source_job_id: "check".to_string(),
+                source: "schedule".to_string(),
                 current_tag: "latest".to_string(),
                 current_display_tag: "1.0.0".to_string(),
                 current_digest: Some("sha256:old".to_string()),
@@ -368,6 +369,7 @@ async fn terminal_unresolved_candidate_re_evaluates_policy_as_skipped() {
                 retry_at: None,
                 discovered_at: "2026-04-30T00:00:00Z".to_string(),
                 source_job_id: "check".to_string(),
+                source: "schedule".to_string(),
                 current_tag: "latest".to_string(),
                 current_display_tag: "1.0.0".to_string(),
                 current_digest: Some("sha256:old".to_string()),
@@ -396,6 +398,82 @@ async fn terminal_unresolved_candidate_re_evaluates_policy_as_skipped() {
     assert_eq!(candidate.status, "unresolved");
     assert_eq!(candidate.policy_status.as_deref(), Some("skipped"));
     assert_eq!(candidate.policy_reason.as_deref(), Some("version_unresolved"));
+}
+
+#[tokio::test]
+async fn authoritative_snapshot_without_semver_settles_candidate_as_unresolved() {
+    let state = test_state(":memory:").await;
+    state
+        .db
+        .upsert_auto_update_candidate(
+            &crate::db::AutoUpdateCandidateInput {
+                id: "candidate-authoritative-unresolved".to_string(),
+                stack_id: "stack".to_string(),
+                service_id: "service".to_string(),
+                image_ref: "ghcr.io/acme/web".to_string(),
+                raw_tag: "latest".to_string(),
+                candidate_digest: "sha256:authoritative-unresolved".to_string(),
+                resolved_version: None,
+                status: "awaiting_inference".to_string(),
+                reason: Some("version_inference_pending".to_string()),
+                attempts: 2,
+                retry_at: Some("2026-04-30T00:01:00Z".to_string()),
+                discovered_at: "2026-04-30T00:00:00Z".to_string(),
+                source_job_id: "check".to_string(),
+                source: "schedule".to_string(),
+                current_tag: "latest".to_string(),
+                current_display_tag: "1.0.0".to_string(),
+                current_digest: Some("sha256:old".to_string()),
+            },
+            "2026-04-30T00:00:00Z",
+        )
+        .await
+        .unwrap();
+    let snapshot = crate::api::types::ServiceDigestTagsSnapshotResponse {
+        digest: "sha256:authoritative-unresolved".to_string(),
+        tags: vec!["latest".to_string(), "stable".to_string()],
+        checked_at: "2026-04-30T00:02:00Z".to_string(),
+        scan: crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    };
+    state
+        .db
+        .upsert_image_digest_tags_snapshot(
+            "ghcr.io/acme/web",
+            "sha256:authoritative-unresolved",
+            "linux/amd64",
+            &serde_json::to_string(&snapshot).unwrap(),
+            &snapshot.checked_at,
+            &snapshot.checked_at,
+        )
+        .await
+        .unwrap();
+
+    crate::auto_update::reconcile_inference_for_digest(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:authoritative-unresolved",
+        "linux/amd64",
+        "2026-04-30T00:02:30Z",
+    )
+    .await
+    .unwrap();
+
+    let candidate = state
+        .db
+        .get_auto_update_candidate("service", "sha256:authoritative-unresolved")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(candidate.status, "unresolved");
+    assert_eq!(candidate.attempts, 2);
+    assert_eq!(candidate.retry_at, None);
+    assert_eq!(candidate.reason.as_deref(), Some("version_inference_unresolved"));
 }
 
 async fn service_id_by_name(
