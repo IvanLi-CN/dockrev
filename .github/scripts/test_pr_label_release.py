@@ -212,6 +212,18 @@ assert preparation_script.is_existing_preparation({"Release-Mode": "normal-prepa
 assert not preparation_script.is_existing_preparation({"Release-Mode": "normal-preparation"})
 preparation_script.validate_version_only_branch("recovery/version-only")
 expect_error(preparation_script.validate_version_only_branch, "feature/version-only")
+preparation_script.validate_release_mode_for_branch("recovery/version-only", "version-only-release-pr")
+expect_error(
+    preparation_script.validate_release_mode_for_branch,
+    "recovery/version-only",
+    "normal-preparation",
+)
+expect_error(
+    preparation_script.validate_release_mode_for_branch,
+    "feature/version-only",
+    "normal-preparation",
+    has_version_only_identity=True,
+)
 assert preparation_script.is_version_only_release({"Release-Mode": "version-only-release-pr", "Covered-Product-Merge-SHA": source_sha, "Product-Version": "0.1.1", "Release-Baseline-Version": "0.1.0", "Release-Intent": "type:patch channel:stable"})
 beta_labels = policy.parse_labels(["type:patch", "channel:beta"])
 assert preparation_script.expected_version(beta_labels, "0.1.0", "0.1.1-beta.1", baseline_version="0.1.0") == "0.1.1-beta.1"
@@ -829,6 +841,7 @@ try:
         def fake_version_only_api(_api_root, _token, _method, path, _payload=None):
             if path.endswith(f"/commits/{prep_sha}"):
                 return {
+                    "parents": [{"sha": source_sha}],
                     "commit": {
                         "verification": {"verified": True},
                         "message": (
@@ -837,6 +850,7 @@ try:
                             "Product-Version: 0.80.2\n"
                             "Release-Baseline-Version: 0.80.1\n"
                             "Release-Intent: type:patch channel:stable\n"
+                            "Source-PR-Updated-At: 2026-01-01T00:00:00Z\n"
                             "Release-Mode: version-only-release-pr"
                         )
                     }
@@ -914,6 +928,7 @@ try:
             repository="IvanLi-CN/dockrev",
             pr_number=42,
             exact_version=None,
+            release_mode="version-only-release-pr",
             output=output,
         ))
         result = json.loads(output.read_text(encoding="utf-8"))
@@ -946,6 +961,7 @@ try:
             repository="IvanLi-CN/dockrev",
             pr_number=42,
             exact_version=None,
+            release_mode="version-only-release-pr",
             output=Path(directory) / "covered-publication-lock.json",
         ))
         assert calls["reserve"] == reservations_before
@@ -959,6 +975,7 @@ try:
             repository="IvanLi-CN/dockrev",
             pr_number=42,
             exact_version=None,
+            release_mode="version-only-release-pr",
             output=Path(directory) / "orphaned-recovery.json",
         ))
         preparation_script.reserve_recovery_identity = fake_reserve_recovery_identity
@@ -971,6 +988,7 @@ try:
             repository="IvanLi-CN/dockrev",
             pr_number=42,
             exact_version=None,
+            release_mode="version-only-release-pr",
             output=Path(directory) / "existing-identity.json",
         ))
         assert calls["reserve"] == reservations_before
@@ -993,6 +1011,7 @@ try:
                 repository="IvanLi-CN/dockrev",
                 pr_number=42,
                 exact_version=None,
+                release_mode="version-only-release-pr",
                 output=Path(directory) / "failed-recovery-ci.json",
             ))
             assert calls["reserve"] == reservations_before + 1
@@ -1160,7 +1179,7 @@ try:
         if "/actions/workflows/ci-pr.yml/runs?per_page=100&page=" in path:
             return {"workflow_runs": [{"head_sha": source_sha, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 42}]}]}
         if "/actions/workflows/label-gate.yml/runs?per_page=100&page=" in path:
-            return {"workflow_runs": [{"head_sha": source_sha, "status": "completed", "conclusion": "success", "created_at": "2026-01-02T00:00:00Z", "pull_requests": [{"number": 42, "head": {"sha": source_sha}}]}]}
+            return {"workflow_runs": [{"event": "pull_request_target", "head_sha": source_sha, "status": "completed", "conclusion": "success", "created_at": "2026-01-02T00:00:00Z", "pull_requests": [{"number": 42, "head": {"sha": source_sha}}]}]}
         if path.endswith("/git/ref/tags/v0.1.1"):
             if tag_exists:
                 return {"object": {"sha": prep_sha, "type": "commit"}}
@@ -1268,7 +1287,7 @@ try:
         if "/actions/workflows/ci-pr.yml/runs?per_page=100&page=" in path:
             return {"workflow_runs": [{"head_sha": source_sha, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 42}]}]}
         if "/actions/workflows/label-gate.yml/runs?per_page=100&page=" in path:
-            return {"workflow_runs": [{"head_sha": source_sha, "status": "completed", "conclusion": "success", "created_at": "2026-01-02T00:00:00Z", "pull_requests": [{"number": 42, "head": {"sha": source_sha}}]}]}
+            return {"workflow_runs": [{"event": "pull_request_target", "head_sha": source_sha, "status": "completed", "conclusion": "success", "created_at": "2026-01-02T00:00:00Z", "pull_requests": [{"number": 42, "head": {"sha": source_sha}}]}]}
         if path.endswith("/git/ref/tags/v0.80.2"):
             raise completion.CompletionError("GitHub API failed: 404")
         if path.endswith("/git/ref/tags/0.80.2"):
@@ -1308,10 +1327,19 @@ try:
         page_calls.append(path)
         if path.endswith("page=1"):
             return {"workflow_runs": [{"pull_requests": []}] * 100}
-        return {"workflow_runs": [{"head_sha": source_sha, "pull_requests": [{"number": 42}]}]}
+        if "label-gate.yml" not in path:
+            return {"workflow_runs": [{"event": "pull_request", "head_sha": source_sha, "pull_requests": [{"number": 42}]}]}
+        return {"workflow_runs": [
+            {"event": "pull_request", "head_sha": source_sha, "pull_requests": [{"number": 42}]},
+            {"event": "pull_request_target", "head_sha": source_sha, "pull_requests": [{"number": 42}]},
+        ]}
 
     completion.api_json = fake_paged_runs
     assert len(completion.workflow_runs_for_pr("https://api.github.test", "token", "IvanLi-CN/dockrev", "ci-pr.yml", 42, source_sha)) == 1
+    assert len(completion.workflow_runs_for_pr(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", "label-gate.yml", 42, source_sha,
+        required_event="pull_request_target",
+    )) == 1
     assert page_calls[-1].endswith("page=2")
 finally:
     completion.api_json = original_completion_api_json
@@ -1884,6 +1912,7 @@ try:
     recovery_identity_matches = True
     recovery_merge_files = [{"filename": "VERSION"}]
     recovery_merge_parents = [{"sha": "0" * 40}]
+    identity_parents = [{"sha": version_only_covered_head_sha}]
     covered_identity_state = {"kind": None, "after_initial_check": None, "reads": 0}
     reservation_ref_state = {"reads": 0, "rebound": False}
     version_only_publication_lock_sha = {}
@@ -1969,7 +1998,7 @@ try:
             raise identity.IdentityError("GitHub API failed: 404")
         if path.endswith(f"/commits/{version_only_release_head_sha}"):
             return {
-                "parents": [{"sha": version_only_covered_head_sha}],
+                "parents": identity_parents,
                 "files": [{"filename": "VERSION"}],
                 "commit": {
                     "verification": {"verified": True},
@@ -2012,6 +2041,12 @@ try:
     assert resolved_version_only["channel"] == "stable" and resolved_version_only["release_tag"] == "v0.80.2"
     assert resolved_version_only["identity_ref_sha"] == version_only_release_head_sha
     assert resolved_version_only["covered_product_version"] == "0.80.1"
+    identity_parents = [{"sha": version_only_covered_head_sha}, {"sha": "2" * 40}]
+    expect_error(
+        identity.resolve_github,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
+    )
+    identity_parents = [{"sha": version_only_covered_head_sha}]
     version_only_covered_merge_sha = "b" * 40
     expect_error(
         identity.resolve_github,
@@ -2371,6 +2406,7 @@ def stale_lifecycle_response(path, error_type):
         return {
             "workflow_runs": [
                 {
+                    "event": "pull_request_target",
                     "head_sha": stale_source_sha,
                     "status": "completed",
                     "conclusion": "success",
@@ -2382,6 +2418,7 @@ def stale_lifecycle_response(path, error_type):
         return {
             "workflow_runs": [
                 {
+                    "event": "pull_request_target",
                     "head_sha": stale_source_sha,
                     "status": "completed",
                     "conclusion": "success",

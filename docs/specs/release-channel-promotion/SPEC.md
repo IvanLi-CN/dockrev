@@ -43,7 +43,9 @@
   baseline is non-draft, non-prerelease, created by release automation, and
   tagged at a `main`-reachable commit. Historical `X.Y.Z` tags and canonical
   `vX.Y.Z` tags qualify for lookup; future publication uses canonical tags, and
-  conflicting qualified tags for one version MUST fail closed.
+  conflicting qualified tags for one version MUST fail closed. Annotated tags
+  MUST resolve to a commit within five tag-object hops; deeper nesting MUST
+  fail closed.
 - Outputs: a signed `VERSION`-only identity carrying
   `Release-Baseline-Version`, or a fail-closed validation error.
 - covers: `G1`, `G2`
@@ -81,7 +83,10 @@
   `0.80.1` and intent `type:patch channel:stable`; no separate PR #390
   identity is allowed. Recovery PRs MUST use a `recovery/` head branch;
   automatic `workflow_run` preparation skips that prefix, and only the
-  explicit manual version-only dispatch may prepare the identity.
+  explicit manual version-only dispatch may prepare the identity. Retries MUST
+  reuse a signed single-parent identity and its source-parent CI evidence.
+  Label Gate evidence MUST come from `pull_request_target`; skipped or ordinary
+  `pull_request` runs MUST NOT satisfy the contract.
 - covers: `G2`, `G3`
 
 ## Verification

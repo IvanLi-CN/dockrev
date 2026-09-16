@@ -57,7 +57,11 @@ assert "covered_merge_sha" in preparation
 assert "baseline_version" in preparation
 assert "VERSION_ONLY_BRANCH_PREFIX = \"recovery/\"" in text(".github/scripts/release_preparation.py")
 assert "validate_version_only_branch" in text(".github/scripts/release_preparation.py")
+assert "validate_release_mode_for_branch" in text(".github/scripts/release_preparation.py")
 assert "for _ in 1 2 3 4 5; do" in release
+assert 'required_event="pull_request_target"' in text(".github/scripts/release_preparation.py")
+assert 'required_event="pull_request_target"' in text(".github/scripts/release_completion.py")
+assert "reserved recovery identity must have exactly one parent" in text(".github/scripts/release_identity.py")
 assert "channel-for-version" in text(".github/scripts/release-channel-contract-check.sh")
 assert "actions: read" in preparation
 assert "checks: read" in preparation

@@ -30,6 +30,10 @@
   preparation skips them and the helper rejects version-only preparation on
   other branches. `.github/workflows/release-completion-pr.yml` contains only
   the trusted `pull_request_target` path.
+- Explicit version-only retries reuse an existing signed single-parent
+  identity and validate its source-parent CI and trusted `pull_request_target`
+  Label Gate evidence. The final identity resolver independently rejects a
+  reserved version-only identity with zero or multiple parents.
 - The baseline resolver and the publication workflow share a five-hop maximum
   for nested annotated tags: a commit reached on the fifth annotated hop is
   accepted, while a sixth hop fails closed.

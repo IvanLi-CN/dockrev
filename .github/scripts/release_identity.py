@@ -386,6 +386,13 @@ def resolve_version_only_reservation(
         raise IdentityError("reserved recovery identity VERSION does not match merged VERSION")
     if trailers.get("Release-Intent") != release_intent:
         raise IdentityError("reserved recovery identity intent does not match the reservation")
+    identity_parents = [parent.get("sha") for parent in identity_commit.get("parents", [])]
+    if len(identity_parents) != 1 or not isinstance(identity_parents[0], str):
+        raise IdentityError("reserved recovery identity must have exactly one parent")
+    try:
+        release_policy.validate_sha(identity_parents[0], "reserved recovery identity parent SHA")
+    except release_policy.PolicyError as error:
+        raise IdentityError(str(error)) from error
     baseline_version = trailers.get("Release-Baseline-Version", "")
     validate_frozen_final_baseline(api_root, token, repository, baseline_version)
     if not recovery_identity_is_owned(api_root, token, repository, covered_merge_sha, identity_sha):

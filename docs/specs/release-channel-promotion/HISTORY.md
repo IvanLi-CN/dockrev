@@ -29,6 +29,11 @@
   requires it before creating an identity. Annotated tag traversal now matches
   the publication workflow's five-hop boundary.
 
+- Version-only retries reuse the existing signed single-parent identity and its
+  source-parent checks. Label Gate evidence is restricted to the trusted
+  `pull_request_target` event, and final identity resolution rejects
+  multi-parent recovery identities.
+
 ## References
 
 - `./SPEC.md`

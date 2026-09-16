@@ -58,6 +58,7 @@ def workflow_runs_for_pr(
     workflow_file: str,
     pr_number: int,
     source_sha: str | None = None,
+    required_event: str | None = None,
 ) -> list[dict[str, Any]]:
     owner, name = repository.split("/", 1)
     result: list[dict[str, Any]] = []
@@ -72,6 +73,7 @@ def workflow_runs_for_pr(
             run for run in runs
             if any(
                 item.get("number") == pr_number
+                and (required_event is None or run.get("event") == required_event)
                 and (
                     source_sha is None
                     or run.get("head_sha") == source_sha
@@ -611,7 +613,15 @@ def load_github_completion(
     check_pr_number = pr_number
     ci_runs = workflow_runs_for_pr(api_root, token, repository, "ci-pr.yml", check_pr_number)
     gate_sha = source_check_sha if mode == "version-only-release-pr" else source_sha
-    label_runs = workflow_runs_for_pr(api_root, token, repository, "label-gate.yml", pr_number, gate_sha)
+    label_runs = workflow_runs_for_pr(
+        api_root,
+        token,
+        repository,
+        "label-gate.yml",
+        pr_number,
+        gate_sha,
+        required_event="pull_request_target",
+    )
     ci_run = next((run for run in ci_runs if run.get("head_sha") == check_sha), None)
     label_pr_updated_at = str(
         preparation.get("source_pr_updated_at", "")

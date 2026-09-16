@@ -34,6 +34,18 @@ def validate_version_only_branch(branch: str) -> None:
         )
 
 
+def validate_release_mode_for_branch(
+    branch: str, release_mode: str, *, has_version_only_identity: bool = False
+) -> None:
+    if (
+        (branch.startswith(VERSION_ONLY_BRANCH_PREFIX) or has_version_only_identity)
+        and release_mode != "version-only-release-pr"
+    ):
+        raise PreparationError(
+            "recovery PRs require explicit version-only-release-pr preparation"
+        )
+
+
 def api_request(api_root: str, token: str, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
     url = path if path.startswith("http") else f"{api_root.rstrip('/')}{path}"
     data = None if payload is None else json.dumps(payload).encode()
@@ -90,6 +102,7 @@ def workflow_runs_for_pr(
     workflow_file: str,
     pr_number: int,
     source_sha: str | None = None,
+    required_event: str | None = None,
 ) -> list[dict[str, Any]]:
     owner, name = repository_parts(repository)
     result: list[dict[str, Any]] = []
@@ -105,6 +118,7 @@ def workflow_runs_for_pr(
             run for run in runs
             if any(
                 item.get("number") == pr_number
+                and (required_event is None or run.get("event") == required_event)
                 and (
                     source_sha is None
                     or run.get("head_sha") == source_sha
@@ -176,7 +190,15 @@ def source_ci_ready(
     ci_runs = [run for run in workflow_runs_for_pr(api_root, token, repository, "ci-pr.yml", pr_number) if run.get("head_sha") == source_sha]
     if not any(run.get("status") == "completed" and run.get("conclusion") == "success" for run in ci_runs):
         raise PreparationError("source SHA does not have a successful complete CI (PR) run")
-    label_runs = workflow_runs_for_pr(api_root, token, repository, "label-gate.yml", pr_number, source_sha)
+    label_runs = workflow_runs_for_pr(
+        api_root,
+        token,
+        repository,
+        "label-gate.yml",
+        pr_number,
+        source_sha,
+        required_event="pull_request_target",
+    )
     if not any(
         run.get("status") == "completed"
         and run.get("conclusion") == "success"
@@ -1081,10 +1103,27 @@ def create(args: argparse.Namespace) -> int:
     head_commit = api_request(args.api_root, args.token, "GET", f"/repos/{owner}/{name}/commits/{source_sha}")
     head_trailers = release_policy.parse_trailers(head_commit.get("commit", {}).get("message", ""))
     intent = release_policy.parse_labels([str(item.get("name")) for item in pr.get("labels", []) if item.get("name")])
-    if getattr(args, "release_mode", "") == "version-only-release-pr":
+    release_mode = getattr(args, "release_mode", "")
+    head_branch = str(pr.get("head", {}).get("ref", ""))
+    has_version_only_identity = is_version_only_release(head_trailers)
+    validate_release_mode_for_branch(
+        head_branch, release_mode, has_version_only_identity=has_version_only_identity
+    )
+    if head_trailers.get("Release-Mode") == "version-only-release-pr" and not has_version_only_identity:
+        raise PreparationError("version-only release identity is incomplete")
+    if has_version_only_identity:
+        validate_version_only_branch(head_branch)
+        if release_mode != "version-only-release-pr":
+            raise PreparationError(
+                "existing version-only release identity requires explicit version-only-release-pr preparation"
+            )
+    if release_mode == "version-only-release-pr":
         if not intent["release_enabled"]:
             raise PreparationError("type:none cannot create a version-only release identity")
-        return create_version_only(args, pr, intent, source_sha)
+        if not head_trailers:
+            return create_version_only(args, pr, intent, source_sha)
+        if not has_version_only_identity:
+            raise PreparationError("version-only release PR head contains malformed identity trailers")
     if any(
         head_trailers.get(key)
         for key in (
@@ -1137,6 +1176,16 @@ def create(args: argparse.Namespace) -> int:
             identity_sha=source_sha,
         ):
             raise PreparationError("covered product merge already has immutable release identity")
+        identity_parents = [parent.get("sha") for parent in head_commit.get("parents", [])]
+        if len(identity_parents) != 1 or not isinstance(identity_parents[0], str):
+            raise PreparationError("version-only identity must have exactly one parent")
+        try:
+            release_policy.validate_sha(identity_parents[0], "version-only identity parent SHA")
+        except release_policy.PolicyError as error:
+            raise PreparationError(str(error)) from error
+        source_pr_updated_at = head_trailers.get("Source-PR-Updated-At", "")
+        if not source_pr_updated_at:
+            raise PreparationError("version-only release identity source timestamp is missing")
         try:
             release_policy.validate_version_only(
                 pull_request_changed_files(args.api_root, args.token, args.repository, args.pr_number),
@@ -1161,10 +1210,11 @@ def create(args: argparse.Namespace) -> int:
             args.token,
             args.repository,
             args.pr_number,
-            source_sha,
-            expected_pr_updated_at=str(pr.get("updated_at", "")),
+            identity_parents[0],
+            expected_pr_updated_at=source_pr_updated_at,
             expected_intent=intent,
-            require_unchanged_pr=True,
+            require_current_head=False,
+            require_unchanged_pr=False,
         )
         reservation_sha = None
         try:
@@ -1215,10 +1265,11 @@ def create(args: argparse.Namespace) -> int:
                 args.token,
                 args.repository,
                 args.pr_number,
-                source_sha,
+                identity_parents[0],
                 expected_pr_updated_at=source_pr_updated_at,
                 expected_intent=intent,
-                require_unchanged_pr=True,
+                require_current_head=False,
+                require_unchanged_pr=False,
             )
         except PreparationError:
             if reservation_sha:

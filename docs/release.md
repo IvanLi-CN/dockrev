@@ -13,10 +13,12 @@ when no final release qualifies, the baseline is `0.0.0`. Both historical
 future publication always uses `vX.Y.Z`. A qualified final release is
 non-draft and non-prerelease, is created by the release automation
 (`github-actions[bot]`), and has a tag that resolves to a commit reachable from
-`main`. If qualified tags for one version resolve to different commits, the
-baseline resolver fails closed. The root `VERSION` file is the merged release
-identity and provenance, not a counter. Cargo manifest versions, environment
-variables, and commit order do not allocate a release version.
+`main`. Annotated tags may be nested by at most five tag-object hops; a sixth
+hop fails closed. If qualified tags for one version resolve to different
+commits, the baseline resolver fails closed. The root `VERSION` file is the
+merged release identity and provenance, not a counter. Cargo manifest
+versions, environment variables, and commit order do not allocate a release
+version.
 
 Every product PR targeting `main` must carry exactly one `type:*` label and one
 `channel:*` label. The supported values are:
@@ -102,7 +104,11 @@ skip PRs whose head branch starts with `recovery/`. A maintainer must use the
 manual `version-only-release-pr` mode for such a PR; the preparation helper
 rejects that mode on any other branch prefix. This prevents a recovery PR from
 being mutated by normal preparation before its explicit covered merge and
-frozen baseline are verified.
+frozen baseline are verified. An interrupted version-only preparation can be
+retried in the same explicit mode: the helper reuses the signed identity's
+single source-parent commit and its bound source CI/Label Gate evidence. Label
+Gate evidence is accepted only from the trusted `pull_request_target` run;
+skipped or ordinary `pull_request` runs do not satisfy the release contract.
 
 For the current historical publication gap, the only approved backfill
 identity is covered merge `978207fe9d140d81e2d4a2a7bd24fb253a04ebff` (PR #391),

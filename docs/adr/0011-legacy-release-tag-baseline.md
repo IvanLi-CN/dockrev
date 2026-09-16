@@ -24,6 +24,8 @@ Baseline lookup accepts final semver tags in both `X.Y.Z` and `vX.Y.Z` form.
 Historical unprefixed tags are immutable evidence only; all future publication
 continues to use canonical `vX.Y.Z` tags. A qualified pair of same-version tags
 that resolves to different commit SHAs fails closed.
+Annotated tag traversal is bounded at five tag-object hops, matching the
+publication workflow; a sixth hop fails closed.
 
 An existing release identity is recognized only when its ownership evidence is
 bound to the covered merge or identity SHA. Reservations validate their source
