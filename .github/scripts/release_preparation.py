@@ -936,6 +936,9 @@ def create_version_only(args: argparse.Namespace, pr: dict[str, Any], intent: di
     )
     try:
         release_policy.validate_final_baseline_version(baseline_version)
+        release_policy.validate_approved_version_only_boundary(
+            covered_merge_sha, exact_version, baseline_version, intent
+        )
         release_policy.validate_preparation_version(
             covered_product_version,
             exact_version,
@@ -1097,6 +1100,9 @@ def create(args: argparse.Namespace) -> int:
             release_policy.parse_version(version)
             release_policy.validate_final_baseline_version(baseline_version)
             release_policy.validate_channel_version(version, intent["channel"])
+            release_policy.validate_approved_version_only_boundary(
+                head_trailers["Covered-Product-Merge-SHA"], version, baseline_version, intent
+            )
         except release_policy.PolicyError as error:
             raise PreparationError(str(error)) from error
         validate_frozen_final_baseline(

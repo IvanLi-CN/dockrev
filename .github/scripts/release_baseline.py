@@ -216,12 +216,13 @@ def latest_qualified_final_release_version(fetch: Fetch, repository: str) -> str
         target_sha = qualified_release_target_sha(fetch, repository, release)
         if target_sha is not None:
             qualified_targets.setdefault(version, set()).add(target_sha)
-    for _numeric, _release, version in sorted(candidates, key=lambda candidate: candidate[0], reverse=True):
-        targets = qualified_targets.get(version, set())
+    for version, targets in qualified_targets.items():
         if len(targets) > 1:
             raise BaselineError(
                 f"qualified release tags for version {version} point to different commit SHAs"
             )
+    for _numeric, _release, version in sorted(candidates, key=lambda candidate: candidate[0], reverse=True):
+        targets = qualified_targets.get(version, set())
         if targets:
             return version
     return "0.0.0"

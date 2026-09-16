@@ -477,11 +477,7 @@ def load_github_completion(
     labels = [item["name"] for item in pr.get("labels", []) if item.get("name")]
     intent = release_policy.parse_labels(labels)
     changed_files = pull_request_changed_files(api_root, token, repository, pr_number)
-    bootstrap_transition = (
-        pr_number == 387
-        and pr.get("base", {}).get("sha") == "759b0cf9c0d5a57be1010e74480cbb5ae713433c"
-    )
-    if intent["release_enabled"] and not bootstrap_transition:
+    if intent["release_enabled"]:
         try:
             release_policy.validate_source_boundary(changed_files)
         except release_policy.PolicyError as error:
@@ -554,6 +550,15 @@ def load_github_completion(
             raise CompletionError("version-only release identity cannot carry Source-SHA")
         covered_merge_sha = trailers.get("Covered-Product-Merge-SHA", "")
         baseline_version = trailers.get("Release-Baseline-Version", "")
+        try:
+            release_policy.validate_approved_version_only_boundary(
+                covered_merge_sha,
+                trailers.get("Product-Version", ""),
+                baseline_version,
+                intent,
+            )
+        except release_policy.PolicyError as error:
+            raise CompletionError(str(error)) from error
         validate_frozen_final_baseline(api_root, token, repository, baseline_version)
         covered_pr = covered_product_boundary(api_root, token, repository, covered_merge_sha)
         source_sha = covered_merge_sha

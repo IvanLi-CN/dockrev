@@ -37,7 +37,8 @@ that absence before accepting it.
 1. The source head must pass the complete `CI (PR)` workflow and `Label Gate`.
 2. `Release Preparation` reads the source `VERSION` only to verify the source
    identity and promotion lineage. Version allocation uses the highest
-   qualified final `vX.Y.Z` release as its numeric baseline (or `0.0.0` when
+   qualified final release across historical `X.Y.Z` and canonical
+   `vX.Y.Z` tags as its numeric baseline (or `0.0.0` when
    none qualifies); it never increments the source `VERSION`. A stable patch
    release uses the next patch after that final baseline. Major and minor use
    the next final major or minor base. Beta, RC, dev, and prerelease-to-stable

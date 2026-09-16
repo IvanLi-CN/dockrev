@@ -43,6 +43,8 @@ assert "759b0cf9c0d5a57be1010e74480cbb5ae713433c" not in completion
 assert "One-time migration path" not in completion
 assert "if [[ -f .github/scripts/release_completion.py ]]" not in completion
 assert "release_policy.validate_source_boundary(" in text(".github/scripts/release_completion.py")
+assert "bootstrap_transition" not in text(".github/scripts/release_completion.py")
+assert "759b0cf9c0d5a57be1010e74480cbb5ae713433c" not in text(".github/scripts/release_completion.py")
 assert "workflows: [\"CI (PR)\", \"Label Gate\"]" in preparation
 assert "group: release-preparation-${{ inputs.pr_number || github.event.workflow_run.pull_requests[0].number || github.run_id }}" in preparation
 assert "name: Prepare PR VERSION identity" in preparation
