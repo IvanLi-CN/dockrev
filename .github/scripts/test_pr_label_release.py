@@ -1846,7 +1846,7 @@ finally:
 
 version_only_merge_sha = "d" * 40
 version_only_release_head_sha = "e" * 40
-version_only_covered_merge_sha = "f" * 40
+version_only_covered_merge_sha = policy.APPROVED_BACKFILL_COVERED_MERGE_SHA
 version_only_covered_head_sha = "1" * 40
 version_only_moved_head_sha = "2" * 40
 version_only_reservation_sha = "3" * 40
@@ -1871,7 +1871,7 @@ try:
                 "merge_commit_sha": version_only_merge_sha,
                 "base": {"ref": "main"},
                 "head": {"sha": version_only_moved_head_sha},
-                "labels": [{"name": "type:patch"}, {"name": "channel:rc"}],
+                "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
             }]
         if path.endswith(f"/commits/{version_only_merge_sha}"):
             return {
@@ -1879,7 +1879,7 @@ try:
                 "files": recovery_merge_files,
                 "commit": {"message": "Merge version-only recovery", "tree": {"sha": version_only_merge_tree_sha}},
             }
-        if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-rc.1"):
+        if path.endswith("/git/ref/heads/release-reservation%2Fv0.80.2"):
             reservation_ref_state["reads"] += 1
             if reservation_ref_state["rebound"] and reservation_ref_state["reads"] > 1:
                 return {"object": {"sha": "4" * 40}}
@@ -1889,12 +1889,12 @@ try:
                 "parents": [{"sha": version_only_covered_merge_sha}],
                 "commit": {
                     "message": (
-                        "Reserve release version v0.1.1-rc.1\n\n"
-                        "Release-Reservation-Version: 0.1.1-rc.1\n"
+                        "Reserve release version v0.80.2\n\n"
+                        "Release-Reservation-Version: 0.80.2\n"
                         "Release-Reservation-PR: 43\n"
                         f"Release-Reservation-Source-SHA: {version_only_covered_merge_sha}\n"
                         f"Release-Reservation-Identity-SHA: {version_only_release_head_sha}\n"
-                        "Release-Reservation-Intent: type:patch channel:rc\n"
+                        "Release-Reservation-Intent: type:patch channel:stable\n"
                         "Release-Reservation-Mode: version-only-release-pr"
                     )
                 },
@@ -1903,15 +1903,15 @@ try:
             if recovery_identity_matches is None:
                 raise identity.IdentityError("GitHub API failed: 404")
             return {"object": {"sha": version_only_release_head_sha if recovery_identity_matches else "4" * 40}}
-        if path.endswith("/git/ref/heads/release-publication-lock%2Fv0.1.1-rc.1"):
-            if version_only_publication_lock_sha.get("0.1.1-rc.1") is not None:
-                return {"object": {"sha": version_only_publication_lock_sha["0.1.1-rc.1"]}}
+        if path.endswith("/git/ref/heads/release-publication-lock%2Fv0.80.2"):
+            if version_only_publication_lock_sha.get("0.80.2") is not None:
+                return {"object": {"sha": version_only_publication_lock_sha["0.80.2"]}}
             raise identity.IdentityError("GitHub API failed: 404")
-        if path.endswith("/git/ref/heads/release-publication-lock%2Fv0.1.1-beta.1"):
-            if version_only_publication_lock_sha.get("0.1.1-beta.1") is not None:
-                return {"object": {"sha": version_only_publication_lock_sha["0.1.1-beta.1"]}}
+        if path.endswith("/git/ref/heads/release-publication-lock%2Fv0.80.1"):
+            if version_only_publication_lock_sha.get("0.80.1") is not None:
+                return {"object": {"sha": version_only_publication_lock_sha["0.80.1"]}}
             raise identity.IdentityError("GitHub API failed: 404")
-        if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-beta.1"):
+        if path.endswith("/git/ref/heads/release-reservation%2Fv0.80.1"):
             covered_identity_state["reads"] += 1
             covered_identity = covered_identity_state["kind"]
             if covered_identity is None and covered_identity_state["reads"] > 2:
@@ -1924,14 +1924,14 @@ try:
                 "parents": [{"sha": version_only_covered_merge_sha}],
                 "commit": {
                     "message": (
-                        "Reserve release version v0.1.1-beta.1\n\n"
-                        "Release-Reservation-Version: 0.1.1-beta.1\n"
+                        "Reserve release version v0.80.1\n\n"
+                        "Release-Reservation-Version: 0.80.1\n"
                         "Release-Reservation-PR: 41\n"
                         f"Release-Reservation-Source-SHA: {version_only_covered_merge_sha}"
                     )
                 },
             }
-        if path.endswith("/git/ref/tags/v0.1.1-beta.1"):
+        if path.endswith("/git/ref/tags/v0.80.1"):
             covered_identity_state["reads"] += 1
             covered_identity = covered_identity_state["kind"]
             if covered_identity is None and covered_identity_state["reads"] > 2:
@@ -1939,7 +1939,7 @@ try:
             if covered_identity == "tag":
                 return {"object": {"type": "commit", "sha": version_only_covered_merge_sha}}
             raise identity.IdentityError("GitHub API failed: 404")
-        if path.endswith("/git/ref/tags/0.1.1-beta.1"):
+        if path.endswith("/git/ref/tags/0.80.1"):
             raise identity.IdentityError("GitHub API failed: 404")
         if path.endswith(f"/commits/{version_only_release_head_sha}"):
             return {
@@ -1951,9 +1951,9 @@ try:
                     "message": (
                         "VERSION-only release\n\n"
                         f"Covered-Product-Merge-SHA: {version_only_covered_merge_sha}\n"
-                        "Product-Version: 0.1.1-rc.1\n"
-                        "Release-Baseline-Version: 0.1.0\n"
-                        "Release-Intent: type:patch channel:rc\n"
+                        "Product-Version: 0.80.2\n"
+                        "Release-Baseline-Version: 0.80.1\n"
+                        "Release-Intent: type:patch channel:stable\n"
                         "Release-Mode: version-only-release-pr"
                     ),
                 },
@@ -1971,7 +1971,7 @@ try:
         if path.endswith("/pulls/43/files?per_page=100&page=1"):
             return [{"filename": "VERSION"}]
         if "/contents/VERSION?ref=" in path:
-            version = b"0.1.1-beta.1" if version_only_covered_merge_sha in path else b"0.1.1-rc.1"
+            version = b"0.80.1" if version_only_covered_merge_sha in path else b"0.80.2"
             encoded = __import__("base64").b64encode(version).decode()
             blob_sha = version_only_merge_blob_sha if version_only_merge_sha in path else version_only_identity_tree_sha
             return {"encoding": "base64", "content": encoded, "sha": blob_sha}
@@ -1983,9 +1983,15 @@ try:
     )
     assert resolved_version_only["release_mode"] == "version-only-release-pr"
     assert resolved_version_only["source_sha"] == version_only_covered_merge_sha
-    assert resolved_version_only["channel"] == "rc" and resolved_version_only["release_tag"] == "v0.1.1-rc.1"
+    assert resolved_version_only["channel"] == "stable" and resolved_version_only["release_tag"] == "v0.80.2"
     assert resolved_version_only["identity_ref_sha"] == version_only_release_head_sha
-    assert resolved_version_only["covered_product_version"] == "0.1.1-beta.1"
+    assert resolved_version_only["covered_product_version"] == "0.80.1"
+    version_only_covered_merge_sha = "b" * 40
+    expect_error(
+        identity.resolve_github,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
+    )
+    version_only_covered_merge_sha = policy.APPROVED_BACKFILL_COVERED_MERGE_SHA
     recovery_merge_parents = [{"sha": "0" * 40}, {"sha": "2" * 40}]
     version_only_merge_tree_sha = "8" * 40
     advanced_version_only = identity.resolve_github(
@@ -1995,14 +2001,14 @@ try:
     recovery_merge_parents = [{"sha": "0" * 40}]
     version_only_merge_tree_sha = version_only_identity_tree_sha
     version_only_publication_lock_sha = {
-        "0.1.1-rc.1": version_only_release_head_sha,
-        "0.1.1-beta.1": version_only_release_head_sha,
+        "0.80.2": version_only_release_head_sha,
+        "0.80.1": version_only_release_head_sha,
     }
     locked_version_only = identity.resolve_github(
         "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
     )
     assert locked_version_only["identity_ref_sha"] == version_only_release_head_sha
-    version_only_publication_lock_sha["0.1.1-beta.1"] = "4" * 40
+    version_only_publication_lock_sha["0.80.1"] = "4" * 40
     expect_error(
         identity.resolve_github,
         "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha

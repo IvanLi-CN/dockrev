@@ -250,9 +250,13 @@ jobs:
             if existing="$(gh api "${path}" 2>"${error_file}")"; then
               owner_type="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"].get("type", ""))' <<<"${existing}")"
               owner_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])' <<<"${existing}")"
-              if [[ "${owner_type}" == "tag" ]]; then
-                owner_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${owner_sha}" --jq .object.sha)"
-              fi
+              for _ in 1 2 3 4 5; do
+                [[ "${owner_type}" == "tag" ]] || break
+                annotated="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${owner_sha}")"
+                owner_type="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"].get("type", ""))' <<<"${annotated}")"
+                owner_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])' <<<"${annotated}")"
+              done
+              [[ "${owner_type}" == "commit" ]] || { echo "tag ${tag} does not resolve to a commit" >&2; exit 1; }
               test "${owner_sha}" = "${MERGE_SHA}" || { echo "tag ${tag} belongs to ${owner_sha}" >&2; exit 1; }
             else
               status=$?
@@ -596,9 +600,13 @@ jobs:
             if existing="$(gh api "${path}" 2>"${error_file}")"; then
               owner_type="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"].get("type", ""))' <<<"${existing}")"
               owner_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])' <<<"${existing}")"
-              if [[ "${owner_type}" == "tag" ]]; then
-                owner_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${owner_sha}" --jq .object.sha)"
-              fi
+              for _ in 1 2 3 4 5; do
+                [[ "${owner_type}" == "tag" ]] || break
+                annotated="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${owner_sha}")"
+                owner_type="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"].get("type", ""))' <<<"${annotated}")"
+                owner_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])' <<<"${annotated}")"
+              done
+              [[ "${owner_type}" == "commit" ]] || { echo "tag ${tag} does not resolve to a commit" >&2; exit 1; }
               test "${owner_sha}" = "${MERGE_SHA}" || { echo "tag ${tag} belongs to ${owner_sha}" >&2; exit 1; }
               [[ "${tag}" == "${RELEASE_TAG}" ]] && canonical_exists=true
             else

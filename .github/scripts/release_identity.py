@@ -391,6 +391,12 @@ def resolve_version_only_reservation(
     if not recovery_identity_is_owned(api_root, token, repository, covered_merge_sha, identity_sha):
         raise IdentityError("version-only reservation does not own the covered recovery identity")
     intent = intent_from_trailer(release_intent)
+    try:
+        release_policy.validate_approved_version_only_boundary(
+            covered_merge_sha, version, baseline_version, intent
+        )
+    except release_policy.PolicyError as error:
+        raise IdentityError(str(error)) from error
     covered_pr = covered_product_boundary(api_root, token, repository, covered_merge_sha)
     covered_product_version = version_at_commit(api_root, token, repository, covered_merge_sha)
     if covered_version_has_existing_identity(
