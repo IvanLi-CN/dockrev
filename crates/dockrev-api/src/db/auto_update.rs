@@ -366,9 +366,9 @@ WHERE job_id = ?1
         let service_ids = service_ids.to_vec();
         self.call(move |conn| {
             let mut out = Vec::new();
-            let mut stmt = conn.prepare(&format!(
-                "SELECT c.id, c.stack_id, c.service_id, c.image_ref, c.raw_tag, c.candidate_digest, c.resolved_version, c.status, c.reason, c.attempts, c.retry_at, c.discovered_at, c.source_job_id, c.source, c.current_tag, c.current_display_tag, c.current_digest, c.settled_at, c.created_at, c.updated_at, c.policy_status, c.policy_reason, c.policy_rule_id, c.policy_evaluated_at FROM auto_update_candidates c JOIN services s ON s.id = c.service_id WHERE c.service_id = ?1 AND (s.candidate_digest = c.candidate_digest OR (s.candidate_digest IS NULL AND c.policy_status = 'completed' AND s.current_digest = c.candidate_digest)) ORDER BY c.discovered_at DESC, c.id DESC LIMIT 1"
-            ))?;
+            let mut stmt = conn.prepare(
+                "SELECT c.id, c.stack_id, c.service_id, c.image_ref, c.raw_tag, c.candidate_digest, c.resolved_version, c.status, c.reason, c.attempts, c.retry_at, c.discovered_at, c.source_job_id, c.source, c.current_tag, c.current_display_tag, c.current_digest, c.settled_at, c.created_at, c.updated_at, c.policy_status, c.policy_reason, c.policy_rule_id, c.policy_evaluated_at FROM auto_update_candidates c JOIN services s ON s.id = c.service_id WHERE c.service_id = ?1 AND (s.candidate_digest = c.candidate_digest OR (s.candidate_digest IS NULL AND c.policy_status = 'completed' AND s.current_digest = c.candidate_digest)) ORDER BY c.discovered_at DESC, c.id DESC LIMIT 1",
+            )?;
             for service_id in service_ids {
                 if let Ok(row) = stmt.query_row(params![service_id], map_auto_update_candidate_row) {
                     out.push(row);
@@ -827,6 +827,7 @@ LIMIT ?2
         .context("list auto update pending candidates")
     }
 
+    #[allow(dead_code)]
     pub async fn try_claim_auto_update_pending(
         &self,
         pending_id: &str,
@@ -848,6 +849,7 @@ WHERE id = ?1 AND status = 'pending'
         .context("claim auto update pending")
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn try_claim_auto_update_pending_if_current(
         &self,
         pending_id: &str,
