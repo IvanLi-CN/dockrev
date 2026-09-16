@@ -97,6 +97,13 @@ failure context, notifier transport, and same-SHA recovery preserve that pair.
 A recovery never recomputes an RC or converts it into a stable version. RC is
 always a prerelease and never advances the stable `latest` surface.
 
+Automatic `Release Preparation` runs triggered by `CI (PR)` or `Label Gate`
+skip PRs whose head branch starts with `recovery/`. A maintainer must use the
+manual `version-only-release-pr` mode for such a PR; the preparation helper
+rejects that mode on any other branch prefix. This prevents a recovery PR from
+being mutated by normal preparation before its explicit covered merge and
+frozen baseline are verified.
+
 For the current historical publication gap, the only approved backfill
 identity is covered merge `978207fe9d140d81e2d4a2a7bd24fb253a04ebff` (PR #391),
 product version `0.80.2`, frozen baseline `0.80.1`, and intent

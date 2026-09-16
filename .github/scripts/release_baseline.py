@@ -17,6 +17,7 @@ import release_policy
 
 
 RELEASE_AUTOMATION_ACTOR = "github-actions[bot]"
+MAX_ANNOTATED_TAG_DEPTH = 5
 
 
 class BaselineError(ValueError):
@@ -127,7 +128,9 @@ def tagged_commit_sha(fetch: Fetch, repository: str, tag: str) -> str | None:
     if not isinstance(ref, dict):
         raise BaselineError("GitHub tag ref is invalid")
     target = ref.get("object")
-    for _ in range(5):
+    # The release workflow allows five annotated-tag hops and checks whether
+    # the fifth hop resolved to a commit after the loop.
+    for _ in range(MAX_ANNOTATED_TAG_DEPTH + 1):
         target_type, target_sha = tag_target(target, "GitHub tag target")
         if target_type == "commit":
             return target_sha

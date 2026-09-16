@@ -26,8 +26,13 @@
   `.github/workflows/release-preparation.yml` expose the explicit
   `version-only-release-pr` mode and bind its covered merge, exact version,
   baseline, intent, signed VERSION-only commit, reservation, and recovery ref.
-  `.github/workflows/release-completion-pr.yml` contains only the trusted
-  `pull_request_target` path.
+  Recovery branches use the `recovery/` selector; automatic workflow-run
+  preparation skips them and the helper rejects version-only preparation on
+  other branches. `.github/workflows/release-completion-pr.yml` contains only
+  the trusted `pull_request_target` path.
+- The baseline resolver and the publication workflow share a five-hop maximum
+  for nested annotated tags: a commit reached on the fifth annotated hop is
+  accepted, while a sixth hop fails closed.
 
 ## Coverage / rollout summary
 

@@ -24,6 +24,16 @@ class PreparationError(RuntimeError):
     pass
 
 
+VERSION_ONLY_BRANCH_PREFIX = "recovery/"
+
+
+def validate_version_only_branch(branch: str) -> None:
+    if not isinstance(branch, str) or not branch.startswith(VERSION_ONLY_BRANCH_PREFIX):
+        raise PreparationError(
+            f"version-only release PR branch must use the {VERSION_ONLY_BRANCH_PREFIX} prefix"
+        )
+
+
 def api_request(api_root: str, token: str, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
     url = path if path.startswith("http") else f"{api_root.rstrip('/')}{path}"
     data = None if payload is None else json.dumps(payload).encode()
@@ -923,6 +933,7 @@ def write_json(path: Path, payload: Any) -> None:
 
 
 def create_version_only(args: argparse.Namespace, pr: dict[str, Any], intent: dict[str, Any], source_sha: str) -> int:
+    validate_version_only_branch(str(pr.get("head", {}).get("ref", "")))
     exact_version = str(getattr(args, "exact_version", "") or "").strip()
     covered_merge_sha = str(getattr(args, "covered_merge_sha", "") or "").strip()
     baseline_version = str(getattr(args, "baseline_version", "") or "").strip()

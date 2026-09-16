@@ -49,11 +49,15 @@ assert "workflows: [\"CI (PR)\", \"Label Gate\"]" in preparation
 assert "group: release-preparation-${{ inputs.pr_number || github.event.workflow_run.pull_requests[0].number || github.run_id }}" in preparation
 assert "name: Prepare PR VERSION identity" in preparation
 assert "(github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')" in preparation
+assert "!startsWith(github.event.workflow_run.pull_requests[0].head.ref, 'recovery/')" in preparation
 assert "release-reservation" in text(".github/scripts/release_preparation.py")
 assert "RC-to-stable promotion" in preparation
 assert "version-only-release-pr" in preparation
 assert "covered_merge_sha" in preparation
 assert "baseline_version" in preparation
+assert "VERSION_ONLY_BRANCH_PREFIX = \"recovery/\"" in text(".github/scripts/release_preparation.py")
+assert "validate_version_only_branch" in text(".github/scripts/release_preparation.py")
+assert "for _ in 1 2 3 4 5; do" in release
 assert "channel-for-version" in text(".github/scripts/release-channel-contract-check.sh")
 assert "actions: read" in preparation
 assert "checks: read" in preparation

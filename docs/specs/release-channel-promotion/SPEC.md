@@ -79,7 +79,9 @@
   approved repair boundary is PR #391 merge
   `978207fe9d140d81e2d4a2a7bd24fb253a04ebff` -> `0.80.2` with baseline
   `0.80.1` and intent `type:patch channel:stable`; no separate PR #390
-  identity is allowed.
+  identity is allowed. Recovery PRs MUST use a `recovery/` head branch;
+  automatic `workflow_run` preparation skips that prefix, and only the
+  explicit manual version-only dispatch may prepare the identity.
 - covers: `G2`, `G3`
 
 ## Verification

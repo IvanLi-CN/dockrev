@@ -210,6 +210,8 @@ expect_error(policy.validate_preparation, {**preparation, "verified": False})
 expect_error(policy.parse_trailers, "Release-Mode: normal-preparation\nRelease-Mode: normal-preparation")
 assert preparation_script.is_existing_preparation({"Release-Mode": "normal-preparation", "Source-SHA": source_sha if 'source_sha' in globals() else "a" * 40, "Product-Version": "0.1.1", "Release-Baseline-Version": "0.1.0"})
 assert not preparation_script.is_existing_preparation({"Release-Mode": "normal-preparation"})
+preparation_script.validate_version_only_branch("recovery/version-only")
+expect_error(preparation_script.validate_version_only_branch, "feature/version-only")
 assert preparation_script.is_version_only_release({"Release-Mode": "version-only-release-pr", "Covered-Product-Merge-SHA": source_sha, "Product-Version": "0.1.1", "Release-Baseline-Version": "0.1.0", "Release-Intent": "type:patch channel:stable"})
 beta_labels = policy.parse_labels(["type:patch", "channel:beta"])
 assert preparation_script.expected_version(beta_labels, "0.1.0", "0.1.1-beta.1", baseline_version="0.1.0") == "0.1.1-beta.1"
@@ -478,6 +480,29 @@ try:
     assert baseline.latest_qualified_final_release_version(
         annotated_release_api, "IvanLi-CN/dockrev"
     ) == "0.11.0"
+
+    def bounded_annotated_tag_api(depth):
+        tag_shas = [f"{index:040x}" for index in range(1, depth + 1)]
+        commit_sha = "e" * 40
+
+        def fetch(path):
+            if path.endswith("/git/ref/tags/five") or path.endswith("/git/ref/tags/six"):
+                return {"object": {"type": "tag", "sha": tag_shas[0]}}
+            for index, tag_sha in enumerate(tag_shas):
+                if path == f"/repos/IvanLi-CN/dockrev/git/tags/{tag_sha}":
+                    if index + 1 == depth:
+                        return {"object": {"type": "commit", "sha": commit_sha}}
+                    return {"object": {"type": "tag", "sha": tag_shas[index + 1]}}
+            raise AssertionError(f"unexpected bounded annotated-tag API path: {path}")
+
+        return fetch
+
+    assert baseline.tagged_commit_sha(
+        bounded_annotated_tag_api(5), "IvanLi-CN/dockrev", "five"
+    ) == "e" * 40
+    expect_baseline_error(
+        baseline.tagged_commit_sha, bounded_annotated_tag_api(6), "IvanLi-CN/dockrev", "six"
+    )
 
     paginated_release = {
         "tag_name": "v1.0.0",

@@ -24,6 +24,11 @@
   `0.80.2` version-only identity with baseline `0.80.1` and stable patch
   intent; PR #390 is not independently released.
 
+- Recovery preparation is selected by the `recovery/` branch prefix. Automatic
+  workflow-run preparation skips that prefix, and the version-only helper
+  requires it before creating an identity. Annotated tag traversal now matches
+  the publication workflow's five-hop boundary.
+
 ## References
 
 - `./SPEC.md`
