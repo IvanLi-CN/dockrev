@@ -61,11 +61,33 @@ assert labels["release_enabled"] is True
 assert policy.next_patch("0.1.0") == "0.1.1"
 assert policy.next_patch("1.4.9") == "1.4.10"
 assert baseline.final_version_from_tag("v1.2.3") == "1.2.3"
+assert baseline.final_version_from_tag("1.2.3") == "1.2.3"
 assert baseline.final_version_from_tag("v1.2.3 ") is None
 policy.validate_channel_version("0.1.1", "stable")
 policy.validate_channel_version("0.2.0-beta.1", "beta")
 policy.validate_channel_version("0.2.0-rc.1", "rc")
 policy.validate_channel_version("0.2.0-dev.3", "dev")
+approved_backfill_intent = policy.parse_labels(["type:patch", "channel:stable"])
+policy.validate_approved_version_only_boundary(
+    policy.APPROVED_BACKFILL_COVERED_MERGE_SHA,
+    policy.APPROVED_BACKFILL_VERSION,
+    policy.APPROVED_BACKFILL_BASELINE,
+    approved_backfill_intent,
+)
+for boundary in (
+    {"covered_merge_sha": "a" * 40},
+    {"version": "0.80.3"},
+    {"baseline_version": "0.80.0"},
+    {"intent": policy.parse_labels(["type:minor", "channel:stable"])},
+):
+    values = {
+        "covered_merge_sha": policy.APPROVED_BACKFILL_COVERED_MERGE_SHA,
+        "version": policy.APPROVED_BACKFILL_VERSION,
+        "baseline_version": policy.APPROVED_BACKFILL_BASELINE,
+        "intent": approved_backfill_intent,
+    }
+    values.update(boundary)
+    expect_error(policy.validate_approved_version_only_boundary, **values)
 assert policy.patch_channel_transitions() == {
     "stable": {"stable", "beta", "dev"},
     "beta": {"beta", "rc"},
@@ -188,6 +210,20 @@ expect_error(policy.validate_preparation, {**preparation, "verified": False})
 expect_error(policy.parse_trailers, "Release-Mode: normal-preparation\nRelease-Mode: normal-preparation")
 assert preparation_script.is_existing_preparation({"Release-Mode": "normal-preparation", "Source-SHA": source_sha if 'source_sha' in globals() else "a" * 40, "Product-Version": "0.1.1", "Release-Baseline-Version": "0.1.0"})
 assert not preparation_script.is_existing_preparation({"Release-Mode": "normal-preparation"})
+preparation_script.validate_version_only_branch("recovery/version-only")
+expect_error(preparation_script.validate_version_only_branch, "feature/version-only")
+preparation_script.validate_release_mode_for_branch("recovery/version-only", "version-only-release-pr")
+expect_error(
+    preparation_script.validate_release_mode_for_branch,
+    "recovery/version-only",
+    "normal-preparation",
+)
+expect_error(
+    preparation_script.validate_release_mode_for_branch,
+    "feature/version-only",
+    "normal-preparation",
+    has_version_only_identity=True,
+)
 assert preparation_script.is_version_only_release({"Release-Mode": "version-only-release-pr", "Covered-Product-Merge-SHA": source_sha, "Product-Version": "0.1.1", "Release-Baseline-Version": "0.1.0", "Release-Intent": "type:patch channel:stable"})
 beta_labels = policy.parse_labels(["type:patch", "channel:beta"])
 assert preparation_script.expected_version(beta_labels, "0.1.0", "0.1.1-beta.1", baseline_version="0.1.0") == "0.1.1-beta.1"
@@ -273,12 +309,16 @@ try:
                 {"tag_name": "v1.0.0-rc.1", "draft": False, "prerelease": True, "author": {"login": "github-actions[bot]"}},
                 qualified_release,
                 {"tag_name": "v9.9.9", "draft": True, "prerelease": False, "author": {"login": "github-actions[bot]"}},
-                {"tag_name": "0.11.0", "draft": False, "prerelease": False, "author": {"login": "github-actions[bot]"}},
+                {"tag_name": "not-a-version", "draft": False, "prerelease": False, "author": {"login": "github-actions[bot]"}},
             ]
         if path == "/repos/IvanLi-CN/dockrev/releases/tags/v0.10.0":
             return qualified_release
         if path == "/repos/IvanLi-CN/dockrev/releases/tags/v20.0.0":
             return {"tag_name": "v20.0.0", "draft": False, "prerelease": False, "author": {"login": "github-actions[bot]"}}
+        if path == "/repos/IvanLi-CN/dockrev/releases/tags/0.10.0":
+            raise urllib.error.HTTPError(path, 404, "Not Found", None, None)
+        if path == "/repos/IvanLi-CN/dockrev/releases/tags/20.0.0":
+            raise urllib.error.HTTPError(path, 404, "Not Found", None, None)
         if path == "/repos/IvanLi-CN/dockrev/git/ref/tags/v0.10.0":
             return {"object": {"type": "commit", "sha": qualified_baseline_sha}}
         if path == "/repos/IvanLi-CN/dockrev/git/ref/tags/v20.0.0":
@@ -300,6 +340,83 @@ try:
         qualified_release_api,
         "IvanLi-CN/dockrev",
         "20.0.0",
+    )
+
+    legacy_sha = "1" * 40
+    legacy_release = {
+        "tag_name": "0.80.1",
+        "draft": False,
+        "prerelease": False,
+        "author": {"login": "github-actions[bot]"},
+    }
+
+    def legacy_release_api(path):
+        if path == "/repos/IvanLi-CN/dockrev/releases?per_page=100&page=1":
+            return [legacy_release]
+        if path == "/repos/IvanLi-CN/dockrev/releases/tags/0.80.1":
+            return legacy_release
+        if path == "/repos/IvanLi-CN/dockrev/git/ref/tags/0.80.1":
+            return {"object": {"type": "commit", "sha": legacy_sha}}
+        if path == f"/repos/IvanLi-CN/dockrev/compare/{legacy_sha}...main":
+            return {"status": "identical"}
+        if path == "/repos/IvanLi-CN/dockrev/releases/tags/v0.80.1":
+            raise urllib.error.HTTPError(path, 404, "Not Found", None, None)
+        raise AssertionError(f"unexpected legacy-release API path: {path}")
+
+    assert baseline.latest_qualified_final_release_version(
+        legacy_release_api, "IvanLi-CN/dockrev"
+    ) == "0.80.1"
+    baseline.validate_frozen_final_baseline(
+        legacy_release_api, "IvanLi-CN/dockrev", "0.80.1"
+    )
+
+    def conflicting_release_api(path):
+        if path == "/repos/IvanLi-CN/dockrev/releases?per_page=100&page=1":
+            return [
+                {**legacy_release, "tag_name": "v0.80.1"},
+                legacy_release,
+            ]
+        if path.endswith("/git/ref/tags/v0.80.1"):
+            return {"object": {"type": "commit", "sha": "2" * 40}}
+        if path.endswith("/git/ref/tags/0.80.1"):
+            return {"object": {"type": "commit", "sha": "3" * 40}}
+        if path.endswith("/compare/" + "2" * 40 + "...main"):
+            return {"status": "identical"}
+        if path.endswith("/compare/" + "3" * 40 + "...main"):
+            return {"status": "identical"}
+        raise AssertionError(f"unexpected conflicting-release API path: {path}")
+
+    expect_baseline_error(
+        baseline.latest_qualified_final_release_version,
+        conflicting_release_api,
+        "IvanLi-CN/dockrev",
+    )
+
+    def lower_conflicting_release_api(path):
+        if path == "/repos/IvanLi-CN/dockrev/releases?per_page=100&page=1":
+            return [
+                {**legacy_release, "tag_name": "v0.90.0"},
+                {**legacy_release, "tag_name": "v0.80.1"},
+                legacy_release,
+            ]
+        if path.endswith("/git/ref/tags/v0.90.0"):
+            return {"object": {"type": "commit", "sha": "4" * 40}}
+        if path.endswith("/git/ref/tags/v0.80.1"):
+            return {"object": {"type": "commit", "sha": "2" * 40}}
+        if path.endswith("/git/ref/tags/0.80.1"):
+            return {"object": {"type": "commit", "sha": "3" * 40}}
+        if path.endswith("/compare/" + "4" * 40 + "...main"):
+            return {"status": "identical"}
+        if path.endswith("/compare/" + "2" * 40 + "...main"):
+            return {"status": "identical"}
+        if path.endswith("/compare/" + "3" * 40 + "...main"):
+            return {"status": "identical"}
+        raise AssertionError(f"unexpected lower-conflicting-release API path: {path}")
+
+    expect_baseline_error(
+        baseline.latest_qualified_final_release_version,
+        lower_conflicting_release_api,
+        "IvanLi-CN/dockrev",
     )
 
     def mismatched_release_api(path):
@@ -329,6 +446,11 @@ try:
                     None,
                     None,
                 )
+            except urllib.error.HTTPError as error:
+                raise baseline.BaselineError("GitHub API GET failed: 404: Not Found") from error
+        if path == "/repos/IvanLi-CN/dockrev/releases/tags/0.0.0":
+            try:
+                raise urllib.error.HTTPError(path, 404, "Not Found", None, None)
             except urllib.error.HTTPError as error:
                 raise baseline.BaselineError("GitHub API GET failed: 404: Not Found") from error
         if path == "/repos/IvanLi-CN/dockrev/releases?per_page=100&page=1":
@@ -370,6 +492,29 @@ try:
     assert baseline.latest_qualified_final_release_version(
         annotated_release_api, "IvanLi-CN/dockrev"
     ) == "0.11.0"
+
+    def bounded_annotated_tag_api(depth):
+        tag_shas = [f"{index:040x}" for index in range(1, depth + 1)]
+        commit_sha = "e" * 40
+
+        def fetch(path):
+            if path.endswith("/git/ref/tags/five") or path.endswith("/git/ref/tags/six"):
+                return {"object": {"type": "tag", "sha": tag_shas[0]}}
+            for index, tag_sha in enumerate(tag_shas):
+                if path == f"/repos/IvanLi-CN/dockrev/git/tags/{tag_sha}":
+                    if index + 1 == depth:
+                        return {"object": {"type": "commit", "sha": commit_sha}}
+                    return {"object": {"type": "tag", "sha": tag_shas[index + 1]}}
+            raise AssertionError(f"unexpected bounded annotated-tag API path: {path}")
+
+        return fetch
+
+    assert baseline.tagged_commit_sha(
+        bounded_annotated_tag_api(5), "IvanLi-CN/dockrev", "five"
+    ) == "e" * 40
+    expect_baseline_error(
+        baseline.tagged_commit_sha, bounded_annotated_tag_api(6), "IvanLi-CN/dockrev", "six"
+    )
 
     paginated_release = {
         "tag_name": "v1.0.0",
@@ -679,10 +824,10 @@ try:
             "state": "open",
             "base": {"ref": "main"},
             "head": {"sha": prep_sha, "ref": "recovery/version-only", "repo": {"full_name": "IvanLi-CN/dockrev"}},
-            "labels": [{"name": "type:patch"}, {"name": "channel:rc"}],
+            "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
         }
         preparation_script.source_ci_ready = fake_source_ci
-        covered_merge_sha = "c" * 40
+        covered_merge_sha = policy.APPROVED_BACKFILL_COVERED_MERGE_SHA
         moved_covered_head_sha = "d" * 40
         covered_identity_marker = False
         covered_publication_lock_sha = None
@@ -690,20 +835,22 @@ try:
 
         def immutable_covered_version(*_args):
             assert _args[-1] == covered_merge_sha
-            return "0.1.1-beta.1"
+            return "0.80.1"
 
         preparation_script.current_version = immutable_covered_version
         def fake_version_only_api(_api_root, _token, _method, path, _payload=None):
             if path.endswith(f"/commits/{prep_sha}"):
                 return {
+                    "parents": [{"sha": source_sha}],
                     "commit": {
                         "verification": {"verified": True},
                         "message": (
                             "VERSION-only recovery\n\n"
                             "Covered-Product-Merge-SHA: " + covered_merge_sha + "\n"
-                            "Product-Version: 0.1.1-rc.1\n"
-                            "Release-Baseline-Version: 0.1.0\n"
-                            "Release-Intent: type:patch channel:rc\n"
+                            "Product-Version: 0.80.2\n"
+                            "Release-Baseline-Version: 0.80.1\n"
+                            "Release-Intent: type:patch channel:stable\n"
+                            "Source-PR-Updated-At: 2026-01-01T00:00:00Z\n"
                             "Release-Mode: version-only-release-pr"
                         )
                     }
@@ -724,15 +871,15 @@ try:
                 if covered_identity_marker == "owned":
                     return {"object": {"sha": prep_sha}}
                 raise preparation_script.PreparationError("GitHub API failed: 404:")
-            if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-beta.1"):
+            if path.endswith("/git/ref/heads/release-reservation%2Fv0.80.1"):
                 if covered_identity_marker == "foreign":
                     return {"object": {"sha": "a" * 40}}
                 raise preparation_script.PreparationError("GitHub API failed: 404:")
-            if path.endswith("/git/ref/heads/release-publication-lock%2Fv0.1.1-beta.1"):
+            if path.endswith("/git/ref/heads/release-publication-lock%2Fv0.80.1"):
                 if covered_publication_lock_sha is not None:
                     return {"object": {"sha": covered_publication_lock_sha}}
                 raise preparation_script.PreparationError("GitHub API failed: 404:")
-            if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-rc.1"):
+            if path.endswith("/git/ref/heads/release-reservation%2Fv0.80.2"):
                 if covered_identity_marker == "owned":
                     return {"object": {"sha": "f" * 40}}
                 raise preparation_script.PreparationError("GitHub API failed: 404:")
@@ -741,8 +888,8 @@ try:
                     "parents": [{"sha": covered_merge_sha}],
                     "commit": {
                         "message": (
-                            "Reserve release version v0.1.1-beta.1\n\n"
-                            "Release-Reservation-Version: 0.1.1-beta.1\n"
+                            "Reserve release version v0.80.1\n\n"
+                            "Release-Reservation-Version: 0.80.1\n"
                             "Release-Reservation-PR: 41\n"
                             f"Release-Reservation-Source-SHA: {covered_merge_sha}"
                         )
@@ -753,17 +900,21 @@ try:
                     "parents": [{"sha": covered_merge_sha}],
                     "commit": {
                         "message": (
-                            "Reserve release version v0.1.1-rc.1\n\n"
-                            "Release-Reservation-Version: 0.1.1-rc.1\n"
+                            "Reserve release version v0.80.2\n\n"
+                            "Release-Reservation-Version: 0.80.2\n"
                             "Release-Reservation-PR: 42\n"
                             f"Release-Reservation-Source-SHA: {covered_merge_sha}\n"
                             f"Release-Reservation-Identity-SHA: {prep_sha}\n"
-                            "Release-Reservation-Intent: type:patch channel:rc\n"
+                            "Release-Reservation-Intent: type:patch channel:stable\n"
                             "Release-Reservation-Mode: version-only-release-pr"
                         )
                     },
                 }
-            if path.endswith("/git/ref/tags/v0.1.1-beta.1"):
+            if path.endswith("/git/ref/tags/v0.80.1"):
+                raise preparation_script.PreparationError("GitHub API failed: 404:")
+            if path.endswith("/git/ref/tags/0.80.1"):
+                raise preparation_script.PreparationError("GitHub API failed: 404:")
+            if path.endswith("/git/ref/tags/v0.80.2") or path.endswith("/git/ref/tags/0.80.2"):
                 raise preparation_script.PreparationError("GitHub API failed: 404:")
             if path.endswith("/pulls/42/files?per_page=100&page=1"):
                 return [{"filename": "VERSION"}]
@@ -777,6 +928,7 @@ try:
             repository="IvanLi-CN/dockrev",
             pr_number=42,
             exact_version=None,
+            release_mode="version-only-release-pr",
             output=output,
         ))
         result = json.loads(output.read_text(encoding="utf-8"))
@@ -786,7 +938,7 @@ try:
         assert reserved_sources[-1] == covered_merge_sha
         assert reservation_kwargs[-1] == {
             "identity_sha": prep_sha,
-            "release_intent": "type:patch channel:rc",
+            "release_intent": "type:patch channel:stable",
             "release_mode": "version-only-release-pr",
         }
         assert recovery_identity_reservations[-1] == (covered_merge_sha, prep_sha)
@@ -798,7 +950,7 @@ try:
             "token",
             "IvanLi-CN/dockrev",
             covered_merge_sha,
-            "0.1.1-beta.1",
+            "0.80.1",
         ) is False
         covered_publication_lock_sha = "9" * 40
         reservations_before = calls["reserve"]
@@ -809,6 +961,7 @@ try:
             repository="IvanLi-CN/dockrev",
             pr_number=42,
             exact_version=None,
+            release_mode="version-only-release-pr",
             output=Path(directory) / "covered-publication-lock.json",
         ))
         assert calls["reserve"] == reservations_before
@@ -822,6 +975,7 @@ try:
             repository="IvanLi-CN/dockrev",
             pr_number=42,
             exact_version=None,
+            release_mode="version-only-release-pr",
             output=Path(directory) / "orphaned-recovery.json",
         ))
         preparation_script.reserve_recovery_identity = fake_reserve_recovery_identity
@@ -834,6 +988,7 @@ try:
             repository="IvanLi-CN/dockrev",
             pr_number=42,
             exact_version=None,
+            release_mode="version-only-release-pr",
             output=Path(directory) / "existing-identity.json",
         ))
         assert calls["reserve"] == reservations_before
@@ -856,11 +1011,12 @@ try:
                 repository="IvanLi-CN/dockrev",
                 pr_number=42,
                 exact_version=None,
+                release_mode="version-only-release-pr",
                 output=Path(directory) / "failed-recovery-ci.json",
             ))
             assert calls["reserve"] == reservations_before + 1
             assert recovery_identity_reservations[-1] == (covered_merge_sha, prep_sha)
-            assert cleanup_calls[-1][-2:] == ("0.1.1-rc.1", "f" * 40)
+            assert cleanup_calls[-1][-2:] == ("0.80.2", "f" * 40)
         finally:
             preparation_script.source_ci_ready = original_version_only_source_ci
 finally:
@@ -1023,10 +1179,12 @@ try:
         if "/actions/workflows/ci-pr.yml/runs?per_page=100&page=" in path:
             return {"workflow_runs": [{"head_sha": source_sha, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 42}]}]}
         if "/actions/workflows/label-gate.yml/runs?per_page=100&page=" in path:
-            return {"workflow_runs": [{"head_sha": source_sha, "status": "completed", "conclusion": "success", "created_at": "2026-01-02T00:00:00Z", "pull_requests": [{"number": 42, "head": {"sha": source_sha}}]}]}
+            return {"workflow_runs": [{"event": "pull_request_target", "head_sha": source_sha, "status": "completed", "conclusion": "success", "created_at": "2026-01-02T00:00:00Z", "pull_requests": [{"number": 42, "head": {"sha": source_sha}}]}]}
         if path.endswith("/git/ref/tags/v0.1.1"):
             if tag_exists:
                 return {"object": {"sha": prep_sha, "type": "commit"}}
+            raise completion.CompletionError("GitHub API failed: 404")
+        if path.endswith("/git/ref/tags/0.1.1"):
             raise completion.CompletionError("GitHub API failed: 404")
         if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1"):
             return {"object": {"sha": "f" * 40, "type": "commit"}}
@@ -1065,12 +1223,14 @@ finally:
 original_completion_api_json = completion.api_json
 try:
     completion_moved_covered_head_sha = "d" * 40
+    version_only_completion_covered_sha = policy.APPROVED_BACKFILL_COVERED_MERGE_SHA
     version_only_completion_message = (
         "VERSION-only recovery\n\n"
-        f"Covered-Product-Merge-SHA: {covered_merge_sha}\n"
-        "Product-Version: 0.1.1-rc.1\n"
-        "Release-Baseline-Version: 0.1.0\n"
-        "Release-Intent: type:patch channel:rc\n"
+        f"Covered-Product-Merge-SHA: {version_only_completion_covered_sha}\n"
+        "Product-Version: 0.80.2\n"
+        "Release-Baseline-Version: 0.80.1\n"
+        "Release-Intent: type:patch channel:stable\n"
+        "Source-PR-Updated-At: 2026-01-01T00:00:00Z\n"
         "Release-Mode: version-only-release-pr"
     )
     recovery_identity_matches = True
@@ -1082,58 +1242,62 @@ try:
                 "base": {"ref": "main"},
                 "head": {"sha": prep_sha},
                 "updated_at": "2026-01-01T00:00:00Z",
-                "labels": [{"name": "type:patch"}, {"name": "channel:rc"}],
+                "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
             }
         if path.endswith(f"/commits/{prep_sha}"):
             return {
-                "parents": [{"sha": covered_merge_sha}],
+                "parents": [{"sha": source_sha}],
                 "files": [{"filename": "VERSION"}],
                 "commit": {
                     "verification": {"verified": True},
                     "message": version_only_completion_message,
                 },
             }
-        if path.endswith(f"/commits/{covered_merge_sha}/pulls"):
+        if path.endswith(f"/commits/{version_only_completion_covered_sha}/pulls"):
             return [{
                 "number": 41,
                 "state": "closed",
                 "merged_at": "2026-01-01T00:00:00Z",
-                "merge_commit_sha": covered_merge_sha,
+                "merge_commit_sha": version_only_completion_covered_sha,
                 "base": {"ref": "main"},
                 "head": {"sha": completion_moved_covered_head_sha},
                 "updated_at": "2026-01-01T00:00:00Z",
-                "labels": [{"name": "type:none"}, {"name": "channel:stable"}],
+                "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
             }]
         if path.endswith(f"/pulls/42/files?per_page=100&page=1"):
             return [{"filename": "VERSION"}]
         if path.endswith(f"/pulls/41/files?per_page=100&page=1"):
             return []
         if "/contents/VERSION?ref=" in path:
-            version = b"0.1.1-beta.1" if covered_merge_sha in path else b"0.1.1-rc.1"
+            version = b"0.80.1" if version_only_completion_covered_sha in path else b"0.80.2"
             encoded = __import__("base64").b64encode(version).decode()
             return {"encoding": "base64", "content": encoded}
-        if path.endswith(f"/git/ref/heads/release-recovery%2F{covered_merge_sha}"):
+        if path.endswith(f"/git/ref/heads/release-recovery%2F{version_only_completion_covered_sha}"):
             if recovery_identity_matches is None:
                 raise completion.CompletionError("GitHub API failed: 404")
             return {"object": {"sha": prep_sha if recovery_identity_matches else "9" * 40}}
-        if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-beta.1"):
+        if path.endswith("/git/ref/heads/release-reservation%2Fv0.80.1"):
             raise completion.CompletionError("GitHub API failed: 404")
-        if path.endswith("/git/ref/heads/release-publication-lock%2Fv0.1.1-beta.1"):
+        if path.endswith("/git/ref/heads/release-publication-lock%2Fv0.80.1"):
             raise completion.CompletionError("GitHub API failed: 404")
-        if path.endswith("/git/ref/tags/v0.1.1-beta.1"):
+        if path.endswith("/git/ref/tags/v0.80.1"):
+            raise completion.CompletionError("GitHub API failed: 404")
+        if path.endswith("/git/ref/tags/0.80.1"):
             raise completion.CompletionError("GitHub API failed: 404")
         if "/actions/workflows/ci-pr.yml/runs?per_page=100&page=" in path:
-            return {"workflow_runs": [{"head_sha": prep_sha, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 42}]}]}
+            return {"workflow_runs": [{"head_sha": source_sha, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 42}]}]}
         if "/actions/workflows/label-gate.yml/runs?per_page=100&page=" in path:
-            return {"workflow_runs": [{"head_sha": "e" * 40, "status": "completed", "conclusion": "success", "created_at": "2026-01-02T00:00:00Z", "pull_requests": [{"number": 42, "head": {"sha": prep_sha}}]}]}
-        if path.endswith("/git/ref/tags/v0.1.1-rc.1"):
+            return {"workflow_runs": [{"event": "pull_request_target", "head_sha": source_sha, "status": "completed", "conclusion": "success", "created_at": "2026-01-02T00:00:00Z", "pull_requests": [{"number": 42, "head": {"sha": source_sha}}]}]}
+        if path.endswith("/git/ref/tags/v0.80.2"):
             raise completion.CompletionError("GitHub API failed: 404")
-        if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-rc.1"):
+        if path.endswith("/git/ref/tags/0.80.2"):
+            raise completion.CompletionError("GitHub API failed: 404")
+        if path.endswith("/git/ref/heads/release-reservation%2Fv0.80.2"):
             return {"object": {"sha": "f" * 40}}
         if path.endswith("/commits/" + "f" * 40):
             return {
-                "parents": [{"sha": covered_merge_sha}],
-                "commit": {"message": "Reserve release version v0.1.1-rc.1\n\nRelease-Reservation-Version: 0.1.1-rc.1\nRelease-Reservation-PR: 42\nRelease-Reservation-Source-SHA: " + covered_merge_sha + "\nRelease-Reservation-Identity-SHA: " + prep_sha + "\nRelease-Reservation-Intent: type:patch channel:rc\nRelease-Reservation-Mode: version-only-release-pr"},
+                "parents": [{"sha": version_only_completion_covered_sha}],
+                "commit": {"message": "Reserve release version v0.80.2\n\nRelease-Reservation-Version: 0.80.2\nRelease-Reservation-PR: 42\nRelease-Reservation-Source-SHA: " + version_only_completion_covered_sha + "\nRelease-Reservation-Identity-SHA: " + prep_sha + "\nRelease-Reservation-Intent: type:patch channel:stable\nRelease-Reservation-Mode: version-only-release-pr"},
             }
         if "/pulls?state=" in path:
             return []
@@ -1163,10 +1327,19 @@ try:
         page_calls.append(path)
         if path.endswith("page=1"):
             return {"workflow_runs": [{"pull_requests": []}] * 100}
-        return {"workflow_runs": [{"head_sha": source_sha, "pull_requests": [{"number": 42}]}]}
+        if "label-gate.yml" not in path:
+            return {"workflow_runs": [{"event": "pull_request", "head_sha": source_sha, "pull_requests": [{"number": 42}]}]}
+        return {"workflow_runs": [
+            {"event": "pull_request", "head_sha": source_sha, "pull_requests": [{"number": 42}]},
+            {"event": "pull_request_target", "head_sha": source_sha, "pull_requests": [{"number": 42}]},
+        ]}
 
     completion.api_json = fake_paged_runs
     assert len(completion.workflow_runs_for_pr("https://api.github.test", "token", "IvanLi-CN/dockrev", "ci-pr.yml", 42, source_sha)) == 1
+    assert len(completion.workflow_runs_for_pr(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", "label-gate.yml", 42, source_sha,
+        required_event="pull_request_target",
+    )) == 1
     assert page_calls[-1].endswith("page=2")
 finally:
     completion.api_json = original_completion_api_json
@@ -1727,7 +1900,7 @@ finally:
 
 version_only_merge_sha = "d" * 40
 version_only_release_head_sha = "e" * 40
-version_only_covered_merge_sha = "f" * 40
+version_only_covered_merge_sha = policy.APPROVED_BACKFILL_COVERED_MERGE_SHA
 version_only_covered_head_sha = "1" * 40
 version_only_moved_head_sha = "2" * 40
 version_only_reservation_sha = "3" * 40
@@ -1739,6 +1912,7 @@ try:
     recovery_identity_matches = True
     recovery_merge_files = [{"filename": "VERSION"}]
     recovery_merge_parents = [{"sha": "0" * 40}]
+    identity_parents = [{"sha": version_only_covered_head_sha}]
     covered_identity_state = {"kind": None, "after_initial_check": None, "reads": 0}
     reservation_ref_state = {"reads": 0, "rebound": False}
     version_only_publication_lock_sha = {}
@@ -1752,7 +1926,7 @@ try:
                 "merge_commit_sha": version_only_merge_sha,
                 "base": {"ref": "main"},
                 "head": {"sha": version_only_moved_head_sha},
-                "labels": [{"name": "type:patch"}, {"name": "channel:rc"}],
+                "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
             }]
         if path.endswith(f"/commits/{version_only_merge_sha}"):
             return {
@@ -1760,7 +1934,7 @@ try:
                 "files": recovery_merge_files,
                 "commit": {"message": "Merge version-only recovery", "tree": {"sha": version_only_merge_tree_sha}},
             }
-        if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-rc.1"):
+        if path.endswith("/git/ref/heads/release-reservation%2Fv0.80.2"):
             reservation_ref_state["reads"] += 1
             if reservation_ref_state["rebound"] and reservation_ref_state["reads"] > 1:
                 return {"object": {"sha": "4" * 40}}
@@ -1770,12 +1944,12 @@ try:
                 "parents": [{"sha": version_only_covered_merge_sha}],
                 "commit": {
                     "message": (
-                        "Reserve release version v0.1.1-rc.1\n\n"
-                        "Release-Reservation-Version: 0.1.1-rc.1\n"
+                        "Reserve release version v0.80.2\n\n"
+                        "Release-Reservation-Version: 0.80.2\n"
                         "Release-Reservation-PR: 43\n"
                         f"Release-Reservation-Source-SHA: {version_only_covered_merge_sha}\n"
                         f"Release-Reservation-Identity-SHA: {version_only_release_head_sha}\n"
-                        "Release-Reservation-Intent: type:patch channel:rc\n"
+                        "Release-Reservation-Intent: type:patch channel:stable\n"
                         "Release-Reservation-Mode: version-only-release-pr"
                     )
                 },
@@ -1784,15 +1958,15 @@ try:
             if recovery_identity_matches is None:
                 raise identity.IdentityError("GitHub API failed: 404")
             return {"object": {"sha": version_only_release_head_sha if recovery_identity_matches else "4" * 40}}
-        if path.endswith("/git/ref/heads/release-publication-lock%2Fv0.1.1-rc.1"):
-            if version_only_publication_lock_sha.get("0.1.1-rc.1") is not None:
-                return {"object": {"sha": version_only_publication_lock_sha["0.1.1-rc.1"]}}
+        if path.endswith("/git/ref/heads/release-publication-lock%2Fv0.80.2"):
+            if version_only_publication_lock_sha.get("0.80.2") is not None:
+                return {"object": {"sha": version_only_publication_lock_sha["0.80.2"]}}
             raise identity.IdentityError("GitHub API failed: 404")
-        if path.endswith("/git/ref/heads/release-publication-lock%2Fv0.1.1-beta.1"):
-            if version_only_publication_lock_sha.get("0.1.1-beta.1") is not None:
-                return {"object": {"sha": version_only_publication_lock_sha["0.1.1-beta.1"]}}
+        if path.endswith("/git/ref/heads/release-publication-lock%2Fv0.80.1"):
+            if version_only_publication_lock_sha.get("0.80.1") is not None:
+                return {"object": {"sha": version_only_publication_lock_sha["0.80.1"]}}
             raise identity.IdentityError("GitHub API failed: 404")
-        if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1-beta.1"):
+        if path.endswith("/git/ref/heads/release-reservation%2Fv0.80.1"):
             covered_identity_state["reads"] += 1
             covered_identity = covered_identity_state["kind"]
             if covered_identity is None and covered_identity_state["reads"] > 2:
@@ -1800,17 +1974,31 @@ try:
             if covered_identity == "reservation":
                 return {"object": {"sha": "5" * 40}}
             raise identity.IdentityError("GitHub API failed: 404")
-        if path.endswith("/git/ref/tags/v0.1.1-beta.1"):
+        if path.endswith("/commits/" + "5" * 40):
+            return {
+                "parents": [{"sha": version_only_covered_merge_sha}],
+                "commit": {
+                    "message": (
+                        "Reserve release version v0.80.1\n\n"
+                        "Release-Reservation-Version: 0.80.1\n"
+                        "Release-Reservation-PR: 41\n"
+                        f"Release-Reservation-Source-SHA: {version_only_covered_merge_sha}"
+                    )
+                },
+            }
+        if path.endswith("/git/ref/tags/v0.80.1"):
             covered_identity_state["reads"] += 1
             covered_identity = covered_identity_state["kind"]
             if covered_identity is None and covered_identity_state["reads"] > 2:
                 covered_identity = covered_identity_state["after_initial_check"]
             if covered_identity == "tag":
-                return {"object": {"sha": "5" * 40}}
+                return {"object": {"type": "commit", "sha": version_only_covered_merge_sha}}
+            raise identity.IdentityError("GitHub API failed: 404")
+        if path.endswith("/git/ref/tags/0.80.1"):
             raise identity.IdentityError("GitHub API failed: 404")
         if path.endswith(f"/commits/{version_only_release_head_sha}"):
             return {
-                "parents": [{"sha": version_only_covered_head_sha}],
+                "parents": identity_parents,
                 "files": [{"filename": "VERSION"}],
                 "commit": {
                     "verification": {"verified": True},
@@ -1818,9 +2006,9 @@ try:
                     "message": (
                         "VERSION-only release\n\n"
                         f"Covered-Product-Merge-SHA: {version_only_covered_merge_sha}\n"
-                        "Product-Version: 0.1.1-rc.1\n"
-                        "Release-Baseline-Version: 0.1.0\n"
-                        "Release-Intent: type:patch channel:rc\n"
+                        "Product-Version: 0.80.2\n"
+                        "Release-Baseline-Version: 0.80.1\n"
+                        "Release-Intent: type:patch channel:stable\n"
                         "Release-Mode: version-only-release-pr"
                     ),
                 },
@@ -1838,7 +2026,7 @@ try:
         if path.endswith("/pulls/43/files?per_page=100&page=1"):
             return [{"filename": "VERSION"}]
         if "/contents/VERSION?ref=" in path:
-            version = b"0.1.1-beta.1" if version_only_covered_merge_sha in path else b"0.1.1-rc.1"
+            version = b"0.80.1" if version_only_covered_merge_sha in path else b"0.80.2"
             encoded = __import__("base64").b64encode(version).decode()
             blob_sha = version_only_merge_blob_sha if version_only_merge_sha in path else version_only_identity_tree_sha
             return {"encoding": "base64", "content": encoded, "sha": blob_sha}
@@ -1850,9 +2038,21 @@ try:
     )
     assert resolved_version_only["release_mode"] == "version-only-release-pr"
     assert resolved_version_only["source_sha"] == version_only_covered_merge_sha
-    assert resolved_version_only["channel"] == "rc" and resolved_version_only["release_tag"] == "v0.1.1-rc.1"
+    assert resolved_version_only["channel"] == "stable" and resolved_version_only["release_tag"] == "v0.80.2"
     assert resolved_version_only["identity_ref_sha"] == version_only_release_head_sha
-    assert resolved_version_only["covered_product_version"] == "0.1.1-beta.1"
+    assert resolved_version_only["covered_product_version"] == "0.80.1"
+    identity_parents = [{"sha": version_only_covered_head_sha}, {"sha": "2" * 40}]
+    expect_error(
+        identity.resolve_github,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
+    )
+    identity_parents = [{"sha": version_only_covered_head_sha}]
+    version_only_covered_merge_sha = "b" * 40
+    expect_error(
+        identity.resolve_github,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
+    )
+    version_only_covered_merge_sha = policy.APPROVED_BACKFILL_COVERED_MERGE_SHA
     recovery_merge_parents = [{"sha": "0" * 40}, {"sha": "2" * 40}]
     version_only_merge_tree_sha = "8" * 40
     advanced_version_only = identity.resolve_github(
@@ -1862,14 +2062,14 @@ try:
     recovery_merge_parents = [{"sha": "0" * 40}]
     version_only_merge_tree_sha = version_only_identity_tree_sha
     version_only_publication_lock_sha = {
-        "0.1.1-rc.1": version_only_release_head_sha,
-        "0.1.1-beta.1": version_only_release_head_sha,
+        "0.80.2": version_only_release_head_sha,
+        "0.80.1": version_only_release_head_sha,
     }
     locked_version_only = identity.resolve_github(
         "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
     )
     assert locked_version_only["identity_ref_sha"] == version_only_release_head_sha
-    version_only_publication_lock_sha["0.1.1-beta.1"] = "4" * 40
+    version_only_publication_lock_sha["0.80.1"] = "4" * 40
     expect_error(
         identity.resolve_github,
         "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
@@ -2123,6 +2323,8 @@ def stale_lifecycle_response(path, error_type):
         return [stale_baseline_release]
     if path == "/repos/IvanLi-CN/dockrev/releases/tags/v0.10.0":
         return stale_baseline_release
+    if path == "/repos/IvanLi-CN/dockrev/releases/tags/0.10.0":
+        raise error_type("GitHub API failed: 404")
     if path == "/repos/IvanLi-CN/dockrev/git/ref/tags/v0.10.0":
         return {"object": {"type": "commit", "sha": stale_baseline_tag_sha}}
     if path == f"/repos/IvanLi-CN/dockrev/compare/{stale_baseline_tag_sha}...main":
@@ -2196,6 +2398,7 @@ def stale_lifecycle_response(path, error_type):
         return {"object": {"sha": stale_preparation_sha}}
     if path in {
         "/repos/IvanLi-CN/dockrev/git/ref/tags/v0.10.1",
+        "/repos/IvanLi-CN/dockrev/git/ref/tags/0.10.1",
         "/repos/IvanLi-CN/dockrev/git/ref/heads/release-publication-lock%2Fv0.10.1",
     }:
         raise error_type("GitHub API failed: 404")
@@ -2203,6 +2406,7 @@ def stale_lifecycle_response(path, error_type):
         return {
             "workflow_runs": [
                 {
+                    "event": "pull_request_target",
                     "head_sha": stale_source_sha,
                     "status": "completed",
                     "conclusion": "success",
@@ -2214,6 +2418,7 @@ def stale_lifecycle_response(path, error_type):
         return {
             "workflow_runs": [
                 {
+                    "event": "pull_request_target",
                     "head_sha": stale_source_sha,
                     "status": "completed",
                     "conclusion": "success",
@@ -2330,5 +2535,81 @@ finally:
     preparation_script.reserve_preparation_identity = original_stale_reserve_preparation_identity
     completion.api_json = original_stale_completion_api
     identity.api_json = original_stale_identity_api
+
+version_only_expected_head = "8" * 40
+version_only_identity_sha = "9" * 40
+version_only_covered_sha = "a" * 40
+version_only_intent = policy.parse_labels(["type:patch", "channel:stable"])
+original_preparation_graphql = preparation_script.graphql
+original_preparation_api_request = preparation_script.api_request
+try:
+    graphql_variables = {}
+
+    def fake_version_only_graphql(_api_root, _token, _query, variables):
+        graphql_variables.update(variables)
+        return {"createCommitOnBranch": {"commit": {"oid": version_only_identity_sha}}}
+
+    preparation_script.graphql = fake_version_only_graphql
+    assert preparation_script.create_version_only_commit(
+        "https://api.github.test",
+        "token",
+        "IvanLi-CN/dockrev",
+        "recovery/version-only",
+        version_only_expected_head,
+        version_only_covered_sha,
+        "0.80.2",
+        version_only_intent,
+        "2026-01-01T00:00:00Z",
+        "0.80.1",
+    ) == version_only_identity_sha
+    version_only_input = graphql_variables["input"]
+    assert version_only_input["expectedHeadOid"] == version_only_expected_head
+    assert version_only_input["fileChanges"]["additions"][0]["path"] == "VERSION"
+    assert version_only_input["message"]["body"] == (
+        "Prepare version-only release identity\n\n"
+        f"Covered-Product-Merge-SHA: {version_only_covered_sha}\n"
+        "Product-Version: 0.80.2\n"
+        "Release-Baseline-Version: 0.80.1\n"
+        "Release-Intent: type:patch channel:stable\n"
+        "Source-PR-Updated-At: 2026-01-01T00:00:00Z\n"
+        "Release-Mode: version-only-release-pr"
+    )
+
+    def fake_version_only_inspect_api(_api_root, _token, _method, path, _payload=None):
+        if path.endswith(f"/commits/{version_only_identity_sha}"):
+            return {
+                "parents": [{"sha": version_only_expected_head}],
+                "files": [{"filename": "VERSION"}],
+                "commit": {
+                    "verification": {"verified": True},
+                    "message": version_only_input["message"]["body"],
+                },
+            }
+        if path.endswith("/git/ref/heads/recovery%2Fversion-only"):
+            return {"object": {"sha": version_only_identity_sha}}
+        if "/contents/VERSION?ref=" in path:
+            return {"encoding": "base64", "content": "MC44MC4yCg==\n"}
+        raise AssertionError(f"unexpected version-only inspect API path: {path}")
+
+    preparation_script.api_request = fake_version_only_inspect_api
+    inspected_version_only = preparation_script.inspect_version_only_commit(
+        "https://api.github.test",
+        "token",
+        "IvanLi-CN/dockrev",
+        "recovery/version-only",
+        version_only_identity_sha,
+        version_only_expected_head,
+        version_only_covered_sha,
+        "0.80.2",
+        version_only_intent,
+        "2026-01-01T00:00:00Z",
+        "0.80.1",
+    )
+    assert inspected_version_only["parents"] == [version_only_expected_head]
+    assert inspected_version_only["changed_files"] == ["VERSION"]
+    assert inspected_version_only["release_mode"] == "version-only-release-pr"
+finally:
+    preparation_script.graphql = original_preparation_graphql
+    preparation_script.api_request = original_preparation_api_request
 
 print("PASS: PR label release fixtures")

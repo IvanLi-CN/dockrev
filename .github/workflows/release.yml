@@ -243,22 +243,30 @@ jobs:
           MERGE_SHA: ${{ steps.resolve.outputs.merge_sha }}
         run: |
           set -euo pipefail
-          path="repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}"
-          if existing="$(gh api "${path}" 2>/tmp/release-tag-error)"; then
-            owner_type="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"].get("type", ""))' <<<"${existing}")"
-            owner_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])' <<<"${existing}")"
-            if [[ "${owner_type}" == "tag" ]]; then
-              owner_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${owner_sha}" --jq .object.sha)"
+          version="${RELEASE_TAG#v}"
+          for tag in "${RELEASE_TAG}" "${version}"; do
+            path="repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}"
+            error_file="/tmp/release-tag-error-${tag}"
+            if existing="$(gh api "${path}" 2>"${error_file}")"; then
+              owner_type="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"].get("type", ""))' <<<"${existing}")"
+              owner_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])' <<<"${existing}")"
+              for _ in 1 2 3 4 5; do
+                [[ "${owner_type}" == "tag" ]] || break
+                annotated="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${owner_sha}")"
+                owner_type="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"].get("type", ""))' <<<"${annotated}")"
+                owner_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])' <<<"${annotated}")"
+              done
+              [[ "${owner_type}" == "commit" ]] || { echo "tag ${tag} does not resolve to a commit" >&2; exit 1; }
+              test "${owner_sha}" = "${MERGE_SHA}" || { echo "tag ${tag} belongs to ${owner_sha}" >&2; exit 1; }
+            else
+              status=$?
+              if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 404|Not Found|404' "${error_file}"; then
+                cat "${error_file}" >&2
+                exit "${status}"
+              fi
+              echo "tag ${tag} is available for ${MERGE_SHA}"
             fi
-            test "${owner_sha}" = "${MERGE_SHA}" || { echo "tag ${RELEASE_TAG} belongs to ${owner_sha}" >&2; exit 1; }
-          else
-            status=$?
-            if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 404|Not Found|404' /tmp/release-tag-error; then
-              cat /tmp/release-tag-error >&2
-              exit "${status}"
-            fi
-            echo "tag ${RELEASE_TAG} is available for ${MERGE_SHA}"
-          fi
+          done
 
       - name: Capture resolved identity step failure context
         id: capture_resolved
@@ -584,19 +592,33 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          if existing="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" 2>/tmp/release-tag-error)"; then
-            owner_type="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"].get("type", ""))' <<<"${existing}")"
-            owner_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])' <<<"${existing}")"
-            if [[ "${owner_type}" == "tag" ]]; then
-              owner_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${owner_sha}" --jq .object.sha)"
+          canonical_exists=false
+          version="${RELEASE_TAG#v}"
+          for tag in "${RELEASE_TAG}" "${version}"; do
+            path="repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}"
+            error_file="/tmp/release-tag-error-${tag}"
+            if existing="$(gh api "${path}" 2>"${error_file}")"; then
+              owner_type="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"].get("type", ""))' <<<"${existing}")"
+              owner_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])' <<<"${existing}")"
+              for _ in 1 2 3 4 5; do
+                [[ "${owner_type}" == "tag" ]] || break
+                annotated="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${owner_sha}")"
+                owner_type="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"].get("type", ""))' <<<"${annotated}")"
+                owner_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])' <<<"${annotated}")"
+              done
+              [[ "${owner_type}" == "commit" ]] || { echo "tag ${tag} does not resolve to a commit" >&2; exit 1; }
+              test "${owner_sha}" = "${MERGE_SHA}" || { echo "tag ${tag} belongs to ${owner_sha}" >&2; exit 1; }
+              [[ "${tag}" == "${RELEASE_TAG}" ]] && canonical_exists=true
+            else
+              status=$?
+              if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 404|Not Found|404' "${error_file}"; then
+                cat "${error_file}" >&2
+                exit "${status}"
+              fi
+              echo "tag ${tag} is available for ${MERGE_SHA}"
             fi
-            test "${owner_sha}" = "${MERGE_SHA}"
-          else
-            status=$?
-            if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 404|Not Found|404' /tmp/release-tag-error; then
-              cat /tmp/release-tag-error >&2
-              exit "${status}"
-            fi
+          done
+          if [[ "${canonical_exists}" != true ]]; then
             gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/tags/${RELEASE_TAG}" -f "sha=${MERGE_SHA}"
           fi
 

@@ -7,13 +7,18 @@ and `.github/quality-gates.json`; the offline validation entrypoint is
 
 ## Release identity
 
-The highest qualified final `vX.Y.Z` release is the numeric version baseline;
-when no final release qualifies, the baseline is `0.0.0`. A qualified final
-release is non-draft and non-prerelease, is created by the release automation
+The highest qualified final `X.Y.Z` release is the numeric version baseline;
+when no final release qualifies, the baseline is `0.0.0`. Both historical
+`X.Y.Z` tags and canonical `vX.Y.Z` tags are recognized for baseline lookup;
+future publication always uses `vX.Y.Z`. A qualified final release is
+non-draft and non-prerelease, is created by the release automation
 (`github-actions[bot]`), and has a tag that resolves to a commit reachable from
-`main`. The root `VERSION` file is the merged release identity and provenance,
-not a counter. Cargo manifest versions, environment variables, and commit order
-do not allocate a release version.
+`main`. Annotated tags may be nested by at most five tag-object hops; a sixth
+hop fails closed. If qualified tags for one version resolve to different
+commits, the baseline resolver fails closed. The root `VERSION` file is the
+merged release identity and provenance, not a counter. Cargo manifest
+versions, environment variables, and commit order do not allocate a release
+version.
 
 Every product PR targeting `main` must carry exactly one `type:*` label and one
 `channel:*` label. The supported values are:
@@ -34,7 +39,8 @@ that absence before accepting it.
 1. The source head must pass the complete `CI (PR)` workflow and `Label Gate`.
 2. `Release Preparation` reads the source `VERSION` only to verify the source
    identity and promotion lineage. Version allocation uses the highest
-   qualified final `vX.Y.Z` release as its numeric baseline (or `0.0.0` when
+   qualified final release across historical `X.Y.Z` and canonical
+   `vX.Y.Z` tags as its numeric baseline (or `0.0.0` when
    none qualifies); it never increments the source `VERSION`. A stable patch
    release uses the next patch after that final baseline. Major and minor use
    the next final major or minor base. Beta, RC, dev, and prerelease-to-stable
@@ -92,6 +98,31 @@ qualified baseline before accepting the version/channel pair. Tag ownership,
 failure context, notifier transport, and same-SHA recovery preserve that pair.
 A recovery never recomputes an RC or converts it into a stable version. RC is
 always a prerelease and never advances the stable `latest` surface.
+
+Automatic `Release Preparation` runs triggered by `CI (PR)` or `Label Gate`
+skip PRs whose head branch starts with `recovery/`. A maintainer must use the
+manual `version-only-release-pr` mode for such a PR; the preparation helper
+rejects that mode on any other branch prefix. This prevents a recovery PR from
+being mutated by normal preparation before its explicit covered merge and
+frozen baseline are verified. An interrupted version-only preparation can be
+retried in the same explicit mode: the helper reuses the signed identity's
+single source-parent commit and its bound source CI/Label Gate evidence. Label
+Gate evidence is accepted only from the trusted `pull_request_target` run;
+skipped or ordinary `pull_request` runs do not satisfy the release contract.
+
+For the current historical publication gap, the only approved backfill
+identity is covered merge `978207fe9d140d81e2d4a2a7bd24fb253a04ebff` (PR #391),
+product version `0.80.2`, frozen baseline `0.80.1`, and intent
+`type:patch channel:stable`. PR #390 is part of that product boundary and does
+not receive a separate identity. A maintainer prepares this identity by
+dispatching `Release Preparation` with
+`release_mode=version-only-release-pr`, the covered merge SHA, exact version,
+and baseline. The workflow requires an unchanged, empty version-only PR before
+it writes the signed `VERSION`-only commit with `createCommitOnBranch`.
+Reservation, recovery-ref, and publication-lock ownership must all bind the
+same identity SHA. This preparation only makes the PR merge-ready; this change
+does not create the `0.80.2` tag, GitHub Release, GHCR images, or recovery
+dispatch.
 
 FIFO queues, release trains, snapshot backfills, mutable label reconstruction,
 and historical tag repair are deliberately unsupported. A stale reservation
