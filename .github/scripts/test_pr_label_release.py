@@ -1186,6 +1186,7 @@ try:
         "Product-Version: 0.80.2\n"
         "Release-Baseline-Version: 0.80.1\n"
         "Release-Intent: type:patch channel:stable\n"
+        "Source-PR-Updated-At: 2026-01-01T00:00:00Z\n"
         "Release-Mode: version-only-release-pr"
     )
     recovery_identity_matches = True
@@ -1201,7 +1202,7 @@ try:
             }
         if path.endswith(f"/commits/{prep_sha}"):
             return {
-                "parents": [{"sha": version_only_completion_covered_sha}],
+                "parents": [{"sha": source_sha}],
                 "files": [{"filename": "VERSION"}],
                 "commit": {
                     "verification": {"verified": True},
@@ -1240,9 +1241,9 @@ try:
         if path.endswith("/git/ref/tags/0.80.1"):
             raise completion.CompletionError("GitHub API failed: 404")
         if "/actions/workflows/ci-pr.yml/runs?per_page=100&page=" in path:
-            return {"workflow_runs": [{"head_sha": prep_sha, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 42}]}]}
+            return {"workflow_runs": [{"head_sha": source_sha, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 42}]}]}
         if "/actions/workflows/label-gate.yml/runs?per_page=100&page=" in path:
-            return {"workflow_runs": [{"head_sha": "e" * 40, "status": "completed", "conclusion": "success", "created_at": "2026-01-02T00:00:00Z", "pull_requests": [{"number": 42, "head": {"sha": prep_sha}}]}]}
+            return {"workflow_runs": [{"head_sha": source_sha, "status": "completed", "conclusion": "success", "created_at": "2026-01-02T00:00:00Z", "pull_requests": [{"number": 42, "head": {"sha": source_sha}}]}]}
         if path.endswith("/git/ref/tags/v0.80.2"):
             raise completion.CompletionError("GitHub API failed: 404")
         if path.endswith("/git/ref/tags/0.80.2"):
@@ -2496,6 +2497,7 @@ try:
         version_only_covered_sha,
         "0.80.2",
         version_only_intent,
+        "2026-01-01T00:00:00Z",
         "0.80.1",
     ) == version_only_identity_sha
     version_only_input = graphql_variables["input"]
@@ -2507,6 +2509,7 @@ try:
         "Product-Version: 0.80.2\n"
         "Release-Baseline-Version: 0.80.1\n"
         "Release-Intent: type:patch channel:stable\n"
+        "Source-PR-Updated-At: 2026-01-01T00:00:00Z\n"
         "Release-Mode: version-only-release-pr"
     )
 
@@ -2537,6 +2540,7 @@ try:
         version_only_covered_sha,
         "0.80.2",
         version_only_intent,
+        "2026-01-01T00:00:00Z",
         "0.80.1",
     )
     assert inspected_version_only["parents"] == [version_only_expected_head]

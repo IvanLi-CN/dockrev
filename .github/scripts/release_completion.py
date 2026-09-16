@@ -489,6 +489,8 @@ def load_github_completion(
     preparation = None
     provenance = None
     covered_pr = None
+    source_check_sha = None
+    source_pr_updated_at = None
     commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{head_sha}")
     parents = [parent.get("sha") for parent in commit.get("parents", [])]
     files = sorted({entry.get("filename") for entry in commit.get("files", []) if entry.get("filename")})
@@ -548,6 +550,12 @@ def load_github_completion(
     elif mode == "version-only-release-pr":
         if trailers.get("Source-SHA"):
             raise CompletionError("version-only release identity cannot carry Source-SHA")
+        if len(parents) != 1 or not parents[0]:
+            raise CompletionError("version-only release identity must have one source parent")
+        source_check_sha = parents[0]
+        source_pr_updated_at = trailers.get("Source-PR-Updated-At", "")
+        if not source_pr_updated_at:
+            raise CompletionError("version-only release identity is missing source PR timestamp")
         covered_merge_sha = trailers.get("Covered-Product-Merge-SHA", "")
         baseline_version = trailers.get("Release-Baseline-Version", "")
         try:
@@ -584,6 +592,8 @@ def load_github_completion(
             "release_intent": trailers.get("Release-Intent", ""),
             "release_mode": mode,
             "branch_head_sha": head_sha,
+            "source_check_sha": source_check_sha,
+            "source_pr_updated_at": source_pr_updated_at,
             "verified": commit.get("commit", {}).get("verification", {}).get("verified") is True,
         }
         files = pull_request_changed_files(api_root, token, repository, pr_number)
@@ -597,16 +607,16 @@ def load_github_completion(
     except release_policy.PolicyError as error:
         raise CompletionError(str(error)) from error
     version_file = version_at_commit(api_root, token, repository, head_sha)
-    check_sha = head_sha if mode == "version-only-release-pr" else source_sha
+    check_sha = source_check_sha if mode == "version-only-release-pr" else source_sha
     check_pr_number = pr_number
     ci_runs = workflow_runs_for_pr(api_root, token, repository, "ci-pr.yml", check_pr_number)
-    gate_sha = source_sha if mode == "normal-preparation" else head_sha
+    gate_sha = source_check_sha if mode == "version-only-release-pr" else source_sha
     label_runs = workflow_runs_for_pr(api_root, token, repository, "label-gate.yml", pr_number, gate_sha)
     ci_run = next((run for run in ci_runs if run.get("head_sha") == check_sha), None)
     label_pr_updated_at = str(
         preparation.get("source_pr_updated_at", "")
         if mode == "normal-preparation"
-        else pr.get("updated_at", "")
+        else provenance.get("source_pr_updated_at", "")
     )
     if not label_pr_updated_at:
         raise CompletionError("PR metadata is missing updated_at for Label Gate binding")

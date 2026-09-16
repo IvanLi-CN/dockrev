@@ -761,6 +761,7 @@ def create_version_only_commit(
     covered_merge_sha: str,
     version: str,
     intent: dict[str, Any],
+    source_pr_updated_at: str,
     baseline_version: str,
 ) -> str:
     """Create the one immutable VERSION-only identity for a historical merge."""
@@ -780,6 +781,7 @@ def create_version_only_commit(
             f"Product-Version: {version}",
             f"Release-Baseline-Version: {baseline_version}",
             f"Release-Intent: {intent['type_label']} {intent['channel_label']}",
+            f"Source-PR-Updated-At: {source_pr_updated_at}",
             "Release-Mode: version-only-release-pr",
         ]
     )
@@ -812,6 +814,7 @@ def inspect_version_only_commit(
     covered_merge_sha: str,
     version: str,
     intent: dict[str, Any],
+    source_pr_updated_at: str,
     baseline_version: str,
 ) -> dict[str, Any]:
     owner, name = repository_parts(repository)
@@ -836,6 +839,7 @@ def inspect_version_only_commit(
         "Product-Version": version,
         "Release-Baseline-Version": baseline_version,
         "Release-Intent": f"{intent['type_label']} {intent['channel_label']}",
+        "Source-PR-Updated-At": source_pr_updated_at,
         "Release-Mode": "version-only-release-pr",
     }
     if any(trailers.get(key) != value for key, value in expected_trailers.items()):
@@ -961,7 +965,7 @@ def create_version_only(args: argparse.Namespace, pr: dict[str, Any], intent: di
         covered_product_version,
     ):
         raise PreparationError("covered product merge already has immutable release identity")
-    source_ci_ready(
+    source_pr_updated_at = source_ci_ready(
         args.api_root,
         args.token,
         args.repository,
@@ -980,6 +984,7 @@ def create_version_only(args: argparse.Namespace, pr: dict[str, Any], intent: di
         covered_merge_sha,
         exact_version,
         intent,
+        source_pr_updated_at,
         baseline_version,
     )
     preparation = inspect_version_only_commit(
@@ -992,6 +997,7 @@ def create_version_only(args: argparse.Namespace, pr: dict[str, Any], intent: di
         covered_merge_sha,
         exact_version,
         intent,
+        source_pr_updated_at,
         baseline_version,
     )
     reservation_sha = None
