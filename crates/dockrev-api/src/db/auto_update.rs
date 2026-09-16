@@ -178,24 +178,9 @@ ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
 
     pub async fn settle_auto_update_candidate(
         &self,
-        service_id: &str,
-        candidate_digest: &str,
-        status: &str,
-        resolved_version: Option<&str>,
-        reason: Option<&str>,
-        attempts: u32,
-        retry_at: Option<&str>,
-        settled_at: Option<&str>,
-        now: &str,
+        input: &AutoUpdateCandidateSettlementInput,
     ) -> anyhow::Result<Option<AutoUpdateCandidateRow>> {
-        let service_id = service_id.to_string();
-        let candidate_digest = candidate_digest.to_string();
-        let status = status.to_string();
-        let resolved_version = resolved_version.map(str::to_string);
-        let reason = reason.map(str::to_string);
-        let retry_at = retry_at.map(str::to_string);
-        let settled_at = settled_at.map(str::to_string);
-        let now = now.to_string();
+        let input = input.clone();
         self.call(move |conn| {
             let changed = conn.execute(
                 r#"
@@ -218,14 +203,24 @@ WHERE service_id = ?1 AND candidate_digest = ?2
     OR settled_at IS NOT ?8
   )
 "#,
-                params![service_id, candidate_digest, status, resolved_version, reason, attempts as i64, retry_at, settled_at, now],
+                params![
+                    input.service_id,
+                    input.candidate_digest,
+                    input.status,
+                    input.resolved_version,
+                    input.reason,
+                    input.attempts as i64,
+                    input.retry_at,
+                    input.settled_at,
+                    input.now,
+                ],
             )?;
             if changed == 0 {
                 return Ok(None);
             }
             Ok(conn.query_row(
                 &format!("SELECT {AUTO_UPDATE_CANDIDATE_COLUMNS} FROM auto_update_candidates WHERE service_id = ?1 AND candidate_digest = ?2"),
-                params![service_id, candidate_digest],
+                params![input.service_id, input.candidate_digest],
                 map_auto_update_candidate_row,
             )
             .optional()?)
@@ -996,17 +991,17 @@ mod tests {
         assert_eq!(first.id, second.id);
 
         let settled = db
-            .settle_auto_update_candidate(
-                "service",
-                "sha256:new",
-                "ready",
-                Some("1.4.0"),
-                Some("digest_bound_version"),
-                0,
-                None,
-                Some("2026-04-30T00:02:00Z"),
-                "2026-04-30T00:02:00Z",
-            )
+            .settle_auto_update_candidate(&AutoUpdateCandidateSettlementInput {
+                service_id: "service".to_string(),
+                candidate_digest: "sha256:new".to_string(),
+                status: "ready".to_string(),
+                resolved_version: Some("1.4.0".to_string()),
+                reason: Some("digest_bound_version".to_string()),
+                attempts: 0,
+                retry_at: None,
+                settled_at: Some("2026-04-30T00:02:00Z".to_string()),
+                now: "2026-04-30T00:02:00Z".to_string(),
+            })
             .await
             .unwrap()
             .expect("first settlement changes the row");
@@ -1014,17 +1009,17 @@ mod tests {
         assert_eq!(settled.resolved_version.as_deref(), Some("1.4.0"));
 
         let repeated = db
-            .settle_auto_update_candidate(
-                "service",
-                "sha256:new",
-                "ready",
-                Some("1.4.0"),
-                Some("digest_bound_version"),
-                0,
-                None,
-                Some("2026-04-30T00:02:00Z"),
-                "2026-04-30T00:03:00Z",
-            )
+            .settle_auto_update_candidate(&AutoUpdateCandidateSettlementInput {
+                service_id: "service".to_string(),
+                candidate_digest: "sha256:new".to_string(),
+                status: "ready".to_string(),
+                resolved_version: Some("1.4.0".to_string()),
+                reason: Some("digest_bound_version".to_string()),
+                attempts: 0,
+                retry_at: None,
+                settled_at: Some("2026-04-30T00:02:00Z".to_string()),
+                now: "2026-04-30T00:03:00Z".to_string(),
+            })
             .await
             .unwrap();
         assert!(repeated.is_none(), "repeated settlement must be a no-op");

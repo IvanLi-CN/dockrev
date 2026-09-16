@@ -17,8 +17,8 @@ use crate::{
         UpdateServiceTarget,
     },
     db::{
-        AutoUpdateCandidateInput, AutoUpdateCandidateRow, AutoUpdatePendingInput,
-        AutoUpdatePendingRow, NewVersionDiscoveryRow,
+        AutoUpdateCandidateInput, AutoUpdateCandidateRow, AutoUpdateCandidateSettlementInput,
+        AutoUpdatePendingInput, AutoUpdatePendingRow, NewVersionDiscoveryRow,
     },
     error::ApiError,
     ids, ignore, notify,
@@ -548,17 +548,17 @@ pub async fn reconcile_inference_for_digest(
             .flatten();
         let settled = state
             .db
-            .settle_auto_update_candidate(
-                &candidate.service_id,
-                &candidate.candidate_digest,
-                status,
-                resolved.as_deref(),
-                reason,
+            .settle_auto_update_candidate(&AutoUpdateCandidateSettlementInput {
+                service_id: candidate.service_id.clone(),
+                candidate_digest: candidate.candidate_digest.clone(),
+                status: status.to_string(),
+                resolved_version: resolved.clone(),
+                reason: reason.map(str::to_string),
                 attempts,
-                retry_at.as_deref(),
-                (resolved.is_some() || terminal).then_some(now),
-                now,
-            )
+                retry_at,
+                settled_at: (resolved.is_some() || terminal).then_some(now.to_string()),
+                now: now.to_string(),
+            })
             .await?;
         let Some(settled) = settled else { continue };
         state

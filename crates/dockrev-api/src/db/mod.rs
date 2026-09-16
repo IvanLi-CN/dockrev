@@ -311,6 +311,19 @@ pub struct AutoUpdateCandidateInput {
 }
 
 #[derive(Clone, Debug)]
+pub struct AutoUpdateCandidateSettlementInput {
+    pub service_id: String,
+    pub candidate_digest: String,
+    pub status: String,
+    pub resolved_version: Option<String>,
+    pub reason: Option<String>,
+    pub attempts: u32,
+    pub retry_at: Option<String>,
+    pub settled_at: Option<String>,
+    pub now: String,
+}
+
+#[derive(Clone, Debug)]
 pub struct AutoUpdateCandidateRow {
     pub id: String,
     pub stack_id: String,
