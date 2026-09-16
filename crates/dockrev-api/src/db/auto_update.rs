@@ -95,6 +95,8 @@ impl Db {
     ) -> anyhow::Result<AutoUpdateCandidateRow> {
         let input = input.clone();
         let now = now.to_string();
+        let settled_at =
+            matches!(input.status.as_str(), "ready" | "unresolved").then(|| now.clone());
         self.call(move |conn| {
             conn.execute(
                 r#"
@@ -102,8 +104,8 @@ INSERT INTO auto_update_candidates (
   id, stack_id, service_id, image_ref, raw_tag, candidate_digest,
   resolved_version, status, reason, attempts, retry_at, discovered_at,
   source_job_id, source, current_tag, current_display_tag, current_digest,
-  created_at, updated_at
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+  settled_at, created_at, updated_at
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
 ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
   stack_id = excluded.stack_id,
   image_ref = excluded.image_ref,
@@ -138,6 +140,7 @@ ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
   current_tag = excluded.current_tag,
   current_display_tag = excluded.current_display_tag,
   current_digest = excluded.current_digest,
+  settled_at = COALESCE(auto_update_candidates.settled_at, excluded.settled_at),
   updated_at = excluded.updated_at
 "#,
                 params![
@@ -158,6 +161,7 @@ ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
                     input.current_tag,
                     input.current_display_tag,
                     input.current_digest,
+                    settled_at,
                     now,
                     now,
                 ],
@@ -363,7 +367,7 @@ WHERE job_id = ?1
         self.call(move |conn| {
             let mut out = Vec::new();
             let mut stmt = conn.prepare(&format!(
-                "SELECT {AUTO_UPDATE_CANDIDATE_COLUMNS} FROM auto_update_candidates WHERE service_id = ?1 ORDER BY discovered_at DESC, id DESC LIMIT 1"
+                "SELECT {AUTO_UPDATE_CANDIDATE_COLUMNS} FROM auto_update_candidates WHERE service_id = ?1 AND EXISTS (SELECT 1 FROM services s WHERE s.id = auto_update_candidates.service_id AND s.candidate_digest = auto_update_candidates.candidate_digest) ORDER BY discovered_at DESC, id DESC LIMIT 1"
             ))?;
             for service_id in service_ids {
                 if let Ok(row) = stmt.query_row(params![service_id], map_auto_update_candidate_row) {
@@ -844,6 +848,60 @@ WHERE id = ?1 AND status = 'pending'
         .context("claim auto update pending")
     }
 
+    pub async fn try_claim_auto_update_pending_if_current(
+        &self,
+        pending_id: &str,
+        service_id: &str,
+        candidate_digest: &str,
+        policy_scope_type: &str,
+        policy_scope_id: &str,
+        rule_id: &str,
+        now: &str,
+    ) -> anyhow::Result<bool> {
+        let pending_id = pending_id.to_string();
+        let service_id = service_id.to_string();
+        let candidate_digest = candidate_digest.to_string();
+        let policy_scope_type = policy_scope_type.to_string();
+        let policy_scope_id = policy_scope_id.to_string();
+        let rule_id = rule_id.to_string();
+        let now = now.to_string();
+        self.call(move |conn| {
+            Ok(conn.execute(
+                r#"
+UPDATE auto_update_pending
+SET status = 'enqueuing', updated_at = ?7
+WHERE id = ?1
+  AND status = 'pending'
+  AND service_id = ?2
+  AND candidate_digest = ?3
+  AND policy_scope_type = ?4
+  AND policy_scope_id = ?5
+  AND rule_id = ?6
+  AND EXISTS (
+    SELECT 1
+    FROM auto_update_candidates c
+    WHERE c.service_id = ?2
+      AND c.candidate_digest = ?3
+      AND c.status <> 'superseded'
+      AND c.policy_status = 'delayed'
+      AND c.policy_rule_id = ?6
+  )
+"#,
+                params![
+                    pending_id,
+                    service_id,
+                    candidate_digest,
+                    policy_scope_type,
+                    policy_scope_id,
+                    rule_id,
+                    now
+                ],
+            )? > 0)
+        })
+        .await
+        .context("claim current auto update pending")
+    }
+
     pub async fn mark_auto_update_pending_enqueued(
         &self,
         pending_id: &str,
@@ -1005,60 +1063,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn candidate_settlement_is_unique_and_idempotent() {
-        let db = Db::open(Path::new(":memory:")).await.unwrap();
-        let input = candidate_input(
-            "candidate-1",
-            "sha256:new",
-            "awaiting_inference",
-            "2026-04-30T00:00:00Z",
-        );
-        let first = db
-            .upsert_auto_update_candidate(&input, "2026-04-30T00:00:00Z")
-            .await
-            .unwrap();
-        let second = db
-            .upsert_auto_update_candidate(&input, "2026-04-30T00:01:00Z")
-            .await
-            .unwrap();
-        assert_eq!(first.id, second.id);
-
-        let settled = db
-            .settle_auto_update_candidate(&AutoUpdateCandidateSettlementInput {
-                service_id: "service".to_string(),
-                candidate_digest: "sha256:new".to_string(),
-                status: "ready".to_string(),
-                resolved_version: Some("1.4.0".to_string()),
-                reason: Some("digest_bound_version".to_string()),
-                attempts: 0,
-                retry_at: None,
-                settled_at: Some("2026-04-30T00:02:00Z".to_string()),
-                now: "2026-04-30T00:02:00Z".to_string(),
-            })
-            .await
-            .unwrap()
-            .expect("first settlement changes the row");
-        assert_eq!(settled.status, "ready");
-        assert_eq!(settled.resolved_version.as_deref(), Some("1.4.0"));
-
-        let repeated = db
-            .settle_auto_update_candidate(&AutoUpdateCandidateSettlementInput {
-                service_id: "service".to_string(),
-                candidate_digest: "sha256:new".to_string(),
-                status: "ready".to_string(),
-                resolved_version: Some("1.4.0".to_string()),
-                reason: Some("digest_bound_version".to_string()),
-                attempts: 0,
-                retry_at: None,
-                settled_at: Some("2026-04-30T00:02:00Z".to_string()),
-                now: "2026-04-30T00:03:00Z".to_string(),
-            })
-            .await
-            .unwrap();
-        assert!(repeated.is_none(), "repeated settlement must be a no-op");
-    }
-
-    #[tokio::test]
     async fn stale_inference_settlement_cannot_regress_ready_candidate() {
         let db = Db::open(Path::new(":memory:")).await.unwrap();
         db.upsert_auto_update_candidate(
@@ -1207,76 +1211,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn lists_only_enqueued_auto_policy_jobs_for_recovery() {
-        let db = Db::open(Path::new(":memory:")).await.unwrap();
-        let pending = db
-            .reserve_auto_update_pending(
-                &AutoUpdatePendingInput {
-                    id: "pending-recovery".to_string(),
-                    policy_scope_type: "stack".to_string(),
-                    policy_scope_id: "stack".to_string(),
-                    rule_id: "rule".to_string(),
-                    stack_id: "stack".to_string(),
-                    service_id: "service".to_string(),
-                    source_check_job_id: "check".to_string(),
-                    candidate_tag: "latest".to_string(),
-                    candidate_display_tag: "1.4.0".to_string(),
-                    candidate_digest: "sha256:recovery".to_string(),
-                    current_display_tag: "1.0.0".to_string(),
-                    first_seen_at: "2026-04-30T00:00:00Z".to_string(),
-                    due_at: "2026-04-30T00:00:00Z".to_string(),
-                    min_age_seconds: 0,
-                    min_version_lag: 0,
-                    summary_json: serde_json::json!({}),
-                    candidate_id: None,
-                },
-                "2026-04-30T00:00:00Z",
-            )
-            .await
-            .unwrap();
-        assert!(
-            db.try_claim_auto_update_pending(&pending.id, "2026-04-30T00:00:01Z")
-                .await
-                .unwrap()
-        );
-        db.insert_job(crate::api::types::JobListItem {
-            id: "recovery-job".to_string(),
-            r#type: crate::api::types::JobType::Update,
-            scope: crate::api::types::JobScope::Service,
-            stack_id: Some("stack".to_string()),
-            service_id: Some("service".to_string()),
-            status: "queued".to_string(),
-            created_by: "auto-policy".to_string(),
-            reason: "auto_policy".to_string(),
-            created_at: "2026-04-30T00:00:02Z".to_string(),
-            started_at: None,
-            finished_at: None,
-            allow_arch_mismatch: false,
-            backup_mode: "inherit".to_string(),
-            summary_json: serde_json::json!({
-                "mode": "apply",
-                "targets": []
-            }),
-        })
-        .await
-        .unwrap();
-        assert!(
-            db.mark_auto_update_pending_enqueued(
-                &pending.id,
-                "recovery-job",
-                "2026-04-30T00:00:03Z",
-            )
-            .await
-            .unwrap()
-        );
-
-        let jobs = db.list_enqueued_auto_update_jobs(10).await.unwrap();
-        assert_eq!(
-            jobs.iter().map(|job| job.id.as_str()).collect::<Vec<_>>(),
-            ["recovery-job"]
-        );
-    }
+    include!("auto_update_recovery_tests.rs");
 
     #[tokio::test]
     async fn newer_candidate_supersedes_old_candidate_and_pending_action() {

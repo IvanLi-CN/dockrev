@@ -1,4 +1,118 @@
 impl Db {
+    pub async fn reopen_auto_update_pending_for_recovered_jobs(
+        &self,
+        job_ids: &[String],
+        now: &str,
+    ) -> anyhow::Result<usize> {
+        if job_ids.is_empty() {
+            return Ok(0);
+        }
+        let job_ids = job_ids.to_vec();
+        let now = now.to_string();
+        self.call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let mut reopened = 0;
+            for job_id in &job_ids {
+                tx.execute(
+                    r#"
+UPDATE auto_update_candidates
+SET policy_status = 'delayed',
+    policy_reason = 'update_job_recovered',
+    policy_evaluated_at = ?2,
+    updated_at = ?2
+WHERE status <> 'superseded'
+  AND EXISTS (
+    SELECT 1
+    FROM auto_update_pending p
+    WHERE p.update_job_id = ?1
+      AND p.status = 'enqueued'
+      AND p.service_id = auto_update_candidates.service_id
+      AND p.candidate_digest = auto_update_candidates.candidate_digest
+  )
+"#,
+                    params![job_id, now],
+                )?;
+                reopened += tx.execute(
+                    r#"
+UPDATE auto_update_pending
+SET status = 'pending', update_job_id = NULL, updated_at = ?2
+WHERE update_job_id = ?1
+  AND status = 'enqueued'
+  AND EXISTS (SELECT 1 FROM jobs j WHERE j.id = ?1 AND j.status = 'failed')
+"#,
+                    params![job_id, now],
+                )?;
+            }
+            tx.commit()?;
+            Ok(reopened)
+        })
+        .await
+        .context("reopen auto update pending after job recovery")
+    }
+
+    pub async fn fail_corrupt_auto_update_job(
+        &self,
+        job_id: &str,
+        now: &str,
+        reason: &str,
+    ) -> anyhow::Result<bool> {
+        let job_id = job_id.to_string();
+        let now = now.to_string();
+        let reason = reason.to_string();
+        self.call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let changed = tx.execute(
+                r#"
+UPDATE jobs
+SET status = 'failed',
+    finished_at = ?2,
+    summary_json = CASE
+      WHEN json_valid(summary_json) THEN json_set(summary_json, '$.recoveryError', ?3, '$.recoveredAt', ?2)
+      ELSE json_object('recoveryError', ?3, 'recoveredAt', ?2)
+    END
+WHERE id = ?1 AND status = 'queued' AND created_by = 'auto-policy'
+"#,
+                params![job_id, now, reason],
+            )?;
+            if changed > 0 {
+                tx.execute(
+                    r#"
+UPDATE auto_update_pending
+SET status = 'skipped',
+    summary_json = CASE
+      WHEN json_valid(summary_json) THEN json_set(summary_json, '$.skipReason', ?2, '$.skippedAt', ?3)
+      ELSE json_object('skipReason', ?2, 'skippedAt', ?3)
+    END,
+    updated_at = ?3
+WHERE update_job_id = ?1 AND status = 'enqueued'
+"#,
+                    params![job_id, reason, now],
+                )?;
+                tx.execute(
+                    r#"
+UPDATE auto_update_candidates
+SET policy_status = 'failed',
+    policy_reason = ?2,
+    policy_evaluated_at = ?3,
+    updated_at = ?3
+WHERE status <> 'superseded'
+  AND EXISTS (
+    SELECT 1 FROM auto_update_pending p
+    WHERE p.update_job_id = ?1
+      AND p.service_id = auto_update_candidates.service_id
+      AND p.candidate_digest = auto_update_candidates.candidate_digest
+  )
+"#,
+                    params![job_id, reason, now],
+                )?;
+            }
+            tx.commit()?;
+            Ok(changed > 0)
+        })
+        .await
+        .context("fail corrupt auto update job")
+    }
+
     pub async fn list_enqueued_auto_update_jobs(
         &self,
         limit: usize,

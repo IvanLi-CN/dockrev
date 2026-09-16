@@ -459,6 +459,14 @@ async fn recover_enqueued_auto_update_jobs(
         let request = match update_request_from_job(&job) {
             Ok(request) => request,
             Err(error) => {
+                state
+                    .db
+                    .fail_corrupt_auto_update_job(
+                        &job.id,
+                        now,
+                        &format!("invalid_job_summary: {error}"),
+                    )
+                    .await?;
                 tracing::warn!(job_id = %job.id, error = %error, "auto policy update job recovery skipped invalid job summary");
                 continue;
             }
@@ -748,7 +756,7 @@ pub async fn reevaluate_service_policy(
         return Ok(());
     }
     match candidate.status.as_str() {
-        "ready" => {
+        "ready" | "awaiting_inference" | "unresolved" => {
             evaluate_candidate(
                 state,
                 &candidate.source_job_id,
@@ -758,32 +766,6 @@ pub async fn reevaluate_service_policy(
                 Some(&candidate.source),
             )
             .await?;
-        }
-        "awaiting_inference" => {
-            state
-                .db
-                .set_auto_update_candidate_policy(
-                    service_id,
-                    &candidate.candidate_digest,
-                    "waiting_inference",
-                    Some("version_inference_pending"),
-                    None,
-                    now,
-                )
-                .await?;
-        }
-        "unresolved" => {
-            state
-                .db
-                .set_auto_update_candidate_policy(
-                    service_id,
-                    &candidate.candidate_digest,
-                    "skipped",
-                    Some("version_unresolved"),
-                    None,
-                    now,
-                )
-                .await?;
         }
         _ => {}
     }
@@ -1004,7 +986,15 @@ async fn enqueue_pending(
 
     if !state
         .db
-        .try_claim_auto_update_pending(&pending.id, now)
+        .try_claim_auto_update_pending_if_current(
+            &pending.id,
+            &pending.service_id,
+            &pending.candidate_digest,
+            &pending.policy_scope_type,
+            &pending.policy_scope_id,
+            &pending.rule_id,
+            now,
+        )
         .await?
     {
         return Ok(None);

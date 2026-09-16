@@ -299,6 +299,10 @@ async fn main() -> anyhow::Result<()> {
             "recovered incomplete jobs on startup"
         );
         backup::recover_interrupted_backups(state.as_ref(), &recovered).await?;
+        state
+            .db
+            .reopen_auto_update_pending_for_recovered_jobs(&recovered, &now)
+            .await?;
     }
     let evidence_db = state.db.clone();
     let evidence_db_path = state.config.db_path.clone();
