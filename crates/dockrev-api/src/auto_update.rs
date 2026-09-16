@@ -426,10 +426,21 @@ fn update_request_from_job(job: &api::types::JobListItem) -> anyhow::Result<Trig
         .summary_json
         .get("targets")
         .cloned()
-        .map(serde_json::from_value::<Option<Vec<UpdateServiceTarget>>>)
-        .transpose()
-        .context("parse auto policy update targets")?
-        .flatten();
+        .ok_or_else(|| anyhow::anyhow!("auto policy update job is missing targets"))
+        .and_then(|value| {
+            serde_json::from_value::<Vec<UpdateServiceTarget>>(value)
+                .context("parse auto policy update targets")
+        })?;
+    if targets.is_empty() {
+        anyhow::bail!("auto policy update job has no targets");
+    }
+    for target in &targets {
+        if target.service_id.trim().is_empty()
+            || api::normalize_digest_for_compare(&target.target_digest).is_none()
+        {
+            anyhow::bail!("auto policy update job has an invalid target");
+        }
+    }
     let backup_mode =
         serde_json::from_value::<BackupMode>(serde_json::Value::String(job.backup_mode.clone()))
             .context("parse auto policy update backup mode")?;
@@ -440,7 +451,7 @@ fn update_request_from_job(job: &api::types::JobListItem) -> anyhow::Result<Trig
         target_tag: None,
         target_digest: None,
         pull_tags: None,
-        targets,
+        targets: Some(targets),
         mode,
         allow_arch_mismatch: job.allow_arch_mismatch,
         backup_mode,

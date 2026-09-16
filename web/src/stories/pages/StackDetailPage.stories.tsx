@@ -77,6 +77,10 @@ export const PolicyEnabled: Story = {
       "stack policy version lag label missing",
     );
     expectStory(
+      canvasElement.textContent?.includes("等待版本证据"),
+      "stack service policy projection missing",
+    );
+    expectStory(
       canvasElement.textContent?.includes("最近更新记录"),
       "stack recent update records missing",
     );

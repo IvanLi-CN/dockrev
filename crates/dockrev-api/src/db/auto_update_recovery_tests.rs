@@ -337,3 +337,125 @@ async fn corrupt_auto_policy_job_is_terminally_skipped() {
         Some("failed")
     );
 }
+
+#[tokio::test]
+async fn pending_claim_rejects_a_service_candidate_that_changed_after_preflight() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    db.call(|conn| {
+        conn.execute(
+            "INSERT INTO stacks (id, name, compose_type, compose_files_json, backup_targets_json, backup_retention_keep_last, backup_retention_delete_after_stable_seconds, created_at, updated_at, last_check_at) VALUES ('stack', 'stack', 'path', '[]', '[]', 0, 0, '2026-04-30', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:new', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    db.upsert_auto_update_candidate(
+        &candidate_input(
+            "candidate-claim",
+            "sha256:old",
+            "ready",
+            "2026-04-30T00:00:00Z",
+        ),
+        "2026-04-30T00:00:00Z",
+    )
+    .await
+    .unwrap();
+    db.set_auto_update_candidate_policy(
+        "service",
+        "sha256:old",
+        "delayed",
+        Some("policy_matched"),
+        Some("rule"),
+        "2026-04-30T00:00:01Z",
+    )
+    .await
+    .unwrap();
+    let pending = db
+        .reserve_auto_update_pending(
+            &AutoUpdatePendingInput {
+                id: "pending-claim".to_string(),
+                policy_scope_type: "stack".to_string(),
+                policy_scope_id: "stack".to_string(),
+                rule_id: "rule".to_string(),
+                stack_id: "stack".to_string(),
+                service_id: "service".to_string(),
+                source_check_job_id: "check".to_string(),
+                candidate_tag: "latest".to_string(),
+                candidate_display_tag: "1.4.0".to_string(),
+                candidate_digest: "sha256:old".to_string(),
+                current_display_tag: "1.0.0".to_string(),
+                first_seen_at: "2026-04-30T00:00:00Z".to_string(),
+                due_at: "2026-04-30T00:00:00Z".to_string(),
+                min_age_seconds: 0,
+                min_version_lag: 0,
+                summary_json: serde_json::json!({}),
+                candidate_id: Some("service:sha256:old".to_string()),
+            },
+            "2026-04-30T00:00:02Z",
+        )
+        .await
+        .unwrap();
+    assert!(!db
+        .try_claim_auto_update_pending_if_current(
+            &pending.id,
+            "service",
+            "sha256:old",
+            "stack",
+            "stack",
+            "rule",
+            "2026-04-30T00:00:03Z",
+        )
+        .await
+        .unwrap());
+}
+
+#[tokio::test]
+async fn completed_candidate_remains_visible_after_service_candidate_is_cleared() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    db.call(|conn| {
+        conn.execute(
+            "INSERT INTO stacks (id, name, compose_type, compose_files_json, backup_targets_json, backup_retention_keep_last, backup_retention_delete_after_stable_seconds, created_at, updated_at, last_check_at) VALUES ('stack', 'stack', 'path', '[]', '[]', 0, 0, '2026-04-30', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:completed', NULL, 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    db.upsert_auto_update_candidate(
+        &candidate_input(
+            "candidate-completed",
+            "sha256:completed",
+            "ready",
+            "2026-04-30T00:00:00Z",
+        ),
+        "2026-04-30T00:00:00Z",
+    )
+    .await
+    .unwrap();
+    db.set_auto_update_candidate_policy(
+        "service",
+        "sha256:completed",
+        "completed",
+        Some("update_job_completed"),
+        Some("rule"),
+        "2026-04-30T00:01:00Z",
+    )
+    .await
+    .unwrap();
+
+    let rows = db
+        .list_latest_auto_update_candidates(&["service".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].policy_status.as_deref(), Some("completed"));
+}

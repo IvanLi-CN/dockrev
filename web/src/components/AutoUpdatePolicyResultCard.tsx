@@ -1,4 +1,4 @@
-import type { AutoUpdatePolicy } from '../api'
+import type { AutoUpdatePolicy, CandidateSettlement } from '../api'
 import { Button, Mono, Pill } from '../ui'
 import {
   activeAutoUpdateRules,
@@ -49,7 +49,7 @@ function policyResult(props: {
   }
 }
 
-function policyActionLabel(status: string): string {
+export function policyActionLabel(status: string): string {
   switch (status) {
     case 'waiting_inference': return '等待版本证据'
     case 'rule_not_matched': return '规则未命中'
@@ -64,6 +64,39 @@ function policyActionLabel(status: string): string {
   }
 }
 
+export function policyActionTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' | 'info' {
+  switch (status) {
+    case 'delayed':
+      return 'warn'
+    case 'failed':
+    case 'unresolved':
+      return 'bad'
+    case 'queued':
+    case 'running':
+    case 'waiting_inference':
+      return 'info'
+    case 'completed':
+      return 'ok'
+    default:
+      return 'muted'
+  }
+}
+
+const settlementReasonLabels: Record<string, string> = {
+  digest_bound_version: 'digest 已绑定版本',
+  version_inference_pending: '等待版本证据',
+  version_inference_unresolved: '版本证据无法解析',
+}
+
+export function candidateSettlementDetail(settlement: CandidateSettlement): string {
+  const details = [
+    settlementReasonLabels[settlement.reason ?? ''] ?? settlement.reason,
+    settlement.attempts > 0 ? `尝试 ${settlement.attempts} 次` : null,
+    settlement.retryAt ? `下次重试 ${settlement.retryAt}` : null,
+  ].filter(Boolean)
+  return details.length > 0 ? details.join(' · ') : '无需继续推断'
+}
+
 export function AutoUpdatePolicyResultCard(props: {
   busy?: boolean
   onOpenSettings: () => void
@@ -71,6 +104,7 @@ export function AutoUpdatePolicyResultCard(props: {
   scope: 'service' | 'stack'
   stackPolicy?: AutoUpdatePolicy | null
   projection?: { policyStatus: string; reason?: string | null; ruleId?: string | null; evaluatedAt?: string | null } | null
+  candidateSettlement?: CandidateSettlement | null
 }) {
   const result = policyResult(props)
   const rules = activeAutoUpdateRules(result.effectivePolicy)
@@ -113,8 +147,18 @@ export function AutoUpdatePolicyResultCard(props: {
         {props.projection ? (
           <div className="autoPolicyFactCell">
             <span className="label autoPolicyFactLabel">策略动作</span>
-            <span className="autoPolicyFactValue" title={props.projection.reason ?? undefined}>
+            <span className="autoPolicyFactValue">
               <Mono>{policyActionLabel(props.projection.policyStatus)}</Mono>
+              {props.projection.reason ? <span>{props.projection.reason}</span> : null}
+            </span>
+          </div>
+        ) : null}
+        {props.candidateSettlement ? (
+          <div className="autoPolicyFactCell" data-auto-policy-evidence="candidate-settlement">
+            <span className="label autoPolicyFactLabel">候选证据</span>
+            <span className="autoPolicyFactValue">
+              <Mono>{props.candidateSettlement.status}</Mono>
+              <span>{candidateSettlementDetail(props.candidateSettlement)}</span>
             </span>
           </div>
         ) : null}

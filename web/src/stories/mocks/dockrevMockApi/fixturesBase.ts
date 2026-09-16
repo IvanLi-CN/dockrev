@@ -53,6 +53,22 @@ export function buildDashboardDemo(): Fixture {
     lifecycleState: 'running',
     image: { ref: 'ghcr.io/acme/api:5.2.1', tag: '5.2.1', digest: d('a', 'b1') },
     candidate: { tag: '5.2.3', digest: d('b', '9f'), archMatch: 'match', arch: ['linux/amd64'] },
+    candidateSettlement: {
+      status: 'awaiting_inference',
+      rawTag: 'latest',
+      candidateDigest: d('b', '9f'),
+      resolvedVersion: null,
+      reason: 'version_inference_pending',
+      attempts: 1,
+      retryAt: '2026-09-16T10:05:00Z',
+      discoveredAt: '2026-09-16T10:00:00Z',
+    },
+    autoUpdate: {
+      policyStatus: 'waiting_inference',
+      reason: 'latest 尚未获得 digest 绑定的版本证据',
+      ruleId: 'stable-semver',
+      evaluatedAt: '2026-09-16T10:00:00Z',
+    },
     ignore: null,
     homepage: {
       group: 'Developer',

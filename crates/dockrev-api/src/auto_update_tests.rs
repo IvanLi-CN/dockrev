@@ -137,6 +137,37 @@ fn update_request_can_be_rebuilt_from_a_persisted_auto_policy_job() {
 }
 
 #[test]
+fn persisted_auto_policy_job_requires_explicit_valid_targets() {
+    let mut job = api::types::JobListItem {
+        id: "job".to_string(),
+        r#type: api::types::JobType::Update,
+        scope: JobScope::Service,
+        stack_id: Some("stack".to_string()),
+        service_id: Some("service".to_string()),
+        status: "queued".to_string(),
+        created_by: "auto-policy".to_string(),
+        reason: "auto_policy".to_string(),
+        created_at: "2026-04-30T00:00:00Z".to_string(),
+        started_at: None,
+        finished_at: None,
+        allow_arch_mismatch: false,
+        backup_mode: "inherit".to_string(),
+        summary_json: json!({ "mode": "apply" }),
+    };
+    assert!(update_request_from_job(&job).is_err());
+
+    job.summary_json["targets"] = json!([]);
+    assert!(update_request_from_job(&job).is_err());
+
+    job.summary_json["targets"] = json!([{
+        "serviceId": "service",
+        "targetTag": "latest",
+        "targetDigest": ""
+    }]);
+    assert!(update_request_from_job(&job).is_err());
+}
+
+#[test]
 fn digest_snapshot_resolution_uses_the_highest_bound_semver_tag() {
     let snapshot = crate::api::types::ServiceDigestTagsSnapshotResponse {
         digest: "sha256:new".to_string(),

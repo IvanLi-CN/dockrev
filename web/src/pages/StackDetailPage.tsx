@@ -16,7 +16,7 @@ import {
 } from '../api'
 import { createDefaultAutoUpdatePolicy } from '../components/AutoUpdatePolicyEditor'
 import { AutoUpdatePolicyDrawer } from '../components/AutoUpdatePolicyDrawer'
-import { AutoUpdatePolicyResultCard } from '../components/AutoUpdatePolicyResultCard'
+import { AutoUpdatePolicyResultCard, policyActionLabel, policyActionTone } from '../components/AutoUpdatePolicyResultCard'
 import { RecentUpdateRecords, selectRecentStackUpdateJobs } from '../components/RecentUpdateRecords'
 import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
 import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
@@ -654,7 +654,9 @@ export function StackDetailPage(props: {
                   <div className="stackServiceName mono">{service.name}</div>
                   <div className="stackServiceRef muted">{service.image.ref}</div>
                 </div>
-                <Pill tone={statusTone(status)}>{statusLabel(status)}</Pill>
+                <Pill tone={service.autoUpdate ? policyActionTone(service.autoUpdate.policyStatus) : statusTone(status)}>
+                  {service.autoUpdate ? policyActionLabel(service.autoUpdate.policyStatus) : statusLabel(status)}
+                </Pill>
                 <Button onClick={() => navigate({ name: 'service', stackId: stack.id, serviceId: service.id })}>
                   详情
                 </Button>

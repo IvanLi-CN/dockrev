@@ -367,7 +367,7 @@ WHERE job_id = ?1
         self.call(move |conn| {
             let mut out = Vec::new();
             let mut stmt = conn.prepare(&format!(
-                "SELECT {AUTO_UPDATE_CANDIDATE_COLUMNS} FROM auto_update_candidates WHERE service_id = ?1 AND EXISTS (SELECT 1 FROM services s WHERE s.id = auto_update_candidates.service_id AND s.candidate_digest = auto_update_candidates.candidate_digest) ORDER BY discovered_at DESC, id DESC LIMIT 1"
+                "SELECT c.id, c.stack_id, c.service_id, c.image_ref, c.raw_tag, c.candidate_digest, c.resolved_version, c.status, c.reason, c.attempts, c.retry_at, c.discovered_at, c.source_job_id, c.source, c.current_tag, c.current_display_tag, c.current_digest, c.settled_at, c.created_at, c.updated_at, c.policy_status, c.policy_reason, c.policy_rule_id, c.policy_evaluated_at FROM auto_update_candidates c JOIN services s ON s.id = c.service_id WHERE c.service_id = ?1 AND (s.candidate_digest = c.candidate_digest OR (s.candidate_digest IS NULL AND c.policy_status = 'completed' AND s.current_digest = c.candidate_digest)) ORDER BY c.discovered_at DESC, c.id DESC LIMIT 1"
             ))?;
             for service_id in service_ids {
                 if let Ok(row) = stmt.query_row(params![service_id], map_auto_update_candidate_row) {
@@ -885,6 +885,12 @@ WHERE id = ?1
       AND c.status <> 'superseded'
       AND c.policy_status = 'delayed'
       AND c.policy_rule_id = ?6
+  )
+  AND EXISTS (
+    SELECT 1
+    FROM services s
+    WHERE s.id = ?2
+      AND s.candidate_digest = ?3
   )
 "#,
                 params![

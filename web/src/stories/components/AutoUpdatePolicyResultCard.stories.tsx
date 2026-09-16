@@ -64,6 +64,29 @@ function renderCard(status: ProjectionStatus) {
         evaluatedAt: '2026-09-16T10:00:00Z',
       }}
       scope="stack"
+      candidateSettlement={
+        status === 'waiting_inference'
+          ? {
+              status: 'awaiting_inference',
+              rawTag: 'latest',
+              candidateDigest: 'sha256:awaiting',
+              reason: 'version_inference_pending',
+              attempts: 1,
+              retryAt: '2026-09-16T10:05:00Z',
+              discoveredAt: '2026-09-16T10:00:00Z',
+            }
+          : status === 'unresolved'
+            ? {
+                status: 'unresolved',
+                rawTag: 'latest',
+                candidateDigest: 'sha256:unresolved',
+                reason: 'version_inference_unresolved',
+                attempts: 3,
+                retryAt: null,
+                discoveredAt: '2026-09-16T10:00:00Z',
+              }
+            : null
+      }
     />
   )
 }
@@ -93,6 +116,12 @@ export const StateGallery: Story = {
       if (!canvasElement.textContent?.includes(projectionCopy[status as ProjectionStatus])) {
         throw new Error(`policy state reason missing for ${status}`)
       }
+    }
+    if (!canvasElement.textContent?.includes('下次重试 2026-09-16T10:05:00Z')) {
+      throw new Error('waiting inference retry detail missing')
+    }
+    if (!canvasElement.textContent?.includes('尝试 3 次')) {
+      throw new Error('unresolved inference attempts missing')
     }
   },
 }
