@@ -157,6 +157,8 @@ fn stack_services_match_specs_detects_changes() {
             candidate: None,
             ignore: None,
             version_inference: None,
+            candidate_settlement: None,
+            auto_update: None,
             new_version_discovery_count: None,
             settings: crate::api::types::ServiceSettings {
                 auto_rollback: true,

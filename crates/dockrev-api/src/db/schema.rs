@@ -609,6 +609,37 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_auto_update_pending_active_candidate
   WHERE status IN ('pending', 'enqueuing', 'enqueued');
 CREATE INDEX IF NOT EXISTS idx_auto_update_pending_due
   ON auto_update_pending(status, due_at);
+
+CREATE TABLE IF NOT EXISTS auto_update_candidates (
+  id TEXT PRIMARY KEY NOT NULL,
+  stack_id TEXT NOT NULL,
+  service_id TEXT NOT NULL,
+  image_ref TEXT NOT NULL,
+  raw_tag TEXT NOT NULL,
+  candidate_digest TEXT NOT NULL,
+  resolved_version TEXT,
+  status TEXT NOT NULL,
+  reason TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  retry_at TEXT,
+  discovered_at TEXT NOT NULL,
+  source_job_id TEXT NOT NULL,
+  current_tag TEXT NOT NULL DEFAULT '',
+  current_display_tag TEXT NOT NULL DEFAULT '',
+  current_digest TEXT,
+  settled_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  policy_status TEXT,
+  policy_reason TEXT,
+  policy_rule_id TEXT,
+  policy_evaluated_at TEXT,
+  UNIQUE(service_id, candidate_digest)
+);
+CREATE INDEX IF NOT EXISTS idx_auto_update_candidates_status_retry
+  ON auto_update_candidates(status, retry_at);
+CREATE INDEX IF NOT EXISTS idx_auto_update_candidates_service_discovered
+  ON auto_update_candidates(service_id, discovered_at DESC);
 "#,
     )?;
     Ok(())
@@ -693,10 +724,137 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     apply_migration_0011_track_candidate_display_tags_in_new_version_discoveries(conn)?;
     apply_migration_0012_track_image_ref_in_new_version_discoveries(conn)?;
     apply_migration_0013_add_update_job_stop_controls(conn)?;
+    apply_migration_0014_add_auto_update_candidates(conn)?;
     schema_lifecycle_events::apply(conn)?;
     schema_job_history_retention::apply(conn)?;
     schema_backup_cleanup_state::apply(conn)?;
     schema_accepted_state_generation::apply(conn)?;
+    Ok(())
+}
+
+fn apply_migration_0014_add_auto_update_candidates(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0014_add_auto_update_candidates";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute_batch(
+        r#"
+CREATE TABLE IF NOT EXISTS auto_update_candidates (
+  id TEXT PRIMARY KEY NOT NULL,
+  stack_id TEXT NOT NULL,
+  service_id TEXT NOT NULL,
+  image_ref TEXT NOT NULL,
+  raw_tag TEXT NOT NULL,
+  candidate_digest TEXT NOT NULL,
+  resolved_version TEXT,
+  status TEXT NOT NULL,
+  reason TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  retry_at TEXT,
+  discovered_at TEXT NOT NULL,
+  source_job_id TEXT NOT NULL,
+  current_tag TEXT NOT NULL DEFAULT '',
+  current_display_tag TEXT NOT NULL DEFAULT '',
+  current_digest TEXT,
+  settled_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  policy_status TEXT,
+  policy_reason TEXT,
+  policy_rule_id TEXT,
+  policy_evaluated_at TEXT,
+  UNIQUE(service_id, candidate_digest)
+);
+CREATE INDEX IF NOT EXISTS idx_auto_update_candidates_status_retry
+  ON auto_update_candidates(status, retry_at);
+CREATE INDEX IF NOT EXISTS idx_auto_update_candidates_service_discovered
+  ON auto_update_candidates(service_id, discovered_at DESC);
+ALTER TABLE auto_update_pending ADD COLUMN candidate_id TEXT;
+"#,
+    )?;
+
+    // Reconstruct only still-actionable pending rows whose source and discovery time are
+    // auditable. All other historical actions are closed below instead of being re-authorized.
+    let now = now_rfc3339()?;
+    tx.execute(
+        r#"
+INSERT OR IGNORE INTO auto_update_candidates (
+  id, stack_id, service_id, image_ref, raw_tag, candidate_digest,
+  status, reason, attempts, discovered_at, source_job_id,
+  current_tag, current_display_tag, current_digest, created_at, updated_at
+)
+SELECT
+  p.service_id || ':' || p.candidate_digest,
+  p.stack_id,
+  p.service_id,
+  COALESCE(NULLIF(CASE WHEN json_valid(p.summary_json) THEN json_extract(p.summary_json, '$.imageRef') END, ''), ''),
+  p.candidate_tag,
+  p.candidate_digest,
+  'awaiting_inference',
+  'migration_pending_history',
+  0,
+  p.first_seen_at,
+  p.source_check_job_id,
+  COALESCE(NULLIF(CASE WHEN json_valid(p.summary_json) THEN json_extract(p.summary_json, '$.currentTag') END, ''), p.current_display_tag),
+  p.current_display_tag,
+  CASE WHEN json_valid(p.summary_json) THEN json_extract(p.summary_json, '$.currentDigest') END,
+  ?1,
+  ?1
+FROM auto_update_pending p
+JOIN jobs j ON j.id = p.source_check_job_id
+WHERE p.status IN ('pending', 'enqueuing', 'enqueued')
+  AND COALESCE(TRIM(p.candidate_digest), '') <> ''
+  AND COALESCE(TRIM(p.first_seen_at), '') <> ''
+  AND (
+    LOWER(j.reason) = 'schedule'
+    OR LOWER(COALESCE(json_extract(j.summary_json, '$.source'), '')) = 'github_webhook'
+  )
+"#,
+        params![&now],
+    )?;
+    tx.execute(
+        r#"
+UPDATE auto_update_pending
+SET candidate_id = (
+  SELECT id FROM auto_update_candidates c
+  WHERE c.service_id = auto_update_pending.service_id
+    AND c.candidate_digest = auto_update_pending.candidate_digest
+)
+WHERE candidate_id IS NULL
+  AND EXISTS (
+    SELECT 1 FROM jobs j
+    WHERE j.id = auto_update_pending.source_check_job_id
+      AND (
+        LOWER(j.reason) = 'schedule'
+        OR LOWER(COALESCE(CASE WHEN json_valid(j.summary_json) THEN json_extract(j.summary_json, '$.source') END, '')) = 'github_webhook'
+      )
+  )
+"#,
+        [],
+    )?;
+
+    // Do not leave unverifiable historical rows in an active state that a later scheduler pass
+    // could interpret as deployment authorization.
+    tx.execute(
+        r#"
+UPDATE auto_update_pending
+SET status = 'skipped',
+    summary_json = CASE
+      WHEN json_valid(summary_json) AND json_type(summary_json) = 'object'
+        THEN json_set(summary_json, '$.skipReason', 'migration_ambiguous_history', '$.skippedAt', ?1)
+      ELSE json_object('skipReason', 'migration_ambiguous_history', 'skippedAt', ?1)
+    END,
+    updated_at = ?1
+WHERE candidate_id IS NULL
+  AND status IN ('pending', 'enqueuing', 'enqueued')
+"#,
+        params![&now],
+    )?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -1376,6 +1534,37 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_auto_update_pending_active_candidate
   WHERE status IN ('pending', 'enqueuing', 'enqueued');
 CREATE INDEX IF NOT EXISTS idx_auto_update_pending_due
   ON auto_update_pending(status, due_at);
+
+CREATE TABLE IF NOT EXISTS auto_update_candidates (
+  id TEXT PRIMARY KEY NOT NULL,
+  stack_id TEXT NOT NULL,
+  service_id TEXT NOT NULL,
+  image_ref TEXT NOT NULL,
+  raw_tag TEXT NOT NULL,
+  candidate_digest TEXT NOT NULL,
+  resolved_version TEXT,
+  status TEXT NOT NULL,
+  reason TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  retry_at TEXT,
+  discovered_at TEXT NOT NULL,
+  source_job_id TEXT NOT NULL,
+  current_tag TEXT NOT NULL DEFAULT '',
+  current_display_tag TEXT NOT NULL DEFAULT '',
+  current_digest TEXT,
+  settled_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  policy_status TEXT,
+  policy_reason TEXT,
+  policy_rule_id TEXT,
+  policy_evaluated_at TEXT,
+  UNIQUE(service_id, candidate_digest)
+);
+CREATE INDEX IF NOT EXISTS idx_auto_update_candidates_status_retry
+  ON auto_update_candidates(status, retry_at);
+CREATE INDEX IF NOT EXISTS idx_auto_update_candidates_service_discovered
+  ON auto_update_candidates(service_id, discovered_at DESC);
 
 CREATE TABLE IF NOT EXISTS jobs (
   id TEXT PRIMARY KEY NOT NULL,

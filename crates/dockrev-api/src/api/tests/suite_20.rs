@@ -237,12 +237,105 @@ fn auto_update_discovery_summary(
                 "currentTag": "latest",
                 "currentDigest": "sha256:old",
                 "currentDisplayTag": "1.0.0",
-                "candidateTag": "latest",
+                "candidateTag": "1.1.0",
                 "candidateDisplayTag": "1.1.0",
                 "candidateDigest": candidate_digest
             }]
         }
     })
+}
+
+#[tokio::test]
+async fn digest_bound_snapshot_settles_candidate_and_re_evaluates_policy() {
+    let state = test_state(":memory:").await;
+    state
+        .db
+        .put_auto_update_policy(
+            "stack",
+            "stack",
+            &delayed_stack_auto_update_policy(3600, 0),
+            "2026-04-30T00:00:00Z",
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .upsert_auto_update_candidate(
+            &crate::db::AutoUpdateCandidateInput {
+                id: "candidate-inference".to_string(),
+                stack_id: "stack".to_string(),
+                service_id: "service".to_string(),
+                image_ref: "ghcr.io/acme/web".to_string(),
+                raw_tag: "latest".to_string(),
+                candidate_digest: "sha256:new".to_string(),
+                resolved_version: None,
+                status: "awaiting_inference".to_string(),
+                reason: Some("version_inference_pending".to_string()),
+                attempts: 1,
+                retry_at: Some("2026-04-30T00:01:00Z".to_string()),
+                discovered_at: "2026-04-30T00:00:00Z".to_string(),
+                source_job_id: "check".to_string(),
+                current_tag: "latest".to_string(),
+                current_display_tag: "1.0.0".to_string(),
+                current_digest: Some("sha256:old".to_string()),
+            },
+            "2026-04-30T00:00:00Z",
+        )
+        .await
+        .unwrap();
+    let snapshot = crate::api::types::ServiceDigestTagsSnapshotResponse {
+        digest: "sha256:new".to_string(),
+        tags: vec!["latest".to_string(), "1.4.0".to_string()],
+        checked_at: "2026-04-30T00:00:30Z".to_string(),
+        scan: crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    };
+    state
+        .db
+        .upsert_image_digest_tags_snapshot(
+            "ghcr.io/acme/web",
+            "sha256:new",
+            "linux/amd64",
+            &serde_json::to_string(&snapshot).unwrap(),
+            &snapshot.checked_at,
+            &snapshot.checked_at,
+        )
+        .await
+        .unwrap();
+
+    crate::auto_update::reconcile_inference_for_digest(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:new",
+        "linux/amd64",
+        "2026-04-30T00:01:00Z",
+    )
+    .await
+    .unwrap();
+
+    let candidate = state
+        .db
+        .get_auto_update_candidate("service", "sha256:new")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(candidate.status, "ready");
+    assert_eq!(candidate.resolved_version.as_deref(), Some("1.4.0"));
+    assert_eq!(candidate.policy_status.as_deref(), Some("delayed"));
+    assert_eq!(
+        state
+            .db
+            .list_auto_update_pending_candidates("2026-04-30T00:01:00Z", 10)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 async fn service_id_by_name(
@@ -337,6 +430,89 @@ async fn insert_backup_record(
             .await
             .unwrap();
     }
+}
+
+#[tokio::test]
+async fn raw_tag_policy_can_enqueue_while_version_inference_is_pending() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(FakeRegistry),
+        Arc::new(UpdateAndRuntimeScanRunner::new()),
+    )
+    .await;
+    let now = test_now_rfc3339();
+    let compose_path = format!(
+        "/tmp/dockrev-auto-policy-raw-tag-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = set_single_service_check_result(
+        &state,
+        &stack_id,
+        Some("sha256:old"),
+        Some("latest"),
+        Some("sha256:new"),
+    )
+    .await;
+
+    let mut policy = immediate_stack_auto_update_policy();
+    policy.rules[0].matcher.kind = crate::api::types::AutoUpdateMatcherType::Glob;
+    policy.rules[0].matcher.pattern = "latest".to_string();
+    state
+        .db
+        .put_auto_update_policy("stack", &stack_id, &policy, &now)
+        .await
+        .unwrap();
+
+    let mut summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    summary["newVersions"]["services"][0]["candidateTag"] = json!("latest");
+    summary["newVersions"]["services"][0]["candidateDisplayTag"] = json!("latest");
+    crate::auto_update::handle_completed_check(
+        &state,
+        "chk_schedule_raw_tag",
+        "schedule",
+        &now,
+        &summary,
+    )
+    .await
+    .unwrap();
+
+    let candidate = state
+        .db
+        .get_auto_update_candidate(&service_id, "sha256:new")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(candidate.status, "awaiting_inference");
+    assert!(
+        matches!(candidate.policy_status.as_deref(), Some("queued" | "running")),
+        "candidate={candidate:?} pending={:?}",
+        state
+            .db
+            .list_auto_update_pending_candidates(&now, 10)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        state
+            .db
+            .list_jobs()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|job| job.reason == "auto_policy")
+            .count(),
+        1
+    );
 }
 
 #[tokio::test]

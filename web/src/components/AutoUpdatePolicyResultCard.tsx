@@ -49,12 +49,28 @@ function policyResult(props: {
   }
 }
 
+function policyActionLabel(status: string): string {
+  switch (status) {
+    case 'waiting_inference': return '等待版本证据'
+    case 'rule_not_matched': return '规则未命中'
+    case 'delayed': return '等待延迟条件'
+    case 'queued': return '更新已排队'
+    case 'running': return '更新执行中'
+    case 'completed': return '更新已完成'
+    case 'failed': return '更新失败'
+    case 'skipped': return '已跳过'
+    case 'unresolved': return '版本无法解析'
+    default: return status
+  }
+}
+
 export function AutoUpdatePolicyResultCard(props: {
   busy?: boolean
   onOpenSettings: () => void
   policy: AutoUpdatePolicy
   scope: 'service' | 'stack'
   stackPolicy?: AutoUpdatePolicy | null
+  projection?: { policyStatus: string; reason?: string | null; ruleId?: string | null; evaluatedAt?: string | null } | null
 }) {
   const result = policyResult(props)
   const rules = activeAutoUpdateRules(result.effectivePolicy)
@@ -94,6 +110,14 @@ export function AutoUpdatePolicyResultCard(props: {
             {primaryRule ? `${primaryRule.name} · ${autoUpdateRuleSummary(primaryRule)}` : '无自动部署动作'}
           </span>
         </div>
+        {props.projection ? (
+          <div className="autoPolicyFactCell">
+            <span className="label autoPolicyFactLabel">策略动作</span>
+            <span className="autoPolicyFactValue" title={props.projection.reason ?? undefined}>
+              <Mono>{policyActionLabel(props.projection.policyStatus)}</Mono>
+            </span>
+          </div>
+        ) : null}
       </div>
 
       {primaryRule ? (

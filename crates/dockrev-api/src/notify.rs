@@ -570,6 +570,11 @@ async fn load_new_version_notification_settle_targets(
                 false
             };
             let current_digest_matches_live = live_current_digest == frozen_current_digest;
+            let canonical_candidate_version = state
+                .db
+                .get_auto_update_candidate(&item.service_id, &item.candidate_digest)
+                .await?
+                .and_then(|candidate| candidate.resolved_version);
             NewVersionNotificationSettleTarget {
                 image_repo,
                 current_digest: frozen_current_digest,
@@ -580,10 +585,12 @@ async fn load_new_version_notification_settle_targets(
                     .clone()
                     .filter(|_| current_snapshot_ready)
                     .filter(|_| current_digest_matches_live),
-                candidate_resolved_tag: service.candidate.as_ref().and_then(|candidate| {
-                    crate::snapshot_worker::normalize_digest(&candidate.digest)
-                        .filter(|digest| digest == item.candidate_digest.as_str())
-                        .and_then(|_| candidate.resolved_tag.clone())
+                candidate_resolved_tag: canonical_candidate_version.or_else(|| {
+                    service.candidate.as_ref().and_then(|candidate| {
+                        crate::snapshot_worker::normalize_digest(&candidate.digest)
+                            .filter(|digest| digest == item.candidate_digest.as_str())
+                            .and_then(|_| candidate.resolved_tag.clone())
+                    })
                 }),
             }
         } else {

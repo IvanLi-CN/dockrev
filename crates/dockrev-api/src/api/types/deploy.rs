@@ -92,6 +92,10 @@ pub struct HomepageNavItem {
     pub candidate: Option<Candidate>,
     pub ignore: Option<IgnoreMatch>,
     pub version_inference: Option<VersionInferenceState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidate_settlement: Option<CandidateSettlement>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_update: Option<AutoUpdateProjection>,
     pub new_version_discovery_count: Option<u32>,
     pub settings: ServiceSettings,
     pub archived: Option<bool>,

@@ -396,6 +396,13 @@ WHERE id = ?1 AND status = 'queued'
         }
 
         if let Ok(Some(item)) = result.as_ref() {
+            if item.r#type.as_str() == "update" {
+                self.sync_auto_update_candidate_policy_for_job(
+                    &item.id,
+                    item.started_at.as_deref().unwrap_or_default(),
+                )
+                .await?;
+            }
             self.management_events
                 .publish_change(
                     "jobs",
@@ -457,6 +464,8 @@ WHERE id = ?1 AND status = 'queued'
         let finished_at = finished_at.to_string();
         let mut summary_json = summary_json.clone();
         let settlements = settlements.map(|items| items.to_vec());
+        let projection_job_id = job_id.clone();
+        let projection_finished_at = finished_at.clone();
         let completed = self
             .call(move |conn| {
                 let previous = conn
@@ -597,6 +606,16 @@ WHERE id IN (
             .await
             .context("finish job")?;
 
+        if completed
+            .as_ref()
+            .is_some_and(|(_, _, job_type, ..)| job_type == "update")
+        {
+            self.sync_auto_update_candidate_policy_for_job(
+                projection_job_id.as_str(),
+                &projection_finished_at,
+            )
+            .await?;
+        }
         if let Some((
             job_id,
             status,

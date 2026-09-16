@@ -168,6 +168,24 @@ export type VersionInferenceState = {
   checkedAt?: string | null
 }
 
+export type CandidateSettlement = {
+  status: string
+  rawTag?: string | null
+  candidateDigest?: string | null
+  resolvedVersion?: string | null
+  reason?: string | null
+  attempts: number
+  retryAt?: string | null
+  discoveredAt?: string | null
+}
+
+export type AutoUpdateProjection = {
+  policyStatus: string
+  reason?: string | null
+  ruleId?: string | null
+  evaluatedAt?: string | null
+}
+
 export type Service = {
   id: string
   name: string
@@ -187,6 +205,8 @@ export type Service = {
     reason: string
   } | null
   versionInference?: VersionInferenceState | null
+  candidateSettlement?: CandidateSettlement | null
+  autoUpdate?: AutoUpdateProjection | null
   newVersionDiscoveryCount?: number | null
   settings: ServiceSettings
   archived?: boolean
@@ -783,6 +803,8 @@ export type HomepageNavItem = {
   candidate?: Service['candidate']
   ignore?: Service['ignore']
   versionInference?: VersionInferenceState | null
+  candidateSettlement?: CandidateSettlement | null
+  autoUpdate?: AutoUpdateProjection | null
   newVersionDiscoveryCount?: number | null
   settings: ServiceSettings
   archived?: boolean

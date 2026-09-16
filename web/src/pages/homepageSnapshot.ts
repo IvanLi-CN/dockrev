@@ -196,6 +196,28 @@ function parseService(value: unknown): Service | null {
           checkedAt: asOptionalString(value.versionInference.checkedAt),
         }
       : null;
+  const candidateSettlement =
+    isRecord(value.candidateSettlement) && asString(value.candidateSettlement.status)
+      ? {
+          status: value.candidateSettlement.status as string,
+          rawTag: asOptionalString(value.candidateSettlement.rawTag),
+          candidateDigest: asOptionalString(value.candidateSettlement.candidateDigest),
+          resolvedVersion: asOptionalString(value.candidateSettlement.resolvedVersion),
+          reason: asOptionalString(value.candidateSettlement.reason),
+          attempts: typeof value.candidateSettlement.attempts === 'number' ? value.candidateSettlement.attempts : 0,
+          retryAt: asOptionalString(value.candidateSettlement.retryAt),
+          discoveredAt: asOptionalString(value.candidateSettlement.discoveredAt),
+        }
+      : null;
+  const autoUpdate =
+    isRecord(value.autoUpdate) && asString(value.autoUpdate.policyStatus)
+      ? {
+          policyStatus: value.autoUpdate.policyStatus as string,
+          reason: asOptionalString(value.autoUpdate.reason),
+          ruleId: asOptionalString(value.autoUpdate.ruleId),
+          evaluatedAt: asOptionalString(value.autoUpdate.evaluatedAt),
+        }
+      : null;
   const settings = isRecord(value.settings)
     ? {
         autoRollback: Boolean(value.settings.autoRollback),
@@ -232,6 +254,8 @@ function parseService(value: unknown): Service | null {
     candidate,
     ignore,
     versionInference,
+    candidateSettlement,
+    autoUpdate,
     newVersionDiscoveryCount:
       typeof value.newVersionDiscoveryCount === "number"
         ? value.newVersionDiscoveryCount

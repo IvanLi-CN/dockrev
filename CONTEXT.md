@@ -47,6 +47,80 @@ _Avoid_: deleted backup, cleanup failure
 - `rollback target` is the single backend-selected version that can restore the service to the previous successful update state.
 - A rollback target is valid only when its `currentDigest` matches the service digest in the same refresh generation.
 
+## Version Discovery and Auto Deployment
+
+**floating tag**:
+A tag such as `latest`, `stable`, or `main` whose spelling does not identify one semantic release version. A floating tag can point to a different image digest over time.
+_Avoid_: mutable digest, resolved version
+
+**resolved version**:
+The semantic release version associated with one image digest after examining the registry's version evidence. It supplements the raw image tag and does not replace the tag's identity.
+_Avoid_: rewritten tag, guessed current version
+
+**version inference**:
+The process of finding a resolved version for a digest when the raw tag is not itself a semantic version. It is supplementary discovery information; its temporary absence does not invalidate the digest candidate.
+_Avoid_: update readiness, deployment result
+
+**version evidence**:
+A digest-bound fact that can support a resolved version, ordered by the candidate settlement contract. Registry tag snapshots and a valid OCI image version label are evidence for the exact digest, not proof that a tag points to that digest in the future.
+_Avoid_: image release metadata, mutable tag state
+
+**candidate readiness**:
+The semantic state of a discovered image candidate: `ready` when the information required by its matcher is available, `awaiting_inference` when a floating tag still needs resolution, and `unresolved` when resolution reached a terminal failure without a usable version.
+_Avoid_: check job status, update job status
+
+**candidate settlement**:
+The authoritative resolution of a discovered candidate's raw tag, digest evidence, resolved version, readiness, and failure reason. Consumers must use the same settlement rather than independently interpreting partial evidence.
+_Avoid_: notification formatting, policy match result
+
+**inference retry budget**:
+The bounded number and schedule of additional attempts to resolve a candidate after a transient inference failure. Exhausting the budget produces an explicit unresolved outcome; it does not authorize an unsafe SemVer fallback.
+_Avoid_: infinite polling, update retry
+
+**superseded candidate**:
+A previously discovered candidate whose digest is no longer the service's newest eligible candidate. It remains historical evidence but cannot start or replace an automatic deployment.
+_Avoid_: rejected candidate, failed update
+
+**policy re-evaluation**:
+A new application of the current effective auto-update policy to a candidate after its readiness or relevant service state changes. It may produce a rule match, a delay decision, a skip, or an automatic deployment request.
+_Avoid_: repeating the original check, retrying Compose
+
+**candidate discovery time**:
+The time at which Dockrev first accepts a candidate digest as a new observation for a service. Delay policies measure candidate age from this point, even when supporting version evidence becomes available later.
+_Avoid_: inference completion time, deployment start time
+
+**candidate reconciliation**:
+A compensating evaluation that compares active candidate state with current registry evidence and policy state after a restart, missed event, or delayed worker result. It may advance, supersede, or close a candidate, but it does not replay obsolete history.
+_Avoid_: full historical replay, repeated check
+
+**automatic deployment claim**:
+The exclusive acceptance of one eligible candidate for creation of an automatic update operation. A claim must be revalidated against the service's current candidate and effective policy before side effects begin.
+_Avoid_: candidate discovery, Compose lock
+
+**automatic action pending**:
+The state of a ready candidate that has matched an effective policy but is waiting for a configured time or version-lag gate before deployment. It is distinct from a candidate awaiting version inference.
+_Avoid_: unresolved candidate, queued update job
+
+**settlement event**:
+A notification that a candidate's authoritative settlement has been committed and is available for consumers. Consumers may react immediately, but the event is not the source of truth.
+_Avoid_: check completion, notification delivery
+
+**candidate notification identity**:
+The stable service-and-candidate-digest identity used to deduplicate notifications for one discovered image candidate, regardless of whether its display version changes from raw tag to resolved version.
+_Avoid_: notification message text, semantic version
+
+**auto-update candidate**:
+A service's newly observed candidate digest together with its raw tag, resolved version when available, current deployment baseline, and discovery provenance. It remains a candidate until an effective policy accepts or rejects it.
+_Avoid_: update job, candidate container
+
+**auto-update policy evaluation**:
+The decision that applies the effective Stack or Service policy to an auto-update candidate. `semver` rules match resolved semantic versions; `regex` and `glob` rules may match the raw tag when no resolved version exists.
+_Avoid_: version inference, update execution
+
+**auto-update deployment**:
+An accepted automatic update operation that changes the service to the candidate digest through the normal update path. It is a deployment action, not publication of an image to a registry.
+_Avoid_: image publication, version discovery
+
 ## Update Rollback Diagnostics
 
 **candidate container**:

@@ -73,6 +73,10 @@ pub struct Service {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version_inference: Option<VersionInferenceState>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidate_settlement: Option<CandidateSettlement>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_update: Option<AutoUpdateProjection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub new_version_discovery_count: Option<u32>,
     pub settings: ServiceSettings,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -120,6 +124,37 @@ pub struct VersionInferenceState {
     pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checked_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CandidateSettlement {
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_tag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidate_digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    pub attempts: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub discovered_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoUpdateProjection {
+    pub policy_status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rule_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evaluated_at: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -8,6 +8,7 @@
 
 | Topic | Lifecycle | Implementation | Spec | Successor |
 | --- | --- | --- | --- | --- |
+| Auto-update candidate settlement | 已完成 | candidate lifecycle, policy re-evaluation, conservative migration and compatibility projections complete | `auto-update-candidate-settlement/SPEC.md` | - |
 | PR label release identity | active | workflow/scripts/docs complete | `docs/adr/0008-pr-label-release-identity.md` | - |
 | Release channel promotion | active | beta/RC/stable identity contract | `release-channel-promotion/SPEC.md` | - |
 | Update rollback diagnostics | active | not started | `update-rollback-diagnostics/SPEC.md` | - |
@@ -38,6 +39,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
+| auto-update-candidate-settlement | Dockrev：自动更新候选收敛与发布边界 | 已完成 | `auto-update-candidate-settlement/SPEC.md` | 2026-09-16 | 候选 settlement、策略重评估、保守迁移和兼容投影已实现；关联 ADR 0011 |
 | async-data-continuity | Dockrev：异步数据连续性与加载反馈 | active | `async-data-continuity/SPEC.md` | 2026-08-19 | fast-track（统一骨架、延迟遮罩、错误重试与 fresh snapshot v2 合同） |
 | ci-duration-optimization | Dockrev：CI 时长优化与事件驱动发布就绪 | superseded | `ci-duration-optimization/SPEC.md` | 2026-09-03 | successor: ADR 0008; candidate/readiness/FIFO contract is historical |
 | release-channel-promotion | Dockrev：Beta、RC 与 Stable 发布身份晋升 | active | `release-channel-promotion/SPEC.md` | 2026-09-11 | beta/RC/stable exact promotion and same-SHA identity contract |

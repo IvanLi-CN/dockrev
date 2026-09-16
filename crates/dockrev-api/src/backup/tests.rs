@@ -121,6 +121,8 @@ fn test_stack(targets: Vec<BackupTarget>) -> StackRecord {
             candidate: None,
             ignore: None,
             version_inference: None,
+            candidate_settlement: None,
+            auto_update: None,
             new_version_discovery_count: None,
             settings: crate::api::types::ServiceSettings {
                 auto_rollback: true,

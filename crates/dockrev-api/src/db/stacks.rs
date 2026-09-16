@@ -281,6 +281,8 @@ WHERE id = ?1
                         candidate,
                         ignore,
                         version_inference: None,
+                        candidate_settlement: None,
+                        auto_update: None,
                         new_version_discovery_count: None,
                         settings: ServiceSettings {
                             auto_rollback: row.get::<_, i64>(14)? != 0,
@@ -510,6 +512,8 @@ ORDER BY st.name ASC, sv.name ASC
                             reason: None,
                             checked_at: None,
                         }),
+                        candidate_settlement: None,
+                        auto_update: None,
                         new_version_discovery_count: None,
                         settings: ServiceSettings {
                             auto_rollback: row.get::<_, i64>(17)? != 0,

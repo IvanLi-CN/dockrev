@@ -632,6 +632,7 @@ export function ServiceDetailPage(props: {
                 policy={policy}
                 scope="service"
                 stackPolicy={stackSettings?.autoUpdatePolicy ?? null}
+                projection={effectiveService.autoUpdate ?? null}
               />
             </div>
           </div>

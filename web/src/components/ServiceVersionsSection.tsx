@@ -758,6 +758,18 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     return rollbackBackupSummaryByJobId.get(sourceJobId) ?? { state: 'empty' as const }
   }, [props.rollbackTarget?.sourceUpdateJobId, rollbackBackupSummaryByJobId])
   const openSettings = () => navigate({ name: 'settings' })
+  const settlement = props.service.candidateSettlement
+  const settlementBanner = settlement
+    ? settlement.status === 'awaiting_inference'
+      ? '候选版本正在等待 digest 绑定的版本证据，策略暂不会进入自动部署。'
+      : settlement.status === 'unresolved'
+        ? '候选版本无法解析为可靠版本，SemVer 策略已安全停止；Regex/Glob 仍可按 raw tag 判断。'
+        : settlement.status === 'superseded'
+          ? '该候选已被更新的 digest 替代，不会再被自动部署。'
+          : settlement.status === 'ready'
+            ? `候选证据已完成${settlement.resolvedVersion ? `：${settlement.resolvedVersion}` : ''}；这不代表更新任务已完成。`
+            : null
+    : null
 
   return (
     <section ref={sectionRef} className="serviceVersionsSection" data-service-detail-section-card="versions">
@@ -812,6 +824,17 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
             ) : null}
           </div>
         </div>
+        {settlementBanner ? (
+          <div
+            className={cn(
+              'releaseDrawerBanner',
+              'releaseDrawerBanner-warning',
+            )}
+            data-service-versions-banner="candidate-settlement"
+          >
+            <span>{settlementBanner}</span>
+          </div>
+        ) : null}
         {listBanner ? (
           <div
             className={cn('releaseDrawerBanner', `releaseDrawerBanner-${listBanner.tone}`)}

@@ -376,6 +376,8 @@ async fn dry_run_does_not_execute() {
             candidate: None,
             ignore: None,
             version_inference: None,
+            candidate_settlement: None,
+            auto_update: None,
             new_version_discovery_count: None,
             settings: ServiceSettings {
                 auto_rollback: true,
@@ -438,6 +440,8 @@ async fn update_job_refreshes_container_id_after_up() {
             candidate: None,
             ignore: None,
             version_inference: None,
+            candidate_settlement: None,
+            auto_update: None,
             new_version_discovery_count: None,
             settings: ServiceSettings {
                 auto_rollback: true,
@@ -502,6 +506,8 @@ async fn update_job_emits_service_progress_events() {
             candidate: None,
             ignore: None,
             version_inference: None,
+            candidate_settlement: None,
+            auto_update: None,
             new_version_discovery_count: None,
             settings: ServiceSettings {
                 auto_rollback: true,
@@ -583,6 +589,8 @@ async fn stack_update_batches_pull_and_up_once_for_selected_services() {
                 }),
                 ignore: None,
                 version_inference: None,
+                candidate_settlement: None,
+                auto_update: None,
                 new_version_discovery_count: None,
                 settings: ServiceSettings {
                     auto_rollback: true,
@@ -615,6 +623,8 @@ async fn stack_update_batches_pull_and_up_once_for_selected_services() {
                 }),
                 ignore: None,
                 version_inference: None,
+                candidate_settlement: None,
+                auto_update: None,
                 new_version_discovery_count: None,
                 settings: ServiceSettings {
                     auto_rollback: true,
