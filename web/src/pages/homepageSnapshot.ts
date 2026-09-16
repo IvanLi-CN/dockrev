@@ -194,6 +194,12 @@ function parseService(value: unknown): Service | null {
           status: value.versionInference.status as string,
           reason: asOptionalString(value.versionInference.reason),
           checkedAt: asOptionalString(value.versionInference.checkedAt),
+          retryAt: asOptionalString(value.versionInference.retryAt),
+          resolvedTag: asOptionalString(value.versionInference.resolvedTag),
+          unresolved:
+            typeof value.versionInference.unresolved === 'boolean'
+              ? value.versionInference.unresolved
+              : null,
         }
       : null;
   const candidateSettlement =

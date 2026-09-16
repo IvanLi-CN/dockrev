@@ -1,3 +1,12 @@
+export type VersionInferenceState = {
+  status: 'ready' | 'pending' | string
+  reason?: string | null
+  checkedAt?: string | null
+  retryAt?: string | null
+  resolvedTag?: string | null
+  unresolved?: boolean | null
+}
+
 export type CandidateSettlement = {
   status: string
   rawTag?: string | null

@@ -335,13 +335,14 @@ INSERT INTO auto_update_pending (
     let migrated = db
         .call(|conn| {
             let candidate = conn.query_row(
-                "SELECT id, status, reason FROM auto_update_candidates WHERE service_id = 'service-1'",
+                "SELECT id, status, reason, resolved_version FROM auto_update_candidates WHERE service_id = 'service-1'",
                 [],
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
+                        row.get::<_, Option<String>>(3)?,
                     ))
                 },
             )?;
@@ -371,7 +372,8 @@ INSERT INTO auto_update_pending (
         (
             "service-1:sha256:new".to_string(),
             "awaiting_inference".to_string(),
-            "migration_pending_history".to_string()
+            "migration_pending_history".to_string(),
+            None
         )
     );
     assert_eq!(

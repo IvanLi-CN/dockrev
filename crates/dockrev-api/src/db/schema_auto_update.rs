@@ -137,11 +137,7 @@ SELECT
   COALESCE(NULLIF(json_extract(CASE WHEN json_valid(p.summary_json) THEN p.summary_json ELSE '{}' END, '$.imageRef'), ''), ''),
   p.candidate_tag,
   p.candidate_digest,
-  COALESCE(
-    NULLIF(json_extract(CASE WHEN json_valid(p.summary_json) THEN p.summary_json ELSE '{}' END, '$.candidateDisplayTag'), ''),
-    NULLIF(p.candidate_display_tag, ''),
-    NULLIF(p.candidate_tag, '')
-  ),
+  NULL,
   'awaiting_inference',
   'migration_pending_history',
   0,
@@ -166,36 +162,6 @@ WHERE p.status IN ('pending', 'enqueuing', 'enqueued')
 "#,
         params![&now],
     )?;
-    let migrated_versions = {
-        let mut stmt = tx.prepare(
-            "SELECT id, resolved_version FROM auto_update_candidates WHERE reason = 'migration_pending_history'",
-        )?;
-        stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
-        })?
-        .collect::<Result<Vec<_>, _>>()?
-    };
-    for (candidate_id, version) in migrated_versions {
-        let normalized = version
-            .as_deref()
-            .and_then(dockrev_common::normalized_semver_from_oci_version);
-        if let Some(version) = normalized {
-            tx.execute(
-                r#"
-UPDATE auto_update_candidates
-SET resolved_version = ?2, status = 'ready',
-    reason = 'migration_digest_bound_version', settled_at = ?3, updated_at = ?3
-WHERE id = ?1
-"#,
-                params![candidate_id, version, &now],
-            )?;
-        } else {
-            tx.execute(
-                "UPDATE auto_update_candidates SET resolved_version = NULL WHERE id = ?1",
-                params![candidate_id],
-            )?;
-        }
-    }
     tx.execute(
         r#"
 UPDATE auto_update_pending
@@ -259,16 +225,9 @@ fn apply_migration_0015_add_auto_update_candidate_provenance(
     tx.execute(
         r#"
 UPDATE auto_update_candidates
-SET resolved_version = (
-  SELECT COALESCE(
-    NULLIF(json_extract(CASE WHEN json_valid(p.summary_json) THEN p.summary_json ELSE '{}' END, '$.candidateDisplayTag'), ''),
-    NULLIF(p.candidate_display_tag, ''),
-    NULLIF(p.candidate_tag, '')
-  )
-  FROM auto_update_pending p
-  WHERE p.candidate_id = auto_update_candidates.id
-  LIMIT 1
-)
+SET resolved_version = NULL,
+    status = 'awaiting_inference',
+    reason = 'migration_pending_history'
 WHERE auto_update_candidates.reason = 'migration_pending_history'
   AND auto_update_candidates.resolved_version IS NULL
   AND EXISTS (
@@ -297,39 +256,6 @@ WHERE reason = 'migration_pending_history'
 "#,
         params![&now],
     )?;
-    let migrated_versions = {
-        let mut stmt = tx.prepare(
-            "SELECT id, resolved_version FROM auto_update_candidates WHERE reason = 'migration_pending_history'",
-        )?;
-        stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
-        })?
-        .collect::<Result<Vec<_>, _>>()?
-    };
-    for (candidate_id, version) in migrated_versions {
-        let normalized = version
-            .as_deref()
-            .and_then(dockrev_common::normalized_semver_from_oci_version);
-        if let Some(version) = normalized {
-            tx.execute(
-                r#"
-UPDATE auto_update_candidates
-SET resolved_version = ?2,
-    status = 'ready',
-    reason = 'migration_digest_bound_version',
-    settled_at = COALESCE(settled_at, ?3),
-    updated_at = ?3
-WHERE id = ?1
-"#,
-                params![candidate_id, version, &now],
-            )?;
-        } else {
-            tx.execute(
-                "UPDATE auto_update_candidates SET resolved_version = NULL WHERE id = ?1",
-                params![candidate_id],
-            )?;
-        }
-    }
     tx.execute(
         r#"
 UPDATE auto_update_pending

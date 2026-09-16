@@ -116,7 +116,7 @@ impl ServiceHomepage {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionInferenceState {
     pub status: String,
@@ -124,6 +124,12 @@ pub struct VersionInferenceState {
     pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checked_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_tag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unresolved: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

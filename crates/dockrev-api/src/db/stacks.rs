@@ -511,6 +511,7 @@ ORDER BY st.name ASC, sv.name ASC
                             status: "ready".to_string(),
                             reason: None,
                             checked_at: None,
+                            ..VersionInferenceState::default()
                         }),
                         candidate_settlement: None,
                         auto_update: None,

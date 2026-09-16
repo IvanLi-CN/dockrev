@@ -1,21 +1,5 @@
 use super::*;
 
-impl Db {
-    pub(super) async fn sync_auto_update_candidate_policy_for_claimed_job(
-        &self,
-        job: &JobListItem,
-    ) -> anyhow::Result<()> {
-        if job.r#type.as_str() == "update" {
-            self.sync_auto_update_candidate_policy_for_job(
-                &job.id,
-                job.started_at.as_deref().unwrap_or_default(),
-            )
-            .await?;
-        }
-        Ok(())
-    }
-}
-
 fn map_serde_error(error: serde_json::Error) -> rusqlite::Error {
     rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
 }
@@ -226,6 +210,13 @@ SET status = ?3,
 WHERE service_id = ?1 AND candidate_digest = ?2
   AND status <> 'superseded'
   AND (
+    (
+      status = ?3
+      OR (?3 = 'ready' AND status IN ('awaiting_inference', 'unresolved'))
+      OR (?3 = 'unresolved' AND status = 'awaiting_inference')
+    )
+  )
+  AND (
     status IS NOT ?3
     OR resolved_version IS NOT COALESCE(?4, resolved_version)
     OR reason IS NOT ?5
@@ -362,38 +353,6 @@ WHERE job_id = ?1
         })
         .await
         .context("supersede auto update candidates")
-    }
-
-    pub async fn list_auto_update_candidates_for_retry(
-        &self,
-        now: &str,
-        limit: usize,
-    ) -> anyhow::Result<Vec<AutoUpdateCandidateRow>> {
-        let now = now.to_string();
-        self.call(move |conn| {
-            let mut stmt = conn.prepare(&format!(
-                "SELECT {AUTO_UPDATE_CANDIDATE_COLUMNS} FROM auto_update_candidates WHERE status = 'awaiting_inference' AND (retry_at IS NULL OR retry_at <= ?1) ORDER BY discovered_at ASC LIMIT ?2"
-            ))?;
-            let rows = stmt.query_map(params![now, limit as i64], map_auto_update_candidate_row)?;
-            Ok(rows.collect::<Result<Vec<_>, _>>()?)
-        })
-        .await
-        .context("list auto update candidates for retry")
-    }
-
-    pub async fn list_auto_update_candidates_for_events(
-        &self,
-        limit: usize,
-    ) -> anyhow::Result<Vec<AutoUpdateCandidateRow>> {
-        self.call(move |conn| {
-            let mut stmt = conn.prepare(&format!(
-                "SELECT {AUTO_UPDATE_CANDIDATE_COLUMNS} FROM auto_update_candidates WHERE status = 'awaiting_inference' ORDER BY discovered_at ASC LIMIT ?1"
-            ))?;
-            let rows = stmt.query_map(params![limit as i64], map_auto_update_candidate_row)?;
-            Ok(rows.collect::<Result<Vec<_>, _>>()?)
-        })
-        .await
-        .context("list auto update candidates for events")
     }
 
     pub async fn list_latest_auto_update_candidates(
@@ -1010,6 +969,8 @@ WHERE id = ?1 AND status = 'enqueuing'
     }
 }
 
+include!("auto_update_claims.rs");
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -1095,6 +1056,155 @@ mod tests {
             .await
             .unwrap();
         assert!(repeated.is_none(), "repeated settlement must be a no-op");
+    }
+
+    #[tokio::test]
+    async fn stale_inference_settlement_cannot_regress_ready_candidate() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        db.upsert_auto_update_candidate(
+            &candidate_input(
+                "candidate-monotonic",
+                "sha256:monotonic",
+                "awaiting_inference",
+                "2026-04-30T00:00:00Z",
+            ),
+            "2026-04-30T00:00:00Z",
+        )
+        .await
+        .unwrap();
+        db.settle_auto_update_candidate(&AutoUpdateCandidateSettlementInput {
+            service_id: "service".to_string(),
+            candidate_digest: "sha256:monotonic".to_string(),
+            status: "ready".to_string(),
+            resolved_version: Some("1.4.0".to_string()),
+            reason: Some("digest_bound_version".to_string()),
+            attempts: 1,
+            retry_at: None,
+            settled_at: Some("2026-04-30T00:02:00Z".to_string()),
+            now: "2026-04-30T00:02:00Z".to_string(),
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        let stale = db
+            .settle_auto_update_candidate(&AutoUpdateCandidateSettlementInput {
+                service_id: "service".to_string(),
+                candidate_digest: "sha256:monotonic".to_string(),
+                status: "awaiting_inference".to_string(),
+                resolved_version: None,
+                reason: Some("version_inference_pending".to_string()),
+                attempts: 2,
+                retry_at: Some("2026-04-30T00:07:00Z".to_string()),
+                settled_at: None,
+                now: "2026-04-30T00:03:00Z".to_string(),
+            })
+            .await
+            .unwrap();
+        assert!(stale.is_none());
+        let current = db
+            .get_auto_update_candidate("service", "sha256:monotonic")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.status, "ready");
+        assert_eq!(current.resolved_version.as_deref(), Some("1.4.0"));
+    }
+
+    #[tokio::test]
+    async fn stale_pending_claim_reconciles_created_job_or_reopens() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let make_pending = |id: &str, digest: &str| AutoUpdatePendingInput {
+            id: id.to_string(),
+            policy_scope_type: "stack".to_string(),
+            policy_scope_id: "stack".to_string(),
+            rule_id: "rule".to_string(),
+            stack_id: "stack".to_string(),
+            service_id: "service".to_string(),
+            source_check_job_id: "check".to_string(),
+            candidate_tag: "latest".to_string(),
+            candidate_display_tag: "1.4.0".to_string(),
+            candidate_digest: digest.to_string(),
+            current_display_tag: "1.0.0".to_string(),
+            first_seen_at: "2026-04-30T00:00:00Z".to_string(),
+            due_at: "2026-04-30T00:00:00Z".to_string(),
+            min_age_seconds: 0,
+            min_version_lag: 0,
+            summary_json: serde_json::json!({}),
+            candidate_id: None,
+        };
+        let linked = db
+            .reserve_auto_update_pending(
+                &make_pending("pending-linked", "sha256:linked"),
+                "2026-04-30T00:00:00Z",
+            )
+            .await
+            .unwrap();
+        let reopened = db
+            .reserve_auto_update_pending(
+                &make_pending("pending-reopened", "sha256:reopened"),
+                "2026-04-30T00:00:00Z",
+            )
+            .await
+            .unwrap();
+        assert!(
+            db.try_claim_auto_update_pending(&linked.id, "2026-04-30T00:00:01Z")
+                .await
+                .unwrap()
+        );
+        assert!(
+            db.try_claim_auto_update_pending(&reopened.id, "2026-04-30T00:00:01Z")
+                .await
+                .unwrap()
+        );
+        db.insert_job(crate::api::types::JobListItem {
+            id: "recovered-auto-policy-job".to_string(),
+            r#type: crate::api::types::JobType::Update,
+            scope: crate::api::types::JobScope::Service,
+            stack_id: Some("stack".to_string()),
+            service_id: Some("service".to_string()),
+            status: "queued".to_string(),
+            created_by: "auto-policy".to_string(),
+            reason: "auto_policy".to_string(),
+            created_at: "2026-04-30T00:00:02Z".to_string(),
+            started_at: None,
+            finished_at: None,
+            allow_arch_mismatch: false,
+            backup_mode: "inherit".to_string(),
+            summary_json: serde_json::json!({
+                "targets": [{
+                    "serviceId": "service",
+                    "targetDigest": "sha256:linked"
+                }]
+            }),
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            db.reconcile_auto_update_pending_claims(
+                "2026-04-30T00:05:00Z",
+                "2026-04-30T00:06:00Z",
+            )
+            .await
+            .unwrap(),
+            2
+        );
+        let linked = db
+            .list_auto_update_pending_candidates("2026-04-30T00:06:00Z", 10)
+            .await
+            .unwrap();
+        assert_eq!(linked.len(), 1);
+        assert_eq!(linked[0].id, reopened.id);
+        assert_eq!(linked[0].status, "pending");
+        let linked = db
+            .get_auto_update_pending_by_id("pending-linked")
+            .await
+            .unwrap();
+        assert_eq!(
+            linked.unwrap().update_job_id.as_deref(),
+            Some("recovered-auto-policy-job")
+        );
     }
 
     #[tokio::test]

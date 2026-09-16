@@ -585,13 +585,7 @@ async fn load_new_version_notification_settle_targets(
                     .clone()
                     .filter(|_| current_snapshot_ready)
                     .filter(|_| current_digest_matches_live),
-                candidate_resolved_tag: canonical_candidate_version.or_else(|| {
-                    service.candidate.as_ref().and_then(|candidate| {
-                        crate::snapshot_worker::normalize_digest(&candidate.digest)
-                            .filter(|digest| digest == item.candidate_digest.as_str())
-                            .and_then(|_| candidate.resolved_tag.clone())
-                    })
-                }),
+                candidate_resolved_tag: canonical_candidate_version,
             }
         } else {
             NewVersionNotificationSettleTarget {

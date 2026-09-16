@@ -288,6 +288,17 @@ fn add_seconds(ts: &str, seconds: u32) -> String {
         .unwrap_or_else(|| ts.to_string())
 }
 
+fn subtract_seconds(ts: &str, seconds: u32) -> String {
+    parse_rfc3339(ts)
+        .map(|value| value - time::Duration::seconds(seconds as i64))
+        .and_then(|value| {
+            value
+                .format(&time::format_description::well_known::Rfc3339)
+                .ok()
+        })
+        .unwrap_or_else(|| ts.to_string())
+}
+
 fn version_lag_met(
     min_version_lag: u32,
     current_display_tag: &str,
@@ -499,8 +510,8 @@ pub async fn reconcile_inference_for_digest(
                 })
             })
             .flatten();
-        if snapshot_ready
-            && resolved.is_none()
+        let mut inference_error = false;
+        if resolved.is_none()
             && let Ok(image) = crate::registry::ImageRef::parse(&format!(
                 "{}@{}",
                 image_repo.trim(),
@@ -516,6 +527,7 @@ pub async fn reconcile_inference_for_digest(
                     raw.and_then(|raw| dockrev_common::normalized_semver_from_oci_version(&raw))
                 }
                 Err(error) => {
+                    inference_error = true;
                     tracing::debug!(
                         image_repo,
                         digest = %candidate.candidate_digest,
@@ -526,7 +538,8 @@ pub async fn reconcile_inference_for_digest(
                 }
             };
         }
-        let authoritative_without_version = snapshot_ready && resolved.is_none();
+        let authoritative_without_version =
+            snapshot_ready && resolved.is_none() && !inference_error;
         let attempts = if resolved.is_some() || authoritative_without_version {
             candidate.attempts
         } else {
@@ -562,7 +575,7 @@ pub async fn reconcile_inference_for_digest(
                 now: now.to_string(),
             })
             .await?;
-        let Some(settled) = settled else { continue };
+        let settled = settled.unwrap_or_else(|| candidate.clone());
         state
             .db
             .management_events()
@@ -578,10 +591,11 @@ pub async fn reconcile_inference_for_digest(
                 }),
             )
             .await;
-        if matches!(status, "ready" | "unresolved") {
+        if matches!(settled.status.as_str(), "ready" | "unresolved") {
             evaluate_candidate(
                 state,
                 &candidate.source_job_id,
+                &settled.discovered_at,
                 now,
                 &candidate_from_row(&settled),
                 Some(&settled.source),
@@ -620,6 +634,21 @@ pub async fn reconcile_pending_inference(
         )
         .await?;
     }
+    for candidate in state
+        .db
+        .list_auto_update_candidates_for_policy_reconciliation(50)
+        .await?
+    {
+        evaluate_candidate(
+            state,
+            &candidate.source_job_id,
+            &candidate.discovered_at,
+            now,
+            &candidate_from_row(&candidate),
+            Some(&candidate.source),
+        )
+        .await?;
+    }
     Ok(reconciled)
 }
 
@@ -635,11 +664,26 @@ pub async fn reevaluate_service_policy(
     let Some(candidate) = rows.into_iter().next() else {
         return Ok(());
     };
+    if !is_qualified_auto_policy_source(Some(&candidate.source)) {
+        state
+            .db
+            .set_auto_update_candidate_policy(
+                service_id,
+                &candidate.candidate_digest,
+                "skipped",
+                Some("unqualified_source"),
+                None,
+                now,
+            )
+            .await?;
+        return Ok(());
+    }
     match candidate.status.as_str() {
         "ready" => {
             evaluate_candidate(
                 state,
                 &candidate.source_job_id,
+                &candidate.discovered_at,
                 now,
                 &candidate_from_row(&candidate),
                 Some(&candidate.source),
@@ -966,6 +1010,7 @@ async fn enqueue_pending(
 async fn evaluate_candidate(
     state: &Arc<AppState>,
     job_id: &str,
+    discovered_at: &str,
     finished_at: &str,
     candidate: &notify::NewVersionDiscoveredService,
     source: Option<&str>,
@@ -988,7 +1033,7 @@ async fn evaluate_candidate(
                 reason: settlement_reason.clone(),
                 attempts: 0,
                 retry_at: None,
-                discovered_at: finished_at.to_string(),
+                discovered_at: discovered_at.to_string(),
                 source_job_id: job_id.to_string(),
                 source: source.unwrap_or("unknown").to_string(),
                 current_tag: candidate.current_tag.clone(),
@@ -998,6 +1043,20 @@ async fn evaluate_candidate(
             finished_at,
         )
         .await?;
+    if !is_qualified_auto_policy_source(source) {
+        state
+            .db
+            .set_auto_update_candidate_policy(
+                &candidate.service_id,
+                &candidate.candidate_digest,
+                "skipped",
+                Some("unqualified_source"),
+                None,
+                finished_at,
+            )
+            .await?;
+        return Ok(());
+    }
     state
         .db
         .supersede_auto_update_candidates(
@@ -1179,6 +1238,10 @@ fn auto_policy_source(reason: &str, summary: &serde_json::Value) -> Option<&'sta
     None
 }
 
+fn is_qualified_auto_policy_source(source: Option<&str>) -> bool {
+    matches!(source, Some("schedule" | "github_webhook"))
+}
+
 pub async fn handle_completed_check(
     state: &Arc<AppState>,
     job_id: &str,
@@ -1199,11 +1262,26 @@ pub async fn handle_completed_check(
         return Ok(());
     }
 
+    let discovered_at = state
+        .db
+        .get_job(job_id)
+        .await?
+        .map(|job| job.created_at)
+        .unwrap_or_else(|| finished_at.to_string());
+
     let host_platform =
         crate::registry::host_platform_override(state.config.host_platform.as_deref())
             .unwrap_or_else(|| "linux/amd64".to_string());
     for candidate in &discovered_services {
-        evaluate_candidate(state, job_id, finished_at, candidate, Some(source)).await?;
+        evaluate_candidate(
+            state,
+            job_id,
+            &discovered_at,
+            finished_at,
+            candidate,
+            Some(source),
+        )
+        .await?;
         if let Some(image_repo) =
             crate::snapshot_worker::image_repo_from_image_ref(&candidate.image_ref)
         {
@@ -1226,6 +1304,11 @@ pub async fn process_due_pending(
     now: &str,
     limit: usize,
 ) -> anyhow::Result<usize> {
+    let stale_before = subtract_seconds(now, 300);
+    state
+        .db
+        .reconcile_auto_update_pending_claims(&stale_before, now)
+        .await?;
     let due = state
         .db
         .list_auto_update_pending_candidates(now, limit)
@@ -1245,220 +1328,5 @@ pub async fn process_due_pending(
 include!("auto_update_reconciliation.rs");
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::api::types::{AutoUpdateDelay, AutoUpdateMatcher};
-
-    fn rule(kind: AutoUpdateMatcherType, pattern: &str) -> AutoUpdateRule {
-        AutoUpdateRule {
-            id: "r1".to_string(),
-            name: "rule".to_string(),
-            enabled: true,
-            matcher: AutoUpdateMatcher {
-                kind,
-                pattern: pattern.to_string(),
-            },
-            action: AutoUpdateRuleAction::Delayed,
-            delay: AutoUpdateDelay {
-                min_age_seconds: 900,
-                min_version_lag: 2,
-            },
-        }
-    }
-
-    #[test]
-    fn matches_semver_regex_and_glob() {
-        assert!(rule_matches_text(
-            &rule(AutoUpdateMatcherType::Semver, ">=1.2, <2"),
-            "1.4.0"
-        ));
-        assert!(!rule_matches_text(
-            &rule(AutoUpdateMatcherType::Semver, ">=1.2, <2"),
-            "2.0.0"
-        ));
-        assert!(rule_matches_text(
-            &rule(AutoUpdateMatcherType::Regex, r"1\.4\.[0-9]+"),
-            "1.4.7"
-        ));
-        assert!(rule_matches_text(
-            &rule(AutoUpdateMatcherType::Glob, "1.4.*-alpine"),
-            "1.4.7-alpine"
-        ));
-    }
-
-    #[test]
-    fn semver_is_fail_closed_until_digest_bound_version_exists() {
-        let candidate = notify::NewVersionDiscoveredService {
-            stack_id: "stack".to_string(),
-            service_id: "service".to_string(),
-            image_ref: "ghcr.io/acme/app".to_string(),
-            current_tag: "latest".to_string(),
-            current_digest: Some("sha256:old".to_string()),
-            current_display_tag: "1.0.0".to_string(),
-            candidate_tag: "latest".to_string(),
-            candidate_display_tag: "latest".to_string(),
-            candidate_digest: "sha256:new".to_string(),
-        };
-        let semver = rule(AutoUpdateMatcherType::Semver, ">=1, <2");
-        assert!(!rule_matches_candidate(&semver, &candidate, None));
-        assert!(rule_matches_candidate(&semver, &candidate, Some("1.4.0")));
-
-        let regex = rule(AutoUpdateMatcherType::Regex, "latest");
-        assert!(rule_matches_candidate(&regex, &candidate, None));
-    }
-
-    #[test]
-    fn candidate_settlement_requires_a_strict_or_digest_bound_version() {
-        let mut candidate = notify::NewVersionDiscoveredService {
-            stack_id: "stack".to_string(),
-            service_id: "service".to_string(),
-            image_ref: "ghcr.io/acme/app".to_string(),
-            current_tag: "latest".to_string(),
-            current_digest: Some("sha256:old".to_string()),
-            current_display_tag: "1.0.0".to_string(),
-            candidate_tag: "latest".to_string(),
-            candidate_display_tag: "latest".to_string(),
-            candidate_digest: "sha256:new".to_string(),
-        };
-        assert_eq!(
-            candidate_settlement_state(&candidate).0,
-            "awaiting_inference"
-        );
-
-        candidate.candidate_display_tag = "1.4.0".to_string();
-        assert_eq!(
-            candidate_settlement_state(&candidate).0,
-            "awaiting_inference"
-        );
-
-        candidate.candidate_tag = "1.5.0".to_string();
-        candidate.candidate_display_tag = "1.5.0".to_string();
-        assert_eq!(candidate_settlement_state(&candidate).0, "ready");
-    }
-
-    #[test]
-    fn digest_snapshot_resolution_uses_the_highest_bound_semver_tag() {
-        let snapshot = crate::api::types::ServiceDigestTagsSnapshotResponse {
-            digest: "sha256:new".to_string(),
-            tags: vec![
-                "latest".to_string(),
-                "1.2.0".to_string(),
-                "v1.4.0".to_string(),
-                "release-notes".to_string(),
-            ],
-            checked_at: "2026-04-30T00:00:00Z".to_string(),
-            scan: crate::api::types::ServiceDigestTagsScanSummary {
-                repo_tags_total: 4,
-                repo_tags_considered: 4,
-                manifests_ok: 4,
-                manifests_timeout: 0,
-                manifests_error: 0,
-            },
-        };
-        assert_eq!(
-            resolved_version_from_snapshot(&snapshot, "latest").as_deref(),
-            Some("1.4.0")
-        );
-    }
-
-    #[test]
-    fn inference_retry_schedule_is_one_five_and_ten_minutes() {
-        let now = "2026-04-30T00:00:00Z";
-        assert_eq!(
-            retry_at_for_attempt(now, 1).as_deref(),
-            Some("2026-04-30T00:01:00Z")
-        );
-        assert_eq!(
-            retry_at_for_attempt(now, 2).as_deref(),
-            Some("2026-04-30T00:05:00Z")
-        );
-        assert_eq!(
-            retry_at_for_attempt(now, 3).as_deref(),
-            Some("2026-04-30T00:10:00Z")
-        );
-        assert_eq!(retry_at_for_attempt(now, 4), None);
-    }
-
-    #[test]
-    fn inference_attempts_wait_through_the_third_backoff_before_terminal_state() {
-        assert!(!inference_attempt_is_terminal(1));
-        assert!(!inference_attempt_is_terminal(2));
-        assert!(!inference_attempt_is_terminal(3));
-        assert!(inference_attempt_is_terminal(4));
-    }
-
-    #[test]
-    fn non_semver_snapshot_tags_do_not_settle_a_candidate() {
-        let snapshot = crate::api::types::ServiceDigestTagsSnapshotResponse {
-            digest: "sha256:new".to_string(),
-            tags: vec!["latest".to_string(), "15-alpine".to_string()],
-            checked_at: "2026-04-30T00:00:00Z".to_string(),
-            scan: crate::api::types::ServiceDigestTagsScanSummary {
-                repo_tags_total: 2,
-                repo_tags_considered: 2,
-                manifests_ok: 2,
-                manifests_timeout: 0,
-                manifests_error: 0,
-            },
-        };
-        assert!(snapshot_is_authoritative(&snapshot));
-        assert_eq!(resolved_version_from_snapshot(&snapshot, "latest"), None);
-    }
-
-    #[test]
-    fn incomplete_snapshot_cannot_be_used_as_version_evidence() {
-        let snapshot = crate::api::types::ServiceDigestTagsSnapshotResponse {
-            digest: "sha256:new".to_string(),
-            tags: vec!["latest".to_string(), "1.4.0".to_string()],
-            checked_at: "2026-04-30T00:00:00Z".to_string(),
-            scan: crate::api::types::ServiceDigestTagsScanSummary {
-                repo_tags_total: 4,
-                repo_tags_considered: 2,
-                manifests_ok: 2,
-                manifests_timeout: 0,
-                manifests_error: 0,
-            },
-        };
-        assert!(!snapshot_is_authoritative(&snapshot));
-    }
-
-    #[test]
-    fn rejects_non_slider_presets() {
-        let mut policy = AutoUpdatePolicy {
-            mode: AutoUpdatePolicyMode::Override,
-            enabled: true,
-            rules: vec![rule(AutoUpdateMatcherType::Semver, ">=1")],
-            updated_at: None,
-        };
-        assert!(validate_policy_for_scope(&policy, "stack").is_ok());
-        policy.rules[0].delay.min_age_seconds = 901;
-        assert!(validate_policy_for_scope(&policy, "stack").is_err());
-    }
-
-    #[test]
-    fn keeps_auto_update_pending_for_transient_service_operation_conflicts() {
-        let conflict = ApiError::conflict("service operation in progress").with_details(json!({
-            "reason": "service_lifecycle_in_progress",
-            "existingJobId": "job-lifecycle-1",
-        }));
-        assert!(!permanent_enqueue_error(&conflict));
-
-        let stack_conflict =
-            ApiError::conflict("service operation in progress").with_details(json!({
-                "reason": "stack_lifecycle_in_progress",
-                "existingJobId": "job-stack-lifecycle-1",
-            }));
-        assert!(!permanent_enqueue_error(&stack_conflict));
-
-        let stale_candidate = ApiError::conflict("target digest no longer matches latest scan");
-        assert!(permanent_enqueue_error(&stale_candidate));
-    }
-
-    #[test]
-    fn keeps_auto_update_pending_for_compose_v2_capability_failures() {
-        let capability_failure = ApiError::compose_v2_required("docker-compose", "v1");
-        assert!(!permanent_enqueue_error(&capability_failure));
-    }
-
-    include!("auto_update_reconciliation_tests.rs");
-}
+#[path = "auto_update_tests.rs"]
+mod tests;

@@ -1,5 +1,6 @@
 import type { ServiceResourceOverviewItem, ServiceResourceOverviewResponse } from './serviceResourceTypes'
-export type { AutoUpdateProjection, CandidateSettlement } from './autoUpdateTypes'
+import type { VersionInferenceState } from './autoUpdateTypes'
+export type { AutoUpdateProjection, CandidateSettlement, VersionInferenceState } from './autoUpdateTypes'
 
 export type StackStatus = 'healthy' | 'degraded' | 'unknown'
 
@@ -162,12 +163,6 @@ export type ServiceImage = {
 }
 
 export type ServiceLifecycleState = 'running' | 'stopped' | 'partial' | 'unknown'
-
-export type VersionInferenceState = {
-  status: 'ready' | 'pending' | string
-  reason?: string | null
-  checkedAt?: string | null
-}
 
 export type Service = {
   id: string

@@ -623,6 +623,7 @@ pub(super) async fn enrich_services_with_version_inference(
                 status: "ready".to_string(),
                 reason: Some(VERSION_INFERENCE_REASON_NOT_REQUIRED.to_string()),
                 checked_at: None,
+                ..VersionInferenceState::default()
             });
             continue;
         }
@@ -633,6 +634,7 @@ pub(super) async fn enrich_services_with_version_inference(
                 status: "ready".to_string(),
                 reason: Some(VERSION_INFERENCE_REASON_NOT_REQUIRED.to_string()),
                 checked_at: None,
+                ..VersionInferenceState::default()
             });
             continue;
         };
@@ -662,6 +664,7 @@ pub(super) async fn enrich_services_with_version_inference(
                 status: "ready".to_string(),
                 reason: Some(VERSION_INFERENCE_REASON_NOT_REQUIRED.to_string()),
                 checked_at: None,
+                ..VersionInferenceState::default()
             });
             continue;
         }
@@ -787,6 +790,7 @@ pub(super) async fn enrich_services_with_version_inference(
             status: status.to_string(),
             reason,
             checked_at: latest_checked_at,
+            ..VersionInferenceState::default()
         });
     }
 

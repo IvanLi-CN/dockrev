@@ -491,6 +491,7 @@ fn homepage_nav_service_from_row(
                 status: "ready".to_string(),
                 reason: None,
                 checked_at: None,
+                ..VersionInferenceState::default()
             }),
             candidate_settlement: None,
             auto_update: None,
