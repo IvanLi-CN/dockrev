@@ -36,10 +36,12 @@ assert "'channel:rc'" in label_gate
 assert "ALLOW_BOOTSTRAP" in label_gate
 assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in label_gate
 assert "name: Release completion" in completion
-assert "pull_request_target:" in completion and "pull_request:" in completion
+assert "pull_request_target:" in completion and "pull_request:" not in completion
 assert "ref: ${{ github.event.pull_request.base.sha }}" in completion
-assert "759b0cf9c0d5a57be1010e74480cbb5ae713433c" in completion
-assert "github.event.pull_request.number == 387" in completion
+assert "github.event.pull_request.number == 387" not in completion
+assert "759b0cf9c0d5a57be1010e74480cbb5ae713433c" not in completion
+assert "One-time migration path" not in completion
+assert "if [[ -f .github/scripts/release_completion.py ]]" not in completion
 assert "release_policy.validate_source_boundary(" in text(".github/scripts/release_completion.py")
 assert "workflows: [\"CI (PR)\", \"Label Gate\"]" in preparation
 assert "group: release-preparation-${{ inputs.pr_number || github.event.workflow_run.pull_requests[0].number || github.run_id }}" in preparation
@@ -47,6 +49,9 @@ assert "name: Prepare PR VERSION identity" in preparation
 assert "(github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')" in preparation
 assert "release-reservation" in text(".github/scripts/release_preparation.py")
 assert "RC-to-stable promotion" in preparation
+assert "version-only-release-pr" in preparation
+assert "covered_merge_sha" in preparation
+assert "baseline_version" in preparation
 assert "channel-for-version" in text(".github/scripts/release-channel-contract-check.sh")
 assert "actions: read" in preparation
 assert "checks: read" in preparation
@@ -133,7 +138,7 @@ assert "import release_baseline" in text(".github/scripts/release_preparation.py
 assert "import release_baseline" in text(".github/scripts/release_completion.py")
 assert "import release_baseline" in text(".github/scripts/release_identity.py")
 assert "Release-Baseline-Version" in ci_pr
-assert "Release-Baseline-Version" in completion
+assert "Release-Baseline-Version" in text(".github/scripts/release_completion.py")
 assert "Release-Baseline-Version" in text(".github/scripts/release_preparation.py")
 assert "Release-Baseline-Version" in text(".github/scripts/release_completion.py")
 assert "Release-Baseline-Version" in text(".github/scripts/release_identity.py")

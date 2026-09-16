@@ -41,7 +41,9 @@
 - Inputs: a qualified final-release baseline, source `VERSION`, frozen
   type/channel labels, and exact version input where required. A qualified
   baseline is non-draft, non-prerelease, created by release automation, and
-  tagged at a `main`-reachable commit.
+  tagged at a `main`-reachable commit. Historical `X.Y.Z` tags and canonical
+  `vX.Y.Z` tags qualify for lookup; future publication uses canonical tags, and
+  conflicting qualified tags for one version MUST fail closed.
 - Outputs: a signed `VERSION`-only identity carrying
   `Release-Baseline-Version`, or a fail-closed validation error.
 - covers: `G1`, `G2`
@@ -65,6 +67,19 @@
   source or covered `VERSION` as a fallback allocator.
 - Inputs: immutable merged provenance and its version/channel pair.
 - Outputs: channel-consistent publication or recovery behavior.
+
+### REQ-RELEASE-CHANNEL-004
+
+- A historical identity repair MUST use one explicit
+  `version-only-release-pr` preparation mode. It MUST bind an exact covered
+  product merge SHA, exact product version, frozen baseline, and label intent
+  to a signed, single-parent, `VERSION`-only commit created with
+  `createCommitOnBranch(expectedHeadOid)`. Reservation, recovery-ref, and
+  publication-lock ownership MUST bind that same identity SHA. The current
+  approved repair boundary is PR #391 merge
+  `978207fe9d140d81e2d4a2a7bd24fb253a04ebff` -> `0.80.2` with baseline
+  `0.80.1` and intent `type:patch channel:stable`; no separate PR #390
+  identity is allowed.
 - covers: `G2`, `G3`
 
 ## Verification
@@ -87,11 +102,22 @@
 - Pass condition: an RC identity keeps `-rc.N`, is marked prerelease, omits
   latest, and its recovery/failure context retains the same identity.
 
+### VER-RELEASE-CHANNEL-003
+
+- Method: baseline, identity-ownership, version-only preparation, and trusted
+  workflow contract fixtures.
+- covers: `REQ-RELEASE-CHANNEL-004`
+- Pass condition: legacy and canonical baseline tags are accepted, conflicting
+  qualified targets fail closed, unrelated tag ownership does not block a
+  covered merge, and the sole version-only identity binds the covered merge,
+  exact version, baseline, intent, reservation, and recovery ref.
+
 ## Related ADRs
 
 - [0008-pr-label-release-identity](../../adr/0008-pr-label-release-identity.md)
 - [0009-release-channel-promotion-identity](../../adr/0009-release-channel-promotion-identity.md)
 - [0010-release-version-baseline](../../adr/0010-release-version-baseline.md)
+- [0011-legacy-release-tag-baseline](../../adr/0011-legacy-release-tag-baseline.md)
 
 ## References
 

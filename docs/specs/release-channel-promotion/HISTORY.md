@@ -13,8 +13,16 @@
 
 - Automatic version allocation follows ADR 0010: the highest qualified final
   release is the numeric baseline, while source `VERSION` remains an
-  identity/provenance input. The baseline is frozen in signed release
-  provenance and revalidated at each release identity boundary.
+  identity/provenance input. Legacy no-prefix tags are accepted as frozen
+  historical baselines, canonical `vX.Y.Z` tags remain the future publication
+  format, and conflicting qualified targets fail closed. The baseline is frozen
+  in signed release provenance and revalidated at each release identity
+  boundary.
+
+- Successor ADR 0011 defines the one historical backfill boundary: PR #391
+  merge `978207fe9d140d81e2d4a2a7bd24fb253a04ebff` receives the sole
+  `0.80.2` version-only identity with baseline `0.80.1` and stable patch
+  intent; PR #390 is not independently released.
 
 ## References
 

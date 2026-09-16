@@ -183,13 +183,22 @@ def covered_product_has_existing_identity(
             raise CompletionError("existing publication lock ref has no valid commit SHA")
         if lock_sha != expected_recovery_identity_sha:
             return True
-    try:
-        api_json(api_root, token, f"/repos/{owner}/{name}/git/ref/tags/v{version}")
-    except CompletionError as error:
-        if "GitHub API failed: 404" not in str(error):
+    def tag_fetch(path: str) -> Any:
+        try:
+            return api_json(api_root, token, path)
+        except CompletionError as error:
+            if "GitHub API failed: 404" in str(error):
+                raise urllib.error.HTTPError(path, 404, "Not Found", None, None) from error
             raise
-        return False
-    return True
+
+    owned_shas = {covered_merge_sha}
+    if expected_recovery_identity_sha is not None:
+        owned_shas.add(expected_recovery_identity_sha)
+    for tag in (f"v{version}", version):
+        target_sha = release_baseline.tagged_commit_sha(tag_fetch, repository, tag)
+        if target_sha is not None and target_sha in owned_shas:
+            return True
+    return False
 
 
 def recovery_identity_is_owned(
@@ -389,13 +398,15 @@ def validate_completion(payload: dict[str, Any]) -> dict[str, Any]:
 
 def tag_is_available(api_root: str, token: str, repository: str, version: str) -> bool:
     owner, name = repository.split("/", 1)
-    try:
-        api_json(api_root, token, f"/repos/{owner}/{name}/git/ref/tags/v{version}")
-    except CompletionError as error:
-        if "GitHub API failed: 404" in str(error):
-            return True
-        raise
-    return False
+    for tag in (f"v{version}", version):
+        try:
+            api_json(api_root, token, f"/repos/{owner}/{name}/git/ref/tags/{tag}")
+        except CompletionError as error:
+            if "GitHub API failed: 404" in str(error):
+                continue
+            raise
+        return False
+    return True
 
 
 def version_reservation_is_owned(

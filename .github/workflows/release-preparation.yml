@@ -15,6 +15,24 @@ on:
         required: false
         default: ""
         type: string
+      release_mode:
+        description: Preparation mode; version-only-release-pr is reserved for one historical product merge
+        required: false
+        default: "normal-preparation"
+        type: choice
+        options:
+          - normal-preparation
+          - version-only-release-pr
+      covered_merge_sha:
+        description: Exact merged product SHA for version-only-release-pr
+        required: false
+        default: ""
+        type: string
+      baseline_version:
+        description: Frozen qualified final baseline for version-only-release-pr
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write
@@ -59,11 +77,23 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
           EXACT_VERSION: ${{ inputs.exact_version || '' }}
+          RELEASE_MODE: ${{ inputs.release_mode || 'normal-preparation' }}
+          COVERED_MERGE_SHA: ${{ inputs.covered_merge_sha || '' }}
+          BASELINE_VERSION: ${{ inputs.baseline_version || '' }}
         run: |
           set -euo pipefail
           args=(create --repository "${GITHUB_REPOSITORY}" --pr-number "${PR_NUMBER}")
           if [[ -n "${EXACT_VERSION}" ]]; then
             args+=(--exact-version "${EXACT_VERSION}")
+          fi
+          if [[ -n "${RELEASE_MODE}" ]]; then
+            args+=(--release-mode "${RELEASE_MODE}")
+          fi
+          if [[ -n "${COVERED_MERGE_SHA}" ]]; then
+            args+=(--covered-merge-sha "${COVERED_MERGE_SHA}")
+          fi
+          if [[ -n "${BASELINE_VERSION}" ]]; then
+            args+=(--baseline-version "${BASELINE_VERSION}")
           fi
           args+=(--output release-intent.json)
           python3 .github/scripts/release_preparation.py create \

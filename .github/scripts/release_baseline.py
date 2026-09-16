@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -36,16 +37,17 @@ def repository_parts(repository: str) -> tuple[str, str]:
 
 
 def final_version_from_tag(tag: str) -> str | None:
-    if not tag.startswith("v"):
+    if not isinstance(tag, str) or not tag:
         return None
+    version_text = tag[1:] if tag.startswith("v") else tag
     try:
-        major, minor, patch, prerelease = release_policy.parse_version(tag[1:])
+        major, minor, patch, prerelease = release_policy.parse_version(version_text)
     except release_policy.PolicyError:
         return None
     if prerelease is not None:
         return None
     version = f"{major}.{minor}.{patch}"
-    return version if tag == f"v{version}" else None
+    return version if tag in {version, f"v{version}"} else None
 
 
 def _is_not_found(error: Exception) -> bool:
@@ -55,6 +57,8 @@ def _is_not_found(error: Exception) -> bool:
     while current is not None and id(current) not in seen:
         seen.add(id(current))
         if isinstance(current, urllib.error.HTTPError) and current.code == 404:
+            return True
+        if re.search(r"GitHub API(?: GET)?[^\n]*failed:\s*404(?:[:\s]|$)", str(current)):
             return True
         if current.__cause__ is not None:
             current = current.__cause__
@@ -164,6 +168,17 @@ def is_qualified_final_release(fetch: Fetch, repository: str, release: Any) -> b
     return target_sha is not None and is_main_reachable(fetch, repository, target_sha)
 
 
+def qualified_release_target_sha(fetch: Fetch, repository: str, release: Any) -> str | None:
+    """Return the target SHA only when the release satisfies the full baseline policy."""
+    if not is_qualified_final_release(fetch, repository, release):
+        return None
+    tag, _draft, _prerelease, _author_login = release_metadata(release)
+    target_sha = tagged_commit_sha(fetch, repository, tag)
+    if target_sha is None:
+        raise BaselineError("qualified release tag has no commit target")
+    return target_sha
+
+
 def release_for_tag(fetch: Fetch, repository: str, tag: str) -> dict[str, Any] | None:
     owner, name = repository_parts(repository)
     release = _optional_fetch(
@@ -196,8 +211,18 @@ def latest_qualified_final_release_version(fetch: Fetch, repository: str) -> str
         if len(releases) < 100:
             break
         page += 1
+    qualified_targets: dict[str, set[str]] = {}
     for _numeric, release, version in sorted(candidates, key=lambda candidate: candidate[0], reverse=True):
-        if is_qualified_final_release(fetch, repository, release):
+        target_sha = qualified_release_target_sha(fetch, repository, release)
+        if target_sha is not None:
+            qualified_targets.setdefault(version, set()).add(target_sha)
+    for _numeric, _release, version in sorted(candidates, key=lambda candidate: candidate[0], reverse=True):
+        targets = qualified_targets.get(version, set())
+        if len(targets) > 1:
+            raise BaselineError(
+                f"qualified release tags for version {version} point to different commit SHAs"
+            )
+        if targets:
             return version
     return "0.0.0"
 
@@ -210,8 +235,19 @@ def validate_frozen_final_baseline(fetch: Fetch, repository: str, baseline_versi
     if prerelease is not None:
         raise BaselineError("release baseline must be a final semver version")
     normalized = f"{major}.{minor}.{patch}"
-    release = release_for_tag(fetch, repository, f"v{normalized}")
-    if release is not None and is_qualified_final_release(fetch, repository, release):
+    targets: set[str] = set()
+    for tag in (f"v{normalized}", normalized):
+        release = release_for_tag(fetch, repository, tag)
+        if release is None:
+            continue
+        target_sha = qualified_release_target_sha(fetch, repository, release)
+        if target_sha is not None:
+            targets.add(target_sha)
+    if len(targets) > 1:
+        raise BaselineError(
+            f"qualified release tags for frozen baseline {normalized} point to different commit SHAs"
+        )
+    if targets:
         return
     if normalized == "0.0.0" and latest_qualified_final_release_version(fetch, repository) == "0.0.0":
         return
