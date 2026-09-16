@@ -89,6 +89,54 @@ fn candidate_settlement_requires_a_strict_or_digest_bound_version() {
 }
 
 #[test]
+fn candidate_settlement_rejects_strict_tags_without_digest_evidence() {
+    let candidate = notify::NewVersionDiscoveredService {
+        stack_id: "stack".to_string(),
+        service_id: "service".to_string(),
+        image_ref: "ghcr.io/acme/app".to_string(),
+        current_tag: "latest".to_string(),
+        current_digest: Some("sha256:old".to_string()),
+        current_display_tag: "1.0.0".to_string(),
+        candidate_tag: "1.4.0".to_string(),
+        candidate_display_tag: "1.4.0".to_string(),
+        candidate_digest: "".to_string(),
+    };
+    assert_eq!(candidate_settlement_state(&candidate).0, "unresolved");
+    assert_eq!(candidate_settlement_state(&candidate).1, None);
+}
+
+#[test]
+fn update_request_can_be_rebuilt_from_a_persisted_auto_policy_job() {
+    let request = update_request_from_job(&api::types::JobListItem {
+        id: "job".to_string(),
+        r#type: api::types::JobType::Update,
+        scope: JobScope::Service,
+        stack_id: Some("stack".to_string()),
+        service_id: Some("service".to_string()),
+        status: "queued".to_string(),
+        created_by: "auto-policy".to_string(),
+        reason: "auto_policy".to_string(),
+        created_at: "2026-04-30T00:00:00Z".to_string(),
+        started_at: None,
+        finished_at: None,
+        allow_arch_mismatch: false,
+        backup_mode: "inherit".to_string(),
+        summary_json: json!({
+            "mode": "apply",
+            "targets": [{
+                "serviceId": "service",
+                "targetTag": "latest",
+                "targetDigest": "sha256:new"
+            }]
+        }),
+    })
+    .unwrap();
+    assert!(matches!(request.mode, UpdateMode::Apply));
+    assert_eq!(request.targets.unwrap()[0].target_digest, "sha256:new");
+    assert!(matches!(request.reason, UpdateReason::AutoPolicy));
+}
+
+#[test]
 fn digest_snapshot_resolution_uses_the_highest_bound_semver_tag() {
     let snapshot = crate::api::types::ServiceDigestTagsSnapshotResponse {
         digest: "sha256:new".to_string(),

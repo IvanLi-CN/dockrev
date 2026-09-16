@@ -1,4 +1,47 @@
 impl Db {
+    pub async fn list_enqueued_auto_update_jobs(
+        &self,
+        limit: usize,
+    ) -> anyhow::Result<Vec<JobListItem>> {
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT
+  j.id,
+  j.type,
+  j.scope,
+  j.stack_id,
+  j.service_id,
+  j.status,
+  j.created_by,
+  j.reason,
+  j.created_at,
+  j.started_at,
+  j.finished_at,
+  j.allow_arch_mismatch,
+  j.backup_mode,
+  j.summary_json
+FROM jobs j
+WHERE j.type = 'update'
+  AND j.status = 'queued'
+  AND j.created_by = 'auto-policy'
+  AND EXISTS (
+    SELECT 1
+    FROM auto_update_pending p
+    WHERE p.update_job_id = j.id
+      AND p.status = 'enqueued'
+  )
+ORDER BY j.created_at ASC, j.id ASC
+LIMIT ?1
+"#,
+            )?;
+            let rows = stmt.query_map(params![limit as i64], map_job_list_item_row)?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list enqueued auto update jobs")
+    }
+
     pub async fn claim_queued_job_by_id(
         &self,
         job_id: &str,

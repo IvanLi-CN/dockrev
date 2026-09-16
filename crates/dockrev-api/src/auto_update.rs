@@ -386,6 +386,13 @@ fn pending_candidate(pending: &AutoUpdatePendingRow) -> notify::NewVersionDiscov
 fn candidate_settlement_state(
     candidate: &notify::NewVersionDiscoveredService,
 ) -> (&'static str, Option<String>, Option<String>) {
+    if candidate.candidate_digest.trim().is_empty() {
+        return (
+            "unresolved",
+            None,
+            Some("missing_candidate_evidence".to_string()),
+        );
+    }
     if let Some(version) = resolved_candidate_version(candidate) {
         return (
             "ready",
@@ -393,7 +400,7 @@ fn candidate_settlement_state(
             Some("digest_bound_version".to_string()),
         );
     }
-    if candidate.candidate_tag.trim().is_empty() || candidate.candidate_digest.trim().is_empty() {
+    if candidate.candidate_tag.trim().is_empty() {
         return (
             "unresolved",
             None,
@@ -405,6 +412,68 @@ fn candidate_settlement_state(
         None,
         Some("version_inference_pending".to_string()),
     )
+}
+
+fn update_request_from_job(job: &api::types::JobListItem) -> anyhow::Result<TriggerUpdateRequest> {
+    let mode = job
+        .summary_json
+        .get("mode")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("auto policy update job is missing mode"))?;
+    let mode = serde_json::from_value::<UpdateMode>(serde_json::Value::String(mode.to_string()))
+        .context("parse auto policy update mode")?;
+    let targets = job
+        .summary_json
+        .get("targets")
+        .cloned()
+        .map(serde_json::from_value::<Option<Vec<UpdateServiceTarget>>>)
+        .transpose()
+        .context("parse auto policy update targets")?
+        .flatten();
+    let backup_mode =
+        serde_json::from_value::<BackupMode>(serde_json::Value::String(job.backup_mode.clone()))
+            .context("parse auto policy update backup mode")?;
+    Ok(TriggerUpdateRequest {
+        scope: job.scope.clone(),
+        stack_id: job.stack_id.clone(),
+        service_id: job.service_id.clone(),
+        target_tag: None,
+        target_digest: None,
+        pull_tags: None,
+        targets,
+        mode,
+        allow_arch_mismatch: job.allow_arch_mismatch,
+        backup_mode,
+        reason: UpdateReason::AutoPolicy,
+    })
+}
+
+async fn recover_enqueued_auto_update_jobs(
+    state: &Arc<AppState>,
+    now: &str,
+    limit: usize,
+) -> anyhow::Result<usize> {
+    let jobs = state.db.list_enqueued_auto_update_jobs(limit).await?;
+    let mut recovered = 0;
+    for job in jobs {
+        let request = match update_request_from_job(&job) {
+            Ok(request) => request,
+            Err(error) => {
+                tracing::warn!(job_id = %job.id, error = %error, "auto policy update job recovery skipped invalid job summary");
+                continue;
+            }
+        };
+        if !state.db.claim_queued_job_by_id(&job.id, now).await? {
+            continue;
+        }
+        let run_state = state.clone();
+        let run_job_id = job.id.clone();
+        tokio::spawn(async move {
+            let _ = api::run_update_job(run_state, run_job_id, request).await;
+        });
+        recovered += 1;
+    }
+    Ok(recovered)
 }
 
 fn candidate_id_for(service_id: &str, digest: &str) -> String {
@@ -1309,11 +1378,11 @@ pub async fn process_due_pending(
         .db
         .reconcile_auto_update_pending_claims(&stale_before, now)
         .await?;
+    let mut enqueued = recover_enqueued_auto_update_jobs(state, now, limit).await?;
     let due = state
         .db
         .list_auto_update_pending_candidates(now, limit)
         .await?;
-    let mut enqueued = 0usize;
     for pending in due {
         if !pending_delay_gates_met(state, &pending, now).await? {
             continue;
