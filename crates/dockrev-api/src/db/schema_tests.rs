@@ -303,7 +303,7 @@ INSERT INTO jobs (
   ('schedule-check', 'check', 'stack', 'success', 0, 'inherit', 'test', 'schedule',
    '2026-04-30T00:00:00Z', '{}'),
   ('unknown-check', 'check', 'stack', 'success', 0, 'inherit', 'test', 'ui',
-   '2026-04-30T00:00:00Z', '{}');
+   '2026-04-30T00:00:00Z', '{malformed');
 INSERT INTO auto_update_pending (
   id, policy_scope_type, policy_scope_id, rule_id, stack_id, service_id,
   source_check_job_id, candidate_tag, candidate_display_tag, candidate_digest,

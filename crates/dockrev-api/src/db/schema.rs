@@ -810,7 +810,7 @@ WHERE p.status IN ('pending', 'enqueuing', 'enqueued')
   AND COALESCE(TRIM(p.first_seen_at), '') <> ''
   AND (
     LOWER(j.reason) = 'schedule'
-    OR LOWER(COALESCE(json_extract(j.summary_json, '$.source'), '')) = 'github_webhook'
+    OR LOWER(COALESCE(CASE WHEN json_valid(j.summary_json) THEN json_extract(j.summary_json, '$.source') END, '')) = 'github_webhook'
   )
 "#,
         params![&now],

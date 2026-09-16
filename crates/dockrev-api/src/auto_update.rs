@@ -576,7 +576,7 @@ pub async fn reconcile_inference_for_digest(
                 }),
             )
             .await;
-        if status == "ready" {
+        if matches!(status, "ready" | "unresolved") {
             evaluate_candidate(
                 state,
                 &candidate.source_job_id,
@@ -917,11 +917,11 @@ async fn enqueue_pending(
     .await
     {
         Ok(job_id) => {
-            state
+            let enqueued = state
                 .db
                 .mark_auto_update_pending_enqueued(&pending.id, &job_id, now)
                 .await?;
-            Ok(Some(job_id))
+            Ok(enqueued.then_some(job_id))
         }
         Err(err) => {
             if permanent_enqueue_error(&err) {

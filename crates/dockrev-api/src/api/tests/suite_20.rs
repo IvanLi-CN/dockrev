@@ -338,6 +338,66 @@ async fn digest_bound_snapshot_settles_candidate_and_re_evaluates_policy() {
     );
 }
 
+#[tokio::test]
+async fn terminal_unresolved_candidate_re_evaluates_policy_as_skipped() {
+    let state = test_state(":memory:").await;
+    state
+        .db
+        .put_auto_update_policy(
+            "stack",
+            "stack",
+            &delayed_stack_auto_update_policy(3600, 0),
+            "2026-04-30T00:00:00Z",
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .upsert_auto_update_candidate(
+            &crate::db::AutoUpdateCandidateInput {
+                id: "candidate-unresolved-policy".to_string(),
+                stack_id: "stack".to_string(),
+                service_id: "service".to_string(),
+                image_ref: "ghcr.io/acme/web".to_string(),
+                raw_tag: "latest".to_string(),
+                candidate_digest: "sha256:unresolved-policy".to_string(),
+                resolved_version: None,
+                status: "awaiting_inference".to_string(),
+                reason: Some("version_inference_pending".to_string()),
+                attempts: 3,
+                retry_at: None,
+                discovered_at: "2026-04-30T00:00:00Z".to_string(),
+                source_job_id: "check".to_string(),
+                current_tag: "latest".to_string(),
+                current_display_tag: "1.0.0".to_string(),
+                current_digest: Some("sha256:old".to_string()),
+            },
+            "2026-04-30T00:00:00Z",
+        )
+        .await
+        .unwrap();
+
+    crate::auto_update::reconcile_inference_for_digest(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:unresolved-policy",
+        "linux/amd64",
+        "2026-04-30T00:01:00Z",
+    )
+    .await
+    .unwrap();
+
+    let candidate = state
+        .db
+        .get_auto_update_candidate("service", "sha256:unresolved-policy")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(candidate.status, "unresolved");
+    assert_eq!(candidate.policy_status.as_deref(), Some("skipped"));
+    assert_eq!(candidate.policy_reason.as_deref(), Some("version_unresolved"));
+}
+
 async fn service_id_by_name(
     state: &Arc<AppState>,
     stack_id: &str,
