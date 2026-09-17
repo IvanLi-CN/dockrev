@@ -421,8 +421,9 @@ def resolve_version_only_reservation(
 ) -> dict[str, Any]:
     owner, name = repository_parts(repository)
     identity_sha = reservation["Release-Reservation-Identity-SHA"]
-    if pr.get("head", {}).get("sha") != identity_sha:
-        raise IdentityError("version-only recovery PR head does not own the reserved identity")
+    pr_head_sha = pr.get("head", {}).get("sha", "")
+    if pull_request_changed_files(api_root, token, repository, pr.get("number", 0)) != ["VERSION"]:
+        raise IdentityError("version-only recovery PR must change VERSION only")
     release_intent = reservation["Release-Reservation-Intent"]
     covered_merge_sha = reservation["Release-Reservation-Source-SHA"]
     identity_commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{identity_sha}")
@@ -435,6 +436,8 @@ def resolve_version_only_reservation(
         raise IdentityError("reserved recovery identity covers a different product merge")
     if trailers.get("Product-Version") != version:
         raise IdentityError("reserved recovery identity VERSION does not match merged VERSION")
+    if version_at_commit(api_root, token, repository, pr_head_sha) != version:
+        raise IdentityError("version-only recovery PR head VERSION does not match reserved identity")
     if trailers.get("Release-Intent") != release_intent:
         raise IdentityError("reserved recovery identity intent does not match the reservation")
     identity_parents = [parent.get("sha") for parent in identity_commit.get("parents", [])]

@@ -404,7 +404,12 @@ def validate_completion(payload: dict[str, Any]) -> dict[str, Any]:
         if payload.get("tag_reserved") is not True:
             raise CompletionError("derived release tag is not reserved")
     elif mode == "version-only-release-pr":
-        release_policy.validate_version_only(payload.get("changed_files", []), payload.get("provenance", {}), head_sha=head_sha)
+        provenance_identity_sha = payload.get("provenance", {}).get("branch_head_sha", head_sha)
+        release_policy.validate_version_only(
+            payload.get("changed_files", []),
+            payload.get("provenance", {}),
+            head_sha=provenance_identity_sha,
+        )
         if source_sha != payload["provenance"].get("covered_product_merge_sha"):
             raise CompletionError("version-only source SHA is not the covered product merge")
         if payload["provenance"].get("release_intent") != f"{intent['type_label']} {intent['channel_label']}":
@@ -500,6 +505,59 @@ def version_reservation_is_owned(
     return True
 
 
+def version_only_reservation(
+    api_root: str,
+    token: str,
+    repository: str,
+    version: str,
+    pr_number: int,
+) -> dict[str, str] | None:
+    owner, name = repository.split("/", 1)
+    ref_name = f"release-reservation/v{version}"
+    try:
+        ref = api_json(
+            api_root,
+            token,
+            f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(ref_name, safe='')}",
+        )
+    except CompletionError as error:
+        if "GitHub API failed: 404" in str(error):
+            return None
+        raise
+    reservation_sha = ref.get("object", {}).get("sha")
+    try:
+        release_policy.validate_sha(str(reservation_sha), "version-only reservation commit SHA")
+    except release_policy.PolicyError as error:
+        raise CompletionError(str(error)) from error
+    reservation = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{reservation_sha}")
+    message = str(reservation.get("commit", {}).get("message", ""))
+    raw = release_policy.parse_reservation_trailers(message)
+    identity = release_policy.parse_trailers(message)
+    if raw:
+        if raw.get("Release-Reservation-PR") != str(pr_number):
+            return None
+        if raw.get("Release-Reservation-Mode") != "version-only-release-pr":
+            return None
+        source_sha = raw.get("Release-Reservation-Source-SHA", "")
+    else:
+        if identity.get("Release-Mode") != "version-only-release-pr":
+            return None
+        source_sha = identity.get("Covered-Product-Merge-SHA", "")
+    try:
+        release_policy.validate_sha(source_sha, "version-only reservation source SHA")
+        trailers = release_policy.validate_version_only_reservation(
+            reservation,
+            version=version,
+            pr_number=pr_number,
+            source_sha=source_sha,
+        )
+    except release_policy.PolicyError as error:
+        raise CompletionError(str(error)) from error
+    if not trailers.get("Release-Reservation-Identity-SHA"):
+        trailers["Release-Reservation-Identity-SHA"] = str(reservation_sha)
+    return {**trailers, "Release-Reservation-Commit-SHA": str(reservation_sha)}
+
+
 def preparation_identity_is_owned(
     api_root: str, token: str, repository: str, pr_number: int, source_sha: str, identity_sha: str
 ) -> bool:
@@ -544,6 +602,11 @@ def load_github_completion(
     files = sorted({entry.get("filename") for entry in commit.get("files", []) if entry.get("filename")})
     trailers = release_policy.parse_trailers(commit.get("commit", {}).get("message", ""))
     mode = trailers.get("Release-Mode")
+    identity_sha = head_sha
+    identity_commit = commit
+    identity_parents = parents
+    identity_files = files
+    identity_trailers = trailers
     if not intent["release_enabled"]:
         if any(
             trailers.get(key)
@@ -573,6 +636,22 @@ def load_github_completion(
             "base_version_exists": False,
             "version_file": version_at_commit(api_root, token, repository, head_sha),
         }
+    if mode != "normal-preparation":
+        head_version = version_at_commit(api_root, token, repository, head_sha)
+        reservation = version_only_reservation(api_root, token, repository, head_version, pr_number)
+        if reservation is not None:
+            identity_sha = reservation["Release-Reservation-Identity-SHA"]
+            identity_commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{identity_sha}")
+            identity_parents = [parent.get("sha") for parent in identity_commit.get("parents", [])]
+            identity_files = sorted(
+                {entry.get("filename") for entry in identity_commit.get("files", []) if entry.get("filename")}
+            )
+            identity_trailers = release_policy.parse_trailers(
+                identity_commit.get("commit", {}).get("message", "")
+            )
+            mode = identity_trailers.get("Release-Mode")
+            if mode != "version-only-release-pr":
+                raise CompletionError("version-only reservation identity has an invalid release mode")
     if mode == "normal-preparation":
         if trailers.get("Covered-Product-Merge-SHA"):
             raise CompletionError("normal preparation identity cannot carry Covered-Product-Merge-SHA")
@@ -596,6 +675,10 @@ def load_github_completion(
             "verified": commit.get("commit", {}).get("verification", {}).get("verified") is True,
         }
     elif mode == "version-only-release-pr":
+        trailers = identity_trailers
+        parents = identity_parents
+        files = identity_files
+        commit = identity_commit
         if trailers.get("Source-SHA"):
             raise CompletionError("version-only release identity cannot carry Source-SHA")
         if len(parents) != 1 or not parents[0]:
@@ -625,7 +708,7 @@ def load_github_completion(
             repository,
             covered_merge_sha,
             covered_product_version,
-            expected_recovery_identity_sha=head_sha,
+            expected_recovery_identity_sha=identity_sha,
             expected_recovery_pr_number=pr_number,
             expected_recovery_intent=trailers.get("Release-Intent", ""),
         ):
@@ -639,7 +722,7 @@ def load_github_completion(
             "baseline_version": baseline_version,
             "release_intent": trailers.get("Release-Intent", ""),
             "release_mode": mode,
-            "branch_head_sha": head_sha,
+            "branch_head_sha": identity_sha,
             "source_check_sha": source_check_sha,
             "source_pr_updated_at": source_pr_updated_at,
             "verified": commit.get("commit", {}).get("verification", {}).get("verified") is True,
@@ -691,7 +774,7 @@ def load_github_completion(
         version_for_tag = provenance["product_version"]
     tag_reserved = tag_is_available(api_root, token, repository, version_for_tag)
     if mode in {"normal-preparation", "version-only-release-pr"}:
-        reservation_kwargs = {"identity_sha": head_sha}
+        reservation_kwargs = {"identity_sha": identity_sha}
         if mode == "version-only-release-pr":
             reservation_kwargs["release_intent"] = provenance["release_intent"]
         tag_reserved = tag_reserved and version_reservation_is_owned(
@@ -703,7 +786,7 @@ def load_github_completion(
             )
         if mode == "version-only-release-pr":
             tag_reserved = tag_reserved and recovery_identity_is_owned(
-                api_root, token, repository, provenance["covered_product_merge_sha"], head_sha
+                api_root, token, repository, provenance["covered_product_merge_sha"], identity_sha
             )
     tag_reserved = tag_reserved and tag_is_reserved_by_other_pr(
         api_root, token, repository, version_for_tag, pr_number

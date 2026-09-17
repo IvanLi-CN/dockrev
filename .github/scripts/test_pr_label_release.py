@@ -1316,13 +1316,14 @@ try:
     )
     version_only_completion_valid_message = version_only_completion_message
     recovery_identity_matches = True
+    version_only_completion_pr_head_sha = prep_sha
 
     def fake_version_only_completion_api(_api_root, _token, path):
         if path.endswith("/pulls/42"):
             return {
                 "state": "open",
                 "base": {"ref": "main"},
-                "head": {"sha": prep_sha},
+                "head": {"sha": version_only_completion_pr_head_sha},
                 "updated_at": "2026-01-01T00:00:00Z",
                 "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
             }
@@ -1334,6 +1335,15 @@ try:
                     "verification": {"verified": True},
                     "message": version_only_completion_message,
                 },
+            }
+        if (
+            version_only_completion_pr_head_sha != prep_sha
+            and path.endswith(f"/commits/{version_only_completion_pr_head_sha}")
+        ):
+            return {
+                "parents": [{"sha": prep_sha}],
+                "files": [{"filename": "VERSION"}],
+                "commit": {"message": "Update branch with current main"},
             }
         if path.endswith(f"/commits/{version_only_completion_covered_sha}/pulls"):
             return [{
@@ -1388,14 +1398,16 @@ try:
     completion.api_json = fake_version_only_completion_api
     version_only_loaded = completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
     assert completion.validate_completion(version_only_loaded)["mode"] == "version-only-release-pr"
+    version_only_completion_pr_head_sha = "c" * 40
+    moved_version_only_loaded = completion.load_github_completion(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", 42
+    )
+    assert completion.validate_completion(moved_version_only_loaded)["mode"] == "version-only-release-pr"
     version_only_completion_message = version_only_completion_valid_message.replace(
         "Release-Intent: type:patch channel:stable",
         "Release-Intent: type:none channel:stable",
     )
-    expect_error(
-        completion.validate_completion,
-        completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42),
-    )
+    expect_error(completion.load_github_completion, "https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
     version_only_completion_message = version_only_completion_valid_message
     recovery_identity_matches = False
     expect_error(completion.load_github_completion, "https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
@@ -2149,10 +2161,10 @@ try:
     )
     assert direct_version_only["identity_ref_sha"] == version_only_release_head_sha
     version_only_pr_head_sha = version_only_moved_head_sha
-    expect_error(
-        identity.resolve_github,
+    moved_version_only = identity.resolve_github(
         "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
     )
+    assert moved_version_only["identity_ref_sha"] == version_only_release_head_sha
     version_only_pr_head_sha = version_only_release_head_sha
     direct_identity_payload = {
         "parents": [{"sha": version_only_covered_head_sha}],
