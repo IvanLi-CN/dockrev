@@ -1994,6 +1994,7 @@ try:
     recovery_merge_files = [{"filename": "VERSION"}]
     recovery_merge_parents = [{"sha": "0" * 40}]
     identity_parents = [{"sha": version_only_covered_head_sha}]
+    version_only_pr_head_sha = version_only_release_head_sha
     covered_identity_state = {"kind": None, "after_initial_check": None, "reads": 0}
     reservation_ref_state = {"reads": 0, "rebound": False}
     version_only_publication_lock_sha = {}
@@ -2006,7 +2007,7 @@ try:
                 "merged_at": "2026-01-01T00:00:00Z",
                 "merge_commit_sha": version_only_merge_sha,
                 "base": {"ref": "main"},
-                "head": {"sha": version_only_moved_head_sha},
+                "head": {"sha": version_only_pr_head_sha},
                 "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
             }]
         if path.endswith(f"/commits/{version_only_merge_sha}"):
@@ -2147,6 +2148,12 @@ try:
         "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
     )
     assert direct_version_only["identity_ref_sha"] == version_only_release_head_sha
+    version_only_pr_head_sha = version_only_moved_head_sha
+    expect_error(
+        identity.resolve_github,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
+    )
+    version_only_pr_head_sha = version_only_release_head_sha
     direct_identity_payload = {
         "parents": [{"sha": version_only_covered_head_sha}],
         "commit": {

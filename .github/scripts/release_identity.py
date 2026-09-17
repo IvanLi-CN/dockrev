@@ -421,6 +421,8 @@ def resolve_version_only_reservation(
 ) -> dict[str, Any]:
     owner, name = repository_parts(repository)
     identity_sha = reservation["Release-Reservation-Identity-SHA"]
+    if pr.get("head", {}).get("sha") != identity_sha:
+        raise IdentityError("version-only recovery PR head does not own the reserved identity")
     release_intent = reservation["Release-Reservation-Intent"]
     covered_merge_sha = reservation["Release-Reservation-Source-SHA"]
     identity_commit = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{identity_sha}")
