@@ -195,7 +195,7 @@ WHERE service_id = ?1 AND candidate_digest = ?2
         let now = now.to_string();
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let superseded = tx.execute(
+            let mut superseded = tx.execute(
                 r#"
 UPDATE auto_update_candidates
 SET status = 'superseded',
@@ -211,6 +211,29 @@ WHERE service_id = ?1 AND candidate_digest <> ?2
 "#,
                 params![service_id, candidate_digest, now, discovered_at, candidate_id],
             )?;
+            superseded += tx.execute(
+                r#"
+UPDATE auto_update_candidates
+SET status = 'superseded',
+    reason = 'candidate_not_current',
+    settled_at = ?3,
+    policy_status = 'skipped',
+    policy_reason = 'candidate_superseded',
+    policy_evaluated_at = ?3,
+    updated_at = ?3
+WHERE id = ?4
+  AND service_id = ?1
+  AND candidate_digest = ?2
+  AND status IN ('awaiting_inference', 'ready', 'unresolved')
+  AND EXISTS (
+    SELECT 1
+    FROM services s
+    WHERE s.id = ?1
+      AND (s.candidate_digest IS NULL OR s.candidate_digest <> ?2)
+  )
+"#,
+                params![service_id, candidate_digest, now, candidate_id],
+            )?;
 
             let pending_rows = {
                 let mut stmt = tx.prepare(r#"
@@ -220,10 +243,15 @@ JOIN auto_update_candidates c
   ON c.service_id = p.service_id AND c.candidate_digest = p.candidate_digest
 LEFT JOIN jobs j ON j.id = p.update_job_id
 WHERE p.service_id = ?1
-  AND p.candidate_digest <> ?2
   AND p.status IN ('pending', 'enqueuing', 'enqueued')
   AND c.status = 'superseded'
-  AND (c.discovered_at < ?3 OR (c.discovered_at = ?3 AND c.id < ?4))
+  AND (
+    (
+      p.candidate_digest <> ?2
+      AND (c.discovered_at < ?3 OR (c.discovered_at = ?3 AND c.id < ?4))
+    )
+    OR (p.candidate_digest = ?2 AND c.id = ?4)
+  )
 "#)?;
                 stmt.query_map(
                     params![service_id, candidate_digest, discovered_at, candidate_id],
@@ -291,9 +319,9 @@ WHERE job_id = ?1
         let service_ids = service_ids.to_vec();
         self.call(move |conn| {
             let mut out = Vec::new();
-            let mut stmt = conn.prepare(
-                "SELECT c.id, c.stack_id, c.service_id, c.image_ref, c.raw_tag, c.candidate_digest, c.resolved_version, c.status, c.reason, c.attempts, c.retry_at, c.discovered_at, c.source_job_id, c.source, c.current_tag, c.current_display_tag, c.current_digest, c.settled_at, c.created_at, c.updated_at, c.policy_status, c.policy_reason, c.policy_rule_id, c.policy_evaluated_at FROM auto_update_candidates c JOIN services s ON s.id = c.service_id WHERE c.service_id = ?1 AND (s.candidate_digest = c.candidate_digest OR (s.candidate_digest IS NULL AND c.policy_status = 'completed' AND s.current_digest = c.candidate_digest)) ORDER BY c.discovered_at DESC, c.id DESC LIMIT 1",
-            )?;
+            let mut stmt = conn.prepare(&format!(
+                "SELECT c.id, c.stack_id, c.service_id, c.image_ref, c.raw_tag, c.candidate_digest, c.resolved_version, c.status, c.reason, c.attempts, c.retry_at, c.discovered_at, c.source_job_id, c.source, c.current_tag, c.current_display_tag, c.current_digest, c.settled_at, c.created_at, c.updated_at, c.policy_status, c.policy_reason, c.policy_rule_id, c.policy_evaluated_at, c.policy_scope_type, c.policy_scope_id, c.update_job_id FROM auto_update_candidates c JOIN services s ON s.id = c.service_id WHERE c.service_id = ?1 AND (s.candidate_digest = c.candidate_digest OR (s.candidate_digest IS NULL AND c.policy_status = 'completed' AND s.current_digest = c.candidate_digest)) ORDER BY c.discovered_at DESC, c.id DESC LIMIT 1",
+            ))?;
             for service_id in service_ids {
                 if let Ok(row) = stmt.query_row(params![service_id], map_auto_update_candidate_row) {
                     out.push(row);
@@ -374,6 +402,8 @@ WHERE service_id = ?1
         let policy_reason = policy_reason.map(str::to_string);
         let rule_id = rule_id.map(str::to_string);
         let evaluated_at = evaluated_at.to_string();
+        let context_service_id = service_id.clone();
+        let context_candidate_digest = candidate_digest.clone();
         self.call(move |conn| {
             conn.execute(
                 r#"
@@ -398,7 +428,61 @@ WHERE service_id = ?1 AND candidate_digest = ?2
             Ok(())
         })
         .await
-        .context("set auto update candidate policy")
+        .context("set auto update candidate policy")?;
+        self.sync_auto_update_candidate_projection_context(
+            &context_service_id,
+            &context_candidate_digest,
+        )
+            .await
+    }
+
+    pub async fn sync_auto_update_candidate_projection_context(
+        &self,
+        service_id: &str,
+        candidate_digest: &str,
+    ) -> anyhow::Result<()> {
+        let service_id = service_id.to_string();
+        let candidate_digest = candidate_digest.to_string();
+        self.call(move |conn| {
+            let context = conn
+                .query_row(
+                    r#"
+SELECT policy_scope_type, policy_scope_id, update_job_id
+FROM auto_update_pending
+WHERE service_id = ?1 AND candidate_digest = ?2
+ORDER BY updated_at DESC, id DESC
+LIMIT 1
+"#,
+                    params![service_id, candidate_digest],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                        ))
+                    },
+                )
+                .optional()?;
+            conn.execute(
+                r#"
+UPDATE auto_update_candidates
+SET policy_scope_type = ?3,
+    policy_scope_id = ?4,
+    update_job_id = ?5
+WHERE service_id = ?1 AND candidate_digest = ?2
+"#,
+                params![
+                    service_id,
+                    candidate_digest,
+                    context.as_ref().map(|value| &value.0),
+                    context.as_ref().map(|value| &value.1),
+                    context.as_ref().and_then(|value| value.2.as_ref()),
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("sync auto update candidate projection context")
     }
 
     /// Reconciles the policy projection with the update job linked by the pending action.
@@ -414,7 +498,8 @@ WHERE service_id = ?1 AND candidate_digest = ?2
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let mut stmt = tx.prepare(
                 r#"
-SELECT p.service_id, p.candidate_digest, p.status, j.status, j.started_at, j.finished_at
+SELECT p.service_id, p.candidate_digest, p.status, j.status, j.started_at, j.finished_at,
+       p.policy_scope_type, p.policy_scope_id
 FROM auto_update_pending p
 JOIN jobs j ON j.id = p.update_job_id
 WHERE p.update_job_id = ?1
@@ -429,6 +514,8 @@ WHERE p.update_job_id = ?1
                         row.get::<_, String>(3)?,
                         row.get::<_, Option<String>>(4)?,
                         row.get::<_, Option<String>>(5)?,
+                        row.get::<_, String>(6)?,
+                        row.get::<_, String>(7)?,
                     ))
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
@@ -442,6 +529,8 @@ WHERE p.update_job_id = ?1
                 job_status,
                 started_at,
                 finished_at,
+                policy_scope_type,
+                policy_scope_id,
             ) in rows
             {
                 let projection = match (pending_status.as_str(), job_status.as_str()) {
@@ -460,6 +549,9 @@ UPDATE auto_update_candidates
 SET policy_status = ?3,
     policy_reason = ?4,
     policy_evaluated_at = ?5,
+    policy_scope_type = ?6,
+    policy_scope_id = ?7,
+    update_job_id = ?8,
     updated_at = ?5
 WHERE service_id = ?1
   AND candidate_digest = ?2
@@ -470,7 +562,10 @@ WHERE service_id = ?1
                         candidate_digest,
                         projection.0,
                         projection.1,
-                        evaluated_at
+                        evaluated_at,
+                        policy_scope_type,
+                        policy_scope_id,
+                        update_job_id
                     ],
                 )?;
             }

@@ -39,6 +39,31 @@ fn matches_semver_regex_and_glob() {
 }
 
 #[test]
+fn auto_update_projection_serializes_auditable_context() {
+    let projection = api::types::AutoUpdateProjection {
+        policy_status: "running".to_string(),
+        reason: Some("update_job_running".to_string()),
+        rule_id: Some("stable".to_string()),
+        evaluated_at: Some("2026-04-30T00:00:00Z".to_string()),
+        policy_scope: Some(api::types::AutoUpdatePolicyScope {
+            scope_type: "stack".to_string(),
+            scope_id: "stack".to_string(),
+        }),
+        update_job_id: Some("job-1".to_string()),
+    };
+    let json = serde_json::to_value(projection).unwrap();
+    assert_eq!(json["policyScope"]["scopeType"], "stack");
+    assert_eq!(json["policyScope"]["scopeId"], "stack");
+    assert_eq!(json["updateJobId"], "job-1");
+    assert!(
+        serde_json::from_value::<api::types::AutoUpdateProjection>(serde_json::json!({
+            "policyStatus": "waiting_inference"
+        }))
+        .is_ok()
+    );
+}
+
+#[test]
 fn semver_is_fail_closed_until_digest_bound_version_exists() {
     let candidate = notify::NewVersionDiscoveredService {
         stack_id: "stack".to_string(),

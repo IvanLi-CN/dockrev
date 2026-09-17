@@ -351,6 +351,9 @@ pub struct AutoUpdateCandidateRow {
     pub policy_reason: Option<String>,
     pub policy_rule_id: Option<String>,
     pub policy_evaluated_at: Option<String>,
+    pub policy_scope_type: Option<String>,
+    pub policy_scope_id: Option<String>,
+    pub update_job_id: Option<String>,
 }
 
 #[derive(Clone, Debug)]

@@ -82,10 +82,13 @@ fn map_auto_update_candidate_row(
         policy_reason: row.get(21)?,
         policy_rule_id: row.get(22)?,
         policy_evaluated_at: row.get(23)?,
+        policy_scope_type: row.get(24)?,
+        policy_scope_id: row.get(25)?,
+        update_job_id: row.get(26)?,
     })
 }
 
-const AUTO_UPDATE_CANDIDATE_COLUMNS: &str = "id, stack_id, service_id, image_ref, raw_tag, candidate_digest, resolved_version, status, reason, attempts, retry_at, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, settled_at, created_at, updated_at, policy_status, policy_reason, policy_rule_id, policy_evaluated_at";
+const AUTO_UPDATE_CANDIDATE_COLUMNS: &str = "id, stack_id, service_id, image_ref, raw_tag, candidate_digest, resolved_version, status, reason, attempts, retry_at, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, settled_at, created_at, updated_at, policy_status, policy_reason, policy_rule_id, policy_evaluated_at, policy_scope_type, policy_scope_id, update_job_id";
 
 include!("auto_update_candidates.rs");
 

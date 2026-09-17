@@ -67,6 +67,9 @@ CREATE TABLE IF NOT EXISTS auto_update_candidates (
   policy_reason TEXT,
   policy_rule_id TEXT,
   policy_evaluated_at TEXT,
+  policy_scope_type TEXT,
+  policy_scope_id TEXT,
+  update_job_id TEXT,
   UNIQUE(service_id, candidate_digest)
 );
 CREATE INDEX IF NOT EXISTS idx_auto_update_candidates_status_retry

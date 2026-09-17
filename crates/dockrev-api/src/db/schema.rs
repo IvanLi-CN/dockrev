@@ -649,10 +649,84 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     apply_migration_0014_add_auto_update_candidates(conn)?;
     apply_migration_0015_add_auto_update_candidate_provenance(conn)?;
     apply_migration_0016_harden_auto_update_candidate_backfill(conn)?;
+    apply_migration_0017_add_auto_update_candidate_projection_context(conn)?;
     schema_lifecycle_events::apply(conn)?;
     schema_job_history_retention::apply(conn)?;
     schema_backup_cleanup_state::apply(conn)?;
     schema_accepted_state_generation::apply(conn)?;
+    Ok(())
+}
+
+fn apply_migration_0017_add_auto_update_candidate_projection_context(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0017_add_auto_update_candidate_projection_context";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let existing_columns = {
+        let mut stmt = tx.prepare("PRAGMA table_info(auto_update_candidates)")?;
+        stmt.query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<BTreeSet<_>, _>>()?
+    };
+    for (name, ddl) in [
+        (
+            "policy_scope_type",
+            "ALTER TABLE auto_update_candidates ADD COLUMN policy_scope_type TEXT",
+        ),
+        (
+            "policy_scope_id",
+            "ALTER TABLE auto_update_candidates ADD COLUMN policy_scope_id TEXT",
+        ),
+        (
+            "update_job_id",
+            "ALTER TABLE auto_update_candidates ADD COLUMN update_job_id TEXT",
+        ),
+    ] {
+        if !existing_columns.contains(name) {
+            tx.execute(ddl, [])?;
+        }
+    }
+    tx.execute(
+        r#"
+UPDATE auto_update_candidates
+SET policy_scope_type = (
+      SELECT p.policy_scope_type
+      FROM auto_update_pending p
+      WHERE p.service_id = auto_update_candidates.service_id
+        AND p.candidate_digest = auto_update_candidates.candidate_digest
+      ORDER BY p.updated_at DESC, p.id DESC
+      LIMIT 1
+    ),
+    policy_scope_id = (
+      SELECT p.policy_scope_id
+      FROM auto_update_pending p
+      WHERE p.service_id = auto_update_candidates.service_id
+        AND p.candidate_digest = auto_update_candidates.candidate_digest
+      ORDER BY p.updated_at DESC, p.id DESC
+      LIMIT 1
+    ),
+    update_job_id = (
+      SELECT p.update_job_id
+      FROM auto_update_pending p
+      WHERE p.service_id = auto_update_candidates.service_id
+        AND p.candidate_digest = auto_update_candidates.candidate_digest
+      ORDER BY p.updated_at DESC, p.id DESC
+      LIMIT 1
+    )
+WHERE EXISTS (
+  SELECT 1
+  FROM auto_update_pending p
+  WHERE p.service_id = auto_update_candidates.service_id
+    AND p.candidate_digest = auto_update_candidates.candidate_digest
+);
+"#,
+        [],
+    )?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
     Ok(())
 }
 

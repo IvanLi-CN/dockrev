@@ -244,7 +244,7 @@ WHERE id = ?1
         if !claimed {
             let cancel_job_id = job_id.clone();
             let cancel_started_at = started_at.clone();
-            self.call(move |conn| {
+            let cancelled = self.call(move |conn| {
                 let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
                 let changed = tx.execute(
                     r#"
@@ -270,10 +270,14 @@ WHERE update_job_id = ?1 AND status = 'enqueued'
                     )?;
                 }
                 tx.commit()?;
-                Ok(())
+                Ok(changed > 0)
             })
             .await
             .context("cancel stale queued auto policy job")?;
+            if cancelled {
+                self.sync_auto_update_candidate_policy_for_job(job_id.as_str(), started_at.as_str())
+                    .await?;
+            }
         }
         if claimed {
             self.sync_auto_update_candidate_policy_for_job(job_id.as_str(), started_at.as_str())

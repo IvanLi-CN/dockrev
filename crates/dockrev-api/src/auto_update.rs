@@ -1188,6 +1188,11 @@ async fn evaluate_candidate(
             finished_at,
         )
         .await?;
+    let candidate_row = state
+        .db
+        .get_auto_update_candidate(&candidate.service_id, &candidate.candidate_digest)
+        .await?
+        .unwrap_or(candidate_row);
     state
         .db
         .management_events()
@@ -1336,6 +1341,13 @@ async fn evaluate_candidate(
                 candidate_id: Some(candidate_row.id),
             },
             finished_at,
+        )
+        .await?;
+    state
+        .db
+        .sync_auto_update_candidate_projection_context(
+            &candidate.service_id,
+            &candidate.candidate_digest,
         )
         .await?;
 

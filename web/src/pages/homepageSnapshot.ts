@@ -222,6 +222,16 @@ function parseService(value: unknown): Service | null {
           reason: asOptionalString(value.autoUpdate.reason),
           ruleId: asOptionalString(value.autoUpdate.ruleId),
           evaluatedAt: asOptionalString(value.autoUpdate.evaluatedAt),
+          policyScope:
+            isRecord(value.autoUpdate.policyScope) &&
+            asString(value.autoUpdate.policyScope.scopeType) &&
+            asString(value.autoUpdate.policyScope.scopeId)
+              ? {
+                  scopeType: value.autoUpdate.policyScope.scopeType as string,
+                  scopeId: value.autoUpdate.policyScope.scopeId as string,
+                }
+              : null,
+          updateJobId: asOptionalString(value.autoUpdate.updateJobId),
         }
       : null;
   const settings = isRecord(value.settings)

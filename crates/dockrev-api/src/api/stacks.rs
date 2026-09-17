@@ -924,6 +924,15 @@ pub(super) async fn enrich_services_with_auto_update_state(
             reason: row.policy_reason.clone().or_else(|| row.reason.clone()),
             rule_id: row.policy_rule_id.clone(),
             evaluated_at: row.policy_evaluated_at.clone(),
+            policy_scope: row
+                .policy_scope_type
+                .clone()
+                .zip(row.policy_scope_id.clone())
+                .map(|(scope_type, scope_id)| AutoUpdatePolicyScope {
+                    scope_type,
+                    scope_id,
+                }),
+            update_job_id: row.update_job_id.clone(),
         });
         if row.status == "unresolved" {
             service.version_inference = Some(VersionInferenceState {

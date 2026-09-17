@@ -75,6 +75,9 @@ mod reconciliation_tests {
             policy_reason: Some("policy_matched".to_string()),
             policy_rule_id: Some("r1".to_string()),
             policy_evaluated_at: Some("2026-04-30T00:01:00Z".to_string()),
+            policy_scope_type: Some("stack".to_string()),
+            policy_scope_id: Some("stack".to_string()),
+            update_job_id: None,
         });
         let history = vec![NewVersionDiscoveryRow {
             service_id: "svc".to_string(),
@@ -119,6 +122,9 @@ mod reconciliation_tests {
             policy_reason: None,
             policy_rule_id: None,
             policy_evaluated_at: None,
+            policy_scope_type: None,
+            policy_scope_id: None,
+            update_job_id: None,
         };
         let digest_a = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let digest_b = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";

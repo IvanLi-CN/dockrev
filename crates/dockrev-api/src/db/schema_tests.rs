@@ -387,13 +387,16 @@ INSERT INTO auto_update_pending (
                 |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
             )?;
             let strict = conn.query_row(
-                "SELECT status, resolved_version, image_ref FROM auto_update_candidates WHERE service_id = 'service-3'",
+                "SELECT status, resolved_version, image_ref, policy_scope_type, policy_scope_id, update_job_id FROM auto_update_candidates WHERE service_id = 'service-3'",
                 [],
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, Option<String>>(1)?,
                         row.get::<_, String>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
                     ))
                 },
             )?;
@@ -440,7 +443,10 @@ INSERT INTO auto_update_pending (
         (
             "ready".to_string(),
             Some("1.2.3".to_string()),
-            "ghcr.io/acme/app".to_string()
+            "ghcr.io/acme/app".to_string(),
+            Some("stack".to_string()),
+            Some("stack-1".to_string()),
+            None
         )
     );
 

@@ -1,4 +1,4 @@
-import type { AutoUpdatePolicy, CandidateSettlement } from '../api'
+import type { AutoUpdatePolicy, AutoUpdateProjection, CandidateSettlement } from '../api'
 import { Button, Mono, Pill } from '../ui'
 import {
   activeAutoUpdateRules,
@@ -99,7 +99,7 @@ export function candidateSettlementDetail(settlement: CandidateSettlement): stri
 
 export type AutoUpdateServiceResult = {
   serviceName: string
-  projection?: { policyStatus: string; reason?: string | null; ruleId?: string | null; evaluatedAt?: string | null } | null
+  projection?: AutoUpdateProjection | null
   candidateSettlement?: CandidateSettlement | null
   fallbackLabel?: string
 }
@@ -110,7 +110,7 @@ export function AutoUpdatePolicyResultCard(props: {
   policy: AutoUpdatePolicy
   scope: 'service' | 'stack'
   stackPolicy?: AutoUpdatePolicy | null
-  projection?: { policyStatus: string; reason?: string | null; ruleId?: string | null; evaluatedAt?: string | null } | null
+  projection?: AutoUpdateProjection | null
   candidateSettlement?: CandidateSettlement | null
   serviceResults?: AutoUpdateServiceResult[]
 }) {

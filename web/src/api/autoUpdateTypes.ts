@@ -23,4 +23,6 @@ export type AutoUpdateProjection = {
   reason?: string | null
   ruleId?: string | null
   evaluatedAt?: string | null
+  policyScope?: { scopeType: string; scopeId: string } | null
+  updateJobId?: string | null
 }

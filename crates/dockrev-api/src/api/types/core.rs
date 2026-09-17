@@ -153,6 +153,13 @@ pub struct CandidateSettlement {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AutoUpdatePolicyScope {
+    pub scope_type: String,
+    pub scope_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AutoUpdateProjection {
     pub policy_status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -161,6 +168,10 @@ pub struct AutoUpdateProjection {
     pub rule_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evaluated_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_scope: Option<AutoUpdatePolicyScope>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub update_job_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
