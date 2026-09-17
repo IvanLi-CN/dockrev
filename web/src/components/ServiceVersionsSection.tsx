@@ -769,7 +769,9 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
         : settlement.status === 'superseded'
           ? '该候选已被更新的 digest 替代，不会再被自动部署。'
           : settlement.status === 'ready'
-            ? `候选证据已完成${settlement.resolvedVersion ? `：${settlement.resolvedVersion}` : ''}；这不代表更新任务已完成。${settlementDetail ? ` ${settlementDetail}` : ''}`
+            ? props.service.autoUpdate?.policyStatus === 'completed'
+              ? `候选证据已完成${settlement.resolvedVersion ? `：${settlement.resolvedVersion}` : ''}；服务更新已完成。${settlementDetail ? ` ${settlementDetail}` : ''}`
+              : `候选证据已完成${settlement.resolvedVersion ? `：${settlement.resolvedVersion}` : ''}；这不代表更新任务已完成。${settlementDetail ? ` ${settlementDetail}` : ''}`
             : null
     : null
 

@@ -64,6 +64,20 @@ fn auto_update_projection_serializes_auditable_context() {
 }
 
 #[test]
+fn schedule_source_requires_scheduler_created_check_jobs() {
+    let summary = serde_json::json!({});
+    assert_eq!(
+        auto_policy_source("schedule", &summary, Some("schedule")),
+        Some("schedule")
+    );
+    assert_eq!(auto_policy_source("schedule", &summary, Some("ivan")), None);
+    assert_eq!(
+        auto_policy_source("schedule", &summary, None),
+        Some("schedule")
+    );
+}
+
+#[test]
 fn semver_is_fail_closed_until_digest_bound_version_exists() {
     let candidate = notify::NewVersionDiscoveredService {
         stack_id: "stack".to_string(),

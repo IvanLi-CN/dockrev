@@ -1357,14 +1357,21 @@ async fn evaluate_candidate(
     Ok(())
 }
 
-fn auto_policy_source(reason: &str, summary: &serde_json::Value) -> Option<&'static str> {
-    if reason.eq_ignore_ascii_case("schedule") {
+fn auto_policy_source(
+    reason: &str,
+    summary: &serde_json::Value,
+    created_by: Option<&str>,
+) -> Option<&'static str> {
+    if reason.eq_ignore_ascii_case("schedule")
+        && created_by.is_none_or(|value| value.eq_ignore_ascii_case("schedule"))
+    {
         return Some("schedule");
     }
     if summary
         .get("source")
         .and_then(serde_json::Value::as_str)
         .is_some_and(|source| source.eq_ignore_ascii_case("github_webhook"))
+        && created_by.is_none_or(|value| value.eq_ignore_ascii_case("webhook"))
         && api::summary_emits_new_version_notification(summary)
     {
         return Some("github_webhook");
@@ -1383,7 +1390,8 @@ pub async fn handle_completed_check(
     finished_at: &str,
     summary: &serde_json::Value,
 ) -> anyhow::Result<()> {
-    let Some(source) = auto_policy_source(reason, summary) else {
+    let created_by = state.db.get_job(job_id).await?.map(|job| job.created_by);
+    let Some(source) = auto_policy_source(reason, summary, created_by.as_deref()) else {
         return Ok(());
     };
     let mut discovered_services = notify::extract_new_versions_discovered(summary);

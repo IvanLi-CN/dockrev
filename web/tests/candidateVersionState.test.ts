@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import type { Service } from '../src/api'
-import { resolveCandidateVersionState } from '../src/candidateVersionState'
+import { candidateResolvedVersion, resolveCandidateVersionState } from '../src/candidateVersionState'
 
 function makeService(overrides?: Partial<Service>): Service {
   return {
@@ -61,5 +61,43 @@ describe('candidateVersionState', () => {
     expect(state.sameDisplayUpdate).toBe(true)
     expect(state.currentDisplayTag).toBe('v1.0.0')
     expect(state.candidateDisplayTag).toBe('v1.0.0')
+  })
+
+  test('prefers digest-bound settlement version and fails closed while unresolved', () => {
+    const readyService = makeService({
+      candidate: {
+        tag: 'latest',
+        resolvedTag: 'latest',
+        digest: 'sha256:candidate',
+        archMatch: 'match',
+        arch: ['linux/amd64'],
+      },
+      candidateSettlement: {
+        status: 'ready',
+        rawTag: 'latest',
+        candidateDigest: 'sha256:candidate',
+        resolvedVersion: 'v1.2.0',
+        reason: 'digest_bound_version',
+        attempts: 1,
+        retryAt: null,
+        discoveredAt: '2026-09-16T10:00:00Z',
+      },
+    })
+    expect(candidateResolvedVersion(readyService)).toBe('v1.2.0')
+    expect(resolveCandidateVersionState(readyService).candidateDisplayTag).toBe('v1.2.0')
+
+    const unresolvedService = makeService({
+      candidateSettlement: {
+        status: 'unresolved',
+        rawTag: 'latest',
+        candidateDigest: 'sha256:candidate',
+        resolvedVersion: null,
+        reason: 'version_inference_unresolved',
+        attempts: 3,
+        retryAt: null,
+        discoveredAt: '2026-09-16T10:00:00Z',
+      },
+    })
+    expect(candidateResolvedVersion(unresolvedService)).toBeNull()
   })
 })

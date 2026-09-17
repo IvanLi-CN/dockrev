@@ -75,6 +75,17 @@ function renderCard(status: ProjectionStatus) {
               retryAt: '2026-09-16T10:05:00Z',
               discoveredAt: '2026-09-16T10:00:00Z',
             }
+          : status === 'completed'
+            ? {
+                status: 'ready',
+                rawTag: 'latest',
+                candidateDigest: 'sha256:completed',
+                resolvedVersion: 'v1.2.0',
+                reason: 'digest_bound_version',
+                attempts: 1,
+                retryAt: null,
+                discoveredAt: '2026-09-16T09:55:00Z',
+              }
           : status === 'unresolved'
             ? {
                 status: 'unresolved',

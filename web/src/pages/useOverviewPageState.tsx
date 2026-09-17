@@ -1021,6 +1021,9 @@ export function useOverviewPageState(props: {
                               resolvedTag: update.resolvedTag,
                             }
                           : prev.candidate,
+                        candidateSettlement: prev.candidateSettlement
+                          ? { ...prev.candidateSettlement, resolvedVersion: update.resolvedTag }
+                          : prev.candidateSettlement,
                       }))
                     }}
                   />

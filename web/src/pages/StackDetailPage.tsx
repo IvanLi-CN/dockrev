@@ -51,6 +51,10 @@ function statusTone(status: ReturnType<typeof serviceRowStatus>): 'ok' | 'warn' 
   return 'muted'
 }
 
+function hasPolicyAction(policy: StackDetail['services'][number]['autoUpdate']): boolean {
+  return Boolean(policy && policy.policyStatus !== 'not_evaluated')
+}
+
 const lifecycleReasonLabels: Record<string, string> = {
   lifecycle_status_loading: '正在读取实时状态',
   lifecycle_status_unavailable: '暂时无法读取运行状态，请刷新后重试',
@@ -524,7 +528,7 @@ export function StackDetailPage(props: {
     const status = serviceRowStatus(service)
     return {
       serviceName: service.name,
-      projection: status === 'blocked' || status === 'archMismatch' ? null : service.autoUpdate,
+      projection: status === 'blocked' || status === 'archMismatch' || !hasPolicyAction(service.autoUpdate) ? null : service.autoUpdate,
       candidateSettlement: service.candidateSettlement ?? null,
       fallbackLabel: status === 'blocked' || status === 'archMismatch' ? statusLabel(status) : undefined,
     }
@@ -658,7 +662,7 @@ export function StackDetailPage(props: {
         <div className="stackServiceList">
           {stack.services.map((service) => {
             const status = serviceRowStatus(service)
-            const policyProjection = status === 'blocked' || status === 'archMismatch' ? null : service.autoUpdate
+            const policyProjection = status === 'blocked' || status === 'archMismatch' || !hasPolicyAction(service.autoUpdate) ? null : service.autoUpdate
             return (
               <div className="stackServiceRow" key={service.id}>
                 <div className="stackServiceCopy">
