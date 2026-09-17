@@ -306,24 +306,46 @@ def validate_version_only_reservation(
     message = payload.get("message") or payload.get("commit", {}).get("message", "")
     trailers = parse_reservation_trailers(str(message))
     identity = parse_trailers(str(message))
-    if not trailers.get("Release-Reservation-Version") or (
-        identity.get("Release-Mode") == "version-only-release-pr"
-        and not trailers.get("Release-Reservation-Identity-SHA")
-    ):
+    if not trailers:
         # New reservations point directly at the signed VERSION-only identity.
-        # The legacy reservation commit format remains readable below.
         if identity.get("Release-Mode") != "version-only-release-pr":
             raise PolicyError("version-only reservation has no accepted identity provenance")
         if identity.get("Product-Version") != version:
             raise PolicyError("version-only reservation version does not match expected VERSION")
         if identity.get("Covered-Product-Merge-SHA") != source_sha:
             raise PolicyError("version-only reservation source SHA does not match expected source")
+        validate_sha(source_sha, "version-only reservation source SHA")
+        release_intent = identity.get("Release-Intent", "")
+        try:
+            parsed_intent = parse_labels(release_intent.split())
+        except PolicyError as error:
+            raise PolicyError("version-only reservation intent is invalid") from error
+        if not parsed_intent["release_enabled"]:
+            raise PolicyError("version-only reservation intent must be release-enabled")
+        return {
+            "Release-Reservation-Version": version,
+            "Release-Reservation-PR": str(pr_number),
+            "Release-Reservation-Source-SHA": source_sha,
+            "Release-Reservation-Identity-SHA": "",
+            "Release-Reservation-Intent": release_intent,
+            "Release-Reservation-Mode": "version-only-release-pr",
+        }
+    if identity.get("Release-Mode") == "version-only-release-pr" and not trailers.get(
+        "Release-Reservation-Identity-SHA"
+    ):
+        # Some early direct identities carried complete reservation metadata but
+        # intentionally omitted a self-referential identity SHA.
         if trailers.get("Release-Reservation-Version") != version:
             raise PolicyError("version-only reservation version trailer does not match expected VERSION")
         if trailers.get("Release-Reservation-PR") != str(pr_number):
             raise PolicyError("version-only reservation belongs to another PR")
         if trailers.get("Release-Reservation-Source-SHA") != source_sha:
             raise PolicyError("version-only reservation source trailer does not match expected source")
+        if identity.get("Product-Version") != version:
+            raise PolicyError("version-only reservation identity version does not match expected VERSION")
+        if identity.get("Covered-Product-Merge-SHA") != source_sha:
+            raise PolicyError("version-only reservation identity source SHA does not match expected source")
+        validate_sha(source_sha, "version-only reservation source SHA")
         if trailers.get("Release-Reservation-Intent") != identity.get("Release-Intent", ""):
             raise PolicyError("version-only reservation intent trailer does not match identity")
         if trailers.get("Release-Reservation-Mode") != "version-only-release-pr":
@@ -343,6 +365,8 @@ def validate_version_only_reservation(
             "Release-Reservation-Intent": release_intent,
             "Release-Reservation-Mode": "version-only-release-pr",
         }
+    if not trailers.get("Release-Reservation-Version"):
+        raise PolicyError("version-only reservation provenance is incomplete")
     validate_reservation(payload, version=version, pr_number=pr_number, source_sha=source_sha)
     identity_sha = trailers.get("Release-Reservation-Identity-SHA", "")
     validate_sha(identity_sha, "version-only reservation identity SHA")

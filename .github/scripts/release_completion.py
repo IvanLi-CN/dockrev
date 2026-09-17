@@ -148,11 +148,13 @@ def covered_product_has_existing_identity(
         if not isinstance(reservation_sha, str):
             raise CompletionError("existing release reservation ref has no commit SHA")
         reservation = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{reservation_sha}")
-        trailers = release_policy.parse_reservation_trailers(
-            str(reservation.get("commit", {}).get("message", ""))
+        reservation_message = str(reservation.get("commit", {}).get("message", ""))
+        trailers = release_policy.parse_reservation_trailers(reservation_message)
+        identity_trailers = release_policy.parse_trailers(reservation_message)
+        direct_identity = (
+            identity_trailers.get("Release-Mode") == "version-only-release-pr"
+            and not trailers.get("Release-Reservation-Identity-SHA")
         )
-        if trailers.get("Release-Reservation-Version") != version:
-            raise CompletionError("existing release reservation version does not match covered VERSION")
         if all(value is not None for value in expected_recovery_reservation):
             try:
                 trailers = release_policy.validate_version_only_reservation(
@@ -162,6 +164,8 @@ def covered_product_has_existing_identity(
                     source_sha=covered_merge_sha,
                 )
             except release_policy.PolicyError:
+                return True
+            if trailers.get("Release-Reservation-Intent") != expected_recovery_intent:
                 return True
             if not trailers.get("Release-Reservation-Identity-SHA"):
                 if reservation_sha != expected_recovery_identity_sha:
@@ -173,6 +177,26 @@ def covered_product_has_existing_identity(
                 and trailers.get("Release-Reservation-Intent") == expected_recovery_intent
             ):
                 return False
+        elif direct_identity:
+            try:
+                release_policy.validate_version_only_reservation(
+                    reservation,
+                    version=version,
+                    pr_number=0,
+                    source_sha=covered_merge_sha,
+                )
+            except release_policy.PolicyError:
+                return True
+        else:
+            try:
+                release_policy.validate_reservation(
+                    reservation,
+                    version=version,
+                    pr_number=int(trailers.get("Release-Reservation-PR", "0")),
+                    source_sha=covered_merge_sha,
+                )
+            except (ValueError, release_policy.PolicyError):
+                return True
         return True
     lock_path = (
         f"/repos/{owner}/{name}/git/ref/heads/"
