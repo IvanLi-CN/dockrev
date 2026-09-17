@@ -108,6 +108,7 @@ assert "Release-Latest-Lock-State: acquired" in release
 assert "--method PATCH" in release and "-F force=false" in release
 assert "/actions/runs/${owner_run}/attempts/${owner_attempt}" in release
 assert "HTTP 404|Not Found|404" in release
+assert " rg -q " not in release
 assert release.index("trap release_lock EXIT") > release.index("while true; do")
 assert "git/ref/heads/${lock_ref_name}" in release
 assert "git/refs/heads/${lock_ref_name}" in release
