@@ -55,10 +55,7 @@ import {
   type ServiceDetailSection,
 } from "./serviceDetailPageHelpers";
 import { useServiceDetailPageState } from "./useServiceDetailPageState";
-function errorMessage(e: unknown): string {
-  if (e instanceof Error) return e.message;
-  return String(e);
-}
+function errorMessage(e: unknown): string { return e instanceof Error ? e.message : String(e); }
 const SERVICE_DETAIL_SNAPSHOT_STALE_MS = 60_000;
 type ServiceDetailSnapshotPayload = {
   version: 2;
@@ -632,6 +629,8 @@ export function ServiceDetailPage(props: {
                 policy={policy}
                 scope="service"
                 stackPolicy={stackSettings?.autoUpdatePolicy ?? null}
+                projection={effectiveService.autoUpdate ?? null}
+                candidateSettlement={effectiveService.candidateSettlement ?? null}
               />
             </div>
           </div>

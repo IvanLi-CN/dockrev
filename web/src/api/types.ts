@@ -1,4 +1,6 @@
 import type { ServiceResourceOverviewItem, ServiceResourceOverviewResponse } from './serviceResourceTypes'
+import type { VersionInferenceState } from './autoUpdateTypes'
+export type { AutoUpdateProjection, CandidateSettlement, VersionInferenceState } from './autoUpdateTypes'
 
 export type StackStatus = 'healthy' | 'degraded' | 'unknown'
 
@@ -162,12 +164,6 @@ export type ServiceImage = {
 
 export type ServiceLifecycleState = 'running' | 'stopped' | 'partial' | 'unknown'
 
-export type VersionInferenceState = {
-  status: 'ready' | 'pending' | string
-  reason?: string | null
-  checkedAt?: string | null
-}
-
 export type Service = {
   id: string
   name: string
@@ -187,6 +183,8 @@ export type Service = {
     reason: string
   } | null
   versionInference?: VersionInferenceState | null
+  candidateSettlement?: import('./autoUpdateTypes').CandidateSettlement | null
+  autoUpdate?: import('./autoUpdateTypes').AutoUpdateProjection | null
   newVersionDiscoveryCount?: number | null
   settings: ServiceSettings
   archived?: boolean
@@ -783,6 +781,8 @@ export type HomepageNavItem = {
   candidate?: Service['candidate']
   ignore?: Service['ignore']
   versionInference?: VersionInferenceState | null
+  candidateSettlement?: import('./autoUpdateTypes').CandidateSettlement | null
+  autoUpdate?: import('./autoUpdateTypes').AutoUpdateProjection | null
   newVersionDiscoveryCount?: number | null
   settings: ServiceSettings
   archived?: boolean

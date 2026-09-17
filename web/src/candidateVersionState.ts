@@ -15,6 +15,14 @@ export type CandidateVersionState = {
   sameDisplayUpdate: boolean
 }
 
+export function candidateResolvedVersion(service: Service): string | null {
+  const settledVersion = service.candidateSettlement?.resolvedVersion?.trim()
+  if (settledVersion) return settledVersion
+  if (service.candidateSettlement) return null
+  const legacyVersion = service.candidate?.resolvedTag?.trim()
+  return legacyVersion || null
+}
+
 export function resolveCandidateVersionState(
   service: Service,
 ): CandidateVersionState {
@@ -34,7 +42,7 @@ export function resolveCandidateVersionState(
   const candidateDisplayTag = candidateTag
     ? formatCandidateTagDisplay(
         candidateTag,
-        service.candidate?.resolvedTag ?? null,
+        candidateResolvedVersion(service),
         service.versionInference?.status,
       )
     : null

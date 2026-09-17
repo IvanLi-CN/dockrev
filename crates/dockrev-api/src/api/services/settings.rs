@@ -71,6 +71,9 @@ pub(in crate::api) async fn put_service_settings(
         .put_auto_update_policy("service", &service_id, &auto_update_policy, &now)
         .await
         .map_err(map_internal)?;
+    crate::auto_update::reevaluate_service_policy(&state, &service_id, &now)
+        .await
+        .map_err(map_internal)?;
     state
         .management_events
         .publish_change(

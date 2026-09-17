@@ -3,7 +3,7 @@ import { Icon } from '@iconify/react'
 import helpCircleOutline from '@iconify-icons/mdi/help-circle-outline'
 
 import type { Service } from '../api'
-import { resolveCandidateVersionState } from '../candidateVersionState'
+import { candidateResolvedVersion, resolveCandidateVersionState } from '../candidateVersionState'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui'
 import { isSemverDowngradeAnomaly, statusLabel, type RowStatus } from '../updateStatus'
 import { CurrentVersionPopover } from './CurrentVersionPopover'
@@ -120,10 +120,10 @@ export function AggregateUpdatePreviewList(props: {
         const candidateOverride = candidateOverrides.get(candidateOverrideKey)
         const useCandidateOverride =
           candidateOverride != null &&
-          candidateOverride.baseResolvedTag === normalizeTag(item.svc.candidate?.resolvedTag)
+          candidateOverride.baseResolvedTag === normalizeTag(candidateResolvedVersion(item.svc))
         const effectiveCandidateResolvedTag = useCandidateOverride
           ? candidateOverride.resolvedTag
-          : item.svc.candidate?.resolvedTag
+          : candidateResolvedVersion(item.svc)
 
         const svc: Service = {
           ...item.svc,
@@ -138,6 +138,9 @@ export function AggregateUpdatePreviewList(props: {
                 resolvedTag: effectiveCandidateResolvedTag,
               }
             : item.svc.candidate,
+          candidateSettlement: item.svc.candidateSettlement
+            ? { ...item.svc.candidateSettlement, resolvedVersion: effectiveCandidateResolvedTag }
+            : item.svc.candidateSettlement,
         }
 
         const {
@@ -153,7 +156,7 @@ export function AggregateUpdatePreviewList(props: {
           candidateTag && candidateDisplayTag
             ? shouldPrefetchFloatingCandidate(
                 candidateTag,
-                svc.candidate?.resolvedTag ?? null,
+                candidateResolvedVersion(svc),
                 svc.candidate?.digest ?? null,
               )
             : false
@@ -258,7 +261,7 @@ export function AggregateUpdatePreviewList(props: {
                           setCandidateOverrides((prev) => {
                             const next = new Map(prev)
                             next.set(candidateOverrideKey, {
-                              baseResolvedTag: normalizeTag(item.svc.candidate?.resolvedTag),
+                              baseResolvedTag: normalizeTag(candidateResolvedVersion(item.svc)),
                               resolvedTag,
                             })
                             return next

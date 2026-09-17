@@ -18,7 +18,7 @@ import {
   splitImageRef,
 } from "../imageLinks";
 import { navigate } from "../routes";
-import { resolveCandidateVersionState } from "../candidateVersionState";
+import { candidateResolvedVersion, resolveCandidateVersionState } from "../candidateVersionState";
 import { ArrowRightIcon, Button, Input, Mono, Pill, StatusRemark } from "../ui";
 import { resolveUpdateActionTargetKey } from "../updateActionTracking";
 import {
@@ -667,6 +667,9 @@ export function OperationsDashboardSectionView(props: {
                                             resolvedTag: update.resolvedTag,
                                           }
                                         : prev.candidate,
+                                      candidateSettlement: prev.candidateSettlement
+                                        ? { ...prev.candidateSettlement, resolvedVersion: update.resolvedTag }
+                                        : prev.candidateSettlement,
                                     }),
                                   );
                                 }}
@@ -722,7 +725,7 @@ export function OperationsDashboardSectionView(props: {
                         candidateTag && candidateDisplayTag
                           ? shouldPrefetchFloatingCandidate(
                               candidateTag,
-                              svc.candidate?.resolvedTag ?? null,
+                              candidateResolvedVersion(svc),
                               svc.candidate?.digest ?? null,
                             )
                           : false;
@@ -910,6 +913,9 @@ export function OperationsDashboardSectionView(props: {
                                                 resolvedTag,
                                               }
                                             : prev.candidate,
+                                          candidateSettlement: prev.candidateSettlement
+                                            ? { ...prev.candidateSettlement, resolvedVersion: resolvedTag }
+                                            : prev.candidateSettlement,
                                         }),
                                       );
                                     }}
@@ -1069,6 +1075,9 @@ export function OperationsDashboardSectionView(props: {
                                                   resolvedTag,
                                                 }
                                               : prev.candidate,
+                                            candidateSettlement: prev.candidateSettlement
+                                              ? { ...prev.candidateSettlement, resolvedVersion: resolvedTag }
+                                              : prev.candidateSettlement,
                                           }),
                                         );
                                       }}

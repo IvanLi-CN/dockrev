@@ -186,65 +186,6 @@ services:
     assert_eq!(invalid_regex.status(), 400);
 }
 
-fn immediate_stack_auto_update_policy() -> crate::api::types::AutoUpdatePolicy {
-    crate::api::types::AutoUpdatePolicy {
-        mode: crate::api::types::AutoUpdatePolicyMode::Override,
-        enabled: true,
-        rules: vec![crate::api::types::AutoUpdateRule {
-            id: "stable".to_string(),
-            name: "Stable".to_string(),
-            enabled: true,
-            matcher: crate::api::types::AutoUpdateMatcher {
-                kind: crate::api::types::AutoUpdateMatcherType::Semver,
-                pattern: ">=1, <2".to_string(),
-            },
-            action: crate::api::types::AutoUpdateRuleAction::Immediate,
-            delay: crate::api::types::AutoUpdateDelay {
-                min_age_seconds: 0,
-                min_version_lag: 0,
-            },
-        }],
-        updated_at: None,
-    }
-}
-
-fn delayed_stack_auto_update_policy(
-    min_age_seconds: u32,
-    min_version_lag: u32,
-) -> crate::api::types::AutoUpdatePolicy {
-    let mut policy = immediate_stack_auto_update_policy();
-    policy.rules[0].action = crate::api::types::AutoUpdateRuleAction::Delayed;
-    policy.rules[0].delay = crate::api::types::AutoUpdateDelay {
-        min_age_seconds,
-        min_version_lag,
-    };
-    policy
-}
-
-fn auto_update_discovery_summary(
-    stack_id: &str,
-    service_id: &str,
-    candidate_digest: &str,
-) -> serde_json::Value {
-    json!({
-        "newVersions": {
-            "count": 1,
-            "services": [{
-                "stackId": stack_id,
-                "serviceId": service_id,
-                "serviceName": "web",
-                "imageRef": "ghcr.io/acme/web",
-                "currentTag": "latest",
-                "currentDigest": "sha256:old",
-                "currentDisplayTag": "1.0.0",
-                "candidateTag": "latest",
-                "candidateDisplayTag": "1.1.0",
-                "candidateDigest": candidate_digest
-            }]
-        }
-    })
-}
-
 async fn service_id_by_name(
     state: &Arc<AppState>,
     stack_id: &str,
@@ -287,6 +228,29 @@ async fn insert_update_job_with_summary(
             allow_arch_mismatch: false,
             backup_mode: "inherit".to_string(),
             summary_json: summary,
+        })
+        .await
+        .unwrap();
+}
+
+async fn insert_schedule_check_job(state: &Arc<AppState>, job_id: &str, created_at: &str) {
+    state
+        .db
+        .insert_job(crate::api::types::JobListItem {
+            id: job_id.to_string(),
+            r#type: crate::api::types::JobType::Check,
+            scope: crate::api::types::JobScope::All,
+            stack_id: None,
+            service_id: None,
+            status: "success".to_string(),
+            created_by: "schedule".to_string(),
+            reason: "schedule".to_string(),
+            created_at: created_at.to_string(),
+            started_at: Some(created_at.to_string()),
+            finished_at: Some(created_at.to_string()),
+            allow_arch_mismatch: false,
+            backup_mode: "inherit".to_string(),
+            summary_json: json!({}),
         })
         .await
         .unwrap();
@@ -388,9 +352,11 @@ services:
             .all(|job| job.reason != "auto_policy")
     );
 
+    insert_schedule_check_job(&state, "chk_schedule", &now).await;
     crate::auto_update::handle_completed_check(&state, "chk_schedule", "schedule", &now, &summary)
         .await
         .unwrap();
+    insert_schedule_check_job(&state, "chk_schedule_duplicate", &now).await;
     crate::auto_update::handle_completed_check(
         &state,
         "chk_schedule_duplicate",
@@ -476,6 +442,26 @@ services:
     let mut ghcr_summary = summary;
     ghcr_summary["source"] = json!("github_webhook");
     ghcr_summary["matchedServiceIds"] = json!([service_id.clone()]);
+    state
+        .db
+        .insert_job(crate::api::types::JobListItem {
+            id: "chk_ghcr_webhook".to_string(),
+            r#type: crate::api::types::JobType::Check,
+            scope: crate::api::types::JobScope::Service,
+            stack_id: Some(stack_id.clone()),
+            service_id: Some(service_id.clone()),
+            status: "success".to_string(),
+            created_by: "github".to_string(),
+            reason: "webhook".to_string(),
+            created_at: now.clone(),
+            started_at: Some(now.clone()),
+            finished_at: Some(now.clone()),
+            allow_arch_mismatch: false,
+            backup_mode: "inherit".to_string(),
+            summary_json: json!({"source": "github_webhook"}),
+        })
+        .await
+        .unwrap();
     crate::auto_update::handle_completed_check(&state, "chk_ghcr_webhook", "webhook", &now, &ghcr_summary)
         .await
         .unwrap();
@@ -542,6 +528,7 @@ services:
         .unwrap();
 
     let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    insert_schedule_check_job(&state, "chk_schedule", &now).await;
     crate::auto_update::handle_completed_check(&state, "chk_schedule", "schedule", &now, &summary)
         .await
         .unwrap();
@@ -594,6 +581,7 @@ services:
         .unwrap();
 
     let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    insert_schedule_check_job(&state, "chk_schedule", &now).await;
     crate::auto_update::handle_completed_check(&state, "chk_schedule", "schedule", &now, &summary)
         .await
         .unwrap();
@@ -668,6 +656,7 @@ services:
         .unwrap();
 
     let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    insert_schedule_check_job(&state, "chk_schedule", &now).await;
     crate::auto_update::handle_completed_check(&state, "chk_schedule", "schedule", &now, &summary)
         .await
         .unwrap();
@@ -724,6 +713,7 @@ services:
         .unwrap();
 
     let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    insert_schedule_check_job(&state, "chk_schedule_initial", &first_seen).await;
     crate::auto_update::handle_completed_check(
         &state,
         "chk_schedule_initial",
@@ -753,6 +743,7 @@ services:
         )
         .await
         .unwrap();
+    insert_schedule_check_job(&state, "chk_schedule_recheck", &twenty_minutes_later).await;
     crate::auto_update::handle_completed_check(
         &state,
         "chk_schedule_recheck",
@@ -813,6 +804,7 @@ services:
         .unwrap();
 
     let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    insert_schedule_check_job(&state, "chk_schedule_initial", &first_seen).await;
     crate::auto_update::handle_completed_check(
         &state,
         "chk_schedule_initial",
@@ -885,6 +877,7 @@ services:
         .unwrap();
 
     let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    insert_schedule_check_job(&state, "chk_schedule_initial", &first_seen).await;
     crate::auto_update::handle_completed_check(
         &state,
         "chk_schedule_initial",
@@ -966,6 +959,7 @@ services:
         .unwrap();
 
     let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    insert_schedule_check_job(&state, "chk_schedule_initial", &first_seen).await;
     crate::auto_update::handle_completed_check(
         &state,
         "chk_schedule_initial",
@@ -995,6 +989,7 @@ services:
         )
         .await
         .unwrap();
+    insert_schedule_check_job(&state, "chk_schedule_override", &override_at).await;
     crate::auto_update::handle_completed_check(
         &state,
         "chk_schedule_override",

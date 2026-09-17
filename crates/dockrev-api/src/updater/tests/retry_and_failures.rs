@@ -504,6 +504,8 @@ async fn up_command_is_not_retried_when_it_fails() {
             candidate: None,
             ignore: None,
             version_inference: None,
+            candidate_settlement: None,
+            auto_update: None,
             new_version_discovery_count: None,
             settings: ServiceSettings {
                 auto_rollback: true,

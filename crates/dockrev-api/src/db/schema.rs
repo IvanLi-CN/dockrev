@@ -16,6 +16,7 @@ mod schema_jobs;
 mod schema_lifecycle_events;
 mod schema_resource_latest;
 mod schema_settings_release_notes;
+include!("schema_auto_update.rs");
 pub(super) fn ensure_parent_dir(path: &Path) -> anyhow::Result<PathBuf> {
     let path = path.to_path_buf();
     if let Some(parent) = path.parent()
@@ -566,54 +567,6 @@ CREATE INDEX IF NOT EXISTS idx_discovered_compose_projects_stack_id ON discovere
     Ok(())
 }
 
-fn ensure_auto_update_schema(conn: &rusqlite::Connection) -> anyhow::Result<()> {
-    conn.execute_batch(
-        r#"
-CREATE TABLE IF NOT EXISTS auto_update_policies (
-  scope_type TEXT NOT NULL,
-  scope_id TEXT NOT NULL,
-  mode TEXT NOT NULL,
-  enabled INTEGER NOT NULL DEFAULT 0,
-  rules_json TEXT NOT NULL DEFAULT '[]',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  PRIMARY KEY (scope_type, scope_id)
-);
-CREATE INDEX IF NOT EXISTS idx_auto_update_policies_scope
-  ON auto_update_policies(scope_type, scope_id);
-
-CREATE TABLE IF NOT EXISTS auto_update_pending (
-  id TEXT PRIMARY KEY NOT NULL,
-  policy_scope_type TEXT NOT NULL,
-  policy_scope_id TEXT NOT NULL,
-  rule_id TEXT NOT NULL,
-  stack_id TEXT NOT NULL,
-  service_id TEXT NOT NULL,
-  source_check_job_id TEXT NOT NULL,
-  candidate_tag TEXT NOT NULL,
-  candidate_display_tag TEXT NOT NULL,
-  candidate_digest TEXT NOT NULL,
-  current_display_tag TEXT NOT NULL,
-  first_seen_at TEXT NOT NULL,
-  due_at TEXT NOT NULL,
-  min_age_seconds INTEGER NOT NULL,
-  min_version_lag INTEGER NOT NULL,
-  status TEXT NOT NULL,
-  update_job_id TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  summary_json TEXT NOT NULL DEFAULT '{}'
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_auto_update_pending_active_candidate
-  ON auto_update_pending(service_id, rule_id, candidate_digest)
-  WHERE status IN ('pending', 'enqueuing', 'enqueued');
-CREATE INDEX IF NOT EXISTS idx_auto_update_pending_due
-  ON auto_update_pending(status, due_at);
-"#,
-    )?;
-    Ok(())
-}
-
 fn ensure_service_tag_history_schema(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         r#"
@@ -693,6 +646,12 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     apply_migration_0011_track_candidate_display_tags_in_new_version_discoveries(conn)?;
     apply_migration_0012_track_image_ref_in_new_version_discoveries(conn)?;
     apply_migration_0013_add_update_job_stop_controls(conn)?;
+    apply_migration_0014_add_auto_update_candidates(conn)?;
+    apply_migration_0015_add_auto_update_candidate_provenance(conn)?;
+    apply_migration_0016_harden_auto_update_candidate_backfill(conn)?;
+    apply_migration_0017_add_auto_update_candidate_projection_context(conn)?;
+    apply_migration_0018_add_auto_update_candidate_audit_fields(conn)?;
+    apply_migration_0019_add_auto_update_candidate_resolved_tags(conn)?;
     schema_lifecycle_events::apply(conn)?;
     schema_job_history_retention::apply(conn)?;
     schema_backup_cleanup_state::apply(conn)?;
@@ -1376,6 +1335,38 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_auto_update_pending_active_candidate
   WHERE status IN ('pending', 'enqueuing', 'enqueued');
 CREATE INDEX IF NOT EXISTS idx_auto_update_pending_due
   ON auto_update_pending(status, due_at);
+
+CREATE TABLE IF NOT EXISTS auto_update_candidates (
+  id TEXT PRIMARY KEY NOT NULL,
+  stack_id TEXT NOT NULL,
+  service_id TEXT NOT NULL,
+  image_ref TEXT NOT NULL,
+  raw_tag TEXT NOT NULL,
+  candidate_digest TEXT NOT NULL,
+  resolved_version TEXT,
+  status TEXT NOT NULL,
+  reason TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  retry_at TEXT,
+  discovered_at TEXT NOT NULL,
+  source_job_id TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'unknown',
+  current_tag TEXT NOT NULL DEFAULT '',
+  current_display_tag TEXT NOT NULL DEFAULT '',
+  current_digest TEXT,
+  settled_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  policy_status TEXT,
+  policy_reason TEXT,
+  policy_rule_id TEXT,
+  policy_evaluated_at TEXT,
+  UNIQUE(service_id, candidate_digest)
+);
+CREATE INDEX IF NOT EXISTS idx_auto_update_candidates_status_retry
+  ON auto_update_candidates(status, retry_at);
+CREATE INDEX IF NOT EXISTS idx_auto_update_candidates_service_discovered
+  ON auto_update_candidates(service_id, discovered_at DESC);
 
 CREATE TABLE IF NOT EXISTS jobs (
   id TEXT PRIMARY KEY NOT NULL,

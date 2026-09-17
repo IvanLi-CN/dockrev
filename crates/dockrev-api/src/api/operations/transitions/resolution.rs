@@ -448,6 +448,7 @@ pub(crate) async fn resolve_service_rollback_target(
                 target_digest: found_target_digest,
                 pull_tags: Some(Vec::new()),
                 skip_tag_followups: true,
+                auto_policy_context: None,
             });
             break;
         }

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 
 import type { Service } from '../api'
+import { candidateResolvedVersion } from '../candidateVersionState'
 import { normalizeDigest } from './digest'
 import { ImageLinkIcons, splitImageNameForDisplay, splitImageRef } from '../imageLinks'
 import { isSemverDowngradeAnomaly, serviceRowStatus } from '../updateStatus'
@@ -111,12 +112,12 @@ export function ServiceUpdateConfirmDetails(props: {
   const activeCandidateOverride =
     candidateOverride &&
     candidateOverride.key === candidateDigestKey &&
-    candidateOverride.baseResolvedTag === normalizeTag(service.candidate?.resolvedTag)
+    candidateOverride.baseResolvedTag === normalizeTag(candidateResolvedVersion(service))
       ? candidateOverride
       : null
   const effectiveCandidateResolvedTag = activeCandidateOverride
     ? activeCandidateOverride.resolvedTag
-    : service.candidate?.resolvedTag ?? null
+    : candidateResolvedVersion(service)
 
   const currentDisplayTag = formatCurrentTagDisplay(
     service.image.tag,
@@ -159,7 +160,7 @@ export function ServiceUpdateConfirmDetails(props: {
   const handleLocalCandidateResolvedTag = (resolvedTag: string | null) => {
     setCandidateOverride({
       key: candidateDigestKey,
-      baseResolvedTag: normalizeTag(service.candidate?.resolvedTag),
+      baseResolvedTag: normalizeTag(candidateResolvedVersion(service)),
       resolvedTag,
     })
     onHostCandidateResolvedTag?.(resolvedTag)

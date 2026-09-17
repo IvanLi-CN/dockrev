@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { ArrowUpCircle, Download, Eye, Layers3, Play, RotateCcw, RotateCw, Square } from 'lucide-react'
 import { ApiError, archiveService, createIgnore, getServiceBackupRecords, getServiceBackupTargets, getServiceLifecycleStatus, getServiceRollbackTarget, getServiceSettings, getStack, getStackSettings, listIgnores, restoreService, triggerServiceLifecycle, triggerServiceRollback, triggerUpdate, type IgnoreRule, type Service, type ServiceBackupRecordItem, type ServiceBackupTargetsResponse, type ServiceLifecycleAction, type ServiceLifecycleStatusResponse, type ServiceRollbackTargetResponse, type ServiceSettings, type StackDetail, type StackSettings } from '../api'
 import { readUpdateGuardBlockedReason } from '../aggregateUpdateGuard'
+import { candidateResolvedVersion } from '../candidateVersionState'
 import { normalizeDigest } from '../components/digest'
 import { backupSummaryValue, summarizeServiceOperationBackups } from '../components/serviceOperationBackupSummary'
 import { ServiceUpdateConfirmDetails } from '../components/ServiceUpdateConfirmDetails'
@@ -470,6 +471,9 @@ export function useServiceDetailPageState(props: {
             next = {
               ...next,
               candidate: { ...candidate, resolvedTag: inferredFirst },
+              candidateSettlement: next.candidateSettlement
+                ? { ...next.candidateSettlement, resolvedVersion: inferredFirst }
+                : next.candidateSettlement,
             }
           }
         }
@@ -770,6 +774,9 @@ export function useServiceDetailPageState(props: {
                       resolvedTag,
                     }
                   : prev.candidate,
+                candidateSettlement: prev.candidateSettlement
+                  ? { ...prev.candidateSettlement, resolvedVersion: resolvedTag }
+                  : prev.candidateSettlement,
               }))
             }}
           />
@@ -801,7 +808,7 @@ export function useServiceDetailPageState(props: {
         })
         if (generation !== pageGenerationRef.current) return
         setNotice({ jobId: resp.jobId, kind: 'update' })
-        if (applyActionKey) trackJob(applyActionKey, resp.jobId, 'queued', service.candidate?.resolvedTag ?? service.candidate?.tag ?? null)
+        if (applyActionKey) trackJob(applyActionKey, resp.jobId, 'queued', candidateResolvedVersion(service) ?? service.candidate?.tag ?? null)
         void refreshLifecycleStatus(generation).catch(() => undefined)
       } catch (e: unknown) {
         if (generation !== pageGenerationRef.current) return
@@ -1070,7 +1077,7 @@ export function useServiceDetailPageState(props: {
     const candidateTag = service.candidate
       ? formatCandidateTagDisplay(
       service.candidate.tag,
-      service.candidate.resolvedTag ?? null,
+      candidateResolvedVersion(service),
       service.versionInference?.status,
     )
       : '-'
@@ -1106,7 +1113,7 @@ export function useServiceDetailPageState(props: {
   const anomalyCandidateTag = service?.candidate
     ? formatCandidateTagDisplay(
         service.candidate.tag,
-        service.candidate.resolvedTag ?? null,
+        candidateResolvedVersion(service),
         service.versionInference?.status,
       )
     : '-'

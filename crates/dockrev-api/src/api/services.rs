@@ -288,6 +288,20 @@ pub(super) async fn trigger_service_version_inference_refresh(
         .ok_or_else(|| ApiError::invalid_argument("invalid service image ref"))?;
     let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
         .unwrap_or_else(|| "linux/amd64".to_string());
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(anyhow::Error::from)
+        .map_err(map_internal)?;
+    state
+        .db
+        .reopen_auto_update_candidate_inference(
+            &service_id,
+            &digest,
+            VERSION_INFERENCE_REASON_FORCE,
+            &now,
+        )
+        .await
+        .map_err(map_internal)?;
     let inserted = state
         .snapshot_worker
         .enqueue(
@@ -971,6 +985,7 @@ pub(super) async fn get_homepage_nav(
         .collect::<Vec<_>>();
     crate::api::stacks::enrich_services_with_version_inference(&state, &mut services, false)
         .await?;
+    crate::api::stacks::enrich_services_with_auto_update_state(&state, &mut services).await?;
     crate::api::stacks::enrich_services_with_new_version_discovery_counts(&state, &mut services)
         .await?;
     for (index, service) in services.into_iter().enumerate() {
@@ -1003,6 +1018,8 @@ pub(super) async fn get_homepage_nav(
                 candidate: row.service.candidate.clone(),
                 ignore: row.service.ignore.clone(),
                 version_inference: row.service.version_inference.clone(),
+                candidate_settlement: row.service.candidate_settlement.clone(),
+                auto_update: row.service.auto_update.clone(),
                 new_version_discovery_count: row.service.new_version_discovery_count,
                 settings: row.service.settings.clone(),
                 archived: row.service.archived,

@@ -5,6 +5,7 @@ import {
   type Service,
   type UpdateServiceTargetInput,
 } from './api'
+import { candidateResolvedVersion } from './candidateVersionState'
 import { isStrictSemverTag } from './versionDisplay'
 
 function uniqueTags(tags: string[], excludeTag: string): string[] {
@@ -41,7 +42,7 @@ export async function buildUpdateServiceTarget(service: Service): Promise<Update
     throw new Error('service update 缺少必要参数（serviceId/targetTag/targetDigest）')
   }
 
-  const resolvedTag = service.candidate?.resolvedTag ?? ''
+  const resolvedTag = candidateResolvedVersion(service) ?? ''
   const tags = [isStrictSemverTag(resolvedTag) ? resolvedTag : '', ...(await loadSnapshotTags(service))]
   return {
     serviceId,

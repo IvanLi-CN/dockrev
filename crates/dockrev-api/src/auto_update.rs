@@ -1,18 +1,25 @@
-use std::{collections::BTreeSet, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeSet, HashMap},
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::Context as _;
 use regex::Regex;
-use semver::VersionReq;
+use semver::{Version, VersionReq};
 use serde_json::json;
 
 use crate::{
     api,
     api::types::{
-        AutoUpdateMatcherType, AutoUpdatePolicy, AutoUpdatePolicyMode, AutoUpdateRule,
-        AutoUpdateRuleAction, BackupMode, JobScope, TriggerUpdateRequest, UpdateMode, UpdateReason,
-        UpdateServiceTarget,
+        AutoUpdateJobContext, AutoUpdateMatcherType, AutoUpdatePolicy, AutoUpdatePolicyMode,
+        AutoUpdateRule, AutoUpdateRuleAction, BackupMode, JobScope, TriggerUpdateRequest,
+        UpdateMode, UpdateReason, UpdateServiceTarget,
     },
-    db::{AutoUpdatePendingInput, AutoUpdatePendingRow, NewVersionDiscoveryRow},
+    db::{
+        AutoUpdateCandidateInput, AutoUpdateCandidateRow, AutoUpdateCandidateSettlementInput,
+        AutoUpdatePendingInput, AutoUpdatePendingRow, NewVersionDiscoveryRow,
+    },
     error::ApiError,
     ids, ignore, notify,
     state::AppState,
@@ -167,17 +174,8 @@ fn rule_delay(rule: &AutoUpdateRule) -> (u32, u32) {
     }
 }
 
-fn candidate_match_values(candidate: &notify::NewVersionDiscoveredService) -> Vec<&str> {
-    if candidate.candidate_display_tag.trim().is_empty()
-        || candidate.candidate_display_tag.trim() == candidate.candidate_tag.trim()
-    {
-        vec![candidate.candidate_tag.trim()]
-    } else {
-        vec![
-            candidate.candidate_display_tag.trim(),
-            candidate.candidate_tag.trim(),
-        ]
-    }
+fn resolved_candidate_version(candidate: &notify::NewVersionDiscoveredService) -> Option<String> {
+    dockrev_common::normalized_semver_from_oci_version(&candidate.candidate_tag)
 }
 
 fn rule_matches_text(rule: &AutoUpdateRule, value: &str) -> bool {
@@ -202,21 +200,29 @@ fn rule_matches_text(rule: &AutoUpdateRule, value: &str) -> bool {
     }
 }
 
-fn match_rule(
-    policy: &AutoUpdatePolicy,
+fn rule_matches_candidate(
+    rule: &AutoUpdateRule,
     candidate: &notify::NewVersionDiscoveredService,
-) -> Option<MatchedRule> {
-    if !policy.enabled {
-        return None;
-    }
-    policy.rules.iter().find_map(|rule| {
-        if !rule.enabled {
-            return None;
+    resolved_version: Option<&str>,
+    resolved_tags: Option<&[String]>,
+) -> bool {
+    match rule.matcher.kind {
+        AutoUpdateMatcherType::Semver => {
+            resolved_version.is_some_and(|version| rule_matches_text(rule, version))
         }
-        let matched = candidate_match_values(candidate)
-            .into_iter()
-            .any(|value| rule_matches_text(rule, value));
-        matched.then(|| MatchedRule { rule: rule.clone() })
+        AutoUpdateMatcherType::Regex | AutoUpdateMatcherType::Glob => {
+            candidate_match_values(candidate, resolved_tags)
+                .into_iter()
+                .any(|value| rule_matches_text(rule, value))
+        }
+    }
+}
+
+fn has_waiting_semver_rule(policy: &AutoUpdatePolicy) -> bool {
+    policy.rules.iter().any(|rule| {
+        rule.enabled
+            && matches!(rule.matcher.kind, AutoUpdateMatcherType::Semver)
+            && VersionReq::parse(rule.matcher.pattern.trim()).is_ok()
     })
 }
 
@@ -231,6 +237,9 @@ async fn effective_policy_for_service(
         .await?;
     match service_policy.mode {
         AutoUpdatePolicyMode::Override => {
+            if !service_policy.enabled {
+                return Ok(None);
+            }
             return Ok(Some(EffectivePolicy {
                 scope_type: "service",
                 scope_id: service_id.to_string(),
@@ -270,12 +279,24 @@ fn add_seconds(ts: &str, seconds: u32) -> String {
         .unwrap_or_else(|| ts.to_string())
 }
 
+fn subtract_seconds(ts: &str, seconds: u32) -> String {
+    parse_rfc3339(ts)
+        .map(|value| value - time::Duration::seconds(seconds as i64))
+        .and_then(|value| {
+            value
+                .format(&time::format_description::well_known::Rfc3339)
+                .ok()
+        })
+        .unwrap_or_else(|| ts.to_string())
+}
+
 fn version_lag_met(
     min_version_lag: u32,
     current_display_tag: &str,
     candidate: &notify::NewVersionDiscoveredService,
     rule: &AutoUpdateRule,
     history: &[NewVersionDiscoveryRow],
+    resolved_tags: Option<&[String]>,
 ) -> bool {
     if min_version_lag == 0 {
         return true;
@@ -285,7 +306,7 @@ fn version_lag_met(
     };
 
     let mut versions = BTreeSet::<semver::Version>::new();
-    for value in candidate_match_values(candidate) {
+    for value in candidate_match_values(candidate, resolved_tags) {
         if let Some(version) = ignore::parse_version(value)
             && version > current_version
             && rule_matches_text(rule, value)
@@ -354,6 +375,437 @@ fn pending_candidate(pending: &AutoUpdatePendingRow) -> notify::NewVersionDiscov
     }
 }
 
+fn candidate_settlement_state(
+    candidate: &notify::NewVersionDiscoveredService,
+) -> (&'static str, Option<String>, Option<String>) {
+    if candidate.candidate_digest.trim().is_empty() {
+        return (
+            "unresolved",
+            None,
+            Some("missing_candidate_evidence".to_string()),
+        );
+    }
+    if let Some(version) = resolved_candidate_version(candidate) {
+        return (
+            "ready",
+            Some(version),
+            Some("digest_bound_version".to_string()),
+        );
+    }
+    if candidate.candidate_tag.trim().is_empty() {
+        return (
+            "unresolved",
+            None,
+            Some("missing_candidate_evidence".to_string()),
+        );
+    }
+    (
+        "awaiting_inference",
+        None,
+        Some("version_inference_pending".to_string()),
+    )
+}
+
+fn update_request_from_job(job: &api::types::JobListItem) -> anyhow::Result<TriggerUpdateRequest> {
+    let mode = job
+        .summary_json
+        .get("mode")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("auto policy update job is missing mode"))?;
+    let mode = serde_json::from_value::<UpdateMode>(serde_json::Value::String(mode.to_string()))
+        .context("parse auto policy update mode")?;
+    let targets = job
+        .summary_json
+        .get("targets")
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("auto policy update job is missing targets"))
+        .and_then(|value| {
+            serde_json::from_value::<Vec<UpdateServiceTarget>>(value)
+                .context("parse auto policy update targets")
+        })?;
+    if targets.is_empty() {
+        anyhow::bail!("auto policy update job has no targets");
+    }
+    for target in &targets {
+        if target.service_id.trim().is_empty()
+            || api::normalize_digest_for_compare(&target.target_digest).is_none()
+        {
+            anyhow::bail!("auto policy update job has an invalid target");
+        }
+    }
+    let backup_mode =
+        serde_json::from_value::<BackupMode>(serde_json::Value::String(job.backup_mode.clone()))
+            .context("parse auto policy update backup mode")?;
+    Ok(TriggerUpdateRequest {
+        scope: job.scope.clone(),
+        stack_id: job.stack_id.clone(),
+        service_id: job.service_id.clone(),
+        target_tag: None,
+        target_digest: None,
+        pull_tags: None,
+        targets: Some(targets),
+        mode,
+        allow_arch_mismatch: job.allow_arch_mismatch,
+        backup_mode,
+        reason: UpdateReason::AutoPolicy,
+    })
+}
+
+async fn recover_enqueued_auto_update_jobs(
+    state: &Arc<AppState>,
+    now: &str,
+    limit: usize,
+) -> anyhow::Result<usize> {
+    let jobs = state.db.list_enqueued_auto_update_jobs(limit).await?;
+    let mut recovered = 0;
+    for job in jobs {
+        let request = match update_request_from_job(&job) {
+            Ok(request) => request,
+            Err(error) => {
+                state
+                    .db
+                    .fail_corrupt_auto_update_job(
+                        &job.id,
+                        now,
+                        &format!("invalid_job_summary: {error}"),
+                    )
+                    .await?;
+                tracing::warn!(job_id = %job.id, error = %error, "auto policy update job recovery skipped invalid job summary");
+                continue;
+            }
+        };
+        if !state.db.claim_queued_job_by_id(&job.id, now).await? {
+            continue;
+        }
+        let run_state = state.clone();
+        let run_job_id = job.id.clone();
+        tokio::spawn(async move {
+            let _ = api::run_update_job(run_state, run_job_id, request).await;
+        });
+        recovered += 1;
+    }
+    Ok(recovered)
+}
+
+fn candidate_id_for(service_id: &str, digest: &str) -> String {
+    format!("{service_id}:{digest}")
+}
+
+fn candidate_from_row(row: &AutoUpdateCandidateRow) -> notify::NewVersionDiscoveredService {
+    notify::NewVersionDiscoveredService {
+        stack_id: row.stack_id.clone(),
+        service_id: row.service_id.clone(),
+        image_ref: row.image_ref.clone(),
+        current_tag: row.current_tag.clone(),
+        current_digest: row.current_digest.clone(),
+        current_display_tag: row.current_display_tag.clone(),
+        candidate_tag: row.raw_tag.clone(),
+        candidate_display_tag: row
+            .resolved_version
+            .clone()
+            .unwrap_or_else(|| row.raw_tag.clone()),
+        candidate_digest: row.candidate_digest.clone(),
+    }
+}
+
+fn resolved_version_from_snapshot(
+    snapshot: &crate::api::types::ServiceDigestTagsSnapshotResponse,
+    raw_tag: &str,
+) -> Option<String> {
+    let versions = snapshot
+        .tags
+        .iter()
+        .filter(|tag| tag.trim() != raw_tag.trim())
+        .filter_map(|tag| {
+            dockrev_common::normalized_semver_from_oci_version(tag).and_then(|version| {
+                Version::parse(&version)
+                    .ok()
+                    .map(|parsed| (parsed, version))
+            })
+        });
+    versions
+        .max_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)))
+        .map(|(_, version)| version)
+}
+
+fn snapshot_is_authoritative(
+    snapshot: &crate::api::types::ServiceDigestTagsSnapshotResponse,
+) -> bool {
+    snapshot.scan.repo_tags_considered >= snapshot.scan.repo_tags_total
+        && snapshot.scan.manifests_timeout == 0
+        && snapshot.scan.manifests_error == 0
+}
+
+fn retry_at_for_attempt(now: &str, attempts: u32) -> Option<String> {
+    let seconds = match attempts {
+        1 => 60,
+        2 => 300,
+        3 => 600,
+        _ => return None,
+    };
+    let retry_at = add_seconds(now, seconds);
+    (retry_at != now).then_some(retry_at)
+}
+
+fn inference_attempt_is_terminal(attempts: u32) -> bool {
+    attempts > 3
+}
+
+fn permanent_inference_error(error: &anyhow::Error) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    [
+        " 400 ",
+        " 401 ",
+        " 403 ",
+        " 404 ",
+        " 405 ",
+        " 406 ",
+        " 415 ",
+        " 422 ",
+        "bad request",
+        "forbidden",
+        "not found",
+        "unauthorized",
+        "parse manifest json",
+        "parse config blob json",
+    ]
+    .iter()
+    .any(|marker| message.contains(marker))
+}
+
+pub async fn reconcile_inference_for_digest(
+    state: &Arc<AppState>,
+    image_repo: &str,
+    digest: &str,
+    host_platform: &str,
+    now: &str,
+) -> anyhow::Result<usize> {
+    let candidates = state
+        .db
+        .list_auto_update_candidates_for_digest(image_repo, digest)
+        .await?;
+    if candidates.is_empty() {
+        return Ok(0);
+    }
+    let snapshot = state
+        .db
+        .get_image_digest_tags_snapshot(image_repo, digest, host_platform)
+        .await?
+        .and_then(|(snapshot_json, _checked_at, _updated_at)| {
+            serde_json::from_str::<crate::api::types::ServiceDigestTagsSnapshotResponse>(
+                &snapshot_json,
+            )
+            .ok()
+        });
+
+    let mut reconciled = 0;
+    for candidate in candidates {
+        let authoritative_snapshot = snapshot.as_ref().filter(|snapshot| {
+            snapshot_is_authoritative(snapshot)
+                && crate::snapshot_worker::normalize_digest(&snapshot.digest)
+                    == crate::snapshot_worker::normalize_digest(&candidate.candidate_digest)
+        });
+        let resolved_tags = authoritative_snapshot.map(|snapshot| snapshot.tags.clone());
+        let mut resolved = authoritative_snapshot
+            .and_then(|snapshot| resolved_version_from_snapshot(snapshot, &candidate.raw_tag));
+        let mut inference_error = false;
+        let mut permanent_error = false;
+        let mut inference_reason = None;
+        if resolved.is_none()
+            && let Ok(image) = crate::registry::ImageRef::parse(&format!(
+                "{}@{}",
+                image_repo.trim(),
+                candidate.candidate_digest.trim()
+            ))
+        {
+            resolved = match state
+                .registry
+                .get_oci_version(&image, &candidate.candidate_digest, host_platform)
+                .await
+            {
+                Ok(raw) => match raw {
+                    Some(raw) => match dockrev_common::normalized_semver_from_oci_version(&raw) {
+                        Some(version) => Some(version),
+                        None => {
+                            inference_error = true;
+                            permanent_error = true;
+                            inference_reason = Some("invalid_oci_version".to_string());
+                            None
+                        }
+                    },
+                    None => None,
+                },
+                Err(error) => {
+                    inference_error = true;
+                    permanent_error = permanent_inference_error(&error);
+                    tracing::debug!(
+                        image_repo,
+                        digest = %candidate.candidate_digest,
+                        error = %error,
+                        "auto update candidate OCI version lookup failed"
+                    );
+                    None
+                }
+            };
+        }
+        let authoritative_without_version =
+            authoritative_snapshot.is_some() && resolved.is_none() && !inference_error;
+        let attempts = if resolved.is_some() || authoritative_without_version {
+            candidate.attempts
+        } else {
+            candidate.attempts.saturating_add(1)
+        };
+        let terminal = resolved.is_none()
+            && (authoritative_without_version
+                || permanent_error
+                || inference_attempt_is_terminal(attempts));
+        let status = if resolved.is_some() {
+            "ready"
+        } else if terminal {
+            "unresolved"
+        } else {
+            "awaiting_inference"
+        };
+        let reason = resolved
+            .as_ref()
+            .map(|_| "digest_bound_version")
+            .or(inference_reason.as_deref())
+            .or_else(|| terminal.then_some("version_inference_unresolved"));
+        let last_error = inference_error.then(|| {
+            inference_reason
+                .clone()
+                .unwrap_or_else(|| "version_inference_failed".into())
+        });
+        let retry_at = (!terminal && resolved.is_none())
+            .then(|| retry_at_for_attempt(now, attempts))
+            .flatten();
+        let settled = state
+            .db
+            .settle_auto_update_candidate(&AutoUpdateCandidateSettlementInput {
+                service_id: candidate.service_id.clone(),
+                candidate_digest: candidate.candidate_digest.clone(),
+                status: status.to_string(),
+                resolved_version: resolved.clone(),
+                resolved_tags,
+                reason: reason.map(str::to_string),
+                last_error,
+                attempts,
+                retry_at,
+                settled_at: (resolved.is_some() || terminal).then_some(now.to_string()),
+                now: now.to_string(),
+            })
+            .await?;
+        let settled = settled.unwrap_or_else(|| candidate.clone());
+        state
+            .db
+            .management_events()
+            .publish_change(
+                "auto_update",
+                "candidate",
+                settled.id.clone(),
+                json!({
+                    "phase": "settled",
+                    "status": settled.status,
+                    "serviceId": settled.service_id,
+                    "candidateDigest": settled.candidate_digest,
+                }),
+            )
+            .await;
+        if matches!(settled.status.as_str(), "ready" | "unresolved") {
+            evaluate_candidate(
+                state,
+                &candidate.source_job_id,
+                &settled.discovered_at,
+                now,
+                &candidate_from_row(&settled),
+                Some(&settled.source),
+            )
+            .await?;
+        }
+        reconciled += 1;
+    }
+    Ok(reconciled)
+}
+
+pub async fn reconcile_pending_inference(
+    state: &Arc<AppState>,
+    now: &str,
+) -> anyhow::Result<usize> {
+    let candidates = state
+        .db
+        .list_auto_update_candidates_for_retry(now, 50)
+        .await?;
+    let host_platform =
+        crate::registry::host_platform_override(state.config.host_platform.as_deref())
+            .unwrap_or_else(|| "linux/amd64".to_string());
+    let mut reconciled = 0;
+    for candidate in candidates {
+        let Some(image_repo) =
+            crate::snapshot_worker::image_repo_from_image_ref(&candidate.image_ref)
+        else {
+            continue;
+        };
+        reconciled += reconcile_inference_for_digest(
+            state,
+            &image_repo,
+            &candidate.candidate_digest,
+            &host_platform,
+            now,
+        )
+        .await?;
+    }
+    Ok(reconciled)
+}
+
+pub async fn reevaluate_service_policy(
+    state: &Arc<AppState>,
+    service_id: &str,
+    now: &str,
+) -> anyhow::Result<()> {
+    let rows = state
+        .db
+        .list_latest_auto_update_candidates(&[service_id.to_string()])
+        .await?;
+    let Some(candidate) = rows.into_iter().next() else {
+        return Ok(());
+    };
+    if candidate.policy_status.as_deref() == Some("completed") {
+        return Ok(());
+    }
+    if !is_qualified_auto_policy_source(Some(&candidate.source))
+        || !has_valid_auto_policy_source(&state.db, &candidate.source_job_id, &candidate.source)
+            .await?
+    {
+        state
+            .db
+            .set_auto_update_candidate_policy(
+                service_id,
+                &candidate.candidate_digest,
+                "skipped",
+                Some("unqualified_source"),
+                None,
+                now,
+            )
+            .await?;
+        return Ok(());
+    }
+    match candidate.status.as_str() {
+        "ready" | "awaiting_inference" | "unresolved" => {
+            evaluate_candidate(
+                state,
+                &candidate.source_job_id,
+                &candidate.discovered_at,
+                now,
+                &candidate_from_row(&candidate),
+                Some(&candidate.source),
+            )
+            .await?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 async fn pending_delay_gates_met(
     state: &Arc<AppState>,
     pending: &AutoUpdatePendingRow,
@@ -393,13 +845,38 @@ async fn pending_delay_gates_met(
     };
 
     let candidate = pending_candidate(pending);
-    if !candidate_match_values(&candidate)
-        .into_iter()
-        .any(|value| rule_matches_text(rule, value))
+    let Some(settlement) = state
+        .db
+        .get_auto_update_candidate(&pending.service_id, &pending.candidate_digest)
+        .await?
+    else {
+        return Ok(false);
+    };
+    let requires_resolved_version = matches!(rule.matcher.kind, AutoUpdateMatcherType::Semver);
+    if settlement.status == "superseded"
+        || (requires_resolved_version && settlement.status != "ready")
+        || !rule_matches_candidate(
+            rule,
+            &candidate,
+            settlement.resolved_version.as_deref(),
+            settlement.resolved_tags.as_deref(),
+        )
     {
         state
             .db
-            .mark_auto_update_pending_skipped(&pending.id, "rule_no_longer_matches", now)
+            .mark_auto_update_pending_skipped(
+                &pending.id,
+                if settlement.status == "superseded" {
+                    "candidate_superseded"
+                } else if settlement.status == "unresolved" {
+                    "candidate_unresolved"
+                } else if requires_resolved_version {
+                    "waiting_inference"
+                } else {
+                    "candidate_rule_no_longer_matches"
+                },
+                now,
+            )
             .await?;
         return Ok(false);
     }
@@ -424,13 +901,16 @@ async fn pending_delay_gates_met(
         &candidate,
         rule,
         &history,
+        settlement.resolved_tags.as_deref(),
     ))
 }
-
-fn build_auto_update_target(service: &crate::api::types::Service) -> Option<UpdateServiceTarget> {
+fn build_auto_update_target(
+    service: &crate::api::types::Service,
+    settled_version: Option<&str>,
+) -> Option<UpdateServiceTarget> {
     let candidate = service.candidate.as_ref()?;
     let mut pull_tags = Vec::new();
-    if let Some(resolved) = candidate.resolved_tag.as_deref()
+    if let Some(resolved) = settled_version.or(candidate.resolved_tag.as_deref())
         && ignore::is_strict_semver(resolved)
         && resolved.trim() != service.image.tag.trim()
     {
@@ -442,6 +922,7 @@ fn build_auto_update_target(service: &crate::api::types::Service) -> Option<Upda
         target_digest: candidate.digest.clone(),
         pull_tags: Some(pull_tags),
         skip_tag_followups: false,
+        auto_policy_context: None,
     })
 }
 
@@ -538,17 +1019,45 @@ async fn enqueue_pending(
         return Ok(None);
     }
 
-    let Some(target) = build_auto_update_target(service) else {
+    let Some(settlement) = state
+        .db
+        .get_auto_update_candidate(&pending.service_id, &pending.candidate_digest)
+        .await?
+    else {
+        state
+            .db
+            .mark_auto_update_pending_skipped(&pending.id, "candidate_missing", now)
+            .await?;
+        return Ok(None);
+    };
+    let Some(mut target) =
+        build_auto_update_target(service, settlement.resolved_version.as_deref())
+    else {
         state
             .db
             .mark_auto_update_pending_skipped(&pending.id, "target_unavailable", now)
             .await?;
         return Ok(None);
     };
+    target.auto_policy_context = Some(AutoUpdateJobContext {
+        pending_id: pending.id.clone(),
+        candidate_id: pending.candidate_id.clone().unwrap_or_default(),
+        rule_id: pending.rule_id.clone(),
+        policy_scope_type: pending.policy_scope_type.clone(),
+        policy_scope_id: pending.policy_scope_id.clone(),
+    });
 
     if !state
         .db
-        .try_claim_auto_update_pending(&pending.id, now)
+        .try_claim_auto_update_pending_if_current(
+            &pending.id,
+            &pending.service_id,
+            &pending.candidate_digest,
+            &pending.policy_scope_type,
+            &pending.policy_scope_id,
+            &pending.rule_id,
+            now,
+        )
         .await?
     {
         return Ok(None);
@@ -568,20 +1077,36 @@ async fn enqueue_pending(
         reason: UpdateReason::AutoPolicy,
     };
 
-    match api::enqueue_update_job(
+    match api::enqueue_update_job_deferred(
         state.clone(),
         "auto-policy".to_string(),
         "auto_policy".to_string(),
-        req,
+        req.clone(),
         now.to_string(),
     )
     .await
     {
         Ok(job_id) => {
-            state
+            let enqueued = state
                 .db
                 .mark_auto_update_pending_enqueued(&pending.id, &job_id, now)
                 .await?;
+            if !enqueued {
+                return Ok(None);
+            }
+            let started_at = crate::now_rfc3339().unwrap_or_else(|_| now.to_string());
+            if !state
+                .db
+                .claim_queued_job_by_id(&job_id, &started_at)
+                .await?
+            {
+                return Ok(None);
+            }
+            let run_state = state.clone();
+            let run_job_id = job_id.clone();
+            tokio::spawn(async move {
+                let _ = api::run_update_job(run_state, run_job_id, req).await;
+            });
             Ok(Some(job_id))
         }
         Err(err) => {
@@ -607,20 +1132,199 @@ async fn enqueue_pending(
 async fn evaluate_candidate(
     state: &Arc<AppState>,
     job_id: &str,
+    discovered_at: &str,
     finished_at: &str,
     candidate: &notify::NewVersionDiscoveredService,
+    source: Option<&str>,
 ) -> anyhow::Result<()> {
+    if let Some(source) = source
+        && is_qualified_auto_policy_source(Some(source))
+        && !has_valid_auto_policy_source(&state.db, job_id, source).await?
+    {
+        state
+            .db
+            .set_auto_update_candidate_policy(
+                &candidate.service_id,
+                &candidate.candidate_digest,
+                "skipped",
+                Some("unqualified_source"),
+                None,
+                finished_at,
+            )
+            .await?;
+        return Ok(());
+    }
+    let (settlement_status, resolved_version, settlement_reason) =
+        candidate_settlement_state(candidate);
+    let candidate_row = state
+        .db
+        .upsert_auto_update_candidate(
+            &AutoUpdateCandidateInput {
+                id: candidate_id_for(&candidate.service_id, &candidate.candidate_digest),
+                stack_id: candidate.stack_id.clone(),
+                service_id: candidate.service_id.clone(),
+                image_ref: crate::snapshot_worker::image_repo_from_image_ref(&candidate.image_ref)
+                    .unwrap_or_else(|| candidate.image_ref.clone()),
+                raw_tag: candidate.candidate_tag.clone(),
+                candidate_digest: candidate.candidate_digest.clone(),
+                resolved_version: resolved_version.clone(),
+                status: settlement_status.to_string(),
+                reason: settlement_reason.clone(),
+                attempts: 0,
+                retry_at: None,
+                discovered_at: discovered_at.to_string(),
+                source_job_id: job_id.to_string(),
+                source: source.unwrap_or("unknown").to_string(),
+                current_tag: candidate.current_tag.clone(),
+                current_display_tag: candidate.current_display_tag.clone(),
+                current_digest: candidate.current_digest.clone(),
+            },
+            finished_at,
+        )
+        .await?;
+    if !is_qualified_auto_policy_source(source) {
+        state
+            .db
+            .set_auto_update_candidate_policy(
+                &candidate.service_id,
+                &candidate.candidate_digest,
+                "skipped",
+                Some("unqualified_source"),
+                None,
+                finished_at,
+            )
+            .await?;
+        return Ok(());
+    }
+    state
+        .db
+        .supersede_auto_update_candidates(
+            &candidate.service_id,
+            &candidate.candidate_digest,
+            &candidate_row.discovered_at,
+            &candidate_row.id,
+            finished_at,
+        )
+        .await?;
+    let candidate_row = state
+        .db
+        .get_auto_update_candidate(&candidate.service_id, &candidate.candidate_digest)
+        .await?
+        .unwrap_or(candidate_row);
+    state
+        .db
+        .management_events()
+        .publish_change(
+            "auto_update",
+            "candidate",
+            candidate_row.id.clone(),
+            json!({
+                "phase": "settled",
+                "status": candidate_row.status,
+                "serviceId": candidate.service_id,
+                "candidateDigest": candidate.candidate_digest,
+            }),
+        )
+        .await;
+
+    if candidate_row.status == "superseded" {
+        return Ok(());
+    }
+
+    let settlement_status = candidate_row.status.as_str();
+    let resolved_version = candidate_row.resolved_version.clone();
+    let settlement_reason = candidate_row.reason.clone();
+    let candidate = candidate_from_row(&candidate_row);
     let Some(effective) =
         effective_policy_for_service(state.as_ref(), &candidate.stack_id, &candidate.service_id)
             .await?
     else {
+        state
+            .db
+            .set_auto_update_candidate_policy(
+                &candidate.service_id,
+                &candidate.candidate_digest,
+                "skipped",
+                Some("policy_disabled"),
+                None,
+                finished_at,
+            )
+            .await?;
         return Ok(());
     };
-    let Some(matched) = match_rule(&effective.policy, candidate) else {
+    let matched = effective
+        .policy
+        .rules
+        .iter()
+        .filter(|rule| rule.enabled)
+        .find(|rule| {
+            rule_matches_candidate(
+                rule,
+                &candidate,
+                resolved_version.as_deref(),
+                candidate_row.resolved_tags.as_deref(),
+            )
+        })
+        .cloned()
+        .map(|rule| MatchedRule { rule });
+    let matched = if let Some(matched) = matched {
+        matched
+    } else if settlement_status == "awaiting_inference"
+        && has_waiting_semver_rule(&effective.policy)
+    {
+        state
+            .db
+            .set_auto_update_candidate_policy(
+                &candidate.service_id,
+                &candidate.candidate_digest,
+                "waiting_inference",
+                settlement_reason.as_deref(),
+                None,
+                finished_at,
+            )
+            .await?;
+        return Ok(());
+    } else if settlement_status == "unresolved" && has_waiting_semver_rule(&effective.policy) {
+        state
+            .db
+            .set_auto_update_candidate_policy(
+                &candidate.service_id,
+                &candidate.candidate_digest,
+                "skipped",
+                Some("version_unresolved"),
+                None,
+                finished_at,
+            )
+            .await?;
+        return Ok(());
+    } else {
+        state
+            .db
+            .set_auto_update_candidate_policy(
+                &candidate.service_id,
+                &candidate.candidate_digest,
+                "rule_not_matched",
+                Some("no_enabled_rule_match"),
+                None,
+                finished_at,
+            )
+            .await?;
         return Ok(());
     };
+    state
+        .db
+        .set_auto_update_candidate_policy(
+            &candidate.service_id,
+            &candidate.candidate_digest,
+            "delayed",
+            Some("policy_matched"),
+            Some(&matched.rule.id),
+            finished_at,
+        )
+        .await?;
     let (min_age_seconds, min_version_lag) = rule_delay(&matched.rule);
-    let due_at = add_seconds(finished_at, min_age_seconds);
+    let discovered_at = candidate_row.discovered_at.clone();
+    let due_at = add_seconds(&discovered_at, min_age_seconds);
     let pending = state
         .db
         .reserve_auto_update_pending(
@@ -636,7 +1340,7 @@ async fn evaluate_candidate(
                 candidate_display_tag: candidate.candidate_display_tag.clone(),
                 candidate_digest: candidate.candidate_digest.clone(),
                 current_display_tag: candidate.current_display_tag.clone(),
-                first_seen_at: finished_at.to_string(),
+                first_seen_at: discovered_at,
                 due_at,
                 min_age_seconds,
                 min_version_lag,
@@ -650,10 +1354,19 @@ async fn evaluate_candidate(
                     "currentDisplayTag": candidate.current_display_tag,
                     "ruleId": matched.rule.id,
                     "policyScopeType": effective.scope_type,
+                    "policyUpdatedAt": effective.policy.updated_at,
                     "sourceCheckJobId": job_id,
                 }),
+                candidate_id: Some(candidate_row.id),
             },
             finished_at,
+        )
+        .await?;
+    state
+        .db
+        .sync_auto_update_candidate_projection_context(
+            &candidate.service_id,
+            &candidate.candidate_digest,
         )
         .await?;
 
@@ -663,10 +1376,6 @@ async fn evaluate_candidate(
     Ok(())
 }
 
-fn auto_policy_source(reason: &str, summary: &serde_json::Value) -> bool {
-    reason.eq_ignore_ascii_case("schedule") || api::summary_emits_new_version_notification(summary)
-}
-
 pub async fn handle_completed_check(
     state: &Arc<AppState>,
     job_id: &str,
@@ -674,9 +1383,10 @@ pub async fn handle_completed_check(
     finished_at: &str,
     summary: &serde_json::Value,
 ) -> anyhow::Result<()> {
-    if !auto_policy_source(reason, summary) {
+    let created_by = state.db.get_job(job_id).await?.map(|job| job.created_by);
+    let Some(source) = auto_policy_source(reason, summary, created_by.as_deref()) else {
         return Ok(());
-    }
+    };
     let mut discovered_services = notify::extract_new_versions_discovered(summary);
     if api::summary_emits_new_version_notification(summary)
         && let Some(matched_service_ids) = api::summary_matched_service_ids(summary)
@@ -687,8 +1397,47 @@ pub async fn handle_completed_check(
         return Ok(());
     }
 
+    let discovered_at = state
+        .db
+        .get_job(job_id)
+        .await?
+        .map(|job| job.created_at)
+        .unwrap_or_else(|| finished_at.to_string());
+
+    let host_platform =
+        crate::registry::host_platform_override(state.config.host_platform.as_deref())
+            .unwrap_or_else(|| "linux/amd64".to_string());
     for candidate in &discovered_services {
-        evaluate_candidate(state, job_id, finished_at, candidate).await?;
+        state
+            .db
+            .reopen_auto_update_candidate_inference(
+                &candidate.service_id,
+                &candidate.candidate_digest,
+                "qualified_check_reopened_inference",
+                finished_at,
+            )
+            .await?;
+        evaluate_candidate(
+            state,
+            job_id,
+            &discovered_at,
+            finished_at,
+            candidate,
+            Some(source),
+        )
+        .await?;
+        if let Some(image_repo) =
+            crate::snapshot_worker::image_repo_from_image_ref(&candidate.image_ref)
+        {
+            reconcile_inference_for_digest(
+                state,
+                &image_repo,
+                &candidate.candidate_digest,
+                &host_platform,
+                finished_at,
+            )
+            .await?;
+        }
     }
     process_due_pending(state, finished_at, 50).await?;
     Ok(())
@@ -699,11 +1448,17 @@ pub async fn process_due_pending(
     now: &str,
     limit: usize,
 ) -> anyhow::Result<usize> {
+    let stale_before = subtract_seconds(now, 300);
+    state
+        .db
+        .reconcile_auto_update_pending_claims(&stale_before, now)
+        .await?;
+    reconcile_auto_update_policy_candidates(state, now).await?;
+    let mut enqueued = recover_enqueued_auto_update_jobs(state, now, limit).await?;
     let due = state
         .db
         .list_auto_update_pending_candidates(now, limit)
         .await?;
-    let mut enqueued = 0usize;
     for pending in due {
         if !pending_delay_gates_met(state, &pending, now).await? {
             continue;
@@ -715,145 +1470,8 @@ pub async fn process_due_pending(
     Ok(enqueued)
 }
 
-pub fn spawn_tasks(state: Arc<AppState>) {
-    tokio::spawn(async move {
-        let interval = Duration::from_secs(PENDING_POLL_INTERVAL_SECONDS);
-        loop {
-            tokio::time::sleep(interval).await;
-            let now = match time::OffsetDateTime::now_utc()
-                .format(&time::format_description::well_known::Rfc3339)
-            {
-                Ok(value) => value,
-                Err(error) => {
-                    tracing::warn!(error = %error, "auto update policy scheduler: clock unavailable");
-                    continue;
-                }
-            };
-            if let Err(error) = process_due_pending(&state, &now, 50).await {
-                tracing::warn!(error = %error, "auto update policy scheduler failed");
-            }
-        }
-    });
-}
+include!("auto_update_reconciliation.rs");
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::api::types::{AutoUpdateDelay, AutoUpdateMatcher};
-
-    fn rule(kind: AutoUpdateMatcherType, pattern: &str) -> AutoUpdateRule {
-        AutoUpdateRule {
-            id: "r1".to_string(),
-            name: "rule".to_string(),
-            enabled: true,
-            matcher: AutoUpdateMatcher {
-                kind,
-                pattern: pattern.to_string(),
-            },
-            action: AutoUpdateRuleAction::Delayed,
-            delay: AutoUpdateDelay {
-                min_age_seconds: 900,
-                min_version_lag: 2,
-            },
-        }
-    }
-
-    #[test]
-    fn matches_semver_regex_and_glob() {
-        assert!(rule_matches_text(
-            &rule(AutoUpdateMatcherType::Semver, ">=1.2, <2"),
-            "1.4.0"
-        ));
-        assert!(!rule_matches_text(
-            &rule(AutoUpdateMatcherType::Semver, ">=1.2, <2"),
-            "2.0.0"
-        ));
-        assert!(rule_matches_text(
-            &rule(AutoUpdateMatcherType::Regex, r"1\.4\.[0-9]+"),
-            "1.4.7"
-        ));
-        assert!(rule_matches_text(
-            &rule(AutoUpdateMatcherType::Glob, "1.4.*-alpine"),
-            "1.4.7-alpine"
-        ));
-    }
-
-    #[test]
-    fn rejects_non_slider_presets() {
-        let mut policy = AutoUpdatePolicy {
-            mode: AutoUpdatePolicyMode::Override,
-            enabled: true,
-            rules: vec![rule(AutoUpdateMatcherType::Semver, ">=1")],
-            updated_at: None,
-        };
-        assert!(validate_policy_for_scope(&policy, "stack").is_ok());
-        policy.rules[0].delay.min_age_seconds = 901;
-        assert!(validate_policy_for_scope(&policy, "stack").is_err());
-    }
-
-    #[test]
-    fn keeps_auto_update_pending_for_transient_service_operation_conflicts() {
-        let conflict = ApiError::conflict("service operation in progress").with_details(json!({
-            "reason": "service_lifecycle_in_progress",
-            "existingJobId": "job-lifecycle-1",
-        }));
-        assert!(!permanent_enqueue_error(&conflict));
-
-        let stack_conflict =
-            ApiError::conflict("service operation in progress").with_details(json!({
-                "reason": "stack_lifecycle_in_progress",
-                "existingJobId": "job-stack-lifecycle-1",
-            }));
-        assert!(!permanent_enqueue_error(&stack_conflict));
-
-        let stale_candidate = ApiError::conflict("target digest no longer matches latest scan");
-        assert!(permanent_enqueue_error(&stale_candidate));
-    }
-
-    #[test]
-    fn keeps_auto_update_pending_for_compose_v2_capability_failures() {
-        let capability_failure = ApiError::compose_v2_required("docker-compose", "v1");
-        assert!(!permanent_enqueue_error(&capability_failure));
-    }
-
-    #[test]
-    fn delayed_version_lag_requires_matching_versions() {
-        let candidate = notify::NewVersionDiscoveredService {
-            stack_id: "stack".to_string(),
-            service_id: "svc".to_string(),
-            image_ref: "ghcr.io/acme/app".to_string(),
-            current_tag: "latest".to_string(),
-            current_digest: Some("sha256:old".to_string()),
-            current_display_tag: "1.0.0".to_string(),
-            candidate_tag: "latest".to_string(),
-            candidate_display_tag: "1.2.0".to_string(),
-            candidate_digest: "sha256:new".to_string(),
-        };
-        let history = vec![NewVersionDiscoveryRow {
-            service_id: "svc".to_string(),
-            image_ref: "ghcr.io/acme/app".to_string(),
-            discovered_at: "2026-04-30T00:00:00Z".to_string(),
-            current_digest: "sha256:old".to_string(),
-            current_display_tag: "1.0.0".to_string(),
-            current_tag: "latest".to_string(),
-            candidate_tag: "latest".to_string(),
-            candidate_digest: "sha256:mid".to_string(),
-            candidate_display_tag: "1.1.0".to_string(),
-        }];
-        let rule = rule(AutoUpdateMatcherType::Semver, ">=1, <2");
-        assert!(version_lag_met(
-            2,
-            &candidate.current_display_tag,
-            &candidate,
-            &rule,
-            &history
-        ));
-        assert!(!version_lag_met(
-            3,
-            &candidate.current_display_tag,
-            &candidate,
-            &rule,
-            &history
-        ));
-    }
-}
+#[path = "auto_update_tests.rs"]
+mod tests;

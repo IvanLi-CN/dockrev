@@ -16,7 +16,7 @@ import {
 } from '../api'
 import { createDefaultAutoUpdatePolicy } from '../components/AutoUpdatePolicyEditor'
 import { AutoUpdatePolicyDrawer } from '../components/AutoUpdatePolicyDrawer'
-import { AutoUpdatePolicyResultCard } from '../components/AutoUpdatePolicyResultCard'
+import { AutoUpdatePolicyResultCard, policyActionLabel, policyActionTone, type AutoUpdateServiceResult } from '../components/AutoUpdatePolicyResultCard'
 import { RecentUpdateRecords, selectRecentStackUpdateJobs } from '../components/RecentUpdateRecords'
 import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
 import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
@@ -49,6 +49,10 @@ function statusTone(status: ReturnType<typeof serviceRowStatus>): 'ok' | 'warn' 
   if (status === 'archMismatch' || status === 'hint') return 'warn'
   if (status === 'blocked') return 'bad'
   return 'muted'
+}
+
+function hasPolicyAction(policy: StackDetail['services'][number]['autoUpdate']): boolean {
+  return Boolean(policy && policy.policyStatus !== 'not_evaluated')
 }
 
 const lifecycleReasonLabels: Record<string, string> = {
@@ -520,6 +524,15 @@ export function StackDetailPage(props: {
   const updatable = stack.services.filter((service) => serviceRowStatus(service) !== 'ok').length
   const recentUpdateJobs = selectRecentStackUpdateJobs(jobs, stack)
   const stableServices = Math.max(stack.services.length - updatable, 0)
+  const serviceResults: AutoUpdateServiceResult[] = stack.services.map((service) => {
+    const status = serviceRowStatus(service)
+    return {
+      serviceName: service.name,
+      projection: status === 'blocked' || status === 'archMismatch' || !hasPolicyAction(service.autoUpdate) ? null : service.autoUpdate,
+      candidateSettlement: service.candidateSettlement ?? null,
+      fallbackLabel: status === 'blocked' || status === 'archMismatch' ? statusLabel(status) : undefined,
+    }
+  })
 
   return (
     <div className="page">
@@ -626,6 +639,7 @@ export function StackDetailPage(props: {
             }}
             policy={policy}
             scope="stack"
+            serviceResults={serviceResults}
           />
         </AsyncDataRegion>
         <AsyncDataRegion
@@ -648,13 +662,16 @@ export function StackDetailPage(props: {
         <div className="stackServiceList">
           {stack.services.map((service) => {
             const status = serviceRowStatus(service)
+            const policyProjection = status === 'blocked' || status === 'archMismatch' || !hasPolicyAction(service.autoUpdate) ? null : service.autoUpdate
             return (
               <div className="stackServiceRow" key={service.id}>
                 <div className="stackServiceCopy">
                   <div className="stackServiceName mono">{service.name}</div>
                   <div className="stackServiceRef muted">{service.image.ref}</div>
                 </div>
-                <Pill tone={statusTone(status)}>{statusLabel(status)}</Pill>
+                <Pill tone={policyProjection ? policyActionTone(policyProjection.policyStatus) : statusTone(status)}>
+                  {policyProjection ? policyActionLabel(policyProjection.policyStatus) : statusLabel(status)}
+                </Pill>
                 <Button onClick={() => navigate({ name: 'service', stackId: stack.id, serviceId: service.id })}>
                   详情
                 </Button>

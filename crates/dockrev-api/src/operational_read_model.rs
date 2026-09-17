@@ -491,7 +491,10 @@ fn homepage_nav_service_from_row(
                 status: "ready".to_string(),
                 reason: None,
                 checked_at: None,
+                ..VersionInferenceState::default()
             }),
+            candidate_settlement: None,
+            auto_update: None,
             new_version_discovery_count: None,
             settings: ServiceSettings {
                 auto_rollback: row.get::<_, i64>(17)? != 0,

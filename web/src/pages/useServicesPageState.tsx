@@ -355,6 +355,9 @@ export function useServicesPageState(props: {
                 ...candidate,
                 resolvedTag: inferredFirst,
               },
+              candidateSettlement: next.candidateSettlement
+                ? { ...next.candidateSettlement, resolvedVersion: inferredFirst }
+                : next.candidateSettlement,
             };
           }
         }

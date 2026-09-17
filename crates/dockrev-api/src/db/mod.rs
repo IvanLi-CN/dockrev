@@ -263,6 +263,7 @@ pub struct AutoUpdatePendingInput {
     pub min_age_seconds: u32,
     pub min_version_lag: u32,
     pub summary_json: serde_json::Value,
+    pub candidate_id: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -286,6 +287,79 @@ pub struct AutoUpdatePendingRow {
     pub status: String,
     pub update_job_id: Option<String>,
     pub summary_json: serde_json::Value,
+    pub candidate_id: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct AutoUpdateCandidateInput {
+    pub id: String,
+    pub stack_id: String,
+    pub service_id: String,
+    pub image_ref: String,
+    pub raw_tag: String,
+    pub candidate_digest: String,
+    pub resolved_version: Option<String>,
+    pub status: String,
+    pub reason: Option<String>,
+    pub attempts: u32,
+    pub retry_at: Option<String>,
+    pub discovered_at: String,
+    pub source_job_id: String,
+    pub source: String,
+    pub current_tag: String,
+    pub current_display_tag: String,
+    pub current_digest: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct AutoUpdateCandidateSettlementInput {
+    pub service_id: String,
+    pub candidate_digest: String,
+    pub status: String,
+    pub resolved_version: Option<String>,
+    pub resolved_tags: Option<Vec<String>>,
+    pub reason: Option<String>,
+    pub last_error: Option<String>,
+    pub attempts: u32,
+    pub retry_at: Option<String>,
+    pub settled_at: Option<String>,
+    pub now: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct AutoUpdateCandidateRow {
+    pub id: String,
+    pub stack_id: String,
+    pub service_id: String,
+    pub image_ref: String,
+    pub raw_tag: String,
+    pub candidate_digest: String,
+    pub resolved_version: Option<String>,
+    pub resolved_tags: Option<Vec<String>>,
+    pub status: String,
+    pub reason: Option<String>,
+    pub attempts: u32,
+    pub retry_at: Option<String>,
+    pub discovered_at: String,
+    pub source_job_id: String,
+    pub source: String,
+    pub current_tag: String,
+    pub current_display_tag: String,
+    pub current_digest: Option<String>,
+    #[allow(dead_code)]
+    pub settled_at: Option<String>,
+    #[allow(dead_code)]
+    pub updated_at: String,
+    pub policy_status: Option<String>,
+    pub policy_reason: Option<String>,
+    pub policy_rule_id: Option<String>,
+    pub policy_evaluated_at: Option<String>,
+    pub policy_scope_type: Option<String>,
+    pub policy_scope_id: Option<String>,
+    pub update_job_id: Option<String>,
+    pub last_error: Option<String>,
+    pub superseded_at: Option<String>,
+    pub superseded_by_candidate_id: Option<String>,
 }
 
 #[derive(Clone, Debug)]

@@ -23,6 +23,7 @@ import {
 } from '../releaseNotes'
 import { useServiceReleaseNotesSession } from '../useServiceReleaseNotesSession'
 import { blockedReasonFor, serviceRowStatus } from '../updateStatus'
+import { candidateSettlementDetail } from './AutoUpdatePolicyResultCard'
 import {
   compareStrictSemverTags,
   formatCandidateTagDisplay,
@@ -161,20 +162,21 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
       ),
     [props.service.image.resolvedTag, props.service.image.tag, props.service.versionInference?.status],
   )
+  const settlement = props.service.candidateSettlement
   const candidateVersion = useMemo(() => {
     const candidate = props.service.candidate
     if (!candidate) return null
-    return (candidate.resolvedTag ?? '').trim() || candidate.tag.trim() || null
-  }, [props.service.candidate])
+    return settlement?.resolvedVersion?.trim() || (!settlement ? (candidate.resolvedTag ?? '').trim() : '') || candidate.tag.trim() || null
+  }, [props.service.candidate, settlement])
   const candidateDisplayVersion = useMemo(() => {
     const candidate = props.service.candidate
     if (!candidate) return null
     return formatCandidateTagDisplay(
       candidate.tag,
-      candidate.resolvedTag ?? null,
+      settlement?.resolvedVersion ?? (!settlement ? candidate.resolvedTag : null),
       props.service.versionInference?.status,
     )
-  }, [props.service.candidate, props.service.versionInference?.status])
+  }, [props.service.candidate, props.service.versionInference?.status, settlement])
   const initialCenterKeyRef = useRef<string | null>(null)
 
   const {
@@ -758,6 +760,20 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     return rollbackBackupSummaryByJobId.get(sourceJobId) ?? { state: 'empty' as const }
   }, [props.rollbackTarget?.sourceUpdateJobId, rollbackBackupSummaryByJobId])
   const openSettings = () => navigate({ name: 'settings' })
+  const settlementDetail = settlement ? candidateSettlementDetail(settlement) : null
+  const settlementBanner = settlement
+    ? settlement.status === 'awaiting_inference'
+      ? `候选版本正在等待 digest 绑定的版本证据；SemVer 策略暂不会进入自动部署，Regex/Glob 仍可按 raw tag 判断。${settlementDetail ? ` ${settlementDetail}` : ''}`
+      : settlement.status === 'unresolved'
+        ? `候选版本无法解析为可靠版本，SemVer 策略已安全停止；Regex/Glob 仍可按 raw tag 判断。${settlementDetail ? ` ${settlementDetail}` : ''}`
+        : settlement.status === 'superseded'
+          ? '该候选已被更新的 digest 替代，不会再被自动部署。'
+          : settlement.status === 'ready'
+            ? props.service.autoUpdate?.policyStatus === 'completed'
+              ? `候选证据已完成${settlement.resolvedVersion ? `：${settlement.resolvedVersion}` : ''}；服务更新已完成。${settlementDetail ? ` ${settlementDetail}` : ''}`
+              : `候选证据已完成${settlement.resolvedVersion ? `：${settlement.resolvedVersion}` : ''}；这不代表更新任务已完成。${settlementDetail ? ` ${settlementDetail}` : ''}`
+            : null
+    : null
 
   return (
     <section ref={sectionRef} className="serviceVersionsSection" data-service-detail-section-card="versions">
@@ -812,6 +828,17 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
             ) : null}
           </div>
         </div>
+        {settlementBanner ? (
+          <div
+            className={cn(
+              'releaseDrawerBanner',
+              'releaseDrawerBanner-warning',
+            )}
+            data-service-versions-banner="candidate-settlement"
+          >
+            <span>{settlementBanner}</span>
+          </div>
+        ) : null}
         {listBanner ? (
           <div
             className={cn('releaseDrawerBanner', `releaseDrawerBanner-${listBanner.tone}`)}

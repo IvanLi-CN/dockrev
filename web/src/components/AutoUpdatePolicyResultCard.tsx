@@ -1,4 +1,4 @@
-import type { AutoUpdatePolicy } from '../api'
+import type { AutoUpdatePolicy, AutoUpdateProjection, CandidateSettlement } from '../api'
 import { Button, Mono, Pill } from '../ui'
 import {
   activeAutoUpdateRules,
@@ -49,12 +49,70 @@ function policyResult(props: {
   }
 }
 
+export function policyActionLabel(status: string): string {
+  switch (status) {
+    case 'waiting_inference': return '等待版本证据'
+    case 'rule_not_matched': return '规则未命中'
+    case 'delayed': return '等待延迟条件'
+    case 'queued': return '更新已排队'
+    case 'running': return '更新执行中'
+    case 'completed': return '更新已完成'
+    case 'failed': return '更新失败'
+    case 'skipped': return '已跳过'
+    case 'unresolved': return '版本无法解析'
+    default: return status
+  }
+}
+
+export function policyActionTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' | 'info' {
+  switch (status) {
+    case 'delayed':
+      return 'warn'
+    case 'failed':
+    case 'unresolved':
+      return 'bad'
+    case 'queued':
+    case 'running':
+    case 'waiting_inference':
+      return 'info'
+    case 'completed':
+      return 'ok'
+    default:
+      return 'muted'
+  }
+}
+
+const settlementReasonLabels: Record<string, string> = {
+  digest_bound_version: 'digest 已绑定版本',
+  version_inference_pending: '等待版本证据',
+  version_inference_unresolved: '版本证据无法解析',
+}
+
+export function candidateSettlementDetail(settlement: CandidateSettlement): string {
+  const details = [
+    settlementReasonLabels[settlement.reason ?? ''] ?? settlement.reason,
+    settlement.attempts > 0 ? `尝试 ${settlement.attempts} 次` : null,
+    settlement.retryAt ? `下次重试 ${settlement.retryAt}` : null,
+  ].filter(Boolean)
+  return details.length > 0 ? details.join(' · ') : '无需继续推断'
+}
+
+export type AutoUpdateServiceResult = {
+  serviceName: string
+  projection?: AutoUpdateProjection | null
+  candidateSettlement?: CandidateSettlement | null
+  fallbackLabel?: string
+}
+
 export function AutoUpdatePolicyResultCard(props: {
   busy?: boolean
   onOpenSettings: () => void
   policy: AutoUpdatePolicy
   scope: 'service' | 'stack'
   stackPolicy?: AutoUpdatePolicy | null
+  projection?: AutoUpdateProjection | null
+  candidateSettlement?: CandidateSettlement | null
+  serviceResults?: AutoUpdateServiceResult[]
 }) {
   const result = policyResult(props)
   const rules = activeAutoUpdateRules(result.effectivePolicy)
@@ -94,6 +152,39 @@ export function AutoUpdatePolicyResultCard(props: {
             {primaryRule ? `${primaryRule.name} · ${autoUpdateRuleSummary(primaryRule)}` : '无自动部署动作'}
           </span>
         </div>
+        {props.serviceResults ? (
+          <div className="autoPolicyFactCell autoPolicyServiceResults">
+            <span className="label autoPolicyFactLabel">服务策略动作</span>
+            <div className="autoPolicyServiceResultList">
+              {props.serviceResults.map((service) => (
+                <div className="autoPolicyServiceResult" key={service.serviceName}>
+                  <Mono>{service.serviceName}</Mono>
+                  <span>
+                    {service.projection ? policyActionLabel(service.projection.policyStatus) : service.fallbackLabel ?? '暂无候选动作'}
+                    {service.candidateSettlement ? ` · 候选 ${service.candidateSettlement.status}` : ''}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : props.projection ? (
+          <div className="autoPolicyFactCell">
+            <span className="label autoPolicyFactLabel">策略动作</span>
+            <span className="autoPolicyFactValue">
+              <Mono>{policyActionLabel(props.projection.policyStatus)}</Mono>
+              {props.projection.reason ? <span>{props.projection.reason}</span> : null}
+            </span>
+          </div>
+        ) : null}
+        {props.candidateSettlement ? (
+          <div className="autoPolicyFactCell" data-auto-policy-evidence="candidate-settlement">
+            <span className="label autoPolicyFactLabel">候选证据</span>
+            <span className="autoPolicyFactValue">
+              <Mono>{props.candidateSettlement.status}</Mono>
+              <span>{candidateSettlementDetail(props.candidateSettlement)}</span>
+            </span>
+          </div>
+        ) : null}
       </div>
 
       {primaryRule ? (

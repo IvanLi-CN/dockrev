@@ -713,21 +713,6 @@ pub(crate) async fn complete_check_job(
                     .flatten()
                     .map(|job| job.summary_json)
                     .unwrap_or_else(|| summary.clone());
-                if let Err(e) = maybe_notify_check_new_versions(
-                    state,
-                    job_id,
-                    reason,
-                    finished_at,
-                    &notify_summary,
-                )
-                .await
-                {
-                    tracing::warn!(
-                        job_id = %job_id,
-                        error = %e,
-                        "failed to send discovered-version notification"
-                    );
-                }
                 if let Err(e) = crate::auto_update::handle_completed_check(
                     state,
                     job_id,
@@ -741,6 +726,21 @@ pub(crate) async fn complete_check_job(
                         job_id = %job_id,
                         error = %e,
                         "failed to evaluate auto update policies"
+                    );
+                }
+                if let Err(e) = maybe_notify_check_new_versions(
+                    state,
+                    job_id,
+                    reason,
+                    finished_at,
+                    &notify_summary,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        job_id = %job_id,
+                        error = %e,
+                        "failed to send discovered-version notification"
                     );
                 }
             }

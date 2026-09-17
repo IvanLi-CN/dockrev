@@ -5,6 +5,7 @@ import closeCircleOutline from '@iconify-icons/mdi/close-circle-outline'
 import helpCircleOutline from '@iconify-icons/mdi/help-circle-outline'
 import minusCircleOutline from '@iconify-icons/mdi/minus-circle-outline'
 import type { Service } from './api'
+import { candidateResolvedVersion } from './candidateVersionState'
 
 export type RowStatus = 'ok' | 'updatable' | 'hint' | 'archMismatch' | 'blocked'
 
@@ -146,7 +147,7 @@ function semverBaselineForCurrent(svc: Service): StrictSemver | null {
 function semverBaselineForCandidate(svc: Service): StrictSemver | null {
   const c = svc.candidate
   if (!c) return null
-  return comparableSemverBaseline(c.resolvedTag, c.tag)
+  return comparableSemverBaseline(candidateResolvedVersion(svc), c.tag)
 }
 
 export function isSemverDowngradeAnomaly(svc: Service): boolean {

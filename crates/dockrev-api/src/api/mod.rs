@@ -68,9 +68,9 @@ use notifications::*;
 pub(crate) use operations::LifecycleSnapshotCoordinator;
 use operations::*;
 pub(crate) use operations::{
-    complete_check_job, enqueue_update_job, normalize_digest_for_compare,
-    recover_interrupted_update_backups, summary_emits_new_version_notification,
-    summary_matched_service_ids,
+    complete_check_job, enqueue_update_job, enqueue_update_job_deferred,
+    normalize_digest_for_compare, recover_interrupted_update_backups, run_update_job,
+    summary_emits_new_version_notification, summary_matched_service_ids,
 };
 use services::*;
 pub(crate) use stacks::needs_version_inference_for_tags;

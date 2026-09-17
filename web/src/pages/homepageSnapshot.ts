@@ -194,6 +194,50 @@ function parseService(value: unknown): Service | null {
           status: value.versionInference.status as string,
           reason: asOptionalString(value.versionInference.reason),
           checkedAt: asOptionalString(value.versionInference.checkedAt),
+          retryAt: asOptionalString(value.versionInference.retryAt),
+          resolvedTag: asOptionalString(value.versionInference.resolvedTag),
+          unresolved:
+            typeof value.versionInference.unresolved === 'boolean'
+              ? value.versionInference.unresolved
+              : null,
+        }
+      : null;
+  const candidateSettlement =
+    isRecord(value.candidateSettlement) && asString(value.candidateSettlement.status)
+      ? {
+          status: value.candidateSettlement.status as string,
+          rawTag: asOptionalString(value.candidateSettlement.rawTag),
+          candidateDigest: asOptionalString(value.candidateSettlement.candidateDigest),
+          resolvedVersion: asOptionalString(value.candidateSettlement.resolvedVersion),
+          resolvedTags: Array.isArray(value.candidateSettlement.resolvedTags)
+            ? value.candidateSettlement.resolvedTags.filter((item): item is string => typeof item === "string")
+            : null,
+          reason: asOptionalString(value.candidateSettlement.reason),
+          attempts: typeof value.candidateSettlement.attempts === 'number' ? value.candidateSettlement.attempts : 0,
+          retryAt: asOptionalString(value.candidateSettlement.retryAt),
+          discoveredAt: asOptionalString(value.candidateSettlement.discoveredAt),
+          lastError: asOptionalString(value.candidateSettlement.lastError),
+          supersededAt: asOptionalString(value.candidateSettlement.supersededAt),
+          supersededByCandidateId: asOptionalString(value.candidateSettlement.supersededByCandidateId),
+        }
+      : null;
+  const autoUpdate =
+    isRecord(value.autoUpdate) && asString(value.autoUpdate.policyStatus)
+      ? {
+          policyStatus: value.autoUpdate.policyStatus as string,
+          reason: asOptionalString(value.autoUpdate.reason),
+          ruleId: asOptionalString(value.autoUpdate.ruleId),
+          evaluatedAt: asOptionalString(value.autoUpdate.evaluatedAt),
+          policyScope:
+            isRecord(value.autoUpdate.policyScope) &&
+            asString(value.autoUpdate.policyScope.scopeType) &&
+            asString(value.autoUpdate.policyScope.scopeId)
+              ? {
+                  scopeType: value.autoUpdate.policyScope.scopeType as string,
+                  scopeId: value.autoUpdate.policyScope.scopeId as string,
+                }
+              : null,
+          updateJobId: asOptionalString(value.autoUpdate.updateJobId),
         }
       : null;
   const settings = isRecord(value.settings)
@@ -232,6 +276,8 @@ function parseService(value: unknown): Service | null {
     candidate,
     ignore,
     versionInference,
+    candidateSettlement,
+    autoUpdate,
     newVersionDiscoveryCount:
       typeof value.newVersionDiscoveryCount === "number"
         ? value.newVersionDiscoveryCount

@@ -203,6 +203,8 @@ function homepageItemToCard(
     candidate: item.candidate ?? null,
     ignore: item.ignore ?? null,
     versionInference: item.versionInference ?? null,
+    candidateSettlement: item.candidateSettlement ?? null,
+    autoUpdate: item.autoUpdate ?? null,
     newVersionDiscoveryCount: item.newVersionDiscoveryCount ?? null,
     settings: item.settings,
     archived: item.archived,

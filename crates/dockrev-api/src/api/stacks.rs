@@ -64,6 +64,16 @@ pub(super) async fn put_stack_settings(
         .put_auto_update_policy("stack", &stack_id, &req.auto_update_policy, &now)
         .await
         .map_err(map_internal)?;
+    let services = state
+        .db
+        .list_services_for_check(&stack_id)
+        .await
+        .map_err(map_internal)?;
+    for service in services {
+        crate::auto_update::reevaluate_service_policy(&state, &service.id, &now)
+            .await
+            .map_err(map_internal)?;
+    }
 
     state
         .management_events
@@ -613,6 +623,7 @@ pub(super) async fn enrich_services_with_version_inference(
                 status: "ready".to_string(),
                 reason: Some(VERSION_INFERENCE_REASON_NOT_REQUIRED.to_string()),
                 checked_at: None,
+                ..VersionInferenceState::default()
             });
             continue;
         }
@@ -623,6 +634,7 @@ pub(super) async fn enrich_services_with_version_inference(
                 status: "ready".to_string(),
                 reason: Some(VERSION_INFERENCE_REASON_NOT_REQUIRED.to_string()),
                 checked_at: None,
+                ..VersionInferenceState::default()
             });
             continue;
         };
@@ -652,6 +664,7 @@ pub(super) async fn enrich_services_with_version_inference(
                 status: "ready".to_string(),
                 reason: Some(VERSION_INFERENCE_REASON_NOT_REQUIRED.to_string()),
                 checked_at: None,
+                ..VersionInferenceState::default()
             });
             continue;
         }
@@ -777,6 +790,7 @@ pub(super) async fn enrich_services_with_version_inference(
             status: status.to_string(),
             reason,
             checked_at: latest_checked_at,
+            ..VersionInferenceState::default()
         });
     }
 
@@ -871,6 +885,76 @@ pub(super) async fn enrich_services_with_new_version_discovery_counts(
     Ok(())
 }
 
+pub(super) async fn enrich_services_with_auto_update_state(
+    state: &Arc<AppState>,
+    services: &mut [Service],
+) -> Result<(), ApiError> {
+    let service_ids = services
+        .iter()
+        .map(|service| service.id.clone())
+        .collect::<Vec<_>>();
+    let rows = state
+        .db
+        .list_latest_auto_update_candidates(&service_ids)
+        .await
+        .map_err(map_internal)?;
+    let by_service = rows
+        .into_iter()
+        .map(|row| (row.service_id.clone(), row))
+        .collect::<std::collections::HashMap<_, _>>();
+    for service in services {
+        let Some(row) = by_service.get(&service.id) else {
+            continue;
+        };
+        service.candidate_settlement = Some(CandidateSettlement {
+            status: row.status.clone(),
+            raw_tag: Some(row.raw_tag.clone()),
+            candidate_digest: Some(row.candidate_digest.clone()),
+            resolved_version: row.resolved_version.clone(),
+            resolved_tags: row.resolved_tags.clone(),
+            reason: row.reason.clone(),
+            attempts: row.attempts,
+            retry_at: row.retry_at.clone(),
+            discovered_at: Some(row.discovered_at.clone()),
+            last_error: row.last_error.clone(),
+            superseded_at: row.superseded_at.clone(),
+            superseded_by_candidate_id: row.superseded_by_candidate_id.clone(),
+        });
+        service.auto_update = Some(AutoUpdateProjection {
+            policy_status: row
+                .policy_status
+                .clone()
+                .unwrap_or_else(|| "not_evaluated".to_string()),
+            reason: row.policy_reason.clone().or_else(|| row.reason.clone()),
+            rule_id: row.policy_rule_id.clone(),
+            evaluated_at: row.policy_evaluated_at.clone(),
+            policy_scope: row
+                .policy_scope_type
+                .clone()
+                .zip(row.policy_scope_id.clone())
+                .map(|(scope_type, scope_id)| AutoUpdatePolicyScope {
+                    scope_type,
+                    scope_id,
+                }),
+            update_job_id: row.update_job_id.clone(),
+        });
+        if row.status == "unresolved" {
+            service.version_inference = Some(VersionInferenceState {
+                status: "ready".to_string(),
+                reason: row.reason.clone(),
+                checked_at: service
+                    .version_inference
+                    .as_ref()
+                    .and_then(|state| state.checked_at.clone()),
+                retry_at: row.retry_at.clone(),
+                resolved_tag: None,
+                unresolved: Some(true),
+            });
+        }
+    }
+    Ok(())
+}
+
 pub(super) async fn get_stack(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -882,6 +966,7 @@ pub(super) async fn get_stack(
         return Err(ApiError::not_found("stack not found"));
     };
     enrich_services_with_version_inference(&state, &mut stack.services, true).await?;
+    enrich_services_with_auto_update_state(&state, &mut stack.services).await?;
     enrich_services_with_new_version_discovery_counts(&state, &mut stack.services).await?;
     let lifecycle_states = lifecycle_states_for_stack(&state, &stack, &stack.services).await;
     let services = stack
