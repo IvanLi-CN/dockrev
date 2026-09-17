@@ -24,7 +24,7 @@ jobs:
       - name: Checkout trusted release helpers
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event.pull_request.base.ref }}
           fetch-depth: 1
 
       - name: Verify release identity completion
