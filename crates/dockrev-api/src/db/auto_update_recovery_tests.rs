@@ -125,6 +125,92 @@ async fn candidate_settlement_is_unique_and_idempotent() {
 }
 
 #[tokio::test]
+async fn skipping_stale_pending_preserves_newer_policy_projection() {
+    let db = Db::open(Path::new(":memory:")).await.unwrap();
+    let candidate = db
+        .upsert_auto_update_candidate(
+            &AutoUpdateCandidateInput {
+                id: "candidate-pending-race".to_string(),
+                stack_id: "stack".to_string(),
+                service_id: "service".to_string(),
+                image_ref: "ghcr.io/acme/app".to_string(),
+                raw_tag: "latest".to_string(),
+                candidate_digest: "sha256:pending-race".to_string(),
+                resolved_version: Some("1.4.0".to_string()),
+                status: "ready".to_string(),
+                reason: Some("test".to_string()),
+                attempts: 0,
+                retry_at: None,
+                discovered_at: "2026-04-30T00:00:00Z".to_string(),
+                source_job_id: "check".to_string(),
+                source: "schedule".to_string(),
+                current_tag: "latest".to_string(),
+                current_display_tag: "1.0.0".to_string(),
+                current_digest: Some("sha256:old".to_string()),
+            },
+            "2026-04-30T00:00:00Z",
+        )
+        .await
+        .unwrap();
+    let make_pending = |id: &str, rule_id: &str| AutoUpdatePendingInput {
+        id: id.to_string(),
+        policy_scope_type: "stack".to_string(),
+        policy_scope_id: "stack".to_string(),
+        rule_id: rule_id.to_string(),
+        stack_id: "stack".to_string(),
+        service_id: "service".to_string(),
+        source_check_job_id: "check".to_string(),
+        candidate_tag: "latest".to_string(),
+        candidate_display_tag: "1.4.0".to_string(),
+        candidate_digest: "sha256:pending-race".to_string(),
+        current_display_tag: "1.0.0".to_string(),
+        first_seen_at: "2026-04-30T00:00:00Z".to_string(),
+        due_at: "2026-04-30T00:00:00Z".to_string(),
+        min_age_seconds: 0,
+        min_version_lag: 0,
+        summary_json: serde_json::json!({}),
+        candidate_id: Some(candidate.id.clone()),
+    };
+    let stale = db
+        .reserve_auto_update_pending(&make_pending("pending-old", "rule-old"), "2026-04-30T00:01:00Z")
+        .await
+        .unwrap();
+    db.reserve_auto_update_pending(&make_pending("pending-new", "rule-new"), "2026-04-30T00:02:00Z")
+        .await
+        .unwrap();
+    db.set_auto_update_candidate_policy(
+        "service",
+        "sha256:pending-race",
+        "delayed",
+        Some("rule_matches"),
+        Some("rule-new"),
+        "2026-04-30T00:02:00Z",
+    )
+    .await
+    .unwrap();
+
+    db.mark_auto_update_pending_skipped(&stale.id, "policy_changed", "2026-04-30T00:03:00Z")
+        .await
+        .unwrap();
+
+    let candidate = db
+        .get_auto_update_candidate("service", "sha256:pending-race")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(candidate.policy_status.as_deref(), Some("delayed"));
+    assert_eq!(candidate.policy_rule_id.as_deref(), Some("rule-new"));
+    assert_eq!(
+        db.get_auto_update_pending_by_id("pending-new")
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        "pending"
+    );
+}
+
+#[tokio::test]
 async fn recovered_auto_policy_job_reopens_its_pending_candidate() {
     let db = Db::open(Path::new(":memory:")).await.unwrap();
     let candidate = db

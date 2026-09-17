@@ -417,6 +417,26 @@ services:
     let mut ghcr_summary = summary;
     ghcr_summary["source"] = json!("github_webhook");
     ghcr_summary["matchedServiceIds"] = json!([service_id.clone()]);
+    state
+        .db
+        .insert_job(crate::api::types::JobListItem {
+            id: "chk_ghcr_webhook".to_string(),
+            r#type: crate::api::types::JobType::Check,
+            scope: crate::api::types::JobScope::Service,
+            stack_id: Some(stack_id.clone()),
+            service_id: Some(service_id.clone()),
+            status: "success".to_string(),
+            created_by: "github".to_string(),
+            reason: "webhook".to_string(),
+            created_at: now.clone(),
+            started_at: Some(now.clone()),
+            finished_at: Some(now.clone()),
+            allow_arch_mismatch: false,
+            backup_mode: "inherit".to_string(),
+            summary_json: json!({"source": "github_webhook"}),
+        })
+        .await
+        .unwrap();
     crate::auto_update::handle_completed_check(&state, "chk_ghcr_webhook", "webhook", &now, &ghcr_summary)
         .await
         .unwrap();

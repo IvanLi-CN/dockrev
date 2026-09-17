@@ -584,6 +584,14 @@ WHERE status <> 'superseded'
       AND p.service_id = auto_update_candidates.service_id
       AND p.candidate_digest = auto_update_candidates.candidate_digest
   )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM auto_update_pending active
+    WHERE active.service_id = auto_update_candidates.service_id
+      AND active.candidate_digest = auto_update_candidates.candidate_digest
+      AND active.id <> ?1
+      AND active.status IN ('pending', 'enqueuing', 'enqueued')
+  )
 "#,
                 params![pending_id, reason, now],
             )?;

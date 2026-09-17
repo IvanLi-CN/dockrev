@@ -689,7 +689,7 @@ pub async fn reconcile_inference_for_digest(
         let last_error = inference_error.then(|| {
             inference_reason
                 .clone()
-                .unwrap_or_else(|| "version_inference_failed".to_string())
+                .unwrap_or_else(|| "version_inference_failed".into())
         });
         let retry_at = (!terminal && resolved.is_none())
             .then(|| retry_at_for_attempt(now, attempts))
@@ -924,7 +924,6 @@ async fn pending_delay_gates_met(
         &history,
     ))
 }
-
 fn build_auto_update_target(
     service: &crate::api::types::Service,
     settled_version: Option<&str>,
@@ -1235,15 +1234,9 @@ async fn evaluate_candidate(
         return Ok(());
     }
 
-    // The database row is authoritative when a duplicate discovery carries less evidence than an
-    // earlier settlement. This prevents a later `latest` observation from downgrading a ready
-    // digest-bound candidate back to waiting.
     let settlement_status = candidate_row.status.as_str();
     let resolved_version = candidate_row.resolved_version.clone();
     let settlement_reason = candidate_row.reason.clone();
-    // Rebuild the candidate from the settled row before evaluating policy. A later observation may
-    // still carry `latest`, while the canonical row already contains the digest-bound version.
-    // Delay and version-lag gates must use that same evidence as the matcher.
     let candidate = candidate_from_row(&candidate_row);
     let Some(effective) =
         effective_policy_for_service(state.as_ref(), &candidate.stack_id, &candidate.service_id)
@@ -1393,7 +1386,9 @@ fn auto_policy_source(
         .get("source")
         .and_then(serde_json::Value::as_str)
         .is_some_and(|source| source.eq_ignore_ascii_case("github_webhook"))
-        && created_by.is_none_or(|value| value.eq_ignore_ascii_case("webhook"))
+        && created_by.is_none_or(|value| {
+            value.eq_ignore_ascii_case("webhook") || value.eq_ignore_ascii_case("github")
+        })
         && api::summary_emits_new_version_notification(summary)
     {
         return Some("github_webhook");
