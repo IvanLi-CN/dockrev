@@ -56,9 +56,12 @@
   identity resolution, tag ownership, failure context/transport, and same-SHA
   recovery. RC MUST remain a prerelease and MUST NOT advance stable `latest`.
 - A `VERSION`-only historical identity recovery MUST preserve its signed
-  release intent in an immutable reservation identity record, validate its
-  explicit version against the covered merge `VERSION`, and reject covered
-  versions with an existing reservation or tag. A separate immutable index
+  release intent in an immutable reservation identity record. The canonical
+  `release-reservation/v<VERSION>` ref MUST point directly to that verified
+  signed identity SHA; legacy reservation commits remain read-only compatibility
+  evidence. The record MUST validate its explicit version against the covered
+  merge `VERSION`, and reject covered versions with an existing reservation or
+  tag. A separate immutable index
   keyed by the covered merge MUST bind exactly one recovery identity, so
   distinct successor versions cannot recover the same product merge; it MUST
   NOT choose an arbitrary successor. The index MUST be allocated before the
@@ -77,7 +80,9 @@
   product merge SHA, exact product version, frozen baseline, and label intent
   to a signed, single-parent, `VERSION`-only commit created with
   `createCommitOnBranch(expectedHeadOid)`. Reservation, recovery-ref, and
-  publication-lock ownership MUST bind that same identity SHA. The current
+  publication-lock ownership MUST bind that same identity SHA, and the
+  canonical version reservation ref MUST point directly to the identity commit.
+  The current
   approved repair boundary is PR #391 merge
   `978207fe9d140d81e2d4a2a7bd24fb253a04ebff` -> `0.80.2` with baseline
   `0.80.1` and intent `type:patch channel:stable`; no separate PR #390

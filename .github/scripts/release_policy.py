@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 POLICY_PATH = ROOT / ".github/pr-label-release.json"
 VERSION_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+RFC3339_UTC_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
 CHANNEL_PRERELEASE_RE = {
     "beta": re.compile(r"beta\.[0-9]+"),
     "rc": re.compile(r"rc\.[0-9]+"),
@@ -213,6 +214,11 @@ def validate_sha(value: str, field: str = "sha") -> None:
         raise PolicyError(f"{field} must be a 40-character lowercase commit SHA")
 
 
+def validate_rfc3339_utc_timestamp(value: str, field: str) -> None:
+    if not RFC3339_UTC_RE.fullmatch(value):
+        raise PolicyError(f"{field} is not an RFC3339 UTC timestamp")
+
+
 def validate_approved_version_only_boundary(
     covered_merge_sha: str,
     version: str,
@@ -297,9 +303,71 @@ def validate_reservation(
 def validate_version_only_reservation(
     payload: dict[str, Any], *, version: str, pr_number: int, source_sha: str
 ) -> dict[str, str]:
-    validate_reservation(payload, version=version, pr_number=pr_number, source_sha=source_sha)
     message = payload.get("message") or payload.get("commit", {}).get("message", "")
     trailers = parse_reservation_trailers(str(message))
+    identity = parse_trailers(str(message))
+    if not trailers:
+        # New reservations point directly at the signed VERSION-only identity.
+        if identity.get("Release-Mode") != "version-only-release-pr":
+            raise PolicyError("version-only reservation has no accepted identity provenance")
+        if identity.get("Product-Version") != version:
+            raise PolicyError("version-only reservation version does not match expected VERSION")
+        if identity.get("Covered-Product-Merge-SHA") != source_sha:
+            raise PolicyError("version-only reservation source SHA does not match expected source")
+        validate_sha(source_sha, "version-only reservation source SHA")
+        release_intent = identity.get("Release-Intent", "")
+        try:
+            parsed_intent = parse_labels(release_intent.split())
+        except PolicyError as error:
+            raise PolicyError("version-only reservation intent is invalid") from error
+        if not parsed_intent["release_enabled"]:
+            raise PolicyError("version-only reservation intent must be release-enabled")
+        return {
+            "Release-Reservation-Version": version,
+            "Release-Reservation-PR": str(pr_number),
+            "Release-Reservation-Source-SHA": source_sha,
+            "Release-Reservation-Identity-SHA": "",
+            "Release-Reservation-Intent": release_intent,
+            "Release-Reservation-Mode": "version-only-release-pr",
+        }
+    if identity.get("Release-Mode") == "version-only-release-pr" and not trailers.get(
+        "Release-Reservation-Identity-SHA"
+    ):
+        # Some early direct identities carried complete reservation metadata but
+        # intentionally omitted a self-referential identity SHA.
+        if trailers.get("Release-Reservation-Version") != version:
+            raise PolicyError("version-only reservation version trailer does not match expected VERSION")
+        if trailers.get("Release-Reservation-PR") != str(pr_number):
+            raise PolicyError("version-only reservation belongs to another PR")
+        if trailers.get("Release-Reservation-Source-SHA") != source_sha:
+            raise PolicyError("version-only reservation source trailer does not match expected source")
+        if identity.get("Product-Version") != version:
+            raise PolicyError("version-only reservation identity version does not match expected VERSION")
+        if identity.get("Covered-Product-Merge-SHA") != source_sha:
+            raise PolicyError("version-only reservation identity source SHA does not match expected source")
+        validate_sha(source_sha, "version-only reservation source SHA")
+        if trailers.get("Release-Reservation-Intent") != identity.get("Release-Intent", ""):
+            raise PolicyError("version-only reservation intent trailer does not match identity")
+        if trailers.get("Release-Reservation-Mode") != "version-only-release-pr":
+            raise PolicyError("version-only reservation mode is invalid")
+        release_intent = identity.get("Release-Intent", "")
+        try:
+            parsed_intent = parse_labels(release_intent.split())
+        except PolicyError as error:
+            raise PolicyError("version-only reservation intent is invalid") from error
+        if not parsed_intent["release_enabled"]:
+            raise PolicyError("version-only reservation intent must be release-enabled")
+        return {
+            "Release-Reservation-Version": version,
+            "Release-Reservation-PR": str(pr_number),
+            "Release-Reservation-Source-SHA": source_sha,
+            "Release-Reservation-Identity-SHA": "",
+            "Release-Reservation-Intent": release_intent,
+            "Release-Reservation-Mode": "version-only-release-pr",
+        }
+    if not trailers.get("Release-Reservation-Version"):
+        raise PolicyError("version-only reservation provenance is incomplete")
+    validate_reservation(payload, version=version, pr_number=pr_number, source_sha=source_sha)
     identity_sha = trailers.get("Release-Reservation-Identity-SHA", "")
     validate_sha(identity_sha, "version-only reservation identity SHA")
     if trailers.get("Release-Reservation-Mode") != "version-only-release-pr":
@@ -331,8 +399,7 @@ def validate_preparation(payload: dict[str, Any], *, source_sha: str | None = No
         raise PolicyError(f"preparation provenance missing: {', '.join(missing)}")
     validate_sha(str(payload["commit_sha"]), "commit_sha")
     validate_sha(str(payload["source_sha"]), "source_sha")
-    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", str(payload["source_pr_updated_at"])):
-        raise PolicyError("preparation source_pr_updated_at is not an RFC3339 UTC timestamp")
+    validate_rfc3339_utc_timestamp(str(payload["source_pr_updated_at"]), "preparation source_pr_updated_at")
     if source_sha and payload["source_sha"] != source_sha:
         raise PolicyError("preparation source_sha does not match expected source")
     parse_version(str(payload["version"]))
@@ -362,6 +429,7 @@ def validate_version_only(files: list[str], provenance: dict[str, Any], *, head_
         "release_mode",
         "verified",
         "branch_head_sha",
+        "source_pr_updated_at",
     }
     missing = sorted(required - set(provenance))
     if missing:
@@ -374,6 +442,9 @@ def validate_version_only(files: list[str], provenance: dict[str, Any], *, head_
     validate_sha(str(provenance["branch_head_sha"]), "branch_head_sha")
     if head_sha and provenance["branch_head_sha"] != head_sha:
         raise PolicyError("version-only branch head drifted")
+    validate_rfc3339_utc_timestamp(
+        str(provenance["source_pr_updated_at"]), "version-only source_pr_updated_at"
+    )
     if provenance["verified"] is not True:
         raise PolicyError("version-only release PR signature is not verified")
     covered_product_version = str(provenance["covered_product_version"])

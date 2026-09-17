@@ -28,11 +28,13 @@ Annotated tag traversal is bounded at five tag-object hops, matching the
 publication workflow; a sixth hop fails closed.
 
 An existing release identity is recognized only when its ownership evidence is
-bound to the covered merge or identity SHA. Reservations validate their source
-trailer and single parent, tags resolve to an owned SHA, publication locks
-match their identity owner, and recovery refs match the expected identity. A
-reservation, lock, or recovery ref with a different owner never becomes valid
-through a version-only retry.
+bound to the covered merge or identity SHA. New `release-reservation/v<VERSION>`
+refs point directly to a verified signed identity commit; that commit carries
+the reservation trailers and has the required single parent. Historical
+reservation commits remain readable compatibility evidence. Tags resolve to an
+owned SHA, publication locks match their identity owner, and recovery refs
+match the expected identity. A reservation, lock, or recovery ref with a
+different owner never becomes valid through a version-only retry.
 
 Historical repair uses an explicit `version-only-release-pr` preparation mode.
 The caller supplies the covered product merge, exact version, frozen baseline,
