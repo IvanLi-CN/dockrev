@@ -136,13 +136,21 @@ def version_only_reservation(
     except release_policy.PolicyError as error:
         raise IdentityError(str(error)) from error
     reservation = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{reservation_sha}")
-    raw = release_policy.parse_reservation_trailers(str(reservation.get("commit", {}).get("message", "")))
-    if raw.get("Release-Reservation-PR") != str(pr_number):
-        return None
-    if raw.get("Release-Reservation-Mode") != "version-only-release-pr":
-        return None
-    source_sha = raw.get("Release-Reservation-Source-SHA", "")
+    message = str(reservation.get("commit", {}).get("message", ""))
+    raw = release_policy.parse_reservation_trailers(message)
+    identity = release_policy.parse_trailers(message)
+    if raw:
+        if raw.get("Release-Reservation-PR") != str(pr_number):
+            return None
+        if raw.get("Release-Reservation-Mode") != "version-only-release-pr":
+            return None
+        source_sha = raw.get("Release-Reservation-Source-SHA", "")
+    else:
+        if identity.get("Release-Mode") != "version-only-release-pr":
+            return None
+        source_sha = identity.get("Covered-Product-Merge-SHA", "")
     try:
+        release_policy.validate_sha(source_sha, "version-only reservation source SHA")
         trailers = release_policy.validate_version_only_reservation(
             reservation, version=version, pr_number=pr_number, source_sha=source_sha
         )
@@ -328,14 +336,23 @@ def covered_version_has_existing_identity(
             reservation = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{reservation_sha}")
             message = str(reservation.get("commit", {}).get("message", ""))
             trailers = release_policy.parse_reservation_trailers(message)
-            if trailers.get("Release-Reservation-Source-SHA") == covered_merge_sha:
-                pr_number = int(trailers.get("Release-Reservation-PR", "0"))
-                identity_trailers = release_policy.parse_trailers(message)
+            identity_trailers = release_policy.parse_trailers(message)
+            direct_identity = (
+                identity_trailers.get("Release-Mode") == "version-only-release-pr"
+                and not trailers.get("Release-Reservation-Identity-SHA")
+            )
+            reservation_source_sha = (
+                identity_trailers.get("Covered-Product-Merge-SHA", "")
+                if direct_identity
+                else trailers.get("Release-Reservation-Source-SHA", "")
+            )
+            if reservation_source_sha == covered_merge_sha:
+                try:
+                    pr_number = int(trailers.get("Release-Reservation-PR", "0"))
+                except ValueError as error:
+                    raise IdentityError("release reservation PR number is invalid") from error
                 allowed_identity_sha = reservation_sha in (allowed_identity_shas or set())
-                if (
-                    identity_trailers.get("Release-Mode") == "version-only-release-pr"
-                    and not trailers.get("Release-Reservation-Identity-SHA")
-                ):
+                if direct_identity:
                     if reservation.get("commit", {}).get("verification", {}).get("verified") is not True:
                         raise IdentityError("direct release reservation identity is not signed")
                     try:

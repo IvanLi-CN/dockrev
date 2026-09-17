@@ -314,6 +314,7 @@ def validate_version_only_reservation(
             raise PolicyError("version-only reservation version does not match expected VERSION")
         if identity.get("Covered-Product-Merge-SHA") != source_sha:
             raise PolicyError("version-only reservation source SHA does not match expected source")
+        validate_sha(source_sha, "version-only reservation source SHA")
         release_intent = identity.get("Release-Intent", "")
         try:
             parsed_intent = parse_labels(release_intent.split())
@@ -340,6 +341,11 @@ def validate_version_only_reservation(
             raise PolicyError("version-only reservation belongs to another PR")
         if trailers.get("Release-Reservation-Source-SHA") != source_sha:
             raise PolicyError("version-only reservation source trailer does not match expected source")
+        if identity.get("Product-Version") != version:
+            raise PolicyError("version-only reservation identity version does not match expected VERSION")
+        if identity.get("Covered-Product-Merge-SHA") != source_sha:
+            raise PolicyError("version-only reservation identity source SHA does not match expected source")
+        validate_sha(source_sha, "version-only reservation source SHA")
         if trailers.get("Release-Reservation-Intent") != identity.get("Release-Intent", ""):
             raise PolicyError("version-only reservation intent trailer does not match identity")
         if trailers.get("Release-Reservation-Mode") != "version-only-release-pr":
