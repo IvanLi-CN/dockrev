@@ -166,17 +166,17 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
   const candidateVersion = useMemo(() => {
     const candidate = props.service.candidate
     if (!candidate) return null
-    return (candidate.resolvedTag ?? '').trim() || settlement?.resolvedVersion?.trim() || candidate.tag.trim() || null
-  }, [props.service.candidate, settlement?.resolvedVersion])
+    return settlement?.resolvedVersion?.trim() || (!settlement ? (candidate.resolvedTag ?? '').trim() : '') || candidate.tag.trim() || null
+  }, [props.service.candidate, settlement])
   const candidateDisplayVersion = useMemo(() => {
     const candidate = props.service.candidate
     if (!candidate) return null
     return formatCandidateTagDisplay(
       candidate.tag,
-      candidate.resolvedTag ?? settlement?.resolvedVersion ?? null,
+      settlement?.resolvedVersion ?? (!settlement ? candidate.resolvedTag : null),
       props.service.versionInference?.status,
     )
-  }, [props.service.candidate, props.service.versionInference?.status, settlement?.resolvedVersion])
+  }, [props.service.candidate, props.service.versionInference?.status, settlement])
   const initialCenterKeyRef = useRef<string | null>(null)
 
   const {

@@ -146,6 +146,13 @@ WHERE service_id = ?1 AND candidate_digest = ?2
     OR retry_at IS NOT ?7
     OR settled_at IS NOT ?8
   )
+  AND (
+    ?3 NOT IN ('ready', 'unresolved')
+    OR (
+      ?8 IS NOT NULL
+      AND (settled_at IS NULL OR ?8 > settled_at)
+    )
+  )
 "#,
                 params![
                     input.service_id,

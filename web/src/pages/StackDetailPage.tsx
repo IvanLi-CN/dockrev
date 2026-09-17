@@ -16,7 +16,7 @@ import {
 } from '../api'
 import { createDefaultAutoUpdatePolicy } from '../components/AutoUpdatePolicyEditor'
 import { AutoUpdatePolicyDrawer } from '../components/AutoUpdatePolicyDrawer'
-import { AutoUpdatePolicyResultCard, policyActionLabel, policyActionTone } from '../components/AutoUpdatePolicyResultCard'
+import { AutoUpdatePolicyResultCard, policyActionLabel, policyActionTone, type AutoUpdateServiceResult } from '../components/AutoUpdatePolicyResultCard'
 import { RecentUpdateRecords, selectRecentStackUpdateJobs } from '../components/RecentUpdateRecords'
 import { AsyncDataRegion, AsyncDataSkeleton } from '../components/AsyncDataRegion'
 import type { AsyncDataPhase, AsyncDataSource, AsyncDataTrigger } from '../asyncData'
@@ -520,6 +520,11 @@ export function StackDetailPage(props: {
   const updatable = stack.services.filter((service) => serviceRowStatus(service) !== 'ok').length
   const recentUpdateJobs = selectRecentStackUpdateJobs(jobs, stack)
   const stableServices = Math.max(stack.services.length - updatable, 0)
+  const serviceResults: AutoUpdateServiceResult[] = stack.services.map((service) => ({
+    serviceName: service.name,
+    projection: service.autoUpdate ?? null,
+    candidateSettlement: service.candidateSettlement ?? null,
+  }))
 
   return (
     <div className="page">
@@ -626,6 +631,7 @@ export function StackDetailPage(props: {
             }}
             policy={policy}
             scope="stack"
+            serviceResults={serviceResults}
           />
         </AsyncDataRegion>
         <AsyncDataRegion

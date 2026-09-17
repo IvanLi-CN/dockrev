@@ -110,6 +110,16 @@ pub struct TriggerRuntimeScanResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AutoUpdateJobContext {
+    pub pending_id: String,
+    pub candidate_id: String,
+    pub rule_id: String,
+    pub policy_scope_type: String,
+    pub policy_scope_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UpdateServiceTarget {
     pub service_id: String,
     pub target_tag: String,
@@ -118,6 +128,8 @@ pub struct UpdateServiceTarget {
     pub pull_tags: Option<Vec<String>>,
     #[serde(default)]
     pub skip_tag_followups: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_policy_context: Option<AutoUpdateJobContext>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

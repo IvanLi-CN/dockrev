@@ -8355,6 +8355,22 @@ html[data-theme="light"] .serviceLogsTerminal {
   min-height: 54px;
 }
 
+.autoPolicyServiceResults {
+  grid-column: 1 / -1;
+}
+
+.autoPolicyServiceResultList {
+  display: grid;
+  gap: 5px;
+}
+
+.autoPolicyServiceResult {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
 .autoPolicyFactLabel {
   color: var(--muted2);
   font-size: 11px;

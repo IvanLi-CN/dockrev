@@ -271,6 +271,16 @@ CREATE TABLE services (
   stack_id TEXT NOT NULL,
   candidate_digest TEXT
 );
+CREATE TABLE update_job_stop_controls (
+  job_id TEXT PRIMARY KEY NOT NULL,
+  apply_committed_at TEXT,
+  stop_requested_at TEXT,
+  stop_requested_by TEXT,
+  recovery_snapshot_json TEXT,
+  recovery_attempted_at TEXT,
+  recovery_error TEXT,
+  updated_at TEXT NOT NULL
+);
 CREATE TABLE auto_update_pending (
   id TEXT PRIMARY KEY NOT NULL,
   policy_scope_type TEXT NOT NULL,
@@ -310,22 +320,24 @@ INSERT INTO jobs (
   ('schedule-check', 'check', 'stack', 'success', 0, 'inherit', 'test', 'schedule',
    '2026-04-30T00:00:00Z', '{}'),
   ('unknown-check', 'check', 'stack', 'success', 0, 'inherit', 'test', 'ui',
-   '2026-04-30T00:00:00Z', '{malformed');
+   '2026-04-30T00:00:00Z', '{malformed'),
+  ('running-auto-job', 'update', 'service', 'running', 0, 'inherit', 'auto-policy', 'auto_policy',
+   '2026-04-30T00:00:02Z', '{}');
 INSERT INTO auto_update_pending (
   id, policy_scope_type, policy_scope_id, rule_id, stack_id, service_id,
   source_check_job_id, candidate_tag, candidate_display_tag, candidate_digest,
   current_display_tag, first_seen_at, due_at, min_age_seconds, min_version_lag,
-  status, created_at, updated_at, summary_json
+  status, update_job_id, created_at, updated_at, summary_json
 ) VALUES
   ('pending-auditable', 'stack', 'stack-1', 'rule-1', 'stack-1', 'service-1',
    'schedule-check', 'latest', 'latest', 'sha256:new', '1.0.0',
    '2026-04-30T00:00:00Z', '2026-04-30T00:15:00Z', 900, 0,
-   'pending', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z',
+   'pending', NULL, '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z',
    '{"imageRef":"ghcr.io/acme/app:latest","currentDigest":"sha256:old"}'),
   ('pending-ambiguous', 'stack', 'stack-1', 'rule-1', 'stack-1', 'service-2',
    'unknown-check', 'latest', 'latest', 'sha256:other', '1.0.0',
    '2026-04-30T00:00:00Z', '2026-04-30T00:15:00Z', 900, 0,
-   'pending', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z', '{}');
+   'pending', 'running-auto-job', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z', '{}');
 "#,
         )
         .unwrap();
@@ -362,7 +374,12 @@ INSERT INTO auto_update_pending (
                     ))
                 },
             )?;
-            Ok((candidate, pending, ambiguous))
+            let stop = conn.query_row(
+                "SELECT stop_requested_at, stop_requested_by FROM update_job_stop_controls WHERE job_id = 'running-auto-job'",
+                [],
+                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+            )?;
+            Ok((candidate, pending, ambiguous, stop))
         })
         .await
         .unwrap();
@@ -388,6 +405,13 @@ INSERT INTO auto_update_pending (
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&migrated.2.2).unwrap()["skipReason"],
         "migration_ambiguous_history"
+    );
+    assert_eq!(
+        migrated.3,
+        (
+            Some("2026-04-30T00:00:00Z".to_string()),
+            Some("migration-ambiguous-history".to_string())
+        )
     );
 
     drop(db);

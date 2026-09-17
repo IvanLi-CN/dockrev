@@ -496,6 +496,7 @@ pub(crate) fn normalize_update_service_target(
             &target_tag,
         )?),
         skip_tag_followups: target.skip_tag_followups,
+        auto_policy_context: target.auto_policy_context.clone(),
     })
 }
 
@@ -535,6 +536,7 @@ pub(crate) fn requested_update_targets(
                     &target_tag,
                 )?),
                 skip_tag_followups: false,
+                auto_policy_context: None,
             }])
         }
         JobScope::Stack | JobScope::All => {

@@ -696,6 +696,28 @@ mod tests {
             .unwrap();
         assert_eq!(current.status, "ready");
         assert_eq!(current.resolved_version.as_deref(), Some("1.4.0"));
+
+        let stale_ready = db
+            .settle_auto_update_candidate(&AutoUpdateCandidateSettlementInput {
+                service_id: "service".to_string(),
+                candidate_digest: "sha256:monotonic".to_string(),
+                status: "ready".to_string(),
+                resolved_version: Some("1.3.0".to_string()),
+                reason: Some("stale_digest_evidence".to_string()),
+                attempts: 0,
+                retry_at: None,
+                settled_at: Some("2026-04-30T00:01:00Z".to_string()),
+                now: "2026-04-30T00:04:00Z".to_string(),
+            })
+            .await
+            .unwrap();
+        assert!(stale_ready.is_none());
+        let current = db
+            .get_auto_update_candidate("service", "sha256:monotonic")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.resolved_version.as_deref(), Some("1.4.0"));
     }
 
     #[tokio::test]
@@ -761,7 +783,14 @@ mod tests {
             summary_json: serde_json::json!({
                 "targets": [{
                     "serviceId": "service",
-                    "targetDigest": "sha256:linked"
+                    "targetDigest": "sha256:linked",
+                    "autoPolicyContext": {
+                        "pendingId": "pending-linked",
+                        "candidateId": "",
+                        "ruleId": "rule",
+                        "policyScopeType": "stack",
+                        "policyScopeId": "stack"
+                    }
                 }]
             }),
         })

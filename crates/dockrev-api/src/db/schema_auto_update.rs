@@ -254,6 +254,59 @@ WHERE id IN (
     )?;
     tx.execute(
         r#"
+INSERT INTO update_job_stop_controls (
+  job_id, stop_requested_at, stop_requested_by, updated_at
+)
+SELECT p.update_job_id, ?1, 'migration-ambiguous-history', ?1
+FROM auto_update_pending p
+JOIN jobs j ON j.id = p.update_job_id
+WHERE (
+    p.status IN ('pending', 'enqueuing', 'enqueued')
+    OR (
+      p.status = 'skipped'
+      AND json_valid(p.summary_json)
+      AND json_extract(p.summary_json, '$.skipReason') = 'migration_ambiguous_history'
+    )
+  )
+  AND p.update_job_id IS NOT NULL
+  AND j.status = 'running'
+  AND NOT EXISTS (
+    SELECT 1
+    FROM auto_update_candidates valid_candidate
+    JOIN jobs candidate_source_job ON candidate_source_job.id = valid_candidate.source_job_id
+    JOIN services candidate_service ON candidate_service.id = valid_candidate.service_id
+    WHERE valid_candidate.id = p.candidate_id
+      AND valid_candidate.service_id = p.service_id
+      AND valid_candidate.candidate_digest = p.candidate_digest
+      AND valid_candidate.stack_id = p.stack_id
+      AND COALESCE(TRIM(valid_candidate.image_ref), '') <> ''
+      AND COALESCE(TRIM(valid_candidate.discovered_at), '') <> ''
+      AND valid_candidate.source IN ('schedule', 'github_webhook')
+      AND LOWER(candidate_source_job.status) = 'success'
+      AND candidate_service.stack_id = valid_candidate.stack_id
+      AND candidate_service.candidate_digest = valid_candidate.candidate_digest
+      AND EXISTS (
+        SELECT 1
+        FROM jobs source_job
+        WHERE source_job.id = p.source_check_job_id
+          AND LOWER(source_job.status) = 'success'
+          AND (
+            LOWER(source_job.reason) = 'schedule'
+            OR LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook'
+          )
+      )
+  )
+ON CONFLICT(job_id) DO UPDATE SET
+  stop_requested_at = COALESCE(update_job_stop_controls.stop_requested_at, excluded.stop_requested_at),
+  stop_requested_by = COALESCE(update_job_stop_controls.stop_requested_by, excluded.stop_requested_by),
+  updated_at = excluded.updated_at
+WHERE update_job_stop_controls.apply_committed_at IS NULL
+  AND update_job_stop_controls.stop_requested_at IS NULL
+"#,
+        params![&now],
+    )?;
+    tx.execute(
+        r#"
 UPDATE auto_update_pending
 SET candidate_id = NULL,
     status = 'skipped',

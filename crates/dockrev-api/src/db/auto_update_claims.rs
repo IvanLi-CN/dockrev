@@ -115,7 +115,8 @@ WHERE id = ?1
             let rows = {
                 let mut stmt = tx.prepare(
                     r#"
-SELECT id, service_id, candidate_digest, updated_at
+SELECT id, service_id, candidate_digest, updated_at,
+       policy_scope_type, policy_scope_id, rule_id, COALESCE(candidate_id, '')
 FROM auto_update_pending
 WHERE status = 'enqueuing' AND updated_at <= ?1
 "#,
@@ -126,13 +127,27 @@ WHERE status = 'enqueuing' AND updated_at <= ?1
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
                         row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, String>(6)?,
+                        row.get::<_, String>(7)?,
                     ))
                 })?
                 .collect::<Result<Vec<_>, _>>()?
             };
             let mut repaired = 0;
             let mut recovered_jobs = Vec::new();
-            for (pending_id, service_id, candidate_digest, claimed_at) in rows {
+            for (
+                pending_id,
+                service_id,
+                candidate_digest,
+                claimed_at,
+                policy_scope_type,
+                policy_scope_id,
+                rule_id,
+                candidate_id,
+            ) in rows
+            {
                 let existing_job = tx
                     .query_row(
                         r#"
@@ -147,11 +162,25 @@ WHERE j.created_by = 'auto-policy'
     FROM json_each(j.summary_json, '$.targets') target
     WHERE json_extract(target.value, '$.serviceId') = ?1
       AND json_extract(target.value, '$.targetDigest') = ?2
+      AND json_extract(target.value, '$.autoPolicyContext.pendingId') = ?4
+      AND json_extract(target.value, '$.autoPolicyContext.ruleId') = ?5
+      AND json_extract(target.value, '$.autoPolicyContext.policyScopeType') = ?6
+      AND json_extract(target.value, '$.autoPolicyContext.policyScopeId') = ?7
+      AND json_extract(target.value, '$.autoPolicyContext.candidateId') = ?8
   )
 ORDER BY j.created_at DESC, j.id DESC
 LIMIT 1
 "#,
-                        params![service_id, candidate_digest, claimed_at],
+                        params![
+                            service_id,
+                            candidate_digest,
+                            claimed_at,
+                            pending_id,
+                            rule_id,
+                            policy_scope_type,
+                            policy_scope_id,
+                            candidate_id,
+                        ],
                         |row| row.get::<_, String>(0),
                     )
                     .optional()?;

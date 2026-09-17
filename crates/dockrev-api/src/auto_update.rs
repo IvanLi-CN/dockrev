@@ -12,9 +12,9 @@ use serde_json::json;
 use crate::{
     api,
     api::types::{
-        AutoUpdateMatcherType, AutoUpdatePolicy, AutoUpdatePolicyMode, AutoUpdateRule,
-        AutoUpdateRuleAction, BackupMode, JobScope, TriggerUpdateRequest, UpdateMode, UpdateReason,
-        UpdateServiceTarget,
+        AutoUpdateJobContext, AutoUpdateMatcherType, AutoUpdatePolicy, AutoUpdatePolicyMode,
+        AutoUpdateRule, AutoUpdateRuleAction, BackupMode, JobScope, TriggerUpdateRequest,
+        UpdateMode, UpdateReason, UpdateServiceTarget,
     },
     db::{
         AutoUpdateCandidateInput, AutoUpdateCandidateRow, AutoUpdateCandidateSettlementInput,
@@ -931,6 +931,7 @@ fn build_auto_update_target(service: &crate::api::types::Service) -> Option<Upda
         target_digest: candidate.digest.clone(),
         pull_tags: Some(pull_tags),
         skip_tag_followups: false,
+        auto_policy_context: None,
     })
 }
 
@@ -1027,13 +1028,20 @@ async fn enqueue_pending(
         return Ok(None);
     }
 
-    let Some(target) = build_auto_update_target(service) else {
+    let Some(mut target) = build_auto_update_target(service) else {
         state
             .db
             .mark_auto_update_pending_skipped(&pending.id, "target_unavailable", now)
             .await?;
         return Ok(None);
     };
+    target.auto_policy_context = Some(AutoUpdateJobContext {
+        pending_id: pending.id.clone(),
+        candidate_id: pending.candidate_id.clone().unwrap_or_default(),
+        rule_id: pending.rule_id.clone(),
+        policy_scope_type: pending.policy_scope_type.clone(),
+        policy_scope_id: pending.policy_scope_id.clone(),
+    });
 
     if !state
         .db

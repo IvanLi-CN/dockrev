@@ -97,6 +97,12 @@ export function candidateSettlementDetail(settlement: CandidateSettlement): stri
   return details.length > 0 ? details.join(' · ') : '无需继续推断'
 }
 
+export type AutoUpdateServiceResult = {
+  serviceName: string
+  projection?: { policyStatus: string; reason?: string | null; ruleId?: string | null; evaluatedAt?: string | null } | null
+  candidateSettlement?: CandidateSettlement | null
+}
+
 export function AutoUpdatePolicyResultCard(props: {
   busy?: boolean
   onOpenSettings: () => void
@@ -105,6 +111,7 @@ export function AutoUpdatePolicyResultCard(props: {
   stackPolicy?: AutoUpdatePolicy | null
   projection?: { policyStatus: string; reason?: string | null; ruleId?: string | null; evaluatedAt?: string | null } | null
   candidateSettlement?: CandidateSettlement | null
+  serviceResults?: AutoUpdateServiceResult[]
 }) {
   const result = policyResult(props)
   const rules = activeAutoUpdateRules(result.effectivePolicy)
@@ -144,7 +151,22 @@ export function AutoUpdatePolicyResultCard(props: {
             {primaryRule ? `${primaryRule.name} · ${autoUpdateRuleSummary(primaryRule)}` : '无自动部署动作'}
           </span>
         </div>
-        {props.projection ? (
+        {props.serviceResults ? (
+          <div className="autoPolicyFactCell autoPolicyServiceResults">
+            <span className="label autoPolicyFactLabel">服务策略动作</span>
+            <div className="autoPolicyServiceResultList">
+              {props.serviceResults.map((service) => (
+                <div className="autoPolicyServiceResult" key={service.serviceName}>
+                  <Mono>{service.serviceName}</Mono>
+                  <span>
+                    {service.projection ? policyActionLabel(service.projection.policyStatus) : '暂无候选动作'}
+                    {service.candidateSettlement ? ` · 候选 ${service.candidateSettlement.status}` : ''}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : props.projection ? (
           <div className="autoPolicyFactCell">
             <span className="label autoPolicyFactLabel">策略动作</span>
             <span className="autoPolicyFactValue">
