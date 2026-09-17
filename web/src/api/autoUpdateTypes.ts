@@ -16,6 +16,9 @@ export type CandidateSettlement = {
   attempts: number
   retryAt?: string | null
   discoveredAt?: string | null
+  lastError?: string | null
+  supersededAt?: string | null
+  supersededByCandidateId?: string | null
 }
 
 export type AutoUpdateProjection = {

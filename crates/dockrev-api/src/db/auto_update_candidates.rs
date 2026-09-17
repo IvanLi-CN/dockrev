@@ -125,10 +125,11 @@ UPDATE auto_update_candidates
 SET status = ?3,
     resolved_version = COALESCE(?4, resolved_version),
     reason = ?5,
-    attempts = ?6,
-    retry_at = ?7,
-    settled_at = ?8,
-    updated_at = ?9
+    last_error = COALESCE(?6, last_error),
+    attempts = ?7,
+    retry_at = ?8,
+    settled_at = ?9,
+    updated_at = ?10
 WHERE service_id = ?1 AND candidate_digest = ?2
   AND status <> 'superseded'
   AND (
@@ -142,15 +143,16 @@ WHERE service_id = ?1 AND candidate_digest = ?2
     status IS NOT ?3
     OR resolved_version IS NOT COALESCE(?4, resolved_version)
     OR reason IS NOT ?5
-    OR attempts IS NOT ?6
-    OR retry_at IS NOT ?7
-    OR settled_at IS NOT ?8
+    OR last_error IS NOT COALESCE(?6, last_error)
+    OR attempts IS NOT ?7
+    OR retry_at IS NOT ?8
+    OR settled_at IS NOT ?9
   )
   AND (
     ?3 NOT IN ('ready', 'unresolved')
     OR (
-      ?8 IS NOT NULL
-      AND (settled_at IS NULL OR ?8 > settled_at)
+      ?9 IS NOT NULL
+      AND (settled_at IS NULL OR ?9 > settled_at)
     )
   )
 "#,
@@ -160,6 +162,7 @@ WHERE service_id = ?1 AND candidate_digest = ?2
                     input.status,
                     input.resolved_version,
                     input.reason,
+                    input.last_error,
                     input.attempts as i64,
                     input.retry_at,
                     input.settled_at,
@@ -184,13 +187,12 @@ WHERE service_id = ?1 AND candidate_digest = ?2
         &self,
         service_id: &str,
         candidate_digest: &str,
-        discovered_at: &str,
+        _discovered_at: &str,
         candidate_id: &str,
         now: &str,
     ) -> anyhow::Result<usize> {
         let service_id = service_id.to_string();
         let candidate_digest = candidate_digest.to_string();
-        let discovered_at = discovered_at.to_string();
         let candidate_id = candidate_id.to_string();
         let now = now.to_string();
         self.call(move |conn| {
@@ -204,12 +206,17 @@ SET status = 'superseded',
     policy_status = 'skipped',
     policy_reason = 'candidate_superseded',
     policy_evaluated_at = ?3,
-    updated_at = ?3
+    updated_at = ?3,
+    superseded_at = ?3,
+    superseded_by_candidate_id = ?4
 WHERE service_id = ?1 AND candidate_digest <> ?2
   AND status IN ('awaiting_inference', 'ready', 'unresolved')
-  AND (discovered_at < ?4 OR (discovered_at = ?4 AND id < ?5))
+  AND EXISTS (
+    SELECT 1 FROM services s
+    WHERE s.id = ?1 AND s.candidate_digest = ?2
+  )
 "#,
-                params![service_id, candidate_digest, now, discovered_at, candidate_id],
+                params![service_id, candidate_digest, now, candidate_id],
             )?;
             superseded += tx.execute(
                 r#"
@@ -220,7 +227,16 @@ SET status = 'superseded',
     policy_status = 'skipped',
     policy_reason = 'candidate_superseded',
     policy_evaluated_at = ?3,
-    updated_at = ?3
+    updated_at = ?3,
+    superseded_at = ?3,
+    superseded_by_candidate_id = (
+      SELECT replacement.id
+      FROM services s
+      JOIN auto_update_candidates replacement
+        ON replacement.service_id = s.id
+       AND replacement.candidate_digest = s.candidate_digest
+      WHERE s.id = ?1
+    )
 WHERE id = ?4
   AND service_id = ?1
   AND candidate_digest = ?2
@@ -245,16 +261,10 @@ LEFT JOIN jobs j ON j.id = p.update_job_id
 WHERE p.service_id = ?1
   AND p.status IN ('pending', 'enqueuing', 'enqueued')
   AND c.status = 'superseded'
-  AND (
-    (
-      p.candidate_digest <> ?2
-      AND (c.discovered_at < ?3 OR (c.discovered_at = ?3 AND c.id < ?4))
-    )
-    OR (p.candidate_digest = ?2 AND c.id = ?4)
-  )
+  AND (p.candidate_digest <> ?2 OR c.id = ?3)
 "#)?;
                 stmt.query_map(
-                    params![service_id, candidate_digest, discovered_at, candidate_id],
+                    params![service_id, candidate_digest, candidate_id],
                     |row| {
                         Ok((
                             row.get::<_, String>(0)?,
@@ -320,7 +330,7 @@ WHERE job_id = ?1
         self.call(move |conn| {
             let mut out = Vec::new();
             let mut stmt = conn.prepare(
-                "SELECT c.id, c.stack_id, c.service_id, c.image_ref, c.raw_tag, c.candidate_digest, c.resolved_version, c.status, c.reason, c.attempts, c.retry_at, c.discovered_at, c.source_job_id, c.source, c.current_tag, c.current_display_tag, c.current_digest, c.settled_at, c.created_at, c.updated_at, c.policy_status, c.policy_reason, c.policy_rule_id, c.policy_evaluated_at, c.policy_scope_type, c.policy_scope_id, c.update_job_id FROM auto_update_candidates c JOIN services s ON s.id = c.service_id WHERE c.service_id = ?1 AND (s.candidate_digest = c.candidate_digest OR (s.candidate_digest IS NULL AND c.policy_status = 'completed' AND s.current_digest = c.candidate_digest)) ORDER BY c.discovered_at DESC, c.id DESC LIMIT 1",
+                "SELECT c.id, c.stack_id, c.service_id, c.image_ref, c.raw_tag, c.candidate_digest, c.resolved_version, c.status, c.reason, c.attempts, c.retry_at, c.discovered_at, c.source_job_id, c.source, c.current_tag, c.current_display_tag, c.current_digest, c.settled_at, c.created_at, c.updated_at, c.policy_status, c.policy_reason, c.policy_rule_id, c.policy_evaluated_at, c.policy_scope_type, c.policy_scope_id, c.update_job_id, c.last_error, c.superseded_at, c.superseded_by_candidate_id FROM auto_update_candidates c JOIN services s ON s.id = c.service_id WHERE c.service_id = ?1 AND (s.candidate_digest = c.candidate_digest OR (s.candidate_digest IS NULL AND c.policy_status = 'completed' AND s.current_digest = c.candidate_digest)) ORDER BY c.discovered_at DESC, c.id DESC LIMIT 1",
             )?;
             for service_id in service_ids {
                 if let Ok(row) = stmt.query_row(params![service_id], map_auto_update_candidate_row) {

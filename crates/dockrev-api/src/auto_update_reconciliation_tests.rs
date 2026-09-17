@@ -78,6 +78,9 @@ mod reconciliation_tests {
             policy_scope_type: Some("stack".to_string()),
             policy_scope_id: Some("stack".to_string()),
             update_job_id: None,
+            last_error: None,
+            superseded_at: None,
+            superseded_by_candidate_id: None,
         });
         let history = vec![NewVersionDiscoveryRow {
             service_id: "svc".to_string(),
@@ -125,6 +128,9 @@ mod reconciliation_tests {
             policy_scope_type: None,
             policy_scope_id: None,
             update_job_id: None,
+            last_error: None,
+            superseded_at: None,
+            superseded_by_candidate_id: None,
         };
         let digest_a = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let digest_b = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";

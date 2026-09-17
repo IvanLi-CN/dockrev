@@ -149,6 +149,12 @@ pub struct CandidateSettlement {
     pub retry_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub discovered_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub superseded_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub superseded_by_candidate_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

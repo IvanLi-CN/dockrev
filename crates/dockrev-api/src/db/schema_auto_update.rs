@@ -70,6 +70,9 @@ CREATE TABLE IF NOT EXISTS auto_update_candidates (
   policy_scope_type TEXT,
   policy_scope_id TEXT,
   update_job_id TEXT,
+  last_error TEXT,
+  superseded_at TEXT,
+  superseded_by_candidate_id TEXT,
   UNIQUE(service_id, candidate_digest)
 );
 CREATE INDEX IF NOT EXISTS idx_auto_update_candidates_status_retry
@@ -147,6 +150,47 @@ WHERE EXISTS (
     AND p.candidate_digest = auto_update_candidates.candidate_digest
 );
 "#,
+        [],
+    )?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
+fn apply_migration_0018_add_auto_update_candidate_audit_fields(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0018_add_auto_update_candidate_audit_fields";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let existing_columns = {
+        let mut stmt = tx.prepare("PRAGMA table_info(auto_update_candidates)")?;
+        stmt.query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<BTreeSet<_>, _>>()?
+    };
+    for (name, ddl) in [
+        (
+            "last_error",
+            "ALTER TABLE auto_update_candidates ADD COLUMN last_error TEXT",
+        ),
+        (
+            "superseded_at",
+            "ALTER TABLE auto_update_candidates ADD COLUMN superseded_at TEXT",
+        ),
+        (
+            "superseded_by_candidate_id",
+            "ALTER TABLE auto_update_candidates ADD COLUMN superseded_by_candidate_id TEXT",
+        ),
+    ] {
+        if !existing_columns.contains(name) {
+            tx.execute(ddl, [])?;
+        }
+    }
+    tx.execute(
+        "UPDATE auto_update_candidates SET superseded_at = COALESCE(superseded_at, settled_at) WHERE status = 'superseded'",
         [],
     )?;
     record_migration_tx(&tx, id)?;

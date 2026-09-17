@@ -915,6 +915,9 @@ pub(super) async fn enrich_services_with_auto_update_state(
             attempts: row.attempts,
             retry_at: row.retry_at.clone(),
             discovered_at: Some(row.discovered_at.clone()),
+            last_error: row.last_error.clone(),
+            superseded_at: row.superseded_at.clone(),
+            superseded_by_candidate_id: row.superseded_by_candidate_id.clone(),
         });
         service.auto_update = Some(AutoUpdateProjection {
             policy_status: row

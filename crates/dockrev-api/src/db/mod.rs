@@ -318,6 +318,7 @@ pub struct AutoUpdateCandidateSettlementInput {
     pub status: String,
     pub resolved_version: Option<String>,
     pub reason: Option<String>,
+    pub last_error: Option<String>,
     pub attempts: u32,
     pub retry_at: Option<String>,
     pub settled_at: Option<String>,
@@ -354,6 +355,9 @@ pub struct AutoUpdateCandidateRow {
     pub policy_scope_type: Option<String>,
     pub policy_scope_id: Option<String>,
     pub update_job_id: Option<String>,
+    pub last_error: Option<String>,
+    pub superseded_at: Option<String>,
+    pub superseded_by_candidate_id: Option<String>,
 }
 
 #[derive(Clone, Debug)]

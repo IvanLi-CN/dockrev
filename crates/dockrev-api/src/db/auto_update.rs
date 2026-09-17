@@ -85,10 +85,13 @@ fn map_auto_update_candidate_row(
         policy_scope_type: row.get(24)?,
         policy_scope_id: row.get(25)?,
         update_job_id: row.get(26)?,
+        last_error: row.get(27)?,
+        superseded_at: row.get(28)?,
+        superseded_by_candidate_id: row.get(29)?,
     })
 }
 
-const AUTO_UPDATE_CANDIDATE_COLUMNS: &str = "id, stack_id, service_id, image_ref, raw_tag, candidate_digest, resolved_version, status, reason, attempts, retry_at, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, settled_at, created_at, updated_at, policy_status, policy_reason, policy_rule_id, policy_evaluated_at, policy_scope_type, policy_scope_id, update_job_id";
+const AUTO_UPDATE_CANDIDATE_COLUMNS: &str = "id, stack_id, service_id, image_ref, raw_tag, candidate_digest, resolved_version, status, reason, attempts, retry_at, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, settled_at, created_at, updated_at, policy_status, policy_reason, policy_rule_id, policy_evaluated_at, policy_scope_type, policy_scope_id, update_job_id, last_error, superseded_at, superseded_by_candidate_id";
 
 include!("auto_update_candidates.rs");
 
@@ -668,6 +671,7 @@ mod tests {
             status: "ready".to_string(),
             resolved_version: Some("1.4.0".to_string()),
             reason: Some("digest_bound_version".to_string()),
+            last_error: None,
             attempts: 1,
             retry_at: None,
             settled_at: Some("2026-04-30T00:02:00Z".to_string()),
@@ -684,6 +688,7 @@ mod tests {
                 status: "awaiting_inference".to_string(),
                 resolved_version: None,
                 reason: Some("version_inference_pending".to_string()),
+                last_error: None,
                 attempts: 2,
                 retry_at: Some("2026-04-30T00:07:00Z".to_string()),
                 settled_at: None,
@@ -707,6 +712,7 @@ mod tests {
                 status: "ready".to_string(),
                 resolved_version: Some("1.3.0".to_string()),
                 reason: Some("stale_digest_evidence".to_string()),
+                last_error: None,
                 attempts: 0,
                 retry_at: None,
                 settled_at: Some("2026-04-30T00:01:00Z".to_string()),
@@ -902,6 +908,91 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn enqueuing_claim_recovers_a_successful_auto_policy_job() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let pending = db
+            .reserve_auto_update_pending(
+                &AutoUpdatePendingInput {
+                    id: "pending-success".to_string(),
+                    policy_scope_type: "stack".to_string(),
+                    policy_scope_id: "stack".to_string(),
+                    rule_id: "rule".to_string(),
+                    stack_id: "stack".to_string(),
+                    service_id: "service".to_string(),
+                    source_check_job_id: "check".to_string(),
+                    candidate_tag: "latest".to_string(),
+                    candidate_display_tag: "1.4.0".to_string(),
+                    candidate_digest: "sha256:success".to_string(),
+                    current_display_tag: "1.0.0".to_string(),
+                    first_seen_at: "2026-04-30T00:00:00Z".to_string(),
+                    due_at: "2026-04-30T00:00:00Z".to_string(),
+                    min_age_seconds: 0,
+                    min_version_lag: 0,
+                    summary_json: serde_json::json!({}),
+                    candidate_id: None,
+                },
+                "2026-04-30T00:00:00Z",
+            )
+            .await
+            .unwrap();
+        assert!(
+            db.try_claim_auto_update_pending(&pending.id, "2026-04-30T00:00:01Z")
+                .await
+                .unwrap()
+        );
+        db.insert_job(crate::api::types::JobListItem {
+            id: "successful-auto-policy-job".to_string(),
+            r#type: crate::api::types::JobType::Update,
+            scope: crate::api::types::JobScope::Service,
+            stack_id: Some("stack".to_string()),
+            service_id: Some("service".to_string()),
+            status: "success".to_string(),
+            created_by: "auto-policy".to_string(),
+            reason: "auto_policy".to_string(),
+            created_at: "2026-04-30T00:00:02Z".to_string(),
+            started_at: Some("2026-04-30T00:00:02Z".to_string()),
+            finished_at: Some("2026-04-30T00:00:03Z".to_string()),
+            allow_arch_mismatch: false,
+            backup_mode: "inherit".to_string(),
+            summary_json: serde_json::json!({
+                "targets": [{
+                    "serviceId": "service",
+                    "targetDigest": "sha256:success",
+                    "autoPolicyContext": {
+                        "pendingId": "pending-success",
+                        "candidateId": "",
+                        "ruleId": "rule",
+                        "policyScopeType": "stack",
+                        "policyScopeId": "stack"
+                    }
+                }]
+            }),
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            db.reconcile_auto_update_pending_claims(
+                "2026-04-30T00:05:00Z",
+                "2026-04-30T00:06:00Z",
+            )
+            .await
+            .unwrap(),
+            1
+        );
+        let pending = db
+            .get_auto_update_pending_by_id("pending-success")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(pending.status, "enqueued");
+        assert_eq!(
+            pending.update_job_id.as_deref(),
+            Some("successful-auto-policy-job")
+        );
+    }
+
+    #[tokio::test]
     async fn pending_claim_rechecks_the_current_effective_policy() {
         let db = Db::open(Path::new(":memory:")).await.unwrap();
         db.call(|conn| {
@@ -1013,13 +1104,26 @@ mod tests {
     #[tokio::test]
     async fn newer_candidate_supersedes_old_candidate_and_pending_action() {
         let db = Db::open(Path::new(":memory:")).await.unwrap();
+        db.call(|conn| {
+            conn.execute(
+                "INSERT INTO stacks (id, name, compose_type, compose_files_json, backup_targets_json, backup_retention_keep_last, backup_retention_delete_after_stable_seconds, created_at, updated_at, last_check_at) VALUES ('stack', 'stack', 'path', '[]', '[]', 0, 0, '2026-04-30', '2026-04-30', '2026-04-30')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:current', 'sha256:new-candidate', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
         let old = db
             .upsert_auto_update_candidate(
                 &candidate_input(
                     "candidate-old",
                     "sha256:old-candidate",
                     "ready",
-                    "2026-04-30T00:00:00Z",
+                    "2026-04-30T00:10:00Z",
                 ),
                 "2026-04-30T00:00:00Z",
             )
@@ -1031,7 +1135,7 @@ mod tests {
                     "candidate-new",
                     "sha256:new-candidate",
                     "ready",
-                    "2026-04-30T01:00:00Z",
+                    "2026-04-30T00:00:00Z",
                 ),
                 "2026-04-30T01:00:00Z",
             )
@@ -1108,13 +1212,19 @@ mod tests {
         .await
         .unwrap();
 
+        let old_candidate = db
+            .get_auto_update_candidate("service", "sha256:old-candidate")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(old_candidate.status, "superseded");
         assert_eq!(
-            db.get_auto_update_candidate("service", "sha256:old-candidate")
-                .await
-                .unwrap()
-                .unwrap()
-                .status,
-            "superseded"
+            old_candidate.superseded_by_candidate_id.as_deref(),
+            Some(new.id.as_str())
+        );
+        assert_eq!(
+            old_candidate.superseded_at.as_deref(),
+            Some("2026-04-30T01:00:00Z")
         );
         assert!(
             db.list_auto_update_pending_candidates("2026-04-30T02:00:00Z", 10)

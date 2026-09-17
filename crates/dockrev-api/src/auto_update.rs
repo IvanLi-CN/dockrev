@@ -686,6 +686,11 @@ pub async fn reconcile_inference_for_digest(
             .map(|_| "digest_bound_version")
             .or(inference_reason.as_deref())
             .or_else(|| terminal.then_some("version_inference_unresolved"));
+        let last_error = inference_error.then(|| {
+            inference_reason
+                .clone()
+                .unwrap_or_else(|| "version_inference_failed".to_string())
+        });
         let retry_at = (!terminal && resolved.is_none())
             .then(|| retry_at_for_attempt(now, attempts))
             .flatten();
@@ -697,6 +702,7 @@ pub async fn reconcile_inference_for_digest(
                 status: status.to_string(),
                 resolved_version: resolved.clone(),
                 reason: reason.map(str::to_string),
+                last_error,
                 attempts,
                 retry_at,
                 settled_at: (resolved.is_some() || terminal).then_some(now.to_string()),
@@ -919,10 +925,13 @@ async fn pending_delay_gates_met(
     ))
 }
 
-fn build_auto_update_target(service: &crate::api::types::Service) -> Option<UpdateServiceTarget> {
+fn build_auto_update_target(
+    service: &crate::api::types::Service,
+    settled_version: Option<&str>,
+) -> Option<UpdateServiceTarget> {
     let candidate = service.candidate.as_ref()?;
     let mut pull_tags = Vec::new();
-    if let Some(resolved) = candidate.resolved_tag.as_deref()
+    if let Some(resolved) = settled_version.or(candidate.resolved_tag.as_deref())
         && ignore::is_strict_semver(resolved)
         && resolved.trim() != service.image.tag.trim()
     {
@@ -1031,7 +1040,20 @@ async fn enqueue_pending(
         return Ok(None);
     }
 
-    let Some(mut target) = build_auto_update_target(service) else {
+    let Some(settlement) = state
+        .db
+        .get_auto_update_candidate(&pending.service_id, &pending.candidate_digest)
+        .await?
+    else {
+        state
+            .db
+            .mark_auto_update_pending_skipped(&pending.id, "candidate_missing", now)
+            .await?;
+        return Ok(None);
+    };
+    let Some(mut target) =
+        build_auto_update_target(service, settlement.resolved_version.as_deref())
+    else {
         state
             .db
             .mark_auto_update_pending_skipped(&pending.id, "target_unavailable", now)
