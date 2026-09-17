@@ -260,7 +260,7 @@ jobs:
               test "${owner_sha}" = "${MERGE_SHA}" || { echo "tag ${tag} belongs to ${owner_sha}" >&2; exit 1; }
             else
               status=$?
-              if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 404|Not Found|404' "${error_file}"; then
+              if [[ "${status}" -ne 1 ]] || ! grep -Eq 'HTTP 404|Not Found|404' "${error_file}"; then
                 cat "${error_file}" >&2
                 exit "${status}"
               fi
@@ -539,7 +539,7 @@ jobs:
             else
               status=$?
             fi
-            if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 404|Not Found|404' "${lock_error}"; then
+            if [[ "${status}" -ne 1 ]] || ! grep -Eq 'HTTP 404|Not Found|404' "${lock_error}"; then
               cat "${lock_error}" >&2
               return "${status}"
             fi
@@ -549,7 +549,7 @@ jobs:
             else
               status=$?
             fi
-            if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 422|Reference already exists|already exists' "${lock_create_error}"; then
+            if [[ "${status}" -ne 1 ]] || ! grep -Eq 'HTTP 422|Reference already exists|already exists' "${lock_create_error}"; then
               cat "${lock_create_error}" >&2
               return "${status}"
             fi
@@ -611,7 +611,7 @@ jobs:
               [[ "${tag}" == "${RELEASE_TAG}" ]] && canonical_exists=true
             else
               status=$?
-              if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 404|Not Found|404' "${error_file}"; then
+              if [[ "${status}" -ne 1 ]] || ! grep -Eq 'HTTP 404|Not Found|404' "${error_file}"; then
                 cat "${error_file}" >&2
                 exit "${status}"
               fi
@@ -699,7 +699,7 @@ jobs:
           while true; do
             lock_json="$(gh api "${lock_read_ref}" 2>"${lock_error_dir}/ref-error" || true)"
             if [[ -z "${lock_json}" ]]; then
-              if rg -q 'HTTP 404|Not Found|404' "${lock_error_dir}/ref-error"; then
+              if grep -Eq 'HTTP 404|Not Found|404' "${lock_error_dir}/ref-error"; then
                 initial_message="$(printf 'Release latest promotion lock\n\nRelease-Latest-Lock-State: released')"
                 initial_sha="$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/commits" \
                   -f "message=${initial_message}" -f "tree=${tree_sha}" -f "parents[]=${MERGE_SHA}" --jq .sha)"
@@ -708,7 +708,7 @@ jobs:
                   continue
                 else
                   status=$?
-                  if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 422|Reference already exists|already exists' "${lock_error_dir}/create-error"; then
+                  if [[ "${status}" -ne 1 ]] || ! grep -Eq 'HTTP 422|Reference already exists|already exists' "${lock_error_dir}/create-error"; then
                     cat "${lock_error_dir}/create-error" >&2
                     exit "${status}"
                   fi
@@ -737,7 +737,7 @@ jobs:
                 [[ "${run_status}" == "completed" ]] || { sleep 5; continue; }
               else
                 status=$?
-                if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 404|Not Found|404' "${lock_error_dir}/run-error"; then
+                if [[ "${status}" -ne 1 ]] || ! grep -Eq 'HTTP 404|Not Found|404' "${lock_error_dir}/run-error"; then
                   cat "${lock_error_dir}/run-error" >&2
                   exit "${status}"
                 fi
@@ -756,7 +756,7 @@ jobs:
               break
             else
               status=$?
-              if [[ "${status}" -ne 1 ]] || ! rg -q 'HTTP 409|HTTP 422|non-fast-forward|fast forward' "${lock_error_dir}/update-error"; then
+              if [[ "${status}" -ne 1 ]] || ! grep -Eq 'HTTP 409|HTTP 422|non-fast-forward|fast forward' "${lock_error_dir}/update-error"; then
                 cat "${lock_error_dir}/update-error" >&2
                 exit "${status}"
               fi
