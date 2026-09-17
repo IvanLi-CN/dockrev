@@ -148,11 +148,21 @@ def version_only_reservation(
         )
     except release_policy.PolicyError as error:
         raise IdentityError(str(error)) from error
+    if not trailers.get("Release-Reservation-Identity-SHA"):
+        # New reservations point at the signed identity commit itself; the ref
+        # target is the owner binding instead of a self-referential trailer.
+        trailers["Release-Reservation-Identity-SHA"] = reservation_sha
     return {**trailers, "Release-Reservation-Commit-SHA": reservation_sha}
 
 
 def version_reservation_ref_is_current(
-    api_root: str, token: str, repository: str, version: str, expected_sha: str
+    api_root: str,
+    token: str,
+    repository: str,
+    version: str,
+    expected_sha: str,
+    *,
+    alternate_sha: str | None = None,
 ) -> bool:
     owner, name = repository_parts(repository)
     ref_name = f"release-reservation/v{version}"
@@ -166,7 +176,10 @@ def version_reservation_ref_is_current(
         if "GitHub API failed: 404" in str(error):
             return False
         raise
-    return ref.get("object", {}).get("sha") == expected_sha
+    accepted_shas = {expected_sha}
+    if alternate_sha is not None:
+        accepted_shas.add(alternate_sha)
+    return ref.get("object", {}).get("sha") in accepted_shas
 
 
 def publication_lock_sha(
@@ -313,20 +326,39 @@ def covered_version_has_existing_identity(
             if not isinstance(reservation_sha, str) or not release_policy.SHA_RE.fullmatch(reservation_sha):
                 raise IdentityError("release reservation ref has an invalid commit SHA")
             reservation = api_json(api_root, token, f"/repos/{owner}/{name}/commits/{reservation_sha}")
-            trailers = release_policy.parse_reservation_trailers(
-                str(reservation.get("commit", {}).get("message", ""))
-            )
+            message = str(reservation.get("commit", {}).get("message", ""))
+            trailers = release_policy.parse_reservation_trailers(message)
             if trailers.get("Release-Reservation-Source-SHA") == covered_merge_sha:
-                try:
-                    release_policy.validate_reservation(
-                        reservation,
-                        version=version,
-                        pr_number=int(trailers.get("Release-Reservation-PR", "0")),
-                        source_sha=covered_merge_sha,
-                    )
-                except (ValueError, release_policy.PolicyError) as error:
-                    raise IdentityError(str(error)) from error
-                return True
+                pr_number = int(trailers.get("Release-Reservation-PR", "0"))
+                identity_trailers = release_policy.parse_trailers(message)
+                allowed_identity_sha = reservation_sha in (allowed_identity_shas or set())
+                if (
+                    identity_trailers.get("Release-Mode") == "version-only-release-pr"
+                    and not trailers.get("Release-Reservation-Identity-SHA")
+                ):
+                    if reservation.get("commit", {}).get("verification", {}).get("verified") is not True:
+                        raise IdentityError("direct release reservation identity is not signed")
+                    try:
+                        release_policy.validate_version_only_reservation(
+                            reservation,
+                            version=version,
+                            pr_number=pr_number,
+                            source_sha=covered_merge_sha,
+                        )
+                    except release_policy.PolicyError as error:
+                        raise IdentityError(str(error)) from error
+                else:
+                    try:
+                        release_policy.validate_reservation(
+                            reservation,
+                            version=version,
+                            pr_number=pr_number,
+                            source_sha=covered_merge_sha,
+                        )
+                    except (ValueError, release_policy.PolicyError) as error:
+                        raise IdentityError(str(error)) from error
+                if not allowed_identity_sha:
+                    return True
 
         def tag_fetch(path: str) -> Any:
             try:
@@ -439,6 +471,7 @@ def resolve_version_only_reservation(
         "release_intent": release_intent,
         "release_mode": "version-only-release-pr",
         "branch_head_sha": identity_sha,
+        "source_pr_updated_at": trailers.get("Source-PR-Updated-At", ""),
         "verified": identity_commit.get("commit", {}).get("verification", {}).get("verified") is True,
     }
     try:
@@ -691,7 +724,8 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
             token,
             repository,
             version,
-            reservation["Release-Reservation-Commit-SHA"],
+            head_sha,
+            alternate_sha=reservation["Release-Reservation-Commit-SHA"],
         ):
             raise IdentityError("normal release reservation ownership changed during identity resolution")
         if preparation_identity_reservation(
