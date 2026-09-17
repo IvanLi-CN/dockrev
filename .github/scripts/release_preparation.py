@@ -300,24 +300,45 @@ def covered_product_has_existing_identity(
         if not isinstance(reservation_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", reservation_sha):
             raise PreparationError("release reservation ref has an invalid commit SHA")
         reservation = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{reservation_sha}")
-        trailers = release_policy.parse_reservation_trailers(
-            str(reservation.get("commit", {}).get("message", ""))
-        )
+        message = str(reservation.get("commit", {}).get("message", ""))
+        trailers = release_policy.parse_reservation_trailers(message)
         if trailers.get("Release-Reservation-Source-SHA") == covered_merge_sha:
-            try:
-                release_policy.validate_sha(covered_merge_sha, "reservation_source_sha")
-                if trailers.get("Release-Reservation-Version") != version:
-                    raise PreparationError("covered product reservation version does not match VERSION")
-                if [parent.get("sha") for parent in reservation.get("parents", [])] != [covered_merge_sha]:
-                    raise PreparationError("covered product reservation ownership is invalid")
-            except release_policy.PolicyError as error:
-                raise PreparationError(str(error)) from error
-            if not (
-                identity_sha is not None
-                and trailers.get("Release-Reservation-Identity-SHA") == identity_sha
-                and trailers.get("Release-Reservation-Mode") == "version-only-release-pr"
+            identity_trailers = release_policy.parse_trailers(message)
+            if (
+                identity_trailers.get("Release-Mode") == "version-only-release-pr"
+                and not trailers.get("Release-Reservation-Identity-SHA")
             ):
-                return True
+                if reservation.get("commit", {}).get("verification", {}).get("verified") is not True:
+                    raise PreparationError("direct release reservation identity is not signed")
+                parents = [parent.get("sha") for parent in reservation.get("parents", [])]
+                if len(parents) != 1 or not isinstance(parents[0], str):
+                    raise PreparationError("direct release reservation identity must have one parent")
+                try:
+                    release_policy.validate_version_only_reservation(
+                        reservation,
+                        version=version,
+                        pr_number=int(trailers.get("Release-Reservation-PR", "0")),
+                        source_sha=covered_merge_sha,
+                    )
+                except (ValueError, release_policy.PolicyError) as error:
+                    raise PreparationError(str(error)) from error
+                if identity_sha is None or reservation_sha != identity_sha:
+                    return True
+            else:
+                try:
+                    release_policy.validate_sha(covered_merge_sha, "reservation_source_sha")
+                    if trailers.get("Release-Reservation-Version") != version:
+                        raise PreparationError("covered product reservation version does not match VERSION")
+                    if [parent.get("sha") for parent in reservation.get("parents", [])] != [covered_merge_sha]:
+                        raise PreparationError("covered product reservation ownership is invalid")
+                except release_policy.PolicyError as error:
+                    raise PreparationError(str(error)) from error
+                if not (
+                    identity_sha is not None
+                    and trailers.get("Release-Reservation-Identity-SHA") == identity_sha
+                    and trailers.get("Release-Reservation-Mode") == "version-only-release-pr"
+                ):
+                    return True
 
     def tag_fetch(path: str) -> Any:
         try:
@@ -378,10 +399,8 @@ def version_only_reservation_is_owned(
         )
     except (PreparationError, release_policy.PolicyError):
         return False
-    return (
-        trailers.get("Release-Reservation-Identity-SHA") == identity_sha
-        and trailers.get("Release-Reservation-Intent") == release_intent
-    )
+    reservation_identity_sha = trailers.get("Release-Reservation-Identity-SHA") or reservation_sha
+    return reservation_identity_sha == identity_sha and trailers.get("Release-Reservation-Intent") == release_intent
 
 
 def version_reservation_exists(

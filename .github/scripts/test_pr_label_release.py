@@ -848,7 +848,12 @@ try:
                             "Release-Baseline-Version: 0.80.1\n"
                             "Release-Intent: type:patch channel:stable\n"
                             "Source-PR-Updated-At: 2026-01-01T00:00:00Z\n"
-                            "Release-Mode: version-only-release-pr"
+                            "Release-Mode: version-only-release-pr\n"
+                            "Release-Reservation-Version: 0.80.2\n"
+                            "Release-Reservation-PR: 42\n"
+                            f"Release-Reservation-Source-SHA: {covered_merge_sha}\n"
+                            "Release-Reservation-Intent: type:patch channel:stable\n"
+                            "Release-Reservation-Mode: version-only-release-pr"
                         )
                     }
                 }
@@ -865,7 +870,7 @@ try:
             if path.endswith(f"/git/ref/heads/release-recovery%2F{covered_merge_sha}"):
                 if covered_identity_marker == "foreign":
                     return {"object": {"sha": "9" * 40}}
-                if covered_identity_marker == "owned":
+                if covered_identity_marker in {"owned", "direct-owned"}:
                     return {"object": {"sha": prep_sha}}
                 raise preparation_script.PreparationError("GitHub API failed: 404:")
             if path.endswith("/git/ref/heads/release-reservation%2Fv0.80.1"):
@@ -879,6 +884,8 @@ try:
             if path.endswith("/git/ref/heads/release-reservation%2Fv0.80.2"):
                 if covered_identity_marker == "owned":
                     return {"object": {"sha": "f" * 40}}
+                if covered_identity_marker == "direct-owned":
+                    return {"object": {"sha": prep_sha}}
                 raise preparation_script.PreparationError("GitHub API failed: 404:")
             if path.endswith("/commits/" + "a" * 40):
                 return {
@@ -941,6 +948,58 @@ try:
         assert recovery_identity_reservations[-1] == (covered_merge_sha, prep_sha)
         assert reservation_sequence == ["covered", "version"]
 
+        covered_identity_marker = "direct-owned"
+        preparation_script.reserve_recovery_identity = lambda *_args: False
+        retry_output = Path(directory) / "direct-retry.json"
+        preparation_script.create(Namespace(
+            api_root="https://api.github.test",
+            token="token",
+            repository="IvanLi-CN/dockrev",
+            pr_number=42,
+            exact_version=None,
+            release_mode="version-only-release-pr",
+            output=retry_output,
+        ))
+        retry_result = json.loads(retry_output.read_text(encoding="utf-8"))
+        assert retry_result["skipped"] == "already-version-only"
+        assert preparation_script.version_only_reservation_is_owned(
+            "https://api.github.test",
+            "token",
+            "IvanLi-CN/dockrev",
+            "0.80.2",
+            42,
+            covered_merge_sha,
+            prep_sha,
+            "type:patch channel:stable",
+        ) is True
+        preparation_script.reserve_recovery_identity = fake_reserve_recovery_identity
+
+        missing_direct_trailer_message = (
+            "VERSION-only recovery\n\n"
+            f"Covered-Product-Merge-SHA: {covered_merge_sha}\n"
+            "Product-Version: 0.80.2\n"
+            "Release-Baseline-Version: 0.80.1\n"
+            "Release-Intent: type:patch channel:stable\n"
+            "Source-PR-Updated-At: 2026-01-01T00:00:00Z\n"
+            "Release-Mode: version-only-release-pr\n"
+            "Release-Reservation-Version: 0.80.2\n"
+            "Release-Reservation-PR: 42\n"
+            f"Release-Reservation-Source-SHA: {covered_merge_sha}\n"
+            "Release-Reservation-Mode: version-only-release-pr"
+        )
+        expect_error(
+            policy.validate_version_only_reservation,
+            {
+                "parents": [{"sha": source_sha}],
+                "commit": {
+                    "verification": {"verified": True},
+                    "message": missing_direct_trailer_message,
+                },
+            },
+            version="0.80.2",
+            pr_number=42,
+            source_sha=covered_merge_sha,
+        )
         covered_identity_marker = False
         assert preparation_script.covered_product_has_existing_identity(
             "https://api.github.test",
@@ -1228,7 +1287,12 @@ try:
         "Release-Baseline-Version: 0.80.1\n"
         "Release-Intent: type:patch channel:stable\n"
         "Source-PR-Updated-At: 2026-01-01T00:00:00Z\n"
-        "Release-Mode: version-only-release-pr"
+        "Release-Mode: version-only-release-pr\n"
+        "Release-Reservation-Version: 0.80.2\n"
+        "Release-Reservation-PR: 42\n"
+        f"Release-Reservation-Source-SHA: {version_only_completion_covered_sha}\n"
+        "Release-Reservation-Intent: type:patch channel:stable\n"
+        "Release-Reservation-Mode: version-only-release-pr"
     )
     recovery_identity_matches = True
 

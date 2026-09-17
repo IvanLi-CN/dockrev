@@ -312,15 +312,15 @@ def validate_version_only_reservation(
             raise PolicyError("version-only reservation version does not match expected VERSION")
         if identity.get("Covered-Product-Merge-SHA") != source_sha:
             raise PolicyError("version-only reservation source SHA does not match expected source")
-        if trailers.get("Release-Reservation-Version") not in {None, version}:
+        if trailers.get("Release-Reservation-Version") != version:
             raise PolicyError("version-only reservation version trailer does not match expected VERSION")
-        if trailers.get("Release-Reservation-PR") not in {None, str(pr_number)}:
+        if trailers.get("Release-Reservation-PR") != str(pr_number):
             raise PolicyError("version-only reservation belongs to another PR")
-        if trailers.get("Release-Reservation-Source-SHA") not in {None, source_sha}:
+        if trailers.get("Release-Reservation-Source-SHA") != source_sha:
             raise PolicyError("version-only reservation source trailer does not match expected source")
-        if trailers.get("Release-Reservation-Intent") not in {None, identity.get("Release-Intent", "")}:
+        if trailers.get("Release-Reservation-Intent") != identity.get("Release-Intent", ""):
             raise PolicyError("version-only reservation intent trailer does not match identity")
-        if trailers.get("Release-Reservation-Mode") not in {None, "version-only-release-pr"}:
+        if trailers.get("Release-Reservation-Mode") != "version-only-release-pr":
             raise PolicyError("version-only reservation mode is invalid")
         release_intent = identity.get("Release-Intent", "")
         try:
