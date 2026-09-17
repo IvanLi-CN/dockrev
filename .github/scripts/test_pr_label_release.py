@@ -870,7 +870,7 @@ try:
             if path.endswith(f"/git/ref/heads/release-recovery%2F{covered_merge_sha}"):
                 if covered_identity_marker == "foreign":
                     return {"object": {"sha": "9" * 40}}
-                if covered_identity_marker in {"owned", "direct-owned"}:
+                if covered_identity_marker in {"owned", "direct-owned", "recovery-only"}:
                     return {"object": {"sha": prep_sha}}
                 raise preparation_script.PreparationError("GitHub API failed: 404:")
             if path.endswith("/git/ref/heads/release-reservation%2Fv0.80.1"):
@@ -1024,16 +1024,22 @@ try:
         assert len(recovery_identity_reservations) == recoveries_before
         covered_publication_lock_sha = None
 
+        covered_identity_marker = "recovery-only"
         preparation_script.reserve_recovery_identity = lambda *_args: False
-        expect_error(preparation_script.create, Namespace(
+        recovery_only_output = Path(directory) / "recovery-only.json"
+        preparation_script.create(Namespace(
             api_root="https://api.github.test",
             token="token",
             repository="IvanLi-CN/dockrev",
             pr_number=42,
             exact_version=None,
             release_mode="version-only-release-pr",
-            output=Path(directory) / "orphaned-recovery.json",
+            output=recovery_only_output,
         ))
+        recovery_only_result = json.loads(recovery_only_output.read_text(encoding="utf-8"))
+        assert recovery_only_result["skipped"] == "already-version-only"
+        assert calls["reserve"] == reservations_before + 1
+        covered_identity_marker = False
         preparation_script.reserve_recovery_identity = fake_reserve_recovery_identity
 
         covered_identity_marker = "foreign"
