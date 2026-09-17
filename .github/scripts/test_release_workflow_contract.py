@@ -80,6 +80,14 @@ assert "release-failure-context-" in release and "workflow_dispatch merge_sha=" 
 assert "create VERSION-only release PR Covered-Product-Merge-SHA=" in release
 assert "prior failed automatic Release run" in release
 assert "path: release-assets" in release and 'chmod +x "${source}"' in release
+assert "name: release-assets-amd64-${{ env.MERGE_SHA }}" in release
+assert "name: release-assets-arm64-${{ env.MERGE_SHA }}" in release
+assert "Stage prebuilt Docker binaries" in release
+assert "target: runtime-prebuilt" in release
+assert "target: runtime-supervisor-prebuilt" in release
+assert "Build and push Dockrev image (artifact-first)" in release
+assert "Build and push supervisor image (artifact-first)" in release
+assert 'source="release-assets/${arch}/musl"' in release
 assert "Acquire immutable publication lock" in release
 assert "release-publication-lock/v${lock_version}" in release
 assert "identity_ref_sha" in release

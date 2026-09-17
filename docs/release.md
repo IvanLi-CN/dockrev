@@ -69,9 +69,11 @@ that absence before accepting it.
    commit, `Release Preparation` recognizes its signed trailers and skips a
    second preparation, so the source identity cannot recurse.
 5. After merge, `Release` resolves the merged SHA to exactly one merged PR and
-   consumes only its immutable identity. It verifies tag ownership, builds
-   `dockrev` and `dockrev-supervisor` for amd64/arm64 and gnu/musl, then
-   publishes the GitHub Release and GHCR images.
+   consumes only its immutable identity. The architecture jobs build
+   `dockrev` and `dockrev-supervisor` for amd64/arm64 and gnu/musl, and the
+   publish job assembles both GHCR images from those exact-SHA musl binaries
+   through the Dockerfile's artifact-first targets. It then publishes the
+   GitHub Release and versioned GHCR images.
 
 ## Remediation boundaries
 
