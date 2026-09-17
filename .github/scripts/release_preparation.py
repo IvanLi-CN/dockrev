@@ -1289,17 +1289,20 @@ def create(args: argparse.Namespace) -> int:
             recovery_created = reserve_recovery_identity(
                 args.api_root, args.token, args.repository, covered_merge_sha, source_sha
             )
-            if not recovery_created and not version_only_reservation_is_owned(
-                args.api_root,
-                args.token,
-                args.repository,
-                version,
-                args.pr_number,
-                covered_merge_sha,
-                source_sha,
-                head_trailers["Release-Intent"],
-            ):
-                raise PreparationError("covered recovery identity is orphaned without its target reservation")
+            if not recovery_created:
+                if not recovery_was_owned:
+                    raise PreparationError("covered recovery identity is not owned by this preparation")
+                if target_reservation_exists and not version_only_reservation_is_owned(
+                    args.api_root,
+                    args.token,
+                    args.repository,
+                    version,
+                    args.pr_number,
+                    covered_merge_sha,
+                    source_sha,
+                    head_trailers["Release-Intent"],
+                ):
+                    raise PreparationError("covered recovery identity is orphaned without its target reservation")
             if covered_product_has_existing_identity(
                 args.api_root,
                 args.token,
