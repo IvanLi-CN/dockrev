@@ -174,19 +174,6 @@ fn rule_delay(rule: &AutoUpdateRule) -> (u32, u32) {
     }
 }
 
-fn candidate_match_values(candidate: &notify::NewVersionDiscoveredService) -> Vec<&str> {
-    if candidate.candidate_display_tag.trim().is_empty()
-        || candidate.candidate_display_tag.trim() == candidate.candidate_tag.trim()
-    {
-        vec![candidate.candidate_tag.trim()]
-    } else {
-        vec![
-            candidate.candidate_display_tag.trim(),
-            candidate.candidate_tag.trim(),
-        ]
-    }
-}
-
 fn resolved_candidate_version(candidate: &notify::NewVersionDiscoveredService) -> Option<String> {
     dockrev_common::normalized_semver_from_oci_version(&candidate.candidate_tag)
 }
@@ -217,13 +204,14 @@ fn rule_matches_candidate(
     rule: &AutoUpdateRule,
     candidate: &notify::NewVersionDiscoveredService,
     resolved_version: Option<&str>,
+    resolved_tags: Option<&[String]>,
 ) -> bool {
     match rule.matcher.kind {
         AutoUpdateMatcherType::Semver => {
             resolved_version.is_some_and(|version| rule_matches_text(rule, version))
         }
         AutoUpdateMatcherType::Regex | AutoUpdateMatcherType::Glob => {
-            candidate_match_values(candidate)
+            candidate_match_values(candidate, resolved_tags)
                 .into_iter()
                 .any(|value| rule_matches_text(rule, value))
         }
@@ -308,6 +296,7 @@ fn version_lag_met(
     candidate: &notify::NewVersionDiscoveredService,
     rule: &AutoUpdateRule,
     history: &[NewVersionDiscoveryRow],
+    resolved_tags: Option<&[String]>,
 ) -> bool {
     if min_version_lag == 0 {
         return true;
@@ -317,7 +306,7 @@ fn version_lag_met(
     };
 
     let mut versions = BTreeSet::<semver::Version>::new();
-    for value in candidate_match_values(candidate) {
+    for value in candidate_match_values(candidate, resolved_tags) {
         if let Some(version) = ignore::parse_version(value)
             && version > current_version
             && rule_matches_text(rule, value)
@@ -765,21 +754,6 @@ pub async fn reconcile_pending_inference(
         )
         .await?;
     }
-    for candidate in state
-        .db
-        .list_auto_update_candidates_for_policy_reconciliation(50)
-        .await?
-    {
-        evaluate_candidate(
-            state,
-            &candidate.source_job_id,
-            &candidate.discovered_at,
-            now,
-            &candidate_from_row(&candidate),
-            Some(&candidate.source),
-        )
-        .await?;
-    }
     Ok(reconciled)
 }
 
@@ -878,7 +852,12 @@ async fn pending_delay_gates_met(
     let requires_resolved_version = matches!(rule.matcher.kind, AutoUpdateMatcherType::Semver);
     if settlement.status == "superseded"
         || (requires_resolved_version && settlement.status != "ready")
-        || !rule_matches_candidate(rule, &candidate, settlement.resolved_version.as_deref())
+        || !rule_matches_candidate(
+            rule,
+            &candidate,
+            settlement.resolved_version.as_deref(),
+            settlement.resolved_tags.as_deref(),
+        )
     {
         state
             .db
@@ -919,6 +898,7 @@ async fn pending_delay_gates_met(
         &candidate,
         rule,
         &history,
+        settlement.resolved_tags.as_deref(),
     ))
 }
 fn build_auto_update_target(
@@ -1257,7 +1237,14 @@ async fn evaluate_candidate(
         .rules
         .iter()
         .filter(|rule| rule.enabled)
-        .find(|rule| rule_matches_candidate(rule, &candidate, resolved_version.as_deref()))
+        .find(|rule| {
+            rule_matches_candidate(
+                rule,
+                &candidate,
+                resolved_version.as_deref(),
+                candidate_row.resolved_tags.as_deref(),
+            )
+        })
         .cloned()
         .map(|rule| MatchedRule { rule });
     let matched = if let Some(matched) = matched {
@@ -1375,7 +1362,7 @@ fn auto_policy_source(
     created_by: Option<&str>,
 ) -> Option<&'static str> {
     if reason.eq_ignore_ascii_case("schedule")
-        && created_by.is_none_or(|value| value.eq_ignore_ascii_case("schedule"))
+        && created_by.is_some_and(|value| value.eq_ignore_ascii_case("schedule"))
     {
         return Some("schedule");
     }
@@ -1383,7 +1370,7 @@ fn auto_policy_source(
         .get("source")
         .and_then(serde_json::Value::as_str)
         .is_some_and(|source| source.eq_ignore_ascii_case("github_webhook"))
-        && created_by.is_none_or(|value| {
+        && created_by.is_some_and(|value| {
             value.eq_ignore_ascii_case("webhook") || value.eq_ignore_ascii_case("github")
         })
         && api::summary_emits_new_version_notification(summary)
@@ -1474,6 +1461,7 @@ pub async fn process_due_pending(
         .db
         .reconcile_auto_update_pending_claims(&stale_before, now)
         .await?;
+    reconcile_auto_update_policy_candidates(state, now).await?;
     let mut enqueued = recover_enqueued_auto_update_jobs(state, now, limit).await?;
     let due = state
         .db

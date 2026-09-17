@@ -45,8 +45,22 @@ mod reconciliation_tests {
             candidate_display_tag: "1.1.0".to_string(),
         }];
         let rule = rule(AutoUpdateMatcherType::Semver, ">=1, <2");
-        assert!(version_lag_met(2, &candidate.current_display_tag, &candidate, &rule, &history));
-        assert!(!version_lag_met(3, &candidate.current_display_tag, &candidate, &rule, &history));
+        assert!(version_lag_met(
+            2,
+            &candidate.current_display_tag,
+            &candidate,
+            &rule,
+            &history,
+            None
+        ));
+        assert!(!version_lag_met(
+            3,
+            &candidate.current_display_tag,
+            &candidate,
+            &rule,
+            &history,
+            None
+        ));
     }
 
     #[test]
@@ -97,7 +111,14 @@ mod reconciliation_tests {
         let rule = rule(AutoUpdateMatcherType::Semver, ">=1, <2");
 
         assert_eq!(candidate.candidate_display_tag, "1.2.0");
-        assert!(version_lag_met(2, &candidate.current_display_tag, &candidate, &rule, &history));
+        assert!(version_lag_met(
+            2,
+            &candidate.current_display_tag,
+            &candidate,
+            &rule,
+            &history,
+            None
+        ));
     }
 
     #[test]

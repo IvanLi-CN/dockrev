@@ -233,6 +233,29 @@ async fn insert_update_job_with_summary(
         .unwrap();
 }
 
+async fn insert_schedule_check_job(state: &Arc<AppState>, job_id: &str, created_at: &str) {
+    state
+        .db
+        .insert_job(crate::api::types::JobListItem {
+            id: job_id.to_string(),
+            r#type: crate::api::types::JobType::Check,
+            scope: crate::api::types::JobScope::All,
+            stack_id: None,
+            service_id: None,
+            status: "success".to_string(),
+            created_by: "schedule".to_string(),
+            reason: "schedule".to_string(),
+            created_at: created_at.to_string(),
+            started_at: Some(created_at.to_string()),
+            finished_at: Some(created_at.to_string()),
+            allow_arch_mismatch: false,
+            backup_mode: "inherit".to_string(),
+            summary_json: json!({}),
+        })
+        .await
+        .unwrap();
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn insert_backup_record(
     state: &Arc<AppState>,
@@ -329,9 +352,11 @@ services:
             .all(|job| job.reason != "auto_policy")
     );
 
+    insert_schedule_check_job(&state, "chk_schedule", &now).await;
     crate::auto_update::handle_completed_check(&state, "chk_schedule", "schedule", &now, &summary)
         .await
         .unwrap();
+    insert_schedule_check_job(&state, "chk_schedule_duplicate", &now).await;
     crate::auto_update::handle_completed_check(
         &state,
         "chk_schedule_duplicate",
@@ -503,6 +528,7 @@ services:
         .unwrap();
 
     let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    insert_schedule_check_job(&state, "chk_schedule", &now).await;
     crate::auto_update::handle_completed_check(&state, "chk_schedule", "schedule", &now, &summary)
         .await
         .unwrap();
@@ -555,6 +581,7 @@ services:
         .unwrap();
 
     let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    insert_schedule_check_job(&state, "chk_schedule", &now).await;
     crate::auto_update::handle_completed_check(&state, "chk_schedule", "schedule", &now, &summary)
         .await
         .unwrap();
@@ -629,6 +656,7 @@ services:
         .unwrap();
 
     let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    insert_schedule_check_job(&state, "chk_schedule", &now).await;
     crate::auto_update::handle_completed_check(&state, "chk_schedule", "schedule", &now, &summary)
         .await
         .unwrap();
@@ -685,6 +713,7 @@ services:
         .unwrap();
 
     let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    insert_schedule_check_job(&state, "chk_schedule_initial", &first_seen).await;
     crate::auto_update::handle_completed_check(
         &state,
         "chk_schedule_initial",
@@ -714,6 +743,7 @@ services:
         )
         .await
         .unwrap();
+    insert_schedule_check_job(&state, "chk_schedule_recheck", &twenty_minutes_later).await;
     crate::auto_update::handle_completed_check(
         &state,
         "chk_schedule_recheck",
@@ -774,6 +804,7 @@ services:
         .unwrap();
 
     let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    insert_schedule_check_job(&state, "chk_schedule_initial", &first_seen).await;
     crate::auto_update::handle_completed_check(
         &state,
         "chk_schedule_initial",
@@ -846,6 +877,7 @@ services:
         .unwrap();
 
     let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    insert_schedule_check_job(&state, "chk_schedule_initial", &first_seen).await;
     crate::auto_update::handle_completed_check(
         &state,
         "chk_schedule_initial",
@@ -927,6 +959,7 @@ services:
         .unwrap();
 
     let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    insert_schedule_check_job(&state, "chk_schedule_initial", &first_seen).await;
     crate::auto_update::handle_completed_check(
         &state,
         "chk_schedule_initial",
@@ -956,6 +989,7 @@ services:
         )
         .await
         .unwrap();
+    insert_schedule_check_job(&state, "chk_schedule_override", &override_at).await;
     crate::auto_update::handle_completed_check(
         &state,
         "chk_schedule_override",

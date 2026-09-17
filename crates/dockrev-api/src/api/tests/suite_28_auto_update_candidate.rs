@@ -389,6 +389,7 @@ services:
     let mut summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
     summary["newVersions"]["services"][0]["candidateTag"] = json!("latest");
     summary["newVersions"]["services"][0]["candidateDisplayTag"] = json!("latest");
+    insert_schedule_check_job(&state, "chk_schedule_raw_tag", &now).await;
     crate::auto_update::handle_completed_check(
         &state,
         "chk_schedule_raw_tag",

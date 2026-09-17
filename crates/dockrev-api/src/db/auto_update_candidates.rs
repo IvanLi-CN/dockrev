@@ -131,7 +131,7 @@ SET status = ?3,
     resolved_version = COALESCE(?4, resolved_version),
     resolved_tags = COALESCE(?5, resolved_tags),
     reason = ?6,
-    last_error = COALESCE(?7, last_error),
+    last_error = CASE WHEN ?3 = 'ready' THEN NULL ELSE COALESCE(?7, last_error) END,
     attempts = ?8,
     retry_at = ?9,
     settled_at = ?10,
@@ -150,7 +150,7 @@ WHERE service_id = ?1 AND candidate_digest = ?2
     OR resolved_version IS NOT COALESCE(?4, resolved_version)
     OR resolved_tags IS NOT COALESCE(?5, resolved_tags)
     OR reason IS NOT ?6
-    OR last_error IS NOT COALESCE(?7, last_error)
+    OR last_error IS NOT CASE WHEN ?3 = 'ready' THEN NULL ELSE COALESCE(?7, last_error) END
     OR attempts IS NOT ?8
     OR retry_at IS NOT ?9
     OR settled_at IS NOT ?10

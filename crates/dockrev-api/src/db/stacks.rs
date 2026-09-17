@@ -1253,16 +1253,19 @@ WHERE id = ?1
                 .query_row(
                     r#"
 SELECT
-  image_ref,
-  image_tag,
-  current_digest,
-  current_runtime_started_at,
-  current_resolved_tag,
-  candidate_tag,
-  candidate_resolved_tag,
-  candidate_digest
+  services.image_ref,
+  services.image_tag,
+  services.current_digest,
+  services.current_runtime_started_at,
+  services.current_resolved_tag,
+  services.candidate_tag,
+  COALESCE(auto_update_candidates.resolved_version, services.candidate_resolved_tag),
+  services.candidate_digest
 FROM services
-WHERE id = ?1
+LEFT JOIN auto_update_candidates
+  ON auto_update_candidates.service_id = services.id
+ AND auto_update_candidates.candidate_digest = services.candidate_digest
+WHERE services.id = ?1
 "#,
                     params![service_id],
                     |row| {

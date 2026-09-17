@@ -87,6 +87,28 @@ async fn candidate_settlement_is_unique_and_idempotent() {
         .unwrap();
     assert_eq!(first.id, second.id);
 
+    let failed = db
+        .settle_auto_update_candidate(&AutoUpdateCandidateSettlementInput {
+            service_id: "service".to_string(),
+            candidate_digest: "sha256:new".to_string(),
+            status: "unresolved".to_string(),
+            resolved_version: None,
+            resolved_tags: None,
+            reason: Some("inference_failed".to_string()),
+            last_error: Some("temporary registry failure".to_string()),
+            attempts: 1,
+            retry_at: Some("2026-04-30T00:01:00Z".to_string()),
+            settled_at: Some("2026-04-30T00:01:00Z".to_string()),
+            now: "2026-04-30T00:01:00Z".to_string(),
+        })
+        .await
+        .unwrap()
+        .expect("failed settlement changes the row");
+    assert_eq!(
+        failed.last_error.as_deref(),
+        Some("temporary registry failure")
+    );
+
     let settled = db
         .settle_auto_update_candidate(&AutoUpdateCandidateSettlementInput {
             service_id: "service".to_string(),
@@ -106,6 +128,7 @@ async fn candidate_settlement_is_unique_and_idempotent() {
         .expect("first settlement changes the row");
     assert_eq!(settled.status, "ready");
     assert_eq!(settled.resolved_version.as_deref(), Some("1.4.0"));
+    assert_eq!(settled.last_error, None);
     assert_eq!(
         settled.resolved_tags.as_deref(),
         Some(["1.4.0".to_string(), "stable".to_string()].as_slice())

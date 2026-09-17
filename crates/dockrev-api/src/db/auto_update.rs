@@ -237,6 +237,50 @@ WHERE id = ?1
             }
             tx.execute(
                 r#"
+UPDATE auto_update_pending
+SET source_check_job_id = ?6,
+    candidate_tag = ?7,
+    candidate_display_tag = ?8,
+    current_display_tag = ?9,
+    due_at = ?10,
+    min_age_seconds = ?11,
+    min_version_lag = ?12,
+    summary_json = ?13,
+    updated_at = ?14,
+    candidate_id = CASE
+      WHEN ?15 IS NULL OR EXISTS (
+        SELECT 1 FROM auto_update_candidates c
+        WHERE c.id = ?15 AND c.service_id = ?4 AND c.candidate_digest = ?5
+      ) THEN ?15
+      ELSE NULL
+    END
+WHERE service_id = ?4
+  AND rule_id = ?2
+  AND candidate_digest = ?5
+  AND policy_scope_type = ?1
+  AND policy_scope_id = ?3
+  AND status = 'pending'
+"#,
+                params![
+                    input.policy_scope_type,
+                    input.rule_id,
+                    input.policy_scope_id,
+                    input.service_id,
+                    input.candidate_digest,
+                    input.source_check_job_id,
+                    input.candidate_tag,
+                    input.candidate_display_tag,
+                    input.current_display_tag,
+                    input.due_at,
+                    input.min_age_seconds as i64,
+                    input.min_version_lag as i64,
+                    serde_json::to_string(&input.summary_json)?,
+                    now,
+                    input.candidate_id,
+                ],
+            )?;
+            tx.execute(
+                r#"
 INSERT OR IGNORE INTO auto_update_pending (
   id,
   policy_scope_type,

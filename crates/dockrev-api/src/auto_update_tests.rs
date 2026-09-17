@@ -71,10 +71,7 @@ fn schedule_source_requires_scheduler_created_check_jobs() {
         Some("schedule")
     );
     assert_eq!(auto_policy_source("schedule", &summary, Some("ivan")), None);
-    assert_eq!(
-        auto_policy_source("schedule", &summary, None),
-        Some("schedule")
-    );
+    assert_eq!(auto_policy_source("schedule", &summary, None), None);
 }
 
 #[test]
@@ -91,11 +88,25 @@ fn semver_is_fail_closed_until_digest_bound_version_exists() {
         candidate_digest: "sha256:new".to_string(),
     };
     let semver = rule(AutoUpdateMatcherType::Semver, ">=1, <2");
-    assert!(!rule_matches_candidate(&semver, &candidate, None));
-    assert!(rule_matches_candidate(&semver, &candidate, Some("1.4.0")));
+    assert!(!rule_matches_candidate(&semver, &candidate, None, None));
+    assert!(rule_matches_candidate(
+        &semver,
+        &candidate,
+        Some("1.4.0"),
+        None
+    ));
 
     let regex = rule(AutoUpdateMatcherType::Regex, "latest");
-    assert!(rule_matches_candidate(&regex, &candidate, None));
+    assert!(rule_matches_candidate(&regex, &candidate, None, None));
+
+    let resolved_tags = vec!["latest".to_string(), "stable".to_string()];
+    let stable = rule(AutoUpdateMatcherType::Glob, "stable");
+    assert!(rule_matches_candidate(
+        &stable,
+        &candidate,
+        None,
+        Some(resolved_tags.as_slice())
+    ));
 }
 
 #[test]

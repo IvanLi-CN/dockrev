@@ -23,6 +23,49 @@ fn candidate_event_targets(
     (keys, targets)
 }
 
+fn candidate_match_values<'a>(
+    candidate: &'a notify::NewVersionDiscoveredService,
+    resolved_tags: Option<&'a [String]>,
+) -> Vec<&'a str> {
+    let mut values = resolved_tags
+        .into_iter()
+        .flatten()
+        .map(String::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .collect::<Vec<_>>();
+    let display_tag = candidate.candidate_display_tag.trim();
+    let raw_tag = candidate.candidate_tag.trim();
+    if !display_tag.is_empty() && display_tag != raw_tag {
+        values.push(display_tag);
+    }
+    if !raw_tag.is_empty() {
+        values.push(raw_tag);
+    }
+    values
+}
+
+async fn reconcile_auto_update_policy_candidates(
+    state: &Arc<AppState>,
+    now: &str,
+) -> anyhow::Result<()> {
+    for candidate in state
+        .db
+        .list_auto_update_candidates_for_policy_reconciliation(50)
+        .await?
+    {
+        evaluate_candidate(
+            state,
+            &candidate.source_job_id,
+            &candidate.discovered_at,
+            now,
+            &candidate_from_row(&candidate),
+            Some(&candidate.source),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 pub fn spawn_tasks(state: Arc<AppState>) {
     tokio::spawn(async move {
         let interval = Duration::from_secs(PENDING_POLL_INTERVAL_SECONDS);
