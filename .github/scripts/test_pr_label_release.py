@@ -2747,6 +2747,19 @@ version_only_signed_reservation_message = "\n".join(
         "Release-Reservation-Mode: version-only-release-pr",
     ]
 )
+direct_identity_sha = "3" * 40
+direct_identity_message = "\n".join(
+    [
+        "Prepare version-only release identity",
+        "",
+        f"Covered-Product-Merge-SHA: {version_only_signed_reservation_source_sha}",
+        "Product-Version: 0.80.2",
+        "Release-Baseline-Version: 0.80.1",
+        "Release-Intent: type:patch channel:stable",
+        "Source-PR-Updated-At: 2026-01-01T00:00:00Z",
+        "Release-Mode: version-only-release-pr",
+    ]
+)
 original_signed_reservation_api_request = preparation_script.api_request
 try:
     signed_reservation_calls = []
@@ -2767,6 +2780,14 @@ try:
                     "verification": {"verified": True},
                 },
             }
+        if method == "GET" and path.endswith(f"/commits/{direct_identity_sha}"):
+            return {
+                "parents": [{"sha": "d" * 40}],
+                "commit": {
+                    "message": direct_identity_message,
+                    "verification": {"verified": True},
+                },
+            }
         if method == "GET" and path.endswith("/commits/" + "e" * 40):
             return {
                 "parents": [{"sha": "d" * 40}],
@@ -2776,11 +2797,9 @@ try:
                 },
             }
         if method == "POST" and path.endswith("/git/refs"):
-            assert payload == {
-                "ref": "refs/heads/release-reservation/v0.80.2",
-                "sha": version_only_signed_reservation_sha,
-            }
-            signed_reservation_ref_sha = version_only_signed_reservation_sha
+            assert payload["ref"] == "refs/heads/release-reservation/v0.80.2"
+            assert payload["sha"] in {version_only_signed_reservation_sha, direct_identity_sha}
+            signed_reservation_ref_sha = payload["sha"]
             return {"ref": payload["ref"], "object": {"sha": payload["sha"]}}
         raise AssertionError((method, path, payload))
 
@@ -2803,6 +2822,19 @@ try:
         pr_number=394,
         source_sha=version_only_signed_reservation_source_sha,
     )["Release-Reservation-Intent"] == "type:patch channel:stable"
+
+    signed_reservation_ref_sha = None
+    assert preparation_script.reserve_version_ref(
+        "https://api.github.test",
+        "token",
+        "IvanLi-CN/dockrev",
+        "0.80.2",
+        394,
+        version_only_signed_reservation_source_sha,
+        identity_sha=direct_identity_sha,
+        release_intent="type:patch channel:stable",
+        release_mode="version-only-release-pr",
+    ) == direct_identity_sha
 
     signed_reservation_ref_sha = "e" * 40
     expect_error(
