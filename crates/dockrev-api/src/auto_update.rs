@@ -1376,48 +1376,6 @@ async fn evaluate_candidate(
     Ok(())
 }
 
-fn auto_policy_source(
-    reason: &str,
-    summary: &serde_json::Value,
-    created_by: Option<&str>,
-) -> Option<&'static str> {
-    if reason.eq_ignore_ascii_case("schedule")
-        && created_by.is_some_and(|value| value.eq_ignore_ascii_case("schedule"))
-    {
-        return Some("schedule");
-    }
-    if summary
-        .get("source")
-        .and_then(serde_json::Value::as_str)
-        .is_some_and(|source| source.eq_ignore_ascii_case("github_webhook"))
-        && created_by.is_some_and(|value| {
-            value.eq_ignore_ascii_case("webhook") || value.eq_ignore_ascii_case("github")
-        })
-        && api::summary_emits_new_version_notification(summary)
-    {
-        return Some("github_webhook");
-    }
-    None
-}
-
-fn is_qualified_auto_policy_source(source: Option<&str>) -> bool {
-    matches!(source, Some("schedule" | "github_webhook"))
-}
-
-async fn has_valid_auto_policy_source(
-    db: &crate::db::Db,
-    source_job_id: &str,
-    source: &str,
-) -> anyhow::Result<bool> {
-    let Some(job) = db.get_job(source_job_id).await? else {
-        return Ok(false);
-    };
-    if !job.status.eq_ignore_ascii_case("success") {
-        return Ok(false);
-    }
-    Ok(auto_policy_source(&job.reason, &job.summary_json, Some(&job.created_by)) == Some(source))
-}
-
 pub async fn handle_completed_check(
     state: &Arc<AppState>,
     job_id: &str,

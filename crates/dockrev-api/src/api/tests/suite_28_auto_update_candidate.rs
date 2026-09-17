@@ -60,6 +60,7 @@ fn auto_update_discovery_summary(
 #[tokio::test]
 async fn digest_bound_snapshot_settles_candidate_and_re_evaluates_policy() {
     let state = test_state(":memory:").await;
+    insert_schedule_check_job(&state, "check", "2026-04-30T00:00:00Z").await;
     state
         .db
         .put_auto_update_policy(
@@ -154,6 +155,7 @@ async fn digest_bound_snapshot_settles_candidate_and_re_evaluates_policy() {
 #[tokio::test]
 async fn terminal_unresolved_candidate_re_evaluates_policy_as_skipped() {
     let state = test_state(":memory:").await;
+    insert_schedule_check_job(&state, "check", "2026-04-30T00:00:00Z").await;
     state
         .db
         .put_auto_update_policy(
