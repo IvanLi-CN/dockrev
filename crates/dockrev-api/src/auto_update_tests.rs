@@ -74,6 +74,42 @@ fn schedule_source_requires_scheduler_created_check_jobs() {
     assert_eq!(auto_policy_source("schedule", &summary, None), None);
 }
 
+#[tokio::test]
+async fn source_revalidation_requires_existing_successful_check_job() {
+    let db = crate::db::Db::open(std::path::Path::new(":memory:"))
+        .await
+        .unwrap();
+    db.insert_job(api::types::JobListItem {
+        id: "schedule-check".to_string(),
+        r#type: api::types::JobType::Check,
+        scope: JobScope::All,
+        stack_id: None,
+        service_id: None,
+        status: "success".to_string(),
+        created_by: "schedule".to_string(),
+        reason: "schedule".to_string(),
+        created_at: "2026-04-30T00:00:00Z".to_string(),
+        started_at: None,
+        finished_at: Some("2026-04-30T00:01:00Z".to_string()),
+        allow_arch_mismatch: false,
+        backup_mode: "inherit".to_string(),
+        summary_json: json!({}),
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        has_valid_auto_policy_source(&db, "schedule-check", "schedule")
+            .await
+            .unwrap()
+    );
+    assert!(
+        !has_valid_auto_policy_source(&db, "missing-check", "schedule")
+            .await
+            .unwrap()
+    );
+}
+
 #[test]
 fn semver_is_fail_closed_until_digest_bound_version_exists() {
     let candidate = notify::NewVersionDiscoveredService {

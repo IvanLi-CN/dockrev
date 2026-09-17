@@ -209,10 +209,16 @@ function parseService(value: unknown): Service | null {
           rawTag: asOptionalString(value.candidateSettlement.rawTag),
           candidateDigest: asOptionalString(value.candidateSettlement.candidateDigest),
           resolvedVersion: asOptionalString(value.candidateSettlement.resolvedVersion),
+          resolvedTags: Array.isArray(value.candidateSettlement.resolvedTags)
+            ? value.candidateSettlement.resolvedTags.filter((item): item is string => typeof item === "string")
+            : null,
           reason: asOptionalString(value.candidateSettlement.reason),
           attempts: typeof value.candidateSettlement.attempts === 'number' ? value.candidateSettlement.attempts : 0,
           retryAt: asOptionalString(value.candidateSettlement.retryAt),
           discoveredAt: asOptionalString(value.candidateSettlement.discoveredAt),
+          lastError: asOptionalString(value.candidateSettlement.lastError),
+          supersededAt: asOptionalString(value.candidateSettlement.supersededAt),
+          supersededByCandidateId: asOptionalString(value.candidateSettlement.supersededByCandidateId),
         }
       : null;
   const autoUpdate =

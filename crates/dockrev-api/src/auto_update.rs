@@ -772,7 +772,10 @@ pub async fn reevaluate_service_policy(
     if candidate.policy_status.as_deref() == Some("completed") {
         return Ok(());
     }
-    if !is_qualified_auto_policy_source(Some(&candidate.source)) {
+    if !is_qualified_auto_policy_source(Some(&candidate.source))
+        || !has_valid_auto_policy_source(&state.db, &candidate.source_job_id, &candidate.source)
+            .await?
+    {
         state
             .db
             .set_auto_update_candidate_policy(
@@ -1134,6 +1137,23 @@ async fn evaluate_candidate(
     candidate: &notify::NewVersionDiscoveredService,
     source: Option<&str>,
 ) -> anyhow::Result<()> {
+    if let Some(source) = source
+        && is_qualified_auto_policy_source(Some(source))
+        && !has_valid_auto_policy_source(&state.db, job_id, source).await?
+    {
+        state
+            .db
+            .set_auto_update_candidate_policy(
+                &candidate.service_id,
+                &candidate.candidate_digest,
+                "skipped",
+                Some("unqualified_source"),
+                None,
+                finished_at,
+            )
+            .await?;
+        return Ok(());
+    }
     let (settlement_status, resolved_version, settlement_reason) =
         candidate_settlement_state(candidate);
     let candidate_row = state
@@ -1382,6 +1402,20 @@ fn auto_policy_source(
 
 fn is_qualified_auto_policy_source(source: Option<&str>) -> bool {
     matches!(source, Some("schedule" | "github_webhook"))
+}
+
+async fn has_valid_auto_policy_source(
+    db: &crate::db::Db,
+    source_job_id: &str,
+    source: &str,
+) -> anyhow::Result<bool> {
+    let Some(job) = db.get_job(source_job_id).await? else {
+        return Ok(false);
+    };
+    if !job.status.eq_ignore_ascii_case("success") {
+        return Ok(false);
+    }
+    Ok(auto_policy_source(&job.reason, &job.summary_json, Some(&job.created_by)) == Some(source))
 }
 
 pub async fn handle_completed_check(

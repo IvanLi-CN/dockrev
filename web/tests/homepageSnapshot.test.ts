@@ -95,6 +95,20 @@ const card: HomepageSnapshotCard = {
       reason: null,
       checkedAt: null,
     },
+    candidateSettlement: {
+      status: 'superseded',
+      rawTag: 'latest',
+      candidateDigest: 'sha256:candidate',
+      resolvedVersion: '5.2.3',
+      resolvedTags: ['5.2.3', 'stable'],
+      reason: 'newer_candidate_discovered',
+      attempts: 2,
+      retryAt: null,
+      discoveredAt: '2099-05-07T00:00:00.000Z',
+      lastError: 'old inference error',
+      supersededAt: '2099-05-07T00:01:00.000Z',
+      supersededByCandidateId: 'candidate-new',
+    },
     newVersionDiscoveryCount: 1,
     settings: {
       autoRollback: true,
@@ -157,6 +171,25 @@ describe('homepage snapshot cache', () => {
     expect(raw.cards[0].service.image.ref).toBe('ghcr.io/acme/api:5.2.1')
 
     expect(readHomepageSnapshot(storage)).toBeNull()
+  })
+
+  test('preserves complete candidate settlement state in snapshots', () => {
+    const snapshot = homepageSnapshotFromResponse({
+      generatedAt: homepageResponse.generatedAt,
+      lastCheckAt: homepageResponse.lastCheckAt,
+      resourceSummary: overview,
+      cards: [card],
+    })
+    const storage = new MemoryStorage()
+
+    writeHomepageSnapshot(snapshot, storage)
+    const restored = JSON.parse(storage.getItem(HOMEPAGE_SNAPSHOT_KEY) ?? '{}')
+    const settlement = restored.cards[0].service.candidateSettlement
+
+    expect(settlement.resolvedTags).toEqual(['5.2.3', 'stable'])
+    expect(settlement.lastError).toBe('old inference error')
+    expect(settlement.supersededAt).toBe('2099-05-07T00:01:00.000Z')
+    expect(settlement.supersededByCandidateId).toBe('candidate-new')
   })
 
   test('marks cached resource summary stale while preserving values', () => {

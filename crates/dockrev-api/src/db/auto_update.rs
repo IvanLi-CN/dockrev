@@ -1459,6 +1459,7 @@ mod tests {
         assert_eq!(candidate.status, "awaiting_inference");
         assert_eq!(candidate.attempts, 0);
         assert_eq!(candidate.retry_at, None);
+        assert_eq!(candidate.last_error, None);
         assert_eq!(
             candidate.policy_status.as_deref(),
             Some("waiting_inference")
