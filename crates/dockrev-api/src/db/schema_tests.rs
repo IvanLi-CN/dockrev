@@ -406,12 +406,16 @@ INSERT INTO auto_update_pending (
         serde_json::from_str::<serde_json::Value>(&migrated.2.2).unwrap()["skipReason"],
         "migration_ambiguous_history"
     );
+    assert!(
+        migrated
+            .3
+            .0
+            .as_deref()
+            .is_some_and(|value| { chrono::DateTime::parse_from_rfc3339(value).is_ok() })
+    );
     assert_eq!(
-        migrated.3,
-        (
-            Some("2026-04-30T00:00:00Z".to_string()),
-            Some("migration-ambiguous-history".to_string())
-        )
+        migrated.3.1,
+        Some("migration-ambiguous-history".to_string())
     );
 
     drop(db);

@@ -654,14 +654,15 @@ export function StackDetailPage(props: {
         <div className="stackServiceList">
           {stack.services.map((service) => {
             const status = serviceRowStatus(service)
+            const policyProjection = status === 'blocked' || status === 'archMismatch' ? null : service.autoUpdate
             return (
               <div className="stackServiceRow" key={service.id}>
                 <div className="stackServiceCopy">
                   <div className="stackServiceName mono">{service.name}</div>
                   <div className="stackServiceRef muted">{service.image.ref}</div>
                 </div>
-                <Pill tone={service.autoUpdate ? policyActionTone(service.autoUpdate.policyStatus) : statusTone(status)}>
-                  {service.autoUpdate ? policyActionLabel(service.autoUpdate.policyStatus) : statusLabel(status)}
+                <Pill tone={policyProjection ? policyActionTone(policyProjection.policyStatus) : statusTone(status)}>
+                  {policyProjection ? policyActionLabel(policyProjection.policyStatus) : statusLabel(status)}
                 </Pill>
                 <Button onClick={() => navigate({ name: 'service', stackId: stack.id, serviceId: service.id })}>
                   详情
