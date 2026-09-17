@@ -520,6 +520,14 @@ export function StackDetailPage(props: {
   const updatable = stack.services.filter((service) => serviceRowStatus(service) !== 'ok').length
   const recentUpdateJobs = selectRecentStackUpdateJobs(jobs, stack)
   const stableServices = Math.max(stack.services.length - updatable, 0)
+  const stackPolicyEvidence = stack.services.find((service) =>
+    service.candidateSettlement?.status === 'unresolved' ||
+    service.autoUpdate?.policyStatus === 'waiting_inference' ||
+    service.autoUpdate?.policyStatus === 'delayed' ||
+    service.autoUpdate?.policyStatus === 'queued' ||
+    service.autoUpdate?.policyStatus === 'running' ||
+    service.autoUpdate?.policyStatus === 'failed'
+  ) ?? stack.services.find((service) => service.autoUpdate || service.candidateSettlement)
 
   return (
     <div className="page">
@@ -626,6 +634,8 @@ export function StackDetailPage(props: {
             }}
             policy={policy}
             scope="stack"
+            projection={stackPolicyEvidence?.autoUpdate ?? null}
+            candidateSettlement={stackPolicyEvidence?.candidateSettlement ?? null}
           />
         </AsyncDataRegion>
         <AsyncDataRegion

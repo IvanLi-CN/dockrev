@@ -249,6 +249,9 @@ async fn effective_policy_for_service(
         .await?;
     match service_policy.mode {
         AutoUpdatePolicyMode::Override => {
+            if !service_policy.enabled {
+                return Ok(None);
+            }
             return Ok(Some(EffectivePolicy {
                 scope_type: "service",
                 scope_id: service_id.to_string(),
@@ -559,6 +562,28 @@ fn inference_attempt_is_terminal(attempts: u32) -> bool {
     attempts > 3
 }
 
+fn permanent_inference_error(error: &anyhow::Error) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    [
+        " 400 ",
+        " 401 ",
+        " 403 ",
+        " 404 ",
+        " 405 ",
+        " 406 ",
+        " 415 ",
+        " 422 ",
+        "bad request",
+        "forbidden",
+        "not found",
+        "unauthorized",
+        "parse manifest json",
+        "parse config blob json",
+    ]
+    .iter()
+    .any(|marker| message.contains(marker))
+}
+
 pub async fn reconcile_inference_for_digest(
     state: &Arc<AppState>,
     image_repo: &str,
@@ -599,6 +624,7 @@ pub async fn reconcile_inference_for_digest(
             })
             .flatten();
         let mut inference_error = false;
+        let mut permanent_error = false;
         if resolved.is_none()
             && let Ok(image) = crate::registry::ImageRef::parse(&format!(
                 "{}@{}",
@@ -616,6 +642,7 @@ pub async fn reconcile_inference_for_digest(
                 }
                 Err(error) => {
                     inference_error = true;
+                    permanent_error = permanent_inference_error(&error);
                     tracing::debug!(
                         image_repo,
                         digest = %candidate.candidate_digest,
@@ -634,7 +661,9 @@ pub async fn reconcile_inference_for_digest(
             candidate.attempts.saturating_add(1)
         };
         let terminal = resolved.is_none()
-            && (authoritative_without_version || inference_attempt_is_terminal(attempts));
+            && (authoritative_without_version
+                || permanent_error
+                || inference_attempt_is_terminal(attempts));
         let status = if resolved.is_some() {
             "ready"
         } else if terminal {

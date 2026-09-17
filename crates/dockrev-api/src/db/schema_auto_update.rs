@@ -155,6 +155,9 @@ JOIN services s ON s.id = p.service_id AND s.candidate_digest = p.candidate_dige
 WHERE p.status IN ('pending', 'enqueuing', 'enqueued')
   AND COALESCE(TRIM(p.candidate_digest), '') <> ''
   AND COALESCE(TRIM(p.first_seen_at), '') <> ''
+  AND COALESCE(TRIM(json_extract(CASE WHEN json_valid(p.summary_json) THEN p.summary_json ELSE '{}' END, '$.imageRef')), '') <> ''
+  AND LOWER(j.status) = 'success'
+  AND s.stack_id = p.stack_id
   AND (
     LOWER(j.reason) = 'schedule'
     OR LOWER(COALESCE(json_extract(CASE WHEN json_valid(j.summary_json) THEN j.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook'
@@ -195,6 +198,77 @@ SET status = 'skipped',
     updated_at = ?1
 WHERE candidate_id IS NULL
   AND status IN ('pending', 'enqueuing', 'enqueued')
+"#,
+        params![&now],
+    )?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
+fn apply_migration_0016_harden_auto_update_candidate_backfill(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0016_harden_auto_update_candidate_backfill";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let now = now_rfc3339()?;
+    tx.execute(
+        r#"
+UPDATE auto_update_pending
+SET candidate_id = NULL,
+    status = 'skipped',
+    summary_json = CASE
+      WHEN json_valid(summary_json)
+        AND json_type(CASE WHEN json_valid(summary_json) THEN summary_json ELSE '{}' END) = 'object'
+        THEN json_set(summary_json, '$.skipReason', 'migration_ambiguous_history', '$.skippedAt', ?1)
+      ELSE json_object('skipReason', 'migration_ambiguous_history', 'skippedAt', ?1)
+    END,
+    updated_at = ?1
+WHERE status IN ('pending', 'enqueuing', 'enqueued')
+  AND (
+    candidate_id IS NULL
+    OR NOT EXISTS (
+      SELECT 1
+      FROM auto_update_candidates c
+      JOIN jobs j ON j.id = c.source_job_id
+      JOIN services s ON s.id = c.service_id
+      WHERE c.id = auto_update_pending.candidate_id
+        AND COALESCE(TRIM(c.image_ref), '') <> ''
+        AND COALESCE(TRIM(c.discovered_at), '') <> ''
+        AND LOWER(j.status) = 'success'
+        AND c.source IN ('schedule', 'github_webhook')
+        AND s.stack_id = c.stack_id
+        AND s.candidate_digest = c.candidate_digest
+    )
+  )
+"#,
+        params![&now],
+    )?;
+    tx.execute(
+        r#"
+UPDATE auto_update_candidates
+SET status = 'superseded',
+    reason = 'migration_ambiguous_history',
+    settled_at = ?1,
+    policy_status = 'skipped',
+    policy_reason = 'migration_ambiguous_history',
+    policy_evaluated_at = ?1,
+    updated_at = ?1
+WHERE reason = 'migration_pending_history'
+  AND NOT EXISTS (
+    SELECT 1
+    FROM jobs j
+    JOIN services s ON s.id = auto_update_candidates.service_id
+    WHERE j.id = auto_update_candidates.source_job_id
+      AND COALESCE(TRIM(auto_update_candidates.image_ref), '') <> ''
+      AND LOWER(j.status) = 'success'
+      AND auto_update_candidates.source IN ('schedule', 'github_webhook')
+      AND s.stack_id = auto_update_candidates.stack_id
+      AND s.candidate_digest = auto_update_candidates.candidate_digest
+  )
 "#,
         params![&now],
     )?;

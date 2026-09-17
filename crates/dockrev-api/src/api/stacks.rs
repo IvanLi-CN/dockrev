@@ -925,6 +925,19 @@ pub(super) async fn enrich_services_with_auto_update_state(
             rule_id: row.policy_rule_id.clone(),
             evaluated_at: row.policy_evaluated_at.clone(),
         });
+        if row.status == "unresolved" {
+            service.version_inference = Some(VersionInferenceState {
+                status: "ready".to_string(),
+                reason: row.reason.clone(),
+                checked_at: service
+                    .version_inference
+                    .as_ref()
+                    .and_then(|state| state.checked_at.clone()),
+                retry_at: row.retry_at.clone(),
+                resolved_tag: None,
+                unresolved: Some(true),
+            });
+        }
     }
     Ok(())
 }

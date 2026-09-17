@@ -219,6 +219,19 @@ fn inference_attempts_wait_through_the_third_backoff_before_terminal_state() {
 }
 
 #[test]
+fn permanent_inference_errors_do_not_use_transient_retry_budget() {
+    assert!(permanent_inference_error(&anyhow::anyhow!(
+        "registry request failed: 404 Not Found"
+    )));
+    assert!(permanent_inference_error(&anyhow::anyhow!(
+        "parse manifest json"
+    )));
+    assert!(!permanent_inference_error(&anyhow::anyhow!(
+        "registry request failed: 503 Service Unavailable"
+    )));
+}
+
+#[test]
 fn non_semver_snapshot_tags_do_not_settle_a_candidate() {
     let snapshot = crate::api::types::ServiceDigestTagsSnapshotResponse {
         digest: "sha256:new".to_string(),

@@ -10,7 +10,13 @@
 
 - Desktop state gallery: [auto-update-policy-state-gallery-desktop.png](assets/auto-update-policy-state-gallery-desktop.png)
 - Mobile state gallery: [auto-update-policy-state-gallery-mobile.png](assets/auto-update-policy-state-gallery-mobile.png)
+- Stack detail awaiting-inference desktop: [stack-detail-policy-awaiting-desktop.png](assets/stack-detail-policy-awaiting-desktop.png)
+- Stack detail awaiting-inference mobile: [stack-detail-policy-awaiting-mobile.png](assets/stack-detail-policy-awaiting-mobile.png)
 - 覆盖候选等待、版本可用、版本未解析、规则未命中、延迟、排队、执行中、完成和跳过等策略动作状态。
+
+## Related ADRs
+
+- [Automatic Update Candidate Settlement](../../adr/0011-auto-update-candidate-settlement.md)
 
 ## 背景 / 问题陈述
 

@@ -132,7 +132,14 @@ ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
     ELSE COALESCE(excluded.reason, auto_update_candidates.reason)
   END,
   retry_at = COALESCE(excluded.retry_at, auto_update_candidates.retry_at),
+  source_job_id = CASE
+    WHEN excluded.source IN ('schedule', 'github_webhook')
+      THEN excluded.source_job_id
+    ELSE auto_update_candidates.source_job_id
+  END,
   source = CASE
+    WHEN excluded.source IN ('schedule', 'github_webhook')
+      THEN excluded.source
     WHEN auto_update_candidates.source IS NULL OR auto_update_candidates.source = 'unknown'
       THEN excluded.source
     ELSE auto_update_candidates.source
@@ -894,6 +901,46 @@ WHERE id = ?1
     WHERE s.id = ?2
       AND s.candidate_digest = ?3
   )
+  AND EXISTS (
+    SELECT 1
+    FROM services s
+    LEFT JOIN auto_update_policies service_policy
+      ON service_policy.scope_type = 'service'
+     AND service_policy.scope_id = s.id
+    LEFT JOIN auto_update_policies stack_policy
+      ON stack_policy.scope_type = 'stack'
+     AND stack_policy.scope_id = s.stack_id
+    WHERE s.id = ?2
+      AND (
+        (
+          ?4 = 'service'
+          AND ?5 = s.id
+          AND service_policy.mode = 'override'
+          AND service_policy.enabled <> 0
+          AND EXISTS (
+            SELECT 1
+            FROM json_each(CASE WHEN json_valid(service_policy.rules_json)
+              THEN service_policy.rules_json ELSE '[]' END) AS rule
+            WHERE json_extract(rule.value, '$.id') = ?6
+              AND json_extract(rule.value, '$.enabled') <> 0
+          )
+        )
+        OR (
+          ?4 = 'stack'
+          AND ?5 = s.stack_id
+          AND COALESCE(service_policy.mode, 'inherit') = 'inherit'
+          AND stack_policy.mode = 'override'
+          AND stack_policy.enabled <> 0
+          AND EXISTS (
+            SELECT 1
+            FROM json_each(CASE WHEN json_valid(stack_policy.rules_json)
+              THEN stack_policy.rules_json ELSE '[]' END) AS rule
+            WHERE json_extract(rule.value, '$.id') = ?6
+              AND json_extract(rule.value, '$.enabled') <> 0
+          )
+        )
+      )
+  )
 "#,
                 params![
                     pending_id,
@@ -1216,6 +1263,113 @@ mod tests {
         assert_eq!(
             linked.unwrap().update_job_id.as_deref(),
             Some("recovered-auto-policy-job")
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_claim_rechecks_the_current_effective_policy() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        db.call(|conn| {
+            conn.execute(
+                "INSERT INTO stacks (id, name, compose_type, compose_files_json, backup_targets_json, backup_retention_keep_last, backup_retention_delete_after_stable_seconds, created_at, updated_at, last_check_at) VALUES ('stack', 'stack', 'path', '[]', '[]', 0, 0, '2026-04-30', '2026-04-30', '2026-04-30')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO services (id, stack_id, name, image_ref, image_tag, current_digest, candidate_digest, auto_rollback, backup_targets_bind_paths_json, backup_targets_volume_names_json, created_at, updated_at) VALUES ('service', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:old', 'sha256:new', 0, '{}', '{}', '2026-04-30', '2026-04-30')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        db.upsert_auto_update_candidate(
+            &candidate_input(
+                "candidate-policy-recheck",
+                "sha256:new",
+                "ready",
+                "2026-04-30T00:00:00Z",
+            ),
+            "2026-04-30T00:00:00Z",
+        )
+        .await
+        .unwrap();
+        db.set_auto_update_candidate_policy(
+            "service",
+            "sha256:new",
+            "delayed",
+            Some("policy_matched"),
+            Some("rule"),
+            "2026-04-30T00:00:00Z",
+        )
+        .await
+        .unwrap();
+        let policy = crate::api::types::AutoUpdatePolicy {
+            mode: crate::api::types::AutoUpdatePolicyMode::Override,
+            enabled: false,
+            rules: vec![crate::api::types::AutoUpdateRule {
+                id: "rule".to_string(),
+                name: "rule".to_string(),
+                enabled: true,
+                matcher: crate::api::types::AutoUpdateMatcher {
+                    kind: crate::api::types::AutoUpdateMatcherType::Glob,
+                    pattern: "latest".to_string(),
+                },
+                action: crate::api::types::AutoUpdateRuleAction::Immediate,
+                delay: crate::api::types::AutoUpdateDelay {
+                    min_age_seconds: 0,
+                    min_version_lag: 0,
+                },
+            }],
+            updated_at: None,
+        };
+        db.put_auto_update_policy("stack", "stack", &policy, "2026-04-30T00:01:00Z")
+            .await
+            .unwrap();
+        let pending = db
+            .reserve_auto_update_pending(
+                &AutoUpdatePendingInput {
+                    id: "pending-policy-recheck".to_string(),
+                    policy_scope_type: "stack".to_string(),
+                    policy_scope_id: "stack".to_string(),
+                    rule_id: "rule".to_string(),
+                    stack_id: "stack".to_string(),
+                    service_id: "service".to_string(),
+                    source_check_job_id: "check".to_string(),
+                    candidate_tag: "latest".to_string(),
+                    candidate_display_tag: "1.4.0".to_string(),
+                    candidate_digest: "sha256:new".to_string(),
+                    current_display_tag: "1.0.0".to_string(),
+                    first_seen_at: "2026-04-30T00:00:00Z".to_string(),
+                    due_at: "2026-04-30T00:00:00Z".to_string(),
+                    min_age_seconds: 0,
+                    min_version_lag: 0,
+                    summary_json: serde_json::json!({}),
+                    candidate_id: Some("service:sha256:new".to_string()),
+                },
+                "2026-04-30T00:01:00Z",
+            )
+            .await
+            .unwrap();
+        assert!(
+            !db.try_claim_auto_update_pending_if_current(
+                &pending.id,
+                "service",
+                "sha256:new",
+                "stack",
+                "stack",
+                "rule",
+                "2026-04-30T00:01:01Z",
+            )
+            .await
+            .unwrap()
+        );
+        assert_eq!(
+            db.get_auto_update_pending_by_id(&pending.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            "pending"
         );
     }
 

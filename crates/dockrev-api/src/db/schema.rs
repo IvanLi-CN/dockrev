@@ -648,6 +648,7 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     apply_migration_0013_add_update_job_stop_controls(conn)?;
     apply_migration_0014_add_auto_update_candidates(conn)?;
     apply_migration_0015_add_auto_update_candidate_provenance(conn)?;
+    apply_migration_0016_harden_auto_update_candidate_backfill(conn)?;
     schema_lifecycle_events::apply(conn)?;
     schema_job_history_retention::apply(conn)?;
     schema_backup_cleanup_state::apply(conn)?;
