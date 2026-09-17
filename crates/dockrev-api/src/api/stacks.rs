@@ -911,6 +911,7 @@ pub(super) async fn enrich_services_with_auto_update_state(
             raw_tag: Some(row.raw_tag.clone()),
             candidate_digest: Some(row.candidate_digest.clone()),
             resolved_version: row.resolved_version.clone(),
+            resolved_tags: row.resolved_tags.clone(),
             reason: row.reason.clone(),
             attempts: row.attempts,
             retry_at: row.retry_at.clone(),

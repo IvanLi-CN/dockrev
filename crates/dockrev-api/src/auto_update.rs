@@ -611,18 +611,14 @@ pub async fn reconcile_inference_for_digest(
 
     let mut reconciled = 0;
     for candidate in candidates {
-        let snapshot_ready = snapshot.as_ref().is_some_and(|snapshot| {
+        let authoritative_snapshot = snapshot.as_ref().filter(|snapshot| {
             snapshot_is_authoritative(snapshot)
                 && crate::snapshot_worker::normalize_digest(&snapshot.digest)
                     == crate::snapshot_worker::normalize_digest(&candidate.candidate_digest)
         });
-        let mut resolved = snapshot_ready
-            .then(|| {
-                snapshot.as_ref().and_then(|snapshot| {
-                    resolved_version_from_snapshot(snapshot, &candidate.raw_tag)
-                })
-            })
-            .flatten();
+        let resolved_tags = authoritative_snapshot.map(|snapshot| snapshot.tags.clone());
+        let mut resolved = authoritative_snapshot
+            .and_then(|snapshot| resolved_version_from_snapshot(snapshot, &candidate.raw_tag));
         let mut inference_error = false;
         let mut permanent_error = false;
         let mut inference_reason = None;
@@ -664,7 +660,7 @@ pub async fn reconcile_inference_for_digest(
             };
         }
         let authoritative_without_version =
-            snapshot_ready && resolved.is_none() && !inference_error;
+            authoritative_snapshot.is_some() && resolved.is_none() && !inference_error;
         let attempts = if resolved.is_some() || authoritative_without_version {
             candidate.attempts
         } else {
@@ -701,6 +697,7 @@ pub async fn reconcile_inference_for_digest(
                 candidate_digest: candidate.candidate_digest.clone(),
                 status: status.to_string(),
                 resolved_version: resolved.clone(),
+                resolved_tags,
                 reason: reason.map(str::to_string),
                 last_error,
                 attempts,

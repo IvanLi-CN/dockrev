@@ -143,6 +143,8 @@ pub struct CandidateSettlement {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolved_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_tags: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     pub attempts: u32,
     #[serde(skip_serializing_if = "Option::is_none")]

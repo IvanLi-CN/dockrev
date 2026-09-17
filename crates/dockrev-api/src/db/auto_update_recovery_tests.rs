@@ -93,6 +93,7 @@ async fn candidate_settlement_is_unique_and_idempotent() {
             candidate_digest: "sha256:new".to_string(),
             status: "ready".to_string(),
             resolved_version: Some("1.4.0".to_string()),
+            resolved_tags: Some(vec!["1.4.0".to_string(), "stable".to_string()]),
             reason: Some("digest_bound_version".to_string()),
             last_error: None,
             attempts: 0,
@@ -105,6 +106,10 @@ async fn candidate_settlement_is_unique_and_idempotent() {
         .expect("first settlement changes the row");
     assert_eq!(settled.status, "ready");
     assert_eq!(settled.resolved_version.as_deref(), Some("1.4.0"));
+    assert_eq!(
+        settled.resolved_tags.as_deref(),
+        Some(["1.4.0".to_string(), "stable".to_string()].as_slice())
+    );
 
     let repeated = db
         .settle_auto_update_candidate(&AutoUpdateCandidateSettlementInput {
@@ -112,6 +117,7 @@ async fn candidate_settlement_is_unique_and_idempotent() {
             candidate_digest: "sha256:new".to_string(),
             status: "ready".to_string(),
             resolved_version: Some("1.4.0".to_string()),
+            resolved_tags: Some(vec!["1.4.0".to_string(), "stable".to_string()]),
             reason: Some("digest_bound_version".to_string()),
             last_error: None,
             attempts: 0,

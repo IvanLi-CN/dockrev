@@ -15,7 +15,7 @@
 
 - 新增 <code>auto_update_candidates</code> 表、索引和迁移。
 - 固定 <code>serviceId + candidateDigest</code> 的候选唯一键。
-- 保存 discovery provenance、discoveredAt、raw tag、current digest、settlement、retry 和 supersession。
+- 保存 discovery provenance、discoveredAt、raw tag、current digest、digest-bound resolved version/tags、settlement、retry 和 supersession。
 - 将现有 active <code>auto_update_pending</code> 与 candidate identity 建立明确关联；保留旧 action 记录。
 - 为 candidate settlement 和 policy action 分开定义状态转换，禁止使用一个 pending 字段覆盖两种生命周期。
 

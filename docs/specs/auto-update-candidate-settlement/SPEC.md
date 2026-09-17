@@ -298,6 +298,7 @@ claim 失败只能释放本次 claim 或写入明确的 skipped/retryable 状态
     "rawTag": "latest",
     "candidateDigest": "sha256:...",
     "resolvedVersion": null,
+    "resolvedTags": null,
     "reason": "inference_running",
     "attempts": 1,
     "retryAt": null,

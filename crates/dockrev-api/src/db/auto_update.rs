@@ -66,32 +66,37 @@ fn map_auto_update_candidate_row(
         raw_tag: row.get(4)?,
         candidate_digest: row.get(5)?,
         resolved_version: row.get(6)?,
-        status: row.get(7)?,
-        reason: row.get(8)?,
-        attempts: row.get::<_, i64>(9)?.max(0) as u32,
-        retry_at: row.get(10)?,
-        discovered_at: row.get(11)?,
-        source_job_id: row.get(12)?,
-        source: row.get(13)?,
-        current_tag: row.get(14)?,
-        current_display_tag: row.get(15)?,
-        current_digest: row.get(16)?,
-        settled_at: row.get(17)?,
-        updated_at: row.get(19)?,
-        policy_status: row.get(20)?,
-        policy_reason: row.get(21)?,
-        policy_rule_id: row.get(22)?,
-        policy_evaluated_at: row.get(23)?,
-        policy_scope_type: row.get(24)?,
-        policy_scope_id: row.get(25)?,
-        update_job_id: row.get(26)?,
-        last_error: row.get(27)?,
-        superseded_at: row.get(28)?,
-        superseded_by_candidate_id: row.get(29)?,
+        resolved_tags: row
+            .get::<_, Option<String>>(7)?
+            .map(|raw| serde_json::from_str(&raw))
+            .transpose()
+            .map_err(map_serde_error)?,
+        status: row.get(8)?,
+        reason: row.get(9)?,
+        attempts: row.get::<_, i64>(10)?.max(0) as u32,
+        retry_at: row.get(11)?,
+        discovered_at: row.get(12)?,
+        source_job_id: row.get(13)?,
+        source: row.get(14)?,
+        current_tag: row.get(15)?,
+        current_display_tag: row.get(16)?,
+        current_digest: row.get(17)?,
+        settled_at: row.get(18)?,
+        updated_at: row.get(20)?,
+        policy_status: row.get(21)?,
+        policy_reason: row.get(22)?,
+        policy_rule_id: row.get(23)?,
+        policy_evaluated_at: row.get(24)?,
+        policy_scope_type: row.get(25)?,
+        policy_scope_id: row.get(26)?,
+        update_job_id: row.get(27)?,
+        last_error: row.get(28)?,
+        superseded_at: row.get(29)?,
+        superseded_by_candidate_id: row.get(30)?,
     })
 }
 
-const AUTO_UPDATE_CANDIDATE_COLUMNS: &str = "id, stack_id, service_id, image_ref, raw_tag, candidate_digest, resolved_version, status, reason, attempts, retry_at, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, settled_at, created_at, updated_at, policy_status, policy_reason, policy_rule_id, policy_evaluated_at, policy_scope_type, policy_scope_id, update_job_id, last_error, superseded_at, superseded_by_candidate_id";
+const AUTO_UPDATE_CANDIDATE_COLUMNS: &str = "id, stack_id, service_id, image_ref, raw_tag, candidate_digest, resolved_version, resolved_tags, status, reason, attempts, retry_at, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, settled_at, created_at, updated_at, policy_status, policy_reason, policy_rule_id, policy_evaluated_at, policy_scope_type, policy_scope_id, update_job_id, last_error, superseded_at, superseded_by_candidate_id";
 
 include!("auto_update_candidates.rs");
 
@@ -451,6 +456,7 @@ WHERE id = ?1
           AND ?5 = s.id
           AND service_policy.mode = 'override'
           AND service_policy.enabled <> 0
+          AND service_policy.updated_at = json_extract(auto_update_pending.summary_json, '$.policyUpdatedAt')
           AND EXISTS (
             SELECT 1
             FROM json_each(CASE WHEN json_valid(service_policy.rules_json)
@@ -465,6 +471,7 @@ WHERE id = ?1
           AND COALESCE(service_policy.mode, 'inherit') = 'inherit'
           AND stack_policy.mode = 'override'
           AND stack_policy.enabled <> 0
+          AND stack_policy.updated_at = json_extract(auto_update_pending.summary_json, '$.policyUpdatedAt')
           AND EXISTS (
             SELECT 1
             FROM json_each(CASE WHEN json_valid(stack_policy.rules_json)
@@ -475,6 +482,7 @@ WHERE id = ?1
         )
       )
   )
+  AND json_extract(auto_update_pending.summary_json, '$.policyUpdatedAt') IS NOT NULL
 "#,
                 params![
                     pending_id,
@@ -678,6 +686,7 @@ mod tests {
             candidate_digest: "sha256:monotonic".to_string(),
             status: "ready".to_string(),
             resolved_version: Some("1.4.0".to_string()),
+            resolved_tags: None,
             reason: Some("digest_bound_version".to_string()),
             last_error: None,
             attempts: 1,
@@ -695,6 +704,7 @@ mod tests {
                 candidate_digest: "sha256:monotonic".to_string(),
                 status: "awaiting_inference".to_string(),
                 resolved_version: None,
+                resolved_tags: None,
                 reason: Some("version_inference_pending".to_string()),
                 last_error: None,
                 attempts: 2,
@@ -719,6 +729,7 @@ mod tests {
                 candidate_digest: "sha256:monotonic".to_string(),
                 status: "ready".to_string(),
                 resolved_version: Some("1.3.0".to_string()),
+                resolved_tags: None,
                 reason: Some("stale_digest_evidence".to_string()),
                 last_error: None,
                 attempts: 0,
@@ -1037,9 +1048,9 @@ mod tests {
         )
         .await
         .unwrap();
-        let policy = crate::api::types::AutoUpdatePolicy {
+        let mut policy = crate::api::types::AutoUpdatePolicy {
             mode: crate::api::types::AutoUpdatePolicyMode::Override,
-            enabled: false,
+            enabled: true,
             rules: vec![crate::api::types::AutoUpdateRule {
                 id: "rule".to_string(),
                 name: "rule".to_string(),
@@ -1077,11 +1088,17 @@ mod tests {
                     due_at: "2026-04-30T00:00:00Z".to_string(),
                     min_age_seconds: 0,
                     min_version_lag: 0,
-                    summary_json: serde_json::json!({}),
+                    summary_json: serde_json::json!({
+                        "policyUpdatedAt": "2026-04-30T00:01:00Z"
+                    }),
                     candidate_id: Some("service:sha256:new".to_string()),
                 },
                 "2026-04-30T00:01:00Z",
             )
+            .await
+            .unwrap();
+        policy.rules[0].matcher.pattern = "not-latest".to_string();
+        db.put_auto_update_policy("stack", "stack", &policy, "2026-04-30T00:02:00Z")
             .await
             .unwrap();
         assert!(

@@ -118,18 +118,24 @@ ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
         input: &AutoUpdateCandidateSettlementInput,
     ) -> anyhow::Result<Option<AutoUpdateCandidateRow>> {
         let input = input.clone();
+        let resolved_tags = input
+            .resolved_tags
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?;
         self.call(move |conn| {
             let changed = conn.execute(
                 r#"
 UPDATE auto_update_candidates
 SET status = ?3,
     resolved_version = COALESCE(?4, resolved_version),
-    reason = ?5,
-    last_error = COALESCE(?6, last_error),
-    attempts = ?7,
-    retry_at = ?8,
-    settled_at = ?9,
-    updated_at = ?10
+    resolved_tags = COALESCE(?5, resolved_tags),
+    reason = ?6,
+    last_error = COALESCE(?7, last_error),
+    attempts = ?8,
+    retry_at = ?9,
+    settled_at = ?10,
+    updated_at = ?11
 WHERE service_id = ?1 AND candidate_digest = ?2
   AND status <> 'superseded'
   AND (
@@ -142,17 +148,18 @@ WHERE service_id = ?1 AND candidate_digest = ?2
   AND (
     status IS NOT ?3
     OR resolved_version IS NOT COALESCE(?4, resolved_version)
-    OR reason IS NOT ?5
-    OR last_error IS NOT COALESCE(?6, last_error)
-    OR attempts IS NOT ?7
-    OR retry_at IS NOT ?8
-    OR settled_at IS NOT ?9
+    OR resolved_tags IS NOT COALESCE(?5, resolved_tags)
+    OR reason IS NOT ?6
+    OR last_error IS NOT COALESCE(?7, last_error)
+    OR attempts IS NOT ?8
+    OR retry_at IS NOT ?9
+    OR settled_at IS NOT ?10
   )
   AND (
     ?3 NOT IN ('ready', 'unresolved')
     OR (
-      ?9 IS NOT NULL
-      AND (settled_at IS NULL OR ?9 > settled_at)
+      ?10 IS NOT NULL
+      AND (settled_at IS NULL OR ?10 > settled_at)
     )
   )
 "#,
@@ -161,6 +168,7 @@ WHERE service_id = ?1 AND candidate_digest = ?2
                     input.candidate_digest,
                     input.status,
                     input.resolved_version,
+                    resolved_tags,
                     input.reason,
                     input.last_error,
                     input.attempts as i64,
@@ -330,7 +338,7 @@ WHERE job_id = ?1
         self.call(move |conn| {
             let mut out = Vec::new();
             let mut stmt = conn.prepare(
-                "SELECT c.id, c.stack_id, c.service_id, c.image_ref, c.raw_tag, c.candidate_digest, c.resolved_version, c.status, c.reason, c.attempts, c.retry_at, c.discovered_at, c.source_job_id, c.source, c.current_tag, c.current_display_tag, c.current_digest, c.settled_at, c.created_at, c.updated_at, c.policy_status, c.policy_reason, c.policy_rule_id, c.policy_evaluated_at, c.policy_scope_type, c.policy_scope_id, c.update_job_id, c.last_error, c.superseded_at, c.superseded_by_candidate_id FROM auto_update_candidates c JOIN services s ON s.id = c.service_id WHERE c.service_id = ?1 AND (s.candidate_digest = c.candidate_digest OR (s.candidate_digest IS NULL AND c.policy_status = 'completed' AND s.current_digest = c.candidate_digest)) ORDER BY c.discovered_at DESC, c.id DESC LIMIT 1",
+                "SELECT c.id, c.stack_id, c.service_id, c.image_ref, c.raw_tag, c.candidate_digest, c.resolved_version, c.resolved_tags, c.status, c.reason, c.attempts, c.retry_at, c.discovered_at, c.source_job_id, c.source, c.current_tag, c.current_display_tag, c.current_digest, c.settled_at, c.created_at, c.updated_at, c.policy_status, c.policy_reason, c.policy_rule_id, c.policy_evaluated_at, c.policy_scope_type, c.policy_scope_id, c.update_job_id, c.last_error, c.superseded_at, c.superseded_by_candidate_id FROM auto_update_candidates c JOIN services s ON s.id = c.service_id WHERE c.service_id = ?1 AND (s.candidate_digest = c.candidate_digest OR (s.candidate_digest IS NULL AND c.policy_status = 'completed' AND s.current_digest = c.candidate_digest)) ORDER BY c.discovered_at DESC, c.id DESC LIMIT 1",
             )?;
             for service_id in service_ids {
                 if let Ok(row) = stmt.query_row(params![service_id], map_auto_update_candidate_row) {

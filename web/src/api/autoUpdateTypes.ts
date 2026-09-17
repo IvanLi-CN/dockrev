@@ -12,6 +12,7 @@ export type CandidateSettlement = {
   rawTag?: string | null
   candidateDigest?: string | null
   resolvedVersion?: string | null
+  resolvedTags?: string[] | null
   reason?: string | null
   attempts: number
   retryAt?: string | null

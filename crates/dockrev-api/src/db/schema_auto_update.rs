@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS auto_update_candidates (
   raw_tag TEXT NOT NULL,
   candidate_digest TEXT NOT NULL,
   resolved_version TEXT,
+  resolved_tags TEXT,
   status TEXT NOT NULL,
   reason TEXT,
   attempts INTEGER NOT NULL DEFAULT 0,
@@ -193,6 +194,30 @@ fn apply_migration_0018_add_auto_update_candidate_audit_fields(
         "UPDATE auto_update_candidates SET superseded_at = COALESCE(superseded_at, settled_at) WHERE status = 'superseded'",
         [],
     )?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
+fn apply_migration_0019_add_auto_update_candidate_resolved_tags(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0019_add_auto_update_candidate_resolved_tags";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let has_column = tx
+        .prepare("PRAGMA table_info(auto_update_candidates)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<BTreeSet<_>, _>>()?
+        .contains("resolved_tags");
+    if !has_column {
+        tx.execute(
+            "ALTER TABLE auto_update_candidates ADD COLUMN resolved_tags TEXT",
+            [],
+        )?;
+    }
     record_migration_tx(&tx, id)?;
     tx.commit()?;
     Ok(())
