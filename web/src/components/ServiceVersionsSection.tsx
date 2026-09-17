@@ -162,20 +162,21 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
       ),
     [props.service.image.resolvedTag, props.service.image.tag, props.service.versionInference?.status],
   )
+  const settlement = props.service.candidateSettlement
   const candidateVersion = useMemo(() => {
     const candidate = props.service.candidate
     if (!candidate) return null
-    return (candidate.resolvedTag ?? '').trim() || candidate.tag.trim() || null
-  }, [props.service.candidate])
+    return (candidate.resolvedTag ?? '').trim() || settlement?.resolvedVersion?.trim() || candidate.tag.trim() || null
+  }, [props.service.candidate, settlement?.resolvedVersion])
   const candidateDisplayVersion = useMemo(() => {
     const candidate = props.service.candidate
     if (!candidate) return null
     return formatCandidateTagDisplay(
       candidate.tag,
-      candidate.resolvedTag ?? null,
+      candidate.resolvedTag ?? settlement?.resolvedVersion ?? null,
       props.service.versionInference?.status,
     )
-  }, [props.service.candidate, props.service.versionInference?.status])
+  }, [props.service.candidate, props.service.versionInference?.status, settlement?.resolvedVersion])
   const initialCenterKeyRef = useRef<string | null>(null)
 
   const {
@@ -759,7 +760,6 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
     return rollbackBackupSummaryByJobId.get(sourceJobId) ?? { state: 'empty' as const }
   }, [props.rollbackTarget?.sourceUpdateJobId, rollbackBackupSummaryByJobId])
   const openSettings = () => navigate({ name: 'settings' })
-  const settlement = props.service.candidateSettlement
   const settlementDetail = settlement ? candidateSettlementDetail(settlement) : null
   const settlementBanner = settlement
     ? settlement.status === 'awaiting_inference'

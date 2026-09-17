@@ -177,6 +177,7 @@ WHERE candidate_id IS NULL
   AND EXISTS (
     SELECT 1 FROM jobs j
     WHERE j.id = auto_update_pending.source_check_job_id
+      AND LOWER(j.status) = 'success'
       AND (
         LOWER(j.reason) = 'schedule'
         OR LOWER(COALESCE(json_extract(CASE WHEN json_valid(j.summary_json) THEN j.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook'
@@ -217,6 +218,42 @@ fn apply_migration_0016_harden_auto_update_candidate_backfill(
     let now = now_rfc3339()?;
     tx.execute(
         r#"
+UPDATE jobs
+SET status = 'cancelled',
+    finished_at = ?1
+WHERE id IN (
+  SELECT p.update_job_id
+  FROM auto_update_pending p
+  LEFT JOIN auto_update_candidates c ON c.id = p.candidate_id
+  WHERE p.status IN ('pending', 'enqueuing', 'enqueued')
+    AND p.update_job_id IS NOT NULL
+    AND (
+      p.candidate_id IS NULL
+      OR c.service_id <> p.service_id
+      OR c.candidate_digest <> p.candidate_digest
+      OR c.stack_id <> p.stack_id
+      OR COALESCE(TRIM(c.image_ref), '') = ''
+      OR COALESCE(TRIM(c.discovered_at), '') = ''
+      OR c.source NOT IN ('schedule', 'github_webhook')
+      OR NOT EXISTS (
+        SELECT 1
+        FROM jobs source_job
+        WHERE source_job.id = p.source_check_job_id
+          AND LOWER(source_job.status) = 'success'
+          AND (
+            LOWER(source_job.reason) = 'schedule'
+            OR LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook'
+          )
+      )
+    )
+)
+  AND status = 'queued'
+  AND created_by = 'auto-policy'
+"#,
+        params![&now],
+    )?;
+    tx.execute(
+        r#"
 UPDATE auto_update_pending
 SET candidate_id = NULL,
     status = 'skipped',
@@ -242,7 +279,20 @@ WHERE status IN ('pending', 'enqueuing', 'enqueued')
         AND c.source IN ('schedule', 'github_webhook')
         AND s.stack_id = c.stack_id
         AND s.candidate_digest = c.candidate_digest
-    )
+        AND EXISTS (
+          SELECT 1
+          FROM jobs source_job
+          WHERE source_job.id = auto_update_pending.source_check_job_id
+            AND LOWER(source_job.status) = 'success'
+            AND (
+              LOWER(source_job.reason) = 'schedule'
+              OR LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook'
+            )
+        )
+        AND c.service_id = auto_update_pending.service_id
+        AND c.candidate_digest = auto_update_pending.candidate_digest
+        AND c.stack_id = auto_update_pending.stack_id
+      )
   )
 "#,
         params![&now],

@@ -171,13 +171,110 @@ LIMIT ?1
                     r#"
 UPDATE jobs
 SET status = 'running', started_at = ?2
-WHERE id = ?1 AND status = 'queued'
+WHERE id = ?1
+  AND status = 'queued'
+  AND created_by = 'auto-policy'
+  AND EXISTS (
+    SELECT 1
+    FROM auto_update_pending p
+    JOIN services s ON s.id = p.service_id
+    JOIN auto_update_candidates c
+      ON c.service_id = p.service_id
+     AND c.candidate_digest = p.candidate_digest
+    WHERE p.update_job_id = jobs.id
+      AND p.status = 'enqueued'
+      AND s.candidate_digest = p.candidate_digest
+      AND (p.candidate_id IS NULL OR p.candidate_id = c.id)
+      AND c.status <> 'superseded'
+      AND c.policy_status = 'queued'
+      AND (
+        (
+          p.policy_scope_type = 'service'
+          AND p.policy_scope_id = s.id
+          AND EXISTS (
+            SELECT 1
+            FROM auto_update_policies policy
+            WHERE policy.scope_type = 'service'
+              AND policy.scope_id = s.id
+              AND policy.mode = 'override'
+              AND policy.enabled <> 0
+              AND policy.updated_at = json_extract(p.summary_json, '$.policyUpdatedAt')
+              AND EXISTS (
+                SELECT 1
+                FROM json_each(CASE WHEN json_valid(policy.rules_json) THEN policy.rules_json ELSE '[]' END) AS rule
+                WHERE json_extract(rule.value, '$.id') = p.rule_id
+                  AND json_extract(rule.value, '$.enabled') <> 0
+              )
+          )
+        )
+        OR (
+          p.policy_scope_type = 'stack'
+          AND p.policy_scope_id = s.stack_id
+          AND NOT EXISTS (
+            SELECT 1
+            FROM auto_update_policies service_policy
+            WHERE service_policy.scope_type = 'service'
+              AND service_policy.scope_id = s.id
+              AND service_policy.mode <> 'inherit'
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM auto_update_policies policy
+            WHERE policy.scope_type = 'stack'
+              AND policy.scope_id = s.stack_id
+              AND policy.mode = 'override'
+              AND policy.enabled <> 0
+              AND policy.updated_at = json_extract(p.summary_json, '$.policyUpdatedAt')
+              AND EXISTS (
+                SELECT 1
+                FROM json_each(CASE WHEN json_valid(policy.rules_json) THEN policy.rules_json ELSE '[]' END) AS rule
+                WHERE json_extract(rule.value, '$.id') = p.rule_id
+                  AND json_extract(rule.value, '$.enabled') <> 0
+              )
+          )
+        )
+      )
+  )
 "#,
                     params![query_job_id, query_started_at],
                 )? == 1)
             })
             .await
             .context("claim queued job by id")?;
+        if !claimed {
+            let cancel_job_id = job_id.clone();
+            let cancel_started_at = started_at.clone();
+            self.call(move |conn| {
+                let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                let changed = tx.execute(
+                    r#"
+UPDATE jobs
+SET status = 'cancelled', finished_at = ?2
+WHERE id = ?1 AND status = 'queued' AND created_by = 'auto-policy'
+"#,
+                    params![cancel_job_id, cancel_started_at],
+                )?;
+                if changed > 0 {
+                    tx.execute(
+                        r#"
+UPDATE auto_update_pending
+SET status = 'skipped',
+    summary_json = CASE
+      WHEN json_valid(summary_json) THEN json_set(summary_json, '$.skipReason', 'policy_changed_before_start', '$.skippedAt', ?2)
+      ELSE json_object('skipReason', 'policy_changed_before_start', 'skippedAt', ?2)
+    END,
+    updated_at = ?2
+WHERE update_job_id = ?1 AND status = 'enqueued'
+"#,
+                        params![cancel_job_id, cancel_started_at],
+                    )?;
+                }
+                tx.commit()?;
+                Ok(())
+            })
+            .await
+            .context("cancel stale queued auto policy job")?;
+        }
         if claimed {
             self.sync_auto_update_candidate_policy_for_job(job_id.as_str(), started_at.as_str())
                 .await?;

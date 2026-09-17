@@ -289,6 +289,63 @@ async fn authoritative_snapshot_without_semver_settles_candidate_as_unresolved()
 }
 
 #[tokio::test]
+async fn malformed_oci_version_settles_candidate_as_unresolved_without_retry() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(ExplicitVersionFallbackRegistry::new("not-a-semver")),
+        Arc::new(UpdateAndRuntimeScanRunner::new()),
+    )
+    .await;
+    state
+        .db
+        .upsert_auto_update_candidate(
+            &crate::db::AutoUpdateCandidateInput {
+                id: "candidate-malformed-oci".to_string(),
+                stack_id: "stack".to_string(),
+                service_id: "service".to_string(),
+                image_ref: "ghcr.io/acme/web".to_string(),
+                raw_tag: "latest".to_string(),
+                candidate_digest: "sha256:new".to_string(),
+                resolved_version: None,
+                status: "awaiting_inference".to_string(),
+                reason: Some("version_inference_pending".to_string()),
+                attempts: 0,
+                retry_at: Some("2026-04-30T00:01:00Z".to_string()),
+                discovered_at: "2026-04-30T00:00:00Z".to_string(),
+                source_job_id: "check".to_string(),
+                source: "schedule".to_string(),
+                current_tag: "latest".to_string(),
+                current_display_tag: "1.0.0".to_string(),
+                current_digest: Some("sha256:old".to_string()),
+            },
+            "2026-04-30T00:00:00Z",
+        )
+        .await
+        .unwrap();
+
+    crate::auto_update::reconcile_inference_for_digest(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:new",
+        "linux/amd64",
+        "2026-04-30T00:00:30Z",
+    )
+    .await
+    .unwrap();
+
+    let candidate = state
+        .db
+        .get_auto_update_candidate("service", "sha256:new")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(candidate.status, "unresolved");
+    assert_eq!(candidate.reason.as_deref(), Some("invalid_oci_version"));
+    assert_eq!(candidate.retry_at, None);
+    assert_eq!(candidate.attempts, 1);
+}
+
+#[tokio::test]
 async fn raw_tag_policy_can_enqueue_while_version_inference_is_pending() {
     let state = test_state_with(
         ":memory:",

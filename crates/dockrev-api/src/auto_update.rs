@@ -625,6 +625,7 @@ pub async fn reconcile_inference_for_digest(
             .flatten();
         let mut inference_error = false;
         let mut permanent_error = false;
+        let mut inference_reason = None;
         if resolved.is_none()
             && let Ok(image) = crate::registry::ImageRef::parse(&format!(
                 "{}@{}",
@@ -637,9 +638,18 @@ pub async fn reconcile_inference_for_digest(
                 .get_oci_version(&image, &candidate.candidate_digest, host_platform)
                 .await
             {
-                Ok(raw) => {
-                    raw.and_then(|raw| dockrev_common::normalized_semver_from_oci_version(&raw))
-                }
+                Ok(raw) => match raw {
+                    Some(raw) => match dockrev_common::normalized_semver_from_oci_version(&raw) {
+                        Some(version) => Some(version),
+                        None => {
+                            inference_error = true;
+                            permanent_error = true;
+                            inference_reason = Some("invalid_oci_version".to_string());
+                            None
+                        }
+                    },
+                    None => None,
+                },
                 Err(error) => {
                     inference_error = true;
                     permanent_error = permanent_inference_error(&error);
@@ -674,6 +684,7 @@ pub async fn reconcile_inference_for_digest(
         let reason = resolved
             .as_ref()
             .map(|_| "digest_bound_version")
+            .or(inference_reason.as_deref())
             .or_else(|| terminal.then_some("version_inference_unresolved"));
         let retry_at = (!terminal && resolved.is_none())
             .then(|| retry_at_for_attempt(now, attempts))
@@ -1308,6 +1319,7 @@ async fn evaluate_candidate(
                     "currentDisplayTag": candidate.current_display_tag,
                     "ruleId": matched.rule.id,
                     "policyScopeType": effective.scope_type,
+                    "policyUpdatedAt": effective.policy.updated_at,
                     "sourceCheckJobId": job_id,
                 }),
                 candidate_id: Some(candidate_row.id),
@@ -1372,6 +1384,15 @@ pub async fn handle_completed_check(
         crate::registry::host_platform_override(state.config.host_platform.as_deref())
             .unwrap_or_else(|| "linux/amd64".to_string());
     for candidate in &discovered_services {
+        state
+            .db
+            .reopen_auto_update_candidate_inference(
+                &candidate.service_id,
+                &candidate.candidate_digest,
+                "qualified_check_reopened_inference",
+                finished_at,
+            )
+            .await?;
         evaluate_candidate(
             state,
             job_id,

@@ -139,7 +139,7 @@ WHERE status = 'enqueuing' AND updated_at <= ?1
 SELECT j.id
 FROM jobs j
 WHERE j.created_by = 'auto-policy'
-  AND j.status IN ('queued', 'running', 'success', 'failed', 'cancelled', 'rolled_back')
+  AND j.status IN ('queued', 'running')
   AND j.created_at >= ?3
   AND json_valid(j.summary_json)
   AND EXISTS (
