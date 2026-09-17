@@ -520,11 +520,15 @@ export function StackDetailPage(props: {
   const updatable = stack.services.filter((service) => serviceRowStatus(service) !== 'ok').length
   const recentUpdateJobs = selectRecentStackUpdateJobs(jobs, stack)
   const stableServices = Math.max(stack.services.length - updatable, 0)
-  const serviceResults: AutoUpdateServiceResult[] = stack.services.map((service) => ({
-    serviceName: service.name,
-    projection: service.autoUpdate ?? null,
-    candidateSettlement: service.candidateSettlement ?? null,
-  }))
+  const serviceResults: AutoUpdateServiceResult[] = stack.services.map((service) => {
+    const status = serviceRowStatus(service)
+    return {
+      serviceName: service.name,
+      projection: status === 'blocked' || status === 'archMismatch' ? null : service.autoUpdate,
+      candidateSettlement: service.candidateSettlement ?? null,
+      fallbackLabel: status === 'blocked' || status === 'archMismatch' ? statusLabel(status) : undefined,
+    }
+  })
 
   return (
     <div className="page">

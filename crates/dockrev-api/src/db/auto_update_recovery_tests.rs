@@ -452,10 +452,27 @@ async fn completed_candidate_remains_visible_after_service_candidate_is_cleared(
     .await
     .unwrap();
 
+    db.upsert_auto_update_candidate(
+        &candidate_input(
+            "candidate-completed",
+            "sha256:completed",
+            "ready",
+            "2026-04-30T00:00:00Z",
+        ),
+        "2026-04-30T00:02:00Z",
+    )
+    .await
+    .unwrap();
+
     let rows = db
         .list_latest_auto_update_candidates(&["service".to_string()])
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].policy_status.as_deref(), Some("completed"));
+    assert!(db
+        .list_auto_update_candidates_for_policy_reconciliation(50)
+        .await
+        .unwrap()
+        .is_empty());
 }

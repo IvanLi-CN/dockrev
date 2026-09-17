@@ -101,6 +101,7 @@ export type AutoUpdateServiceResult = {
   serviceName: string
   projection?: { policyStatus: string; reason?: string | null; ruleId?: string | null; evaluatedAt?: string | null } | null
   candidateSettlement?: CandidateSettlement | null
+  fallbackLabel?: string
 }
 
 export function AutoUpdatePolicyResultCard(props: {
@@ -159,7 +160,7 @@ export function AutoUpdatePolicyResultCard(props: {
                 <div className="autoPolicyServiceResult" key={service.serviceName}>
                   <Mono>{service.serviceName}</Mono>
                   <span>
-                    {service.projection ? policyActionLabel(service.projection.policyStatus) : '暂无候选动作'}
+                    {service.projection ? policyActionLabel(service.projection.policyStatus) : service.fallbackLabel ?? '暂无候选动作'}
                     {service.candidateSettlement ? ` · 候选 ${service.candidateSettlement.status}` : ''}
                   </span>
                 </div>

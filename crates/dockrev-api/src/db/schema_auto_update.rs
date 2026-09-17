@@ -165,6 +165,37 @@ WHERE p.status IN ('pending', 'enqueuing', 'enqueued')
 "#,
         params![&now],
     )?;
+    let migrated_candidates = {
+        let mut stmt = tx.prepare(
+            "SELECT id, image_ref, raw_tag FROM auto_update_candidates WHERE reason = 'migration_pending_history'",
+        )?;
+        stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+    };
+    for (candidate_id, image_ref, raw_tag) in migrated_candidates {
+        let image_ref = crate::snapshot_worker::image_repo_from_image_ref(&image_ref)
+            .unwrap_or(image_ref);
+        let resolved_version = dockrev_common::normalized_semver_from_oci_version(&raw_tag);
+        tx.execute(
+            r#"
+UPDATE auto_update_candidates
+SET image_ref = ?1,
+    resolved_version = COALESCE(?2, resolved_version),
+    status = CASE WHEN ?2 IS NULL THEN status ELSE 'ready' END,
+    reason = CASE WHEN ?2 IS NULL THEN reason ELSE 'digest_bound_version' END,
+    settled_at = CASE WHEN ?2 IS NULL THEN settled_at ELSE ?3 END,
+    updated_at = ?3
+WHERE id = ?4
+"#,
+            params![&image_ref, resolved_version, &now, &candidate_id],
+        )?;
+    }
     tx.execute(
         r#"
 UPDATE auto_update_pending

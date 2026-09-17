@@ -312,7 +312,9 @@ INSERT INTO schema_migrations (id, applied_at) VALUES
   ('0012_track_image_ref_in_new_version_discoveries', '2026-01-01T00:00:00Z'),
   ('0013_add_update_job_stop_controls', '2026-01-01T00:00:00Z');
 INSERT INTO services (id, stack_id, candidate_digest)
-VALUES ('service-1', 'stack-1', 'sha256:new');
+VALUES
+  ('service-1', 'stack-1', 'sha256:new'),
+  ('service-3', 'stack-1', 'sha256:strict');
 INSERT INTO jobs (
   id, type, scope, status, allow_arch_mismatch, backup_mode, created_by,
   reason, created_at, summary_json
@@ -337,7 +339,12 @@ INSERT INTO auto_update_pending (
   ('pending-ambiguous', 'stack', 'stack-1', 'rule-1', 'stack-1', 'service-2',
    'unknown-check', 'latest', 'latest', 'sha256:other', '1.0.0',
    '2026-04-30T00:00:00Z', '2026-04-30T00:15:00Z', 900, 0,
-   'pending', 'running-auto-job', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z', '{}');
+   'pending', 'running-auto-job', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z', '{}'),
+  ('pending-strict', 'stack', 'stack-1', 'rule-1', 'stack-1', 'service-3',
+   'schedule-check', '1.2.3', '1.2.3', 'sha256:strict', '1.0.0',
+   '2026-04-30T00:00:00Z', '2026-04-30T00:15:00Z', 900, 0,
+   'pending', NULL, '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z',
+   '{"imageRef":"ghcr.io/acme/app:1.2.3","currentDigest":"sha256:old"}');
 "#,
         )
         .unwrap();
@@ -379,7 +386,18 @@ INSERT INTO auto_update_pending (
                 [],
                 |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
             )?;
-            Ok((candidate, pending, ambiguous, stop))
+            let strict = conn.query_row(
+                "SELECT status, resolved_version, image_ref FROM auto_update_candidates WHERE service_id = 'service-3'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )?;
+            Ok((candidate, pending, ambiguous, stop, strict))
         })
         .await
         .unwrap();
@@ -416,6 +434,14 @@ INSERT INTO auto_update_pending (
     assert_eq!(
         migrated.3.1,
         Some("migration-ambiguous-history".to_string())
+    );
+    assert_eq!(
+        migrated.4,
+        (
+            "ready".to_string(),
+            Some("1.2.3".to_string()),
+            "ghcr.io/acme/app".to_string()
+        )
     );
 
     drop(db);

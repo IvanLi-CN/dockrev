@@ -792,6 +792,9 @@ pub async fn reevaluate_service_policy(
     let Some(candidate) = rows.into_iter().next() else {
         return Ok(());
     };
+    if candidate.policy_status.as_deref() == Some("completed") {
+        return Ok(());
+    }
     if !is_qualified_auto_policy_source(Some(&candidate.source)) {
         state
             .db

@@ -51,7 +51,7 @@ impl Db {
     ) -> anyhow::Result<Vec<AutoUpdateCandidateRow>> {
         self.call(move |conn| {
             let mut stmt = conn.prepare(&format!(
-                "SELECT {AUTO_UPDATE_CANDIDATE_COLUMNS} FROM auto_update_candidates WHERE status IN ('ready', 'unresolved') AND (policy_evaluated_at IS NULL OR policy_evaluated_at < updated_at OR (policy_status = 'delayed' AND NOT EXISTS (SELECT 1 FROM auto_update_pending p WHERE p.service_id = auto_update_candidates.service_id AND p.candidate_digest = auto_update_candidates.candidate_digest AND p.status IN ('pending', 'enqueuing', 'enqueued')))) ORDER BY updated_at ASC LIMIT ?1"
+                "SELECT {AUTO_UPDATE_CANDIDATE_COLUMNS} FROM auto_update_candidates WHERE status IN ('ready', 'unresolved') AND policy_status IS NOT 'completed' AND EXISTS (SELECT 1 FROM services s WHERE s.id = auto_update_candidates.service_id AND s.candidate_digest = auto_update_candidates.candidate_digest) AND (policy_evaluated_at IS NULL OR policy_evaluated_at < updated_at OR (policy_status = 'delayed' AND NOT EXISTS (SELECT 1 FROM auto_update_pending p WHERE p.service_id = auto_update_candidates.service_id AND p.candidate_digest = auto_update_candidates.candidate_digest AND p.status IN ('pending', 'enqueuing', 'enqueued')))) ORDER BY updated_at ASC LIMIT ?1"
             ))?;
             let rows = stmt.query_map(params![limit as i64], map_auto_update_candidate_row)?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
