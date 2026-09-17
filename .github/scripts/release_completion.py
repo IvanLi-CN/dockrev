@@ -443,6 +443,12 @@ def version_reservation_is_owned(
             release_policy.validate_reservation(
                 reservation, version=version, pr_number=pr_number, source_sha=source_sha
             )
+        elif identity_sha is not None and release_intent is None:
+            release_policy.validate_reservation(
+                reservation, version=version, pr_number=pr_number, source_sha=source_sha
+            )
+            if reservation_sha != identity_sha:
+                return False
         elif identity_sha is not None and release_intent is not None:
             trailers = release_policy.validate_version_only_reservation(
                 reservation, version=version, pr_number=pr_number, source_sha=source_sha
@@ -653,14 +659,9 @@ def load_github_completion(
         version_for_tag = provenance["product_version"]
     tag_reserved = tag_is_available(api_root, token, repository, version_for_tag)
     if mode in {"normal-preparation", "version-only-release-pr"}:
-        reservation_kwargs = (
-            {
-                "identity_sha": head_sha,
-                "release_intent": provenance["release_intent"],
-            }
-            if mode == "version-only-release-pr"
-            else {}
-        )
+        reservation_kwargs = {"identity_sha": head_sha}
+        if mode == "version-only-release-pr":
+            reservation_kwargs["release_intent"] = provenance["release_intent"]
         tag_reserved = tag_reserved and version_reservation_is_owned(
             api_root, token, repository, version_for_tag, pr_number, source_sha, **reservation_kwargs
         )

@@ -1196,6 +1196,7 @@ expect_error(
 original_completion_api_json = completion.api_json
 try:
     tag_exists = False
+    normal_reservation_ref_sha = prep_sha
     labels_for_loader = ["type:patch", "channel:stable"]
     preparation_message = (
         "Prepare release identity\n\n"
@@ -1204,7 +1205,10 @@ try:
         "Product-Version: 0.1.1\n"
         "Release-Baseline-Version: 0.1.0\n"
         "Release-Intent: type:patch channel:stable\n"
-        "Release-Mode: normal-preparation"
+        "Release-Mode: normal-preparation\n"
+        "Release-Reservation-Version: 0.1.1\n"
+        "Release-Reservation-PR: 42\n"
+        f"Release-Reservation-Source-SHA: {source_sha}"
     )
 
     def fake_completion_api(_api_root, _token, path):
@@ -1243,7 +1247,7 @@ try:
         if path.endswith("/git/ref/tags/0.1.1"):
             raise completion.CompletionError("GitHub API failed: 404")
         if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1"):
-            return {"object": {"sha": "f" * 40, "type": "commit"}}
+            return {"object": {"sha": normal_reservation_ref_sha, "type": "commit"}}
         if path.endswith("/commits/" + "f" * 40):
             return {
                 "parents": [{"sha": source_sha}],
@@ -1258,6 +1262,12 @@ try:
     completion.api_json = fake_completion_api
     loaded = completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
     assert completion.validate_completion(loaded)["status"] == "pass"
+    normal_reservation_ref_sha = "f" * 40
+    expect_error(
+        completion.validate_completion,
+        completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42),
+    )
+    normal_reservation_ref_sha = prep_sha
     normal_preparation_message = preparation_message
     preparation_message = normal_preparation_message + "\nCovered-Product-Merge-SHA: " + source_sha
     expect_error(completion.load_github_completion, "https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
@@ -1294,6 +1304,7 @@ try:
         "Release-Reservation-Intent: type:patch channel:stable\n"
         "Release-Reservation-Mode: version-only-release-pr"
     )
+    version_only_completion_valid_message = version_only_completion_message
     recovery_identity_matches = True
 
     def fake_version_only_completion_api(_api_root, _token, path):
@@ -1354,7 +1365,7 @@ try:
         if path.endswith("/git/ref/tags/0.80.2"):
             raise completion.CompletionError("GitHub API failed: 404")
         if path.endswith("/git/ref/heads/release-reservation%2Fv0.80.2"):
-            return {"object": {"sha": "f" * 40}}
+            return {"object": {"sha": prep_sha}}
         if path.endswith("/commits/" + "f" * 40):
             return {
                 "parents": [{"sha": version_only_completion_covered_sha}],
@@ -1367,6 +1378,14 @@ try:
     completion.api_json = fake_version_only_completion_api
     version_only_loaded = completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
     assert completion.validate_completion(version_only_loaded)["mode"] == "version-only-release-pr"
+    version_only_completion_message = version_only_completion_valid_message.replace(
+        "Release-Reservation-Intent: type:patch channel:stable\n", ""
+    )
+    expect_error(
+        completion.validate_completion,
+        completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42),
+    )
+    version_only_completion_message = version_only_completion_valid_message
     recovery_identity_matches = False
     expect_error(completion.load_github_completion, "https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
     recovery_identity_matches = None
@@ -1553,10 +1572,11 @@ version_only = {
         "release_intent": "type:patch channel:stable",
         "release_mode": "version-only-release-pr",
         "branch_head_sha": prep_sha,
+        "source_pr_updated_at": "2026-01-01T00:00:00Z",
         "covered_product_pr_number": 41,
         "covered_product_version": "0.1.0",
         "covered_product_merged": True,
-    "verified": True,
+        "verified": True,
     },
     "source_checks": source_checks,
     "tag_reserved": True,
@@ -1572,6 +1592,16 @@ expect_error(
     policy.validate_version_only,
     version_only["changed_files"],
     {**version_only["provenance"], "product_version": "9.9.9"},
+)
+expect_error(
+    policy.validate_version_only,
+    version_only["changed_files"],
+    {**version_only["provenance"], "source_pr_updated_at": "0"},
+)
+expect_error(
+    policy.validate_version_only,
+    version_only["changed_files"],
+    {**version_only["provenance"], "source_pr_updated_at": ""},
 )
 expect_error(
     policy.validate_version_only,
@@ -1671,7 +1701,7 @@ try:
     normal_merge_sha = "0" * 40
     normal_pr_head_sha = prep_sha
     normal_merge_parents = [{"sha": source_sha}]
-    normal_reservation_sha = "8" * 40
+    normal_reservation_sha = prep_sha
     normal_tree_sha = "9" * 40
     normal_merge_tree_sha = normal_tree_sha
     normal_merge_blob_sha = normal_tree_sha
@@ -1719,7 +1749,10 @@ try:
                         "Product-Version: 0.1.1\n"
                         "Release-Baseline-Version: 0.1.0\n"
                         "Release-Intent: type:patch channel:stable\n"
-                        "Release-Mode: normal-preparation"
+                        "Release-Mode: normal-preparation\n"
+                        "Release-Reservation-Version: 0.1.1\n"
+                        "Release-Reservation-PR: 42\n"
+                        f"Release-Reservation-Source-SHA: {source_sha}"
                     ),
                 },
             }
@@ -1736,6 +1769,16 @@ try:
                 return {"object": {"sha": "4" * 40}}
             return {"object": {"sha": normal_reservation_sha}}
         if path.endswith(f"/commits/{normal_reservation_sha}"):
+            return {
+                "parents": [{"sha": source_sha}],
+                "commit": {"message": (
+                    "Reserve release version v0.1.1\n\n"
+                    "Release-Reservation-Version: 0.1.1\n"
+                    "Release-Reservation-PR: 42\n"
+                    f"Release-Reservation-Source-SHA: {source_sha}"
+                )},
+            }
+        if path.endswith("/commits/" + "4" * 40):
             return {
                 "parents": [{"sha": source_sha}],
                 "commit": {"message": (
@@ -1904,8 +1947,23 @@ version_only_direct_identity_sha = "4" * 40
 version_only_merge_tree_sha = "6" * 40
 version_only_identity_tree_sha = version_only_merge_tree_sha
 version_only_merge_blob_sha = version_only_identity_tree_sha
+version_only_identity_message = (
+    "VERSION-only release\n\n"
+    f"Covered-Product-Merge-SHA: {version_only_covered_merge_sha}\n"
+    "Product-Version: 0.80.2\n"
+    "Release-Baseline-Version: 0.80.1\n"
+    "Release-Intent: type:patch channel:stable\n"
+    "Source-PR-Updated-At: 2026-01-01T00:00:00Z\n"
+    "Release-Mode: version-only-release-pr\n"
+    "Release-Reservation-Version: 0.80.2\n"
+    "Release-Reservation-PR: 43\n"
+    f"Release-Reservation-Source-SHA: {version_only_covered_merge_sha}\n"
+    "Release-Reservation-Intent: type:patch channel:stable\n"
+    "Release-Reservation-Mode: version-only-release-pr"
+)
 original_identity_api_json = identity.api_json
 try:
+    version_only_reservation_mode = "legacy"
     recovery_identity_matches = True
     recovery_merge_files = [{"filename": "VERSION"}]
     recovery_merge_parents = [{"sha": "0" * 40}]
@@ -1935,6 +1993,8 @@ try:
             reservation_ref_state["reads"] += 1
             if reservation_ref_state["rebound"] and reservation_ref_state["reads"] > 1:
                 return {"object": {"sha": "4" * 40}}
+            if version_only_reservation_mode == "direct":
+                return {"object": {"sha": version_only_release_head_sha}}
             return {"object": {"sha": version_only_reservation_sha}}
         if path.endswith(f"/commits/{version_only_reservation_sha}"):
             return {
@@ -2021,14 +2081,7 @@ try:
                 "commit": {
                     "verification": {"verified": True},
                     "tree": {"sha": version_only_identity_tree_sha},
-                    "message": (
-                        "VERSION-only release\n\n"
-                        f"Covered-Product-Merge-SHA: {version_only_covered_merge_sha}\n"
-                        "Product-Version: 0.80.2\n"
-                        "Release-Baseline-Version: 0.80.1\n"
-                        "Release-Intent: type:patch channel:stable\n"
-                        "Release-Mode: version-only-release-pr"
-                    ),
+                    "message": version_only_identity_message,
                 },
             }
         if path.endswith(f"/commits/{version_only_covered_merge_sha}/pulls"):
@@ -2059,6 +2112,21 @@ try:
     assert resolved_version_only["channel"] == "stable" and resolved_version_only["release_tag"] == "v0.80.2"
     assert resolved_version_only["identity_ref_sha"] == version_only_release_head_sha
     assert resolved_version_only["covered_product_version"] == "0.80.1"
+    version_only_reservation_mode = "direct"
+    direct_version_only = identity.resolve_github(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
+    )
+    assert direct_version_only["identity_ref_sha"] == version_only_release_head_sha
+    saved_version_only_identity_message = version_only_identity_message
+    version_only_identity_message = saved_version_only_identity_message.replace(
+        "Release-Reservation-Intent: type:patch channel:stable\n", ""
+    )
+    expect_error(
+        identity.resolve_github,
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
+    )
+    version_only_identity_message = saved_version_only_identity_message
+    version_only_reservation_mode = "legacy"
     identity_parents = [{"sha": version_only_covered_head_sha}, {"sha": "2" * 40}]
     expect_error(
         identity.resolve_github,
@@ -2299,7 +2367,7 @@ with tempfile.TemporaryDirectory() as directory:
 stale_source_sha = "1" * 40
 stale_preparation_sha = "2" * 40
 stale_merge_sha = "3" * 40
-stale_reservation_sha = "4" * 40
+stale_reservation_sha = stale_preparation_sha
 stale_baseline_tag_sha = "5" * 40
 stale_version_blob_sha = "6" * 40
 stale_source_blob_sha = "7" * 40
@@ -2319,6 +2387,9 @@ stale_preparation_message = "\n".join(
         "Release-Baseline-Version: 0.10.0",
         "Release-Intent: type:patch channel:stable",
         "Release-Mode: normal-preparation",
+        "Release-Reservation-Version: 0.10.1",
+        "Release-Reservation-PR: 42",
+        f"Release-Reservation-Source-SHA: {stale_source_sha}",
     ]
 )
 stale_reservation_message = "\n".join(

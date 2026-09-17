@@ -462,6 +462,7 @@ def resolve_version_only_reservation(
         "release_intent": release_intent,
         "release_mode": "version-only-release-pr",
         "branch_head_sha": identity_sha,
+        "source_pr_updated_at": trailers.get("Source-PR-Updated-At", ""),
         "verified": identity_commit.get("commit", {}).get("verification", {}).get("verified") is True,
     }
     try:
@@ -714,9 +715,9 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
             token,
             repository,
             version,
-            reservation["Release-Reservation-Commit-SHA"],
+            head_sha,
         ):
-            raise IdentityError("normal release reservation ownership changed during identity resolution")
+            raise IdentityError("normal release reservation does not own the preparation identity")
         if preparation_identity_reservation(
             api_root, token, repository, pr.get("number", 0), source_sha
         ) != head_sha:

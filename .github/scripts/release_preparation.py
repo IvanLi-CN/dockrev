@@ -1237,6 +1237,7 @@ def create(args: argparse.Namespace) -> int:
                     "release_intent": head_trailers["Release-Intent"],
                     "release_mode": "version-only-release-pr",
                     "branch_head_sha": source_sha,
+                    "source_pr_updated_at": source_pr_updated_at,
                     "verified": head_commit.get("commit", {}).get("verification", {}).get("verified") is True,
                 },
                 head_sha=source_sha,
