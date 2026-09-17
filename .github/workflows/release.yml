@@ -504,6 +504,32 @@ jobs:
           name: release-assets-${{ env.MERGE_SHA }}
           path: dist/release
 
+      - name: Download amd64 architecture assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets-amd64-${{ env.MERGE_SHA }}
+          path: release-assets
+
+      - name: Download arm64 architecture assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets-arm64-${{ env.MERGE_SHA }}
+          path: release-assets
+
+      - name: Stage prebuilt Docker binaries
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            source="release-assets/${arch}/musl"
+            destination="dist/ci/docker/${arch}"
+            mkdir -p "${destination}"
+            for binary in dockrev dockrev-supervisor; do
+              test -f "${source}/${binary}"
+              cp "${source}/${binary}" "${destination}/${binary}"
+              chmod +x "${destination}/${binary}"
+            done
+          done
+
       - name: Acquire immutable publication lock
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -636,24 +662,24 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push Dockrev image
+      - name: Build and push Dockrev image (artifact-first)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
-          target: runtime
+          target: runtime-prebuilt
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ steps.ghcr-owner.outputs.owner }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
           build-args: APP_EFFECTIVE_VERSION=${{ env.VERSION }}
 
-      - name: Build and push supervisor image
+      - name: Build and push supervisor image (artifact-first)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
-          target: runtime-supervisor
+          target: runtime-supervisor-prebuilt
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
