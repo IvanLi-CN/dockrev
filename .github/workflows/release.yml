@@ -484,7 +484,7 @@ jobs:
       packages: write
       actions: read
     concurrency:
-      group: release-publish-${{ needs.identity.outputs.merge_sha }}
+      group: ${{ needs.identity.outputs.channel == 'stable' && 'release-publish-stable' || format('release-publish-{0}', needs.identity.outputs.merge_sha) }}
       cancel-in-progress: false
     env:
       VERSION: ${{ needs.identity.outputs.version }}
@@ -706,89 +706,6 @@ jobs:
           GHCR_OWNER: ${{ steps.ghcr-owner.outputs.owner }}
         run: |
           set -euo pipefail
-          lock_ref_name="release-latest-lock"
-          lock_error_dir="${RUNNER_TEMP:-/tmp}/dockrev-release-latest-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          mkdir -p "${lock_error_dir}"
-          lock_read_ref="repos/${GITHUB_REPOSITORY}/git/ref/heads/${lock_ref_name}"
-          lock_update_ref="repos/${GITHUB_REPOSITORY}/git/refs/heads/${lock_ref_name}"
-          lock_head_sha=""
-          release_lock() {
-            set +e
-            [[ -n "${lock_head_sha}" ]] || return 0
-            unlock_tree="$(gh api "repos/${GITHUB_REPOSITORY}/git/commits/${lock_head_sha}" --jq '.tree.sha')"
-            unlock_message="$(printf 'Release latest promotion lock\n\nRelease-Latest-Lock-State: released\nRelease-Latest-Lock-Run: %s\nRelease-Latest-Lock-Attempt: %s\nRelease-Latest-Lock-Merge-SHA: %s' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${MERGE_SHA}")"
-            unlock_sha="$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/commits" \
-              -f "message=${unlock_message}" -f "tree=${unlock_tree}" -f "parents[]=${lock_head_sha}" --jq .sha)"
-            gh api --method PATCH "${lock_update_ref}" -f "sha=${unlock_sha}" -F force=false >/dev/null 2>&1
-          }
-          tree_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${MERGE_SHA}" --jq '.commit.tree.sha')"
-          while true; do
-            lock_json="$(gh api "${lock_read_ref}" 2>"${lock_error_dir}/ref-error" || true)"
-            if [[ -z "${lock_json}" ]]; then
-              if grep -Eq 'HTTP 404|Not Found|404' "${lock_error_dir}/ref-error"; then
-                initial_message="$(printf 'Release latest promotion lock\n\nRelease-Latest-Lock-State: released')"
-                initial_sha="$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/commits" \
-                  -f "message=${initial_message}" -f "tree=${tree_sha}" -f "parents[]=${MERGE_SHA}" --jq .sha)"
-                if gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-                  -f "ref=refs/heads/${lock_ref_name}" -f "sha=${initial_sha}" >/dev/null 2>"${lock_error_dir}/create-error"; then
-                  continue
-                else
-                  status=$?
-                  if [[ "${status}" -ne 1 ]] || ! grep -Eq 'HTTP 422|Reference already exists|already exists' "${lock_error_dir}/create-error"; then
-                    cat "${lock_error_dir}/create-error" >&2
-                    exit "${status}"
-                  fi
-                fi
-              else
-                cat "${lock_error_dir}/ref-error" >&2
-                exit 1
-              fi
-              sleep 1
-              continue
-            fi
-            current_sha="$(jq -r '.object.sha' <<<"${lock_json}")"
-            lock_commit="$(gh api "repos/${GITHUB_REPOSITORY}/git/commits/${current_sha}")"
-            lock_message="$(jq -r '.message' <<<"${lock_commit}")"
-            lock_state="$(awk -F': ' '/^Release-Latest-Lock-State:/{print $2; exit}' <<<"${lock_message}")"
-            owner_run="$(awk -F': ' '/^Release-Latest-Lock-Run:/{print $2; exit}' <<<"${lock_message}")"
-            owner_attempt="$(awk -F': ' '/^Release-Latest-Lock-Attempt:/{print $2; exit}' <<<"${lock_message}")"
-            if [[ "${lock_state}" == "acquired" ]]; then
-              [[ "${owner_run}" =~ ^[0-9]+$ && "${owner_attempt}" =~ ^[0-9]+$ ]] || { echo "latest promotion lock owner is invalid" >&2; exit 2; }
-              if [[ "${owner_run}" == "${GITHUB_RUN_ID}" && "${owner_attempt}" == "${GITHUB_RUN_ATTEMPT}" ]]; then
-                lock_head_sha="${current_sha}"
-                trap release_lock EXIT
-                break
-              fi
-              if run_status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${owner_run}/attempts/${owner_attempt}" --jq '.status' 2>"${lock_error_dir}/run-error")"; then
-                [[ "${run_status}" == "completed" ]] || { sleep 5; continue; }
-              else
-                status=$?
-                if [[ "${status}" -ne 1 ]] || ! grep -Eq 'HTTP 404|Not Found|404' "${lock_error_dir}/run-error"; then
-                  cat "${lock_error_dir}/run-error" >&2
-                  exit "${status}"
-                fi
-              fi
-            elif [[ "${lock_state}" != "released" ]]; then
-              echo "latest promotion lock state is invalid" >&2
-              exit 2
-            fi
-            current_tree="$(jq -r '.tree.sha' <<<"${lock_commit}")"
-            acquire_message="$(printf 'Release latest promotion lock\n\nRelease-Latest-Lock-State: acquired\nRelease-Latest-Lock-Run: %s\nRelease-Latest-Lock-Attempt: %s\nRelease-Latest-Lock-Merge-SHA: %s' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${MERGE_SHA}")"
-            acquire_sha="$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/commits" \
-              -f "message=${acquire_message}" -f "tree=${current_tree}" -f "parents[]=${current_sha}" --jq .sha)"
-            if gh api --method PATCH "${lock_update_ref}" -f "sha=${acquire_sha}" -F force=false >/dev/null 2>"${lock_error_dir}/update-error"; then
-              lock_head_sha="${acquire_sha}"
-              trap release_lock EXIT
-              break
-            else
-              status=$?
-              if [[ "${status}" -ne 1 ]] || ! grep -Eq 'HTTP 409|HTTP 422|non-fast-forward|fast forward' "${lock_error_dir}/update-error"; then
-                cat "${lock_error_dir}/update-error" >&2
-                exit "${status}"
-              fi
-            fi
-            sleep 5
-          done
           highest="$(python3 .github/scripts/release_baseline.py \
             --repository "${GITHUB_REPOSITORY}" \
             --token "${GH_TOKEN}")"
