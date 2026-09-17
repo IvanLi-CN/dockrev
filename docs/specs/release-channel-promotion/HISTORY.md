@@ -34,6 +34,10 @@
   `pull_request_target` event, and final identity resolution rejects
   multi-parent recovery identities.
 
+- Canonical version reservations now point directly to the verified signed
+  identity commit. The resolver keeps legacy reservation commits readable as
+  historical evidence, but no new unsigned reservation commit is created.
+
 ## References
 
 - `./SPEC.md`

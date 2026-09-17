@@ -297,9 +297,47 @@ def validate_reservation(
 def validate_version_only_reservation(
     payload: dict[str, Any], *, version: str, pr_number: int, source_sha: str
 ) -> dict[str, str]:
-    validate_reservation(payload, version=version, pr_number=pr_number, source_sha=source_sha)
     message = payload.get("message") or payload.get("commit", {}).get("message", "")
     trailers = parse_reservation_trailers(str(message))
+    identity = parse_trailers(str(message))
+    if not trailers.get("Release-Reservation-Version") or (
+        identity.get("Release-Mode") == "version-only-release-pr"
+        and not trailers.get("Release-Reservation-Identity-SHA")
+    ):
+        # New reservations point directly at the signed VERSION-only identity.
+        # The legacy reservation commit format remains readable below.
+        if identity.get("Release-Mode") != "version-only-release-pr":
+            raise PolicyError("version-only reservation has no accepted identity provenance")
+        if identity.get("Product-Version") != version:
+            raise PolicyError("version-only reservation version does not match expected VERSION")
+        if identity.get("Covered-Product-Merge-SHA") != source_sha:
+            raise PolicyError("version-only reservation source SHA does not match expected source")
+        if trailers.get("Release-Reservation-Version") not in {None, version}:
+            raise PolicyError("version-only reservation version trailer does not match expected VERSION")
+        if trailers.get("Release-Reservation-PR") not in {None, str(pr_number)}:
+            raise PolicyError("version-only reservation belongs to another PR")
+        if trailers.get("Release-Reservation-Source-SHA") not in {None, source_sha}:
+            raise PolicyError("version-only reservation source trailer does not match expected source")
+        if trailers.get("Release-Reservation-Intent") not in {None, identity.get("Release-Intent", "")}:
+            raise PolicyError("version-only reservation intent trailer does not match identity")
+        if trailers.get("Release-Reservation-Mode") not in {None, "version-only-release-pr"}:
+            raise PolicyError("version-only reservation mode is invalid")
+        release_intent = identity.get("Release-Intent", "")
+        try:
+            parsed_intent = parse_labels(release_intent.split())
+        except PolicyError as error:
+            raise PolicyError("version-only reservation intent is invalid") from error
+        if not parsed_intent["release_enabled"]:
+            raise PolicyError("version-only reservation intent must be release-enabled")
+        return {
+            "Release-Reservation-Version": version,
+            "Release-Reservation-PR": str(pr_number),
+            "Release-Reservation-Source-SHA": source_sha,
+            "Release-Reservation-Identity-SHA": "",
+            "Release-Reservation-Intent": release_intent,
+            "Release-Reservation-Mode": "version-only-release-pr",
+        }
+    validate_reservation(payload, version=version, pr_number=pr_number, source_sha=source_sha)
     identity_sha = trailers.get("Release-Reservation-Identity-SHA", "")
     validate_sha(identity_sha, "version-only reservation identity SHA")
     if trailers.get("Release-Reservation-Mode") != "version-only-release-pr":

@@ -163,6 +163,10 @@ def covered_product_has_existing_identity(
                 )
             except release_policy.PolicyError:
                 return True
+            if not trailers.get("Release-Reservation-Identity-SHA"):
+                if reservation_sha != expected_recovery_identity_sha:
+                    return True
+                return False
             if (
                 trailers.get("Release-Reservation-Identity-SHA")
                 == expected_recovery_identity_sha
@@ -443,7 +447,11 @@ def version_reservation_is_owned(
             trailers = release_policy.validate_version_only_reservation(
                 reservation, version=version, pr_number=pr_number, source_sha=source_sha
             )
-            if trailers.get("Release-Reservation-Identity-SHA") != identity_sha:
+            reservation_identity_sha = trailers.get("Release-Reservation-Identity-SHA")
+            if reservation_identity_sha:
+                if reservation_identity_sha != identity_sha:
+                    return False
+            elif reservation_sha != identity_sha:
                 return False
             if trailers.get("Release-Reservation-Intent") != release_intent:
                 return False
@@ -600,7 +608,7 @@ def load_github_completion(
         }
         files = pull_request_changed_files(api_root, token, repository, pr_number)
     else:
-        provenance = None
+        raise CompletionError("PR head has no accepted release provenance")
     source_pr_number = pr_number
     try:
         release_policy.validate_source_boundary(
@@ -626,7 +634,7 @@ def load_github_completion(
     label_pr_updated_at = str(
         preparation.get("source_pr_updated_at", "")
         if mode == "normal-preparation"
-        else provenance.get("source_pr_updated_at", "")
+        else provenance["source_pr_updated_at"]
     )
     if not label_pr_updated_at:
         raise CompletionError("PR metadata is missing updated_at for Label Gate binding")
@@ -643,8 +651,6 @@ def load_github_completion(
         version_for_tag = preparation["version"]
     elif mode == "version-only-release-pr":
         version_for_tag = provenance["product_version"]
-    else:
-        raise CompletionError("PR head has no accepted release provenance")
     tag_reserved = tag_is_available(api_root, token, repository, version_for_tag)
     if mode in {"normal-preparation", "version-only-release-pr"}:
         reservation_kwargs = (

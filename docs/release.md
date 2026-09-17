@@ -52,9 +52,11 @@ that absence before accepting it.
    Beta cannot promote directly to stable, dev does not promote into the
    beta/RC/stable sequence, and RC cannot return to beta or dev. Before
    writing, it atomically creates the shared
-   `release-reservation/vVERSION` ref, pointing to an owner-stamped reservation
-   commit whose trailers bind the PR and source SHA. Completion validates that
-   immutable ref ownership before accepting the identity.
+   `release-reservation/vVERSION` ref, pointing directly to the verified signed
+   identity commit whose trailers bind the PR and source SHA. Historical
+   owner-stamped reservation commits remain readable only for compatibility;
+   completion validates the immutable ref target and identity ownership before
+   accepting the identity.
 3. Preparation uses GitHub's `createCommitOnBranch(expectedHeadOid)` to add one
    signed, single-parent commit that changes only `VERSION`. Its trailers bind
    the source SHA, product version, qualified final baseline
@@ -84,8 +86,10 @@ If a historical product merge has no identity, create exactly one non-empty
 `Covered-Product-Merge-SHA` trailer, the product version, qualified final
 baseline, and frozen label intent. The recovery PR must first pass its own CI
 and Label Gate. Its
-reservation binds that signed identity commit, intent, mode, and covered merge;
-after merge, `Release` reads that reservation rather than the PR's current
+`release-reservation/vVERSION` points directly to that signed identity
+commit, whose reservation trailers bind the intent, mode, and covered merge;
+legacy reservation commits remain read-only compatibility evidence. After
+merge, `Release` reads that reservation rather than the PR's current
 head. The covered merge's immutable `VERSION` must have neither a reservation
 nor a tag, and validates the explicit recovery version by the same promotion
 policy. `Release completion` validates that boundary and the normal merged
@@ -119,10 +123,10 @@ dispatching `Release Preparation` with
 `release_mode=version-only-release-pr`, the covered merge SHA, exact version,
 and baseline. The workflow requires an unchanged, empty version-only PR before
 it writes the signed `VERSION`-only commit with `createCommitOnBranch`.
-Reservation, recovery-ref, and publication-lock ownership must all bind the
-same identity SHA. This preparation only makes the PR merge-ready; this change
-does not create the `0.80.2` tag, GitHub Release, GHCR images, or recovery
-dispatch.
+The version reservation ref, recovery-ref, and publication-lock ownership
+must all bind the same identity SHA. This preparation only makes the PR
+merge-ready; this change does not create the `0.80.2` tag, GitHub Release,
+GHCR images, or recovery dispatch.
 
 FIFO queues, release trains, snapshot backfills, mutable label reconstruction,
 and historical tag repair are deliberately unsupported. A stale reservation
@@ -151,6 +155,8 @@ alignment remain owner actions outside this repository change.
 
 Maintainers must align the `main` ruleset with `Review Policy Gate`, `Label
 Gate`, and `Release completion`, require PR-only signed commits, and allow
-job-scoped `contents: write` only where the workflows declare it. They must
+job-scoped `contents: write` only where the workflows declare it. The direct
+reservation ref uses that existing job-scoped contents permission and does not
+require any additional CI permission. They must
 also confirm the OIDC subject/audience allowlist for Oidrune. No workflow in
 this change performs those external configuration writes.

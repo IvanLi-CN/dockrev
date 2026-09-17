@@ -579,8 +579,10 @@ def reserve_version_ref(
     release_intent: str | None = None,
     release_mode: str | None = None,
 ) -> str | None:
-    """CAS one version ref to an owner-stamped reservation commit."""
-    version_only_reservation = any(value is not None for value in (identity_sha, release_intent, release_mode))
+    """CAS one version ref to an already-verified signed identity commit."""
+    version_only_reservation = any(value is not None for value in (release_intent, release_mode))
+    if identity_sha is None:
+        raise PreparationError("release reservation requires a signed identity SHA")
     if version_only_reservation:
         if not all(value is not None for value in (identity_sha, release_intent, release_mode)):
             raise PreparationError("version-only reservation provenance is incomplete")
@@ -591,6 +593,10 @@ def reserve_version_ref(
             raise PreparationError(str(error)) from error
         if not intent["release_enabled"] or release_mode != "version-only-release-pr":
             raise PreparationError("version-only reservation provenance is invalid")
+    try:
+        release_policy.validate_sha(str(identity_sha), "reservation identity SHA")
+    except release_policy.PolicyError as error:
+        raise PreparationError(str(error)) from error
     owner, name = repository_parts(repository)
     ref_name = f"release-reservation/v{version}"
     path = f"/repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(ref_name, safe='')}"
@@ -599,39 +605,27 @@ def reserve_version_ref(
     except PreparationError as error:
         if " 404:" not in str(error):
             raise
-        source = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{source_sha}")
-        tree_sha = source.get("commit", {}).get("tree", {}).get("sha")
-        if not isinstance(tree_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", tree_sha):
-            raise PreparationError("source commit tree SHA is invalid")
-        message_lines = [
-            f"Reserve release version v{version}",
-            "",
-            f"Release-Reservation-Version: {version}",
-            f"Release-Reservation-PR: {pr_number}",
-            f"Release-Reservation-Source-SHA: {source_sha}",
-        ]
-        if version_only_reservation:
-            message_lines.extend(
-                [
-                    f"Release-Reservation-Identity-SHA: {identity_sha}",
-                    f"Release-Reservation-Intent: {release_intent}",
-                    f"Release-Reservation-Mode: {release_mode}",
-                ]
-            )
-        reservation = api_request(
-            api_root,
-            token,
-            "POST",
-            f"/repos/{owner}/{name}/git/commits",
-            {
-                "message": "\n".join(message_lines),
-                "tree": tree_sha,
-                "parents": [source_sha],
-            },
+        reservation_sha = str(identity_sha)
+        reservation_commit = api_request(
+            api_root, token, "GET", f"/repos/{owner}/{name}/commits/{reservation_sha}"
         )
-        reservation_sha = reservation.get("sha")
-        if not isinstance(reservation_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", reservation_sha):
-            raise PreparationError("release reservation commit SHA is invalid")
+        if reservation_commit.get("commit", {}).get("verification", {}).get("verified") is not True:
+            raise PreparationError("release reservation identity commit signature is not verified")
+        try:
+            if version_only_reservation:
+                trailers = release_policy.validate_version_only_reservation(
+                    reservation_commit, version=version, pr_number=pr_number, source_sha=source_sha
+                )
+                if trailers.get("Release-Reservation-Identity-SHA") not in {"", identity_sha}:
+                    raise PreparationError("release reservation identity SHA does not match the recovery PR")
+                if trailers.get("Release-Reservation-Intent") != release_intent:
+                    raise PreparationError("release reservation intent does not match the recovery PR")
+            else:
+                release_policy.validate_reservation(
+                    reservation_commit, version=version, pr_number=pr_number, source_sha=source_sha
+                )
+        except release_policy.PolicyError as error:
+            raise PreparationError(str(error)) from error
         try:
             api_request(
                 api_root,
@@ -648,13 +642,17 @@ def reserve_version_ref(
     reservation_sha = existing.get("object", {}).get("sha")
     if not isinstance(reservation_sha, str):
         raise PreparationError("release reservation ref has no commit SHA")
+    if reservation_sha != identity_sha:
+        raise PreparationError("release reservation ref belongs to another identity")
     reservation_commit = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{reservation_sha}")
+    if reservation_commit.get("commit", {}).get("verification", {}).get("verified") is not True:
+        raise PreparationError("release reservation identity commit signature is not verified")
     try:
         if version_only_reservation:
             trailers = release_policy.validate_version_only_reservation(
                 reservation_commit, version=version, pr_number=pr_number, source_sha=source_sha
             )
-            if trailers.get("Release-Reservation-Identity-SHA") != identity_sha:
+            if trailers.get("Release-Reservation-Identity-SHA") not in {"", identity_sha}:
                 raise PreparationError("release reservation identity SHA does not match the recovery PR")
             if trailers.get("Release-Reservation-Intent") != release_intent:
                 raise PreparationError("release reservation intent does not match the recovery PR")
@@ -748,6 +746,7 @@ def create_commit(
     intent: dict[str, Any],
     source_pr_updated_at: str,
     baseline_version: str,
+    reservation_pr_number: int | None = None,
 ) -> str:
     encoded = base64.b64encode((version + "\n").encode()).decode()
     query = """
@@ -769,6 +768,14 @@ def create_commit(
             "Release-Mode: normal-preparation",
         ]
     )
+    if reservation_pr_number is not None:
+        body += "\n" + "\n".join(
+            [
+                f"Release-Reservation-Version: {version}",
+                f"Release-Reservation-PR: {reservation_pr_number}",
+                f"Release-Reservation-Source-SHA: {source_sha}",
+            ]
+        )
     variables = {
         "input": {
             "branch": {"repositoryNameWithOwner": repository, "branchName": branch},
@@ -795,6 +802,7 @@ def create_version_only_commit(
     intent: dict[str, Any],
     source_pr_updated_at: str,
     baseline_version: str,
+    reservation_pr_number: int | None = None,
 ) -> str:
     """Create the one immutable VERSION-only identity for a historical merge."""
     encoded = base64.b64encode((version + "\n").encode()).decode()
@@ -817,6 +825,16 @@ def create_version_only_commit(
             "Release-Mode: version-only-release-pr",
         ]
     )
+    if reservation_pr_number is not None:
+        body += "\n" + "\n".join(
+            [
+                f"Release-Reservation-Version: {version}",
+                f"Release-Reservation-PR: {reservation_pr_number}",
+                f"Release-Reservation-Source-SHA: {covered_merge_sha}",
+                f"Release-Reservation-Intent: {intent['type_label']} {intent['channel_label']}",
+                "Release-Reservation-Mode: version-only-release-pr",
+            ]
+        )
     data = graphql(
         f"{api_root.rstrip('/')}",
         token,
@@ -1019,6 +1037,7 @@ def create_version_only(args: argparse.Namespace, pr: dict[str, Any], intent: di
         intent,
         source_pr_updated_at,
         baseline_version,
+        args.pr_number,
     )
     preparation = inspect_version_only_commit(
         args.api_root,
@@ -1342,7 +1361,15 @@ def create(args: argparse.Namespace) -> int:
             existing_source_sha,
             source_sha,
         )
-        reserve_tag(args.api_root, args.token, args.repository, existing_version, args.pr_number, existing_source_sha)
+        reserve_tag(
+            args.api_root,
+            args.token,
+            args.repository,
+            existing_version,
+            args.pr_number,
+            existing_source_sha,
+            identity_sha=source_sha,
+        )
         write_json(
             args.output,
             {
@@ -1382,8 +1409,8 @@ def create(args: argparse.Namespace) -> int:
         args.exact_version,
         baseline_version=final_baseline,
     )
-    reservation_sha = reserve_tag(args.api_root, args.token, args.repository, version, args.pr_number, source_sha)
     commit_sha = None
+    reservation_sha = None
     preparation_reserved = False
     try:
         source_ci_ready(
@@ -1399,6 +1426,7 @@ def create(args: argparse.Namespace) -> int:
         commit_sha = create_commit(
             args.api_root, args.token, args.repository, pr["head"]["ref"], source_sha, version, intent,
             source_pr_updated_at, final_baseline,
+            args.pr_number,
         )
         preparation = inspect_commit(
             args.api_root,
@@ -1415,6 +1443,15 @@ def create(args: argparse.Namespace) -> int:
             args.api_root, args.token, args.repository, args.pr_number, source_sha, commit_sha
         )
         preparation_reserved = True
+        reservation_sha = reserve_tag(
+            args.api_root,
+            args.token,
+            args.repository,
+            version,
+            args.pr_number,
+            source_sha,
+            identity_sha=commit_sha,
+        )
     except PreparationError:
         if reservation_sha and not preparation_reserved:
             delete_reservation_ref(args.api_root, args.token, args.repository, version, reservation_sha)

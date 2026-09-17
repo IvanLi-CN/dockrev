@@ -25,7 +25,11 @@
 - `REQ-RELEASE-CHANNEL-004`: `.github/scripts/release_preparation.py` and
   `.github/workflows/release-preparation.yml` expose the explicit
   `version-only-release-pr` mode and bind its covered merge, exact version,
-  baseline, intent, signed VERSION-only commit, reservation, and recovery ref.
+  baseline, intent, signed VERSION-only commit, direct reservation ref, and
+  recovery ref. Legacy reservation commits remain readable only for
+  compatibility. The direct reservation ref, recovery ref, and publication
+  lock must resolve to the same identity SHA and use existing job-scoped
+  `contents: write`; no additional CI permission is required.
   Recovery branches use the `recovery/` selector; automatic workflow-run
   preparation skips them and the helper rejects version-only preparation on
   other branches. `.github/workflows/release-completion-pr.yml` contains only

@@ -757,8 +757,7 @@ try:
                 exact_version=None,
                 output=Path(drift_directory) / "release-intent.json",
             ))
-        assert len(cleanup_calls) == 1
-        assert cleanup_calls[-1][-2:] == ("0.1.1", "f" * 40)
+        assert cleanup_calls == []
         assert calls["create"] == 0
 
         preparation_script.source_ci_ready = fake_source_ci
@@ -777,8 +776,7 @@ try:
                 exact_version=None,
                 output=Path(inspect_directory) / "release-intent.json",
             ))
-        assert len(cleanup_calls) == 1
-        assert cleanup_calls[-1][-2:] == ("0.1.1", "f" * 40)
+        assert cleanup_calls == []
         preparation_script.inspect_commit = fake_inspect
 
         cleanup_calls.clear()
@@ -796,8 +794,7 @@ try:
                 exact_version=None,
                 output=Path(reservation_directory) / "release-intent.json",
             ))
-        assert len(cleanup_calls) == 1
-        assert cleanup_calls[-1][-2:] == ("0.1.1", "f" * 40)
+        assert cleanup_calls == []
         preparation_script.reserve_preparation_identity = lambda *_args: True
 
         calls = {"source_ci": 0, "reserve": 0, "create": 0}
@@ -1344,80 +1341,15 @@ try:
 finally:
     completion.api_json = original_completion_api_json
 
-reservation_calls = []
-original_preparation_api_request = preparation_script.api_request
-try:
-    reservation_ref_state = {"sha": None}
-    reservation_create_collision = None
-
-    def fake_reservation_api(_api_root, _token, method, path, payload=None):
-        reservation_calls.append((method, path, payload))
-        if method == "GET" and path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1"):
-            if reservation_ref_state["sha"] is not None:
-                return {"object": {"sha": reservation_ref_state["sha"]}}
-            raise preparation_script.PreparationError("GitHub API GET ref failed: 404: missing")
-        if method == "GET" and path.endswith(f"/commits/{source_sha}"):
-            return {"commit": {"tree": {"sha": "e" * 40}}}
-        if method == "POST" and path.endswith("/git/commits"):
-            assert payload["tree"] == "e" * 40
-            assert payload["parents"] == [source_sha]
-            assert payload["message"] == (
-                "Reserve release version v0.1.1\n\n"
-                "Release-Reservation-Version: 0.1.1\n"
-                "Release-Reservation-PR: 42\n"
-                f"Release-Reservation-Source-SHA: {source_sha}"
-            )
-            return {"sha": "f" * 40}
-        if method == "POST" and path.endswith("/git/refs"):
-            if reservation_create_collision is not None:
-                reservation_ref_state["sha"] = reservation_create_collision
-                raise preparation_script.PreparationError("GitHub API POST ref failed: 422: already exists")
-            reservation_ref_state["sha"] = "f" * 40
-            return {"ref": "refs/heads/release-reservation/v0.1.1", "object": {"sha": "f" * 40}}
-        if method == "GET" and path.endswith("/commits/" + "f" * 40):
-            return {
-                "parents": [{"sha": source_sha}],
-                "commit": {"message": (
-                    "Reserve release version v0.1.1\n\n"
-                    "Release-Reservation-Version: 0.1.1\n"
-                    "Release-Reservation-PR: 42\n"
-                    f"Release-Reservation-Source-SHA: {source_sha}"
-                )},
-            }
-        if method == "GET" and path.endswith("/commits/" + "a" * 40):
-            return {
-                "parents": [{"sha": source_sha}],
-                "commit": {"message": (
-                    "Reserve release version v0.1.1\n\n"
-                    "Release-Reservation-Version: 0.1.1\n"
-                    "Release-Reservation-PR: 41\n"
-                    f"Release-Reservation-Source-SHA: {source_sha}"
-                )},
-            }
-        raise AssertionError((method, path, payload))
-
-    preparation_script.api_request = fake_reservation_api
-    preparation_script.reserve_version_ref(
-        "https://api.github.test", "token", "IvanLi-CN/dockrev", "0.1.1", 42, source_sha
-    )
-    assert reservation_calls[-1] == (
-        "POST",
-        "/repos/IvanLi-CN/dockrev/git/refs",
-        {"ref": "refs/heads/release-reservation/v0.1.1", "sha": "f" * 40},
-    )
-    reservation_ref_state["sha"] = None
-    reservation_create_collision = "f" * 40
-    assert preparation_script.reserve_version_ref(
-        "https://api.github.test", "token", "IvanLi-CN/dockrev", "0.1.1", 42, source_sha
-    ) is None
-    reservation_ref_state["sha"] = None
-    reservation_create_collision = "a" * 40
-    expect_error(
-        preparation_script.reserve_version_ref,
-        "https://api.github.test", "token", "IvanLi-CN/dockrev", "0.1.1", 42, source_sha
-    )
-finally:
-    preparation_script.api_request = original_preparation_api_request
+expect_error(
+    preparation_script.reserve_version_ref,
+    "https://api.github.test",
+    "token",
+    "IvanLi-CN/dockrev",
+    "0.1.1",
+    42,
+    source_sha,
+)
 
 reservation_delete_calls = []
 original_preparation_api_request = preparation_script.api_request
@@ -1904,6 +1836,7 @@ version_only_covered_merge_sha = policy.APPROVED_BACKFILL_COVERED_MERGE_SHA
 version_only_covered_head_sha = "1" * 40
 version_only_moved_head_sha = "2" * 40
 version_only_reservation_sha = "3" * 40
+version_only_direct_identity_sha = "4" * 40
 version_only_merge_tree_sha = "6" * 40
 version_only_identity_tree_sha = version_only_merge_tree_sha
 version_only_merge_blob_sha = version_only_identity_tree_sha
@@ -1973,6 +1906,8 @@ try:
                 covered_identity = covered_identity_state["after_initial_check"]
             if covered_identity == "reservation":
                 return {"object": {"sha": "5" * 40}}
+            if covered_identity == "direct":
+                return {"object": {"sha": version_only_direct_identity_sha}}
             raise identity.IdentityError("GitHub API failed: 404")
         if path.endswith("/commits/" + "5" * 40):
             return {
@@ -1984,6 +1919,25 @@ try:
                         "Release-Reservation-PR: 41\n"
                         f"Release-Reservation-Source-SHA: {version_only_covered_merge_sha}"
                     )
+                },
+            }
+        if path.endswith(f"/commits/{version_only_direct_identity_sha}"):
+            return {
+                "parents": [{"sha": version_only_covered_head_sha}],
+                "commit": {
+                    "verification": {"verified": True},
+                    "message": (
+                        "VERSION-only release\n\n"
+                        f"Covered-Product-Merge-SHA: {version_only_covered_merge_sha}\n"
+                        "Product-Version: 0.80.1\n"
+                        "Release-Intent: type:patch channel:stable\n"
+                        "Release-Mode: version-only-release-pr\n"
+                        "Release-Reservation-Version: 0.80.1\n"
+                        "Release-Reservation-PR: 41\n"
+                        f"Release-Reservation-Source-SHA: {version_only_covered_merge_sha}\n"
+                        "Release-Reservation-Intent: type:patch channel:stable\n"
+                        "Release-Reservation-Mode: version-only-release-pr"
+                    ),
                 },
             }
         if path.endswith("/git/ref/tags/v0.80.1"):
@@ -2075,7 +2029,7 @@ try:
         "https://api.github.test", "token", "IvanLi-CN/dockrev", version_only_merge_sha
     )
     version_only_publication_lock_sha = {}
-    for covered_identity in ("reservation", "tag"):
+    for covered_identity in ("reservation", "direct", "tag"):
         covered_identity_state = {"kind": covered_identity, "after_initial_check": None, "reads": 0}
         expect_error(
             identity.resolve_github,
@@ -2561,6 +2515,7 @@ try:
         version_only_intent,
         "2026-01-01T00:00:00Z",
         "0.80.1",
+        394,
     ) == version_only_identity_sha
     version_only_input = graphql_variables["input"]
     assert version_only_input["expectedHeadOid"] == version_only_expected_head
@@ -2572,7 +2527,12 @@ try:
         "Release-Baseline-Version: 0.80.1\n"
         "Release-Intent: type:patch channel:stable\n"
         "Source-PR-Updated-At: 2026-01-01T00:00:00Z\n"
-        "Release-Mode: version-only-release-pr"
+        "Release-Mode: version-only-release-pr\n"
+        "Release-Reservation-Version: 0.80.2\n"
+        "Release-Reservation-PR: 394\n"
+        f"Release-Reservation-Source-SHA: {version_only_covered_sha}\n"
+        "Release-Reservation-Intent: type:patch channel:stable\n"
+        "Release-Reservation-Mode: version-only-release-pr"
     )
 
     def fake_version_only_inspect_api(_api_root, _token, _method, path, _payload=None):
@@ -2611,5 +2571,105 @@ try:
 finally:
     preparation_script.graphql = original_preparation_graphql
     preparation_script.api_request = original_preparation_api_request
+
+version_only_signed_reservation_sha = "b" * 40
+version_only_signed_reservation_source_sha = "c" * 40
+version_only_signed_reservation_message = "\n".join(
+    [
+        "Prepare version-only release identity",
+        "",
+        f"Covered-Product-Merge-SHA: {version_only_signed_reservation_source_sha}",
+        "Product-Version: 0.80.2",
+        "Release-Baseline-Version: 0.80.1",
+        "Release-Intent: type:patch channel:stable",
+        "Source-PR-Updated-At: 2026-01-01T00:00:00Z",
+        "Release-Mode: version-only-release-pr",
+        "Release-Reservation-Version: 0.80.2",
+        "Release-Reservation-PR: 394",
+        f"Release-Reservation-Source-SHA: {version_only_signed_reservation_source_sha}",
+        "Release-Reservation-Intent: type:patch channel:stable",
+        "Release-Reservation-Mode: version-only-release-pr",
+    ]
+)
+original_signed_reservation_api_request = preparation_script.api_request
+try:
+    signed_reservation_calls = []
+    signed_reservation_ref_sha = None
+
+    def fake_signed_reservation_api(_api_root, _token, method, path, payload=None):
+        global signed_reservation_ref_sha
+        signed_reservation_calls.append((method, path, payload))
+        if method == "GET" and path.endswith("/git/ref/heads/release-reservation%2Fv0.80.2"):
+            if signed_reservation_ref_sha is None:
+                raise preparation_script.PreparationError("GitHub API GET ref failed: 404: missing")
+            return {"object": {"sha": signed_reservation_ref_sha}}
+        if method == "GET" and path.endswith(f"/commits/{version_only_signed_reservation_sha}"):
+            return {
+                "parents": [{"sha": "d" * 40}],
+                "commit": {
+                    "message": version_only_signed_reservation_message,
+                    "verification": {"verified": True},
+                },
+            }
+        if method == "POST" and path.endswith("/git/refs"):
+            assert payload == {
+                "ref": "refs/heads/release-reservation/v0.80.2",
+                "sha": version_only_signed_reservation_sha,
+            }
+            signed_reservation_ref_sha = version_only_signed_reservation_sha
+            return {"ref": payload["ref"], "object": {"sha": payload["sha"]}}
+        raise AssertionError((method, path, payload))
+
+    preparation_script.api_request = fake_signed_reservation_api
+    assert preparation_script.reserve_version_ref(
+        "https://api.github.test",
+        "token",
+        "IvanLi-CN/dockrev",
+        "0.80.2",
+        394,
+        version_only_signed_reservation_source_sha,
+        identity_sha=version_only_signed_reservation_sha,
+        release_intent="type:patch channel:stable",
+        release_mode="version-only-release-pr",
+    ) == version_only_signed_reservation_sha
+    assert not any(method == "POST" and path.endswith("/git/commits") for method, path, _ in signed_reservation_calls)
+    assert policy.validate_version_only_reservation(
+        {"parents": [{"sha": "d" * 40}], "commit": {"message": version_only_signed_reservation_message}},
+        version="0.80.2",
+        pr_number=394,
+        source_sha=version_only_signed_reservation_source_sha,
+    )["Release-Reservation-Intent"] == "type:patch channel:stable"
+
+    signed_reservation_ref_sha = "e" * 40
+    expect_error(
+        preparation_script.reserve_version_ref,
+        "https://api.github.test",
+        "token",
+        "IvanLi-CN/dockrev",
+        "0.80.2",
+        394,
+        version_only_signed_reservation_source_sha,
+        identity_sha=version_only_signed_reservation_sha,
+        release_intent="type:patch channel:stable",
+        release_mode="version-only-release-pr",
+    )
+finally:
+    preparation_script.api_request = original_signed_reservation_api_request
+
+expect_error(
+    completion.validate_completion,
+    {
+        "labels": ["type:patch", "channel:stable"],
+        "source_sha": "1" * 40,
+        "head_sha": "2" * 40,
+        "source_checks": {
+            "ci_pr": {"status": "completed", "conclusion": "success"},
+            "label_gate": {"status": "completed", "conclusion": "success"},
+        },
+        "version": "0.1.1",
+        "version_file": "0.1.1",
+        "release_mode": "unsupported",
+    },
+)
 
 print("PASS: PR label release fixtures")
