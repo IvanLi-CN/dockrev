@@ -448,7 +448,15 @@ def version_reservation_is_owned(
                 reservation, version=version, pr_number=pr_number, source_sha=source_sha
             )
             if reservation_sha != identity_sha:
-                return False
+                reservation_message = str(reservation.get("commit", {}).get("message", ""))
+                reservation_trailers = release_policy.parse_reservation_trailers(reservation_message)
+                identity_trailers = release_policy.parse_trailers(reservation_message)
+                if (
+                    identity_trailers.get("Release-Mode")
+                    or reservation_trailers.get("Release-Reservation-Identity-SHA")
+                    or reservation_trailers.get("Release-Reservation-Mode")
+                ):
+                    return False
         elif identity_sha is not None and release_intent is not None:
             trailers = release_policy.validate_version_only_reservation(
                 reservation, version=version, pr_number=pr_number, source_sha=source_sha

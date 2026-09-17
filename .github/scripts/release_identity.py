@@ -156,7 +156,13 @@ def version_only_reservation(
 
 
 def version_reservation_ref_is_current(
-    api_root: str, token: str, repository: str, version: str, expected_sha: str
+    api_root: str,
+    token: str,
+    repository: str,
+    version: str,
+    expected_sha: str,
+    *,
+    alternate_sha: str | None = None,
 ) -> bool:
     owner, name = repository_parts(repository)
     ref_name = f"release-reservation/v{version}"
@@ -170,7 +176,10 @@ def version_reservation_ref_is_current(
         if "GitHub API failed: 404" in str(error):
             return False
         raise
-    return ref.get("object", {}).get("sha") == expected_sha
+    accepted_shas = {expected_sha}
+    if alternate_sha is not None:
+        accepted_shas.add(alternate_sha)
+    return ref.get("object", {}).get("sha") in accepted_shas
 
 
 def publication_lock_sha(
@@ -716,8 +725,9 @@ def resolve_github(api_root: str, token: str, repository: str, merge_sha: str, r
             repository,
             version,
             head_sha,
+            alternate_sha=reservation["Release-Reservation-Commit-SHA"],
         ):
-            raise IdentityError("normal release reservation does not own the preparation identity")
+            raise IdentityError("normal release reservation ownership changed during identity resolution")
         if preparation_identity_reservation(
             api_root, token, repository, pr.get("number", 0), source_sha
         ) != head_sha:

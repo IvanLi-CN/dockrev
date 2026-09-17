@@ -1253,6 +1253,11 @@ try:
                 "parents": [{"sha": source_sha}],
                 "commit": {"message": "Reserve release version v0.1.1\n\nRelease-Reservation-Version: 0.1.1\nRelease-Reservation-PR: 42\nRelease-Reservation-Source-SHA: " + source_sha},
             }
+        if path.endswith("/commits/" + "6" * 40):
+            return {
+                "parents": [{"sha": source_sha}],
+                "commit": {"verification": {"verified": True}, "message": preparation_message},
+            }
         if path.endswith(f"/git/ref/heads/release-preparation%2F42%2F{source_sha}"):
             return {"object": {"sha": prep_sha}}
         if "/pulls?state=" in path:
@@ -1263,6 +1268,10 @@ try:
     loaded = completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
     assert completion.validate_completion(loaded)["status"] == "pass"
     normal_reservation_ref_sha = "f" * 40
+    assert completion.validate_completion(
+        completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
+    )["status"] == "pass"
+    normal_reservation_ref_sha = "6" * 40
     expect_error(
         completion.validate_completion,
         completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42),
@@ -1701,7 +1710,7 @@ try:
     normal_merge_sha = "0" * 40
     normal_pr_head_sha = prep_sha
     normal_merge_parents = [{"sha": source_sha}]
-    normal_reservation_sha = prep_sha
+    normal_reservation_sha = "8" * 40
     normal_tree_sha = "9" * 40
     normal_merge_tree_sha = normal_tree_sha
     normal_merge_blob_sha = normal_tree_sha
@@ -1803,6 +1812,12 @@ try:
     resolved_api = identity.resolve_github("https://api.github.test", "token", "IvanLi-CN/dockrev", normal_merge_sha)
     assert resolved_api["release_tag"] == "v0.1.1"
     assert resolved_api["identity_ref_sha"] == prep_sha
+    normal_reservation_sha = prep_sha
+    normal_reservation_state = {"reads": 0, "rebound": False}
+    assert identity.resolve_github(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", normal_merge_sha
+    )["identity_ref_sha"] == prep_sha
+    normal_reservation_sha = "8" * 40
     normal_pr_head_sha = "7" * 40
     assert identity.resolve_github(
         "https://api.github.test", "token", "IvanLi-CN/dockrev", normal_merge_sha
@@ -2746,6 +2761,14 @@ try:
                     "verification": {"verified": True},
                 },
             }
+        if method == "GET" and path.endswith("/commits/" + "e" * 40):
+            return {
+                "parents": [{"sha": "d" * 40}],
+                "commit": {
+                    "message": version_only_signed_reservation_message,
+                    "verification": {"verified": True},
+                },
+            }
         if method == "POST" and path.endswith("/git/refs"):
             assert payload == {
                 "ref": "refs/heads/release-reservation/v0.80.2",
@@ -2790,6 +2813,41 @@ try:
     )
 finally:
     preparation_script.api_request = original_signed_reservation_api_request
+
+legacy_reservation_sha = "f" * 40
+legacy_reservation_source_sha = "1" * 40
+legacy_reservation_identity_sha = "2" * 40
+legacy_reservation_message = (
+    "Reserve release version v0.1.1\n\n"
+    "Release-Reservation-Version: 0.1.1\n"
+    "Release-Reservation-PR: 42\n"
+    f"Release-Reservation-Source-SHA: {legacy_reservation_source_sha}"
+)
+original_legacy_reservation_api_request = preparation_script.api_request
+try:
+    def fake_legacy_reservation_api(_api_root, _token, method, path, payload=None):
+        assert method == "GET" and payload is None
+        if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1"):
+            return {"object": {"sha": legacy_reservation_sha}}
+        if path.endswith(f"/commits/{legacy_reservation_sha}"):
+            return {
+                "parents": [{"sha": legacy_reservation_source_sha}],
+                "commit": {"message": legacy_reservation_message},
+            }
+        raise AssertionError((method, path, payload))
+
+    preparation_script.api_request = fake_legacy_reservation_api
+    assert preparation_script.reserve_version_ref(
+        "https://api.github.test",
+        "token",
+        "IvanLi-CN/dockrev",
+        "0.1.1",
+        42,
+        legacy_reservation_source_sha,
+        identity_sha=legacy_reservation_identity_sha,
+    ) is None
+finally:
+    preparation_script.api_request = original_legacy_reservation_api_request
 
 expect_error(
     completion.validate_completion,

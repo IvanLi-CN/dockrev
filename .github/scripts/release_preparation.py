@@ -661,12 +661,33 @@ def reserve_version_ref(
     reservation_sha = existing.get("object", {}).get("sha")
     if not isinstance(reservation_sha, str):
         raise PreparationError("release reservation ref has no commit SHA")
-    if reservation_sha != identity_sha:
-        raise PreparationError("release reservation ref belongs to another identity")
     reservation_commit = api_request(api_root, token, "GET", f"/repos/{owner}/{name}/commits/{reservation_sha}")
-    if reservation_commit.get("commit", {}).get("verification", {}).get("verified") is not True:
-        raise PreparationError("release reservation identity commit signature is not verified")
     try:
+        reservation_message = str(reservation_commit.get("commit", {}).get("message", ""))
+        reservation_trailers = release_policy.parse_reservation_trailers(reservation_message)
+        identity_trailers = release_policy.parse_trailers(reservation_message)
+        if reservation_sha != identity_sha:
+            if version_only_reservation:
+                trailers = release_policy.validate_version_only_reservation(
+                    reservation_commit, version=version, pr_number=pr_number, source_sha=source_sha
+                )
+                if trailers.get("Release-Reservation-Identity-SHA") != identity_sha:
+                    raise PreparationError("release reservation identity SHA does not match the recovery PR")
+                if trailers.get("Release-Reservation-Intent") != release_intent:
+                    raise PreparationError("release reservation intent does not match the recovery PR")
+            else:
+                if (
+                    identity_trailers.get("Release-Mode")
+                    or reservation_trailers.get("Release-Reservation-Identity-SHA")
+                    or reservation_trailers.get("Release-Reservation-Mode")
+                ):
+                    raise PreparationError("release reservation ref belongs to another identity")
+                release_policy.validate_reservation(
+                    reservation_commit, version=version, pr_number=pr_number, source_sha=source_sha
+                )
+            return None
+        if reservation_commit.get("commit", {}).get("verification", {}).get("verified") is not True:
+            raise PreparationError("release reservation identity commit signature is not verified")
         if version_only_reservation:
             trailers = release_policy.validate_version_only_reservation(
                 reservation_commit, version=version, pr_number=pr_number, source_sha=source_sha
