@@ -99,12 +99,12 @@ async fn source_revalidation_requires_existing_successful_check_job() {
     .unwrap();
 
     assert!(
-        has_valid_auto_policy_source(&db, "schedule-check", "schedule")
+        has_valid_auto_policy_source(&db, "schedule-check", "schedule", None, None)
             .await
             .unwrap()
     );
     assert!(
-        !has_valid_auto_policy_source(&db, "missing-check", "schedule")
+        !has_valid_auto_policy_source(&db, "missing-check", "schedule", None, None)
             .await
             .unwrap()
     );

@@ -191,6 +191,11 @@ WHERE service_id = ?1 AND candidate_digest = ?2
       AND (settled_at IS NULL OR ?10 > settled_at)
     )
   )
+  AND (
+    ?3 <> 'awaiting_inference'
+    OR ?8 > attempts
+    OR (?8 = attempts AND ?11 >= updated_at)
+  )
 "#,
                 params![
                     input.service_id,

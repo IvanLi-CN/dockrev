@@ -244,6 +244,10 @@ SET source_check_job_id = ?6,
     candidate_tag = ?7,
     candidate_display_tag = ?8,
     current_display_tag = ?9,
+    current_digest = COALESCE(NULLIF(TRIM(json_extract(
+      CASE WHEN json_valid(?13) THEN ?13 ELSE '{}' END,
+      '$.currentDigest'
+    )), ''), current_digest),
     due_at = ?10,
     min_age_seconds = ?11,
     min_version_lag = ?12,
@@ -295,6 +299,7 @@ INSERT OR IGNORE INTO auto_update_pending (
   candidate_display_tag,
   candidate_digest,
   current_display_tag,
+  current_digest,
   first_seen_at,
   due_at,
   min_age_seconds,
@@ -304,7 +309,7 @@ INSERT OR IGNORE INTO auto_update_pending (
   updated_at,
   candidate_id,
   summary_json
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, 'pending', ?16, ?17, CASE WHEN ?18 IS NULL OR EXISTS (SELECT 1 FROM auto_update_candidates c WHERE c.id = ?18 AND c.service_id = ?6 AND c.candidate_digest = ?10) THEN ?18 ELSE NULL END, ?19)
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULLIF(TRIM(json_extract(CASE WHEN json_valid(?19) THEN ?19 ELSE '{}' END, '$.currentDigest')), ''), ?12, ?13, ?14, ?15, 'pending', ?16, ?17, CASE WHEN ?18 IS NULL OR EXISTS (SELECT 1 FROM auto_update_candidates c WHERE c.id = ?18 AND c.service_id = ?6 AND c.candidate_digest = ?10) THEN ?18 ELSE NULL END, ?19)
 "#,
                 params![
                     input.id,
@@ -485,6 +490,12 @@ WHERE id = ?1
     FROM services s
     WHERE s.id = ?2
       AND s.candidate_digest = ?3
+      AND NULLIF(TRIM(s.current_digest), '') IS NOT NULL
+      AND LOWER(NULLIF(TRIM(COALESCE(
+        NULLIF(TRIM(auto_update_pending.current_digest), ''),
+        json_extract(CASE WHEN json_valid(auto_update_pending.summary_json)
+          THEN auto_update_pending.summary_json ELSE '{}' END, '$.currentDigest')
+      )), '')) = LOWER(NULLIF(TRIM(s.current_digest), ''))
   )
   AND EXISTS (
     SELECT 1

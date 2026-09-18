@@ -653,6 +653,7 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     apply_migration_0018_add_auto_update_candidate_audit_fields(conn)?;
     apply_migration_0019_add_auto_update_candidate_resolved_tags(conn)?;
     apply_migration_0020_hydrate_auto_update_candidates_from_discoveries(conn)?;
+    apply_migration_0021_add_auto_update_pending_current_digest(conn)?;
     schema_lifecycle_events::apply(conn)?;
     schema_job_history_retention::apply(conn)?;
     schema_backup_cleanup_state::apply(conn)?;
@@ -1321,6 +1322,7 @@ CREATE TABLE IF NOT EXISTS auto_update_pending (
   candidate_display_tag TEXT NOT NULL,
   candidate_digest TEXT NOT NULL,
   current_display_tag TEXT NOT NULL,
+  current_digest TEXT,
   first_seen_at TEXT NOT NULL,
   due_at TEXT NOT NULL,
   min_age_seconds INTEGER NOT NULL,

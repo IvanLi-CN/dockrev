@@ -773,8 +773,14 @@ pub async fn reevaluate_service_policy(
         return Ok(());
     }
     if !is_qualified_auto_policy_source(Some(&candidate.source))
-        || !has_valid_auto_policy_source(&state.db, &candidate.source_job_id, &candidate.source)
-            .await?
+        || !has_valid_auto_policy_source(
+            &state.db,
+            &candidate.source_job_id,
+            &candidate.source,
+            Some(&candidate.service_id),
+            Some(&candidate.stack_id),
+        )
+        .await?
     {
         state
             .db
@@ -1139,7 +1145,14 @@ async fn evaluate_candidate(
 ) -> anyhow::Result<()> {
     if let Some(source) = source
         && is_qualified_auto_policy_source(Some(source))
-        && !has_valid_auto_policy_source(&state.db, job_id, source).await?
+        && !has_valid_auto_policy_source(
+            &state.db,
+            job_id,
+            source,
+            Some(&candidate.service_id),
+            Some(&candidate.stack_id),
+        )
+        .await?
     {
         state
             .db

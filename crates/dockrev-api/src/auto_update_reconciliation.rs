@@ -98,11 +98,18 @@ async fn has_valid_auto_policy_source(
     db: &crate::db::Db,
     source_job_id: &str,
     source: &str,
+    service_id: Option<&str>,
+    stack_id: Option<&str>,
 ) -> anyhow::Result<bool> {
     let Some(job) = db.get_job(source_job_id).await? else {
         return Ok(false);
     };
     if !job.status.eq_ignore_ascii_case("success") {
+        return Ok(false);
+    }
+    if stack_id.is_some_and(|stack_id| job.stack_id.as_deref() != Some(stack_id))
+        || service_id.is_some_and(|service_id| job.service_id.as_deref() != Some(service_id))
+    {
         return Ok(false);
     }
     Ok(auto_policy_source(&job.reason, &job.summary_json, Some(&job.created_by)) == Some(source))
