@@ -27,6 +27,7 @@ def load(name: str, path: Path):
 
 policy = load("release_policy", ROOT / ".github/scripts/release_policy.py")
 baseline = load("release_baseline", ROOT / ".github/scripts/release_baseline.py")
+release_lock = load("release_lock", ROOT / ".github/scripts/release_lock.py")
 completion = load("release_completion", ROOT / ".github/scripts/release_completion.py")
 identity = load("release_identity", ROOT / ".github/scripts/release_identity.py")
 preparation_script = load("release_preparation", ROOT / ".github/scripts/release_preparation.py")
@@ -54,6 +55,89 @@ def expect_exception(error_type, function, *args, **kwargs):
     except error_type:
         return
     raise AssertionError(f"expected {function.__name__} to raise {error_type.__name__}")
+
+
+lock_commit_sha = "c" * 40
+covered_lock_target = "a" * 40
+covered_lock_other = "b" * 40
+normal_lock_merge_sha = covered_lock_other
+lock_commit_payload = {
+    "commit": {
+        "verification": {"verified": True},
+        "message": (
+            "VERSION-only release\n\n"
+            f"Covered-Product-Merge-SHA: {covered_lock_other}\n"
+            "Product-Version: 0.80.2\n"
+            "Release-Mode: version-only-release-pr"
+        ),
+    }
+}
+
+
+def publication_lock_fixture(path):
+    if path.endswith(f"/commits/{lock_commit_sha}"):
+        return lock_commit_payload
+    if path.endswith(f"/commits/{covered_lock_other}/pulls"):
+        return [{
+            "state": "closed",
+            "merged_at": "2026-01-01T00:00:00Z",
+            "merge_commit_sha": normal_lock_merge_sha,
+            "base": {"ref": "main"},
+        }]
+    raise AssertionError(f"unexpected publication lock API path: {path}")
+
+
+assert release_lock.publication_lock_matches_merge(
+    publication_lock_fixture,
+    "IvanLi-CN/dockrev",
+    lock_commit_sha,
+    "0.80.2",
+    covered_lock_target,
+) is False
+lock_commit_payload["commit"]["message"] = lock_commit_payload["commit"]["message"].replace(
+    covered_lock_other, covered_lock_target
+)
+assert release_lock.publication_lock_matches_merge(
+    publication_lock_fixture,
+    "IvanLi-CN/dockrev",
+    lock_commit_sha,
+    "0.80.2",
+    covered_lock_target,
+) is True
+lock_commit_payload["commit"]["message"] = (
+    "Prepare release identity\n\n"
+    f"Source-SHA: {covered_lock_other}\n"
+    "Product-Version: 0.80.2\n"
+    "Release-Mode: normal-preparation"
+)
+normal_lock_merge_sha = covered_lock_target
+assert release_lock.publication_lock_matches_merge(
+    publication_lock_fixture,
+    "IvanLi-CN/dockrev",
+    lock_commit_sha,
+    "0.80.2",
+    covered_lock_target,
+) is True
+normal_lock_merge_sha = covered_lock_other
+assert release_lock.publication_lock_matches_merge(
+    publication_lock_fixture,
+    "IvanLi-CN/dockrev",
+    lock_commit_sha,
+    "0.80.2",
+    covered_lock_target,
+) is False
+lock_commit_payload["commit"]["message"] = lock_commit_payload["commit"]["message"].replace(
+    "normal-preparation", "unsupported"
+)
+expect_exception(
+    release_lock.PublicationLockOwnershipError,
+    release_lock.publication_lock_matches_merge,
+    publication_lock_fixture,
+    "IvanLi-CN/dockrev",
+    lock_commit_sha,
+    "0.80.2",
+    covered_lock_target,
+)
 
 
 labels = policy.parse_labels(["type:patch", "channel:stable", "component:app"])
@@ -927,6 +1011,30 @@ try:
                         )
                     },
                 }
+            if path.endswith("/commits/" + "9" * 40):
+                return {
+                    "commit": {
+                        "verification": {"verified": True},
+                        "message": (
+                            "VERSION-only release\n\n"
+                            f"Covered-Product-Merge-SHA: {'b' * 40}\n"
+                            "Product-Version: 0.80.1\n"
+                            "Release-Mode: version-only-release-pr"
+                        ),
+                    }
+                }
+            if path.endswith("/commits/" + "8" * 40):
+                return {
+                    "commit": {
+                        "verification": {"verified": True},
+                        "message": (
+                            "VERSION-only release\n\n"
+                            f"Covered-Product-Merge-SHA: {covered_merge_sha}\n"
+                            "Product-Version: 0.80.1\n"
+                            "Release-Mode: version-only-release-pr"
+                        ),
+                    }
+                }
             if path.endswith("/git/ref/tags/v0.80.1"):
                 raise preparation_script.PreparationError("GitHub API failed: 404:")
             if path.endswith("/git/ref/tags/0.80.1"):
@@ -1022,22 +1130,25 @@ try:
             "0.80.1",
         ) is False
         covered_publication_lock_sha = "9" * 40
-        reservations_before = calls["reserve"]
-        recoveries_before = len(recovery_identity_reservations)
-        expect_error(preparation_script.create, Namespace(
-            api_root="https://api.github.test",
-            token="token",
-            repository="IvanLi-CN/dockrev",
-            pr_number=42,
-            exact_version=None,
-            release_mode="version-only-release-pr",
-            output=Path(directory) / "covered-publication-lock.json",
-        ))
-        assert calls["reserve"] == reservations_before
-        assert len(recovery_identity_reservations) == recoveries_before
+        assert preparation_script.covered_product_has_existing_identity(
+            "https://api.github.test",
+            "token",
+            "IvanLi-CN/dockrev",
+            covered_merge_sha,
+            "0.80.1",
+        ) is False
+        covered_publication_lock_sha = "8" * 40
+        assert preparation_script.covered_product_has_existing_identity(
+            "https://api.github.test",
+            "token",
+            "IvanLi-CN/dockrev",
+            covered_merge_sha,
+            "0.80.1",
+        ) is True
         covered_publication_lock_sha = None
 
         covered_identity_marker = "recovery-only"
+        reservations_before = calls["reserve"]
         preparation_script.reserve_recovery_identity = lambda *_args: False
         recovery_only_output = Path(directory) / "recovery-only.json"
         preparation_script.create(Namespace(
@@ -1671,9 +1782,44 @@ try:
             if completion_publication_lock_sha is None:
                 raise completion.CompletionError("GitHub API failed: 404")
             return {"object": {"sha": completion_publication_lock_sha}}
+        if path.endswith("/commits/" + "9" * 40):
+            return {
+                "commit": {
+                    "verification": {"verified": True},
+                    "message": (
+                        "VERSION-only release\n\n"
+                        f"Covered-Product-Merge-SHA: {'b' * 40}\n"
+                        "Product-Version: 0.1.0\n"
+                        "Release-Mode: version-only-release-pr"
+                    ),
+                }
+            }
+        if path.endswith("/commits/" + "8" * 40):
+            return {
+                "commit": {
+                    "verification": {"verified": True},
+                    "message": (
+                        "VERSION-only release\n\n"
+                        f"Covered-Product-Merge-SHA: {covered_sha}\n"
+                        "Product-Version: 0.1.0\n"
+                        "Release-Mode: version-only-release-pr"
+                    ),
+                }
+            }
         raise completion.CompletionError("GitHub API failed: 404")
 
     completion.api_json = fake_completion_lock_api
+    assert completion.covered_product_has_existing_identity(
+        "https://api.github.test",
+        "token",
+        "IvanLi-CN/dockrev",
+        covered_sha,
+        "0.1.0",
+        expected_recovery_identity_sha=prep_sha,
+        expected_recovery_pr_number=42,
+        expected_recovery_intent="type:patch channel:stable",
+    ) is False
+    completion_publication_lock_sha = "8" * 40
     assert completion.covered_product_has_existing_identity(
         "https://api.github.test",
         "token",

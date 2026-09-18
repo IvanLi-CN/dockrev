@@ -28,7 +28,10 @@
   baseline, intent, signed VERSION-only commit, direct reservation ref, and
   recovery ref. Legacy reservation commits remain readable only for
   compatibility. The direct reservation ref, recovery ref, and publication
-  lock must resolve to the same identity SHA and use existing job-scoped
+  lock for the new product version resolve to the same identity SHA. A lock on
+  the covered product's older VERSION is resolved to its exact owning merge and
+  does not block an unrelated historical boundary. Publication acquires only
+  the new product-version lock. All writes use existing job-scoped
   `contents: write`; no additional CI permission is required.
   Recovery branches use the `recovery/` selector; automatic workflow-run
   preparation skips them and the helper rejects version-only preparation on

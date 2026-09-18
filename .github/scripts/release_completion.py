@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import release_baseline
+import release_lock
 import release_policy
 
 
@@ -211,8 +212,22 @@ def covered_product_has_existing_identity(
         lock_sha = lock_ref.get("object", {}).get("sha")
         if not isinstance(lock_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", lock_sha):
             raise CompletionError("existing publication lock ref has no valid commit SHA")
-        if lock_sha != expected_recovery_identity_sha:
-            return True
+        try:
+            if release_lock.publication_lock_matches_merge(
+                lambda path: api_json(api_root, token, path),
+                repository,
+                lock_sha,
+                version,
+                covered_merge_sha,
+                allowed_identity_shas=(
+                    {expected_recovery_identity_sha}
+                    if expected_recovery_identity_sha is not None
+                    else set()
+                ),
+            ):
+                return True
+        except release_lock.PublicationLockOwnershipError as error:
+            raise CompletionError(str(error)) from error
     def tag_fetch(path: str) -> Any:
         try:
             return api_json(api_root, token, path)

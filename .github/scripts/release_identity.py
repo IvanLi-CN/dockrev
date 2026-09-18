@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import release_baseline
+import release_lock
 import release_policy
 
 
@@ -404,8 +405,19 @@ def covered_version_has_existing_identity(
                 raise
             return True
     lock_sha = publication_lock_sha(api_root, token, repository, version)
-    if lock_sha is not None and (allowed_lock_sha is None or lock_sha != allowed_lock_sha):
-        return True
+    if lock_sha is not None:
+        try:
+            if release_lock.publication_lock_matches_merge(
+                lambda path: api_json(api_root, token, path),
+                repository,
+                lock_sha,
+                version,
+                covered_merge_sha,
+                allowed_identity_shas={allowed_lock_sha} if allowed_lock_sha else set(),
+            ):
+                return True
+        except release_lock.PublicationLockOwnershipError as error:
+            raise IdentityError(str(error)) from error
     return False
 
 
