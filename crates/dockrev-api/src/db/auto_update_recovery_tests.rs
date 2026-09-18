@@ -196,6 +196,8 @@ async fn hydration_rejects_successful_source_job_from_another_service() {
         .unwrap();
     assert_eq!(candidate.status, "unresolved");
     assert_eq!(candidate.source, "unknown");
+    assert_eq!(candidate.source_job_id, "");
+    assert_eq!(candidate.discovered_at, "");
     assert_eq!(candidate.reason.as_deref(), Some("migration_ambiguous_history"));
 }
 
@@ -231,6 +233,17 @@ async fn hydration_keeps_the_earliest_qualified_observation_as_one_consistent_re
     })
     .await
     .unwrap();
+
+    let mut runtime_candidate = candidate_input(
+        "runtime-current-candidate",
+        "sha256:multi",
+        "ready",
+        "2026-04-30T00:01:00Z",
+    );
+    runtime_candidate.raw_tag.clear();
+    db.upsert_auto_update_candidate(&runtime_candidate, "2026-04-30T00:01:00Z")
+        .await
+        .unwrap();
 
     for (id, created_by, reason, summary) in [
         ("check-old", "schedule", "schedule", serde_json::json!({})),
@@ -288,18 +301,21 @@ async fn hydration_keeps_the_earliest_qualified_observation_as_one_consistent_re
         .await
         .unwrap()
         .unwrap();
+    assert_eq!(candidate.id, "runtime-current-candidate");
     assert_eq!(candidate.status, "ready");
     assert_eq!(candidate.discovered_at, "2026-04-30T00:01:00Z");
     assert_eq!(candidate.source, "schedule");
     assert_eq!(candidate.source_job_id, "check-schedule");
     assert_eq!(candidate.raw_tag, "1.4.0");
+    let old_candidate = db
+        .get_auto_update_candidate("service", "sha256:old")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(old_candidate.status, "superseded");
     assert_eq!(
-        db.get_auto_update_candidate("service", "sha256:old")
-            .await
-            .unwrap()
-            .unwrap()
-            .status,
-        "superseded"
+        old_candidate.superseded_by_candidate_id.as_deref(),
+        Some("runtime-current-candidate")
     );
     let old_pending = db
         .get_auto_update_pending_by_id("pending-old-hydration")
