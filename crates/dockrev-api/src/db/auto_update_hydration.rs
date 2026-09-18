@@ -400,6 +400,7 @@ pub(super) fn list_candidate_hydration_diagnostics_conn(
         r#"
 SELECT
   s.id,
+  c.id,
   s.candidate_digest,
   c.status,
   c.reason,
@@ -416,7 +417,9 @@ WHERE s.id IN ({placeholders})
     c.hydration_origin IS NOT NULL
     OR EXISTS (
       SELECT 1 FROM service_new_version_discoveries d
-      WHERE d.service_id = s.id AND d.candidate_digest = s.candidate_digest
+      WHERE c.id IS NULL
+        AND d.service_id = s.id
+        AND d.candidate_digest = s.candidate_digest
     )
   )
 "#
@@ -427,14 +430,17 @@ WHERE s.id IN ({placeholders})
         .collect::<Vec<_>>();
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params.as_slice(), |row| {
-        let hydration_origin: Option<String> = row.get(6)?;
-        let candidate_digest: Option<String> = row.get(1)?;
-        let status = if hydration_origin.as_deref() == Some(HYDRATION_ORIGIN_AMBIGUOUS_HISTORY) {
+        let candidate_id: Option<String> = row.get(1)?;
+        let candidate_digest: Option<String> = row.get(2)?;
+        let hydration_origin: Option<String> = row.get(7)?;
+        let status = if candidate_id.is_none() {
+            "candidate_missing"
+        } else if hydration_origin.as_deref() == Some(HYDRATION_ORIGIN_AMBIGUOUS_HISTORY) {
             "ambiguous_history"
         } else if hydration_origin.as_deref() == Some(HYDRATION_ORIGIN_DISCOVERY_HISTORY) {
             "hydrated"
         } else {
-            "candidate_missing"
+            "unknown"
         };
         let reason = match status {
             "ambiguous_history" => Some("migration_ambiguous_history".to_string()),
@@ -446,10 +452,10 @@ WHERE s.id IN ({placeholders})
             candidate_digest,
             status: status.to_string(),
             reason,
-            source: row.get(4)?,
-            source_job_id: row.get(5)?,
+            source: row.get(5)?,
+            source_job_id: row.get(6)?,
             hydration_origin,
-            discovered_at: row.get(7)?,
+            discovered_at: row.get(8)?,
         })
     })?;
     rows.collect()
