@@ -662,12 +662,12 @@ async fn notification_digest_migration_deduplicates_equivalent_active_rows() {
 INSERT INTO new_version_notifications (
   id, service_id, job_id, reason, image_ref, image_tag, current_tag,
   current_display_tag, candidate_tag, candidate_display_tag, candidate_digest,
-  status, created_at
+  status, sent_channels_json, created_at, sent_at, last_error
 ) VALUES
   ('notification-pending', 'service', 'job-1', 'new_version', 'ghcr.io/acme/app', 'latest', 'latest',
-   '1.0.0', 'latest', 'latest', 'ABC', 'pending', '2026-04-30T00:00:00Z'),
+   '1.0.0', 'latest', 'latest', 'ABC', 'pending', '["webhook"]', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z', 'delivery retry'),
   ('notification-sent', 'service', 'job-2', 'new_version', 'ghcr.io/acme/app', 'latest', 'latest',
-   '1.0.0', 'latest', '1.2.3', 'sha256:abc', 'sent', '2026-04-30T00:00:01Z')
+   '1.0.0', 'latest', '1.2.3', 'sha256:abc', 'sent', '["slack"]', '2026-04-30T00:00:01Z', NULL, NULL)
 "#,
             [],
         )?;
@@ -685,7 +685,7 @@ INSERT INTO new_version_notifications (
     let rows = db
         .call(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, candidate_digest, status, last_error FROM new_version_notifications ORDER BY id",
+                "SELECT id, candidate_digest, status, last_error, sent_channels_json, sent_at FROM new_version_notifications ORDER BY id",
             )?;
             Ok(stmt
                 .query_map([], |row| {
@@ -694,6 +694,8 @@ INSERT INTO new_version_notifications (
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
                         row.get::<_, Option<String>>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, Option<String>>(5)?,
                     ))
                 })?
                 .collect::<Result<Vec<_>, _>>()?)
@@ -702,9 +704,14 @@ INSERT INTO new_version_notifications (
         .unwrap();
     assert_eq!(rows[0].1, "sha256:abc");
     assert_eq!(rows[0].2, "superseded");
-    assert_eq!(rows[0].3.as_deref(), Some("migration_canonical_digest"));
+    assert_eq!(rows[0].3.as_deref(), Some("delivery retry"));
+    assert_eq!(rows[0].4, "[\"webhook\"]");
+    assert_eq!(rows[0].5.as_deref(), Some("2026-04-30T00:00:00Z"));
     assert_eq!(rows[1].1, "sha256:abc");
     assert_eq!(rows[1].2, "sent");
+    assert_eq!(rows[1].3.as_deref(), Some("delivery retry"));
+    assert_eq!(rows[1].4, "[\"slack\",\"webhook\"]");
+    assert_eq!(rows[1].5.as_deref(), Some("2026-04-30T00:00:00Z"));
 
     drop(db);
     let db = Db::open(&db_path).await.unwrap();

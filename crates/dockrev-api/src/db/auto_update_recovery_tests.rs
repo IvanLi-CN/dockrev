@@ -576,7 +576,7 @@ async fn digest_identity_migration_deduplicates_active_pending_rows() {
                 [],
             )?;
             conn.execute(
-                "INSERT INTO auto_update_candidates (id, stack_id, service_id, image_ref, raw_tag, candidate_digest, status, reason, attempts, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, created_at, updated_at, policy_status) VALUES ('candidate-legacy', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'ABC', 'awaiting_inference', 'version_inference_pending', 0, '2026-04-29T23:59:00Z', 'check-legacy', 'schedule', 'latest', '1.0.0', 'sha256:current', '2026-04-29T23:59:00Z', '2026-04-29T23:59:00Z', NULL)",
+                "INSERT INTO auto_update_candidates (id, stack_id, service_id, image_ref, raw_tag, candidate_digest, status, reason, attempts, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, created_at, updated_at, policy_status, resolved_tags, last_error, retry_at, policy_reason, policy_rule_id, policy_evaluated_at, policy_scope_type, policy_scope_id, superseded_at, superseded_by_candidate_id) VALUES ('candidate-legacy', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'ABC', 'awaiting_inference', 'version_inference_pending', 0, '2026-04-29T23:59:00Z', 'check-legacy', 'schedule', 'latest', '1.0.0', 'sha256:current', '2026-04-29T23:59:00Z', '2026-04-29T23:59:00Z', NULL, '[\"linux/amd64\"]', 'legacy inference error', '2026-05-01T00:00:00Z', 'legacy policy reason', 'legacy-rule', '2026-05-01T00:01:00Z', 'stack', 'stack', '2026-05-01T00:02:00Z', 'candidate-superseded-by')",
                 [],
             )?;
             conn.execute(
@@ -635,12 +635,30 @@ async fn digest_identity_migration_deduplicates_active_pending_rows() {
                     ))
                 },
             )?;
+            let audit = conn.query_row(
+                "SELECT resolved_tags, last_error, retry_at, policy_reason, policy_rule_id, policy_evaluated_at, policy_scope_type, policy_scope_id, superseded_at, superseded_by_candidate_id FROM auto_update_candidates WHERE id = 'candidate-canonical'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, Option<String>>(6)?,
+                        row.get::<_, Option<String>>(7)?,
+                        row.get::<_, Option<String>>(8)?,
+                        row.get::<_, Option<String>>(9)?,
+                    ))
+                },
+            )?;
             let job = conn.query_row(
                 "SELECT status FROM jobs WHERE id = 'duplicate-job'",
                 [],
                 |row| row.get::<_, String>(0),
             )?;
-            Ok((pending, candidate, job))
+            Ok((pending, candidate, job, audit))
         })
         .await
         .unwrap();
@@ -679,6 +697,21 @@ async fn digest_identity_migration_deduplicates_active_pending_rows() {
         )
     );
     assert_eq!(rows.2, "queued");
+    assert_eq!(
+        rows.3,
+        (
+            Some("[\"linux/amd64\"]".to_string()),
+            Some("legacy inference error".to_string()),
+            Some("2026-05-01T00:00:00Z".to_string()),
+            Some("legacy policy reason".to_string()),
+            Some("legacy-rule".to_string()),
+            Some("2026-05-01T00:01:00Z".to_string()),
+            Some("stack".to_string()),
+            Some("stack".to_string()),
+            Some("2026-05-01T00:02:00Z".to_string()),
+            Some("candidate-superseded-by".to_string()),
+        )
+    );
     drop(db);
     std::fs::remove_file(path).unwrap();
 }
