@@ -306,6 +306,81 @@ WHERE p.id = ?1
   AND c.status <> 'superseded'
   AND c.policy_status = 'delayed'
   AND c.policy_rule_id = p.rule_id
+  AND EXISTS (
+    SELECT 1
+    FROM jobs source_job
+    WHERE source_job.id = p.source_check_job_id
+      AND LOWER(source_job.type) = 'check'
+      AND LOWER(source_job.status) = 'success'
+      AND (
+        (LOWER(c.source) = 'schedule'
+          AND LOWER(source_job.reason) = 'schedule'
+          AND LOWER(source_job.created_by) = 'schedule')
+        OR (LOWER(c.source) = 'github_webhook'
+          AND LOWER(source_job.created_by) IN ('webhook', 'github')
+          AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{{}}' END, '$.source'), '')) = 'github_webhook')
+      )
+      AND LOWER(c.source) IN ('schedule', 'github_webhook')
+      AND (
+        (LOWER(source_job.scope) = 'service'
+          AND source_job.stack_id = c.stack_id
+          AND source_job.service_id = c.service_id)
+        OR (LOWER(source_job.scope) = 'stack'
+          AND source_job.stack_id = c.stack_id
+          AND source_job.service_id IS NULL)
+        OR (LOWER(source_job.scope) = 'all'
+          AND source_job.stack_id IS NULL
+          AND source_job.service_id IS NULL)
+      )
+  )
+  AND json_extract(p.summary_json, '$.policyUpdatedAt') IS NOT NULL
+  AND (
+    (
+      ?4 = 'service'
+      AND ?5 = s.id
+      AND EXISTS (
+        SELECT 1
+        FROM auto_update_policies service_policy
+        WHERE service_policy.scope_type = 'service'
+          AND service_policy.scope_id = s.id
+          AND service_policy.mode = 'override'
+          AND service_policy.enabled <> 0
+          AND service_policy.updated_at = json_extract(p.summary_json, '$.policyUpdatedAt')
+          AND EXISTS (
+            SELECT 1
+            FROM json_each(CASE WHEN json_valid(service_policy.rules_json) THEN service_policy.rules_json ELSE '[]' END) AS rule
+            WHERE json_extract(rule.value, '$.id') = ?6
+              AND json_extract(rule.value, '$.enabled') <> 0
+          )
+      )
+    )
+    OR (
+      ?4 = 'stack'
+      AND ?5 = s.stack_id
+      AND NOT EXISTS (
+        SELECT 1
+        FROM auto_update_policies service_policy
+        WHERE service_policy.scope_type = 'service'
+          AND service_policy.scope_id = s.id
+          AND service_policy.mode <> 'inherit'
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM auto_update_policies stack_policy
+        WHERE stack_policy.scope_type = 'stack'
+          AND stack_policy.scope_id = s.stack_id
+          AND stack_policy.mode = 'override'
+          AND stack_policy.enabled <> 0
+          AND stack_policy.updated_at = json_extract(p.summary_json, '$.policyUpdatedAt')
+          AND EXISTS (
+            SELECT 1
+            FROM json_each(CASE WHEN json_valid(stack_policy.rules_json) THEN stack_policy.rules_json ELSE '[]' END) AS rule
+            WHERE json_extract(rule.value, '$.id') = ?6
+              AND json_extract(rule.value, '$.enabled') <> 0
+          )
+      )
+    )
+  )
 "#,
                     );
                     let valid = tx

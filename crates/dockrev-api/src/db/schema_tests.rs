@@ -760,6 +760,10 @@ async fn hydration_migration_survives_equivalent_legacy_candidate_rows() {
             )?;
         }
         conn.execute(
+            "INSERT INTO auto_update_candidates (id, stack_id, service_id, image_ref, raw_tag, candidate_digest, status, reason, attempts, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, created_at, updated_at, superseded_by_candidate_id) VALUES ('legacy-observer', 'legacy-stack', 'legacy-service', 'ghcr.io/acme/app', 'latest', 'sha256:other', 'superseded', 'newer_candidate', 0, '2026-04-29T00:00:00Z', 'legacy-check', 'schedule', 'latest', '1.0.0', 'sha256:current', '2026-04-29T00:00:00Z', '2026-04-29T00:00:00Z', 'legacy-uppercase')",
+            [],
+        )?;
+        conn.execute(
             "DELETE FROM schema_migrations WHERE id IN ('0020_hydrate_auto_update_candidates_from_discoveries', '0024_normalize_auto_update_digest_identity')",
             [],
         )?;
@@ -773,7 +777,7 @@ async fn hydration_migration_survives_equivalent_legacy_candidate_rows() {
     let candidates = db
         .call(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT candidate_digest FROM auto_update_candidates WHERE service_id = 'legacy-service' ORDER BY id",
+                "SELECT candidate_digest FROM auto_update_candidates WHERE service_id = 'legacy-service' AND candidate_digest = 'sha256:abc' ORDER BY id",
             )?;
             Ok(stmt
                 .query_map([], |row| row.get::<_, String>(0))?
@@ -782,6 +786,17 @@ async fn hydration_migration_survives_equivalent_legacy_candidate_rows() {
         .await
         .unwrap();
     assert_eq!(candidates, vec!["sha256:abc"]);
+    let superseded_by = db
+        .call(|conn| {
+            Ok(conn.query_row(
+                "SELECT superseded_by_candidate_id FROM auto_update_candidates WHERE id = 'legacy-observer'",
+                [],
+                |row| row.get::<_, Option<String>>(0),
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(superseded_by.as_deref(), Some("legacy-prefixed"));
     drop(db);
     std::fs::remove_file(&db_path).unwrap();
     let _ = std::fs::remove_file(db_path.with_extension("sqlite3-wal"));

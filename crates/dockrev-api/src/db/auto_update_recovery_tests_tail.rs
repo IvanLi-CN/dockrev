@@ -512,7 +512,7 @@ INSERT INTO service_new_version_discoveries (
 }
 
 #[tokio::test]
-async fn auto_policy_enqueue_guard_rejects_superseded_pending_without_creating_a_job() {
+async fn auto_policy_enqueue_guard_rejects_changed_candidate_without_creating_a_job() {
     let db = Db::open(Path::new(":memory:")).await.unwrap();
     db.call(|conn| {
         conn.execute(
@@ -571,6 +571,15 @@ async fn auto_policy_enqueue_guard_rejects_superseded_pending_without_creating_a
     )
     .await
     .unwrap();
+    db.call(|conn| {
+        conn.execute(
+            "UPDATE auto_update_candidates SET source_job_id = 'source-check' WHERE id = 'candidate-old'",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
     let pending = db
         .reserve_auto_update_pending(
             &AutoUpdatePendingInput {
@@ -612,18 +621,6 @@ async fn auto_policy_enqueue_guard_rejects_superseded_pending_without_creating_a
         .await
         .unwrap());
 
-    let replacement = db
-        .upsert_auto_update_candidate(
-            &candidate_input(
-                "candidate-new",
-                "sha256:new",
-                "ready",
-                "2026-04-30T00:01:00Z",
-            ),
-            "2026-04-30T00:01:00Z",
-        )
-        .await
-        .unwrap();
     db.call(|conn| {
         conn.execute(
             "UPDATE services SET candidate_digest = 'sha256:new' WHERE id = 'service'",
@@ -631,15 +628,6 @@ async fn auto_policy_enqueue_guard_rejects_superseded_pending_without_creating_a
         )?;
         Ok(())
     })
-    .await
-    .unwrap();
-    db.supersede_auto_update_candidates(
-        "service",
-        "sha256:new",
-        &replacement.discovered_at,
-        &replacement.id,
-        "2026-04-30T00:01:01Z",
-    )
     .await
     .unwrap();
 
@@ -683,7 +671,7 @@ async fn auto_policy_enqueue_guard_rejects_superseded_pending_without_creating_a
         db.get_auto_update_pending_by_id(&pending.id)
             .await
             .unwrap()
-            .unwrap()
+        .unwrap()
             .status,
         "skipped"
     );

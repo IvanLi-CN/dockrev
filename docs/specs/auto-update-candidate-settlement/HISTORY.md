@@ -24,6 +24,7 @@
 - recovery 的取消审计与 migration provenance 统一保留 `migration_ambiguous_history`，正常运行时 policy 变化仍保持独立 reason；hydration 对已存在的 running stop-control 也会发出 supersession stop request。
 - migration `0024_normalize_auto_update_digest_identity` 补足旧数据库的 digest identity 收敛：等价 active pending 只保留一个 keeper，重复 pending 进入 `migration_duplicate_candidate_digest` 审计状态，已绑定的 queued action 可被取消，running action 只登记 stop control；重复打开数据库保持幂等。
 - migration `0024_normalize_auto_update_digest_identity` 现在也在 canonicalize 前确定 candidate keeper，重绑关联 pending，失效没有保留 active pending 的重复 action，并删除重复 candidate fact；`0014` legacy backfill 与 queued recovery 同时收紧 Check/source/scope 与 canonical digest 门禁。
+- migration `0024` 在删除等价 candidate 前会重写指向 duplicate 的 `superseded_by_candidate_id`，保留可遍历的 supersession audit lineage；enqueue guard 在 claim 后的最终事务中再次校验 current policy 与 source provenance。
 - discovery hydration 的可信 provenance 选择固定为按 `discovered_at`、再按 discovery id 的最早完整成功 check observation；current-digest CAS 与 hydration diagnostic 共享同一 canonical digest 规则，覆盖缺省 `sha256:` 前缀和大小写差异。
 
 ## Decision Trace
