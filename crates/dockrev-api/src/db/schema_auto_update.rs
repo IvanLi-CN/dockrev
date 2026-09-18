@@ -1,9 +1,3 @@
-fn canonical_digest_sql(column: &str) -> String {
-    format!(
-        "CASE WHEN instr(lower(trim({column})), ':') = 0 THEN 'sha256:' || lower(trim({column})) ELSE lower(trim({column})) END"
-    )
-}
-
 fn ensure_auto_update_schema(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         r#"
@@ -125,8 +119,8 @@ fn apply_migration_0017_add_auto_update_candidate_projection_context(
             tx.execute(ddl, [])?;
         }
     }
-    let candidate_digest = canonical_digest_sql("auto_update_candidates.candidate_digest");
-    let pending_digest = canonical_digest_sql("p.candidate_digest");
+    let candidate_digest = super::canonical_digest_sql("auto_update_candidates.candidate_digest");
+    let pending_digest = super::canonical_digest_sql("p.candidate_digest");
     let sql = format!(
         r#"
 UPDATE auto_update_candidates
@@ -261,6 +255,137 @@ fn apply_migration_0020_hydrate_auto_update_candidates_from_discoveries(
     Ok(())
 }
 
+fn deduplicate_auto_update_pending_digests_tx(
+    tx: &rusqlite::Transaction<'_>,
+    now: &str,
+) -> anyhow::Result<()> {
+    let pending_digest = super::canonical_digest_sql("p.candidate_digest");
+    let comparison_digest = super::canonical_digest_sql("p2.candidate_digest");
+    let sql = format!(
+        r#"
+CREATE TEMP TABLE migration_duplicate_auto_update_pending AS
+SELECT
+  p.id,
+  p.update_job_id,
+  (
+    SELECT p2.id
+    FROM auto_update_pending p2
+    WHERE p2.service_id = p.service_id
+      AND p2.rule_id = p.rule_id
+      AND {comparison_digest} = {pending_digest}
+      AND p2.status IN ('pending', 'enqueuing', 'enqueued')
+    ORDER BY
+      CASE p2.status WHEN 'enqueued' THEN 3 WHEN 'enqueuing' THEN 2 ELSE 1 END DESC,
+      CASE WHEN p2.update_job_id IS NULL THEN 0 ELSE 1 END DESC,
+      p2.created_at ASC,
+      p2.id ASC
+    LIMIT 1
+  ) AS keeper_id
+FROM auto_update_pending p
+WHERE p.status IN ('pending', 'enqueuing', 'enqueued')
+"#
+    );
+    tx.execute(&sql, [])?;
+    tx.execute(
+        r#"
+UPDATE jobs
+SET status = 'cancelled',
+    finished_at = ?1
+WHERE id IN (
+  SELECT update_job_id
+  FROM migration_duplicate_auto_update_pending
+  WHERE id <> keeper_id
+    AND update_job_id IS NOT NULL
+)
+  AND status = 'queued'
+  AND created_by = 'auto-policy'
+"#,
+        rusqlite::params![now],
+    )?;
+    tx.execute(
+        r#"
+INSERT INTO update_job_stop_controls (
+  job_id, stop_requested_at, stop_requested_by, updated_at
+)
+SELECT p.update_job_id, ?1, 'migration-canonical-digest', ?1
+FROM migration_duplicate_auto_update_pending p
+JOIN jobs j ON j.id = p.update_job_id
+WHERE p.id <> p.keeper_id
+  AND p.update_job_id IS NOT NULL
+  AND j.status = 'running'
+ON CONFLICT(job_id) DO UPDATE SET
+  stop_requested_at = COALESCE(update_job_stop_controls.stop_requested_at, excluded.stop_requested_at),
+  stop_requested_by = COALESCE(update_job_stop_controls.stop_requested_by, excluded.stop_requested_by),
+  updated_at = excluded.updated_at
+WHERE update_job_stop_controls.apply_committed_at IS NULL
+  AND update_job_stop_controls.stop_requested_at IS NULL
+"#,
+        rusqlite::params![now],
+    )?;
+    tx.execute(
+        r#"
+UPDATE auto_update_pending
+SET candidate_id = NULL,
+    status = 'skipped',
+    summary_json = CASE
+      WHEN json_valid(summary_json)
+        AND json_type(CASE WHEN json_valid(summary_json) THEN summary_json ELSE '{}' END) = 'object'
+        THEN json_set(summary_json, '$.skipReason', 'migration_duplicate_candidate_digest', '$.skippedAt', ?1)
+      ELSE json_object('skipReason', 'migration_duplicate_candidate_digest', 'skippedAt', ?1)
+    END,
+    updated_at = ?1
+WHERE id IN (
+  SELECT id
+  FROM migration_duplicate_auto_update_pending
+  WHERE id <> keeper_id
+)
+"#,
+        rusqlite::params![now],
+    )?;
+    tx.execute_batch("DROP TABLE migration_duplicate_auto_update_pending")?;
+    Ok(())
+}
+
+pub(super) fn apply_migration_0024_normalize_auto_update_digest_identity(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0024_normalize_auto_update_digest_identity";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let now = now_rfc3339()?;
+    deduplicate_auto_update_pending_digests_tx(&tx, &now)?;
+    for table in ["services", "auto_update_pending"] {
+        let digest = super::canonical_digest_sql("candidate_digest");
+        let sql = format!(
+            "UPDATE {table} SET candidate_digest = {digest} WHERE candidate_digest IS NOT NULL AND TRIM(candidate_digest) <> ''"
+        );
+        tx.execute(&sql, [])?;
+    }
+    let candidate_digest = super::canonical_digest_sql("auto_update_candidates.candidate_digest");
+    let other_digest = super::canonical_digest_sql("other.candidate_digest");
+    let sql = format!(
+        r#"
+UPDATE auto_update_candidates
+SET candidate_digest = {candidate_digest}
+WHERE candidate_digest IS NOT NULL
+  AND TRIM(candidate_digest) <> ''
+  AND NOT EXISTS (
+    SELECT 1
+    FROM auto_update_candidates other
+    WHERE other.id <> auto_update_candidates.id
+      AND other.service_id = auto_update_candidates.service_id
+      AND {other_digest} = {candidate_digest}
+  )
+"#
+    );
+    tx.execute(&sql, [])?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
 pub(super) fn apply_migration_0021_add_auto_update_pending_current_digest(
     conn: &mut rusqlite::Connection,
 ) -> anyhow::Result<()> {
@@ -312,9 +437,9 @@ pub(super) fn apply_migration_0022_harden_auto_update_source_provenance(
     tx.execute_batch(
         "CREATE TEMP TABLE migration_invalid_auto_update_pending (id TEXT PRIMARY KEY NOT NULL)",
     )?;
-    let candidate_digest = canonical_digest_sql("c.candidate_digest");
-    let pending_digest = canonical_digest_sql("p.candidate_digest");
-    let service_digest = canonical_digest_sql("candidate_service.candidate_digest");
+    let candidate_digest = super::canonical_digest_sql("c.candidate_digest");
+    let pending_digest = super::canonical_digest_sql("p.candidate_digest");
+    let service_digest = super::canonical_digest_sql("candidate_service.candidate_digest");
     let sql = format!(
         r#"
 INSERT INTO migration_invalid_auto_update_pending (id)
@@ -512,16 +637,17 @@ CREATE INDEX IF NOT EXISTS idx_auto_update_candidates_service_discovered
 ALTER TABLE auto_update_pending ADD COLUMN candidate_id TEXT;
 "#,
     )?;
+    let now = now_rfc3339()?;
+    deduplicate_auto_update_pending_digests_tx(&tx, &now)?;
     for table in ["services", "auto_update_pending", "auto_update_candidates"] {
-        let digest = canonical_digest_sql("candidate_digest");
+        let digest = super::canonical_digest_sql("candidate_digest");
         let sql = format!(
             "UPDATE {table} SET candidate_digest = {digest} WHERE candidate_digest IS NOT NULL AND TRIM(candidate_digest) <> ''"
         );
         tx.execute(&sql, [])?;
     }
-    let now = now_rfc3339()?;
-    let pending_digest = canonical_digest_sql("p.candidate_digest");
-    let service_digest = canonical_digest_sql("s.candidate_digest");
+    let pending_digest = super::canonical_digest_sql("p.candidate_digest");
+    let service_digest = super::canonical_digest_sql("s.candidate_digest");
     let sql = format!(
         r#"
 INSERT OR IGNORE INTO auto_update_candidates (
@@ -595,8 +721,8 @@ WHERE id = ?4
             params![&image_ref, resolved_version, &now, &candidate_id],
         )?;
     }
-    let pending_digest = canonical_digest_sql("auto_update_pending.candidate_digest");
-    let candidate_digest = canonical_digest_sql("c.candidate_digest");
+    let pending_digest = super::canonical_digest_sql("auto_update_pending.candidate_digest");
+    let candidate_digest = super::canonical_digest_sql("c.candidate_digest");
     let sql = format!(
         r#"
 UPDATE auto_update_pending
@@ -874,8 +1000,8 @@ WHERE status IN ('pending', 'enqueuing', 'enqueued')
 "#,
         params![&now],
     )?;
-    let candidate_digest = canonical_digest_sql("auto_update_candidates.candidate_digest");
-    let service_digest = canonical_digest_sql("s.candidate_digest");
+    let candidate_digest = super::canonical_digest_sql("auto_update_candidates.candidate_digest");
+    let service_digest = super::canonical_digest_sql("s.candidate_digest");
     let sql = format!(
         r#"
 UPDATE auto_update_candidates
@@ -940,8 +1066,8 @@ WHERE auto_update_candidates.reason = 'migration_pending_history'
 "#,
         [],
     )?;
-    let candidate_digest = canonical_digest_sql("auto_update_candidates.candidate_digest");
-    let service_digest = canonical_digest_sql("s.candidate_digest");
+    let candidate_digest = super::canonical_digest_sql("auto_update_candidates.candidate_digest");
+    let service_digest = super::canonical_digest_sql("s.candidate_digest");
     let sql = format!(
         r#"
 UPDATE auto_update_candidates
@@ -961,8 +1087,8 @@ WHERE reason = 'migration_pending_history'
 "#
     );
     tx.execute(&sql, params![&now])?;
-    let pending_digest = canonical_digest_sql("auto_update_pending.candidate_digest");
-    let service_digest = canonical_digest_sql("s.candidate_digest");
+    let pending_digest = super::canonical_digest_sql("auto_update_pending.candidate_digest");
+    let service_digest = super::canonical_digest_sql("s.candidate_digest");
     let sql = format!(
         r#"
 UPDATE auto_update_pending
