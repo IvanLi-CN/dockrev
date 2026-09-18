@@ -18,27 +18,20 @@ pub(crate) fn list_stable_candidate_display_tags_for_notification_targets_conn(
 ) -> rusqlite::Result<StableCandidateDisplayTagsByNotificationTarget> {
     let targets = targets
         .iter()
-        .map(|(service_id, image_ref, image_tag, candidate_digest)| {
-            (
-                service_id.trim(),
-                image_ref.trim(),
-                image_tag.trim(),
-                candidate_digest.trim(),
-            )
-        })
-        .filter(|(service_id, image_ref, image_tag, candidate_digest)| {
-            !service_id.is_empty()
-                && !image_ref.is_empty()
-                && !image_tag.is_empty()
-                && !candidate_digest.is_empty()
-        })
-        .map(|(service_id, image_ref, image_tag, candidate_digest)| {
-            (
+        .filter_map(|(service_id, image_ref, image_tag, candidate_digest)| {
+            let candidate_digest = crate::snapshot_worker::normalize_digest(candidate_digest)?;
+            let service_id = service_id.trim();
+            let image_ref = image_ref.trim();
+            let image_tag = image_tag.trim();
+            if service_id.is_empty() || image_ref.is_empty() || image_tag.is_empty() {
+                return None;
+            }
+            Some((
                 service_id.to_string(),
                 image_ref.to_string(),
                 image_tag.to_string(),
-                candidate_digest.to_string(),
-            )
+                candidate_digest,
+            ))
         })
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
@@ -163,10 +156,7 @@ fn is_active_notification_conflict(err: &rusqlite::Error) -> bool {
 }
 
 fn normalize_candidate_digest(candidate_digest: Option<&str>) -> Option<String> {
-    candidate_digest
-        .map(str::trim)
-        .filter(|digest| !digest.is_empty())
-        .map(ToString::to_string)
+    candidate_digest.and_then(crate::snapshot_worker::normalize_digest)
 }
 
 pub(super) fn reconcile_service_new_version_notifications_tx(
@@ -246,6 +236,8 @@ impl Db {
         let pending = pending.clone();
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let candidate_digest = normalize_candidate_digest(Some(&pending.candidate_digest))
+                .ok_or_else(|| rusqlite::Error::InvalidParameterName("candidate_digest".into()))?;
             let insert = tx.execute(
                 r#"
 INSERT INTO new_version_notifications (
@@ -276,7 +268,7 @@ INSERT INTO new_version_notifications (
                     pending.current_display_tag,
                     pending.candidate_tag,
                     pending.candidate_display_tag,
-                    pending.candidate_digest,
+                    candidate_digest,
                     STATUS_PENDING,
                     "[]",
                     pending.created_at,
@@ -311,9 +303,10 @@ INSERT INTO new_version_notifications (
         let now = now.to_string();
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let row = tx
-                .query_row(
-                    r#"
+            let service_digest = super::canonical_digest_sql("s.candidate_digest");
+            let notification_digest = super::canonical_digest_sql("n.candidate_digest");
+            let sql = format!(
+                r#"
 SELECT
   n.status,
   n.superseded_at,
@@ -323,20 +316,20 @@ SELECT
     WHERE s.id = n.service_id
       AND s.image_ref = n.image_ref
       AND s.image_tag = n.image_tag
-      AND s.candidate_digest = n.candidate_digest
+      AND {service_digest} = {notification_digest}
   )
 FROM new_version_notifications n
 WHERE n.id = ?1
-"#,
-                    params![notification_id],
-                    |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, Option<String>>(1)?,
-                            row.get::<_, i64>(2)? != 0,
-                        ))
-                    },
-                )
+"#
+            );
+            let row = tx
+                .query_row(&sql, params![notification_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, i64>(2)? != 0,
+                    ))
+                })
                 .optional()?;
             let Some((existing_status, existing_superseded_at, still_current)) = row else {
                 return Ok(false);
@@ -610,6 +603,29 @@ mod tests {
             second_result,
             NewVersionNotificationReserveResult::SkippedDuplicate
         );
+    }
+
+    #[tokio::test]
+    async fn reserve_canonicalizes_equivalent_active_digests() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let first = pending("nvn_1", "svc_1", "ABC");
+        let second = pending("nvn_2", "svc_1", "sha256:abc");
+
+        assert_eq!(
+            db.reserve_new_version_notification(&first).await.unwrap(),
+            NewVersionNotificationReserveResult::Reserved("nvn_1".to_string())
+        );
+        assert_eq!(
+            db.reserve_new_version_notification(&second).await.unwrap(),
+            NewVersionNotificationReserveResult::SkippedDuplicate
+        );
+
+        let rows = db
+            .list_new_version_notifications_for_service("svc_1")
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].candidate_digest, "sha256:abc");
     }
 
     #[tokio::test]

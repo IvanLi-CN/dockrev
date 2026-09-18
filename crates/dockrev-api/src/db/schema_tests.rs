@@ -651,3 +651,76 @@ async fn source_provenance_migration_invalidates_pending_candidate_job_mismatch(
     let _ = std::fs::remove_file(db_path.with_extension("sqlite3-wal"));
     let _ = std::fs::remove_file(db_path.with_extension("sqlite3-shm"));
 }
+
+#[tokio::test]
+async fn notification_digest_migration_deduplicates_equivalent_active_rows() {
+    let db_path = temporary_db_path();
+    let db = Db::open(&db_path).await.unwrap();
+    db.call(|conn| {
+        conn.execute(
+            r#"
+INSERT INTO new_version_notifications (
+  id, service_id, job_id, reason, image_ref, image_tag, current_tag,
+  current_display_tag, candidate_tag, candidate_display_tag, candidate_digest,
+  status, created_at
+) VALUES
+  ('notification-pending', 'service', 'job-1', 'new_version', 'ghcr.io/acme/app', 'latest', 'latest',
+   '1.0.0', 'latest', 'latest', 'ABC', 'pending', '2026-04-30T00:00:00Z'),
+  ('notification-sent', 'service', 'job-2', 'new_version', 'ghcr.io/acme/app', 'latest', 'latest',
+   '1.0.0', 'latest', '1.2.3', 'sha256:abc', 'sent', '2026-04-30T00:00:01Z')
+"#,
+            [],
+        )?;
+        conn.execute(
+            "DELETE FROM schema_migrations WHERE id = '0025_normalize_new_version_notification_digest_identity'",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    drop(db);
+
+    let db = Db::open(&db_path).await.unwrap();
+    let rows = db
+        .call(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, candidate_digest, status, last_error FROM new_version_notifications ORDER BY id",
+            )?;
+            Ok(stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(rows[0].1, "sha256:abc");
+    assert_eq!(rows[0].2, "superseded");
+    assert_eq!(rows[0].3.as_deref(), Some("migration_canonical_digest"));
+    assert_eq!(rows[1].1, "sha256:abc");
+    assert_eq!(rows[1].2, "sent");
+
+    drop(db);
+    let db = Db::open(&db_path).await.unwrap();
+    let active_count = db
+        .call(|conn| {
+            Ok(conn.query_row(
+                "SELECT COUNT(*) FROM new_version_notifications WHERE service_id = 'service' AND candidate_digest = 'sha256:abc' AND status IN ('pending', 'sent')",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(active_count, 1);
+    drop(db);
+    std::fs::remove_file(&db_path).unwrap();
+    let _ = std::fs::remove_file(db_path.with_extension("sqlite3-wal"));
+    let _ = std::fs::remove_file(db_path.with_extension("sqlite3-shm"));
+}
