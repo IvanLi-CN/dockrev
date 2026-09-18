@@ -517,6 +517,17 @@ INSERT INTO auto_update_pending (
         .unwrap();
     assert_eq!(noncheck.0, (None, "skipped".to_string()));
     assert_eq!(noncheck.1, "cancelled");
+    let noncheck_candidate_count = db
+        .call(|conn| {
+            Ok(conn.query_row(
+                "SELECT COUNT(*) FROM auto_update_candidates WHERE service_id = 'service-4'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(noncheck_candidate_count, 0);
 
     drop(db);
     std::fs::remove_file(&db_path).unwrap();

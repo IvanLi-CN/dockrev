@@ -740,15 +740,23 @@ async fn digest_identity_migration_deduplicates_active_pending_rows() {
                 [],
             )?;
             conn.execute(
+                "INSERT INTO auto_update_candidates (id, stack_id, service_id, image_ref, raw_tag, candidate_digest, status, reason, attempts, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, created_at, updated_at, policy_status) VALUES ('candidate-legacy', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'ABC', 'awaiting_inference', 'version_inference_pending', 0, '2026-04-30T00:00:00Z', 'check', 'unknown', 'latest', '1.0.0', 'sha256:current', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z', NULL)",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO auto_update_candidates (id, stack_id, service_id, image_ref, raw_tag, candidate_digest, status, reason, attempts, discovered_at, source_job_id, source, current_tag, current_display_tag, current_digest, created_at, updated_at, policy_status) VALUES ('candidate-canonical', 'stack', 'service', 'ghcr.io/acme/app', 'latest', 'sha256:abc', 'ready', 'digest_bound_version', 0, '2026-04-30T00:00:01Z', 'check', 'schedule', 'latest', '1.0.0', 'sha256:current', '2026-04-30T00:00:01Z', '2026-04-30T00:00:01Z', 'queued')",
+                [],
+            )?;
+            conn.execute(
                 "INSERT INTO jobs (id, type, scope, stack_id, service_id, status, allow_arch_mismatch, backup_mode, created_by, reason, created_at, summary_json) VALUES ('duplicate-job', 'update', 'service', 'stack', 'service', 'queued', 0, 'inherit', 'auto-policy', 'auto_policy', '2026-04-30T00:00:02Z', '{}')",
                 [],
             )?;
             conn.execute(
-                "INSERT INTO auto_update_pending (id, policy_scope_type, policy_scope_id, rule_id, stack_id, service_id, source_check_job_id, candidate_tag, candidate_display_tag, candidate_digest, current_display_tag, current_digest, first_seen_at, due_at, min_age_seconds, min_version_lag, status, update_job_id, created_at, updated_at, candidate_id, summary_json) VALUES ('pending-legacy', 'stack', 'stack', 'rule', 'stack', 'service', 'check', 'latest', '1.2.0', 'ABC', '1.0.0', 'sha256:current', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z', 0, 0, 'pending', NULL, '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z', NULL, '{}')",
+                "INSERT INTO auto_update_pending (id, policy_scope_type, policy_scope_id, rule_id, stack_id, service_id, source_check_job_id, candidate_tag, candidate_display_tag, candidate_digest, current_display_tag, current_digest, first_seen_at, due_at, min_age_seconds, min_version_lag, status, update_job_id, created_at, updated_at, candidate_id, summary_json) VALUES ('pending-legacy', 'stack', 'stack', 'rule', 'stack', 'service', 'check', 'latest', '1.2.0', 'ABC', '1.0.0', 'sha256:current', '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z', 0, 0, 'pending', NULL, '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z', 'candidate-legacy', '{}')",
                 [],
             )?;
             conn.execute(
-                "INSERT INTO auto_update_pending (id, policy_scope_type, policy_scope_id, rule_id, stack_id, service_id, source_check_job_id, candidate_tag, candidate_display_tag, candidate_digest, current_display_tag, current_digest, first_seen_at, due_at, min_age_seconds, min_version_lag, status, update_job_id, created_at, updated_at, candidate_id, summary_json) VALUES ('pending-canonical', 'stack', 'stack', 'rule', 'stack', 'service', 'check', 'latest', '1.2.0', 'sha256:abc', '1.0.0', 'sha256:current', '2026-04-30T00:00:01Z', '2026-04-30T00:00:01Z', 0, 0, 'enqueued', 'duplicate-job', '2026-04-30T00:00:01Z', '2026-04-30T00:00:01Z', NULL, '{}')",
+                "INSERT INTO auto_update_pending (id, policy_scope_type, policy_scope_id, rule_id, stack_id, service_id, source_check_job_id, candidate_tag, candidate_display_tag, candidate_digest, current_display_tag, current_digest, first_seen_at, due_at, min_age_seconds, min_version_lag, status, update_job_id, created_at, updated_at, candidate_id, summary_json) VALUES ('pending-canonical', 'stack', 'stack', 'rule', 'stack', 'service', 'check', 'latest', '1.2.0', 'sha256:abc', '1.0.0', 'sha256:current', '2026-04-30T00:00:01Z', '2026-04-30T00:00:01Z', 0, 0, 'enqueued', 'duplicate-job', '2026-04-30T00:00:01Z', '2026-04-30T00:00:01Z', 'candidate-canonical', '{}')",
                 [],
             )?;
             conn.execute(
@@ -777,12 +785,23 @@ async fn digest_identity_migration_deduplicates_active_pending_rows() {
                     ))
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
+            let candidate = conn.query_row(
+                "SELECT COUNT(*), MIN(id), MIN(candidate_digest) FROM auto_update_candidates WHERE service_id = 'service'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )?;
             let job = conn.query_row(
                 "SELECT status FROM jobs WHERE id = 'duplicate-job'",
                 [],
                 |row| row.get::<_, String>(0),
             )?;
-            Ok((pending, job))
+            Ok((pending, candidate, job))
         })
         .await
         .unwrap();
@@ -803,7 +822,8 @@ async fn digest_identity_migration_deduplicates_active_pending_rows() {
             )
         ]
     );
-    assert_eq!(rows.1, "queued");
+    assert_eq!(rows.1, (1, "candidate-canonical".to_string(), "sha256:abc".to_string()));
+    assert_eq!(rows.2, "queued");
     drop(db);
     std::fs::remove_file(path).unwrap();
 }
@@ -826,13 +846,21 @@ async fn queued_auto_policy_recovery_requires_exact_candidate_and_target_identit
     .unwrap();
 
     let cases = [
-        ("missing-candidate", "missing", None, "latest", "service"),
+        (
+            "missing-candidate",
+            "missing",
+            None,
+            "latest",
+            "service",
+            false,
+        ),
         (
             "mismatched-tag",
             "tag",
             Some("candidate"),
             "stable",
             "service",
+            false,
         ),
         (
             "wrong-scope",
@@ -840,6 +868,7 @@ async fn queued_auto_policy_recovery_requires_exact_candidate_and_target_identit
             Some("candidate"),
             "latest",
             "stack",
+            false,
         ),
         (
             "wrong-target-service",
@@ -847,10 +876,27 @@ async fn queued_auto_policy_recovery_requires_exact_candidate_and_target_identit
             Some("other-service"),
             "latest",
             "service",
+            false,
+        ),
+        (
+            "prefixless-target",
+            "prefixless",
+            Some("candidate"),
+            "latest",
+            "service",
+            true,
         ),
     ];
 
-    for (suffix, digest_suffix, candidate_binding, target_tag, job_scope) in cases {
+    for (
+        suffix,
+        digest_suffix,
+        candidate_binding,
+        target_tag,
+        job_scope,
+        expected_claim,
+    ) in cases
+    {
         let service_id = format!("service-{suffix}");
         let digest = format!("sha256:{digest_suffix}");
         let source_job_id = format!("check-{suffix}");
@@ -941,6 +987,11 @@ async fn queued_auto_policy_recovery_requires_exact_candidate_and_target_identit
         } else {
             crate::api::types::JobScope::Service
         };
+        let target_digest = if expected_claim {
+            digest_suffix.to_string()
+        } else {
+            digest.clone()
+        };
         db.insert_job(crate::api::types::JobListItem {
             id: job_id.clone(),
             r#type: crate::api::types::JobType::Update,
@@ -960,7 +1011,7 @@ async fn queued_auto_policy_recovery_requires_exact_candidate_and_target_identit
                 "targets": [{
                     "serviceId": target_service_id,
                     "targetTag": target_tag,
-                    "targetDigest": digest,
+                    "targetDigest": target_digest,
                     "autoPolicyContext": {
                         "expectedCurrentDigest": "sha256:current"
                     }
@@ -974,22 +1025,30 @@ async fn queued_auto_policy_recovery_requires_exact_candidate_and_target_identit
             .await
             .unwrap());
 
-        assert!(!db
+        let claimed = db
             .claim_queued_job_by_id_for_recovery(&job_id, "2026-04-30T00:01:05Z")
             .await
-            .unwrap());
-        assert_eq!(
-            db.get_job(&job_id).await.unwrap().unwrap().status,
-            "cancelled"
-        );
-        assert_eq!(
-            db.get_auto_update_pending_by_id(&pending_id)
-                .await
-                .unwrap()
-                .unwrap()
-                .summary_json["skipReason"],
-            "migration_ambiguous_history"
-        );
+            .unwrap();
+        assert_eq!(claimed, expected_claim);
+        if expected_claim {
+            assert_eq!(
+                db.get_job(&job_id).await.unwrap().unwrap().status,
+                "running"
+            );
+        } else {
+            assert_eq!(
+                db.get_job(&job_id).await.unwrap().unwrap().status,
+                "cancelled"
+            );
+            assert_eq!(
+                db.get_auto_update_pending_by_id(&pending_id)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .summary_json["skipReason"],
+                "migration_ambiguous_history"
+            );
+        }
     }
 }
 #[tokio::test]
