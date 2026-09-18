@@ -88,7 +88,6 @@ ORDER BY s.created_at DESC
 "#,
             );
             let mut stmt = conn.prepare(&sql)?;
-
             let rows = stmt.query_map([], |row| {
                 Ok(StackListItem {
                     id: row.get(0)?,
