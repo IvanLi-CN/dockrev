@@ -313,7 +313,7 @@ INSERT INTO schema_migrations (id, applied_at) VALUES
   ('0013_add_update_job_stop_controls', '2026-01-01T00:00:00Z');
 INSERT INTO services (id, stack_id, candidate_digest)
 VALUES
-  ('service-1', 'stack-1', 'sha256:new'),
+  ('service-1', 'stack-1', 'NEW'),
   ('service-3', 'stack-1', 'sha256:strict'),
   ('service-4', 'stack-1', 'sha256:noncheck');
 INSERT INTO jobs (
@@ -337,7 +337,7 @@ INSERT INTO auto_update_pending (
   status, update_job_id, created_at, updated_at, summary_json
 ) VALUES
   ('pending-auditable', 'stack', 'stack-1', 'rule-1', 'stack-1', 'service-1',
-   'schedule-check', 'latest', 'latest', 'sha256:new', '1.0.0',
+   'schedule-check', 'latest', 'latest', 'NEW', '1.0.0',
    '2026-04-30T00:00:00Z', '2026-04-30T00:15:00Z', 900, 0,
    'pending', NULL, '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z',
    '{"imageRef":"ghcr.io/acme/app:latest","currentDigest":"sha256:old"}'),

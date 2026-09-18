@@ -1,3 +1,9 @@
+fn canonical_digest_sql(column: &str) -> String {
+    format!(
+        "CASE WHEN instr(lower(trim({column})), ':') = 0 THEN 'sha256:' || lower(trim({column})) ELSE lower(trim({column})) END"
+    )
+}
+
 fn ensure_auto_update_schema(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         r#"
@@ -119,14 +125,16 @@ fn apply_migration_0017_add_auto_update_candidate_projection_context(
             tx.execute(ddl, [])?;
         }
     }
-    tx.execute(
+    let candidate_digest = canonical_digest_sql("auto_update_candidates.candidate_digest");
+    let pending_digest = canonical_digest_sql("p.candidate_digest");
+    let sql = format!(
         r#"
 UPDATE auto_update_candidates
 SET policy_scope_type = (
       SELECT p.policy_scope_type
       FROM auto_update_pending p
       WHERE p.service_id = auto_update_candidates.service_id
-        AND p.candidate_digest = auto_update_candidates.candidate_digest
+        AND {pending_digest} = {candidate_digest}
       ORDER BY p.updated_at DESC, p.id DESC
       LIMIT 1
     ),
@@ -134,7 +142,7 @@ SET policy_scope_type = (
       SELECT p.policy_scope_id
       FROM auto_update_pending p
       WHERE p.service_id = auto_update_candidates.service_id
-        AND p.candidate_digest = auto_update_candidates.candidate_digest
+        AND {pending_digest} = {candidate_digest}
       ORDER BY p.updated_at DESC, p.id DESC
       LIMIT 1
     ),
@@ -142,7 +150,7 @@ SET policy_scope_type = (
       SELECT p.update_job_id
       FROM auto_update_pending p
       WHERE p.service_id = auto_update_candidates.service_id
-        AND p.candidate_digest = auto_update_candidates.candidate_digest
+        AND {pending_digest} = {candidate_digest}
       ORDER BY p.updated_at DESC, p.id DESC
       LIMIT 1
     )
@@ -150,11 +158,11 @@ WHERE EXISTS (
   SELECT 1
   FROM auto_update_pending p
   WHERE p.service_id = auto_update_candidates.service_id
-    AND p.candidate_digest = auto_update_candidates.candidate_digest
+    AND {pending_digest} = {candidate_digest}
 );
-"#,
-        [],
-    )?;
+"#
+    );
+    tx.execute(&sql, [])?;
     record_migration_tx(&tx, id)?;
     tx.commit()?;
     Ok(())
@@ -304,7 +312,10 @@ pub(super) fn apply_migration_0022_harden_auto_update_source_provenance(
     tx.execute_batch(
         "CREATE TEMP TABLE migration_invalid_auto_update_pending (id TEXT PRIMARY KEY NOT NULL)",
     )?;
-    tx.execute(
+    let candidate_digest = canonical_digest_sql("c.candidate_digest");
+    let pending_digest = canonical_digest_sql("p.candidate_digest");
+    let service_digest = canonical_digest_sql("candidate_service.candidate_digest");
+    let sql = format!(
         r#"
 INSERT INTO migration_invalid_auto_update_pending (id)
 SELECT p.id
@@ -317,14 +328,14 @@ WHERE p.status IN ('pending', 'enqueuing', 'enqueued')
     JOIN services candidate_service ON candidate_service.id = c.service_id
     WHERE c.id = p.candidate_id
       AND c.service_id = p.service_id
-      AND c.candidate_digest = p.candidate_digest
+      AND {candidate_digest} = {pending_digest}
       AND c.stack_id = p.stack_id
       AND c.source_job_id = p.source_check_job_id
       AND COALESCE(TRIM(c.image_ref), '') <> ''
       AND COALESCE(TRIM(c.discovered_at), '') <> ''
       AND LOWER(c.source) IN ('schedule', 'github_webhook')
       AND candidate_service.stack_id = c.stack_id
-      AND candidate_service.candidate_digest = c.candidate_digest
+      AND {service_digest} = {candidate_digest}
       AND LOWER(candidate_source_job.type) = 'check'
       AND LOWER(candidate_source_job.status) = 'success'
       AND (
@@ -333,7 +344,7 @@ WHERE p.status IN ('pending', 'enqueuing', 'enqueued')
           AND LOWER(candidate_source_job.created_by) = 'schedule')
         OR (LOWER(c.source) = 'github_webhook'
           AND LOWER(candidate_source_job.created_by) IN ('webhook', 'github')
-          AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(candidate_source_job.summary_json) THEN candidate_source_job.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook')
+          AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(candidate_source_job.summary_json) THEN candidate_source_job.summary_json ELSE '{{}}' END, '$.source'), '')) = 'github_webhook')
       )
       AND (
         (LOWER(candidate_source_job.scope) = 'service'
@@ -358,7 +369,7 @@ WHERE p.status IN ('pending', 'enqueuing', 'enqueued')
               AND LOWER(source_job.created_by) = 'schedule')
             OR (LOWER(c.source) = 'github_webhook'
               AND LOWER(source_job.created_by) IN ('webhook', 'github')
-              AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook')
+              AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{{}}' END, '$.source'), '')) = 'github_webhook')
           )
           AND (
             (LOWER(source_job.scope) = 'service'
@@ -373,9 +384,9 @@ WHERE p.status IN ('pending', 'enqueuing', 'enqueued')
           )
       )
   )
-"#,
-        [],
-    )?;
+"#
+    );
+    tx.execute(&sql, [])?;
     tx.execute(
         r#"
 UPDATE jobs
@@ -501,8 +512,17 @@ CREATE INDEX IF NOT EXISTS idx_auto_update_candidates_service_discovered
 ALTER TABLE auto_update_pending ADD COLUMN candidate_id TEXT;
 "#,
     )?;
+    for table in ["services", "auto_update_pending", "auto_update_candidates"] {
+        let digest = canonical_digest_sql("candidate_digest");
+        let sql = format!(
+            "UPDATE {table} SET candidate_digest = {digest} WHERE candidate_digest IS NOT NULL AND TRIM(candidate_digest) <> ''"
+        );
+        tx.execute(&sql, [])?;
+    }
     let now = now_rfc3339()?;
-    tx.execute(
+    let pending_digest = canonical_digest_sql("p.candidate_digest");
+    let service_digest = canonical_digest_sql("s.candidate_digest");
+    let sql = format!(
         r#"
 INSERT OR IGNORE INTO auto_update_candidates (
   id, stack_id, service_id, image_ref, raw_tag, candidate_digest,
@@ -510,12 +530,12 @@ INSERT OR IGNORE INTO auto_update_candidates (
   current_tag, current_display_tag, current_digest, created_at, updated_at
 )
 SELECT
-  p.service_id || ':' || p.candidate_digest,
+  p.service_id || ':' || {pending_digest},
   p.stack_id,
   p.service_id,
-  COALESCE(NULLIF(json_extract(CASE WHEN json_valid(p.summary_json) THEN p.summary_json ELSE '{}' END, '$.imageRef'), ''), ''),
+  COALESCE(NULLIF(json_extract(CASE WHEN json_valid(p.summary_json) THEN p.summary_json ELSE '{{}}' END, '$.imageRef'), ''), ''),
   p.candidate_tag,
-  p.candidate_digest,
+  {pending_digest},
   NULL,
   'awaiting_inference',
   'migration_pending_history',
@@ -523,27 +543,27 @@ SELECT
   p.first_seen_at,
   p.source_check_job_id,
   CASE WHEN LOWER(j.reason) = 'schedule' THEN 'schedule' ELSE 'github_webhook' END,
-  COALESCE(NULLIF(json_extract(CASE WHEN json_valid(p.summary_json) THEN p.summary_json ELSE '{}' END, '$.currentTag'), ''), p.current_display_tag),
+  COALESCE(NULLIF(json_extract(CASE WHEN json_valid(p.summary_json) THEN p.summary_json ELSE '{{}}' END, '$.currentTag'), ''), p.current_display_tag),
   p.current_display_tag,
-  json_extract(CASE WHEN json_valid(p.summary_json) THEN p.summary_json ELSE '{}' END, '$.currentDigest'),
+  json_extract(CASE WHEN json_valid(p.summary_json) THEN p.summary_json ELSE '{{}}' END, '$.currentDigest'),
   ?1,
   ?1
 FROM auto_update_pending p
 JOIN jobs j ON j.id = p.source_check_job_id
-JOIN services s ON s.id = p.service_id AND s.candidate_digest = p.candidate_digest
+JOIN services s ON s.id = p.service_id AND {service_digest} = {pending_digest}
 WHERE p.status IN ('pending', 'enqueuing', 'enqueued')
   AND COALESCE(TRIM(p.candidate_digest), '') <> ''
   AND COALESCE(TRIM(p.first_seen_at), '') <> ''
-  AND COALESCE(TRIM(json_extract(CASE WHEN json_valid(p.summary_json) THEN p.summary_json ELSE '{}' END, '$.imageRef')), '') <> ''
+  AND COALESCE(TRIM(json_extract(CASE WHEN json_valid(p.summary_json) THEN p.summary_json ELSE '{{}}' END, '$.imageRef')), '') <> ''
   AND LOWER(j.status) = 'success'
   AND s.stack_id = p.stack_id
   AND (
     LOWER(j.reason) = 'schedule'
-    OR LOWER(COALESCE(json_extract(CASE WHEN json_valid(j.summary_json) THEN j.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook'
+    OR LOWER(COALESCE(json_extract(CASE WHEN json_valid(j.summary_json) THEN j.summary_json ELSE '{{}}' END, '$.source'), '')) = 'github_webhook'
   )
-"#,
-        params![&now],
-    )?;
+"#
+    );
+    tx.execute(&sql, params![&now])?;
     let migrated_candidates = {
         let mut stmt = tx.prepare(
             "SELECT id, image_ref, raw_tag FROM auto_update_candidates WHERE reason = 'migration_pending_history'",
@@ -575,13 +595,15 @@ WHERE id = ?4
             params![&image_ref, resolved_version, &now, &candidate_id],
         )?;
     }
-    tx.execute(
+    let pending_digest = canonical_digest_sql("auto_update_pending.candidate_digest");
+    let candidate_digest = canonical_digest_sql("c.candidate_digest");
+    let sql = format!(
         r#"
 UPDATE auto_update_pending
 SET candidate_id = (
   SELECT id FROM auto_update_candidates c
   WHERE c.service_id = auto_update_pending.service_id
-    AND c.candidate_digest = auto_update_pending.candidate_digest
+    AND {candidate_digest} = {pending_digest}
 )
 WHERE candidate_id IS NULL
   AND EXISTS (
@@ -590,12 +612,12 @@ WHERE candidate_id IS NULL
       AND LOWER(j.status) = 'success'
       AND (
         LOWER(j.reason) = 'schedule'
-        OR LOWER(COALESCE(json_extract(CASE WHEN json_valid(j.summary_json) THEN j.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook'
+        OR LOWER(COALESCE(json_extract(CASE WHEN json_valid(j.summary_json) THEN j.summary_json ELSE '{{}}' END, '$.source'), '')) = 'github_webhook'
       )
   )
-"#,
-        [],
-    )?;
+"#
+    );
+    tx.execute(&sql, [])?;
     tx.execute(
         r#"
 UPDATE auto_update_pending
@@ -852,7 +874,9 @@ WHERE status IN ('pending', 'enqueuing', 'enqueued')
 "#,
         params![&now],
     )?;
-    tx.execute(
+    let candidate_digest = canonical_digest_sql("auto_update_candidates.candidate_digest");
+    let service_digest = canonical_digest_sql("s.candidate_digest");
+    let sql = format!(
         r#"
 UPDATE auto_update_candidates
 SET status = 'superseded',
@@ -872,11 +896,11 @@ WHERE reason = 'migration_pending_history'
       AND LOWER(j.status) = 'success'
       AND auto_update_candidates.source IN ('schedule', 'github_webhook')
       AND s.stack_id = auto_update_candidates.stack_id
-      AND s.candidate_digest = auto_update_candidates.candidate_digest
+      AND {service_digest} = {candidate_digest}
   )
-"#,
-        params![&now],
-    )?;
+"#
+    );
+    tx.execute(&sql, params![&now])?;
     record_migration_tx(&tx, id)?;
     tx.commit()?;
     Ok(())
@@ -916,7 +940,9 @@ WHERE auto_update_candidates.reason = 'migration_pending_history'
 "#,
         [],
     )?;
-    tx.execute(
+    let candidate_digest = canonical_digest_sql("auto_update_candidates.candidate_digest");
+    let service_digest = canonical_digest_sql("s.candidate_digest");
+    let sql = format!(
         r#"
 UPDATE auto_update_candidates
 SET status = 'superseded',
@@ -930,12 +956,14 @@ WHERE reason = 'migration_pending_history'
   AND NOT EXISTS (
     SELECT 1 FROM services s
     WHERE s.id = auto_update_candidates.service_id
-      AND s.candidate_digest = auto_update_candidates.candidate_digest
+      AND {service_digest} = {candidate_digest}
   )
-"#,
-        params![&now],
-    )?;
-    tx.execute(
+"#
+    );
+    tx.execute(&sql, params![&now])?;
+    let pending_digest = canonical_digest_sql("auto_update_pending.candidate_digest");
+    let service_digest = canonical_digest_sql("s.candidate_digest");
+    let sql = format!(
         r#"
 UPDATE auto_update_pending
 SET candidate_id = NULL
@@ -943,12 +971,12 @@ WHERE candidate_id IS NOT NULL
   AND NOT EXISTS (
     SELECT 1 FROM services s
     WHERE s.id = auto_update_pending.service_id
-      AND s.candidate_digest = auto_update_pending.candidate_digest
+      AND {service_digest} = {pending_digest}
   )
   AND status IN ('pending', 'enqueuing', 'enqueued')
-"#,
-        [],
-    )?;
+"#
+    );
+    tx.execute(&sql, [])?;
     tx.execute(
         r#"
 UPDATE auto_update_candidates

@@ -58,6 +58,37 @@ fn canonical_candidate_digest(value: &str) -> String {
         .unwrap_or_else(|| value.trim().to_ascii_lowercase())
 }
 
+fn reuse_equivalent_candidate_id(
+    tx: &Transaction<'_>,
+    service_id: &str,
+    candidate_digest: &str,
+) -> anyhow::Result<Option<String>> {
+    let mut stmt = tx.prepare(
+        "SELECT id, candidate_digest FROM auto_update_candidates WHERE service_id = ?1 ORDER BY created_at ASC, id ASC",
+    )?;
+    let rows = stmt.query_map(params![service_id], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut equivalent = None;
+    for row in rows {
+        let (id, digest) = row?;
+        if digest == candidate_digest {
+            return Ok(Some(id));
+        }
+        if equivalent.is_none() && canonical_candidate_digest(&digest) == candidate_digest {
+            equivalent = Some((id, digest));
+        }
+    }
+    if let Some((id, _)) = equivalent {
+        tx.execute(
+            "UPDATE auto_update_candidates SET candidate_digest = ?1 WHERE id = ?2",
+            params![candidate_digest, id],
+        )?;
+        return Ok(Some(id));
+    }
+    Ok(None)
+}
+
 fn job_summary(row: &DiscoveryHistoryRow) -> serde_json::Value {
     row.job_summary_json
         .as_deref()
@@ -228,45 +259,72 @@ fn supersede_previous_candidates(
     row: &HydratedCandidateRow,
     now: &str,
 ) -> anyhow::Result<()> {
-    tx.execute(
-        r#"
-UPDATE auto_update_candidates
-SET status = 'superseded',
-    reason = 'newer_candidate',
-    settled_at = ?3,
-    policy_status = 'skipped',
-    policy_reason = 'candidate_superseded',
-    policy_evaluated_at = ?3,
-    updated_at = ?3,
-    superseded_at = ?3,
-    superseded_by_candidate_id = ?4
-WHERE service_id = ?1
-  AND candidate_digest <> ?2
-  AND status IN ('awaiting_inference', 'ready', 'unresolved')
-"#,
-        params![row.service_id, row.candidate_digest, now, row.candidate_id],
-    )?;
-
     let pending_ids = {
         let mut stmt = tx.prepare(
             r#"
-SELECT p.id, p.update_job_id, p.summary_json
+SELECT p.id, p.candidate_digest, p.update_job_id, p.summary_json
 FROM auto_update_pending p
 WHERE p.service_id = ?1
-  AND p.candidate_digest <> ?2
   AND p.status IN ('pending', 'enqueuing', 'enqueued')
 "#,
         )?;
-        stmt.query_map(params![row.service_id, row.candidate_digest], |pending| {
+        stmt.query_map(params![row.service_id], |pending| {
             Ok((
                 pending.get::<_, String>(0)?,
-                pending.get::<_, Option<String>>(1)?,
-                pending.get::<_, String>(2)?,
+                pending.get::<_, String>(1)?,
+                pending.get::<_, Option<String>>(2)?,
+                pending.get::<_, String>(3)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?
     };
-    for (pending_id, update_job_id, summary_raw) in pending_ids {
+    let pending_ids = pending_ids
+        .into_iter()
+        .filter(|(_, digest, _, _)| canonical_candidate_digest(digest) != row.candidate_digest)
+        .collect::<Vec<_>>();
+    let candidate_ids = {
+        let mut stmt = tx.prepare(
+            r#"
+SELECT id, candidate_digest
+FROM auto_update_candidates
+WHERE service_id = ?1
+  AND status IN ('awaiting_inference', 'ready', 'unresolved')
+"#,
+        )?;
+        stmt.query_map(params![row.service_id], |candidate| {
+            Ok((
+                candidate.get::<_, String>(0)?,
+                candidate.get::<_, String>(1)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+    };
+    for candidate_id in candidate_ids
+        .into_iter()
+        .filter(|(candidate_id, digest)| {
+            candidate_id != &row.candidate_id
+                && canonical_candidate_digest(digest) != row.candidate_digest
+        })
+        .map(|(candidate_id, _)| candidate_id)
+    {
+        tx.execute(
+            r#"
+UPDATE auto_update_candidates
+SET status = 'superseded',
+    reason = 'newer_candidate',
+    settled_at = ?2,
+    policy_status = 'skipped',
+    policy_reason = 'candidate_superseded',
+    policy_evaluated_at = ?2,
+    updated_at = ?2,
+    superseded_at = ?2,
+    superseded_by_candidate_id = ?3
+WHERE id = ?1
+"#,
+            params![candidate_id, now, row.candidate_id],
+        )?;
+    }
+    for (pending_id, _, update_job_id, summary_raw) in pending_ids {
         let mut summary = serde_json::from_str::<serde_json::Value>(&summary_raw)
             .unwrap_or_else(|_| serde_json::json!({}));
         if !summary.is_object() {
@@ -364,7 +422,8 @@ pub(super) fn hydrate_auto_update_candidates_tx(
         } else {
             "version_inference_pending"
         };
-        let candidate_id = format!("{service_id}:{candidate_digest}");
+        let candidate_id = reuse_equivalent_candidate_id(tx, &service_id, &candidate_digest)?
+            .unwrap_or_else(|| format!("{service_id}:{candidate_digest}"));
         let hydration_origin = if complete {
             HYDRATION_ORIGIN_DISCOVERY_HISTORY
         } else {
