@@ -83,10 +83,13 @@
   publication-lock ownership MUST bind that same identity SHA, and the
   canonical version reservation ref MUST point directly to the identity commit.
   The current
-  approved repair boundary is PR #391 merge
-  `978207fe9d140d81e2d4a2a7bd24fb253a04ebff` -> `0.80.2` with baseline
-  `0.80.1` and intent `type:patch channel:stable`; no separate PR #390
-  identity is allowed. Recovery PRs MUST use a `recovery/` head branch;
+  approved repair boundaries are explicitly enumerated. They include PR #391
+  merge `978207fe9d140d81e2d4a2a7bd24fb253a04ebff` -> `0.80.2` with baseline
+  `0.80.1` and intent `type:patch channel:stable`, with no separate PR #390
+  identity, and PR #395 merge
+  `ff1b57b6835616cd3b7a95a479c0106426eb5d40` -> `0.80.3` with baseline
+  `0.80.2` and the same intent. No tuple outside this allowlist is valid.
+  Recovery PRs MUST use a `recovery/` head branch;
   automatic `workflow_run` preparation skips that prefix, and only the
   explicit manual version-only dispatch may prepare the identity. Retries MUST
   reuse a signed single-parent identity and its source-parent CI evidence.
@@ -130,6 +133,7 @@
 - [0009-release-channel-promotion-identity](../../adr/0009-release-channel-promotion-identity.md)
 - [0010-release-version-baseline](../../adr/0010-release-version-baseline.md)
 - [0011-legacy-release-tag-baseline](../../adr/0011-legacy-release-tag-baseline.md)
+- [0012-auto-update-release-identity-backfill](../../adr/0012-auto-update-release-identity-backfill.md)
 
 ## References
 

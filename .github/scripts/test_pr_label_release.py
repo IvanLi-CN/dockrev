@@ -74,6 +74,19 @@ policy.validate_approved_version_only_boundary(
     policy.APPROVED_BACKFILL_BASELINE,
     approved_backfill_intent,
 )
+policy.validate_approved_version_only_boundary(
+    "ff1b57b6835616cd3b7a95a479c0106426eb5d40",
+    "0.80.3",
+    "0.80.2",
+    approved_backfill_intent,
+)
+expect_error(
+    policy.validate_approved_version_only_boundary,
+    "ff1b57b6835616cd3b7a95a479c0106426eb5d40",
+    "0.80.3",
+    "0.80.2",
+    policy.parse_labels(["type:patch", "channel:stable", "component:app"]),
+)
 for boundary in (
     {"covered_merge_sha": "a" * 40},
     {"version": "0.80.3"},
