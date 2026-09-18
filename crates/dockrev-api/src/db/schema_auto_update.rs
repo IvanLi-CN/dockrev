@@ -619,6 +619,22 @@ WHERE keeper.id IN (SELECT keeper_id FROM migration_duplicate_auto_update_candid
     )?;
     tx.execute(
         r#"
+UPDATE auto_update_candidates
+SET superseded_by_candidate_id = (
+  SELECT mapping.keeper_id
+  FROM migration_duplicate_auto_update_candidates mapping
+  WHERE mapping.duplicate_id = auto_update_candidates.superseded_by_candidate_id
+)
+WHERE superseded_by_candidate_id IN (
+  SELECT duplicate_id
+  FROM migration_duplicate_auto_update_candidates
+  WHERE duplicate_id <> keeper_id
+)
+"#,
+        [],
+    )?;
+    tx.execute(
+        r#"
 UPDATE auto_update_pending
 SET candidate_id = (
   SELECT mapping.keeper_id
