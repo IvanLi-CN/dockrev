@@ -32,6 +32,12 @@ mod stacks_backup_targets;
 mod tag_history;
 mod update_stops;
 
+pub(super) fn canonical_digest_sql(column: &str) -> String {
+    format!(
+        "CASE WHEN NULLIF(TRIM({column}), '') IS NULL THEN NULL WHEN instr(lower(trim({column})), ':') = 0 THEN 'sha256:' || lower(trim({column})) ELSE lower(trim({column})) END"
+    )
+}
+
 pub(super) fn summary_stack_ids(summary: &serde_json::Value) -> Vec<String> {
     summary
         .get("changedStackIds")

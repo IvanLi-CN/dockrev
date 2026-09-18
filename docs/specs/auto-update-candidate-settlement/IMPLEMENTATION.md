@@ -23,7 +23,10 @@
 - hydration supersession 使用数据库实际返回的 current candidate id，兼容运行时创建的非默认 candidate id，避免写入悬空的 `superseded_by_candidate_id`。
 - hydration 会恢复所有 qualifying discovery history 的 digest，并以当前 service candidate 统一 supersede 非当前历史 candidate，确保旧 pending/action 不能因迁移只看到当前 digest 而重新执行。
 - candidate identity 在 hydration 分组、upsert、settlement、inference、policy projection 和诊断查询边界统一使用共享 digest 规整，避免 legacy 大小写或缺省 `sha256:` 前缀制造重复候选。
-- Validation: local checks complete; the shared-testbox Compose smoke is partially blocked by the existing metrics migration error <code>retained rollups cannot be recovered after raw retention</code> during the Compose V1 rejection setup. The V2 plugin and standalone lifecycle portions passed before that blocker.
+- migration `0024_normalize_auto_update_digest_identity` applies the same digest identity rule to services, candidates and pending rows. It first consolidates equivalent active pending rows before canonicalization, preserves the enqueued row with the strongest existing action, skips duplicate pending facts, cancels duplicate queued auto-policy jobs, and writes stop controls for duplicate running jobs. Reopening the database does not create another action.
+- discovery history is ordered by `discovered_at ASC, id ASC` before canonical digest grouping; hydration selects the earliest complete, source-qualified observation and never replaces its first `discovered_at` with a later duplicate observation.
+- current-digest CAS and hydration diagnostics also use the shared canonical digest SQL, so legacy prefixless and case-variant digests cannot bypass service identity checks or hide a missing candidate.
+- Validation: the five focused Rust regression tests, `cargo check -p dockrev-api`, formatting and diff checks pass. The shared-testbox Compose smoke built the current binary and passed the plugin and standalone lifecycle modes; the Compose V1 rejection mode timed out waiting for health and did not produce a summary, matching the existing metrics migration blocker (<code>retained rollups cannot be recovered after raw retention</code>) recorded below.
 
 ## 实现顺序
 
@@ -79,6 +82,7 @@
 - 对同一 candidate 的 inference settlement 使用单调递增 `settlement_generation` token 做条件更新；reconciliation 先原子 claim 当前 generation，再以精确 token 写入证据，旧 worker 的迟到结果保持幂等且不可覆盖新状态。
 - recovery 只允许通过与正常 enqueue 相同的 provenance、scope、candidate target/current digest 和 policy 校验；历史 queued action 缺少 persisted current-digest baseline 时直接跳过并保留 `migration_ambiguous_history` 审计原因。
 - hydration 按 service + digest 处理完整 discovery history，再根据 service 当前 candidate digest supersede 旧候选；重复 migration、启动 hydration 和周期 reconciliation 不增加 candidate、pending 或 update job。
+- migration `0024_normalize_auto_update_digest_identity` 在旧数据库上先处理 active pending 的等价 digest 冲突，再 canonicalize service/candidate/pending identity；keeper 选择优先保留已 enqueued 且已绑定 action 的事实，重复 queued job 取消，running job 仅写 stop control。
 - 迁移脚本必须可重复执行，且不能把历史通知直接转换成新的自动部署授权。
 
 ## 计划修改边界
@@ -209,4 +213,4 @@ reload candidate and evaluate current policy
 - [x] API/UI states are distinguishable from inference readiness.
 - [x] Notification/history/API consume the same settlement.
 - [x] Existing updater safety boundaries remain intact.
-- [ ] Implementation-level validation and rollout evidence are complete. Local Rust tests and Clippy are complete; the shared-testbox Compose smoke remains blocked by the metrics migration error recorded above.
+- [ ] Implementation-level validation and rollout evidence are complete. Local focused Rust checks and Clippy are complete; the shared-testbox Compose smoke still needs the existing metrics migration blocker resolved or explicitly waived before this item can be checked.

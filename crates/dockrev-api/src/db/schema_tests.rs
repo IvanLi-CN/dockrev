@@ -329,7 +329,9 @@ INSERT INTO jobs (
   ('non-check-schedule', 'update', 'service', 'stack-1', 'service-4', 'success', 0, 'inherit', 'schedule', 'schedule',
    '2026-04-30T00:00:00Z', '{}'),
   ('queued-noncheck-job', 'update', 'service', 'stack-1', 'service-4', 'queued', 0, 'inherit', 'auto-policy', 'auto_policy',
-   '2026-04-30T00:00:02Z', '{}');
+   '2026-04-30T00:00:02Z', '{}'),
+  ('queued-duplicate-job', 'update', 'service', 'stack-1', 'service-1', 'queued', 0, 'inherit', 'auto-policy', 'auto_policy',
+   '2026-04-30T00:00:03Z', '{}');
 INSERT INTO auto_update_pending (
   id, policy_scope_type, policy_scope_id, rule_id, stack_id, service_id,
   source_check_job_id, candidate_tag, candidate_display_tag, candidate_digest,
@@ -340,6 +342,11 @@ INSERT INTO auto_update_pending (
    'schedule-check', 'latest', 'latest', 'NEW', '1.0.0',
    '2026-04-30T00:00:00Z', '2026-04-30T00:15:00Z', 900, 0,
    'pending', NULL, '2026-04-30T00:00:00Z', '2026-04-30T00:00:00Z',
+   '{"imageRef":"ghcr.io/acme/app:latest","currentDigest":"sha256:old"}'),
+  ('pending-duplicate', 'stack', 'stack-1', 'rule-1', 'stack-1', 'service-1',
+   'schedule-check', 'latest', 'latest', 'sha256:new', '1.0.0',
+   '2026-04-30T00:00:01Z', '2026-04-30T00:15:00Z', 900, 0,
+   'enqueued', 'queued-duplicate-job', '2026-04-30T00:00:01Z', '2026-04-30T00:00:01Z',
    '{"imageRef":"ghcr.io/acme/app:latest","currentDigest":"sha256:old"}'),
   ('pending-ambiguous', 'stack', 'stack-1', 'rule-1', 'stack-1', 'service-2',
    'unknown-check', 'latest', 'latest', 'sha256:other', '1.0.0',
@@ -427,7 +434,7 @@ INSERT INTO auto_update_pending (
         migrated.1,
         (
             Some("service-1:sha256:new".to_string()),
-            "pending".to_string()
+            "skipped".to_string()
         )
     );
     assert_eq!(migrated.2.0, None);
@@ -447,6 +454,39 @@ INSERT INTO auto_update_pending (
         migrated.3.1,
         Some("migration-ambiguous-history".to_string())
     );
+    let duplicate = db
+        .call(|conn| {
+            let pending = conn.query_row(
+                "SELECT candidate_id, candidate_digest, status, json_extract(summary_json, '$.skipReason') FROM auto_update_pending WHERE id = 'pending-duplicate'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                    ))
+                },
+            )?;
+            let job = conn.query_row(
+                "SELECT status FROM jobs WHERE id = 'queued-duplicate-job'",
+                [],
+                |row| row.get::<_, String>(0),
+            )?;
+            Ok((pending, job))
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        duplicate.0,
+        (
+            Some("service-1:sha256:new".to_string()),
+            "sha256:new".to_string(),
+            "enqueued".to_string(),
+            None
+        )
+    );
+    assert_eq!(duplicate.1, "queued");
     assert_eq!(
         migrated.4,
         (

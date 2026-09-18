@@ -223,7 +223,7 @@ JOIN services s
   ON s.id = d.service_id
 LEFT JOIN jobs j ON j.id = d.source_job_id
 WHERE TRIM(d.candidate_digest) <> ''
-ORDER BY d.service_id, d.candidate_digest, d.discovered_at ASC, d.id ASC
+ORDER BY d.service_id, d.discovered_at ASC, d.id ASC
 "#,
     )?;
     let rows = stmt.query_map([], |row| {
@@ -620,6 +620,9 @@ pub(super) fn list_candidate_hydration_diagnostics_conn(
         .map(|_| "?")
         .collect::<Vec<_>>()
         .join(",");
+    let candidate_digest = super::canonical_digest_sql("c.candidate_digest");
+    let service_digest = super::canonical_digest_sql("s.candidate_digest");
+    let discovery_digest = super::canonical_digest_sql("d.candidate_digest");
     let sql = format!(
         r#"
 SELECT
@@ -635,7 +638,7 @@ SELECT
 FROM services s
 LEFT JOIN auto_update_candidates c
   ON c.service_id = s.id
- AND LOWER(TRIM(c.candidate_digest)) = LOWER(TRIM(s.candidate_digest))
+ AND {candidate_digest} = {service_digest}
 WHERE s.id IN ({placeholders})
   AND (
     c.hydration_origin IS NOT NULL
@@ -643,7 +646,7 @@ WHERE s.id IN ({placeholders})
       SELECT 1 FROM service_new_version_discoveries d
       WHERE c.id IS NULL
         AND d.service_id = s.id
-        AND LOWER(TRIM(d.candidate_digest)) = LOWER(TRIM(s.candidate_digest))
+        AND {discovery_digest} = {service_digest}
     )
   )
 "#

@@ -22,6 +22,8 @@
 - queued auto-policy recovery 现在要求 exact candidate binding 与唯一 service target，并重新校验 service scope、target tag、candidate digest 和 expected current digest；旧 action 不满足这些条件时 fail-closed。
 - candidate identity 对 legacy digest 表示保持兼容：大小写或缺省 `sha256:` 前缀差异在 hydration、runtime reconciliation 和 settlement 边界归一为同一身份，不改变首次 `discoveredAt`。
 - recovery 的取消审计与 migration provenance 统一保留 `migration_ambiguous_history`，正常运行时 policy 变化仍保持独立 reason；hydration 对已存在的 running stop-control 也会发出 supersession stop request。
+- migration `0024_normalize_auto_update_digest_identity` 补足旧数据库的 digest identity 收敛：等价 active pending 只保留一个 keeper，重复 pending 进入 `migration_duplicate_candidate_digest` 审计状态，已绑定的 queued action 可被取消，running action 只登记 stop control；重复打开数据库保持幂等。
+- discovery hydration 的可信 provenance 选择固定为按 `discovered_at`、再按 discovery id 的最早完整成功 check observation；current-digest CAS 与 hydration diagnostic 共享同一 canonical digest 规则，覆盖缺省 `sha256:` 前缀和大小写差异。
 
 ## Decision Trace
 

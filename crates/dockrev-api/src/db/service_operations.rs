@@ -268,10 +268,15 @@ WHERE id = ?1
                 }
 
                 if let Some(expected_current_digest) = expected_current_digest.as_deref() {
+                    let current_digest = super::canonical_digest_sql("current_digest");
+                    let expected_digest = super::canonical_digest_sql("?2");
+                    let sql = format!(
+                        "SELECT {current_digest} = {expected_digest} FROM services WHERE id = ?1"
+                    );
                     for target in &targets {
                         let matches = tx
                             .query_row(
-                                "SELECT LOWER(NULLIF(TRIM(current_digest), '')) = LOWER(NULLIF(TRIM(?2), '')) FROM services WHERE id = ?1",
+                                &sql,
                                 params![target.service_id, expected_current_digest],
                                 |row| row.get::<_, bool>(0),
                             )
@@ -885,5 +890,46 @@ INSERT INTO services (
                 .generation,
             0
         );
+    }
+
+    #[tokio::test]
+    async fn auto_policy_current_digest_cas_accepts_legacy_prefixless_digest() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let (stack_id, service_id) = seed_service(&db).await;
+        let current_service_id = service_id.clone();
+        db.call(move |conn| {
+            conn.execute(
+                "UPDATE services SET current_digest = 'OLD' WHERE id = ?1",
+                [current_service_id.as_str()],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let job = crate::api::types::JobRecord::new_running(
+            "job_legacy_current_digest".to_string(),
+            JobType::Update,
+            JobScope::Service,
+            Some(stack_id.clone()),
+            Some(service_id.clone()),
+            "2026-08-30T00:01:00Z",
+        );
+        let outcome = db
+            .insert_service_operation_job_if_unblocked_with_current_digest(
+                job.to_db(),
+                vec![ServiceOperationTarget {
+                    service_id,
+                    stack_id,
+                }],
+                None,
+                "sha256:old",
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            outcome,
+            ServiceOperationAcquireOutcome::Acquired(_)
+        ));
     }
 }
