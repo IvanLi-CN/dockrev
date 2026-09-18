@@ -657,6 +657,7 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     apply_migration_0022_harden_auto_update_source_provenance(conn)?;
     apply_migration_0023_add_auto_update_candidate_settlement_generation(conn)?;
     apply_migration_0024_normalize_auto_update_digest_identity(conn)?;
+    apply_migration_0025_normalize_new_version_notification_digest_identity(conn)?;
     schema_lifecycle_events::apply(conn)?;
     schema_job_history_retention::apply(conn)?;
     schema_backup_cleanup_state::apply(conn)?;

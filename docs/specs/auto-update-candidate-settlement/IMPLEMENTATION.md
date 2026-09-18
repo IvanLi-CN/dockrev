@@ -26,6 +26,7 @@
 - migration `0024_normalize_auto_update_digest_identity` applies the same digest identity rule to services, candidates and pending rows. It first consolidates equivalent active pending rows before canonicalization, preserves the enqueued row with the strongest existing action, skips duplicate pending facts, cancels duplicate queued auto-policy jobs, and writes stop controls for duplicate running jobs. Reopening the database does not create another action.
 - migration `0024_normalize_auto_update_digest_identity` also consolidates candidate rows before writing canonical digests: it chooses a deterministic keeper, rebinds pending rows to that keeper, cancels or stop-controls duplicate candidate actions that have no retained active pending row, and removes duplicate candidate facts so the existing unique key represents canonical identity.
 - Before removing an equivalent candidate row, migration `0024` merges the earliest qualified `sourceJobId`/`source`/`discoveredAt`, the strongest settlement facts, and any still-active policy action projection into the deterministic keeper. Reserve, current claim, and latest-candidate reads all use the same canonical digest identity expression.
+- migration `0025_normalize_new_version_notification_digest_identity` canonicalizes notification digests, preserves the sent active row when equivalent active notification records collide, marks the other active rows superseded with an audit reason, and keeps repeated startup migration idempotent. Notification reservation and current-service checks use the same canonical digest normalizer.
 - legacy candidate backfill in migration `0014` accepts only a successful `check` whose schedule or GitHub webhook creator/source pairing and service/stack/all scope match the pending service; incomplete or non-check history is skipped and its queued/running action is cancelled or stop-controlled before the pending row is marked ambiguous.
 - queued auto-policy recovery uses the same canonical digest expression for service, candidate, pending, target and expected-current-digest comparisons, so a prefixless or case-variant target cannot be rejected or accepted differently from enqueue identity.
 - discovery history is ordered by `discovered_at ASC, id ASC` before canonical digest grouping; hydration selects the earliest complete, source-qualified observation and never replaces its first `discovered_at` with a later duplicate observation.
@@ -89,6 +90,7 @@
 - migration `0024_normalize_auto_update_digest_identity` 在旧数据库上先处理 active pending 的等价 digest 冲突，再处理候选重复行并 canonicalize service/candidate/pending identity；candidate keeper 选择是确定性的，pending 会重绑到 keeper，无保留 active pending 的重复 action 会取消或写 stop control，重复 candidate fact 会移除，重复打开数据库保持幂等。
 - migration `0014` 的 legacy pending 回填与 runtime claim 共用成功 Check、schedule/GitHub webhook creator/source pairing 和 service/stack/all scope identity 门禁；queued recovery 的 service、candidate、target digest 也共用 canonical identity SQL。
 - 迁移脚本必须可重复执行，且不能把历史通知直接转换成新的自动部署授权。
+- migration `0025` 只重写通知身份和历史状态，不创建 candidate、pending 或 update job，也不改变通知发送 side effect；重复启动只保留一个等价 digest 的 active notification。
 
 ## 计划修改边界
 

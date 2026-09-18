@@ -606,6 +606,68 @@ pub(super) fn apply_migration_0024_normalize_auto_update_digest_identity(
     Ok(())
 }
 
+pub(super) fn apply_migration_0025_normalize_new_version_notification_digest_identity(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0025_normalize_new_version_notification_digest_identity";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let now = now_rfc3339()?;
+    let candidate_digest = super::canonical_digest_sql("notification.candidate_digest");
+    let other_digest = super::canonical_digest_sql("other.candidate_digest");
+    let mapping_sql = format!(
+        r#"
+CREATE TEMP TABLE migration_duplicate_new_version_notifications AS
+SELECT
+  notification.id AS duplicate_id,
+  (
+    SELECT other.id
+    FROM new_version_notifications other
+    WHERE other.service_id = notification.service_id
+      AND other.status IN ('pending', 'sent')
+      AND {other_digest} = {candidate_digest}
+    ORDER BY
+      CASE other.status WHEN 'sent' THEN 2 WHEN 'pending' THEN 1 ELSE 0 END DESC,
+      other.created_at ASC,
+      other.id ASC
+    LIMIT 1
+  ) AS keeper_id
+FROM new_version_notifications notification
+WHERE notification.status IN ('pending', 'sent')
+  AND NULLIF(TRIM(notification.candidate_digest), '') IS NOT NULL
+"#
+    );
+    tx.execute(&mapping_sql, [])?;
+    tx.execute(
+        r#"
+UPDATE new_version_notifications
+SET
+  status = 'superseded',
+  superseded_at = COALESCE(superseded_at, ?1),
+  last_error = COALESCE(last_error, 'migration_canonical_digest')
+WHERE id IN (
+  SELECT duplicate_id
+  FROM migration_duplicate_new_version_notifications
+  WHERE duplicate_id <> keeper_id
+)
+"#,
+        rusqlite::params![&now],
+    )?;
+    let digest = super::canonical_digest_sql("candidate_digest");
+    tx.execute(
+        &format!(
+            "UPDATE new_version_notifications SET candidate_digest = {digest} WHERE candidate_digest IS NOT NULL AND TRIM(candidate_digest) <> ''"
+        ),
+        [],
+    )?;
+    tx.execute_batch("DROP TABLE migration_duplicate_new_version_notifications")?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
 pub(super) fn apply_migration_0021_add_auto_update_pending_current_digest(
     conn: &mut rusqlite::Connection,
 ) -> anyhow::Result<()> {
