@@ -1,0 +1,456 @@
+use rusqlite::{Transaction, params};
+use std::collections::BTreeMap;
+
+const HYDRATION_ORIGIN_DISCOVERY_HISTORY: &str = "discovery_history";
+const HYDRATION_ORIGIN_AMBIGUOUS_HISTORY: &str = "discovery_history_ambiguous";
+
+#[derive(Clone, Debug)]
+pub(crate) struct HydratedCandidateRow {
+    pub service_id: String,
+    pub candidate_digest: String,
+    pub candidate_id: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CandidateHydrationDiagnosticRow {
+    pub service_id: String,
+    pub candidate_digest: Option<String>,
+    pub status: String,
+    pub reason: Option<String>,
+    pub source: Option<String>,
+    pub source_job_id: Option<String>,
+    pub hydration_origin: Option<String>,
+    pub discovered_at: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct DiscoveryHistoryRow {
+    #[allow(dead_code)]
+    id: i64,
+    service_id: String,
+    stack_id: String,
+    image_ref: String,
+    source_job_id: String,
+    discovered_at: String,
+    current_digest: String,
+    current_display_tag: String,
+    current_tag: String,
+    candidate_tag: String,
+    candidate_digest: String,
+    candidate_display_tag: String,
+    job_type: Option<String>,
+    job_status: Option<String>,
+    job_created_by: Option<String>,
+    job_reason: Option<String>,
+    job_summary_json: Option<String>,
+}
+
+fn non_empty(value: &str) -> bool {
+    !value.trim().is_empty()
+}
+
+fn job_summary(row: &DiscoveryHistoryRow) -> serde_json::Value {
+    row.job_summary_json
+        .as_deref()
+        .and_then(|raw| serde_json::from_str(raw).ok())
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+fn qualified_source(row: &DiscoveryHistoryRow) -> Option<&'static str> {
+    if row
+        .job_type
+        .as_deref()
+        .is_some_and(|value| value.eq_ignore_ascii_case("check"))
+        && row
+            .job_status
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case("success"))
+        && row
+            .job_reason
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case("schedule"))
+        && row
+            .job_created_by
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case("schedule"))
+    {
+        return Some("schedule");
+    }
+
+    if row
+        .job_type
+        .as_deref()
+        .is_some_and(|value| value.eq_ignore_ascii_case("check"))
+        && row
+            .job_status
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case("success"))
+        && row.job_created_by.as_deref().is_some_and(|value| {
+            value.eq_ignore_ascii_case("webhook") || value.eq_ignore_ascii_case("github")
+        })
+        && job_summary(row)
+            .get("source")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| value.eq_ignore_ascii_case("github_webhook"))
+    {
+        return Some("github_webhook");
+    }
+
+    None
+}
+
+fn is_complete_hydration(row: &DiscoveryHistoryRow) -> bool {
+    qualified_source(row).is_some()
+        && non_empty(&row.image_ref)
+        && non_empty(&row.source_job_id)
+        && non_empty(&row.discovered_at)
+        && non_empty(&row.current_digest)
+        && non_empty(&row.current_tag)
+        && non_empty(&row.candidate_digest)
+        && (non_empty(&row.candidate_tag) || non_empty(&row.candidate_display_tag))
+}
+
+fn candidate_values(row: &DiscoveryHistoryRow) -> (String, String, String, String) {
+    let raw_tag = if non_empty(&row.candidate_tag) {
+        row.candidate_tag.trim().to_string()
+    } else {
+        row.candidate_display_tag.trim().to_string()
+    };
+    let current_tag = if non_empty(&row.current_tag) {
+        row.current_tag.trim().to_string()
+    } else {
+        String::new()
+    };
+    let current_display_tag = if non_empty(&row.current_display_tag) {
+        row.current_display_tag.trim().to_string()
+    } else if non_empty(&current_tag) {
+        current_tag.clone()
+    } else {
+        String::new()
+    };
+    let image_ref = crate::snapshot_worker::image_repo_from_image_ref(&row.image_ref)
+        .unwrap_or_else(|| row.image_ref.trim().to_string());
+    (image_ref, raw_tag, current_tag, current_display_tag)
+}
+
+fn select_discovery_history(tx: &Transaction<'_>) -> rusqlite::Result<Vec<DiscoveryHistoryRow>> {
+    let mut stmt = tx.prepare(
+        r#"
+SELECT
+  d.id,
+  d.service_id,
+  s.stack_id,
+  d.image_ref,
+  d.source_job_id,
+  d.discovered_at,
+  d.current_digest,
+  d.current_display_tag,
+  d.current_tag,
+  d.candidate_tag,
+  d.candidate_digest,
+  d.candidate_display_tag,
+  j.type,
+  j.status,
+  j.created_by,
+  j.reason,
+  j.summary_json
+FROM service_new_version_discoveries d
+JOIN services s
+  ON s.id = d.service_id
+ AND s.candidate_digest = d.candidate_digest
+LEFT JOIN jobs j ON j.id = d.source_job_id
+WHERE TRIM(d.candidate_digest) <> ''
+ORDER BY d.service_id, d.candidate_digest, d.discovered_at ASC, d.id ASC
+"#,
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(DiscoveryHistoryRow {
+            id: row.get(0)?,
+            service_id: row.get(1)?,
+            stack_id: row.get(2)?,
+            image_ref: row.get(3)?,
+            source_job_id: row.get(4)?,
+            discovered_at: row.get(5)?,
+            current_digest: row.get(6)?,
+            current_display_tag: row.get(7)?,
+            current_tag: row.get(8)?,
+            candidate_tag: row.get(9)?,
+            candidate_digest: row.get(10)?,
+            candidate_display_tag: row.get(11)?,
+            job_type: row.get(12)?,
+            job_status: row.get(13)?,
+            job_created_by: row.get(14)?,
+            job_reason: row.get(15)?,
+            job_summary_json: row.get(16)?,
+        })
+    })?;
+    rows.collect()
+}
+
+fn supersede_previous_candidates(
+    tx: &Transaction<'_>,
+    row: &HydratedCandidateRow,
+    now: &str,
+) -> anyhow::Result<()> {
+    tx.execute(
+        r#"
+UPDATE auto_update_candidates
+SET status = 'superseded',
+    reason = 'newer_candidate',
+    settled_at = ?3,
+    policy_status = 'skipped',
+    policy_reason = 'candidate_superseded',
+    policy_evaluated_at = ?3,
+    updated_at = ?3,
+    superseded_at = ?3,
+    superseded_by_candidate_id = ?4
+WHERE service_id = ?1
+  AND candidate_digest <> ?2
+  AND status IN ('awaiting_inference', 'ready', 'unresolved')
+"#,
+        params![row.service_id, row.candidate_digest, now, row.candidate_id],
+    )?;
+
+    let pending_ids = {
+        let mut stmt = tx.prepare(
+            r#"
+SELECT p.id, p.update_job_id, p.summary_json
+FROM auto_update_pending p
+WHERE p.service_id = ?1
+  AND p.candidate_digest <> ?2
+  AND p.status IN ('pending', 'enqueuing', 'enqueued')
+"#,
+        )?;
+        stmt.query_map(params![row.service_id, row.candidate_digest], |pending| {
+            Ok((
+                pending.get::<_, String>(0)?,
+                pending.get::<_, Option<String>>(1)?,
+                pending.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+    };
+    for (pending_id, update_job_id, summary_raw) in pending_ids {
+        let mut summary = serde_json::from_str::<serde_json::Value>(&summary_raw)
+            .unwrap_or_else(|_| serde_json::json!({}));
+        if !summary.is_object() {
+            summary = serde_json::json!({});
+        }
+        if let Some(object) = summary.as_object_mut() {
+            object.insert(
+                "skipReason".to_string(),
+                serde_json::json!("candidate_superseded"),
+            );
+            object.insert("skippedAt".to_string(), serde_json::json!(now));
+        }
+        tx.execute(
+            "UPDATE auto_update_pending SET status = 'skipped', summary_json = ?2, updated_at = ?3 WHERE id = ?1",
+            params![pending_id, serde_json::to_string(&summary)?, now],
+        )?;
+        if let Some(update_job_id) = update_job_id {
+            tx.execute(
+                "UPDATE jobs SET status = 'cancelled', finished_at = ?2 WHERE id = ?1 AND status = 'queued' AND created_by = 'auto-policy'",
+                params![update_job_id, now],
+            )?;
+            tx.execute(
+                r#"
+INSERT OR IGNORE INTO update_job_stop_controls (
+  job_id, stop_requested_at, stop_requested_by, updated_at
+)
+SELECT ?1, ?2, 'auto-policy-supersession', ?2
+WHERE EXISTS (SELECT 1 FROM jobs WHERE id = ?1 AND status = 'running')
+"#,
+                params![update_job_id, now],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn hydrate_auto_update_candidates_tx(
+    tx: &Transaction<'_>,
+    now: &str,
+) -> anyhow::Result<Vec<HydratedCandidateRow>> {
+    let history = select_discovery_history(tx)?;
+    let mut grouped = BTreeMap::<(String, String), Vec<DiscoveryHistoryRow>>::new();
+    for row in history {
+        grouped
+            .entry((row.service_id.clone(), row.candidate_digest.clone()))
+            .or_default()
+            .push(row);
+    }
+
+    let mut hydrated = Vec::new();
+    for ((service_id, candidate_digest), rows) in grouped {
+        let source_row = rows
+            .iter()
+            .find(|row| is_complete_hydration(row))
+            .unwrap_or(&rows[0]);
+        let complete = is_complete_hydration(source_row);
+        let (image_ref, raw_tag, current_tag, current_display_tag) = candidate_values(source_row);
+        let source = if complete {
+            qualified_source(source_row).unwrap_or("unknown")
+        } else {
+            "unknown"
+        };
+        let source_job_id = if non_empty(&source_row.source_job_id) {
+            source_row.source_job_id.clone()
+        } else {
+            format!("migration-ambiguous:{service_id}:{candidate_digest}")
+        };
+        let discovered_at = if non_empty(&source_row.discovered_at) {
+            source_row.discovered_at.clone()
+        } else {
+            now.to_string()
+        };
+        let resolved_version = complete
+            .then(|| dockrev_common::normalized_semver_from_oci_version(&raw_tag))
+            .flatten();
+        let status = if !complete {
+            "unresolved"
+        } else if resolved_version.is_some() {
+            "ready"
+        } else {
+            "awaiting_inference"
+        };
+        let reason = if !complete {
+            "migration_ambiguous_history"
+        } else if resolved_version.is_some() {
+            "digest_bound_version"
+        } else {
+            "version_inference_pending"
+        };
+        let candidate_id = format!("{service_id}:{candidate_digest}");
+        let hydration_origin = if complete {
+            HYDRATION_ORIGIN_DISCOVERY_HISTORY
+        } else {
+            HYDRATION_ORIGIN_AMBIGUOUS_HISTORY
+        };
+        let current_digest =
+            non_empty(&source_row.current_digest).then(|| source_row.current_digest.clone());
+
+        tx.execute(
+            r#"
+INSERT INTO auto_update_candidates (
+  id, stack_id, service_id, image_ref, raw_tag, candidate_digest,
+  resolved_version, resolved_tags, status, reason, attempts, retry_at,
+  discovered_at, source_job_id, source, current_tag, current_display_tag,
+  current_digest, settled_at, created_at, updated_at, hydration_origin
+)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, ?9, 0, NULL, ?10, ?11, ?12,
+        ?13, ?14, ?15, CASE WHEN ?8 IN ('ready', 'unresolved') THEN ?16 ELSE NULL END,
+        ?16, ?16, ?17)
+ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
+  hydration_origin = COALESCE(auto_update_candidates.hydration_origin, excluded.hydration_origin),
+  updated_at = excluded.updated_at
+"#,
+            params![
+                candidate_id,
+                source_row.stack_id,
+                service_id,
+                image_ref,
+                raw_tag,
+                candidate_digest,
+                resolved_version,
+                status,
+                reason,
+                discovered_at,
+                source_job_id,
+                source,
+                current_tag,
+                current_display_tag,
+                current_digest,
+                now,
+                hydration_origin,
+            ],
+        )?;
+        let candidate_id = tx.query_row(
+            "SELECT id FROM auto_update_candidates WHERE service_id = ?1 AND candidate_digest = ?2",
+            params![service_id, candidate_digest],
+            |row| row.get::<_, String>(0),
+        )?;
+        let hydrated_row = HydratedCandidateRow {
+            service_id,
+            candidate_digest,
+            candidate_id,
+        };
+        supersede_previous_candidates(tx, &hydrated_row, now)?;
+        hydrated.push(hydrated_row);
+    }
+    Ok(hydrated)
+}
+
+pub(super) fn list_candidate_hydration_diagnostics_conn(
+    conn: &rusqlite::Connection,
+    service_ids: &[String],
+) -> rusqlite::Result<Vec<CandidateHydrationDiagnosticRow>> {
+    let service_ids = service_ids
+        .iter()
+        .filter(|id| !id.trim().is_empty())
+        .collect::<Vec<_>>();
+    if service_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = service_ids
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        r#"
+SELECT
+  s.id,
+  s.candidate_digest,
+  c.status,
+  c.reason,
+  c.source,
+  c.source_job_id,
+  c.hydration_origin,
+  c.discovered_at
+FROM services s
+LEFT JOIN auto_update_candidates c
+  ON c.service_id = s.id
+ AND c.candidate_digest = s.candidate_digest
+WHERE s.id IN ({placeholders})
+  AND (
+    c.hydration_origin IS NOT NULL
+    OR EXISTS (
+      SELECT 1 FROM service_new_version_discoveries d
+      WHERE d.service_id = s.id AND d.candidate_digest = s.candidate_digest
+    )
+  )
+"#
+    );
+    let params = service_ids
+        .iter()
+        .map(|id| *id as &dyn rusqlite::ToSql)
+        .collect::<Vec<_>>();
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params.as_slice(), |row| {
+        let hydration_origin: Option<String> = row.get(6)?;
+        let candidate_digest: Option<String> = row.get(1)?;
+        let status = if hydration_origin.as_deref() == Some(HYDRATION_ORIGIN_AMBIGUOUS_HISTORY) {
+            "ambiguous_history"
+        } else if hydration_origin.as_deref() == Some(HYDRATION_ORIGIN_DISCOVERY_HISTORY) {
+            "hydrated"
+        } else {
+            "candidate_missing"
+        };
+        let reason = match status {
+            "ambiguous_history" => Some("migration_ambiguous_history".to_string()),
+            "candidate_missing" => Some("candidate_row_missing".to_string()),
+            _ => None,
+        };
+        Ok(CandidateHydrationDiagnosticRow {
+            service_id: row.get(0)?,
+            candidate_digest,
+            status: status.to_string(),
+            reason,
+            source: row.get(4)?,
+            source_job_id: row.get(5)?,
+            hydration_origin,
+            discovered_at: row.get(7)?,
+        })
+    })?;
+    rows.collect()
+}

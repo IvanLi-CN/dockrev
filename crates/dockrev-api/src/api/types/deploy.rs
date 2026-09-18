@@ -95,6 +95,8 @@ pub struct HomepageNavItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub candidate_settlement: Option<CandidateSettlement>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidate_hydration: Option<CandidateHydrationDiagnostic>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_update: Option<AutoUpdateProjection>,
     pub new_version_discovery_count: Option<u32>,
     pub settings: ServiceSettings,

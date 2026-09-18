@@ -62,6 +62,7 @@ pub(super) fn single_service_stack(
             ignore: None,
             version_inference: None,
             candidate_settlement: None,
+            candidate_hydration: None,
             auto_update: None,
             new_version_discovery_count: None,
             settings: ServiceSettings {
@@ -263,6 +264,7 @@ pub(super) fn selection_test_service(id: &str, name: &str, image_reference: &str
         ignore: None,
         version_inference: None,
         candidate_settlement: None,
+        candidate_hydration: None,
         auto_update: None,
         new_version_discovery_count: None,
         settings: ServiceSettings {

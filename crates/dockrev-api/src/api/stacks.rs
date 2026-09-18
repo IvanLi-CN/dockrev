@@ -898,11 +898,33 @@ pub(super) async fn enrich_services_with_auto_update_state(
         .list_latest_auto_update_candidates(&service_ids)
         .await
         .map_err(map_internal)?;
+    let hydration_diagnostics = state
+        .db
+        .list_candidate_hydration_diagnostics(&service_ids)
+        .await
+        .map_err(map_internal)?
+        .into_iter()
+        .map(|row| {
+            (
+                row.service_id,
+                CandidateHydrationDiagnostic {
+                    status: row.status,
+                    reason: row.reason,
+                    candidate_digest: row.candidate_digest,
+                    source: row.source,
+                    source_job_id: row.source_job_id,
+                    hydration_origin: row.hydration_origin,
+                    discovered_at: row.discovered_at,
+                },
+            )
+        })
+        .collect::<std::collections::HashMap<_, _>>();
     let by_service = rows
         .into_iter()
         .map(|row| (row.service_id.clone(), row))
         .collect::<std::collections::HashMap<_, _>>();
     for service in services {
+        service.candidate_hydration = hydration_diagnostics.get(&service.id).cloned();
         let Some(row) = by_service.get(&service.id) else {
             continue;
         };
@@ -919,6 +941,9 @@ pub(super) async fn enrich_services_with_auto_update_state(
             last_error: row.last_error.clone(),
             superseded_at: row.superseded_at.clone(),
             superseded_by_candidate_id: row.superseded_by_candidate_id.clone(),
+            source: Some(row.source.clone()),
+            source_job_id: Some(row.source_job_id.clone()),
+            hydration_origin: row.hydration_origin.clone(),
         });
         service.auto_update = Some(AutoUpdateProjection {
             policy_status: row

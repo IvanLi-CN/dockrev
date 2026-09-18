@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS auto_update_candidates (
   last_error TEXT,
   superseded_at TEXT,
   superseded_by_candidate_id TEXT,
+  hydration_origin TEXT,
   UNIQUE(service_id, candidate_digest)
 );
 CREATE INDEX IF NOT EXISTS idx_auto_update_candidates_status_retry
@@ -218,6 +219,34 @@ fn apply_migration_0019_add_auto_update_candidate_resolved_tags(
             [],
         )?;
     }
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
+fn apply_migration_0020_hydrate_auto_update_candidates_from_discoveries(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0020_hydrate_auto_update_candidates_from_discoveries";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let has_column = tx
+        .prepare("PRAGMA table_info(auto_update_candidates)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<BTreeSet<_>, _>>()?
+        .contains("hydration_origin");
+    if !has_column {
+        tx.execute(
+            "ALTER TABLE auto_update_candidates ADD COLUMN hydration_origin TEXT",
+            [],
+        )?;
+    }
+    super::auto_update_hydration::hydrate_auto_update_candidates_tx(
+        &tx,
+        &now_rfc3339()?,
+    )?;
     record_migration_tx(&tx, id)?;
     tx.commit()?;
     Ok(())

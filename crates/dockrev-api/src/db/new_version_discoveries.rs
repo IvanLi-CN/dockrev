@@ -678,6 +678,7 @@ pub(crate) fn list_new_version_discoveries_for_services_conn(
 SELECT
   service_id,
   image_ref,
+  source_job_id,
   discovered_at,
   current_digest,
   current_display_tag,
@@ -698,13 +699,14 @@ WHERE service_id IN ({placeholders})
         Ok(NewVersionDiscoveryRow {
             service_id: row.get(0)?,
             image_ref: row.get(1)?,
-            discovered_at: row.get(2)?,
-            current_digest: row.get(3)?,
-            current_display_tag: row.get(4)?,
-            current_tag: row.get(5)?,
-            candidate_tag: row.get(6)?,
-            candidate_digest: row.get(7)?,
-            candidate_display_tag: row.get(8)?,
+            source_job_id: row.get(2)?,
+            discovered_at: row.get(3)?,
+            current_digest: row.get(4)?,
+            current_display_tag: row.get(5)?,
+            current_tag: row.get(6)?,
+            candidate_tag: row.get(7)?,
+            candidate_digest: row.get(8)?,
+            candidate_display_tag: row.get(9)?,
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>()

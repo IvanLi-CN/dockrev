@@ -1448,6 +1448,7 @@ pub async fn process_due_pending(
     now: &str,
     limit: usize,
 ) -> anyhow::Result<usize> {
+    state.db.hydrate_auto_update_candidates(now).await?;
     let stale_before = subtract_seconds(now, 300);
     state
         .db

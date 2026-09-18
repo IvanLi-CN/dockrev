@@ -23,7 +23,7 @@ import {
 } from '../releaseNotes'
 import { useServiceReleaseNotesSession } from '../useServiceReleaseNotesSession'
 import { blockedReasonFor, serviceRowStatus } from '../updateStatus'
-import { candidateSettlementDetail } from './AutoUpdatePolicyResultCard'
+import { candidateHydrationDetail, candidateSettlementDetail } from './AutoUpdatePolicyResultCard'
 import {
   compareStrictSemverTags,
   formatCandidateTagDisplay,
@@ -774,6 +774,9 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
               : `候选证据已完成${settlement.resolvedVersion ? `：${settlement.resolvedVersion}` : ''}；这不代表更新任务已完成。${settlementDetail ? ` ${settlementDetail}` : ''}`
             : null
     : null
+  const hydrationBanner = props.service.candidateHydration && props.service.candidateHydration.status !== 'hydrated'
+    ? candidateHydrationDetail(props.service.candidateHydration)
+    : null
 
   return (
     <section ref={sectionRef} className="serviceVersionsSection" data-service-detail-section-card="versions">
@@ -828,6 +831,14 @@ export function ServiceVersionsSection(props: ServiceVersionsSectionProps) {
             ) : null}
           </div>
         </div>
+        {hydrationBanner ? (
+          <div
+            className="releaseDrawerBanner releaseDrawerBanner-warning"
+            data-service-versions-banner="candidate-hydration"
+          >
+            <span>候选回填：{hydrationBanner}</span>
+          </div>
+        ) : null}
         {settlementBanner ? (
           <div
             className={cn(

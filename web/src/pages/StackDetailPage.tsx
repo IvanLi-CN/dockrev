@@ -530,6 +530,7 @@ export function StackDetailPage(props: {
       serviceName: service.name,
       projection: status === 'blocked' || status === 'archMismatch' || !hasPolicyAction(service.autoUpdate) ? null : service.autoUpdate,
       candidateSettlement: service.candidateSettlement ?? null,
+      candidateHydration: service.candidateHydration ?? null,
       fallbackLabel: status === 'blocked' || status === 'archMismatch' ? statusLabel(status) : undefined,
     }
   })

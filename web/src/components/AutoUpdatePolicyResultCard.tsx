@@ -1,4 +1,9 @@
-import type { AutoUpdatePolicy, AutoUpdateProjection, CandidateSettlement } from '../api'
+import type {
+  AutoUpdatePolicy,
+  AutoUpdateProjection,
+  CandidateHydrationDiagnostic,
+  CandidateSettlement,
+} from '../api'
 import { Button, Mono, Pill } from '../ui'
 import {
   activeAutoUpdateRules,
@@ -91,16 +96,29 @@ const settlementReasonLabels: Record<string, string> = {
 export function candidateSettlementDetail(settlement: CandidateSettlement): string {
   const details = [
     settlementReasonLabels[settlement.reason ?? ''] ?? settlement.reason,
+    settlement.source ? `来源 ${settlement.source}` : null,
+    settlement.sourceJobId ? `来源任务 ${settlement.sourceJobId}` : null,
+    settlement.hydrationOrigin ? `回填 ${settlement.hydrationOrigin}` : null,
     settlement.attempts > 0 ? `尝试 ${settlement.attempts} 次` : null,
     settlement.retryAt ? `下次重试 ${settlement.retryAt}` : null,
   ].filter(Boolean)
   return details.length > 0 ? details.join(' · ') : '无需继续推断'
 }
 
+export function candidateHydrationDetail(hydration: CandidateHydrationDiagnostic): string {
+  if (hydration.status === 'ambiguous_history') return '发现历史 provenance 不完整，已禁止自动部署'
+  if (hydration.status === 'candidate_missing') return '发现历史存在，但尚未生成候选事实'
+  if (hydration.status === 'hydrated') {
+    return hydration.source ? `已从 ${hydration.source} 发现历史回填` : '已从发现历史回填'
+  }
+  return hydration.reason ?? hydration.status
+}
+
 export type AutoUpdateServiceResult = {
   serviceName: string
   projection?: AutoUpdateProjection | null
   candidateSettlement?: CandidateSettlement | null
+  candidateHydration?: CandidateHydrationDiagnostic | null
   fallbackLabel?: string
 }
 
@@ -112,6 +130,7 @@ export function AutoUpdatePolicyResultCard(props: {
   stackPolicy?: AutoUpdatePolicy | null
   projection?: AutoUpdateProjection | null
   candidateSettlement?: CandidateSettlement | null
+  candidateHydration?: CandidateHydrationDiagnostic | null
   serviceResults?: AutoUpdateServiceResult[]
 }) {
   const result = policyResult(props)
@@ -162,6 +181,7 @@ export function AutoUpdatePolicyResultCard(props: {
                   <span>
                     {service.projection ? policyActionLabel(service.projection.policyStatus) : service.fallbackLabel ?? '暂无候选动作'}
                     {service.candidateSettlement ? ` · 候选 ${service.candidateSettlement.status}` : ''}
+                    {service.candidateHydration ? ` · ${candidateHydrationDetail(service.candidateHydration)}` : ''}
                   </span>
                 </div>
               ))}
@@ -182,6 +202,15 @@ export function AutoUpdatePolicyResultCard(props: {
             <span className="autoPolicyFactValue">
               <Mono>{props.candidateSettlement.status}</Mono>
               <span>{candidateSettlementDetail(props.candidateSettlement)}</span>
+            </span>
+          </div>
+        ) : null}
+        {props.candidateHydration && props.candidateHydration.status !== 'hydrated' ? (
+          <div className="autoPolicyFactCell" data-auto-policy-evidence="candidate-hydration">
+            <span className="label autoPolicyFactLabel">候选回填</span>
+            <span className="autoPolicyFactValue">
+              <Mono>{props.candidateHydration.status}</Mono>
+              <span>{candidateHydrationDetail(props.candidateHydration)}</span>
             </span>
           </div>
         ) : null}

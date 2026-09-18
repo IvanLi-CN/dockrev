@@ -1,4 +1,33 @@
 impl Db {
+    pub async fn hydrate_auto_update_candidates(&self, now: &str) -> anyhow::Result<usize> {
+        let now = now.to_string();
+        self.call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let hydrated = super::auto_update_hydration::hydrate_auto_update_candidates_tx(
+                &tx, &now,
+            )?;
+            tx.commit()?;
+            Ok(hydrated.len())
+        })
+        .await
+        .context("hydrate auto update candidates")
+    }
+
+    pub async fn list_candidate_hydration_diagnostics(
+        &self,
+        service_ids: &[String],
+    ) -> anyhow::Result<Vec<super::auto_update_hydration::CandidateHydrationDiagnosticRow>> {
+        let service_ids = service_ids.to_vec();
+        self.call(move |conn| {
+            Ok(super::auto_update_hydration::list_candidate_hydration_diagnostics_conn(
+                conn,
+                &service_ids,
+            )?)
+        })
+        .await
+        .context("list auto update candidate hydration diagnostics")
+    }
+
     pub async fn upsert_auto_update_candidate(
         &self,
         input: &AutoUpdateCandidateInput,
@@ -338,7 +367,7 @@ WHERE job_id = ?1
         self.call(move |conn| {
             let mut out = Vec::new();
             let mut stmt = conn.prepare(
-                "SELECT c.id, c.stack_id, c.service_id, c.image_ref, c.raw_tag, c.candidate_digest, c.resolved_version, c.resolved_tags, c.status, c.reason, c.attempts, c.retry_at, c.discovered_at, c.source_job_id, c.source, c.current_tag, c.current_display_tag, c.current_digest, c.settled_at, c.created_at, c.updated_at, c.policy_status, c.policy_reason, c.policy_rule_id, c.policy_evaluated_at, c.policy_scope_type, c.policy_scope_id, c.update_job_id, c.last_error, c.superseded_at, c.superseded_by_candidate_id FROM auto_update_candidates c JOIN services s ON s.id = c.service_id WHERE c.service_id = ?1 AND (s.candidate_digest = c.candidate_digest OR (s.candidate_digest IS NULL AND c.policy_status = 'completed' AND s.current_digest = c.candidate_digest)) ORDER BY c.discovered_at DESC, c.id DESC LIMIT 1",
+                &format!("SELECT {AUTO_UPDATE_CANDIDATE_COLUMNS_QUALIFIED} FROM auto_update_candidates c JOIN services s ON s.id = c.service_id WHERE c.service_id = ?1 AND (s.candidate_digest = c.candidate_digest OR (s.candidate_digest IS NULL AND c.policy_status = 'completed' AND s.current_digest = c.candidate_digest)) ORDER BY c.discovered_at DESC, c.id DESC LIMIT 1"),
             )?;
             for service_id in service_ids {
                 if let Ok(row) = stmt.query_row(params![service_id], map_auto_update_candidate_row) {
