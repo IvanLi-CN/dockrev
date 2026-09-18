@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS auto_update_pending (
   candidate_display_tag TEXT NOT NULL,
   candidate_digest TEXT NOT NULL,
   current_display_tag TEXT NOT NULL,
+  current_digest TEXT,
   first_seen_at TEXT NOT NULL,
   due_at TEXT NOT NULL,
   min_age_seconds INTEGER NOT NULL,
@@ -246,6 +247,45 @@ fn apply_migration_0020_hydrate_auto_update_candidates_from_discoveries(
     super::auto_update_hydration::hydrate_auto_update_candidates_tx(
         &tx,
         &now_rfc3339()?,
+    )?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub(super) fn apply_migration_0021_add_auto_update_pending_current_digest(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0021_add_auto_update_pending_current_digest";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let has_column = tx
+        .prepare("PRAGMA table_info(auto_update_pending)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<BTreeSet<_>, _>>()?
+        .contains("current_digest");
+    if !has_column {
+        tx.execute(
+            "ALTER TABLE auto_update_pending ADD COLUMN current_digest TEXT",
+            [],
+        )?;
+    }
+    tx.execute(
+        r#"
+UPDATE auto_update_pending
+SET current_digest = NULLIF(TRIM(json_extract(
+  CASE WHEN json_valid(summary_json) THEN summary_json ELSE '{}' END,
+  '$.currentDigest'
+)), '')
+WHERE current_digest IS NULL
+  AND NULLIF(TRIM(json_extract(
+    CASE WHEN json_valid(summary_json) THEN summary_json ELSE '{}' END,
+    '$.currentDigest'
+  )), '') IS NOT NULL
+"#,
+        [],
     )?;
     record_migration_tx(&tx, id)?;
     tx.commit()?;

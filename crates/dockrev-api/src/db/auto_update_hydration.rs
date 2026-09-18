@@ -43,6 +43,8 @@ struct DiscoveryHistoryRow {
     job_created_by: Option<String>,
     job_reason: Option<String>,
     job_summary_json: Option<String>,
+    job_stack_id: Option<String>,
+    job_service_id: Option<String>,
 }
 
 fn non_empty(value: &str) -> bool {
@@ -56,7 +58,15 @@ fn job_summary(row: &DiscoveryHistoryRow) -> serde_json::Value {
         .unwrap_or_else(|| serde_json::json!({}))
 }
 
+fn source_job_matches_discovery(row: &DiscoveryHistoryRow) -> bool {
+    row.job_stack_id.as_deref() == Some(row.stack_id.as_str())
+        && row.job_service_id.as_deref() == Some(row.service_id.as_str())
+}
+
 fn qualified_source(row: &DiscoveryHistoryRow) -> Option<&'static str> {
+    if !source_job_matches_discovery(row) {
+        return None;
+    }
     if row
         .job_type
         .as_deref()
@@ -153,7 +163,9 @@ SELECT
   j.status,
   j.created_by,
   j.reason,
-  j.summary_json
+  j.summary_json,
+  j.stack_id,
+  j.service_id
 FROM service_new_version_discoveries d
 JOIN services s
   ON s.id = d.service_id
@@ -182,6 +194,8 @@ ORDER BY d.service_id, d.candidate_digest, d.discovered_at ASC, d.id ASC
             job_created_by: row.get(14)?,
             job_reason: row.get(15)?,
             job_summary_json: row.get(16)?,
+            job_stack_id: row.get(17)?,
+            job_service_id: row.get(18)?,
         })
     })?;
     rows.collect()
@@ -341,8 +355,93 @@ VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, ?9, 0, NULL, ?10, ?11, ?12,
         ?13, ?14, ?15, CASE WHEN ?8 IN ('ready', 'unresolved') THEN ?16 ELSE NULL END,
         ?16, ?16, ?17)
 ON CONFLICT(service_id, candidate_digest) DO UPDATE SET
-  hydration_origin = COALESCE(auto_update_candidates.hydration_origin, excluded.hydration_origin),
-  updated_at = excluded.updated_at
+  image_ref = CASE
+    WHEN auto_update_candidates.image_ref = '' THEN excluded.image_ref
+    ELSE auto_update_candidates.image_ref
+  END,
+  raw_tag = CASE
+    WHEN auto_update_candidates.raw_tag = '' THEN excluded.raw_tag
+    ELSE auto_update_candidates.raw_tag
+  END,
+  resolved_version = COALESCE(auto_update_candidates.resolved_version, excluded.resolved_version),
+  status = CASE
+    WHEN auto_update_candidates.status = 'superseded' THEN auto_update_candidates.status
+    WHEN auto_update_candidates.status = 'ready' AND excluded.status <> 'ready'
+      THEN auto_update_candidates.status
+    WHEN auto_update_candidates.status = 'unresolved'
+      AND excluded.status = 'awaiting_inference'
+      AND auto_update_candidates.hydration_origin <> 'discovery_history_ambiguous'
+      THEN auto_update_candidates.status
+    ELSE excluded.status
+  END,
+  reason = CASE
+    WHEN auto_update_candidates.status = 'superseded' THEN auto_update_candidates.reason
+    WHEN auto_update_candidates.status = 'ready' AND excluded.status <> 'ready'
+      THEN auto_update_candidates.reason
+    WHEN auto_update_candidates.status = 'unresolved'
+      AND excluded.status = 'awaiting_inference'
+      AND auto_update_candidates.hydration_origin <> 'discovery_history_ambiguous'
+      THEN auto_update_candidates.reason
+    ELSE COALESCE(excluded.reason, auto_update_candidates.reason)
+  END,
+  discovered_at = auto_update_candidates.discovered_at,
+  source_job_id = CASE
+    WHEN auto_update_candidates.hydration_origin IS NULL
+      OR auto_update_candidates.source = 'unknown'
+      THEN excluded.source_job_id
+    ELSE auto_update_candidates.source_job_id
+  END,
+  source = CASE
+    WHEN auto_update_candidates.hydration_origin IS NULL
+      OR auto_update_candidates.source = 'unknown'
+      THEN excluded.source
+    ELSE auto_update_candidates.source
+  END,
+  current_tag = CASE
+    WHEN auto_update_candidates.current_tag = '' THEN excluded.current_tag
+    ELSE auto_update_candidates.current_tag
+  END,
+  current_display_tag = CASE
+    WHEN auto_update_candidates.current_display_tag = '' THEN excluded.current_display_tag
+    ELSE auto_update_candidates.current_display_tag
+  END,
+  current_digest = COALESCE(auto_update_candidates.current_digest, excluded.current_digest),
+  settled_at = CASE
+    WHEN auto_update_candidates.settled_at IS NULL
+      AND excluded.settled_at IS NOT NULL
+      THEN excluded.settled_at
+    ELSE auto_update_candidates.settled_at
+  END,
+  hydration_origin = CASE
+    WHEN excluded.hydration_origin = 'discovery_history'
+      AND auto_update_candidates.hydration_origin = 'discovery_history_ambiguous'
+      THEN excluded.hydration_origin
+    ELSE COALESCE(auto_update_candidates.hydration_origin, excluded.hydration_origin)
+  END,
+  updated_at = CASE
+    WHEN auto_update_candidates.hydration_origin IS NULL
+      OR (
+        auto_update_candidates.source = 'unknown'
+        AND excluded.source <> 'unknown'
+      )
+      OR (
+        CASE
+          WHEN auto_update_candidates.status = 'superseded' THEN 'superseded'
+          WHEN auto_update_candidates.status = 'ready' AND excluded.status <> 'ready'
+            THEN 'ready'
+          WHEN auto_update_candidates.status = 'unresolved'
+            AND excluded.status = 'awaiting_inference'
+            AND auto_update_candidates.hydration_origin <> 'discovery_history_ambiguous'
+            THEN 'unresolved'
+          ELSE excluded.status
+        END <> auto_update_candidates.status
+      )
+      OR auto_update_candidates.current_digest IS NULL AND excluded.current_digest IS NOT NULL
+      OR auto_update_candidates.image_ref = '' AND excluded.image_ref <> ''
+      OR auto_update_candidates.raw_tag = '' AND excluded.raw_tag <> ''
+      THEN excluded.updated_at
+    ELSE auto_update_candidates.updated_at
+  END
 "#,
             params![
                 candidate_id,
