@@ -51,9 +51,12 @@
 
 - No release, tag, artifact, image, deployment, or recovery dispatch is part of
   this implementation.
-- The approved historical boundary is PR #391 merge
-  `978207fe9d140d81e2d4a2a7bd24fb253a04ebff` and one `0.80.2` stable identity;
-  PR #390 receives no separate release identity.
+- Approved historical boundaries are explicitly enumerated in
+  `.github/scripts/release_policy.py`: PR #391 merge
+  `978207fe9d140d81e2d4a2a7bd24fb253a04ebff` receives the `0.80.2` stable
+  identity and PR #395 merge
+  `ff1b57b6835616cd3b7a95a479c0106426eb5d40` receives the `0.80.3` stable
+  identity. PR #390 receives no separate release identity.
 
 ## References
 

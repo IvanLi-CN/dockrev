@@ -36,6 +36,23 @@ APPROVED_BACKFILL_COVERED_MERGE_SHA = "978207fe9d140d81e2d4a2a7bd24fb253a04ebff"
 APPROVED_BACKFILL_VERSION = "0.80.2"
 APPROVED_BACKFILL_BASELINE = "0.80.1"
 APPROVED_BACKFILL_INTENT = ("type:patch", "channel:stable")
+APPROVED_VERSION_ONLY_BOUNDARIES = frozenset(
+    {
+        (
+            APPROVED_BACKFILL_COVERED_MERGE_SHA,
+            APPROVED_BACKFILL_VERSION,
+            APPROVED_BACKFILL_BASELINE,
+            *APPROVED_BACKFILL_INTENT,
+        ),
+        (
+            "ff1b57b6835616cd3b7a95a479c0106426eb5d40",
+            "0.80.3",
+            "0.80.2",
+            "type:patch",
+            "channel:stable",
+        ),
+    }
+)
 
 
 class PolicyError(ValueError):
@@ -225,18 +242,23 @@ def validate_approved_version_only_boundary(
     baseline_version: str,
     intent: dict[str, Any],
 ) -> None:
-    """Keep the one historical backfill identity bound to its approved tuple."""
-    if covered_merge_sha != APPROVED_BACKFILL_COVERED_MERGE_SHA:
+    """Keep each historical backfill identity bound to an approved tuple."""
+    if covered_merge_sha not in {item[0] for item in APPROVED_VERSION_ONLY_BOUNDARIES}:
         raise PolicyError("version-only release PR covers an unapproved product merge")
-    if version != APPROVED_BACKFILL_VERSION:
+    if not any(item[0] == covered_merge_sha and item[1] == version for item in APPROVED_VERSION_ONLY_BOUNDARIES):
         raise PolicyError("version-only release PR requests an unapproved product version")
-    if baseline_version != APPROVED_BACKFILL_BASELINE:
+    if not any(
+        item[0] == covered_merge_sha and item[1] == version and item[2] == baseline_version
+        for item in APPROVED_VERSION_ONLY_BOUNDARIES
+    ):
         raise PolicyError("version-only release PR uses an unapproved release baseline")
     if (
+        covered_merge_sha,
+        version,
+        baseline_version,
         intent.get("type_label"),
         intent.get("channel_label"),
-        intent.get("components", []),
-    ) != (*APPROVED_BACKFILL_INTENT, []):
+    ) not in APPROVED_VERSION_ONLY_BOUNDARIES or intent.get("components", []):
         raise PolicyError("version-only release PR uses an unapproved release intent")
 
 

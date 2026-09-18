@@ -19,10 +19,12 @@
   in signed release provenance and revalidated at each release identity
   boundary.
 
-- Successor ADR 0011 defines the one historical backfill boundary: PR #391
-  merge `978207fe9d140d81e2d4a2a7bd24fb253a04ebff` receives the sole
-  `0.80.2` version-only identity with baseline `0.80.1` and stable patch
-  intent; PR #390 is not independently released.
+- Successor ADR 0011 defines the PR #391 historical backfill boundary. ADR
+  0012 adds the independently enumerated PR #395 boundary:
+  `ff1b57b6835616cd3b7a95a479c0106426eb5d40` receives the `0.80.3`
+  version-only identity with baseline `0.80.2` and stable patch intent.
+  PR #390 remains part of the PR #391 boundary and is not independently
+  released.
 
 - Recovery preparation is selected by the `recovery/` branch prefix. Automatic
   workflow-run preparation skips that prefix, and the version-only helper

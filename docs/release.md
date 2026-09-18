@@ -116,18 +116,24 @@ single source-parent commit and its bound source CI/Label Gate evidence. Label
 Gate evidence is accepted only from the trusted `pull_request_target` run;
 skipped or ordinary `pull_request` runs do not satisfy the release contract.
 
-For the current historical publication gap, the only approved backfill
-identity is covered merge `978207fe9d140d81e2d4a2a7bd24fb253a04ebff` (PR #391),
-product version `0.80.2`, frozen baseline `0.80.1`, and intent
-`type:patch channel:stable`. PR #390 is part of that product boundary and does
-not receive a separate identity. A maintainer prepares this identity by
-dispatching `Release Preparation` with
-`release_mode=version-only-release-pr`, the covered merge SHA, exact version,
-and baseline. The workflow requires an unchanged, empty version-only PR before
-it writes the signed `VERSION`-only commit with `createCommitOnBranch`.
-The version reservation ref, recovery-ref, and publication-lock ownership
-must all bind the same identity SHA. This preparation only makes the PR
-merge-ready; this change does not create the `0.80.2` tag, GitHub Release,
+For the current historical publication gaps, the approved backfill identities
+are:
+
+- covered merge `978207fe9d140d81e2d4a2a7bd24fb253a04ebff` (PR #391), product
+  version `0.80.2`, frozen baseline `0.80.1`, and intent
+  `type:patch channel:stable`; PR #390 is part of that product boundary and
+  does not receive a separate identity;
+- covered merge `ff1b57b6835616cd3b7a95a479c0106426eb5d40` (PR #395), product
+  version `0.80.3`, frozen baseline `0.80.2`, and intent
+  `type:patch channel:stable`.
+
+A maintainer prepares an approved identity by dispatching `Release Preparation`
+with `release_mode=version-only-release-pr`, the covered merge SHA, exact
+version, and baseline. The workflow requires an unchanged, empty version-only
+PR before it writes the signed `VERSION`-only commit with
+`createCommitOnBranch`. The version reservation ref, recovery-ref, and
+publication-lock ownership must all bind the same identity SHA. Preparation
+only makes the PR merge-ready; it does not create the tag, GitHub Release,
 GHCR images, or recovery dispatch.
 
 FIFO queues, release trains, snapshot backfills, mutable label reconstruction,
