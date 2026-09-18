@@ -82,6 +82,21 @@
   `createCommitOnBranch(expectedHeadOid)`. Reservation, recovery-ref, and
   publication-lock ownership MUST bind that same identity SHA, and the
   canonical version reservation ref MUST point directly to the identity commit.
+  A publication lock for the new product version MUST resolve to that exact
+  identity SHA. A lock for the covered product's older version MUST be
+  resolved against its own owning merge SHA and MUST NOT be treated as the
+  owner of the new version or block an unrelated historical boundary.
+  For a normal-preparation identity, its owning association MUST be exactly
+  one merged PR into `main` whose head SHA equals the signed release identity
+  SHA and whose base repository equals the target repository. Any other
+  association MUST fail closed.
+  Before `Release completion` accepts a release PR, the publication lock for
+  the target product version MUST be absent or resolve to the current release
+  identity. A valid lock owned by another identity MUST make the completion
+  check fail; a malformed lock MUST fail closed rather than be treated as
+  available.
+  Malformed, ambiguous, duplicate, or unverified lock ownership evidence MUST
+  fail closed.
   The current
   approved repair boundaries are explicitly enumerated. They include PR #391
   merge `978207fe9d140d81e2d4a2a7bd24fb253a04ebff` -> `0.80.2` with baseline

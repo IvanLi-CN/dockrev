@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import release_baseline
+import release_lock
 import release_policy
 
 
@@ -365,7 +366,17 @@ def covered_product_has_existing_identity(
     lock_sha = lock_ref.get("object", {}).get("sha")
     if not isinstance(lock_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", lock_sha):
         raise PreparationError("publication lock ref has an invalid commit SHA")
-    return identity_sha is None or lock_sha != identity_sha
+    try:
+        return release_lock.publication_lock_matches_merge(
+            lambda path: api_request(api_root, token, "GET", path),
+            repository,
+            lock_sha,
+            version,
+            covered_merge_sha,
+            allowed_identity_shas={identity_sha} if identity_sha else set(),
+        )
+    except release_lock.PublicationLockOwnershipError as error:
+        raise PreparationError(str(error)) from error
 
 
 def version_only_reservation_is_owned(

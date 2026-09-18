@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import importlib.util
 import json
 import subprocess
@@ -27,6 +28,7 @@ def load(name: str, path: Path):
 
 policy = load("release_policy", ROOT / ".github/scripts/release_policy.py")
 baseline = load("release_baseline", ROOT / ".github/scripts/release_baseline.py")
+release_lock = load("release_lock", ROOT / ".github/scripts/release_lock.py")
 completion = load("release_completion", ROOT / ".github/scripts/release_completion.py")
 identity = load("release_identity", ROOT / ".github/scripts/release_identity.py")
 preparation_script = load("release_preparation", ROOT / ".github/scripts/release_preparation.py")
@@ -54,6 +56,469 @@ def expect_exception(error_type, function, *args, **kwargs):
     except error_type:
         return
     raise AssertionError(f"expected {function.__name__} to raise {error_type.__name__}")
+
+
+lock_commit_sha = "c" * 40
+covered_lock_target = "a" * 40
+covered_lock_other = "b" * 40
+normal_lock_merge_sha = covered_lock_other
+lock_commit_payload = {
+    "parents": [{"sha": "d" * 40}],
+    "files": [{"filename": "VERSION"}],
+    "commit": {
+        "verification": {"verified": True},
+        "message": (
+            "VERSION-only release\n\n"
+            f"Covered-Product-Merge-SHA: {covered_lock_other}\n"
+            "Product-Version: 0.80.2\n"
+            "Release-Baseline-Version: 0.80.1\n"
+            "Release-Intent: type:patch channel:stable\n"
+            "Source-PR-Updated-At: 2026-01-01T00:00:00Z\n"
+            "Release-Mode: version-only-release-pr"
+        ),
+    },
+}
+
+
+def publication_lock_fixture(path):
+    if path.endswith(f"/commits/{lock_commit_sha}"):
+        return lock_commit_payload
+    if path.startswith(f"/repos/IvanLi-CN/dockrev/commits/{covered_lock_other}/pulls?"):
+        return [{
+            "state": "closed",
+            "merged_at": "2026-01-01T00:00:00Z",
+            "merge_commit_sha": normal_lock_merge_sha,
+            "base": {"ref": "main", "repo": {"full_name": "IvanLi-CN/dockrev"}},
+            "head": {"sha": lock_commit_sha},
+        }]
+    if path.endswith(f"/contents/VERSION?ref={lock_commit_sha}"):
+        return {"encoding": "base64", "content": "MC44MC4y\n"}
+    if path.endswith(f"/contents/VERSION?ref={covered_lock_other}") or path.endswith(
+        f"/contents/VERSION?ref={covered_lock_target}"
+    ):
+        return {"encoding": "base64", "content": "MC44MC4x\n"}
+    raise AssertionError(f"unexpected publication lock API path: {path}")
+
+
+def paginated_publication_lock_fixture(path):
+    if path.endswith(f"/commits/{lock_commit_sha}"):
+        return lock_commit_payload
+    if path.endswith(f"/commits/{covered_lock_other}/pulls?per_page=100&page=1"):
+        return [
+            {
+                "state": "open",
+                "base": {"ref": "main", "repo": {"full_name": "IvanLi-CN/dockrev"}},
+                "head": {"sha": covered_lock_other},
+            }
+            for _ in range(100)
+        ]
+    if path.endswith(f"/commits/{covered_lock_other}/pulls?per_page=100&page=2"):
+        return [{
+            "state": "closed",
+            "merged_at": "2026-01-01T00:00:00Z",
+            "merge_commit_sha": covered_lock_target,
+            "base": {"ref": "main", "repo": {"full_name": "IvanLi-CN/dockrev"}},
+            "head": {"sha": lock_commit_sha},
+        }]
+    if path.endswith(f"/contents/VERSION?ref={lock_commit_sha}"):
+        return {"encoding": "base64", "content": "MC44MC4y\n"}
+    if path.endswith(f"/contents/VERSION?ref={covered_lock_other}") or path.endswith(
+        f"/contents/VERSION?ref={covered_lock_target}"
+    ):
+        return {"encoding": "base64", "content": "MC44MC4x\n"}
+    raise AssertionError(f"unexpected paginated publication lock API path: {path}")
+
+
+assert release_lock.publication_lock_matches_merge(
+    publication_lock_fixture,
+    "IvanLi-CN/dockrev",
+    lock_commit_sha,
+    "0.80.2",
+    covered_lock_target,
+) is False
+lock_commit_payload["commit"]["message"] = lock_commit_payload["commit"]["message"].replace(
+    covered_lock_other, covered_lock_target
+)
+assert release_lock.publication_lock_matches_merge(
+    publication_lock_fixture,
+    "IvanLi-CN/dockrev",
+    lock_commit_sha,
+    "0.80.2",
+    covered_lock_target,
+) is True
+lock_commit_payload["commit"]["message"] = (
+    "Prepare release identity\n\n"
+    f"Source-SHA: {covered_lock_other}\n"
+    "Product-Version: 0.80.2\n"
+    "Release-Baseline-Version: 0.80.1\n"
+    "Release-Intent: type:patch channel:stable\n"
+    "Source-PR-Updated-At: 2026-01-01T00:00:00Z\n"
+    "Release-Mode: normal-preparation"
+)
+lock_commit_payload["parents"] = [{"sha": covered_lock_other}]
+normal_lock_merge_sha = covered_lock_target
+assert release_lock.publication_lock_matches_merge(
+    publication_lock_fixture,
+    "IvanLi-CN/dockrev",
+    lock_commit_sha,
+    "0.80.2",
+    covered_lock_target,
+) is True
+normal_lock_merge_sha = covered_lock_other
+assert release_lock.publication_lock_matches_merge(
+    paginated_publication_lock_fixture,
+    "IvanLi-CN/dockrev",
+    lock_commit_sha,
+    "0.80.2",
+    covered_lock_target,
+) is True
+assert release_lock.publication_lock_matches_merge(
+    publication_lock_fixture,
+    "IvanLi-CN/dockrev",
+    lock_commit_sha,
+    "0.80.2",
+    covered_lock_target,
+) is False
+lock_commit_payload["commit"]["message"] = lock_commit_payload["commit"]["message"].replace(
+    "normal-preparation", "unsupported"
+)
+expect_exception(
+    release_lock.PublicationLockOwnershipError,
+    release_lock.publication_lock_matches_merge,
+    publication_lock_fixture,
+    "IvanLi-CN/dockrev",
+    lock_commit_sha,
+    "0.80.2",
+    covered_lock_target,
+)
+lock_commit_payload["commit"]["message"] = lock_commit_payload["commit"]["message"].replace(
+    "unsupported", "normal-preparation"
+)
+
+
+duplicate_association_paths = []
+
+def duplicate_publication_lock_fixture(path):
+    if path.endswith(f"/commits/{lock_commit_sha}"):
+        return lock_commit_payload
+    if path.endswith(f"/contents/VERSION?ref={lock_commit_sha}"):
+        return {"encoding": "base64", "content": "MC44MC4y\n"}
+    if path.endswith(f"/contents/VERSION?ref={covered_lock_other}") or path.endswith(
+        f"/contents/VERSION?ref={covered_lock_target}"
+    ):
+        return {"encoding": "base64", "content": "MC44MC4x\n"}
+    if path.endswith(f"/commits/{covered_lock_other}/pulls?per_page=100&page=1"):
+        duplicate_association_paths.append(path)
+        return [
+            {
+                "state": "closed",
+                "merged_at": "2026-01-01T00:00:00Z",
+                "merge_commit_sha": covered_lock_target,
+                "base": {"ref": "main", "repo": {"full_name": "IvanLi-CN/dockrev"}},
+                "head": {"sha": lock_commit_sha},
+            },
+            {
+                "state": "closed",
+                "merged_at": "2026-01-02T00:00:00Z",
+                "merge_commit_sha": covered_lock_target,
+                "base": {"ref": "main", "repo": {"full_name": "IvanLi-CN/dockrev"}},
+                "head": {"sha": lock_commit_sha},
+            },
+        ]
+    raise AssertionError(f"unexpected duplicate publication lock API path: {path}")
+
+
+expect_exception(
+    release_lock.PublicationLockOwnershipError,
+    release_lock.publication_lock_matches_merge,
+    duplicate_publication_lock_fixture,
+    "IvanLi-CN/dockrev",
+    lock_commit_sha,
+    "0.80.2",
+    covered_lock_target,
+)
+assert duplicate_association_paths == [
+    f"/repos/IvanLi-CN/dockrev/commits/{covered_lock_other}/pulls?per_page=100&page=1"
+]
+
+
+mismatched_association_paths = []
+
+def mismatched_head_publication_lock_fixture(path):
+    if path.endswith(f"/commits/{lock_commit_sha}"):
+        return lock_commit_payload
+    if path.endswith(f"/contents/VERSION?ref={lock_commit_sha}"):
+        return {"encoding": "base64", "content": "MC44MC4y\n"}
+    if path.endswith(f"/contents/VERSION?ref={covered_lock_other}") or path.endswith(
+        f"/contents/VERSION?ref={covered_lock_target}"
+    ):
+        return {"encoding": "base64", "content": "MC44MC4x\n"}
+    if path.endswith(f"/commits/{covered_lock_other}/pulls?per_page=100&page=1"):
+        mismatched_association_paths.append(path)
+        return [{
+            "state": "closed",
+            "merged_at": "2026-01-01T00:00:00Z",
+            "merge_commit_sha": covered_lock_target,
+            "base": {"ref": "main", "repo": {"full_name": "IvanLi-CN/dockrev"}},
+            "head": {"sha": covered_lock_target},
+        }]
+    raise AssertionError(f"unexpected mismatched publication lock API path: {path}")
+
+
+expect_exception(
+    release_lock.PublicationLockOwnershipError,
+    release_lock.publication_lock_matches_merge,
+    mismatched_head_publication_lock_fixture,
+    "IvanLi-CN/dockrev",
+    lock_commit_sha,
+    "0.80.2",
+    covered_lock_target,
+)
+assert mismatched_association_paths == [
+    f"/repos/IvanLi-CN/dockrev/commits/{covered_lock_other}/pulls?per_page=100&page=1"
+]
+
+
+wrong_base_repository_paths = []
+
+def wrong_base_repository_publication_lock_fixture(path):
+    if path.endswith(f"/commits/{lock_commit_sha}"):
+        return lock_commit_payload
+    if path.endswith(f"/contents/VERSION?ref={lock_commit_sha}"):
+        return {"encoding": "base64", "content": "MC44MC4y\n"}
+    if path.endswith(f"/contents/VERSION?ref={covered_lock_other}") or path.endswith(
+        f"/contents/VERSION?ref={covered_lock_target}"
+    ):
+        return {"encoding": "base64", "content": "MC44MC4x\n"}
+    if path.endswith(f"/commits/{covered_lock_other}/pulls?per_page=100&page=1"):
+        wrong_base_repository_paths.append(path)
+        return [{
+            "state": "closed",
+            "merged_at": "2026-01-01T00:00:00Z",
+            "merge_commit_sha": covered_lock_target,
+            "base": {"ref": "main", "repo": {"full_name": "IvanLi-CN/other-repo"}},
+            "head": {"sha": lock_commit_sha},
+        }]
+    raise AssertionError(f"unexpected wrong-base publication lock API path: {path}")
+
+
+expect_exception(
+    release_lock.PublicationLockOwnershipError,
+    release_lock.publication_lock_matches_merge,
+    wrong_base_repository_publication_lock_fixture,
+    "IvanLi-CN/dockrev",
+    lock_commit_sha,
+    "0.80.2",
+    covered_lock_target,
+)
+assert wrong_base_repository_paths == [
+    f"/repos/IvanLi-CN/dockrev/commits/{covered_lock_other}/pulls?per_page=100&page=1"
+]
+
+
+malformed_association_paths = []
+
+def malformed_publication_lock_fixture(path):
+    if path.endswith(f"/commits/{lock_commit_sha}"):
+        return lock_commit_payload
+    if path.endswith(f"/contents/VERSION?ref={lock_commit_sha}"):
+        return {"encoding": "base64", "content": "MC44MC4y\n"}
+    if path.endswith(f"/contents/VERSION?ref={covered_lock_other}") or path.endswith(
+        f"/contents/VERSION?ref={covered_lock_target}"
+    ):
+        return {"encoding": "base64", "content": "MC44MC4x\n"}
+    if path.endswith(f"/commits/{covered_lock_other}/pulls?per_page=100&page=1"):
+        malformed_association_paths.append(path)
+        return [{"state": "closed", "base": {"ref": "main"}}]
+    raise AssertionError(f"unexpected malformed publication lock API path: {path}")
+
+
+expect_exception(
+    release_lock.PublicationLockOwnershipError,
+    release_lock.publication_lock_matches_merge,
+    malformed_publication_lock_fixture,
+    "IvanLi-CN/dockrev",
+    lock_commit_sha,
+    "0.80.2",
+    covered_lock_target,
+)
+assert malformed_association_paths == [
+    f"/repos/IvanLi-CN/dockrev/commits/{covered_lock_other}/pulls?per_page=100&page=1"
+]
+
+
+def identity_only_fixture(payload, lock_content="MC44MC4y\n"):
+    def fixture(path):
+        if path.endswith(f"/commits/{lock_commit_sha}"):
+            return payload
+        if path.endswith(f"/contents/VERSION?ref={lock_commit_sha}"):
+            return {"encoding": "base64", "content": lock_content}
+        if path.endswith(f"/contents/VERSION?ref={covered_lock_other}"):
+            return {"encoding": "base64", "content": "MC44MC4x\n"}
+        raise AssertionError(f"unexpected identity-only API path: {path}")
+
+    return fixture
+
+
+validated_lock, validated_source = release_lock.validate_publication_lock_identity(
+    identity_only_fixture(copy.deepcopy(lock_commit_payload)),
+    "IvanLi-CN/dockrev",
+    lock_commit_sha,
+    "0.80.2",
+)
+assert validated_lock["Release-Mode"] == "normal-preparation"
+assert validated_source == covered_lock_other
+
+unsigned_identity = copy.deepcopy(lock_commit_payload)
+unsigned_identity["commit"]["verification"]["verified"] = False
+wrong_files_identity = copy.deepcopy(lock_commit_payload)
+wrong_files_identity["files"] = [{"filename": "VERSION"}, {"filename": "README.md"}]
+wrong_version_identity = copy.deepcopy(lock_commit_payload)
+wrong_version_identity["commit"]["message"] = wrong_version_identity["commit"]["message"].replace(
+    "Product-Version: 0.80.2", "Product-Version: 0.80.3", 1
+)
+duplicate_trailer_identity = copy.deepcopy(lock_commit_payload)
+duplicate_trailer_identity["commit"]["message"] += "\nProduct-Version: 0.80.2"
+for invalid_identity, content in (
+    (unsigned_identity, "MC44MC4y\n"),
+    (wrong_files_identity, "MC44MC4y\n"),
+    (wrong_version_identity, "MC44MC4y\n"),
+    (duplicate_trailer_identity, "MC44MC4y\n"),
+    (copy.deepcopy(lock_commit_payload), "MC44MC4z\n"),
+):
+    expect_exception(
+        release_lock.PublicationLockOwnershipError,
+        release_lock.validate_publication_lock_identity,
+        identity_only_fixture(invalid_identity, content),
+        "IvanLi-CN/dockrev",
+        lock_commit_sha,
+        "0.80.2",
+    )
+
+
+def cross_page_association_fixture(second_page):
+    def fixture(path):
+        if path.endswith(f"/commits/{lock_commit_sha}"):
+            return lock_commit_payload
+        if path.endswith(f"/contents/VERSION?ref={lock_commit_sha}"):
+            return {"encoding": "base64", "content": "MC44MC4y\n"}
+        if path.endswith(f"/contents/VERSION?ref={covered_lock_other}"):
+            return {"encoding": "base64", "content": "MC44MC4x\n"}
+        if path.endswith(f"/commits/{covered_lock_other}/pulls?per_page=100&page=1"):
+            return [
+                {
+                    "state": "open",
+                    "base": {"ref": "main", "repo": {"full_name": "IvanLi-CN/dockrev"}},
+                    "head": {"sha": lock_commit_sha},
+                }
+                for _ in range(100)
+            ]
+        if path.endswith(f"/commits/{covered_lock_other}/pulls?per_page=100&page=2"):
+            return second_page
+        raise AssertionError(f"unexpected cross-page API path: {path}")
+
+    return fixture
+
+
+cross_page_valid_association = {
+    "state": "closed",
+    "merged_at": "2026-01-01T00:00:00Z",
+    "merge_commit_sha": covered_lock_target,
+    "base": {"ref": "main", "repo": {"full_name": "IvanLi-CN/dockrev"}},
+    "head": {"sha": lock_commit_sha},
+}
+expect_exception(
+    release_lock.PublicationLockOwnershipError,
+    release_lock.publication_lock_matches_merge,
+    cross_page_association_fixture([copy.deepcopy(cross_page_valid_association)] * 2),
+    "IvanLi-CN/dockrev",
+    lock_commit_sha,
+    "0.80.2",
+    covered_lock_target,
+)
+expect_exception(
+    release_lock.PublicationLockOwnershipError,
+    release_lock.publication_lock_matches_merge,
+    cross_page_association_fixture([{"state": "closed", "base": {"ref": "main"}}]),
+    "IvanLi-CN/dockrev",
+    lock_commit_sha,
+    "0.80.2",
+    covered_lock_target,
+)
+
+
+original_lock_match = release_lock.publication_lock_matches_merge
+
+
+def raise_lock_ownership_error(*_args, **_kwargs):
+    raise release_lock.PublicationLockOwnershipError("malformed publication lock")
+
+
+def completion_mapping_fixture(_api_root, _token, path):
+    if "release-publication-lock%2Fv0.80.2" in path:
+        return {"object": {"sha": lock_commit_sha}}
+    if "/git/ref/" in path:
+        raise completion.CompletionError("GitHub API failed: 404")
+    raise AssertionError(f"unexpected completion mapping API path: {path}")
+
+
+def preparation_mapping_fixture(_api_root, _token, _method, path, _payload=None):
+    if "release-publication-lock%2Fv0.80.2" in path:
+        return {"object": {"sha": lock_commit_sha}}
+    if "/git/ref/" in path:
+        raise preparation_script.PreparationError("GitHub API failed: 404:")
+    raise AssertionError(f"unexpected preparation mapping API path: {path}")
+
+
+def identity_mapping_fixture(_api_root, _token, path):
+    if "release-publication-lock%2Fv0.80.2" in path:
+        return {"object": {"sha": lock_commit_sha}}
+    if "/git/ref/" in path:
+        raise identity.IdentityError("GitHub API failed: 404")
+    raise AssertionError(f"unexpected identity mapping API path: {path}")
+
+
+release_lock.publication_lock_matches_merge = raise_lock_ownership_error
+original_completion_mapping_api = completion.api_json
+original_preparation_mapping_api = preparation_script.api_request
+original_identity_mapping_api = identity.api_json
+try:
+    completion.api_json = completion_mapping_fixture
+    preparation_script.api_request = preparation_mapping_fixture
+    identity.api_json = identity_mapping_fixture
+    expect_exception(
+        completion.CompletionError,
+        completion.covered_product_has_existing_identity,
+        "https://api.github.test",
+        "token",
+        "IvanLi-CN/dockrev",
+        covered_lock_target,
+        "0.80.2",
+    )
+    expect_exception(
+        preparation_script.PreparationError,
+        preparation_script.covered_product_has_existing_identity,
+        "https://api.github.test",
+        "token",
+        "IvanLi-CN/dockrev",
+        covered_lock_target,
+        "0.80.2",
+        identity_sha=lock_commit_sha,
+    )
+    expect_exception(
+        identity.IdentityError,
+        identity.covered_version_has_existing_identity,
+        "https://api.github.test",
+        "token",
+        "IvanLi-CN/dockrev",
+        "0.80.2",
+        covered_merge_sha=covered_lock_target,
+    )
+finally:
+    release_lock.publication_lock_matches_merge = original_lock_match
+    completion.api_json = original_completion_mapping_api
+    preparation_script.api_request = original_preparation_mapping_api
+    identity.api_json = original_identity_mapping_api
 
 
 labels = policy.parse_labels(["type:patch", "channel:stable", "component:app"])
@@ -927,6 +1392,48 @@ try:
                         )
                     },
                 }
+            if path.endswith("/commits/" + "9" * 40):
+                return {
+                    "parents": [{"sha": "c" * 40}],
+                    "files": [{"filename": "VERSION"}],
+                    "commit": {
+                        "verification": {"verified": True},
+                        "message": (
+                            "VERSION-only release\n\n"
+                            f"Covered-Product-Merge-SHA: {'b' * 40}\n"
+                            "Product-Version: 0.80.1\n"
+                            "Release-Baseline-Version: 0.80.0\n"
+                            "Release-Intent: type:patch channel:stable\n"
+                            "Source-PR-Updated-At: 2026-01-01T00:00:00Z\n"
+                            "Release-Mode: version-only-release-pr"
+                        ),
+                    }
+                }
+            if path.endswith("/commits/" + "8" * 40):
+                return {
+                    "parents": [{"sha": "c" * 40}],
+                    "files": [{"filename": "VERSION"}],
+                    "commit": {
+                        "verification": {"verified": True},
+                        "message": (
+                            "VERSION-only release\n\n"
+                            f"Covered-Product-Merge-SHA: {covered_merge_sha}\n"
+                            "Product-Version: 0.80.1\n"
+                            "Release-Baseline-Version: 0.80.0\n"
+                            "Release-Intent: type:patch channel:stable\n"
+                            "Source-PR-Updated-At: 2026-01-01T00:00:00Z\n"
+                            "Release-Mode: version-only-release-pr"
+                        ),
+                    }
+                }
+            if path.endswith("/contents/VERSION?ref=" + "9" * 40) or path.endswith(
+                "/contents/VERSION?ref=" + "8" * 40
+            ):
+                return {"encoding": "base64", "content": "MC44MC4x\n"}
+            if path.endswith(f"/contents/VERSION?ref={covered_merge_sha}"):
+                return {"encoding": "base64", "content": "MC44MC4w\n"}
+            if path.endswith("/contents/VERSION?ref=" + "b" * 40):
+                return {"encoding": "base64", "content": "MC44MC4w\n"}
             if path.endswith("/git/ref/tags/v0.80.1"):
                 raise preparation_script.PreparationError("GitHub API failed: 404:")
             if path.endswith("/git/ref/tags/0.80.1"):
@@ -1022,22 +1529,25 @@ try:
             "0.80.1",
         ) is False
         covered_publication_lock_sha = "9" * 40
-        reservations_before = calls["reserve"]
-        recoveries_before = len(recovery_identity_reservations)
-        expect_error(preparation_script.create, Namespace(
-            api_root="https://api.github.test",
-            token="token",
-            repository="IvanLi-CN/dockrev",
-            pr_number=42,
-            exact_version=None,
-            release_mode="version-only-release-pr",
-            output=Path(directory) / "covered-publication-lock.json",
-        ))
-        assert calls["reserve"] == reservations_before
-        assert len(recovery_identity_reservations) == recoveries_before
+        assert preparation_script.covered_product_has_existing_identity(
+            "https://api.github.test",
+            "token",
+            "IvanLi-CN/dockrev",
+            covered_merge_sha,
+            "0.80.1",
+        ) is False
+        covered_publication_lock_sha = "8" * 40
+        assert preparation_script.covered_product_has_existing_identity(
+            "https://api.github.test",
+            "token",
+            "IvanLi-CN/dockrev",
+            covered_merge_sha,
+            "0.80.1",
+        ) is True
         covered_publication_lock_sha = None
 
         covered_identity_marker = "recovery-only"
+        reservations_before = calls["reserve"]
         preparation_script.reserve_recovery_identity = lambda *_args: False
         recovery_only_output = Path(directory) / "recovery-only.json"
         preparation_script.create(Namespace(
@@ -1216,6 +1726,7 @@ original_completion_api_json = completion.api_json
 try:
     tag_exists = False
     normal_reservation_ref_sha = prep_sha
+    normal_target_lock_sha = None
     labels_for_loader = ["type:patch", "channel:stable"]
     preparation_message = (
         "Prepare release identity\n\n"
@@ -1245,6 +1756,19 @@ try:
                 "files": [{"filename": "VERSION"}] if labels_for_loader[0] != "type:none" else [],
                 "commit": {"verification": {"verified": True}, "message": preparation_message if labels_for_loader[0] != "type:none" else "Product change"},
             }
+        if (
+            normal_target_lock_sha is not None
+            and normal_target_lock_sha != prep_sha
+            and path.endswith(f"/commits/{normal_target_lock_sha}")
+        ):
+            return {
+                "parents": [{"sha": source_sha}],
+                "files": [{"filename": "VERSION"}],
+                "commit": {
+                    "verification": {"verified": True},
+                    "message": preparation_message,
+                },
+            }
         if path.endswith("/pulls/42/files?per_page=100&page=1"):
             return [{"filename": "VERSION"}] if labels_for_loader[0] == "type:none" else []
         if path.endswith("/commits/" + source_sha):
@@ -1265,6 +1789,10 @@ try:
             raise completion.CompletionError("GitHub API failed: 404")
         if path.endswith("/git/ref/tags/0.1.1"):
             raise completion.CompletionError("GitHub API failed: 404")
+        if path.endswith("/git/ref/heads/release-publication-lock%2Fv0.1.1"):
+            if normal_target_lock_sha is None:
+                raise completion.CompletionError("GitHub API failed: 404")
+            return {"object": {"sha": normal_target_lock_sha}}
         if path.endswith("/git/ref/heads/release-reservation%2Fv0.1.1"):
             return {"object": {"sha": normal_reservation_ref_sha, "type": "commit"}}
         if path.endswith("/commits/" + "f" * 40):
@@ -1286,6 +1814,36 @@ try:
     completion.api_json = fake_completion_api
     loaded = completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
     assert completion.validate_completion(loaded)["status"] == "pass"
+    normal_target_lock_sha = "7" * 40
+    foreign_normal_target_lock = completion.load_github_completion(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", 42
+    )
+    assert foreign_normal_target_lock["tag_reserved"] is False
+    expect_error(completion.validate_completion, foreign_normal_target_lock)
+    normal_target_lock_sha = prep_sha
+    owned_normal_target_lock = completion.load_github_completion(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", 42
+    )
+    assert completion.validate_completion(owned_normal_target_lock)["status"] == "pass"
+    normal_target_lock_sha = "6" * 40
+    preparation_message += "\nProduct-Version: 0.1.1"
+    expect_error(
+        completion.load_github_completion,
+        "https://api.github.test",
+        "token",
+        "IvanLi-CN/dockrev",
+        42,
+    )
+    preparation_message = preparation_message.rsplit("\nProduct-Version: 0.1.1", 1)[0]
+    normal_target_lock_sha = "not-a-sha"
+    expect_error(
+        completion.load_github_completion,
+        "https://api.github.test",
+        "token",
+        "IvanLi-CN/dockrev",
+        42,
+    )
+    normal_target_lock_sha = None
     normal_reservation_ref_sha = "f" * 40
     assert completion.validate_completion(
         completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
@@ -1330,6 +1888,7 @@ try:
     version_only_completion_valid_message = version_only_completion_message
     recovery_identity_matches = True
     version_only_completion_pr_head_sha = prep_sha
+    version_only_completion_target_lock_sha = None
 
     def fake_version_only_completion_api(_api_root, _token, path):
         if path.endswith("/pulls/42"):
@@ -1341,6 +1900,19 @@ try:
                 "labels": [{"name": "type:patch"}, {"name": "channel:stable"}],
             }
         if path.endswith(f"/commits/{prep_sha}"):
+            return {
+                "parents": [{"sha": source_sha}],
+                "files": [{"filename": "VERSION"}],
+                "commit": {
+                    "verification": {"verified": True},
+                    "message": version_only_completion_message,
+                },
+            }
+        if (
+            version_only_completion_target_lock_sha is not None
+            and version_only_completion_target_lock_sha != prep_sha
+            and path.endswith(f"/commits/{version_only_completion_target_lock_sha}")
+        ):
             return {
                 "parents": [{"sha": source_sha}],
                 "files": [{"filename": "VERSION"}],
@@ -1397,6 +1969,10 @@ try:
             raise completion.CompletionError("GitHub API failed: 404")
         if path.endswith("/git/ref/tags/0.80.2"):
             raise completion.CompletionError("GitHub API failed: 404")
+        if path.endswith("/git/ref/heads/release-publication-lock%2Fv0.80.2"):
+            if version_only_completion_target_lock_sha is None:
+                raise completion.CompletionError("GitHub API failed: 404")
+            return {"object": {"sha": version_only_completion_target_lock_sha}}
         if path.endswith("/git/ref/heads/release-reservation%2Fv0.80.2"):
             return {"object": {"sha": prep_sha}}
         if path.endswith("/commits/" + "f" * 40):
@@ -1411,6 +1987,36 @@ try:
     completion.api_json = fake_version_only_completion_api
     version_only_loaded = completion.load_github_completion("https://api.github.test", "token", "IvanLi-CN/dockrev", 42)
     assert completion.validate_completion(version_only_loaded)["mode"] == "version-only-release-pr"
+    version_only_completion_target_lock_sha = "7" * 40
+    foreign_target_lock_loaded = completion.load_github_completion(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", 42
+    )
+    assert foreign_target_lock_loaded["tag_reserved"] is False
+    expect_error(completion.validate_completion, foreign_target_lock_loaded)
+    version_only_completion_target_lock_sha = prep_sha
+    owned_target_lock_loaded = completion.load_github_completion(
+        "https://api.github.test", "token", "IvanLi-CN/dockrev", 42
+    )
+    assert completion.validate_completion(owned_target_lock_loaded)["mode"] == "version-only-release-pr"
+    version_only_completion_target_lock_sha = "6" * 40
+    version_only_completion_message += "\nProduct-Version: 0.80.2"
+    expect_error(
+        completion.load_github_completion,
+        "https://api.github.test",
+        "token",
+        "IvanLi-CN/dockrev",
+        42,
+    )
+    version_only_completion_message = version_only_completion_valid_message
+    version_only_completion_target_lock_sha = "not-a-sha"
+    expect_error(
+        completion.load_github_completion,
+        "https://api.github.test",
+        "token",
+        "IvanLi-CN/dockrev",
+        42,
+    )
+    version_only_completion_target_lock_sha = None
     version_only_completion_pr_head_sha = "c" * 40
     moved_version_only_loaded = completion.load_github_completion(
         "https://api.github.test", "token", "IvanLi-CN/dockrev", 42
@@ -1671,9 +2277,62 @@ try:
             if completion_publication_lock_sha is None:
                 raise completion.CompletionError("GitHub API failed: 404")
             return {"object": {"sha": completion_publication_lock_sha}}
+        if path.endswith("/commits/" + "9" * 40):
+            return {
+                "parents": [{"sha": "c" * 40}],
+                "files": [{"filename": "VERSION"}],
+                "commit": {
+                    "verification": {"verified": True},
+                    "message": (
+                        "VERSION-only release\n\n"
+                        f"Covered-Product-Merge-SHA: {'b' * 40}\n"
+                        "Product-Version: 0.1.0\n"
+                        "Release-Baseline-Version: 0.0.0\n"
+                        "Release-Intent: type:minor channel:stable\n"
+                        "Source-PR-Updated-At: 2026-01-01T00:00:00Z\n"
+                        "Release-Mode: version-only-release-pr"
+                    ),
+                }
+            }
+        if path.endswith("/commits/" + "8" * 40):
+            return {
+                "parents": [{"sha": "c" * 40}],
+                "files": [{"filename": "VERSION"}],
+                "commit": {
+                    "verification": {"verified": True},
+                    "message": (
+                        "VERSION-only release\n\n"
+                        f"Covered-Product-Merge-SHA: {covered_sha}\n"
+                        "Product-Version: 0.1.0\n"
+                        "Release-Baseline-Version: 0.0.0\n"
+                        "Release-Intent: type:minor channel:stable\n"
+                        "Source-PR-Updated-At: 2026-01-01T00:00:00Z\n"
+                        "Release-Mode: version-only-release-pr"
+                    ),
+                }
+            }
+        if path.endswith("/contents/VERSION?ref=" + "9" * 40) or path.endswith(
+            "/contents/VERSION?ref=" + "8" * 40
+        ):
+            return {"encoding": "base64", "content": "MC4xLjA=\n"}
+        if path.endswith(f"/contents/VERSION?ref={covered_sha}") or path.endswith(
+            "/contents/VERSION?ref=" + "b" * 40
+        ):
+            return {"encoding": "base64", "content": "MC4wLjA=\n"}
         raise completion.CompletionError("GitHub API failed: 404")
 
     completion.api_json = fake_completion_lock_api
+    assert completion.covered_product_has_existing_identity(
+        "https://api.github.test",
+        "token",
+        "IvanLi-CN/dockrev",
+        covered_sha,
+        "0.1.0",
+        expected_recovery_identity_sha=prep_sha,
+        expected_recovery_pr_number=42,
+        expected_recovery_intent="type:patch channel:stable",
+    ) is False
+    completion_publication_lock_sha = "8" * 40
     assert completion.covered_product_has_existing_identity(
         "https://api.github.test",
         "token",
