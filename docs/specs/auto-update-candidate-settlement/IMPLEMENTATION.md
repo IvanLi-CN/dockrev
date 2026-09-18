@@ -16,6 +16,8 @@
 - `JobScope` source scope 解析对大小写不敏感，与 migration predicate 保持一致；不合格的历史 queued/running action 分别取消或写入 stop control，保留 `migration_ambiguous_history` 审计原因。
 - inference 开始时以原子递增 `settlement_generation` 发出唯一 evidence CAS token；settlement 只能提交与当前 token 精确匹配的 generation，迟到的旧 inference 结果不能覆盖更新的 retry 或 ready 结果。
 - recovery queued auto-policy job 在恢复执行前重新验证成功 Check、schedule/GHCR webhook provenance、creator/scope identity、candidate target digest、expected current digest、当前 service digest、candidate 和 policy；缺少任一基线则 fail-closed，不能绕过 source/current-digest 门禁。
+- ambiguous hydration 不伪造 `source_job_id` 或 `discovered_at`；这些缺失值在候选事实和 API diagnostic 中保持为空，`migration_ambiguous_history` 只作为不可执行的审计原因。
+- queued recovery 必须同时匹配 pending 的 candidate identity、service scope、唯一 target、当前 service tag、candidate digest 和 expected current digest；缺失 candidate 绑定、target tag 或 scope/target service 不一致都会取消 queued action。
 - hydration 会恢复所有 qualifying discovery history 的 digest，并以当前 service candidate 统一 supersede 非当前历史 candidate，确保旧 pending/action 不能因迁移只看到当前 digest 而重新执行。
 - Validation: local checks complete; the shared-testbox Compose smoke is partially blocked by the existing metrics migration error <code>retained rollups cannot be recovered after raw retention</code> during the Compose V1 rejection setup. The V2 plugin and standalone lifecycle portions passed before that blocker.
 

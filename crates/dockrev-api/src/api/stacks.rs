@@ -937,12 +937,14 @@ pub(super) async fn enrich_services_with_auto_update_state(
             reason: row.reason.clone(),
             attempts: row.attempts,
             retry_at: row.retry_at.clone(),
-            discovered_at: Some(row.discovered_at.clone()),
+            discovered_at: (!row.discovered_at.trim().is_empty())
+                .then(|| row.discovered_at.clone()),
             last_error: row.last_error.clone(),
             superseded_at: row.superseded_at.clone(),
             superseded_by_candidate_id: row.superseded_by_candidate_id.clone(),
-            source: Some(row.source.clone()),
-            source_job_id: Some(row.source_job_id.clone()),
+            source: (!row.source.trim().is_empty()).then(|| row.source.clone()),
+            source_job_id: (!row.source_job_id.trim().is_empty())
+                .then(|| row.source_job_id.clone()),
             hydration_origin: row.hydration_origin.clone(),
         });
         service.auto_update = Some(AutoUpdateProjection {

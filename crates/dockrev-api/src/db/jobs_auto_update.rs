@@ -185,7 +185,7 @@ WHERE id = ?1
     WHERE p.update_job_id = jobs.id
       AND p.status = 'enqueued'
       AND s.candidate_digest = p.candidate_digest
-      AND (p.candidate_id IS NULL OR p.candidate_id = c.id)
+      AND p.candidate_id = c.id
       AND c.status <> 'superseded'
       AND c.policy_status = 'queued'
       AND c.source_job_id = p.source_check_job_id
@@ -211,10 +211,15 @@ WHERE id = ?1
           AND source_job.stack_id IS NULL
           AND source_job.service_id IS NULL)
       )
+      AND LOWER(jobs.scope) = 'service'
+      AND jobs.stack_id = p.stack_id
+      AND jobs.service_id = p.service_id
+      AND json_array_length(CASE WHEN json_valid(jobs.summary_json) THEN jobs.summary_json ELSE '{}' END, '$.targets') = 1
       AND EXISTS (
         SELECT 1
         FROM json_each(CASE WHEN json_valid(jobs.summary_json) THEN jobs.summary_json ELSE '{}' END, '$.targets') AS target
         WHERE json_extract(target.value, '$.serviceId') = p.service_id
+          AND NULLIF(TRIM(json_extract(target.value, '$.targetTag')), '') = NULLIF(TRIM(s.image_tag), '')
           AND LOWER(NULLIF(TRIM(json_extract(target.value, '$.targetDigest')), '')) = LOWER(NULLIF(TRIM(p.candidate_digest), ''))
           AND LOWER(NULLIF(TRIM(json_extract(target.value, '$.autoPolicyContext.expectedCurrentDigest')), '')) = LOWER(NULLIF(TRIM(s.current_digest), ''))
       )
