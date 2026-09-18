@@ -109,6 +109,8 @@ async fn source_revalidation_requires_existing_successful_check_job() {
             .unwrap()
     );
 
+    assert_eq!(JobScope::from_str("SeRvIcE"), JobScope::Service);
+
     db.insert_job(api::types::JobListItem {
         id: "schedule-update".to_string(),
         r#type: api::types::JobType::Update,
