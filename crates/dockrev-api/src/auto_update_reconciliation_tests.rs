@@ -98,6 +98,7 @@ mod reconciliation_tests {
             superseded_at: None,
             superseded_by_candidate_id: None,
             hydration_origin: None,
+            evidence_generation: 0,
         });
         let history = vec![NewVersionDiscoveryRow {
             service_id: "svc".to_string(),
@@ -158,6 +159,7 @@ mod reconciliation_tests {
             superseded_at: None,
             superseded_by_candidate_id: None,
             hydration_origin: None,
+            evidence_generation: 0,
         };
         let digest_a = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let digest_b = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";

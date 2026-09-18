@@ -12,6 +12,11 @@
 - hydration 事务只创建 candidate fact、supersede 旧候选和跳过旧 pending；启动/周期 reconciliation 随后复用现有 evaluator 与 claim safety，不直接执行 Compose。
 - policy reconciliation 显式包含 `awaiting_inference` candidate；SemVer evaluator 仍返回 waiting 状态并保持无 pending/update job 的 fail-closed 语义。
 - hydration diagnostic 仅在当前 digest 没有 candidate row 且存在 discovery history 时报告 `candidate_missing`；已有运行时 candidate 不会被错误报告为缺失。
+- 自动策略 job 插入事务内重新确认 service current digest；pending claim 与 enqueue 共同要求成功 Check、授权 source/creator pairing 和稳定的 scope identity，避免 stale candidate 或非 Check source 获得执行授权。
+- `JobScope` source scope 解析对大小写不敏感，与 migration predicate 保持一致；不合格的历史 queued/running action 分别取消或写入 stop control，保留 `migration_ambiguous_history` 审计原因。
+- inference 开始时以原子递增 `settlement_generation` 建立 evidence CAS；settlement 只能提交严格更高 generation，迟到的旧 inference 结果不能覆盖更新的 retry 或 ready 结果。
+- recovery queued auto-policy job 在恢复执行前重新验证成功 Check、schedule/GHCR webhook provenance、creator/scope identity、candidate target digest、expected current digest、当前 service digest、candidate 和 policy；缺少任一基线则 fail-closed，不能绕过 source/current-digest 门禁。
+- hydration 会恢复所有 qualifying discovery history 的 digest，并以当前 service candidate 统一 supersede 非当前历史 candidate，确保旧 pending/action 不能因迁移只看到当前 digest 而重新执行。
 - Validation: local checks complete; the shared-testbox Compose smoke is partially blocked by the existing metrics migration error <code>retained rollups cannot be recovered after raw retention</code> during the Compose V1 rejection setup. The V2 plugin and standalone lifecycle portions passed before that blocker.
 
 ## 实现顺序
@@ -65,6 +70,9 @@
 - 对来源可证明为 schedule/GHCR webhook 且有 discoveredAt、仍是最新 digest 的候选执行一次有限 reconciliation。
 - 迁移恢复严格 SemVer 或 digest-bound display evidence；floating/不可解析版本保持等待或 unresolved，只有当前服务 candidate digest 才能保留 active authorization。
 - 来源不明、image/baseline/source job/time 缺失、已 superseded 或历史终态记录不自动补发 update job；当前 digest 的不完整历史保留 `migration_ambiguous_history` audit reason。
+- 对同一 candidate 的 inference settlement 使用单调递增 `settlement_generation` 做条件更新；reconciliation 先 claim 新 generation，再写入证据，旧 worker 的迟到结果保持幂等且不可覆盖新状态。
+- recovery 只允许通过与正常 enqueue 相同的 provenance、scope、candidate target/current digest 和 policy 校验；历史 queued action 缺少 persisted current-digest baseline 时直接跳过并保留 `migration_ambiguous_history` 审计原因。
+- hydration 按 service + digest 处理完整 discovery history，再根据 service 当前 candidate digest supersede 旧候选；重复 migration、启动 hydration 和周期 reconciliation 不增加 candidate、pending 或 update job。
 - 迁移脚本必须可重复执行，且不能把历史通知直接转换成新的自动部署授权。
 
 ## 计划修改边界

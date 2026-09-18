@@ -67,7 +67,7 @@ pub(crate) use jobs::JobListFilters;
 pub(crate) use lifecycle_events::{ServiceLifecycleEventInput, ServiceLifecycleEventRow};
 pub(crate) use service_operations::{
     AcceptedStateCasOutcome, ServiceAcceptedState, ServiceAcceptedStateSettlement,
-    ServiceOperationTarget,
+    ServiceOperationAcquireOutcome, ServiceOperationTarget,
 };
 pub(crate) use update_stops::UpdateStopRequestOutcome;
 
@@ -322,6 +322,7 @@ pub struct AutoUpdateCandidateSettlementInput {
     pub reason: Option<String>,
     pub last_error: Option<String>,
     pub attempts: u32,
+    pub evidence_generation: i64,
     pub retry_at: Option<String>,
     pub settled_at: Option<String>,
     pub now: String,
@@ -362,6 +363,7 @@ pub struct AutoUpdateCandidateRow {
     pub superseded_at: Option<String>,
     pub superseded_by_candidate_id: Option<String>,
     pub hydration_origin: Option<String>,
+    pub evidence_generation: i64,
 }
 
 #[derive(Clone, Debug)]

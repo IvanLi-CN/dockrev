@@ -600,6 +600,17 @@ pub async fn reconcile_inference_for_digest(
 
     let mut reconciled = 0;
     for candidate in candidates {
+        let Some(candidate) = state
+            .db
+            .begin_auto_update_candidate_inference(
+                &candidate.service_id,
+                &candidate.candidate_digest,
+                now,
+            )
+            .await?
+        else {
+            continue;
+        };
         let authoritative_snapshot = snapshot.as_ref().filter(|snapshot| {
             snapshot_is_authoritative(snapshot)
                 && crate::snapshot_worker::normalize_digest(&snapshot.digest)
@@ -690,6 +701,7 @@ pub async fn reconcile_inference_for_digest(
                 reason: reason.map(str::to_string),
                 last_error,
                 attempts,
+                evidence_generation: candidate.evidence_generation,
                 retry_at,
                 settled_at: (resolved.is_some() || terminal).then_some(now.to_string()),
                 now: now.to_string(),
@@ -1133,7 +1145,10 @@ async fn enqueue_pending(
         }
         Err(err) => {
             if permanent_enqueue_error(&err) {
-                let skip_reason = format!("enqueue_rejected_{}", err.code());
+                let skip_reason = err
+                    .detail_str("reason")
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("enqueue_rejected_{}", err.code()));
                 state
                     .db
                     .mark_auto_update_pending_skipped(&pending.id, &skip_reason, now)

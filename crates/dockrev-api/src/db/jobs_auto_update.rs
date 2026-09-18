@@ -181,12 +181,43 @@ WHERE id = ?1
     JOIN auto_update_candidates c
       ON c.service_id = p.service_id
      AND c.candidate_digest = p.candidate_digest
+    JOIN jobs source_job ON source_job.id = p.source_check_job_id
     WHERE p.update_job_id = jobs.id
       AND p.status = 'enqueued'
       AND s.candidate_digest = p.candidate_digest
       AND (p.candidate_id IS NULL OR p.candidate_id = c.id)
       AND c.status <> 'superseded'
       AND c.policy_status = 'queued'
+      AND c.source_job_id = p.source_check_job_id
+      AND LOWER(source_job.type) = 'check'
+      AND LOWER(source_job.status) = 'success'
+      AND LOWER(c.source) IN ('schedule', 'github_webhook')
+      AND (
+        (LOWER(c.source) = 'schedule'
+          AND LOWER(source_job.reason) = 'schedule'
+          AND LOWER(source_job.created_by) = 'schedule')
+        OR (LOWER(c.source) = 'github_webhook'
+          AND LOWER(source_job.created_by) IN ('webhook', 'github')
+          AND LOWER(COALESCE(json_extract(CASE WHEN json_valid(source_job.summary_json) THEN source_job.summary_json ELSE '{}' END, '$.source'), '')) = 'github_webhook')
+      )
+      AND (
+        (LOWER(source_job.scope) = 'service'
+          AND source_job.stack_id = p.stack_id
+          AND source_job.service_id = p.service_id)
+        OR (LOWER(source_job.scope) = 'stack'
+          AND source_job.stack_id = p.stack_id
+          AND source_job.service_id IS NULL)
+        OR (LOWER(source_job.scope) = 'all'
+          AND source_job.stack_id IS NULL
+          AND source_job.service_id IS NULL)
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM json_each(CASE WHEN json_valid(jobs.summary_json) THEN jobs.summary_json ELSE '{}' END, '$.targets') AS target
+        WHERE json_extract(target.value, '$.serviceId') = p.service_id
+          AND LOWER(NULLIF(TRIM(json_extract(target.value, '$.targetDigest')), '')) = LOWER(NULLIF(TRIM(p.candidate_digest), ''))
+          AND LOWER(NULLIF(TRIM(json_extract(target.value, '$.autoPolicyContext.expectedCurrentDigest')), '')) = LOWER(NULLIF(TRIM(s.current_digest), ''))
+      )
       AND (
         (
           p.policy_scope_type = 'service'
