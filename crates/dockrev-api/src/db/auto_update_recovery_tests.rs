@@ -405,6 +405,27 @@ async fn runtime_candidate_with_discovery_history_is_not_reported_as_missing() {
     assert_eq!(hydrated.discovered_at, original_discovered_at);
     let hydrated_updated_at = hydrated.updated_at.clone();
 
+    db.call(|conn| {
+        conn.execute(
+            "UPDATE auto_update_candidates SET discovered_at = '', current_digest = '' WHERE service_id = 'service' AND candidate_digest = 'sha256:runtime'",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    db.hydrate_auto_update_candidates("2026-04-30T00:00:03Z")
+        .await
+        .unwrap();
+    let repaired = db
+        .get_auto_update_candidate("service", "sha256:runtime")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(repaired.discovered_at, "2026-04-30T00:00:00Z");
+    assert_eq!(repaired.current_digest.as_deref(), Some("sha256:current"));
+    let repaired_updated_at = repaired.updated_at.clone();
+
     db.hydrate_auto_update_candidates("2026-04-30T00:00:03Z")
         .await
         .unwrap();
@@ -413,7 +434,8 @@ async fn runtime_candidate_with_discovery_history_is_not_reported_as_missing() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(repeated.updated_at, hydrated_updated_at);
+    assert_eq!(repeated.updated_at, repaired_updated_at);
+    assert_ne!(repaired_updated_at, hydrated_updated_at);
 }
 
 #[tokio::test]
